@@ -242,6 +242,14 @@ Return ONLY the JSON object, no other text.`
       // Strip markdown fences if Claude wraps them anyway
       output = output.replace(/^```json?\s*/m, '').replace(/\s*```\s*$/m, '')
 
+      // Extract JSON object from output — Claude sometimes adds preamble/postamble text
+      // Find the first '{' and last '}' to extract the JSON block
+      const firstBrace = output.indexOf('{')
+      const lastBrace = output.lastIndexOf('}')
+      if (firstBrace !== -1 && lastBrace > firstBrace) {
+        output = output.substring(firstBrace, lastBrace + 1)
+      }
+
       try {
         const parsed = JSON.parse(output)
 
