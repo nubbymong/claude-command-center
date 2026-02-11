@@ -1,0 +1,74 @@
+@import "tailwindcss";
+
+@theme {
+  /* Platform v9 dark palette */
+  --color-base: #0f1218;
+  --color-mantle: #0b0e14;
+  --color-crust: #080a10;
+  --color-surface0: #161c26;
+  --color-surface1: #1e2530;
+  --color-surface2: #2a3342;
+  --color-overlay0: #4a5568;
+  --color-overlay1: #64748b;
+  --color-overlay2: #8892a4;
+  --color-subtext0: #94a3b8;
+  --color-subtext1: #b8c5d6;
+  --color-text: #f0f4fc;
+  --color-lavender: #B4BEFE;
+  --color-blue: #89B4FA;
+  --color-sapphire: #74C7EC;
+  --color-sky: #89DCEB;
+  --color-teal: #94E2D5;
+  --color-green: #A6E3A1;
+  --color-yellow: #F9E2AF;
+  --color-peach: #FAB387;
+  --color-maroon: #EBA0AC;
+  --color-red: #F38BA8;
+  --color-mauve: #CBA6F7;
+  --color-pink: #F5C2E7;
+  --color-flamingo: #F2CDCD;
+  --color-rosewater: #F5E0DC;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-mantle);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-surface1);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-surface2);
+}
+
+/* Title bar drag region */
+.titlebar-drag {
+  -webkit-app-region: drag;
+}
+.titlebar-no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/* Selection */
+::selection {
+  background: color-mix(in srgb, var(--color-blue) 30%, transparent);
+}
+
+/* Ensure xterm.js textarea can receive keyboard input */
+.xterm-helper-textarea {
+  user-select: text !important;
+  -webkit-user-select: text !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+}
+
+.xterm {
+  user-select: text !important;
+  -webkit-user-select: text !important;
+  pointer-events: auto !important;
+}
