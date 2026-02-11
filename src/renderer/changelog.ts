@@ -15,6 +15,14 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '1.2.69',
+    date: '2026-02-11',
+    highlights: "Maintenance release with internal improvements",
+    changes: [
+      { type: 'improvement', description: "Internal code maintenance and stability improvements" }
+    ]
+  },
+  {
     version: '1.2.68',
     date: '2026-02-11',
     highlights: 'Automated release pipeline with Claude CLI, VirusTotal, and GitHub Releases',
