@@ -15,7 +15,7 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
-    version: '1.2.64',
+    version: '1.2.65',
     date: '2026-02-08',
     highlights: 'Platform v9 theme, rate limits, enriched statusline, config improvements',
     changes: [
