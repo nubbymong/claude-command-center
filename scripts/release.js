@@ -221,6 +221,7 @@ Generate TWO things as valid JSON (no markdown fences, just raw JSON):
 Return ONLY the JSON object, no other text.`
 
     // Pipe prompt via stdin to avoid Windows command line length limits
+    // shell:true required on Windows for .cmd wrappers with stdin piping
     const claudeBin = process.platform === 'win32' ? 'claude.cmd' : 'claude'
     console.log('      Spawning Claude CLI for changelog generation...')
     const claudeResult = spawnSync(claudeBin, ['-p'], {
@@ -228,6 +229,7 @@ Return ONLY the JSON object, no other text.`
       encoding: 'utf-8',
       timeout: 120000,
       windowsHide: true,
+      shell: true,
       input: prompt
     })
 
@@ -255,10 +257,11 @@ ${entry.changes.map(c => `      { type: '${c.type}', description: ${JSON.stringi
     ]
   },`
 
-          // Insert after the opening bracket of the array
-          const insertPoint = changelogContent.indexOf('export const changelog: ChangelogEntry[] = [')
+          // Insert after the '= [' that opens the array (not the [] in the type annotation)
+          const marker = 'ChangelogEntry[] = ['
+          const insertPoint = changelogContent.indexOf(marker)
           if (insertPoint !== -1) {
-            const bracketPos = changelogContent.indexOf('[', insertPoint) + 1
+            const bracketPos = insertPoint + marker.length
             const updatedChangelog = changelogContent.slice(0, bracketPos) + '\n' + newEntry + changelogContent.slice(bracketPos)
             fs.writeFileSync(changelogPath, updatedChangelog, 'utf-8')
             changelogGenerated = true
