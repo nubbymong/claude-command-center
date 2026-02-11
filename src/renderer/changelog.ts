@@ -15,6 +15,19 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '1.2.68',
+    date: '2026-02-11',
+    highlights: 'Automated release pipeline with Claude CLI, VirusTotal, and GitHub Releases',
+    changes: [
+      { type: 'feature', description: 'Release pipeline now auto-generates changelog and release notes via Claude CLI' },
+      { type: 'feature', description: 'VirusTotal scan of installer with results linked in GitHub Release' },
+      { type: 'feature', description: 'SHA-256 checksums generated and attached to each release' },
+      { type: 'feature', description: 'GitHub Releases created automatically with installer download' },
+      { type: 'improvement', description: 'Old installer versions auto-cleaned from project root on each release' },
+      { type: 'improvement', description: 'npm audit pre-check blocks release if critical vulnerabilities found' },
+    ]
+  },
+  {
     version: '1.2.67',
     date: '2026-02-08',
     highlights: 'Platform v9 theme, rate limits, enriched statusline, config improvements',
