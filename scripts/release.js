@@ -220,7 +220,11 @@ Generate TWO things as valid JSON (no markdown fences, just raw JSON):
 
 Return ONLY the JSON object, no other text.`
 
-    const claudeResult = spawnSync('claude', ['--print', '-p', prompt], {
+    // claude -p is the --print flag; prompt is the positional argument
+    // On Windows, use claude.cmd since it's an npm global
+    const claudeBin = process.platform === 'win32' ? 'claude.cmd' : 'claude'
+    console.log('      Spawning Claude CLI for changelog generation...')
+    const claudeResult = spawnSync(claudeBin, ['-p', prompt], {
       cwd: PROJECT_ROOT,
       encoding: 'utf-8',
       timeout: 120000,
@@ -380,12 +384,30 @@ if (SKIP_VT) {
       const sizeMB = (fileSize / (1024 * 1024)).toFixed(1)
       console.log(`      File: ${installerName} (${sizeMB} MB)`)
 
-      // Use curl for multipart upload (simpler than Node https for large files)
+      // Files > 32MB need a special upload URL
+      let uploadUrl = 'https://www.virustotal.com/api/v3/files'
+      if (fileSize > 32 * 1024 * 1024) {
+        console.log('      File exceeds 32MB, requesting large file upload URL...')
+        const urlResult = run(
+          `curl -s --request GET --url https://www.virustotal.com/api/v3/files/upload_url ` +
+          `--header "x-apikey: ${vtKey}"`,
+          { timeout: 30000 }
+        )
+        const urlJson = JSON.parse(urlResult)
+        if (urlJson.data) {
+          uploadUrl = urlJson.data
+          ok('Got large file upload URL')
+        } else {
+          warn('Could not get large file upload URL, trying standard endpoint')
+        }
+      }
+
+      // Upload the file
       const vtResult = run(
-        `curl -s --request POST --url https://www.virustotal.com/api/v3/files ` +
+        `curl -s --request POST --url "${uploadUrl}" ` +
         `--header "x-apikey: ${vtKey}" ` +
         `--form "file=@${installerDst.replace(/\\/g, '/')}"`,
-        { timeout: 300000 }  // 5 min timeout for upload
+        { timeout: 600000 }  // 10 min timeout for large file upload
       )
 
       const vtJson = JSON.parse(vtResult)
