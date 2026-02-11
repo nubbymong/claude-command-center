@@ -220,16 +220,20 @@ Generate TWO things as valid JSON (no markdown fences, just raw JSON):
 
 Return ONLY the JSON object, no other text.`
 
-    // claude -p is the --print flag; prompt is the positional argument
-    // On Windows, use claude.cmd since it's an npm global
+    // Pipe prompt via stdin to avoid Windows command line length limits
     const claudeBin = process.platform === 'win32' ? 'claude.cmd' : 'claude'
     console.log('      Spawning Claude CLI for changelog generation...')
-    const claudeResult = spawnSync(claudeBin, ['-p', prompt], {
+    const claudeResult = spawnSync(claudeBin, ['-p'], {
       cwd: PROJECT_ROOT,
       encoding: 'utf-8',
       timeout: 120000,
-      windowsHide: true
+      windowsHide: true,
+      input: prompt
     })
+
+    if (claudeResult.stderr) {
+      console.log(`      Claude stderr: ${claudeResult.stderr.substring(0, 300)}`)
+    }
 
     if (claudeResult.status === 0 && claudeResult.stdout) {
       let output = claudeResult.stdout.trim()
