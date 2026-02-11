@@ -1,0 +1,83 @@
+{
+  "name": "claude-conductor",
+  "version": "1.2.64",
+  "description": "Multi-session Claude Code terminal orchestrator",
+  "author": "Nicholas Moger",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "package": "electron-vite build && electron-builder --win --dir",
+    "package:exe": "electron-vite build && electron-builder --win && copy /Y \"dist\\Claude Conductor Setup 1.2.2.exe\" \"Claude Conductor Setup.exe\"",
+    "release": "node scripts/release.js",
+    "update-server": "node scripts/update-server.js",
+    "postinstall": "npx @electron/rebuild --only node-pty --only better-sqlite3",
+    "rebuild": "npx @electron/rebuild"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/addon-web-links": "^0.11.0",
+    "@xterm/addon-webgl": "^0.18.0",
+    "@xterm/xterm": "^5.5.0",
+    "better-sqlite3": "^11.7.0",
+    "marked": "^15.0.0",
+    "node-pty": "^1.2.0-beta.10",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "ws": "^8.19.0",
+    "zustand": "^5.0.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/better-sqlite3": "^7.6.8",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@types/ws": "^8.18.1",
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8",
+    "electron-vite": "^5.0.0",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.7.0",
+    "vite": "^6.0.0"
+  },
+  "build": {
+    "appId": "com.claudeconductor.app",
+    "productName": "Claude Conductor Beta",
+    "files": [
+      "out/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "allowElevation": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Claude Conductor Beta",
+      "runAfterFinish": true,
+      "uninstallDisplayName": "Claude Conductor Beta",
+      "artifactName": "ClaudeConductor-Beta-${version}.${ext}"
+    },
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "asar": true,
+    "extraResources": [
+      {
+        "from": "build/config-template.json",
+        "to": "config-template.json"
+      }
+    ]
+  }
+}
