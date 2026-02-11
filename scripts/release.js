@@ -324,6 +324,17 @@ const installerLatest = path.join(PROJECT_ROOT, 'ClaudeConductor-latest.exe')
 const checksumsPath = path.join(PROJECT_ROOT, 'CHECKSUMS.txt')
 
 if (fs.existsSync(installerSrc)) {
+  // Clean up old versioned installers from project root
+  const oldExes = fs.readdirSync(PROJECT_ROOT).filter(f =>
+    f.startsWith('ClaudeConductor-') && f.endsWith('.exe') && f !== installerName && f !== 'ClaudeConductor-latest.exe'
+  )
+  if (oldExes.length > 0) {
+    oldExes.forEach(f => {
+      try { fs.unlinkSync(path.join(PROJECT_ROOT, f)) } catch {}
+    })
+    ok(`Cleaned up ${oldExes.length} old installer(s): ${oldExes.join(', ')}`)
+  }
+
   fs.copyFileSync(installerSrc, installerDst)
   fs.copyFileSync(installerSrc, installerLatest)
   ok(`Copied: ${installerName}`)
