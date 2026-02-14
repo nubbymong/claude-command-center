@@ -13,70 +13,95 @@ const readline = require('readline')
 // Matches how Claude CLI encodes project paths to directory names.
 // F:\scratch_space\rune → F--scratch-space-rune
 function encodeProjectPath(p) {
-  // Normalise to backslash on Windows
   const norm = p.replace(/\//g, '\\')
-  // Drive letter stays, :\ → --
   let encoded = norm.replace(/:\\/, '--')
-  // Remaining backslashes → -
   encoded = encoded.replace(/\\/g, '-')
-  // Underscores → -
   encoded = encoded.replace(/_/g, '-')
   return encoded
 }
 
-// ── Parse first user message from a .jsonl file ─────────────────────
+// ── Extract user text from a message object ─────────────────────────
+function extractUserText(obj) {
+  if (obj.isMeta) return null
+  let text = null
+  if (typeof obj.message === 'string') {
+    text = obj.message
+  } else if (obj.message?.content) {
+    if (typeof obj.message.content === 'string') {
+      text = obj.message.content
+    } else if (Array.isArray(obj.message.content)) {
+      const textBlock = obj.message.content.find(b => b.type === 'text')
+      if (textBlock) text = textBlock.text
+    }
+  }
+  if (!text) return null
+  // Skip commands, caveats, and tool interrupts
+  if (text.startsWith('<command-name>') || text.startsWith('<local-command')
+      || text.startsWith('[Request interrupted')) return null
+  return text.replace(/[\r\n]+/g, ' ').trim()
+}
+
+// ── Parse conversation: first message from head, last 5 from tail ───
 function parseConversation(filePath) {
   try {
-    const fd = fs.openSync(filePath, 'r')
-    const buf = Buffer.alloc(16384)
-    const bytesRead = fs.readSync(fd, buf, 0, 16384, 0)
-    fs.closeSync(fd)
-    const text = buf.toString('utf-8', 0, bytesRead)
+    const stat = fs.statSync(filePath)
+    if (stat.size < 20480) return null // Skip ghost sessions
 
-    const lines = text.split('\n').filter(Boolean)
-    let sessionId = null
+    const fd = fs.openSync(filePath, 'r')
+    const sessionId = path.basename(filePath, '.jsonl')
+
+    // ── Read HEAD (first 32KB) for first message + model ──
+    const headBuf = Buffer.alloc(Math.min(32768, stat.size))
+    fs.readSync(fd, headBuf, 0, headBuf.length, 0)
+    const headText = headBuf.toString('utf-8')
+    const headLines = headText.split('\n').filter(Boolean)
+
     let firstMessage = null
-    let messageCount = 0
     let model = null
 
-    for (const line of lines) {
+    for (const line of headLines) {
       try {
         const obj = JSON.parse(line)
-        // Extract session ID from the conversation UUID (filename minus .jsonl)
-        if (!sessionId) {
-          sessionId = path.basename(filePath, '.jsonl')
+        if (obj.type === 'user' && !firstMessage) {
+          firstMessage = extractUserText(obj)
         }
-        // Count messages
-        if (obj.type === 'human' || obj.type === 'assistant') {
-          messageCount++
+        if (obj.type === 'assistant' && obj.message?.model && !model) {
+          model = obj.message.model
         }
-        // First user message
-        if (obj.type === 'human' && !firstMessage) {
-          if (typeof obj.message === 'string') {
-            firstMessage = obj.message
-          } else if (obj.message?.content) {
-            if (typeof obj.message.content === 'string') {
-              firstMessage = obj.message.content
-            } else if (Array.isArray(obj.message.content)) {
-              const textBlock = obj.message.content.find(b => b.type === 'text')
-              if (textBlock) firstMessage = textBlock.text
-            }
-          }
-        }
-        // Model
-        if (obj.model && !model) {
-          model = obj.model
-        }
-      } catch { /* skip unparseable lines */ }
+        if (firstMessage && model) break
+      } catch { /* skip */ }
     }
 
-    if (!sessionId || !firstMessage) return null
+    // ── Read TAIL (last 128KB) for recent user messages ──
+    const tailSize = Math.min(131072, stat.size)
+    const tailOffset = Math.max(0, stat.size - tailSize)
+    const tailBuf = Buffer.alloc(tailSize)
+    fs.readSync(fd, tailBuf, 0, tailSize, tailOffset)
+    fs.closeSync(fd)
 
-    const stat = fs.statSync(filePath)
+    const tailText = tailBuf.toString('utf-8')
+    // If we started mid-line, skip the first partial line
+    const tailStart = tailOffset > 0 ? tailText.indexOf('\n') + 1 : 0
+    const tailLines = tailText.slice(tailStart).split('\n').filter(Boolean)
+
+    const recentMessages = []
+    for (const line of tailLines) {
+      try {
+        const obj = JSON.parse(line)
+        if (obj.type === 'user') {
+          const text = extractUserText(obj)
+          if (text) recentMessages.push(text)
+        }
+      } catch { /* skip */ }
+    }
+
+    // Last 5 user messages
+    const lastMessages = recentMessages.slice(-5)
+
     return {
       sessionId,
-      firstMessage: firstMessage.trim(),
-      messageCount,
+      firstMessage: (firstMessage || '(continued session)').trim(),
+      lastMessages,
       model,
       mtime: stat.mtimeMs,
       size: stat.size,
@@ -145,7 +170,6 @@ async function main() {
       }
     }
   } catch {
-    // No .claude/projects — just launch Claude
     launchClaude()
     return
   }
@@ -176,7 +200,7 @@ async function main() {
     .map(parseConversation)
     .filter(Boolean)
     .sort((a, b) => b.mtime - a.mtime)
-    .slice(0, 20) // Max 20 entries
+    .slice(0, 15)
 
   if (conversations.length === 0) {
     launchClaude()
@@ -184,29 +208,39 @@ async function main() {
   }
 
   // ── Display ─────────────────────────────────────────────────────
-  const maxWidth = Math.min(process.stdout.columns || 80, 72)
-  const innerWidth = maxWidth - 6 // padding: 3 left + 3 right
+  const maxWidth = Math.min(process.stdout.columns || 80, 78)
+  const innerWidth = maxWidth - 6
   const dirDisplay = truncate(cwd, innerWidth)
 
   console.log('')
   console.log(`  ${C.surface}\u256D\u2500${C.blue} Resume Conversation ${C.surface}\u2500 ${C.subtext}${dirDisplay} ${C.surface}${'\u2500'.repeat(Math.max(0, maxWidth - 26 - dirDisplay.length))}\u256E${C.reset}`)
-  console.log(`  ${C.surface}\u2502${C.reset}${''.padEnd(maxWidth - 4)}${C.surface}\u2502${C.reset}`)
+  console.log(`  ${C.surface}\u2502${C.reset}`)
 
   for (let i = 0; i < conversations.length; i++) {
     const conv = conversations[i]
     const num = String(i + 1).padStart(2)
-    const msg = truncate(conv.firstMessage.replace(/[\r\n]+/g, ' '), innerWidth - 6)
+    const title = truncate(conv.firstMessage.replace(/[\r\n]+/g, ' '), innerWidth - 6)
     const meta = [
       timeAgo(conv.mtime),
-      conv.messageCount > 0 ? `${conv.messageCount} msgs` : null,
       formatSize(conv.size),
       conv.model || null,
     ].filter(Boolean).join(' \u00B7 ')
 
-    console.log(`  ${C.surface}\u2502${C.reset}  ${C.green}${num}${C.reset}  ${C.text}"${msg}"${C.reset}`)
+    // Title line
+    console.log(`  ${C.surface}\u2502${C.reset}  ${C.green}${num}${C.reset}  ${C.text}${title}${C.reset}`)
+    // Meta line
     console.log(`  ${C.surface}\u2502${C.reset}      ${C.overlay}${meta}${C.reset}`)
+
+    // Last 5 user messages (dim, indented)
+    if (conv.lastMessages.length > 0) {
+      for (const msg of conv.lastMessages) {
+        const line = truncate(msg, innerWidth - 10)
+        console.log(`  ${C.surface}\u2502${C.reset}      ${C.dim}${C.subtext}> ${line}${C.reset}`)
+      }
+    }
+
     if (i < conversations.length - 1) {
-      console.log(`  ${C.surface}\u2502${C.reset}`)
+      console.log(`  ${C.surface}\u2502${C.reset}      ${C.surface}${'─'.repeat(Math.max(0, innerWidth - 6))}${C.reset}`)
     }
   }
 
@@ -269,6 +303,5 @@ function launchClaude(resumeId) {
 }
 
 main().catch(() => {
-  // On any error, fall through to plain Claude
   launchClaude()
 })
