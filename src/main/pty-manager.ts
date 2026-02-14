@@ -22,12 +22,13 @@ const pendingWrites = new Map<string, string[]>()
  * On Windows, ~ is not resolved by the OS — only by shells.
  */
 function resolveCwd(cwd: string | undefined): string {
-  if (!cwd) return os.homedir()
+  if (!cwd || cwd === '.') return os.homedir()
   if (cwd === '~') return os.homedir()
   if (cwd.startsWith('~/') || cwd.startsWith('~\\')) {
     return path.join(os.homedir(), cwd.slice(2))
   }
-  return cwd
+  // Resolve any relative paths to absolute (prevents using Electron's process.cwd())
+  return path.resolve(cwd)
 }
 
 export interface SSHOptions {
@@ -220,12 +221,25 @@ export function spawnPty(
         env: { ...process.env, CLAUDE_MULTI_SESSION_ID: sessionId } as Record<string, string>,
         useConpty: false
       })
+
+      // Explicitly cd to ensure the shell is in the right directory
+      // (PowerShell profiles can change cwd before the user sees the prompt)
+      const escapedShellCwd = resolvedCwd.replace(/'/g, "''")
+      const cdCmd = os.platform() === 'win32'
+        ? `Set-Location '${escapedShellCwd}'`
+        : `cd '${resolvedCwd.replace(/'/g, "'\\''")}' 2>/dev/null; clear`
+      setTimeout(() => {
+        ptyProcess.write(cdCmd + '\r')
+      }, 300)
     } else {
       // Launch Claude Code interactive mode.
-      // Spawn a shell first and run `claude` from within it — this guarantees the
-      // working directory is correct. Spawning claude.cmd directly via pty.spawn on
-      // Windows can fail to propagate the cwd, causing all conversations to be stored
-      // under the Electron install directory instead of the project directory.
+      // Spawn a shell first, explicitly cd to the project directory, then run claude.
+      // We must cd explicitly because:
+      //   1. PowerShell profiles can change the working directory before our command runs
+      //   2. WinPTY may not always propagate cwd correctly
+      //   3. Spawning claude.cmd directly via pty.spawn fails to propagate cwd on Windows
+      // Without the explicit cd, conversations get stored under the wrong project hash
+      // and won't appear when the user tries to /resume.
       const { cmd } = resolveClaudeForPty()
       const resolvedCwd = resolveCwd(options?.cwd)
       const shell = os.platform() === 'win32' ? 'powershell.exe' : process.env.SHELL || '/bin/bash'
@@ -240,10 +254,13 @@ export function spawnPty(
         useConpty: false
       })
 
-      // Start Claude after shell is ready, then exit shell when Claude exits
+      // Explicitly cd to the project directory, then launch Claude.
+      // The cd is critical — it ensures Claude sees the correct project directory
+      // regardless of PowerShell profile scripts or PTY cwd propagation issues.
+      const escapedCwd = resolvedCwd.replace(/'/g, "''")
       const escapedCmd = os.platform() === 'win32'
-        ? `& "${cmd}"; exit`
-        : `"${cmd}"; exit`
+        ? `Set-Location '${escapedCwd}'; & "${cmd}"; exit`
+        : `cd '${escapedCwd.replace(/'/g, "'\\''")}' && "${cmd}"; exit`
       setTimeout(() => {
         ptyProcess.write(escapedCmd + '\r')
       }, 300)
