@@ -281,9 +281,13 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
             .replace(/\x1b[()][A-Z0-9]/g, '')         // Charset selection
             .replace(/\x1b[=>]/g, '')                  // Keypad modes
 
-          // Check if this is a restored session that needs /resume
+          // Check if this is a restored session that needs /resume.
+          // IMPORTANT: Only trigger on Claude's own prompt (❯) or welcome text,
+          // NOT on shell prompts like PowerShell's ">". The shell prompt appears
+          // before Claude starts and would cause /resume to be sent to the shell
+          // instead of to Claude, resulting in "Resume cancelled".
           if (!resumeSent && shouldSendResume(sessionId)) {
-            if (stripped.includes('❯') || stripped.includes('>') || stripped.includes('Claude')) {
+            if (stripped.includes('❯') || stripped.includes('Welcome to Claude') || stripped.includes('/help')) {
               resumeSent = true
               setTimeout(() => {
                 window.electronAPI.pty.write(sessionId, '/resume\r')
