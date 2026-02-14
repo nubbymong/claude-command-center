@@ -44,6 +44,7 @@ export interface ElectronAPI {
       shellOnly?: boolean
       elevated?: boolean
       configLabel?: string
+      useResumePicker?: boolean
     }) => Promise<void>
     write: (sessionId: string, data: string) => void
     resize: (sessionId: string, cols: number, rows: number) => void
@@ -154,6 +155,13 @@ export interface ElectronAPI {
     isRunning: () => Promise<boolean>
     seed: () => Promise<string | null>
     onStatusChanged: (callback: (run: InsightsRun) => void) => () => void
+  }
+  notes: {
+    list: () => Promise<Array<{ id: string; label: string; color: string; configId?: string; createdAt: number }>>
+    load: (id: string) => Promise<string | null>
+    save: (id: string, label: string, content: string, color: string, configId?: string) => Promise<boolean>
+    delete: (id: string) => Promise<boolean>
+    reorder: (ids: string[]) => Promise<boolean>
   }
   cli: {
     check: () => Promise<boolean>

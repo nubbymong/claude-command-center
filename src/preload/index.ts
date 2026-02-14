@@ -43,6 +43,7 @@ export interface ElectronAPI {
         sudoPassword?: string
       }
       configLabel?: string
+      useResumePicker?: boolean
     }) => Promise<void>
     write: (sessionId: string, data: string) => void
     resize: (sessionId: string, cols: number, rows: number) => void
@@ -103,6 +104,13 @@ export interface ElectronAPI {
     clear: () => Promise<boolean>
     hasSaved: () => Promise<boolean>
     gracefulExit: () => Promise<boolean>
+  }
+  notes: {
+    list: () => Promise<Array<{ id: string; label: string; color: string; configId?: string; createdAt: number }>>
+    load: (id: string) => Promise<string | null>
+    save: (id: string, label: string, content: string, color: string, configId?: string) => Promise<boolean>
+    delete: (id: string) => Promise<boolean>
+    reorder: (ids: string[]) => Promise<boolean>
   }
 }
 
@@ -262,6 +270,14 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.on('insights:statusChanged', handler)
       return () => ipcRenderer.removeListener('insights:statusChanged', handler)
     }
+  },
+  notes: {
+    list: () => ipcRenderer.invoke('notes:list'),
+    load: (id: string) => ipcRenderer.invoke('notes:load', id),
+    save: (id: string, label: string, content: string, color: string, configId?: string) =>
+      ipcRenderer.invoke('notes:save', id, label, content, color, configId),
+    delete: (id: string) => ipcRenderer.invoke('notes:delete', id),
+    reorder: (ids: string[]) => ipcRenderer.invoke('notes:reorder', ids),
   },
   cli: {
     check: () => ipcRenderer.invoke('cli:check')

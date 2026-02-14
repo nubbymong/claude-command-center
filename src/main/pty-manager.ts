@@ -5,9 +5,10 @@ import { execSync } from 'child_process'
 import { startSessionLog, logSessionData, endSessionLog } from './session-logger'
 import { logPtyOutput, isDebugModeEnabled } from './debug-capture'
 import { logInfo, logDebug, logError } from './debug-logger'
-import { writeCliSetupPty } from './ipc/setup-handlers'
+import { writeCliSetupPty, getResourcesDirectory } from './ipc/setup-handlers'
 
 import * as path from 'path'
+import * as fs from 'fs'
 
 interface PtySession {
   ptyProcess: pty.IPty
@@ -51,7 +52,7 @@ const ptySessions = new Map<string, PtySession>()
  * /mnt/resources/scripts/ on the remote machine.
  */
 function getRemoteStatuslineSetup(): string {
-  const configCmd = 'const f=require("fs"),p=require("path").join(require("os").homedir(),".claude","settings.json");let s={};try{s=JSON.parse(f.readFileSync(p,"utf-8"))}catch{}s.statusLine={type:"command",command:"node /mnt/resources/scripts/claude-multi-statusline.js",padding:0};f.writeFileSync(p,JSON.stringify(s,null,2))'
+  const configCmd = 'const f=require("fs"),p=require("path").join(require("os").homedir(),".claude","settings.json");let s={};try{s=JSON.parse(f.readFileSync(p,"utf-8"))}catch{}s.statusLine={type:"command",command:"node /mnt/resources/scripts/claude-multi-statusline.js"};f.writeFileSync(p,JSON.stringify(s,null,2))'
   return `mkdir -p ~/.claude ~/.claude-multi/status 2>/dev/null; node -e '${configCmd}' 2>/dev/null`
 }
 
@@ -73,10 +74,22 @@ export function resolveClaudeForPty(): { cmd: string; args: string[] } {
   }
 }
 
+/**
+ * Resolve path to the resume-picker.js script.
+ * Deployed to ResourcesDirectory/scripts/ by deployStatuslineScript().
+ */
+function getResumePickerPath(): string | null {
+  try {
+    const scriptPath = path.join(getResourcesDirectory(), 'scripts', 'resume-picker.js')
+    if (fs.existsSync(scriptPath)) return scriptPath
+  } catch { /* resources dir may not be configured yet */ }
+  return null
+}
+
 export function spawnPty(
   win: BrowserWindow,
   sessionId: string,
-  options?: { cwd?: string; cols?: number; rows?: number; ssh?: SSHOptions; shellOnly?: boolean; elevated?: boolean; configLabel?: string }
+  options?: { cwd?: string; cols?: number; rows?: number; ssh?: SSHOptions; shellOnly?: boolean; elevated?: boolean; configLabel?: string; useResumePicker?: boolean }
 ): void {
   logInfo(`[pty] Spawning PTY for session ${sessionId} (ssh=${!!options?.ssh}, shellOnly=${!!options?.shellOnly}, cwd=${options?.cwd || 'default'})`)
   killPty(sessionId)
@@ -243,7 +256,7 @@ export function spawnPty(
       const { cmd } = resolveClaudeForPty()
       const resolvedCwd = resolveCwd(options?.cwd)
       const shell = os.platform() === 'win32' ? 'powershell.exe' : process.env.SHELL || '/bin/bash'
-      console.log(`[pty-manager] Launching Claude via shell in PTY: ${shell} -> ${cmd} cwd=${resolvedCwd}`)
+      console.log(`[pty-manager] Launching Claude via shell in PTY: ${shell} -> ${cmd} cwd=${resolvedCwd} (resumePicker=${!!options?.useResumePicker})`)
 
       ptyProcess = pty.spawn(shell, [], {
         name: 'xterm-256color',
@@ -258,9 +271,28 @@ export function spawnPty(
       // The cd is critical — it ensures Claude sees the correct project directory
       // regardless of PowerShell profile scripts or PTY cwd propagation issues.
       const escapedCwd = resolvedCwd.replace(/'/g, "''")
-      const escapedCmd = os.platform() === 'win32'
-        ? `Set-Location '${escapedCwd}'; & "${cmd}"; exit`
-        : `cd '${escapedCwd.replace(/'/g, "'\\''")}' && "${cmd}"; exit`
+
+      // When useResumePicker is true, run the resume-picker script instead of Claude directly.
+      // The picker shows prior conversations and launches Claude with --resume or plain.
+      let escapedCmd: string
+      if (options?.useResumePicker) {
+        const pickerScript = getResumePickerPath()
+        if (pickerScript && os.platform() === 'win32') {
+          const escapedScript = pickerScript.replace(/'/g, "''")
+          escapedCmd = `Set-Location '${escapedCwd}'; node '${escapedScript}'; exit`
+        } else if (pickerScript) {
+          escapedCmd = `cd '${escapedCwd.replace(/'/g, "'\\''")}' && node '${pickerScript.replace(/'/g, "'\\''")}'; exit`
+        } else {
+          // Fallback: no picker script found, launch Claude directly
+          escapedCmd = os.platform() === 'win32'
+            ? `Set-Location '${escapedCwd}'; & "${cmd}"; exit`
+            : `cd '${escapedCwd.replace(/'/g, "'\\''")}' && "${cmd}"; exit`
+        }
+      } else {
+        escapedCmd = os.platform() === 'win32'
+          ? `Set-Location '${escapedCwd}'; & "${cmd}"; exit`
+          : `cd '${escapedCwd.replace(/'/g, "'\\''")}' && "${cmd}"; exit`
+      }
       setTimeout(() => {
         ptyProcess.write(escapedCmd + '\r')
       }, 300)

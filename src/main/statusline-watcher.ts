@@ -208,6 +208,12 @@ process.stdin.on('end', async () => {
       scriptContent,
       { mode: 0o755 }
     )
+
+    // Deploy resume-picker.js from bundled scripts
+    const resumePickerSrc = path.join(__dirname, '../../scripts/resume-picker.js')
+    if (fs.existsSync(resumePickerSrc)) {
+      fs.copyFileSync(resumePickerSrc, path.join(resourcesScriptsDir, 'resume-picker.js'))
+    }
   } catch { /* resources dir may not be configured yet */ }
 }
 
@@ -230,8 +236,7 @@ export function configureClaudeSettings(): void {
 
   settings.statusLine = {
     type: 'command',
-    command,
-    padding: 0
+    command
   }
 
   const claudeDir = path.join(os.homedir(), '.claude')

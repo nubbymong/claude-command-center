@@ -1,6 +1,7 @@
 import React from 'react'
 import { Session, useSessionStore } from '../stores/sessionStore'
 import { killSessionPty } from '../ptyTracker'
+import NotesBar from './NotesBar'
 
 interface Props {
   session: Session
@@ -29,6 +30,12 @@ export default function SessionHeader({ session }: Props) {
       {session.sessionType === 'ssh' && session.sshConfig && (
         <span className="text-xs text-mauve">SSH: {session.sshConfig.username}@{session.sshConfig.host}</span>
       )}
+
+      {/* Separator before notes */}
+      <div className="w-px h-4 bg-surface1" />
+
+      {/* Secret notes */}
+      <NotesBar configId={session.configId} />
 
       <div className="flex-1" />
 
