@@ -221,8 +221,8 @@ Generate TWO things as valid JSON (no markdown fences, just raw JSON):
 Return ONLY the JSON object, no other text.`
 
     // Pipe prompt via stdin to avoid Windows command line length limits
-    // shell:true required on Windows for .cmd wrappers with stdin piping
-    const claudeBin = process.platform === 'win32' ? 'claude.cmd' : 'claude'
+    // shell:true required on Windows — 'claude' with shell finds .exe or .cmd
+    const claudeBin = 'claude'
     console.log('      Spawning Claude CLI for changelog generation...')
     const claudeResult = spawnSync(claudeBin, ['-p'], {
       cwd: PROJECT_ROOT,

@@ -58,20 +58,22 @@ function getRemoteStatuslineSetup(): string {
 
 /**
  * Resolve the claude command for PTY usage.
- * On Windows we need claude.cmd (the PTY handles .cmd wrappers properly unlike spawn).
+ * Checks for native CLI (claude.exe) first, then npm wrapper (claude.cmd).
  */
 export function resolveClaudeForPty(): { cmd: string; args: string[] } {
   if (os.platform() !== 'win32') {
     return { cmd: 'claude', args: [] }
   }
 
-  try {
-    const cmdPath = execSync('where claude.cmd', { encoding: 'utf-8', timeout: 5000 })
-      .trim().split('\n')[0].trim()
-    return { cmd: cmdPath, args: [] }
-  } catch {
-    return { cmd: 'claude', args: [] }
+  // Try native CLI first (.exe), then npm wrapper (.cmd)
+  for (const bin of ['claude.exe', 'claude.cmd']) {
+    try {
+      const cmdPath = execSync(`where ${bin}`, { encoding: 'utf-8', timeout: 5000 })
+        .trim().split('\n')[0].trim()
+      return { cmd: cmdPath, args: [] }
+    } catch { /* try next */ }
   }
+  return { cmd: 'claude', args: [] }
 }
 
 /**

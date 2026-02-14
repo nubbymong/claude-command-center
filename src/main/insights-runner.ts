@@ -316,10 +316,10 @@ function spawnClaudeInsights(timeoutMs = 600000): Promise<{ code: number; output
 
 function spawnClaude(args: string[], timeoutMs = 600000): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
-    logInfo(`[insights] Spawning: claude.cmd ${args.join(' ')}`)
+    // Use native CLI (claude.exe) or npm wrapper (claude.cmd) — 'claude' with shell:true finds either
+    logInfo(`[insights] Spawning: claude ${args.join(' ')}`)
 
-    // Use claude.cmd on Windows
-    const proc = spawn('claude.cmd', args, {
+    const proc = spawn('claude', args, {
       shell: true,
       windowsHide: true,
       env: { ...process.env }

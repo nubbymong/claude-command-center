@@ -283,14 +283,17 @@ async function main() {
 function launchClaude(resumeId) {
   const args = resumeId ? ['--resume', resumeId] : []
 
-  // Resolve claude command
+  // Resolve claude command — try native .exe first, then npm .cmd
   let cmd = 'claude'
   if (os.platform() === 'win32') {
-    try {
-      const { execSync } = require('child_process')
-      cmd = execSync('where claude.cmd', { encoding: 'utf-8', timeout: 5000 })
-        .trim().split('\n')[0].trim()
-    } catch { /* fallback to 'claude' */ }
+    const { execSync } = require('child_process')
+    for (const bin of ['claude.exe', 'claude.cmd']) {
+      try {
+        cmd = execSync(`where ${bin}`, { encoding: 'utf-8', timeout: 5000 })
+          .trim().split('\n')[0].trim()
+        break
+      } catch { /* try next */ }
+    }
   }
 
   const result = spawnSync(cmd, args, {
