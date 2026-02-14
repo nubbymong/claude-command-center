@@ -16,6 +16,7 @@ import { registerUpdateHandlers } from './ipc/update-handlers'
 import { registerSetupHandlers, getResourcesDirectory } from './ipc/setup-handlers'
 import { registerScreenshotHandlers } from './ipc/screenshot-handlers'
 import { registerInsightsHandlers } from './ipc/insights-handlers'
+import { registerNotesHandlers } from './ipc/notes-handlers'
 import { registerConfigHandlers } from './ipc/config-handlers'
 import { initUpdateWatcher, stopUpdateWatcher, getProjectRootPath, isPackagedApp } from './update-watcher'
 import { startUpdateServer, stopUpdateServer } from './update-server'
@@ -340,6 +341,7 @@ if (!gotTheLock) {
     registerConfigHandlers()
     registerScreenshotHandlers(getWindow)
     registerInsightsHandlers(getWindow)
+    registerNotesHandlers()
 
     // Start update system
     // Dev mode: run update server to push notifications to production clients

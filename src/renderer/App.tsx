@@ -64,16 +64,16 @@ class ErrorBoundary extends React.Component<
   }
 }
 
-// Track sessions that need /resume sent after startup
-const pendingResumeSessionIds = new Set<string>()
+// Track sessions that should use the resume picker (restored local sessions)
+const resumePickerSessionIds = new Set<string>()
 
-export function markSessionForResume(sessionId: string) {
-  pendingResumeSessionIds.add(sessionId)
+export function markSessionForResumePicker(sessionId: string) {
+  resumePickerSessionIds.add(sessionId)
 }
 
-export function shouldSendResume(sessionId: string): boolean {
-  if (pendingResumeSessionIds.has(sessionId)) {
-    pendingResumeSessionIds.delete(sessionId)
+export function shouldUseResumePicker(sessionId: string): boolean {
+  if (resumePickerSessionIds.has(sessionId)) {
+    resumePickerSessionIds.delete(sessionId)
     return true
   }
   return false
@@ -264,10 +264,10 @@ export default function App() {
         // Mark non-shellOnly sessions for /resume
       }))
 
-      // Mark sessions for /resume (non-shellOnly, non-SSH)
+      // Mark local Claude sessions for resume picker (shows conversation list before Claude)
       for (const session of restoredSessions) {
         if (!session.shellOnly && session.sessionType === 'local') {
-          markSessionForResume(session.id)
+          markSessionForResumePicker(session.id)
         }
       }
 

@@ -10,6 +10,7 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     ssh?: SSHOptions
     shellOnly?: boolean
     configLabel?: string
+    useResumePicker?: boolean
   }) => {
     const win = getWindow()
     if (!win) throw new Error('No window available')
