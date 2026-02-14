@@ -264,10 +264,15 @@ function createWindow(): void {
     return true
   })
 
-  // CLI availability check - tests that claude.cmd exists and responds
+  // CLI availability check - tests that claude CLI exists (native .exe or npm .cmd)
   ipcMain.handle('cli:check', async () => {
     try {
       const { execSync } = require('child_process')
+      // Try native CLI first, then npm wrapper
+      try {
+        execSync('where claude.exe', { encoding: 'utf-8', timeout: 5000, windowsHide: true })
+        return true
+      } catch { /* try .cmd */ }
       execSync('where claude.cmd', { encoding: 'utf-8', timeout: 5000, windowsHide: true })
       return true
     } catch {
