@@ -1,6 +1,7 @@
 import React from 'react'
 import { Session, useSessionStore } from '../stores/sessionStore'
 import { killSessionPty } from '../ptyTracker'
+import { markSessionForResumePicker } from '../App'
 import NotesBar from './NotesBar'
 
 interface Props {
@@ -13,6 +14,10 @@ export default function SessionHeader({ session }: Props) {
   const handleRestart = () => {
     // Kill the old PTY (also clears spawn tracker so new one will spawn)
     killSessionPty(session.id)
+    // Mark local Claude sessions for resume picker on restart
+    if (!session.shellOnly && session.sessionType === 'local') {
+      markSessionForResumePicker(session.id)
+    }
     // Force re-mount by removing and re-adding with new createdAt
     const store = useSessionStore.getState()
     store.removeSession(session.id)

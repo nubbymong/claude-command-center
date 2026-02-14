@@ -4,7 +4,7 @@ import { useConfigStore, TerminalConfig, ConfigGroup, ConfigSection } from '../s
 import { useInsightsStore } from '../stores/insightsStore'
 import SessionDialog from './SessionDialog'
 import { killSessionPty } from '../ptyTracker'
-import { ViewType } from '../App'
+import { ViewType, markSessionForResumePicker } from '../App'
 
 // Inject keyframes for attention pulse animation (shared with TabBar)
 const ATTENTION_STYLES_ID = 'attention-pulse-styles'
@@ -187,6 +187,10 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested }
         startClaudeAfter: config.sshConfig.startClaudeAfter,
         dockerContainer: config.sshConfig.dockerContainer
       } : undefined
+    }
+    // Mark local Claude sessions for the resume picker
+    if (!session.shellOnly && session.sessionType === 'local') {
+      markSessionForResumePicker(session.id)
     }
     addSession(session)
     onViewChange('sessions')

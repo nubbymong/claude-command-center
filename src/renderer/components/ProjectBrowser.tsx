@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { useSessionStore, Session } from '../stores/sessionStore'
+import { markSessionForResumePicker } from '../App'
 import { COLOR_SWATCHES } from './SessionDialog'
 
 interface DiscoveredProject {
@@ -60,6 +61,7 @@ export default function ProjectBrowser() {
       createdAt: Date.now(),
       sessionType: 'local'
     }
+    markSessionForResumePicker(session.id)
     addSession(session)
   }
 
