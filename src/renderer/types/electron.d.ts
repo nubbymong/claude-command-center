@@ -116,6 +116,7 @@ export interface ElectronAPI {
   }
   update: {
     check: () => Promise<boolean>
+    getVersion: () => Promise<string | null>
     installAndRestart: () => Promise<boolean>
     hasSourcePath: () => Promise<boolean>
     getSourcePath: () => Promise<string>

@@ -97,8 +97,15 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested }
   const handleCheckForUpdates = () => {
     if (checking) return
     setChecking(true)
-    window.electronAPI.update.check().then((available) => {
+    window.electronAPI.update.check().then(async (available) => {
       setUpdateAvailable(available)
+      if (available) {
+        // Try to get the version from GitHub check
+        try {
+          const ver = await window.electronAPI.update.getVersion()
+          if (ver) setUpdateVersion(ver)
+        } catch { /* ignore */ }
+      }
       setChecking(false)
     }).catch(() => setChecking(false))
   }

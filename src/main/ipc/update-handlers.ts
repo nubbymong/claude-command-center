@@ -5,12 +5,33 @@ import * as fs from 'fs'
 import * as os from 'os'
 import { isUpdateAvailable, checkForUpdatesOnDemand, markUpdateInstalled, getProjectRootPath, setSourcePathInRegistry, hasSourcePath } from '../update-watcher'
 import { getInstallerPath } from '../update-client'
+import { checkGitHubRelease, downloadGitHubRelease } from '../github-update'
 import { killAllPty } from '../pty-manager'
 import { logInfo, logError } from '../debug-logger'
 
+// Cache the latest release info from GitHub
+let cachedRelease: { version: string; tagName: string; installerName: string | null } | null = null
+
 export function registerUpdateHandlers(): void {
   ipcMain.handle('update:check', async () => {
-    return checkForUpdatesOnDemand()
+    // 1. Check local source watcher first (dev workflow)
+    const localUpdate = checkForUpdatesOnDemand()
+    if (localUpdate) return true
+
+    // 2. Check GitHub releases (production workflow)
+    try {
+      const release = await checkGitHubRelease()
+      if (release) {
+        cachedRelease = release
+        return true
+      }
+    } catch { /* fall through */ }
+
+    return false
+  })
+
+  ipcMain.handle('update:getVersion', async () => {
+    return cachedRelease?.version || null
   })
 
   ipcMain.handle('update:hasSourcePath', async () => {
@@ -46,21 +67,33 @@ export function registerUpdateHandlers(): void {
   ipcMain.handle('update:installAndRestart', async () => {
     logInfo('[update] Starting update...')
 
-    // 1. Try installer path from WebSocket notification
-    let installerSrc = getInstallerPath()
-    if (installerSrc && fs.existsSync(installerSrc)) {
-      logInfo(`[update] Using installer from notification: ${installerSrc}`)
-    } else {
-      // 2. Fall back to SourcePath registry lookup
-      installerSrc = null
+    let installerPath: string | null = null
+
+    // 1. If we have a GitHub release cached, download the installer
+    if (cachedRelease?.installerName && cachedRelease?.tagName) {
+      logInfo(`[update] Downloading from GitHub: ${cachedRelease.installerName}`)
+      installerPath = await downloadGitHubRelease(cachedRelease.tagName, cachedRelease.installerName)
+    }
+
+    // 2. Try installer path from WebSocket notification
+    if (!installerPath) {
+      const wsPath = getInstallerPath()
+      if (wsPath && fs.existsSync(wsPath)) {
+        installerPath = wsPath
+        logInfo(`[update] Using installer from notification: ${installerPath}`)
+      }
+    }
+
+    // 3. Fall back to SourcePath registry lookup (dev workflow)
+    if (!installerPath) {
       const projectRoot = getProjectRootPath()
       if (projectRoot) {
         // Try latest naming (new name first, then old)
-        installerSrc = path.join(projectRoot, 'ClaudeCommandCenter-latest.exe')
-        if (!fs.existsSync(installerSrc)) {
-          installerSrc = path.join(projectRoot, 'ClaudeConductor-latest.exe')
+        let src = path.join(projectRoot, 'ClaudeCommandCenter-latest.exe')
+        if (!fs.existsSync(src)) {
+          src = path.join(projectRoot, 'ClaudeConductor-latest.exe')
         }
-        if (!fs.existsSync(installerSrc)) {
+        if (!fs.existsSync(src)) {
           // Try versioned naming with Beta tag (new and old names)
           try {
             const pkg = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf-8'))
@@ -70,34 +103,36 @@ export function registerUpdateHandlers(): void {
               path.join(projectRoot, `ClaudeConductor-Beta-${pkg.version}.exe`),
               path.join(projectRoot, 'dist', `ClaudeConductor-Beta-${pkg.version}.exe`),
             ]
-            installerSrc = candidates.find(p => fs.existsSync(p)) || null
+            src = candidates.find(p => fs.existsSync(p)) || ''
           } catch { /* fall through */ }
+        }
+        if (src && fs.existsSync(src)) {
+          // Copy to Downloads for consistency
+          const downloadsDir = path.join(os.homedir(), 'Downloads')
+          const dest = path.join(downloadsDir, path.basename(src))
+          fs.copyFileSync(src, dest)
+          installerPath = dest
+          logInfo(`[update] Copied local installer to ${dest}`)
         }
       }
     }
 
-    if (!installerSrc || !fs.existsSync(installerSrc)) {
-      const msg = 'Installer not found. Run "npm run release" from the source directory first.'
+    if (!installerPath || !fs.existsSync(installerPath)) {
+      const msg = 'Installer not found. Check your internet connection or run "npm run release" from source.'
       logError('[update] ' + msg)
       throw new Error(msg)
     }
 
-    logInfo(`[update] Found installer: ${installerSrc}`)
+    logInfo(`[update] Found installer: ${installerPath}`)
 
     try {
-      // Copy installer to Downloads folder (like a real download)
-      const downloadsDir = path.join(os.homedir(), 'Downloads')
-      const installerDest = path.join(downloadsDir, path.basename(installerSrc))
-      logInfo(`[update] Copying installer to ${installerDest}`)
-      fs.copyFileSync(installerSrc, installerDest)
-
-      // Kill all PTY processes immediately (no graceful exit — just kill)
+      // Kill all PTY processes immediately
       logInfo('[update] Killing all PTYs...')
       killAllPty()
 
-      // Launch the installer from Downloads
+      // Launch the installer
       logInfo('[update] Launching installer...')
-      const proc = spawn(installerDest, [], {
+      const proc = spawn(installerPath, [], {
         detached: true,
         stdio: 'ignore',
       })
@@ -105,7 +140,7 @@ export function registerUpdateHandlers(): void {
 
       markUpdateInstalled()
 
-      // Exit immediately — installer handles the rest (install + relaunch)
+      // Exit immediately — installer handles the rest
       logInfo('[update] Exiting app for installer...')
       app.exit(0)
 
