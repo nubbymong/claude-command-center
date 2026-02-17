@@ -179,11 +179,16 @@ async function main() {
     return
   }
 
-  // Scan for .jsonl files
+  // Scan for .jsonl files that have a companion directory (current Claude CLI format).
+  // Older conversations with only a .jsonl file can't be resumed by the current CLI.
   let files
   try {
-    files = fs.readdirSync(projectDir)
-      .filter(f => f.endsWith('.jsonl'))
+    const entries = fs.readdirSync(projectDir)
+    const dirSet = new Set(entries.filter(e => {
+      try { return fs.statSync(path.join(projectDir, e)).isDirectory() } catch { return false }
+    }))
+    files = entries
+      .filter(f => f.endsWith('.jsonl') && dirSet.has(f.replace('.jsonl', '')))
       .map(f => path.join(projectDir, f))
   } catch {
     launchClaude()
@@ -301,6 +306,17 @@ function launchClaude(resumeId) {
     shell: os.platform() === 'win32',
     windowsHide: false
   })
+
+  // If resume failed (conversation no longer exists), fall back to fresh session
+  if (resumeId && result.status !== 0) {
+    console.log('\n  Conversation no longer available — starting fresh session...\n')
+    const fresh = spawnSync(cmd, [], {
+      stdio: 'inherit',
+      shell: os.platform() === 'win32',
+      windowsHide: false
+    })
+    process.exit(fresh.status || 0)
+  }
 
   process.exit(result.status || 0)
 }
