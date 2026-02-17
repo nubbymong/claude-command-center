@@ -483,10 +483,16 @@ const VISION_MARKER_END = '<!-- VISION-INSTRUCTIONS-END -->'
  */
 function injectVisionInstructions(): void {
   try {
+    // Try resources directory first, then fall back to bundled scripts
     const promptFile = path.join(getResourcesDirectory(), 'scripts', 'vision-prompt.txt')
-    if (!fs.existsSync(promptFile)) return
+    const bundledPromptFile = path.join(__dirname, '../../scripts/vision-prompt.txt')
+    const actualFile = fs.existsSync(promptFile) ? promptFile : fs.existsSync(bundledPromptFile) ? bundledPromptFile : null
+    if (!actualFile) {
+      logError('[vision] vision-prompt.txt not found at resources or bundled path')
+      return
+    }
 
-    const instructions = fs.readFileSync(promptFile, 'utf-8').trim()
+    const instructions = fs.readFileSync(actualFile, 'utf-8').trim()
     const section = `${VISION_MARKER_START}\n${instructions}\n${VISION_MARKER_END}`
 
     const claudeDir = path.join(os.homedir(), '.claude')
