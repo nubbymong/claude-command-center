@@ -40,6 +40,7 @@ interface Props {
     enabled: boolean
     browser: 'chrome' | 'edge'
     debugPort: number
+    url?: string
   }
 }
 
@@ -819,6 +820,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         visionConnected={session?.visionConnected}
         visionBrowser={visionConfig?.browser}
         visionDebugPort={visionConfig?.debugPort}
+        visionUrl={visionConfig?.url}
       />
       {/* Drag handle for resizing input bar */}
       <div

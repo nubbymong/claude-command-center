@@ -69,6 +69,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
   const [visionEnabled, setVisionEnabled] = useState(initial?.visionConfig?.enabled ?? false)
   const [visionBrowser, setVisionBrowser] = useState<'chrome' | 'edge'>(initial?.visionConfig?.browser ?? 'chrome')
   const [visionDebugPort, setVisionDebugPort] = useState(initial?.visionConfig?.debugPort ?? 9222)
+  const [visionUrl, setVisionUrl] = useState(initial?.visionConfig?.url ?? '')
 
   const handleBrowse = async () => {
     const path = await window.electronAPI.dialog.openFolder()
@@ -163,7 +164,8 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
       visionConfig: visionEnabled ? {
         enabled: true,
         browser: visionBrowser,
-        debugPort: visionDebugPort
+        debugPort: visionDebugPort,
+        url: visionUrl.trim() || undefined
       } : undefined
     }
 
@@ -474,6 +476,16 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
             </label>
             {visionEnabled && (
               <div className="ml-5 mt-2 space-y-2">
+                <div>
+                  <label className="block text-xs text-subtext0 mb-1">URL to open</label>
+                  <input
+                    type="text"
+                    value={visionUrl}
+                    onChange={(e) => setVisionUrl(e.target.value)}
+                    placeholder="http://localhost:3000"
+                    className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-blue"
+                  />
+                </div>
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label className="block text-xs text-subtext0 mb-1">Browser</label>
@@ -487,7 +499,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-xs text-subtext0 mb-1">Debug Port</label>
+                    <label className="block text-xs text-subtext0 mb-1">CDP Port</label>
                     <input
                       type="number"
                       value={visionDebugPort}
@@ -499,7 +511,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                 <p className="text-[10px] text-overlay0">
                   {sessionType === 'ssh'
                     ? 'Browser launches locally. Vision proxy is network-accessible for remote sessions.'
-                    : 'Click "Launch Vision" in the command bar to start the browser.'}
+                    : 'Claude can navigate, click, type, and verify UI in the browser. CDP Port is for Chrome DevTools Protocol (usually 9222).'}
                 </p>
               </div>
             )}

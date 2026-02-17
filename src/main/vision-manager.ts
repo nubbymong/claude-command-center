@@ -665,7 +665,7 @@ export function stopAllVisionManagers(): void {
  * Launch the browser with remote debugging enabled.
  * Returns the child process PID (for logging), or throws on failure.
  */
-export function launchBrowser(browser: 'chrome' | 'edge', debugPort: number): { pid: number; command: string } {
+export function launchBrowser(browser: 'chrome' | 'edge', debugPort: number, url?: string): { pid: number; command: string } {
   const tmpDir = process.env.TEMP || process.env.TMP || os.tmpdir()
   const profileDir = path.join(tmpDir, `${browser}-debug-${debugPort}`)
 
@@ -689,6 +689,11 @@ export function launchBrowser(browser: 'chrome' | 'edge', debugPort: number): { 
     `--remote-debugging-port=${debugPort}`,
     `--user-data-dir=${profileDir}`,
   ]
+
+  // Navigate to URL if provided, otherwise open about:blank
+  if (url) {
+    args.push(url)
+  }
 
   const command = `"${executable}" ${args.join(' ')}`
   logInfo(`[vision] Launching browser: ${command}`)

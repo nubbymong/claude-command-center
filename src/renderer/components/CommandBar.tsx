@@ -16,13 +16,14 @@ interface Props {
   visionConnected?: boolean
   visionBrowser?: 'chrome' | 'edge'
   visionDebugPort?: number
+  visionUrl?: string
 }
 
 function generateId(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
 }
 
-export default function CommandBar({ sessionId, configId, sessionType = 'local', partnerEnabled, isPartnerActive, onTogglePartner, partnerSessionId, visionEnabled, visionConnected, visionBrowser, visionDebugPort }: Props) {
+export default function CommandBar({ sessionId, configId, sessionType = 'local', partnerEnabled, isPartnerActive, onTogglePartner, partnerSessionId, visionEnabled, visionConnected, visionBrowser, visionDebugPort, visionUrl }: Props) {
   const { commands, addCommand, updateCommand, removeCommand, reorderCommands } = useCommandStore()
   const [showDialog, setShowDialog] = useState(false)
   const [editingCommand, setEditingCommand] = useState<CustomCommand | null>(null)
@@ -200,7 +201,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
             <button
               onClick={() => {
                 if (visionBrowser && visionDebugPort) {
-                  window.electronAPI.vision.launch(visionBrowser, visionDebugPort)
+                  window.electronAPI.vision.launch(visionBrowser, visionDebugPort, visionUrl)
                 }
               }}
               className="flex items-center gap-1 px-2 py-0.5 text-xs rounded border border-peach/40 bg-peach/10 text-peach hover:bg-peach/20 transition-colors shrink-0"
@@ -224,7 +225,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
               setVisionContextMenu(null)
             }}
             onLaunch={visionBrowser && visionDebugPort ? () => {
-              window.electronAPI.vision.launch(visionBrowser, visionDebugPort)
+              window.electronAPI.vision.launch(visionBrowser, visionDebugPort, visionUrl)
               setVisionContextMenu(null)
             } : undefined}
           />
