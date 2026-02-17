@@ -6,6 +6,7 @@ import { startSessionLog, logSessionData, endSessionLog } from './session-logger
 import { logPtyOutput, isDebugModeEnabled } from './debug-capture'
 import { logInfo, logDebug, logError } from './debug-logger'
 import { writeCliSetupPty, getResourcesDirectory } from './ipc/setup-handlers'
+import { getVisionEnv } from './vision-manager'
 
 import * as path from 'path'
 import * as fs from 'fs'
@@ -54,6 +55,17 @@ const ptySessions = new Map<string, PtySession>()
 function getRemoteStatuslineSetup(): string {
   const configCmd = 'const f=require("fs"),p=require("path").join(require("os").homedir(),".claude","settings.json");let s={};try{s=JSON.parse(f.readFileSync(p,"utf-8"))}catch{}s.statusLine={type:"command",command:"node /mnt/resources/scripts/claude-multi-statusline.js"};f.writeFileSync(p,JSON.stringify(s,null,2))'
   return `mkdir -p ~/.claude ~/.claude-multi/status 2>/dev/null; node -e '${configCmd}' 2>/dev/null`
+}
+
+/**
+ * Generate shell commands to export vision env vars on a remote machine.
+ * Returns empty string if vision is not active for this session.
+ */
+function getRemoteVisionSetup(sessionId: string): string {
+  const env = getVisionEnv(sessionId, true)
+  if (!env.VISION_PORT) return ''
+  // On the remote machine, vision-cli.js is at /mnt/resources/scripts/
+  return `export VISION_HOST=${env.VISION_HOST} VISION_PORT=${env.VISION_PORT} VISION_CLI=/mnt/resources/scripts/vision-cli.js`
 }
 
 /**
@@ -164,17 +176,19 @@ export function spawnPty(
       if (!cdSent && (data.includes('$') || data.includes('#') || data.includes('>') || data.includes('~'))) {
         cdSent = true
         setTimeout(() => {
+          const visionSetup = getRemoteVisionSetup(sessionId)
+          const visionPrefix = visionSetup ? `${visionSetup}; ` : ''
           if (postCommand) {
             // cd to path and run post command
             ptyProcess.write(`cd ${remotePath} && ${postCommand}\r`)
             postCommandSent = true
           } else if (startClaudeAfter && !options?.shellOnly) {
-            // Deploy statusline then start Claude
+            // Deploy statusline, set vision env, then start Claude
             claudeSent = true
-            ptyProcess.write(`cd ${remotePath}; ${getRemoteStatuslineSetup()}; claude\r`)
+            ptyProcess.write(`cd ${remotePath}; ${getRemoteStatuslineSetup()}; ${visionPrefix}claude\r`)
           } else {
-            // Shell only or no Claude — just cd and deploy statusline
-            ptyProcess.write(`cd ${remotePath}; ${getRemoteStatuslineSetup()}; clear\r`)
+            // Shell only or no Claude — just cd, deploy statusline, set vision env
+            ptyProcess.write(`cd ${remotePath}; ${getRemoteStatuslineSetup()}; ${visionPrefix}clear\r`)
           }
         }, 200)
         return
@@ -193,8 +207,10 @@ export function spawnPty(
             postCommandShellReady = true
             setTimeout(() => {
               claudeSent = true
-              // Deploy statusline on remote for context tracking, then start Claude
-              ptyProcess.write(`${getRemoteStatuslineSetup()}; claude\r`)
+              const visionSetup = getRemoteVisionSetup(sessionId)
+              const visionPrefix = visionSetup ? `${visionSetup}; ` : ''
+              // Deploy statusline on remote for context tracking, set vision env, then start Claude
+              ptyProcess.write(`${getRemoteStatuslineSetup()}; ${visionPrefix}claude\r`)
             }, 300)
           }
         }
@@ -233,7 +249,7 @@ export function spawnPty(
         cols,
         rows,
         cwd: resolvedCwd,
-        env: { ...process.env, CLAUDE_MULTI_SESSION_ID: sessionId } as Record<string, string>,
+        env: { ...process.env, CLAUDE_MULTI_SESSION_ID: sessionId, ...getVisionEnv(sessionId) } as Record<string, string>,
         useConpty: false
       })
 
@@ -265,7 +281,7 @@ export function spawnPty(
         cols,
         rows,
         cwd: resolvedCwd,
-        env: { ...process.env, CLAUDE_MULTI_SESSION_ID: sessionId } as Record<string, string>,
+        env: { ...process.env, CLAUDE_MULTI_SESSION_ID: sessionId, ...getVisionEnv(sessionId) } as Record<string, string>,
         useConpty: false
       })
 

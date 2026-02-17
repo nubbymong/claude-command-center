@@ -214,6 +214,12 @@ process.stdin.on('end', async () => {
     if (fs.existsSync(resumePickerSrc)) {
       fs.copyFileSync(resumePickerSrc, path.join(resourcesScriptsDir, 'resume-picker.js'))
     }
+
+    // Deploy vision-cli.js from bundled scripts
+    const visionCliSrc = path.join(__dirname, '../../scripts/vision-cli.js')
+    if (fs.existsSync(visionCliSrc)) {
+      fs.copyFileSync(visionCliSrc, path.join(resourcesScriptsDir, 'vision-cli.js'))
+    }
   } catch { /* resources dir may not be configured yet */ }
 }
 

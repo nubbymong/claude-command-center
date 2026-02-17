@@ -67,6 +67,21 @@ export default function SessionHeader({ session, isShowingPartner }: Props) {
       {session.sessionType === 'ssh' && session.sshConfig && (
         <span className="text-xs text-mauve">SSH: {session.sshConfig.username}@{session.sshConfig.host}</span>
       )}
+      {session.visionConfig?.enabled && (
+        <span
+          className="flex items-center gap-1 text-xs"
+          title={session.visionConnected
+            ? `Vision: connected to ${session.visionConfig.browser} (port ${session.visionConfig.debugPort})`
+            : `Vision: disconnected (${session.visionConfig.browser} port ${session.visionConfig.debugPort})`
+          }
+        >
+          <span
+            className="w-2 h-2 rounded-full inline-block"
+            style={{ backgroundColor: session.visionConnected ? '#A6E3A1' : '#F38BA8' }}
+          />
+          <span className="text-overlay0">Vision</span>
+        </span>
+      )}
 
       {/* Separator before notes */}
       <div className="w-px h-4 bg-surface1" />

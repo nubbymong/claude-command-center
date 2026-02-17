@@ -12,13 +12,17 @@ interface Props {
   isPartnerActive?: boolean
   onTogglePartner?: () => void
   partnerSessionId?: string
+  visionEnabled?: boolean
+  visionConnected?: boolean
+  visionBrowser?: 'chrome' | 'edge'
+  visionDebugPort?: number
 }
 
 function generateId(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
 }
 
-export default function CommandBar({ sessionId, configId, sessionType = 'local', partnerEnabled, isPartnerActive, onTogglePartner, partnerSessionId }: Props) {
+export default function CommandBar({ sessionId, configId, sessionType = 'local', partnerEnabled, isPartnerActive, onTogglePartner, partnerSessionId, visionEnabled, visionConnected, visionBrowser, visionDebugPort }: Props) {
   const { commands, addCommand, updateCommand, removeCommand, reorderCommands } = useCommandStore()
   const [showDialog, setShowDialog] = useState(false)
   const [editingCommand, setEditingCommand] = useState<CustomCommand | null>(null)
@@ -174,6 +178,40 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
         <div className="w-px h-4 bg-surface1 mx-0.5" />
         <ScreenshotButton sessionId={sessionId} sessionType={sessionType} />
         <CompactionInterruptButton sessionId={sessionId} />
+        {visionEnabled && (
+          visionConnected ? (
+            <button
+              onClick={() => {
+                window.electronAPI.pty.write(sessionId, 'node "$VISION_CLI" screenshot\r')
+              }}
+              className="flex items-center gap-1 px-2 py-0.5 text-xs rounded border border-green/40 bg-green/10 text-green hover:bg-green/20 transition-colors shrink-0"
+              title="Capture browser screenshot via Vision"
+            >
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="3" />
+                <path d="M12 2a10 10 0 1 0 10 10" />
+                <path d="M22 2L12 12" />
+              </svg>
+              Vision
+            </button>
+          ) : (
+            <button
+              onClick={() => {
+                if (visionBrowser && visionDebugPort) {
+                  window.electronAPI.vision.launch(visionBrowser, visionDebugPort)
+                }
+              }}
+              className="flex items-center gap-1 px-2 py-0.5 text-xs rounded border border-peach/40 bg-peach/10 text-peach hover:bg-peach/20 transition-colors shrink-0"
+              title={`Launch ${visionBrowser || 'browser'} with remote debugging on port ${visionDebugPort || 9222}`}
+            >
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <polygon points="10,8 16,12 10,16" fill="currentColor" stroke="none" />
+              </svg>
+              Launch Vision
+            </button>
+          )
+        )}
         {/* Back to Claude / Partner toggle - on magic row */}
         {partnerEnabled && onTogglePartner && (
           <>

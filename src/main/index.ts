@@ -17,12 +17,14 @@ import { registerSetupHandlers, getResourcesDirectory } from './ipc/setup-handle
 import { registerScreenshotHandlers } from './ipc/screenshot-handlers'
 import { registerInsightsHandlers } from './ipc/insights-handlers'
 import { registerNotesHandlers } from './ipc/notes-handlers'
+import { registerVisionHandlers } from './ipc/vision-handlers'
 import { registerConfigHandlers } from './ipc/config-handlers'
 import { initUpdateWatcher, stopUpdateWatcher, getProjectRootPath, isPackagedApp } from './update-watcher'
 import { startUpdateServer, stopUpdateServer } from './update-server'
 import { startUpdateClient, stopUpdateClient } from './update-client'
 import { saveSessionState, loadSessionState, clearSessionState, hasSavedSessionState, SessionState } from './session-state'
 import { getConfigDir, ensureConfigDir } from './config-manager'
+import { stopAllVisionManagers } from './vision-manager'
 
 import { installGlobalErrorHandlers, logInfo, logError, closeDebugLogger } from './debug-logger'
 
@@ -347,6 +349,7 @@ if (!gotTheLock) {
     registerScreenshotHandlers(getWindow)
     registerInsightsHandlers(getWindow)
     registerNotesHandlers()
+    registerVisionHandlers(getWindow)
 
     // Start update system
     // Dev mode: run update server to push notifications to production clients
@@ -378,6 +381,7 @@ if (!gotTheLock) {
     stopUpdateClient()
     disableDebugMode()
     closeAllLogs()
+    stopAllVisionManagers()
     killAllPty()
     closeDebugLogger()
   })
