@@ -1,6 +1,6 @@
 {
   "name": "claude-conductor",
-  "version": "1.2.84",
+  "version": "1.2.85",
   "description": "Multi-session Claude Code terminal orchestrator",
   "author": "Nicholas Moger",
   "main": "./out/main/index.js",
@@ -46,7 +46,10 @@
     "appId": "com.claudeconductor.app",
     "productName": "Claude Command Center Beta",
     "files": [
-      "out/**/*"
+      "out/**/*",
+      "scripts/resume-picker.js",
+      "scripts/vision-cli.js",
+      "scripts/vision-prompt.txt"
     ],
     "win": {
       "target": [
