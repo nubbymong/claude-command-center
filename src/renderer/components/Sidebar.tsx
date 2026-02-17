@@ -198,7 +198,8 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested }
         sudoPassword,
         startClaudeAfter: config.sshConfig.startClaudeAfter,
         dockerContainer: config.sshConfig.dockerContainer
-      } : undefined
+      } : undefined,
+      visionConfig: config.visionConfig
     }
     // Mark local Claude sessions for the resume picker
     if (!session.shellOnly && session.sessionType === 'local') {

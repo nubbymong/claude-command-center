@@ -36,6 +36,11 @@ interface Props {
   isPartnerActive?: boolean
   onTogglePartner?: () => void
   partnerSessionId?: string
+  visionConfig?: {
+    enabled: boolean
+    browser: 'chrome' | 'edge'
+    debugPort: number
+  }
 }
 
 // Platform v9 dark theme
@@ -161,7 +166,7 @@ function RateLimitBar({ label, pct, resets }: { label: string; pct: number; rese
   )
 }
 
-export default function TerminalView({ sessionId, configId, cwd, shellOnly, elevated, ssh, isActive = true, partnerEnabled, isPartnerActive, onTogglePartner, partnerSessionId }: Props) {
+export default function TerminalView({ sessionId, configId, cwd, shellOnly, elevated, ssh, isActive = true, partnerEnabled, isPartnerActive, onTogglePartner, partnerSessionId, visionConfig }: Props) {
   const xtermContainerRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
@@ -245,7 +250,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
           const rows = term.rows
           const configLabel = session?.label || 'default'
           const useResumePicker = shouldUseResumePicker(sessionId)
-          window.electronAPI.pty.spawn(sessionId, { cwd, cols, rows, ssh, shellOnly, elevated, configLabel, useResumePicker })
+          window.electronAPI.pty.spawn(sessionId, { cwd, cols, rows, ssh, shellOnly, elevated, configLabel, useResumePicker, visionConfig })
         }
       })
 
@@ -537,6 +542,24 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
     }
   }, [session?.contextPercent, session?.compactionInterrupt, session?.compactionInterruptTriggered, appSettings.compactionInterruptThreshold, sessionId])
 
+  // Vision status subscription + cleanup.
+  // Vision is started in pty:spawn (before PTY) so env vars are available.
+  // This effect subscribes to status changes (heartbeat reconnect/disconnect) and cleans up on unmount.
+  useEffect(() => {
+    if (!visionConfig?.enabled) return
+
+    const unsub = window.electronAPI.vision.onStatusChanged((data) => {
+      if (data.sessionId !== sessionId) return
+      updateSession(sessionId, { visionConnected: data.connected, visionPort: data.proxyPort })
+    })
+
+    return () => {
+      unsub()
+      window.electronAPI.vision.stop(sessionId)
+      updateSession(sessionId, { visionConnected: undefined, visionPort: undefined })
+    }
+  }, [sessionId, visionConfig?.enabled])
+
   // Debounce image paste to prevent double-sends
   const lastImagePasteRef = useRef<number>(0)
 
@@ -792,6 +815,10 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         isPartnerActive={isPartnerActive}
         onTogglePartner={onTogglePartner}
         partnerSessionId={partnerSessionId}
+        visionEnabled={visionConfig?.enabled}
+        visionConnected={session?.visionConnected}
+        visionBrowser={visionConfig?.browser}
+        visionDebugPort={visionConfig?.debugPort}
       />
       {/* Drag handle for resizing input bar */}
       <div

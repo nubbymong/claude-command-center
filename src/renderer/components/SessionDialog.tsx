@@ -65,6 +65,11 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
   const [startClaudeAfter, setStartClaudeAfter] = useState(initial?.sshConfig?.startClaudeAfter ?? false)
   const [dockerContainer, setDockerContainer] = useState(initial?.sshConfig?.dockerContainer ?? '')
 
+  // Vision fields
+  const [visionEnabled, setVisionEnabled] = useState(initial?.visionConfig?.enabled ?? false)
+  const [visionBrowser, setVisionBrowser] = useState<'chrome' | 'edge'>(initial?.visionConfig?.browser ?? 'chrome')
+  const [visionDebugPort, setVisionDebugPort] = useState(initial?.visionConfig?.debugPort ?? 9222)
+
   const handleBrowse = async () => {
     const path = await window.electronAPI.dialog.openFolder()
     if (path) setWorkingDir(path)
@@ -154,6 +159,11 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
         hasSudoPassword: saveSudoPassword && sudoPassword.length > 0,
         startClaudeAfter: postCommand.trim() ? startClaudeAfter : undefined,
         dockerContainer: dockerContainer.trim() || undefined
+      } : undefined,
+      visionConfig: visionEnabled ? {
+        enabled: true,
+        browser: visionBrowser,
+        debugPort: visionDebugPort
       } : undefined
     }
 
@@ -449,6 +459,50 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
               <option value="opus">Opus</option>
               <option value="haiku">Haiku</option>
             </select>
+          </div>
+
+          {/* Vision — browser control */}
+          <div className="pt-2 border-t border-surface0">
+            <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={visionEnabled}
+                onChange={(e) => setVisionEnabled(e.target.checked)}
+                className="rounded border-surface1"
+              />
+              Vision (browser control)
+            </label>
+            {visionEnabled && (
+              <div className="ml-5 mt-2 space-y-2">
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-xs text-subtext0 mb-1">Browser</label>
+                    <select
+                      value={visionBrowser}
+                      onChange={(e) => setVisionBrowser(e.target.value as 'chrome' | 'edge')}
+                      className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-blue"
+                    >
+                      <option value="chrome">Chrome</option>
+                      <option value="edge">Edge</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-subtext0 mb-1">Debug Port</label>
+                    <input
+                      type="number"
+                      value={visionDebugPort}
+                      onChange={(e) => setVisionDebugPort(parseInt(e.target.value) || 9222)}
+                      className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-blue"
+                    />
+                  </div>
+                </div>
+                <p className="text-[10px] text-overlay0">
+                  {sessionType === 'ssh'
+                    ? 'Browser launches locally. Vision proxy is network-accessible for remote sessions.'
+                    : 'Click "Launch Vision" in the command bar to start the browser.'}
+                </p>
+              </div>
+            )}
           </div>
 
           {/* Group assignment */}

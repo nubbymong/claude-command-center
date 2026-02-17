@@ -44,6 +44,11 @@ export interface ElectronAPI {
       }
       configLabel?: string
       useResumePicker?: boolean
+      visionConfig?: {
+        enabled: boolean
+        browser: 'chrome' | 'edge'
+        debugPort: number
+      }
     }) => Promise<void>
     write: (sessionId: string, data: string) => void
     resize: (sessionId: string, cols: number, rows: number) => void
@@ -278,6 +283,19 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.invoke('notes:save', id, label, content, color, configId),
     delete: (id: string) => ipcRenderer.invoke('notes:delete', id),
     reorder: (ids: string[]) => ipcRenderer.invoke('notes:reorder', ids),
+  },
+  vision: {
+    start: (sessionId: string, debugPort: number, browser: string) =>
+      ipcRenderer.invoke('vision:start', sessionId, debugPort, browser),
+    stop: (sessionId: string) => ipcRenderer.invoke('vision:stop', sessionId),
+    status: (sessionId: string) => ipcRenderer.invoke('vision:status', sessionId),
+    launch: (browser: string, debugPort: number) =>
+      ipcRenderer.invoke('vision:launch', browser, debugPort),
+    onStatusChanged: (callback: (data: { sessionId: string; connected: boolean; browser: string; proxyPort: number }) => void) => {
+      const handler = (_: unknown, data: any) => callback(data)
+      ipcRenderer.on('vision:statusChanged', handler)
+      return () => ipcRenderer.removeListener('vision:statusChanged', handler)
+    }
   },
   cli: {
     check: () => ipcRenderer.invoke('cli:check')

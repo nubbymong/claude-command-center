@@ -1,6 +1,6 @@
 {
   "name": "claude-conductor",
-  "version": "1.2.76",
+  "version": "1.2.77",
   "description": "Multi-session Claude Code terminal orchestrator",
   "author": "Nicholas Moger",
   "main": "./out/main/index.js",
@@ -21,6 +21,7 @@
     "@xterm/addon-webgl": "^0.18.0",
     "@xterm/xterm": "^5.5.0",
     "better-sqlite3": "^11.7.0",
+    "chrome-remote-interface": "^0.34.0",
     "marked": "^15.0.0",
     "node-pty": "^1.2.0-beta.10",
     "react": "^18.3.1",

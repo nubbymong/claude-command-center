@@ -309,6 +309,7 @@ export default function App() {
           startClaudeAfter: s.sshConfig.startClaudeAfter,
           dockerContainer: s.sshConfig.dockerContainer,
         } : undefined,
+        visionConfig: s.visionConfig,
       })),
       activeSessionId: state.activeSessionId,
       savedAt: Date.now(),
@@ -510,6 +511,7 @@ export default function App() {
                   isPartnerActive={isShowingPartner}
                   onTogglePartner={() => togglePartner(session.id)}
                   partnerSessionId={hasPartner ? partnerPtyId : undefined}
+                  visionConfig={session.visionConfig}
                 />
               </div>
               {/* Partner terminal */}

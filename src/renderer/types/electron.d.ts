@@ -45,6 +45,11 @@ export interface ElectronAPI {
       elevated?: boolean
       configLabel?: string
       useResumePicker?: boolean
+      visionConfig?: {
+        enabled: boolean
+        browser: 'chrome' | 'edge'
+        debugPort: number
+      }
     }) => Promise<void>
     write: (sessionId: string, data: string) => void
     resize: (sessionId: string, cols: number, rows: number) => void
@@ -163,6 +168,13 @@ export interface ElectronAPI {
     delete: (id: string) => Promise<boolean>
     reorder: (ids: string[]) => Promise<boolean>
   }
+  vision: {
+    start: (sessionId: string, debugPort: number, browser: string) => Promise<{ ok: boolean; proxyPort?: number; error?: string }>
+    stop: (sessionId: string) => Promise<{ ok: boolean }>
+    status: (sessionId: string) => Promise<{ connected: boolean; browser: string | null; proxyPort: number }>
+    launch: (browser: string, debugPort: number) => Promise<{ ok: boolean; pid?: number; command?: string; error?: string }>
+    onStatusChanged: (callback: (data: { sessionId: string; connected: boolean; browser: string; proxyPort: number }) => void) => () => void
+  }
   cli: {
     check: () => Promise<boolean>
   }
@@ -189,6 +201,11 @@ export interface SavedSession {
     hasSudoPassword?: boolean
     startClaudeAfter?: boolean
     dockerContainer?: string
+  }
+  visionConfig?: {
+    enabled: boolean
+    browser: 'chrome' | 'edge'
+    debugPort: number
   }
 }
 
