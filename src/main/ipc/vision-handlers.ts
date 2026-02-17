@@ -1,5 +1,5 @@
 import { ipcMain, BrowserWindow } from 'electron'
-import { startVisionForSession, stopVisionForSession, getVisionStatus, launchBrowser } from '../vision-manager'
+import { startVisionForSession, stopVisionForSession, getVisionStatus, launchBrowser, getVisionPrompt } from '../vision-manager'
 
 export function registerVisionHandlers(getWindow: () => BrowserWindow | null): void {
   ipcMain.handle('vision:start', async (_event, sessionId: string, debugPort: number, browser: string) => {
@@ -28,5 +28,9 @@ export function registerVisionHandlers(getWindow: () => BrowserWindow | null): v
     } catch (err: any) {
       return { ok: false, error: err?.message || 'Failed to launch browser' }
     }
+  })
+
+  ipcMain.handle('vision:getPrompt', async () => {
+    return getVisionPrompt()
   })
 }

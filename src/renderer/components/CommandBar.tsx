@@ -204,8 +204,13 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
                   window.electronAPI.vision.launch(visionBrowser, visionDebugPort, visionUrl)
                 }
               }}
+              onContextMenu={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                setVisionContextMenu({ x: e.clientX, y: e.clientY })
+              }}
               className="flex items-center gap-1 px-2 py-0.5 text-xs rounded border border-peach/40 bg-peach/10 text-peach hover:bg-peach/20 transition-colors shrink-0"
-              title={`Launch ${visionBrowser || 'browser'} with remote debugging on port ${visionDebugPort || 9222}`}
+              title={`Launch ${visionBrowser || 'browser'} \u2014 right-click to disconnect`}
             >
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <circle cx="12" cy="12" r="10" />
@@ -228,6 +233,13 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
               window.electronAPI.vision.launch(visionBrowser, visionDebugPort, visionUrl)
               setVisionContextMenu(null)
             } : undefined}
+            onInjectSetup={async () => {
+              const prompt = await window.electronAPI.vision.getPrompt()
+              if (prompt) {
+                window.electronAPI.pty.write(sessionId, prompt + '\r')
+              }
+              setVisionContextMenu(null)
+            }}
           />
         )}
         {/* Back to Claude / Partner toggle - on magic row */}
@@ -391,11 +403,12 @@ function ContextMenuOverlay({ x, y, onClose, onAdd, onEdit, onDelete }: {
   )
 }
 
-function VisionContextMenu({ x, y, onClose, onDisconnect, onLaunch }: {
+function VisionContextMenu({ x, y, onClose, onDisconnect, onLaunch, onInjectSetup }: {
   x: number; y: number
   onClose: () => void
   onDisconnect: () => void
   onLaunch?: () => void
+  onInjectSetup?: () => void
 }) {
   const menuRef = React.useRef<HTMLDivElement>(null)
   const [pos, setPos] = React.useState<{ left: number; top?: number; bottom?: number }>({ left: x })
@@ -422,6 +435,14 @@ function VisionContextMenu({ x, y, onClose, onDisconnect, onLaunch }: {
         style={pos}
         onClick={(e) => e.stopPropagation()}
       >
+        {onInjectSetup && (
+          <button onClick={onInjectSetup} className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface1 transition-colors flex items-center gap-2">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
+            </svg>
+            Inject Vision Setup
+          </button>
+        )}
         {onLaunch && (
           <button onClick={onLaunch} className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface1 transition-colors flex items-center gap-2">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
