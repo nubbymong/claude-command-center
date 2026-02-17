@@ -52,7 +52,7 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested }
   const [updateAvailable, setUpdateAvailable] = useState(false)
   const [updateVersion, setUpdateVersion] = useState<string | null>(null)
   const [updating, setUpdating] = useState(false)
-  const [serverConnected, setServerConnected] = useState(false)
+  const [checking, setChecking] = useState(false)
   const [contextMenuConfig, setContextMenuConfig] = useState<{ configId: string; x: number; y: number } | null>(null)
   const [renamingGroupId, setRenamingGroupId] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
@@ -77,19 +77,31 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested }
     window.electronAPI.debug.isEnabled().then(setDebugRecording)
   }, [])
 
-  // Subscribe to update availability and server connection
+  // Check for updates on startup and subscribe to push notifications
   useEffect(() => {
-    window.electronAPI.update.check().then(setUpdateAvailable)
+    // Startup check
+    setChecking(true)
+    window.electronAPI.update.check().then((available) => {
+      setUpdateAvailable(available)
+      setChecking(false)
+    }).catch(() => setChecking(false))
+    // Listen for push notifications (from dev server WebSocket if connected)
     const unsubAvailable = window.electronAPI.update.onAvailable((available, version) => {
       setUpdateAvailable(available)
       if (version) setUpdateVersion(version)
+      setChecking(false)
     })
-    const unsubServer = window.electronAPI.update.onServerConnected(setServerConnected)
-    return () => {
-      unsubAvailable()
-      unsubServer()
-    }
+    return () => { unsubAvailable() }
   }, [])
+
+  const handleCheckForUpdates = () => {
+    if (checking) return
+    setChecking(true)
+    window.electronAPI.update.check().then((available) => {
+      setUpdateAvailable(available)
+      setChecking(false)
+    }).catch(() => setChecking(false))
+  }
 
   const handleInstallUpdate = () => {
     if (updating) return
@@ -962,9 +974,9 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested }
         />
       )}
 
-      {/* Bottom buttons: Update */}
+      {/* Bottom buttons: Update check / Update available */}
       <div className="absolute bottom-2 left-2 right-2 flex flex-col gap-2">
-        {updateAvailable && (
+        {updateAvailable ? (
           <button
             onClick={handleInstallUpdate}
             disabled={updating}
@@ -979,7 +991,7 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested }
                 <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
                   <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" strokeDasharray="32" strokeLinecap="round" />
                 </svg>
-                <span className="text-xs font-medium">Rebuilding...</span>
+                <span className="text-xs font-medium">Installing...</span>
               </>
             ) : (
               <>
@@ -994,6 +1006,29 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested }
                   <div className="text-[10px] text-green/70">Click to install & restart</div>
                 </div>
                 <div className="w-2 h-2 rounded-full bg-green animate-pulse" />
+              </>
+            )}
+          </button>
+        ) : (
+          <button
+            onClick={handleCheckForUpdates}
+            disabled={checking}
+            className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg border border-surface1 text-overlay0 hover:text-subtext0 hover:bg-surface0/50 hover:border-surface2 transition-colors"
+          >
+            {checking ? (
+              <>
+                <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
+                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" strokeDasharray="32" strokeLinecap="round" />
+                </svg>
+                <span className="text-xs">Checking...</span>
+              </>
+            ) : (
+              <>
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                  <path d="M8 2v4M8 14v-4M8 6a2 2 0 110 4 2 2 0 010-4z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                  <path d="M2 8h4M14 8h-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                </svg>
+                <span className="text-xs">Check for Updates</span>
               </>
             )}
           </button>

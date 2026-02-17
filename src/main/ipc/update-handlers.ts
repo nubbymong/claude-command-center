@@ -3,14 +3,14 @@ import { spawn } from 'child_process'
 import * as path from 'path'
 import * as fs from 'fs'
 import * as os from 'os'
-import { isUpdateAvailable, markUpdateInstalled, getProjectRootPath, setSourcePathInRegistry, hasSourcePath } from '../update-watcher'
+import { isUpdateAvailable, checkForUpdatesOnDemand, markUpdateInstalled, getProjectRootPath, setSourcePathInRegistry, hasSourcePath } from '../update-watcher'
 import { getInstallerPath } from '../update-client'
 import { killAllPty } from '../pty-manager'
 import { logInfo, logError } from '../debug-logger'
 
 export function registerUpdateHandlers(): void {
   ipcMain.handle('update:check', async () => {
-    return isUpdateAvailable()
+    return checkForUpdatesOnDemand()
   })
 
   ipcMain.handle('update:hasSourcePath', async () => {
