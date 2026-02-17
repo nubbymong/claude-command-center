@@ -28,6 +28,7 @@ export interface TerminalConfig {
     enabled: boolean
     browser: 'chrome' | 'edge'
     debugPort: number
+    url?: string
   }
 }
 

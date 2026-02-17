@@ -21,9 +21,9 @@ export function registerVisionHandlers(getWindow: () => BrowserWindow | null): v
     return status || { connected: false, browser: null, proxyPort: 0 }
   })
 
-  ipcMain.handle('vision:launch', async (_event, browser: 'chrome' | 'edge', debugPort: number) => {
+  ipcMain.handle('vision:launch', async (_event, browser: 'chrome' | 'edge', debugPort: number, url?: string) => {
     try {
-      const result = launchBrowser(browser, debugPort)
+      const result = launchBrowser(browser, debugPort, url)
       return { ok: true, ...result }
     } catch (err: any) {
       return { ok: false, error: err?.message || 'Failed to launch browser' }
