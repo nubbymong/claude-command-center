@@ -160,6 +160,21 @@ class VisionManager {
     }
   }
 
+  /** Immediately attempt CDP reconnection (called after browser launch) */
+  async tryReconnectNow(): Promise<void> {
+    // Give Chrome a moment to start its debug server
+    for (let attempt = 0; attempt < 10; attempt++) {
+      await new Promise(r => setTimeout(r, 1500))
+      try {
+        await this.connectCDP()
+        this.notifyStatusChange()
+        return
+      } catch {
+        // Keep trying
+      }
+    }
+  }
+
   private startHeartbeat(): void {
     this.heartbeatTimer = setInterval(() => {
       const req = http.request({
@@ -683,6 +698,13 @@ export function stopAllVisionManagers(): void {
  * Launch the browser with remote debugging enabled.
  * Returns the child process PID (for logging), or throws on failure.
  */
+export function tryReconnectVision(debugPort: number): void {
+  const entry = registry.get(debugPort)
+  if (entry) {
+    entry.manager.tryReconnectNow()
+  }
+}
+
 export function launchBrowser(browser: 'chrome' | 'edge', debugPort: number, url?: string): { pid: number; command: string } {
   const tmpDir = process.env.TEMP || process.env.TMP || os.tmpdir()
   const profileDir = path.join(tmpDir, `${browser}-debug-${debugPort}`)

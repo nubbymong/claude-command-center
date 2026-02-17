@@ -1,5 +1,5 @@
 import { ipcMain, BrowserWindow } from 'electron'
-import { startVisionForSession, stopVisionForSession, getVisionStatus, launchBrowser, getVisionPrompt } from '../vision-manager'
+import { startVisionForSession, stopVisionForSession, getVisionStatus, launchBrowser, getVisionPrompt, tryReconnectVision } from '../vision-manager'
 
 export function registerVisionHandlers(getWindow: () => BrowserWindow | null): void {
   ipcMain.handle('vision:start', async (_event, sessionId: string, debugPort: number, browser: string) => {
@@ -24,6 +24,8 @@ export function registerVisionHandlers(getWindow: () => BrowserWindow | null): v
   ipcMain.handle('vision:launch', async (_event, browser: 'chrome' | 'edge', debugPort: number, url?: string) => {
     try {
       const result = launchBrowser(browser, debugPort, url)
+      // Trigger CDP reconnect in background (Chrome needs time to start)
+      tryReconnectVision(debugPort)
       return { ok: true, ...result }
     } catch (err: any) {
       return { ok: false, error: err?.message || 'Failed to launch browser' }
