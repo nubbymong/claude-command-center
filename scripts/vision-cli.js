@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Claude Conductor — Vision CLI
+// Claude Command Center — Vision CLI
 // Standalone script (Node built-in http only) that proxies commands to VisionManager's HTTP server.
 // Usage: node vision-cli.js <command> [args...]
 // Env vars:

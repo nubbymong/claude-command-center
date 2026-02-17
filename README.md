@@ -1,4 +1,4 @@
-# Claude Conductor Beta
+# Claude Command Center Beta
 
 Multi-session terminal orchestrator for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Run multiple Claude sessions simultaneously with tabbed management, SSH remote access, session restore, and real-time usage monitoring.
 
@@ -7,7 +7,7 @@ Multi-session terminal orchestrator for [Claude Code](https://docs.anthropic.com
 
 ## Installation
 
-1. Download the latest `ClaudeConductor-Beta-x.y.z.exe` from [Releases](../../releases)
+1. Download the latest `ClaudeCommandCenter-Beta-x.y.z.exe` from [Releases](../../releases)
 2. Verify the SHA-256 checksum against `CHECKSUMS.txt` in the release
 3. Run the installer — choose your Data and Resources directories
 4. The setup wizard will guide you through Claude CLI authentication

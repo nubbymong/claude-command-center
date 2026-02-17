@@ -50,7 +50,7 @@ export default function StatusBar() {
           >
             <h2 className="text-lg font-semibold text-text mb-3">Claude CLI Not Found</h2>
             <p className="text-sm text-subtext0 mb-4">
-              Claude Conductor requires Claude Code CLI to be installed and on your PATH.
+              Claude Command Center requires Claude Code CLI to be installed and on your PATH.
             </p>
 
             <div className="space-y-3 text-sm">

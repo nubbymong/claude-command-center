@@ -465,7 +465,7 @@ export default function App() {
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center text-overlay1">
               <div className="text-5xl mb-4 font-mono">&gt;_</div>
-              <h2 className="text-xl font-semibold mb-2">Claude Conductor <span className="text-yellow/70">Beta</span></h2>
+              <h2 className="text-xl font-semibold mb-2">Claude Command Center <span className="text-yellow/70">Beta</span></h2>
               <p className="text-sm">Create a terminal config to get started</p>
               <p className="text-xs text-overlay0 mt-2">Ctrl+T to create, Ctrl+Tab to switch</p>
             </div>

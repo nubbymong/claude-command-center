@@ -1,56 +1,55 @@
 import { ipcMain, app, dialog, BrowserWindow } from 'electron'
 import * as path from 'path'
 import * as fs from 'fs'
-import { execSync } from 'child_process'
 import { homedir } from 'os'
 import * as pty from 'node-pty'
 import { logInfo } from '../debug-logger'
 import { getInstallPath } from '../update-watcher'
 import { resolveClaudeForPty } from '../pty-manager'
+import { readRegistry, writeRegistry } from '../registry'
 
 // Lazy getter for default data dir - can't call app.getPath() at module load time
 function getDefaultDataDir(): string {
-  return path.join(app.getPath('localAppData'), 'Claude Conductor')
+  return path.join(app.getPath('localAppData'), 'Claude Command Center')
 }
 
-// Read data directory from registry
+// Cache registry values — they don't change during the app's lifetime
+// (only set during installer wizard or setup dialog, which restarts the app)
+let cachedDataDir: string | null = null
+let cachedResourcesDir: string | null = null
+let dataDirFromRegistry = false // true if DataDirectory was found in registry
+
+// Read data directory from registry (cached after first call)
 export function getDataDirectory(): string {
-  if (process.platform === 'win32') {
-    try {
-      const result = execSync(
-        'reg query "HKCU\\Software\\Claude Conductor" /v DataDirectory 2>nul',
-        { encoding: 'utf-8' }
-      )
-      const match = result.match(/DataDirectory\s+REG_SZ\s+(.+)/)
-      if (match && match[1].trim()) {
-        return match[1].trim()
-      }
-    } catch { /* not set yet */ }
+  if (cachedDataDir) return cachedDataDir
+
+  const regVal = readRegistry('DataDirectory')
+  if (regVal) {
+    cachedDataDir = regVal
+    dataDirFromRegistry = true
+    logInfo(`[setup] Data directory from registry: ${cachedDataDir}`)
+    return cachedDataDir
   }
-  return getDefaultDataDir()
+
+  cachedDataDir = getDefaultDataDir()
+  logInfo(`[setup] Data directory default: ${cachedDataDir}`)
+  return cachedDataDir
 }
 
-// Read resources directory from registry
+// Read resources directory from registry (cached after first call)
 export function getResourcesDirectory(): string {
-  if (process.platform === 'win32') {
-    try {
-      const result = execSync(
-        'reg query "HKCU\\Software\\Claude Conductor" /v ResourcesDirectory 2>nul',
-        { encoding: 'utf-8' }
-      )
-      const match = result.match(/ResourcesDirectory\s+REG_SZ\s+(.+)/)
-      if (match && match[1].trim()) {
-        logInfo(`[setup] Resources directory from registry: ${match[1].trim()}`)
-        return match[1].trim()
-      }
-      logInfo('[setup] ResourcesDirectory key found but empty, using fallback')
-    } catch {
-      logInfo('[setup] ResourcesDirectory key not in registry, using fallback')
-    }
+  if (cachedResourcesDir) return cachedResourcesDir
+
+  const regVal = readRegistry('ResourcesDirectory')
+  if (regVal) {
+    cachedResourcesDir = regVal
+    logInfo(`[setup] Resources directory from registry: ${cachedResourcesDir}`)
+    return cachedResourcesDir
   }
-  const fallback = path.join(getDataDirectory(), 'resources')
-  logInfo(`[setup] Resources directory fallback: ${fallback}`)
-  return fallback
+
+  cachedResourcesDir = path.join(getDataDirectory(), 'resources')
+  logInfo(`[setup] Resources directory fallback: ${cachedResourcesDir}`)
+  return cachedResourcesDir
 }
 
 // Set resources directory in registry and create folders
@@ -61,13 +60,9 @@ function setResourcesDirectory(resourcesDir: string): boolean {
     fs.mkdirSync(path.join(resourcesDir, 'skills'), { recursive: true })
     fs.mkdirSync(path.join(resourcesDir, 'scripts'), { recursive: true })
 
-    if (process.platform === 'win32') {
-      execSync(
-        `reg add "HKCU\\Software\\Claude Conductor" /v ResourcesDirectory /t REG_SZ /d "${resourcesDir}" /f`,
-        { encoding: 'utf-8' }
-      )
-    }
+    writeRegistry('ResourcesDirectory', resourcesDir)
 
+    cachedResourcesDir = resourcesDir // Update cache
     logInfo(`[setup] Resources directory set to: ${resourcesDir}`)
     return true
   } catch (err) {
@@ -76,18 +71,12 @@ function setResourcesDirectory(resourcesDir: string): boolean {
   }
 }
 
-// Check if setup is complete
+// Check if setup is complete (uses cached registry check — no extra reg query)
 export function isSetupComplete(): boolean {
   if (process.platform === 'win32') {
-    try {
-      execSync(
-        'reg query "HKCU\\Software\\Claude Conductor" /v DataDirectory 2>nul',
-        { encoding: 'utf-8' }
-      )
-      return true
-    } catch {
-      return false
-    }
+    // Ensure getDataDirectory() has been called at least once to populate cache
+    getDataDirectory()
+    return dataDirFromRegistry
   }
   // Non-Windows: check if data dir exists
   return fs.existsSync(getDefaultDataDir())
@@ -102,14 +91,10 @@ function setDataDirectory(dataDir: string): boolean {
     fs.mkdirSync(path.join(dataDir, 'debug'), { recursive: true })
     fs.mkdirSync(path.join(dataDir, 'config'), { recursive: true })
 
-    // Save to registry on Windows
-    if (process.platform === 'win32') {
-      execSync(
-        `reg add "HKCU\\Software\\Claude Conductor" /v DataDirectory /t REG_SZ /d "${dataDir}" /f`,
-        { encoding: 'utf-8' }
-      )
-    }
+    writeRegistry('DataDirectory', dataDir)
 
+    cachedDataDir = dataDir // Update cache
+    dataDirFromRegistry = true
     logInfo(`[setup] Data directory set to: ${dataDir}`)
     return true
   } catch (err) {

@@ -1,6 +1,6 @@
 {
   "name": "claude-conductor",
-  "version": "1.2.77",
+  "version": "1.2.78",
   "description": "Multi-session Claude Code terminal orchestrator",
   "author": "Nicholas Moger",
   "main": "./out/main/index.js",
@@ -44,7 +44,7 @@
   },
   "build": {
     "appId": "com.claudeconductor.app",
-    "productName": "Claude Conductor Beta",
+    "productName": "Claude Command Center Beta",
     "files": [
       "out/**/*"
     ],
@@ -64,10 +64,10 @@
       "allowElevation": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Claude Conductor Beta",
+      "shortcutName": "Claude Command Center Beta",
       "runAfterFinish": true,
-      "uninstallDisplayName": "Claude Conductor Beta",
-      "artifactName": "ClaudeConductor-Beta-${version}.${ext}"
+      "uninstallDisplayName": "Claude Command Center Beta",
+      "artifactName": "ClaudeCommandCenter-Beta-${version}.${ext}"
     },
     "directories": {
       "output": "dist",

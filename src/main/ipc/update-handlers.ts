@@ -28,8 +28,8 @@ export function registerUpdateHandlers(): void {
   ipcMain.handle('update:selectSourcePath', async () => {
     const result = await dialog.showOpenDialog({
       properties: ['openDirectory'],
-      title: 'Select Claude Conductor Source Directory',
-      message: 'Select the folder containing the Claude Conductor source code (with package.json)'
+      title: 'Select Claude Command Center Source Directory',
+      message: 'Select the folder containing the Claude Command Center source code (with package.json)'
     })
     if (result.canceled || result.filePaths.length === 0) return null
 
@@ -55,25 +55,23 @@ export function registerUpdateHandlers(): void {
       installerSrc = null
       const projectRoot = getProjectRootPath()
       if (projectRoot) {
-        // Try latest naming
-        installerSrc = path.join(projectRoot, 'ClaudeConductor-latest.exe')
+        // Try latest naming (new name first, then old)
+        installerSrc = path.join(projectRoot, 'ClaudeCommandCenter-latest.exe')
         if (!fs.existsSync(installerSrc)) {
-          // Try versioned naming with Beta tag
+          installerSrc = path.join(projectRoot, 'ClaudeConductor-latest.exe')
+        }
+        if (!fs.existsSync(installerSrc)) {
+          // Try versioned naming with Beta tag (new and old names)
           try {
             const pkg = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf-8'))
             const candidates = [
+              path.join(projectRoot, `ClaudeCommandCenter-Beta-${pkg.version}.exe`),
+              path.join(projectRoot, 'dist', `ClaudeCommandCenter-Beta-${pkg.version}.exe`),
               path.join(projectRoot, `ClaudeConductor-Beta-${pkg.version}.exe`),
-              path.join(projectRoot, `ClaudeConductor-${pkg.version}.exe`),
               path.join(projectRoot, 'dist', `ClaudeConductor-Beta-${pkg.version}.exe`),
-              path.join(projectRoot, 'dist', `ClaudeConductor-${pkg.version}.exe`),
             ]
             installerSrc = candidates.find(p => fs.existsSync(p)) || null
           } catch { /* fall through */ }
-        }
-        // Legacy fallback
-        if (!installerSrc || !fs.existsSync(installerSrc)) {
-          const legacy = path.join(projectRoot, 'Claude Conductor Setup.exe')
-          if (fs.existsSync(legacy)) installerSrc = legacy
         }
       }
     }
