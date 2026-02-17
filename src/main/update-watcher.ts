@@ -275,19 +275,22 @@ export function initUpdateWatcher(getWindow: () => BrowserWindow | null): void {
   const srcDir = projectRoot ? path.join(projectRoot, 'src') : ''
 
   if (hasSourcePath()) {
-    logInfo(`[update-watcher] Watching source at: ${srcDir}`)
+    logInfo(`[update-watcher] Source path configured: ${srcDir}`)
   } else {
-    logInfo('[update-watcher] No source path configured yet, will check periodically')
+    logInfo('[update-watcher] No source path configured')
   }
 
-  // Check for updates every 3 seconds (more responsive)
-  watchInterval = setInterval(checkForUpdates, 3000)
-
-  // Initial check
+  // Single startup check — no polling. Use checkForUpdatesOnDemand() for manual checks.
   checkForUpdates()
 }
 
 export function isUpdateAvailable(): boolean {
+  return updateAvailable
+}
+
+// On-demand check triggered by user clicking "Check for Updates"
+export function checkForUpdatesOnDemand(): boolean {
+  checkForUpdates()
   return updateAvailable
 }
 
