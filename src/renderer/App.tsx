@@ -476,7 +476,7 @@ export default function App() {
     return (
       <div className="flex-1 flex flex-col" style={{ display: view === 'sessions' ? 'flex' : 'none', minHeight: 0 }}>
         <TabBar />
-        <SessionHeader session={activeSession} />
+        <SessionHeader session={activeSession} isShowingPartner={partnerActive.has(activeSession.id)} />
         {/* Render ALL sessions but only show the active one - keeps PTYs alive */}
         {sessions.map((session) => {
           const isShowingPartner = partnerActive.has(session.id)

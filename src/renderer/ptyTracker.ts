@@ -11,6 +11,10 @@ export function markSpawned(sessionId: string): void {
   spawnedPtys.add(sessionId)
 }
 
+export function clearSpawned(sessionId: string): void {
+  spawnedPtys.delete(sessionId)
+}
+
 export function killSessionPty(sessionId: string): void {
   spawnedPtys.delete(sessionId)
   window.electronAPI.pty.kill(sessionId)
