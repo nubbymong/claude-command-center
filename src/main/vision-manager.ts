@@ -113,7 +113,8 @@ class VisionManager {
       this.client = await cdp({ port: this.debugPort })
       await this.client.Page.enable()
       await this.client.Runtime.enable()
-      await this.client.DOM.enable()
+      // Note: DOM.enable() intentionally omitted — it subscribes to every DOM mutation
+      // event which is very expensive on complex pages. We use Runtime.evaluate instead.
       this.connected = true
       logInfo(`[vision] CDP connected to ${this.browser} on port ${this.debugPort}`)
     } catch (err: any) {
@@ -163,7 +164,7 @@ class VisionManager {
   /** Immediately attempt CDP reconnection (called after browser launch) */
   async tryReconnectNow(): Promise<void> {
     // Give Chrome a moment to start its debug server
-    for (let attempt = 0; attempt < 10; attempt++) {
+    for (let attempt = 0; attempt < 5; attempt++) {
       await new Promise(r => setTimeout(r, 1500))
       try {
         await this.connectCDP()
@@ -208,7 +209,7 @@ class VisionManager {
         }
       })
       req.end()
-    }, 10000)
+    }, 30000)
   }
 
   private stopHeartbeat(): void {
@@ -298,7 +299,6 @@ class VisionManager {
           this.client = await cdp({ port: this.debugPort, target: pages[idx] })
           await this.client.Page.enable()
           await this.client.Runtime.enable()
-          await this.client.DOM.enable()
           this.connected = true
           return { ok: true, data: { index: idx, title: pages[idx].title, url: pages[idx].url } }
         }
