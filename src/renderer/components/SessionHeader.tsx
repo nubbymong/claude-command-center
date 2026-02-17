@@ -1,6 +1,7 @@
 import React from 'react'
 import { Session, useSessionStore } from '../stores/sessionStore'
 import { killSessionPty, clearSpawned } from '../ptyTracker'
+import { markSessionForResumePicker } from '../App'
 import NotesBar from './NotesBar'
 
 interface Props {
@@ -27,8 +28,10 @@ export default function SessionHeader({ session, isShowingPartner }: Props) {
     }
     // Kill the old PTY (also clears spawn tracker so new one will spawn)
     killSessionPty(session.id)
-    // NO resume picker on restart — user already has their session, just restart Claude directly.
-    // Resume picker is only for initial launch from sidebar.
+    // Show resume picker on restart so user can pick a conversation
+    if (session.sessionType === 'local' && !session.shellOnly) {
+      markSessionForResumePicker(session.id)
+    }
     // Force re-mount with clean metadata
     const store = useSessionStore.getState()
     store.removeSession(session.id)
