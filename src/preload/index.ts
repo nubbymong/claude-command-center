@@ -292,6 +292,7 @@ const electronAPI: ElectronAPI = {
     status: (sessionId: string) => ipcRenderer.invoke('vision:status', sessionId),
     launch: (browser: string, debugPort: number, url?: string) =>
       ipcRenderer.invoke('vision:launch', browser, debugPort, url),
+    getPrompt: () => ipcRenderer.invoke('vision:getPrompt') as Promise<string | null>,
     onStatusChanged: (callback: (data: { sessionId: string; connected: boolean; browser: string; proxyPort: number }) => void) => {
       const handler = (_: unknown, data: any) => callback(data)
       ipcRenderer.on('vision:statusChanged', handler)

@@ -657,6 +657,18 @@ export function getVisionStatus(sessionId: string): { connected: boolean; browse
   }
 }
 
+export function getVisionPrompt(): string | null {
+  try {
+    const promptFile = path.join(getResourcesDirectory(), 'scripts', 'vision-prompt.txt')
+    const bundledPromptFile = path.join(__dirname, '../../scripts/vision-prompt.txt')
+    const actualFile = fs.existsSync(promptFile) ? promptFile : fs.existsSync(bundledPromptFile) ? bundledPromptFile : null
+    if (!actualFile) return null
+    return fs.readFileSync(actualFile, 'utf-8').trim()
+  } catch {
+    return null
+  }
+}
+
 export function stopAllVisionManagers(): void {
   for (const [port, entry] of registry) {
     entry.manager.stop()

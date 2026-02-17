@@ -75,10 +75,9 @@ export default function SessionHeader({ session, isShowingPartner }: Props) {
           className="flex items-center gap-1 text-xs cursor-default"
           title={session.visionConnected
             ? `Vision: connected to ${session.visionConfig.browser} (port ${session.visionConfig.debugPort}) \u2014 right-click to disconnect`
-            : `Vision: disconnected (${session.visionConfig.browser} port ${session.visionConfig.debugPort})`
+            : `Vision: disconnected (${session.visionConfig.browser} port ${session.visionConfig.debugPort}) \u2014 right-click to disconnect`
           }
           onContextMenu={(e) => {
-            if (!session.visionConnected) return
             e.preventDefault()
             e.stopPropagation()
             window.electronAPI.vision.stop(session.id)

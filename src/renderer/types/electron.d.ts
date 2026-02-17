@@ -174,6 +174,7 @@ export interface ElectronAPI {
     stop: (sessionId: string) => Promise<{ ok: boolean }>
     status: (sessionId: string) => Promise<{ connected: boolean; browser: string | null; proxyPort: number }>
     launch: (browser: string, debugPort: number, url?: string) => Promise<{ ok: boolean; pid?: number; command?: string; error?: string }>
+    getPrompt: () => Promise<string | null>
     onStatusChanged: (callback: (data: { sessionId: string; connected: boolean; browser: string; proxyPort: number }) => void) => () => void
   }
   cli: {
