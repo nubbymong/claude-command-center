@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { Session, useSessionStore } from '../stores/sessionStore'
 import { killSessionPty, clearSpawned } from '../ptyTracker'
 import { markSessionForResumePicker } from '../App'
@@ -11,6 +11,7 @@ interface Props {
 
 export default function SessionHeader({ session, isShowingPartner }: Props) {
   const updateSession = useSessionStore((s) => s.updateSession)
+  const [recoverMenu, setRecoverMenu] = useState<{ x: number; y: number } | null>(null)
 
   const handleRestart = () => {
     if (isShowingPartner) {
@@ -33,12 +34,37 @@ export default function SessionHeader({ session, isShowingPartner }: Props) {
       markSessionForResumePicker(session.id)
     }
     // Force re-mount with clean metadata
+    forceRemount('idle')
+  }
+
+  // Aggressive recovery: kill ALL PTYs (main + partner), clear ALL spawn trackers, force remount.
+  // Use when a PTY process has crashed (OOM, etc.) and normal restart can't recover.
+  const handleRecover = () => {
+    setRecoverMenu(null)
+    const partnerPtyId = session.id + '-partner'
+    // Kill both main and partner PTYs (ignore errors — process may already be dead)
+    window.electronAPI.pty.kill(session.id)
+    window.electronAPI.pty.kill(partnerPtyId)
+    clearSpawned(session.id)
+    clearSpawned(partnerPtyId)
+    // Stop vision if active
+    if (session.visionConfig?.enabled) {
+      window.electronAPI.vision.stop(session.id)
+    }
+    // Show resume picker for Claude sessions
+    if (session.sessionType === 'local' && !session.shellOnly) {
+      markSessionForResumePicker(session.id)
+    }
+    forceRemount('idle')
+  }
+
+  const forceRemount = (status: 'idle' | 'working') => {
     const store = useSessionStore.getState()
     store.removeSession(session.id)
     store.addSession({
       ...session,
       id: session.id,
-      status: 'idle',
+      status,
       createdAt: Date.now(),
       // Clear stale metadata from previous run
       contextPercent: undefined,
@@ -56,6 +82,8 @@ export default function SessionHeader({ session, isShowingPartner }: Props) {
       rateLimitWeeklyResets: undefined,
       rateLimitExtra: undefined,
       compactionInterruptTriggered: undefined,
+      visionConnected: undefined,
+      visionPort: undefined,
     })
   }
 
@@ -102,11 +130,76 @@ export default function SessionHeader({ session, isShowingPartner }: Props) {
 
       <button
         onClick={handleRestart}
+        onContextMenu={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          setRecoverMenu({ x: e.clientX, y: e.clientY })
+        }}
         className="px-2.5 py-1 rounded text-xs font-medium text-overlay1 hover:text-text hover:bg-surface0 transition-colors"
-        title={isShowingPartner ? 'Restart partner terminal' : 'Restart Claude session'}
+        title={isShowingPartner ? 'Restart partner terminal (right-click to recover)' : 'Restart Claude session (right-click to recover)'}
       >
         Restart
       </button>
+
+      {recoverMenu && (
+        <RecoverContextMenu
+          x={recoverMenu.x}
+          y={recoverMenu.y}
+          onClose={() => setRecoverMenu(null)}
+          onRecover={handleRecover}
+          isShowingPartner={isShowingPartner}
+        />
+      )}
+    </div>
+  )
+}
+
+function RecoverContextMenu({ x, y, onClose, onRecover, isShowingPartner }: {
+  x: number; y: number
+  onClose: () => void
+  onRecover: () => void
+  isShowingPartner?: boolean
+}) {
+  const menuRef = React.useRef<HTMLDivElement>(null)
+  const [pos, setPos] = React.useState<{ left: number; top?: number; bottom?: number }>({ left: x })
+
+  React.useEffect(() => {
+    const el = menuRef.current
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    const viewH = window.innerHeight
+    const viewW = window.innerWidth
+    const left = Math.min(x, viewW - rect.width - 8)
+    if (y + rect.height > viewH - 8) {
+      setPos({ left, bottom: viewH - y })
+    } else {
+      setPos({ left, top: y })
+    }
+  }, [x, y])
+
+  return (
+    <div className="fixed inset-0 z-50" onClick={onClose}>
+      <div
+        ref={menuRef}
+        className="fixed bg-surface0 border border-surface1 rounded-lg shadow-xl py-1 min-w-[200px]"
+        style={pos}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          onClick={onRecover}
+          className="w-full text-left px-3 py-1.5 text-xs text-yellow hover:bg-surface1 transition-colors flex items-center gap-2"
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M1 4v6h6" />
+            <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+          </svg>
+          {isShowingPartner ? 'Recover Partner Terminal' : 'Recover All Terminals'}
+        </button>
+        <div className="px-3 py-1 text-[10px] text-overlay0">
+          Force-kills all PTYs and respawns fresh.
+          Use when a terminal has crashed (OOM, etc).
+        </div>
+      </div>
     </div>
   )
 }
