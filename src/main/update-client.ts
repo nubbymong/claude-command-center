@@ -8,7 +8,9 @@ import { execSync } from 'child_process'
 import { logInfo, logError } from './debug-logger'
 
 const DEFAULT_UPDATE_SERVER = 'ws://localhost:9847'
-const RECONNECT_INTERVAL = 5000  // Reconnect every 5 seconds if disconnected
+const RECONNECT_BASE = 5000       // Initial reconnect delay (5s)
+const RECONNECT_MAX = 120000      // Max reconnect delay (2 minutes)
+const RECONNECT_BACKOFF = 2       // Exponential backoff multiplier
 
 interface UpdateMessage {
   type: 'update_available' | 'heartbeat' | 'connected'
@@ -20,13 +22,16 @@ interface UpdateMessage {
 }
 
 let ws: WebSocket | null = null
-let reconnectTimer: ReturnType<typeof setInterval> | null = null
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 let windowGetter: (() => BrowserWindow | null) | null = null
 let currentServerHash: string | null = null
 let currentServerVersion: string | null = null
 let currentInstallerPath: string | null = null
 let localHash: string | null = null
 let isConnected = false
+let consecutiveFailures = 0
+let reconnectDelay = RECONNECT_BASE
+let hasLoggedDisconnect = false    // Suppress repeated disconnect logs
 
 // Read update server URL from registry
 function getUpdateServerUrl(): string {
@@ -129,7 +134,11 @@ function connect() {
   }
 
   const serverUrl = getUpdateServerUrl()
-  logInfo(`[update-client] Connecting to update server: ${serverUrl}`)
+
+  // Only log first attempt and every 50th retry to avoid log spam
+  if (consecutiveFailures === 0) {
+    logInfo(`[update-client] Connecting to update server: ${serverUrl}`)
+  }
 
   try {
     ws = new WebSocket(serverUrl)
@@ -137,6 +146,9 @@ function connect() {
     ws.on('open', () => {
       logInfo('[update-client] Connected to update server')
       isConnected = true
+      consecutiveFailures = 0
+      reconnectDelay = RECONNECT_BASE
+      hasLoggedDisconnect = false
       notifyRenderer(false)  // Connected but no update yet
     })
 
@@ -145,22 +157,37 @@ function connect() {
     })
 
     ws.on('close', () => {
-      logInfo('[update-client] Disconnected from update server')
+      const wasConnected = isConnected
       isConnected = false
       ws = null
-      // Will reconnect via interval
+      // Only log if we were actually connected (not on failed connection attempts)
+      if (wasConnected) {
+        logInfo('[update-client] Disconnected from update server')
+        hasLoggedDisconnect = false  // Reset so next failure cycle logs once
+        consecutiveFailures = 0
+        reconnectDelay = RECONNECT_BASE
+      }
+      scheduleReconnect()
     })
 
     ws.on('error', (err) => {
-      // Connection refused is expected if dev server isn't running
-      if ((err as NodeJS.ErrnoException).code !== 'ECONNREFUSED') {
+      const code = (err as NodeJS.ErrnoException).code
+      if (code !== 'ECONNREFUSED') {
         logError('[update-client] WebSocket error:', err)
+      } else if (!hasLoggedDisconnect) {
+        logInfo('[update-client] Update server not running (will retry with backoff)')
+        hasLoggedDisconnect = true
       }
       isConnected = false
+      consecutiveFailures++
+      // Exponential backoff: 5s → 10s → 20s → 40s → 80s → 120s (cap)
+      reconnectDelay = Math.min(RECONNECT_BASE * Math.pow(RECONNECT_BACKOFF, consecutiveFailures), RECONNECT_MAX)
     })
   } catch (err) {
     logError('[update-client] Failed to connect:', err)
     isConnected = false
+    consecutiveFailures++
+    reconnectDelay = Math.min(RECONNECT_BASE * Math.pow(RECONNECT_BACKOFF, consecutiveFailures), RECONNECT_MAX)
   }
 }
 
@@ -173,6 +200,19 @@ function disconnect() {
   isConnected = false
 }
 
+// Schedule next reconnect attempt with current backoff delay
+function scheduleReconnect() {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer)
+  }
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      connect()
+    }
+  }, reconnectDelay)
+}
+
 // Start the update client
 export function startUpdateClient(getWindow: () => BrowserWindow | null, initialHash?: string): void {
   windowGetter = getWindow
@@ -181,23 +221,19 @@ export function startUpdateClient(getWindow: () => BrowserWindow | null, initial
   // Initial connection
   connect()
 
-  // Reconnect periodically if disconnected
-  reconnectTimer = setInterval(() => {
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      connect()
-    }
-  }, RECONNECT_INTERVAL)
-
   logInfo('[update-client] Update client started')
 }
 
 // Stop the update client
 export function stopUpdateClient(): void {
   if (reconnectTimer) {
-    clearInterval(reconnectTimer)
+    clearTimeout(reconnectTimer)
     reconnectTimer = null
   }
   disconnect()
+  consecutiveFailures = 0
+  reconnectDelay = RECONNECT_BASE
+  hasLoggedDisconnect = false
   logInfo('[update-client] Update client stopped')
 }
 
