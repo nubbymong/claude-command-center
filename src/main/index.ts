@@ -26,10 +26,14 @@ import { saveSessionState, loadSessionState, clearSessionState, hasSavedSessionS
 import { getConfigDir, ensureConfigDir } from './config-manager'
 import { stopAllVisionManagers } from './vision-manager'
 
+import { migrateRegistryKeys } from './registry'
 import { installGlobalErrorHandlers, logInfo, logError, closeDebugLogger } from './debug-logger'
 
 // Install global error handlers that log to file
 installGlobalErrorHandlers()
+
+// Migrate registry keys from old "Claude Conductor" → new "Claude Command Center"
+migrateRegistryKeys()
 
 // Lazy getter — can't call getConfigDir() at module load time
 function getWindowStateFile(): string {

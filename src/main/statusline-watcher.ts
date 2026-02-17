@@ -58,7 +58,7 @@ export function deployStatuslineScript(): void {
 
   // Write the Node.js statusline script
   const scriptContent = `#!/usr/bin/env node
-// Claude Conductor - Statusline bridge script
+// Claude Command Center - Statusline bridge script
 // Reads JSON from stdin (sent by Claude Code), fetches rate limits, writes status file
 const fs = require('fs');
 const path = require('path');
@@ -66,7 +66,7 @@ const https = require('https');
 const os = require('os');
 
 const statusDir = ${JSON.stringify(statusDir)};
-const cacheFile = path.join(os.tmpdir(), 'claude-conductor-usage-cache.json');
+const cacheFile = path.join(os.tmpdir(), 'claude-command-center-usage-cache.json');
 const CACHE_MAX_AGE = 60; // seconds
 
 function fetchUsageLimits() {
@@ -219,6 +219,12 @@ process.stdin.on('end', async () => {
     const visionCliSrc = path.join(__dirname, '../../scripts/vision-cli.js')
     if (fs.existsSync(visionCliSrc)) {
       fs.copyFileSync(visionCliSrc, path.join(resourcesScriptsDir, 'vision-cli.js'))
+    }
+
+    // Deploy vision-prompt.txt from bundled scripts
+    const visionPromptSrc = path.join(__dirname, '../../scripts/vision-prompt.txt')
+    if (fs.existsSync(visionPromptSrc)) {
+      fs.copyFileSync(visionPromptSrc, path.join(resourcesScriptsDir, 'vision-prompt.txt'))
     }
   } catch { /* resources dir may not be configured yet */ }
 }

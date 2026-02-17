@@ -4,8 +4,8 @@
  */
 import { BrowserWindow } from 'electron'
 import WebSocket from 'ws'
-import { execSync } from 'child_process'
 import { logInfo, logError } from './debug-logger'
+import { readRegistry, writeRegistry } from './registry'
 
 const DEFAULT_UPDATE_SERVER = 'ws://localhost:9847'
 const RECONNECT_BASE = 5000       // Initial reconnect delay (5s)
@@ -35,37 +35,22 @@ let hasLoggedDisconnect = false    // Suppress repeated disconnect logs
 
 // Read update server URL from registry
 function getUpdateServerUrl(): string {
-  if (process.platform !== 'win32') return DEFAULT_UPDATE_SERVER
-  try {
-    const result = execSync(
-      'reg query "HKCU\\Software\\Claude Conductor" /v UpdateServer 2>nul',
-      { encoding: 'utf-8' }
-    )
-    const match = result.match(/UpdateServer\s+REG_SZ\s+(.+)/)
-    if (match && match[1].trim()) {
-      return match[1].trim()
-    }
-  } catch { /* use default */ }
-  return DEFAULT_UPDATE_SERVER
+  return readRegistry('UpdateServer') || DEFAULT_UPDATE_SERVER
 }
 
 // Set update server URL in registry
 export function setUpdateServerUrl(url: string): boolean {
   if (process.platform !== 'win32') return false
-  try {
-    execSync(
-      `reg add "HKCU\\Software\\Claude Conductor" /v UpdateServer /t REG_SZ /d "${url}" /f`,
-      { encoding: 'utf-8' }
-    )
+  const ok = writeRegistry('UpdateServer', url)
+  if (ok) {
     logInfo(`[update-client] Set update server URL: ${url}`)
     // Reconnect to new server
     disconnect()
     connect()
-    return true
-  } catch (err) {
-    logError('[update-client] Failed to set update server URL:', err)
-    return false
+  } else {
+    logError('[update-client] Failed to set update server URL')
   }
+  return ok
 }
 
 // Get the local hash (from the installed app's source-hash.json)

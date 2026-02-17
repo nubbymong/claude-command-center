@@ -30,7 +30,7 @@ export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
       </div>
 
       <div className="flex-1 text-center text-xs text-overlay1 font-medium">
-        Claude Conductor <span className="text-yellow/70">Beta</span>
+        Claude Command Center <span className="text-yellow/70">Beta</span>
       </div>
 
       <div className="titlebar-no-drag flex items-center">

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Claude Conductor — Resume Picker
+// Claude Command Center — Resume Picker
 // Shows a conversation picker in the terminal before Claude launches.
 // For local (non-SSH) sessions that have prior conversations on disk.
 

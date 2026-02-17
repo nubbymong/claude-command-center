@@ -216,7 +216,7 @@ export async function listWindows(): Promise<Array<{ id: string; name: string; t
     })
 
     return sources
-      .filter(s => !s.thumbnail.isEmpty() && !s.name.includes('Claude Conductor'))
+      .filter(s => !s.thumbnail.isEmpty() && !s.name.includes('Claude Command Center'))
       .map(s => ({
         id: s.id,
         name: s.name,

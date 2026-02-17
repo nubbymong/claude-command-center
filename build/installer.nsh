@@ -25,7 +25,7 @@
 
     ${if} $R0 == 0
       ; Still running — show debug info and let user decide
-      MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "Claude Conductor is still running.$\n$\nProcess: ${APP_EXECUTABLE_FILENAME}$\nCheck result: $R0$\n$\nPlease close it manually and click Retry." IDRETRY retry_check
+      MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "Claude Command Center is still running.$\n$\nProcess: ${APP_EXECUTABLE_FILENAME}$\nCheck result: $R0$\n$\nPlease close it manually and click Retry." IDRETRY retry_check
       Quit
       retry_check:
     ${endIf}
@@ -34,10 +34,57 @@
   ${endIf}
 !macroend
 
-; Write registry entries after install
+; Write registry entries after install + migrate from old key
 !macro customInstall
-  WriteRegStr HKCU "Software\Claude Conductor" "InstallPath" "$INSTDIR"
-  WriteRegStr HKCU "Software\Claude Conductor" "SourcePath" ""
+  ; --- Registry migration from "Claude Conductor" → "Claude Command Center" ---
+  ; Read all values from old key and copy to new key (if old key exists)
+  ReadRegStr $R0 HKCU "Software\Claude Conductor" "DataDirectory"
+  ${If} $R0 != ""
+    DetailPrint "Migrating registry from Claude Conductor to Claude Command Center..."
+    ; Copy DataDirectory (don't overwrite if new key already has it)
+    ReadRegStr $R1 HKCU "Software\Claude Command Center" "DataDirectory"
+    ${If} $R1 == ""
+      WriteRegStr HKCU "Software\Claude Command Center" "DataDirectory" $R0
+      DetailPrint "  Migrated DataDirectory: $R0"
+    ${EndIf}
+
+    ; Copy ResourcesDirectory
+    ReadRegStr $R0 HKCU "Software\Claude Conductor" "ResourcesDirectory"
+    ${If} $R0 != ""
+      ReadRegStr $R1 HKCU "Software\Claude Command Center" "ResourcesDirectory"
+      ${If} $R1 == ""
+        WriteRegStr HKCU "Software\Claude Command Center" "ResourcesDirectory" $R0
+        DetailPrint "  Migrated ResourcesDirectory: $R0"
+      ${EndIf}
+    ${EndIf}
+
+    ; Copy SourcePath
+    ReadRegStr $R0 HKCU "Software\Claude Conductor" "SourcePath"
+    ${If} $R0 != ""
+      ReadRegStr $R1 HKCU "Software\Claude Command Center" "SourcePath"
+      ${If} $R1 == ""
+        WriteRegStr HKCU "Software\Claude Command Center" "SourcePath" $R0
+        DetailPrint "  Migrated SourcePath: $R0"
+      ${EndIf}
+    ${EndIf}
+
+    ; Copy UpdateServer
+    ReadRegStr $R0 HKCU "Software\Claude Conductor" "UpdateServer"
+    ${If} $R0 != ""
+      ReadRegStr $R1 HKCU "Software\Claude Command Center" "UpdateServer"
+      ${If} $R1 == ""
+        WriteRegStr HKCU "Software\Claude Command Center" "UpdateServer" $R0
+        DetailPrint "  Migrated UpdateServer: $R0"
+      ${EndIf}
+    ${EndIf}
+
+    ; Do NOT delete old key — app startup will clean it up after confirming migration
+    DetailPrint "Registry migration complete (old key preserved for rollback safety)"
+  ${EndIf}
+
+  ; Always write InstallPath to new key
+  WriteRegStr HKCU "Software\Claude Command Center" "InstallPath" "$INSTDIR"
+  WriteRegStr HKCU "Software\Claude Command Center" "SourcePath" ""
 !macroend
 
 ; ============================================================
@@ -61,10 +108,13 @@ Function DataDirPage
   ${NSD_CreateLabel} 0 0 100% 24u "Choose where to store sessions, logs, and configuration data:"
   Pop $0
 
-  ; Read existing value from registry, default to LOCALAPPDATA
-  ReadRegStr $1 HKCU "Software\Claude Conductor" "DataDirectory"
+  ; Read existing value from new registry key, fall back to old key, default for fresh install
+  ReadRegStr $1 HKCU "Software\Claude Command Center" "DataDirectory"
   ${If} $1 == ""
-    StrCpy $1 "$LOCALAPPDATA\Claude Conductor"
+    ReadRegStr $1 HKCU "Software\Claude Conductor" "DataDirectory"
+  ${EndIf}
+  ${If} $1 == ""
+    StrCpy $1 "$LOCALAPPDATA\Claude Command Center"
   ${EndIf}
 
   ${NSD_CreateDirRequest} 0 30u 75% 12u "$1"
@@ -78,7 +128,7 @@ Function DataDirPage
 FunctionEnd
 
 Function OnBrowseDataDir
-  nsDialogs::SelectFolderDialog "Select Data Directory" "$LOCALAPPDATA\Claude Conductor"
+  nsDialogs::SelectFolderDialog "Select Data Directory" "$LOCALAPPDATA\Claude Command Center"
   Pop $0
   ${If} $0 != "error"
     ${NSD_SetText} $DataDir $0
@@ -87,7 +137,7 @@ FunctionEnd
 
 Function DataDirPageLeave
   ${NSD_GetText} $DataDir $0
-  WriteRegStr HKCU "Software\Claude Conductor" "DataDirectory" $0
+  WriteRegStr HKCU "Software\Claude Command Center" "DataDirectory" $0
   CreateDirectory "$0"
   CreateDirectory "$0\sessions"
   CreateDirectory "$0\logs"
@@ -101,10 +151,13 @@ Function ResourcesDirPage
   ${NSD_CreateLabel} 0 0 100% 36u "Choose where to store shared resources (insights, screenshots, skills, scripts).$\nUse a network-mountable path to share across SSH sessions."
   Pop $0
 
-  ; Read existing value from registry, default to LOCALAPPDATA
-  ReadRegStr $1 HKCU "Software\Claude Conductor" "ResourcesDirectory"
+  ; Read existing value from new registry key, fall back to old key, default for fresh install
+  ReadRegStr $1 HKCU "Software\Claude Command Center" "ResourcesDirectory"
   ${If} $1 == ""
-    StrCpy $1 "$LOCALAPPDATA\Claude Conductor\resources"
+    ReadRegStr $1 HKCU "Software\Claude Conductor" "ResourcesDirectory"
+  ${EndIf}
+  ${If} $1 == ""
+    StrCpy $1 "$LOCALAPPDATA\Claude Command Center\resources"
   ${EndIf}
 
   ${NSD_CreateDirRequest} 0 42u 75% 12u "$1"
@@ -118,7 +171,7 @@ Function ResourcesDirPage
 FunctionEnd
 
 Function OnBrowseResourcesDir
-  nsDialogs::SelectFolderDialog "Select Resources Directory" "$LOCALAPPDATA\Claude Conductor\resources"
+  nsDialogs::SelectFolderDialog "Select Resources Directory" "$LOCALAPPDATA\Claude Command Center\resources"
   Pop $0
   ${If} $0 != "error"
     ${NSD_SetText} $ResourcesDir $0
@@ -127,7 +180,7 @@ FunctionEnd
 
 Function ResourcesDirPageLeave
   ${NSD_GetText} $ResourcesDir $0
-  WriteRegStr HKCU "Software\Claude Conductor" "ResourcesDirectory" $0
+  WriteRegStr HKCU "Software\Claude Command Center" "ResourcesDirectory" $0
   CreateDirectory "$0"
   CreateDirectory "$0\CONFIG"
   CreateDirectory "$0\insights"
@@ -140,8 +193,11 @@ FunctionEnd
 ; UNINSTALLER — protect CONFIG/ by default
 ; ============================================================
 !macro customUnInstall
-  ; Read ResourcesDirectory from registry to find CONFIG/
-  ReadRegStr $0 HKCU "Software\Claude Conductor" "ResourcesDirectory"
+  ; Read ResourcesDirectory from new key, fall back to old key
+  ReadRegStr $0 HKCU "Software\Claude Command Center" "ResourcesDirectory"
+  ${If} $0 == ""
+    ReadRegStr $0 HKCU "Software\Claude Conductor" "ResourcesDirectory"
+  ${EndIf}
   ${If} $0 != ""
     ${If} ${FileExists} "$0\CONFIG\*.*"
       ; Only ask during manual uninstall (not during silent upgrade)
@@ -155,4 +211,7 @@ FunctionEnd
       skip_config_dialog:
     ${EndIf}
   ${EndIf}
+
+  ; Clean up old registry key if it still exists
+  DeleteRegKey /ifempty HKCU "Software\Claude Conductor"
 !macroend

@@ -6,7 +6,7 @@ import { startSessionLog, logSessionData, endSessionLog } from './session-logger
 import { logPtyOutput, isDebugModeEnabled } from './debug-capture'
 import { logInfo, logDebug, logError } from './debug-logger'
 import { writeCliSetupPty, getResourcesDirectory } from './ipc/setup-handlers'
-import { getVisionEnv } from './vision-manager'
+import { getVisionEnv, getRemoteVisionInstructionsSetup } from './vision-manager'
 
 import * as path from 'path'
 import * as fs from 'fs'
@@ -178,17 +178,19 @@ export function spawnPty(
         setTimeout(() => {
           const visionSetup = getRemoteVisionSetup(sessionId)
           const visionPrefix = visionSetup ? `${visionSetup}; ` : ''
+          const visionClaudeMd = getRemoteVisionInstructionsSetup()
+          const visionClaudeMdPrefix = visionClaudeMd ? `${visionClaudeMd}; ` : ''
           if (postCommand) {
             // cd to path and run post command
             ptyProcess.write(`cd ${remotePath} && ${postCommand}\r`)
             postCommandSent = true
           } else if (startClaudeAfter && !options?.shellOnly) {
-            // Deploy statusline, set vision env, then start Claude
+            // Deploy statusline, set vision env + CLAUDE.md, then start Claude
             claudeSent = true
-            ptyProcess.write(`cd ${remotePath}; ${getRemoteStatuslineSetup()}; ${visionPrefix}claude\r`)
+            ptyProcess.write(`cd ${remotePath}; ${getRemoteStatuslineSetup()}; ${visionPrefix}${visionClaudeMdPrefix}claude\r`)
           } else {
-            // Shell only or no Claude — just cd, deploy statusline, set vision env
-            ptyProcess.write(`cd ${remotePath}; ${getRemoteStatuslineSetup()}; ${visionPrefix}clear\r`)
+            // Shell only or no Claude — just cd, deploy statusline, set vision env + CLAUDE.md
+            ptyProcess.write(`cd ${remotePath}; ${getRemoteStatuslineSetup()}; ${visionPrefix}${visionClaudeMdPrefix}clear\r`)
           }
         }, 200)
         return
@@ -207,10 +209,12 @@ export function spawnPty(
             postCommandShellReady = true
             setTimeout(() => {
               claudeSent = true
-              const visionSetup = getRemoteVisionSetup(sessionId)
-              const visionPrefix = visionSetup ? `${visionSetup}; ` : ''
-              // Deploy statusline on remote for context tracking, set vision env, then start Claude
-              ptyProcess.write(`${getRemoteStatuslineSetup()}; ${visionPrefix}claude\r`)
+              const visionSetup2 = getRemoteVisionSetup(sessionId)
+              const visionPrefix2 = visionSetup2 ? `${visionSetup2}; ` : ''
+              const visionClaudeMd2 = getRemoteVisionInstructionsSetup()
+              const visionClaudeMdPrefix2 = visionClaudeMd2 ? `${visionClaudeMd2}; ` : ''
+              // Deploy statusline on remote for context tracking, set vision env + CLAUDE.md, then start Claude
+              ptyProcess.write(`${getRemoteStatuslineSetup()}; ${visionPrefix2}${visionClaudeMdPrefix2}claude\r`)
             }, 300)
           }
         }

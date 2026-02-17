@@ -3,7 +3,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
 import { spawn } from 'child_process'
-import { BrowserWindow } from 'electron'
+import { BrowserWindow, nativeImage } from 'electron'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import { logInfo, logError } from './debug-logger'
 
@@ -294,7 +294,21 @@ class VisionManager {
           if (!fs.existsSync(screenshotsDir)) fs.mkdirSync(screenshotsDir, { recursive: true })
           const filename = `vision-${Date.now()}.jpg`
           const filePath = path.join(screenshotsDir, filename)
-          fs.writeFileSync(filePath, Buffer.from(data, 'base64'))
+
+          // Downscale high-res captures to cap token usage (max 1280px wide)
+          const MAX_WIDTH = 1280
+          const rawBuffer = Buffer.from(data, 'base64')
+          const img = nativeImage.createFromBuffer(rawBuffer)
+          const size = img.getSize()
+          if (size.width > MAX_WIDTH) {
+            const scale = MAX_WIDTH / size.width
+            const resized = img.resize({ width: MAX_WIDTH, height: Math.round(size.height * scale) })
+            fs.writeFileSync(filePath, resized.toJPEG(75))
+            logInfo(`[vision] Screenshot downscaled ${size.width}x${size.height} -> ${MAX_WIDTH}x${Math.round(size.height * scale)}`)
+          } else {
+            fs.writeFileSync(filePath, rawBuffer)
+          }
+
           return { ok: true, path: filePath }
         }
 
@@ -457,6 +471,97 @@ class VisionManager {
   }
 }
 
+// === Vision CLAUDE.md Instructions ===
+
+const VISION_MARKER_START = '<!-- VISION-INSTRUCTIONS-START -->'
+const VISION_MARKER_END = '<!-- VISION-INSTRUCTIONS-END -->'
+
+/**
+ * Inject vision instructions into ~/.claude/CLAUDE.md so Claude
+ * automatically knows about the vision CLI tools.
+ * Uses section markers to add/update without clobbering user content.
+ */
+function injectVisionInstructions(): void {
+  try {
+    const promptFile = path.join(getResourcesDirectory(), 'scripts', 'vision-prompt.txt')
+    if (!fs.existsSync(promptFile)) return
+
+    const instructions = fs.readFileSync(promptFile, 'utf-8').trim()
+    const section = `${VISION_MARKER_START}\n${instructions}\n${VISION_MARKER_END}`
+
+    const claudeDir = path.join(os.homedir(), '.claude')
+    const claudeMdPath = path.join(claudeDir, 'CLAUDE.md')
+
+    if (!fs.existsSync(claudeDir)) fs.mkdirSync(claudeDir, { recursive: true })
+
+    let existing = ''
+    if (fs.existsSync(claudeMdPath)) {
+      existing = fs.readFileSync(claudeMdPath, 'utf-8')
+    }
+
+    // Replace existing vision section or append
+    const markerRegex = new RegExp(
+      `${VISION_MARKER_START.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\S]*?${VISION_MARKER_END.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`,
+      'g'
+    )
+
+    if (markerRegex.test(existing)) {
+      const updated = existing.replace(markerRegex, section)
+      fs.writeFileSync(claudeMdPath, updated)
+    } else {
+      const separator = existing.length > 0 ? '\n\n' : ''
+      fs.writeFileSync(claudeMdPath, existing + separator + section + '\n')
+    }
+    logInfo('[vision] Injected vision instructions into ~/.claude/CLAUDE.md')
+  } catch (err: any) {
+    logError('[vision] Failed to inject CLAUDE.md instructions:', err?.message)
+  }
+}
+
+/**
+ * Remove vision instructions from ~/.claude/CLAUDE.md when no vision sessions remain.
+ */
+function removeVisionInstructions(): void {
+  try {
+    const claudeMdPath = path.join(os.homedir(), '.claude', 'CLAUDE.md')
+    if (!fs.existsSync(claudeMdPath)) return
+
+    const content = fs.readFileSync(claudeMdPath, 'utf-8')
+    const markerRegex = new RegExp(
+      `\\n?\\n?${VISION_MARKER_START.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\S]*?${VISION_MARKER_END.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\n?`,
+      'g'
+    )
+
+    if (markerRegex.test(content)) {
+      const cleaned = content.replace(markerRegex, '').trim()
+      if (cleaned.length === 0) {
+        fs.unlinkSync(claudeMdPath)
+      } else {
+        fs.writeFileSync(claudeMdPath, cleaned + '\n')
+      }
+      logInfo('[vision] Removed vision instructions from ~/.claude/CLAUDE.md')
+    }
+  } catch (err: any) {
+    logError('[vision] Failed to clean CLAUDE.md instructions:', err?.message)
+  }
+}
+
+/**
+ * Generate shell commands to inject vision instructions into CLAUDE.md on a remote machine.
+ */
+export function getRemoteVisionInstructionsSetup(): string {
+  try {
+    const promptFile = path.join(getResourcesDirectory(), 'scripts', 'vision-prompt.txt')
+    if (!fs.existsSync(promptFile)) return ''
+    const instructions = fs.readFileSync(promptFile, 'utf-8').trim()
+    // Escape single quotes for shell injection
+    const escaped = instructions.replace(/'/g, "'\\''")
+    return `mkdir -p ~/.claude 2>/dev/null; if ! grep -q 'VISION-INSTRUCTIONS-START' ~/.claude/CLAUDE.md 2>/dev/null; then echo '\\n${VISION_MARKER_START}\\n${escaped}\\n${VISION_MARKER_END}' >> ~/.claude/CLAUDE.md; fi`
+  } catch {
+    return ''
+  }
+}
+
 // === Public API ===
 
 export async function startVisionForSession(
@@ -477,6 +582,10 @@ export async function startVisionForSession(
   const proxyPort = await manager.start(getWindow)
   registry.set(debugPort, { manager, sessionIds: new Set([sessionId]) })
   sessionPortMap.set(sessionId, debugPort)
+
+  // Inject vision instructions into CLAUDE.md on first vision session
+  injectVisionInstructions()
+
   logInfo(`[vision] Started new VisionManager for session ${sessionId} on debug port ${debugPort}, proxy port ${proxyPort}`)
   return proxyPort
 }
@@ -494,6 +603,10 @@ export function stopVisionForSession(sessionId: string): void {
   if (entry.sessionIds.size === 0) {
     entry.manager.stop()
     registry.delete(debugPort)
+    // If no vision managers remain, clean up CLAUDE.md instructions
+    if (registry.size === 0) {
+      removeVisionInstructions()
+    }
     logInfo(`[vision] Stopped VisionManager for port ${debugPort} (no more sessions)`)
   } else {
     logInfo(`[vision] Session ${sessionId} left VisionManager on port ${debugPort} (${entry.sessionIds.size} remaining)`)
@@ -545,6 +658,7 @@ export function stopAllVisionManagers(): void {
   }
   registry.clear()
   sessionPortMap.clear()
+  removeVisionInstructions()
 }
 
 /**

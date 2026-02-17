@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Claude Conductor Release Script
+ * Claude Command Center Release Script
  *
  * Full automated release pipeline:
  * 1. Pre-flight checks (npm audit, git clean, gh auth)
@@ -151,7 +151,7 @@ fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n', 'utf-8')
 
 console.log('')
 console.log('  ===========================================')
-console.log(`    Claude Conductor Beta  v${version}`)
+console.log(`    Claude Command Center Beta  v${version}`)
 console.log(`    (from v${oldVersion})`)
 console.log('  ===========================================')
 
@@ -191,7 +191,7 @@ if (SKIP_CLAUDE) {
     // Extract just the first entry as format example
     const formatExample = changelogContent.substring(0, 1500)
 
-    const prompt = `You are generating release notes for Claude Conductor Beta v${version} (previously v${oldVersion}).
+    const prompt = `You are generating release notes for Claude Command Center Beta v${version} (previously v${oldVersion}).
 
 CRITICAL RULES:
 - Do NOT include any file paths, usernames, machine names, API keys, or personal information
@@ -336,16 +336,16 @@ try {
 // --- Step 6: Post-build (copy, hash, checksum) ---
 step(6, TOTAL_STEPS, 'Post-build: copy installer, generate checksums...')
 
-const installerName = `ClaudeConductor-Beta-${version}.exe`
+const installerName = `ClaudeCommandCenter-Beta-${version}.exe`
 const installerSrc = path.join(PROJECT_ROOT, 'dist', installerName)
 const installerDst = path.join(PROJECT_ROOT, installerName)
-const installerLatest = path.join(PROJECT_ROOT, 'ClaudeConductor-latest.exe')
+const installerLatest = path.join(PROJECT_ROOT, 'ClaudeCommandCenter-latest.exe')
 const checksumsPath = path.join(PROJECT_ROOT, 'CHECKSUMS.txt')
 
 if (fs.existsSync(installerSrc)) {
   // Clean up old versioned installers from project root
   const oldExes = fs.readdirSync(PROJECT_ROOT).filter(f =>
-    f.startsWith('ClaudeConductor-') && f.endsWith('.exe') && f !== installerName && f !== 'ClaudeConductor-latest.exe'
+    (f.startsWith('ClaudeCommandCenter-') || f.startsWith('ClaudeConductor-')) && f.endsWith('.exe') && f !== installerName && f !== 'ClaudeCommandCenter-latest.exe'
   )
   if (oldExes.length > 0) {
     oldExes.forEach(f => {
@@ -360,7 +360,7 @@ if (fs.existsSync(installerSrc)) {
 
   // SHA-256
   const hash = sha256File(installerDst)
-  const checksumContent = `SHA-256 Checksums for Claude Conductor Beta v${version}\nGenerated: ${new Date().toISOString()}\n\n${hash}  ${installerName}\n`
+  const checksumContent = `SHA-256 Checksums for Claude Command Center Beta v${version}\nGenerated: ${new Date().toISOString()}\n\n${hash}  ${installerName}\n`
   fs.writeFileSync(checksumsPath, checksumContent, 'utf-8')
   ok(`SHA-256: ${hash.substring(0, 16)}...`)
 } else {

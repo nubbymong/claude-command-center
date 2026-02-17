@@ -2,78 +2,41 @@ import { BrowserWindow, app } from 'electron'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as crypto from 'crypto'
-import { execSync } from 'child_process'
 import { logInfo, logError } from './debug-logger'
+import { readRegistry, writeRegistry } from './registry'
 
 const IS_PACKAGED = app.isPackaged
 const HASH_FILE = path.join(app.getPath('userData'), 'source-hash.json')
 
 // Read source path from Windows registry (set during install or manually)
 function getSourcePathFromRegistry(): string | null {
-  if (process.platform !== 'win32') return null
-  try {
-    const result = execSync(
-      'reg query "HKCU\\Software\\Claude Conductor" /v SourcePath 2>nul',
-      { encoding: 'utf-8' }
-    )
-    const match = result.match(/SourcePath\s+REG_SZ\s+(.+)/)
-    if (match && match[1].trim()) {
-      return match[1].trim()
-    }
-  } catch { /* registry key doesn't exist */ }
-  return null
+  return readRegistry('SourcePath') || null
 }
 
 // Read data directory from Windows registry
 export function getDataDirectoryFromRegistry(): string | null {
-  if (process.platform !== 'win32') return null
-  try {
-    const result = execSync(
-      'reg query "HKCU\\Software\\Claude Conductor" /v DataDirectory 2>nul',
-      { encoding: 'utf-8' }
-    )
-    const match = result.match(/DataDirectory\s+REG_SZ\s+(.+)/)
-    if (match && match[1].trim()) {
-      return match[1].trim()
-    }
-  } catch { /* registry key doesn't exist */ }
-  return null
+  return readRegistry('DataDirectory') || null
 }
 
 // Read install path from Windows registry
 export function getInstallPath(): string {
-  if (process.platform !== 'win32') return ''
-  try {
-    const result = execSync(
-      'reg query "HKCU\\Software\\Claude Conductor" /v InstallPath 2>nul',
-      { encoding: 'utf-8' }
-    )
-    const match = result.match(/InstallPath\s+REG_SZ\s+(.+)/)
-    if (match && match[1].trim()) {
-      return match[1].trim()
-    }
-  } catch { /* registry key doesn't exist */ }
-  return ''
+  return readRegistry('InstallPath') || ''
 }
 
 // Set source path in Windows registry
 export function setSourcePathInRegistry(sourcePath: string): boolean {
   if (process.platform !== 'win32') return false
-  try {
-    execSync(
-      `reg add "HKCU\\Software\\Claude Conductor" /v SourcePath /t REG_SZ /d "${sourcePath}" /f`,
-      { encoding: 'utf-8' }
-    )
+  const ok = writeRegistry('SourcePath', sourcePath)
+  if (ok) {
     logInfo(`[update-watcher] Set source path in registry: ${sourcePath}`)
     // Trigger re-initialization of watcher
     if (windowGetter) {
       reinitializeWatcher()
     }
-    return true
-  } catch (err) {
-    logError('[update-watcher] Failed to set source path in registry:', err)
-    return false
+  } else {
+    logError('[update-watcher] Failed to set source path in registry')
   }
+  return ok
 }
 
 // Get project root DYNAMICALLY - always re-read from registry

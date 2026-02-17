@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Standalone Update Server
- * Run this to push update notifications to production Claude Conductor apps
+ * Run this to push update notifications to production Claude Command Center apps
  *
  * Usage: node scripts/update-server.js
  */
@@ -16,7 +16,7 @@ const PORT = 9847
 const PROJECT_ROOT = path.resolve(__dirname, '..')
 const SRC_DIR = path.join(PROJECT_ROOT, 'src')
 
-console.log('Claude Conductor Update Server')
+console.log('Claude Command Center Update Server')
 console.log('==============================')
 console.log(`Project root: ${PROJECT_ROOT}`)
 console.log(`Watching: ${SRC_DIR}`)

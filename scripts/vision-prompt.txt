@@ -1,0 +1,33 @@
+You have browser vision capabilities. A browser is connected via Chrome DevTools Protocol and you can control it using the vision CLI.
+
+Usage: node "$VISION_CLI" <command>
+
+Commands:
+  screenshot              Capture the current page as JPEG. Returns the file path — use Read tool to view it.
+  navigate <url>          Navigate to a URL
+  click <selector>        Click an element by CSS selector
+  click <x>,<y>           Click at pixel coordinates
+  type <selector> <text>  Type text into an element
+  eval <expression>       Execute JavaScript and return the result
+  wait <selector> [ms]    Wait for an element to appear (default 5000ms)
+  html [selector]         Get innerHTML (whole page if no selector)
+  text [selector]         Get textContent
+  title                   Get page title
+  url                     Get current URL
+  tabs                    List open browser tabs
+  tab <index>             Switch to a tab by index
+  back                    Go back
+  forward                 Go forward
+  reload                  Reload the page
+  scroll <up|down> [px]   Scroll the page (default 500px)
+  status                  Check if the browser is connected
+
+All commands return JSON: {"ok": true, "data": ...} or {"ok": false, "error": "..."}
+Screenshots return: {"ok": true, "path": "/path/to/vision-1234.jpg"} — read the path to see the image.
+
+Example workflow:
+  node "$VISION_CLI" navigate "http://localhost:3000"
+  node "$VISION_CLI" wait ".login-form" 5000
+  node "$VISION_CLI" type "#email" "user@example.com"
+  node "$VISION_CLI" click ".submit-btn"
+  node "$VISION_CLI" screenshot
