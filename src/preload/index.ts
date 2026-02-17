@@ -214,6 +214,7 @@ const electronAPI: ElectronAPI = {
   },
   update: {
     check: () => ipcRenderer.invoke('update:check'),
+    getVersion: () => ipcRenderer.invoke('update:getVersion'),
     installAndRestart: () => ipcRenderer.invoke('update:installAndRestart'),
     hasSourcePath: () => ipcRenderer.invoke('update:hasSourcePath'),
     getSourcePath: () => ipcRenderer.invoke('update:getSourcePath'),
