@@ -23,10 +23,9 @@ export default function WindowPickerModal({ onCapture, onCancel }: Props) {
   }, [])
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onCancel}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
       <div
         className="bg-mantle border border-surface0 rounded-lg shadow-xl p-5 w-[680px] max-h-[80vh] overflow-y-auto"
-        onClick={(e) => e.stopPropagation()}
       >
         <h2 className="text-lg font-semibold text-text mb-4">Select Window to Capture</h2>
 

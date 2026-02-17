@@ -43,10 +43,9 @@ export default function StatusBar() {
       </div>
 
       {showCliHelp && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setShowCliHelp(false)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
           <div
             className="bg-mantle border border-surface0 rounded-lg shadow-xl p-5 w-[480px] max-h-[80vh] overflow-y-auto"
-            onClick={(e) => e.stopPropagation()}
           >
             <h2 className="text-lg font-semibold text-text mb-3">Claude CLI Not Found</h2>
             <p className="text-sm text-subtext0 mb-4">

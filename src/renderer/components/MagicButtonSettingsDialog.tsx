@@ -21,10 +21,9 @@ export default function MagicButtonSettingsDialog({ onClose }: Props) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
       <div
         className="bg-mantle border border-surface0 rounded-lg shadow-xl p-5 w-[380px]"
-        onClick={(e) => e.stopPropagation()}
       >
         <h2 className="text-lg font-semibold text-text mb-4">Screenshot Settings</h2>
 
