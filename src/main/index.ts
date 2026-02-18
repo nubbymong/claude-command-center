@@ -310,17 +310,20 @@ function createWindow(): void {
   }
 }
 
-// Single instance lock
-const gotTheLock = app.requestSingleInstanceLock()
+// Single instance lock (skip in dev so prod + dev can run side by side)
+const isDev = !app.isPackaged
+const gotTheLock = isDev ? true : app.requestSingleInstanceLock()
 if (!gotTheLock) {
   app.quit()
 } else {
-  app.on('second-instance', () => {
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore()
-      mainWindow.focus()
-    }
-  })
+  if (!isDev) {
+    app.on('second-instance', () => {
+      if (mainWindow) {
+        if (mainWindow.isMinimized()) mainWindow.restore()
+        mainWindow.focus()
+      }
+    })
+  }
 
   app.whenReady().then(() => {
     // Set up application menu with Edit roles so Ctrl+C/V/X/A work in frameless window

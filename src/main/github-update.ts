@@ -10,7 +10,11 @@ import * as os from 'os'
 import { execSync } from 'child_process'
 import { logInfo, logError } from './debug-logger'
 
-const REPO = 'nubbymong/claude_command_center_windows'
+import { readRegistry } from './registry'
+
+// Read from registry first (allows user override), fall back to default
+const DEFAULT_REPO = 'nubbymong/claude_command_center_windows'
+const REPO = readRegistry('GitHubRepo') || DEFAULT_REPO
 
 interface ReleaseInfo {
   version: string

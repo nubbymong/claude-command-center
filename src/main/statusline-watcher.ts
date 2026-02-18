@@ -5,6 +5,10 @@ import * as os from 'os'
 
 import { getResourcesDirectory, getDataDirectory } from './ipc/setup-handlers'
 
+// Re-export from shared types for backward compatibility
+export type { StatuslineData } from '../shared/types'
+import type { StatuslineData } from '../shared/types'
+
 // Lazy-initialized: can't call getDataDirectory() at module load time
 let STATUS_DIR: string | null = null
 function getStatusDir(): string {
@@ -14,31 +18,6 @@ function getStatusDir(): string {
   return STATUS_DIR
 }
 const STATUSLINE_SCRIPT = path.join(os.homedir(), '.claude', 'claude-multi-statusline.js')
-
-export interface StatuslineData {
-  sessionId: string
-  model?: string
-  contextUsedPercent?: number
-  contextRemainingPercent?: number
-  contextWindowSize?: number
-  inputTokens?: number
-  outputTokens?: number
-  costUsd?: number
-  totalDurationMs?: number
-  linesAdded?: number
-  linesRemoved?: number
-  // Rate limits from Anthropic API
-  rateLimitCurrent?: number        // 5-hour utilization %
-  rateLimitCurrentResets?: string   // ISO timestamp
-  rateLimitWeekly?: number         // 7-day utilization %
-  rateLimitWeeklyResets?: string   // ISO timestamp
-  rateLimitExtra?: {
-    enabled: boolean
-    utilization: number            // %
-    usedUsd: number
-    limitUsd: number
-  }
-}
 
 /**
  * Deploy the statusline script that Claude Code will invoke.
@@ -71,7 +50,8 @@ const CACHE_MAX_AGE = 60; // seconds
 
 function fetchUsageLimits() {
   return new Promise((resolve) => {
-    // Read OAuth token from Claude's credentials
+    // Read OAuth token from Claude CLI's own credentials file (opt-in: only used if file exists).
+    // This token is created by "claude login" and is NOT stored or transmitted by this app.
     const credsPath = path.join(os.homedir(), '.claude', '.credentials.json');
     try {
       if (!fs.existsSync(credsPath)) return resolve(null);

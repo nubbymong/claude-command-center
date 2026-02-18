@@ -79,13 +79,21 @@ export function migrateRegistryKeys(): void {
 
 // --- Internal helpers ---
 
+/** Sanitize a string for safe use in a shell command argument. */
+function sanitizeShellArg(s: string): string {
+  // Remove characters that could break out of quoted strings or inject commands
+  return s.replace(/["`$\\!&|;<>(){}[\]\r\n]/g, '')
+}
+
 function readRegValue(key: string, valueName: string): string | null {
   try {
+    const safeKey = sanitizeShellArg(key)
+    const safeName = sanitizeShellArg(valueName)
     const result = execSync(
-      `reg query "HKCU\\${key}" /v ${valueName} 2>nul`,
+      `reg query "HKCU\\${safeKey}" /v "${safeName}" 2>nul`,
       { encoding: 'utf-8' }
     )
-    const match = result.match(new RegExp(`${valueName}\\s+REG_SZ\\s+(.+)`))
+    const match = result.match(new RegExp(`${safeName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s+REG_SZ\\s+(.+)`))
     if (match && match[1].trim()) {
       return match[1].trim()
     }
@@ -95,8 +103,11 @@ function readRegValue(key: string, valueName: string): string | null {
 
 function writeRegValue(key: string, valueName: string, value: string): boolean {
   try {
+    const safeKey = sanitizeShellArg(key)
+    const safeName = sanitizeShellArg(valueName)
+    const safeValue = sanitizeShellArg(value)
     execSync(
-      `reg add "HKCU\\${key}" /v ${valueName} /t REG_SZ /d "${value}" /f`,
+      `reg add "HKCU\\${safeKey}" /v "${safeName}" /t REG_SZ /d "${safeValue}" /f`,
       { encoding: 'utf-8' }
     )
     return true
@@ -107,8 +118,9 @@ function writeRegValue(key: string, valueName: string, value: string): boolean {
 
 function readAllRegValues(key: string): Record<string, string> | null {
   try {
+    const safeKey = sanitizeShellArg(key)
     const result = execSync(
-      `reg query "HKCU\\${key}" 2>nul`,
+      `reg query "HKCU\\${safeKey}" 2>nul`,
       { encoding: 'utf-8' }
     )
     const values: Record<string, string> = {}

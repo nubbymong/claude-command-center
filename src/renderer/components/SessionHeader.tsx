@@ -1,15 +1,16 @@
 import React, { useState } from 'react'
 import { Session, useSessionStore } from '../stores/sessionStore'
 import { killSessionPty, clearSpawned } from '../ptyTracker'
-import { markSessionForResumePicker } from '../App'
+import { markSessionForResumePicker } from '../utils/resumePicker'
 import NotesBar from './NotesBar'
 
 interface Props {
   session: Session
   isShowingPartner?: boolean
+  sidebarCollapsed?: boolean
 }
 
-export default function SessionHeader({ session, isShowingPartner }: Props) {
+export default function SessionHeader({ session, isShowingPartner, sidebarCollapsed }: Props) {
   const updateSession = useSessionStore((s) => s.updateSession)
   const [recoverMenu, setRecoverMenu] = useState<{ x: number; y: number } | null>(null)
 
@@ -95,6 +96,24 @@ export default function SessionHeader({ session, isShowingPartner }: Props) {
       <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: session.color }} />
       <span className="font-medium text-sm text-text">{session.label}</span>
       <span className="text-xs text-overlay0">{session.model || 'default'}</span>
+      {sidebarCollapsed && session.contextPercent != null && (
+        <span className="text-xs text-overlay0">{Math.round(session.contextPercent)}%</span>
+      )}
+      {sidebarCollapsed && session.costUsd != null && (
+        <span className="text-xs text-green">${session.costUsd.toFixed(2)}</span>
+      )}
+      {sidebarCollapsed && session.workingDirectory && (
+        <span className="text-xs text-overlay0 truncate max-w-[120px]" title={session.workingDirectory}>
+          {session.workingDirectory.split(/[/\\]/).filter(Boolean).pop() || session.workingDirectory}
+        </span>
+      )}
+      {sidebarCollapsed && (
+        <span className={`text-[10px] px-1 py-0.5 rounded font-medium ${
+          session.shellOnly ? 'bg-surface1 text-overlay1' : 'bg-peach/20 text-peach'
+        }`}>
+          {session.shellOnly ? 'Shell' : 'Claude'}
+        </span>
+      )}
       {session.sessionType === 'ssh' && session.sshConfig && (
         <span className="text-xs text-mauve">SSH: {session.sshConfig.username}@{session.sshConfig.host}</span>
       )}

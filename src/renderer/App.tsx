@@ -13,134 +13,26 @@ import InsightsPage from './components/InsightsPage'
 import CloudAgentsPage from './components/CloudAgentsPage'
 import SetupDialog from './components/SetupDialog'
 import WhatsNewModal, { shouldShowWhatsNew, markWhatsNewSeen } from './components/WhatsNewModal'
+import ErrorBoundary from './components/ErrorBoundary'
+import CloseDialog from './components/CloseDialog'
 import { useSessionStore, Session } from './stores/sessionStore'
-import { useCommandStore, DEFAULT_COMMANDS } from './stores/commandStore'
 import { useConfigStore } from './stores/configStore'
+import { useCommandStore } from './stores/commandStore'
 import { useMagicButtonStore } from './stores/magicButtonStore'
-import { useSettingsStore } from './stores/settingsStore'
 import { useAppMetaStore } from './stores/appMetaStore'
-import { useCloudAgentStore } from './stores/cloudAgentStore'
+import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
+import { markSessionForResumePicker } from './utils/resumePicker'
+import { gatherLocalStorageData, hydrateStores } from './utils/configHydration'
 import type { SessionState, SavedSession } from './types/electron'
 
-export type ViewType = 'cloud-agents' | 'sessions' | 'usage' | 'browser' | 'logs' | 'settings' | 'insights'
+// Re-export ViewType from its canonical location for backwards compatibility
+export type { ViewType } from './types/views'
+import type { ViewType } from './types/views'
 
-// Error boundary to catch renderer crashes and show error instead of blank screen
-class ErrorBoundary extends React.Component<
-  { children: React.ReactNode },
-  { hasError: boolean; error: Error | null }
-> {
-  constructor(props: { children: React.ReactNode }) {
-    super(props)
-    this.state = { hasError: false, error: null }
-  }
-
-  static getDerivedStateFromError(error: Error) {
-    return { hasError: true, error }
-  }
-
-  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
-    console.error('[ErrorBoundary] Renderer crash:', error, errorInfo)
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div className="flex flex-col h-screen bg-base text-text p-8">
-          <h1 className="text-2xl font-bold text-red mb-4">Something went wrong</h1>
-          <p className="text-subtext1 mb-4">The app encountered an error. Your sessions are still running in the background.</p>
-          <pre className="bg-surface0 p-4 rounded text-sm text-red overflow-auto flex-1 mb-4">
-            {this.state.error?.message}
-            {'\n\n'}
-            {this.state.error?.stack}
-          </pre>
-          <button
-            onClick={() => this.setState({ hasError: false, error: null })}
-            className="px-4 py-2 bg-blue text-crust rounded hover:bg-blue/80 w-fit"
-          >
-            Try to recover
-          </button>
-        </div>
-      )
-    }
-    return this.props.children
-  }
-}
-
-// Track sessions that should use the resume picker (restored local sessions)
-const resumePickerSessionIds = new Set<string>()
-
-export function markSessionForResumePicker(sessionId: string) {
-  resumePickerSessionIds.add(sessionId)
-}
-
-export function shouldUseResumePicker(sessionId: string): boolean {
-  if (resumePickerSessionIds.has(sessionId)) {
-    resumePickerSessionIds.delete(sessionId)
-    return true
-  }
-  return false
-}
+// Re-export resume picker for backwards compatibility
+export { markSessionForResumePicker, shouldUseResumePicker } from './utils/resumePicker'
 
 declare const __APP_VERSION__: string
-
-/**
- * Gather all relevant localStorage keys for migration to CONFIG/.
- */
-function gatherLocalStorageData(): Record<string, string> {
-  const keys = [
-    'claude-multi-commands',
-    'claude-multi-commands-seeded-v2',
-    'claude-multi-configs',
-    'claude-multi-config-groups',
-    'claude-multi-config-sections',
-    'claude-multi-settings',
-    'claude-multi-magic-buttons',
-    'claude-multi-color-migration-v2',
-    'claude-conductor-setup-version',
-    'claude-conductor-last-seen-version',
-  ]
-  const data: Record<string, string> = {}
-  for (const key of keys) {
-    const value = localStorage.getItem(key)
-    if (value != null) {
-      data[key] = value
-    }
-  }
-  return data
-}
-
-/**
- * Hydrate all stores from loaded config data.
- */
-function hydrateStores(configData: Record<string, unknown>): void {
-  // Commands — seed defaults if empty
-  const commands = (configData.commands as any[]) || [...DEFAULT_COMMANDS]
-  useCommandStore.getState().hydrate(commands)
-
-  // Terminal configs
-  const configs = (configData.configs as any[]) || []
-  const groups = (configData.configGroups as any[]) || []
-  const sections = (configData.configSections as any[]) || []
-  useConfigStore.getState().hydrate(configs, groups, sections)
-
-  // Magic buttons
-  const magicButtons = configData.magicButtons || {}
-  useMagicButtonStore.getState().hydrate(magicButtons as any)
-
-  // Settings
-  const settings = configData.settings || {}
-  useSettingsStore.getState().hydrate(settings as any)
-
-  // App meta
-  const appMeta = configData.appMeta || {}
-  useAppMetaStore.getState().hydrate(appMeta as any)
-
-  // Cloud agents
-  const cloudAgents = (configData.cloudAgents as any[]) || []
-  useCloudAgentStore.getState().hydrate(cloudAgents)
-
-  console.log('[App] All stores hydrated from CONFIG/')
-}
 
 export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true)
@@ -158,6 +50,9 @@ export default function App() {
   const activeSession = sessions.find((s) => s.id === activeSessionId)
   const hasRestoredRef = useRef(false)
 
+  // Global keyboard shortcuts
+  useKeyboardShortcuts(activeSessionId, setSidebarOpen, setView)
+
   const togglePartner = (sessionId: string) => {
     setPartnerActive(prev => {
       const next = new Set(prev)
@@ -171,7 +66,6 @@ export default function App() {
   useEffect(() => {
     window.electronAPI.setup.isComplete().then(async (complete) => {
       setSetupComplete(complete)
-
       if (complete) {
         await loadAndHydrateConfig()
       }
@@ -189,11 +83,9 @@ export default function App() {
         if (Object.keys(lsData).length > 0) {
           await window.electronAPI.config.migrateFromLocalStorage(lsData)
           console.log('[App] Migration complete, reloading...')
-          // Reload after migration
           const reloaded = await window.electronAPI.config.loadAll()
           hydrateStores(reloaded.data)
         } else {
-          // Fresh install — hydrate with defaults
           hydrateStores(result.data)
         }
       } else {
@@ -203,7 +95,6 @@ export default function App() {
       setConfigLoaded(true)
     } catch (err) {
       console.error('[App] Failed to load config:', err)
-      // Fall through — hydrate with empty defaults so the app still works
       hydrateStores({})
       setConfigLoaded(true)
     }
@@ -215,17 +106,13 @@ export default function App() {
     hasRestoredRef.current = true
 
     async function postConfigInit() {
-      // On version change: check if CLI is trusted
       const appMeta = useAppMetaStore.getState().meta
       if (appMeta.setupVersion !== __APP_VERSION__) {
-        // If we already have config data, this is an upgrade — just stamp and skip
         const hasExistingConfig = useConfigStore.getState().configs.length > 0 ||
           useCommandStore.getState().commands.length > 0
         if (hasExistingConfig) {
-          // Existing user — auto-stamp, no CLI setup needed
           useAppMetaStore.getState().update({ setupVersion: __APP_VERSION__ })
         } else {
-          // Fresh install — check if CLI is trusted
           const cliReady = await window.electronAPI.setup.isCliReady()
           if (cliReady) {
             useAppMetaStore.getState().update({ setupVersion: __APP_VERSION__ })
@@ -237,13 +124,11 @@ export default function App() {
 
       await restoreSavedSessions()
 
-      // Auto-cleanup old screenshots
       const magicSettings = useMagicButtonStore.getState().settings
       if (magicSettings.autoDeleteDays != null && magicSettings.autoDeleteDays > 0) {
         window.electronAPI.screenshot.cleanup(magicSettings.autoDeleteDays)
       }
 
-      // Check if we should show What's New modal (after a short delay for restore to complete)
       setTimeout(() => {
         if (shouldShowWhatsNew()) {
           setShowWhatsNew(true)
@@ -262,25 +147,19 @@ export default function App() {
 
       console.log(`[App] Restoring ${savedState.sessions.length} sessions...`)
 
-      // Convert saved sessions to full Session objects
       const restoredSessions: Session[] = savedState.sessions.map((saved: SavedSession) => ({
         ...saved,
         status: 'idle' as const,
         createdAt: Date.now(),
-        // Mark non-shellOnly sessions for /resume
       }))
 
-      // Mark local Claude sessions for resume picker (shows conversation list before Claude)
       for (const session of restoredSessions) {
         if (!session.shellOnly && session.sessionType === 'local') {
           markSessionForResumePicker(session.id)
         }
       }
 
-      // Restore to store
       useSessionStore.getState().restoreSessions(restoredSessions, savedState.activeSessionId)
-
-      // Clear the saved state after successful restore
       await window.electronAPI.session.clear()
 
       console.log('[App] Sessions restored')
@@ -323,7 +202,6 @@ export default function App() {
     }
   }
 
-  // Close with saving sessions (for restore on next launch)
   const handleSaveAndClose = async () => {
     const isUpdate = closeDialog === 'update'
     setCloseDialog(null)
@@ -346,7 +224,6 @@ export default function App() {
     }
   }
 
-  // Close without saving sessions (sessions die)
   const handleCloseWithoutSaving = async () => {
     const isUpdate = closeDialog === 'update'
     setCloseDialog(null)
@@ -372,12 +249,10 @@ export default function App() {
     const handleCloseRequested = () => {
       if (isClosing) return
       const state = useSessionStore.getState()
-      // If no sessions, allow close immediately
       if (state.sessions.length === 0) {
         window.electronAPI.window.allowClose()
         return
       }
-      // Show close dialog
       setCloseDialog('close')
     }
 
@@ -385,78 +260,8 @@ export default function App() {
     return () => unsub()
   }, [isClosing])
 
-
-  // Keyboard shortcuts
-  useEffect(() => {
-    const handleKeyDown = async (e: KeyboardEvent) => {
-      // Ctrl+W: close current session
-      if (e.ctrlKey && e.key === 'w') {
-        e.preventDefault()
-        if (activeSessionId) {
-          killSessionPty(activeSessionId)
-          killSessionPty(activeSessionId + '-partner')
-          useSessionStore.getState().removeSession(activeSessionId)
-        }
-      }
-      // Ctrl+Tab: next session
-      if (e.ctrlKey && e.key === 'Tab') {
-        e.preventDefault()
-        const state = useSessionStore.getState()
-        if (state.sessions.length > 1 && state.activeSessionId) {
-          const idx = state.sessions.findIndex(s => s.id === state.activeSessionId)
-          const nextIdx = e.shiftKey
-            ? (idx - 1 + state.sessions.length) % state.sessions.length
-            : (idx + 1) % state.sessions.length
-          state.setActiveSession(state.sessions[nextIdx].id)
-        }
-      }
-      // Ctrl+1-9: jump to session
-      if (e.ctrlKey && e.key >= '1' && e.key <= '9') {
-        e.preventDefault()
-        const idx = parseInt(e.key) - 1
-        const state = useSessionStore.getState()
-        if (idx < state.sessions.length) {
-          state.setActiveSession(state.sessions[idx].id)
-          setView('sessions')
-        }
-      }
-      // Ctrl+B: toggle sidebar
-      if (e.ctrlKey && e.key === 'b') {
-        e.preventDefault()
-        setSidebarOpen(prev => !prev)
-      }
-      // Ctrl+Shift+D: toggle debug recording
-      if (e.ctrlKey && e.shiftKey && e.key === 'D') {
-        e.preventDefault()
-        window.electronAPI.debug.isEnabled().then(enabled => {
-          if (enabled) {
-            window.electronAPI.debug.disable()
-          } else {
-            window.electronAPI.debug.enable()
-          }
-        })
-      }
-      // Alt+V: paste clipboard image into active terminal
-      if (e.altKey && e.key === 'v') {
-        e.preventDefault()
-        const state = useSessionStore.getState()
-        if (state.activeSessionId) {
-          const base64 = await window.electronAPI.clipboard.readImage()
-          if (base64) {
-            window.electronAPI.pty.write(state.activeSessionId, base64)
-          }
-        }
-      }
-    }
-
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [activeSessionId])
-
   // Render non-session views (shown on top of sessions)
   const renderOverlayView = () => {
-    if (view === 'usage') return <UsageDashboard />
-    if (view === 'browser') return <ProjectBrowser />
     if (view === 'logs') return <LogViewer />
     if (view === 'settings') return <SettingsPage />
     if (view === 'insights') return <InsightsPage />
@@ -465,7 +270,6 @@ export default function App() {
   }
 
   // Sessions are ALWAYS rendered (kept alive) but hidden when another view is active.
-  // This preserves terminal state, input text, and PTY connections across view switches.
   const renderSessions = () => {
     if (!activeSessionId || sessions.length === 0 || !activeSession) {
       return (
@@ -485,8 +289,7 @@ export default function App() {
     return (
       <div className="flex-1 flex flex-col" style={{ display: view === 'sessions' ? 'flex' : 'none', minHeight: 0 }}>
         <TabBar />
-        <SessionHeader session={activeSession} isShowingPartner={partnerActive.has(activeSession.id)} />
-        {/* Render ALL sessions but only show the active one - keeps PTYs alive */}
+        <SessionHeader session={activeSession} isShowingPartner={partnerActive.has(activeSession.id)} sidebarCollapsed={!sidebarOpen} />
         {sessions.map((session) => {
           const isShowingPartner = partnerActive.has(session.id)
           const hasPartner = !!session.partnerTerminalPath
@@ -500,7 +303,6 @@ export default function App() {
                 minHeight: 0,
               }}
             >
-              {/* Main terminal */}
               <div
                 className="flex-1 flex flex-col"
                 style={{
@@ -509,6 +311,7 @@ export default function App() {
                 }}
               >
                 <TerminalView
+                  key={session.id + '-main-' + session.createdAt}
                   sessionId={session.id}
                   configId={session.configId}
                   cwd={session.sessionType === 'local' ? session.workingDirectory : undefined}
@@ -523,7 +326,6 @@ export default function App() {
                   legacyVersion={session.legacyVersion}
                 />
               </div>
-              {/* Partner terminal */}
               {hasPartner && (
                 <div
                   className="flex-1 flex flex-col"
@@ -533,6 +335,7 @@ export default function App() {
                   }}
                 >
                   <TerminalView
+                    key={partnerPtyId + '-' + session.createdAt}
                     sessionId={partnerPtyId}
                     configId={session.configId}
                     cwd={session.partnerTerminalPath}
@@ -572,7 +375,7 @@ export default function App() {
     }} />
   }
 
-  // Show setup dialog on version change — CLI not trusted, skip to step 2 (dirs already saved)
+  // Show setup dialog on version change — CLI not trusted
   if (needsCliSetup) {
     return <SetupDialog initialStep={2} onComplete={() => { useAppMetaStore.getState().update({ setupVersion: __APP_VERSION__ }); setNeedsCliSetup(false) }} />
   }
@@ -585,45 +388,18 @@ export default function App() {
   return (
     <ErrorBoundary>
       <div className="flex flex-col h-screen bg-base text-text">
-        {/* What's New modal */}
         {showWhatsNew && <WhatsNewModal onClose={handleWhatsNewClose} />}
 
-        {/* Close/Update dialog */}
         {closeDialog && (
-          <div className="absolute inset-0 bg-base/80 z-50 flex items-center justify-center">
-            <div className="bg-surface0 border border-surface1 rounded-lg shadow-2xl p-6 max-w-sm w-full mx-4">
-              <h2 className="text-lg font-semibold text-text mb-2">
-                {closeDialog === 'update' ? 'Update & Restart' : 'Close App'}
-              </h2>
-              <p className="text-sm text-overlay1 mb-5">
-                You have {sessions.length} active session{sessions.length !== 1 ? 's' : ''}.
-                Would you like to save them for next launch?
-              </p>
-              <div className="flex flex-col gap-2">
-                <button
-                  onClick={handleSaveAndClose}
-                  className="w-full py-2 px-4 text-sm font-medium rounded bg-blue hover:bg-blue/80 text-crust transition-colors"
-                >
-                  Save Sessions
-                </button>
-                <button
-                  onClick={handleCloseWithoutSaving}
-                  className="w-full py-2 px-4 text-sm font-medium rounded bg-surface1 hover:bg-surface2 text-text transition-colors"
-                >
-                  Close Sessions
-                </button>
-                <button
-                  onClick={() => { setCloseDialog(null); window.electronAPI.window.cancelClose() }}
-                  className="w-full py-1.5 px-4 text-xs text-overlay0 hover:text-overlay1 transition-colors"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          </div>
+          <CloseDialog
+            mode={closeDialog}
+            sessionCount={sessions.length}
+            onSaveAndClose={handleSaveAndClose}
+            onCloseWithoutSaving={handleCloseWithoutSaving}
+            onCancel={() => { setCloseDialog(null); window.electronAPI.window.cancelClose() }}
+          />
         )}
 
-        {/* Closing/Updating overlay */}
         {isClosing && (
           <div className="absolute inset-0 bg-base/90 z-50 flex items-center justify-center">
             <div className="text-center">
@@ -638,17 +414,16 @@ export default function App() {
         )}
         <TitleBar sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
         <div className="flex flex-1 overflow-hidden">
-          {sidebarOpen && <Sidebar currentView={view} onViewChange={setView} onUpdateRequested={() => {
+          <Sidebar currentView={view} onViewChange={setView} collapsed={!sidebarOpen} onUpdateRequested={() => {
             const state = useSessionStore.getState()
             if (state.sessions.length === 0) {
-              // No sessions — show updating overlay then update
               setIsClosing(true)
               setIsUpdating(true)
               window.electronAPI.update.installAndRestart().catch(() => { setIsClosing(false); setIsUpdating(false) })
             } else {
               setCloseDialog('update')
             }
-          }} />}
+          }} />
           <main className="flex-1 flex flex-col overflow-hidden titlebar-no-drag">
             {renderSessions()}
             {renderOverlayView()}

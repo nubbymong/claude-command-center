@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { COLOR_SWATCHES } from './SessionDialog'
+import { generateId } from '../utils/id'
 
 interface NoteEntry {
   id: string
@@ -14,10 +15,6 @@ interface Props {
   configId?: string             // Current session's configId
   onSave: (id: string, label: string, content: string, color: string, configId?: string) => void
   onCancel: () => void
-}
-
-function generateId(): string {
-  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
 }
 
 export default function NoteDialog({ note, configId, onSave, onCancel }: Props) {

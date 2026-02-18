@@ -184,8 +184,10 @@ export function spawnPty(
         return
       }
 
-      // After SSH login, cd to remotePath and optionally run postCommand
-      if (!cdSent && (data.includes('$') || data.includes('#') || data.includes('>') || data.includes('~'))) {
+      // After SSH login, cd to remotePath and optionally run postCommand.
+      // Only match shell prompts at end of the last line (not MOTD/banners).
+      const lastLine = data.split('\n').pop()?.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').trim() || ''
+      if (!cdSent && lastLine.length < 200 && /[$#>~]\s*$/.test(lastLine)) {
         cdSent = true
         setTimeout(() => {
           const visionSetup = getRemoteVisionSetup(sessionId)
@@ -441,19 +443,19 @@ export function gracefulExitPty(sessionId: string, timeoutMs = 5000): Promise<vo
       return
     }
 
+    // Attach exit listener BEFORE writing to avoid race condition
+    entry.ptyProcess.onExit(() => {
+      clearTimeout(timeout)
+      ptySessions.delete(sessionId)
+      resolve()
+    })
+
     const timeout = setTimeout(() => {
       // Timeout - force kill
       console.log(`[pty-manager] Graceful exit timeout for ${sessionId}, force killing`)
       killPty(sessionId)
       resolve()
     }, timeoutMs)
-
-    // Listen for exit
-    entry.ptyProcess.onExit(() => {
-      clearTimeout(timeout)
-      ptySessions.delete(sessionId)
-      resolve()
-    })
 
     // Send Escape (cancel any pending input), then /exit
     entry.ptyProcess.write('\x1b')  // Escape

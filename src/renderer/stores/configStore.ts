@@ -34,6 +34,7 @@ export interface TerminalConfig {
     enabled: boolean
     version: string
   }
+  pinned?: boolean
 }
 
 export interface ConfigGroup {
@@ -69,6 +70,9 @@ interface ConfigState {
   toggleSectionCollapsed: (sectionId: string) => void
   moveGroupToSection: (groupId: string, sectionId: string | undefined) => void
   moveConfigToSection: (configId: string, sectionId: string | undefined) => void
+  togglePinned: (configId: string) => void
+  duplicateConfig: (configId: string) => TerminalConfig | undefined
+  reorderConfigs: (reordered: TerminalConfig[]) => void
 }
 
 export const useConfigStore = create<ConfigState>((set) => ({
@@ -199,5 +203,37 @@ export const useConfigStore = create<ConfigState>((set) => ({
       )
       saveConfigNow('configs', configs)
       return { configs }
-    })
+    }),
+
+  togglePinned: (configId) =>
+    set((state) => {
+      const configs = state.configs.map((c) =>
+        c.id === configId ? { ...c, pinned: !c.pinned } : c
+      )
+      saveConfigNow('configs', configs)
+      return { configs }
+    }),
+
+  reorderConfigs: (reordered) =>
+    set(() => {
+      saveConfigNow('configs', reordered)
+      return { configs: reordered }
+    }),
+
+  duplicateConfig: (configId) => {
+    const state = useConfigStore.getState()
+    const original = state.configs.find((c) => c.id === configId)
+    if (!original) return undefined
+    const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
+    const copy: TerminalConfig = {
+      ...original,
+      id,
+      label: original.label + ' (copy)',
+      pinned: undefined,
+    }
+    const configs = [...state.configs, copy]
+    saveConfigNow('configs', configs)
+    useConfigStore.setState({ configs })
+    return copy
+  }
 }))

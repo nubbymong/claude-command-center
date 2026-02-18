@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { useSessionStore, Session } from '../stores/sessionStore'
-import { markSessionForResumePicker } from '../App'
+import { markSessionForResumePicker } from '../utils/resumePicker'
 import { COLOR_SWATCHES } from './SessionDialog'
 
 interface DiscoveredProject {

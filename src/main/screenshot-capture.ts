@@ -36,7 +36,19 @@ function uniquePath(filename: string): string {
  * Minimizes the main window, shows a fullscreen overlay for selection,
  * captures the screen, crops to selection, saves to SCREENSHOTS_DIR.
  */
+let captureInProgress = false
+
 export async function captureRectangle(mainWindow: BrowserWindow): Promise<string | null> {
+  if (captureInProgress) return null // Prevent conflicting rapid calls
+  captureInProgress = true
+  try {
+    return await _captureRectangleImpl(mainWindow)
+  } finally {
+    captureInProgress = false
+  }
+}
+
+async function _captureRectangleImpl(mainWindow: BrowserWindow): Promise<string | null> {
   ensureDir()
 
   const primaryDisplay = screen.getPrimaryDisplay()

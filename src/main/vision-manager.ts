@@ -246,11 +246,12 @@ class VisionManager {
         }
       })
 
-      // Listen on 0.0.0.0 so SSH sessions on remote machines can reach the proxy
-      this.proxyServer.listen(0, '0.0.0.0', () => {
+      // Listen on 127.0.0.1 only — not accessible from network
+      // SSH sessions use port forwarding to reach the proxy
+      this.proxyServer.listen(0, '127.0.0.1', () => {
         const addr = this.proxyServer!.address() as { port: number }
         this.proxyPort = addr.port
-        logInfo(`[vision] HTTP proxy listening on 0.0.0.0:${this.proxyPort} (debug port ${this.debugPort})`)
+        logInfo(`[vision] HTTP proxy listening on 127.0.0.1:${this.proxyPort} (debug port ${this.debugPort})`)
         resolve()
       })
 

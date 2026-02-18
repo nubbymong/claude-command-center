@@ -44,10 +44,12 @@ import {
 function createMockProcess(): any {
   const stdout = { on: vi.fn() }
   const stderr = { on: vi.fn() }
+  const stdin = { write: vi.fn(), end: vi.fn() }
   return {
     pid: 12345,
     stdout,
     stderr,
+    stdin,
     on: vi.fn(),
     kill: vi.fn(),
   }
@@ -114,13 +116,18 @@ describe('cloud-agent-manager', () => {
 
       expect(mockSpawn).toHaveBeenCalledWith(
         'claude',
-        ['-p', 'Fix the bug', '--dangerously-skip-permissions'],
+        ['--dangerously-skip-permissions'],
         expect.objectContaining({
           cwd: 'C:\\dev\\project',
           shell: true,
           windowsHide: true,
+          stdio: ['pipe', 'pipe', 'pipe'],
         })
       )
+      // Prompt is piped via stdin, not passed as arg
+      const proc = mockSpawn.mock.results[0]?.value
+      expect(proc.stdin.write).toHaveBeenCalledWith('Fix the bug')
+      expect(proc.stdin.end).toHaveBeenCalled()
       expect(agent.status).toBe('running')
       expect(agent.name).toBe('Test')
       expect(agent.id).toMatch(/^ca-/)
