@@ -393,18 +393,46 @@ export function spawnPty(
 }
 
 // Large writes to WinPTY/ConPTY can overflow the console input buffer,
-// causing truncation. Chunk large writes with a small inter-chunk delay.
-const WRITE_CHUNK_SIZE = 512
+// causing truncation. Chunk large writes with inter-chunk delay.
+// Uses a per-session queue so concurrent writes don't interleave.
+const WRITE_CHUNK_SIZE = 256
+const WRITE_CHUNK_DELAY = 12
+const writeQueues = new Map<string, string[]>()
+const writingActive = new Set<string>()
 
-function writeChunked(ptyProcess: pty.IPty, data: string): void {
+function drainWriteQueue(sessionId: string, ptyProcess: pty.IPty): void {
+  if (writingActive.has(sessionId)) return
+  const queue = writeQueues.get(sessionId)
+  if (!queue || queue.length === 0) return
+
+  // Concatenate all queued data into one stream to chunk through
+  const data = queue.splice(0).join('')
+  if (data.length === 0) return
+
+  if (data.length <= WRITE_CHUNK_SIZE) {
+    ptyProcess.write(data)
+    // Check if more arrived while we wrote
+    if (queue.length > 0) drainWriteQueue(sessionId, ptyProcess)
+    return
+  }
+
+  writingActive.add(sessionId)
   let offset = 0
   const writeNext = () => {
-    if (offset >= data.length) return
+    if (offset >= data.length) {
+      writingActive.delete(sessionId)
+      // More data may have queued while we were chunking
+      drainWriteQueue(sessionId, ptyProcess)
+      return
+    }
     const end = Math.min(offset + WRITE_CHUNK_SIZE, data.length)
     ptyProcess.write(data.slice(offset, end))
     offset = end
     if (offset < data.length) {
-      setTimeout(writeNext, 5)
+      setTimeout(writeNext, WRITE_CHUNK_DELAY)
+    } else {
+      writingActive.delete(sessionId)
+      drainWriteQueue(sessionId, ptyProcess)
     }
   }
   writeNext()
@@ -414,11 +442,9 @@ export function writePty(sessionId: string, data: string): void {
   try {
     const session = ptySessions.get(sessionId)
     if (session) {
-      if (data.length > WRITE_CHUNK_SIZE) {
-        writeChunked(session.ptyProcess, data)
-      } else {
-        session.ptyProcess.write(data)
-      }
+      if (!writeQueues.has(sessionId)) writeQueues.set(sessionId, [])
+      writeQueues.get(sessionId)!.push(data)
+      drainWriteQueue(sessionId, session.ptyProcess)
     } else if (sessionId === '__cli_setup__') {
       writeCliSetupPty(data)
     } else {
@@ -432,6 +458,8 @@ export function writePty(sessionId: string, data: string): void {
     const code = (err as NodeJS.ErrnoException)?.code
     if (code === 'EPIPE' || code === 'EIO') {
       ptySessions.delete(sessionId)
+      writeQueues.delete(sessionId)
+      writingActive.delete(sessionId)
     } else {
       throw err
     }
@@ -460,6 +488,8 @@ export function killPty(sessionId: string): void {
     ptySessions.delete(sessionId)
   }
   pendingWrites.delete(sessionId)
+  writeQueues.delete(sessionId)
+  writingActive.delete(sessionId)
 }
 
 export function killAllPty(): void {
