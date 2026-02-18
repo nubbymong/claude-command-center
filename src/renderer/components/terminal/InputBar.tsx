@@ -85,6 +85,9 @@ export default function InputBar({
         if (imagePath) {
           const sessionPath = getScreenshotPathForSession(imagePath, sessionType)
           window.electronAPI.pty.write(sessionId, sessionPath + '\r')
+          if (claudeWaiting) {
+            updateSession(sessionId, { claudeWaiting: false })
+          }
         }
         return
       }
