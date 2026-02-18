@@ -121,20 +121,6 @@ export default function SettingsPage() {
                     className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-24 focus:outline-none focus:border-blue/50 tabular-nums transition-colors"
                   />
                 </Field>
-                <Field label="Input Bar Max Height">
-                  <div className="flex items-center gap-3">
-                    <input
-                      type="range"
-                      value={settings.inputBarMaxHeight || 400}
-                      onChange={e => save({ inputBarMaxHeight: parseInt(e.target.value) })}
-                      min={100}
-                      max={800}
-                      step={50}
-                      className="flex-1 accent-blue"
-                    />
-                    <span className="text-xs text-overlay1 font-mono w-14 text-right tabular-nums">{settings.inputBarMaxHeight || 400}px</span>
-                  </div>
-                </Field>
               </Section>
 
               <Section title="Debug Logging" icon={<path d="M4 4l8 8M4 12l8-8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />}>
