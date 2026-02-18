@@ -22,6 +22,7 @@ import { registerConfigHandlers } from './ipc/config-handlers'
 import { registerCloudAgentHandlers } from './ipc/cloud-agent-handlers'
 import { registerLegacyVersionHandlers } from './ipc/legacy-version-handlers'
 import { killAllAgents } from './cloud-agent-manager'
+import { startServiceStatusPoller, stopServiceStatusPoller } from './service-status'
 import { initUpdateWatcher, stopUpdateWatcher, getProjectRootPath, isPackagedApp } from './update-watcher'
 import { startUpdateServer, stopUpdateServer } from './update-server'
 import { startUpdateClient, stopUpdateClient } from './update-client'
@@ -390,10 +391,14 @@ if (!gotTheLock) {
 
     // Start watching for statusline updates
     startStatuslineWatcher(getWindow)
+
+    // Start polling Anthropic service status
+    startServiceStatusPoller(getWindow)
   })
 
   app.on('before-quit', () => {
     logInfo('App quitting...')
+    stopServiceStatusPoller()
     stopUpdateWatcher()
     stopUpdateServer()
     stopUpdateClient()

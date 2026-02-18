@@ -5,12 +5,34 @@ interface Props {
   onToggleSidebar: () => void
 }
 
+const STATUS_COLORS: Record<string, string> = {
+  operational: 'bg-green',
+  degraded_performance: 'bg-yellow',
+  partial_outage: 'bg-peach',
+  major_outage: 'bg-red',
+}
+
+const STATUS_LABELS: Record<string, string> = {
+  operational: 'Operational',
+  degraded_performance: 'Degraded Performance',
+  partial_outage: 'Partial Outage',
+  major_outage: 'Major Outage',
+}
+
 export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
   const [maximized, setMaximized] = useState(false)
+  const [serviceStatus, setServiceStatus] = useState<string | null>(null)
 
   useEffect(() => {
     window.electronAPI.window.isMaximized().then(setMaximized)
     const unsub = window.electronAPI.window.onMaximizedChanged(setMaximized)
+    return unsub
+  }, [])
+
+  useEffect(() => {
+    const unsub = window.electronAPI.serviceStatus.onUpdate((data) => {
+      setServiceStatus(data.status)
+    })
     return unsub
   }, [])
 
@@ -33,7 +55,13 @@ export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
         Claude Command Center <span className="text-yellow/70">Beta</span>
       </div>
 
-      <div className="titlebar-no-drag flex items-center">
+      <div className="titlebar-no-drag flex items-center gap-1">
+        {serviceStatus && (
+          <div
+            className={`w-2 h-2 rounded-full ${STATUS_COLORS[serviceStatus] || 'bg-overlay0'}`}
+            title={`Claude Code: ${STATUS_LABELS[serviceStatus] || serviceStatus}`}
+          />
+        )}
         <button
           onClick={() => window.electronAPI.window.minimize()}
           className="p-2 hover:bg-surface0 rounded transition-colors text-overlay1 hover:text-text"

@@ -239,6 +239,9 @@ export interface ElectronAPI {
     onStatusChanged: (callback: (agent: CloudAgent) => void) => () => void
     onOutputChunk: (callback: (data: { id: string; chunk: string }) => void) => () => void
   }
+  serviceStatus: {
+    onUpdate: (callback: (data: { status: string; description: string }) => void) => () => void
+  }
   cli: {
     check: () => Promise<boolean>
   }
