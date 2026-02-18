@@ -9,7 +9,7 @@ import CommandBar from './CommandBar'
 import { shouldUseResumePicker } from '../utils/resumePicker'
 import { stripCursorSequences } from '../utils/terminalFormatting'
 import { THEME } from './terminal/terminalTheme'
-import { ContextBar, ScrollToBottomButton, InputBar } from './terminal'
+import { ContextBar, ScrollToBottomButton } from './terminal'
 import { useStatuslineSubscription } from '../hooks/useStatuslineSubscription'
 import { useCompactionInterrupt } from '../hooks/useCompactionInterrupt'
 import { useVisionLifecycle } from '../hooks/useVisionLifecycle'
@@ -58,12 +58,10 @@ interface Props {
 
 export default function TerminalView({ sessionId, configId, cwd, shellOnly, elevated, ssh, isActive = true, partnerEnabled, isPartnerActive, onTogglePartner, partnerSessionId, visionConfig, legacyVersion, agentIds }: Props) {
   const xtermContainerRef = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLTextAreaElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const attentionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const attentionAckedRef = useRef(false)
-  const [inputValue, setInputValue] = useState('')
   const [isScrolledUp, setIsScrolledUp] = useState(false)
   const isScrolledUpRef = useRef(false)
   const updateSession = useSessionStore((s) => s.updateSession)
@@ -229,18 +227,12 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
           if (promptPattern.test(stripped.trim()) && !attentionAckedRef.current) {
             attentionTimerRef.current = setTimeout(() => {
               attentionTimerRef.current = null
-              // claudeWaiting: always set (controls red InputBar on active tab)
               // needsAttention: only for inactive tabs (controls tab notification dot)
               const state = useSessionStore.getState()
-              const updates: Record<string, any> = { claudeWaiting: true }
               if (state.activeSessionId !== sessionId) {
-                updates.needsAttention = true
+                updateSession(sessionId, { needsAttention: true })
               }
-              updateSession(sessionId, updates)
             }, 2000)
-          } else if (visibleText.length > 10) {
-            // Significant non-prompt output — Claude is responding, no longer waiting
-            updateSession(sessionId, { claudeWaiting: false })
           }
         }, 250)
       }
@@ -329,8 +321,6 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         }
       }
       container.addEventListener('contextmenu', handleContextMenu, true)
-
-      inputRef.current?.focus()
     }
 
     requestAnimationFrame(initTerminal)
@@ -354,8 +344,6 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
   }, [sessionId])
 
   const needsAttention = session?.needsAttention ?? false
-  const claudeWaiting = session?.claudeWaiting ?? false
-  const inputBarHeight = session?.inputBarHeight ?? 0
 
   return (
     <div className="flex-1 flex flex-col titlebar-no-drag overflow-hidden relative" style={{ minHeight: 0 }}>
@@ -404,19 +392,6 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         visionDebugPort={visionConfig?.debugPort}
         visionUrl={visionConfig?.url}
         visionHeadless={visionConfig?.headless}
-      />
-      <InputBar
-        sessionId={sessionId}
-        sessionType={ssh ? 'ssh' : 'local'}
-        needsAttention={needsAttention}
-        claudeWaiting={claudeWaiting}
-        inputBarHeight={inputBarHeight}
-        terminalRef={terminalRef}
-        isScrolledUpRef={isScrolledUpRef}
-        setIsScrolledUp={setIsScrolledUp}
-        inputRef={inputRef}
-        inputValue={inputValue}
-        setInputValue={setInputValue}
       />
     </div>
   )

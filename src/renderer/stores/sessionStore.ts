@@ -32,7 +32,6 @@ export interface Session {
   sshConfig?: SSHConfig
   contextPercent?: number
   needsAttention?: boolean
-  claudeWaiting?: boolean            // Claude is prompting for input (red InputBar)
   costUsd?: number
   modelName?: string
   linesAdded?: number
@@ -53,7 +52,6 @@ export interface Session {
   }
   compactionInterrupt?: boolean         // Per-session on/off (default off)
   compactionInterruptTriggered?: boolean // Set true after auto-Escape, prevents re-trigger
-  inputBarHeight?: number               // Per-session remembered input bar height (px)
   visionConfig?: {                       // Vision browser control config
     enabled: boolean
     browser: 'chrome' | 'edge'
