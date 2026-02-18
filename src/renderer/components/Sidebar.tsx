@@ -955,21 +955,6 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
             session={s}
             hasGroup={!!cfg?.groupId}
             onRename={() => handleStartSessionRename(s.id, s.label)}
-            onUpdateClaude={!s.shellOnly ? () => {
-              const isSSH = s.sessionType === 'ssh'
-              window.electronAPI.pty.write(s.id, '\x1b')
-              setTimeout(() => {
-                window.electronAPI.pty.write(s.id, '/exit\n')
-              }, 300)
-              setTimeout(() => {
-                const cmd = isSSH ? 'sudo claude update' : 'claude update'
-                window.electronAPI.pty.write(s.id, cmd + '\n')
-              }, 3000)
-              setTimeout(() => {
-                window.electronAPI.pty.write(s.id, 'claude\n')
-              }, 30000)
-              setSessionContextMenu(null)
-            } : undefined}
             onRemoveFromGroup={() => {
               if (cfg) moveConfigToGroup(cfg.id, undefined)
               setSessionContextMenu(null)

@@ -8,13 +8,12 @@ interface SessionContextMenuProps {
   session: Session
   hasGroup: boolean
   onRename: () => void
-  onUpdateClaude?: () => void
   onRemoveFromGroup: () => void
   onClose: () => void
   onDismiss: () => void
 }
 
-export default function SessionContextMenu({ x, y, session, hasGroup, onRename, onUpdateClaude, onRemoveFromGroup, onClose, onDismiss }: SessionContextMenuProps) {
+export default function SessionContextMenu({ x, y, session, hasGroup, onRename, onRemoveFromGroup, onClose, onDismiss }: SessionContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null)
   useClickOutside(menuRef, onDismiss)
 
@@ -31,18 +30,6 @@ export default function SessionContextMenu({ x, y, session, hasGroup, onRename, 
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2"><path d="M8.5 1.5l2 2-7 7H1.5v-2z"/></svg>
         Rename
       </button>
-      {onUpdateClaude && (
-        <button
-          onClick={onUpdateClaude}
-          className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface1 transition-colors flex items-center gap-2"
-        >
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2">
-            <path d="M6 2v5M4 5l2 2 2-2" strokeLinecap="round" strokeLinejoin="round"/>
-            <path d="M2 8v2h8V8" strokeLinecap="round"/>
-          </svg>
-          Update Claude
-        </button>
-      )}
       {hasGroup && (
         <button
           onClick={onRemoveFromGroup}
