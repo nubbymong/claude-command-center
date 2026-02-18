@@ -3,17 +3,17 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
 
-import { getResourcesDirectory, getDataDirectory } from './ipc/setup-handlers'
+import { getResourcesDirectory } from './ipc/setup-handlers'
 
 // Re-export from shared types for backward compatibility
 export type { StatuslineData } from '../shared/types'
 import type { StatuslineData } from '../shared/types'
 
-// Lazy-initialized: can't call getDataDirectory() at module load time
+// Lazy-initialized: can't call getResourcesDirectory() at module load time
 let STATUS_DIR: string | null = null
 function getStatusDir(): string {
   if (!STATUS_DIR) {
-    STATUS_DIR = path.join(getDataDirectory(), 'status')
+    STATUS_DIR = path.join(getResourcesDirectory(), 'status')
   }
   return STATUS_DIR
 }
@@ -44,7 +44,7 @@ const path = require('path');
 const https = require('https');
 const os = require('os');
 
-const statusDir = ${JSON.stringify(statusDir)};
+const statusDir = process.env.CLAUDE_MULTI_STATUS_DIR || ${JSON.stringify(statusDir)};
 const cacheFile = path.join(os.tmpdir(), 'claude-command-center-usage-cache.json');
 const CACHE_MAX_AGE = 60; // seconds
 

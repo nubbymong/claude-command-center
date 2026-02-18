@@ -55,7 +55,7 @@ const ptySessions = new Map<string, PtySession>()
  */
 function getRemoteStatuslineSetup(): string {
   const configCmd = 'const f=require("fs"),p=require("path").join(require("os").homedir(),".claude","settings.json");let s={};try{s=JSON.parse(f.readFileSync(p,"utf-8"))}catch{}s.statusLine={type:"command",command:"node /mnt/resources/scripts/claude-multi-statusline.js"};f.writeFileSync(p,JSON.stringify(s,null,2))'
-  return `mkdir -p ~/.claude ~/.claude-multi/status 2>/dev/null; node -e '${configCmd}' 2>/dev/null`
+  return `mkdir -p ~/.claude /mnt/resources/status 2>/dev/null; export CLAUDE_MULTI_STATUS_DIR=/mnt/resources/status; node -e '${configCmd}' 2>/dev/null`
 }
 
 /**
