@@ -60,6 +60,10 @@ export interface Session {
   }
   visionConnected?: boolean              // Whether vision CDP connection is active
   visionPort?: number                    // Vision proxy port (for env vars)
+  legacyVersion?: {                      // Pinned Claude CLI version
+    enabled: boolean
+    version: string
+  }
 }
 
 interface SessionState {

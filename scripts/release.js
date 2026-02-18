@@ -6,14 +6,16 @@
  * 1. Pre-flight checks (npm audit, git clean, gh auth)
  * 2. Auto-increment version
  * 3. Claude CLI generates changelog entry + release notes
- * 4. Build (electron-vite build)
- * 5. Package installer (electron-builder --win)
- * 6. SHA-256 checksum
- * 7. VirusTotal scan
- * 8. Git commit, tag, push
- * 9. GitHub Release with assets
- * 10. Push update notification to connected clients
- * 11. Verify
+ * 4. Unit tests (vitest)
+ * 5. Build (electron-vite build)
+ * 6. E2E tests (playwright)
+ * 7. Package installer (electron-builder --win)
+ * 8. SHA-256 checksum
+ * 9. VirusTotal scan
+ * 10. Git commit, tag, push
+ * 11. GitHub Release with assets
+ * 12. Push update notification to connected clients
+ * 13. Verify
  *
  * Usage: npm run release
  *        npm run release -- --minor
@@ -21,6 +23,7 @@
  *        npm run release -- --skip-vt       (skip VirusTotal)
  *        npm run release -- --skip-claude   (skip changelog generation)
  *        npm run release -- --skip-push     (skip git push + gh release)
+ *        npm run release -- --skip-tests    (skip unit + E2E tests)
  */
 
 const { execSync, spawnSync } = require('child_process')
@@ -40,6 +43,7 @@ const args = process.argv.slice(2)
 const SKIP_VT = args.includes('--skip-vt')
 const SKIP_CLAUDE = args.includes('--skip-claude')
 const SKIP_PUSH = args.includes('--skip-push')
+const SKIP_TESTS = args.includes('--skip-tests')
 const BUMP_MINOR = args.includes('--minor')
 const BUMP_MAJOR = args.includes('--major')
 
@@ -87,7 +91,7 @@ function sha256File(filePath) {
 // MAIN
 // ============================================================
 
-const TOTAL_STEPS = 11
+const TOTAL_STEPS = 13
 let exitCode = 0
 
 // --- Step 1: Pre-flight checks ---
@@ -315,8 +319,22 @@ if (!changelogGenerated) {
   }
 }
 
-// --- Step 4: Build ---
-step(4, TOTAL_STEPS, 'Building...')
+// --- Step 4: Unit tests ---
+step(4, TOTAL_STEPS, 'Running unit tests...')
+
+if (SKIP_TESTS) {
+  warn('Skipped (--skip-tests)')
+} else {
+  try {
+    runInherit('npx vitest run --reporter=verbose')
+    ok('All unit tests passed')
+  } catch (err) {
+    fail('UNIT TESTS FAILED — fix before releasing')
+  }
+}
+
+// --- Step 5: Build ---
+step(5, TOTAL_STEPS, 'Building...')
 try {
   runInherit('npx electron-vite build')
   ok('Build complete')
@@ -324,8 +342,22 @@ try {
   fail('BUILD FAILED')
 }
 
-// --- Step 5: Package ---
-step(5, TOTAL_STEPS, 'Packaging installer...')
+// --- Step 6: E2E tests ---
+step(6, TOTAL_STEPS, 'Running E2E tests...')
+
+if (SKIP_TESTS) {
+  warn('Skipped (--skip-tests)')
+} else {
+  try {
+    runInherit('npx playwright test --reporter=list')
+    ok('All E2E tests passed')
+  } catch (err) {
+    fail('E2E TESTS FAILED — fix before releasing')
+  }
+}
+
+// --- Step 7: Package ---
+step(7, TOTAL_STEPS, 'Packaging installer...')
 try {
   runInherit('npx electron-builder --win')
   ok('Package complete')
@@ -333,8 +365,8 @@ try {
   fail('PACKAGE FAILED')
 }
 
-// --- Step 6: Post-build (copy, hash, checksum) ---
-step(6, TOTAL_STEPS, 'Post-build: copy installer, generate checksums...')
+// --- Step 8: Post-build (copy, hash, checksum) ---
+step(8, TOTAL_STEPS, 'Post-build: copy installer, generate checksums...')
 
 const installerName = `ClaudeCommandCenter-Beta-${version}.exe`
 const installerSrc = path.join(PROJECT_ROOT, 'dist', installerName)
@@ -378,8 +410,8 @@ try {
   warn('Could not delete source-hash.json (non-fatal)')
 }
 
-// --- Step 7: VirusTotal scan ---
-step(7, TOTAL_STEPS, 'VirusTotal scan...')
+// --- Step 9: VirusTotal scan ---
+step(9, TOTAL_STEPS, 'VirusTotal scan...')
 
 let vtUrl = null
 
@@ -456,8 +488,8 @@ if (vtUrl) {
 const releaseNotesPath = path.join(PROJECT_ROOT, 'RELEASE_NOTES.md')
 fs.writeFileSync(releaseNotesPath, releaseNotesBody, 'utf-8')
 
-// --- Step 8: Git commit, tag, push ---
-step(8, TOTAL_STEPS, 'Git commit and tag...')
+// --- Step 10: Git commit, tag, push ---
+step(10, TOTAL_STEPS, 'Git commit and tag...')
 
 if (SKIP_PUSH) {
   warn('Skipped (--skip-push)')
@@ -493,8 +525,8 @@ if (SKIP_PUSH) {
   }
 }
 
-// --- Step 9: GitHub Release ---
-step(9, TOTAL_STEPS, 'Creating GitHub Release...')
+// --- Step 11: GitHub Release ---
+step(11, TOTAL_STEPS, 'Creating GitHub Release...')
 
 let releaseUrl = ''
 
@@ -527,8 +559,8 @@ if (SKIP_PUSH) {
   }
 }
 
-// --- Step 10: Push update notification ---
-step(10, TOTAL_STEPS, 'Pushing update notification...')
+// --- Step 12: Push update notification ---
+step(12, TOTAL_STEPS, 'Pushing update notification...')
 
 pushNotification()
 
@@ -585,8 +617,8 @@ function pushNotification() {
 }
 
 function finishUp() {
-  // --- Step 11: Verify ---
-  step(11, TOTAL_STEPS, 'Verification...')
+  // --- Step 13: Verify ---
+  step(13, TOTAL_STEPS, 'Verification...')
 
   const checks = []
   const installerSize = fs.existsSync(installerDst)

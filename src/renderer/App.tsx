@@ -10,6 +10,7 @@ import ProjectBrowser from './components/ProjectBrowser'
 import SettingsPage from './components/SettingsPage'
 import LogViewer from './components/LogViewer'
 import InsightsPage from './components/InsightsPage'
+import CloudAgentsPage from './components/CloudAgentsPage'
 import SetupDialog from './components/SetupDialog'
 import WhatsNewModal, { shouldShowWhatsNew, markWhatsNewSeen } from './components/WhatsNewModal'
 import { useSessionStore, Session } from './stores/sessionStore'
@@ -18,9 +19,10 @@ import { useConfigStore } from './stores/configStore'
 import { useMagicButtonStore } from './stores/magicButtonStore'
 import { useSettingsStore } from './stores/settingsStore'
 import { useAppMetaStore } from './stores/appMetaStore'
+import { useCloudAgentStore } from './stores/cloudAgentStore'
 import type { SessionState, SavedSession } from './types/electron'
 
-export type ViewType = 'sessions' | 'usage' | 'browser' | 'logs' | 'settings' | 'insights'
+export type ViewType = 'cloud-agents' | 'sessions' | 'usage' | 'browser' | 'logs' | 'settings' | 'insights'
 
 // Error boundary to catch renderer crashes and show error instead of blank screen
 class ErrorBoundary extends React.Component<
@@ -132,6 +134,10 @@ function hydrateStores(configData: Record<string, unknown>): void {
   // App meta
   const appMeta = configData.appMeta || {}
   useAppMetaStore.getState().hydrate(appMeta as any)
+
+  // Cloud agents
+  const cloudAgents = (configData.cloudAgents as any[]) || []
+  useCloudAgentStore.getState().hydrate(cloudAgents)
 
   console.log('[App] All stores hydrated from CONFIG/')
 }
@@ -310,6 +316,7 @@ export default function App() {
           dockerContainer: s.sshConfig.dockerContainer,
         } : undefined,
         visionConfig: s.visionConfig,
+        legacyVersion: s.legacyVersion,
       })),
       activeSessionId: state.activeSessionId,
       savedAt: Date.now(),
@@ -453,6 +460,7 @@ export default function App() {
     if (view === 'logs') return <LogViewer />
     if (view === 'settings') return <SettingsPage />
     if (view === 'insights') return <InsightsPage />
+    if (view === 'cloud-agents') return <CloudAgentsPage />
     return null
   }
 
@@ -512,6 +520,7 @@ export default function App() {
                   onTogglePartner={() => togglePartner(session.id)}
                   partnerSessionId={hasPartner ? partnerPtyId : undefined}
                   visionConfig={session.visionConfig}
+                  legacyVersion={session.legacyVersion}
                 />
               </div>
               {/* Partner terminal */}

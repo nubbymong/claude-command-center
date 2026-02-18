@@ -30,6 +30,10 @@ export interface TerminalConfig {
     debugPort: number
     url?: string
   }
+  legacyVersion?: {
+    enabled: boolean
+    version: string
+  }
 }
 
 export interface ConfigGroup {

@@ -3,6 +3,7 @@ import { spawnPty, writePty, resizePty, killPty, SSHOptions } from '../pty-manag
 import { logUserInput, isDebugModeEnabled } from '../debug-capture'
 import { startVisionForSession } from '../vision-manager'
 import { logInfo } from '../debug-logger'
+import { isVersionInstalled, installVersion } from '../legacy-version-manager'
 
 export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void {
   ipcMain.handle('pty:spawn', async (_event, sessionId: string, options?: {
@@ -14,9 +15,21 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     configLabel?: string
     useResumePicker?: boolean
     visionConfig?: { enabled: boolean; browser: 'chrome' | 'edge'; debugPort: number }
+    legacyVersion?: { enabled: boolean; version: string }
   }) => {
     const win = getWindow()
     if (!win) throw new Error('No window available')
+
+    // Auto-install legacy version before spawn if needed
+    if (options?.legacyVersion?.enabled && options.legacyVersion.version) {
+      if (!isVersionInstalled(options.legacyVersion.version)) {
+        logInfo(`[pty] Auto-installing legacy Claude CLI v${options.legacyVersion.version} before spawn`)
+        const result = await installVersion(options.legacyVersion.version)
+        if (!result.ok) {
+          logInfo(`[pty] Legacy install failed, falling back to system claude: ${result.error}`)
+        }
+      }
+    }
 
     // Start vision BEFORE spawning PTY so env vars are available
     if (options?.visionConfig?.enabled) {

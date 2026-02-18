@@ -50,6 +50,10 @@ export interface ElectronAPI {
         browser: 'chrome' | 'edge'
         debugPort: number
       }
+      legacyVersion?: {
+        enabled: boolean
+        version: string
+      }
     }) => Promise<void>
     write: (sessionId: string, data: string) => void
     resize: (sessionId: string, cols: number, rows: number) => void
@@ -177,6 +181,25 @@ export interface ElectronAPI {
     getPrompt: () => Promise<string | null>
     onStatusChanged: (callback: (data: { sessionId: string; connected: boolean; browser: string; proxyPort: number }) => void) => () => void
   }
+  legacyVersion: {
+    fetchVersions: () => Promise<string[]>
+    isInstalled: (version: string) => Promise<boolean>
+    install: (version: string) => Promise<{ ok: boolean; error?: string }>
+    remove: (version: string) => Promise<boolean>
+    listInstalled: () => Promise<Array<{ version: string; sizeBytes: number }>>
+    onInstallProgress: (cb: (data: { version: string; message: string }) => void) => () => void
+  }
+  cloudAgent: {
+    dispatch: (agent: { name: string; description: string; projectPath: string; configId?: string; legacyVersion?: { enabled: boolean; version: string } }) => Promise<CloudAgent>
+    cancel: (id: string) => Promise<boolean>
+    remove: (id: string) => Promise<boolean>
+    retry: (id: string) => Promise<CloudAgent | null>
+    list: () => Promise<CloudAgent[]>
+    getOutput: (id: string) => Promise<string>
+    clearCompleted: () => Promise<number>
+    onStatusChanged: (callback: (agent: CloudAgent) => void) => () => void
+    onOutputChunk: (callback: (data: { id: string; chunk: string }) => void) => () => void
+  }
   cli: {
     check: () => Promise<boolean>
   }
@@ -209,6 +232,10 @@ export interface SavedSession {
     browser: 'chrome' | 'edge'
     debugPort: number
     url?: string
+  }
+  legacyVersion?: {
+    enabled: boolean
+    version: string
   }
 }
 
@@ -251,6 +278,24 @@ export interface InsightsData {
 
 // Keep KpiData as alias for backward compat
 export type KpiData = InsightsData
+
+export type CloudAgentStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+
+export interface CloudAgent {
+  id: string
+  name: string
+  description: string
+  status: CloudAgentStatus
+  createdAt: number
+  updatedAt: number
+  projectPath: string
+  configId?: string
+  output: string
+  cost?: number
+  duration?: number
+  tokenUsage?: { inputTokens: number; outputTokens: number }
+  error?: string
+}
 
 declare global {
   interface Window {
