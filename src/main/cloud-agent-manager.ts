@@ -4,6 +4,9 @@
 
 import { spawn, execSync, ChildProcess } from 'child_process'
 import { BrowserWindow } from 'electron'
+import * as os from 'os'
+import * as fs from 'fs'
+import * as path from 'path'
 import { readConfig, writeConfig } from './config-manager'
 import { logInfo, logError } from './debug-logger'
 import { resolveVersionBinary, isVersionInstalled, installVersion } from './legacy-version-manager'
@@ -116,24 +119,35 @@ export async function dispatchAgent(params: {
     }
   }
 
-  // Spawn the headless Claude process
-  // Pipe prompt via stdin instead of -p arg to avoid shell quoting issues on Windows
-  const child = spawn(claudeBin, ['--dangerously-skip-permissions'], {
+  // Write prompt to a temp file, then pipe it to Claude via shell.
+  // This ensures Claude CLI reliably detects piped input (print mode).
+  // Previous approach (child.stdin.write) broke on Windows because cmd.exe's
+  // stdin passthrough doesn't always trigger Claude's pipe detection.
+  const tmpFile = path.join(os.tmpdir(), `ccc-agent-${agent.id}.txt`)
+  fs.writeFileSync(tmpFile, params.description, 'utf8')
+
+  const pipeCmd = process.platform === 'win32' ? 'type' : 'cat'
+  const shellCmd = `${pipeCmd} "${tmpFile}" | ${claudeBin} --dangerously-skip-permissions`
+
+  const child = spawn(shellCmd, [], {
     cwd: params.projectPath,
     shell: true,
     windowsHide: true,
-    stdio: ['pipe', 'pipe', 'pipe'],
+    stdio: ['ignore', 'pipe', 'pipe'],
   })
-
-  // Write prompt to stdin — Claude CLI auto-detects piped input as print mode
-  child.stdin?.write(params.description)
-  child.stdin?.end()
 
   activeProcesses.set(agent.id, child)
   logInfo(`[cloud-agent] Dispatched agent ${agent.id} (${agent.name}) pid=${child.pid}`)
+  logInfo(`[cloud-agent] Shell cmd: ${shellCmd}`)
+  logInfo(`[cloud-agent] CWD: ${params.projectPath}, prompt length: ${params.description.length}`)
+
+  const cleanupTmpFile = (): void => {
+    try { fs.unlinkSync(tmpFile) } catch { /* ignore */ }
+  }
 
   child.stdout?.on('data', (data: Buffer) => {
     const chunk = data.toString()
+    logInfo(`[cloud-agent] ${agent.id} stdout: ${chunk.length} bytes`)
     const agentRef = agents.find(a => a.id === agent.id)
     if (agentRef) {
       if (agentRef.output.length < MAX_OUTPUT_BYTES) {
@@ -148,6 +162,7 @@ export async function dispatchAgent(params: {
 
   child.stderr?.on('data', (data: Buffer) => {
     const chunk = data.toString()
+    logInfo(`[cloud-agent] ${agent.id} stderr: ${chunk.length} bytes — ${chunk.slice(0, 200)}`)
     const agentRef = agents.find(a => a.id === agent.id)
     if (agentRef) {
       if (agentRef.output.length < MAX_OUTPUT_BYTES) {
@@ -158,6 +173,7 @@ export async function dispatchAgent(params: {
   })
 
   child.on('close', (code) => {
+    cleanupTmpFile()
     activeProcesses.delete(agent.id)
     const agentRef = agents.find(a => a.id === agent.id)
     if (agentRef) {
@@ -174,11 +190,12 @@ export async function dispatchAgent(params: {
       parseCostFromOutput(agentRef)
       persist()
       broadcastStatus(agentRef)
-      logInfo(`[cloud-agent] Agent ${agentRef.id} finished: status=${agentRef.status} code=${code}`)
+      logInfo(`[cloud-agent] Agent ${agentRef.id} finished: status=${agentRef.status} code=${code} output=${agentRef.output.length}b`)
     }
   })
 
   child.on('error', (err) => {
+    cleanupTmpFile()
     activeProcesses.delete(agent.id)
     const agentRef = agents.find(a => a.id === agent.id)
     if (agentRef) {
