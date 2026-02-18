@@ -49,6 +49,7 @@ export interface ElectronAPI {
         enabled: boolean
         browser: 'chrome' | 'edge'
         debugPort: number
+        headless?: boolean
       }
     }) => Promise<void>
     write: (sessionId: string, data: string) => void
@@ -303,8 +304,8 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.invoke(IPC.VISION_START, sessionId, debugPort, browser),
     stop: (sessionId: string) => ipcRenderer.invoke(IPC.VISION_STOP, sessionId),
     status: (sessionId: string) => ipcRenderer.invoke(IPC.VISION_STATUS, sessionId),
-    launch: (browser: string, debugPort: number, url?: string) =>
-      ipcRenderer.invoke(IPC.VISION_LAUNCH, browser, debugPort, url),
+    launch: (browser: string, debugPort: number, url?: string, headless?: boolean) =>
+      ipcRenderer.invoke(IPC.VISION_LAUNCH, browser, debugPort, url, headless ?? true),
     getPrompt: () => ipcRenderer.invoke(IPC.VISION_GET_PROMPT) as Promise<string | null>,
     onStatusChanged: (callback: (data: { sessionId: string; connected: boolean; browser: string; proxyPort: number }) => void) => {
       const handler = (_: unknown, data: any) => callback(data)

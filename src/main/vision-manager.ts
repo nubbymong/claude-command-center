@@ -706,7 +706,7 @@ export function tryReconnectVision(debugPort: number): void {
   }
 }
 
-export function launchBrowser(browser: 'chrome' | 'edge', debugPort: number, url?: string): { pid: number; command: string } {
+export function launchBrowser(browser: 'chrome' | 'edge', debugPort: number, url?: string, headless: boolean = true): { pid: number; command: string } {
   const tmpDir = process.env.TEMP || process.env.TMP || os.tmpdir()
   const profileDir = path.join(tmpDir, `${browser}-debug-${debugPort}`)
 
@@ -731,6 +731,10 @@ export function launchBrowser(browser: 'chrome' | 'edge', debugPort: number, url
     `--user-data-dir=${profileDir}`,
   ]
 
+  if (headless) {
+    args.push('--headless=new', '--disable-gpu')
+  }
+
   // Navigate to URL if provided, otherwise open about:blank
   if (url) {
     args.push(url)
@@ -742,7 +746,7 @@ export function launchBrowser(browser: 'chrome' | 'edge', debugPort: number, url
   const child = spawn(executable, args, {
     detached: true,
     stdio: 'ignore',
-    windowsHide: false
+    windowsHide: headless
   })
   child.unref()
 

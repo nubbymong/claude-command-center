@@ -10,6 +10,7 @@ export interface VisionConfig {
   browser: 'chrome' | 'edge'
   debugPort: number
   url?: string
+  headless?: boolean  // default true — run browser without visible window
 }
 
 // ── SSH ──

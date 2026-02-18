@@ -46,6 +46,7 @@ interface Props {
     browser: 'chrome' | 'edge'
     debugPort: number
     url?: string
+    headless?: boolean
   }
   legacyVersion?: {
     enabled: boolean
@@ -386,6 +387,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         visionBrowser={visionConfig?.browser}
         visionDebugPort={visionConfig?.debugPort}
         visionUrl={visionConfig?.url}
+        visionHeadless={visionConfig?.headless}
       />
       <InputBar
         sessionId={sessionId}
