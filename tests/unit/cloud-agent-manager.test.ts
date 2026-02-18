@@ -114,20 +114,17 @@ describe('cloud-agent-manager', () => {
         projectPath: 'C:\\dev\\project',
       })
 
-      expect(mockSpawn).toHaveBeenCalledWith(
-        'claude',
-        ['--dangerously-skip-permissions'],
-        expect.objectContaining({
-          cwd: 'C:\\dev\\project',
-          shell: true,
-          windowsHide: true,
-          stdio: ['pipe', 'pipe', 'pipe'],
-        })
-      )
-      // Prompt is piped via stdin, not passed as arg
-      const proc = mockSpawn.mock.results[0]?.value
-      expect(proc.stdin.write).toHaveBeenCalledWith('Fix the bug')
-      expect(proc.stdin.end).toHaveBeenCalled()
+      // Prompt is written to a temp file and piped via shell command
+      const spawnCall = mockSpawn.mock.calls[0]
+      const shellCmd = spawnCall[0] as string
+      expect(shellCmd).toMatch(/type ".*ccc-agent-.*\.txt" \| claude --dangerously-skip-permissions/)
+      expect(spawnCall[1]).toEqual([])
+      expect(spawnCall[2]).toEqual(expect.objectContaining({
+        cwd: 'C:\\dev\\project',
+        shell: true,
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }))
       expect(agent.status).toBe('running')
       expect(agent.name).toBe('Test')
       expect(agent.id).toMatch(/^ca-/)
