@@ -2,6 +2,28 @@ import { create } from 'zustand'
 import { saveConfigNow } from '../utils/config-saver'
 import { DEFAULT_SHORTCUTS } from '../utils/shortcuts'
 
+export interface StatusLineSettings {
+  showModel: boolean
+  showTokens: boolean
+  showContextBar: boolean
+  showCost: boolean
+  showLinesChanged: boolean
+  showDuration: boolean
+  showRateLimits: boolean
+  showResetTime: boolean
+}
+
+export const DEFAULT_STATUS_LINE: StatusLineSettings = {
+  showModel: true,
+  showTokens: true,
+  showContextBar: true,
+  showCost: true,
+  showLinesChanged: true,
+  showDuration: true,
+  showRateLimits: true,
+  showResetTime: true
+}
+
 export interface AppSettings {
   defaultModel: string
   defaultWorkingDirectory: string
@@ -11,6 +33,7 @@ export interface AppSettings {
   keyboardShortcuts: Record<string, string>
   inputBarMaxHeight: number
   configPanelPinned: boolean
+  statusLine: StatusLineSettings
 }
 
 interface SettingsState {
@@ -28,7 +51,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   compactionInterruptThreshold: 80,
   keyboardShortcuts: { ...DEFAULT_SHORTCUTS },
   inputBarMaxHeight: 400,
-  configPanelPinned: false
+  configPanelPinned: false,
+  statusLine: { ...DEFAULT_STATUS_LINE }
 }
 
 export const useSettingsStore = create<SettingsState>((set) => ({
