@@ -79,10 +79,12 @@ export function migrateRegistryKeys(): void {
 
 // --- Internal helpers ---
 
-/** Sanitize a string for safe use in a shell command argument. */
+/** Sanitize a string for safe use in a cmd.exe double-quoted argument. */
 function sanitizeShellArg(s: string): string {
-  // Remove characters that could break out of quoted strings or inject commands
-  return s.replace(/["`$\\!&|;<>(){}[\]\r\n]/g, '')
+  // In cmd.exe double-quoted strings: " breaks out of quotes, % expands env vars,
+  // ! expands with delayed expansion, \r\n can inject new commands.
+  // Backslashes are NOT special in cmd.exe (needed for paths and registry keys).
+  return s.replace(/["`%!\r\n]/g, '')
 }
 
 function readRegValue(key: string, valueName: string): string | null {
