@@ -10,6 +10,7 @@ import * as crypto from 'crypto'
 import { logInfo, logError } from './debug-logger'
 
 const UPDATE_SERVER_PORT = 9847  // Arbitrary port for update notifications
+const UPDATE_SERVER_PORT_ALT = 9848  // Fallback port if primary is in use
 
 let wss: WebSocketServer | null = null
 let httpServer: ReturnType<typeof createServer> | null = null
@@ -105,12 +106,34 @@ function watchSourceDirectory(srcDir: string) {
   }
 }
 
-export function startUpdateServer(projectRoot: string): { port: number } | null {
+function isPortFree(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const tester = createServer()
+    tester.once('error', () => { resolve(false) })
+    tester.listen(port, '0.0.0.0', () => {
+      tester.close(() => resolve(true))
+    })
+  })
+}
+
+export async function startUpdateServer(projectRoot: string): Promise<{ port: number } | null> {
   const srcDir = path.join(projectRoot, 'src')
 
   if (!fs.existsSync(srcDir)) {
     logError('[update-server] Source directory not found:', srcDir)
     return null
+  }
+
+  // Find a free port
+  let port = UPDATE_SERVER_PORT
+  if (!(await isPortFree(port))) {
+    logInfo(`[update-server] Port ${port} in use, trying ${UPDATE_SERVER_PORT_ALT}`)
+    port = UPDATE_SERVER_PORT_ALT
+    if (!(await isPortFree(port))) {
+      logInfo('[update-server] Both ports in use, skipping update server (prod likely running)')
+      watchSourceDirectory(srcDir)
+      return null
+    }
   }
 
   // Create HTTP server for health checks
@@ -159,9 +182,8 @@ export function startUpdateServer(projectRoot: string): { port: number } | null 
   watchSourceDirectory(srcDir)
 
   // Start the server
-  httpServer.listen(UPDATE_SERVER_PORT, '0.0.0.0', () => {
-    logInfo(`[update-server] Update server running on port ${UPDATE_SERVER_PORT}`)
-    logInfo(`[update-server] Clients can connect to ws://localhost:${UPDATE_SERVER_PORT}`)
+  httpServer.listen(port, '0.0.0.0', () => {
+    logInfo(`[update-server] Update server running on port ${port}`)
   })
 
   // Send heartbeat every 30 seconds to keep connections alive
@@ -179,7 +201,7 @@ export function startUpdateServer(projectRoot: string): { port: number } | null 
     })
   }, 30000)
 
-  return { port: UPDATE_SERVER_PORT }
+  return { port }
 }
 
 export function stopUpdateServer(): void {

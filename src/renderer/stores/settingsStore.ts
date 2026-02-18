@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { saveConfigNow } from '../utils/config-saver'
+import { DEFAULT_SHORTCUTS } from '../utils/shortcuts'
 
 export interface AppSettings {
   defaultModel: string
@@ -7,6 +8,9 @@ export interface AppSettings {
   terminalFontSize: number
   debugMode: boolean
   compactionInterruptThreshold: number  // Context % at which to auto-Escape (default 80)
+  keyboardShortcuts: Record<string, string>
+  inputBarMaxHeight: number
+  configPanelPinned: boolean
 }
 
 interface SettingsState {
@@ -21,7 +25,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   defaultWorkingDirectory: '',
   terminalFontSize: 14,
   debugMode: false,
-  compactionInterruptThreshold: 80
+  compactionInterruptThreshold: 80,
+  keyboardShortcuts: { ...DEFAULT_SHORTCUTS },
+  inputBarMaxHeight: 400,
+  configPanelPinned: false
 }
 
 export const useSettingsStore = create<SettingsState>((set) => ({

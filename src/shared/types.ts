@@ -1,0 +1,171 @@
+/**
+ * Shared type definitions used across main, preload, and renderer.
+ * This is the canonical source — other files should import from here.
+ */
+
+// ── Vision ──
+
+export interface VisionConfig {
+  enabled: boolean
+  browser: 'chrome' | 'edge'
+  debugPort: number
+  url?: string
+}
+
+// ── SSH ──
+
+export interface SshConfig {
+  host: string
+  port: number
+  username: string
+  remotePath: string
+  password?: string
+  hasPassword?: boolean
+  postCommand?: string
+  sudoPassword?: string
+  hasSudoPassword?: boolean
+  startClaudeAfter?: boolean
+  dockerContainer?: string
+}
+
+// ── Legacy Version ──
+
+export interface LegacyVersion {
+  enabled: boolean
+  version: string
+}
+
+// ── Session Persistence ──
+
+export interface SavedSession {
+  id: string
+  configId?: string
+  label: string
+  workingDirectory: string
+  model: string
+  color: string
+  sessionType: 'local' | 'ssh'
+  shellOnly?: boolean
+  partnerTerminalPath?: string
+  partnerElevated?: boolean
+  sshConfig?: SshConfig
+  visionConfig?: VisionConfig
+  legacyVersion?: LegacyVersion
+}
+
+export interface SessionState {
+  sessions: SavedSession[]
+  activeSessionId: string | null
+  savedAt: number
+}
+
+// ── Statusline ──
+
+export interface RateLimitExtra {
+  enabled: boolean
+  utilization: number
+  usedUsd: number
+  limitUsd: number
+}
+
+export interface StatuslineData {
+  sessionId: string
+  model?: string
+  contextUsedPercent?: number
+  contextRemainingPercent?: number
+  contextWindowSize?: number
+  inputTokens?: number
+  outputTokens?: number
+  costUsd?: number
+  totalDurationMs?: number
+  linesAdded?: number
+  linesRemoved?: number
+  rateLimitCurrent?: number
+  rateLimitCurrentResets?: string
+  rateLimitWeekly?: number
+  rateLimitWeeklyResets?: string
+  rateLimitExtra?: RateLimitExtra
+}
+
+// ── Cloud Agents ──
+
+export type CloudAgentStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+
+export interface CloudAgent {
+  id: string
+  name: string
+  description: string
+  status: CloudAgentStatus
+  createdAt: number
+  updatedAt: number
+  projectPath: string
+  configId?: string
+  output: string
+  cost?: number
+  duration?: number
+  tokenUsage?: { inputTokens: number; outputTokens: number }
+  error?: string
+}
+
+// ── Insights ──
+
+export interface InsightsRun {
+  id: string
+  timestamp: number
+  status: 'running' | 'extracting_kpis' | 'complete' | 'failed'
+  statusMessage?: string
+  error?: string
+}
+
+export interface InsightsCatalogue {
+  runs: InsightsRun[]
+}
+
+export interface KpiMetric {
+  value: number
+  label: string
+  format?: 'number' | 'percent' | 'duration'
+  goodDirection?: 'up' | 'down' | 'neutral'
+}
+
+export interface InsightsData {
+  period?: { start?: string; end?: string; days?: number }
+  summary?: {
+    improvements?: string[]
+    regressions?: string[]
+    suggestions?: string[]
+  }
+  kpis?: Record<string, Record<string, KpiMetric>>
+  lists?: Record<string, Array<{ name: string; count: number }>>
+  [key: string]: any
+}
+
+/** Alias for backward compatibility */
+export type KpiData = InsightsData
+
+// ── Logs ──
+
+export interface LogSession {
+  configLabel: string
+  sessionId: string
+  logDir: string
+  startTime?: number
+  endTime?: number
+  size: number
+}
+
+export interface LogEntry {
+  ts: number
+  type: string
+  data?: string
+}
+
+// ── Notes ──
+
+export interface NoteMetadata {
+  id: string
+  label: string
+  color: string
+  configId?: string
+  createdAt: number
+}

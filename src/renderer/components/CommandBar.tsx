@@ -3,6 +3,7 @@ import { useCommandStore, CustomCommand } from '../stores/commandStore'
 import CommandDialog from './CommandDialog'
 import ScreenshotButton from './ScreenshotButton'
 import CompactionInterruptButton from './CompactionInterruptButton'
+import { generateId } from '../utils/id'
 
 interface Props {
   sessionId: string
@@ -17,10 +18,6 @@ interface Props {
   visionBrowser?: 'chrome' | 'edge'
   visionDebugPort?: number
   visionUrl?: string
-}
-
-function generateId(): string {
-  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
 }
 
 export default function CommandBar({ sessionId, configId, sessionType = 'local', partnerEnabled, isPartnerActive, onTogglePartner, partnerSessionId, visionEnabled, visionConnected, visionBrowser, visionDebugPort, visionUrl }: Props) {

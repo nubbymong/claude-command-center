@@ -199,12 +199,10 @@ export default function InsightsPage() {
   const [loading, setLoading] = useState(false)
   const iframeRef = useRef<HTMLIFrameElement>(null)
 
-  // Load catalogue on mount
   useEffect(() => {
     loadCatalogue()
   }, [])
 
-  // Load report and KPIs when selected run changes
   useEffect(() => {
     if (!selectedRunId) {
       setReportHtml(null)
@@ -220,7 +218,6 @@ export default function InsightsPage() {
       window.electronAPI.insights.getKpis(selectedRunId),
     ]).then(([html, kpis]) => {
       if (html) {
-        // Inject dark theme CSS
         const injected = html.replace('</head>', DARK_THEME_CSS + '</head>')
         setReportHtml(injected)
       } else {
@@ -230,7 +227,6 @@ export default function InsightsPage() {
       setLoading(false)
     })
 
-    // Load previous run's KPIs for trend comparison
     if (catalogue) {
       const runs = catalogue.runs.filter((r) => r.status === 'complete')
       const idx = runs.findIndex((r) => r.id === selectedRunId)
@@ -243,99 +239,131 @@ export default function InsightsPage() {
   }, [selectedRunId, catalogue])
 
   const completedRuns = catalogue?.runs.filter((r) => r.status === 'complete') || []
+  const isRunning = status === 'running' || status === 'extracting_kpis'
 
   // Empty state
   if (!catalogue || completedRuns.length === 0) {
     return (
-      <div className="flex-1 flex items-center justify-center">
-        <div className="text-center text-overlay1">
-          <svg width="48" height="48" viewBox="0 0 16 16" fill="none" className="mx-auto mb-4 text-overlay0">
-            <circle cx="8" cy="3" r="2" stroke="currentColor" strokeWidth="1.2" />
-            <path d="M4 8h8M6 6v4M10 6v4M3 12h10" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-          </svg>
-          <h2 className="text-lg font-semibold mb-2">No Insights Yet</h2>
-          {status === 'running' || status === 'extracting_kpis' ? (
-            <div className="flex flex-col items-center gap-3 text-blue">
-              <svg className="w-6 h-6 animate-spin" viewBox="0 0 24 24" fill="none">
-                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" strokeDasharray="32" strokeLinecap="round" />
+      <div className="flex-1 flex flex-col bg-base overflow-hidden">
+        {/* Header even in empty state */}
+        <div className="px-5 pt-4 pb-3 border-b border-surface0/80 bg-mantle/30 shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-teal/10 flex items-center justify-center shrink-0">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="text-teal">
+                <circle cx="8" cy="3" r="2" stroke="currentColor" strokeWidth="1.2" />
+                <path d="M4 8h8M6 6v4M10 6v4M3 12h10" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
               </svg>
-              <span className="text-sm font-medium">
-                {statusMessage || (status === 'extracting_kpis' ? 'Extracting KPIs...' : 'Generating insights...')}
-              </span>
-              <span className="text-xs text-overlay0">This may take a few minutes</span>
             </div>
-          ) : (
-            <>
-              <p className="text-sm mb-4">Click the Insights button in the sidebar to generate your first report</p>
-              <button
-                onClick={startInsights}
-                className="px-4 py-2 bg-blue/10 border border-blue/30 text-blue rounded-lg hover:bg-blue/20 transition-colors text-sm"
-              >
-                Run Insights Now
-              </button>
-            </>
-          )}
+            <div>
+              <h1 className="text-base font-semibold text-text">Insights</h1>
+              <p className="text-[11px] text-overlay0 mt-0.5">AI-generated analysis of your workflow</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center">
+            <div className="w-14 h-14 mx-auto mb-4 rounded-2xl bg-surface0/30 flex items-center justify-center">
+              <svg width="24" height="24" viewBox="0 0 16 16" fill="none" className="text-overlay0">
+                <circle cx="8" cy="3" r="2" stroke="currentColor" strokeWidth="1.2" />
+                <path d="M4 8h8M6 6v4M10 6v4M3 12h10" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+              </svg>
+            </div>
+            <h3 className="text-sm font-medium text-subtext1 mb-2">No Insights Yet</h3>
+            {isRunning ? (
+              <div className="flex flex-col items-center gap-3">
+                <svg className="w-5 h-5 animate-spin text-teal" viewBox="0 0 24 24" fill="none">
+                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" strokeDasharray="32" strokeLinecap="round" />
+                </svg>
+                <span className="text-xs text-teal font-medium">
+                  {statusMessage || (status === 'extracting_kpis' ? 'Extracting KPIs...' : 'Generating insights...')}
+                </span>
+                <span className="text-[11px] text-overlay0">This may take a few minutes</span>
+              </div>
+            ) : (
+              <>
+                <p className="text-xs text-overlay0 mb-4 max-w-[240px]">Generate an AI-powered analysis of your session history and workflow patterns</p>
+                <button
+                  onClick={startInsights}
+                  className="px-4 py-2 bg-teal/10 border border-teal/25 text-teal rounded-lg hover:bg-teal/20 transition-colors text-xs font-medium"
+                >
+                  Run Insights Now
+                </button>
+              </>
+            )}
+          </div>
         </div>
       </div>
     )
   }
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
-      {/* Header with history dropdown */}
-      <div className="flex items-center gap-3 px-4 py-2 border-b border-surface0 bg-mantle shrink-0">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="text-blue shrink-0">
-          <circle cx="8" cy="3" r="2" stroke="currentColor" strokeWidth="1.2" />
-          <path d="M4 8h8M6 6v4M10 6v4M3 12h10" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-        </svg>
-        <span className="text-sm font-medium text-text">Insights Report</span>
+    <div className="flex-1 flex flex-col bg-base overflow-hidden">
+      {/* Page header */}
+      <div className="px-5 pt-4 pb-3 border-b border-surface0/80 bg-mantle/30 shrink-0">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-lg bg-teal/10 flex items-center justify-center shrink-0">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="text-teal">
+              <circle cx="8" cy="3" r="2" stroke="currentColor" strokeWidth="1.2" />
+              <path d="M4 8h8M6 6v4M10 6v4M3 12h10" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+            </svg>
+          </div>
+          <div className="flex-1 min-w-0">
+            <h1 className="text-base font-semibold text-text">Insights Report</h1>
+            <p className="text-[11px] text-overlay0 mt-0.5">{completedRuns.length} report{completedRuns.length !== 1 ? 's' : ''} generated</p>
+          </div>
 
-        <select
-          value={selectedRunId || ''}
-          onChange={(e) => selectRun(e.target.value)}
-          className="ml-auto bg-surface0 text-text text-xs rounded px-2 py-1 border border-surface1 focus:outline-none focus:border-blue"
-        >
-          {completedRuns.slice().reverse().map((run) => {
-            const date = new Date(run.timestamp)
-            const label = date.toLocaleDateString('en-US', {
-              month: 'short', day: 'numeric', year: 'numeric',
-              hour: '2-digit', minute: '2-digit'
-            })
-            return (
-              <option key={run.id} value={run.id}>{label}</option>
-            )
-          })}
-        </select>
+          {/* Run selector */}
+          <select
+            value={selectedRunId || ''}
+            onChange={(e) => selectRun(e.target.value)}
+            className="bg-surface0/40 text-text text-xs rounded-lg px-3 py-1.5 border border-surface0/80 focus:outline-none focus:border-blue/40 transition-colors"
+          >
+            {completedRuns.slice().reverse().map((run) => {
+              const date = new Date(run.timestamp)
+              const label = date.toLocaleDateString('en-US', {
+                month: 'short', day: 'numeric', year: 'numeric',
+                hour: '2-digit', minute: '2-digit'
+              })
+              return (
+                <option key={run.id} value={run.id}>{label}</option>
+              )
+            })}
+          </select>
 
-        <button
-          onClick={startInsights}
-          disabled={status === 'running' || status === 'extracting_kpis'}
-          className={`text-xs px-3 py-1 rounded border transition-colors ${
-            status === 'running' || status === 'extracting_kpis'
-              ? 'bg-surface0 border-surface1 text-blue cursor-wait flex items-center gap-1.5'
-              : 'bg-blue/10 border-blue/30 text-blue hover:bg-blue/20'
-          }`}
-        >
-          {status === 'running' || status === 'extracting_kpis' ? (
-            <>
-              <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none">
-                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" strokeDasharray="32" strokeLinecap="round" />
-              </svg>
-              {statusMessage || 'Running...'}
-            </>
-          ) : 'New Run'}
-        </button>
+          <button
+            onClick={startInsights}
+            disabled={isRunning}
+            className={`text-xs px-3 py-1.5 rounded-lg border font-medium transition-all ${
+              isRunning
+                ? 'bg-surface0/40 border-surface0 text-teal cursor-wait flex items-center gap-1.5'
+                : 'bg-teal/10 border-teal/25 text-teal hover:bg-teal/20'
+            }`}
+          >
+            {isRunning ? (
+              <>
+                <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none">
+                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" strokeDasharray="32" strokeLinecap="round" />
+                </svg>
+                {statusMessage || 'Running...'}
+              </>
+            ) : 'New Run'}
+          </button>
+        </div>
       </div>
 
-      {/* Main content area */}
+      {/* Main content */}
       <div className="flex-1 flex overflow-hidden">
         {/* Report iframe */}
         <div className="flex-1 overflow-hidden">
           {loading ? (
             <div className="flex items-center justify-center h-full">
-              <svg className="w-6 h-6 animate-spin text-blue" viewBox="0 0 24 24" fill="none">
-                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" strokeDasharray="32" strokeLinecap="round" />
-              </svg>
+              <div className="flex items-center gap-2.5 text-overlay1">
+                <svg className="w-4 h-4 animate-spin text-teal" viewBox="0 0 24 24" fill="none">
+                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" strokeDasharray="32" strokeLinecap="round" />
+                </svg>
+                <span className="text-xs">Loading report...</span>
+              </div>
             </div>
           ) : reportHtml ? (
             <iframe
@@ -346,8 +374,8 @@ export default function InsightsPage() {
               title="Insights Report"
             />
           ) : (
-            <div className="flex items-center justify-center h-full text-overlay0 text-sm">
-              No report available for this run
+            <div className="flex items-center justify-center h-full">
+              <p className="text-overlay0 text-xs">No report available for this run</p>
             </div>
           )}
         </div>

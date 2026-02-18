@@ -117,12 +117,17 @@ export async function dispatchAgent(params: {
   }
 
   // Spawn the headless Claude process
-  const child = spawn(claudeBin, ['-p', params.description, '--dangerously-skip-permissions'], {
+  // Pipe prompt via stdin instead of -p arg to avoid shell quoting issues on Windows
+  const child = spawn(claudeBin, ['--dangerously-skip-permissions'], {
     cwd: params.projectPath,
     shell: true,
     windowsHide: true,
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: ['pipe', 'pipe', 'pipe'],
   })
+
+  // Write prompt to stdin — Claude CLI auto-detects piped input as print mode
+  child.stdin?.write(params.description)
+  child.stdin?.end()
 
   activeProcesses.set(agent.id, child)
   logInfo(`[cloud-agent] Dispatched agent ${agent.id} (${agent.name}) pid=${child.pid}`)
@@ -270,7 +275,7 @@ export function removeAgent(id: string): boolean {
   return true
 }
 
-export function retryAgent(id: string): CloudAgentData | null {
+export async function retryAgent(id: string): Promise<CloudAgentData | null> {
   const agent = agents.find(a => a.id === id)
   if (!agent) return null
 

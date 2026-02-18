@@ -1,3 +1,35 @@
+// Re-export shared types so existing imports continue to work
+export type {
+  VisionConfig,
+  SshConfig,
+  LegacyVersion,
+  SavedSession,
+  SessionState,
+  StatuslineData,
+  RateLimitExtra,
+  CloudAgent,
+  CloudAgentStatus,
+  InsightsRun,
+  InsightsCatalogue,
+  KpiMetric,
+  InsightsData,
+  KpiData,
+  LogSession,
+  LogEntry,
+  NoteMetadata,
+} from '../../shared/types'
+
+// Import for use in the ElectronAPI interface
+import type {
+  SavedSession,
+  SessionState,
+  InsightsRun,
+  InsightsCatalogue,
+  InsightsData,
+  KpiData,
+  CloudAgent,
+} from '../../shared/types'
+
 export interface ElectronAPI {
   config: {
     loadAll: () => Promise<{ data: Record<string, unknown>; needsMigration: boolean }>
@@ -203,98 +235,6 @@ export interface ElectronAPI {
   cli: {
     check: () => Promise<boolean>
   }
-}
-
-export interface SavedSession {
-  id: string
-  configId?: string
-  label: string
-  workingDirectory: string
-  model: string
-  color: string
-  sessionType: 'local' | 'ssh'
-  shellOnly?: boolean
-  partnerTerminalPath?: string
-  partnerElevated?: boolean
-  sshConfig?: {
-    host: string
-    port: number
-    username: string
-    remotePath: string
-    hasPassword?: boolean
-    postCommand?: string
-    hasSudoPassword?: boolean
-    startClaudeAfter?: boolean
-    dockerContainer?: string
-  }
-  visionConfig?: {
-    enabled: boolean
-    browser: 'chrome' | 'edge'
-    debugPort: number
-    url?: string
-  }
-  legacyVersion?: {
-    enabled: boolean
-    version: string
-  }
-}
-
-export interface SessionState {
-  sessions: SavedSession[]
-  activeSessionId: string | null
-  savedAt: number
-}
-
-export interface InsightsRun {
-  id: string
-  timestamp: number
-  status: 'running' | 'extracting_kpis' | 'complete' | 'failed'
-  statusMessage?: string
-  error?: string
-}
-
-export interface InsightsCatalogue {
-  runs: InsightsRun[]
-}
-
-export interface KpiMetric {
-  value: number
-  label: string
-  format?: 'number' | 'percent' | 'duration'
-  goodDirection?: 'up' | 'down' | 'neutral'
-}
-
-export interface InsightsData {
-  period?: { start?: string; end?: string; days?: number }
-  summary?: {
-    improvements?: string[]
-    regressions?: string[]
-    suggestions?: string[]
-  }
-  kpis?: Record<string, Record<string, KpiMetric>>
-  lists?: Record<string, Array<{ name: string; count: number }>>
-  [key: string]: any
-}
-
-// Keep KpiData as alias for backward compat
-export type KpiData = InsightsData
-
-export type CloudAgentStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
-
-export interface CloudAgent {
-  id: string
-  name: string
-  description: string
-  status: CloudAgentStatus
-  createdAt: number
-  updatedAt: number
-  projectPath: string
-  configId?: string
-  output: string
-  cost?: number
-  duration?: number
-  tokenUsage?: { inputTokens: number; outputTokens: number }
-  error?: string
 }
 
 declare global {

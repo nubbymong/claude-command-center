@@ -114,6 +114,11 @@ export default function NewAgentDialog({ onClose }: Props) {
           )}
         </div>
 
+        {/* Safety notice */}
+        <div className="mb-3 px-3 py-2 rounded-lg bg-yellow/8 border border-yellow/20 text-[11px] text-yellow leading-relaxed">
+          Cloud agents run with full file access in the specified directory. Only dispatch to trusted project paths with prompts you have reviewed.
+        </div>
+
         {/* Actions */}
         <div className="flex justify-end gap-2">
           <button

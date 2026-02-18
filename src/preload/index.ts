@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import { IPC, ptyDataChannel, ptyExitChannel } from '../shared/ipc-channels'
 
 export interface ElectronAPI {
   config: {
@@ -121,57 +122,57 @@ export interface ElectronAPI {
 
 const electronAPI: ElectronAPI = {
   config: {
-    loadAll: () => ipcRenderer.invoke('config:loadAll'),
-    save: (key, data) => ipcRenderer.invoke('config:save', key, data),
-    migrateFromLocalStorage: (data) => ipcRenderer.invoke('config:migrateFromLocalStorage', data),
+    loadAll: () => ipcRenderer.invoke(IPC.CONFIG_LOAD_ALL),
+    save: (key, data) => ipcRenderer.invoke(IPC.CONFIG_SAVE, key, data),
+    migrateFromLocalStorage: (data) => ipcRenderer.invoke(IPC.CONFIG_MIGRATE, data),
   },
   window: {
-    minimize: () => ipcRenderer.send('window:minimize'),
-    maximize: () => ipcRenderer.send('window:maximize'),
-    close: () => ipcRenderer.send('window:close'),
-    forceClose: () => ipcRenderer.send('window:forceClose'),
-    allowClose: () => ipcRenderer.send('window:allowClose'),
-    cancelClose: () => ipcRenderer.send('window:cancelClose'),
-    isMaximized: () => ipcRenderer.invoke('window:isMaximized'),
+    minimize: () => ipcRenderer.send(IPC.WINDOW_MINIMIZE),
+    maximize: () => ipcRenderer.send(IPC.WINDOW_MAXIMIZE),
+    close: () => ipcRenderer.send(IPC.WINDOW_CLOSE),
+    forceClose: () => ipcRenderer.send(IPC.WINDOW_FORCE_CLOSE),
+    allowClose: () => ipcRenderer.send(IPC.WINDOW_ALLOW_CLOSE),
+    cancelClose: () => ipcRenderer.send(IPC.WINDOW_CANCEL_CLOSE),
+    isMaximized: () => ipcRenderer.invoke(IPC.WINDOW_IS_MAXIMIZED),
     onMaximizedChanged: (callback) => {
       const handler = (_: unknown, maximized: boolean) => callback(maximized)
-      ipcRenderer.on('window:maximized-changed', handler)
-      return () => ipcRenderer.removeListener('window:maximized-changed', handler)
+      ipcRenderer.on(IPC.WINDOW_MAXIMIZED_CHANGED, handler)
+      return () => ipcRenderer.removeListener(IPC.WINDOW_MAXIMIZED_CHANGED, handler)
     },
     onCloseRequested: (callback) => {
       const handler = () => callback()
-      ipcRenderer.on('window:closeRequested', handler)
-      return () => ipcRenderer.removeListener('window:closeRequested', handler)
+      ipcRenderer.on(IPC.WINDOW_CLOSE_REQUESTED, handler)
+      return () => ipcRenderer.removeListener(IPC.WINDOW_CLOSE_REQUESTED, handler)
     }
   },
   dialog: {
-    openFolder: () => ipcRenderer.invoke('dialog:openFolder')
+    openFolder: () => ipcRenderer.invoke(IPC.DIALOG_OPEN_FOLDER)
   },
   clipboard: {
-    readImage: () => ipcRenderer.invoke('clipboard:readImage'),
-    saveImage: () => ipcRenderer.invoke('clipboard:saveImage')
+    readImage: () => ipcRenderer.invoke(IPC.CLIPBOARD_READ_IMAGE),
+    saveImage: () => ipcRenderer.invoke(IPC.CLIPBOARD_SAVE_IMAGE)
   },
   credentials: {
-    save: (configId, password) => ipcRenderer.invoke('credentials:save', configId, password),
-    load: (configId) => ipcRenderer.invoke('credentials:load', configId),
-    delete: (configId) => ipcRenderer.invoke('credentials:delete', configId)
+    save: (configId, password) => ipcRenderer.invoke(IPC.CREDENTIALS_SAVE, configId, password),
+    load: (configId) => ipcRenderer.invoke(IPC.CREDENTIALS_LOAD, configId),
+    delete: (configId) => ipcRenderer.invoke(IPC.CREDENTIALS_DELETE, configId)
   },
   pty: {
     spawn: (sessionId, options) =>
-      ipcRenderer.invoke('pty:spawn', sessionId, options),
+      ipcRenderer.invoke(IPC.PTY_SPAWN, sessionId, options),
     write: (sessionId, data) =>
-      ipcRenderer.send('pty:write', sessionId, data),
+      ipcRenderer.send(IPC.PTY_WRITE, sessionId, data),
     resize: (sessionId, cols, rows) =>
-      ipcRenderer.send('pty:resize', sessionId, cols, rows),
-    kill: (sessionId) => ipcRenderer.send('pty:kill', sessionId),
+      ipcRenderer.send(IPC.PTY_RESIZE, sessionId, cols, rows),
+    kill: (sessionId) => ipcRenderer.send(IPC.PTY_KILL, sessionId),
     onData: (sessionId, callback) => {
-      const channel = `pty:data:${sessionId}`
+      const channel = ptyDataChannel(sessionId)
       const handler = (_: unknown, data: string) => callback(data)
       ipcRenderer.on(channel, handler)
       return () => ipcRenderer.removeListener(channel, handler)
     },
     onExit: (sessionId, callback) => {
-      const channel = `pty:exit:${sessionId}`
+      const channel = ptyExitChannel(sessionId)
       const handler = (_: unknown, exitCode: number) => callback(exitCode)
       ipcRenderer.on(channel, handler)
       return () => ipcRenderer.removeListener(channel, handler)
@@ -180,159 +181,159 @@ const electronAPI: ElectronAPI = {
   statusline: {
     onUpdate: (callback) => {
       const handler = (_: unknown, data: unknown) => callback(data as any)
-      ipcRenderer.on('statusline:update', handler)
-      return () => ipcRenderer.removeListener('statusline:update', handler)
+      ipcRenderer.on(IPC.STATUSLINE_UPDATE, handler)
+      return () => ipcRenderer.removeListener(IPC.STATUSLINE_UPDATE, handler)
     }
   },
   debug: {
     onDebug: (callback: (data: unknown) => void) => {
       const handler = (_: unknown, data: unknown) => callback(data)
-      ipcRenderer.on('claude:debug', handler)
-      return () => ipcRenderer.removeListener('claude:debug', handler)
+      ipcRenderer.on(IPC.DEBUG_ON_DEBUG, handler)
+      return () => ipcRenderer.removeListener(IPC.DEBUG_ON_DEBUG, handler)
     },
-    enable: () => ipcRenderer.invoke('debug:enable'),
-    disable: () => ipcRenderer.invoke('debug:disable'),
-    isEnabled: () => ipcRenderer.invoke('debug:isEnabled'),
-    openFolder: () => ipcRenderer.invoke('debug:openFolder')
+    enable: () => ipcRenderer.invoke(IPC.DEBUG_ENABLE),
+    disable: () => ipcRenderer.invoke(IPC.DEBUG_DISABLE),
+    isEnabled: () => ipcRenderer.invoke(IPC.DEBUG_IS_ENABLED),
+    openFolder: () => ipcRenderer.invoke(IPC.DEBUG_OPEN_FOLDER)
   },
   usage: {
     getSessionUsage: (sessionId) =>
-      ipcRenderer.invoke('usage:session', sessionId),
-    getTotalUsage: () => ipcRenderer.invoke('usage:total'),
-    getUsageHistory: (hours) => ipcRenderer.invoke('usage:history', hours)
+      ipcRenderer.invoke(IPC.USAGE_SESSION, sessionId),
+    getTotalUsage: () => ipcRenderer.invoke(IPC.USAGE_TOTAL),
+    getUsageHistory: (hours) => ipcRenderer.invoke(IPC.USAGE_HISTORY, hours)
   },
   logs: {
-    list: () => ipcRenderer.invoke('logs:list'),
-    read: (logDir, offset, limit) => ipcRenderer.invoke('logs:read', logDir, offset, limit),
-    search: (logDir, query) => ipcRenderer.invoke('logs:search', logDir, query),
-    cleanup: (retentionDays) => ipcRenderer.invoke('logs:cleanup', retentionDays)
+    list: () => ipcRenderer.invoke(IPC.LOGS_LIST),
+    read: (logDir, offset, limit) => ipcRenderer.invoke(IPC.LOGS_READ, logDir, offset, limit),
+    search: (logDir, query) => ipcRenderer.invoke(IPC.LOGS_SEARCH, logDir, query),
+    cleanup: (retentionDays) => ipcRenderer.invoke(IPC.LOGS_CLEANUP, retentionDays)
   },
   discovery: {
-    getProjects: () => ipcRenderer.invoke('discovery:projects'),
+    getProjects: () => ipcRenderer.invoke(IPC.DISCOVERY_PROJECTS),
     getSessionHistory: (projectPath) =>
-      ipcRenderer.invoke('discovery:sessions', projectPath)
+      ipcRenderer.invoke(IPC.DISCOVERY_SESSIONS, projectPath)
   },
   update: {
-    check: () => ipcRenderer.invoke('update:check'),
-    getVersion: () => ipcRenderer.invoke('update:getVersion'),
-    installAndRestart: () => ipcRenderer.invoke('update:installAndRestart'),
-    hasSourcePath: () => ipcRenderer.invoke('update:hasSourcePath'),
-    getSourcePath: () => ipcRenderer.invoke('update:getSourcePath'),
-    setSourcePath: (path: string) => ipcRenderer.invoke('update:setSourcePath', path),
-    selectSourcePath: () => ipcRenderer.invoke('update:selectSourcePath'),
+    check: () => ipcRenderer.invoke(IPC.UPDATE_CHECK),
+    getVersion: () => ipcRenderer.invoke(IPC.UPDATE_GET_VERSION),
+    installAndRestart: () => ipcRenderer.invoke(IPC.UPDATE_INSTALL_RESTART),
+    hasSourcePath: () => ipcRenderer.invoke(IPC.UPDATE_HAS_SOURCE_PATH),
+    getSourcePath: () => ipcRenderer.invoke(IPC.UPDATE_GET_SOURCE_PATH),
+    setSourcePath: (path: string) => ipcRenderer.invoke(IPC.UPDATE_SET_SOURCE_PATH, path),
+    selectSourcePath: () => ipcRenderer.invoke(IPC.UPDATE_SELECT_SOURCE_PATH),
     onAvailable: (callback) => {
       const handler = (_: unknown, available: boolean, version?: string) => callback(available, version)
-      ipcRenderer.on('update:available', handler)
-      return () => ipcRenderer.removeListener('update:available', handler)
+      ipcRenderer.on(IPC.UPDATE_AVAILABLE, handler)
+      return () => ipcRenderer.removeListener(IPC.UPDATE_AVAILABLE, handler)
     },
     onSourceConfigured: (callback: (configured: boolean) => void) => {
       const handler = (_: unknown, configured: boolean) => callback(configured)
-      ipcRenderer.on('update:sourceConfigured', handler)
-      return () => ipcRenderer.removeListener('update:sourceConfigured', handler)
+      ipcRenderer.on(IPC.UPDATE_SOURCE_CONFIGURED, handler)
+      return () => ipcRenderer.removeListener(IPC.UPDATE_SOURCE_CONFIGURED, handler)
     },
     onServerConnected: (callback: (connected: boolean) => void) => {
       const handler = (_: unknown, connected: boolean) => callback(connected)
-      ipcRenderer.on('update:serverConnected', handler)
-      return () => ipcRenderer.removeListener('update:serverConnected', handler)
+      ipcRenderer.on(IPC.UPDATE_SERVER_CONNECTED, handler)
+      return () => ipcRenderer.removeListener(IPC.UPDATE_SERVER_CONNECTED, handler)
     }
   },
   setup: {
-    isComplete: () => ipcRenderer.invoke('setup:isComplete'),
-    getDefaultDataDir: () => ipcRenderer.invoke('setup:getDefaultDataDir'),
-    selectDataDir: () => ipcRenderer.invoke('setup:selectDataDir'),
-    setDataDir: (dir: string) => ipcRenderer.invoke('setup:setDataDir', dir),
-    getDataDir: () => ipcRenderer.invoke('setup:getDataDir'),
-    getResourcesDir: () => ipcRenderer.invoke('setup:getResourcesDir'),
-    selectResourcesDir: () => ipcRenderer.invoke('setup:selectResourcesDir'),
-    setResourcesDir: (dir: string) => ipcRenderer.invoke('setup:setResourcesDir', dir),
-    isCliReady: () => ipcRenderer.invoke('setup:isCliReady'),
-    spawnCliSetup: (cols: number, rows: number) => ipcRenderer.invoke('setup:spawnCliSetup', cols, rows),
-    killCliSetup: () => ipcRenderer.invoke('setup:killCliSetup'),
+    isComplete: () => ipcRenderer.invoke(IPC.SETUP_IS_COMPLETE),
+    getDefaultDataDir: () => ipcRenderer.invoke(IPC.SETUP_GET_DEFAULT_DATA_DIR),
+    selectDataDir: () => ipcRenderer.invoke(IPC.SETUP_SELECT_DATA_DIR),
+    setDataDir: (dir: string) => ipcRenderer.invoke(IPC.SETUP_SET_DATA_DIR, dir),
+    getDataDir: () => ipcRenderer.invoke(IPC.SETUP_GET_DATA_DIR),
+    getResourcesDir: () => ipcRenderer.invoke(IPC.SETUP_GET_RESOURCES_DIR),
+    selectResourcesDir: () => ipcRenderer.invoke(IPC.SETUP_SELECT_RESOURCES_DIR),
+    setResourcesDir: (dir: string) => ipcRenderer.invoke(IPC.SETUP_SET_RESOURCES_DIR, dir),
+    isCliReady: () => ipcRenderer.invoke(IPC.SETUP_IS_CLI_READY),
+    spawnCliSetup: (cols: number, rows: number) => ipcRenderer.invoke(IPC.SETUP_SPAWN_CLI_SETUP, cols, rows),
+    killCliSetup: () => ipcRenderer.invoke(IPC.SETUP_KILL_CLI_SETUP),
   },
   screenshot: {
-    captureRectangle: () => ipcRenderer.invoke('screenshot:captureRectangle'),
-    captureWindow: (sourceId: string) => ipcRenderer.invoke('screenshot:captureWindow', sourceId),
-    listWindows: () => ipcRenderer.invoke('screenshot:listWindows'),
-    listRecent: () => ipcRenderer.invoke('screenshot:listRecent'),
-    cleanup: (maxAgeDays: number) => ipcRenderer.invoke('screenshot:cleanup', maxAgeDays)
+    captureRectangle: () => ipcRenderer.invoke(IPC.SCREENSHOT_CAPTURE_RECTANGLE),
+    captureWindow: (sourceId: string) => ipcRenderer.invoke(IPC.SCREENSHOT_CAPTURE_WINDOW, sourceId),
+    listWindows: () => ipcRenderer.invoke(IPC.SCREENSHOT_LIST_WINDOWS),
+    listRecent: () => ipcRenderer.invoke(IPC.SCREENSHOT_LIST_RECENT),
+    cleanup: (maxAgeDays: number) => ipcRenderer.invoke(IPC.SCREENSHOT_CLEANUP, maxAgeDays)
   },
   session: {
-    save: (state: unknown) => ipcRenderer.invoke('session:save', state),
-    load: () => ipcRenderer.invoke('session:load'),
-    clear: () => ipcRenderer.invoke('session:clear'),
-    hasSaved: () => ipcRenderer.invoke('session:hasSaved'),
-    gracefulExit: () => ipcRenderer.invoke('session:gracefulExit')
+    save: (state: unknown) => ipcRenderer.invoke(IPC.SESSION_SAVE, state),
+    load: () => ipcRenderer.invoke(IPC.SESSION_LOAD),
+    clear: () => ipcRenderer.invoke(IPC.SESSION_CLEAR),
+    hasSaved: () => ipcRenderer.invoke(IPC.SESSION_HAS_SAVED),
+    gracefulExit: () => ipcRenderer.invoke(IPC.SESSION_GRACEFUL_EXIT)
   },
   insights: {
-    run: () => ipcRenderer.invoke('insights:run'),
-    getCatalogue: () => ipcRenderer.invoke('insights:getCatalogue'),
-    getReport: (runId: string) => ipcRenderer.invoke('insights:getReport', runId),
-    getKpis: (runId: string) => ipcRenderer.invoke('insights:getKpis', runId),
-    getLatest: () => ipcRenderer.invoke('insights:getLatest'),
-    isRunning: () => ipcRenderer.invoke('insights:isRunning'),
-    seed: () => ipcRenderer.invoke('insights:seed'),
+    run: () => ipcRenderer.invoke(IPC.INSIGHTS_RUN),
+    getCatalogue: () => ipcRenderer.invoke(IPC.INSIGHTS_GET_CATALOGUE),
+    getReport: (runId: string) => ipcRenderer.invoke(IPC.INSIGHTS_GET_REPORT, runId),
+    getKpis: (runId: string) => ipcRenderer.invoke(IPC.INSIGHTS_GET_KPIS, runId),
+    getLatest: () => ipcRenderer.invoke(IPC.INSIGHTS_GET_LATEST),
+    isRunning: () => ipcRenderer.invoke(IPC.INSIGHTS_IS_RUNNING),
+    seed: () => ipcRenderer.invoke(IPC.INSIGHTS_SEED),
     onStatusChanged: (callback: (run: unknown) => void) => {
       const handler = (_: unknown, run: unknown) => callback(run)
-      ipcRenderer.on('insights:statusChanged', handler)
-      return () => ipcRenderer.removeListener('insights:statusChanged', handler)
+      ipcRenderer.on(IPC.INSIGHTS_STATUS_CHANGED, handler)
+      return () => ipcRenderer.removeListener(IPC.INSIGHTS_STATUS_CHANGED, handler)
     }
   },
   notes: {
-    list: () => ipcRenderer.invoke('notes:list'),
-    load: (id: string) => ipcRenderer.invoke('notes:load', id),
+    list: () => ipcRenderer.invoke(IPC.NOTES_LIST),
+    load: (id: string) => ipcRenderer.invoke(IPC.NOTES_LOAD, id),
     save: (id: string, label: string, content: string, color: string, configId?: string) =>
-      ipcRenderer.invoke('notes:save', id, label, content, color, configId),
-    delete: (id: string) => ipcRenderer.invoke('notes:delete', id),
-    reorder: (ids: string[]) => ipcRenderer.invoke('notes:reorder', ids),
+      ipcRenderer.invoke(IPC.NOTES_SAVE, id, label, content, color, configId),
+    delete: (id: string) => ipcRenderer.invoke(IPC.NOTES_DELETE, id),
+    reorder: (ids: string[]) => ipcRenderer.invoke(IPC.NOTES_REORDER, ids),
   },
   legacyVersion: {
-    fetchVersions: () => ipcRenderer.invoke('legacyVersion:fetchVersions'),
-    isInstalled: (version: string) => ipcRenderer.invoke('legacyVersion:isInstalled', version),
-    install: (version: string) => ipcRenderer.invoke('legacyVersion:install', version),
-    remove: (version: string) => ipcRenderer.invoke('legacyVersion:remove', version),
-    listInstalled: () => ipcRenderer.invoke('legacyVersion:listInstalled'),
+    fetchVersions: () => ipcRenderer.invoke(IPC.LEGACY_FETCH_VERSIONS),
+    isInstalled: (version: string) => ipcRenderer.invoke(IPC.LEGACY_IS_INSTALLED, version),
+    install: (version: string) => ipcRenderer.invoke(IPC.LEGACY_INSTALL, version),
+    remove: (version: string) => ipcRenderer.invoke(IPC.LEGACY_REMOVE, version),
+    listInstalled: () => ipcRenderer.invoke(IPC.LEGACY_LIST_INSTALLED),
     onInstallProgress: (cb: (data: { version: string; message: string }) => void) => {
       const handler = (_: unknown, data: any) => cb(data)
-      ipcRenderer.on('legacyVersion:installProgress', handler)
-      return () => ipcRenderer.removeListener('legacyVersion:installProgress', handler)
+      ipcRenderer.on(IPC.LEGACY_INSTALL_PROGRESS, handler)
+      return () => ipcRenderer.removeListener(IPC.LEGACY_INSTALL_PROGRESS, handler)
     },
   },
   vision: {
     start: (sessionId: string, debugPort: number, browser: string) =>
-      ipcRenderer.invoke('vision:start', sessionId, debugPort, browser),
-    stop: (sessionId: string) => ipcRenderer.invoke('vision:stop', sessionId),
-    status: (sessionId: string) => ipcRenderer.invoke('vision:status', sessionId),
+      ipcRenderer.invoke(IPC.VISION_START, sessionId, debugPort, browser),
+    stop: (sessionId: string) => ipcRenderer.invoke(IPC.VISION_STOP, sessionId),
+    status: (sessionId: string) => ipcRenderer.invoke(IPC.VISION_STATUS, sessionId),
     launch: (browser: string, debugPort: number, url?: string) =>
-      ipcRenderer.invoke('vision:launch', browser, debugPort, url),
-    getPrompt: () => ipcRenderer.invoke('vision:getPrompt') as Promise<string | null>,
+      ipcRenderer.invoke(IPC.VISION_LAUNCH, browser, debugPort, url),
+    getPrompt: () => ipcRenderer.invoke(IPC.VISION_GET_PROMPT) as Promise<string | null>,
     onStatusChanged: (callback: (data: { sessionId: string; connected: boolean; browser: string; proxyPort: number }) => void) => {
       const handler = (_: unknown, data: any) => callback(data)
-      ipcRenderer.on('vision:statusChanged', handler)
-      return () => ipcRenderer.removeListener('vision:statusChanged', handler)
+      ipcRenderer.on(IPC.VISION_STATUS_CHANGED, handler)
+      return () => ipcRenderer.removeListener(IPC.VISION_STATUS_CHANGED, handler)
     }
   },
   cloudAgent: {
     dispatch: (params: { name: string; description: string; projectPath: string; configId?: string }) =>
-      ipcRenderer.invoke('cloudAgent:dispatch', params),
-    cancel: (id: string) => ipcRenderer.invoke('cloudAgent:cancel', id),
-    remove: (id: string) => ipcRenderer.invoke('cloudAgent:remove', id),
-    retry: (id: string) => ipcRenderer.invoke('cloudAgent:retry', id),
-    list: () => ipcRenderer.invoke('cloudAgent:list'),
-    getOutput: (id: string) => ipcRenderer.invoke('cloudAgent:getOutput', id),
-    clearCompleted: () => ipcRenderer.invoke('cloudAgent:clearCompleted'),
+      ipcRenderer.invoke(IPC.CLOUD_AGENT_DISPATCH, params),
+    cancel: (id: string) => ipcRenderer.invoke(IPC.CLOUD_AGENT_CANCEL, id),
+    remove: (id: string) => ipcRenderer.invoke(IPC.CLOUD_AGENT_REMOVE, id),
+    retry: (id: string) => ipcRenderer.invoke(IPC.CLOUD_AGENT_RETRY, id),
+    list: () => ipcRenderer.invoke(IPC.CLOUD_AGENT_LIST),
+    getOutput: (id: string) => ipcRenderer.invoke(IPC.CLOUD_AGENT_GET_OUTPUT, id),
+    clearCompleted: () => ipcRenderer.invoke(IPC.CLOUD_AGENT_CLEAR_COMPLETED),
     onStatusChanged: (callback: (agent: any) => void) => {
       const handler = (_: unknown, agent: any) => callback(agent)
-      ipcRenderer.on('cloudAgent:statusChanged', handler)
-      return () => ipcRenderer.removeListener('cloudAgent:statusChanged', handler)
+      ipcRenderer.on(IPC.CLOUD_AGENT_STATUS_CHANGED, handler)
+      return () => ipcRenderer.removeListener(IPC.CLOUD_AGENT_STATUS_CHANGED, handler)
     },
     onOutputChunk: (callback: (data: { id: string; chunk: string }) => void) => {
       const handler = (_: unknown, data: any) => callback(data)
-      ipcRenderer.on('cloudAgent:outputChunk', handler)
-      return () => ipcRenderer.removeListener('cloudAgent:outputChunk', handler)
+      ipcRenderer.on(IPC.CLOUD_AGENT_OUTPUT_CHUNK, handler)
+      return () => ipcRenderer.removeListener(IPC.CLOUD_AGENT_OUTPUT_CHUNK, handler)
     },
   },
   cli: {
-    check: () => ipcRenderer.invoke('cli:check')
+    check: () => ipcRenderer.invoke(IPC.CLI_CHECK)
   }
 }
 

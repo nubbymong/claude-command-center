@@ -5,7 +5,7 @@
  */
 
 import { join } from 'path'
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, unlinkSync, readdirSync } from 'fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, unlinkSync, readdirSync, copyFileSync } from 'fs'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import { logInfo, logError } from './debug-logger'
 
@@ -68,15 +68,18 @@ export function writeConfig(key: ConfigKey, data: unknown): boolean {
   try {
     const json = JSON.stringify(data, null, 2)
     writeFileSync(tmpPath, json, 'utf-8')
-    // Atomic rename — on Windows, rename fails if target exists, so unlink first
+    // On Windows, renameSync fails if target exists. Use copyFileSync (which overwrites
+    // atomically) then clean up tmp. This avoids the unlink+rename window where neither
+    // file exists.
     if (existsSync(filePath)) {
-      unlinkSync(filePath)
+      copyFileSync(tmpPath, filePath)
+      try { unlinkSync(tmpPath) } catch { /* ignore */ }
+    } else {
+      renameSync(tmpPath, filePath)
     }
-    renameSync(tmpPath, filePath)
     return true
   } catch (err) {
     logError(`[config-manager] Failed to write ${key}: ${err}`)
-    // Clean up tmp file if it exists
     try { if (existsSync(tmpPath)) unlinkSync(tmpPath) } catch { /* ignore */ }
     return false
   }
