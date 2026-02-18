@@ -52,6 +52,7 @@ export interface SavedSession {
   sshConfig?: SshConfig
   visionConfig?: VisionConfig
   legacyVersion?: LegacyVersion
+  agentIds?: string[]
 }
 
 export interface SessionState {
@@ -86,6 +87,20 @@ export interface StatuslineData {
   rateLimitWeekly?: number
   rateLimitWeeklyResets?: string
   rateLimitExtra?: RateLimitExtra
+}
+
+// ── Agent Templates ──
+
+export type AgentModelOverride = 'sonnet' | 'opus' | 'haiku' | 'inherit'
+
+export interface AgentTemplate {
+  id: string
+  name: string           // "code-reviewer" (lowercase, hyphens)
+  description: string    // When Claude should delegate to this agent
+  prompt: string         // System prompt
+  model: AgentModelOverride
+  tools: string[]        // Allowed tools (empty = inherit all)
+  isBuiltIn?: boolean    // Pre-built template (read-only)
 }
 
 // ── Cloud Agents ──

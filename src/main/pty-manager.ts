@@ -115,7 +115,7 @@ function getResumePickerPath(): string | null {
 export function spawnPty(
   win: BrowserWindow,
   sessionId: string,
-  options?: { cwd?: string; cols?: number; rows?: number; ssh?: SSHOptions; shellOnly?: boolean; elevated?: boolean; configLabel?: string; useResumePicker?: boolean; legacyVersion?: { enabled: boolean; version: string } }
+  options?: { cwd?: string; cols?: number; rows?: number; ssh?: SSHOptions; shellOnly?: boolean; elevated?: boolean; configLabel?: string; useResumePicker?: boolean; legacyVersion?: { enabled: boolean; version: string }; agentsConfig?: Array<{ name: string; description: string; prompt: string; model?: string; tools?: string[] }> }
 ): void {
   logInfo(`[pty] Spawning PTY for session ${sessionId} (ssh=${!!options?.ssh}, shellOnly=${!!options?.shellOnly}, cwd=${options?.cwd || 'default'})`)
   killPty(sessionId)
@@ -308,6 +308,22 @@ export function spawnPty(
       // regardless of PowerShell profile scripts or PTY cwd propagation issues.
       const escapedCwd = resolvedCwd.replace(/'/g, "''")
 
+      // Build --agents flag if agent templates are configured
+      let agentsFlag = ''
+      if (options?.agentsConfig && options.agentsConfig.length > 0) {
+        const agentsJson = JSON.stringify(options.agentsConfig)
+        if (os.platform() === 'win32') {
+          // PowerShell: single-quote the JSON, escape internal single quotes by doubling
+          const escaped = agentsJson.replace(/'/g, "''")
+          agentsFlag = ` --agents '${escaped}'`
+        } else {
+          // Bash: single-quote the JSON, escape internal single quotes
+          const escaped = agentsJson.replace(/'/g, "'\\''")
+          agentsFlag = ` --agents '${escaped}'`
+        }
+        logInfo(`[pty] Agents flag for ${sessionId}: ${agentsFlag.slice(0, 200)}...`)
+      }
+
       // When useResumePicker is true, run the resume-picker script instead of Claude directly.
       // The picker shows prior conversations and launches Claude with --resume or plain.
       let escapedCmd: string
@@ -321,13 +337,13 @@ export function spawnPty(
         } else {
           // Fallback: no picker script found, launch Claude directly
           escapedCmd = os.platform() === 'win32'
-            ? `Set-Location '${escapedCwd}'; & "${cmd}"; exit`
-            : `cd '${escapedCwd.replace(/'/g, "'\\''")}' && "${cmd}"; exit`
+            ? `Set-Location '${escapedCwd}'; & "${cmd}"${agentsFlag}; exit`
+            : `cd '${escapedCwd.replace(/'/g, "'\\''")}' && "${cmd}"${agentsFlag}; exit`
         }
       } else {
         escapedCmd = os.platform() === 'win32'
-          ? `Set-Location '${escapedCwd}'; & "${cmd}"; exit`
-          : `cd '${escapedCwd.replace(/'/g, "'\\''")}' && "${cmd}"; exit`
+          ? `Set-Location '${escapedCwd}'; & "${cmd}"${agentsFlag}; exit`
+          : `cd '${escapedCwd.replace(/'/g, "'\\''")}' && "${cmd}"${agentsFlag}; exit`
       }
       setTimeout(() => {
         ptyProcess.write(escapedCmd + '\r')

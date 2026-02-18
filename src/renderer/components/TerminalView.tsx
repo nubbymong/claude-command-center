@@ -15,6 +15,7 @@ import { useCompactionInterrupt } from '../hooks/useCompactionInterrupt'
 import { useVisionLifecycle } from '../hooks/useVisionLifecycle'
 import { useActiveTabEffect } from '../hooks/useActiveTabEffect'
 import { useCursorLayerVisibility } from '../hooks/useCursorLayerVisibility'
+import { useAgentLibraryStore, BUILTIN_TEMPLATES } from '../stores/agentLibraryStore'
 
 // Re-export for consumers
 export { killSessionPty } from '../ptyTracker'
@@ -52,9 +53,10 @@ interface Props {
     enabled: boolean
     version: string
   }
+  agentIds?: string[]
 }
 
-export default function TerminalView({ sessionId, configId, cwd, shellOnly, elevated, ssh, isActive = true, partnerEnabled, isPartnerActive, onTogglePartner, partnerSessionId, visionConfig, legacyVersion }: Props) {
+export default function TerminalView({ sessionId, configId, cwd, shellOnly, elevated, ssh, isActive = true, partnerEnabled, isPartnerActive, onTogglePartner, partnerSessionId, visionConfig, legacyVersion, agentIds }: Props) {
   const xtermContainerRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
@@ -142,7 +144,23 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
           const rows = term.rows
           const configLabel = session?.label || 'default'
           const useResumePicker = shouldUseResumePicker(sessionId)
-          window.electronAPI.pty.spawn(sessionId, { cwd, cols, rows, ssh, shellOnly, elevated, configLabel, useResumePicker, visionConfig, legacyVersion })
+          // Resolve agent template IDs to config objects for --agents flag
+          let agentsConfig: Array<{ name: string; description: string; prompt: string; model?: string; tools?: string[] }> | undefined
+          if (agentIds && agentIds.length > 0) {
+            const allTemplates = [...useAgentLibraryStore.getState().templates, ...BUILTIN_TEMPLATES]
+            agentsConfig = agentIds
+              .map(id => allTemplates.find(t => t.id === id))
+              .filter((t): t is NonNullable<typeof t> => !!t)
+              .map(t => ({
+                name: t.name,
+                description: t.description,
+                prompt: t.prompt,
+                model: t.model !== 'inherit' ? t.model : undefined,
+                tools: t.tools.length > 0 ? t.tools : undefined,
+              }))
+            if (agentsConfig.length === 0) agentsConfig = undefined
+          }
+          window.electronAPI.pty.spawn(sessionId, { cwd, cols, rows, ssh, shellOnly, elevated, configLabel, useResumePicker, visionConfig, legacyVersion, agentsConfig })
         }
       })
 

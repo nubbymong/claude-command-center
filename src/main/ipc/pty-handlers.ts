@@ -16,6 +16,7 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     useResumePicker?: boolean
     visionConfig?: { enabled: boolean; browser: 'chrome' | 'edge'; debugPort: number }
     legacyVersion?: { enabled: boolean; version: string }
+    agentsConfig?: Array<{ name: string; description: string; prompt: string; model?: string; tools?: string[] }>
   }) => {
     const win = getWindow()
     if (!win) throw new Error('No window available')

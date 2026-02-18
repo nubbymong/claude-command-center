@@ -36,6 +36,7 @@ export interface TerminalConfig {
     version: string
   }
   pinned?: boolean
+  agentIds?: string[]  // Selected agent template IDs
 }
 
 export interface ConfigGroup {

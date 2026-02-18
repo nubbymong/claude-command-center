@@ -22,6 +22,7 @@ const CONFIG_FILES = {
   windowState: 'window-state.json',
   sshCredentials: 'ssh-credentials.json',
   cloudAgents: 'cloud-agents.json',
+  agentTemplates: 'agent-templates.json',
 } as const
 
 export type ConfigKey = keyof typeof CONFIG_FILES

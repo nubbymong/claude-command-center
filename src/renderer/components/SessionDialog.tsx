@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { TerminalConfig, ConfigGroup, ConfigSection, useConfigStore } from '../stores/configStore'
+import { useAgentLibraryStore, BUILTIN_TEMPLATES } from '../stores/agentLibraryStore'
 
 export type SessionType = 'local' | 'ssh'
 
@@ -73,6 +74,11 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
   const [versionInstalled, setVersionInstalled] = useState(false)
   const [installing, setInstalling] = useState(false)
   const [installError, setInstallError] = useState('')
+
+  // Agent fields
+  const agentUserTemplates = useAgentLibraryStore(s => s.templates)
+  const allAgentTemplates = [...agentUserTemplates, ...BUILTIN_TEMPLATES]
+  const [selectedAgentIds, setSelectedAgentIds] = useState<Set<string>>(new Set(initial?.agentIds ?? []))
 
   // Vision fields
   const [visionEnabled, setVisionEnabled] = useState(initial?.visionConfig?.enabled ?? false)
@@ -236,7 +242,8 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
       legacyVersion: legacyEnabled && legacyVersion ? {
         enabled: true,
         version: legacyVersion
-      } : undefined
+      } : undefined,
+      agentIds: !shellOnly && selectedAgentIds.size > 0 ? Array.from(selectedAgentIds) : undefined,
     }
 
     onConfirm(
@@ -660,6 +667,43 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
               </div>
             )}
           </div>
+
+          {/* Agent selection */}
+          {!shellOnly && allAgentTemplates.length > 0 && (
+            <div className="pt-2 border-t border-surface0">
+              <label className="block text-xs text-subtext0 mb-1.5">
+                Agents
+                <span className="text-overlay0 ml-1">(attached via --agents flag)</span>
+              </label>
+              <div className="max-h-[120px] overflow-y-auto border border-surface1 rounded bg-base">
+                {allAgentTemplates.map(t => (
+                  <label
+                    key={t.id}
+                    className="flex items-start gap-2 px-2.5 py-1.5 hover:bg-surface0/30 cursor-pointer transition-colors"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedAgentIds.has(t.id)}
+                      onChange={() => {
+                        setSelectedAgentIds(prev => {
+                          const next = new Set(prev)
+                          if (next.has(t.id)) next.delete(t.id)
+                          else next.add(t.id)
+                          return next
+                        })
+                      }}
+                      className="rounded border-surface1 mt-0.5"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <span className="text-xs font-medium text-text font-mono">{t.name}</span>
+                      {t.isBuiltIn && <span className="text-[9px] text-overlay0 ml-1">(built-in)</span>}
+                      <div className="text-[10px] text-overlay1 truncate">{t.description}</div>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Group assignment */}
           <div>
