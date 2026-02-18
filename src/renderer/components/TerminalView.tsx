@@ -116,7 +116,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         cursorStyle: 'bar',
         cursorWidth: 1,
         cursorInactiveStyle: 'none',
-        scrollback: 100000,
+        scrollback: 10000,
         allowTransparency: true,
       })
 
