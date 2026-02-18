@@ -211,11 +211,18 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
           if (promptPattern.test(stripped.trim()) && !attentionAckedRef.current) {
             attentionTimerRef.current = setTimeout(() => {
               attentionTimerRef.current = null
+              // claudeWaiting: always set (controls red InputBar on active tab)
+              // needsAttention: only for inactive tabs (controls tab notification dot)
               const state = useSessionStore.getState()
+              const updates: Record<string, any> = { claudeWaiting: true }
               if (state.activeSessionId !== sessionId) {
-                updateSession(sessionId, { needsAttention: true })
+                updates.needsAttention = true
               }
+              updateSession(sessionId, updates)
             }, 2000)
+          } else if (visibleText.length > 10) {
+            // Significant non-prompt output — Claude is responding, no longer waiting
+            updateSession(sessionId, { claudeWaiting: false })
           }
         }, 250)
       }
@@ -339,6 +346,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
   }, [sessionId])
 
   const needsAttention = session?.needsAttention ?? false
+  const claudeWaiting = session?.claudeWaiting ?? false
   const inputBarHeight = session?.inputBarHeight ?? 0
 
   return (
@@ -393,6 +401,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         sessionId={sessionId}
         sessionType={ssh ? 'ssh' : 'local'}
         needsAttention={needsAttention}
+        claudeWaiting={claudeWaiting}
         inputBarHeight={inputBarHeight}
         terminalRef={terminalRef}
         isScrolledUpRef={isScrolledUpRef}
