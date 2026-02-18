@@ -11,6 +11,7 @@ export default function NewAgentDialog({ onClose }: Props) {
   const [description, setDescription] = useState('')
   const [projectPath, setProjectPath] = useState('')
   const [selectedConfigId, setSelectedConfigId] = useState<string>('')
+  const [dispatching, setDispatching] = useState(false)
   const configs = useConfigStore(s => s.configs)
   const dispatch = useCloudAgentStore(s => s.dispatch)
   const nameRef = useRef<HTMLInputElement>(null)
@@ -40,7 +41,8 @@ export default function NewAgentDialog({ onClose }: Props) {
   }
 
   const handleDispatch = async () => {
-    if (!name.trim() || !description.trim() || !projectPath.trim()) return
+    if (!name.trim() || !description.trim() || !projectPath.trim() || dispatching) return
+    setDispatching(true)
     const selectedConfig = selectedConfigId ? localConfigs.find(c => c.id === selectedConfigId) : undefined
     await dispatch({
       name: name.trim(),
@@ -122,10 +124,10 @@ export default function NewAgentDialog({ onClose }: Props) {
           </button>
           <button
             onClick={handleDispatch}
-            disabled={!name.trim() || !description.trim() || !projectPath.trim()}
+            disabled={!name.trim() || !description.trim() || !projectPath.trim() || dispatching}
             className="px-4 py-2 text-sm font-medium rounded bg-blue hover:bg-blue/80 text-crust transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            Dispatch Agent
+            {dispatching ? 'Dispatching...' : 'Dispatch Agent'}
           </button>
         </div>
 

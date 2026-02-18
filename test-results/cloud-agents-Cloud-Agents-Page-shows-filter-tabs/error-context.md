@@ -7,10 +7,10 @@
       - generic [ref=e7]:
         - heading "What's New" [level=2] [ref=e8]
         - button "×" [ref=e9]
-      - paragraph [ref=e10]: "Build: 18 Feb 2026 01:18"
+      - paragraph [ref=e10]: "Build: 18 Feb 2026 01:37"
     - generic [ref=e12]:
       - generic [ref=e13]:
-        - generic [ref=e14]: v1.2.91
+        - generic [ref=e14]: v1.2.95
         - generic [ref=e15]: 11 Feb 2026
       - paragraph [ref=e16]: Maintenance release with internal improvements
       - list [ref=e17]:
@@ -222,5 +222,5 @@
     - generic [ref=e317]: "Sessions: 0/0"
     - generic "Claude CLI available" [ref=e318]:
       - generic [ref=e320]: CLI
-    - 'generic "Built: 2026-02-18T01:18:22.452Z" [ref=e321]': v1.2.91
+    - 'generic "Built: 2026-02-18T01:37:08.303Z" [ref=e321]': v1.2.95
 ```

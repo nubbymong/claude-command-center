@@ -40,16 +40,16 @@ describe('cloudAgentStore', () => {
   })
 
   describe('dispatch', () => {
-    it('calls electronAPI and adds agent to store', async () => {
+    it('calls electronAPI and sets selectedAgentId (does not add to store — handleStatusChanged does that)', async () => {
       await useCloudAgentStore.getState().dispatch({
         name: 'Auth Fix',
         description: 'Fix auth module',
         projectPath: 'C:\\dev',
       })
       const state = useCloudAgentStore.getState()
-      expect(state.agents).toHaveLength(1)
-      expect(state.agents[0].name).toBe('Auth Fix')
-      expect(state.selectedAgentId).toBe(state.agents[0].id)
+      // dispatch no longer adds the agent — handleStatusChanged listener does
+      expect(state.agents).toHaveLength(0)
+      expect(state.selectedAgentId).toBe('ca-mock123')
     })
   })
 

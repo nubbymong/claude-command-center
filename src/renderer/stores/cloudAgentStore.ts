@@ -53,10 +53,9 @@ export const useCloudAgentStore = create<CloudAgentState>((set, get) => ({
   dispatch: async (params) => {
     try {
       const agent = await window.electronAPI.cloudAgent.dispatch(params)
-      set(state => ({
-        agents: [agent, ...state.agents],
-        selectedAgentId: agent.id,
-      }))
+      // Don't add agent here — handleStatusChanged listener already added it
+      // from the broadcastStatus() call in the main process. Just select it.
+      set({ selectedAgentId: agent.id })
     } catch (err: any) {
       console.error('[cloudAgentStore] dispatch failed:', err)
     }
@@ -79,10 +78,8 @@ export const useCloudAgentStore = create<CloudAgentState>((set, get) => ({
   retry: async (id: string) => {
     const newAgent = await window.electronAPI.cloudAgent.retry(id)
     if (newAgent) {
-      set(state => ({
-        agents: [newAgent, ...state.agents],
-        selectedAgentId: newAgent.id,
-      }))
+      // Don't add — handleStatusChanged listener already added it from broadcast
+      set({ selectedAgentId: newAgent.id })
     }
   },
 
