@@ -1,10 +1,19 @@
 import React, { useState, useEffect, useRef } from 'react'
 import WhatsNewModal, { markWhatsNewSeen } from './WhatsNewModal'
 import { getLatestVersion } from '../changelog'
-import { useSettingsStore } from '../stores/settingsStore'
+import { useSettingsStore, DEFAULT_STATUS_LINE } from '../stores/settingsStore'
+import type { StatusLineSettings } from '../stores/settingsStore'
 import { eventToShortcutString, DEFAULT_SHORTCUTS, SHORTCUT_LABELS } from '../utils/shortcuts'
-
 declare const __BUILD_TIME__: string
+
+type SettingsTab = 'general' | 'statusline' | 'shortcuts' | 'about'
+
+const TABS: { id: SettingsTab; label: string }[] = [
+  { id: 'general', label: 'General' },
+  { id: 'statusline', label: 'Status Line' },
+  { id: 'shortcuts', label: 'Shortcuts' },
+  { id: 'about', label: 'About' }
+]
 
 function formatBuildTime(iso: string): string {
   try {
@@ -20,6 +29,7 @@ export default function SettingsPage() {
   const settings = useSettingsStore((s) => s.settings)
   const updateSettings = useSettingsStore((s) => s.updateSettings)
   const [showWhatsNew, setShowWhatsNew] = useState(false)
+  const [activeTab, setActiveTab] = useState<SettingsTab>('general')
   const latestVersion = getLatestVersion()
 
   useEffect(() => {
@@ -45,11 +55,17 @@ export default function SettingsPage() {
     await window.electronAPI.debug.openFolder()
   }
 
+  const sl = settings.statusLine || DEFAULT_STATUS_LINE
+
+  const updateStatusLine = (key: keyof StatusLineSettings) => {
+    save({ statusLine: { ...sl, [key]: !sl[key] } })
+  }
+
   return (
     <div className="flex-1 flex flex-col bg-base overflow-hidden">
       {/* Page header */}
       <div className="px-5 pt-4 pb-3 border-b border-surface0/80 bg-mantle/30 shrink-0">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 mb-3">
           <div className="w-8 h-8 rounded-lg bg-blue/10 flex items-center justify-center shrink-0">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="text-blue">
               <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.3" />
@@ -61,131 +77,157 @@ export default function SettingsPage() {
             <p className="text-[11px] text-overlay0 mt-0.5">Application preferences and configuration</p>
           </div>
         </div>
+        {/* Tab bar */}
+        <div className="flex items-center bg-crust rounded-md p-0.5">
+          {TABS.map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`flex-1 px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+                activeTab === tab.id ? 'bg-blue text-crust' : 'text-overlay1 hover:text-text'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-2xl mx-auto p-5 space-y-4">
 
-          <Section title="Defaults" icon={<path d="M3 3h10v10H3z" stroke="currentColor" strokeWidth="1.2" fill="none" />}>
-            <Field label="Default Working Directory">
-              <input
-                value={settings.defaultWorkingDirectory}
-                onChange={e => save({ defaultWorkingDirectory: e.target.value })}
-                placeholder="Leave empty for home directory"
-                className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-full focus:outline-none focus:border-blue/50 placeholder:text-overlay0 transition-colors"
-              />
-            </Field>
-          </Section>
-
-          <Section title="Appearance" icon={<><circle cx="8" cy="8" r="3" stroke="currentColor" strokeWidth="1.2" fill="none" /><path d="M8 2v2M8 12v2M2 8h2M12 8h2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" /></>}>
-            <Field label="Terminal Font Size">
-              <input
-                type="number"
-                value={settings.terminalFontSize}
-                onChange={e => save({ terminalFontSize: parseInt(e.target.value) || 14 })}
-                min={10}
-                max={24}
-                className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-24 focus:outline-none focus:border-blue/50 tabular-nums transition-colors"
-              />
-            </Field>
-            <Field label="Input Bar Max Height">
-              <div className="flex items-center gap-3">
-                <input
-                  type="range"
-                  value={settings.inputBarMaxHeight || 400}
-                  onChange={e => save({ inputBarMaxHeight: parseInt(e.target.value) })}
-                  min={100}
-                  max={800}
-                  step={50}
-                  className="flex-1 accent-blue"
-                />
-                <span className="text-xs text-overlay1 font-mono w-14 text-right tabular-nums">{settings.inputBarMaxHeight || 400}px</span>
-              </div>
-            </Field>
-          </Section>
-
-          <Section title="Debug Logging" icon={<path d="M4 4l8 8M4 12l8-8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />}>
-            <Field label="Verbose Logging">
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={() => save({ debugMode: !settings.debugMode })}
-                  className={`relative w-11 h-6 rounded-full transition-colors duration-200 ${
-                    settings.debugMode ? 'bg-green' : 'bg-surface1'
-                  }`}
-                >
-                  <div
-                    className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-200 ${
-                      settings.debugMode ? 'translate-x-6' : 'translate-x-1'
-                    }`}
+          {activeTab === 'general' && (
+            <>
+              <Section title="Defaults" icon={<path d="M3 3h10v10H3z" stroke="currentColor" strokeWidth="1.2" fill="none" />}>
+                <Field label="Default Working Directory">
+                  <input
+                    value={settings.defaultWorkingDirectory}
+                    onChange={e => save({ defaultWorkingDirectory: e.target.value })}
+                    placeholder="Leave empty for home directory"
+                    className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-full focus:outline-none focus:border-blue/50 placeholder:text-overlay0 transition-colors"
                   />
-                </button>
-                <span className={`text-xs font-medium ${settings.debugMode ? 'text-green' : 'text-overlay0'}`}>
-                  {settings.debugMode ? 'ON' : 'OFF'}
-                </span>
-              </div>
-            </Field>
-            <p className="text-[11px] text-overlay0 mt-1 leading-relaxed">
-              Logs PTY input/output, session events, and IPC calls to app.log. Persists across updates.
-            </p>
-            <button
-              onClick={openDebugFolder}
-              className="mt-2 text-[11px] text-blue hover:text-blue/80 transition-colors"
-            >
-              Open log folder
-            </button>
-          </Section>
+                </Field>
+              </Section>
 
-          <Section title="Keyboard Shortcuts" icon={<><rect x="2" y="6" width="12" height="6" rx="1" stroke="currentColor" strokeWidth="1.2" fill="none" /><path d="M5 9h6" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" /></>}>
-            <div className="space-y-0.5">
-              {Object.keys(SHORTCUT_LABELS).map((action) => (
-                <ShortcutEditor
-                  key={action}
-                  action={action}
-                  label={SHORTCUT_LABELS[action]}
-                  shortcut={settings.keyboardShortcuts?.[action] || DEFAULT_SHORTCUTS[action]}
-                  allShortcuts={settings.keyboardShortcuts || DEFAULT_SHORTCUTS}
-                  onSave={(newShortcut) => {
-                    save({
-                      keyboardShortcuts: {
-                        ...DEFAULT_SHORTCUTS,
-                        ...settings.keyboardShortcuts,
-                        [action]: newShortcut,
-                      },
-                    })
-                  }}
-                />
-              ))}
-              <ShortcutRow keys="Ctrl+1-9" action="Jump to session" />
-            </div>
-            <button
-              onClick={() => save({ keyboardShortcuts: { ...DEFAULT_SHORTCUTS } })}
-              className="mt-3 text-[11px] text-blue hover:text-blue/80 transition-colors"
-            >
-              Reset to Defaults
-            </button>
-          </Section>
+              <Section title="Appearance" icon={<><circle cx="8" cy="8" r="3" stroke="currentColor" strokeWidth="1.2" fill="none" /><path d="M8 2v2M8 12v2M2 8h2M12 8h2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" /></>}>
+                <Field label="Terminal Font Size">
+                  <input
+                    type="number"
+                    value={settings.terminalFontSize}
+                    onChange={e => save({ terminalFontSize: parseInt(e.target.value) || 14 })}
+                    min={10}
+                    max={24}
+                    className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-24 focus:outline-none focus:border-blue/50 tabular-nums transition-colors"
+                  />
+                </Field>
+                <Field label="Input Bar Max Height">
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="range"
+                      value={settings.inputBarMaxHeight || 400}
+                      onChange={e => save({ inputBarMaxHeight: parseInt(e.target.value) })}
+                      min={100}
+                      max={800}
+                      step={50}
+                      className="flex-1 accent-blue"
+                    />
+                    <span className="text-xs text-overlay1 font-mono w-14 text-right tabular-nums">{settings.inputBarMaxHeight || 400}px</span>
+                  </div>
+                </Field>
+              </Section>
 
-          <Section title="About" icon={<><circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.2" fill="none" /><path d="M8 7v4M8 5.5v.01" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" /></>}>
-            <div className="space-y-2.5">
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-text">Version</span>
-                <span className="text-sm text-subtext0 font-medium">v{latestVersion.version}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-text">Build</span>
-                <span className="text-xs text-overlay0 font-mono tabular-nums">{formatBuildTime(__BUILD_TIME__)}</span>
-              </div>
-              <div className="pt-1">
+              <Section title="Debug Logging" icon={<path d="M4 4l8 8M4 12l8-8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />}>
+                <Field label="Verbose Logging">
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => save({ debugMode: !settings.debugMode })}
+                      className={`relative w-11 h-6 rounded-full transition-colors duration-200 ${
+                        settings.debugMode ? 'bg-green' : 'bg-surface1'
+                      }`}
+                    >
+                      <div
+                        className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-200 ${
+                          settings.debugMode ? 'translate-x-6' : 'translate-x-1'
+                        }`}
+                      />
+                    </button>
+                    <span className={`text-xs font-medium ${settings.debugMode ? 'text-green' : 'text-overlay0'}`}>
+                      {settings.debugMode ? 'ON' : 'OFF'}
+                    </span>
+                  </div>
+                </Field>
+                <p className="text-[11px] text-overlay0 mt-1 leading-relaxed">
+                  Logs PTY input/output, session events, and IPC calls to app.log. Persists across updates.
+                </p>
                 <button
-                  onClick={() => setShowWhatsNew(true)}
-                  className="text-[11px] text-blue hover:text-blue/80 transition-colors"
+                  onClick={openDebugFolder}
+                  className="mt-2 text-[11px] text-blue hover:text-blue/80 transition-colors"
                 >
-                  View What's New
+                  Open log folder
                 </button>
+              </Section>
+            </>
+          )}
+
+          {activeTab === 'statusline' && (
+            <StatusLineTab sl={sl} onToggle={updateStatusLine} />
+          )}
+
+          {activeTab === 'shortcuts' && (
+            <Section title="Keyboard Shortcuts" icon={<><rect x="2" y="6" width="12" height="6" rx="1" stroke="currentColor" strokeWidth="1.2" fill="none" /><path d="M5 9h6" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" /></>}>
+              <div className="space-y-0.5">
+                {Object.keys(SHORTCUT_LABELS).map((action) => (
+                  <ShortcutEditor
+                    key={action}
+                    action={action}
+                    label={SHORTCUT_LABELS[action]}
+                    shortcut={settings.keyboardShortcuts?.[action] || DEFAULT_SHORTCUTS[action]}
+                    allShortcuts={settings.keyboardShortcuts || DEFAULT_SHORTCUTS}
+                    onSave={(newShortcut) => {
+                      save({
+                        keyboardShortcuts: {
+                          ...DEFAULT_SHORTCUTS,
+                          ...settings.keyboardShortcuts,
+                          [action]: newShortcut,
+                        },
+                      })
+                    }}
+                  />
+                ))}
+                <ShortcutRow keys="Ctrl+1-9" action="Jump to session" />
               </div>
-            </div>
-          </Section>
+              <button
+                onClick={() => save({ keyboardShortcuts: { ...DEFAULT_SHORTCUTS } })}
+                className="mt-3 text-[11px] text-blue hover:text-blue/80 transition-colors"
+              >
+                Reset to Defaults
+              </button>
+            </Section>
+          )}
+
+          {activeTab === 'about' && (
+            <Section title="About" icon={<><circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.2" fill="none" /><path d="M8 7v4M8 5.5v.01" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" /></>}>
+              <div className="space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-text">Version</span>
+                  <span className="text-sm text-subtext0 font-medium">v{latestVersion.version}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-text">Build</span>
+                  <span className="text-xs text-overlay0 font-mono tabular-nums">{formatBuildTime(__BUILD_TIME__)}</span>
+                </div>
+                <div className="pt-1">
+                  <button
+                    onClick={() => setShowWhatsNew(true)}
+                    className="text-[11px] text-blue hover:text-blue/80 transition-colors"
+                  >
+                    View What's New
+                  </button>
+                </div>
+              </div>
+            </Section>
+          )}
         </div>
       </div>
 
@@ -201,6 +243,143 @@ export default function SettingsPage() {
     </div>
   )
 }
+
+/* ── Status Line Tab ─────────────────────────────────── */
+
+const STATUS_LINE_TOGGLES: { key: keyof StatusLineSettings; label: string; description: string }[] = [
+  { key: 'showModel', label: 'Model Name', description: 'Shows the active Claude model' },
+  { key: 'showTokens', label: 'Token Count', description: 'Input tokens / context window' },
+  { key: 'showContextBar', label: 'Context Bar', description: 'Visual progress bar + percentage' },
+  { key: 'showCost', label: 'API Cost', description: 'API equivalent cost estimate' },
+  { key: 'showLinesChanged', label: 'Lines Changed', description: 'Lines added and removed' },
+  { key: 'showDuration', label: 'Duration', description: 'Total session duration' },
+  { key: 'showRateLimits', label: 'Rate Limits', description: '5h and 7d usage dot bars' },
+  { key: 'showResetTime', label: 'Reset Time', description: 'Time until rate limit resets' }
+]
+
+function StatusLineTab({ sl, onToggle }: { sl: StatusLineSettings; onToggle: (key: keyof StatusLineSettings) => void }) {
+  return (
+    <>
+      {/* Live Preview */}
+      <div className="rounded-xl bg-surface0/30 border border-surface0/60 overflow-hidden">
+        <div className="px-4 py-2.5 border-b border-surface0/40 flex items-center gap-2">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="text-overlay1 shrink-0">
+            <rect x="2" y="3" width="12" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.2" fill="none" />
+            <path d="M2 6h12" stroke="currentColor" strokeWidth="1.2" />
+          </svg>
+          <h3 className="text-xs font-semibold text-subtext0 uppercase tracking-wider">Live Preview</h3>
+        </div>
+        <div className="p-4">
+          <div className="rounded-lg border border-surface0/80 overflow-hidden">
+            <StatusLinePreview sl={sl} />
+          </div>
+          <p className="text-[11px] text-overlay0 mt-2">
+            Toggle elements below to see how the status bar changes.
+          </p>
+        </div>
+      </div>
+
+      {/* Toggle Grid */}
+      <div className="rounded-xl bg-surface0/30 border border-surface0/60 overflow-hidden">
+        <div className="px-4 py-2.5 border-b border-surface0/40 flex items-center gap-2">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="text-overlay1 shrink-0">
+            <path d="M4 8h8M8 4v8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+          </svg>
+          <h3 className="text-xs font-semibold text-subtext0 uppercase tracking-wider">Customize Elements</h3>
+        </div>
+        <div className="p-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {STATUS_LINE_TOGGLES.map(({ key, label, description }) => (
+              <div
+                key={key}
+                className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-surface0/30 transition-colors"
+              >
+                <button
+                  onClick={() => onToggle(key)}
+                  className={`relative w-9 h-5 rounded-full transition-colors duration-200 shrink-0 ${
+                    sl[key] ? 'bg-green' : 'bg-surface1'
+                  }`}
+                >
+                  <div
+                    className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-200 ${
+                      sl[key] ? 'translate-x-[18px]' : 'translate-x-0.5'
+                    }`}
+                  />
+                </button>
+                <div className="min-w-0">
+                  <div className="text-sm text-text leading-tight">{label}</div>
+                  <div className="text-[11px] text-overlay0 leading-tight">{description}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </>
+  )
+}
+
+/* ── Status Line Preview (mock data) ─────────────────── */
+
+function StatusLinePreview({ sl }: { sl: StatusLineSettings }) {
+  // Elements that are toggled off render at 30% opacity with strikethrough
+  const vis = (on: boolean) =>
+    on ? '' : 'opacity-30 line-through'
+
+  return (
+    <div className="flex flex-col shrink-0 bg-crust border-t border-surface0 text-xs font-mono">
+      {/* Row 1 */}
+      <div className="flex items-center gap-3 px-2 py-1">
+        <span className={`text-blue font-medium ${vis(sl.showModel)}`}>Claude 4 Sonnet</span>
+        <span className={`text-peach ${vis(sl.showTokens)}`}>84K / 200K</span>
+        <div className={`flex items-center gap-1.5 ${!sl.showContextBar ? 'opacity-30' : ''}`}>
+          <div className="w-20 h-1.5 bg-surface1 rounded-full overflow-hidden">
+            <div className="h-full rounded-full bg-[#A6E3A1]" style={{ width: '42%' }} />
+          </div>
+          <span className={`text-subtext0 ${!sl.showContextBar ? 'line-through' : ''}`}>42%</span>
+        </div>
+        <div className="flex-1" />
+        <span className={`text-yellow ${vis(sl.showCost)}`}>API eq $0.1847</span>
+        <span className={`text-green ${vis(sl.showLinesChanged)}`}>+127</span>
+        <span className={`text-red ${vis(sl.showLinesChanged)}`}>-23</span>
+        <span className={`text-overlay0 ${vis(sl.showDuration)}`}>3m 42s</span>
+      </div>
+      {/* Row 2: Rate limits */}
+      <div className={`flex items-center gap-3 px-2 py-0.5 border-t border-surface0/50 ${!sl.showRateLimits && !sl.showResetTime ? 'opacity-30' : ''}`}>
+        <span className={!sl.showRateLimits ? 'opacity-30' : ''}>
+          <MockRateDots label="5h" pct={35} />
+        </span>
+        <span className={!sl.showRateLimits ? 'opacity-30' : ''}>
+          <MockRateDots label="7d" pct={12} />
+        </span>
+        <span className={`text-overlay0 ${vis(sl.showRateLimits)}`}>
+          extra: <span className="text-teal">$1.20</span><span className="text-overlay0">/50</span>
+        </span>
+        <div className="flex-1" />
+        <span className={`text-overlay0 ${vis(sl.showResetTime)}`}>resets 2h 14m</span>
+      </div>
+    </div>
+  )
+}
+
+function MockRateDots({ label, pct }: { label: string; pct: number }) {
+  const barWidth = 10
+  const filled = Math.round(pct * barWidth / 100)
+  const color = pct >= 90 ? '#F38BA8' : pct >= 70 ? '#F9E2AF' : pct >= 50 ? '#FAB387' : '#A6E3A1'
+  return (
+    <span className="flex items-center gap-1">
+      <span className="text-subtext0">{label}:</span>
+      <span style={{ letterSpacing: '-1px' }}>
+        {Array.from({ length: barWidth }, (_, i) => (
+          <span key={i} style={{ color: i < filled ? color : '#2a3342', fontSize: '9px' }}>{String.fromCodePoint(0x25CF)}</span>
+        ))}
+      </span>
+      <span className="text-subtext0">{pct}%</span>
+    </span>
+  )
+}
+
+/* ── Shared section/field helpers ─────────────────────── */
 
 function Section({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
   return (
