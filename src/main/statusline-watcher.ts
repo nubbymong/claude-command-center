@@ -44,7 +44,9 @@ const path = require('path');
 const https = require('https');
 const os = require('os');
 
-const statusDir = process.env.CLAUDE_MULTI_STATUS_DIR || ${JSON.stringify(statusDir)};
+// Derive status dir from script location: scripts/xxx.js → ../status/
+// Works on any mount path (local resources dir, SSH remote mount, etc.)
+const statusDir = path.join(path.dirname(process.argv[1]), '..', 'status');
 const cacheFile = path.join(os.tmpdir(), 'claude-command-center-usage-cache.json');
 const CACHE_MAX_AGE = 60; // seconds
 
@@ -221,9 +223,12 @@ export function configureClaudeSettings(): void {
     }
   } catch { /* start fresh */ }
 
+  // Point to the resources dir copy so the script can derive status dir
+  // from its own location (scripts/ → ../status/)
+  const resourcesScript = path.join(getResourcesDirectory(), 'scripts', 'claude-multi-statusline.js')
   const command = os.platform() === 'win32'
-    ? `node "${STATUSLINE_SCRIPT.replace(/\\/g, '\\\\')}"`
-    : `node "${STATUSLINE_SCRIPT}"`
+    ? `node "${resourcesScript.replace(/\\/g, '\\\\')}"`
+    : `node "${resourcesScript}"`
 
   settings.statusLine = {
     type: 'command',
