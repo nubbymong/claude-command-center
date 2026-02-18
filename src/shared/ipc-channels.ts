@@ -150,6 +150,9 @@ export const IPC = {
   CLOUD_AGENT_STATUS_CHANGED: 'cloudAgent:statusChanged',
   CLOUD_AGENT_OUTPUT_CHUNK: 'cloudAgent:outputChunk',
 
+  // Service status
+  SERVICE_STATUS: 'serviceStatus:update',
+
   // CLI
   CLI_CHECK: 'cli:check',
 } as const
