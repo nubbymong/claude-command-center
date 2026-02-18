@@ -134,7 +134,7 @@ export default function LogViewer() {
         fontFamily: "'Cascadia Code', 'Fira Code', 'JetBrains Mono', Consolas, monospace",
         fontSize: 13,
         lineHeight: 1.2,
-        scrollback: 100000,
+        scrollback: 10000,
         disableStdin: true,
         cursorStyle: 'bar',
         cursorBlink: false,
