@@ -321,19 +321,9 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
           navigator.clipboard.writeText(sel)
         } else {
           navigator.clipboard.readText().then((text) => {
-            if (text && inputRef.current) {
-              const input = inputRef.current
-              const start = input.selectionStart ?? input.value.length
-              const end = input.selectionEnd ?? input.value.length
-              const newValue = input.value.slice(0, start) + text + input.value.slice(end)
-              setInputValue(newValue)
-              requestAnimationFrame(() => {
-                input.selectionStart = input.selectionEnd = start + text.length
-                // Auto-resize textarea to fit pasted content
-                input.style.height = 'auto'
-                input.style.height = Math.min(input.scrollHeight, 400) + 'px'
-                input.focus()
-              })
+            if (text) {
+              // Paste directly into the PTY (like real Claude Code terminal)
+              window.electronAPI.pty.write(sessionId, text)
             }
           })
         }
