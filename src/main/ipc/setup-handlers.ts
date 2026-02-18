@@ -59,6 +59,7 @@ function setResourcesDirectory(resourcesDir: string): boolean {
     fs.mkdirSync(path.join(resourcesDir, 'screenshots'), { recursive: true })
     fs.mkdirSync(path.join(resourcesDir, 'skills'), { recursive: true })
     fs.mkdirSync(path.join(resourcesDir, 'scripts'), { recursive: true })
+    fs.mkdirSync(path.join(resourcesDir, 'status'), { recursive: true })
 
     writeRegistry('ResourcesDirectory', resourcesDir)
 
