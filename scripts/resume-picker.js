@@ -229,6 +229,7 @@ async function main() {
       timeAgo(conv.mtime),
       formatSize(conv.size),
       conv.model || null,
+      conv.sessionId || null,
     ].filter(Boolean).join(' \u00B7 ')
 
     // Title line

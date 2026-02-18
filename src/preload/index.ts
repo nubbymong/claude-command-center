@@ -51,6 +51,10 @@ export interface ElectronAPI {
         debugPort: number
         headless?: boolean
       }
+      agentsConfig?: Array<{
+        name: string; description: string; prompt: string
+        model?: string; tools?: string[]
+      }>
     }) => Promise<void>
     write: (sessionId: string, data: string) => void
     resize: (sessionId: string, cols: number, rows: number) => void

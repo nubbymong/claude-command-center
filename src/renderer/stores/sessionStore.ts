@@ -65,6 +65,7 @@ export interface Session {
     enabled: boolean
     version: string
   }
+  agentIds?: string[]                    // Agent template IDs for this session
 }
 
 interface SessionState {

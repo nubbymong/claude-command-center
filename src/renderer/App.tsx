@@ -196,6 +196,7 @@ export default function App() {
         } : undefined,
         visionConfig: s.visionConfig,
         legacyVersion: s.legacyVersion,
+        agentIds: s.agentIds,
       })),
       activeSessionId: state.activeSessionId,
       savedAt: Date.now(),
@@ -324,6 +325,7 @@ export default function App() {
                   partnerSessionId={hasPartner ? partnerPtyId : undefined}
                   visionConfig={session.visionConfig}
                   legacyVersion={session.legacyVersion}
+                  agentIds={session.agentIds}
                 />
               </div>
               {hasPartner && (

@@ -17,6 +17,8 @@ export type {
   LogSession,
   LogEntry,
   NoteMetadata,
+  AgentTemplate,
+  AgentModelOverride,
 } from '../../shared/types'
 
 // Import for use in the ElectronAPI interface
@@ -87,6 +89,10 @@ export interface ElectronAPI {
         enabled: boolean
         version: string
       }
+      agentsConfig?: Array<{
+        name: string; description: string; prompt: string
+        model?: string; tools?: string[]
+      }>
     }) => Promise<void>
     write: (sessionId: string, data: string) => void
     resize: (sessionId: string, cols: number, rows: number) => void

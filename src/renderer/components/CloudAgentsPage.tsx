@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { useCloudAgentStore, setupCloudAgentListener } from '../stores/cloudAgentStore'
 import type { CloudAgent, CloudAgentStatus } from '../types/electron'
 import NewAgentDialog from './NewAgentDialog'
+import AgentLibrary from './AgentLibrary'
 
 const STATUS_COLORS: Record<CloudAgentStatus, string> = {
   running: '#89B4FA',
@@ -488,7 +489,10 @@ function AgentDetail({ agent }: { agent: CloudAgent }) {
 
 // --- Main Page ---
 
+type HubTab = 'tasks' | 'library'
+
 export default function CloudAgentsPage() {
+  const [hubTab, setHubTab] = useState<HubTab>('tasks')
   const allAgents = useCloudAgentStore(s => s.agents)
   const selectedAgentId = useCloudAgentStore(s => s.selectedAgentId)
   const selectAgent = useCloudAgentStore(s => s.selectAgent)
@@ -532,10 +536,58 @@ export default function CloudAgentsPage() {
 
   const contextMenuAgent = contextMenu ? allAgents.find(a => a.id === contextMenu.agentId) : null
 
+  if (hubTab === 'library') {
+    return (
+      <div className="flex-1 flex flex-col bg-base overflow-hidden">
+        {/* Hub tab bar */}
+        <div className="px-5 pt-3 bg-mantle/30 shrink-0">
+          <div className="flex gap-0.5 bg-crust/50 rounded-lg p-0.5 self-start w-fit">
+            <button
+              onClick={() => setHubTab('tasks')}
+              className={`px-4 py-1.5 rounded-md text-xs font-medium transition-all ${
+                hubTab === 'tasks' ? 'bg-surface0 text-text shadow-sm' : 'text-overlay1 hover:text-text'
+              }`}
+            >
+              Tasks
+            </button>
+            <button
+              onClick={() => setHubTab('library')}
+              className={`px-4 py-1.5 rounded-md text-xs font-medium transition-all ${
+                hubTab === 'library' ? 'bg-surface0 text-text shadow-sm' : 'text-overlay1 hover:text-text'
+              }`}
+            >
+              Agent Library
+            </button>
+          </div>
+        </div>
+        <AgentLibrary />
+      </div>
+    )
+  }
+
   return (
     <div className="flex-1 flex flex-col bg-base overflow-hidden">
       {/* Page header */}
       <div className="px-5 pt-4 pb-3 border-b border-surface0/80 bg-mantle/30 shrink-0">
+        {/* Hub tab bar */}
+        <div className="flex gap-0.5 bg-crust/50 rounded-lg p-0.5 self-start w-fit mb-3">
+          <button
+            onClick={() => setHubTab('tasks')}
+            className={`px-4 py-1.5 rounded-md text-xs font-medium transition-all ${
+              hubTab === 'tasks' ? 'bg-surface0 text-text shadow-sm' : 'text-overlay1 hover:text-text'
+            }`}
+          >
+            Tasks
+          </button>
+          <button
+            onClick={() => setHubTab('library')}
+            className={`px-4 py-1.5 rounded-md text-xs font-medium transition-all ${
+              hubTab === 'library' ? 'bg-surface0 text-text shadow-sm' : 'text-overlay1 hover:text-text'
+            }`}
+          >
+            Agent Library
+          </button>
+        </div>
         <div className="flex items-center gap-3 mb-3">
           <div className="w-8 h-8 rounded-lg bg-sapphire/10 flex items-center justify-center shrink-0">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className="text-sapphire">
@@ -544,7 +596,7 @@ export default function CloudAgentsPage() {
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2.5">
-              <h1 className="text-base font-semibold text-text">Cloud Agents</h1>
+              <h1 className="text-base font-semibold text-text">Agent Hub</h1>
               {counts.running > 0 && (
                 <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium text-crust" style={{ backgroundColor: '#89B4FA' }}>
                   <span className="w-1.5 h-1.5 rounded-full bg-crust animate-pulse" />

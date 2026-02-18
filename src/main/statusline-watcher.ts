@@ -153,15 +153,10 @@ process.stdin.on('end', async () => {
       }
     }
 
-    // Output a single-line status for Claude's built-in statusline display
-    // This MUST happen first — on SSH remotes the file write below may fail
-    // (hardcoded Windows path), but stdout always works for Claude CLI.
-    const pct = status.contextUsedPercent != null ? Math.round(status.contextUsedPercent) + '%' : '?';
-    const cost = status.costUsd != null ? 'API eq $' + status.costUsd.toFixed(4) : '';
-    let line = pct + ' context' + (cost ? ' | ' + cost : '');
-    if (status.rateLimitCurrent != null) line += ' | 5h:' + status.rateLimitCurrent + '%';
-    if (status.rateLimitWeekly != null) line += ' 7d:' + status.rateLimitWeekly + '%';
-    process.stdout.write(line);
+    // Suppress statusline display in the terminal — the app's own ContextBar
+    // shows all this data via the file watcher below. Output a single space
+    // so Claude's statusline area stays minimal.
+    process.stdout.write(' ');
 
     // Write status file for the app's ContextBar (best-effort, fails silently on remote)
     try {

@@ -4,6 +4,7 @@ import { useMagicButtonStore } from '../stores/magicButtonStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useAppMetaStore } from '../stores/appMetaStore'
 import { useCloudAgentStore } from '../stores/cloudAgentStore'
+import { useAgentLibraryStore } from '../stores/agentLibraryStore'
 
 /**
  * Gather all relevant localStorage keys for migration to CONFIG/.
@@ -54,6 +55,9 @@ export function hydrateStores(configData: Record<string, unknown>): void {
 
   const cloudAgents = (configData.cloudAgents as any[]) || []
   useCloudAgentStore.getState().hydrate(cloudAgents)
+
+  const agentTemplates = (configData.agentTemplates as any[]) || []
+  useAgentLibraryStore.getState().hydrate(agentTemplates)
 
   console.log('[App] All stores hydrated from CONFIG/')
 }

@@ -226,7 +226,8 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
         dockerContainer: config.sshConfig.dockerContainer
       } : undefined,
       visionConfig: config.visionConfig,
-      legacyVersion: config.legacyVersion
+      legacyVersion: config.legacyVersion,
+      agentIds: config.agentIds,
     }
     if (!session.shellOnly && session.sessionType === 'local') {
       markSessionForResumePicker(session.id)
