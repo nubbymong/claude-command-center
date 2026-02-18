@@ -2,7 +2,7 @@
  * Cloud Agent Manager — spawn/track/cancel headless Claude CLI background agents
  */
 
-import { spawn, ChildProcess } from 'child_process'
+import { spawn, execSync, ChildProcess } from 'child_process'
 import { BrowserWindow } from 'electron'
 import { readConfig, writeConfig } from './config-manager'
 import { logInfo, logError } from './debug-logger'
@@ -223,14 +223,26 @@ export function cancelAgent(id: string): boolean {
     agent.status = 'cancelled'
     agent.updatedAt = Date.now()
     agent.duration = agent.updatedAt - agent.createdAt
-    proc.kill('SIGTERM')
-    // Force kill after 5s if still alive
-    setTimeout(() => {
-      if (activeProcesses.has(id)) {
-        proc.kill('SIGKILL')
-        activeProcesses.delete(id)
+
+    // On Windows, shell:true processes need taskkill /T to kill the entire process tree
+    // SIGTERM only kills the shell wrapper, not the child claude process
+    if (process.platform === 'win32' && proc.pid) {
+      try {
+        execSync(`taskkill /pid ${proc.pid} /T /F`, { windowsHide: true, timeout: 5000 })
+      } catch {
+        // Process may have already exited
       }
-    }, 5000)
+    } else {
+      proc.kill('SIGTERM')
+      // Force kill after 5s if still alive
+      setTimeout(() => {
+        if (activeProcesses.has(id)) {
+          try { proc.kill('SIGKILL') } catch {}
+          activeProcesses.delete(id)
+        }
+      }, 5000)
+    }
+
     persist()
     broadcastStatus(agent)
     return true
@@ -291,9 +303,13 @@ export function clearCompletedAgents(): number {
 export function killAllAgents(): void {
   for (const [id, proc] of activeProcesses) {
     try {
-      proc.kill('SIGTERM')
+      if (process.platform === 'win32' && proc.pid) {
+        execSync(`taskkill /pid ${proc.pid} /T /F`, { windowsHide: true, timeout: 5000 })
+      } else {
+        proc.kill('SIGTERM')
+      }
     } catch {
-      // ignore
+      // ignore — process may have already exited
     }
     activeProcesses.delete(id)
   }

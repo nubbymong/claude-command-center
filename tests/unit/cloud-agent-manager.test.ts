@@ -3,9 +3,10 @@ import type { ChildProcess } from 'child_process'
 
 // Mock child_process
 const mockSpawn = vi.fn()
+const mockExecSync = vi.fn()
 vi.mock('child_process', () => ({
   spawn: (...args: any[]) => mockSpawn(...args),
-  execSync: vi.fn(),
+  execSync: (...args: any[]) => mockExecSync(...args),
   spawnSync: vi.fn(),
 }))
 
@@ -162,7 +163,12 @@ describe('cloud-agent-manager', () => {
       const agent = await dispatchAgent({ name: 'Test', description: 'desc', projectPath: '/p' })
       const result = cancelAgent(agent.id)
       expect(result).toBe(true)
-      expect(mockProc.kill).toHaveBeenCalledWith('SIGTERM')
+      // On Windows, uses taskkill via execSync; on other platforms, uses proc.kill('SIGTERM')
+      if (process.platform === 'win32') {
+        expect(mockExecSync).toHaveBeenCalled()
+      } else {
+        expect(mockProc.kill).toHaveBeenCalledWith('SIGTERM')
+      }
     })
 
     it('returns false for non-running agent', () => {
@@ -251,8 +257,12 @@ describe('cloud-agent-manager', () => {
       dispatchAgent({ name: 'A', description: 'd', projectPath: '/p' })
       dispatchAgent({ name: 'B', description: 'd', projectPath: '/p' })
       killAllAgents()
-      expect(proc1.kill).toHaveBeenCalledWith('SIGTERM')
-      expect(proc2.kill).toHaveBeenCalledWith('SIGTERM')
+      if (process.platform === 'win32') {
+        expect(mockExecSync).toHaveBeenCalled()
+      } else {
+        expect(proc1.kill).toHaveBeenCalledWith('SIGTERM')
+        expect(proc2.kill).toHaveBeenCalledWith('SIGTERM')
+      }
     })
   })
 })
