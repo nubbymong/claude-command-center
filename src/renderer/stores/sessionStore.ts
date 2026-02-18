@@ -32,6 +32,7 @@ export interface Session {
   sshConfig?: SSHConfig
   contextPercent?: number
   needsAttention?: boolean
+  claudeWaiting?: boolean            // Claude is prompting for input (red InputBar)
   costUsd?: number
   modelName?: string
   linesAdded?: number

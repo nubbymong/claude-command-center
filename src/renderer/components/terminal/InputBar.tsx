@@ -8,6 +8,7 @@ interface InputBarProps {
   sessionId: string
   sessionType: 'ssh' | 'local'
   needsAttention: boolean
+  claudeWaiting: boolean
   inputBarHeight: number
   terminalRef: React.RefObject<Terminal | null>
   isScrolledUpRef: React.MutableRefObject<boolean>
@@ -19,7 +20,7 @@ interface InputBarProps {
 
 // Forward ref not needed — parent passes inputRef directly
 export default function InputBar({
-  sessionId, sessionType, needsAttention, inputBarHeight,
+  sessionId, sessionType, needsAttention, claudeWaiting, inputBarHeight,
   terminalRef, isScrolledUpRef, setIsScrolledUp,
   inputRef, inputValue, setInputValue
 }: InputBarProps) {
@@ -95,17 +96,8 @@ export default function InputBar({
       e.preventDefault()
       const val = inputValue.trim()
 
-      if (needsAttention && val.length > 1) {
-        if (inputRef.current) {
-          inputRef.current.style.borderColor = '#F38BA8'
-          inputRef.current.title = 'Claude is asking a question \u2014 click the terminal to paste longer text'
-          setTimeout(() => {
-            if (inputRef.current) {
-              inputRef.current.style.borderColor = ''
-              inputRef.current.title = ''
-            }
-          }, 2000)
-        }
+      // When Claude is waiting for input, block multi-char sends (text stays in InputBar)
+      if (claudeWaiting && val.length > 1) {
         return
       }
 
@@ -113,6 +105,10 @@ export default function InputBar({
         window.electronAPI.pty.write(sessionId, val + '\r')
       } else {
         window.electronAPI.pty.write(sessionId, inputValue + '\r')
+      }
+      // Clear claudeWaiting after user responds
+      if (claudeWaiting) {
+        updateSession(sessionId, { claudeWaiting: false })
       }
       setInputValue('')
       if (inputRef.current) {
@@ -197,9 +193,11 @@ export default function InputBar({
             setContextMenu({ x: e.clientX, y: e.clientY })
           }}
           rows={1}
-          className={`flex-1 bg-transparent text-text text-sm outline-none font-mono resize-none overflow-y-auto border ${needsAttention ? 'border-blue/50' : 'border-transparent'} rounded transition-colors`}
+          className={`flex-1 text-text text-sm outline-none font-mono resize-none overflow-y-auto border rounded transition-colors ${claudeWaiting ? 'border-red/50 bg-red/10' : needsAttention ? 'border-blue/50 bg-transparent' : 'border-transparent bg-transparent'}`}
           style={{ maxHeight: maxInputHeight + 'px', ...(inputBarHeight > 0 ? { height: inputBarHeight + 'px' } : {}) }}
-          placeholder={needsAttention
+          placeholder={claudeWaiting
+            ? "Claude is waiting \u2014 type y/n/1-9 here, or click terminal for longer responses"
+            : needsAttention
             ? "Claude is waiting for input \u2014 type 1-9/y/n here, or click terminal for other responses"
             : "Type here, Enter to send, Shift+Enter for newline | Right-click for screenshots"
           }
