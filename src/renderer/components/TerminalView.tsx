@@ -42,6 +42,10 @@ interface Props {
     debugPort: number
     url?: string
   }
+  legacyVersion?: {
+    enabled: boolean
+    version: string
+  }
 }
 
 // Platform v9 dark theme
@@ -167,7 +171,7 @@ function RateLimitBar({ label, pct, resets }: { label: string; pct: number; rese
   )
 }
 
-export default function TerminalView({ sessionId, configId, cwd, shellOnly, elevated, ssh, isActive = true, partnerEnabled, isPartnerActive, onTogglePartner, partnerSessionId, visionConfig }: Props) {
+export default function TerminalView({ sessionId, configId, cwd, shellOnly, elevated, ssh, isActive = true, partnerEnabled, isPartnerActive, onTogglePartner, partnerSessionId, visionConfig, legacyVersion }: Props) {
   const xtermContainerRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
@@ -251,7 +255,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
           const rows = term.rows
           const configLabel = session?.label || 'default'
           const useResumePicker = shouldUseResumePicker(sessionId)
-          window.electronAPI.pty.spawn(sessionId, { cwd, cols, rows, ssh, shellOnly, elevated, configLabel, useResumePicker, visionConfig })
+          window.electronAPI.pty.spawn(sessionId, { cwd, cols, rows, ssh, shellOnly, elevated, configLabel, useResumePicker, visionConfig, legacyVersion })
         }
       })
 

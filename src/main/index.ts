@@ -19,6 +19,9 @@ import { registerInsightsHandlers } from './ipc/insights-handlers'
 import { registerNotesHandlers } from './ipc/notes-handlers'
 import { registerVisionHandlers } from './ipc/vision-handlers'
 import { registerConfigHandlers } from './ipc/config-handlers'
+import { registerCloudAgentHandlers } from './ipc/cloud-agent-handlers'
+import { registerLegacyVersionHandlers } from './ipc/legacy-version-handlers'
+import { killAllAgents } from './cloud-agent-manager'
 import { initUpdateWatcher, stopUpdateWatcher, getProjectRootPath, isPackagedApp } from './update-watcher'
 import { startUpdateServer, stopUpdateServer } from './update-server'
 import { startUpdateClient, stopUpdateClient } from './update-client'
@@ -105,7 +108,13 @@ function createWindow(): void {
   }
 
   mainWindow.on('ready-to-show', () => {
-    mainWindow!.show()
+    if (process.env.E2E_HEADLESS === '1') {
+      // Keep window off-screen for headless E2E tests
+      mainWindow!.setPosition(-10000, -10000)
+      mainWindow!.showInactive()
+    } else {
+      mainWindow!.show()
+    }
   })
 
   // Track if we're allowing close (after graceful shutdown)
@@ -354,6 +363,8 @@ if (!gotTheLock) {
     registerInsightsHandlers(getWindow)
     registerNotesHandlers()
     registerVisionHandlers(getWindow)
+    registerCloudAgentHandlers(getWindow)
+    registerLegacyVersionHandlers(getWindow)
 
     // Start update system
     // Dev mode: run update server to push notifications to production clients
@@ -386,6 +397,7 @@ if (!gotTheLock) {
     disableDebugMode()
     closeAllLogs()
     stopAllVisionManagers()
+    killAllAgents()
     killAllPty()
     closeDebugLogger()
   })

@@ -7,6 +7,7 @@ import { logPtyOutput, isDebugModeEnabled } from './debug-capture'
 import { logInfo, logDebug, logError } from './debug-logger'
 import { writeCliSetupPty, getResourcesDirectory } from './ipc/setup-handlers'
 import { getVisionEnv, getRemoteVisionInstructionsSetup } from './vision-manager'
+import { resolveVersionBinary } from './legacy-version-manager'
 
 import * as path from 'path'
 import * as fs from 'fs'
@@ -70,9 +71,20 @@ function getRemoteVisionSetup(sessionId: string): string {
 
 /**
  * Resolve the claude command for PTY usage.
- * Checks for native CLI (claude.exe) first, then npm wrapper (claude.cmd).
+ * If legacyVersion is provided and enabled, uses the managed install binary.
+ * Otherwise checks for native CLI (claude.exe) first, then npm wrapper (claude.cmd).
  */
-export function resolveClaudeForPty(): { cmd: string; args: string[] } {
+export function resolveClaudeForPty(legacyVersion?: { enabled: boolean; version: string }): { cmd: string; args: string[] } {
+  // Try legacy version binary first
+  if (legacyVersion?.enabled && legacyVersion.version) {
+    const legacyBin = resolveVersionBinary(legacyVersion.version)
+    if (legacyBin) {
+      logInfo(`[pty] Using legacy Claude CLI v${legacyVersion.version}: ${legacyBin}`)
+      return { cmd: legacyBin, args: [] }
+    }
+    logInfo(`[pty] Legacy v${legacyVersion.version} binary not found, falling back to system claude`)
+  }
+
   if (os.platform() !== 'win32') {
     return { cmd: 'claude', args: [] }
   }
@@ -103,7 +115,7 @@ function getResumePickerPath(): string | null {
 export function spawnPty(
   win: BrowserWindow,
   sessionId: string,
-  options?: { cwd?: string; cols?: number; rows?: number; ssh?: SSHOptions; shellOnly?: boolean; elevated?: boolean; configLabel?: string; useResumePicker?: boolean }
+  options?: { cwd?: string; cols?: number; rows?: number; ssh?: SSHOptions; shellOnly?: boolean; elevated?: boolean; configLabel?: string; useResumePicker?: boolean; legacyVersion?: { enabled: boolean; version: string } }
 ): void {
   logInfo(`[pty] Spawning PTY for session ${sessionId} (ssh=${!!options?.ssh}, shellOnly=${!!options?.shellOnly}, cwd=${options?.cwd || 'default'})`)
   killPty(sessionId)
@@ -275,7 +287,7 @@ export function spawnPty(
       //   3. Spawning claude.cmd directly via pty.spawn fails to propagate cwd on Windows
       // Without the explicit cd, conversations get stored under the wrong project hash
       // and won't appear when the user tries to /resume.
-      const { cmd } = resolveClaudeForPty()
+      const { cmd } = resolveClaudeForPty(options?.legacyVersion)
       const resolvedCwd = resolveCwd(options?.cwd)
       const shell = os.platform() === 'win32' ? 'powershell.exe' : process.env.SHELL || '/bin/bash'
       console.log(`[pty-manager] Launching Claude via shell in PTY: ${shell} -> ${cmd} cwd=${resolvedCwd} (resumePicker=${!!options?.useResumePicker})`)

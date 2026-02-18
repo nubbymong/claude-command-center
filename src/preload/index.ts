@@ -285,6 +285,18 @@ const electronAPI: ElectronAPI = {
     delete: (id: string) => ipcRenderer.invoke('notes:delete', id),
     reorder: (ids: string[]) => ipcRenderer.invoke('notes:reorder', ids),
   },
+  legacyVersion: {
+    fetchVersions: () => ipcRenderer.invoke('legacyVersion:fetchVersions'),
+    isInstalled: (version: string) => ipcRenderer.invoke('legacyVersion:isInstalled', version),
+    install: (version: string) => ipcRenderer.invoke('legacyVersion:install', version),
+    remove: (version: string) => ipcRenderer.invoke('legacyVersion:remove', version),
+    listInstalled: () => ipcRenderer.invoke('legacyVersion:listInstalled'),
+    onInstallProgress: (cb: (data: { version: string; message: string }) => void) => {
+      const handler = (_: unknown, data: any) => cb(data)
+      ipcRenderer.on('legacyVersion:installProgress', handler)
+      return () => ipcRenderer.removeListener('legacyVersion:installProgress', handler)
+    },
+  },
   vision: {
     start: (sessionId: string, debugPort: number, browser: string) =>
       ipcRenderer.invoke('vision:start', sessionId, debugPort, browser),
@@ -298,6 +310,26 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.on('vision:statusChanged', handler)
       return () => ipcRenderer.removeListener('vision:statusChanged', handler)
     }
+  },
+  cloudAgent: {
+    dispatch: (params: { name: string; description: string; projectPath: string; configId?: string }) =>
+      ipcRenderer.invoke('cloudAgent:dispatch', params),
+    cancel: (id: string) => ipcRenderer.invoke('cloudAgent:cancel', id),
+    remove: (id: string) => ipcRenderer.invoke('cloudAgent:remove', id),
+    retry: (id: string) => ipcRenderer.invoke('cloudAgent:retry', id),
+    list: () => ipcRenderer.invoke('cloudAgent:list'),
+    getOutput: (id: string) => ipcRenderer.invoke('cloudAgent:getOutput', id),
+    clearCompleted: () => ipcRenderer.invoke('cloudAgent:clearCompleted'),
+    onStatusChanged: (callback: (agent: any) => void) => {
+      const handler = (_: unknown, agent: any) => callback(agent)
+      ipcRenderer.on('cloudAgent:statusChanged', handler)
+      return () => ipcRenderer.removeListener('cloudAgent:statusChanged', handler)
+    },
+    onOutputChunk: (callback: (data: { id: string; chunk: string }) => void) => {
+      const handler = (_: unknown, data: any) => callback(data)
+      ipcRenderer.on('cloudAgent:outputChunk', handler)
+      return () => ipcRenderer.removeListener('cloudAgent:outputChunk', handler)
+    },
   },
   cli: {
     check: () => ipcRenderer.invoke('cli:check')

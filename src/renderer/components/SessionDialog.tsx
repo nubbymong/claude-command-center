@@ -65,11 +65,75 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
   const [startClaudeAfter, setStartClaudeAfter] = useState(initial?.sshConfig?.startClaudeAfter ?? false)
   const [dockerContainer, setDockerContainer] = useState(initial?.sshConfig?.dockerContainer ?? '')
 
+  // Legacy version fields
+  const [legacyEnabled, setLegacyEnabled] = useState(initial?.legacyVersion?.enabled ?? false)
+  const [legacyVersion, setLegacyVersion] = useState(initial?.legacyVersion?.version ?? '')
+  const [availableVersions, setAvailableVersions] = useState<string[]>([])
+  const [loadingVersions, setLoadingVersions] = useState(false)
+  const [versionInstalled, setVersionInstalled] = useState(false)
+  const [installing, setInstalling] = useState(false)
+  const [installError, setInstallError] = useState('')
+
   // Vision fields
   const [visionEnabled, setVisionEnabled] = useState(initial?.visionConfig?.enabled ?? false)
   const [visionBrowser, setVisionBrowser] = useState<'chrome' | 'edge'>(initial?.visionConfig?.browser ?? 'chrome')
   const [visionDebugPort, setVisionDebugPort] = useState(initial?.visionConfig?.debugPort ?? 9222)
   const [visionUrl, setVisionUrl] = useState(initial?.visionConfig?.url ?? '')
+
+  // Fetch available versions when legacy checkbox enabled
+  useEffect(() => {
+    if (!legacyEnabled) return
+    let cancelled = false
+    setLoadingVersions(true)
+    window.electronAPI.legacyVersion.fetchVersions()
+      .then((versions) => {
+        if (cancelled) return
+        setAvailableVersions(versions)
+        if (!legacyVersion && versions.length > 0) {
+          setLegacyVersion(versions[0])
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setAvailableVersions([])
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingVersions(false)
+      })
+    return () => { cancelled = true }
+  }, [legacyEnabled])
+
+  // Check install status when version changes
+  useEffect(() => {
+    if (!legacyEnabled || !legacyVersion) {
+      setVersionInstalled(false)
+      return
+    }
+    window.electronAPI.legacyVersion.isInstalled(legacyVersion)
+      .then(setVersionInstalled)
+      .catch(() => setVersionInstalled(false))
+  }, [legacyEnabled, legacyVersion])
+
+  // Listen for install progress
+  useEffect(() => {
+    if (!installing) return
+    const unsub = window.electronAPI.legacyVersion.onInstallProgress((data) => {
+      // Progress is displayed via the installing state; we just need to know when done
+    })
+    return unsub
+  }, [installing])
+
+  const handleInstallVersion = async () => {
+    if (!legacyVersion) return
+    setInstalling(true)
+    setInstallError('')
+    const result = await window.electronAPI.legacyVersion.install(legacyVersion)
+    setInstalling(false)
+    if (result.ok) {
+      setVersionInstalled(true)
+    } else {
+      setInstallError(result.error || 'Install failed')
+    }
+  }
 
   const handleBrowse = async () => {
     const path = await window.electronAPI.dialog.openFolder()
@@ -166,6 +230,10 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
         browser: visionBrowser,
         debugPort: visionDebugPort,
         url: visionUrl.trim() || undefined
+      } : undefined,
+      legacyVersion: legacyEnabled && legacyVersion ? {
+        enabled: true,
+        version: legacyVersion
       } : undefined
     }
 
@@ -461,6 +529,70 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
               <option value="opus">Opus</option>
               <option value="haiku">Haiku</option>
             </select>
+          </div>
+
+          {/* Legacy Claude Version */}
+          <div className="pt-2 border-t border-surface0">
+            <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={legacyEnabled}
+                onChange={(e) => {
+                  setLegacyEnabled(e.target.checked)
+                  if (!e.target.checked) {
+                    setInstallError('')
+                  }
+                }}
+                className="rounded border-surface1"
+              />
+              Legacy Claude Version
+            </label>
+            {legacyEnabled && (
+              <div className="ml-5 mt-2 space-y-2">
+                <div>
+                  <label className="block text-xs text-subtext0 mb-1">Version</label>
+                  {loadingVersions ? (
+                    <div className="text-xs text-overlay0">Loading versions from npm...</div>
+                  ) : availableVersions.length > 0 ? (
+                    <select
+                      value={legacyVersion}
+                      onChange={(e) => setLegacyVersion(e.target.value)}
+                      className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-blue"
+                    >
+                      {availableVersions.map((v) => (
+                        <option key={v} value={v}>{v}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <div className="text-xs text-red">Failed to load versions. Is npm installed?</div>
+                  )}
+                </div>
+                {legacyVersion && !loadingVersions && (
+                  <div className="flex items-center gap-2">
+                    {versionInstalled ? (
+                      <span className="text-xs text-green">Installed</span>
+                    ) : installing ? (
+                      <span className="text-xs text-overlay0">Installing...</span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleInstallVersion}
+                        className="px-3 py-1 rounded text-xs bg-blue text-crust font-medium hover:bg-blue/90 transition-colors"
+                      >
+                        Install
+                      </button>
+                    )}
+                  </div>
+                )}
+                {installError && (
+                  <div className="text-xs text-red">{installError}</div>
+                )}
+                <p className="text-[10px] text-overlay0">
+                  Install and use a specific version of Claude CLI. ~80MB per version.
+                  {!versionInstalled && legacyVersion && ' Will auto-install on first launch if not installed.'}
+                </p>
+              </div>
+            )}
           </div>
 
           {/* Vision — browser control */}

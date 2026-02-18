@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { useSessionStore, Session } from '../stores/sessionStore'
 import { useConfigStore, TerminalConfig, ConfigGroup, ConfigSection } from '../stores/configStore'
 import { useInsightsStore } from '../stores/insightsStore'
+import { useCloudAgentStore } from '../stores/cloudAgentStore'
 import SessionDialog from './SessionDialog'
 import { killSessionPty } from '../ptyTracker'
 import { ViewType, markSessionForResumePicker } from '../App'
@@ -46,6 +47,7 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested }
   const { configs, groups, sections, addConfig, updateConfig, removeConfig, addGroup, renameGroup, removeGroup, toggleGroupCollapsed, moveConfigToGroup, addSection, renameSection, removeSection, toggleSectionCollapsed, moveGroupToSection, moveConfigToSection } = useConfigStore()
   const insightsStatus = useInsightsStore((s) => s.status)
   const insightsMessage = useInsightsStore((s) => s.statusMessage)
+  const cloudAgentRunning = useCloudAgentStore((s) => s.agents.filter(a => a.status === 'running' || a.status === 'pending').length)
   const [showNewDialog, setShowNewDialog] = useState(false)
   const [editingConfig, setEditingConfig] = useState<TerminalConfig | null>(null)
   const [debugRecording, setDebugRecording] = useState(false)
@@ -206,7 +208,8 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested }
         startClaudeAfter: config.sshConfig.startClaudeAfter,
         dockerContainer: config.sshConfig.dockerContainer
       } : undefined,
-      visionConfig: config.visionConfig
+      visionConfig: config.visionConfig,
+      legacyVersion: config.legacyVersion
     }
     // Mark local Claude sessions for the resume picker
     if (!session.shellOnly && session.sessionType === 'local') {
@@ -438,6 +441,16 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested }
 
   const navItems: { view: ViewType; icon: React.ReactNode; label: string }[] = [
     {
+      view: 'cloud-agents',
+      label: 'Cloud Agents',
+      icon: (
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <path d="M13 10.5h-.63A4 4 0 1 0 4.5 13H13a2.5 2.5 0 0 0 0-5z" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+          <path d="M8 7v4M6.5 9.5l1.5-1.5 1.5 1.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      )
+    },
+    {
       view: 'sessions',
       label: 'Sessions',
       icon: (
@@ -524,15 +537,18 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested }
             : insightsStatus === 'failed' ? '#F38BA8'
             : null
           const isInsightsAnimating = insightsStatus === 'running' || insightsStatus === 'extracting_kpis'
+          const isCloudAgentsRunning = item.view === 'cloud-agents' && cloudAgentRunning > 0
           return (
           <button
             key={item.view}
             onClick={() => onViewChange(item.view)}
-            title={isInsightsAnimating ? (insightsMessage || 'Insights running...') : item.label}
+            title={isCloudAgentsRunning ? `${cloudAgentRunning} agent${cloudAgentRunning !== 1 ? 's' : ''} running` : isInsightsAnimating ? (insightsMessage || 'Insights running...') : item.label}
             className={`flex-1 flex items-center justify-center py-1.5 rounded transition-colors relative ${
               currentView === item.view
                 ? 'bg-surface0 text-text'
                 : isInsightsAnimating
+                ? 'text-blue'
+                : isCloudAgentsRunning
                 ? 'text-blue'
                 : 'text-overlay0 hover:text-text hover:bg-surface0/50'
             }`}
@@ -544,6 +560,15 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested }
                 style={{
                   backgroundColor: insightsDotColor,
                   boxShadow: `0 0 6px 2px ${insightsDotColor}60`,
+                }}
+              />
+            )}
+            {isCloudAgentsRunning && (
+              <span
+                className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full insights-pulse-dot"
+                style={{
+                  backgroundColor: '#89B4FA',
+                  boxShadow: '0 0 6px 2px #89B4FA60',
                 }}
               />
             )}

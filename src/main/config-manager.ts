@@ -21,6 +21,7 @@ const CONFIG_FILES = {
   sessionState: 'session-state.json',
   windowState: 'window-state.json',
   sshCredentials: 'ssh-credentials.json',
+  cloudAgents: 'cloud-agents.json',
 } as const
 
 export type ConfigKey = keyof typeof CONFIG_FILES
