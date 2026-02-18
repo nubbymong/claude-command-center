@@ -63,12 +63,17 @@ function rotateIfNeeded() {
   } catch { /* ignore */ }
 }
 
-function getStream(): fs.WriteStream {
+function getStream(): fs.WriteStream | null {
   if (logStream && !logStream.destroyed) return logStream
-  ensureLogDir()
-  rotateIfNeeded()
-  logStream = fs.createWriteStream(getLogFilePath(), { flags: 'a' })
-  return logStream
+  try {
+    ensureLogDir()
+    rotateIfNeeded()
+    logStream = fs.createWriteStream(getLogFilePath(), { flags: 'a' })
+    return logStream
+  } catch {
+    // If data directory resolution fails, fall back to console-only logging
+    return null
+  }
 }
 
 function formatMessage(level: string, ...args: unknown[]): string {
@@ -89,24 +94,24 @@ function formatMessage(level: string, ...args: unknown[]): string {
 export function logDebug(...args: unknown[]): void {
   if (!verboseMode) return
   const stream = getStream()
-  stream.write(formatMessage('DEBUG', ...args))
+  stream?.write(formatMessage('DEBUG', ...args))
 }
 
 export function logInfo(...args: unknown[]): void {
   const stream = getStream()
-  stream.write(formatMessage('INFO', ...args))
+  stream?.write(formatMessage('INFO', ...args))
   console.log(...args)
 }
 
 export function logWarn(...args: unknown[]): void {
   const stream = getStream()
-  stream.write(formatMessage('WARN', ...args))
+  stream?.write(formatMessage('WARN', ...args))
   console.warn(...args)
 }
 
 export function logError(...args: unknown[]): void {
   const stream = getStream()
-  stream.write(formatMessage('ERROR', ...args))
+  stream?.write(formatMessage('ERROR', ...args))
   console.error(...args)
 }
 
