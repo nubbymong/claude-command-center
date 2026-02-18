@@ -376,11 +376,33 @@ export function spawnPty(
   })
 }
 
+// Large writes to WinPTY/ConPTY can overflow the console input buffer,
+// causing truncation. Chunk large writes with a small inter-chunk delay.
+const WRITE_CHUNK_SIZE = 512
+
+function writeChunked(ptyProcess: pty.IPty, data: string): void {
+  let offset = 0
+  const writeNext = () => {
+    if (offset >= data.length) return
+    const end = Math.min(offset + WRITE_CHUNK_SIZE, data.length)
+    ptyProcess.write(data.slice(offset, end))
+    offset = end
+    if (offset < data.length) {
+      setTimeout(writeNext, 5)
+    }
+  }
+  writeNext()
+}
+
 export function writePty(sessionId: string, data: string): void {
   try {
     const session = ptySessions.get(sessionId)
     if (session) {
-      session.ptyProcess.write(data)
+      if (data.length > WRITE_CHUNK_SIZE) {
+        writeChunked(session.ptyProcess, data)
+      } else {
+        session.ptyProcess.write(data)
+      }
     } else if (sessionId === '__cli_setup__') {
       writeCliSetupPty(data)
     } else {

@@ -79,6 +79,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
   const [visionBrowser, setVisionBrowser] = useState<'chrome' | 'edge'>(initial?.visionConfig?.browser ?? 'chrome')
   const [visionDebugPort, setVisionDebugPort] = useState(initial?.visionConfig?.debugPort ?? 9222)
   const [visionUrl, setVisionUrl] = useState(initial?.visionConfig?.url ?? '')
+  const [visionHeadless, setVisionHeadless] = useState(initial?.visionConfig?.headless ?? true)
 
   // Fetch available versions when legacy checkbox enabled
   useEffect(() => {
@@ -229,7 +230,8 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
         enabled: true,
         browser: visionBrowser,
         debugPort: visionDebugPort,
-        url: visionUrl.trim() || undefined
+        url: visionUrl.trim() || undefined,
+        headless: visionHeadless
       } : undefined,
       legacyVersion: legacyEnabled && legacyVersion ? {
         enabled: true,
@@ -640,6 +642,16 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                     />
                   </div>
                 </div>
+                <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={visionHeadless}
+                    onChange={(e) => setVisionHeadless(e.target.checked)}
+                    className="rounded border-surface1"
+                  />
+                  Headless
+                  <span className="text-overlay0 text-xs">(run browser without visible window)</span>
+                </label>
                 <p className="text-[10px] text-overlay0">
                   {sessionType === 'ssh'
                     ? 'Browser launches locally. Vision proxy is network-accessible for remote sessions.'

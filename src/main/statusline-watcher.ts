@@ -153,22 +153,26 @@ process.stdin.on('end', async () => {
       }
     }
 
-    if (!fs.existsSync(statusDir)) {
-      fs.mkdirSync(statusDir, { recursive: true });
-    }
-
-    fs.writeFileSync(
-      path.join(statusDir, sessionId + '.json'),
-      JSON.stringify(status)
-    );
-
     // Output a single-line status for Claude's built-in statusline display
+    // This MUST happen first — on SSH remotes the file write below may fail
+    // (hardcoded Windows path), but stdout always works for Claude CLI.
     const pct = status.contextUsedPercent != null ? Math.round(status.contextUsedPercent) + '%' : '?';
     const cost = status.costUsd != null ? 'API eq $' + status.costUsd.toFixed(4) : '';
     let line = pct + ' context' + (cost ? ' | ' + cost : '');
     if (status.rateLimitCurrent != null) line += ' | 5h:' + status.rateLimitCurrent + '%';
     if (status.rateLimitWeekly != null) line += ' 7d:' + status.rateLimitWeekly + '%';
     process.stdout.write(line);
+
+    // Write status file for the app's ContextBar (best-effort, fails silently on remote)
+    try {
+      if (!fs.existsSync(statusDir)) {
+        fs.mkdirSync(statusDir, { recursive: true });
+      }
+      fs.writeFileSync(
+        path.join(statusDir, sessionId + '.json'),
+        JSON.stringify(status)
+      );
+    } catch {}
   } catch (e) {
     // Silently fail - don't break Claude's output
   }

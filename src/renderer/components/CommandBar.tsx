@@ -18,9 +18,10 @@ interface Props {
   visionBrowser?: 'chrome' | 'edge'
   visionDebugPort?: number
   visionUrl?: string
+  visionHeadless?: boolean
 }
 
-export default function CommandBar({ sessionId, configId, sessionType = 'local', partnerEnabled, isPartnerActive, onTogglePartner, partnerSessionId, visionEnabled, visionConnected, visionBrowser, visionDebugPort, visionUrl }: Props) {
+export default function CommandBar({ sessionId, configId, sessionType = 'local', partnerEnabled, isPartnerActive, onTogglePartner, partnerSessionId, visionEnabled, visionConnected, visionBrowser, visionDebugPort, visionUrl, visionHeadless }: Props) {
   const { commands, addCommand, updateCommand, removeCommand, reorderCommands } = useCommandStore()
   const [showDialog, setShowDialog] = useState(false)
   const [editingCommand, setEditingCommand] = useState<CustomCommand | null>(null)
@@ -198,7 +199,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
             <button
               onClick={() => {
                 if (visionBrowser && visionDebugPort) {
-                  window.electronAPI.vision.launch(visionBrowser, visionDebugPort, visionUrl)
+                  window.electronAPI.vision.launch(visionBrowser, visionDebugPort, visionUrl, visionHeadless ?? true)
                 }
               }}
               onContextMenu={(e) => {
@@ -227,7 +228,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
               setVisionContextMenu(null)
             }}
             onLaunch={visionBrowser && visionDebugPort ? () => {
-              window.electronAPI.vision.launch(visionBrowser, visionDebugPort, visionUrl)
+              window.electronAPI.vision.launch(visionBrowser, visionDebugPort, visionUrl, visionHeadless ?? true)
               setVisionContextMenu(null)
             } : undefined}
             onInjectSetup={async () => {

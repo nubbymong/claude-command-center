@@ -21,9 +21,9 @@ export function registerVisionHandlers(getWindow: () => BrowserWindow | null): v
     return status || { connected: false, browser: null, proxyPort: 0 }
   })
 
-  ipcMain.handle('vision:launch', async (_event, browser: 'chrome' | 'edge', debugPort: number, url?: string) => {
+  ipcMain.handle('vision:launch', async (_event, browser: 'chrome' | 'edge', debugPort: number, url?: string, headless: boolean = true) => {
     try {
-      const result = launchBrowser(browser, debugPort, url)
+      const result = launchBrowser(browser, debugPort, url, headless)
       // Trigger CDP reconnect in background (Chrome needs time to start)
       tryReconnectVision(debugPort)
       return { ok: true, ...result }
