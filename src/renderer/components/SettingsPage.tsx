@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import WhatsNewModal, { markWhatsNewSeen } from './WhatsNewModal'
+import TrainingWalkthrough from './TrainingWalkthrough'
 import { getLatestVersion } from '../changelog'
 import { useSettingsStore, DEFAULT_STATUS_LINE } from '../stores/settingsStore'
 import type { StatusLineSettings } from '../stores/settingsStore'
@@ -29,6 +30,7 @@ export default function SettingsPage() {
   const settings = useSettingsStore((s) => s.settings)
   const updateSettings = useSettingsStore((s) => s.updateSettings)
   const [showWhatsNew, setShowWhatsNew] = useState(false)
+  const [showTraining, setShowTraining] = useState(false)
   const [activeTab, setActiveTab] = useState<SettingsTab>('general')
   const latestVersion = getLatestVersion()
 
@@ -203,12 +205,19 @@ export default function SettingsPage() {
                   <span className="text-sm text-text">Build</span>
                   <span className="text-xs text-overlay0 font-mono tabular-nums">{formatBuildTime(__BUILD_TIME__)}</span>
                 </div>
-                <div className="pt-1">
+                <div className="pt-1 flex items-center gap-1.5">
                   <button
                     onClick={() => setShowWhatsNew(true)}
                     className="text-[11px] text-blue hover:text-blue/80 transition-colors"
                   >
                     View What's New
+                  </button>
+                  <span className="text-[11px] text-overlay0">|</span>
+                  <button
+                    onClick={() => setShowTraining(true)}
+                    className="text-[11px] text-blue hover:text-blue/80 transition-colors"
+                  >
+                    Replay Training
                   </button>
                 </div>
               </div>
@@ -224,6 +233,12 @@ export default function SettingsPage() {
             setShowWhatsNew(false)
           }}
           showAllVersions
+        />
+      )}
+      {showTraining && (
+        <TrainingWalkthrough
+          onClose={() => setShowTraining(false)}
+          showAll
         />
       )}
     </div>

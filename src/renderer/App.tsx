@@ -13,6 +13,7 @@ import InsightsPage from './components/InsightsPage'
 import CloudAgentsPage from './components/CloudAgentsPage'
 import SetupDialog from './components/SetupDialog'
 import WhatsNewModal, { shouldShowWhatsNew, markWhatsNewSeen } from './components/WhatsNewModal'
+import TrainingWalkthrough, { shouldShowTraining, isFirstInstall } from './components/TrainingWalkthrough'
 import ErrorBoundary from './components/ErrorBoundary'
 import CloseDialog from './components/CloseDialog'
 import { useSessionStore, Session } from './stores/sessionStore'
@@ -44,6 +45,7 @@ export default function App() {
   const [isUpdating, setIsUpdating] = useState(false)
   const [closeDialog, setCloseDialog] = useState<'close' | 'update' | null>(null)
   const [showWhatsNew, setShowWhatsNew] = useState(false)
+  const [showTraining, setShowTraining] = useState(false)
   const [partnerActive, setPartnerActive] = useState<Set<string>>(new Set())
   const activeSessionId = useSessionStore((s) => s.activeSessionId)
   const sessions = useSessionStore((s) => s.sessions)
@@ -130,8 +132,11 @@ export default function App() {
       }
 
       setTimeout(() => {
-        if (shouldShowWhatsNew()) {
-          setShowWhatsNew(true)
+        if (isFirstInstall()) {
+          setShowTraining(true)
+        } else {
+          if (shouldShowWhatsNew()) setShowWhatsNew(true)
+          else if (shouldShowTraining()) setShowTraining(true)
         }
       }, 500)
     }
@@ -385,12 +390,16 @@ export default function App() {
   const handleWhatsNewClose = () => {
     markWhatsNewSeen()
     setShowWhatsNew(false)
+    if (shouldShowTraining()) {
+      setTimeout(() => setShowTraining(true), 300)
+    }
   }
 
   return (
     <ErrorBoundary>
       <div className="flex flex-col h-screen bg-base text-text">
         {showWhatsNew && <WhatsNewModal onClose={handleWhatsNewClose} />}
+        {showTraining && <TrainingWalkthrough onClose={() => setShowTraining(false)} />}
 
         {closeDialog && (
           <CloseDialog

@@ -4,6 +4,7 @@ import { saveConfigNow } from '../utils/config-saver'
 export interface AppMeta {
   setupVersion?: string
   lastSeenVersion?: string
+  lastTrainingVersion?: string
   commandsSeeded?: boolean
   colorMigrated?: boolean
 }
