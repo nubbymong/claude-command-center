@@ -19,6 +19,12 @@ export type {
   NoteMetadata,
   AgentTemplate,
   AgentModelOverride,
+  TeamTemplate,
+  TeamRun,
+  TeamStep,
+  TeamStepMode,
+  TeamRunStep,
+  TeamRunStatus,
 } from '../../shared/types'
 
 // Import for use in the ElectronAPI interface
@@ -30,6 +36,8 @@ import type {
   InsightsData,
   KpiData,
   CloudAgent,
+  TeamTemplate,
+  TeamRun,
 } from '../../shared/types'
 
 export interface ElectronAPI {
@@ -238,6 +246,15 @@ export interface ElectronAPI {
     clearCompleted: () => Promise<number>
     onStatusChanged: (callback: (agent: CloudAgent) => void) => () => void
     onOutputChunk: (callback: (data: { id: string; chunk: string }) => void) => () => void
+  }
+  team: {
+    list: () => Promise<TeamTemplate[]>
+    save: (team: TeamTemplate) => Promise<TeamTemplate>
+    delete: (id: string) => Promise<boolean>
+    run: (teamId: string, projectPath?: string) => Promise<TeamRun | null>
+    cancelRun: (runId: string) => Promise<boolean>
+    listRuns: () => Promise<TeamRun[]>
+    onRunStatusChanged: (callback: (run: TeamRun) => void) => () => void
   }
   serviceStatus: {
     onUpdate: (callback: (data: { status: string; description: string }) => void) => () => void

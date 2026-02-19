@@ -5,6 +5,7 @@ import { useSettingsStore } from '../stores/settingsStore'
 import { useAppMetaStore } from '../stores/appMetaStore'
 import { useCloudAgentStore } from '../stores/cloudAgentStore'
 import { useAgentLibraryStore } from '../stores/agentLibraryStore'
+import { useTeamStore } from '../stores/teamStore'
 
 /**
  * Gather all relevant localStorage keys for migration to CONFIG/.
@@ -58,6 +59,10 @@ export function hydrateStores(configData: Record<string, unknown>): void {
 
   const agentTemplates = (configData.agentTemplates as any[]) || []
   useAgentLibraryStore.getState().hydrate(agentTemplates)
+
+  const agentTeams = (configData.agentTeams as any[]) || []
+  const agentTeamRuns = (configData.agentTeamRuns as any[]) || []
+  useTeamStore.getState().hydrate(agentTeams, agentTeamRuns)
 
   console.log('[App] All stores hydrated from CONFIG/')
 }
