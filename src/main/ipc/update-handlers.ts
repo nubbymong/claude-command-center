@@ -69,7 +69,18 @@ export function registerUpdateHandlers(): void {
 
     let installerPath: string | null = null
 
-    // 1. If we have a GitHub release cached, download the installer
+    // 1. Always re-check GitHub for the LATEST release (cached info may be stale)
+    try {
+      const latestRelease = await checkGitHubRelease()
+      if (latestRelease) {
+        cachedRelease = latestRelease
+        logInfo(`[update] Latest GitHub release: v${latestRelease.version}`)
+      }
+    } catch (err) {
+      logInfo(`[update] GitHub re-check failed, using cached info: ${err}`)
+    }
+
+    // 2. Download from GitHub if we have release info
     if (cachedRelease?.installerName && cachedRelease?.tagName) {
       logInfo(`[update] Downloading from GitHub: ${cachedRelease.installerName}`)
       installerPath = await downloadGitHubRelease(cachedRelease.tagName, cachedRelease.installerName)
