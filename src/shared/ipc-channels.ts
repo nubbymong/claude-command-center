@@ -150,6 +150,15 @@ export const IPC = {
   CLOUD_AGENT_STATUS_CHANGED: 'cloudAgent:statusChanged',
   CLOUD_AGENT_OUTPUT_CHUNK: 'cloudAgent:outputChunk',
 
+  // Agent Teams
+  TEAM_LIST: 'team:list',
+  TEAM_SAVE: 'team:save',
+  TEAM_DELETE: 'team:delete',
+  TEAM_RUN: 'team:run',
+  TEAM_CANCEL_RUN: 'team:cancelRun',
+  TEAM_LIST_RUNS: 'team:listRuns',
+  TEAM_RUN_STATUS_CHANGED: 'team:runStatusChanged',
+
   // Service status
   SERVICE_STATUS: 'serviceStatus:update',
 

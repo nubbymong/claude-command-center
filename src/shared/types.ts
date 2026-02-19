@@ -176,6 +176,52 @@ export interface LogEntry {
   data?: string
 }
 
+// ── Agent Teams ──
+
+export type TeamStepMode = 'sequential' | 'parallel'
+
+export interface TeamStep {
+  id: string              // 'ts-' + random
+  templateId: string      // references AgentTemplate.id
+  label: string           // display name (defaults to template name)
+  mode: TeamStepMode
+  promptOverride?: string // optional: override the template's prompt
+}
+
+export interface TeamTemplate {
+  id: string              // 'team-' + timestamp + random
+  name: string
+  description: string
+  steps: TeamStep[]
+  projectPath: string
+  createdAt: number
+  updatedAt: number
+}
+
+export type TeamRunStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+
+export interface TeamRunStep {
+  stepId: string          // matches TeamStep.id
+  agentId: string | null  // CloudAgent.id once dispatched
+  status: TeamRunStatus
+  label: string
+  startedAt?: number
+  completedAt?: number
+}
+
+export interface TeamRun {
+  id: string              // 'tr-' + timestamp + random
+  teamId: string
+  teamName: string        // snapshot at run time
+  status: TeamRunStatus
+  steps: TeamRunStep[]
+  projectPath: string
+  createdAt: number
+  updatedAt: number
+  duration?: number
+  error?: string
+}
+
 // ── Notes ──
 
 export interface NoteMetadata {

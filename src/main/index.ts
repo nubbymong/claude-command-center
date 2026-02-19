@@ -20,6 +20,7 @@ import { registerNotesHandlers } from './ipc/notes-handlers'
 import { registerVisionHandlers } from './ipc/vision-handlers'
 import { registerConfigHandlers } from './ipc/config-handlers'
 import { registerCloudAgentHandlers } from './ipc/cloud-agent-handlers'
+import { registerTeamHandlers } from './ipc/team-handlers'
 import { registerLegacyVersionHandlers } from './ipc/legacy-version-handlers'
 import { killAllAgents } from './cloud-agent-manager'
 import { startServiceStatusPoller, stopServiceStatusPoller } from './service-status'
@@ -368,6 +369,7 @@ if (!gotTheLock) {
     registerNotesHandlers()
     registerVisionHandlers(getWindow)
     registerCloudAgentHandlers(getWindow)
+    registerTeamHandlers(getWindow)
     registerLegacyVersionHandlers(getWindow)
 
     // Start update system

@@ -337,6 +337,19 @@ const electronAPI: ElectronAPI = {
       return () => ipcRenderer.removeListener(IPC.CLOUD_AGENT_OUTPUT_CHUNK, handler)
     },
   },
+  team: {
+    list: () => ipcRenderer.invoke(IPC.TEAM_LIST),
+    save: (team: any) => ipcRenderer.invoke(IPC.TEAM_SAVE, team),
+    delete: (id: string) => ipcRenderer.invoke(IPC.TEAM_DELETE, id),
+    run: (teamId: string, projectPath?: string) => ipcRenderer.invoke(IPC.TEAM_RUN, teamId, projectPath),
+    cancelRun: (runId: string) => ipcRenderer.invoke(IPC.TEAM_CANCEL_RUN, runId),
+    listRuns: () => ipcRenderer.invoke(IPC.TEAM_LIST_RUNS),
+    onRunStatusChanged: (callback: (run: any) => void) => {
+      const handler = (_: unknown, run: any) => callback(run)
+      ipcRenderer.on(IPC.TEAM_RUN_STATUS_CHANGED, handler)
+      return () => ipcRenderer.removeListener(IPC.TEAM_RUN_STATUS_CHANGED, handler)
+    },
+  },
   serviceStatus: {
     onUpdate: (callback: (data: { status: string; description: string }) => void) => {
       const handler = (_: unknown, data: { status: string; description: string }) => callback(data)

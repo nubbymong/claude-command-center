@@ -53,9 +53,10 @@ const ptySessions = new Map<string, PtySession>()
  * {ResourcesDir}/scripts/claude-multi-statusline.js and mounted at
  * /mnt/resources/scripts/ on the remote machine.
  */
-function getRemoteStatuslineSetup(): string {
+function getRemoteStatuslineSetup(sessionId?: string): string {
   const configCmd = 'const f=require("fs"),p=require("path").join(require("os").homedir(),".claude","settings.json");let s={};try{s=JSON.parse(f.readFileSync(p,"utf-8"))}catch{}s.statusLine={type:"command",command:"node /mnt/resources/scripts/claude-multi-statusline.js"};f.writeFileSync(p,JSON.stringify(s,null,2))'
-  return `mkdir -p ~/.claude 2>/dev/null; node -e '${configCmd}' 2>/dev/null`
+  const exportSessionId = sessionId ? `export CLAUDE_MULTI_SESSION_ID=${sessionId}; ` : ''
+  return `${exportSessionId}mkdir -p ~/.claude 2>/dev/null; node -e '${configCmd}' 2>/dev/null`
 }
 
 /**
@@ -201,10 +202,10 @@ export function spawnPty(
           } else if (startClaudeAfter && !options?.shellOnly) {
             // Deploy statusline, set vision env + CLAUDE.md, then start Claude
             claudeSent = true
-            ptyProcess.write(`cd ${remotePath}; ${getRemoteStatuslineSetup()}; ${visionPrefix}${visionClaudeMdPrefix}claude\r`)
+            ptyProcess.write(`cd ${remotePath}; ${getRemoteStatuslineSetup(sessionId)}; ${visionPrefix}${visionClaudeMdPrefix}claude\r`)
           } else {
             // Shell only or no Claude — just cd, deploy statusline, set vision env + CLAUDE.md
-            ptyProcess.write(`cd ${remotePath}; ${getRemoteStatuslineSetup()}; ${visionPrefix}${visionClaudeMdPrefix}clear\r`)
+            ptyProcess.write(`cd ${remotePath}; ${getRemoteStatuslineSetup(sessionId)}; ${visionPrefix}${visionClaudeMdPrefix}clear\r`)
           }
         }, 200)
         return
@@ -228,7 +229,7 @@ export function spawnPty(
               const visionClaudeMd2 = getRemoteVisionInstructionsSetup()
               const visionClaudeMdPrefix2 = visionClaudeMd2 ? `${visionClaudeMd2}; ` : ''
               // Deploy statusline on remote for context tracking, set vision env + CLAUDE.md, then start Claude
-              ptyProcess.write(`${getRemoteStatuslineSetup()}; ${visionPrefix2}${visionClaudeMdPrefix2}claude\r`)
+              ptyProcess.write(`${getRemoteStatuslineSetup(sessionId)}; ${visionPrefix2}${visionClaudeMdPrefix2}claude\r`)
             }, 300)
           }
         }

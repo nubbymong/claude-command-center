@@ -94,6 +94,24 @@ const mockElectronAPI = {
     seed: vi.fn(() => Promise.resolve(null)),
     onStatusChanged: vi.fn(() => () => {}),
   },
+  team: {
+    list: vi.fn(() => Promise.resolve([])),
+    save: vi.fn((team: any) => Promise.resolve({ ...team, id: team.id || 'team-mock123', updatedAt: Date.now() })),
+    delete: vi.fn(() => Promise.resolve(true)),
+    run: vi.fn((teamId: string) => Promise.resolve({
+      id: 'tr-mock123',
+      teamId,
+      teamName: 'Mock Team',
+      status: 'running',
+      steps: [],
+      projectPath: '/mock',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    })),
+    cancelRun: vi.fn(() => Promise.resolve(true)),
+    listRuns: vi.fn(() => Promise.resolve([])),
+    onRunStatusChanged: vi.fn(() => () => {}),
+  },
   dialog: { openFolder: vi.fn(() => Promise.resolve(null)) },
 }
 

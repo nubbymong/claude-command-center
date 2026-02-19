@@ -159,6 +159,19 @@ describe('config-manager', () => {
       expect(data).toHaveProperty('cloudAgents')
     })
 
+    it('includes agentTeams and agentTeamRuns keys', () => {
+      mockedFs.existsSync.mockReturnValue(true)
+      mockedFs.readdirSync.mockReturnValue(['agent-teams.json'] as any)
+      mockedFs.readFileSync.mockImplementation((p: any) => {
+        if (typeof p === 'string' && p.includes('agent-teams')) return JSON.stringify([{ id: 'team-1' }])
+        if (typeof p === 'string' && p.includes('agent-team-runs')) return JSON.stringify([{ id: 'tr-1' }])
+        return 'null'
+      })
+      const { data } = loadAllConfig()
+      expect(data).toHaveProperty('agentTeams')
+      expect(data).toHaveProperty('agentTeamRuns')
+    })
+
     it('returns needsMigration=true when no config files exist', () => {
       mockedFs.existsSync.mockImplementation((p: any) => {
         // CONFIG dir doesn't exist for configHasData check
