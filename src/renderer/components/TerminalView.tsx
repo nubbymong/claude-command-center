@@ -87,10 +87,10 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
     let handleKeyDownCopy: ((e: KeyboardEvent) => void) | null = null
     let handleContextMenu: ((e: MouseEvent) => void) | null = null
     let disposed = false
-    let scrollCheckInterval: ReturnType<typeof setInterval> | null = null
     let parseTimer: ReturnType<typeof setTimeout> | null = null
     let pendingParseData = ''
     let refreshTimer: ReturnType<typeof setTimeout> | null = null
+    let handleWheel: ((e: WheelEvent) => void) | null = null
 
     const initTerminal = () => {
       if (disposed) return
@@ -237,19 +237,55 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         }, 250)
       }
 
+      // --- Scroll state management ---
+      // Use wheel events to detect intentional user scroll, not onScroll
+      // (which fires spuriously during term.write and causes pull-down)
+      const updateScrollState = (scrolledUp: boolean) => {
+        isScrolledUpRef.current = scrolledUp
+        setIsScrolledUp(scrolledUp)
+      }
+
+      handleWheel = () => {
+        if (!term) return
+        // After the wheel event settles, check viewport position
+        if (refreshTimer) clearTimeout(refreshTimer)
+        refreshTimer = setTimeout(() => {
+          refreshTimer = null
+          if (!term) return
+          try {
+            const buf = term.buffer.active
+            const atBottom = buf.viewportY >= buf.baseY
+            if (atBottom) {
+              updateScrollState(false)
+            } else {
+              updateScrollState(true)
+              // Fix scroll corruption by refreshing viewport
+              term.refresh(0, term.rows - 1)
+            }
+          } catch { /* terminal may be disposed */ }
+        }, 80)
+      }
+      container.addEventListener('wheel', handleWheel)
+
+      // Only use onScroll to detect when user scrolls back to bottom
+      // (e.g. via keyboard PageDown or scrollbar drag)
+      term.onScroll(() => {
+        if (disposed || !term || !isScrolledUpRef.current) return
+        try {
+          const buf = term.buffer.active
+          const atBottom = buf.viewportY >= buf.baseY
+          if (atBottom) updateScrollState(false)
+        } catch { /* terminal may be disposed */ }
+      })
+
       // Receive PTY output
       unsubData = window.electronAPI.pty.onData(sessionId, (data) => {
         const filtered = shellOnly ? data : stripCursorSequences(data) + '\x1b[?25l'
         term?.write(filtered)
 
+        // Only auto-scroll if user hasn't scrolled up
         if (!isScrolledUpRef.current) {
           term?.scrollToBottom()
-        } else if (term) {
-          if (refreshTimer) clearTimeout(refreshTimer)
-          refreshTimer = setTimeout(() => {
-            refreshTimer = null
-            try { term.refresh(0, term.rows - 1) } catch { /* ignore */ }
-          }, 150)
         }
 
         pendingParseData += data
@@ -269,30 +305,6 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         } catch { /* ignore */ }
       })
       resizeObserver.observe(container)
-
-      // Track scroll position
-      const updateScrollState = (scrolledUp: boolean) => {
-        isScrolledUpRef.current = scrolledUp
-        setIsScrolledUp(scrolledUp)
-      }
-
-      term.onScroll(() => {
-        if (disposed || !term) return
-        try {
-          const buf = term.buffer.active
-          const atBottom = buf.viewportY >= buf.baseY
-          updateScrollState(!atBottom)
-        } catch { /* terminal may be disposed */ }
-      })
-
-      scrollCheckInterval = setInterval(() => {
-        if (disposed || !term) return
-        try {
-          const buf = term.buffer.active
-          const atBottom = buf.viewportY >= buf.baseY
-          if (atBottom) updateScrollState(false)
-        } catch { /* terminal may be disposed */ }
-      }, 500)
 
       // Ctrl+Shift+C to copy selected text
       handleKeyDownCopy = (e: KeyboardEvent) => {
@@ -332,8 +344,8 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       if (refreshTimer) clearTimeout(refreshTimer)
       if (handleKeyDownCopy) document.removeEventListener('keydown', handleKeyDownCopy)
       if (handleContextMenu) container.removeEventListener('contextmenu', handleContextMenu, true)
+      if (handleWheel) container.removeEventListener('wheel', handleWheel)
       resizeObserver?.disconnect()
-      if (scrollCheckInterval) clearInterval(scrollCheckInterval)
       unsubData?.()
       unsubExit?.()
       // DON'T kill PTY here - it survives HMR remounts.
