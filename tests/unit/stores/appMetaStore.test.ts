@@ -31,4 +31,25 @@ describe('appMetaStore', () => {
       expect(useAppMetaStore.getState().meta.setupVersion).toBe('2.0.0')
     })
   })
+
+  describe('lastTrainingVersion', () => {
+    it('hydrates with lastTrainingVersion', () => {
+      useAppMetaStore.getState().hydrate({ lastTrainingVersion: '1.0.0' })
+      expect(useAppMetaStore.getState().meta.lastTrainingVersion).toBe('1.0.0')
+    })
+
+    it('updates lastTrainingVersion independently', () => {
+      useAppMetaStore.getState().hydrate({ setupVersion: '1.2.0', lastSeenVersion: '1.2.0' })
+      useAppMetaStore.getState().update({ lastTrainingVersion: '1.0.0' })
+      const meta = useAppMetaStore.getState().meta
+      expect(meta.lastTrainingVersion).toBe('1.0.0')
+      expect(meta.setupVersion).toBe('1.2.0')
+      expect(meta.lastSeenVersion).toBe('1.2.0')
+    })
+
+    it('is undefined by default', () => {
+      useAppMetaStore.getState().hydrate({})
+      expect(useAppMetaStore.getState().meta.lastTrainingVersion).toBeUndefined()
+    })
+  })
 })
