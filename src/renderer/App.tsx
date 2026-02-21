@@ -24,6 +24,7 @@ import { useAppMetaStore } from './stores/appMetaStore'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 import { markSessionForResumePicker } from './utils/resumePicker'
 import { gatherLocalStorageData, hydrateStores } from './utils/configHydration'
+import { setupCloudAgentListener } from './stores/cloudAgentStore'
 import type { SessionState, SavedSession } from './types/electron'
 
 // Re-export ViewType from its canonical location for backwards compatibility
@@ -125,6 +126,10 @@ export default function App() {
       }
 
       await restoreSavedSessions()
+
+      // Start cloud agent IPC listener early so status updates are
+      // never missed (previously only started when CloudAgentsPage mounted)
+      setupCloudAgentListener()
 
       const magicSettings = useMagicButtonStore.getState().settings
       if (magicSettings.autoDeleteDays != null && magicSettings.autoDeleteDays > 0) {

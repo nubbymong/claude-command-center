@@ -164,23 +164,19 @@ export const useCloudAgentStore = create<CloudAgentState>((set, get) => ({
   },
 }))
 
-// Set up IPC listeners once (lazy init from CloudAgentsPage)
+// Set up IPC listeners once globally — never tear down.
+// Previously tied to CloudAgentsPage mount/unmount, which meant status updates
+// were missed while the user was on a different page.
 let listenerSetup = false
-export function setupCloudAgentListener(): () => void {
-  if (listenerSetup) return () => {}
+export function setupCloudAgentListener(): void {
+  if (listenerSetup) return
   listenerSetup = true
 
-  const unsubStatus = window.electronAPI.cloudAgent.onStatusChanged((agent) => {
+  window.electronAPI.cloudAgent.onStatusChanged((agent) => {
     useCloudAgentStore.getState().handleStatusChanged(agent)
   })
 
-  const unsubOutput = window.electronAPI.cloudAgent.onOutputChunk((data) => {
+  window.electronAPI.cloudAgent.onOutputChunk((data) => {
     useCloudAgentStore.getState().handleOutputChunk(data)
   })
-
-  return () => {
-    unsubStatus()
-    unsubOutput()
-    listenerSetup = false
-  }
 }

@@ -52,7 +52,7 @@ export default function TrainingWalkthrough({ onClose, showAll = false }: Props)
     : getNewSteps(useAppMetaStore.getState().meta.lastTrainingVersion)
 
   const [currentIndex, setCurrentIndex] = useState(0)
-  const [imgError, setImgError] = useState<Set<number>>(new Set())
+  const [imgBad, setImgBad] = useState<Set<number>>(new Set())
 
   const step = steps[currentIndex]
   const isFirst = currentIndex === 0
@@ -78,8 +78,8 @@ export default function TrainingWalkthrough({ onClose, showAll = false }: Props)
     if (!isFirst) setCurrentIndex((i) => i - 1)
   }
 
-  const handleImgError = () => {
-    setImgError((prev) => new Set(prev).add(currentIndex))
+  const markBad = () => {
+    setImgBad((prev) => new Set(prev).add(currentIndex))
   }
 
   if (steps.length === 0) {
@@ -88,7 +88,7 @@ export default function TrainingWalkthrough({ onClose, showAll = false }: Props)
   }
 
   const imgSrc = screenshotMap[step.screenshotFilename]
-  const showFallback = imgError.has(currentIndex)
+  const showFallback = imgBad.has(currentIndex)
 
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
@@ -126,7 +126,11 @@ export default function TrainingWalkthrough({ onClose, showAll = false }: Props)
                 src={imgSrc}
                 alt={step.title}
                 className="w-full h-auto max-h-[320px] object-cover"
-                onError={handleImgError}
+                onError={markBad}
+                onLoad={(e) => {
+                  const img = e.currentTarget
+                  if (img.naturalWidth < 10 || img.naturalHeight < 10) markBad()
+                }}
               />
             ) : (
               <div className="flex items-center justify-center h-48 text-overlay0">

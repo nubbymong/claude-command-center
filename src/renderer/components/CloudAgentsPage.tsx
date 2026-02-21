@@ -516,8 +516,7 @@ export default function CloudAgentsPage() {
   const selectedAgent = allAgents.find(a => a.id === selectedAgentId) || null
 
   useEffect(() => {
-    const cleanup = setupCloudAgentListener()
-    return cleanup
+    setupCloudAgentListener()
   }, [])
 
   useEffect(() => {
