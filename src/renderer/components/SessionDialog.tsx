@@ -257,7 +257,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
       <form
         onSubmit={handleSubmit}
-        className="bg-surface0 rounded-lg p-6 w-[440px] shadow-2xl border border-surface1"
+        className="bg-surface0 rounded-lg p-6 w-[760px] max-h-[90vh] overflow-y-auto shadow-2xl border border-surface1"
       >
         <h3 className="text-base font-semibold text-text mb-4">
           {initial ? 'Edit Config' : 'New Terminal Config'}
@@ -285,489 +285,487 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
           </button>
         </div>
 
-        <div className="space-y-3">
-          <div>
-            <label className="block text-xs text-subtext0 mb-1">Label</label>
-            <input
-              autoFocus
-              value={label}
-              onChange={(e) => setLabel(e.target.value)}
-              placeholder="My project"
-              className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue"
-            />
-          </div>
+        {/* Two-column grid */}
+        <div className="grid grid-cols-2 gap-6">
 
-          {/* Color picker */}
-          <div>
-            <label className="block text-xs text-subtext0 mb-1">Color</label>
-            <div className="flex flex-wrap gap-2">
-              {COLOR_SWATCHES.map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  onClick={() => setColor(c)}
-                  className={`w-7 h-7 rounded-md border-2 transition-all ${
-                    color === c ? 'border-text scale-110' : 'border-transparent hover:border-overlay0'
-                  }`}
-                  style={{ backgroundColor: c }}
-                  title={c}
-                />
-              ))}
-            </div>
-          </div>
+          {/* ============ LEFT COLUMN: Identity + Connection ============ */}
+          <div className="space-y-3">
 
-          {/* Shell only toggle */}
-          <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={shellOnly}
-              onChange={(e) => {
-                setShellOnly(e.target.checked)
-                if (e.target.checked) setPartnerTerminalPath('')
-              }}
-              className="rounded border-surface1"
-            />
-            Shell only (don't run Claude)
-          </label>
-
-          {/* Partner Terminal — available for both local and SSH sessions (partner is always a local shell) */}
-          {!shellOnly && (
+            {/* -- IDENTITY section (first in column, no border-t) -- */}
             <div>
-              <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer mb-1.5">
-                <input
-                  type="checkbox"
-                  checked={!!partnerTerminalPath}
-                  onChange={(e) => setPartnerTerminalPath(e.target.checked ? (workingDir || '.') : '')}
-                  className="rounded border-surface1"
-                />
-                Partner Terminal (optional shell alongside Claude)
-              </label>
-              {partnerTerminalPath && (
-                <>
-                  <div className="flex gap-2 ml-5">
-                    <input
-                      value={partnerTerminalPath}
-                      onChange={(e) => setPartnerTerminalPath(e.target.value)}
-                      placeholder="Partner terminal path"
-                      className="flex-1 bg-base border border-surface1 rounded px-3 py-2 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue"
-                    />
-                    <button
-                      type="button"
-                      onClick={handleBrowsePartner}
-                      className="px-3 py-2 rounded text-sm bg-surface1 text-subtext1 hover:bg-surface2 hover:text-text transition-colors shrink-0"
-                    >
-                      Browse
-                    </button>
-                  </div>
-                  <label className="flex items-center gap-2 text-xs text-subtext0 cursor-pointer ml-5">
-                    <input
-                      type="checkbox"
-                      checked={partnerElevated}
-                      onChange={(e) => setPartnerElevated(e.target.checked)}
-                      className="rounded border-surface1"
-                    />
-                    Run as Administrator (requires gsudo)
-                  </label>
-                </>
-              )}
+              <span className="text-[10px] uppercase tracking-wider text-overlay1 font-medium">Identity</span>
             </div>
-          )}
 
-          {sessionType === 'local' ? (
             <div>
-              <label className="block text-xs text-subtext0 mb-1">Working Directory</label>
-              <div className="flex gap-2">
-                <input
-                  value={workingDir}
-                  onChange={(e) => setWorkingDir(e.target.value)}
-                  placeholder="C:\path\to\project"
-                  className="flex-1 bg-base border border-surface1 rounded px-3 py-2 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue"
-                />
-                <button
-                  type="button"
-                  onClick={handleBrowse}
-                  className="px-3 py-2 rounded text-sm bg-surface1 text-subtext1 hover:bg-surface2 hover:text-text transition-colors shrink-0"
-                >
-                  Browse
-                </button>
+              <label className="block text-xs text-subtext0 mb-1">Label</label>
+              <input
+                autoFocus
+                value={label}
+                onChange={(e) => setLabel(e.target.value)}
+                placeholder="My project"
+                className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue"
+              />
+            </div>
+
+            {/* Color picker — compact swatches */}
+            <div>
+              <label className="block text-xs text-subtext0 mb-1">Color</label>
+              <div className="flex flex-wrap gap-1.5">
+                {COLOR_SWATCHES.map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    onClick={() => setColor(c)}
+                    className={`w-6 h-6 rounded-md border-2 transition-all ${
+                      color === c ? 'border-text scale-110' : 'border-transparent hover:border-overlay0'
+                    }`}
+                    style={{ backgroundColor: c }}
+                    title={c}
+                  />
+                ))}
               </div>
             </div>
-          ) : (
-            <>
-              <div className="grid grid-cols-[1fr_80px] gap-2">
-                <div>
-                  <label className="block text-xs text-subtext0 mb-1">Host</label>
+
+            {/* -- CONNECTION section -- */}
+            <div className="border-t border-surface1 pt-3 mt-3">
+              <span className="text-[10px] uppercase tracking-wider text-overlay1 font-medium">Connection</span>
+            </div>
+
+            {sessionType === 'local' ? (
+              <div>
+                <label className="block text-xs text-subtext0 mb-1">Working Directory</label>
+                <div className="flex gap-2">
                   <input
-                    value={sshHost}
-                    onChange={(e) => setSshHost(e.target.value)}
-                    placeholder="192.168.1.100 or hostname"
+                    value={workingDir}
+                    onChange={(e) => setWorkingDir(e.target.value)}
+                    placeholder="C:\path\to\project"
+                    className="flex-1 bg-base border border-surface1 rounded px-3 py-2 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleBrowse}
+                    className="px-3 py-2 rounded text-sm bg-surface1 text-subtext1 hover:bg-surface2 hover:text-text transition-colors shrink-0"
+                  >
+                    Browse
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-[1fr_80px] gap-2">
+                  <div>
+                    <label className="block text-xs text-subtext0 mb-1">Host</label>
+                    <input
+                      value={sshHost}
+                      onChange={(e) => setSshHost(e.target.value)}
+                      placeholder="192.168.1.100 or hostname"
+                      className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-subtext0 mb-1">Port</label>
+                    <input
+                      type="number"
+                      value={sshPort}
+                      onChange={(e) => setSshPort(parseInt(e.target.value) || 22)}
+                      className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-blue"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs text-subtext0 mb-1">Username</label>
+                  <input
+                    value={sshUser}
+                    onChange={(e) => setSshUser(e.target.value)}
+                    placeholder="root"
                     className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs text-subtext0 mb-1">Port</label>
-                  <input
-                    type="number"
-                    value={sshPort}
-                    onChange={(e) => setSshPort(parseInt(e.target.value) || 22)}
-                    className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-blue"
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="block text-xs text-subtext0 mb-1">Username</label>
-                <input
-                  value={sshUser}
-                  onChange={(e) => setSshUser(e.target.value)}
-                  placeholder="root"
-                  className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue"
-                />
-              </div>
-              <div>
-                <label className="block text-xs text-subtext0 mb-1">
-                  Password
-                  <span className="text-overlay0 ml-1">(encrypted with OS keychain)</span>
-                </label>
-                <input
-                  type="password"
-                  value={sshPassword}
-                  onChange={(e) => setSshPassword(e.target.value)}
-                  placeholder={initial?.sshConfig?.hasPassword ? '(saved - enter new to change)' : 'Leave empty for key auth'}
-                  className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue"
-                />
-                {sshPassword.length > 0 && (
-                  <label className="flex items-center gap-2 mt-1.5 text-xs text-subtext0 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={savePassword}
-                      onChange={(e) => setSavePassword(e.target.checked)}
-                      className="rounded border-surface1"
-                    />
-                    Save password for this config
-                  </label>
-                )}
-              </div>
-              <div>
-                <label className="block text-xs text-subtext0 mb-1">Remote Path (cd after connect)</label>
-                <input
-                  value={sshRemotePath}
-                  onChange={(e) => setSshRemotePath(e.target.value)}
-                  placeholder="~/projects/my-app"
-                  className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue"
-                />
-              </div>
-              <div>
-                <label className="block text-xs text-subtext0 mb-1">
-                  Post-connect Command
-                  <span className="text-overlay0 ml-1">(runs after SSH connects)</span>
-                </label>
-                <input
-                  value={postCommand}
-                  onChange={(e) => setPostCommand(e.target.value)}
-                  placeholder="sudo docker exec -it container bash"
-                  className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue font-mono text-xs"
-                />
-              </div>
-              {postCommand && (
-                <div>
                   <label className="block text-xs text-subtext0 mb-1">
-                    Sudo Password
-                    <span className="text-overlay0 ml-1">(auto-entered if prompted)</span>
+                    Password
+                    <span className="text-overlay0 ml-1">(encrypted with OS keychain)</span>
                   </label>
                   <input
                     type="password"
-                    value={sudoPassword}
-                    onChange={(e) => setSudoPassword(e.target.value)}
-                    placeholder={initial?.sshConfig?.hasSudoPassword ? '(saved - enter new to change)' : 'Leave empty if not needed'}
+                    value={sshPassword}
+                    onChange={(e) => setSshPassword(e.target.value)}
+                    placeholder={initial?.sshConfig?.hasPassword ? '(saved - enter new to change)' : 'Leave empty for key auth'}
                     className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue"
                   />
-                  {sudoPassword.length > 0 && (
+                  {sshPassword.length > 0 && (
                     <label className="flex items-center gap-2 mt-1.5 text-xs text-subtext0 cursor-pointer">
                       <input
                         type="checkbox"
-                        checked={saveSudoPassword}
-                        onChange={(e) => setSaveSudoPassword(e.target.checked)}
+                        checked={savePassword}
+                        onChange={(e) => setSavePassword(e.target.checked)}
                         className="rounded border-surface1"
                       />
-                      Save sudo password for this config
+                      Save password for this config
                     </label>
                   )}
                 </div>
-              )}
-              {postCommand && (
-                <label className="flex items-center gap-2 text-xs text-subtext0 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={startClaudeAfter}
-                    onChange={(e) => setStartClaudeAfter(e.target.checked)}
-                    className="rounded border-surface1"
-                  />
-                  Start Claude after post-command completes
-                </label>
-              )}
-              <div className="pt-2 border-t border-surface0">
-                <label className="block text-xs text-subtext0 mb-1">
-                  Docker Container
-                  <span className="text-overlay0 ml-1">(for screenshot paste support)</span>
-                </label>
-                <input
-                  value={dockerContainer}
-                  onChange={(e) => setDockerContainer(e.target.value)}
-                  placeholder="my-container"
-                  className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue font-mono"
-                />
-                <p className="text-[10px] text-overlay0 mt-1">
-                  If set, pasted images will be copied into this container via docker cp
-                </p>
-              </div>
-            </>
-          )}
-
-          <div>
-            <label className="block text-xs text-subtext0 mb-1">
-              Model override
-              <span className="text-overlay0 ml-1">(uses your subscription plan)</span>
-            </label>
-            <select
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-blue"
-            >
-              <option value="">Default (no override)</option>
-              <option value="sonnet">Sonnet</option>
-              <option value="opus">Opus</option>
-              <option value="haiku">Haiku</option>
-            </select>
-          </div>
-
-          {/* Legacy Claude Version */}
-          <div className="pt-2 border-t border-surface0">
-            <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={legacyEnabled}
-                onChange={(e) => {
-                  setLegacyEnabled(e.target.checked)
-                  if (!e.target.checked) {
-                    setInstallError('')
-                  }
-                }}
-                className="rounded border-surface1"
-              />
-              Legacy Claude Version
-            </label>
-            {legacyEnabled && (
-              <div className="ml-5 mt-2 space-y-2">
                 <div>
-                  <label className="block text-xs text-subtext0 mb-1">Version</label>
-                  {loadingVersions ? (
-                    <div className="text-xs text-overlay0">Loading versions from npm...</div>
-                  ) : availableVersions.length > 0 ? (
-                    <select
-                      value={legacyVersion}
-                      onChange={(e) => setLegacyVersion(e.target.value)}
-                      className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-blue"
-                    >
-                      {availableVersions.map((v) => (
-                        <option key={v} value={v}>{v}</option>
-                      ))}
-                    </select>
-                  ) : (
-                    <div className="text-xs text-red">Failed to load versions. Is npm installed?</div>
-                  )}
+                  <label className="block text-xs text-subtext0 mb-1">Remote Path (cd after connect)</label>
+                  <input
+                    value={sshRemotePath}
+                    onChange={(e) => setSshRemotePath(e.target.value)}
+                    placeholder="~/projects/my-app"
+                    className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue"
+                  />
                 </div>
-                {legacyVersion && !loadingVersions && (
-                  <div className="flex items-center gap-2">
-                    {versionInstalled ? (
-                      <span className="text-xs text-green">Installed</span>
-                    ) : installing ? (
-                      <span className="text-xs text-overlay0">Installing...</span>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={handleInstallVersion}
-                        className="px-3 py-1 rounded text-xs bg-blue text-crust font-medium hover:bg-blue/90 transition-colors"
-                      >
-                        Install
-                      </button>
+                <div>
+                  <label className="block text-xs text-subtext0 mb-1">
+                    Post-connect Command
+                    <span className="text-overlay0 ml-1">(runs after SSH connects)</span>
+                  </label>
+                  <input
+                    value={postCommand}
+                    onChange={(e) => setPostCommand(e.target.value)}
+                    placeholder="sudo docker exec -it container bash"
+                    className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue font-mono text-xs"
+                  />
+                </div>
+                {postCommand && (
+                  <div>
+                    <label className="block text-xs text-subtext0 mb-1">
+                      Sudo Password
+                      <span className="text-overlay0 ml-1">(auto-entered if prompted)</span>
+                    </label>
+                    <input
+                      type="password"
+                      value={sudoPassword}
+                      onChange={(e) => setSudoPassword(e.target.value)}
+                      placeholder={initial?.sshConfig?.hasSudoPassword ? '(saved - enter new to change)' : 'Leave empty if not needed'}
+                      className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue"
+                    />
+                    {sudoPassword.length > 0 && (
+                      <label className="flex items-center gap-2 mt-1.5 text-xs text-subtext0 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={saveSudoPassword}
+                          onChange={(e) => setSaveSudoPassword(e.target.checked)}
+                          className="rounded border-surface1"
+                        />
+                        Save sudo password for this config
+                      </label>
                     )}
                   </div>
                 )}
-                {installError && (
-                  <div className="text-xs text-red">{installError}</div>
+                {postCommand && (
+                  <label className="flex items-center gap-2 text-xs text-subtext0 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={startClaudeAfter}
+                      onChange={(e) => setStartClaudeAfter(e.target.checked)}
+                      className="rounded border-surface1"
+                    />
+                    Start Claude after post-command completes
+                  </label>
                 )}
-                <p className="text-[10px] text-overlay0">
-                  Install and use a specific version of Claude CLI. ~80MB per version.
-                  {!versionInstalled && legacyVersion && ' Will auto-install on first launch if not installed.'}
-                </p>
-              </div>
+                <div>
+                  <label className="block text-xs text-subtext0 mb-1">
+                    Docker Container
+                    <span className="text-overlay0 ml-1">(for screenshot paste support)</span>
+                  </label>
+                  <input
+                    value={dockerContainer}
+                    onChange={(e) => setDockerContainer(e.target.value)}
+                    placeholder="my-container"
+                    className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue font-mono"
+                  />
+                  <p className="text-[10px] text-overlay0 mt-1">
+                    If set, pasted images will be copied into this container via docker cp
+                  </p>
+                </div>
+              </>
             )}
           </div>
 
-          {/* Vision — browser control */}
-          <div className="pt-2 border-t border-surface0">
+          {/* ============ RIGHT COLUMN: Options + Extensions + Agents + Organization ============ */}
+          <div className="space-y-3">
+
+            {/* -- SESSION OPTIONS section (first in column, no border-t) -- */}
+            <div>
+              <span className="text-[10px] uppercase tracking-wider text-overlay1 font-medium">Session Options</span>
+            </div>
+
+            {/* Shell only toggle */}
             <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
               <input
                 type="checkbox"
-                checked={visionEnabled}
-                onChange={(e) => setVisionEnabled(e.target.checked)}
+                checked={shellOnly}
+                onChange={(e) => {
+                  setShellOnly(e.target.checked)
+                  if (e.target.checked) setPartnerTerminalPath('')
+                }}
                 className="rounded border-surface1"
               />
-              Vision (browser control)
+              Shell only (don't run Claude)
             </label>
-            {visionEnabled && (
-              <div className="ml-5 mt-2 space-y-2">
-                <div>
-                  <label className="block text-xs text-subtext0 mb-1">URL to open</label>
-                  <input
-                    type="text"
-                    value={visionUrl}
-                    onChange={(e) => setVisionUrl(e.target.value)}
-                    placeholder="http://localhost:3000"
-                    className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-blue"
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="block text-xs text-subtext0 mb-1">Browser</label>
-                    <select
-                      value={visionBrowser}
-                      onChange={(e) => setVisionBrowser(e.target.value as 'chrome' | 'edge')}
-                      className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-blue"
-                    >
-                      <option value="chrome">Chrome</option>
-                      <option value="edge">Edge</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs text-subtext0 mb-1">CDP Port</label>
-                    <input
-                      type="number"
-                      value={visionDebugPort}
-                      onChange={(e) => setVisionDebugPort(parseInt(e.target.value) || 9222)}
-                      className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-blue"
-                    />
-                  </div>
-                </div>
-                <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
+
+            {/* Partner Terminal */}
+            {!shellOnly && (
+              <div>
+                <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer mb-1.5">
                   <input
                     type="checkbox"
-                    checked={visionHeadless}
-                    onChange={(e) => setVisionHeadless(e.target.checked)}
+                    checked={!!partnerTerminalPath}
+                    onChange={(e) => setPartnerTerminalPath(e.target.checked ? (workingDir || '.') : '')}
                     className="rounded border-surface1"
                   />
-                  Headless
-                  <span className="text-overlay0 text-xs">(run browser without visible window)</span>
+                  Partner Terminal
                 </label>
-                <p className="text-[10px] text-overlay0">
-                  {sessionType === 'ssh'
-                    ? 'Browser launches locally. Vision proxy is network-accessible for remote sessions.'
-                    : 'Claude can navigate, click, type, and verify UI in the browser. CDP Port is for Chrome DevTools Protocol (usually 9222).'}
-                </p>
-              </div>
-            )}
-          </div>
-
-          {/* Agent selection */}
-          {!shellOnly && allAgentTemplates.length > 0 && (
-            <div className="pt-2 border-t border-surface0">
-              <label className="block text-xs text-subtext0 mb-1.5">
-                Agents
-                <span className="text-overlay0 ml-1">(attached via --agents flag)</span>
-              </label>
-              <div className="max-h-[120px] overflow-y-auto border border-surface1 rounded bg-base">
-                {allAgentTemplates.map(t => (
-                  <label
-                    key={t.id}
-                    className="flex items-start gap-2 px-2.5 py-1.5 hover:bg-surface0/30 cursor-pointer transition-colors"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selectedAgentIds.has(t.id)}
-                      onChange={() => {
-                        setSelectedAgentIds(prev => {
-                          const next = new Set(prev)
-                          if (next.has(t.id)) next.delete(t.id)
-                          else next.add(t.id)
-                          return next
-                        })
-                      }}
-                      className="rounded border-surface1 mt-0.5"
-                    />
-                    <div className="min-w-0 flex-1">
-                      <span className="text-xs font-medium text-text font-mono">{t.name}</span>
-                      {t.isBuiltIn && <span className="text-[9px] text-overlay0 ml-1">(built-in)</span>}
-                      <div className="text-[10px] text-overlay1 truncate">{t.description}</div>
+                {partnerTerminalPath && (
+                  <>
+                    <div className="flex gap-2 ml-5">
+                      <input
+                        value={partnerTerminalPath}
+                        onChange={(e) => setPartnerTerminalPath(e.target.value)}
+                        placeholder="Partner terminal path"
+                        className="flex-1 bg-base border border-surface1 rounded px-3 py-2 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleBrowsePartner}
+                        className="px-3 py-2 rounded text-sm bg-surface1 text-subtext1 hover:bg-surface2 hover:text-text transition-colors shrink-0"
+                      >
+                        Browse
+                      </button>
                     </div>
-                  </label>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Group assignment */}
-          <div>
-            <label className="block text-xs text-subtext0 mb-1">Group</label>
-            <select
-              value={showNewGroup ? '__new__' : (groupId || '')}
-              onChange={(e) => handleGroupChange(e.target.value)}
-              className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-blue"
-            >
-              <option value="">No group</option>
-              {groups.map((g) => (
-                <option key={g.id} value={g.id}>{g.name}</option>
-              ))}
-              <option value="__new__">+ New Group...</option>
-            </select>
-            {showNewGroup && (
-              <div className="flex gap-2 mt-1.5">
-                <input
-                  autoFocus
-                  value={newGroupName}
-                  onChange={(e) => setNewGroupName(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleCreateGroup() } }}
-                  placeholder="Group name"
-                  className="flex-1 bg-base border border-surface1 rounded px-3 py-1.5 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue"
-                />
-                <button
-                  type="button"
-                  onClick={handleCreateGroup}
-                  className="px-3 py-1.5 rounded text-xs bg-blue text-crust font-medium hover:bg-blue/90 transition-colors"
-                >
-                  Create
-                </button>
+                    <label className="flex items-center gap-2 text-xs text-subtext0 cursor-pointer ml-5">
+                      <input
+                        type="checkbox"
+                        checked={partnerElevated}
+                        onChange={(e) => setPartnerElevated(e.target.checked)}
+                        className="rounded border-surface1"
+                      />
+                      Run as Administrator (requires gsudo)
+                    </label>
+                  </>
+                )}
               </div>
             )}
-          </div>
 
-          {/* Section assignment (only when ungrouped — group's section takes priority) */}
-          {!groupId && (
+            {/* Model override */}
             <div>
-              <label className="block text-xs text-subtext0 mb-1">Section</label>
+              <label className="block text-xs text-subtext0 mb-1">
+                Model override
+                <span className="text-overlay0 ml-1">(uses your subscription plan)</span>
+              </label>
               <select
-                value={showNewSection ? '__new__' : (sectionId || '')}
-                onChange={(e) => handleSectionChange(e.target.value)}
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
                 className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-blue"
               >
-                <option value="">No section</option>
-                {sections.map((s) => (
-                  <option key={s.id} value={s.id}>{s.name}</option>
-                ))}
-                <option value="__new__">+ New Section...</option>
+                <option value="">Default (no override)</option>
+                <option value="sonnet">Sonnet</option>
+                <option value="opus">Opus</option>
+                <option value="haiku">Haiku</option>
               </select>
-              {showNewSection && (
+            </div>
+
+            {/* -- EXTENSIONS section -- */}
+            <div className="border-t border-surface1 pt-3 mt-3">
+              <span className="text-[10px] uppercase tracking-wider text-overlay1 font-medium">Extensions</span>
+            </div>
+
+            {/* Legacy Claude Version */}
+            <div>
+              <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={legacyEnabled}
+                  onChange={(e) => {
+                    setLegacyEnabled(e.target.checked)
+                    if (!e.target.checked) {
+                      setInstallError('')
+                    }
+                  }}
+                  className="rounded border-surface1"
+                />
+                Legacy Claude Version
+              </label>
+              {legacyEnabled && (
+                <div className="ml-5 mt-2 space-y-2">
+                  <div>
+                    <label className="block text-xs text-subtext0 mb-1">Version</label>
+                    {loadingVersions ? (
+                      <div className="text-xs text-overlay0">Loading versions from npm...</div>
+                    ) : availableVersions.length > 0 ? (
+                      <select
+                        value={legacyVersion}
+                        onChange={(e) => setLegacyVersion(e.target.value)}
+                        className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-blue"
+                      >
+                        {availableVersions.map((v) => (
+                          <option key={v} value={v}>{v}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <div className="text-xs text-red">Failed to load versions. Is npm installed?</div>
+                    )}
+                  </div>
+                  {legacyVersion && !loadingVersions && (
+                    <div className="flex items-center gap-2">
+                      {versionInstalled ? (
+                        <span className="text-xs text-green">Installed</span>
+                      ) : installing ? (
+                        <span className="text-xs text-overlay0">Installing...</span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={handleInstallVersion}
+                          className="px-3 py-1 rounded text-xs bg-blue text-crust font-medium hover:bg-blue/90 transition-colors"
+                        >
+                          Install
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  {installError && (
+                    <div className="text-xs text-red">{installError}</div>
+                  )}
+                  <p className="text-[10px] text-overlay0">
+                    Install and use a specific version of Claude CLI. ~80MB per version.
+                    {!versionInstalled && legacyVersion && ' Will auto-install on first launch if not installed.'}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Vision — browser control */}
+            <div>
+              <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={visionEnabled}
+                  onChange={(e) => setVisionEnabled(e.target.checked)}
+                  className="rounded border-surface1"
+                />
+                Vision (browser control)
+              </label>
+              {visionEnabled && (
+                <div className="ml-5 mt-2 space-y-2">
+                  <div>
+                    <label className="block text-xs text-subtext0 mb-1">URL to open</label>
+                    <input
+                      type="text"
+                      value={visionUrl}
+                      onChange={(e) => setVisionUrl(e.target.value)}
+                      placeholder="http://localhost:3000"
+                      className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-blue"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-xs text-subtext0 mb-1">Browser</label>
+                      <select
+                        value={visionBrowser}
+                        onChange={(e) => setVisionBrowser(e.target.value as 'chrome' | 'edge')}
+                        className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-blue"
+                      >
+                        <option value="chrome">Chrome</option>
+                        <option value="edge">Edge</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-subtext0 mb-1">CDP Port</label>
+                      <input
+                        type="number"
+                        value={visionDebugPort}
+                        onChange={(e) => setVisionDebugPort(parseInt(e.target.value) || 9222)}
+                        className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-blue"
+                      />
+                    </div>
+                  </div>
+                  <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={visionHeadless}
+                      onChange={(e) => setVisionHeadless(e.target.checked)}
+                      className="rounded border-surface1"
+                    />
+                    Headless
+                    <span className="text-overlay0 text-xs">(run browser without visible window)</span>
+                  </label>
+                  <p className="text-[10px] text-overlay0">
+                    {sessionType === 'ssh'
+                      ? 'Browser launches locally. Vision proxy is network-accessible for remote sessions.'
+                      : 'Claude can navigate, click, type, and verify UI in the browser. CDP Port is for Chrome DevTools Protocol (usually 9222).'}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* -- AGENTS section -- */}
+            {!shellOnly && allAgentTemplates.length > 0 && (
+              <>
+                <div className="border-t border-surface1 pt-3 mt-3">
+                  <span className="text-[10px] uppercase tracking-wider text-overlay1 font-medium">Agents</span>
+                </div>
+                <div className="max-h-[120px] overflow-y-auto border border-surface1 rounded bg-base">
+                  {allAgentTemplates.map(t => (
+                    <label
+                      key={t.id}
+                      className="flex items-start gap-2 px-2.5 py-1.5 hover:bg-surface0/30 cursor-pointer transition-colors"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedAgentIds.has(t.id)}
+                        onChange={() => {
+                          setSelectedAgentIds(prev => {
+                            const next = new Set(prev)
+                            if (next.has(t.id)) next.delete(t.id)
+                            else next.add(t.id)
+                            return next
+                          })
+                        }}
+                        className="rounded border-surface1 mt-0.5"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <span className="text-xs font-medium text-text font-mono">{t.name}</span>
+                        {t.isBuiltIn && <span className="text-[9px] text-overlay0 ml-1">(built-in)</span>}
+                        <div className="text-[10px] text-overlay1 truncate">{t.description}</div>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </>
+            )}
+
+            {/* -- ORGANIZATION section -- */}
+            <div className="border-t border-surface1 pt-3 mt-3">
+              <span className="text-[10px] uppercase tracking-wider text-overlay1 font-medium">Organization</span>
+            </div>
+
+            {/* Group assignment */}
+            <div>
+              <label className="block text-xs text-subtext0 mb-1">Group</label>
+              <select
+                value={showNewGroup ? '__new__' : (groupId || '')}
+                onChange={(e) => handleGroupChange(e.target.value)}
+                className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-blue"
+              >
+                <option value="">No group</option>
+                {groups.map((g) => (
+                  <option key={g.id} value={g.id}>{g.name}</option>
+                ))}
+                <option value="__new__">+ New Group...</option>
+              </select>
+              {showNewGroup && (
                 <div className="flex gap-2 mt-1.5">
                   <input
                     autoFocus
-                    value={newSectionName}
-                    onChange={(e) => setNewSectionName(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleCreateSection() } }}
-                    placeholder="Section name"
+                    value={newGroupName}
+                    onChange={(e) => setNewGroupName(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleCreateGroup() } }}
+                    placeholder="Group name"
                     className="flex-1 bg-base border border-surface1 rounded px-3 py-1.5 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue"
                   />
                   <button
                     type="button"
-                    onClick={handleCreateSection}
+                    onClick={handleCreateGroup}
                     className="px-3 py-1.5 rounded text-xs bg-blue text-crust font-medium hover:bg-blue/90 transition-colors"
                   >
                     Create
@@ -775,9 +773,48 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                 </div>
               )}
             </div>
-          )}
+
+            {/* Section assignment (only when ungrouped) */}
+            {!groupId && (
+              <div>
+                <label className="block text-xs text-subtext0 mb-1">Section</label>
+                <select
+                  value={showNewSection ? '__new__' : (sectionId || '')}
+                  onChange={(e) => handleSectionChange(e.target.value)}
+                  className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-blue"
+                >
+                  <option value="">No section</option>
+                  {sections.map((s) => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                  <option value="__new__">+ New Section...</option>
+                </select>
+                {showNewSection && (
+                  <div className="flex gap-2 mt-1.5">
+                    <input
+                      autoFocus
+                      value={newSectionName}
+                      onChange={(e) => setNewSectionName(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleCreateSection() } }}
+                      placeholder="Section name"
+                      className="flex-1 bg-base border border-surface1 rounded px-3 py-1.5 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleCreateSection}
+                      className="px-3 py-1.5 rounded text-xs bg-blue text-crust font-medium hover:bg-blue/90 transition-colors"
+                    >
+                      Create
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
         </div>
 
+        {/* Buttons — full-width below grid */}
         <div className="flex justify-end gap-2 mt-5">
           <button
             type="button"
