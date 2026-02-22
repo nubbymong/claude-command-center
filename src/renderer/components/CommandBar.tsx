@@ -247,18 +247,24 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
             {isPartnerActive ? (
               <button
                 onClick={onTogglePartner}
-                className="flex items-center gap-1.5 px-2.5 py-0.5 text-xs rounded bg-blue/20 border border-blue/40 text-blue hover:bg-blue/30 transition-colors shrink-0 font-medium"
+                className="w-[118px] flex items-center justify-center gap-1.5 py-0.5 text-xs rounded font-medium transition-colors shrink-0"
+                style={{ backgroundColor: 'rgba(227, 148, 85, 0.18)', borderColor: 'rgba(227, 148, 85, 0.4)', color: '#E39455', border: '1px solid rgba(227, 148, 85, 0.4)' }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'rgba(227, 148, 85, 0.28)' }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'rgba(227, 148, 85, 0.18)' }}
                 title="Switch back to Claude terminal"
               >
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
                   <path d="M12 2v8.5M12 13.5V22M2 12h8.5M13.5 12H22M4.93 4.93l6.01 6.01M13.06 13.06l6.01 6.01M19.07 4.93l-6.01 6.01M10.94 13.06l-6.01 6.01" />
                 </svg>
-                Back to Claude
+                Claude
               </button>
             ) : (
               <button
                 onClick={onTogglePartner}
-                className="flex items-center gap-1.5 px-2.5 py-0.5 text-xs rounded border border-surface1 text-overlay0 hover:text-text hover:bg-surface0/50 hover:border-surface2 transition-colors shrink-0"
+                className="w-[118px] flex items-center justify-center gap-1.5 py-0.5 text-xs rounded font-medium transition-colors shrink-0"
+                style={{ backgroundColor: 'rgba(100, 160, 240, 0.14)', borderColor: 'rgba(100, 160, 240, 0.35)', color: '#64A0F0', border: '1px solid rgba(100, 160, 240, 0.35)' }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'rgba(100, 160, 240, 0.24)' }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'rgba(100, 160, 240, 0.14)' }}
                 title="Switch to partner terminal"
               >
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
