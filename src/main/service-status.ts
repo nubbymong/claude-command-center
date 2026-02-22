@@ -7,7 +7,7 @@ import { BrowserWindow } from 'electron'
 import { IPC } from '../shared/ipc-channels'
 import { logInfo, logError } from './debug-logger'
 
-const STATUS_URL = 'https://status.anthropic.com/api/v2/components.json'
+const STATUS_URL = 'https://status.claude.com/api/v2/components.json'
 const COMPONENT_ID = 'yyzkbfz2thpt' // Claude Code
 const POLL_INTERVAL = 5 * 60 * 1000 // 5 minutes
 const REQUEST_TIMEOUT = 8000
