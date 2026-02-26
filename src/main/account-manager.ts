@@ -10,7 +10,7 @@ import { readFileSync, writeFileSync, existsSync, unlinkSync } from 'fs'
 import { readConfig, writeConfig } from './config-manager'
 import { logInfo, logError } from './debug-logger'
 import { killAllAgents } from './cloud-agent-manager'
-import { killAllPty } from './pty-manager'
+import { gracefulExitAllPty } from './pty-manager'
 import { cancelAllRuns } from './team-manager'
 import type { AccountProfile } from '../shared/types'
 
@@ -90,21 +90,22 @@ export function getActiveAccount(): AccountProfile | null {
 }
 
 /**
- * Switch to a stored account by killing all running sessions/agents,
+ * Switch to a stored account by gracefully exiting all running sessions/agents,
  * then overwriting ~/.claude/.credentials.json and clearing caches.
+ * Uses graceful exit (sends /exit) so Claude CLI can flush .claude.json cleanly.
  */
-export function switchAccount(id: string): { ok: boolean; error?: string } {
+export async function switchAccount(id: string): Promise<{ ok: boolean; error?: string }> {
   const data = loadAccountsData()
   const account = data.accounts.find(a => a.profile.id === id)
   if (!account) {
     return { ok: false, error: `Account "${id}" not found. Save it first.` }
   }
 
-  // Kill everything running under the old account
-  logInfo(`[account-manager] Killing all sessions before account switch...`)
-  cancelAllRuns()    // Cancel team pipeline runs (which also cancels their agents)
-  killAllAgents()    // Kill any remaining cloud agents
-  killAllPty()       // Kill all PTY sessions (local + SSH)
+  // Gracefully shut down everything running under the old account
+  logInfo(`[account-manager] Gracefully exiting all sessions before account switch...`)
+  cancelAllRuns()         // Cancel team pipeline runs (which also cancels their agents)
+  killAllAgents()         // Kill cloud agents (headless, no .claude.json risk)
+  await gracefulExitAllPty(5000)  // Send /exit to PTYs, wait up to 5s, then force-kill
 
   if (!writeClaudeCredentials(account.credentials)) {
     return { ok: false, error: 'Failed to write credentials file.' }
