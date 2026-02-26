@@ -164,6 +164,12 @@ export const IPC = {
 
   // CLI
   CLI_CHECK: 'cli:check',
+
+  // Account switching
+  ACCOUNT_LIST: 'account:list',
+  ACCOUNT_SWITCH: 'account:switch',
+  ACCOUNT_GET_ACTIVE: 'account:getActive',
+  ACCOUNT_SAVE_CURRENT_AS: 'account:saveCurrentAs',
 } as const
 
 /** Helper to build per-session PTY data channels */

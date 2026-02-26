@@ -25,6 +25,7 @@ const CONFIG_FILES = {
   agentTemplates: 'agent-templates.json',
   agentTeams: 'agent-teams.json',
   agentTeamRuns: 'agent-team-runs.json',
+  accounts: 'accounts.json',
 } as const
 
 export type ConfigKey = keyof typeof CONFIG_FILES

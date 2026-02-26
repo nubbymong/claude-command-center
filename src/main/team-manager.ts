@@ -338,6 +338,14 @@ function handleAgentCompletion(agent: CloudAgentData): void {
   logInfo(`[team-manager] Step "${step.label}" in run ${run.id} → ${step.status}`)
 }
 
+export function cancelAllRuns(): void {
+  for (const run of runs) {
+    if (run.status === 'running') {
+      cancelRun(run.id)
+    }
+  }
+}
+
 export function cancelRun(runId: string): boolean {
   const run = runs.find(r => r.id === runId)
   if (!run || run.status !== 'running') return false
