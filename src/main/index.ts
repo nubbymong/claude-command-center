@@ -22,6 +22,7 @@ import { registerConfigHandlers } from './ipc/config-handlers'
 import { registerCloudAgentHandlers } from './ipc/cloud-agent-handlers'
 import { registerTeamHandlers } from './ipc/team-handlers'
 import { registerLegacyVersionHandlers } from './ipc/legacy-version-handlers'
+import { registerAccountHandlers } from './ipc/account-handlers'
 import { killAllAgents } from './cloud-agent-manager'
 import { startServiceStatusPoller, stopServiceStatusPoller } from './service-status'
 import { initUpdateWatcher, stopUpdateWatcher, getProjectRootPath, isPackagedApp } from './update-watcher'
@@ -371,6 +372,7 @@ if (!gotTheLock) {
     registerCloudAgentHandlers(getWindow)
     registerTeamHandlers(getWindow)
     registerLegacyVersionHandlers(getWindow)
+    registerAccountHandlers()
 
     // Start update system
     // Dev mode: run update server to push notifications to production clients

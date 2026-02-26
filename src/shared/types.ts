@@ -222,6 +222,14 @@ export interface TeamRun {
   error?: string
 }
 
+// ── Account Profiles ──
+
+export interface AccountProfile {
+  id: 'primary' | 'secondary'
+  label: string
+  savedAt: number
+}
+
 // ── Notes ──
 
 export interface NoteMetadata {

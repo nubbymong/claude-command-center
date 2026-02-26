@@ -17,6 +17,7 @@ export type {
   LogSession,
   LogEntry,
   NoteMetadata,
+  AccountProfile,
   AgentTemplate,
   AgentModelOverride,
   TeamTemplate,
@@ -38,6 +39,7 @@ import type {
   CloudAgent,
   TeamTemplate,
   TeamRun,
+  AccountProfile,
 } from '../../shared/types'
 
 export interface ElectronAPI {
@@ -261,6 +263,12 @@ export interface ElectronAPI {
   }
   cli: {
     check: () => Promise<boolean>
+  }
+  account: {
+    list: () => Promise<AccountProfile[]>
+    switch: (id: string) => Promise<{ ok: boolean; error?: string }>
+    getActive: () => Promise<AccountProfile | null>
+    saveCurrentAs: (id: string, label: string) => Promise<{ ok: boolean; error?: string }>
   }
 }
 

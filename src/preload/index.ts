@@ -359,6 +359,12 @@ const electronAPI: ElectronAPI = {
   },
   cli: {
     check: () => ipcRenderer.invoke(IPC.CLI_CHECK)
+  },
+  account: {
+    list: () => ipcRenderer.invoke(IPC.ACCOUNT_LIST),
+    switch: (id: string) => ipcRenderer.invoke(IPC.ACCOUNT_SWITCH, id),
+    getActive: () => ipcRenderer.invoke(IPC.ACCOUNT_GET_ACTIVE),
+    saveCurrentAs: (id: string, label: string) => ipcRenderer.invoke(IPC.ACCOUNT_SAVE_CURRENT_AS, id, label),
   }
 }
 
