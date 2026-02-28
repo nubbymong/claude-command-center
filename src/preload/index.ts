@@ -365,6 +365,7 @@ const electronAPI: ElectronAPI = {
     switch: (id: string) => ipcRenderer.invoke(IPC.ACCOUNT_SWITCH, id),
     getActive: () => ipcRenderer.invoke(IPC.ACCOUNT_GET_ACTIVE),
     saveCurrentAs: (id: string, label: string) => ipcRenderer.invoke(IPC.ACCOUNT_SAVE_CURRENT_AS, id, label),
+    rename: (id: string, newLabel: string) => ipcRenderer.invoke(IPC.ACCOUNT_RENAME, id, newLabel),
   }
 }
 

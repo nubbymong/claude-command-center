@@ -170,6 +170,7 @@ export const IPC = {
   ACCOUNT_SWITCH: 'account:switch',
   ACCOUNT_GET_ACTIVE: 'account:getActive',
   ACCOUNT_SAVE_CURRENT_AS: 'account:saveCurrentAs',
+  ACCOUNT_RENAME: 'account:rename',
 } as const
 
 /** Helper to build per-session PTY data channels */

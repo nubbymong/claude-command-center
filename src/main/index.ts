@@ -23,6 +23,7 @@ import { registerCloudAgentHandlers } from './ipc/cloud-agent-handlers'
 import { registerTeamHandlers } from './ipc/team-handlers'
 import { registerLegacyVersionHandlers } from './ipc/legacy-version-handlers'
 import { registerAccountHandlers } from './ipc/account-handlers'
+import { initAccounts } from './account-manager'
 import { killAllAgents } from './cloud-agent-manager'
 import { startServiceStatusPoller, stopServiceStatusPoller } from './service-status'
 import { initUpdateWatcher, stopUpdateWatcher, getProjectRootPath, isPackagedApp } from './update-watcher'
@@ -373,6 +374,9 @@ if (!gotTheLock) {
     registerTeamHandlers(getWindow)
     registerLegacyVersionHandlers(getWindow)
     registerAccountHandlers()
+
+    // Auto-detect current account from credentials (fire-and-forget)
+    initAccounts().catch(() => {})
 
     // Start update system
     // Dev mode: run update server to push notifications to production clients
