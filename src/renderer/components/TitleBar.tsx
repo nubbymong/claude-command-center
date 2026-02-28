@@ -28,7 +28,10 @@ export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
   const [accountOpen, setAccountOpen] = useState(false)
   const [accounts, setAccounts] = useState<AccountProfile[]>([])
   const [activeAccount, setActiveAccount] = useState<AccountProfile | null>(null)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editValue, setEditValue] = useState('')
   const accountRef = useRef<HTMLDivElement>(null)
+  const editInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     window.electronAPI.window.isMaximized().then(setMaximized)
@@ -92,12 +95,18 @@ export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
     }
   }
 
-  const handleRename = async (id: string, currentLabel: string) => {
-    const newLabel = prompt('Account name:', currentLabel)
-    if (newLabel && newLabel !== currentLabel) {
-      const result = await window.electronAPI.account.rename(id, newLabel)
+  const startRename = (id: string, currentLabel: string) => {
+    setEditingId(id)
+    setEditValue(currentLabel)
+    setTimeout(() => editInputRef.current?.select(), 0)
+  }
+
+  const commitRename = async () => {
+    if (editingId && editValue.trim()) {
+      const result = await window.electronAPI.account.rename(editingId, editValue.trim())
       if (result.ok) await refreshAccounts()
     }
+    setEditingId(null)
   }
 
   const accountTooltip = activeAccount
@@ -138,32 +147,53 @@ export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
               )}
               {accounts.map((acct) => {
                 const isActive = activeAccount?.id === acct.id
+                const isEditing = editingId === acct.id
                 return (
                   <div
                     key={acct.id}
                     className={`flex items-center hover:bg-surface1 ${isActive ? 'bg-surface1/50' : ''}`}
                   >
-                    <button
-                      onClick={() => !isActive && handleSwitch(acct.id)}
-                      className="flex-1 px-3 py-2 text-left flex items-center gap-2 text-text"
-                    >
-                      <span className="w-4 text-center text-green shrink-0">
-                        {isActive ? '\u2713' : ''}
-                      </span>
-                      <div className="flex flex-col min-w-0">
-                        <span className="truncate">{acct.label}</span>
-                        <span className="text-xs text-overlay0 capitalize">{acct.id}</span>
+                    {isEditing ? (
+                      <div className="flex-1 px-3 py-1.5 flex items-center gap-2">
+                        <span className="w-4 shrink-0" />
+                        <input
+                          ref={editInputRef}
+                          value={editValue}
+                          onChange={(e) => setEditValue(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') commitRename()
+                            if (e.key === 'Escape') setEditingId(null)
+                          }}
+                          onBlur={commitRename}
+                          className="flex-1 bg-base border border-surface2 rounded px-2 py-1 text-text text-sm outline-none focus:border-blue"
+                          autoFocus
+                        />
                       </div>
-                    </button>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); handleRename(acct.id, acct.label) }}
-                      className="px-2 py-1 mr-1 text-overlay0 hover:text-text rounded hover:bg-surface0"
-                      title="Rename"
-                    >
-                      <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                        <path d="M8.5 1.5l2 2L4 10H2v-2l6.5-6.5z" stroke="currentColor" strokeWidth="1" strokeLinejoin="round"/>
-                      </svg>
-                    </button>
+                    ) : (
+                      <>
+                        <button
+                          onClick={() => !isActive && handleSwitch(acct.id)}
+                          className="flex-1 px-3 py-2 text-left flex items-center gap-2 text-text"
+                        >
+                          <span className="w-4 text-center text-green shrink-0">
+                            {isActive ? '\u2713' : ''}
+                          </span>
+                          <div className="flex flex-col min-w-0">
+                            <span className="truncate">{acct.label}</span>
+                            <span className="text-xs text-overlay0 capitalize">{acct.id}</span>
+                          </div>
+                        </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); startRename(acct.id, acct.label) }}
+                          className="px-2 py-1 mr-1 text-overlay0 hover:text-text rounded hover:bg-surface0"
+                          title="Rename"
+                        >
+                          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                            <path d="M8.5 1.5l2 2L4 10H2v-2l6.5-6.5z" stroke="currentColor" strokeWidth="1" strokeLinejoin="round"/>
+                          </svg>
+                        </button>
+                      </>
+                    )}
                   </div>
                 )
               })}

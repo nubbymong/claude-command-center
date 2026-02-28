@@ -105,9 +105,26 @@ export async function initAccounts(): Promise<void> {
     return
   }
 
-  // New credentials — save into the first available slot
+  // Deduplicate: ensure only primary and secondary exist (max 2)
+  const seen = new Set<string>()
+  data.accounts = data.accounts.filter(a => {
+    if (seen.has(a.profile.id)) return false
+    seen.add(a.profile.id)
+    return true
+  })
+
+  // Find an available slot, or replace the non-active slot if both are taken
   const usedSlots = new Set(data.accounts.map(a => a.profile.id))
-  const slotId: 'primary' | 'secondary' = usedSlots.has('primary') ? 'secondary' : 'primary'
+  let slotId: 'primary' | 'secondary'
+  if (!usedSlots.has('primary')) {
+    slotId = 'primary'
+  } else if (!usedSlots.has('secondary')) {
+    slotId = 'secondary'
+  } else {
+    // Both slots full — replace the one that ISN'T lastActiveId
+    slotId = data.lastActiveId === 'primary' ? 'secondary' : 'primary'
+    data.accounts = data.accounts.filter(a => a.profile.id !== slotId)
+  }
 
   const fp = tokenFingerprint(creds)
   const sub = creds.claudeAiOauth?.subscriptionType || 'unknown'
@@ -129,10 +146,16 @@ export async function initAccounts(): Promise<void> {
 
 /**
  * Return profile metadata for all saved accounts (no credentials).
+ * Deduplicates by id (keeps the first occurrence).
  */
 export function getAccounts(): AccountProfile[] {
   const data = loadAccountsData()
-  return data.accounts.map(a => a.profile)
+  const seen = new Set<string>()
+  return data.accounts.filter(a => {
+    if (seen.has(a.profile.id)) return false
+    seen.add(a.profile.id)
+    return true
+  }).map(a => a.profile)
 }
 
 /**
