@@ -52,7 +52,8 @@ export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
     setActiveAccount(active)
   }, [])
 
-  // Load accounts on dropdown open
+  // Load accounts on mount and on dropdown open
+  useEffect(() => { refreshAccounts() }, [refreshAccounts])
   useEffect(() => {
     if (accountOpen) refreshAccounts()
   }, [accountOpen, refreshAccounts])
@@ -91,8 +92,16 @@ export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
     }
   }
 
+  const handleRename = async (id: string, currentLabel: string) => {
+    const newLabel = prompt('Account name:', currentLabel)
+    if (newLabel && newLabel !== currentLabel) {
+      const result = await window.electronAPI.account.rename(id, newLabel)
+      if (result.ok) await refreshAccounts()
+    }
+  }
+
   const accountTooltip = activeAccount
-    ? `Account: ${activeAccount.email || activeAccount.label}`
+    ? `Account: ${activeAccount.label}`
     : 'Account Switcher'
 
   return (
@@ -123,50 +132,56 @@ export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
           </button>
 
           {accountOpen && (
-            <div className="absolute left-0 top-full mt-1 w-64 bg-surface0 border border-surface1 rounded-lg shadow-lg z-50 py-1 text-sm">
-              {(['primary', 'secondary'] as const).map((slotId) => {
-                const acct = accounts.find(a => a.id === slotId)
-                const isActive = activeAccount?.id === slotId
+            <div className="absolute left-0 top-full mt-1 w-72 bg-surface0 border border-surface1 rounded-lg shadow-lg z-50 py-1 text-sm">
+              {accounts.length === 0 && (
+                <div className="px-3 py-2 text-overlay0 italic">Detecting account...</div>
+              )}
+              {accounts.map((acct) => {
+                const isActive = activeAccount?.id === acct.id
                 return (
-                  <button
-                    key={slotId}
-                    onClick={() => acct && handleSwitch(slotId)}
-                    className="w-full px-3 py-2 text-left hover:bg-surface1 flex items-center gap-2 text-text disabled:opacity-40"
-                    disabled={!acct}
+                  <div
+                    key={acct.id}
+                    className={`flex items-center hover:bg-surface1 ${isActive ? 'bg-surface1/50' : ''}`}
                   >
-                    <span className="w-4 text-center text-green shrink-0">
-                      {isActive ? '\u2713' : ''}
-                    </span>
-                    <div className="flex flex-col min-w-0">
-                      <span className="capitalize">{slotId}</span>
-                      {acct?.email && (
-                        <span className="text-xs text-overlay0 truncate">{acct.email}</span>
-                      )}
-                      {acct && !acct.email && acct.label !== 'Primary' && acct.label !== 'Secondary' && (
-                        <span className="text-xs text-overlay0 truncate">{acct.label}</span>
-                      )}
-                      {!acct && (
-                        <span className="text-xs text-overlay0 italic">Not configured</span>
-                      )}
-                    </div>
-                  </button>
+                    <button
+                      onClick={() => !isActive && handleSwitch(acct.id)}
+                      className="flex-1 px-3 py-2 text-left flex items-center gap-2 text-text"
+                    >
+                      <span className="w-4 text-center text-green shrink-0">
+                        {isActive ? '\u2713' : ''}
+                      </span>
+                      <div className="flex flex-col min-w-0">
+                        <span className="truncate">{acct.label}</span>
+                        <span className="text-xs text-overlay0 capitalize">{acct.id}</span>
+                      </div>
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleRename(acct.id, acct.label) }}
+                      className="px-2 py-1 mr-1 text-overlay0 hover:text-text rounded hover:bg-surface0"
+                      title="Rename"
+                    >
+                      <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                        <path d="M8.5 1.5l2 2L4 10H2v-2l6.5-6.5z" stroke="currentColor" strokeWidth="1" strokeLinejoin="round"/>
+                      </svg>
+                    </button>
+                  </div>
                 )
               })}
 
-              <div className="border-t border-surface1 my-1" />
-
-              <button
-                onClick={() => handleSaveAs('primary', 'Primary')}
-                className="w-full px-3 py-1.5 text-left hover:bg-surface1 text-overlay1 hover:text-text"
-              >
-                <span className="ml-6">Save current as Primary</span>
-              </button>
-              <button
-                onClick={() => handleSaveAs('secondary', 'Secondary')}
-                className="w-full px-3 py-1.5 text-left hover:bg-surface1 text-overlay1 hover:text-text"
-              >
-                <span className="ml-6">Save current as Secondary</span>
-              </button>
+              {accounts.length < 2 && (
+                <>
+                  <div className="border-t border-surface1 my-1" />
+                  <button
+                    onClick={() => {
+                      const nextSlot = accounts.find(a => a.id === 'primary') ? 'secondary' : 'primary'
+                      handleSaveAs(nextSlot as 'primary' | 'secondary', nextSlot === 'primary' ? 'Primary' : 'Secondary')
+                    }}
+                    className="w-full px-3 py-1.5 text-left hover:bg-surface1 text-overlay1 hover:text-text"
+                  >
+                    <span className="ml-6">Save current as {accounts.find(a => a.id === 'primary') ? 'Secondary' : 'Primary'}</span>
+                  </button>
+                </>
+              )}
             </div>
           )}
         </div>

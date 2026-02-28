@@ -269,6 +269,7 @@ export interface ElectronAPI {
     switch: (id: string) => Promise<{ ok: boolean; error?: string }>
     getActive: () => Promise<AccountProfile | null>
     saveCurrentAs: (id: string, label: string) => Promise<{ ok: boolean; error?: string }>
+    rename: (id: string, newLabel: string) => Promise<{ ok: boolean; error?: string }>
   }
 }
 

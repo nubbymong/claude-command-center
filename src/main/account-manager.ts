@@ -7,7 +7,6 @@
 
 import { join } from 'path'
 import { tmpdir } from 'os'
-import * as https from 'https'
 import { readFileSync, writeFileSync, existsSync, unlinkSync } from 'fs'
 import { readConfig, writeConfig } from './config-manager'
 import { logInfo, logError } from './debug-logger'
@@ -65,37 +64,67 @@ function saveAccountsData(data: AccountsData): void {
 }
 
 /**
- * Fetch the user's email/name from the Anthropic API using the OAuth token.
- * Returns null if the fetch fails (non-blocking, best-effort).
+ * Generate a short fingerprint from the refresh token to distinguish accounts.
+ * Returns something like "...x7Kf" — last 4 chars.
  */
-function fetchUserEmail(accessToken: string): Promise<string | null> {
-  return new Promise((resolve) => {
-    const req = https.request({
-      hostname: 'api.anthropic.com',
-      path: '/api/oauth/userinfo',
-      method: 'GET',
-      headers: {
-        'Accept': 'application/json',
-        'Authorization': `Bearer ${accessToken}`,
-        'anthropic-beta': 'oauth-2025-04-20',
-      },
-      timeout: 5000,
-    }, (res) => {
-      let body = ''
-      res.on('data', (c: Buffer) => { body += c })
-      res.on('end', () => {
-        try {
-          const data = JSON.parse(body)
-          resolve(data.email || data.name || null)
-        } catch {
-          resolve(null)
-        }
-      })
-    })
-    req.on('error', () => resolve(null))
-    req.on('timeout', () => { req.destroy(); resolve(null) })
-    req.end()
+function tokenFingerprint(creds: any): string {
+  const rt = creds?.claudeAiOauth?.refreshToken || ''
+  if (rt.length < 4) return '???'
+  return '...' + rt.slice(-4)
+}
+
+/**
+ * Auto-detect the current account on startup.
+ * If no accounts are saved yet, save the current credentials as Primary.
+ * If credentials don't match any saved account, save as the next available slot.
+ * Runs once at app startup (fire-and-forget, non-blocking).
+ */
+export async function initAccounts(): Promise<void> {
+  const creds = readClaudeCredentials() as any
+  if (!creds?.claudeAiOauth?.refreshToken) {
+    logInfo('[account-manager] No credentials found, skipping auto-detect')
+    return
+  }
+
+  const data = loadAccountsData()
+  const currentRefresh = creds.claudeAiOauth.refreshToken
+
+  // Check if current credentials already match a saved account
+  const existingMatch = data.accounts.find(a => {
+    const stored = a.credentials as any
+    return stored?.claudeAiOauth?.refreshToken === currentRefresh
   })
+
+  if (existingMatch) {
+    // Update lastActiveId to match
+    if (data.lastActiveId !== existingMatch.profile.id) {
+      data.lastActiveId = existingMatch.profile.id
+      saveAccountsData(data)
+    }
+    logInfo(`[account-manager] Auto-detected active account: ${existingMatch.profile.id}`)
+    return
+  }
+
+  // New credentials — save into the first available slot
+  const usedSlots = new Set(data.accounts.map(a => a.profile.id))
+  const slotId: 'primary' | 'secondary' = usedSlots.has('primary') ? 'secondary' : 'primary'
+
+  const fp = tokenFingerprint(creds)
+  const sub = creds.claudeAiOauth?.subscriptionType || 'unknown'
+
+  const stored: StoredAccount = {
+    profile: {
+      id: slotId,
+      label: `${sub} ${fp}`,
+      savedAt: Date.now(),
+    },
+    credentials: creds,
+  }
+
+  data.accounts.push(stored)
+  data.lastActiveId = slotId
+  saveAccountsData(data)
+  logInfo(`[account-manager] Auto-saved current account as ${slotId}: ${sub} ${fp}`)
 }
 
 /**
@@ -172,7 +201,6 @@ export async function switchAccount(id: string): Promise<{ ok: boolean; error?: 
 
 /**
  * Snapshot the current ~/.claude/.credentials.json as a named profile.
- * Fetches the user's email from the API for display.
  */
 export async function saveCurrentAs(id: string, label: string): Promise<{ ok: boolean; error?: string }> {
   const creds = readClaudeCredentials() as any
@@ -180,22 +208,20 @@ export async function saveCurrentAs(id: string, label: string): Promise<{ ok: bo
     return { ok: false, error: 'No credentials file found at ~/.claude/.credentials.json' }
   }
 
-  // Try to fetch the user's email for display
-  let email: string | null = null
-  const token = creds?.claudeAiOauth?.accessToken
-  if (token) {
-    email = await fetchUserEmail(token)
-    logInfo(`[account-manager] Fetched email for ${id}: ${email || '(none)'}`)
-  }
-
   const data = loadAccountsData()
   const existing = data.accounts.findIndex(a => a.profile.id === id)
+
+  // Use provided label, or generate from token fingerprint
+  const fp = tokenFingerprint(creds)
+  const sub = creds.claudeAiOauth?.subscriptionType || 'unknown'
+  const displayLabel = (label && label !== 'Primary' && label !== 'Secondary')
+    ? label
+    : `${sub} ${fp}`
 
   const stored: StoredAccount = {
     profile: {
       id: id as 'primary' | 'secondary',
-      label: email || label,  // Use email if available, fallback to label
-      email: email || undefined,
+      label: displayLabel,
       savedAt: Date.now(),
     },
     credentials: creds,
@@ -212,5 +238,19 @@ export async function saveCurrentAs(id: string, label: string): Promise<{ ok: bo
   saveAccountsData(data)
 
   logInfo(`[account-manager] Saved current credentials as: ${stored.profile.label} (${id})`)
+  return { ok: true }
+}
+
+/**
+ * Rename an account's display label.
+ */
+export function renameAccount(id: string, newLabel: string): { ok: boolean; error?: string } {
+  const data = loadAccountsData()
+  const account = data.accounts.find(a => a.profile.id === id)
+  if (!account) return { ok: false, error: `Account "${id}" not found.` }
+
+  account.profile.label = newLabel
+  saveAccountsData(data)
+  logInfo(`[account-manager] Renamed account ${id} to: ${newLabel}`)
   return { ok: true }
 }

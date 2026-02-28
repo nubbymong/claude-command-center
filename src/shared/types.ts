@@ -227,7 +227,6 @@ export interface TeamRun {
 export interface AccountProfile {
   id: 'primary' | 'secondary'
   label: string
-  email?: string
   savedAt: number
 }
 
