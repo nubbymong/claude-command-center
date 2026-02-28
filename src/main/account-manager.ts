@@ -6,6 +6,8 @@
  */
 
 import { join } from 'path'
+import { tmpdir } from 'os'
+import * as https from 'https'
 import { readFileSync, writeFileSync, existsSync, unlinkSync } from 'fs'
 import { readConfig, writeConfig } from './config-manager'
 import { logInfo, logError } from './debug-logger'
@@ -21,6 +23,7 @@ interface StoredAccount {
 
 interface AccountsData {
   accounts: StoredAccount[]
+  lastActiveId?: string // persisted across restarts
 }
 
 function getClaudeCredentialsPath(): string {
@@ -29,8 +32,7 @@ function getClaudeCredentialsPath(): string {
 }
 
 function getUsageCachePath(): string {
-  const home = process.env.USERPROFILE || process.env.HOME || ''
-  return join(home, '.claude', 'usage_cache.json')
+  return join(tmpdir(), 'claude-command-center-usage-cache.json')
 }
 
 function readClaudeCredentials(): unknown | null {
@@ -63,6 +65,40 @@ function saveAccountsData(data: AccountsData): void {
 }
 
 /**
+ * Fetch the user's email/name from the Anthropic API using the OAuth token.
+ * Returns null if the fetch fails (non-blocking, best-effort).
+ */
+function fetchUserEmail(accessToken: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    const req = https.request({
+      hostname: 'api.anthropic.com',
+      path: '/api/oauth/userinfo',
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+        'Authorization': `Bearer ${accessToken}`,
+        'anthropic-beta': 'oauth-2025-04-20',
+      },
+      timeout: 5000,
+    }, (res) => {
+      let body = ''
+      res.on('data', (c: Buffer) => { body += c })
+      res.on('end', () => {
+        try {
+          const data = JSON.parse(body)
+          resolve(data.email || data.name || null)
+        } catch {
+          resolve(null)
+        }
+      })
+    })
+    req.on('error', () => resolve(null))
+    req.on('timeout', () => { req.destroy(); resolve(null) })
+    req.end()
+  })
+}
+
+/**
  * Return profile metadata for all saved accounts (no credentials).
  */
 export function getAccounts(): AccountProfile[] {
@@ -71,18 +107,28 @@ export function getAccounts(): AccountProfile[] {
 }
 
 /**
- * Determine which stored profile matches the current credentials file.
- * Compares by JSON equality of the credentials content.
+ * Determine which stored profile is active.
+ * Uses persisted lastActiveId first (survives restarts).
+ * Falls back to refreshToken matching if lastActiveId is missing.
  */
 export function getActiveAccount(): AccountProfile | null {
-  const currentCreds = readClaudeCredentials()
-  if (!currentCreds) return null
-
-  const currentJson = JSON.stringify(currentCreds)
   const data = loadAccountsData()
+  if (data.accounts.length === 0) return null
 
+  // Primary: use persisted last-switched-to ID
+  if (data.lastActiveId) {
+    const match = data.accounts.find(a => a.profile.id === data.lastActiveId)
+    if (match) return match.profile
+  }
+
+  // Fallback: match by refreshToken
+  const currentCreds = readClaudeCredentials() as any
+  if (!currentCreds?.claudeAiOauth?.refreshToken) return null
+
+  const currentRefresh = currentCreds.claudeAiOauth.refreshToken
   for (const stored of data.accounts) {
-    if (JSON.stringify(stored.credentials) === currentJson) {
+    const storedCreds = stored.credentials as any
+    if (storedCreds?.claudeAiOauth?.refreshToken === currentRefresh) {
       return stored.profile
     }
   }
@@ -92,7 +138,6 @@ export function getActiveAccount(): AccountProfile | null {
 /**
  * Switch to a stored account by gracefully exiting all running sessions/agents,
  * then overwriting ~/.claude/.credentials.json and clearing caches.
- * Uses graceful exit (sends /exit) so Claude CLI can flush .claude.json cleanly.
  */
 export async function switchAccount(id: string): Promise<{ ok: boolean; error?: string }> {
   const data = loadAccountsData()
@@ -103,15 +148,19 @@ export async function switchAccount(id: string): Promise<{ ok: boolean; error?: 
 
   // Gracefully shut down everything running under the old account
   logInfo(`[account-manager] Gracefully exiting all sessions before account switch...`)
-  cancelAllRuns()         // Cancel team pipeline runs (which also cancels their agents)
-  killAllAgents()         // Kill cloud agents (headless, no .claude.json risk)
-  await gracefulExitAllPty(5000)  // Send /exit to PTYs, wait up to 5s, then force-kill
+  cancelAllRuns()
+  killAllAgents()
+  await gracefulExitAllPty(5000)
 
   if (!writeClaudeCredentials(account.credentials)) {
     return { ok: false, error: 'Failed to write credentials file.' }
   }
 
-  // Clear usage cache so Claude re-reads identity
+  // Persist which account is now active
+  data.lastActiveId = id
+  saveAccountsData(data)
+
+  // Clear usage cache so statusline re-reads identity
   try {
     const cachePath = getUsageCachePath()
     if (existsSync(cachePath)) unlinkSync(cachePath)
@@ -123,18 +172,32 @@ export async function switchAccount(id: string): Promise<{ ok: boolean; error?: 
 
 /**
  * Snapshot the current ~/.claude/.credentials.json as a named profile.
+ * Fetches the user's email from the API for display.
  */
-export function saveCurrentAs(id: string, label: string): { ok: boolean; error?: string } {
-  const creds = readClaudeCredentials()
+export async function saveCurrentAs(id: string, label: string): Promise<{ ok: boolean; error?: string }> {
+  const creds = readClaudeCredentials() as any
   if (!creds) {
     return { ok: false, error: 'No credentials file found at ~/.claude/.credentials.json' }
+  }
+
+  // Try to fetch the user's email for display
+  let email: string | null = null
+  const token = creds?.claudeAiOauth?.accessToken
+  if (token) {
+    email = await fetchUserEmail(token)
+    logInfo(`[account-manager] Fetched email for ${id}: ${email || '(none)'}`)
   }
 
   const data = loadAccountsData()
   const existing = data.accounts.findIndex(a => a.profile.id === id)
 
   const stored: StoredAccount = {
-    profile: { id: id as 'primary' | 'secondary', label, savedAt: Date.now() },
+    profile: {
+      id: id as 'primary' | 'secondary',
+      label: email || label,  // Use email if available, fallback to label
+      email: email || undefined,
+      savedAt: Date.now(),
+    },
     credentials: creds,
   }
 
@@ -144,7 +207,10 @@ export function saveCurrentAs(id: string, label: string): { ok: boolean; error?:
     data.accounts.push(stored)
   }
 
+  // Also mark this as the active account
+  data.lastActiveId = id
   saveAccountsData(data)
-  logInfo(`[account-manager] Saved current credentials as: ${label} (${id})`)
+
+  logInfo(`[account-manager] Saved current credentials as: ${stored.profile.label} (${id})`)
   return { ok: true }
 }

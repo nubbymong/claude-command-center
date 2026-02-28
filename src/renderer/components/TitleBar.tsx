@@ -92,7 +92,7 @@ export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
   }
 
   const accountTooltip = activeAccount
-    ? `Account: ${activeAccount.label}`
+    ? `Account: ${activeAccount.email || activeAccount.label}`
     : 'Account Switcher'
 
   return (
@@ -123,53 +123,44 @@ export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
           </button>
 
           {accountOpen && (
-            <div className="absolute left-0 top-full mt-1 w-56 bg-surface0 border border-surface1 rounded-lg shadow-lg z-50 py-1 text-sm">
-              {/* Switch to Primary */}
-              <button
-                onClick={() => handleSwitch('primary')}
-                className="w-full px-3 py-1.5 text-left hover:bg-surface1 flex items-center gap-2 text-text disabled:opacity-40"
-                disabled={!accounts.some(a => a.id === 'primary')}
-              >
-                <span className="w-4 text-center text-green">
-                  {activeAccount?.id === 'primary' ? '\u2713' : ''}
-                </span>
-                <span>Primary</span>
-                {accounts.find(a => a.id === 'primary') && (
-                  <span className="ml-auto text-xs text-overlay0 truncate max-w-[80px]">
-                    {accounts.find(a => a.id === 'primary')!.label}
-                  </span>
-                )}
-              </button>
+            <div className="absolute left-0 top-full mt-1 w-64 bg-surface0 border border-surface1 rounded-lg shadow-lg z-50 py-1 text-sm">
+              {(['primary', 'secondary'] as const).map((slotId) => {
+                const acct = accounts.find(a => a.id === slotId)
+                const isActive = activeAccount?.id === slotId
+                return (
+                  <button
+                    key={slotId}
+                    onClick={() => acct && handleSwitch(slotId)}
+                    className="w-full px-3 py-2 text-left hover:bg-surface1 flex items-center gap-2 text-text disabled:opacity-40"
+                    disabled={!acct}
+                  >
+                    <span className="w-4 text-center text-green shrink-0">
+                      {isActive ? '\u2713' : ''}
+                    </span>
+                    <div className="flex flex-col min-w-0">
+                      <span className="capitalize">{slotId}</span>
+                      {acct?.email && (
+                        <span className="text-xs text-overlay0 truncate">{acct.email}</span>
+                      )}
+                      {acct && !acct.email && acct.label !== 'Primary' && acct.label !== 'Secondary' && (
+                        <span className="text-xs text-overlay0 truncate">{acct.label}</span>
+                      )}
+                      {!acct && (
+                        <span className="text-xs text-overlay0 italic">Not configured</span>
+                      )}
+                    </div>
+                  </button>
+                )
+              })}
 
-              {/* Switch to Secondary */}
-              <button
-                onClick={() => handleSwitch('secondary')}
-                className="w-full px-3 py-1.5 text-left hover:bg-surface1 flex items-center gap-2 text-text disabled:opacity-40"
-                disabled={!accounts.some(a => a.id === 'secondary')}
-              >
-                <span className="w-4 text-center text-green">
-                  {activeAccount?.id === 'secondary' ? '\u2713' : ''}
-                </span>
-                <span>Secondary</span>
-                {accounts.find(a => a.id === 'secondary') && (
-                  <span className="ml-auto text-xs text-overlay0 truncate max-w-[80px]">
-                    {accounts.find(a => a.id === 'secondary')!.label}
-                  </span>
-                )}
-              </button>
-
-              {/* Divider */}
               <div className="border-t border-surface1 my-1" />
 
-              {/* Save current as Primary */}
               <button
                 onClick={() => handleSaveAs('primary', 'Primary')}
                 className="w-full px-3 py-1.5 text-left hover:bg-surface1 text-overlay1 hover:text-text"
               >
                 <span className="ml-6">Save current as Primary</span>
               </button>
-
-              {/* Save current as Secondary */}
               <button
                 onClick={() => handleSaveAs('secondary', 'Secondary')}
                 className="w-full px-3 py-1.5 text-left hover:bg-surface1 text-overlay1 hover:text-text"
