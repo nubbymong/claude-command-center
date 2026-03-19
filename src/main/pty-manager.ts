@@ -54,9 +54,13 @@ const ptySessions = new Map<string, PtySession>()
  * /mnt/resources/scripts/ on the remote machine.
  */
 function getRemoteStatuslineSetup(sessionId?: string): string {
-  const configCmd = 'const f=require("fs"),p=require("path").join(require("os").homedir(),".claude","settings.json");let s={};try{s=JSON.parse(f.readFileSync(p,"utf-8"))}catch{}s.statusLine={type:"command",command:"node /mnt/resources/scripts/claude-multi-statusline.js"};f.writeFileSync(p,JSON.stringify(s,null,2))'
-  const exportSessionId = sessionId ? `export CLAUDE_MULTI_SESSION_ID=${sessionId}; ` : ''
-  return `${exportSessionId}mkdir -p ~/.claude 2>/dev/null; node -e '${configCmd}' 2>/dev/null`
+  // Embed session ID directly into the statusline command in settings.json
+  // so it persists across Claude restarts (not reliant on shell env vars)
+  const statusCmd = sessionId
+    ? `CLAUDE_MULTI_SESSION_ID=${sessionId} node /mnt/resources/scripts/claude-multi-statusline.js`
+    : 'node /mnt/resources/scripts/claude-multi-statusline.js'
+  const configCmd = `const f=require("fs"),p=require("path").join(require("os").homedir(),".claude","settings.json");let s={};try{s=JSON.parse(f.readFileSync(p,"utf-8"))}catch{}s.statusLine={type:"command",command:"${statusCmd}"};f.writeFileSync(p,JSON.stringify(s,null,2))`
+  return `mkdir -p ~/.claude 2>/dev/null; node -e '${configCmd}' 2>/dev/null`
 }
 
 /**
