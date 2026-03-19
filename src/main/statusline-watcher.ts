@@ -244,6 +244,8 @@ export function configureClaudeSettings(): void {
 
 /**
  * Watch the status directory for updates and send to the renderer.
+ * Uses fs.watch for instant local notifications, plus a polling fallback
+ * for remote/SMB writes that don't trigger ReadDirectoryChangesW on Windows.
  */
 export function startStatuslineWatcher(getWindow: () => BrowserWindow | null): () => void {
   const statusDir = getStatusDir()
@@ -251,20 +253,47 @@ export function startStatuslineWatcher(getWindow: () => BrowserWindow | null): (
     fs.mkdirSync(statusDir, { recursive: true })
   }
 
-  const watcher = fs.watch(statusDir, (eventType, filename) => {
-    if (!filename || !filename.endsWith('.json')) return
+  // Track last-seen mtime per file to avoid redundant sends
+  const lastMtime = new Map<string, number>()
+
+  function processFile(filename: string): void {
     const win = getWindow()
     if (!win || win.isDestroyed()) return
 
     const filePath = path.join(statusDir, filename)
     try {
+      const stat = fs.statSync(filePath)
+      const mtime = stat.mtimeMs
+      if (lastMtime.get(filename) === mtime) return
+      lastMtime.set(filename, mtime)
+
       const content = fs.readFileSync(filePath, 'utf-8')
       const data: StatuslineData = JSON.parse(content)
       win.webContents.send('statusline:update', data)
     } catch { /* ignore read errors during writes */ }
+  }
+
+  // fs.watch: instant for local writes
+  const watcher = fs.watch(statusDir, (eventType, filename) => {
+    if (!filename || !filename.endsWith('.json')) return
+    processFile(filename)
   })
 
-  return () => watcher.close()
+  // Polling fallback: catches remote/SMB writes that fs.watch misses
+  const POLL_INTERVAL = 3000
+  const pollTimer = setInterval(() => {
+    try {
+      const files = fs.readdirSync(statusDir).filter(f => f.endsWith('.json'))
+      for (const file of files) {
+        processFile(file)
+      }
+    } catch { /* ignore */ }
+  }, POLL_INTERVAL)
+
+  return () => {
+    watcher.close()
+    clearInterval(pollTimer)
+  }
 }
 
 /**
