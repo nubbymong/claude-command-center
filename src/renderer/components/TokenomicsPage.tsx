@@ -68,7 +68,19 @@ function SummaryCards({ today, week, allTime }: { today: number; week: number; a
 // ── Daily Cost Chart (inline SVG) ──
 
 function DailyChart() {
-  const aggregates = useTokenomicsStore(s => s.getDailyAggregates(30))
+  const data = useTokenomicsStore(s => s.data)
+  const aggregates = useMemo(() => {
+    if (!data) return []
+    const result: Array<{ date: string; totalCostUsd: number }> = []
+    const now = new Date()
+    for (let i = 29; i >= 0; i--) {
+      const d = new Date(now)
+      d.setDate(d.getDate() - i)
+      const key = d.toISOString().slice(0, 10)
+      result.push({ date: key, totalCostUsd: data.dailyAggregates[key]?.totalCostUsd || 0 })
+    }
+    return result
+  }, [data])
   const maxCost = Math.max(...aggregates.map(a => a.totalCostUsd), 0.01)
 
   const barWidth = 16
@@ -123,7 +135,22 @@ function DailyChart() {
 // ── Model Breakdown ──
 
 function ModelBreakdown() {
-  const breakdown = useTokenomicsStore(s => s.getModelBreakdown())
+  const data = useTokenomicsStore(s => s.data)
+  const breakdown = useMemo(() => {
+    if (!data) return []
+    const models: Record<string, { costUsd: number; inputTokens: number; outputTokens: number }> = {}
+    for (const agg of Object.values(data.dailyAggregates)) {
+      for (const [model, stats] of Object.entries(agg.byModel)) {
+        if (!models[model]) models[model] = { costUsd: 0, inputTokens: 0, outputTokens: 0 }
+        models[model].costUsd += stats.costUsd
+        models[model].inputTokens += stats.inputTokens
+        models[model].outputTokens += stats.outputTokens
+      }
+    }
+    return Object.entries(models)
+      .map(([model, stats]) => ({ model, ...stats }))
+      .sort((a, b) => b.costUsd - a.costUsd)
+  }, [data])
   const maxCost = breakdown.length > 0 ? breakdown[0].costUsd : 1
 
   if (breakdown.length === 0) {
@@ -176,7 +203,23 @@ function SessionsTable() {
   const [page, setPage] = useState(0)
   const PAGE_SIZE = 50
 
-  const sessions = useTokenomicsStore(s => s.getSortedSessions(sortBy, sortDir))
+  const data = useTokenomicsStore(s => s.data)
+  const sessions = useMemo(() => {
+    if (!data) return []
+    const list = Object.values(data.sessions)
+    const dir = sortDir === 'asc' ? 1 : -1
+    return [...list].sort((a, b) => {
+      switch (sortBy) {
+        case 'cost': return (a.totalCostUsd - b.totalCostUsd) * dir
+        case 'inputTokens': return (a.totalInputTokens - b.totalInputTokens) * dir
+        case 'outputTokens': return (a.totalOutputTokens - b.totalOutputTokens) * dir
+        case 'date': return (a.firstTimestamp.localeCompare(b.firstTimestamp)) * dir
+        case 'model': return (a.model.localeCompare(b.model)) * dir
+        case 'project': return (a.projectDir.localeCompare(b.projectDir)) * dir
+        default: return (a.totalCostUsd - b.totalCostUsd) * dir
+      }
+    })
+  }, [data, sortBy, sortDir])
   const totalPages = Math.ceil(sessions.length / PAGE_SIZE)
   const paginated = sessions.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
 
@@ -310,9 +353,21 @@ function SeedProgressBar() {
 
 export default function TokenomicsPage() {
   const { data, loading, seeding, syncing, loadData, startSeed, startSync } = useTokenomicsStore()
-  const todayCost = useTokenomicsStore(s => s.getTodayCost())
-  const weekCost = useTokenomicsStore(s => s.getWeekCost())
-  const allTimeCost = useTokenomicsStore(s => s.getAllTimeCost())
+
+  const { todayCost, weekCost, allTimeCost } = useMemo(() => {
+    if (!data) return { todayCost: 0, weekCost: 0, allTimeCost: 0 }
+    const today = new Date().toISOString().slice(0, 10)
+    const todayCost = data.dailyAggregates[today]?.totalCostUsd || 0
+    let weekCost = 0
+    const now = new Date()
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(now)
+      d.setDate(d.getDate() - i)
+      const key = d.toISOString().slice(0, 10)
+      weekCost += data.dailyAggregates[key]?.totalCostUsd || 0
+    }
+    return { todayCost, weekCost, allTimeCost: data.totalCostUsd || 0 }
+  }, [data])
 
   useEffect(() => {
     loadData()
