@@ -48,30 +48,33 @@ export interface SSHOptions {
 const ptySessions = new Map<string, PtySession>()
 
 /**
+ * Shell snippet that finds the mounted resources scripts dir on the remote.
+ * Probes common mount paths and exports CCRES for use by subsequent commands.
+ * Falls back to /mnt/resources/scripts if nothing found.
+ */
+const PROBE_RESOURCES = `CCRES=""; for d in /mnt/*/scripts /mnt/*/*/scripts; do [ -f "$d/claude-multi-statusline.js" ] && CCRES="$d" && break; done; [ -z "$CCRES" ] && CCRES=/mnt/resources/scripts`
+
+/**
  * Generate a shell command that configures Claude's settings.json on a remote machine
- * to use the mounted statusline script. The script is already deployed at
- * {ResourcesDir}/scripts/claude-multi-statusline.js and mounted at
- * /mnt/resources/scripts/ on the remote machine.
+ * to use the mounted statusline script. Auto-detects the mount path via probe.
  */
 function getRemoteStatuslineSetup(sessionId?: string): string {
-  // Embed session ID directly into the statusline command in settings.json
-  // so it persists across Claude restarts (not reliant on shell env vars)
-  const statusCmd = sessionId
-    ? `CLAUDE_MULTI_SESSION_ID=${sessionId} node /mnt/resources/scripts/claude-multi-statusline.js`
-    : 'node /mnt/resources/scripts/claude-multi-statusline.js'
-  const configCmd = `const f=require("fs"),p=require("path").join(require("os").homedir(),".claude","settings.json");let s={};try{s=JSON.parse(f.readFileSync(p,"utf-8"))}catch{}s.statusLine={type:"command",command:"${statusCmd}"};f.writeFileSync(p,JSON.stringify(s,null,2))`
-  return `mkdir -p ~/.claude 2>/dev/null; node -e '${configCmd}' 2>/dev/null`
+  const sessionEnv = sessionId ? `CLAUDE_MULTI_SESSION_ID=${sessionId} ` : ''
+  // Use $CCRES (set by PROBE_RESOURCES) in the statusline command.
+  // The node -e script writes settings.json with the resolved path.
+  const configCmd = `const f=require("fs"),p=require("path").join(require("os").homedir(),".claude","settings.json");let s={};try{s=JSON.parse(f.readFileSync(p,"utf-8"))}catch{}s.statusLine={type:"command",command:"${sessionEnv}node "+process.env.CCRES+"/claude-multi-statusline.js"};f.writeFileSync(p,JSON.stringify(s,null,2))`
+  return `mkdir -p ~/.claude 2>/dev/null; CCRES=$CCRES node -e '${configCmd}' 2>/dev/null`
 }
 
 /**
  * Generate shell commands to export vision env vars on a remote machine.
+ * Uses $CCRES (from PROBE_RESOURCES) to find vision-cli.js.
  * Returns empty string if vision is not active for this session.
  */
 function getRemoteVisionSetup(sessionId: string): string {
   const env = getVisionEnv(sessionId, true)
   if (!env.VISION_PORT) return ''
-  // On the remote machine, vision-cli.js is at /mnt/resources/scripts/
-  return `export VISION_HOST=${env.VISION_HOST} VISION_PORT=${env.VISION_PORT} VISION_CLI=/mnt/resources/scripts/vision-cli.js`
+  return `export VISION_HOST=${env.VISION_HOST} VISION_PORT=${env.VISION_PORT} VISION_CLI="$CCRES/vision-cli.js"`
 }
 
 /**
@@ -195,34 +198,32 @@ export function spawnPty(
       if (!cdSent && lastLine.length < 200 && /[$#>~]\s*$/.test(lastLine)) {
         cdSent = true
         setTimeout(() => {
+          // Step 1: Probe for mounted resources directory (sets $CCRES)
+          // Step 2: cd to project, deploy statusline + vision, start Claude
           const visionSetup = getRemoteVisionSetup(sessionId)
           const visionPrefix = visionSetup ? `${visionSetup}; ` : ''
           const visionClaudeMd = getRemoteVisionInstructionsSetup()
           const visionClaudeMdPrefix = visionClaudeMd ? `${visionClaudeMd}; ` : ''
           if (postCommand) {
-            // cd to path and run post command
-            ptyProcess.write(`cd ${remotePath} && ${postCommand}\r`)
+            // cd to path and run post command (probe runs first for later use)
+            ptyProcess.write(`${PROBE_RESOURCES}; cd ${remotePath} && ${postCommand}\r`)
             postCommandSent = true
           } else if (startClaudeAfter && !options?.shellOnly) {
-            // Deploy statusline, set vision env + CLAUDE.md, then start Claude
+            // Probe resources, deploy statusline, set vision env + CLAUDE.md, then start Claude
             claudeSent = true
-            ptyProcess.write(`cd ${remotePath}; ${getRemoteStatuslineSetup(sessionId)}; ${visionPrefix}${visionClaudeMdPrefix}claude\r`)
+            ptyProcess.write(`${PROBE_RESOURCES}; cd ${remotePath}; ${getRemoteStatuslineSetup(sessionId)}; ${visionPrefix}${visionClaudeMdPrefix}claude\r`)
           } else {
-            // Shell only or no Claude — just cd, deploy statusline, set vision env + CLAUDE.md
-            ptyProcess.write(`cd ${remotePath}; ${getRemoteStatuslineSetup(sessionId)}; ${visionPrefix}${visionClaudeMdPrefix}clear\r`)
+            // Shell only — probe, cd, deploy statusline, set vision env + CLAUDE.md
+            ptyProcess.write(`${PROBE_RESOURCES}; cd ${remotePath}; ${getRemoteStatuslineSetup(sessionId)}; ${visionPrefix}${visionClaudeMdPrefix}clear\r`)
           }
         }, 200)
         return
       }
 
       // After post-command completes (container shell ready), optionally start Claude
-      // Detect shell prompt after postCommand was sent and sudo password handled (if needed)
-      // Skip if shellOnly mode is enabled
       if (postCommandSent && !claudeSent && startClaudeAfter && !options?.shellOnly) {
         const sudoHandled = !sudoPassword || sudoPasswordSent
         if (sudoHandled && !postCommandShellReady) {
-          // Look for container shell prompt (typically ends with # or $)
-          // Check for common prompt patterns at end of output
           const trimmed = data.trimEnd()
           if (trimmed.endsWith('#') || trimmed.endsWith('$') || trimmed.endsWith('>')) {
             postCommandShellReady = true
@@ -232,8 +233,8 @@ export function spawnPty(
               const visionPrefix2 = visionSetup2 ? `${visionSetup2}; ` : ''
               const visionClaudeMd2 = getRemoteVisionInstructionsSetup()
               const visionClaudeMdPrefix2 = visionClaudeMd2 ? `${visionClaudeMd2}; ` : ''
-              // Deploy statusline on remote for context tracking, set vision env + CLAUDE.md, then start Claude
-              ptyProcess.write(`${getRemoteStatuslineSetup(sessionId)}; ${visionPrefix2}${visionClaudeMdPrefix2}claude\r`)
+              // Re-probe (in case postCommand changed shell/mounts), then deploy + start
+              ptyProcess.write(`${PROBE_RESOURCES}; ${getRemoteStatuslineSetup(sessionId)}; ${visionPrefix2}${visionClaudeMdPrefix2}claude\r`)
             }, 300)
           }
         }

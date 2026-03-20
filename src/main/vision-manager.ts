@@ -579,7 +579,8 @@ export function getRemoteVisionInstructionsSetup(): string {
     // Use cat to read from the mounted resources dir on the remote instead of
     // embedding the full 1.6KB prompt in the shell command. The old approach
     // caused PTY chunking to leak the prompt text into Claude's input.
-    return `mkdir -p ~/.claude 2>/dev/null; if ! grep -q 'VISION-INSTRUCTIONS-START' ~/.claude/CLAUDE.md 2>/dev/null; then VF=/mnt/resources/scripts/vision-prompt.txt; if [ -f "$VF" ]; then printf '\\n${VISION_MARKER_START}\\n' >> ~/.claude/CLAUDE.md && cat "$VF" >> ~/.claude/CLAUDE.md && printf '\\n${VISION_MARKER_END}\\n' >> ~/.claude/CLAUDE.md; fi; fi`
+    // Uses $CCRES set by PROBE_RESOURCES in pty-manager.ts
+    return `mkdir -p ~/.claude 2>/dev/null; if ! grep -q 'VISION-INSTRUCTIONS-START' ~/.claude/CLAUDE.md 2>/dev/null; then VF="$CCRES/vision-prompt.txt"; if [ -f "$VF" ]; then printf '\\n${VISION_MARKER_START}\\n' >> ~/.claude/CLAUDE.md && cat "$VF" >> ~/.claude/CLAUDE.md && printf '\\n${VISION_MARKER_END}\\n' >> ~/.claude/CLAUDE.md; fi; fi`
   } catch {
     return ''
   }
