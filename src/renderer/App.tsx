@@ -11,6 +11,7 @@ import SettingsPage from './components/SettingsPage'
 import LogViewer from './components/LogViewer'
 import InsightsPage from './components/InsightsPage'
 import CloudAgentsPage from './components/CloudAgentsPage'
+import TokenomicsPage from './components/TokenomicsPage'
 import SetupDialog from './components/SetupDialog'
 import WhatsNewModal, { shouldShowWhatsNew, markWhatsNewSeen } from './components/WhatsNewModal'
 import TrainingWalkthrough, { shouldShowTraining, isFirstInstall } from './components/TrainingWalkthrough'
@@ -25,6 +26,7 @@ import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 import { markSessionForResumePicker } from './utils/resumePicker'
 import { gatherLocalStorageData, hydrateStores } from './utils/configHydration'
 import { setupCloudAgentListener } from './stores/cloudAgentStore'
+import { setupTokenomicsListener } from './stores/tokenomicsStore'
 import type { SessionState, SavedSession } from './types/electron'
 
 // Re-export ViewType from its canonical location for backwards compatibility
@@ -130,6 +132,7 @@ export default function App() {
       // Start cloud agent IPC listener early so status updates are
       // never missed (previously only started when CloudAgentsPage mounted)
       setupCloudAgentListener()
+      setupTokenomicsListener()
 
       const magicSettings = useMagicButtonStore.getState().settings
       if (magicSettings.autoDeleteDays != null && magicSettings.autoDeleteDays > 0) {
@@ -277,6 +280,7 @@ export default function App() {
     if (view === 'settings') return <SettingsPage />
     if (view === 'insights') return <InsightsPage />
     if (view === 'cloud-agents') return <CloudAgentsPage />
+    if (view === 'tokenomics') return <TokenomicsPage />
     return null
   }
 

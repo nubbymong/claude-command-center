@@ -573,12 +573,13 @@ function removeVisionInstructions(): void {
  */
 export function getRemoteVisionInstructionsSetup(): string {
   try {
+    // Check the prompt file exists locally (confirms vision is configured)
     const promptFile = path.join(getResourcesDirectory(), 'scripts', 'vision-prompt.txt')
     if (!fs.existsSync(promptFile)) return ''
-    const instructions = fs.readFileSync(promptFile, 'utf-8').trim()
-    // Escape single quotes for shell injection
-    const escaped = instructions.replace(/'/g, "'\\''")
-    return `mkdir -p ~/.claude 2>/dev/null; if ! grep -q 'VISION-INSTRUCTIONS-START' ~/.claude/CLAUDE.md 2>/dev/null; then echo '\\n${VISION_MARKER_START}\\n${escaped}\\n${VISION_MARKER_END}' >> ~/.claude/CLAUDE.md; fi`
+    // Use cat to read from the mounted resources dir on the remote instead of
+    // embedding the full 1.6KB prompt in the shell command. The old approach
+    // caused PTY chunking to leak the prompt text into Claude's input.
+    return `mkdir -p ~/.claude 2>/dev/null; if ! grep -q 'VISION-INSTRUCTIONS-START' ~/.claude/CLAUDE.md 2>/dev/null; then VF=/mnt/resources/scripts/vision-prompt.txt; if [ -f "$VF" ]; then printf '\\n${VISION_MARKER_START}\\n' >> ~/.claude/CLAUDE.md && cat "$VF" >> ~/.claude/CLAUDE.md && printf '\\n${VISION_MARKER_END}\\n' >> ~/.claude/CLAUDE.md; fi; fi`
   } catch {
     return ''
   }
