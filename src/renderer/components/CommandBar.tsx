@@ -231,13 +231,6 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
               window.electronAPI.vision.launch(visionBrowser, visionDebugPort, visionUrl, visionHeadless ?? true)
               setVisionContextMenu(null)
             } : undefined}
-            onInjectSetup={async () => {
-              const prompt = await window.electronAPI.vision.getPrompt()
-              if (prompt) {
-                window.electronAPI.pty.write(sessionId, prompt + '\r')
-              }
-              setVisionContextMenu(null)
-            }}
           />
         )}
         {/* Back to Claude / Partner toggle - on magic row */}
@@ -407,12 +400,11 @@ function ContextMenuOverlay({ x, y, onClose, onAdd, onEdit, onDelete }: {
   )
 }
 
-function VisionContextMenu({ x, y, onClose, onDisconnect, onLaunch, onInjectSetup }: {
+function VisionContextMenu({ x, y, onClose, onDisconnect, onLaunch }: {
   x: number; y: number
   onClose: () => void
   onDisconnect: () => void
   onLaunch?: () => void
-  onInjectSetup?: () => void
 }) {
   const menuRef = React.useRef<HTMLDivElement>(null)
   const [pos, setPos] = React.useState<{ left: number; top?: number; bottom?: number }>({ left: x })
@@ -439,14 +431,6 @@ function VisionContextMenu({ x, y, onClose, onDisconnect, onLaunch, onInjectSetu
         style={pos}
         onClick={(e) => e.stopPropagation()}
       >
-        {onInjectSetup && (
-          <button onClick={onInjectSetup} className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface1 transition-colors flex items-center gap-2">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
-            </svg>
-            Inject Vision Setup
-          </button>
-        )}
         {onLaunch && (
           <button onClick={onLaunch} className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface1 transition-colors flex items-center gap-2">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
