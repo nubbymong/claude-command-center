@@ -360,6 +360,16 @@ const electronAPI: ElectronAPI = {
   cli: {
     check: () => ipcRenderer.invoke(IPC.CLI_CHECK)
   },
+  tokenomics: {
+    getData: () => ipcRenderer.invoke(IPC.TOKENOMICS_GET_DATA),
+    seed: () => ipcRenderer.invoke(IPC.TOKENOMICS_SEED),
+    sync: () => ipcRenderer.invoke(IPC.TOKENOMICS_SYNC),
+    onProgress: (callback: (data: any) => void) => {
+      const handler = (_: unknown, data: any) => callback(data)
+      ipcRenderer.on(IPC.TOKENOMICS_PROGRESS, handler)
+      return () => ipcRenderer.removeListener(IPC.TOKENOMICS_PROGRESS, handler)
+    },
+  },
   account: {
     list: () => ipcRenderer.invoke(IPC.ACCOUNT_LIST),
     switch: (id: string) => ipcRenderer.invoke(IPC.ACCOUNT_SWITCH, id),

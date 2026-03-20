@@ -230,6 +230,46 @@ export interface AccountProfile {
   savedAt: number
 }
 
+// ── Tokenomics ──
+
+export interface TokenomicsSessionRecord {
+  sessionId: string
+  projectDir: string
+  model: string
+  totalInputTokens: number
+  totalOutputTokens: number
+  totalCacheReadTokens: number
+  totalCacheWriteTokens: number
+  totalCostUsd: number
+  messageCount: number
+  firstTimestamp: string
+  lastTimestamp: string
+}
+
+export interface TokenomicsDailyAggregate {
+  date: string
+  totalCostUsd: number
+  totalTokens: number
+  messageCount: number
+  sessionCount: number
+  byModel: Record<string, { costUsd: number; inputTokens: number; outputTokens: number }>
+}
+
+export interface TokenomicsData {
+  sessions: Record<string, TokenomicsSessionRecord>
+  dailyAggregates: Record<string, TokenomicsDailyAggregate>
+  lastSyncTimestamp: number
+  totalCostUsd: number
+  seedComplete: boolean
+}
+
+export interface TokenomicsSyncProgress {
+  phase: 'scanning' | 'processing' | 'complete'
+  totalFiles: number
+  processedFiles: number
+  currentFile?: string
+}
+
 // ── Notes ──
 
 export interface NoteMetadata {

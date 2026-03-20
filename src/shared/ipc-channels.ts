@@ -165,6 +165,12 @@ export const IPC = {
   // CLI
   CLI_CHECK: 'cli:check',
 
+  // Tokenomics
+  TOKENOMICS_GET_DATA: 'tokenomics:getData',
+  TOKENOMICS_SEED: 'tokenomics:seed',
+  TOKENOMICS_SYNC: 'tokenomics:sync',
+  TOKENOMICS_PROGRESS: 'tokenomics:progress',
+
   // Account switching
   ACCOUNT_LIST: 'account:list',
   ACCOUNT_SWITCH: 'account:switch',

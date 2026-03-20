@@ -23,6 +23,7 @@ import { registerCloudAgentHandlers } from './ipc/cloud-agent-handlers'
 import { registerTeamHandlers } from './ipc/team-handlers'
 import { registerLegacyVersionHandlers } from './ipc/legacy-version-handlers'
 import { registerAccountHandlers } from './ipc/account-handlers'
+import { registerTokenomicsHandlers } from './ipc/tokenomics-handlers'
 import { initAccounts } from './account-manager'
 import { killAllAgents } from './cloud-agent-manager'
 import { startServiceStatusPoller, stopServiceStatusPoller } from './service-status'
@@ -374,6 +375,7 @@ if (!gotTheLock) {
     registerTeamHandlers(getWindow)
     registerLegacyVersionHandlers(getWindow)
     registerAccountHandlers()
+    registerTokenomicsHandlers(getWindow)
 
     // Auto-detect current account from credentials (fire-and-forget)
     initAccounts().catch(() => {})

@@ -4,6 +4,7 @@ import * as path from 'path'
 import * as os from 'os'
 
 import { getResourcesDirectory } from './ipc/setup-handlers'
+import { handleStatuslineUpdate } from './tokenomics-manager'
 
 // Re-export from shared types for backward compatibility
 export type { StatuslineData } from '../shared/types'
@@ -270,6 +271,9 @@ export function startStatuslineWatcher(getWindow: () => BrowserWindow | null): (
       const content = fs.readFileSync(filePath, 'utf-8')
       const data: StatuslineData = JSON.parse(content)
       win.webContents.send('statusline:update', data)
+
+      // Feed real-time data to tokenomics
+      handleStatuslineUpdate(data)
     } catch { /* ignore read errors during writes */ }
   }
 

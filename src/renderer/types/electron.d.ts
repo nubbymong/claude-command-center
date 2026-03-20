@@ -26,6 +26,10 @@ export type {
   TeamStepMode,
   TeamRunStep,
   TeamRunStatus,
+  TokenomicsData,
+  TokenomicsSyncProgress,
+  TokenomicsSessionRecord,
+  TokenomicsDailyAggregate,
 } from '../../shared/types'
 
 // Import for use in the ElectronAPI interface
@@ -40,6 +44,8 @@ import type {
   TeamTemplate,
   TeamRun,
   AccountProfile,
+  TokenomicsData,
+  TokenomicsSyncProgress,
 } from '../../shared/types'
 
 export interface ElectronAPI {
@@ -263,6 +269,12 @@ export interface ElectronAPI {
   }
   cli: {
     check: () => Promise<boolean>
+  }
+  tokenomics: {
+    getData: () => Promise<TokenomicsData>
+    seed: () => Promise<TokenomicsData>
+    sync: () => Promise<TokenomicsData>
+    onProgress: (callback: (data: TokenomicsSyncProgress) => void) => () => void
   }
   account: {
     list: () => Promise<AccountProfile[]>
