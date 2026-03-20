@@ -78,15 +78,13 @@ function getRemoteStatuslineSetup(sessionId?: string): string {
 function getRemoteVisionSetup(sessionId: string): string {
   const env = getVisionEnv(sessionId, true)
   if (!env.VISION_PORT) return ''
-  // Write persistent wrapper script + env file, then export for current shell
-  return [
-    // vision-env: sourceable env vars
-    `printf 'export VISION_HOST=${env.VISION_HOST}\\nexport VISION_PORT=${env.VISION_PORT}\\nexport VISION_CLI="'"$CCRES"'/vision-cli.js"\\n' > ~/.claude/vision-env`,
-    // vision-cli: executable wrapper with baked connection details
-    `printf '#!/bin/sh\\nVISION_HOST=${env.VISION_HOST} VISION_PORT=${env.VISION_PORT} exec node "'"$CCRES"'/vision-cli.js" "$@"\\n' > ~/.claude/vision-cli && chmod +x ~/.claude/vision-cli`,
-    // Export for current shell session
-    `export VISION_HOST=${env.VISION_HOST} VISION_PORT=${env.VISION_PORT} VISION_CLI="$CCRES/vision-cli.js"`,
-  ].join('; ')
+  const H = env.VISION_HOST
+  const P = env.VISION_PORT
+  // Use node to write the files — avoids shell quoting nightmares with $@, $CCRES, etc.
+  const writeCmd = `node -e 'const f=require("fs"),p=require("path"),c=process.env.CCRES||"/mnt/resources/scripts";` +
+    `f.writeFileSync(p.join(process.env.HOME,".claude","vision-cli"),"#!/bin/sh\\nVISION_HOST=${H} VISION_PORT=${P} exec node \\""+c+"/vision-cli.js\\" \\"\\$@\\"\\n",{mode:0o755});` +
+    `f.writeFileSync(p.join(process.env.HOME,".claude","vision-env"),"export VISION_HOST=${H}\\nexport VISION_PORT=${P}\\nexport VISION_CLI=\\""+c+"/vision-cli.js\\"\\n")'`
+  return `${writeCmd}; export VISION_HOST=${H}; export VISION_PORT=${P}; export VISION_CLI="$CCRES/vision-cli.js"`
 }
 
 /**
