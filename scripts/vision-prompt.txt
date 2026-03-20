@@ -2,6 +2,8 @@ You have browser vision capabilities. A browser is connected via Chrome DevTools
 
 Usage: node "$VISION_CLI" <command>
 
+If $VISION_CLI is not set, use: ~/.claude/vision-cli <command>
+
 Commands:
   screenshot              Capture the current page as JPEG. Returns the file path — use Read tool to view it.
   navigate <url>          Navigate to a URL

@@ -44,14 +44,21 @@ const sessionPortMap = new Map<string, number>()
  */
 function getLocalIp(): string {
   const interfaces = os.networkInterfaces()
+  const candidates: string[] = []
   for (const name of Object.keys(interfaces)) {
     for (const iface of interfaces[name]!) {
       if (iface.family === 'IPv4' && !iface.internal) {
-        return iface.address
+        candidates.push(iface.address)
       }
     }
   }
-  return '127.0.0.1'
+  if (candidates.length === 0) return '127.0.0.1'
+  // Prefer 192.168.x.x (most common home/office LAN) over everything else.
+  // Avoids Tailscale (100.x.x.x), Hyper-V vSwitches (172.x.x.x), WSL bridges, etc.
+  const preferred = candidates.find(ip => ip.startsWith('192.168.'))
+    || candidates.find(ip => ip.startsWith('10.'))
+    || candidates.find(ip => /^172\.(1[6-9]|2\d|3[01])\./.test(ip))
+  return preferred || candidates[0]
 }
 
 class VisionManager {
@@ -576,10 +583,10 @@ export function getRemoteVisionInstructionsSetup(): string {
     // Check the prompt file exists locally (confirms vision is configured)
     const promptFile = path.join(getResourcesDirectory(), 'scripts', 'vision-prompt.txt')
     if (!fs.existsSync(promptFile)) return ''
-    // Use cat to read from the mounted resources dir on the remote instead of
-    // embedding the full 1.6KB prompt in the shell command. The old approach
-    // caused PTY chunking to leak the prompt text into Claude's input.
-    // Uses $CCRES set by PROBE_RESOURCES in pty-manager.ts
+    // Inject vision instructions into CLAUDE.md on the remote.
+    // Uses $CCRES set by PROBE_RESOURCES in pty-manager.ts.
+    // Also prepends a source command so env vars survive Claude restarts.
+    // The grep -q check makes this idempotent.
     return `mkdir -p ~/.claude 2>/dev/null; if ! grep -q 'VISION-INSTRUCTIONS-START' ~/.claude/CLAUDE.md 2>/dev/null; then VF="$CCRES/vision-prompt.txt"; if [ -f "$VF" ]; then printf '\\n${VISION_MARKER_START}\\n' >> ~/.claude/CLAUDE.md && cat "$VF" >> ~/.claude/CLAUDE.md && printf '\\n${VISION_MARKER_END}\\n' >> ~/.claude/CLAUDE.md; fi; fi`
   } catch {
     return ''

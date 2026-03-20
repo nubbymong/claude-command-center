@@ -67,14 +67,26 @@ function getRemoteStatuslineSetup(sessionId?: string): string {
 }
 
 /**
- * Generate shell commands to export vision env vars on a remote machine.
- * Uses $CCRES (from PROBE_RESOURCES) to find vision-cli.js.
+ * Generate shell commands to persist vision config on a remote machine.
+ * Creates two files:
+ *   ~/.claude/vision-env   — env vars (source this to get VISION_* vars)
+ *   ~/.claude/vision-cli   — executable wrapper with baked-in connection details
+ * Also exports env vars into the current shell for immediate use.
+ * Uses $CCRES (from PROBE_RESOURCES) to find the actual vision-cli.js.
  * Returns empty string if vision is not active for this session.
  */
 function getRemoteVisionSetup(sessionId: string): string {
   const env = getVisionEnv(sessionId, true)
   if (!env.VISION_PORT) return ''
-  return `export VISION_HOST=${env.VISION_HOST} VISION_PORT=${env.VISION_PORT} VISION_CLI="$CCRES/vision-cli.js"`
+  // Write persistent wrapper script + env file, then export for current shell
+  return [
+    // vision-env: sourceable env vars
+    `printf 'export VISION_HOST=${env.VISION_HOST}\\nexport VISION_PORT=${env.VISION_PORT}\\nexport VISION_CLI="'"$CCRES"'/vision-cli.js"\\n' > ~/.claude/vision-env`,
+    // vision-cli: executable wrapper with baked connection details
+    `printf '#!/bin/sh\\nVISION_HOST=${env.VISION_HOST} VISION_PORT=${env.VISION_PORT} exec node "'"$CCRES"'/vision-cli.js" "$@"\\n' > ~/.claude/vision-cli && chmod +x ~/.claude/vision-cli`,
+    // Export for current shell session
+    `export VISION_HOST=${env.VISION_HOST} VISION_PORT=${env.VISION_PORT} VISION_CLI="$CCRES/vision-cli.js"`,
+  ].join('; ')
 }
 
 /**
