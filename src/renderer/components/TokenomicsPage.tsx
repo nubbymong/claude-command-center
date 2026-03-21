@@ -46,21 +46,50 @@ function formatDate(ts: string): string {
 
 // ── Summary Cards ──
 
-function SummaryCards({ today, week, allTime }: { today: number; week: number; allTime: number }) {
+function SummaryCards({ today, week, allTime, extraSpend }: {
+  today: number; week: number; allTime: number
+  extraSpend?: { enabled: boolean; usedUsd: number; limitUsd: number; lastUpdated: number }
+}) {
   return (
-    <div className="grid grid-cols-3 gap-4 mb-6">
+    <div className="grid grid-cols-4 gap-4 mb-6">
       <div className="bg-surface0 rounded-xl p-4">
         <div className="text-xs text-overlay0 uppercase tracking-wider mb-1">Today</div>
         <div className="text-2xl font-mono font-bold text-green">{formatCost(today)}</div>
+        <div className="text-[10px] text-overlay0 mt-1">Plan usage</div>
       </div>
       <div className="bg-surface0 rounded-xl p-4">
         <div className="text-xs text-overlay0 uppercase tracking-wider mb-1">This Week</div>
         <div className="text-2xl font-mono font-bold text-blue">{formatCost(week)}</div>
+        <div className="text-[10px] text-overlay0 mt-1">Plan usage</div>
       </div>
       <div className="bg-surface0 rounded-xl p-4">
         <div className="text-xs text-overlay0 uppercase tracking-wider mb-1">All Time</div>
         <div className="text-2xl font-mono font-bold text-peach">{formatCost(allTime)}</div>
+        <div className="text-[10px] text-overlay0 mt-1">Estimated from tokens</div>
       </div>
+      {extraSpend?.enabled ? (
+        <div className={`rounded-xl p-4 ${extraSpend.usedUsd > 0 ? 'bg-red/10 border border-red/30' : 'bg-surface0'}`}>
+          <div className="text-xs text-overlay0 uppercase tracking-wider mb-1">Extra Spend</div>
+          <div className={`text-2xl font-mono font-bold ${extraSpend.usedUsd > 0 ? 'text-red' : 'text-green'}`}>
+            ${extraSpend.usedUsd.toFixed(2)}
+          </div>
+          <div className="text-[10px] text-overlay0 mt-1">
+            of ${extraSpend.limitUsd.toFixed(0)} limit
+          </div>
+          <div className="h-1.5 bg-surface1 rounded-full mt-2 overflow-hidden">
+            <div
+              className={`h-full rounded-full ${extraSpend.usedUsd > 0 ? 'bg-red' : 'bg-green'}`}
+              style={{ width: `${Math.min((extraSpend.usedUsd / Math.max(extraSpend.limitUsd, 1)) * 100, 100)}%` }}
+            />
+          </div>
+        </div>
+      ) : (
+        <div className="bg-surface0 rounded-xl p-4">
+          <div className="text-xs text-overlay0 uppercase tracking-wider mb-1">Extra Spend</div>
+          <div className="text-sm text-overlay0 mt-2">Not enabled</div>
+          <div className="text-[10px] text-overlay0 mt-1">Enable in Claude settings</div>
+        </div>
+      )}
     </div>
   )
 }
@@ -406,7 +435,7 @@ export default function TokenomicsPage() {
 
       <SeedProgressBar />
 
-      <SummaryCards today={todayCost} week={weekCost} allTime={allTimeCost} />
+      <SummaryCards today={todayCost} week={weekCost} allTime={allTimeCost} extraSpend={data?.extraSpend} />
 
       {/* Charts row */}
       <div className="grid grid-cols-3 gap-4 mb-6">

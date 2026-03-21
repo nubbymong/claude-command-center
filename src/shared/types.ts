@@ -261,6 +261,13 @@ export interface TokenomicsData {
   lastSyncTimestamp: number
   totalCostUsd: number
   seedComplete: boolean
+  // Extra spend tracking (from Anthropic API via statusline)
+  extraSpend?: {
+    enabled: boolean
+    usedUsd: number
+    limitUsd: number
+    lastUpdated: number // epoch ms
+  }
 }
 
 export interface TokenomicsSyncProgress {
