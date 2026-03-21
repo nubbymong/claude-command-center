@@ -408,15 +408,31 @@ export function handleStatuslineUpdate(statuslineData: {
   costUsd?: number
   inputTokens?: number
   outputTokens?: number
+  rateLimitExtra?: { enabled: boolean; utilization: number; usedUsd: number; limitUsd: number }
 }): void {
-  if (!statuslineData.costUsd && !statuslineData.inputTokens) return
+  if (!statuslineData.costUsd && !statuslineData.inputTokens && !statuslineData.rateLimitExtra) return
 
   if (!cachedData) {
     cachedData = loadData()
   }
   if (!cachedData.seedComplete) return
 
+  // Capture extra spend data from the API
+  if (statuslineData.rateLimitExtra?.enabled) {
+    cachedData.extraSpend = {
+      enabled: true,
+      usedUsd: statuslineData.rateLimitExtra.usedUsd,
+      limitUsd: statuslineData.rateLimitExtra.limitUsd,
+      lastUpdated: Date.now(),
+    }
+  }
+
   const { sessionId, model, costUsd } = statuslineData
+  if (!sessionId) {
+    // Extra spend only update — no session data
+    if (statuslineData.rateLimitExtra) saveDataDebounced(cachedData)
+    return
+  }
   let record = cachedData.sessions[sessionId]
 
   if (!record) {
