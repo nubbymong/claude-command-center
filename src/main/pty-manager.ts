@@ -6,7 +6,7 @@ import { startSessionLog, logSessionData, endSessionLog } from './session-logger
 import { logPtyOutput, isDebugModeEnabled } from './debug-capture'
 import { logInfo, logDebug, logError } from './debug-logger'
 import { writeCliSetupPty, getResourcesDirectory } from './ipc/setup-handlers'
-import { getVisionEnv, getRemoteVisionInstructionsSetup } from './vision-manager'
+import { getVisionEnv } from './vision-manager'
 import { resolveVersionBinary } from './legacy-version-manager'
 
 import * as path from 'path'
@@ -48,43 +48,86 @@ export interface SSHOptions {
 const ptySessions = new Map<string, PtySession>()
 
 /**
- * Shell snippet that finds the mounted resources scripts dir on the remote.
- * Probes common mount paths and exports CCRES for use by subsequent commands.
- * Falls back to /mnt/resources/scripts if nothing found.
+ * Generate a single node script that handles ALL remote setup:
+ * - Probes for mounted resources directory
+ * - Configures statusline in settings.json
+ * - Writes vision-cli wrapper and vision-env
+ * - Injects vision instructions into CLAUDE.md
+ *
+ * Returns the script content to write to ~/.claude/conductor-setup.js
+ * The PTY then only needs to write: `node ~/.claude/conductor-setup.js && claude`
  */
-const PROBE_RESOURCES = `CCRES=""; for d in /mnt/*/scripts /mnt/*/*/scripts; do [ -f "$d/claude-multi-statusline.js" ] && CCRES="$d" && break; done; [ -z "$CCRES" ] && CCRES=/mnt/resources/scripts`
+function generateRemoteSetupScript(sessionId: string, visionSessionId: string): string {
+  const env = getVisionEnv(visionSessionId, true)
+  const visionHost = env.VISION_HOST || ''
+  const visionPort = env.VISION_PORT || ''
+  const hasVision = !!visionPort
 
-/**
- * Generate a shell command that configures Claude's settings.json on a remote machine
- * to use the mounted statusline script. Auto-detects the mount path via probe.
- */
-function getRemoteStatuslineSetup(sessionId?: string): string {
-  const sessionEnv = sessionId ? `CLAUDE_MULTI_SESSION_ID=${sessionId} ` : ''
-  // Use $CCRES (set by PROBE_RESOURCES) in the statusline command.
-  // The node -e script writes settings.json with the resolved path.
-  const configCmd = `const f=require("fs"),p=require("path").join(require("os").homedir(),".claude","settings.json");let s={};try{s=JSON.parse(f.readFileSync(p,"utf-8"))}catch{}s.statusLine={type:"command",command:"${sessionEnv}node "+process.env.CCRES+"/claude-multi-statusline.js"};f.writeFileSync(p,JSON.stringify(s,null,2))`
-  return `mkdir -p ~/.claude 2>/dev/null; CCRES=$CCRES node -e '${configCmd}' 2>/dev/null`
+  return `
+const fs=require('fs'),path=require('path'),os=require('os');
+const home=os.homedir(),claudeDir=path.join(home,'.claude');
+try{fs.mkdirSync(claudeDir,{recursive:true})}catch{}
+
+// Probe for mounted resources
+let ccres='';
+try{
+  const dirs=['/mnt','/mnt'];
+  for(const base of fs.readdirSync('/mnt')){
+    const d=path.join('/mnt',base,'scripts');
+    if(fs.existsSync(path.join(d,'claude-multi-statusline.js'))){ccres=d;break}
+    try{for(const sub of fs.readdirSync(path.join('/mnt',base))){
+      const d2=path.join('/mnt',base,sub,'scripts');
+      if(fs.existsSync(path.join(d2,'claude-multi-statusline.js'))){ccres=d2;break}
+    }}catch{}
+    if(ccres)break;
+  }
+}catch{}
+if(!ccres)ccres='/mnt/resources/scripts';
+
+// Configure statusline
+const sp=path.join(claudeDir,'settings.json');
+let s={};try{s=JSON.parse(fs.readFileSync(sp,'utf-8'))}catch{}
+s.statusLine={type:'command',command:'CLAUDE_MULTI_SESSION_ID=${sessionId} node '+ccres+'/claude-multi-statusline.js'};
+fs.writeFileSync(sp,JSON.stringify(s,null,2));
+
+${hasVision ? `
+// Vision setup
+fs.writeFileSync(path.join(claudeDir,'vision-cli'),
+  '#!/bin/sh\\nVISION_HOST=${visionHost} VISION_PORT=${visionPort} exec node "'+ccres+'/vision-cli.js" "$@"\\n',
+  {mode:0o755});
+fs.writeFileSync(path.join(claudeDir,'vision-env'),
+  'export VISION_HOST=${visionHost}\\nexport VISION_PORT=${visionPort}\\nexport VISION_CLI="'+ccres+'/vision-cli.js"\\n');
+
+// Inject vision instructions into CLAUDE.md
+const md=path.join(claudeDir,'CLAUDE.md');
+let content='';try{content=fs.readFileSync(md,'utf-8')}catch{}
+if(!content.includes('VISION-INSTRUCTIONS-START')){
+  const vf=path.join(ccres,'vision-prompt.txt');
+  if(fs.existsSync(vf)){
+    const prompt=fs.readFileSync(vf,'utf-8');
+    content+='\\n<!-- VISION-INSTRUCTIONS-START -->\\n'+prompt+'\\n<!-- VISION-INSTRUCTIONS-END -->\\n';
+    fs.writeFileSync(md,content);
+  }
+}
+` : ''}
+process.stdout.write('setup ok\\n');
+`.trim().replace(/\n/g, '')  // Single line for PTY safety
 }
 
 /**
- * Generate shell commands to persist vision config on a remote machine.
- * Creates two files:
- *   ~/.claude/vision-env   — env vars (source this to get VISION_* vars)
- *   ~/.claude/vision-cli   — executable wrapper with baked-in connection details
- * Also exports env vars into the current shell for immediate use.
- * Uses $CCRES (from PROBE_RESOURCES) to find the actual vision-cli.js.
- * Returns empty string if vision is not active for this session.
+ * Write the setup script to the remote and return the short command to run it.
+ * Uses a heredoc to avoid quoting issues.
  */
-function getRemoteVisionSetup(sessionId: string): string {
-  const env = getVisionEnv(sessionId, true)
-  if (!env.VISION_PORT) return ''
-  const H = env.VISION_HOST
-  const P = env.VISION_PORT
-  // Use node to write the files — avoids shell quoting nightmares with $@, $CCRES, etc.
-  const writeCmd = `node -e 'const f=require("fs"),p=require("path"),c=process.env.CCRES||"/mnt/resources/scripts";` +
-    `f.writeFileSync(p.join(process.env.HOME,".claude","vision-cli"),"#!/bin/sh\\nVISION_HOST=${H} VISION_PORT=${P} exec node \\""+c+"/vision-cli.js\\" \\"\\$@\\"\\n",{mode:0o755});` +
-    `f.writeFileSync(p.join(process.env.HOME,".claude","vision-env"),"export VISION_HOST=${H}\\nexport VISION_PORT=${P}\\nexport VISION_CLI=\\""+c+"/vision-cli.js\\"\\n")'`
-  return `${writeCmd}; export VISION_HOST=${H}; export VISION_PORT=${P}; export VISION_CLI="$CCRES/vision-cli.js"`
+function getRemoteSetupCommand(sessionId: string, visionSessionId: string, remotePath: string): string {
+  const script = generateRemoteSetupScript(sessionId, visionSessionId)
+  // Write the setup script via a single node -e, then run it
+  // Escape single quotes in the script for shell embedding
+  const escaped = script.replace(/'/g, "'\\''")
+  const visionEnv = getVisionEnv(visionSessionId, true)
+  const visionExport = visionEnv.VISION_PORT
+    ? `export VISION_HOST=${visionEnv.VISION_HOST} VISION_PORT=${visionEnv.VISION_PORT};`
+    : ''
+  return `node -e '${escaped}' 2>/dev/null; ${visionExport} cd ${remotePath}`
 }
 
 /**
@@ -208,23 +251,17 @@ export function spawnPty(
       if (!cdSent && lastLine.length < 200 && /[$#>~]\s*$/.test(lastLine)) {
         cdSent = true
         setTimeout(() => {
-          // Step 1: Probe for mounted resources directory (sets $CCRES)
-          // Step 2: cd to project, deploy statusline + vision, start Claude
-          const visionSetup = getRemoteVisionSetup(sessionId)
-          const visionPrefix = visionSetup ? `${visionSetup}; ` : ''
-          const visionClaudeMd = getRemoteVisionInstructionsSetup()
-          const visionClaudeMdPrefix = visionClaudeMd ? `${visionClaudeMd}; ` : ''
+          // Run the consolidated setup script (statusline + vision + CLAUDE.md)
+          // then cd to project and optionally start Claude
+          const setupCmd = getRemoteSetupCommand(sessionId, sessionId, remotePath)
           if (postCommand) {
-            // cd to path and run post command (probe runs first for later use)
-            ptyProcess.write(`${PROBE_RESOURCES}; cd ${remotePath} && ${postCommand}\r`)
+            ptyProcess.write(`${setupCmd} && ${postCommand}\r`)
             postCommandSent = true
           } else if (startClaudeAfter && !options?.shellOnly) {
-            // Probe resources, deploy statusline, set vision env + CLAUDE.md, then start Claude
             claudeSent = true
-            ptyProcess.write(`${PROBE_RESOURCES}; cd ${remotePath}; ${getRemoteStatuslineSetup(sessionId)}; ${visionPrefix}${visionClaudeMdPrefix}claude\r`)
+            ptyProcess.write(`${setupCmd} && claude\r`)
           } else {
-            // Shell only — probe, cd, deploy statusline, set vision env + CLAUDE.md
-            ptyProcess.write(`${PROBE_RESOURCES}; cd ${remotePath}; ${getRemoteStatuslineSetup(sessionId)}; ${visionPrefix}${visionClaudeMdPrefix}clear\r`)
+            ptyProcess.write(`${setupCmd} && clear\r`)
           }
         }, 200)
         return
@@ -239,12 +276,8 @@ export function spawnPty(
             postCommandShellReady = true
             setTimeout(() => {
               claudeSent = true
-              const visionSetup2 = getRemoteVisionSetup(sessionId)
-              const visionPrefix2 = visionSetup2 ? `${visionSetup2}; ` : ''
-              const visionClaudeMd2 = getRemoteVisionInstructionsSetup()
-              const visionClaudeMdPrefix2 = visionClaudeMd2 ? `${visionClaudeMd2}; ` : ''
-              // Re-probe (in case postCommand changed shell/mounts), then deploy + start
-              ptyProcess.write(`${PROBE_RESOURCES}; ${getRemoteStatuslineSetup(sessionId)}; ${visionPrefix2}${visionClaudeMdPrefix2}claude\r`)
+              const setupCmd = getRemoteSetupCommand(sessionId, sessionId, remotePath)
+              ptyProcess.write(`${setupCmd} && claude\r`)
             }, 300)
           }
         }
