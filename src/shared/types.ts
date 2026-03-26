@@ -268,6 +268,12 @@ export interface TokenomicsData {
     limitUsd: number
     lastUpdated: number // epoch ms
   }
+  // Rate limit tracking (from Anthropic API via statusline)
+  rateLimits?: {
+    fiveHour?: number    // utilization percentage
+    sevenDay?: number    // utilization percentage
+    lastUpdated: number
+  }
 }
 
 export interface TokenomicsSyncProgress {
