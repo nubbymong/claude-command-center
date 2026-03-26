@@ -408,9 +408,11 @@ export function handleStatuslineUpdate(statuslineData: {
   costUsd?: number
   inputTokens?: number
   outputTokens?: number
+  rateLimitCurrent?: number
+  rateLimitWeekly?: number
   rateLimitExtra?: { enabled: boolean; utilization: number; usedUsd: number; limitUsd: number }
 }): void {
-  if (!statuslineData.costUsd && !statuslineData.inputTokens && !statuslineData.rateLimitExtra) return
+  if (!statuslineData.costUsd && !statuslineData.inputTokens && !statuslineData.rateLimitExtra && !statuslineData.rateLimitCurrent) return
 
   if (!cachedData) {
     cachedData = loadData()
@@ -423,6 +425,15 @@ export function handleStatuslineUpdate(statuslineData: {
       enabled: true,
       usedUsd: statuslineData.rateLimitExtra.usedUsd,
       limitUsd: statuslineData.rateLimitExtra.limitUsd,
+      lastUpdated: Date.now(),
+    }
+  }
+
+  // Capture rate limit percentages
+  if (statuslineData.rateLimitCurrent != null || statuslineData.rateLimitWeekly != null) {
+    cachedData.rateLimits = {
+      fiveHour: statuslineData.rateLimitCurrent ?? cachedData.rateLimits?.fiveHour,
+      sevenDay: statuslineData.rateLimitWeekly ?? cachedData.rateLimits?.sevenDay,
       lastUpdated: Date.now(),
     }
   }

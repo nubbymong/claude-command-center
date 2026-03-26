@@ -1,6 +1,6 @@
-import React, { useEffect, useState, useMemo } from 'react'
+import React, { useEffect, useState, useMemo, useCallback } from 'react'
 import { useTokenomicsStore } from '../stores/tokenomicsStore'
-import type { TokenomicsSessionRecord } from '../../shared/types'
+import type { TokenomicsSessionRecord, TokenomicsDailyAggregate } from '../../shared/types'
 
 const MODEL_COLORS: Record<string, string> = {
   'claude-sonnet-4-6': '#89B4FA',
@@ -44,23 +44,77 @@ function formatDate(ts: string): string {
   } catch { return ts.slice(0, 10) }
 }
 
+function formatDateFull(ts: string): string {
+  if (!ts) return '-'
+  try {
+    const d = new Date(ts)
+    return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+  } catch { return ts }
+}
+
+/** Get the 5-hour rate limit window start for a given date */
+function getRateLimitPeriod(): { fiveHourStart: string; sevenDayStart: string } {
+  const now = new Date()
+  const fiveHourStart = new Date(now.getTime() - 5 * 60 * 60 * 1000).toISOString()
+  const sevenDayStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString()
+  return { fiveHourStart, sevenDayStart }
+}
+
+// ── Filter types ──
+
+type DateFilter = 'all' | 'today' | 'week' | '5h' | '7d' | string // string = specific date YYYY-MM-DD
+type SpendFilter = 'all' | 'plan' | 'extra'
+
 // ── Summary Cards ──
 
-function SummaryCards({ today, week, allTime, extraSpend }: {
-  today: number; week: number; allTime: number
+function SummaryCards({ today, week, fiveHour, allTime, extraSpend, rateLimitCurrent, rateLimitWeekly }: {
+  today: number; week: number; fiveHour: number; allTime: number
   extraSpend?: { enabled: boolean; usedUsd: number; limitUsd: number; lastUpdated: number }
+  rateLimitCurrent?: number
+  rateLimitWeekly?: number
 }) {
   return (
-    <div className="grid grid-cols-4 gap-4 mb-6">
+    <div className="grid grid-cols-5 gap-3 mb-6">
+      <div className="bg-surface0 rounded-xl p-4">
+        <div className="text-xs text-overlay0 uppercase tracking-wider mb-1">5-Hour Window</div>
+        <div className="text-2xl font-mono font-bold text-teal">{formatCost(fiveHour)}</div>
+        {rateLimitCurrent != null && (
+          <div className="mt-2">
+            <div className="flex justify-between text-[10px] text-overlay0 mb-0.5">
+              <span>Rate limit</span>
+              <span className={rateLimitCurrent > 80 ? 'text-red' : 'text-overlay1'}>{rateLimitCurrent}%</span>
+            </div>
+            <div className="h-1.5 bg-surface1 rounded-full overflow-hidden">
+              <div
+                className={`h-full rounded-full ${rateLimitCurrent > 80 ? 'bg-red' : rateLimitCurrent > 50 ? 'bg-yellow' : 'bg-teal'}`}
+                style={{ width: `${Math.min(rateLimitCurrent, 100)}%` }}
+              />
+            </div>
+          </div>
+        )}
+      </div>
       <div className="bg-surface0 rounded-xl p-4">
         <div className="text-xs text-overlay0 uppercase tracking-wider mb-1">Today</div>
         <div className="text-2xl font-mono font-bold text-green">{formatCost(today)}</div>
         <div className="text-[10px] text-overlay0 mt-1">Plan usage</div>
       </div>
       <div className="bg-surface0 rounded-xl p-4">
-        <div className="text-xs text-overlay0 uppercase tracking-wider mb-1">This Week</div>
+        <div className="text-xs text-overlay0 uppercase tracking-wider mb-1">7-Day Window</div>
         <div className="text-2xl font-mono font-bold text-blue">{formatCost(week)}</div>
-        <div className="text-[10px] text-overlay0 mt-1">Plan usage</div>
+        {rateLimitWeekly != null && (
+          <div className="mt-2">
+            <div className="flex justify-between text-[10px] text-overlay0 mb-0.5">
+              <span>Rate limit</span>
+              <span className={rateLimitWeekly > 80 ? 'text-red' : 'text-overlay1'}>{rateLimitWeekly}%</span>
+            </div>
+            <div className="h-1.5 bg-surface1 rounded-full overflow-hidden">
+              <div
+                className={`h-full rounded-full ${rateLimitWeekly > 80 ? 'bg-red' : rateLimitWeekly > 50 ? 'bg-yellow' : 'bg-blue'}`}
+                style={{ width: `${Math.min(rateLimitWeekly, 100)}%` }}
+              />
+            </div>
+          </div>
+        )}
       </div>
       <div className="bg-surface0 rounded-xl p-4">
         <div className="text-xs text-overlay0 uppercase tracking-wider mb-1">All Time</div>
@@ -87,26 +141,34 @@ function SummaryCards({ today, week, allTime, extraSpend }: {
         <div className="bg-surface0 rounded-xl p-4">
           <div className="text-xs text-overlay0 uppercase tracking-wider mb-1">Extra Spend</div>
           <div className="text-sm text-overlay0 mt-2">Not enabled</div>
-          <div className="text-[10px] text-overlay0 mt-1">Enable in Claude settings</div>
         </div>
       )}
     </div>
   )
 }
 
-// ── Daily Cost Chart (inline SVG) ──
+// ── Daily Cost Chart (clickable) ──
 
-function DailyChart() {
+function DailyChart({ selectedDate, onSelectDate }: {
+  selectedDate: string | null
+  onSelectDate: (date: string | null) => void
+}) {
   const data = useTokenomicsStore(s => s.data)
   const aggregates = useMemo(() => {
     if (!data) return []
-    const result: Array<{ date: string; totalCostUsd: number }> = []
+    const result: Array<{ date: string; totalCostUsd: number; sessionCount: number; messageCount: number }> = []
     const now = new Date()
     for (let i = 29; i >= 0; i--) {
       const d = new Date(now)
       d.setDate(d.getDate() - i)
       const key = d.toISOString().slice(0, 10)
-      result.push({ date: key, totalCostUsd: data.dailyAggregates[key]?.totalCostUsd || 0 })
+      const agg = data.dailyAggregates[key]
+      result.push({
+        date: key,
+        totalCostUsd: agg?.totalCostUsd || 0,
+        sessionCount: agg?.sessionCount || 0,
+        messageCount: agg?.messageCount || 0,
+      })
     }
     return result
   }, [data])
@@ -119,7 +181,17 @@ function DailyChart() {
 
   return (
     <div className="bg-surface0 rounded-xl p-4">
-      <div className="text-xs text-overlay0 uppercase tracking-wider mb-3">Daily Cost (30 days)</div>
+      <div className="flex items-center justify-between mb-3">
+        <div className="text-xs text-overlay0 uppercase tracking-wider">
+          Daily Cost (30 days)
+          {selectedDate && (
+            <span className="ml-2 text-blue normal-case">
+              {formatDateFull(selectedDate)}
+              <button onClick={() => onSelectDate(null)} className="ml-1 text-overlay0 hover:text-text">{'\u2715'}</button>
+            </span>
+          )}
+        </div>
+      </div>
       <div className="overflow-x-auto">
         <svg width={chartWidth} height={chartHeight + 20} className="block">
           {aggregates.map((agg, i) => {
@@ -127,27 +199,29 @@ function DailyChart() {
             const x = i * (barWidth + gap)
             const y = chartHeight - barHeight
             const showLabel = i % 5 === 0 || i === aggregates.length - 1
+            const isSelected = selectedDate === agg.date
             return (
-              <g key={agg.date}>
+              <g key={agg.date} className="cursor-pointer" onClick={() => onSelectDate(isSelected ? null : agg.date)}>
                 <rect
                   x={x}
                   y={y}
                   width={barWidth}
                   height={Math.max(barHeight, 1)}
                   rx={3}
-                  fill="#FAB387"
-                  opacity={agg.totalCostUsd > 0 ? 0.85 : 0.15}
+                  fill={isSelected ? '#89B4FA' : '#FAB387'}
+                  opacity={agg.totalCostUsd > 0 ? (isSelected ? 1 : 0.85) : 0.15}
+                  stroke={isSelected ? '#89B4FA' : 'none'}
+                  strokeWidth={isSelected ? 2 : 0}
                 />
-                {agg.totalCostUsd > 0 && (
-                  <title>{`${agg.date}: ${formatCost(agg.totalCostUsd)}`}</title>
-                )}
+                <title>{`${agg.date}: ${formatCost(agg.totalCostUsd)} (${agg.sessionCount} sessions, ${agg.messageCount} msgs)`}</title>
                 {showLabel && (
                   <text
                     x={x + barWidth / 2}
                     y={chartHeight + 14}
                     textAnchor="middle"
-                    fill="#6C7086"
+                    fill={isSelected ? '#89B4FA' : '#6C7086'}
                     fontSize="8"
+                    fontWeight={isSelected ? 'bold' : 'normal'}
                   >
                     {agg.date.slice(5)}
                   </text>
@@ -163,23 +237,21 @@ function DailyChart() {
 
 // ── Model Breakdown ──
 
-function ModelBreakdown() {
-  const data = useTokenomicsStore(s => s.data)
+function ModelBreakdown({ sessions }: { sessions: TokenomicsSessionRecord[] }) {
   const breakdown = useMemo(() => {
-    if (!data) return []
-    const models: Record<string, { costUsd: number; inputTokens: number; outputTokens: number }> = {}
-    for (const agg of Object.values(data.dailyAggregates)) {
-      for (const [model, stats] of Object.entries(agg.byModel)) {
-        if (!models[model]) models[model] = { costUsd: 0, inputTokens: 0, outputTokens: 0 }
-        models[model].costUsd += stats.costUsd
-        models[model].inputTokens += stats.inputTokens
-        models[model].outputTokens += stats.outputTokens
-      }
+    const models: Record<string, { costUsd: number; inputTokens: number; outputTokens: number; count: number }> = {}
+    for (const s of sessions) {
+      const key = s.model || 'unknown'
+      if (!models[key]) models[key] = { costUsd: 0, inputTokens: 0, outputTokens: 0, count: 0 }
+      models[key].costUsd += s.totalCostUsd
+      models[key].inputTokens += s.totalInputTokens + s.totalCacheReadTokens + s.totalCacheWriteTokens
+      models[key].outputTokens += s.totalOutputTokens
+      models[key].count++
     }
     return Object.entries(models)
       .map(([model, stats]) => ({ model, ...stats }))
       .sort((a, b) => b.costUsd - a.costUsd)
-  }, [data])
+  }, [sessions])
   const maxCost = breakdown.length > 0 ? breakdown[0].costUsd : 1
 
   if (breakdown.length === 0) {
@@ -201,7 +273,7 @@ function ModelBreakdown() {
           return (
             <div key={m.model}>
               <div className="flex justify-between text-xs mb-1">
-                <span className="text-text font-medium">{getModelShort(m.model)}</span>
+                <span className="text-text font-medium">{getModelShort(m.model)} <span className="text-overlay0 font-normal">({m.count})</span></span>
                 <span className="text-overlay1">{formatCost(m.costUsd)}</span>
               </div>
               <div className="h-3 bg-surface1 rounded-full overflow-hidden">
@@ -222,35 +294,109 @@ function ModelBreakdown() {
   )
 }
 
+// ── Filter Bar ──
+
+function FilterBar({ dateFilter, spendFilter, onDateFilter, onSpendFilter, selectedDate }: {
+  dateFilter: DateFilter
+  spendFilter: SpendFilter
+  onDateFilter: (f: DateFilter) => void
+  onSpendFilter: (f: SpendFilter) => void
+  selectedDate: string | null
+}) {
+  const dateButtons: Array<{ label: string; value: DateFilter }> = [
+    { label: 'All', value: 'all' },
+    { label: '5h', value: '5h' },
+    { label: 'Today', value: 'today' },
+    { label: '7d', value: '7d' },
+    { label: 'Week', value: 'week' },
+  ]
+
+  return (
+    <div className="flex items-center gap-4 mb-4">
+      <div className="flex items-center gap-1">
+        <span className="text-xs text-overlay0 mr-1">Time:</span>
+        {dateButtons.map(b => (
+          <button
+            key={b.value}
+            onClick={() => onDateFilter(b.value)}
+            className={`px-2 py-0.5 text-xs rounded ${
+              dateFilter === b.value && !selectedDate
+                ? 'bg-blue/20 text-blue'
+                : 'bg-surface1 text-overlay1 hover:text-text'
+            }`}
+          >
+            {b.label}
+          </button>
+        ))}
+        {selectedDate && (
+          <span className="px-2 py-0.5 text-xs rounded bg-blue/20 text-blue">
+            {formatDateFull(selectedDate)}
+            <button onClick={() => onDateFilter('all')} className="ml-1 hover:text-text">{'\u2715'}</button>
+          </span>
+        )}
+      </div>
+      <div className="flex items-center gap-1">
+        <span className="text-xs text-overlay0 mr-1">Spend:</span>
+        {(['all', 'plan', 'extra'] as SpendFilter[]).map(f => (
+          <button
+            key={f}
+            onClick={() => onSpendFilter(f)}
+            className={`px-2 py-0.5 text-xs rounded capitalize ${
+              spendFilter === f
+                ? f === 'extra' ? 'bg-red/20 text-red' : 'bg-blue/20 text-blue'
+                : 'bg-surface1 text-overlay1 hover:text-text'
+            }`}
+          >
+            {f}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // ── Sessions Table ──
 
-type SortKey = 'project' | 'model' | 'cost' | 'inputTokens' | 'outputTokens' | 'date'
+type SortKey = 'project' | 'model' | 'cost' | 'inputTokens' | 'outputTokens' | 'date' | 'messages' | 'cacheTokens'
 
-function SessionsTable() {
+function SessionsTable({ sessions, title }: { sessions: TokenomicsSessionRecord[]; title?: string }) {
   const [sortBy, setSortBy] = useState<SortKey>('cost')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [page, setPage] = useState(0)
   const PAGE_SIZE = 50
 
-  const data = useTokenomicsStore(s => s.data)
-  const sessions = useMemo(() => {
-    if (!data) return []
-    const list = Object.values(data.sessions)
+  const sorted = useMemo(() => {
     const dir = sortDir === 'asc' ? 1 : -1
-    return [...list].sort((a, b) => {
+    return [...sessions].sort((a, b) => {
       switch (sortBy) {
         case 'cost': return (a.totalCostUsd - b.totalCostUsd) * dir
         case 'inputTokens': return (a.totalInputTokens - b.totalInputTokens) * dir
         case 'outputTokens': return (a.totalOutputTokens - b.totalOutputTokens) * dir
+        case 'cacheTokens': return ((a.totalCacheReadTokens + a.totalCacheWriteTokens) - (b.totalCacheReadTokens + b.totalCacheWriteTokens)) * dir
+        case 'messages': return (a.messageCount - b.messageCount) * dir
         case 'date': return (a.firstTimestamp.localeCompare(b.firstTimestamp)) * dir
         case 'model': return (a.model.localeCompare(b.model)) * dir
         case 'project': return (a.projectDir.localeCompare(b.projectDir)) * dir
         default: return (a.totalCostUsd - b.totalCostUsd) * dir
       }
     })
-  }, [data, sortBy, sortDir])
-  const totalPages = Math.ceil(sessions.length / PAGE_SIZE)
-  const paginated = sessions.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
+  }, [sessions, sortBy, sortDir])
+
+  const totalPages = Math.ceil(sorted.length / PAGE_SIZE)
+  const paginated = sorted.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
+
+  // Compute totals for filtered sessions
+  const totals = useMemo(() => {
+    let cost = 0, input = 0, output = 0, cache = 0, msgs = 0
+    for (const s of sessions) {
+      cost += s.totalCostUsd
+      input += s.totalInputTokens
+      output += s.totalOutputTokens
+      cache += s.totalCacheReadTokens + s.totalCacheWriteTokens
+      msgs += s.messageCount
+    }
+    return { cost, input, output, cache, msgs }
+  }, [sessions])
 
   const handleSort = (key: SortKey) => {
     if (sortBy === key) {
@@ -262,9 +408,12 @@ function SessionsTable() {
     setPage(0)
   }
 
-  const SortHeader = ({ label, sortKey }: { label: string; sortKey: SortKey }) => (
+  // Reset page when sessions change
+  useEffect(() => { setPage(0) }, [sessions])
+
+  const SortHeader = ({ label, sortKey, className }: { label: string; sortKey: SortKey; className?: string }) => (
     <th
-      className="text-left text-xs text-overlay0 font-medium px-3 py-2 cursor-pointer hover:text-text select-none"
+      className={`text-left text-xs text-overlay0 font-medium px-3 py-2 cursor-pointer hover:text-text select-none ${className || ''}`}
       onClick={() => handleSort(sortKey)}
     >
       {label}
@@ -278,7 +427,9 @@ function SessionsTable() {
     <div className="bg-surface0 rounded-xl p-4">
       <div className="flex items-center justify-between mb-3">
         <div className="text-xs text-overlay0 uppercase tracking-wider">
-          Sessions ({sessions.length})
+          {title || 'Sessions'} ({sessions.length})
+          <span className="ml-3 text-peach normal-case">Total: {formatCost(totals.cost)}</span>
+          <span className="ml-2 text-overlay1 normal-case">{formatTokens(totals.input)} in / {formatTokens(totals.output)} out</span>
         </div>
         {totalPages > 1 && (
           <div className="flex items-center gap-2 text-xs">
@@ -309,13 +460,15 @@ function SessionsTable() {
               <SortHeader label="Cost" sortKey="cost" />
               <SortHeader label="Input" sortKey="inputTokens" />
               <SortHeader label="Output" sortKey="outputTokens" />
+              <SortHeader label="Cache" sortKey="cacheTokens" />
+              <SortHeader label="Msgs" sortKey="messages" />
               <SortHeader label="Date" sortKey="date" />
             </tr>
           </thead>
           <tbody>
             {paginated.map(s => (
               <tr key={s.sessionId} className="border-b border-surface1/50 hover:bg-surface1/30">
-                <td className="px-3 py-1.5 text-text truncate max-w-[200px]" title={s.projectDir}>
+                <td className="px-3 py-1.5 text-text truncate max-w-[180px]" title={s.projectDir}>
                   {s.projectDir || '-'}
                 </td>
                 <td className="px-3 py-1.5">
@@ -329,13 +482,15 @@ function SessionsTable() {
                 <td className="px-3 py-1.5 font-mono text-peach">{formatCost(s.totalCostUsd)}</td>
                 <td className="px-3 py-1.5 font-mono text-overlay1">{formatTokens(s.totalInputTokens)}</td>
                 <td className="px-3 py-1.5 font-mono text-overlay1">{formatTokens(s.totalOutputTokens)}</td>
+                <td className="px-3 py-1.5 font-mono text-overlay0">{formatTokens(s.totalCacheReadTokens + s.totalCacheWriteTokens)}</td>
+                <td className="px-3 py-1.5 font-mono text-overlay0">{s.messageCount}</td>
                 <td className="px-3 py-1.5 text-overlay0">{formatDate(s.firstTimestamp)}</td>
               </tr>
             ))}
             {paginated.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-3 py-6 text-center text-overlay0">
-                  No session data yet
+                <td colSpan={8} className="px-3 py-6 text-center text-overlay0">
+                  No sessions match the current filter
                 </td>
               </tr>
             )}
@@ -378,15 +533,109 @@ function SeedProgressBar() {
   )
 }
 
+// ── Usage Anomaly Alert ──
+
+function UsageAlert({ sessions, data }: { sessions: TokenomicsSessionRecord[]; data: any }) {
+  const alert = useMemo(() => {
+    if (!data?.extraSpend?.enabled) return null
+
+    // Check if rate limit is high but our tracked usage is low
+    const { fiveHourStart, sevenDayStart } = getRateLimitPeriod()
+
+    const weekSessions = sessions.filter(s => s.firstTimestamp >= sevenDayStart)
+    const weekCost = weekSessions.reduce((sum, s) => sum + s.totalCostUsd, 0)
+    const weekMessages = weekSessions.reduce((sum, s) => sum + s.messageCount, 0)
+
+    // If extra spend is non-zero but we tracked very few messages, flag it
+    if (data.extraSpend.usedUsd > 0 && weekMessages < 50) {
+      return {
+        type: 'warning' as const,
+        message: `Extra spend of $${data.extraSpend.usedUsd.toFixed(2)} detected but only ${weekMessages} messages tracked this week. Usage may be coming from outside the Conductor (web, API, other CLI instances).`,
+      }
+    }
+
+    return null
+  }, [sessions, data])
+
+  if (!alert) return null
+
+  return (
+    <div className="bg-yellow/10 border border-yellow/30 rounded-xl p-4 mb-6">
+      <div className="flex items-start gap-2">
+        <span className="text-yellow text-lg shrink-0">!</span>
+        <div>
+          <div className="text-sm font-medium text-yellow mb-1">Usage Anomaly</div>
+          <div className="text-xs text-overlay1">{alert.message}</div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Main Page ──
 
 export default function TokenomicsPage() {
   const { data, loading, seeding, syncing, loadData, startSeed, startSync } = useTokenomicsStore()
+  const [dateFilter, setDateFilter] = useState<DateFilter>('all')
+  const [spendFilter, setSpendFilter] = useState<SpendFilter>('all')
+  const [selectedDate, setSelectedDate] = useState<string | null>(null)
 
-  const { todayCost, weekCost, allTimeCost } = useMemo(() => {
-    if (!data) return { todayCost: 0, weekCost: 0, allTimeCost: 0 }
+  // When chart bar is clicked, set date filter to that specific date
+  const handleDateSelect = useCallback((date: string | null) => {
+    setSelectedDate(date)
+    if (date) setDateFilter(date)
+    else setDateFilter('all')
+  }, [])
+
+  // All sessions flat
+  const allSessions = useMemo(() => {
+    if (!data) return []
+    return Object.values(data.sessions)
+  }, [data])
+
+  // Rate limit periods
+  const periods = useMemo(() => getRateLimitPeriod(), [])
+
+  // Filtered sessions based on date + spend filters
+  const filteredSessions = useMemo(() => {
+    let list = allSessions
+
+    // Date filter
+    if (selectedDate) {
+      list = list.filter(s => s.firstTimestamp.slice(0, 10) === selectedDate)
+    } else {
+      const today = new Date().toISOString().slice(0, 10)
+      switch (dateFilter) {
+        case 'today':
+          list = list.filter(s => s.firstTimestamp.slice(0, 10) === today)
+          break
+        case '5h':
+          list = list.filter(s => s.firstTimestamp >= periods.fiveHourStart)
+          break
+        case '7d':
+        case 'week':
+          list = list.filter(s => s.firstTimestamp >= periods.sevenDayStart)
+          break
+      }
+    }
+
+    // Spend filter - extra spend sessions are those with costUsd from statusline (no message-level tracking)
+    // Plan sessions have full message-level token data from JSONL parsing
+    if (spendFilter === 'plan') {
+      list = list.filter(s => s.messageCount > 0)
+    } else if (spendFilter === 'extra') {
+      list = list.filter(s => s.messageCount === 0)
+    }
+
+    return list
+  }, [allSessions, dateFilter, spendFilter, selectedDate, periods])
+
+  // Summary costs
+  const { todayCost, weekCost, fiveHourCost, allTimeCost } = useMemo(() => {
+    if (!data) return { todayCost: 0, weekCost: 0, fiveHourCost: 0, allTimeCost: 0 }
     const today = new Date().toISOString().slice(0, 10)
     const todayCost = data.dailyAggregates[today]?.totalCostUsd || 0
+
     let weekCost = 0
     const now = new Date()
     for (let i = 0; i < 7; i++) {
@@ -395,8 +644,18 @@ export default function TokenomicsPage() {
       const key = d.toISOString().slice(0, 10)
       weekCost += data.dailyAggregates[key]?.totalCostUsd || 0
     }
-    return { todayCost, weekCost, allTimeCost: data.totalCostUsd || 0 }
-  }, [data])
+
+    const fiveHourCost = allSessions
+      .filter(s => s.firstTimestamp >= periods.fiveHourStart)
+      .reduce((sum, s) => sum + s.totalCostUsd, 0)
+
+    return { todayCost, weekCost, fiveHourCost, allTimeCost: data.totalCostUsd || 0 }
+  }, [data, allSessions, periods])
+
+  const rateLimits = useMemo(() => ({
+    current: data?.rateLimits?.fiveHour,
+    weekly: data?.rateLimits?.sevenDay,
+  }), [data])
 
   useEffect(() => {
     loadData()
@@ -435,18 +694,40 @@ export default function TokenomicsPage() {
 
       <SeedProgressBar />
 
-      <SummaryCards today={todayCost} week={weekCost} allTime={allTimeCost} extraSpend={data?.extraSpend} />
+      <UsageAlert sessions={allSessions} data={data} />
+
+      <SummaryCards
+        today={todayCost}
+        week={weekCost}
+        fiveHour={fiveHourCost}
+        allTime={allTimeCost}
+        extraSpend={data?.extraSpend}
+        rateLimitCurrent={rateLimits.current}
+        rateLimitWeekly={rateLimits.weekly}
+      />
 
       {/* Charts row */}
       <div className="grid grid-cols-3 gap-4 mb-6">
         <div className="col-span-2">
-          <DailyChart />
+          <DailyChart selectedDate={selectedDate} onSelectDate={handleDateSelect} />
         </div>
-        <ModelBreakdown />
+        <ModelBreakdown sessions={filteredSessions} />
       </div>
 
+      {/* Filter bar */}
+      <FilterBar
+        dateFilter={dateFilter}
+        spendFilter={spendFilter}
+        onDateFilter={(f) => { setDateFilter(f); setSelectedDate(null) }}
+        onSpendFilter={setSpendFilter}
+        selectedDate={selectedDate}
+      />
+
       {/* Sessions table */}
-      <SessionsTable />
+      <SessionsTable
+        sessions={filteredSessions}
+        title={selectedDate ? `Sessions on ${formatDateFull(selectedDate)}` : undefined}
+      />
     </div>
   )
 }
