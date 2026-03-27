@@ -15,9 +15,15 @@ const STATUS_COLORS: Record<string, string> = {
 
 const STATUS_LABELS: Record<string, string> = {
   operational: 'Operational',
-  degraded_performance: 'Degraded Performance',
+  degraded_performance: 'Degraded',
   partial_outage: 'Partial Outage',
   major_outage: 'Major Outage',
+}
+
+const STATUS_GRADIENT_COLORS: Record<string, string> = {
+  degraded_performance: '#F9E2AF',
+  partial_outage: '#FAB387',
+  major_outage: '#F38BA8',
 }
 
 export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
@@ -113,8 +119,16 @@ export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
     ? `Account: ${activeAccount.label}`
     : 'Account Switcher'
 
+  const isHealthy = !serviceStatus || serviceStatus === 'operational'
+  const gradientColor = serviceStatus ? STATUS_GRADIENT_COLORS[serviceStatus] : undefined
+
   return (
-    <div className="titlebar-drag flex items-center h-10 bg-crust px-3 shrink-0">
+    <div
+      className="titlebar-drag flex items-center h-10 bg-crust px-3 shrink-0 relative"
+      style={gradientColor ? {
+        background: `linear-gradient(90deg, var(--crust) 0%, ${gradientColor}18 30%, ${gradientColor}25 50%, ${gradientColor}18 70%, var(--crust) 100%)`
+      } : undefined}
+    >
       <div className="titlebar-no-drag flex items-center gap-1 mr-3">
         <button
           onClick={onToggleSidebar}
@@ -222,10 +236,23 @@ export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
       </div>
 
       <div className="titlebar-no-drag flex items-center gap-1">
-        {serviceStatus && (
+        {serviceStatus && !isHealthy && (
           <div
-            className={`w-2 h-2 rounded-full ${STATUS_COLORS[serviceStatus] || 'bg-overlay0'}`}
+            className="flex items-center gap-1.5 mr-2"
             title={`Claude Code: ${STATUS_LABELS[serviceStatus] || serviceStatus}`}
+          >
+            <div className={`w-2 h-2 rounded-full ${STATUS_COLORS[serviceStatus] || 'bg-overlay0'}`}
+              style={gradientColor ? { boxShadow: `0 0 6px 1px ${gradientColor}60` } : undefined}
+            />
+            <span className="text-xs font-medium" style={{ color: gradientColor || undefined }}>
+              Claude {STATUS_LABELS[serviceStatus] || serviceStatus}
+            </span>
+          </div>
+        )}
+        {serviceStatus === 'operational' && (
+          <div
+            className={`w-2 h-2 rounded-full ${STATUS_COLORS[serviceStatus]}`}
+            title="Claude Code: Operational"
           />
         )}
         <button
