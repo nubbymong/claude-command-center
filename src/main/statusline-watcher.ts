@@ -172,19 +172,10 @@ process.stdin.on('end', async () => {
     const isPeak = isWeekday && ptHour >= 5 && ptHour < 11;
     status.isPeak = isPeak;
 
-    // Build a compact statusline for the Claude Code terminal
-    const parts = [];
-    const modelName = status.model || '';
-    if (modelName) {
-      const short = modelName.includes('opus') ? 'Opus' : modelName.includes('sonnet') ? 'Sonnet' : modelName.includes('haiku') ? 'Haiku' : modelName;
-      parts.push(short);
-    }
-    if (status.contextUsedPercent != null) parts.push('ctx:' + Math.round(status.contextUsedPercent) + '%');
-    if (status.costUsd != null) parts.push('$' + Number(status.costUsd).toFixed(2));
-    if (status.rateLimitCurrent != null) parts.push('5h:' + status.rateLimitCurrent + '%');
-    parts.push(isPeak ? 'PEAK' : 'OFF-PEAK');
-
-    process.stdout.write(parts.join(' | '));
+    // Suppress statusline display in the terminal — the Conductor's own ContextBar
+    // shows all this data via the file watcher below. Output a single space
+    // so Claude's statusline area stays minimal.
+    process.stdout.write(' ');
 
     // Write status file for the app's ContextBar (best-effort, fails silently on remote)
     try {
