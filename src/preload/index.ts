@@ -45,12 +45,6 @@ export interface ElectronAPI {
       }
       configLabel?: string
       useResumePicker?: boolean
-      visionConfig?: {
-        enabled: boolean
-        browser: 'chrome' | 'edge'
-        debugPort: number
-        headless?: boolean
-      }
       agentsConfig?: Array<{
         name: string; description: string; prompt: string
         model?: string; tools?: string[]
@@ -304,14 +298,14 @@ const electronAPI: ElectronAPI = {
     },
   },
   vision: {
-    start: (sessionId: string, debugPort: number, browser: string) =>
-      ipcRenderer.invoke(IPC.VISION_START, sessionId, debugPort, browser),
-    stop: (sessionId: string) => ipcRenderer.invoke(IPC.VISION_STOP, sessionId),
-    status: (sessionId: string) => ipcRenderer.invoke(IPC.VISION_STATUS, sessionId),
+    start: () => ipcRenderer.invoke(IPC.VISION_START),
+    stop: () => ipcRenderer.invoke(IPC.VISION_STOP),
+    status: () => ipcRenderer.invoke(IPC.VISION_STATUS),
     launch: (browser: string, debugPort: number, url?: string, headless?: boolean) =>
       ipcRenderer.invoke(IPC.VISION_LAUNCH, browser, debugPort, url, headless ?? true),
-    getPrompt: () => ipcRenderer.invoke(IPC.VISION_GET_PROMPT) as Promise<string | null>,
-    onStatusChanged: (callback: (data: { sessionId: string; connected: boolean; browser: string; proxyPort: number }) => void) => {
+    saveConfig: (config: any) => ipcRenderer.invoke(IPC.VISION_SAVE_CONFIG, config),
+    getConfig: () => ipcRenderer.invoke(IPC.VISION_GET_CONFIG),
+    onStatusChanged: (callback: (data: { connected: boolean; browser: string; mcpPort: number }) => void) => {
       const handler = (_: unknown, data: any) => callback(data)
       ipcRenderer.on(IPC.VISION_STATUS_CHANGED, handler)
       return () => ipcRenderer.removeListener(IPC.VISION_STATUS_CHANGED, handler)

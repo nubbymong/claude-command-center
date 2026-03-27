@@ -156,10 +156,35 @@ process.stdin.on('end', async () => {
       }
     }
 
-    // Suppress statusline display in the terminal — the app's own ContextBar
-    // shows all this data via the file watcher below. Output a single space
-    // so Claude's statusline area stays minimal.
-    process.stdout.write(' ');
+    // Peak/off-peak — peak hours are 05:00-11:00 PT (UTC-7/-8) on weekdays
+    const now = new Date();
+    const ptOffset = (() => {
+      const year = now.getUTCFullYear();
+      const marchSecondSun = new Date(Date.UTC(year, 2, 8));
+      marchSecondSun.setUTCDate(8 + (7 - marchSecondSun.getUTCDay()) % 7);
+      const novFirstSun = new Date(Date.UTC(year, 10, 1));
+      novFirstSun.setUTCDate(1 + (7 - novFirstSun.getUTCDay()) % 7);
+      return (now >= marchSecondSun && now < novFirstSun) ? -7 : -8;
+    })();
+    const ptHour = (now.getUTCHours() + ptOffset + 24) % 24;
+    const ptDay = new Date(now.getTime() + ptOffset * 3600000).getUTCDay();
+    const isWeekday = ptDay >= 1 && ptDay <= 5;
+    const isPeak = isWeekday && ptHour >= 5 && ptHour < 11;
+    status.isPeak = isPeak;
+
+    // Build a compact statusline for the Claude Code terminal
+    const parts = [];
+    const modelName = status.model || '';
+    if (modelName) {
+      const short = modelName.includes('opus') ? 'Opus' : modelName.includes('sonnet') ? 'Sonnet' : modelName.includes('haiku') ? 'Haiku' : modelName;
+      parts.push(short);
+    }
+    if (status.contextUsedPercent != null) parts.push('ctx:' + Math.round(status.contextUsedPercent) + '%');
+    if (status.costUsd != null) parts.push('$' + Number(status.costUsd).toFixed(2));
+    if (status.rateLimitCurrent != null) parts.push('5h:' + status.rateLimitCurrent + '%');
+    parts.push(isPeak ? 'PEAK' : 'OFF-PEAK');
+
+    process.stdout.write(parts.join(' | '));
 
     // Write status file for the app's ContextBar (best-effort, fails silently on remote)
     try {
@@ -197,17 +222,12 @@ process.stdin.on('end', async () => {
       fs.copyFileSync(resumePickerSrc, path.join(resourcesScriptsDir, 'resume-picker.js'))
     }
 
-    // Deploy vision-cli.js from bundled scripts
-    const visionCliSrc = path.join(__dirname, '../../scripts/vision-cli.js')
-    if (fs.existsSync(visionCliSrc)) {
-      fs.copyFileSync(visionCliSrc, path.join(resourcesScriptsDir, 'vision-cli.js'))
+    // Clean up legacy vision scripts (replaced by MCP server)
+    for (const legacy of ['vision-cli.js', 'vision-prompt.txt']) {
+      const legacyPath = path.join(resourcesScriptsDir, legacy)
+      try { if (fs.existsSync(legacyPath)) fs.unlinkSync(legacyPath) } catch { /* ignore */ }
     }
 
-    // Deploy vision-prompt.txt from bundled scripts
-    const visionPromptSrc = path.join(__dirname, '../../scripts/vision-prompt.txt')
-    if (fs.existsSync(visionPromptSrc)) {
-      fs.copyFileSync(visionPromptSrc, path.join(resourcesScriptsDir, 'vision-prompt.txt'))
-    }
   } catch { /* resources dir may not be configured yet */ }
 }
 

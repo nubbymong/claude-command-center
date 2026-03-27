@@ -13,20 +13,13 @@ interface Props {
   isPartnerActive?: boolean
   onTogglePartner?: () => void
   partnerSessionId?: string
-  visionEnabled?: boolean
-  visionConnected?: boolean
-  visionBrowser?: 'chrome' | 'edge'
-  visionDebugPort?: number
-  visionUrl?: string
-  visionHeadless?: boolean
 }
 
-export default function CommandBar({ sessionId, configId, sessionType = 'local', partnerEnabled, isPartnerActive, onTogglePartner, partnerSessionId, visionEnabled, visionConnected, visionBrowser, visionDebugPort, visionUrl, visionHeadless }: Props) {
+export default function CommandBar({ sessionId, configId, sessionType = 'local', partnerEnabled, isPartnerActive, onTogglePartner, partnerSessionId }: Props) {
   const { commands, addCommand, updateCommand, removeCommand, reorderCommands } = useCommandStore()
   const [showDialog, setShowDialog] = useState(false)
   const [editingCommand, setEditingCommand] = useState<CustomCommand | null>(null)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; commandId?: string } | null>(null)
-  const [visionContextMenu, setVisionContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [dragId, setDragId] = useState<string | null>(null)
   const [dragOverId, setDragOverId] = useState<string | null>(null)
 
@@ -178,61 +171,6 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
         <div className="w-px h-4 bg-surface1 mx-0.5" />
         <ScreenshotButton sessionId={sessionId} sessionType={sessionType} />
         <CompactionInterruptButton sessionId={sessionId} />
-        {visionEnabled && (
-          visionConnected ? (
-            <div className="relative shrink-0">
-              <button
-                onClick={(e) => e.preventDefault()}
-                onContextMenu={(e) => {
-                  e.preventDefault()
-                  e.stopPropagation()
-                  setVisionContextMenu({ x: e.clientX, y: e.clientY })
-                }}
-                className="flex items-center gap-1 px-2 py-0.5 text-xs rounded border border-green/40 bg-green/10 text-green cursor-default shrink-0"
-                title={`Vision connected to ${visionBrowser || 'browser'} (port ${visionDebugPort || 9222}) \u2014 right-click to disconnect`}
-              >
-                <span className="w-1.5 h-1.5 rounded-full bg-green inline-block" />
-                Vision
-              </button>
-            </div>
-          ) : (
-            <button
-              onClick={() => {
-                if (visionBrowser && visionDebugPort) {
-                  window.electronAPI.vision.launch(visionBrowser, visionDebugPort, visionUrl, visionHeadless ?? true)
-                }
-              }}
-              onContextMenu={(e) => {
-                e.preventDefault()
-                e.stopPropagation()
-                setVisionContextMenu({ x: e.clientX, y: e.clientY })
-              }}
-              className="flex items-center gap-1 px-2 py-0.5 text-xs rounded border border-peach/40 bg-peach/10 text-peach hover:bg-peach/20 transition-colors shrink-0"
-              title={`Launch ${visionBrowser || 'browser'} \u2014 right-click to disconnect`}
-            >
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="12" r="10" />
-                <polygon points="10,8 16,12 10,16" fill="currentColor" stroke="none" />
-              </svg>
-              Launch Vision
-            </button>
-          )
-        )}
-        {visionContextMenu && (
-          <VisionContextMenu
-            x={visionContextMenu.x}
-            y={visionContextMenu.y}
-            onClose={() => setVisionContextMenu(null)}
-            onDisconnect={() => {
-              window.electronAPI.vision.stop(sessionId)
-              setVisionContextMenu(null)
-            }}
-            onLaunch={visionBrowser && visionDebugPort ? () => {
-              window.electronAPI.vision.launch(visionBrowser, visionDebugPort, visionUrl, visionHeadless ?? true)
-              setVisionContextMenu(null)
-            } : undefined}
-          />
-        )}
         {/* Back to Claude / Partner toggle - on magic row */}
         {partnerEnabled && onTogglePartner && (
           <>
@@ -400,51 +338,3 @@ function ContextMenuOverlay({ x, y, onClose, onAdd, onEdit, onDelete }: {
   )
 }
 
-function VisionContextMenu({ x, y, onClose, onDisconnect, onLaunch }: {
-  x: number; y: number
-  onClose: () => void
-  onDisconnect: () => void
-  onLaunch?: () => void
-}) {
-  const menuRef = React.useRef<HTMLDivElement>(null)
-  const [pos, setPos] = React.useState<{ left: number; top?: number; bottom?: number }>({ left: x })
-
-  React.useEffect(() => {
-    const el = menuRef.current
-    if (!el) return
-    const rect = el.getBoundingClientRect()
-    const viewH = window.innerHeight
-    const viewW = window.innerWidth
-    const left = Math.min(x, viewW - rect.width - 8)
-    if (y + rect.height > viewH - 8) {
-      setPos({ left, bottom: viewH - y })
-    } else {
-      setPos({ left, top: y })
-    }
-  }, [x, y])
-
-  return (
-    <div className="fixed inset-0 z-50" onClick={onClose}>
-      <div
-        ref={menuRef}
-        className="fixed bg-surface0 border border-surface1 rounded-lg shadow-xl py-1 min-w-[180px]"
-        style={pos}
-        onClick={(e) => e.stopPropagation()}
-      >
-        {onLaunch && (
-          <button onClick={onLaunch} className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface1 transition-colors flex items-center gap-2">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="10" />
-              <polygon points="10,8 16,12 10,16" fill="currentColor" stroke="none" />
-            </svg>
-            Relaunch Browser
-          </button>
-        )}
-        <button onClick={onDisconnect} className="w-full text-left px-3 py-1.5 text-xs text-red hover:bg-surface1 transition-colors flex items-center gap-2">
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2"><line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/></svg>
-          Disconnect Vision
-        </button>
-      </div>
-    </div>
-  )
-}

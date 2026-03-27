@@ -24,13 +24,6 @@ export interface TerminalConfig {
     startClaudeAfter?: boolean // Start Claude after post-command completes
     dockerContainer?: string  // Docker container name (enables docker cp for screenshots)
   }
-  visionConfig?: {
-    enabled: boolean
-    browser: 'chrome' | 'edge'
-    debugPort: number
-    url?: string
-    headless?: boolean
-  }
   legacyVersion?: {
     enabled: boolean
     version: string

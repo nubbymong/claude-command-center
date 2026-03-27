@@ -20,6 +20,7 @@
     "capture-training": "npx tsx scripts/capture-training-screenshots.ts"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.28.0",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/addon-web-links": "^0.11.0",
     "@xterm/addon-webgl": "^0.18.0",
@@ -31,6 +32,7 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "ws": "^8.19.0",
+    "zod": "^4.3.6",
     "zustand": "^5.0.0"
   },
   "devDependencies": {

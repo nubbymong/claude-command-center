@@ -5,12 +5,22 @@
 
 // ── Vision ──
 
+/** @deprecated Use GlobalVisionConfig instead — vision is now global, not per-session */
 export interface VisionConfig {
   enabled: boolean
   browser: 'chrome' | 'edge'
   debugPort: number
   url?: string
   headless?: boolean  // default true — run browser without visible window
+}
+
+export interface GlobalVisionConfig {
+  enabled: boolean
+  browser: 'chrome' | 'edge'
+  debugPort: number     // CDP port, default 9222
+  mcpPort: number       // MCP SSE server port, default 19333
+  url?: string
+  headless?: boolean    // default true
 }
 
 // ── SSH ──
@@ -50,7 +60,6 @@ export interface SavedSession {
   partnerTerminalPath?: string
   partnerElevated?: boolean
   sshConfig?: SshConfig
-  visionConfig?: VisionConfig
   legacyVersion?: LegacyVersion
   agentIds?: string[]
 }
@@ -87,6 +96,7 @@ export interface StatuslineData {
   rateLimitWeekly?: number
   rateLimitWeeklyResets?: string
   rateLimitExtra?: RateLimitExtra
+  isPeak?: boolean
 }
 
 // ── Agent Templates ──

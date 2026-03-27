@@ -1,7 +1,6 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { spawnPty, writePty, resizePty, killPty, SSHOptions } from '../pty-manager'
 import { logUserInput, isDebugModeEnabled } from '../debug-capture'
-import { startVisionForSession } from '../vision-manager'
 import { logInfo } from '../debug-logger'
 import { isVersionInstalled, installVersion } from '../legacy-version-manager'
 
@@ -14,7 +13,6 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     shellOnly?: boolean
     configLabel?: string
     useResumePicker?: boolean
-    visionConfig?: { enabled: boolean; browser: 'chrome' | 'edge'; debugPort: number }
     legacyVersion?: { enabled: boolean; version: string }
     agentsConfig?: Array<{ name: string; description: string; prompt: string; model?: string; tools?: string[] }>
   }) => {
@@ -29,27 +27,6 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
         if (!result.ok) {
           logInfo(`[pty] Legacy install failed, falling back to system claude: ${result.error}`)
         }
-      }
-    }
-
-    // Start vision BEFORE spawning PTY so env vars are available
-    if (options?.visionConfig?.enabled) {
-      try {
-        const proxyPort = await startVisionForSession(sessionId, options.visionConfig.debugPort, options.visionConfig.browser, getWindow)
-        logInfo(`[pty] Vision started for ${sessionId}, proxy port ${proxyPort}`)
-        // Notify renderer of initial connected state
-        const { getVisionStatus } = require('../vision-manager')
-        const status = getVisionStatus(sessionId)
-        if (status) {
-          win.webContents.send('vision:statusChanged', {
-            sessionId,
-            connected: status.connected,
-            browser: status.browser,
-            proxyPort: status.proxyPort
-          })
-        }
-      } catch (err: any) {
-        logInfo(`[pty] Vision start deferred for ${sessionId}: ${err?.message || err}`)
       }
     }
 

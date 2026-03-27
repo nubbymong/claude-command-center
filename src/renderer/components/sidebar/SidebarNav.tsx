@@ -7,6 +7,8 @@ interface SidebarNavProps {
   insightsStatus: string | null
   insightsMessage: string | null
   cloudAgentRunning: number
+  visionRunning?: boolean
+  visionConnected?: boolean
   collapsed?: boolean
 }
 
@@ -40,6 +42,16 @@ const navItems: { view: ViewType; icon: React.ReactNode; label: string }[] = [
     )
   },
   {
+    view: 'vision',
+    label: 'Vision',
+    icon: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+        <circle cx="12" cy="12" r="3" />
+      </svg>
+    )
+  },
+  {
     view: 'logs',
     label: 'Logs',
     icon: (
@@ -64,13 +76,15 @@ const navItems: { view: ViewType; icon: React.ReactNode; label: string }[] = [
   },
 ]
 
-function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMessage, cloudAgentRunning, isCollapsed }: {
+function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMessage, cloudAgentRunning, visionRunning, visionConnected, isCollapsed }: {
   item: typeof navItems[0]
   currentView: ViewType
   onViewChange: (view: ViewType) => void
   insightsStatus: string | null
   insightsMessage: string | null
   cloudAgentRunning: number
+  visionRunning?: boolean
+  visionConnected?: boolean
   isCollapsed: boolean
 }) {
   const isInsightsActive = item.view === 'insights' && !!insightsStatus
@@ -81,6 +95,7 @@ function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMe
     : null
   const isInsightsAnimating = insightsStatus === 'running' || insightsStatus === 'extracting_kpis'
   const isCloudAgentsRunning = item.view === 'cloud-agents' && cloudAgentRunning > 0
+  const isVisionActive = item.view === 'vision' && visionRunning
 
   const title = isCollapsed
     ? item.label
@@ -123,11 +138,20 @@ function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMe
           }}
         />
       )}
+      {isVisionActive && (
+        <span
+          className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full"
+          style={{
+            backgroundColor: visionConnected ? '#A6E3A1' : '#F38BA8',
+            boxShadow: `0 0 6px 2px ${visionConnected ? '#A6E3A160' : '#F38BA860'}`,
+          }}
+        />
+      )}
     </button>
   )
 }
 
-export default function SidebarNav({ currentView, onViewChange, insightsStatus, insightsMessage, cloudAgentRunning, collapsed }: SidebarNavProps) {
+export default function SidebarNav({ currentView, onViewChange, insightsStatus, insightsMessage, cloudAgentRunning, visionRunning, visionConnected, collapsed }: SidebarNavProps) {
   if (collapsed) {
     return (
       <div className="flex flex-col items-center gap-1 py-2 border-b border-surface0">
@@ -140,6 +164,8 @@ export default function SidebarNav({ currentView, onViewChange, insightsStatus, 
             insightsStatus={insightsStatus}
             insightsMessage={insightsMessage}
             cloudAgentRunning={cloudAgentRunning}
+            visionRunning={visionRunning}
+            visionConnected={visionConnected}
             isCollapsed
           />
         ))}
@@ -158,6 +184,8 @@ export default function SidebarNav({ currentView, onViewChange, insightsStatus, 
           insightsStatus={insightsStatus}
           insightsMessage={insightsMessage}
           cloudAgentRunning={cloudAgentRunning}
+          visionRunning={visionRunning}
+          visionConnected={visionConnected}
           isCollapsed={false}
         />
       ))}

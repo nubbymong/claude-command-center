@@ -50,15 +50,9 @@ export interface Session {
     usedUsd: number
     limitUsd: number
   }
+  isPeak?: boolean
   compactionInterrupt?: boolean         // Per-session on/off (default off)
   compactionInterruptTriggered?: boolean // Set true after auto-Escape, prevents re-trigger
-  visionConfig?: {                       // Vision browser control config
-    enabled: boolean
-    browser: 'chrome' | 'edge'
-    debugPort: number
-  }
-  visionConnected?: boolean              // Whether vision CDP connection is active
-  visionPort?: number                    // Vision proxy port (for env vars)
   legacyVersion?: {                      // Pinned Claude CLI version
     enabled: boolean
     version: string

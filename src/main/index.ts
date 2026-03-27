@@ -32,7 +32,9 @@ import { startUpdateServer, stopUpdateServer } from './update-server'
 import { startUpdateClient, stopUpdateClient } from './update-client'
 import { saveSessionState, loadSessionState, clearSessionState, hasSavedSessionState, SessionState } from './session-state'
 import { getConfigDir, ensureConfigDir } from './config-manager'
-import { stopAllVisionManagers } from './vision-manager'
+import { stopGlobalVision, startGlobalVision, cleanupLegacyVisionMarkers } from './vision-manager'
+import { readConfig } from './config-manager'
+import type { GlobalVisionConfig } from '../shared/types'
 
 import { migrateRegistryKeys } from './registry'
 import { installGlobalErrorHandlers, logInfo, logError, closeDebugLogger } from './debug-logger'
@@ -380,6 +382,15 @@ if (!gotTheLock) {
     // Auto-detect current account from credentials (fire-and-forget)
     initAccounts().catch(() => {})
 
+    // Clean up legacy CLAUDE.md vision markers and auto-start global vision if configured
+    cleanupLegacyVisionMarkers()
+    const visionConfig = readConfig<GlobalVisionConfig>('visionGlobal')
+    if (visionConfig?.enabled) {
+      startGlobalVision(visionConfig, getWindow).catch(err => {
+        logError(`[main] Vision auto-start failed: ${err?.message}`)
+      })
+    }
+
     // Start update system
     // Dev mode: run update server to push notifications to production clients
     // Production mode: connect to dev server as client to receive push notifications
@@ -414,7 +425,7 @@ if (!gotTheLock) {
     stopUpdateClient()
     disableDebugMode()
     closeAllLogs()
-    stopAllVisionManagers()
+    stopGlobalVision()
     killAllAgents()
     killAllPty()
     closeDebugLogger()

@@ -48,10 +48,6 @@ export default function SessionHeader({ session, isShowingPartner, sidebarCollap
     window.electronAPI.pty.kill(partnerPtyId)
     clearSpawned(session.id)
     clearSpawned(partnerPtyId)
-    // Stop vision if active
-    if (session.visionConfig?.enabled) {
-      window.electronAPI.vision.stop(session.id)
-    }
     // Show resume picker for Claude sessions
     if (session.sessionType === 'local' && !session.shellOnly) {
       markSessionForResumePicker(session.id)
@@ -83,8 +79,6 @@ export default function SessionHeader({ session, isShowingPartner, sidebarCollap
       rateLimitWeeklyResets: undefined,
       rateLimitExtra: undefined,
       compactionInterruptTriggered: undefined,
-      visionConnected: undefined,
-      visionPort: undefined,
     })
   }
 
@@ -117,28 +111,6 @@ export default function SessionHeader({ session, isShowingPartner, sidebarCollap
       {session.sessionType === 'ssh' && session.sshConfig && (
         <span className="text-xs text-mauve">SSH: {session.sshConfig.username}@{session.sshConfig.host}</span>
       )}
-      {session.visionConfig?.enabled && (
-        <span
-          className="flex items-center gap-1 text-xs cursor-default"
-          title={session.visionConnected
-            ? `Vision: connected to ${session.visionConfig.browser} (port ${session.visionConfig.debugPort}) \u2014 right-click to disconnect`
-            : `Vision: disconnected (${session.visionConfig.browser} port ${session.visionConfig.debugPort}) \u2014 right-click to disconnect`
-          }
-          onContextMenu={(e) => {
-            e.preventDefault()
-            e.stopPropagation()
-            window.electronAPI.vision.stop(session.id)
-            updateSession(session.id, { visionConnected: undefined, visionPort: undefined })
-          }}
-        >
-          <span
-            className="w-2 h-2 rounded-full inline-block"
-            style={{ backgroundColor: session.visionConnected ? '#A6E3A1' : '#F38BA8' }}
-          />
-          <span className="text-overlay0">Vision</span>
-        </span>
-      )}
-
       {/* Separator before notes */}
       <div className="w-px h-4 bg-surface1" />
 

@@ -80,13 +80,6 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
   const allAgentTemplates = [...agentUserTemplates, ...BUILTIN_TEMPLATES]
   const [selectedAgentIds, setSelectedAgentIds] = useState<Set<string>>(new Set(initial?.agentIds ?? []))
 
-  // Vision fields
-  const [visionEnabled, setVisionEnabled] = useState(initial?.visionConfig?.enabled ?? false)
-  const [visionBrowser, setVisionBrowser] = useState<'chrome' | 'edge'>(initial?.visionConfig?.browser ?? 'chrome')
-  const [visionDebugPort, setVisionDebugPort] = useState(initial?.visionConfig?.debugPort ?? 9222)
-  const [visionUrl, setVisionUrl] = useState(initial?.visionConfig?.url ?? '')
-  const [visionHeadless, setVisionHeadless] = useState(initial?.visionConfig?.headless ?? true)
-
   // Fetch available versions when legacy checkbox enabled
   useEffect(() => {
     if (!legacyEnabled) return
@@ -231,13 +224,6 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
         hasSudoPassword: saveSudoPassword && sudoPassword.length > 0,
         startClaudeAfter: postCommand.trim() ? startClaudeAfter : undefined,
         dockerContainer: dockerContainer.trim() || undefined
-      } : undefined,
-      visionConfig: visionEnabled ? {
-        enabled: true,
-        browser: visionBrowser,
-        debugPort: visionDebugPort,
-        url: visionUrl.trim() || undefined,
-        headless: visionHeadless
       } : undefined,
       legacyVersion: legacyEnabled && legacyVersion ? {
         enabled: true,
@@ -629,70 +615,6 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                   <p className="text-[10px] text-overlay0">
                     Install and use a specific version of Claude CLI. ~80MB per version.
                     {!versionInstalled && legacyVersion && ' Will auto-install on first launch if not installed.'}
-                  </p>
-                </div>
-              )}
-            </div>
-
-            {/* Vision — browser control */}
-            <div>
-              <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={visionEnabled}
-                  onChange={(e) => setVisionEnabled(e.target.checked)}
-                  className="rounded border-surface1"
-                />
-                Vision (browser control)
-              </label>
-              {visionEnabled && (
-                <div className="ml-5 mt-2 space-y-2">
-                  <div>
-                    <label className="block text-xs text-subtext0 mb-1">URL to open</label>
-                    <input
-                      type="text"
-                      value={visionUrl}
-                      onChange={(e) => setVisionUrl(e.target.value)}
-                      placeholder="http://localhost:3000"
-                      className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-blue"
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="block text-xs text-subtext0 mb-1">Browser</label>
-                      <select
-                        value={visionBrowser}
-                        onChange={(e) => setVisionBrowser(e.target.value as 'chrome' | 'edge')}
-                        className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-blue"
-                      >
-                        <option value="chrome">Chrome</option>
-                        <option value="edge">Edge</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-xs text-subtext0 mb-1">CDP Port</label>
-                      <input
-                        type="number"
-                        value={visionDebugPort}
-                        onChange={(e) => setVisionDebugPort(parseInt(e.target.value) || 9222)}
-                        className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-blue"
-                      />
-                    </div>
-                  </div>
-                  <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={visionHeadless}
-                      onChange={(e) => setVisionHeadless(e.target.checked)}
-                      className="rounded border-surface1"
-                    />
-                    Headless
-                    <span className="text-overlay0 text-xs">(run browser without visible window)</span>
-                  </label>
-                  <p className="text-[10px] text-overlay0">
-                    {sessionType === 'ssh'
-                      ? 'Browser launches locally. Vision proxy is network-accessible for remote sessions.'
-                      : 'Claude can navigate, click, type, and verify UI in the browser. CDP Port is for Chrome DevTools Protocol (usually 9222).'}
                   </p>
                 </div>
               )}

@@ -1,3 +1,10 @@
+/**
+ * Vision Manager — global CDP browser automation for Claude Code via MCP.
+ * Manages a single VisionManager instance (singleton) with CDP connection,
+ * heartbeat, and browser launching. The MCP SSE server (vision-mcp-server.ts)
+ * wraps this to expose tools to Claude Code sessions.
+ */
+
 import * as http from 'http'
 import * as fs from 'fs'
 import * as path from 'path'
@@ -6,6 +13,8 @@ import { spawn } from 'child_process'
 import { BrowserWindow, nativeImage } from 'electron'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import { logInfo, logError } from './debug-logger'
+import { startMcpServer, stopMcpServer } from './vision-mcp-server'
+import type { GlobalVisionConfig } from '../shared/types'
 
 // chrome-remote-interface types
 let CDP: any = null
@@ -16,60 +25,29 @@ function getCDP(): any {
   return CDP
 }
 
-interface VisionCommand {
+export interface VisionCommand {
   command: string
   args: string[]
 }
 
-interface VisionResult {
+export interface VisionResult {
   ok: boolean
   data?: any
   error?: string
   path?: string
 }
 
-interface VisionManagerEntry {
-  manager: VisionManager
-  sessionIds: Set<string>
-}
+// === Singleton state ===
 
-// Registry: one VisionManager per debug port, ref-counted by session IDs
-const registry = new Map<number, VisionManagerEntry>()
-
-// Track which session maps to which debug port
-const sessionPortMap = new Map<string, number>()
-
-/**
- * Get the local machine's LAN IP address for SSH sessions to reach the proxy.
- */
-function getLocalIp(): string {
-  const interfaces = os.networkInterfaces()
-  const candidates: string[] = []
-  for (const name of Object.keys(interfaces)) {
-    for (const iface of interfaces[name]!) {
-      if (iface.family === 'IPv4' && !iface.internal) {
-        candidates.push(iface.address)
-      }
-    }
-  }
-  if (candidates.length === 0) return '127.0.0.1'
-  // Prefer 192.168.x.x (most common home/office LAN) over everything else.
-  // Avoids Tailscale (100.x.x.x), Hyper-V vSwitches (172.x.x.x), WSL bridges, etc.
-  const preferred = candidates.find(ip => ip.startsWith('192.168.'))
-    || candidates.find(ip => ip.startsWith('10.'))
-    || candidates.find(ip => /^172\.(1[6-9]|2\d|3[01])\./.test(ip))
-  return preferred || candidates[0]
-}
+let globalManager: VisionManager | null = null
+let globalConfig: GlobalVisionConfig | null = null
 
 class VisionManager {
   private debugPort: number
   private browser: string
   private client: any = null
-  private proxyServer: http.Server | null = null
-  private proxyPort: number = 0
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null
   private connected: boolean = false
-  private commandQueue: Promise<VisionResult> = Promise.resolve({ ok: true })
   private getWindow: (() => BrowserWindow | null) | null = null
 
   constructor(debugPort: number, browser: string) {
@@ -77,9 +55,8 @@ class VisionManager {
     this.browser = browser
   }
 
-  async start(getWindow: () => BrowserWindow | null): Promise<number> {
+  async start(getWindow: () => BrowserWindow | null): Promise<void> {
     this.getWindow = getWindow
-    await this.startProxy()
     // Try to connect — don't throw if browser isn't running yet.
     // The heartbeat will pick it up when it launches.
     try {
@@ -88,15 +65,10 @@ class VisionManager {
       logInfo(`[vision] Browser not reachable yet on port ${this.debugPort} — heartbeat will reconnect when it launches`)
     }
     this.startHeartbeat()
-    return this.proxyPort
   }
 
   async stop(): Promise<void> {
     this.stopHeartbeat()
-    if (this.proxyServer) {
-      this.proxyServer.close()
-      this.proxyServer = null
-    }
     await this.disconnectCDP()
     this.connected = false
     logInfo(`[vision] Stopped VisionManager for port ${this.debugPort}`)
@@ -106,12 +78,12 @@ class VisionManager {
     return this.connected
   }
 
-  getProxyPort(): number {
-    return this.proxyPort
-  }
-
   getBrowser(): string {
     return this.browser
+  }
+
+  getDebugPort(): number {
+    return this.debugPort
   }
 
   private async connectCDP(): Promise<void> {
@@ -156,16 +128,11 @@ class VisionManager {
   private notifyStatusChange(): void {
     const win = this.getWindow?.()
     if (!win || win.isDestroyed()) return
-    const entry = registry.get(this.debugPort)
-    if (!entry) return
-    for (const sessionId of entry.sessionIds) {
-      win.webContents.send('vision:statusChanged', {
-        sessionId,
-        connected: this.connected,
-        browser: this.browser,
-        proxyPort: this.proxyPort
-      })
-    }
+    win.webContents.send('vision:statusChanged', {
+      connected: this.connected,
+      browser: this.browser,
+      mcpPort: globalConfig?.mcpPort || 0
+    })
   }
 
   /** Immediately attempt CDP reconnection (called after browser launch) */
@@ -226,59 +193,10 @@ class VisionManager {
     }
   }
 
-  private async startProxy(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      this.proxyServer = http.createServer((req, res) => {
-        if (req.method === 'POST' && req.url === '/command') {
-          let body = ''
-          req.on('data', (c) => { body += c })
-          req.on('end', () => {
-            try {
-              const cmd: VisionCommand = JSON.parse(body)
-              this.enqueueCommand(cmd).then((result) => {
-                res.writeHead(200, { 'Content-Type': 'application/json' })
-                res.end(JSON.stringify(result))
-              })
-            } catch {
-              res.writeHead(400, { 'Content-Type': 'application/json' })
-              res.end(JSON.stringify({ ok: false, error: 'Invalid JSON' }))
-            }
-          })
-        } else if (req.method === 'GET' && req.url === '/status') {
-          res.writeHead(200, { 'Content-Type': 'application/json' })
-          res.end(JSON.stringify({ ok: true, data: { connected: this.connected, browser: this.browser, port: this.debugPort } }))
-        } else {
-          res.writeHead(404)
-          res.end()
-        }
-      })
-
-      // Listen on 0.0.0.0 so remote SSH sessions can reach the proxy via LAN IP
-      this.proxyServer.listen(0, '0.0.0.0', () => {
-        const addr = this.proxyServer!.address() as { port: number }
-        this.proxyPort = addr.port
-        logInfo(`[vision] HTTP proxy listening on 127.0.0.1:${this.proxyPort} (debug port ${this.debugPort})`)
-        resolve()
-      })
-
-      this.proxyServer.on('error', (err) => {
-        logError('[vision] Proxy server error:', err)
-        reject(err)
-      })
-    })
-  }
-
-  private enqueueCommand(cmd: VisionCommand): Promise<VisionResult> {
-    this.commandQueue = this.commandQueue.then(
-      () => this.executeCommand(cmd),
-      () => this.executeCommand(cmd)
-    )
-    return this.commandQueue
-  }
-
-  private async executeCommand(cmd: VisionCommand): Promise<VisionResult> {
+  /** Execute a vision command against the connected browser. */
+  async executeCommand(cmd: VisionCommand): Promise<VisionResult> {
     if (!this.connected || !this.client) {
-      return { ok: false, error: 'Not connected to browser. Launch it first or check that it is running with --remote-debugging-port.' }
+      return { ok: false, error: 'Not connected to browser. Launch it from the Vision page or check that it is running with --remote-debugging-port.' }
     }
 
     try {
@@ -493,72 +411,46 @@ class VisionManager {
   }
 }
 
-// === Vision CLAUDE.md Instructions ===
+// === Settings.json MCP config management ===
 
-const VISION_MARKER_START = '<!-- VISION-INSTRUCTIONS-START -->'
-const VISION_MARKER_END = '<!-- VISION-INSTRUCTIONS-END -->'
-
-/**
- * Inject vision instructions into ~/.claude/CLAUDE.md so Claude
- * automatically knows about the vision CLI tools.
- * Uses section markers to add/update without clobbering user content.
- */
-function injectVisionInstructions(): void {
+function injectMcpSettings(mcpPort: number): void {
   try {
-    // Try resources directory first, then fall back to bundled scripts
-    const promptFile = path.join(getResourcesDirectory(), 'scripts', 'vision-prompt.txt')
-    const bundledPromptFile = path.join(__dirname, '../../scripts/vision-prompt.txt')
-    const actualFile = fs.existsSync(promptFile) ? promptFile : fs.existsSync(bundledPromptFile) ? bundledPromptFile : null
-    if (!actualFile) {
-      logError('[vision] vision-prompt.txt not found at resources or bundled path')
-      return
-    }
-
-    const instructions = fs.readFileSync(actualFile, 'utf-8').trim()
-    const section = `${VISION_MARKER_START}\n${instructions}\n${VISION_MARKER_END}`
-
-    const claudeDir = path.join(os.homedir(), '.claude')
-    const claudeMdPath = path.join(claudeDir, 'CLAUDE.md')
-
-    if (!fs.existsSync(claudeDir)) fs.mkdirSync(claudeDir, { recursive: true })
-
-    let existing = ''
-    if (fs.existsSync(claudeMdPath)) {
-      existing = fs.readFileSync(claudeMdPath, 'utf-8')
-    }
-
-    // Replace existing vision section or append
-    const markerRegex = new RegExp(
-      `${VISION_MARKER_START.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\S]*?${VISION_MARKER_END.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`,
-      'g'
-    )
-
-    if (markerRegex.test(existing)) {
-      const updated = existing.replace(markerRegex, section)
-      fs.writeFileSync(claudeMdPath, updated)
-    } else {
-      const separator = existing.length > 0 ? '\n\n' : ''
-      fs.writeFileSync(claudeMdPath, existing + separator + section + '\n')
-    }
-    logInfo('[vision] Injected vision instructions into ~/.claude/CLAUDE.md')
+    const settingsPath = path.join(os.homedir(), '.claude', 'settings.json')
+    let settings: any = {}
+    try { settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')) } catch { /* file may not exist */ }
+    if (!settings.mcpServers) settings.mcpServers = {}
+    settings.mcpServers['conductor-vision'] = { url: `http://localhost:${mcpPort}/sse` }
+    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2))
+    logInfo(`[vision] Injected MCP server config into ~/.claude/settings.json (port ${mcpPort})`)
   } catch (err: any) {
-    logError('[vision] Failed to inject CLAUDE.md instructions:', err?.message)
+    logError('[vision] Failed to inject MCP settings:', err?.message)
   }
 }
 
-/**
- * Remove vision instructions from ~/.claude/CLAUDE.md when no vision sessions remain.
- */
-function removeVisionInstructions(): void {
+function removeMcpSettings(): void {
+  try {
+    const settingsPath = path.join(os.homedir(), '.claude', 'settings.json')
+    if (!fs.existsSync(settingsPath)) return
+    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'))
+    if (settings.mcpServers?.['conductor-vision']) {
+      delete settings.mcpServers['conductor-vision']
+      if (Object.keys(settings.mcpServers).length === 0) delete settings.mcpServers
+      fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2))
+      logInfo('[vision] Removed MCP server config from ~/.claude/settings.json')
+    }
+  } catch (err: any) {
+    logError('[vision] Failed to remove MCP settings:', err?.message)
+  }
+}
+
+/** One-time cleanup: remove old CLAUDE.md vision markers from the legacy per-session system. */
+export function cleanupLegacyVisionMarkers(): void {
   try {
     const claudeMdPath = path.join(os.homedir(), '.claude', 'CLAUDE.md')
     if (!fs.existsSync(claudeMdPath)) return
 
     const content = fs.readFileSync(claudeMdPath, 'utf-8')
-    const markerRegex = new RegExp(
-      `\\n?\\n?${VISION_MARKER_START.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\S]*?${VISION_MARKER_END.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\n?`,
-      'g'
-    )
+    const markerRegex = /\n?\n?<!-- VISION-INSTRUCTIONS-START -->[\s\S]*?<!-- VISION-INSTRUCTIONS-END -->\n?/g
 
     if (markerRegex.test(content)) {
       const cleaned = content.replace(markerRegex, '').trim()
@@ -567,152 +459,81 @@ function removeVisionInstructions(): void {
       } else {
         fs.writeFileSync(claudeMdPath, cleaned + '\n')
       }
-      logInfo('[vision] Removed vision instructions from ~/.claude/CLAUDE.md')
+      logInfo('[vision] Cleaned up legacy vision markers from ~/.claude/CLAUDE.md')
     }
   } catch (err: any) {
-    logError('[vision] Failed to clean CLAUDE.md instructions:', err?.message)
+    logError('[vision] Failed to clean legacy CLAUDE.md markers:', err?.message)
   }
 }
 
-/**
- * Generate shell commands to inject vision instructions into CLAUDE.md on a remote machine.
- */
-export function getRemoteVisionInstructionsSetup(): string {
-  try {
-    // Check the prompt file exists locally (confirms vision is configured)
-    const promptFile = path.join(getResourcesDirectory(), 'scripts', 'vision-prompt.txt')
-    if (!fs.existsSync(promptFile)) return ''
-    // Inject vision instructions into CLAUDE.md on the remote.
-    // Uses $CCRES set by PROBE_RESOURCES in pty-manager.ts.
-    // Also prepends a source command so env vars survive Claude restarts.
-    // The grep -q check makes this idempotent.
-    return `mkdir -p ~/.claude 2>/dev/null; if ! grep -q 'VISION-INSTRUCTIONS-START' ~/.claude/CLAUDE.md 2>/dev/null; then VF="$CCRES/vision-prompt.txt"; if [ -f "$VF" ]; then printf '\\n${VISION_MARKER_START}\\n' >> ~/.claude/CLAUDE.md && cat "$VF" >> ~/.claude/CLAUDE.md && printf '\\n${VISION_MARKER_END}\\n' >> ~/.claude/CLAUDE.md; fi; fi`
-  } catch {
-    return ''
-  }
-}
+// === Public API (global singleton) ===
 
-// === Public API ===
-
-export async function startVisionForSession(
-  sessionId: string,
-  debugPort: number,
-  browser: string,
+export async function startGlobalVision(
+  config: GlobalVisionConfig,
   getWindow: () => BrowserWindow | null
-): Promise<number> {
-  const existing = registry.get(debugPort)
-  if (existing) {
-    existing.sessionIds.add(sessionId)
-    sessionPortMap.set(sessionId, debugPort)
-    logInfo(`[vision] Session ${sessionId} joined existing VisionManager on port ${debugPort} (${existing.sessionIds.size} sessions)`)
-    return existing.manager.getProxyPort()
+): Promise<void> {
+  // Stop existing if running
+  if (globalManager) {
+    await stopGlobalVision()
   }
 
-  const manager = new VisionManager(debugPort, browser)
-  const proxyPort = await manager.start(getWindow)
-  registry.set(debugPort, { manager, sessionIds: new Set([sessionId]) })
-  sessionPortMap.set(sessionId, debugPort)
+  globalConfig = config
+  const manager = new VisionManager(config.debugPort, config.browser)
+  await manager.start(getWindow)
+  globalManager = manager
 
-  // Inject vision instructions into CLAUDE.md on first vision session
-  injectVisionInstructions()
+  // Start MCP SSE server
+  await startMcpServer(config.mcpPort, manager)
 
-  logInfo(`[vision] Started new VisionManager for session ${sessionId} on debug port ${debugPort}, proxy port ${proxyPort}`)
-  return proxyPort
+  // Inject MCP settings into Claude Code
+  injectMcpSettings(config.mcpPort)
+
+  // Clean up any legacy CLAUDE.md markers
+  cleanupLegacyVisionMarkers()
+
+  logInfo(`[vision] Global vision started: CDP port ${config.debugPort}, MCP port ${config.mcpPort}`)
 }
 
-export function stopVisionForSession(sessionId: string): void {
-  const debugPort = sessionPortMap.get(sessionId)
-  if (!debugPort) return
-
-  const entry = registry.get(debugPort)
-  if (!entry) return
-
-  entry.sessionIds.delete(sessionId)
-  sessionPortMap.delete(sessionId)
-
-  if (entry.sessionIds.size === 0) {
-    entry.manager.stop()
-    registry.delete(debugPort)
-    // If no vision managers remain, clean up CLAUDE.md instructions
-    if (registry.size === 0) {
-      removeVisionInstructions()
-    }
-    logInfo(`[vision] Stopped VisionManager for port ${debugPort} (no more sessions)`)
-  } else {
-    logInfo(`[vision] Session ${sessionId} left VisionManager on port ${debugPort} (${entry.sessionIds.size} remaining)`)
+export async function stopGlobalVision(): Promise<void> {
+  if (globalManager) {
+    // Sync cleanup first (safe to run without await — critical for before-quit handler)
+    stopMcpServer()
+    removeMcpSettings()
+    // Async cleanup (CDP disconnect)
+    await globalManager.stop()
+    globalManager = null
+    logInfo('[vision] Global vision stopped')
   }
+  globalConfig = null
 }
 
-export function getVisionEnv(sessionId: string, forSSH: boolean = false): Record<string, string> {
-  const debugPort = sessionPortMap.get(sessionId)
-  if (!debugPort) return {}
-
-  const entry = registry.get(debugPort)
-  if (!entry) return {}
-
-  const scriptsDir = path.join(getResourcesDirectory(), 'scripts')
-  const cliPath = path.join(scriptsDir, 'vision-cli.js')
-
-  const env: Record<string, string> = {
-    VISION_PORT: String(entry.manager.getProxyPort()),
-    VISION_CLI: cliPath
+export function getGlobalVisionStatus(): { running: boolean; connected: boolean; browser: string; mcpPort: number } {
+  if (!globalManager || !globalConfig) {
+    return { running: false, connected: false, browser: 'chrome', mcpPort: 0 }
   }
-
-  // For SSH sessions, set VISION_HOST to the LAN IP so remote can reach the proxy.
-  // For local sessions, default 127.0.0.1 (the CLI defaults to this).
-  if (forSSH) {
-    env.VISION_HOST = getLocalIp()
-  }
-
-  return env
-}
-
-export function getVisionStatus(sessionId: string): { connected: boolean; browser: string; proxyPort: number } | null {
-  const debugPort = sessionPortMap.get(sessionId)
-  if (!debugPort) return null
-
-  const entry = registry.get(debugPort)
-  if (!entry) return null
-
   return {
-    connected: entry.manager.isConnected(),
-    browser: entry.manager.getBrowser(),
-    proxyPort: entry.manager.getProxyPort()
+    running: true,
+    connected: globalManager.isConnected(),
+    browser: globalManager.getBrowser(),
+    mcpPort: globalConfig.mcpPort
   }
 }
 
-export function getVisionPrompt(): string | null {
-  try {
-    const promptFile = path.join(getResourcesDirectory(), 'scripts', 'vision-prompt.txt')
-    const bundledPromptFile = path.join(__dirname, '../../scripts/vision-prompt.txt')
-    const actualFile = fs.existsSync(promptFile) ? promptFile : fs.existsSync(bundledPromptFile) ? bundledPromptFile : null
-    if (!actualFile) return null
-    return fs.readFileSync(actualFile, 'utf-8').trim()
-  } catch {
-    return null
+export function isGlobalVisionRunning(): boolean {
+  return globalManager !== null
+}
+
+export function getGlobalVisionConfig(): GlobalVisionConfig | null {
+  return globalConfig
+}
+
+export function tryReconnectGlobalVision(): void {
+  if (globalManager) {
+    globalManager.tryReconnectNow()
   }
 }
 
-export function stopAllVisionManagers(): void {
-  for (const [port, entry] of registry) {
-    entry.manager.stop()
-    logInfo(`[vision] Stopped VisionManager on port ${port} (app quit)`)
-  }
-  registry.clear()
-  sessionPortMap.clear()
-  removeVisionInstructions()
-}
-
-/**
- * Launch the browser with remote debugging enabled.
- * Returns the child process PID (for logging), or throws on failure.
- */
-export function tryReconnectVision(debugPort: number): void {
-  const entry = registry.get(debugPort)
-  if (entry) {
-    entry.manager.tryReconnectNow()
-  }
-}
+// === Browser launching (unchanged) ===
 
 export function launchBrowser(browser: 'chrome' | 'edge', debugPort: number, url?: string, headless: boolean = true): { pid: number; command: string } {
   const tmpDir = process.env.TEMP || process.env.TMP || os.tmpdir()
@@ -720,7 +541,6 @@ export function launchBrowser(browser: 'chrome' | 'edge', debugPort: number, url
 
   let executable: string
   if (browser === 'edge') {
-    // Try common Edge paths
     const edgePaths = [
       'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
       'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
@@ -743,7 +563,6 @@ export function launchBrowser(browser: 'chrome' | 'edge', debugPort: number, url
     args.push('--headless=new', '--disable-gpu')
   }
 
-  // Navigate to URL if provided, otherwise open about:blank
   if (url) {
     args.push(url)
   }
