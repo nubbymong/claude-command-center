@@ -4,6 +4,7 @@ import { useConfigStore, TerminalConfig, ConfigGroup, ConfigSection } from '../s
 import { useInsightsStore } from '../stores/insightsStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useCloudAgentStore } from '../stores/cloudAgentStore'
+import { useVisionStore } from '../stores/visionStore'
 import SessionDialog from './SessionDialog'
 import { killSessionPty } from '../ptyTracker'
 import { ViewType } from '../types/views'
@@ -61,6 +62,8 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
   const insightsStatus = useInsightsStore((s) => s.status)
   const insightsMessage = useInsightsStore((s) => s.statusMessage)
   const cloudAgentRunning = useCloudAgentStore((s) => s.agents.filter(a => a.status === 'running' || a.status === 'pending').length)
+  const visionRunning = useVisionStore((s) => s.running)
+  const visionConnected = useVisionStore((s) => s.connected)
   const [showNewDialog, setShowNewDialog] = useState(false)
   const [editingConfig, setEditingConfig] = useState<TerminalConfig | null>(null)
   const [updateAvailable, setUpdateAvailable] = useState(false)
@@ -225,7 +228,6 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
         startClaudeAfter: config.sshConfig.startClaudeAfter,
         dockerContainer: config.sshConfig.dockerContainer
       } : undefined,
-      visionConfig: config.visionConfig,
       legacyVersion: config.legacyVersion,
       agentIds: config.agentIds,
     }
@@ -515,6 +517,8 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
           insightsStatus={insightsStatus}
           insightsMessage={insightsMessage}
           cloudAgentRunning={cloudAgentRunning}
+          visionRunning={visionRunning}
+          visionConnected={visionConnected}
           collapsed
         />
       </aside>
@@ -572,6 +576,8 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
         insightsStatus={insightsStatus}
         insightsMessage={insightsMessage}
         cloudAgentRunning={cloudAgentRunning}
+        visionRunning={visionRunning}
+        visionConnected={visionConnected}
       />
 
       {/* Saved Configs — hover trigger or pinned inline */}

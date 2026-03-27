@@ -6,7 +6,7 @@ import { startSessionLog, logSessionData, endSessionLog } from './session-logger
 import { logPtyOutput, isDebugModeEnabled } from './debug-capture'
 import { logInfo, logDebug, logError } from './debug-logger'
 import { writeCliSetupPty, getResourcesDirectory } from './ipc/setup-handlers'
-import { getVisionEnv } from './vision-manager'
+import { isGlobalVisionRunning, getGlobalVisionConfig } from './vision-manager'
 import { resolveVersionBinary } from './legacy-version-manager'
 
 import * as path from 'path'
@@ -51,17 +51,15 @@ const ptySessions = new Map<string, PtySession>()
  * Generate a single node script that handles ALL remote setup:
  * - Probes for mounted resources directory
  * - Configures statusline in settings.json
- * - Writes vision-cli wrapper and vision-env
- * - Injects vision instructions into CLAUDE.md
+ * - Configures MCP vision server (if running) in settings.json
+ * - Cleans up legacy CLAUDE.md vision markers
  *
  * Returns the script content to write to ~/.claude/conductor-setup.js
  * The PTY then only needs to write: `node ~/.claude/conductor-setup.js && claude`
  */
-function generateRemoteSetupScript(sessionId: string, visionSessionId: string): string {
-  const env = getVisionEnv(visionSessionId, true)
-  const visionHost = env.VISION_HOST || ''
-  const visionPort = env.VISION_PORT || ''
-  const hasVision = !!visionPort
+function generateRemoteSetupScript(sessionId: string): string {
+  const hasVision = isGlobalVisionRunning()
+  const mcpPort = getGlobalVisionConfig()?.mcpPort || 19333
 
   return `
 const fs=require('fs'),path=require('path'),os=require('os');
@@ -84,32 +82,16 @@ try{
 }catch{}
 if(!ccres)ccres='/mnt/resources/scripts';
 
-// Configure statusline
+// Configure statusline + MCP vision
 const sp=path.join(claudeDir,'settings.json');
 let s={};try{s=JSON.parse(fs.readFileSync(sp,'utf-8'))}catch{}
 s.statusLine={type:'command',command:'CLAUDE_MULTI_SESSION_ID=${sessionId} node '+ccres+'/claude-multi-statusline.js'};
+${hasVision ? `if(!s.mcpServers)s.mcpServers={};s.mcpServers['conductor-vision']={url:'http://localhost:${mcpPort}/sse'};` : `if(s.mcpServers&&s.mcpServers['conductor-vision'])delete s.mcpServers['conductor-vision'];`}
 fs.writeFileSync(sp,JSON.stringify(s,null,2));
 
-${hasVision ? `
-// Vision setup
-fs.writeFileSync(path.join(claudeDir,'vision-cli'),
-  '#!/bin/sh\\nVISION_HOST=${visionHost} VISION_PORT=${visionPort} exec node "'+ccres+'/vision-cli.js" "$@"\\n',
-  {mode:0o755});
-fs.writeFileSync(path.join(claudeDir,'vision-env'),
-  'export VISION_HOST=${visionHost}\\nexport VISION_PORT=${visionPort}\\nexport VISION_CLI="'+ccres+'/vision-cli.js"\\n');
+// Clean up legacy CLAUDE.md vision markers
+try{const md=path.join(claudeDir,'CLAUDE.md');let c=fs.readFileSync(md,'utf-8');const rx=/\\n?\\n?<!-- VISION-INSTRUCTIONS-START -->[\\s\\S]*?<!-- VISION-INSTRUCTIONS-END -->\\n?/g;if(rx.test(c)){c=c.replace(rx,'').trim();c?fs.writeFileSync(md,c+'\\n'):fs.unlinkSync(md)}}catch{}
 
-// Inject vision instructions into CLAUDE.md
-const md=path.join(claudeDir,'CLAUDE.md');
-let content='';try{content=fs.readFileSync(md,'utf-8')}catch{}
-if(!content.includes('VISION-INSTRUCTIONS-START')){
-  const vf=path.join(ccres,'vision-prompt.txt');
-  if(fs.existsSync(vf)){
-    const prompt=fs.readFileSync(vf,'utf-8');
-    content+='\\n<!-- VISION-INSTRUCTIONS-START -->\\n'+prompt+'\\n<!-- VISION-INSTRUCTIONS-END -->\\n';
-    fs.writeFileSync(md,content);
-  }
-}
-` : ''}
 process.stdout.write('setup ok\\n');
 `.trim().replace(/\n/g, '')  // Single line for PTY safety
 }
@@ -118,16 +100,12 @@ process.stdout.write('setup ok\\n');
  * Write the setup script to the remote and return the short command to run it.
  * Uses a heredoc to avoid quoting issues.
  */
-function getRemoteSetupCommand(sessionId: string, visionSessionId: string, remotePath: string): string {
-  const script = generateRemoteSetupScript(sessionId, visionSessionId)
+function getRemoteSetupCommand(sessionId: string, remotePath: string): string {
+  const script = generateRemoteSetupScript(sessionId)
   // Write the setup script via a single node -e, then run it
   // Escape single quotes in the script for shell embedding
   const escaped = script.replace(/'/g, "'\\''")
-  const visionEnv = getVisionEnv(visionSessionId, true)
-  const visionExport = visionEnv.VISION_PORT
-    ? `export VISION_HOST=${visionEnv.VISION_HOST} VISION_PORT=${visionEnv.VISION_PORT};`
-    : ''
-  return `node -e '${escaped}' 2>/dev/null; ${visionExport} cd ${remotePath}`
+  return `node -e '${escaped}' 2>/dev/null; cd ${remotePath}`
 }
 
 /**
@@ -196,6 +174,12 @@ export function spawnPty(
       '-o', 'StrictHostKeyChecking=accept-new'
     ]
 
+    // Add reverse tunnel for MCP vision server so remote sessions can reach it
+    if (isGlobalVisionRunning()) {
+      const mcpPort = getGlobalVisionConfig()?.mcpPort || 19333
+      sshArgs.push('-R', `${mcpPort}:localhost:${mcpPort}`)
+    }
+
     const sshBinary = os.platform() === 'win32' ? 'ssh.exe' : 'ssh'
 
     ptyProcess = pty.spawn(sshBinary, sshArgs, {
@@ -253,7 +237,7 @@ export function spawnPty(
         setTimeout(() => {
           // Run the consolidated setup script (statusline + vision + CLAUDE.md)
           // then cd to project and optionally start Claude
-          const setupCmd = getRemoteSetupCommand(sessionId, sessionId, remotePath)
+          const setupCmd = getRemoteSetupCommand(sessionId, remotePath)
           if (postCommand) {
             ptyProcess.write(`${setupCmd} && ${postCommand}\r`)
             postCommandSent = true
@@ -276,7 +260,7 @@ export function spawnPty(
             postCommandShellReady = true
             setTimeout(() => {
               claudeSent = true
-              const setupCmd = getRemoteSetupCommand(sessionId, sessionId, remotePath)
+              const setupCmd = getRemoteSetupCommand(sessionId, remotePath)
               ptyProcess.write(`${setupCmd} && claude\r`)
             }, 300)
           }
@@ -316,7 +300,7 @@ export function spawnPty(
         cols,
         rows,
         cwd: resolvedCwd,
-        env: { ...process.env, CLAUDE_MULTI_SESSION_ID: sessionId, ...getVisionEnv(sessionId) } as Record<string, string>,
+        env: { ...process.env, CLAUDE_MULTI_SESSION_ID: sessionId } as Record<string, string>,
         useConpty: false
       })
 
@@ -348,7 +332,7 @@ export function spawnPty(
         cols,
         rows,
         cwd: resolvedCwd,
-        env: { ...process.env, CLAUDE_MULTI_SESSION_ID: sessionId, ...getVisionEnv(sessionId) } as Record<string, string>,
+        env: { ...process.env, CLAUDE_MULTI_SESSION_ID: sessionId } as Record<string, string>,
         useConpty: false
       })
 

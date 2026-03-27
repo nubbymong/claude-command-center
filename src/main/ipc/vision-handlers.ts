@@ -1,38 +1,45 @@
 import { ipcMain, BrowserWindow } from 'electron'
-import { startVisionForSession, stopVisionForSession, getVisionStatus, launchBrowser, getVisionPrompt, tryReconnectVision } from '../vision-manager'
+import { startGlobalVision, stopGlobalVision, getGlobalVisionStatus, launchBrowser, tryReconnectGlobalVision } from '../vision-manager'
+import { readConfig, writeConfig } from '../config-manager'
+import type { GlobalVisionConfig } from '../../shared/types'
 
 export function registerVisionHandlers(getWindow: () => BrowserWindow | null): void {
-  ipcMain.handle('vision:start', async (_event, sessionId: string, debugPort: number, browser: string) => {
+  ipcMain.handle('vision:start', async () => {
+    const config = readConfig<GlobalVisionConfig>('visionGlobal')
+    if (!config?.enabled) return { ok: false, error: 'Vision not configured' }
     try {
-      const proxyPort = await startVisionForSession(sessionId, debugPort, browser, getWindow)
-      return { ok: true, proxyPort }
+      await startGlobalVision(config, getWindow)
+      return { ok: true }
     } catch (err: any) {
       return { ok: false, error: err?.message || 'Failed to start vision' }
     }
   })
 
-  ipcMain.handle('vision:stop', async (_event, sessionId: string) => {
-    stopVisionForSession(sessionId)
+  ipcMain.handle('vision:stop', async () => {
+    await stopGlobalVision()
     return { ok: true }
   })
 
-  ipcMain.handle('vision:status', async (_event, sessionId: string) => {
-    const status = getVisionStatus(sessionId)
-    return status || { connected: false, browser: null, proxyPort: 0 }
+  ipcMain.handle('vision:status', async () => {
+    return getGlobalVisionStatus()
   })
 
   ipcMain.handle('vision:launch', async (_event, browser: 'chrome' | 'edge', debugPort: number, url?: string, headless: boolean = true) => {
     try {
       const result = launchBrowser(browser, debugPort, url, headless)
-      // Trigger CDP reconnect in background (Chrome needs time to start)
-      tryReconnectVision(debugPort)
+      tryReconnectGlobalVision()
       return { ok: true, ...result }
     } catch (err: any) {
       return { ok: false, error: err?.message || 'Failed to launch browser' }
     }
   })
 
-  ipcMain.handle('vision:getPrompt', async () => {
-    return getVisionPrompt()
+  ipcMain.handle('vision:saveConfig', async (_event, config: GlobalVisionConfig) => {
+    writeConfig('visionGlobal', config)
+    return { ok: true }
+  })
+
+  ipcMain.handle('vision:getConfig', async () => {
+    return readConfig<GlobalVisionConfig>('visionGlobal')
   })
 }

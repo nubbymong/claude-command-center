@@ -131,12 +131,13 @@ export const IPC = {
   LEGACY_LIST_INSTALLED: 'legacyVersion:listInstalled',
   LEGACY_INSTALL_PROGRESS: 'legacyVersion:installProgress',
 
-  // Vision
+  // Vision (global MCP server)
   VISION_START: 'vision:start',
   VISION_STOP: 'vision:stop',
   VISION_STATUS: 'vision:status',
   VISION_LAUNCH: 'vision:launch',
-  VISION_GET_PROMPT: 'vision:getPrompt',
+  VISION_SAVE_CONFIG: 'vision:saveConfig',
+  VISION_GET_CONFIG: 'vision:getConfig',
   VISION_STATUS_CHANGED: 'vision:statusChanged',
 
   // Cloud agents

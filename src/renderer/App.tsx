@@ -12,6 +12,7 @@ import LogViewer from './components/LogViewer'
 import InsightsPage from './components/InsightsPage'
 import CloudAgentsPage from './components/CloudAgentsPage'
 import TokenomicsPage from './components/TokenomicsPage'
+import VisionPage from './components/VisionPage'
 import SetupDialog from './components/SetupDialog'
 import WhatsNewModal, { shouldShowWhatsNew, markWhatsNewSeen } from './components/WhatsNewModal'
 import TrainingWalkthrough, { shouldShowTraining, isFirstInstall } from './components/TrainingWalkthrough'
@@ -27,6 +28,7 @@ import { markSessionForResumePicker } from './utils/resumePicker'
 import { gatherLocalStorageData, hydrateStores } from './utils/configHydration'
 import { setupCloudAgentListener } from './stores/cloudAgentStore'
 import { setupTokenomicsListener } from './stores/tokenomicsStore'
+import { setupVisionListener, useVisionStore } from './stores/visionStore'
 import type { SessionState, SavedSession } from './types/electron'
 
 // Re-export ViewType from its canonical location for backwards compatibility
@@ -133,6 +135,9 @@ export default function App() {
       // never missed (previously only started when CloudAgentsPage mounted)
       setupCloudAgentListener()
       setupTokenomicsListener()
+      setupVisionListener()
+      useVisionStore.getState().loadConfig()
+      useVisionStore.getState().fetchStatus()
 
       const magicSettings = useMagicButtonStore.getState().settings
       if (magicSettings.autoDeleteDays != null && magicSettings.autoDeleteDays > 0) {
@@ -207,7 +212,6 @@ export default function App() {
           startClaudeAfter: s.sshConfig.startClaudeAfter,
           dockerContainer: s.sshConfig.dockerContainer,
         } : undefined,
-        visionConfig: s.visionConfig,
         legacyVersion: s.legacyVersion,
         agentIds: s.agentIds,
       })),
@@ -281,6 +285,7 @@ export default function App() {
     if (view === 'insights') return <InsightsPage />
     if (view === 'cloud-agents') return <CloudAgentsPage />
     if (view === 'tokenomics') return <TokenomicsPage />
+    if (view === 'vision') return <VisionPage />
     return null
   }
 
@@ -337,7 +342,6 @@ export default function App() {
                   isPartnerActive={isShowingPartner}
                   onTogglePartner={() => togglePartner(session.id)}
                   partnerSessionId={hasPartner ? partnerPtyId : undefined}
-                  visionConfig={session.visionConfig}
                   legacyVersion={session.legacyVersion}
                   agentIds={session.agentIds}
                 />

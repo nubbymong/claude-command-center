@@ -17,13 +17,14 @@ interface ContextBarProps {
   rateLimitWeekly?: number
   rateLimitWeeklyResets?: string
   rateLimitExtra?: { enabled: boolean; utilization: number; usedUsd: number; limitUsd: number }
+  isPeak?: boolean
 }
 
 export default function ContextBar({
   modelName, inputTokens, contextWindowSize, contextPercent,
   costUsd, linesAdded, linesRemoved, totalDurationMs,
   rateLimitCurrent, rateLimitCurrentResets,
-  rateLimitWeekly, rateLimitWeeklyResets, rateLimitExtra
+  rateLimitWeekly, rateLimitWeeklyResets, rateLimitExtra, isPeak
 }: ContextBarProps) {
   const sl = useSettingsStore((s) => s.settings.statusLine) || DEFAULT_STATUS_LINE
 
@@ -80,6 +81,11 @@ export default function ContextBar({
             <span className="text-overlay0">
               extra: <span className={rateLimitExtra.utilization > 80 ? 'text-red' : 'text-teal'}>${rateLimitExtra.usedUsd.toFixed(2)}</span>
               <span className="text-overlay0">/${rateLimitExtra.limitUsd.toFixed(0)}</span>
+            </span>
+          )}
+          {isPeak != null && (
+            <span className={`font-medium ${isPeak ? 'text-red' : 'text-green'}`} title={isPeak ? 'Peak hours: 5-11 AM PT weekdays — 5h limit consumed faster' : 'Off-peak: normal rate limit consumption'}>
+              {isPeak ? 'PEAK' : 'OFF-PEAK'}
             </span>
           )}
           <div className="flex-1" />

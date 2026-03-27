@@ -95,12 +95,6 @@ export interface ElectronAPI {
       elevated?: boolean
       configLabel?: string
       useResumePicker?: boolean
-      visionConfig?: {
-        enabled: boolean
-        browser: 'chrome' | 'edge'
-        debugPort: number
-        headless?: boolean
-      }
       legacyVersion?: {
         enabled: boolean
         version: string
@@ -229,12 +223,13 @@ export interface ElectronAPI {
     reorder: (ids: string[]) => Promise<boolean>
   }
   vision: {
-    start: (sessionId: string, debugPort: number, browser: string) => Promise<{ ok: boolean; proxyPort?: number; error?: string }>
-    stop: (sessionId: string) => Promise<{ ok: boolean }>
-    status: (sessionId: string) => Promise<{ connected: boolean; browser: string | null; proxyPort: number }>
+    start: () => Promise<{ ok: boolean; error?: string }>
+    stop: () => Promise<{ ok: boolean }>
+    status: () => Promise<{ running: boolean; connected: boolean; browser: string; mcpPort: number }>
     launch: (browser: string, debugPort: number, url?: string, headless?: boolean) => Promise<{ ok: boolean; pid?: number; command?: string; error?: string }>
-    getPrompt: () => Promise<string | null>
-    onStatusChanged: (callback: (data: { sessionId: string; connected: boolean; browser: string; proxyPort: number }) => void) => () => void
+    saveConfig: (config: { enabled: boolean; browser: 'chrome' | 'edge'; debugPort: number; mcpPort: number; url?: string; headless?: boolean }) => Promise<{ ok: boolean }>
+    getConfig: () => Promise<{ enabled: boolean; browser: 'chrome' | 'edge'; debugPort: number; mcpPort: number; url?: string; headless?: boolean } | null>
+    onStatusChanged: (callback: (data: { connected: boolean; browser: string; mcpPort: number }) => void) => () => void
   }
   legacyVersion: {
     fetchVersions: () => Promise<string[]>

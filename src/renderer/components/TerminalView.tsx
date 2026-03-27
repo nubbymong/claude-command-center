@@ -12,7 +12,6 @@ import { THEME } from './terminal/terminalTheme'
 import { ContextBar, ScrollToBottomButton } from './terminal'
 import { useStatuslineSubscription } from '../hooks/useStatuslineSubscription'
 import { useCompactionInterrupt } from '../hooks/useCompactionInterrupt'
-import { useVisionLifecycle } from '../hooks/useVisionLifecycle'
 import { useActiveTabEffect } from '../hooks/useActiveTabEffect'
 import { useCursorLayerVisibility } from '../hooks/useCursorLayerVisibility'
 import { useAgentLibraryStore, BUILTIN_TEMPLATES } from '../stores/agentLibraryStore'
@@ -42,13 +41,6 @@ interface Props {
   isPartnerActive?: boolean
   onTogglePartner?: () => void
   partnerSessionId?: string
-  visionConfig?: {
-    enabled: boolean
-    browser: 'chrome' | 'edge'
-    debugPort: number
-    url?: string
-    headless?: boolean
-  }
   legacyVersion?: {
     enabled: boolean
     version: string
@@ -56,7 +48,7 @@ interface Props {
   agentIds?: string[]
 }
 
-export default function TerminalView({ sessionId, configId, cwd, shellOnly, elevated, ssh, isActive = true, partnerEnabled, isPartnerActive, onTogglePartner, partnerSessionId, visionConfig, legacyVersion, agentIds }: Props) {
+export default function TerminalView({ sessionId, configId, cwd, shellOnly, elevated, ssh, isActive = true, partnerEnabled, isPartnerActive, onTogglePartner, partnerSessionId, legacyVersion, agentIds }: Props) {
   const xtermContainerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
@@ -70,7 +62,6 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
   // Extracted hooks
   useStatuslineSubscription(sessionId)
   useCompactionInterrupt(sessionId)
-  useVisionLifecycle(sessionId, visionConfig)
   useActiveTabEffect(sessionId, isActive, terminalRef, attentionTimerRef, attentionAckedRef)
   useCursorLayerVisibility(xtermContainerRef, isActive, shellOnly)
 
@@ -158,7 +149,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
               }))
             if (agentsConfig.length === 0) agentsConfig = undefined
           }
-          window.electronAPI.pty.spawn(sessionId, { cwd, cols, rows, ssh, shellOnly, elevated, configLabel, useResumePicker, visionConfig, legacyVersion, agentsConfig })
+          window.electronAPI.pty.spawn(sessionId, { cwd, cols, rows, ssh, shellOnly, elevated, configLabel, useResumePicker, legacyVersion, agentsConfig })
         }
       })
 
@@ -388,6 +379,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
           rateLimitWeekly={session.rateLimitWeekly}
           rateLimitWeeklyResets={session.rateLimitWeeklyResets}
           rateLimitExtra={session.rateLimitExtra}
+          isPeak={session.isPeak}
         />
       )}
       <CommandBar
@@ -398,12 +390,6 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         isPartnerActive={isPartnerActive}
         onTogglePartner={onTogglePartner}
         partnerSessionId={partnerSessionId}
-        visionEnabled={visionConfig?.enabled}
-        visionConnected={session?.visionConnected}
-        visionBrowser={visionConfig?.browser}
-        visionDebugPort={visionConfig?.debugPort}
-        visionUrl={visionConfig?.url}
-        visionHeadless={visionConfig?.headless}
       />
     </div>
   )
