@@ -97,15 +97,14 @@ process.stdout.write('setup ok\\n');
 }
 
 /**
- * Write the setup script to the remote and return the short command to run it.
- * Uses a heredoc to avoid quoting issues.
+ * Write the setup script to the remote, execute it, then clean up.
+ * Uses a short write-and-run pattern to avoid PTY echo of the long script.
  */
 function getRemoteSetupCommand(sessionId: string, remotePath: string): string {
   const script = generateRemoteSetupScript(sessionId)
-  // Write the setup script via a single node -e, then run it
-  // Escape single quotes in the script for shell embedding
-  const escaped = script.replace(/'/g, "'\\''")
-  return `node -e '${escaped}' 2>/dev/null; cd ${remotePath}`
+  // Base64-encode the script so the PTY only echoes a short command
+  const b64 = Buffer.from(script).toString('base64')
+  return `echo '${b64}' | base64 -d | node 2>/dev/null; cd ${remotePath}`
 }
 
 /**
