@@ -254,6 +254,9 @@ export interface TokenomicsSessionRecord {
   messageCount: number
   firstTimestamp: string
   lastTimestamp: string
+  durationMs?: number
+  costPerHour?: number
+  tokensPerMinute?: number
 }
 
 export interface TokenomicsDailyAggregate {
@@ -262,6 +265,8 @@ export interface TokenomicsDailyAggregate {
   totalTokens: number
   messageCount: number
   sessionCount: number
+  totalDurationMs: number
+  avgCostPerHour: number
   byModel: Record<string, { costUsd: number; inputTokens: number; outputTokens: number }>
 }
 

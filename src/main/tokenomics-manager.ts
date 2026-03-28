@@ -22,21 +22,94 @@ interface ModelPricing {
   cacheWrite: number
 }
 
-const MODEL_PRICING: Record<string, ModelPricing> = {
+// Hardcoded fallback pricing (per 1M tokens)
+const FALLBACK_PRICING: Record<string, ModelPricing> = {
   'claude-opus-4-6': { input: 15, output: 75, cacheRead: 1.5, cacheWrite: 18.75 },
   'claude-sonnet-4-6': { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
   'claude-haiku-4-5': { input: 0.80, output: 4, cacheRead: 0.08, cacheWrite: 1 },
 }
 
-function getPricing(model: string): ModelPricing {
-  if (MODEL_PRICING[model]) return MODEL_PRICING[model]
-  // Prefix matching for future versions
-  for (const key of Object.keys(MODEL_PRICING)) {
-    const base = key.replace(/-\d+-\d+$/, '')
-    if (model.startsWith(base)) return MODEL_PRICING[key]
+// Dynamic pricing from LiteLLM (static JSON of model prices, cached 24h)
+let livePricing: Record<string, ModelPricing> | null = null
+
+/** Fetch Claude model pricing from LiteLLM's open pricing dataset (static JSON only). */
+export async function fetchModelPricing(): Promise<void> {
+  // Check disk cache first (24h TTL)
+  try {
+    const cachePath = path.join(getConfigDir(), 'model-pricing.json')
+    if (fs.existsSync(cachePath)) {
+      const stat = fs.statSync(cachePath)
+      if (Date.now() - stat.mtimeMs < 24 * 60 * 60 * 1000) {
+        livePricing = JSON.parse(fs.readFileSync(cachePath, 'utf-8'))
+        logInfo(`[tokenomics] Loaded cached model pricing (${Object.keys(livePricing!).length} models)`)
+        return
+      }
+    }
+  } catch { /* cache miss */ }
+
+  try {
+    const https = await import('https')
+    const body: string = await new Promise((resolve, reject) => {
+      const req = https.request({
+        hostname: 'raw.githubusercontent.com',
+        path: '/BerriAI/litellm/main/model_prices_and_context_window.json',
+        method: 'GET',
+        timeout: 10000
+      }, (res) => {
+        let d = ''
+        res.on('data', (c: string) => { d += c })
+        res.on('end', () => resolve(d))
+      })
+      req.on('error', reject)
+      req.on('timeout', () => { req.destroy(); reject(new Error('timeout')) })
+      req.end()
+    })
+
+    const allModels = JSON.parse(body)
+    const pricing: Record<string, ModelPricing> = {}
+
+    for (const [key, val] of Object.entries(allModels) as [string, any][]) {
+      if (!key.includes('claude')) continue
+      const modelName = key.replace(/^[^/]+\//, '') // strip provider prefix
+      if (pricing[modelName]) continue
+
+      const inp = (val.input_cost_per_token || 0) * 1_000_000
+      const out = (val.output_cost_per_token || 0) * 1_000_000
+      const cr = (val.cache_read_input_token_cost || 0) * 1_000_000
+      const cw = (val.cache_creation_input_token_cost || 0) * 1_000_000
+
+      if (inp > 0 || out > 0) {
+        pricing[modelName] = {
+          input: inp, output: out,
+          cacheRead: cr || inp * 0.1,
+          cacheWrite: cw || inp * 1.25,
+        }
+      }
+    }
+
+    if (Object.keys(pricing).length > 0) {
+      livePricing = pricing
+      try {
+        ensureConfigDir()
+        fs.writeFileSync(path.join(getConfigDir(), 'model-pricing.json'), JSON.stringify(pricing, null, 2))
+      } catch { /* ignore */ }
+      logInfo(`[tokenomics] Fetched pricing for ${Object.keys(pricing).length} Claude models`)
+    }
+  } catch (err: any) {
+    logInfo(`[tokenomics] Pricing fetch failed (using hardcoded): ${err?.message}`)
   }
-  // Default to sonnet pricing for unknown models
-  return MODEL_PRICING['claude-sonnet-4-6']
+}
+
+function getPricing(model: string): ModelPricing {
+  const sources = livePricing ? [livePricing, FALLBACK_PRICING] : [FALLBACK_PRICING]
+  for (const db of sources) {
+    if (db[model]) return db[model]
+    for (const key of Object.keys(db)) {
+      const base = key.replace(/-\d+[-\d]*$/, '')
+      if (model.startsWith(base)) return db[key]
+    }
+  }
+  return FALLBACK_PRICING['claude-sonnet-4-6']
 }
 
 function calculateCost(
@@ -206,6 +279,19 @@ function updateSessionRecord(
     record.totalCacheWriteTokens,
     record.model
   )
+
+  // Calculate burn rate
+  if (record.firstTimestamp && record.lastTimestamp) {
+    const start = new Date(record.firstTimestamp).getTime()
+    const end = new Date(record.lastTimestamp).getTime()
+    record.durationMs = Math.max(end - start, 0)
+    if (record.durationMs > 60000) { // Only calculate if session lasted > 1 minute
+      const totalTokens = record.totalInputTokens + record.totalOutputTokens +
+        record.totalCacheReadTokens + record.totalCacheWriteTokens
+      record.costPerHour = (record.totalCostUsd / record.durationMs) * 3_600_000
+      record.tokensPerMinute = (totalTokens / record.durationMs) * 60_000
+    }
+  }
 }
 
 function rebuildAggregates(data: TokenomicsData): void {
@@ -228,6 +314,8 @@ function rebuildAggregates(data: TokenomicsData): void {
         totalTokens: 0,
         messageCount: 0,
         sessionCount: 0,
+        totalDurationMs: 0,
+        avgCostPerHour: 0,
         byModel: {},
       }
       data.dailyAggregates[date] = agg
@@ -238,6 +326,7 @@ function rebuildAggregates(data: TokenomicsData): void {
       record.totalCacheReadTokens + record.totalCacheWriteTokens
     agg.messageCount += record.messageCount
     agg.sessionCount++
+    agg.totalDurationMs += record.durationMs || 0
 
     const modelKey = record.model || 'unknown'
     if (!agg.byModel[modelKey]) {
@@ -246,6 +335,13 @@ function rebuildAggregates(data: TokenomicsData): void {
     agg.byModel[modelKey].costUsd += record.totalCostUsd
     agg.byModel[modelKey].inputTokens += record.totalInputTokens + record.totalCacheReadTokens + record.totalCacheWriteTokens
     agg.byModel[modelKey].outputTokens += record.totalOutputTokens
+  }
+
+  // Calculate daily average burn rates
+  for (const agg of Object.values(data.dailyAggregates)) {
+    if (agg.totalDurationMs > 60000) {
+      agg.avgCostPerHour = (agg.totalCostUsd / agg.totalDurationMs) * 3_600_000
+    }
   }
 }
 

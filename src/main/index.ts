@@ -24,6 +24,7 @@ import { registerTeamHandlers } from './ipc/team-handlers'
 import { registerLegacyVersionHandlers } from './ipc/legacy-version-handlers'
 import { registerAccountHandlers } from './ipc/account-handlers'
 import { registerTokenomicsHandlers } from './ipc/tokenomics-handlers'
+import { fetchModelPricing } from './tokenomics-manager'
 import { initAccounts } from './account-manager'
 import { killAllAgents } from './cloud-agent-manager'
 import { startServiceStatusPoller, stopServiceStatusPoller } from './service-status'
@@ -381,6 +382,9 @@ if (!gotTheLock) {
 
     // Auto-detect current account from credentials (fire-and-forget)
     initAccounts().catch(() => {})
+
+    // Fetch model pricing in background (non-blocking)
+    fetchModelPricing().catch(() => {})
 
     // Clean up legacy CLAUDE.md vision markers and auto-start global vision if configured
     cleanupLegacyVisionMarkers()
