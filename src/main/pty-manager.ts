@@ -89,11 +89,8 @@ s.statusLine={type:'command',command:'CLAUDE_MULTI_SESSION_ID=${sessionId} node 
 ${hasVision ? `if(!s.mcpServers)s.mcpServers={};s.mcpServers['conductor-vision']={url:'http://localhost:${mcpPort}/sse'};` : `if(s.mcpServers&&s.mcpServers['conductor-vision'])delete s.mcpServers['conductor-vision'];`}
 fs.writeFileSync(sp,JSON.stringify(s,null,2));
 
-// Also inject MCP vision into ~/.claude.json (Claude Code reads MCP servers from here too)
-const cj=path.join(home,'.claude.json');
-try{let c={};try{c=JSON.parse(fs.readFileSync(cj,'utf-8'))}catch{}
-${hasVision ? `if(!c.mcpServers)c.mcpServers={};c.mcpServers['conductor-vision']={url:'http://localhost:${mcpPort}/sse'};` : `if(c.mcpServers&&c.mcpServers['conductor-vision'])delete c.mcpServers['conductor-vision'];`}
-fs.writeFileSync(cj,JSON.stringify(c,null,2));}catch{}
+// Also clean conductor-vision from ~/.claude.json if present (wrong schema for that file)
+try{const cj=path.join(home,'.claude.json');if(fs.existsSync(cj)){let c=JSON.parse(fs.readFileSync(cj,'utf-8'));if(c.mcpServers&&c.mcpServers['conductor-vision']){delete c.mcpServers['conductor-vision'];fs.writeFileSync(cj,JSON.stringify(c,null,2))}}}catch{}
 
 // Clean up legacy CLAUDE.md vision markers
 try{const md=path.join(claudeDir,'CLAUDE.md');let c=fs.readFileSync(md,'utf-8');const rx=/\\n?\\n?<!-- VISION-INSTRUCTIONS-START -->[\\s\\S]*?<!-- VISION-INSTRUCTIONS-END -->\\n?/g;if(rx.test(c)){c=c.replace(rx,'').trim();c?fs.writeFileSync(md,c+'\\n'):fs.unlinkSync(md)}}catch{}

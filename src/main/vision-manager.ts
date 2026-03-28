@@ -428,17 +428,17 @@ function injectMcpSettings(mcpPort: number): void {
     logError('[vision] Failed to inject settings.json MCP:', err?.message)
   }
 
-  // Also write to ~/.claude.json (Claude Code reads MCP servers from here too)
+  // Clean any stale entry from ~/.claude.json (different schema, url format not valid there)
   try {
     const claudeJsonPath = path.join(os.homedir(), '.claude.json')
-    let cj: any = {}
-    try { cj = JSON.parse(fs.readFileSync(claudeJsonPath, 'utf-8')) } catch { /* file may not exist */ }
-    if (!cj.mcpServers) cj.mcpServers = {}
-    cj.mcpServers['conductor-vision'] = entry
-    fs.writeFileSync(claudeJsonPath, JSON.stringify(cj, null, 2))
-  } catch (err: any) {
-    logError('[vision] Failed to inject .claude.json MCP:', err?.message)
-  }
+    if (fs.existsSync(claudeJsonPath)) {
+      const cj = JSON.parse(fs.readFileSync(claudeJsonPath, 'utf-8'))
+      if (cj.mcpServers?.['conductor-vision']) {
+        delete cj.mcpServers['conductor-vision']
+        fs.writeFileSync(claudeJsonPath, JSON.stringify(cj, null, 2))
+      }
+    }
+  } catch { /* ignore */ }
 
   logInfo(`[vision] Injected MCP server config (port ${mcpPort})`)
 }
@@ -459,7 +459,7 @@ function removeMcpSettings(): void {
     logError('[vision] Failed to remove settings.json MCP:', err?.message)
   }
 
-  // Remove from ~/.claude.json
+  // Also clean from ~/.claude.json if present
   try {
     const claudeJsonPath = path.join(os.homedir(), '.claude.json')
     if (fs.existsSync(claudeJsonPath)) {
@@ -470,9 +470,7 @@ function removeMcpSettings(): void {
         fs.writeFileSync(claudeJsonPath, JSON.stringify(cj, null, 2))
       }
     }
-  } catch (err: any) {
-    logError('[vision] Failed to remove .claude.json MCP:', err?.message)
-  }
+  } catch { /* ignore */ }
 
   logInfo('[vision] Removed MCP server config')
 }
