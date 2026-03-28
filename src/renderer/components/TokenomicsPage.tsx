@@ -67,14 +67,23 @@ type SpendFilter = 'all' | 'plan' | 'extra'
 
 // ── Summary Cards ──
 
-function SummaryCards({ today, week, fiveHour, allTime, extraSpend, rateLimitCurrent, rateLimitWeekly }: {
+function formatDurationShort(ms: number): string {
+  if (!ms || ms <= 0) return '-'
+  const h = Math.floor(ms / 3_600_000)
+  const m = Math.floor((ms % 3_600_000) / 60_000)
+  if (h > 0) return `${h}h ${m}m`
+  return `${m}m`
+}
+
+function SummaryCards({ today, week, fiveHour, allTime, extraSpend, rateLimitCurrent, rateLimitWeekly, burnRate }: {
   today: number; week: number; fiveHour: number; allTime: number
   extraSpend?: { enabled: boolean; usedUsd: number; limitUsd: number; lastUpdated: number }
   rateLimitCurrent?: number
   rateLimitWeekly?: number
+  burnRate?: { costPerHour: number; tokensPerMinute: number }
 }) {
   return (
-    <div className="grid grid-cols-5 gap-3 mb-6">
+    <div className="grid grid-cols-6 gap-3 mb-6">
       <div className="bg-surface0 rounded-xl p-4">
         <div className="text-xs text-overlay0 uppercase tracking-wider mb-1">5-Hour Window</div>
         <div className="text-2xl font-mono font-bold text-teal">{formatCost(fiveHour)}</div>
@@ -143,6 +152,23 @@ function SummaryCards({ today, week, fiveHour, allTime, extraSpend, rateLimitCur
           <div className="text-sm text-overlay0 mt-2">Not enabled</div>
         </div>
       )}
+      <div className="bg-surface0 rounded-xl p-4">
+        <div className="text-xs text-overlay0 uppercase tracking-wider mb-1">Burn Rate</div>
+        {burnRate && burnRate.costPerHour > 0 ? (
+          <>
+            <div className={`text-2xl font-mono font-bold ${
+              burnRate.costPerHour > 20 ? 'text-red' : burnRate.costPerHour > 5 ? 'text-yellow' : 'text-green'
+            }`}>
+              {formatCost(burnRate.costPerHour)}/hr
+            </div>
+            <div className="text-[10px] text-overlay0 mt-1">
+              {formatTokens(Math.round(burnRate.tokensPerMinute))} tok/min
+            </div>
+          </>
+        ) : (
+          <div className="text-sm text-overlay0 mt-2">No active data</div>
+        )}
+      </div>
     </div>
   )
 }
@@ -296,12 +322,15 @@ function ModelBreakdown({ sessions }: { sessions: TokenomicsSessionRecord[] }) {
 
 // ── Filter Bar ──
 
-function FilterBar({ dateFilter, spendFilter, onDateFilter, onSpendFilter, selectedDate }: {
+function FilterBar({ dateFilter, spendFilter, onDateFilter, onSpendFilter, selectedDate, projects, projectFilter, onProjectFilter }: {
   dateFilter: DateFilter
   spendFilter: SpendFilter
   onDateFilter: (f: DateFilter) => void
   onSpendFilter: (f: SpendFilter) => void
   selectedDate: string | null
+  projects: string[]
+  projectFilter: string
+  onProjectFilter: (p: string) => void
 }) {
   const dateButtons: Array<{ label: string; value: DateFilter }> = [
     { label: 'All', value: 'all' },
@@ -351,13 +380,28 @@ function FilterBar({ dateFilter, spendFilter, onDateFilter, onSpendFilter, selec
           </button>
         ))}
       </div>
+      {projects.length > 1 && (
+        <div className="flex items-center gap-1">
+          <span className="text-xs text-overlay0 mr-1">Project:</span>
+          <select
+            value={projectFilter}
+            onChange={(e) => onProjectFilter(e.target.value)}
+            className="text-xs bg-surface1 text-overlay1 rounded px-2 py-0.5 border-none outline-none max-w-[200px]"
+          >
+            <option value="all">All</option>
+            {projects.map(p => (
+              <option key={p} value={p}>{p.split(/[/\\]/).slice(-2).join('/')}</option>
+            ))}
+          </select>
+        </div>
+      )}
     </div>
   )
 }
 
 // ── Sessions Table ──
 
-type SortKey = 'project' | 'model' | 'cost' | 'inputTokens' | 'outputTokens' | 'date' | 'messages' | 'cacheTokens'
+type SortKey = 'project' | 'model' | 'cost' | 'inputTokens' | 'outputTokens' | 'date' | 'messages' | 'cacheTokens' | 'duration' | 'costPerHour'
 
 function SessionsTable({ sessions, title }: { sessions: TokenomicsSessionRecord[]; title?: string }) {
   const [sortBy, setSortBy] = useState<SortKey>('cost')
@@ -377,6 +421,8 @@ function SessionsTable({ sessions, title }: { sessions: TokenomicsSessionRecord[
         case 'date': return (a.firstTimestamp.localeCompare(b.firstTimestamp)) * dir
         case 'model': return (a.model.localeCompare(b.model)) * dir
         case 'project': return (a.projectDir.localeCompare(b.projectDir)) * dir
+        case 'duration': return ((a.durationMs || 0) - (b.durationMs || 0)) * dir
+        case 'costPerHour': return ((a.costPerHour || 0) - (b.costPerHour || 0)) * dir
         default: return (a.totalCostUsd - b.totalCostUsd) * dir
       }
     })
@@ -462,6 +508,8 @@ function SessionsTable({ sessions, title }: { sessions: TokenomicsSessionRecord[
               <SortHeader label="Output" sortKey="outputTokens" />
               <SortHeader label="Cache" sortKey="cacheTokens" />
               <SortHeader label="Msgs" sortKey="messages" />
+              <SortHeader label="Duration" sortKey="duration" />
+              <SortHeader label="$/hr" sortKey="costPerHour" />
               <SortHeader label="Date" sortKey="date" />
             </tr>
           </thead>
@@ -484,12 +532,16 @@ function SessionsTable({ sessions, title }: { sessions: TokenomicsSessionRecord[
                 <td className="px-3 py-1.5 font-mono text-overlay1">{formatTokens(s.totalOutputTokens)}</td>
                 <td className="px-3 py-1.5 font-mono text-overlay0">{formatTokens(s.totalCacheReadTokens + s.totalCacheWriteTokens)}</td>
                 <td className="px-3 py-1.5 font-mono text-overlay0">{s.messageCount}</td>
+                <td className="px-3 py-1.5 font-mono text-overlay0">{formatDurationShort(s.durationMs || 0)}</td>
+                <td className={`px-3 py-1.5 font-mono ${
+                  (s.costPerHour || 0) > 20 ? 'text-red' : (s.costPerHour || 0) > 5 ? 'text-yellow' : 'text-overlay0'
+                }`}>{s.costPerHour ? formatCost(s.costPerHour) : '-'}</td>
                 <td className="px-3 py-1.5 text-overlay0">{formatDate(s.firstTimestamp)}</td>
               </tr>
             ))}
             {paginated.length === 0 && (
               <tr>
-                <td colSpan={8} className="px-3 py-6 text-center text-overlay0">
+                <td colSpan={10} className="px-3 py-6 text-center text-overlay0">
                   No sessions match the current filter
                 </td>
               </tr>
@@ -579,6 +631,7 @@ export default function TokenomicsPage() {
   const [dateFilter, setDateFilter] = useState<DateFilter>('all')
   const [spendFilter, setSpendFilter] = useState<SpendFilter>('all')
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
+  const [projectFilter, setProjectFilter] = useState<string>('all')
 
   // When chart bar is clicked, set date filter to that specific date
   const handleDateSelect = useCallback((date: string | null) => {
@@ -596,9 +649,43 @@ export default function TokenomicsPage() {
   // Rate limit periods
   const periods = useMemo(() => getRateLimitPeriod(), [])
 
-  // Filtered sessions based on date + spend filters
+  // Unique project directories
+  const projects = useMemo(() => {
+    const dirs = new Set<string>()
+    for (const s of allSessions) {
+      if (s.projectDir) dirs.add(s.projectDir)
+    }
+    return [...dirs].sort()
+  }, [allSessions])
+
+  // Burn rate from recent activity (last 5h window)
+  const burnRate = useMemo(() => {
+    const recent = allSessions.filter(s => s.firstTimestamp >= periods.fiveHourStart && s.costPerHour)
+    if (recent.length === 0) return undefined
+    // Weight by duration
+    let totalCost = 0, totalMs = 0, totalTokens = 0
+    for (const s of recent) {
+      if (s.durationMs && s.durationMs > 60000) {
+        totalCost += s.totalCostUsd
+        totalMs += s.durationMs
+        totalTokens += s.totalInputTokens + s.totalOutputTokens + s.totalCacheReadTokens + s.totalCacheWriteTokens
+      }
+    }
+    if (totalMs <= 0) return undefined
+    return {
+      costPerHour: (totalCost / totalMs) * 3_600_000,
+      tokensPerMinute: (totalTokens / totalMs) * 60_000,
+    }
+  }, [allSessions, periods])
+
+  // Filtered sessions based on date + spend + project filters
   const filteredSessions = useMemo(() => {
     let list = allSessions
+
+    // Project filter
+    if (projectFilter !== 'all') {
+      list = list.filter(s => s.projectDir === projectFilter)
+    }
 
     // Date filter
     if (selectedDate) {
@@ -704,6 +791,7 @@ export default function TokenomicsPage() {
         extraSpend={data?.extraSpend}
         rateLimitCurrent={rateLimits.current}
         rateLimitWeekly={rateLimits.weekly}
+        burnRate={burnRate}
       />
 
       {/* Charts row */}
@@ -721,6 +809,9 @@ export default function TokenomicsPage() {
         onDateFilter={(f) => { setDateFilter(f); setSelectedDate(null) }}
         onSpendFilter={setSpendFilter}
         selectedDate={selectedDate}
+        projects={projects}
+        projectFilter={projectFilter}
+        onProjectFilter={setProjectFilter}
       />
 
       {/* Sessions table */}
