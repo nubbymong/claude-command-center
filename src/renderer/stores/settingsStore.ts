@@ -29,11 +29,12 @@ export interface AppSettings {
   defaultWorkingDirectory: string
   terminalFontSize: number
   debugMode: boolean
-  compactionInterruptThreshold: number  // Context % at which to auto-Escape (default 80)
   keyboardShortcuts: Record<string, string>
   inputBarMaxHeight: number
   configPanelPinned: boolean
   statusLine: StatusLineSettings
+  localMachineName: string
+  updateChannel: 'stable' | 'beta'
 }
 
 interface SettingsState {
@@ -48,11 +49,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
   defaultWorkingDirectory: '',
   terminalFontSize: 14,
   debugMode: false,
-  compactionInterruptThreshold: 80,
   keyboardShortcuts: { ...DEFAULT_SHORTCUTS },
   inputBarMaxHeight: 400,
   configPanelPinned: false,
-  statusLine: { ...DEFAULT_STATUS_LINE }
+  statusLine: { ...DEFAULT_STATUS_LINE },
+  localMachineName: '',
+  updateChannel: 'stable' as const
 }
 
 export const useSettingsStore = create<SettingsState>((set) => ({

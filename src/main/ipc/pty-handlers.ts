@@ -17,6 +17,8 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     agentsConfig?: Array<{ name: string; description: string; prompt: string; model?: string; tools?: string[] }>
     flickerFree?: boolean
     powershellTool?: boolean
+    effortLevel?: 'low' | 'medium' | 'high'
+    disableAutoMemory?: boolean
   }) => {
     const win = getWindow()
     if (!win) throw new Error('No window available')

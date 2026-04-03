@@ -156,7 +156,7 @@ function getResumePickerPath(): string | null {
 export function spawnPty(
   win: BrowserWindow,
   sessionId: string,
-  options?: { cwd?: string; cols?: number; rows?: number; ssh?: SSHOptions; shellOnly?: boolean; elevated?: boolean; configLabel?: string; useResumePicker?: boolean; legacyVersion?: { enabled: boolean; version: string }; agentsConfig?: Array<{ name: string; description: string; prompt: string; model?: string; tools?: string[] }>; flickerFree?: boolean; powershellTool?: boolean }
+  options?: { cwd?: string; cols?: number; rows?: number; ssh?: SSHOptions; shellOnly?: boolean; elevated?: boolean; configLabel?: string; useResumePicker?: boolean; legacyVersion?: { enabled: boolean; version: string }; agentsConfig?: Array<{ name: string; description: string; prompt: string; model?: string; tools?: string[] }>; flickerFree?: boolean; powershellTool?: boolean; effortLevel?: 'low' | 'medium' | 'high'; disableAutoMemory?: boolean }
 ): void {
   logInfo(`[pty] Spawning PTY for session ${sessionId} (ssh=${!!options?.ssh}, shellOnly=${!!options?.shellOnly}, cwd=${options?.cwd || 'default'})`)
   killPty(sessionId)
@@ -203,8 +203,13 @@ export function spawnPty(
     const claudeEnvPrefix = [
       options?.flickerFree ? 'CLAUDE_CODE_NO_FLICKER=1' : '',
       options?.powershellTool ? 'CLAUDE_CODE_USE_POWERSHELL_TOOL=1' : '',
+      options?.disableAutoMemory ? 'CLAUDE_CODE_DISABLE_AUTO_MEMORY=1' : '',
     ].filter(Boolean).join(' ')
-    const claudeCmd = claudeEnvPrefix ? `${claudeEnvPrefix} claude` : 'claude'
+    const claudeFlags = [
+      options?.effortLevel ? `--effort ${options.effortLevel}` : '',
+      options?.configLabel ? `--name "${options.configLabel.replace(/"/g, '\\"')}"` : '',
+    ].filter(Boolean).join(' ')
+    const claudeCmd = [claudeEnvPrefix, 'claude', claudeFlags].filter(Boolean).join(' ')
     const password = ssh.password
     const postCommand = ssh.postCommand
     const sudoPassword = ssh.sudoPassword
@@ -341,6 +346,7 @@ export function spawnPty(
       const claudeEnv: Record<string, string> = { ...process.env, CLAUDE_MULTI_SESSION_ID: sessionId } as Record<string, string>
       if (options?.flickerFree) claudeEnv.CLAUDE_CODE_NO_FLICKER = '1'
       if (options?.powershellTool) claudeEnv.CLAUDE_CODE_USE_POWERSHELL_TOOL = '1'
+      if (options?.disableAutoMemory) claudeEnv.CLAUDE_CODE_DISABLE_AUTO_MEMORY = '1'
 
       ptyProcess = pty.spawn(shell, [], {
         name: 'xterm-256color',
@@ -355,6 +361,16 @@ export function spawnPty(
       // The cd is critical — it ensures Claude sees the correct project directory
       // regardless of PowerShell profile scripts or PTY cwd propagation issues.
       const escapedCwd = resolvedCwd.replace(/'/g, "''")
+
+      // Build extra CLI flags (--name, --effort)
+      let extraFlags = ''
+      if (options?.configLabel) {
+        const nameEscaped = options.configLabel.replace(/"/g, '\\"')
+        extraFlags += ` --name "${nameEscaped}"`
+      }
+      if (options?.effortLevel) {
+        extraFlags += ` --effort ${options.effortLevel}`
+      }
 
       // Build --agents flag if agent templates are configured
       let agentsFlag = ''
@@ -385,13 +401,13 @@ export function spawnPty(
         } else {
           // Fallback: no picker script found, launch Claude directly
           escapedCmd = os.platform() === 'win32'
-            ? `Set-Location '${escapedCwd}'; & "${cmd}"${agentsFlag}; exit`
-            : `cd '${escapedCwd.replace(/'/g, "'\\''")}' && "${cmd}"${agentsFlag}; exit`
+            ? `Set-Location '${escapedCwd}'; & "${cmd}"${agentsFlag}${extraFlags}; exit`
+            : `cd '${escapedCwd.replace(/'/g, "'\\''")}' && "${cmd}"${agentsFlag}${extraFlags}; exit`
         }
       } else {
         escapedCmd = os.platform() === 'win32'
-          ? `Set-Location '${escapedCwd}'; & "${cmd}"${agentsFlag}; exit`
-          : `cd '${escapedCwd.replace(/'/g, "'\\''")}' && "${cmd}"${agentsFlag}; exit`
+          ? `Set-Location '${escapedCwd}'; & "${cmd}"${agentsFlag}${extraFlags}; exit`
+          : `cd '${escapedCwd.replace(/'/g, "'\\''")}' && "${cmd}"${agentsFlag}${extraFlags}; exit`
       }
       setTimeout(() => {
         ptyProcess.write(escapedCmd + '\r')

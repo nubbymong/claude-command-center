@@ -13,6 +13,7 @@ import InsightsPage from './components/InsightsPage'
 import CloudAgentsPage from './components/CloudAgentsPage'
 import TokenomicsPage from './components/TokenomicsPage'
 import VisionPage from './components/VisionPage'
+import MemoryPage from './components/MemoryPage'
 import SetupDialog from './components/SetupDialog'
 import WhatsNewModal, { shouldShowWhatsNew, markWhatsNewSeen } from './components/WhatsNewModal'
 import TrainingWalkthrough, { shouldShowTraining, isFirstInstall } from './components/TrainingWalkthrough'
@@ -23,6 +24,7 @@ import { useConfigStore } from './stores/configStore'
 import { useCommandStore } from './stores/commandStore'
 import { useMagicButtonStore } from './stores/magicButtonStore'
 import { useAppMetaStore } from './stores/appMetaStore'
+import { useSettingsStore } from './stores/settingsStore'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 import { markSessionForResumePicker } from './utils/resumePicker'
 import { gatherLocalStorageData, hydrateStores } from './utils/configHydration'
@@ -52,6 +54,8 @@ export default function App() {
   const [showWhatsNew, setShowWhatsNew] = useState(false)
   const [showTraining, setShowTraining] = useState(false)
   const [partnerActive, setPartnerActive] = useState<Set<string>>(new Set())
+  const [showMachineNamePrompt, setShowMachineNamePrompt] = useState(false)
+  const [machineNameInput, setMachineNameInput] = useState('')
   const activeSessionId = useSessionStore((s) => s.activeSessionId)
   const sessions = useSessionStore((s) => s.sessions)
   const activeSession = sessions.find((s) => s.id === activeSessionId)
@@ -142,6 +146,12 @@ export default function App() {
       const magicSettings = useMagicButtonStore.getState().settings
       if (magicSettings.autoDeleteDays != null && magicSettings.autoDeleteDays > 0) {
         window.electronAPI.screenshot.cleanup(magicSettings.autoDeleteDays)
+      }
+
+      // Prompt for local machine name if not set (first run after update)
+      const currentSettings = useSettingsStore.getState().settings
+      if (!currentSettings.localMachineName) {
+        setTimeout(() => setShowMachineNamePrompt(true), 800)
       }
 
       setTimeout(() => {
@@ -286,6 +296,7 @@ export default function App() {
     if (view === 'cloud-agents') return <CloudAgentsPage />
     if (view === 'tokenomics') return <TokenomicsPage />
     if (view === 'vision') return <VisionPage />
+    if (view === 'memory') return <MemoryPage />
     return null
   }
 
@@ -346,6 +357,8 @@ export default function App() {
                   agentIds={session.agentIds}
                   flickerFree={session.flickerFree}
                   powershellTool={session.powershellTool}
+                  effortLevel={session.effortLevel}
+                  disableAutoMemory={session.disableAutoMemory}
                 />
               </div>
               {hasPartner && (
@@ -415,6 +428,47 @@ export default function App() {
       <div className="flex flex-col h-screen bg-base text-text">
         {showWhatsNew && <WhatsNewModal onClose={handleWhatsNewClose} />}
         {showTraining && <TrainingWalkthrough onClose={() => setShowTraining(false)} />}
+
+        {showMachineNamePrompt && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+            <div className="bg-surface0 rounded-lg p-5 w-[360px] shadow-2xl border border-surface1">
+              <h3 className="text-sm font-semibold text-text mb-2">Name this machine</h3>
+              <p className="text-xs text-overlay1 mb-3">Give your local machine a name so sessions and memories can be identified by machine.</p>
+              <input
+                autoFocus
+                value={machineNameInput}
+                onChange={e => setMachineNameInput(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && machineNameInput.trim()) {
+                    useSettingsStore.getState().updateSettings({ localMachineName: machineNameInput.trim() })
+                    setShowMachineNamePrompt(false)
+                  }
+                }}
+                placeholder="e.g. Desktop, Dev Workstation, Laptop"
+                className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue mb-3"
+              />
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => setShowMachineNamePrompt(false)}
+                  className="px-3 py-1.5 rounded text-xs text-subtext0 hover:text-text hover:bg-surface1 transition-colors"
+                >
+                  Skip
+                </button>
+                <button
+                  onClick={() => {
+                    if (machineNameInput.trim()) {
+                      useSettingsStore.getState().updateSettings({ localMachineName: machineNameInput.trim() })
+                    }
+                    setShowMachineNamePrompt(false)
+                  }}
+                  className="px-3 py-1.5 rounded text-xs bg-blue text-crust font-medium hover:bg-blue/90 transition-colors"
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {closeDialog && (
           <CloseDialog

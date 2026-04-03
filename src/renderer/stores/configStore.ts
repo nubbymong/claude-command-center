@@ -32,6 +32,9 @@ export interface TerminalConfig {
   agentIds?: string[]  // Selected agent template IDs
   flickerFree?: boolean // Enable CLAUDE_CODE_NO_FLICKER=1 (alternate screen buffer rendering)
   powershellTool?: boolean // Enable CLAUDE_CODE_USE_POWERSHELL_TOOL=1 (native PowerShell tool)
+  effortLevel?: 'low' | 'medium' | 'high' // Claude Code --effort flag
+  disableAutoMemory?: boolean // Disable CLAUDE.md auto-memory writes
+  machineName?: string // Identifies which machine this session runs on
 }
 
 export interface ConfigGroup {

@@ -81,6 +81,9 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
   const [selectedAgentIds, setSelectedAgentIds] = useState<Set<string>>(new Set(initial?.agentIds ?? []))
   const [flickerFree, setFlickerFree] = useState(initial?.flickerFree ?? false)
   const [powershellTool, setPowershellTool] = useState(initial?.powershellTool ?? false)
+  const [effortLevel, setEffortLevel] = useState<string>(initial?.effortLevel ?? '')
+  const [disableAutoMemory, setDisableAutoMemory] = useState(initial?.disableAutoMemory ?? false)
+  const [machineName, setMachineName] = useState(initial?.machineName ?? '')
 
   // Fetch available versions when legacy checkbox enabled
   useEffect(() => {
@@ -234,6 +237,9 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
       agentIds: !shellOnly && selectedAgentIds.size > 0 ? Array.from(selectedAgentIds) : undefined,
       flickerFree: flickerFree || undefined,
       powershellTool: powershellTool || undefined,
+      effortLevel: (!shellOnly && effortLevel ? effortLevel : undefined) as any,
+      disableAutoMemory: !shellOnly && disableAutoMemory ? true : undefined,
+      machineName: machineName.trim() || undefined,
     }
 
     onConfirm(
@@ -296,6 +302,18 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                 className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue"
               />
             </div>
+
+            {sessionType === 'ssh' && (
+              <div>
+                <label className="block text-xs text-subtext0 mb-1">Machine Name</label>
+                <input
+                  value={machineName}
+                  onChange={(e) => setMachineName(e.target.value)}
+                  placeholder="e.g. GPU Server, Build Box"
+                  className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue"
+                />
+              </div>
+            )}
 
             {/* Color picker — compact swatches */}
             <div>
@@ -554,6 +572,40 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                 <option value="haiku">Haiku</option>
               </select>
             </div>
+
+            {/* Effort level */}
+            {!shellOnly && (
+              <div>
+                <label className="block text-xs text-subtext0 mb-1">
+                  Effort level
+                  <span className="text-overlay0 ml-1">(thinking depth vs cost)</span>
+                </label>
+                <select
+                  value={effortLevel}
+                  onChange={(e) => setEffortLevel(e.target.value)}
+                  className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-blue"
+                >
+                  <option value="">Auto (default)</option>
+                  <option value="low">Low — fast, minimal thinking</option>
+                  <option value="medium">Medium — balanced</option>
+                  <option value="high">High — deep reasoning</option>
+                </select>
+              </div>
+            )}
+
+            {/* Disable auto-memory toggle */}
+            {!shellOnly && (
+              <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={disableAutoMemory}
+                  onChange={(e) => setDisableAutoMemory(e.target.checked)}
+                  className="rounded border-surface1"
+                />
+                Disable auto-memory
+                <span className="text-[10px] text-overlay0">(no CLAUDE.md memory writes)</span>
+              </label>
+            )}
 
             {/* Flicker-free rendering toggle */}
             {!shellOnly && (

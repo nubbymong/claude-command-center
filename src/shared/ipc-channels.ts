@@ -99,6 +99,12 @@ export const IPC = {
   SCREENSHOT_REGION_SELECTED: 'screenshot:regionSelected',
   SCREENSHOT_CANCELLED: 'screenshot:cancelled',
 
+  // Storyboard
+  STORYBOARD_START: 'storyboard:start',
+  STORYBOARD_CAPTURE_FRAME: 'storyboard:captureFrame',
+  STORYBOARD_STOP: 'storyboard:stop',
+  STORYBOARD_IS_ACTIVE: 'storyboard:isActive',
+
   // Session persistence
   SESSION_SAVE: 'session:save',
   SESSION_LOAD: 'session:load',
@@ -178,6 +184,12 @@ export const IPC = {
   ACCOUNT_GET_ACTIVE: 'account:getActive',
   ACCOUNT_SAVE_CURRENT_AS: 'account:saveCurrentAs',
   ACCOUNT_RENAME: 'account:rename',
+
+  // Memory
+  MEMORY_SCAN: 'memory:scan',
+  MEMORY_READ: 'memory:read',
+  MEMORY_DELETE: 'memory:delete',
+  MEMORY_WRITE_FRONTMATTER: 'memory:writeFrontmatter',
 } as const
 
 /** Helper to build per-session PTY data channels */

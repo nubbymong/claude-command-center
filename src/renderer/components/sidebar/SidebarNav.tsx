@@ -52,6 +52,17 @@ const navItems: { view: ViewType; icon: React.ReactNode; label: string }[] = [
     )
   },
   {
+    view: 'memory',
+    label: 'Memory',
+    icon: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 2a7 7 0 0 1 7 7c0 2.38-1.19 4.47-3 5.74V17a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1v-2.26C6.19 13.47 5 11.38 5 9a7 7 0 0 1 7-7z" />
+        <line x1="9" y1="21" x2="15" y2="21" />
+        <line x1="10" y1="24" x2="14" y2="24" />
+      </svg>
+    )
+  },
+  {
     view: 'logs',
     label: 'Logs',
     icon: (

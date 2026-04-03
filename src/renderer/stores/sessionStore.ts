@@ -51,8 +51,6 @@ export interface Session {
     limitUsd: number
   }
   isPeak?: boolean
-  compactionInterrupt?: boolean         // Per-session on/off (default off)
-  compactionInterruptTriggered?: boolean // Set true after auto-Escape, prevents re-trigger
   legacyVersion?: {                      // Pinned Claude CLI version
     enabled: boolean
     version: string
@@ -60,6 +58,9 @@ export interface Session {
   agentIds?: string[]                    // Agent template IDs for this session
   flickerFree?: boolean                  // Enable flicker-free alternate screen rendering
   powershellTool?: boolean               // Enable native PowerShell tool
+  effortLevel?: 'low' | 'medium' | 'high'
+  disableAutoMemory?: boolean
+  machineName?: string
 }
 
 interface SessionState {

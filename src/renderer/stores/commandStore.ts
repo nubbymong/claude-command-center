@@ -4,22 +4,37 @@ import { saveConfigNow, saveConfigDebounced } from '../utils/config-saver'
 export interface CustomCommand {
   id: string
   label: string
-  prompt: string
+  prompt: string           // Base command (script path) — no longer includes arguments
   scope: 'global' | 'config'
   configId?: string
   color?: string
   target?: 'claude' | 'partner' | 'any'
+  sectionId?: string       // Which section this button belongs to
+  defaultArgs?: string[]   // Default arguments (run on normal click)
+  lastCustomArgs?: string[] // Last custom arguments used (remembered)
+}
+
+export interface CommandSection {
+  id: string
+  name: string
+  scope: 'global' | 'config'
+  configId?: string
 }
 
 interface CommandState {
   commands: CustomCommand[]
+  sections: CommandSection[]
   isLoaded: boolean
-  hydrate: (commands: CustomCommand[]) => void
+  hydrate: (commands: CustomCommand[], sections?: CommandSection[]) => void
   addCommand: (command: CustomCommand) => void
   updateCommand: (id: string, updates: Partial<CustomCommand>) => void
   removeCommand: (id: string) => void
   reorderCommands: (reordered: CustomCommand[]) => void
   getCommandsForSession: (configId?: string) => CustomCommand[]
+  addSection: (section: CommandSection) => void
+  updateSection: (id: string, updates: Partial<CommandSection>) => void
+  removeSection: (id: string) => void
+  reorderSections: (reordered: CommandSection[]) => void
 }
 
 export const DEFAULT_COMMANDS: CustomCommand[] = [
@@ -34,9 +49,10 @@ export const DEFAULT_COMMANDS: CustomCommand[] = [
 
 export const useCommandStore = create<CommandState>((set, get) => ({
   commands: [],
+  sections: [],
   isLoaded: false,
 
-  hydrate: (commands) => set({ commands, isLoaded: true }),
+  hydrate: (commands, sections?) => set({ commands, sections: sections || [], isLoaded: true }),
 
   addCommand: (command) =>
     set((state) => {
@@ -71,5 +87,37 @@ export const useCommandStore = create<CommandState>((set, get) => ({
     return all.filter(
       (c) => c.scope === 'global' || (c.scope === 'config' && c.configId === configId)
     )
-  }
+  },
+
+  addSection: (section) =>
+    set((state) => {
+      const sections = [...state.sections, section]
+      saveConfigNow('commandSections', sections)
+      return { sections }
+    }),
+
+  updateSection: (id, updates) =>
+    set((state) => {
+      const sections = state.sections.map((s) => (s.id === id ? { ...s, ...updates } : s))
+      saveConfigNow('commandSections', sections)
+      return { sections }
+    }),
+
+  removeSection: (id) =>
+    set((state) => {
+      const sections = state.sections.filter((s) => s.id !== id)
+      // Also clear sectionId from any commands in this section
+      const commands = state.commands.map((c) =>
+        c.sectionId === id ? { ...c, sectionId: undefined } : c
+      )
+      saveConfigNow('commandSections', sections)
+      saveConfigNow('commands', commands)
+      return { sections, commands }
+    }),
+
+  reorderSections: (reordered) =>
+    set(() => {
+      saveConfigDebounced('commandSections', reordered)
+      return { sections: reordered }
+    }),
 }))

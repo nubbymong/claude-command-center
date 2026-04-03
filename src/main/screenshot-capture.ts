@@ -281,6 +281,160 @@ export async function listRecentScreenshots(): Promise<Array<{
   }
 }
 
+// ── Storyboard: repeated region capture ──────────────────────────────────
+
+let storyboardRegion: { x: number; y: number; width: number; height: number } | null = null
+let storyboardFrames: string[] = []
+let storyboardCounter = 0
+
+/**
+ * Show the region-selection overlay (reuses captureRectangle's overlay) and
+ * return the selected region without capturing a screenshot.
+ * The region is saved internally for subsequent `captureStoryboardFrame()` calls.
+ */
+export async function startStoryboard(mainWindow: BrowserWindow): Promise<{ x: number; y: number; width: number; height: number } | null> {
+  ensureDir()
+  storyboardFrames = []
+  storyboardCounter = 0
+
+  const primaryDisplay = screen.getPrimaryDisplay()
+  const { width: screenW, height: screenH } = primaryDisplay.size
+
+  // Minimize main window so user can see the screen
+  mainWindow.minimize()
+  await new Promise<void>((resolve) => {
+    const check = () => {
+      if (mainWindow.isMinimized()) resolve()
+      else setTimeout(check, 50)
+    }
+    setTimeout(check, 100)
+  })
+  await new Promise(r => setTimeout(r, 300))
+
+  return new Promise<{ x: number; y: number; width: number; height: number } | null>((resolve) => {
+    const overlay = new BrowserWindow({
+      x: 0,
+      y: 0,
+      width: screenW,
+      height: screenH,
+      frame: false,
+      transparent: true,
+      alwaysOnTop: true,
+      skipTaskbar: true,
+      resizable: false,
+      fullscreen: true,
+      webPreferences: {
+        preload: join(__dirname, '../preload/screenshot-overlay.js'),
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: false
+      }
+    })
+
+    let resolved = false
+    const cleanup = () => {
+      if (!overlay.isDestroyed()) overlay.destroy()
+      mainWindow.restore()
+      mainWindow.focus()
+    }
+
+    const handleRegion = async (_event: unknown, region: { x: number; y: number; width: number; height: number }) => {
+      if (resolved) return
+      resolved = true
+      ipcMain.removeHandler('screenshot:regionSelected')
+      ipcMain.removeHandler('screenshot:cancelled')
+      cleanup()
+      storyboardRegion = region
+      resolve(region)
+    }
+
+    const handleCancel = () => {
+      if (resolved) return
+      resolved = true
+      ipcMain.removeHandler('screenshot:regionSelected')
+      ipcMain.removeHandler('screenshot:cancelled')
+      cleanup()
+      storyboardRegion = null
+      resolve(null)
+    }
+
+    ipcMain.handle('screenshot:regionSelected', handleRegion)
+    ipcMain.handle('screenshot:cancelled', handleCancel)
+
+    overlay.on('closed', () => {
+      if (!resolved) {
+        resolved = true
+        ipcMain.removeHandler('screenshot:regionSelected')
+        ipcMain.removeHandler('screenshot:cancelled')
+        mainWindow.restore()
+        mainWindow.focus()
+        resolve(null)
+      }
+    })
+
+    const html = getOverlayHtml()
+    overlay.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
+  })
+}
+
+/**
+ * Capture a single frame of the saved storyboard region (no overlay).
+ * Returns the file path of the saved JPEG, or null on error.
+ */
+export async function captureStoryboardFrame(): Promise<string | null> {
+  if (!storyboardRegion) return null
+  ensureDir()
+
+  try {
+    const primaryDisplay = screen.getPrimaryDisplay()
+    const { width: screenW, height: screenH } = primaryDisplay.size
+    const scaleFactor = primaryDisplay.scaleFactor
+
+    const sources = await desktopCapturer.getSources({
+      types: ['screen'],
+      thumbnailSize: { width: screenW * scaleFactor, height: screenH * scaleFactor }
+    })
+    if (sources.length === 0) return null
+
+    const img = sources[0].thumbnail
+    const cropped = img.crop({
+      x: Math.round(storyboardRegion.x * scaleFactor),
+      y: Math.round(storyboardRegion.y * scaleFactor),
+      width: Math.round(storyboardRegion.width * scaleFactor),
+      height: Math.round(storyboardRegion.height * scaleFactor)
+    })
+
+    storyboardCounter++
+    const padded = String(storyboardCounter).padStart(3, '0')
+    const dir = getScreenshotsDir()
+    const filePath = join(dir, `storyboard-${padded}.jpg`)
+    writeFileSync(filePath, cropped.toJPEG(80))
+    storyboardFrames.push(filePath)
+    return filePath
+  } catch (err) {
+    console.error('[screenshot] captureStoryboardFrame error:', err)
+    return null
+  }
+}
+
+/**
+ * Stop the storyboard session and return all captured frame paths.
+ */
+export function stopStoryboard(): string[] {
+  const frames = [...storyboardFrames]
+  storyboardFrames = []
+  storyboardRegion = null
+  storyboardCounter = 0
+  return frames
+}
+
+/**
+ * Check whether a storyboard region is currently set (recording could be in progress).
+ */
+export function isStoryboardActive(): boolean {
+  return storyboardRegion !== null
+}
+
 /**
  * Delete screenshots older than maxAgeDays.
  */

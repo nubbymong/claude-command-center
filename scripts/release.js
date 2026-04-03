@@ -20,6 +20,7 @@
  * Usage: npm run release
  *        npm run release -- --minor
  *        npm run release -- --major
+ *        npm run release -- --beta          (mark as beta/pre-release)
  *        npm run release -- --skip-vt       (skip VirusTotal)
  *        npm run release -- --skip-claude   (skip changelog generation)
  *        npm run release -- --skip-push     (skip git push + gh release)
@@ -39,6 +40,8 @@ const APPDATA = process.env.APPDATA || ''
 const HASH_FILE = path.join(APPDATA, 'claude-conductor', 'source-hash.json')
 const SECRETS_DIR = path.join(PROJECT_ROOT, '.secrets')
 
+const readline = require('readline')
+
 const args = process.argv.slice(2)
 const SKIP_VT = args.includes('--skip-vt')
 const SKIP_CLAUDE = args.includes('--skip-claude')
@@ -46,6 +49,26 @@ const SKIP_PUSH = args.includes('--skip-push')
 const SKIP_TESTS = args.includes('--skip-tests')
 const BUMP_MINOR = args.includes('--minor')
 const BUMP_MAJOR = args.includes('--major')
+const BETA_FLAG = args.includes('--beta')
+
+/**
+ * Prompt the user for stable vs beta if --beta was not passed.
+ * Returns true if this is a beta release.
+ */
+function askBetaOrStable() {
+  return new Promise((resolve) => {
+    if (BETA_FLAG) {
+      resolve(true)
+      return
+    }
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
+    rl.question('Is this a stable or beta release? (s/b): ', (answer) => {
+      rl.close()
+      const trimmed = (answer || '').trim().toLowerCase()
+      resolve(trimmed === 'b' || trimmed === 'beta')
+    })
+  })
+}
 
 // ============================================================
 // HELPERS
@@ -90,6 +113,15 @@ function sha256File(filePath) {
 // ============================================================
 // MAIN
 // ============================================================
+
+;(async () => {
+
+const IS_BETA = await askBetaOrStable()
+if (IS_BETA) {
+  console.log('\n  Release channel: BETA (pre-release)\n')
+} else {
+  console.log('\n  Release channel: STABLE\n')
+}
 
 const TOTAL_STEPS = 13
 let exitCode = 0
@@ -157,6 +189,7 @@ console.log('')
 console.log('  ===========================================')
 console.log(`    Claude Command Center Beta  v${version}`)
 console.log(`    (from v${oldVersion})`)
+console.log(`    Channel: ${IS_BETA ? 'BETA' : 'STABLE'}`)
 console.log('  ===========================================')
 
 // --- Step 3: Claude changelog + release notes ---
@@ -318,6 +351,10 @@ if (!changelogGenerated) {
     warn('Could not update changelog version')
   }
 }
+
+// Prepend release channel label to release notes
+const channelLabel = IS_BETA ? '**Beta Release**' : '**Stable Release**'
+releaseNotesBody = channelLabel + '\n\n' + releaseNotesBody
 
 // --- Step 4: Unit tests ---
 step(4, TOTAL_STEPS, 'Running unit tests...')
@@ -507,12 +544,13 @@ if (SKIP_PUSH) {
       ok('Nothing new to commit')
     }
 
-    // Tag
+    // Tag — beta releases get -beta suffix
+    const tagName = IS_BETA ? `v${version}-beta` : `v${version}`
     try {
-      run(`git tag v${version}`)
-      ok(`Tagged: v${version}`)
+      run(`git tag ${tagName}`)
+      ok(`Tagged: ${tagName}`)
     } catch (err) {
-      warn(`Tag v${version} may already exist`)
+      warn(`Tag ${tagName} may already exist`)
     }
 
     // Push
@@ -535,11 +573,21 @@ if (SKIP_PUSH) {
 } else {
   try {
     // Create release with assets
+    const ghReleaseTag = IS_BETA ? `v${version}-beta` : `v${version}`
     const ghCmd = [
-      'gh', 'release', 'create', `v${version}`,
-      '--title', `v${version}`,
+      'gh', 'release', 'create', ghReleaseTag,
+      '--title', ghReleaseTag,
       '--notes-file', releaseNotesPath,
     ]
+
+    // Note: --prerelease is intentionally NOT used yet.
+    // Existing installs (stable channel) use `gh release view` which skips prereleases.
+    // Until all users have the updateChannel setting, beta releases are published as
+    // regular releases with -beta tag suffix for labeling only.
+    // TODO: Enable --prerelease once user base has updateChannel support
+    // if (IS_BETA) {
+    //   ghCmd.push('--prerelease')
+    // }
 
     // Add installer as asset if it exists
     if (fs.existsSync(installerDst)) {
@@ -638,8 +686,9 @@ function finishUp() {
 
   if (!SKIP_PUSH) {
     try {
-      run(`git tag -l v${version}`)
-      checks.push(`  OK   Git tag: v${version}`)
+      const verifyTag = IS_BETA ? `v${version}-beta` : `v${version}`
+      run(`git tag -l ${verifyTag}`)
+      checks.push(`  OK   Git tag: ${verifyTag}`)
     } catch { /* ignore */ }
   }
 
@@ -664,7 +713,7 @@ function finishUp() {
   console.log('')
   console.log('  ===========================================')
   if (exitCode === 0) {
-    console.log(`    Release v${version} complete!`)
+    console.log(`    ${IS_BETA ? 'Beta' : 'Stable'} Release v${version} complete!`)
     if (releaseUrl) console.log(`    ${releaseUrl}`)
   } else {
     console.log('    Release completed with warnings.')
@@ -674,3 +723,5 @@ function finishUp() {
 
   process.exit(exitCode)
 }
+
+})()
