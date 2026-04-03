@@ -58,6 +58,8 @@ export interface Session {
     version: string
   }
   agentIds?: string[]                    // Agent template IDs for this session
+  flickerFree?: boolean                  // Enable flicker-free alternate screen rendering
+  powershellTool?: boolean               // Enable native PowerShell tool
 }
 
 interface SessionState {

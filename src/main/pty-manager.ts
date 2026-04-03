@@ -156,7 +156,7 @@ function getResumePickerPath(): string | null {
 export function spawnPty(
   win: BrowserWindow,
   sessionId: string,
-  options?: { cwd?: string; cols?: number; rows?: number; ssh?: SSHOptions; shellOnly?: boolean; elevated?: boolean; configLabel?: string; useResumePicker?: boolean; legacyVersion?: { enabled: boolean; version: string }; agentsConfig?: Array<{ name: string; description: string; prompt: string; model?: string; tools?: string[] }> }
+  options?: { cwd?: string; cols?: number; rows?: number; ssh?: SSHOptions; shellOnly?: boolean; elevated?: boolean; configLabel?: string; useResumePicker?: boolean; legacyVersion?: { enabled: boolean; version: string }; agentsConfig?: Array<{ name: string; description: string; prompt: string; model?: string; tools?: string[] }>; flickerFree?: boolean; powershellTool?: boolean }
 ): void {
   logInfo(`[pty] Spawning PTY for session ${sessionId} (ssh=${!!options?.ssh}, shellOnly=${!!options?.shellOnly}, cwd=${options?.cwd || 'default'})`)
   killPty(sessionId)
@@ -200,6 +200,11 @@ export function spawnPty(
     let claudeSent = false
     let postCommandShellReady = false
     const remotePath = ssh.remotePath || '~'
+    const claudeEnvPrefix = [
+      options?.flickerFree ? 'CLAUDE_CODE_NO_FLICKER=1' : '',
+      options?.powershellTool ? 'CLAUDE_CODE_USE_POWERSHELL_TOOL=1' : '',
+    ].filter(Boolean).join(' ')
+    const claudeCmd = claudeEnvPrefix ? `${claudeEnvPrefix} claude` : 'claude'
     const password = ssh.password
     const postCommand = ssh.postCommand
     const sudoPassword = ssh.sudoPassword
@@ -245,7 +250,7 @@ export function spawnPty(
             postCommandSent = true
           } else if (startClaudeAfter && !options?.shellOnly) {
             claudeSent = true
-            ptyProcess.write(`${setupCmd} && claude\r`)
+            ptyProcess.write(`${setupCmd} && ${claudeCmd}\r`)
           } else {
             ptyProcess.write(`${setupCmd} && clear\r`)
           }
@@ -263,7 +268,7 @@ export function spawnPty(
             setTimeout(() => {
               claudeSent = true
               const setupCmd = getRemoteSetupCommand(sessionId, remotePath)
-              ptyProcess.write(`${setupCmd} && claude\r`)
+              ptyProcess.write(`${setupCmd} && ${claudeCmd}\r`)
             }, 300)
           }
         }
@@ -297,12 +302,16 @@ export function spawnPty(
       const resolvedCwd = resolveCwd(options?.cwd)
       console.log(`[pty-manager] Launching shell-only PTY: ${spawnCmd} ${spawnArgs.join(' ')} cwd=${resolvedCwd}${elevated ? ' (elevated)' : ''}`)
 
+      const shellEnv: Record<string, string> = { ...process.env, CLAUDE_MULTI_SESSION_ID: sessionId } as Record<string, string>
+      if (options?.flickerFree) shellEnv.CLAUDE_CODE_NO_FLICKER = '1'
+      if (options?.powershellTool) shellEnv.CLAUDE_CODE_USE_POWERSHELL_TOOL = '1'
+
       ptyProcess = pty.spawn(spawnCmd, spawnArgs, {
         name: 'xterm-256color',
         cols,
         rows,
         cwd: resolvedCwd,
-        env: { ...process.env, CLAUDE_MULTI_SESSION_ID: sessionId } as Record<string, string>,
+        env: shellEnv,
         useConpty: false
       })
 
@@ -329,12 +338,16 @@ export function spawnPty(
       const shell = os.platform() === 'win32' ? 'powershell.exe' : process.env.SHELL || '/bin/bash'
       console.log(`[pty-manager] Launching Claude via shell in PTY: ${shell} -> ${cmd} cwd=${resolvedCwd} (resumePicker=${!!options?.useResumePicker})`)
 
+      const claudeEnv: Record<string, string> = { ...process.env, CLAUDE_MULTI_SESSION_ID: sessionId } as Record<string, string>
+      if (options?.flickerFree) claudeEnv.CLAUDE_CODE_NO_FLICKER = '1'
+      if (options?.powershellTool) claudeEnv.CLAUDE_CODE_USE_POWERSHELL_TOOL = '1'
+
       ptyProcess = pty.spawn(shell, [], {
         name: 'xterm-256color',
         cols,
         rows,
         cwd: resolvedCwd,
-        env: { ...process.env, CLAUDE_MULTI_SESSION_ID: sessionId } as Record<string, string>,
+        env: claudeEnv,
         useConpty: false
       })
 
