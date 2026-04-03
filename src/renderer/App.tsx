@@ -344,6 +344,8 @@ export default function App() {
                   partnerSessionId={hasPartner ? partnerPtyId : undefined}
                   legacyVersion={session.legacyVersion}
                   agentIds={session.agentIds}
+                  flickerFree={session.flickerFree}
+                  powershellTool={session.powershellTool}
                 />
               </div>
               {hasPartner && (

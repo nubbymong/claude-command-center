@@ -30,6 +30,8 @@ export interface TerminalConfig {
   }
   pinned?: boolean
   agentIds?: string[]  // Selected agent template IDs
+  flickerFree?: boolean // Enable CLAUDE_CODE_NO_FLICKER=1 (alternate screen buffer rendering)
+  powershellTool?: boolean // Enable CLAUDE_CODE_USE_POWERSHELL_TOOL=1 (native PowerShell tool)
 }
 
 export interface ConfigGroup {

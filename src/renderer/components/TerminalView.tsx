@@ -46,9 +46,11 @@ interface Props {
     version: string
   }
   agentIds?: string[]
+  flickerFree?: boolean
+  powershellTool?: boolean
 }
 
-export default function TerminalView({ sessionId, configId, cwd, shellOnly, elevated, ssh, isActive = true, partnerEnabled, isPartnerActive, onTogglePartner, partnerSessionId, legacyVersion, agentIds }: Props) {
+export default function TerminalView({ sessionId, configId, cwd, shellOnly, elevated, ssh, isActive = true, partnerEnabled, isPartnerActive, onTogglePartner, partnerSessionId, legacyVersion, agentIds, flickerFree, powershellTool }: Props) {
   const xtermContainerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
@@ -149,7 +151,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
               }))
             if (agentsConfig.length === 0) agentsConfig = undefined
           }
-          window.electronAPI.pty.spawn(sessionId, { cwd, cols, rows, ssh, shellOnly, elevated, configLabel, useResumePicker, legacyVersion, agentsConfig })
+          window.electronAPI.pty.spawn(sessionId, { cwd, cols, rows, ssh, shellOnly, elevated, configLabel, useResumePicker, legacyVersion, agentsConfig, flickerFree, powershellTool })
         }
       })
 

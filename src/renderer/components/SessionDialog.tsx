@@ -79,6 +79,8 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
   const agentUserTemplates = useAgentLibraryStore(s => s.templates)
   const allAgentTemplates = [...agentUserTemplates, ...BUILTIN_TEMPLATES]
   const [selectedAgentIds, setSelectedAgentIds] = useState<Set<string>>(new Set(initial?.agentIds ?? []))
+  const [flickerFree, setFlickerFree] = useState(initial?.flickerFree ?? false)
+  const [powershellTool, setPowershellTool] = useState(initial?.powershellTool ?? false)
 
   // Fetch available versions when legacy checkbox enabled
   useEffect(() => {
@@ -230,6 +232,8 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
         version: legacyVersion
       } : undefined,
       agentIds: !shellOnly && selectedAgentIds.size > 0 ? Array.from(selectedAgentIds) : undefined,
+      flickerFree: flickerFree || undefined,
+      powershellTool: powershellTool || undefined,
     }
 
     onConfirm(
@@ -550,6 +554,34 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                 <option value="haiku">Haiku</option>
               </select>
             </div>
+
+            {/* Flicker-free rendering toggle */}
+            {!shellOnly && (
+              <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={flickerFree}
+                  onChange={(e) => setFlickerFree(e.target.checked)}
+                  className="rounded border-surface1"
+                />
+                Flicker-free rendering
+                <span className="text-[10px] text-overlay0">(alternate screen buffer)</span>
+              </label>
+            )}
+
+            {/* PowerShell tool toggle (local Windows sessions only) */}
+            {!shellOnly && sessionType === 'local' && (
+              <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={powershellTool}
+                  onChange={(e) => setPowershellTool(e.target.checked)}
+                  className="rounded border-surface1"
+                />
+                PowerShell tool
+                <span className="text-[10px] text-overlay0">(native PS commands, preview)</span>
+              </label>
+            )}
 
             {/* -- EXTENSIONS section -- */}
             <div className="border-t border-surface1 pt-3 mt-3">

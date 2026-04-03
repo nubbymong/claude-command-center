@@ -62,6 +62,8 @@ export interface SavedSession {
   sshConfig?: SshConfig
   legacyVersion?: LegacyVersion
   agentIds?: string[]
+  flickerFree?: boolean
+  powershellTool?: boolean
 }
 
 export interface SessionState {
