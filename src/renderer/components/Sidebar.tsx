@@ -230,8 +230,11 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
       } : undefined,
       legacyVersion: config.legacyVersion,
       agentIds: config.agentIds,
+      machineName: config.machineName,
       flickerFree: config.flickerFree,
       powershellTool: config.powershellTool,
+      effortLevel: config.effortLevel,
+      disableAutoMemory: config.disableAutoMemory,
     }
     if (!session.shellOnly && session.sessionType === 'local') {
       markSessionForResumePicker(session.id)

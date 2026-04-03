@@ -30,6 +30,10 @@ export type {
   TokenomicsSyncProgress,
   TokenomicsSessionRecord,
   TokenomicsDailyAggregate,
+  MemoryFile,
+  MemoryProject,
+  MemoryScanResult,
+  SchemaWarning,
 } from '../../shared/types'
 
 // Import for use in the ElectronAPI interface
@@ -105,6 +109,8 @@ export interface ElectronAPI {
       }>
       flickerFree?: boolean
       powershellTool?: boolean
+      effortLevel?: 'low' | 'medium' | 'high'
+      disableAutoMemory?: boolean
     }) => Promise<void>
     write: (sessionId: string, data: string) => void
     resize: (sessionId: string, cols: number, rows: number) => void
@@ -200,6 +206,12 @@ export interface ElectronAPI {
     listRecent: () => Promise<Array<{ filename: string; path: string; timestamp: number; thumbnail: string }>>
     cleanup: (maxAgeDays: number) => Promise<number>
   }
+  storyboard: {
+    start: () => Promise<{ x: number; y: number; width: number; height: number } | null>
+    captureFrame: () => Promise<string | null>
+    stop: () => Promise<string[]>
+    isActive: () => Promise<boolean>
+  }
   session: {
     save: (state: SessionState) => Promise<boolean>
     load: () => Promise<SessionState | null>
@@ -279,6 +291,12 @@ export interface ElectronAPI {
     getActive: () => Promise<AccountProfile | null>
     saveCurrentAs: (id: string, label: string) => Promise<{ ok: boolean; error?: string }>
     rename: (id: string, newLabel: string) => Promise<{ ok: boolean; error?: string }>
+  }
+  memory: {
+    scan: () => Promise<import('../../shared/types').MemoryScanResult>
+    read: (filePath: string) => Promise<string>
+    delete: (filePath: string) => Promise<void>
+    writeFrontmatter: (filePath: string, frontmatter: { name?: string; description?: string; type?: string }) => Promise<void>
   }
 }
 

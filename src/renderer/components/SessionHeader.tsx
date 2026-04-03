@@ -78,7 +78,6 @@ export default function SessionHeader({ session, isShowingPartner, sidebarCollap
       rateLimitWeekly: undefined,
       rateLimitWeeklyResets: undefined,
       rateLimitExtra: undefined,
-      compactionInterruptTriggered: undefined,
     })
   }
 

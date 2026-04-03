@@ -64,6 +64,9 @@ export interface SavedSession {
   agentIds?: string[]
   flickerFree?: boolean
   powershellTool?: boolean
+  effortLevel?: 'low' | 'medium' | 'high'
+  disableAutoMemory?: boolean
+  machineName?: string
 }
 
 export interface SessionState {
@@ -308,4 +311,45 @@ export interface NoteMetadata {
   color: string
   configId?: string
   createdAt: number
+}
+
+// ── Memory Visualiser ──
+
+export interface MemoryFile {
+  id: string
+  name: string
+  filename: string
+  project: string
+  projectDir: string
+  type: 'user' | 'feedback' | 'project' | 'reference' | 'snapshot' | 'uncategorized'
+  description: string
+  size: number
+  modified: number
+  hasFrontmatter: boolean
+  path: string
+}
+
+export interface MemoryProject {
+  name: string
+  projectDir: string
+  fileCount: number
+  totalSize: number
+  lastModified: number
+  types: Record<string, number>
+  memoryMdLines?: number
+}
+
+export interface SchemaWarning {
+  level: 'info' | 'warn' | 'error'
+  message: string
+  project?: string
+  file?: string
+}
+
+export interface MemoryScanResult {
+  projects: MemoryProject[]
+  memories: MemoryFile[]
+  warnings: SchemaWarning[]
+  totalSize: number
+  scannedAt: number
 }

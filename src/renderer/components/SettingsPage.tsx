@@ -110,6 +110,24 @@ export default function SettingsPage() {
                     className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-full focus:outline-none focus:border-blue/50 placeholder:text-overlay0 transition-colors"
                   />
                 </Field>
+                <Field label="Local Machine Name">
+                  <input
+                    value={settings.localMachineName}
+                    onChange={e => save({ localMachineName: e.target.value })}
+                    placeholder="e.g. Desktop, Laptop"
+                    className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-full focus:outline-none focus:border-blue/50 placeholder:text-overlay0 transition-colors"
+                  />
+                </Field>
+                <Field label="Update Channel">
+                  <select
+                    value={settings.updateChannel}
+                    onChange={(e) => save({ updateChannel: e.target.value as 'stable' | 'beta' })}
+                    className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-full focus:outline-none focus:border-blue/50 transition-colors"
+                  >
+                    <option value="stable">Stable</option>
+                    <option value="beta">Beta (pre-release builds)</option>
+                  </select>
+                </Field>
               </Section>
 
               <Section title="Appearance" icon={<><circle cx="8" cy="8" r="3" stroke="currentColor" strokeWidth="1.2" fill="none" /><path d="M8 2v2M8 12v2M2 8h2M12 8h2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" /></>}>

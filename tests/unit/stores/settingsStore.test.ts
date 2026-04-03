@@ -11,7 +11,6 @@ describe('settingsStore', () => {
       expect(DEFAULT_SETTINGS.defaultModel).toBe('sonnet')
       expect(DEFAULT_SETTINGS.terminalFontSize).toBe(14)
       expect(DEFAULT_SETTINGS.debugMode).toBe(false)
-      expect(DEFAULT_SETTINGS.compactionInterruptThreshold).toBe(80)
     })
   })
 
@@ -31,14 +30,12 @@ describe('settingsStore', () => {
         defaultWorkingDirectory: 'C:\\custom',
         terminalFontSize: 18,
         debugMode: true,
-        compactionInterruptThreshold: 90,
       })
       const s = useSettingsStore.getState().settings
       expect(s.defaultModel).toBe('haiku')
       expect(s.defaultWorkingDirectory).toBe('C:\\custom')
       expect(s.terminalFontSize).toBe(18)
       expect(s.debugMode).toBe(true)
-      expect(s.compactionInterruptThreshold).toBe(90)
     })
   })
 

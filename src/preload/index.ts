@@ -51,6 +51,8 @@ export interface ElectronAPI {
       }>
       flickerFree?: boolean
       powershellTool?: boolean
+      effortLevel?: 'low' | 'medium' | 'high'
+      disableAutoMemory?: boolean
     }) => Promise<void>
     write: (sessionId: string, data: string) => void
     resize: (sessionId: string, cols: number, rows: number) => void
@@ -104,6 +106,12 @@ export interface ElectronAPI {
     listWindows: () => Promise<Array<{ id: string; name: string; thumbnail: string }>>
     listRecent: () => Promise<Array<{ filename: string; path: string; timestamp: number; thumbnail: string }>>
     cleanup: (maxAgeDays: number) => Promise<number>
+  }
+  storyboard: {
+    start: () => Promise<{ x: number; y: number; width: number; height: number } | null>
+    captureFrame: () => Promise<string | null>
+    stop: () => Promise<string[]>
+    isActive: () => Promise<boolean>
   }
   session: {
     save: (state: unknown) => Promise<boolean>
@@ -258,6 +266,12 @@ const electronAPI: ElectronAPI = {
     listRecent: () => ipcRenderer.invoke(IPC.SCREENSHOT_LIST_RECENT),
     cleanup: (maxAgeDays: number) => ipcRenderer.invoke(IPC.SCREENSHOT_CLEANUP, maxAgeDays)
   },
+  storyboard: {
+    start: () => ipcRenderer.invoke(IPC.STORYBOARD_START),
+    captureFrame: () => ipcRenderer.invoke(IPC.STORYBOARD_CAPTURE_FRAME),
+    stop: () => ipcRenderer.invoke(IPC.STORYBOARD_STOP),
+    isActive: () => ipcRenderer.invoke(IPC.STORYBOARD_IS_ACTIVE),
+  },
   session: {
     save: (state: unknown) => ipcRenderer.invoke(IPC.SESSION_SAVE, state),
     load: () => ipcRenderer.invoke(IPC.SESSION_LOAD),
@@ -372,7 +386,14 @@ const electronAPI: ElectronAPI = {
     getActive: () => ipcRenderer.invoke(IPC.ACCOUNT_GET_ACTIVE),
     saveCurrentAs: (id: string, label: string) => ipcRenderer.invoke(IPC.ACCOUNT_SAVE_CURRENT_AS, id, label),
     rename: (id: string, newLabel: string) => ipcRenderer.invoke(IPC.ACCOUNT_RENAME, id, newLabel),
-  }
+  },
+  memory: {
+    scan: () => ipcRenderer.invoke('memory:scan'),
+    read: (filePath: string) => ipcRenderer.invoke('memory:read', filePath),
+    delete: (filePath: string) => ipcRenderer.invoke('memory:delete', filePath),
+    writeFrontmatter: (filePath: string, frontmatter: { name?: string; description?: string; type?: string }) =>
+      ipcRenderer.invoke('memory:writeFrontmatter', filePath, frontmatter),
+  },
 }
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI)

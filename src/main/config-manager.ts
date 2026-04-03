@@ -27,6 +27,7 @@ const CONFIG_FILES = {
   agentTeamRuns: 'agent-team-runs.json',
   accounts: 'accounts.json',
   visionGlobal: 'vision-global.json',
+  commandSections: 'command-sections.json',
 } as const
 
 export type ConfigKey = keyof typeof CONFIG_FILES

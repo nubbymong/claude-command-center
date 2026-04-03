@@ -4,7 +4,11 @@ import {
   captureWindow,
   listWindows,
   listRecentScreenshots,
-  cleanupOldScreenshots
+  cleanupOldScreenshots,
+  startStoryboard,
+  captureStoryboardFrame,
+  stopStoryboard,
+  isStoryboardActive
 } from '../screenshot-capture'
 
 export function registerScreenshotHandlers(getWindow: () => BrowserWindow | null): void {
@@ -28,5 +32,24 @@ export function registerScreenshotHandlers(getWindow: () => BrowserWindow | null
 
   ipcMain.handle('screenshot:cleanup', async (_event, maxAgeDays: number) => {
     return cleanupOldScreenshots(maxAgeDays)
+  })
+
+  // Storyboard handlers
+  ipcMain.handle('storyboard:start', async () => {
+    const win = getWindow()
+    if (!win) return null
+    return startStoryboard(win)
+  })
+
+  ipcMain.handle('storyboard:captureFrame', async () => {
+    return captureStoryboardFrame()
+  })
+
+  ipcMain.handle('storyboard:stop', async () => {
+    return stopStoryboard()
+  })
+
+  ipcMain.handle('storyboard:isActive', async () => {
+    return isStoryboardActive()
   })
 }

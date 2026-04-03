@@ -1,0 +1,1120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Memory Visualiser — Claude Command Center</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --base: #1e1e2e;
+    --mantle: #181825;
+    --crust: #11111b;
+    --surface0: #313244;
+    --surface1: #45475a;
+    --surface2: #585b70;
+    --overlay0: #6c7086;
+    --overlay1: #7f849c;
+    --subtext0: #a6adc8;
+    --subtext1: #bac2de;
+    --text: #cdd6f4;
+    --blue: #89b4fa;
+    --green: #a6e3a1;
+    --red: #f38ba8;
+    --yellow: #f9e2af;
+    --mauve: #cba6f7;
+    --teal: #94e2d5;
+    --peach: #fab387;
+    --lavender: #b4befe;
+
+    --type-user: #89b4fa;
+    --type-feedback: #f9e2af;
+    --type-project: #a6e3a1;
+    --type-reference: #cba6f7;
+    --type-snapshot: #7f849c;
+    --type-uncategorized: #585b70;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'IBM Plex Sans', sans-serif;
+    background: var(--base);
+    color: var(--text);
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--surface1); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--surface2); }
+
+  /* ── Top Bar ── */
+  .top-bar {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--surface0);
+    background: var(--mantle);
+    flex-shrink: 0;
+  }
+
+  .page-title {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    letter-spacing: 0.5px;
+  }
+
+  .breadcrumb {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--overlay0);
+    flex: 1;
+  }
+  .breadcrumb-sep { color: var(--surface2); }
+  .breadcrumb-link {
+    color: var(--blue);
+    cursor: pointer;
+    text-decoration: none;
+    transition: opacity 0.15s;
+  }
+  .breadcrumb-link:hover { opacity: 0.8; }
+  .breadcrumb-current { color: var(--subtext1); }
+
+  .machine-select {
+    background: var(--surface0);
+    border: 1px solid var(--surface1);
+    color: var(--text);
+    padding: 5px 28px 5px 10px;
+    border-radius: 4px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    cursor: pointer;
+    outline: none;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='%236c7086'%3E%3Cpath d='M0 0l5 6 5-6z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 8px center;
+  }
+  .machine-select:focus { border-color: var(--blue); }
+
+  .search-box {
+    position: relative;
+    width: 240px;
+  }
+  .search-box svg {
+    position: absolute;
+    left: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--overlay0);
+  }
+  .search-input {
+    width: 100%;
+    background: var(--surface0);
+    border: 1px solid var(--surface1);
+    color: var(--text);
+    padding: 5px 12px 5px 32px;
+    border-radius: 4px;
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 12px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .search-input::placeholder { color: var(--overlay0); }
+  .search-input:focus { border-color: var(--blue); }
+
+  /* ── Warning Banner ── */
+  .warning-banner {
+    display: none;
+    padding: 8px 20px;
+    background: rgba(249, 226, 175, 0.08);
+    border-bottom: 1px solid rgba(249, 226, 175, 0.15);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--yellow);
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+  .warning-banner.visible { display: flex; }
+  .warning-icon { flex-shrink: 0; opacity: 0.8; }
+  .warning-text { flex: 1; }
+  .warning-dismiss {
+    background: none;
+    border: 1px solid rgba(249, 226, 175, 0.2);
+    color: var(--yellow);
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    cursor: pointer;
+  }
+  .warning-dismiss:hover { background: rgba(249, 226, 175, 0.1); }
+
+  /* ── Main Area ���─ */
+  .main-area {
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+  }
+
+  .content-scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+  }
+
+  /* ── Stats Strip ── */
+  .stats-strip {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 20px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+  }
+  .stat-item {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .stat-val { font-weight: 600; color: var(--text); font-size: 13px; }
+  .stat-lbl { color: var(--overlay0); }
+  .stat-sep { width: 1px; height: 16px; background: var(--surface1); }
+  .type-mini-bar {
+    display: flex;
+    height: 5px;
+    border-radius: 3px;
+    overflow: hidden;
+    width: 140px;
+    background: var(--surface0);
+  }
+  .type-mini-seg { height: 100%; }
+
+  /* ── Project Cards (Level 1) ── */
+  .project-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 10px;
+  }
+
+  .project-card {
+    background: var(--mantle);
+    border: 1px solid var(--surface0);
+    border-radius: 6px;
+    padding: 16px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .project-card:hover {
+    border-color: var(--surface1);
+    background: rgba(137, 180, 250, 0.03);
+  }
+
+  .pc-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+  .pc-name {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text);
+    flex: 1;
+  }
+  .pc-count {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    background: var(--surface0);
+    color: var(--overlay1);
+    padding: 2px 8px;
+    border-radius: 10px;
+  }
+
+  .pc-meta {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    color: var(--overlay0);
+    margin-bottom: 10px;
+  }
+
+  .pc-type-bar {
+    display: flex;
+    height: 4px;
+    border-radius: 2px;
+    overflow: hidden;
+    background: var(--surface0);
+    margin-bottom: 8px;
+  }
+  .pc-type-seg { height: 100%; }
+
+  .pc-type-legend {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .pc-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 9px;
+    color: var(--overlay0);
+  }
+  .pc-legend-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+  }
+
+  .pc-description {
+    font-size: 11px;
+    color: var(--overlay1);
+    margin-top: 8px;
+    line-height: 1.4;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .pc-staleness {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .staleness-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .staleness-fresh { background: var(--green); box-shadow: 0 0 4px rgba(166, 227, 161, 0.4); }
+  .staleness-aging { background: var(--yellow); box-shadow: 0 0 4px rgba(249, 226, 175, 0.3); }
+  .staleness-stale { background: var(--red); box-shadow: 0 0 4px rgba(243, 139, 168, 0.3); }
+
+  /* ── Memory List (Level 2 — inside a project) ── */
+  .type-group {
+    margin-bottom: 16px;
+  }
+
+  .type-group-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 0;
+    margin-bottom: 6px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .type-group-header:hover .tg-label { color: var(--text); }
+
+  .tg-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .tg-label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--overlay1);
+    transition: color 0.15s;
+  }
+  .tg-count {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    color: var(--overlay0);
+  }
+  .tg-line {
+    flex: 1;
+    height: 1px;
+    background: var(--surface0);
+  }
+  .tg-chevron {
+    color: var(--overlay0);
+    font-size: 10px;
+    transition: transform 0.15s;
+  }
+  .tg-chevron.collapsed { transform: rotate(-90deg); }
+
+  .type-group-items {
+    padding-left: 16px;
+  }
+  .type-group-items.collapsed { display: none; }
+
+  .memory-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background 0.12s;
+    margin-bottom: 2px;
+  }
+  .memory-row:hover { background: rgba(137, 180, 250, 0.05); }
+  .memory-row.selected { background: rgba(137, 180, 250, 0.1); }
+
+  .mr-name {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    color: var(--text);
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .mr-desc {
+    font-size: 11px;
+    color: var(--overlay1);
+    flex: 2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+  }
+  .mr-meta {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    color: var(--overlay0);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+  .mr-fm {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 8px;
+    color: var(--teal);
+    opacity: 0.6;
+    border: 1px solid rgba(148, 226, 213, 0.2);
+    padding: 0 4px;
+    border-radius: 2px;
+  }
+
+  /* ── Detail Panel ── */
+  .detail-panel {
+    width: 0;
+    overflow: hidden;
+    border-left: 1px solid var(--surface0);
+    background: var(--mantle);
+    transition: width 0.25s ease;
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+  }
+  .detail-panel.open { width: 440px; min-width: 440px; }
+
+  .detail-header {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--surface0);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+  }
+  .detail-title {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text);
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .detail-actions { display: flex; gap: 6px; }
+  .detail-btn {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    padding: 4px 10px;
+    border-radius: 3px;
+    border: 1px solid var(--surface1);
+    background: var(--surface0);
+    color: var(--subtext0);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .detail-btn:hover { border-color: var(--overlay0); color: var(--text); }
+  .detail-btn.danger:hover { border-color: var(--red); color: var(--red); }
+  .close-btn {
+    width: 28px; height: 28px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 4px; border: none;
+    background: transparent; color: var(--overlay0);
+    cursor: pointer; font-size: 16px;
+    transition: all 0.15s;
+  }
+  .close-btn:hover { background: var(--surface0); color: var(--text); }
+
+  .detail-metadata {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--surface0);
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 4px 12px;
+    flex-shrink: 0;
+  }
+  .meta-key {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    color: var(--overlay0);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .meta-val {
+    color: var(--subtext1);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .detail-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+  }
+
+  .md-render { font-size: 12px; line-height: 1.7; color: var(--subtext1); }
+  .md-render h1, .md-render h2, .md-render h3 {
+    font-family: 'IBM Plex Mono', monospace;
+    color: var(--text); margin: 16px 0 8px; font-weight: 600;
+  }
+  .md-render h1 { font-size: 15px; }
+  .md-render h2 { font-size: 13px; color: var(--blue); }
+  .md-render h3 { font-size: 12px; color: var(--subtext0); }
+  .md-render p { margin-bottom: 8px; }
+  .md-render ul { margin-left: 18px; margin-bottom: 8px; }
+  .md-render li { margin-bottom: 3px; }
+  .md-render code {
+    font-family: 'IBM Plex Mono', monospace; font-size: 11px;
+    background: var(--surface0); padding: 1px 5px; border-radius: 2px; color: var(--peach);
+  }
+  .md-render strong { color: var(--text); font-weight: 600; }
+
+  /* ── Search Results overlay ── */
+  .search-results-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--overlay1);
+  }
+  .search-result-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--surface0);
+    border-radius: 4px;
+    margin-bottom: 6px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .search-result-item:hover { background: rgba(137, 180, 250, 0.04); border-color: var(--surface1); }
+  .sr-badge {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 9px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.5px;
+    padding: 2px 7px; border-radius: 2px;
+    white-space: nowrap; flex-shrink: 0;
+  }
+  .sr-body { flex: 1; min-width: 0; }
+  .sr-name {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px; color: var(--text);
+  }
+  .sr-breadcrumb {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px; color: var(--overlay0);
+    margin-top: 2px;
+  }
+  .sr-desc {
+    font-size: 11px; color: var(--overlay1);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    margin-top: 2px;
+  }
+  .sr-meta {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px; color: var(--overlay0);
+    flex-shrink: 0;
+  }
+
+  /* ── Back button ── */
+  .back-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--blue);
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 4px 0;
+    margin-bottom: 16px;
+    transition: opacity 0.15s;
+  }
+  .back-btn:hover { opacity: 0.8; }
+
+  /* ── Animations ── */
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .project-card, .memory-row, .search-result-item { animation: fadeIn 0.2s ease both; }
+
+  .empty-state {
+    display: flex; flex-direction: column; align-items: center;
+    justify-content: center; padding: 60px 20px; color: var(--overlay0); gap: 8px;
+  }
+  .empty-state-text { font-family: 'IBM Plex Mono', monospace; font-size: 12px; }
+</style>
+</head>
+<body>
+
+<!-- Top Bar -->
+<div class="top-bar">
+  <span class="page-title">Memory</span>
+  <div class="breadcrumb" id="breadcrumb">
+    <span class="breadcrumb-current">All Projects</span>
+  </div>
+  <div class="search-box">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+    </svg>
+    <input type="text" class="search-input" id="searchInput" placeholder="Search all memories...">
+  </div>
+  <select class="machine-select" id="machineSelect">
+    <option value="local">Dev Workstation</option>
+    <option value="gpu">GPU Server</option>
+    <option value="build">Build Box</option>
+  </select>
+</div>
+
+<!-- Warning Banner (schema detection) -->
+<div class="warning-banner" id="warningBanner">
+  <svg class="warning-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+    <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+  </svg>
+  <span class="warning-text" id="warningText"></span>
+  <button class="warning-dismiss" id="warningDismiss">Dismiss</button>
+</div>
+
+<!-- Main Area -->
+<div class="main-area">
+  <div class="content-scroll" id="contentArea"></div>
+  <div class="detail-panel" id="detailPanel"></div>
+</div>
+
+<script>
+// ── Type Config ──
+const TC = {
+  user:          { bg: 'rgba(137,180,250,0.12)', fg: '#89b4fa', label: 'User' },
+  feedback:      { bg: 'rgba(249,226,175,0.12)', fg: '#f9e2af', label: 'Feedback' },
+  project:       { bg: 'rgba(166,227,161,0.12)', fg: '#a6e3a1', label: 'Project' },
+  reference:     { bg: 'rgba(203,166,247,0.12)', fg: '#cba6f7', label: 'Reference' },
+  snapshot:      { bg: 'rgba(127,132,156,0.12)', fg: '#7f849c', label: 'Snapshot' },
+  uncategorized: { bg: 'rgba(88,91,112,0.12)',   fg: '#585b70', label: 'Uncategorized' },
+};
+
+const TYPE_ORDER = ['user', 'feedback', 'project', 'reference', 'snapshot', 'uncategorized'];
+const now = Date.now(), DAY = 86400000;
+
+// ── Fake Data ──
+const MEMORIES = [
+  // claude-multi-app (4 files)
+  { id:1,  name:'MEMORY', file:'MEMORY.md', proj:'claude-multi-app', type:'reference', size:4770, mod:now-6*DAY, desc:'Claude Command Center Beta — Key Learnings', fm:false, content:'# Claude Command Center Beta\n\n## Architecture\n- Electron 33 + React 18 + Zustand 5 + xterm.js 5.5 + node-pty\n- Tailwind CSS v4 with `@theme` in `src/renderer/styles.css`\n- `electron-vite` for dev/build with HMR\n\n## Key Files\n- `src/main/pty-manager.ts` - PTY spawn, chunked writePty()\n- `src/main/vision-manager.ts` - Global VisionManager singleton\n\n## Important Gotchas\n- **PTY paste chunking**: 256B chunks, 12ms delay\n- **xterm.js scrollback**: Keep at 10000 max' },
+  { id:2,  name:'Agent Teams', file:'agent-teams.md', proj:'claude-multi-app', type:'project', size:2989, mod:now-42*DAY, desc:'Pipeline orchestration for multi-step agent teams', fm:false, content:'# Agent Teams Feature\n\n## Status: IMPLEMENTED\n\nPipeline orchestration for multi-step agent teams.\n\n## Architecture\n- **Batch grouping**: consecutive parallel steps form one batch\n- **Context forwarding**: prior step outputs prepended\n- **Output truncation**: 50KB max per prior step' },
+  { id:3,  name:'Tokenomics service planned', file:'project_tokenomics.md', proj:'claude-multi-app', type:'project', size:1384, mod:now-14*DAY, desc:'Toolbar tokenomics audit of token usage across all sessions', fm:true, content:'---\nname: Tokenomics service planned\ndescription: Toolbar tokenomics audit\ntype: project\n---\n\nUser wants a tokenomics service on the toolbar.\n\n**Why:** Track spending across Claude Code sessions.\n\n**How to apply:** Parse `~/.claude/projects/<path>/<session-id>.jsonl`' },
+  { id:4,  name:'Agent Teams Detail', file:'agent-teams-feature.md', proj:'claude-multi-app', type:'project', size:3882, mod:now-43*DAY, desc:'Full implementation details: files, tests, architecture', fm:false },
+
+  // flexspec-soma (14 files)
+  { id:5,  name:'MEMORY', file:'MEMORY.md', proj:'flexspec-soma', type:'reference', size:7502, mod:now-1*DAY, desc:'Soma project overview — architecture, workstreams, design', fm:false },
+  { id:6,  name:'Architecture', file:'architecture.md', proj:'flexspec-soma', type:'reference', size:2690, mod:now-26*DAY, desc:'Core architecture: Cortex engine, Codex L2, review pipeline', fm:false },
+  { id:7,  name:'Dashboard UX Quality', file:'feedback-dashboard-ux-quality.md', proj:'flexspec-soma', type:'feedback', size:1373, mod:now-4*DAY, desc:'Dashboard must meet production quality bar, not prototype level', fm:true, content:'---\nname: Dashboard UX Quality\ntype: feedback\n---\n\nDashboard must meet production quality bar.\n\n**Why:** User rejected initial dashboard as hackathon quality.\n\n**How to apply:** Every UI component should look intentionally designed.' },
+  { id:8,  name:'No Orphaned Code', file:'feedback-no-orphaned-code.md', proj:'flexspec-soma', type:'feedback', size:1064, mod:now-5*DAY, desc:'Never leave dead imports, unused variables, or orphaned functions', fm:false },
+  { id:9,  name:'Knowledge Chain Design', file:'knowledge-chain-design.md', proj:'flexspec-soma', type:'project', size:3373, mod:now-1*DAY, desc:'Session context threading across conversations', fm:false },
+  { id:10, name:'Session 2026-03-28', file:'session-state-2026-03-28.md', proj:'flexspec-soma', type:'snapshot', size:2762, mod:now-5*DAY, desc:'Workstream C build state, review pipeline fixes', fm:false },
+  { id:11, name:'Session 2026-03-27', file:'session-state-2026-03-27.md', proj:'flexspec-soma', type:'snapshot', size:5306, mod:now-6*DAY, desc:'Sentinel bootstrap, knowledge chain threading', fm:false },
+  { id:12, name:'Sentinel Bootstrap', file:'sentinel-bootstrap-design.md', proj:'flexspec-soma', type:'project', size:6773, mod:now-6*DAY, desc:'Sentinel auto-bootstrap and self-healing patterns', fm:false },
+  { id:13, name:'OS Architecture', file:'os-architecture.md', proj:'flexspec-soma', type:'reference', size:12766, mod:now-24*DAY, desc:'Full OS-level architecture: Cortex, Codex, Sentinel, Forge', fm:false },
+  { id:14, name:'Soma Branding', file:'soma-branding-design.md', proj:'flexspec-soma', type:'project', size:2871, mod:now-2*DAY, desc:'Brand identity: colors, typography, iconography', fm:false },
+  { id:15, name:'Use Codex/Cortex', file:'feedback-use-codex-cortex.md', proj:'flexspec-soma', type:'feedback', size:1354, mod:now-13*DAY, desc:'Always route through Codex L2, never bypass to raw data', fm:false },
+  { id:16, name:'Review Pipeline', file:'review-pipeline-architecture.md', proj:'flexspec-soma', type:'reference', size:2058, mod:now-13*DAY, desc:'Three-stage review: lint, semantic, approval gate', fm:false },
+  { id:17, name:'Logging Standards', file:'feedback_logging.md', proj:'flexspec-soma', type:'feedback', size:1146, mod:now-15*DAY, desc:'All agent actions must emit structured logs', fm:false },
+
+  // platform-v9-extension (6 files)
+  { id:18, name:'MEMORY', file:'MEMORY.md', proj:'platform-v9-extension', type:'reference', size:21179, mod:now-17*DAY, desc:'CDM pipeline, DRR fixes, Rune DSL toolchain', fm:false },
+  { id:19, name:'CDM Pipeline', file:'cdm-pipeline.md', proj:'platform-v9-extension', type:'reference', size:12750, mod:now-42*DAY, desc:'Full CDM ingestion: parse, validate, transform, emit', fm:false },
+  { id:20, name:'DRR Fix Methodology', file:'drr-fix-methodology.md', proj:'platform-v9-extension', type:'reference', size:9708, mod:now-19*DAY, desc:'Systematic: isolate, reproduce, trace, patch', fm:false },
+  { id:21, name:'No Mass Reverts', file:'feedback_no_mass_reverts.md', proj:'platform-v9-extension', type:'feedback', size:1012, mod:now-15*DAY, desc:'Isolate specific fix, never revert large changesets', fm:true, content:'---\nname: No Mass Reverts\ntype: feedback\n---\n\nNever revert large changesets to fix one issue.\n\n**Why:** A mass revert lost 3 days of work. The bug was in one function.\n\n**How to apply:** Bisect to find the exact cause. Fix surgically.' },
+  { id:22, name:'Factory Manager Design', file:'factory-manager-design-decisions.md', proj:'platform-v9-extension', type:'project', size:4073, mod:now-17*DAY, desc:'Registry pattern over reflection — design rationale', fm:false },
+  { id:23, name:'Parser Strategy', file:'feedback_parser_strategy.md', proj:'platform-v9-extension', type:'feedback', size:1270, mod:now-21*DAY, desc:'Streaming parsers for large XML — DOM OOMs on 500MB', fm:false },
+
+  // rune-bok-v2 (3 files)
+  { id:24, name:'MEMORY', file:'MEMORY.md', proj:'rune-bok-v2', type:'reference', size:3931, mod:now-15*DAY, desc:'Forge import, P3 analysis, telemetry', fm:false },
+  { id:25, name:'Forge Import', file:'forge-import.md', proj:'rune-bok-v2', type:'reference', size:3037, mod:now-27*DAY, desc:'Pipeline: download, validate, transform, index', fm:false },
+  { id:26, name:'FDR Process', file:'feedback_fdr_process.md', proj:'rune-bok-v2', type:'feedback', size:1265, mod:now-15*DAY, desc:'Formal review checklist required, no shortcuts', fm:false },
+
+  // claude-random (3 files)
+  { id:27, name:'MEMORY', file:'MEMORY.md', proj:'claude-random', type:'reference', size:2801, mod:now-18*DAY, desc:'ASUS LCD, Citrix networking, FMSB wizard', fm:false },
+  { id:28, name:'ASUS LCD', file:'asus_lcd.md', proj:'claude-random', type:'project', size:11390, mod:now-20*DAY, desc:'LCD hacking: custom firmware, JPEG decode, display commands', fm:false },
+  { id:29, name:'FMSB SSI Wizard', file:'fmsb_ssi_wizard.md', proj:'claude-random', type:'project', size:10132, mod:now-35*DAY, desc:'Financial Markets Standards Board wizard implementation', fm:false },
+
+  // claude-widget (2 files)
+  { id:30, name:'MEMORY', file:'MEMORY.md', proj:'claude-widget', type:'reference', size:4346, mod:now-31*DAY, desc:'Widget architecture, skills registry', fm:false },
+  { id:31, name:'Skills Registry', file:'skills-registry.md', proj:'claude-widget', type:'reference', size:2506, mod:now-40*DAY, desc:'Plugin-based discovery and registration', fm:false },
+
+  // claude-mcp-servers (1 file)
+  { id:32, name:'MEMORY', file:'MEMORY.md', proj:'claude-mcp-servers', type:'reference', size:5535, mod:now-27*DAY, desc:'MCP server implementations — vision, tools, transports', fm:false },
+
+  // home (2 files)
+  { id:33, name:'Scale vs Simplicity', file:'feedback_scale_vs_simplicity.md', proj:'home', type:'feedback', size:1051, mod:now-17*DAY, desc:'Start simple, scale only when proven needed', fm:true, content:'---\nname: Scale vs Simplicity\ntype: feedback\n---\n\nStart simple, scale only when proven needed.\n\n**Why:** Premature abstraction kills velocity.\n\n**How to apply:** Build simplest thing that works. Extract abstractions at 3+ cases.' },
+  { id:34, name:'Kernel Gateway', file:'feedback_kernel_gateway_architecture.md', proj:'home', type:'feedback', size:996, mod:now-17*DAY, desc:'Gateway must be stateless — state belongs in notebook server', fm:false },
+];
+
+// ── Schema Warnings (error detection) ──
+const SCHEMA_WARNINGS = [];
+
+function detectSchemaIssues() {
+  SCHEMA_WARNINGS.length = 0;
+
+  // Check: any memory files with unknown frontmatter fields?
+  const knownFmFields = new Set(['name', 'description', 'type']);
+  // Check: any unknown types in frontmatter?
+  const knownTypes = new Set(['user', 'feedback', 'project', 'reference']);
+
+  let unknownTypeCount = 0;
+  let missingMemoryMd = 0;
+  const projectsWithMemoryMd = new Set();
+
+  MEMORIES.forEach(m => {
+    if (m.file === 'MEMORY.md') projectsWithMemoryMd.add(m.proj);
+    if (m.fm && m.type && !knownTypes.has(m.type)) unknownTypeCount++;
+  });
+
+  const allProjects = [...new Set(MEMORIES.map(m => m.proj))];
+  allProjects.forEach(p => {
+    if (!projectsWithMemoryMd.has(p)) missingMemoryMd++;
+  });
+
+  // Simulate detected issues for demo
+  SCHEMA_WARNINGS.push({
+    level: 'info',
+    msg: '2 projects have memories without MEMORY.md index — Claude may not discover these at session start'
+  });
+
+  // Example of a schema change detection
+  // SCHEMA_WARNINGS.push({
+  //   level: 'warn',
+  //   msg: 'Unrecognized frontmatter field "priority" found in 3 files — Claude may have updated its memory schema'
+  // });
+}
+
+// ── State ──
+let currentView = 'projects'; // 'projects' | 'project-detail' | 'search'
+let selectedProject = null;
+let selectedMemory = null;
+let searchQuery = '';
+let collapsedGroups = new Set();
+
+// ── Helpers ──
+function fmt(bytes) { return bytes < 1024 ? bytes+'B' : (bytes/1024).toFixed(1)+'KB'; }
+function fmtDate(ts) {
+  const d = new Date(ts);
+  return ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()] + ' ' + d.getDate();
+}
+function fmtRel(ts) {
+  const d = Math.floor((now - ts) / DAY);
+  if (d === 0) return 'today';
+  if (d === 1) return '1d ago';
+  if (d < 30) return d + 'd ago';
+  return Math.floor(d/30) + 'mo ago';
+}
+function staleClass(ts) {
+  const d = (now - ts) / DAY;
+  return d < 7 ? 'staleness-fresh' : d < 30 ? 'staleness-aging' : 'staleness-stale';
+}
+
+function getProjectData() {
+  const map = {};
+  MEMORIES.forEach(m => {
+    if (!map[m.proj]) map[m.proj] = { name: m.proj, count: 0, size: 0, mod: 0, types: {} };
+    const p = map[m.proj];
+    p.count++;
+    p.size += m.size;
+    p.mod = Math.max(p.mod, m.mod);
+    p.types[m.type] = (p.types[m.type] || 0) + 1;
+  });
+  return Object.values(map).sort((a, b) => b.mod - a.mod);
+}
+
+function getProjectMemories(proj) {
+  return MEMORIES.filter(m => m.proj === proj).sort((a, b) => b.mod - a.mod);
+}
+
+function searchMemories(q) {
+  const ql = q.toLowerCase();
+  return MEMORIES.filter(m =>
+    m.name.toLowerCase().includes(ql) ||
+    m.desc.toLowerCase().includes(ql) ||
+    m.proj.toLowerCase().includes(ql) ||
+    m.file.toLowerCase().includes(ql) ||
+    (m.content && m.content.toLowerCase().includes(ql))
+  ).sort((a, b) => b.mod - a.mod);
+}
+
+function typeBar(types, total) {
+  return TYPE_ORDER.map(t => {
+    const pct = ((types[t] || 0) / (total || 1)) * 100;
+    if (pct === 0) return '';
+    return `<div class="pc-type-seg" style="width:${pct}%;background:${TC[t].fg}"></div>`;
+  }).join('');
+}
+
+// ── Render ──
+function renderBreadcrumb() {
+  const bc = document.getElementById('breadcrumb');
+  if (searchQuery) {
+    bc.innerHTML = `<span class="breadcrumb-link" onclick="clearSearch()">All Projects</span>
+      <span class="breadcrumb-sep">/</span>
+      <span class="breadcrumb-current">Search: "${searchQuery}"</span>`;
+  } else if (currentView === 'project-detail' && selectedProject) {
+    bc.innerHTML = `<span class="breadcrumb-link" onclick="goToProjects()">All Projects</span>
+      <span class="breadcrumb-sep">/</span>
+      <span class="breadcrumb-current">${selectedProject}</span>`;
+  } else {
+    bc.innerHTML = `<span class="breadcrumb-current">All Projects</span>`;
+  }
+}
+
+function renderWarnings() {
+  detectSchemaIssues();
+  const banner = document.getElementById('warningBanner');
+  if (SCHEMA_WARNINGS.length > 0) {
+    document.getElementById('warningText').textContent = SCHEMA_WARNINGS[0].msg;
+    banner.classList.add('visible');
+  } else {
+    banner.classList.remove('visible');
+  }
+}
+
+function renderProjectsView() {
+  const projects = getProjectData();
+  const totalMem = MEMORIES.length;
+  const totalSize = MEMORIES.reduce((s, m) => s + m.size, 0);
+  const allTypes = {};
+  MEMORIES.forEach(m => allTypes[m.type] = (allTypes[m.type] || 0) + 1);
+
+  let html = `
+    <div class="stats-strip">
+      <div class="stat-item"><span class="stat-val">${totalMem}</span><span class="stat-lbl">memories</span></div>
+      <div class="stat-sep"></div>
+      <div class="stat-item"><span class="stat-val">${projects.length}</span><span class="stat-lbl">projects</span></div>
+      <div class="stat-sep"></div>
+      <div class="stat-item"><span class="stat-val">${fmt(totalSize)}</span><span class="stat-lbl">total</span></div>
+      <div class="stat-sep"></div>
+      <div class="type-mini-bar">${typeBar(allTypes, totalMem)}</div>
+    </div>
+    <div class="project-grid">
+  `;
+
+  projects.forEach((p, i) => {
+    const legend = TYPE_ORDER
+      .filter(t => p.types[t])
+      .map(t => `<span class="pc-legend-item"><span class="pc-legend-dot" style="background:${TC[t].fg}"></span>${TC[t].label} ${p.types[t]}</span>`)
+      .join('');
+
+    // Get first non-MEMORY description as preview
+    const preview = MEMORIES.find(m => m.proj === p.name && m.file !== 'MEMORY.md');
+
+    html += `
+      <div class="project-card" onclick="openProject('${p.name}')" style="animation-delay:${i * 0.04}s">
+        <div class="pc-header">
+          <span class="pc-name">${p.name}</span>
+          <span class="pc-count">${p.count} files</span>
+        </div>
+        <div class="pc-meta">
+          <span>${fmt(p.size)}</span>
+          <span class="pc-staleness">
+            <span class="staleness-dot ${staleClass(p.mod)}"></span>
+            ${fmtRel(p.mod)}
+          </span>
+        </div>
+        <div class="pc-type-bar">${typeBar(p.types, p.count)}</div>
+        <div class="pc-type-legend">${legend}</div>
+        ${preview ? `<div class="pc-description">${preview.desc}</div>` : ''}
+      </div>
+    `;
+  });
+
+  html += '</div>';
+  document.getElementById('contentArea').innerHTML = html;
+}
+
+function renderProjectDetail(proj) {
+  const mems = getProjectMemories(proj);
+  const grouped = {};
+  TYPE_ORDER.forEach(t => grouped[t] = []);
+  mems.forEach(m => {
+    if (grouped[m.type]) grouped[m.type].push(m);
+    else grouped.uncategorized.push(m);
+  });
+
+  const totalSize = mems.reduce((s, m) => s + m.size, 0);
+
+  let html = `
+    <button class="back-btn" onclick="goToProjects()">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+      All Projects
+    </button>
+    <div class="stats-strip">
+      <div class="stat-item"><span class="stat-val">${mems.length}</span><span class="stat-lbl">memories</span></div>
+      <div class="stat-sep"></div>
+      <div class="stat-item"><span class="stat-val">${fmt(totalSize)}</span><span class="stat-lbl">total</span></div>
+    </div>
+  `;
+
+  TYPE_ORDER.forEach(type => {
+    const items = grouped[type];
+    if (items.length === 0) return;
+
+    const tc = TC[type];
+    const collapsed = collapsedGroups.has(type);
+
+    html += `
+      <div class="type-group">
+        <div class="type-group-header" onclick="toggleGroup('${type}')">
+          <span class="tg-dot" style="background:${tc.fg}"></span>
+          <span class="tg-label">${tc.label}</span>
+          <span class="tg-count">${items.length}</span>
+          <span class="tg-line"></span>
+          <span class="tg-chevron ${collapsed ? 'collapsed' : ''}">&#9660;</span>
+        </div>
+        <div class="type-group-items ${collapsed ? 'collapsed' : ''}">
+    `;
+
+    items.forEach((m, i) => {
+      html += `
+        <div class="memory-row ${selectedMemory === m.id ? 'selected' : ''}"
+             onclick="openMemory(${m.id})" style="animation-delay:${i * 0.03}s">
+          <span class="mr-name">${m.name}</span>
+          <span class="mr-desc">${m.desc}</span>
+          <div class="mr-meta">
+            ${m.fm ? '<span class="mr-fm">FM</span>' : ''}
+            <span>${fmt(m.size)}</span>
+            <span class="staleness-dot ${staleClass(m.mod)}" title="${fmtRel(m.mod)}"></span>
+            <span>${fmtRel(m.mod)}</span>
+          </div>
+        </div>
+      `;
+    });
+
+    html += '</div></div>';
+  });
+
+  document.getElementById('contentArea').innerHTML = html;
+}
+
+function renderSearchResults(q) {
+  const results = searchMemories(q);
+
+  let html = `
+    <button class="back-btn" onclick="clearSearch()">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+      Clear search
+    </button>
+    <div class="search-results-header">
+      ${results.length} result${results.length !== 1 ? 's' : ''} for "${q}"
+    </div>
+  `;
+
+  if (results.length === 0) {
+    html += `<div class="empty-state">
+      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="opacity:0.4">
+        <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+      </svg>
+      <span class="empty-state-text">No memories match "${q}"</span>
+    </div>`;
+  } else {
+    results.forEach((m, i) => {
+      const tc = TC[m.type] || TC.uncategorized;
+      html += `
+        <div class="search-result-item" onclick="openMemoryFromSearch(${m.id}, '${m.proj}')" style="animation-delay:${i * 0.03}s">
+          <span class="sr-badge" style="background:${tc.bg};color:${tc.fg}">${tc.label}</span>
+          <div class="sr-body">
+            <div class="sr-name">${m.name}</div>
+            <div class="sr-breadcrumb">Dev Workstation / ${m.proj} / ${m.file}</div>
+            <div class="sr-desc">${m.desc}</div>
+          </div>
+          <div class="sr-meta">
+            <span>${fmt(m.size)}</span>
+            <br>
+            <span>${fmtRel(m.mod)}</span>
+          </div>
+        </div>
+      `;
+    });
+  }
+
+  document.getElementById('contentArea').innerHTML = html;
+}
+
+function renderDetail() {
+  const panel = document.getElementById('detailPanel');
+  if (!selectedMemory) { panel.classList.remove('open'); return; }
+
+  const m = MEMORIES.find(x => x.id === selectedMemory);
+  if (!m) { panel.classList.remove('open'); return; }
+
+  const tc = TC[m.type] || TC.uncategorized;
+  const raw = m.content || `# ${m.name}\n\n${m.desc}\n\n*Content loaded from disk at runtime.*`;
+  const rendered = raw
+    .replace(/^---[\s\S]*?---\n*/m, '')
+    .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+    .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+    .replace(/^# (.+)$/gm, '<h1>$1</h1>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/^- (.+)$/gm, '<li>$1</li>')
+    .replace(/\n{2,}/g, '</p><p>')
+    .replace(/\n/g, '<br>');
+
+  panel.innerHTML = `
+    <div class="detail-header">
+      <span class="sr-badge" style="background:${tc.bg};color:${tc.fg}">${tc.label}</span>
+      <span class="detail-title">${m.name}</span>
+      <div class="detail-actions">
+        ${!m.fm ? '<button class="detail-btn" title="Add YAML frontmatter">+ Metadata</button>' : ''}
+        <button class="detail-btn">Edit</button>
+        <button class="detail-btn danger">Delete</button>
+      </div>
+      <button class="close-btn" onclick="closeDetail()">&times;</button>
+    </div>
+    <div class="detail-metadata">
+      <span class="meta-key">Type</span>
+      <span class="meta-val">${m.type} ${m.fm ? '(frontmatter)' : '(inferred)'}</span>
+      <span class="meta-key">Project</span>
+      <span class="meta-val">${m.proj}</span>
+      <span class="meta-key">Machine</span>
+      <span class="meta-val">Dev Workstation</span>
+      <span class="meta-key">Path</span>
+      <span class="meta-val" title="~/.claude/projects/${m.proj}/memory/${m.file}">~/.claude/projects/${m.proj}/memory/${m.file}</span>
+      <span class="meta-key">Size</span>
+      <span class="meta-val">${fmt(m.size)}</span>
+      <span class="meta-key">Modified</span>
+      <span class="meta-val">${new Date(m.mod).toISOString().slice(0,10)} (${fmtRel(m.mod)})</span>
+    </div>
+    <div class="detail-content">
+      <div class="md-render"><p>${rendered}</p></div>
+    </div>
+  `;
+  panel.classList.add('open');
+}
+
+function render() {
+  renderBreadcrumb();
+  renderWarnings();
+  if (searchQuery) {
+    renderSearchResults(searchQuery);
+  } else if (currentView === 'project-detail' && selectedProject) {
+    renderProjectDetail(selectedProject);
+  } else {
+    renderProjectsView();
+  }
+  renderDetail();
+}
+
+// ── Actions ──
+function goToProjects() {
+  currentView = 'projects';
+  selectedProject = null;
+  selectedMemory = null;
+  render();
+}
+
+function openProject(proj) {
+  currentView = 'project-detail';
+  selectedProject = proj;
+  selectedMemory = null;
+  render();
+}
+
+function openMemory(id) {
+  selectedMemory = selectedMemory === id ? null : id;
+  render();
+}
+
+function openMemoryFromSearch(id, proj) {
+  selectedMemory = id;
+  renderDetail();
+  // Highlight the clicked item
+  document.querySelectorAll('.search-result-item').forEach(el => el.classList.remove('selected'));
+  event.currentTarget.classList.add('selected');
+}
+
+function closeDetail() {
+  selectedMemory = null;
+  render();
+}
+
+function toggleGroup(type) {
+  if (collapsedGroups.has(type)) collapsedGroups.delete(type);
+  else collapsedGroups.add(type);
+  render();
+}
+
+function clearSearch() {
+  searchQuery = '';
+  document.getElementById('searchInput').value = '';
+  currentView = selectedProject ? 'project-detail' : 'projects';
+  render();
+}
+
+// ── Events ──
+let searchTimeout;
+document.getElementById('searchInput').addEventListener('input', (e) => {
+  clearTimeout(searchTimeout);
+  searchTimeout = setTimeout(() => {
+    searchQuery = e.target.value.trim();
+    if (searchQuery) currentView = 'search';
+    else currentView = selectedProject ? 'project-detail' : 'projects';
+    render();
+  }, 200);
+});
+
+document.getElementById('warningDismiss').addEventListener('click', () => {
+  document.getElementById('warningBanner').classList.remove('visible');
+});
+
+// ── Init ──
+render();
+</script>
+</body>
+</html>

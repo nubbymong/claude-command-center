@@ -2,7 +2,7 @@ import React, { useState } from 'react'
 import { useCommandStore, CustomCommand } from '../stores/commandStore'
 import CommandDialog from './CommandDialog'
 import ScreenshotButton from './ScreenshotButton'
-import CompactionInterruptButton from './CompactionInterruptButton'
+import StoryboardButton from './StoryboardButton'
 import { generateId } from '../utils/id'
 
 interface Props {
@@ -16,12 +16,14 @@ interface Props {
 }
 
 export default function CommandBar({ sessionId, configId, sessionType = 'local', partnerEnabled, isPartnerActive, onTogglePartner, partnerSessionId }: Props) {
-  const { commands, addCommand, updateCommand, removeCommand, reorderCommands } = useCommandStore()
+  const { commands, sections, addCommand, updateCommand, removeCommand, reorderCommands } = useCommandStore()
   const [showDialog, setShowDialog] = useState(false)
   const [editingCommand, setEditingCommand] = useState<CustomCommand | null>(null)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; commandId?: string } | null>(null)
   const [dragId, setDragId] = useState<string | null>(null)
   const [dragOverId, setDragOverId] = useState<string | null>(null)
+  const [argsPopover, setArgsPopover] = useState<{ cmd: CustomCommand; rect: DOMRect } | null>(null)
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set())
 
   const visibleCommands = commands
     .filter((c) => c.scope === 'global' || (c.scope === 'config' && c.configId === configId))
@@ -38,23 +40,43 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
   const claudeCommands = visibleCommands.filter((c) => !c.target || c.target === 'any' || c.target === 'claude')
   const partnerCommands = visibleCommands.filter((c) => c.target === 'partner')
 
-  const handleClick = (cmd: CustomCommand) => {
+  /** Build the full command string (prompt + default args) */
+  const buildFullCommand = (cmd: CustomCommand, args?: string[]): string => {
+    const useArgs = args || cmd.defaultArgs
+    if (useArgs && useArgs.length > 0) {
+      return cmd.prompt + ' ' + useArgs.join(' ')
+    }
+    return cmd.prompt
+  }
+
+  /** Send a command to the appropriate PTY */
+  const sendCommand = (cmd: CustomCommand, fullCommand: string) => {
     const target = cmd.target || 'any'
     if (target === 'partner' && !isPartnerActive && onTogglePartner && partnerSessionId) {
       onTogglePartner()
-      setTimeout(() => window.electronAPI.pty.write(partnerSessionId, cmd.prompt + '\r'), 100)
+      setTimeout(() => window.electronAPI.pty.write(partnerSessionId, fullCommand + '\r'), 100)
       return
     }
     if (target === 'claude' && isPartnerActive && onTogglePartner) {
       onTogglePartner()
-      setTimeout(() => window.electronAPI.pty.write(sessionId, cmd.prompt + '\r'), 100)
+      setTimeout(() => window.electronAPI.pty.write(sessionId, fullCommand + '\r'), 100)
       return
     }
     // 'any' or already on the right terminal
     const targetId = target === 'partner' && partnerSessionId ? partnerSessionId
       : target === 'claude' ? sessionId
       : (isPartnerActive && partnerSessionId ? partnerSessionId : sessionId)
-    window.electronAPI.pty.write(targetId, cmd.prompt + '\r')
+    window.electronAPI.pty.write(targetId, fullCommand + '\r')
+  }
+
+  const handleClick = (cmd: CustomCommand, e: React.MouseEvent) => {
+    // Ctrl+click: show args popover if command has args
+    if (e.ctrlKey && (cmd.defaultArgs?.length || cmd.lastCustomArgs?.length)) {
+      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+      setArgsPopover({ cmd, rect })
+      return
+    }
+    sendCommand(cmd, buildFullCommand(cmd))
   }
 
   const handleContextMenu = (e: React.MouseEvent, commandId?: string) => {
@@ -107,11 +129,25 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
     setDragOverId(null)
   }
 
+  /** Toggle section collapse */
+  const toggleSection = (sectionId: string) => {
+    setCollapsedSections((prev) => {
+      const next = new Set(prev)
+      if (next.has(sectionId)) next.delete(sectionId)
+      else next.add(sectionId)
+      return next
+    })
+  }
+
   // Render a single command button with full-color styling
   const renderCommandButton = (cmd: CustomCommand) => {
     const color = cmd.color || '#89B4FA'
     const isDragging = dragId === cmd.id
     const isDragOver = dragOverId === cmd.id
+    const hasArgs = (cmd.defaultArgs && cmd.defaultArgs.length > 0) || (cmd.lastCustomArgs && cmd.lastCustomArgs.length > 0)
+    const argsTitle = cmd.defaultArgs?.length
+      ? `${cmd.prompt}\nArgs: ${cmd.defaultArgs.join(' ')}\nCtrl+click to customize args`
+      : cmd.prompt
     return (
       <button
         key={cmd.id}
@@ -120,7 +156,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
         onDragOver={(e) => handleDragOver(e, cmd)}
         onDrop={(e) => handleDrop(e, cmd)}
         onDragEnd={handleDragEnd}
-        onClick={() => handleClick(cmd)}
+        onClick={(e) => handleClick(cmd, e)}
         onContextMenu={(e) => { e.stopPropagation(); handleContextMenu(e, cmd.id) }}
         className="flex items-center gap-1 px-2.5 py-0.5 text-xs rounded border text-subtext0 hover:text-text transition-colors whitespace-nowrap shrink-0"
         style={{
@@ -143,7 +179,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
             if (!isDragOver) (e.currentTarget as HTMLElement).style.borderColor = color + '40'
           }
         }}
-        title={cmd.prompt}
+        title={argsTitle}
       >
         {cmd.scope === 'global' && (
           <svg width="8" height="8" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-overlay0 shrink-0 opacity-60">
@@ -153,7 +189,62 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
           </svg>
         )}
         {cmd.label}
+        {hasArgs && (
+          <svg width="7" height="7" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.3" className="text-overlay0 shrink-0 opacity-50">
+            <path d="M2 3.5l3 3 3-3" />
+          </svg>
+        )}
       </button>
+    )
+  }
+
+  /** Render commands grouped by section */
+  const renderGroupedCommands = (cmds: CustomCommand[]) => {
+    const visibleSections = sections.filter(
+      (s) => s.scope === 'global' || (s.scope === 'config' && s.configId === configId)
+    )
+
+    // Group by sectionId
+    const unsectioned = cmds.filter((c) => !c.sectionId)
+    const bySectionId = new Map<string, CustomCommand[]>()
+    for (const cmd of cmds) {
+      if (cmd.sectionId) {
+        const list = bySectionId.get(cmd.sectionId) || []
+        list.push(cmd)
+        bySectionId.set(cmd.sectionId, list)
+      }
+    }
+
+    // Only show sections that have commands
+    const activeSections = visibleSections.filter((s) => bySectionId.has(s.id))
+
+    return (
+      <>
+        {unsectioned.map(renderCommandButton)}
+        {activeSections.map((section) => {
+          const sectionCmds = bySectionId.get(section.id) || []
+          const isCollapsed = collapsedSections.has(section.id)
+          return (
+            <React.Fragment key={section.id}>
+              <button
+                onClick={() => toggleSection(section.id)}
+                className="flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] text-overlay0 hover:text-subtext0 transition-colors shrink-0 rounded hover:bg-surface0/50"
+                title={`${section.name} (${sectionCmds.length} commands)`}
+              >
+                <svg
+                  width="6" height="6" viewBox="0 0 8 8" fill="none" stroke="currentColor" strokeWidth="1.5"
+                  className="shrink-0 transition-transform"
+                  style={{ transform: isCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)' }}
+                >
+                  <path d="M1.5 2.5l2.5 3 2.5-3" />
+                </svg>
+                {section.name}
+              </button>
+              {!isCollapsed && sectionCmds.map(renderCommandButton)}
+            </React.Fragment>
+          )
+        })}
+      </>
     )
   }
 
@@ -170,7 +261,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
         </div>
         <div className="w-px h-4 bg-surface1 mx-0.5" />
         <ScreenshotButton sessionId={sessionId} sessionType={sessionType} />
-        <CompactionInterruptButton sessionId={sessionId} />
+        <StoryboardButton sessionId={sessionId} sessionType={sessionType} />
         {/* Back to Claude / Partner toggle - on magic row */}
         {partnerEnabled && onTogglePartner && (
           <>
@@ -229,7 +320,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
             </svg>
           </div>
           <div className="w-px h-4 bg-surface1 mx-0.5" />
-          {claudeCommands.map(renderCommandButton)}
+          {renderGroupedCommands(claudeCommands)}
         </div>
       )}
 
@@ -245,7 +336,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
             </svg>
           </div>
           <div className="w-px h-4 bg-surface1 mx-0.5" />
-          {partnerCommands.map(renderCommandButton)}
+          {renderGroupedCommands(partnerCommands)}
         </div>
       )}
 
@@ -278,6 +369,23 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
             removeCommand(contextMenu.commandId!)
             setContextMenu(null)
           } : undefined}
+        />
+      )}
+      {argsPopover && (
+        <ArgsPopover
+          cmd={argsPopover.cmd}
+          rect={argsPopover.rect}
+          onRun={(args) => {
+            const cmd = argsPopover.cmd
+            updateCommand(cmd.id, { lastCustomArgs: args })
+            sendCommand(cmd, buildFullCommand(cmd, args))
+            setArgsPopover(null)
+          }}
+          onSetDefault={(args) => {
+            updateCommand(argsPopover.cmd.id, { defaultArgs: args })
+            setArgsPopover(null)
+          }}
+          onClose={() => setArgsPopover(null)}
         />
       )}
     </div>
@@ -333,6 +441,170 @@ function ContextMenuOverlay({ x, y, onClose, onAdd, onEdit, onDelete }: {
             Delete
           </button>
         )}
+      </div>
+    </div>
+  )
+}
+
+/** Popover for customizing command arguments (shown on Ctrl+click) */
+function ArgsPopover({ cmd, rect, onRun, onSetDefault, onClose }: {
+  cmd: CustomCommand
+  rect: DOMRect
+  onRun: (args: string[]) => void
+  onSetDefault: (args: string[]) => void
+  onClose: () => void
+}) {
+  // Build union of all known args
+  const allKnownArgs = React.useMemo(() => {
+    const set = new Set<string>()
+    cmd.defaultArgs?.forEach((a) => set.add(a))
+    cmd.lastCustomArgs?.forEach((a) => set.add(a))
+    return Array.from(set)
+  }, [cmd.defaultArgs, cmd.lastCustomArgs])
+
+  // Initialize checked state from lastCustomArgs or defaultArgs
+  const initialChecked = React.useMemo(() => {
+    const checked = new Set<string>()
+    const source = cmd.lastCustomArgs || cmd.defaultArgs || []
+    source.forEach((a) => checked.add(a))
+    return checked
+  }, [cmd.lastCustomArgs, cmd.defaultArgs])
+
+  const [checked, setChecked] = React.useState<Set<string>>(initialChecked)
+  const [customArgs, setCustomArgs] = React.useState<string[]>([])
+  const [inputVal, setInputVal] = React.useState('')
+  const popoverRef = React.useRef<HTMLDivElement>(null)
+  const [pos, setPos] = React.useState<{ left: number; top?: number; bottom?: number }>({ left: 0 })
+
+  // Position the popover above the button
+  React.useEffect(() => {
+    const el = popoverRef.current
+    if (!el) return
+    const popRect = el.getBoundingClientRect()
+    const viewW = window.innerWidth
+    const viewH = window.innerHeight
+
+    let left = rect.left
+    if (left + popRect.width > viewW - 8) {
+      left = viewW - popRect.width - 8
+    }
+    if (left < 8) left = 8
+
+    // Position above the button by default; below if no room above
+    if (rect.top - popRect.height - 4 > 0) {
+      setPos({ left, bottom: viewH - rect.top + 4 })
+    } else {
+      setPos({ left, top: rect.bottom + 4 })
+    }
+  }, [rect])
+
+  const toggleArg = (arg: string) => {
+    setChecked((prev) => {
+      const next = new Set(prev)
+      if (next.has(arg)) next.delete(arg)
+      else next.add(arg)
+      return next
+    })
+  }
+
+  const handleAddCustom = () => {
+    const val = inputVal.trim()
+    if (val && !allKnownArgs.includes(val) && !customArgs.includes(val)) {
+      setCustomArgs((prev) => [...prev, val])
+      setChecked((prev) => new Set(prev).add(val))
+      setInputVal('')
+    }
+  }
+
+  const getSelectedArgs = (): string[] => {
+    const result: string[] = []
+    // Maintain order: allKnownArgs first, then custom args
+    for (const a of allKnownArgs) {
+      if (checked.has(a)) result.push(a)
+    }
+    for (const a of customArgs) {
+      if (checked.has(a)) result.push(a)
+    }
+    return result
+  }
+
+  return (
+    <div className="fixed inset-0 z-50" onClick={onClose}>
+      <div
+        ref={popoverRef}
+        className="fixed bg-surface0 border border-surface1 rounded-lg shadow-xl p-3 min-w-[240px] max-w-[340px]"
+        style={pos}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="text-xs text-subtext0 mb-2 font-medium truncate" title={cmd.prompt}>
+          {cmd.label} — Arguments
+        </div>
+
+        {/* Argument checkboxes */}
+        <div className="space-y-1 mb-2 max-h-[200px] overflow-y-auto">
+          {allKnownArgs.map((arg) => (
+            <label key={arg} className="flex items-center gap-2 text-xs text-text cursor-pointer hover:bg-surface1/50 rounded px-1 py-0.5">
+              <input
+                type="checkbox"
+                checked={checked.has(arg)}
+                onChange={() => toggleArg(arg)}
+                className="rounded border-surface1 text-blue accent-blue"
+              />
+              <span className="font-mono truncate">{arg}</span>
+              {cmd.defaultArgs?.includes(arg) && (
+                <span className="text-[9px] text-overlay0 ml-auto shrink-0">default</span>
+              )}
+            </label>
+          ))}
+          {customArgs.map((arg) => (
+            <label key={arg} className="flex items-center gap-2 text-xs text-text cursor-pointer hover:bg-surface1/50 rounded px-1 py-0.5">
+              <input
+                type="checkbox"
+                checked={checked.has(arg)}
+                onChange={() => toggleArg(arg)}
+                className="rounded border-surface1 text-blue accent-blue"
+              />
+              <span className="font-mono truncate">{arg}</span>
+              <span className="text-[9px] text-green ml-auto shrink-0">custom</span>
+            </label>
+          ))}
+        </div>
+
+        {/* Add custom arg input */}
+        <div className="flex gap-1 mb-2">
+          <input
+            type="text"
+            value={inputVal}
+            onChange={(e) => setInputVal(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddCustom() } }}
+            className="flex-1 px-2 py-1 bg-crust text-text text-xs rounded border border-surface1 outline-none focus:border-blue font-mono"
+            placeholder="Add argument..."
+          />
+          <button
+            onClick={handleAddCustom}
+            disabled={!inputVal.trim()}
+            className="px-2 py-1 text-xs bg-surface1 text-text rounded hover:bg-surface1/80 disabled:opacity-40"
+          >
+            +
+          </button>
+        </div>
+
+        {/* Action buttons */}
+        <div className="flex gap-1.5">
+          <button
+            onClick={() => onRun(getSelectedArgs())}
+            className="flex-1 px-3 py-1.5 text-xs bg-blue text-crust rounded hover:bg-blue/80 font-medium"
+          >
+            Run
+          </button>
+          <button
+            onClick={() => onSetDefault(getSelectedArgs())}
+            className="px-3 py-1.5 text-xs bg-surface1 text-text rounded hover:bg-surface1/80"
+            title="Save selected args as the new default"
+          >
+            Set as Default
+          </button>
+        </div>
       </div>
     </div>
   )
