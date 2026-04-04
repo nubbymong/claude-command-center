@@ -113,6 +113,18 @@ const mockElectronAPI = {
     onRunStatusChanged: vi.fn(() => () => {}),
   },
   dialog: { openFolder: vi.fn(() => Promise.resolve(null)) },
+  memory: {
+    scan: vi.fn(() => Promise.resolve({
+      projects: [],
+      memories: [],
+      warnings: [],
+      totalSize: 0,
+      scannedAt: Date.now(),
+    })),
+    read: vi.fn((path: string) => Promise.resolve('# Mock content')),
+    delete: vi.fn(() => Promise.resolve()),
+    writeFrontmatter: vi.fn(() => Promise.resolve()),
+  },
 }
 
 // Install on globalThis so store imports can find it

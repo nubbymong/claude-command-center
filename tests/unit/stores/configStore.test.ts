@@ -103,6 +103,46 @@ describe('configStore', () => {
     })
   })
 
+  describe('TerminalConfig new fields', () => {
+    it('supports flickerFree field', () => {
+      useConfigStore.getState().addConfig(makeConfig({ id: 'c1', flickerFree: true }))
+      expect(useConfigStore.getState().configs[0].flickerFree).toBe(true)
+    })
+
+    it('supports powershellTool field', () => {
+      useConfigStore.getState().addConfig(makeConfig({ id: 'c1', powershellTool: true }))
+      expect(useConfigStore.getState().configs[0].powershellTool).toBe(true)
+    })
+
+    it('supports effortLevel field', () => {
+      useConfigStore.getState().addConfig(makeConfig({ id: 'c1', effortLevel: 'low' }))
+      expect(useConfigStore.getState().configs[0].effortLevel).toBe('low')
+
+      useConfigStore.getState().updateConfig('c1', { effortLevel: 'high' })
+      expect(useConfigStore.getState().configs[0].effortLevel).toBe('high')
+    })
+
+    it('supports disableAutoMemory field', () => {
+      useConfigStore.getState().addConfig(makeConfig({ id: 'c1', disableAutoMemory: true }))
+      expect(useConfigStore.getState().configs[0].disableAutoMemory).toBe(true)
+    })
+
+    it('supports machineName field', () => {
+      useConfigStore.getState().addConfig(makeConfig({ id: 'c1', machineName: 'workstation-1' }))
+      expect(useConfigStore.getState().configs[0].machineName).toBe('workstation-1')
+    })
+
+    it('new fields default to undefined when not set', () => {
+      useConfigStore.getState().addConfig(makeConfig({ id: 'c1' }))
+      const config = useConfigStore.getState().configs[0]
+      expect(config.flickerFree).toBeUndefined()
+      expect(config.powershellTool).toBeUndefined()
+      expect(config.effortLevel).toBeUndefined()
+      expect(config.disableAutoMemory).toBeUndefined()
+      expect(config.machineName).toBeUndefined()
+    })
+  })
+
   describe('section operations', () => {
     it('adds a section', () => {
       useConfigStore.getState().addSection({ id: 's1', name: 'Prod' })

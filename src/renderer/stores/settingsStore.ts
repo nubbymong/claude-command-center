@@ -35,6 +35,7 @@ export interface AppSettings {
   statusLine: StatusLineSettings
   localMachineName: string
   updateChannel: 'stable' | 'beta'
+  skipPermissionsForAgents: boolean
 }
 
 interface SettingsState {
@@ -54,7 +55,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   configPanelPinned: false,
   statusLine: { ...DEFAULT_STATUS_LINE },
   localMachineName: '',
-  updateChannel: 'stable' as const
+  updateChannel: 'stable' as const,
+  skipPermissionsForAgents: true
 }
 
 export const useSettingsStore = create<SettingsState>((set) => ({

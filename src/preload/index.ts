@@ -39,10 +39,11 @@ export interface ElectronAPI {
         port: number
         username: string
         remotePath: string
-        password?: string
         postCommand?: string
-        sudoPassword?: string
+        startClaudeAfter?: boolean
+        dockerContainer?: string
       }
+      configId?: string
       configLabel?: string
       useResumePicker?: boolean
       agentsConfig?: Array<{

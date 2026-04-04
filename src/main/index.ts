@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, clipboard, safeStorage, Menu } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, clipboard, Menu, session } from 'electron'
 import { join } from 'path'
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
 import { randomBytes } from 'crypto'
@@ -36,6 +36,7 @@ import { saveSessionState, loadSessionState, clearSessionState, hasSavedSessionS
 import { getConfigDir, ensureConfigDir } from './config-manager'
 import { stopGlobalVision, startGlobalVision, cleanupLegacyVisionMarkers } from './vision-manager'
 import { readConfig } from './config-manager'
+import { loadCredential, saveCredential, deleteCredential } from './credential-store'
 import type { GlobalVisionConfig } from '../shared/types'
 
 import { migrateRegistryKeys } from './registry'
@@ -90,6 +91,79 @@ function saveWindowState(win: BrowserWindow): void {
 }
 
 let mainWindow: BrowserWindow | null = null
+let splashWindow: BrowserWindow | null = null
+
+function getSplashImagePath(): string {
+  // In dev: repo root. In production: resources/ directory inside app.
+  const devPath = join(app.getAppPath(), 'splash.webp')
+  if (existsSync(devPath)) return devPath
+  return join(process.resourcesPath, 'splash.webp')
+}
+
+function createSplashWindow(): void {
+  const splashPath = getSplashImagePath()
+  if (!existsSync(splashPath)) {
+    logInfo('[splash] Splash image not found, skipping')
+    return
+  }
+
+  const imgData = readFileSync(splashPath).toString('base64')
+  const html = `<!DOCTYPE html>
+<html><head><style>
+  * { margin: 0; padding: 0; }
+  body {
+    background: transparent;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    overflow: hidden;
+    opacity: 0;
+    animation: fadeIn 0.6s ease-out 0.1s forwards;
+  }
+  @keyframes fadeIn { to { opacity: 1; } }
+  img { width: 100%; height: 100%; object-fit: contain; }
+</style></head><body>
+  <img src="data:image/webp;base64,${imgData}" />
+</body></html>`
+
+  splashWindow = new BrowserWindow({
+    width: 420,
+    height: 420,
+    frame: false,
+    transparent: true,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    resizable: false,
+    center: true,
+    show: false,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true
+    }
+  })
+
+  splashWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
+  splashWindow.once('ready-to-show', () => {
+    splashWindow?.show()
+  })
+}
+
+function closeSplashWindow(): void {
+  if (!splashWindow || splashWindow.isDestroyed()) return
+  // Fade out by sending a message, then destroy after delay
+  splashWindow.webContents.executeJavaScript(`
+    document.body.style.transition = 'opacity 0.4s ease-in';
+    document.body.style.opacity = '0';
+  `).catch(() => {})
+  setTimeout(() => {
+    if (splashWindow && !splashWindow.isDestroyed()) {
+      splashWindow.destroy()
+    }
+    splashWindow = null
+  }, 500)
+}
 
 function createWindow(): void {
   const state = loadWindowState()
@@ -108,7 +182,7 @@ function createWindow(): void {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      sandbox: true
     }
   })
 
@@ -116,13 +190,30 @@ function createWindow(): void {
     mainWindow.maximize()
   }
 
+  // Prevent navigation away from the app
+  mainWindow.webContents.on('will-navigate', (event) => {
+    event.preventDefault()
+  })
+
+  mainWindow.webContents.setWindowOpenHandler(() => {
+    return { action: 'deny' }
+  })
+
+  const splashShownAt = Date.now()
+
   mainWindow.on('ready-to-show', () => {
     if (process.env.E2E_HEADLESS === '1') {
-      // Keep window off-screen for headless E2E tests
       mainWindow!.setPosition(-10000, -10000)
       mainWindow!.showInactive()
+      closeSplashWindow()
     } else {
-      mainWindow!.show()
+      // Ensure splash shows for at least 2 seconds
+      const elapsed = Date.now() - splashShownAt
+      const remaining = Math.max(0, 2000 - elapsed)
+      setTimeout(() => {
+        mainWindow!.show()
+        closeSplashWindow()
+      }, remaining)
     }
   })
 
@@ -217,52 +308,17 @@ function createWindow(): void {
     return filePath
   })
 
-  // Encrypted credential storage using safeStorage — stored in CONFIG/
-  function getCredentialsFile(): string {
-    return join(getConfigDir(), 'ssh-credentials.json')
-  }
-
-  function loadCredentials(): Record<string, string> {
-    try {
-      const file = getCredentialsFile()
-      if (existsSync(file)) {
-        return JSON.parse(readFileSync(file, 'utf-8'))
-      }
-    } catch { /* ignore */ }
-    return {}
-  }
-
-  function saveCredentials(creds: Record<string, string>): void {
-    try {
-      ensureConfigDir()
-      writeFileSync(getCredentialsFile(), JSON.stringify(creds))
-    } catch { /* ignore */ }
-  }
-
+  // Encrypted credential storage using safeStorage — delegated to credential-store module
   ipcMain.handle('credentials:save', async (_event, configId: string, password: string) => {
-    if (!safeStorage.isEncryptionAvailable()) return false
-    const encrypted = safeStorage.encryptString(password).toString('base64')
-    const creds = loadCredentials()
-    creds[configId] = encrypted
-    saveCredentials(creds)
-    return true
+    return saveCredential(configId, password)
   })
 
   ipcMain.handle('credentials:load', async (_event, configId: string) => {
-    if (!safeStorage.isEncryptionAvailable()) return null
-    const creds = loadCredentials()
-    const encrypted = creds[configId]
-    if (!encrypted) return null
-    try {
-      return safeStorage.decryptString(Buffer.from(encrypted, 'base64'))
-    } catch { return null }
+    return loadCredential(configId)
   })
 
   ipcMain.handle('credentials:delete', async (_event, configId: string) => {
-    const creds = loadCredentials()
-    delete creds[configId]
-    saveCredentials(creds)
-    return true
+    return deleteCredential(configId)
   })
 
   // Session state persistence IPC handlers
@@ -360,6 +416,19 @@ if (!gotTheLock) {
       console.warn('[main] Failed to deploy statusline:', err)
     }
 
+    // Content Security Policy
+    session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+      callback({
+        responseHeaders: {
+          ...details.responseHeaders,
+          'Content-Security-Policy': [
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' ws://localhost:* http://localhost:*"
+          ]
+        }
+      })
+    })
+
+    createSplashWindow()
     createWindow()
 
     const getWindow = () => mainWindow

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { useCommandStore, CustomCommand, DEFAULT_COMMANDS } from '../../../src/renderer/stores/commandStore'
+import { useCommandStore, CustomCommand, CommandSection, DEFAULT_COMMANDS } from '../../../src/renderer/stores/commandStore'
 
 function makeCommand(overrides: Partial<CustomCommand> = {}): CustomCommand {
   return {
@@ -11,9 +11,18 @@ function makeCommand(overrides: Partial<CustomCommand> = {}): CustomCommand {
   }
 }
 
+function makeSection(overrides: Partial<CommandSection> = {}): CommandSection {
+  return {
+    id: 'sec-' + Math.random().toString(36).slice(2, 8),
+    name: 'Test Section',
+    scope: 'global',
+    ...overrides,
+  }
+}
+
 describe('commandStore', () => {
   beforeEach(() => {
-    useCommandStore.setState({ commands: [], isLoaded: false })
+    useCommandStore.setState({ commands: [], sections: [], isLoaded: false })
   })
 
   describe('hydrate', () => {
@@ -92,6 +101,93 @@ describe('commandStore', () => {
       useCommandStore.getState().addCommand(makeCommand({ id: 'c1', scope: 'config', configId: 'cfg-a' }))
       const result = useCommandStore.getState().getCommandsForSession('cfg-b')
       expect(result).toHaveLength(0)
+    })
+  })
+
+  describe('addSection', () => {
+    it('creates a section', () => {
+      useCommandStore.getState().addSection(makeSection({ id: 's1', name: 'Deploy' }))
+      expect(useCommandStore.getState().sections).toHaveLength(1)
+      expect(useCommandStore.getState().sections[0].name).toBe('Deploy')
+    })
+
+    it('appends to existing sections', () => {
+      useCommandStore.getState().addSection(makeSection({ id: 's1' }))
+      useCommandStore.getState().addSection(makeSection({ id: 's2' }))
+      expect(useCommandStore.getState().sections).toHaveLength(2)
+    })
+  })
+
+  describe('updateSection', () => {
+    it('modifies a section by id', () => {
+      useCommandStore.getState().addSection(makeSection({ id: 's1', name: 'Old' }))
+      useCommandStore.getState().updateSection('s1', { name: 'New' })
+      expect(useCommandStore.getState().sections[0].name).toBe('New')
+    })
+
+    it('does not affect other sections', () => {
+      useCommandStore.getState().addSection(makeSection({ id: 's1', name: 'A' }))
+      useCommandStore.getState().addSection(makeSection({ id: 's2', name: 'B' }))
+      useCommandStore.getState().updateSection('s1', { name: 'Updated' })
+      expect(useCommandStore.getState().sections[1].name).toBe('B')
+    })
+  })
+
+  describe('removeSection', () => {
+    it('removes section and clears sectionId from orphaned commands', () => {
+      useCommandStore.getState().addSection(makeSection({ id: 's1', name: 'S' }))
+      useCommandStore.getState().addCommand(makeCommand({ id: 'c1', sectionId: 's1' }))
+      useCommandStore.getState().addCommand(makeCommand({ id: 'c2', sectionId: 's1' }))
+      useCommandStore.getState().addCommand(makeCommand({ id: 'c3', sectionId: 's2' }))
+
+      useCommandStore.getState().removeSection('s1')
+
+      expect(useCommandStore.getState().sections).toHaveLength(0)
+      // Commands that had sectionId 's1' should be cleared
+      const c1 = useCommandStore.getState().commands.find(c => c.id === 'c1')
+      const c2 = useCommandStore.getState().commands.find(c => c.id === 'c2')
+      const c3 = useCommandStore.getState().commands.find(c => c.id === 'c3')
+      expect(c1?.sectionId).toBeUndefined()
+      expect(c2?.sectionId).toBeUndefined()
+      // c3 has different sectionId — should NOT be cleared
+      expect(c3?.sectionId).toBe('s2')
+    })
+  })
+
+  describe('reorderSections', () => {
+    it('reorders sections', () => {
+      const s1 = makeSection({ id: 's1', name: 'A' })
+      const s2 = makeSection({ id: 's2', name: 'B' })
+      useCommandStore.getState().addSection(s1)
+      useCommandStore.getState().addSection(s2)
+
+      useCommandStore.getState().reorderSections([s2, s1])
+
+      expect(useCommandStore.getState().sections[0].id).toBe('s2')
+      expect(useCommandStore.getState().sections[1].id).toBe('s1')
+    })
+  })
+
+  describe('hydrate with sections', () => {
+    it('populates both commands and sections', () => {
+      const cmds = [makeCommand({ id: 'c1' })]
+      const secs = [makeSection({ id: 's1', name: 'Deploy' })]
+      useCommandStore.getState().hydrate(cmds, secs)
+
+      const state = useCommandStore.getState()
+      expect(state.isLoaded).toBe(true)
+      expect(state.commands).toHaveLength(1)
+      expect(state.sections).toHaveLength(1)
+      expect(state.sections[0].name).toBe('Deploy')
+    })
+
+    it('defaults sections to empty array when not provided', () => {
+      const cmds = [makeCommand({ id: 'c1' })]
+      useCommandStore.getState().hydrate(cmds)
+
+      const state = useCommandStore.getState()
+      expect(state.isLoaded).toBe(true)
+      expect(state.sections).toEqual([])
     })
   })
 })

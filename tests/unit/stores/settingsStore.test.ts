@@ -12,6 +12,14 @@ describe('settingsStore', () => {
       expect(DEFAULT_SETTINGS.terminalFontSize).toBe(14)
       expect(DEFAULT_SETTINGS.debugMode).toBe(false)
     })
+
+    it('localMachineName defaults to empty string', () => {
+      expect(DEFAULT_SETTINGS.localMachineName).toBe('')
+    })
+
+    it('updateChannel defaults to stable', () => {
+      expect(DEFAULT_SETTINGS.updateChannel).toBe('stable')
+    })
   })
 
   describe('hydrate', () => {

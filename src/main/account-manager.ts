@@ -8,6 +8,8 @@
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { readFileSync, writeFileSync, existsSync, unlinkSync } from 'fs'
+import { createHash } from 'crypto'
+import { safeStorage } from 'electron'
 import { readConfig, writeConfig } from './config-manager'
 import { logInfo, logError } from './debug-logger'
 import { killAllAgents } from './cloud-agent-manager'
@@ -54,23 +56,92 @@ function writeClaudeCredentials(data: unknown): boolean {
   }
 }
 
+/**
+ * Encrypt a string using Electron's safeStorage (OS-level credential store).
+ * Falls back to plaintext if encryption is not available.
+ */
+function encryptField(value: string): string {
+  try {
+    if (safeStorage.isEncryptionAvailable()) {
+      return 'enc:' + safeStorage.encryptString(value).toString('base64')
+    }
+  } catch (err) {
+    logError(`[account-manager] safeStorage encrypt failed, storing plaintext: ${err}`)
+  }
+  return value
+}
+
+/**
+ * Decrypt a string that was encrypted with encryptField().
+ * Handles both encrypted ('enc:' prefix) and legacy plaintext values.
+ */
+function decryptField(value: string): string {
+  if (!value.startsWith('enc:')) return value // plaintext or legacy
+  try {
+    if (safeStorage.isEncryptionAvailable()) {
+      return safeStorage.decryptString(Buffer.from(value.slice(4), 'base64'))
+    }
+    logError('[account-manager] safeStorage not available to decrypt credential')
+  } catch (err) {
+    logError(`[account-manager] safeStorage decrypt failed: ${err}`)
+  }
+  return '' // can't decrypt — return empty rather than ciphertext
+}
+
+/**
+ * Encrypt OAuth tokens inside a credentials object before saving.
+ */
+function encryptCredentials(creds: any): any {
+  if (!creds?.claudeAiOauth) return creds
+  const clone = JSON.parse(JSON.stringify(creds))
+  const oauth = clone.claudeAiOauth
+  if (oauth.accessToken) oauth.accessToken = encryptField(oauth.accessToken)
+  if (oauth.refreshToken) oauth.refreshToken = encryptField(oauth.refreshToken)
+  return clone
+}
+
+/**
+ * Decrypt OAuth tokens inside a stored credentials object when loading.
+ */
+function decryptCredentials(creds: any): any {
+  if (!creds?.claudeAiOauth) return creds
+  const clone = JSON.parse(JSON.stringify(creds))
+  const oauth = clone.claudeAiOauth
+  if (oauth.accessToken) oauth.accessToken = decryptField(oauth.accessToken)
+  if (oauth.refreshToken) oauth.refreshToken = decryptField(oauth.refreshToken)
+  return clone
+}
+
 function loadAccountsData(): AccountsData {
   const data = readConfig<AccountsData>('accounts')
-  return data || { accounts: [] }
+  if (!data) return { accounts: [] }
+  // Decrypt credentials on load
+  for (const account of data.accounts) {
+    account.credentials = decryptCredentials(account.credentials)
+  }
+  return data
 }
 
 function saveAccountsData(data: AccountsData): void {
-  writeConfig('accounts', data)
+  // Encrypt credentials before writing to disk
+  const toSave: AccountsData = {
+    ...data,
+    accounts: data.accounts.map(a => ({
+      ...a,
+      credentials: encryptCredentials(a.credentials),
+    })),
+  }
+  writeConfig('accounts', toSave)
 }
 
 /**
  * Generate a short fingerprint from the refresh token to distinguish accounts.
- * Returns something like "...x7Kf" — last 4 chars.
+ * Uses a SHA-256 hash truncated to 8 hex chars instead of exposing raw token chars.
  */
 function tokenFingerprint(creds: any): string {
   const rt = creds?.claudeAiOauth?.refreshToken || ''
   if (rt.length < 4) return '???'
-  return '...' + rt.slice(-4)
+  return createHash('sha256').update(rt).digest('hex').slice(0, 8)
 }
 
 /**

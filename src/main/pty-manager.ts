@@ -12,6 +12,10 @@ import { resolveVersionBinary } from './legacy-version-manager'
 import * as path from 'path'
 import * as fs from 'fs'
 
+function escapeShellArg(str: string): string {
+  return str.replace(/[\\"$`]/g, '\\$&')
+}
+
 interface PtySession {
   ptyProcess: pty.IPty
   sessionId: string
@@ -207,7 +211,7 @@ export function spawnPty(
     ].filter(Boolean).join(' ')
     const claudeFlags = [
       options?.effortLevel ? `--effort ${options.effortLevel}` : '',
-      options?.configLabel ? `--name "${options.configLabel.replace(/"/g, '\\"')}"` : '',
+      options?.configLabel ? `--name "${escapeShellArg(options.configLabel)}"` : '',
     ].filter(Boolean).join(' ')
     const claudeCmd = [claudeEnvPrefix, 'claude', claudeFlags].filter(Boolean).join(' ')
     const password = ssh.password
@@ -365,8 +369,7 @@ export function spawnPty(
       // Build extra CLI flags (--name, --effort)
       let extraFlags = ''
       if (options?.configLabel) {
-        const nameEscaped = options.configLabel.replace(/"/g, '\\"')
-        extraFlags += ` --name "${nameEscaped}"`
+        extraFlags += ` --name "${escapeShellArg(options.configLabel)}"`
       }
       if (options?.effortLevel) {
         extraFlags += ` --effort ${options.effortLevel}`
