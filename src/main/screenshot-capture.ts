@@ -84,7 +84,7 @@ async function _captureRectangleImpl(mainWindow: BrowserWindow): Promise<string 
         preload: join(__dirname, '../preload/screenshot-overlay.js'),
         contextIsolation: true,
         nodeIntegration: false,
-        sandbox: false
+        sandbox: true
       }
     })
 
@@ -327,7 +327,7 @@ export async function startStoryboard(mainWindow: BrowserWindow): Promise<{ x: n
         preload: join(__dirname, '../preload/screenshot-overlay.js'),
         contextIsolation: true,
         nodeIntegration: false,
-        sandbox: false
+        sandbox: true
       }
     })
 

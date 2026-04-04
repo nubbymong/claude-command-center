@@ -170,7 +170,7 @@ export async function startMcpServer(port: number, visionManager: VisionManagerI
   return new Promise((resolve, reject) => {
     httpServer = http.createServer(async (req, res) => {
       // CORS headers for cross-origin MCP clients
-      res.setHeader('Access-Control-Allow-Origin', '*')
+      res.setHeader('Access-Control-Allow-Origin', `http://localhost:${port}`)
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
       res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
 
@@ -244,10 +244,10 @@ export async function startMcpServer(port: number, visionManager: VisionManagerI
       res.end()
     })
 
-    // Listen on 0.0.0.0 so SSH reverse tunnels can route traffic
-    httpServer.listen(port, '0.0.0.0', () => {
+    // Listen on localhost only — SSH reverse tunnels connect to localhost on the remote end
+    httpServer.listen(port, '127.0.0.1', () => {
       mcpPort = port
-      logInfo(`[vision-mcp] MCP SSE server listening on 0.0.0.0:${port}`)
+      logInfo(`[vision-mcp] MCP SSE server listening on 127.0.0.1:${port}`)
       resolve()
     })
 

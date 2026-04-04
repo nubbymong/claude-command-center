@@ -1,6 +1,6 @@
 {
   "name": "claude-conductor",
-  "version": "1.2.152",
+  "version": "1.2.155",
   "description": "Multi-session Claude Code terminal orchestrator",
   "author": "Nicholas Moger",
   "main": "./out/main/index.js",
@@ -17,7 +17,8 @@
     "update-server": "node scripts/update-server.js",
     "postinstall": "npx @electron/rebuild --only node-pty --only better-sqlite3",
     "rebuild": "npx @electron/rebuild",
-    "capture-training": "npx tsx scripts/capture-training-screenshots.ts"
+    "capture-training": "npx tsx scripts/capture-training-screenshots.ts",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.28.0",
@@ -89,6 +90,10 @@
       {
         "from": "build/config-template.json",
         "to": "config-template.json"
+      },
+      {
+        "from": "splash.webp",
+        "to": "splash.webp"
       }
     ]
   }

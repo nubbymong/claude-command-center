@@ -1,16 +1,68 @@
 import { ipcMain, BrowserWindow } from 'electron'
+import { z } from 'zod'
 import { spawnPty, writePty, resizePty, killPty, SSHOptions } from '../pty-manager'
 import { logUserInput, isDebugModeEnabled } from '../debug-capture'
 import { logInfo } from '../debug-logger'
 import { isVersionInstalled, installVersion } from '../legacy-version-manager'
+import { loadCredential } from '../credential-store'
+
+/** SSH options as received from the renderer (no passwords — only configId) */
+interface RendererSSHOptions {
+  host: string
+  port: number
+  username: string
+  remotePath: string
+  postCommand?: string
+  startClaudeAfter?: boolean
+  dockerContainer?: string
+}
+
+const sshSchema = z.object({
+  host: z.string().min(1),
+  port: z.number().int().min(1).max(65535),
+  username: z.string().min(1),
+  remotePath: z.string().min(1),
+  postCommand: z.string().optional(),
+  startClaudeAfter: z.boolean().optional(),
+  dockerContainer: z.string().optional(),
+}).optional()
+
+const spawnOptionsSchema = z.object({
+  cwd: z.string().optional(),
+  cols: z.number().int().positive().optional(),
+  rows: z.number().int().positive().optional(),
+  ssh: sshSchema,
+  shellOnly: z.boolean().optional(),
+  configId: z.string().optional(),
+  configLabel: z.string().max(100).optional(),
+  useResumePicker: z.boolean().optional(),
+  legacyVersion: z.object({
+    enabled: z.boolean(),
+    version: z.string(),
+  }).optional(),
+  agentsConfig: z.array(z.object({
+    name: z.string(),
+    description: z.string(),
+    prompt: z.string(),
+    model: z.string().optional(),
+    tools: z.array(z.string()).optional(),
+  })).optional(),
+  flickerFree: z.boolean().optional(),
+  powershellTool: z.boolean().optional(),
+  effortLevel: z.enum(['low', 'medium', 'high']).optional(),
+  disableAutoMemory: z.boolean().optional(),
+}).optional()
+
+const sessionIdSchema = z.string().min(1).max(200)
 
 export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void {
   ipcMain.handle('pty:spawn', async (_event, sessionId: string, options?: {
     cwd?: string
     cols?: number
     rows?: number
-    ssh?: SSHOptions
+    ssh?: RendererSSHOptions
     shellOnly?: boolean
+    configId?: string
     configLabel?: string
     useResumePicker?: boolean
     legacyVersion?: { enabled: boolean; version: string }
@@ -20,6 +72,13 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     effortLevel?: 'low' | 'medium' | 'high'
     disableAutoMemory?: boolean
   }) => {
+    try {
+      sessionIdSchema.parse(sessionId)
+      spawnOptionsSchema.parse(options)
+    } catch (err) {
+      throw new Error(`Invalid parameters: ${err instanceof Error ? err.message : String(err)}`)
+    }
+
     const win = getWindow()
     if (!win) throw new Error('No window available')
 
@@ -34,7 +93,20 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
       }
     }
 
-    spawnPty(win, sessionId, options)
+    // Resolve SSH credentials in the main process (never transit through renderer)
+    let resolvedOptions = options
+    if (options?.ssh && options.configId) {
+      const password = loadCredential(options.configId) ?? undefined
+      const sudoPassword = loadCredential(options.configId + '_sudo') ?? undefined
+      const sshWithCreds: SSHOptions = {
+        ...options.ssh,
+        password,
+        sudoPassword,
+      }
+      resolvedOptions = { ...options, ssh: sshWithCreds }
+    }
+
+    spawnPty(win, sessionId, resolvedOptions)
   })
 
   ipcMain.on('pty:write', (_event, sessionId: string, data: string) => {

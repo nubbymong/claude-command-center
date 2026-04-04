@@ -16,6 +16,7 @@ import { logInfo, logError } from './debug-logger'
 import { resolveClaudeForPty } from './pty-manager'
 import { getProjectRootPath, getInstallPath } from './update-watcher'
 import { getResourcesDirectory } from './ipc/setup-handlers'
+import { readConfig } from './config-manager'
 
 // Source locations (Claude CLI output)
 const CLAUDE_REPORT = join(homedir(), '.claude', 'usage-data', 'report.html')
@@ -433,12 +434,18 @@ async function extractKpis(archiveDir: string, runId: string): Promise<boolean> 
 
   logInfo('[insights] Starting KPI extraction for ' + reportPath + (prevKpis ? ' (with comparison)' : ' (no previous data)'))
 
-  const result = await spawnClaude([
+  // Read setting to decide whether to include --dangerously-skip-permissions
+  const settings = readConfig<{ skipPermissionsForAgents?: boolean }>('settings')
+  const skipPerms = settings?.skipPermissionsForAgents !== false // default true
+
+  const spawnArgs = [
     '-p', `"${prompt.replace(/"/g, '\\"')}"`,
     '--allowedTools', 'Read',
-    '--dangerously-skip-permissions',
+    ...(skipPerms ? ['--dangerously-skip-permissions'] : []),
     '--output-format', 'json'
-  ])
+  ]
+
+  const result = await spawnClaude(spawnArgs)
 
   if (result.code !== 0) {
     logError('[insights] KPI extraction failed:', result.stderr)

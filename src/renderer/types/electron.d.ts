@@ -91,12 +91,13 @@ export interface ElectronAPI {
         port: number
         username: string
         remotePath: string
-        password?: string
         postCommand?: string
-        sudoPassword?: string
+        startClaudeAfter?: boolean
+        dockerContainer?: string
       }
       shellOnly?: boolean
       elevated?: boolean
+      configId?: string
       configLabel?: string
       useResumePicker?: boolean
       legacyVersion?: {

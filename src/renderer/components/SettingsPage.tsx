@@ -130,6 +130,19 @@ export default function SettingsPage() {
                 </Field>
               </Section>
 
+              <Section title="Security" icon={<path d="M8 2L3 5v4c0 3.5 2.1 6.4 5 7.5 2.9-1.1 5-4 5-7.5V5L8 2z" stroke="currentColor" strokeWidth="1.2" fill="none" />}>
+                <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.skipPermissionsForAgents}
+                    onChange={(e) => save({ skipPermissionsForAgents: e.target.checked })}
+                    className="rounded border-surface1"
+                  />
+                  Skip permission prompts for headless agents
+                  <span className="text-[10px] text-overlay0">(--dangerously-skip-permissions)</span>
+                </label>
+              </Section>
+
               <Section title="Appearance" icon={<><circle cx="8" cy="8" r="3" stroke="currentColor" strokeWidth="1.2" fill="none" /><path d="M8 2v2M8 12v2M2 8h2M12 8h2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" /></>}>
                 <Field label="Terminal Font Size">
                   <input

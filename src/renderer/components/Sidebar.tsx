@@ -162,6 +162,7 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
   const handleCreateConfig = async (data: Omit<TerminalConfig, 'id'>, password?: string, sudoPassword?: string) => {
     const config: TerminalConfig = { ...data, id: generateId() }
     addConfig(config)
+    // Save credentials to the encrypted store (main process handles decryption at spawn time)
     if (password) {
       await window.electronAPI.credentials.save(config.id, password)
     }
@@ -169,7 +170,7 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
       await window.electronAPI.credentials.save(config.id + '_sudo', sudoPassword)
     }
     setShowNewDialog(false)
-    launchFromConfig(config, password, sudoPassword)
+    launchFromConfig(config)
   }
 
   const handleEditConfig = async (data: Omit<TerminalConfig, 'id'>, password?: string, sudoPassword?: string) => {
@@ -180,6 +181,7 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
         updateSession(s.id, { color: data.color, label: data.label })
       }
     })
+    // Save credentials to the encrypted store (main process handles decryption at spawn time)
     if (password) {
       await window.electronAPI.credentials.save(editingConfig.id, password)
     }
@@ -194,15 +196,8 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
     await window.electronAPI.credentials.delete(configId)
   }
 
-  const launchFromConfig = async (config: TerminalConfig, passwordOverride?: string, sudoPasswordOverride?: string) => {
-    let password = passwordOverride
-    if (!password && config.sshConfig?.hasPassword) {
-      password = (await window.electronAPI.credentials.load(config.id)) ?? undefined
-    }
-    let sudoPassword = sudoPasswordOverride
-    if (!sudoPassword && config.sshConfig?.hasSudoPassword) {
-      sudoPassword = (await window.electronAPI.credentials.load(config.id + '_sudo')) ?? undefined
-    }
+  const launchFromConfig = async (config: TerminalConfig) => {
+    // Credentials are resolved in the main process at PTY spawn time — never loaded in the renderer
     const session: Session = {
       id: generateId(),
       configId: config.id,
@@ -222,9 +217,8 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
         username: config.sshConfig.username,
         remotePath: config.sshConfig.remotePath,
         hasPassword: config.sshConfig.hasPassword,
-        password,
         postCommand: config.sshConfig.postCommand,
-        sudoPassword,
+        hasSudoPassword: config.sshConfig.hasSudoPassword,
         startClaudeAfter: config.sshConfig.startClaudeAfter,
         dockerContainer: config.sshConfig.dockerContainer
       } : undefined,

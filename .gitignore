@@ -26,6 +26,9 @@ Thumbs.db
 *.swo
 nul
 
+# Test artifacts
+test-results/
+
 # Temp/debug files
 *.ps1
 *.log

@@ -53,9 +53,19 @@ function TypeBadge({ type }: { type: string }) {
   )
 }
 
-// Simple markdown renderer
+// Escape HTML entities to prevent XSS in dangerouslySetInnerHTML
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+// Simple markdown renderer (content is escaped first to prevent injection)
 function renderMarkdown(content: string): string {
-  return content
+  return escapeHtml(content)
     .replace(/^---[\s\S]*?---\n*/m, '') // strip frontmatter
     .replace(/^### (.+)$/gm, '<h3 class="font-mono text-xs text-subtext0 font-semibold mt-4 mb-1">$1</h3>')
     .replace(/^## (.+)$/gm, '<h2 class="font-mono text-[13px] text-blue font-semibold mt-4 mb-1">$1</h2>')

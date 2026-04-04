@@ -134,8 +134,13 @@ export async function dispatchAgent(params: {
   const tmpFile = path.join(os.tmpdir(), `ccc-agent-${agent.id}.txt`)
   fs.writeFileSync(tmpFile, params.description, 'utf8')
 
+  // Read setting to decide whether to include --dangerously-skip-permissions
+  const settings = readConfig<{ skipPermissionsForAgents?: boolean }>('settings')
+  const skipPerms = settings?.skipPermissionsForAgents !== false // default true
+
   const pipeCmd = process.platform === 'win32' ? 'type' : 'cat'
-  const shellCmd = `${pipeCmd} "${tmpFile}" | ${claudeBin} --dangerously-skip-permissions`
+  const permFlag = skipPerms ? ' --dangerously-skip-permissions' : ''
+  const shellCmd = `${pipeCmd} "${tmpFile}" | ${claudeBin}${permFlag}`
 
   const child = spawn(shellCmd, [], {
     cwd: params.projectPath,

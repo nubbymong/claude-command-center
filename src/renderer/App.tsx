@@ -218,7 +218,7 @@ export default function App() {
           remotePath: s.sshConfig.remotePath,
           hasPassword: s.sshConfig.hasPassword,
           postCommand: s.sshConfig.postCommand,
-          hasSudoPassword: !!s.sshConfig.sudoPassword,
+          hasSudoPassword: s.sshConfig.hasSudoPassword,
           startClaudeAfter: s.sshConfig.startClaudeAfter,
           dockerContainer: s.sshConfig.dockerContainer,
         } : undefined,

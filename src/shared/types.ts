@@ -30,10 +30,8 @@ export interface SshConfig {
   port: number
   username: string
   remotePath: string
-  password?: string
   hasPassword?: boolean
   postCommand?: string
-  sudoPassword?: string
   hasSudoPassword?: boolean
   startClaudeAfter?: boolean
   dockerContainer?: string

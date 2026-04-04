@@ -9,9 +9,8 @@ export interface SSHConfig {
   username: string
   remotePath: string
   hasPassword?: boolean
-  password?: string
   postCommand?: string
-  sudoPassword?: string
+  hasSudoPassword?: boolean
   startClaudeAfter?: boolean
   dockerContainer?: string  // Docker container name (enables docker cp for screenshots)
 }
