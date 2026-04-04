@@ -54,9 +54,10 @@ interface Props {
   onViewChange: (view: ViewType) => void
   onUpdateRequested?: () => void
   collapsed?: boolean
+  onShowHelp?: () => void
 }
 
-export default function Sidebar({ currentView, onViewChange, onUpdateRequested, collapsed }: Props) {
+export default function Sidebar({ currentView, onViewChange, onUpdateRequested, collapsed, onShowHelp }: Props) {
   const { sessions, activeSessionId, setActiveSession, removeSession, addSession, updateSession } = useSessionStore()
   const { configs, groups, sections, addConfig, updateConfig, removeConfig, addGroup, renameGroup, removeGroup, toggleGroupCollapsed, moveConfigToGroup, addSection, renameSection, removeSection, toggleSectionCollapsed, moveGroupToSection, moveConfigToSection, togglePinned, duplicateConfig, reorderConfigs } = useConfigStore()
   const insightsStatus = useInsightsStore((s) => s.status)
@@ -519,6 +520,7 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
           visionRunning={visionRunning}
           visionConnected={visionConnected}
           collapsed
+          onShowHelp={onShowHelp}
         />
       </aside>
     )
@@ -577,6 +579,7 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
         cloudAgentRunning={cloudAgentRunning}
         visionRunning={visionRunning}
         visionConnected={visionConnected}
+        onShowHelp={onShowHelp}
       />
 
       {/* Saved Configs — hover trigger or pinned inline */}

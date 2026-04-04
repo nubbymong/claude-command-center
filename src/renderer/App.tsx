@@ -53,6 +53,7 @@ export default function App() {
   const [closeDialog, setCloseDialog] = useState<'close' | 'update' | null>(null)
   const [showWhatsNew, setShowWhatsNew] = useState(false)
   const [showTraining, setShowTraining] = useState(false)
+  const [showTrainingAll, setShowTrainingAll] = useState(false)
   const [partnerActive, setPartnerActive] = useState<Set<string>>(new Set())
   const [showMachineNamePrompt, setShowMachineNamePrompt] = useState(false)
   const [machineNameInput, setMachineNameInput] = useState('')
@@ -427,7 +428,7 @@ export default function App() {
     <ErrorBoundary>
       <div className="flex flex-col h-screen bg-base text-text">
         {showWhatsNew && <WhatsNewModal onClose={handleWhatsNewClose} />}
-        {showTraining && <TrainingWalkthrough onClose={() => setShowTraining(false)} />}
+        {showTraining && <TrainingWalkthrough onClose={() => { setShowTraining(false); setShowTrainingAll(false) }} showAll={showTrainingAll} />}
 
         {showMachineNamePrompt && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
@@ -494,7 +495,7 @@ export default function App() {
         )}
         <TitleBar sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
         <div className="flex flex-1 overflow-hidden">
-          <Sidebar currentView={view} onViewChange={setView} collapsed={!sidebarOpen} onUpdateRequested={() => {
+          <Sidebar currentView={view} onViewChange={setView} collapsed={!sidebarOpen} onShowHelp={() => { setShowTrainingAll(true); setShowTraining(true) }} onUpdateRequested={() => {
             const state = useSessionStore.getState()
             if (state.sessions.length === 0) {
               setIsClosing(true)
