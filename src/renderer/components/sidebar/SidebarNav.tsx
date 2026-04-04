@@ -10,6 +10,7 @@ interface SidebarNavProps {
   visionRunning?: boolean
   visionConnected?: boolean
   collapsed?: boolean
+  onShowHelp?: () => void
 }
 
 const navItems: { view: ViewType; icon: React.ReactNode; label: string }[] = [
@@ -162,7 +163,21 @@ function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMe
   )
 }
 
-export default function SidebarNav({ currentView, onViewChange, insightsStatus, insightsMessage, cloudAgentRunning, visionRunning, visionConnected, collapsed }: SidebarNavProps) {
+export default function SidebarNav({ currentView, onViewChange, insightsStatus, insightsMessage, cloudAgentRunning, visionRunning, visionConnected, collapsed, onShowHelp }: SidebarNavProps) {
+  const helpButton = onShowHelp ? (
+    <button
+      onClick={onShowHelp}
+      title="Feature Guide"
+      className={`${collapsed ? 'w-10 h-10' : 'flex-1 py-2'} flex items-center justify-center rounded-lg transition-colors text-overlay0 hover:text-text hover:bg-surface0/50`}
+    >
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="12" r="10" />
+        <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+        <line x1="12" y1="17" x2="12.01" y2="17" />
+      </svg>
+    </button>
+  ) : null
+
   if (collapsed) {
     return (
       <div className="flex flex-col items-center gap-1 py-2 border-b border-surface0">
@@ -180,6 +195,7 @@ export default function SidebarNav({ currentView, onViewChange, insightsStatus, 
             isCollapsed
           />
         ))}
+        {helpButton}
       </div>
     )
   }
@@ -200,6 +216,7 @@ export default function SidebarNav({ currentView, onViewChange, insightsStatus, 
           isCollapsed={false}
         />
       ))}
+      {helpButton}
     </div>
   )
 }

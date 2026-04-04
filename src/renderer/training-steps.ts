@@ -91,6 +91,90 @@ export const trainingSteps: TrainingStep[] = [
     ],
     screenshotFilename: 'step-tips.jpg',
   },
+  {
+    id: 'vision',
+    title: 'Vision System',
+    sinceVersion: '1.2.144',
+    bullets: [
+      '**Browser automation** via a global MCP server — all sessions share one browser',
+      'Click the **eye icon** in the sidebar to configure and start vision',
+      '17 vision tools available to Claude: **screenshot, navigate, click, type** and more',
+      'Works over **SSH** too — reverse tunnels connect remote sessions automatically',
+    ],
+    screenshotFilename: 'step-tips.jpg',
+  },
+  {
+    id: 'tokenomics',
+    title: 'Tokenomics',
+    sinceVersion: '1.2.144',
+    bullets: [
+      'Track **token usage and costs** across all your Claude Code sessions',
+      'Parses JSONL transcript files for **historical usage data**',
+      'See **daily aggregates**, burn rate, and cost breakdown **by model**',
+      'Monitor **rate limits** and extra spend from the Anthropic API',
+    ],
+    screenshotFilename: 'step-tips.jpg',
+  },
+  {
+    id: 'memory-visualiser',
+    title: 'Memory Visualiser',
+    sinceVersion: '1.2.152',
+    bullets: [
+      'Browse Claude Code **auto-memory** files across all your projects',
+      'Click the **brain icon** in the sidebar to explore memory',
+      'Drill down: **project cards** > **type groups** > individual memories',
+      '**Search** across all memories, view rendered markdown, delete stale entries',
+    ],
+    screenshotFilename: 'step-tips.jpg',
+  },
+  {
+    id: 'command-args',
+    title: 'Command Arguments',
+    sinceVersion: '1.2.152',
+    bullets: [
+      'Command buttons now separate **base command** from **arguments**',
+      'Normal click runs with **default arguments** — no modal needed',
+      '**Ctrl+click** any command button to customize arguments before running',
+      'Organize buttons into **named sections** — drag to reorder',
+    ],
+    screenshotFilename: 'step-tips.jpg',
+  },
+  {
+    id: 'storyboard',
+    title: 'Storyboard Capture',
+    sinceVersion: '1.2.152',
+    bullets: [
+      'Record a **sequence of screenshots** at a set interval (1-5 seconds)',
+      'Click **Storyboard** in the command bar, select a screen region, and record',
+      'Review captured frames: **annotate each**, select/deselect, add context text',
+      'Sends a **structured prompt** with numbered frames to Claude',
+    ],
+    screenshotFilename: 'step-tips.jpg',
+  },
+  {
+    id: 'session-options',
+    title: 'Session Options',
+    sinceVersion: '1.2.152',
+    bullets: [
+      'Set **effort level** per session (Low/Medium/High) to control thinking depth',
+      'Enable **flicker-free rendering** for reduced terminal flicker',
+      'Enable **PowerShell tool** for native Windows commands (preview)',
+      'Disable **auto-memory** to prevent Claude writing to ~/.claude/memory/',
+    ],
+    screenshotFilename: 'step-tips.jpg',
+  },
+  {
+    id: 'security',
+    title: 'Security & Updates',
+    sinceVersion: '1.2.155',
+    bullets: [
+      '**Sandbox enabled** — renderer runs in a sandboxed process',
+      'SSH passwords are **resolved in the main process** — never visible to the UI',
+      'Choose **Stable or Beta** update channel in Settings',
+      'All IPC calls are **validated with zod** schemas at the boundary',
+    ],
+    screenshotFilename: 'step-tips.jpg',
+  },
 ]
 
 /** Returns the highest sinceVersion across all training steps */
