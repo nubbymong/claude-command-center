@@ -428,7 +428,6 @@ export default function App() {
     <ErrorBoundary>
       <div className="flex flex-col h-screen bg-base text-text">
         {showWhatsNew && <WhatsNewModal onClose={handleWhatsNewClose} />}
-        {showTraining && <TrainingWalkthrough onClose={() => { setShowTraining(false); setShowTrainingAll(false) }} showAll={showTrainingAll} />}
 
         {showMachineNamePrompt && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
@@ -506,8 +505,14 @@ export default function App() {
             }
           }} />
           <main className="flex-1 flex flex-col overflow-hidden titlebar-no-drag">
-            {renderSessions()}
-            {renderOverlayView()}
+            {showTraining ? (
+              <TrainingWalkthrough onClose={() => { setShowTraining(false); setShowTrainingAll(false) }} showAll={showTrainingAll} />
+            ) : (
+              <>
+                {renderSessions()}
+                {renderOverlayView()}
+              </>
+            )}
           </main>
         </div>
         <StatusBar />
