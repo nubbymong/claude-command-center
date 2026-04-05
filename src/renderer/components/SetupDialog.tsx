@@ -197,7 +197,7 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
                   : 'bg-mauve hover:bg-pink text-base'
               }`}
             >
-              {ptyExited ? 'Finish' : 'Finish (skip remaining)'}
+              {ptyExited ? 'Done' : 'Skip & Continue'}
             </button>
           </div>
         </div>
