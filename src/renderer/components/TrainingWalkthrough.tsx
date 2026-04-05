@@ -91,41 +91,41 @@ export default function TrainingWalkthrough({ onClose, showAll = false }: Props)
   const showFallback = imgBad.has(currentIndex)
 
   return (
-    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-      <div className="bg-mantle rounded-lg shadow-2xl border border-surface0 w-full max-w-2xl max-h-[85vh] flex flex-col">
-        {/* Progress bar */}
-        <div className="h-0.5 bg-surface0 rounded-t-lg overflow-hidden">
-          <div
-            className="h-full bg-blue transition-all duration-300 ease-out"
-            style={{ width: `${progress}%` }}
-          />
-        </div>
+    <div className="flex-1 flex flex-col overflow-hidden bg-base">
+      {/* Progress bar */}
+      <div className="h-1 bg-surface0">
+        <div
+          className="h-full bg-blue transition-all duration-300 ease-out"
+          style={{ width: `${progress}%` }}
+        />
+      </div>
 
-        {/* Header */}
-        <div className="px-5 pt-4 pb-3 flex items-center justify-between">
-          <div>
-            <h2 className="text-lg font-bold text-text">{step.title}</h2>
-            <span className="text-xs text-overlay0">
-              Step {currentIndex + 1} of {steps.length}
-            </span>
-          </div>
-          <button
-            onClick={handleClose}
-            className="text-overlay0 hover:text-text transition-colors text-xl leading-none px-1"
-          >
-            &times;
-          </button>
+      {/* Header */}
+      <div className="px-8 pt-5 pb-3 flex items-center justify-between">
+        <div>
+          <h2 className="text-xl font-bold text-text">{step.title}</h2>
+          <span className="text-xs text-overlay0">
+            Step {currentIndex + 1} of {steps.length}
+          </span>
         </div>
+        <button
+          onClick={handleClose}
+          className="text-overlay0 hover:text-text transition-colors text-xl leading-none px-2 py-1"
+        >
+          &times;
+        </button>
+      </div>
 
-        {/* Content */}
-        <div className="flex-1 overflow-y-auto px-5 pb-4 space-y-4">
+      {/* Content */}
+      <div className="flex-1 overflow-y-auto px-8 pb-4">
+        <div className="max-w-4xl mx-auto space-y-5">
           {/* Screenshot area */}
           <div className="rounded-lg border border-surface0/60 overflow-hidden bg-crust">
             {!showFallback && imgSrc ? (
               <img
                 src={imgSrc}
                 alt={step.title}
-                className="w-full h-auto max-h-[320px] object-cover"
+                className="w-full h-auto object-contain"
                 onError={markBad}
                 onLoad={(e) => {
                   const img = e.currentTarget
@@ -133,7 +133,7 @@ export default function TrainingWalkthrough({ onClose, showAll = false }: Props)
                 }}
               />
             ) : (
-              <div className="flex items-center justify-center h-48 text-overlay0">
+              <div className="flex items-center justify-center h-64 text-overlay0">
                 <div className="text-center">
                   <div className="text-3xl mb-2 font-mono opacity-40">&gt;_</div>
                   <p className="text-xs">Screenshot will appear here</p>
@@ -143,7 +143,7 @@ export default function TrainingWalkthrough({ onClose, showAll = false }: Props)
           </div>
 
           {/* Bullet points */}
-          <ul className="space-y-2">
+          <ul className="space-y-3">
             {step.bullets.map((bullet, i) => (
               <li key={i} className="flex items-start gap-2.5 text-sm text-subtext0">
                 <span className="text-blue mt-0.5 shrink-0">
@@ -156,49 +156,49 @@ export default function TrainingWalkthrough({ onClose, showAll = false }: Props)
             ))}
           </ul>
         </div>
+      </div>
 
-        {/* Footer */}
-        <div className="px-5 py-3 border-t border-surface0 flex items-center justify-between">
-          {/* Dot navigation */}
-          <div className="flex items-center gap-1.5">
-            {steps.map((_, i) => (
-              <button
-                key={i}
-                onClick={() => setCurrentIndex(i)}
-                className={`w-2 h-2 rounded-full transition-all duration-200 ${
-                  i === currentIndex
-                    ? 'bg-blue scale-125'
-                    : 'bg-surface1 hover:bg-overlay0'
-                }`}
-              />
-            ))}
-          </div>
-
-          {/* Buttons */}
-          <div className="flex items-center gap-2">
-            {!isFirst && (
-              <button
-                onClick={handleBack}
-                className="px-3 py-1.5 text-sm text-overlay1 hover:text-text transition-colors"
-              >
-                Back
-              </button>
-            )}
-            {!isLast && (
-              <button
-                onClick={handleClose}
-                className="px-3 py-1.5 text-sm text-overlay0 hover:text-overlay1 transition-colors"
-              >
-                Skip
-              </button>
-            )}
+      {/* Footer */}
+      <div className="px-8 py-4 border-t border-surface0 flex items-center justify-between">
+        {/* Dot navigation */}
+        <div className="flex items-center gap-1.5">
+          {steps.map((_, i) => (
             <button
-              onClick={handleNext}
-              className="px-4 py-1.5 bg-blue text-crust rounded font-medium text-sm hover:bg-blue/80 transition-colors"
+              key={i}
+              onClick={() => setCurrentIndex(i)}
+              className={`w-2 h-2 rounded-full transition-all duration-200 ${
+                i === currentIndex
+                  ? 'bg-blue scale-125'
+                  : 'bg-surface1 hover:bg-overlay0'
+              }`}
+            />
+          ))}
+        </div>
+
+        {/* Buttons */}
+        <div className="flex items-center gap-2">
+          {!isFirst && (
+            <button
+              onClick={handleBack}
+              className="px-3 py-1.5 text-sm text-overlay1 hover:text-text transition-colors"
             >
-              {isLast ? 'Get Started' : 'Next'}
+              Back
             </button>
-          </div>
+          )}
+          {!isLast && (
+            <button
+              onClick={handleClose}
+              className="px-3 py-1.5 text-sm text-overlay0 hover:text-overlay1 transition-colors"
+            >
+              Skip
+            </button>
+          )}
+          <button
+            onClick={handleNext}
+            className="px-4 py-1.5 bg-blue text-crust rounded font-medium text-sm hover:bg-blue/80 transition-colors"
+          >
+            {isLast ? 'Get Started' : 'Next'}
+          </button>
         </div>
       </div>
     </div>
