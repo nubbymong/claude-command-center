@@ -14,6 +14,11 @@ import { readConfig } from './config-manager'
 
 import { readRegistry } from './registry'
 
+// Redirect stderr to null in a cross-platform way
+const STDERR_NULL = process.platform === 'win32' ? '2>nul' : '2>/dev/null'
+// Platform-appropriate installer file extension
+const INSTALLER_EXT = process.platform === 'darwin' ? '.dmg' : '.exe'
+
 // Read from registry first (allows user override), fall back to default
 const DEFAULT_REPO = 'nubbymong/claude_command_center_windows'
 const REPO = readRegistry('GitHubRepo') || DEFAULT_REPO
@@ -67,7 +72,7 @@ export async function checkGitHubRelease(): Promise<ReleaseInfo | null> {
     if (channel === 'beta') {
       // Beta channel: list all releases (including prereleases) and pick the newest
       const listResult = execSync(
-        `gh release list --repo ${REPO} --limit 10 --json tagName,isPrerelease,assets 2>nul`,
+        `gh release list --repo ${REPO} --limit 10 --json tagName,isPrerelease,assets ${STDERR_NULL}`,
         { encoding: 'utf-8', timeout: 15000, windowsHide: true }
       )
 
@@ -97,7 +102,7 @@ export async function checkGitHubRelease(): Promise<ReleaseInfo | null> {
       }
 
       const installer = bestRelease.assets?.find((a: { name: string }) =>
-        a.name.endsWith('.exe') && a.name.startsWith('ClaudeCommandCenter-')
+        a.name.endsWith(INSTALLER_EXT) && a.name.startsWith('ClaudeCommandCenter-')
       )
 
       logInfo(`[github-update] Update available: v${bestVersion} (tag: ${bestRelease.tagName}, installer: ${installer?.name || 'none'})`)
@@ -111,7 +116,7 @@ export async function checkGitHubRelease(): Promise<ReleaseInfo | null> {
     } else {
       // Stable channel: use gh release view which returns the latest non-draft, non-prerelease release
       const result = execSync(
-        `gh release view --repo ${REPO} --json tagName,assets,isPrerelease 2>nul`,
+        `gh release view --repo ${REPO} --json tagName,assets,isPrerelease ${STDERR_NULL}`,
         { encoding: 'utf-8', timeout: 15000, windowsHide: true }
       )
 
@@ -131,10 +136,10 @@ export async function checkGitHubRelease(): Promise<ReleaseInfo | null> {
         return null
       }
 
-      // Find the .exe installer asset
+      // Find the platform-appropriate installer asset
       const assets = release.assets as Array<{ name: string; url: string }>
       const installer = assets?.find((a: { name: string }) =>
-        a.name.endsWith('.exe') && a.name.startsWith('ClaudeCommandCenter-')
+        a.name.endsWith(INSTALLER_EXT) && a.name.startsWith('ClaudeCommandCenter-')
       )
 
       logInfo(`[github-update] Update available: v${latestVersion} (installer: ${installer?.name || 'none'})`)

@@ -68,7 +68,7 @@ export const trainingSteps: TrainingStep[] = [
     screenshotFilename: 'step-agent-hub.jpg',
   },
   {
-    id: 'statusline',
+    id: 'statusline-basics',
     title: 'Statusline Metrics',
     sinceVersion: '1.0.0',
     bullets: [
@@ -92,6 +92,18 @@ export const trainingSteps: TrainingStep[] = [
     screenshotFilename: 'step-tips.jpg',
   },
   {
+    id: 'statusline-advanced',
+    title: 'Peak Hours & Service Status',
+    sinceVersion: '1.2.144',
+    bullets: [
+      'Live **context bar** showing model, tokens, cost, and context usage per session',
+      '**Rate limits** with 5-hour and 7-day utilization bars and reset timers',
+      '**Peak/off-peak** indicator based on Anthropic API hours (05:00-11:00 PT)',
+      '**Service status** gradient across the title bar when Claude is degraded',
+    ],
+    screenshotFilename: 'step-statusline.jpg',
+  },
+  {
     id: 'vision',
     title: 'Vision System',
     sinceVersion: '1.2.144',
@@ -101,7 +113,7 @@ export const trainingSteps: TrainingStep[] = [
       '17 vision tools available to Claude: **screenshot, navigate, click, type** and more',
       'Works over **SSH** too — reverse tunnels connect remote sessions automatically',
     ],
-    screenshotFilename: 'step-tips.jpg',
+    screenshotFilename: 'step-vision.jpg',
   },
   {
     id: 'tokenomics',
@@ -113,7 +125,7 @@ export const trainingSteps: TrainingStep[] = [
       'See **daily aggregates**, burn rate, and cost breakdown **by model**',
       'Monitor **rate limits** and extra spend from the Anthropic API',
     ],
-    screenshotFilename: 'step-tips.jpg',
+    screenshotFilename: 'step-tokenomics.jpg',
   },
   {
     id: 'memory-visualiser',
@@ -125,7 +137,7 @@ export const trainingSteps: TrainingStep[] = [
       'Drill down: **project cards** > **type groups** > individual memories',
       '**Search** across all memories, view rendered markdown, delete stale entries',
     ],
-    screenshotFilename: 'step-tips.jpg',
+    screenshotFilename: 'step-memory.jpg',
   },
   {
     id: 'command-args',
@@ -137,7 +149,7 @@ export const trainingSteps: TrainingStep[] = [
       '**Ctrl+click** any command button to customize arguments before running',
       'Organize buttons into **named sections** — drag to reorder',
     ],
-    screenshotFilename: 'step-tips.jpg',
+    screenshotFilename: 'step-commands.jpg',
   },
   {
     id: 'storyboard',
@@ -149,7 +161,7 @@ export const trainingSteps: TrainingStep[] = [
       'Review captured frames: **annotate each**, select/deselect, add context text',
       'Sends a **structured prompt** with numbered frames to Claude',
     ],
-    screenshotFilename: 'step-tips.jpg',
+    screenshotFilename: 'step-storyboard.jpg',
   },
   {
     id: 'session-options',
@@ -158,10 +170,10 @@ export const trainingSteps: TrainingStep[] = [
     bullets: [
       'Set **effort level** per session (Low/Medium/High) to control thinking depth',
       'Enable **flicker-free rendering** for reduced terminal flicker',
-      'Enable **PowerShell tool** for native Windows commands (preview)',
+      'Platform-specific tools: **PowerShell** on Windows, native shell on macOS',
       'Disable **auto-memory** to prevent Claude writing to ~/.claude/memory/',
     ],
-    screenshotFilename: 'step-tips.jpg',
+    screenshotFilename: 'step-session-options.jpg',
   },
   {
     id: 'security',
@@ -173,7 +185,7 @@ export const trainingSteps: TrainingStep[] = [
       'Choose **Stable or Beta** update channel in Settings',
       'All IPC calls are **validated with zod** schemas at the boundary',
     ],
-    screenshotFilename: 'step-tips.jpg',
+    screenshotFilename: 'step-security.jpg',
   },
 ]
 

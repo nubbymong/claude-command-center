@@ -78,7 +78,7 @@ export default function NoteDialog({ note, configId, onSave, onCancel }: Props) 
                 onChange={(e) => setContent(e.target.value)}
                 className="flex-1 w-full px-3 py-2 bg-surface0 text-text text-sm rounded border border-surface1 outline-none focus:border-blue font-mono resize-none"
                 style={{ minHeight: '200px' }}
-                placeholder="Store passwords, API keys, notes, or any sensitive information here. Content is encrypted with Windows DPAPI."
+                placeholder="Store passwords, API keys, notes, or any sensitive information here. Content is encrypted with OS-level security."
               />
             )}
           </div>

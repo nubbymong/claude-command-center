@@ -344,17 +344,23 @@ function createWindow(): void {
     return true
   })
 
-  // CLI availability check - tests that claude CLI exists (native .exe or npm .cmd)
+  // CLI availability check - tests that claude CLI exists
+  // Windows: tries native .exe then npm .cmd via 'where'
+  // macOS/Linux: uses 'which' to find 'claude' in PATH
   ipcMain.handle('cli:check', async () => {
     try {
       const { execSync } = require('child_process')
-      // Try native CLI first, then npm wrapper
-      try {
-        execSync('where claude.exe', { encoding: 'utf-8', timeout: 5000, windowsHide: true })
+      if (process.platform === 'win32') {
+        try {
+          execSync('where claude.exe', { encoding: 'utf-8', timeout: 5000, windowsHide: true })
+          return true
+        } catch { /* try .cmd */ }
+        execSync('where claude.cmd', { encoding: 'utf-8', timeout: 5000, windowsHide: true })
         return true
-      } catch { /* try .cmd */ }
-      execSync('where claude.cmd', { encoding: 'utf-8', timeout: 5000, windowsHide: true })
-      return true
+      } else {
+        execSync('which claude', { encoding: 'utf-8', timeout: 5000 })
+        return true
+      }
     } catch {
       return false
     }
@@ -392,20 +398,50 @@ if (!gotTheLock) {
 
   app.whenReady().then(() => {
     // Set up application menu with Edit roles so Ctrl+C/V/X/A work in frameless window
-    const menu = Menu.buildFromTemplate([
-      {
-        label: 'Edit',
+    // On macOS, include the app name menu (About, Hide, Quit) and Window menu (macOS convention)
+    const menuTemplate: Electron.MenuItemConstructorOptions[] = []
+
+    if (process.platform === 'darwin') {
+      menuTemplate.push({
+        label: app.name,
         submenu: [
-          { role: 'undo' },
-          { role: 'redo' },
+          { role: 'about' },
           { type: 'separator' },
-          { role: 'cut' },
-          { role: 'copy' },
-          { role: 'paste' },
-          { role: 'selectAll' },
-        ],
-      },
-    ])
+          { role: 'hide' },
+          { role: 'hideOthers' },
+          { role: 'unhide' },
+          { type: 'separator' },
+          { role: 'quit' }
+        ]
+      })
+    }
+
+    menuTemplate.push({
+      label: 'Edit',
+      submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'selectAll' },
+      ],
+    })
+
+    if (process.platform === 'darwin') {
+      menuTemplate.push({
+        label: 'Window',
+        submenu: [
+          { role: 'minimize' },
+          { role: 'zoom' },
+          { type: 'separator' },
+          { role: 'front' }
+        ]
+      })
+    }
+
+    const menu = Menu.buildFromTemplate(menuTemplate)
     Menu.setApplicationMenu(menu)
 
     // Deploy statusline script and configure Claude settings
@@ -507,7 +543,18 @@ if (!gotTheLock) {
   })
 
   app.on('window-all-closed', () => {
-    app.quit()
+    // On macOS, apps conventionally stay running when all windows are closed.
+    // The user must explicitly quit via Cmd+Q or the app menu.
+    if (process.platform !== 'darwin') {
+      app.quit()
+    }
+  })
+
+  // On macOS, re-create the window when the dock icon is clicked and no windows exist
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createWindow()
+    }
   })
 }
 

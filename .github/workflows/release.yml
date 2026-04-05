@@ -1,0 +1,224 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      beta:
+        description: 'Beta release (pre-release tag)'
+        type: boolean
+        default: false
+      skip_vt:
+        description: 'Skip VirusTotal scan'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  # ── Build Windows installer ──
+  build-windows:
+    runs-on: windows-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      installer: ${{ steps.version.outputs.installer }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npx vitest run
+
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          VERSION=$(node -e "console.log(require('./package.json').version)")
+          BETA="${{ inputs.beta }}"
+          if [ "$BETA" = "true" ]; then
+            TAG="v${VERSION}-beta"
+          else
+            TAG="v${VERSION}"
+          fi
+          INSTALLER="ClaudeCommandCenter-Beta-${VERSION}.exe"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "installer=${INSTALLER}" >> $GITHUB_OUTPUT
+          echo "Building v${VERSION} (tag: ${TAG})"
+
+      - name: Build
+        run: npm run build
+
+      - name: Package Windows installer
+        run: npx electron-builder --win --publish never
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: dist/${{ steps.version.outputs.installer }}
+          if-no-files-found: error
+
+  # ── Build macOS app ──
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Rebuild native modules
+        run: |
+          node -e "
+          const { rebuild } = require('@electron/rebuild');
+          rebuild({
+            buildPath: process.cwd(),
+            electronVersion: '33.4.11',
+            onlyModules: ['node-pty', 'better-sqlite3']
+          }).then(() => console.log('rebuild done')).catch(e => { console.error(e); process.exit(1) })
+          "
+
+      - name: Build
+        run: npm run build
+
+      - name: Import signing certificate
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          # Create temporary keychain
+          KEYCHAIN_PATH=$RUNNER_TEMP/build.keychain-db
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
+          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+
+          # Import certificate
+          echo "$APPLE_CERTIFICATE" | base64 --decode > $RUNNER_TEMP/certificate.p12
+          security import $RUNNER_TEMP/certificate.p12 \
+            -k $KEYCHAIN_PATH \
+            -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/productbuild
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+
+          # Add to search list
+          security list-keychains -d user -s $KEYCHAIN_PATH login.keychain-db
+
+          # Verify
+          security find-identity -v -p codesigning $KEYCHAIN_PATH
+
+      - name: Package macOS DMG
+        env:
+          CSC_KEYCHAIN: ${{ runner.temp }}/build.keychain-db
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.ELECTRON }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          npx electron-builder --mac dmg --publish never \
+            --config.mac.notarize.teamId="$APPLE_TEAM_ID"
+
+      - name: Determine DMG filename
+        id: dmg
+        run: |
+          DMG=$(ls dist/*.dmg | head -1)
+          echo "path=${DMG}" >> $GITHUB_OUTPUT
+          echo "name=$(basename ${DMG})" >> $GITHUB_OUTPUT
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: ${{ steps.dmg.outputs.path }}
+          if-no-files-found: error
+
+  # ── Create GitHub Release ──
+  release:
+    needs: [build-windows, build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-installer
+          path: artifacts/
+
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-dmg
+          path: artifacts/
+
+      - name: List artifacts
+        run: ls -la artifacts/
+
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          sha256sum * > CHECKSUMS.txt
+          cat CHECKSUMS.txt
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ needs.build-windows.outputs.tag }}"
+          VERSION="${{ needs.build-windows.outputs.version }}"
+          BETA="${{ inputs.beta }}"
+
+          TITLE="${TAG}"
+          BODY="## Claude Command Center Beta v${VERSION}"
+          if [ "$BETA" = "true" ]; then
+            BODY="${BODY}\n\n**Beta Release**"
+          else
+            BODY="${BODY}\n\n**Stable Release**"
+          fi
+          BODY="${BODY}\n\nSHA-256 checksums are in CHECKSUMS.txt attached to this release."
+
+          gh release create "${TAG}" \
+            --title "${TITLE}" \
+            --notes "$(echo -e "${BODY}")" \
+            artifacts/*
+
+      - name: VirusTotal scan (Windows)
+        if: ${{ !inputs.skip_vt }}
+        env:
+          VT_API_KEY: ${{ secrets.VT_API_KEY }}
+        run: |
+          INSTALLER=$(ls artifacts/*.exe 2>/dev/null | head -1)
+          if [ -z "$INSTALLER" ] || [ -z "$VT_API_KEY" ]; then
+            echo "Skipping VT scan (no installer or no API key)"
+            exit 0
+          fi
+          echo "Uploading $(basename $INSTALLER) to VirusTotal..."
+          # Get upload URL for large files
+          UPLOAD_URL=$(curl -s --request GET \
+            --url "https://www.virustotal.com/api/v3/files/upload_url" \
+            --header "x-apikey: ${VT_API_KEY}" | jq -r '.data')
+          # Upload
+          RESULT=$(curl -s --request POST \
+            --url "${UPLOAD_URL}" \
+            --header "x-apikey: ${VT_API_KEY}" \
+            --form "file=@${INSTALLER}")
+          ANALYSIS_ID=$(echo "$RESULT" | jq -r '.data.id // empty')
+          if [ -n "$ANALYSIS_ID" ]; then
+            echo "VirusTotal analysis: https://www.virustotal.com/gui/file-analysis/${ANALYSIS_ID}"
+          else
+            echo "VirusTotal upload response: ${RESULT}"
+          fi
