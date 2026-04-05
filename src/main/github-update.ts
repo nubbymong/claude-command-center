@@ -20,7 +20,7 @@ const STDERR_NULL = process.platform === 'win32' ? '2>nul' : '2>/dev/null'
 const INSTALLER_EXT = process.platform === 'darwin' ? '.dmg' : '.exe'
 
 // Read from registry first (allows user override), fall back to default
-const DEFAULT_REPO = 'nubbymong/claude_command_center_windows'
+const DEFAULT_REPO = 'nubbymong/claude-command-center'
 const REPO = readRegistry('GitHubRepo') || DEFAULT_REPO
 
 interface ReleaseInfo {
