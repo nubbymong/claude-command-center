@@ -186,10 +186,6 @@ function createWindow(): void {
     }
   })
 
-  if (state.isMaximized) {
-    mainWindow.maximize()
-  }
-
   // Prevent navigation away from the app
   mainWindow.webContents.on('will-navigate', (event) => {
     event.preventDefault()
@@ -211,6 +207,8 @@ function createWindow(): void {
       const elapsed = Date.now() - splashShownAt
       const remaining = Math.max(0, 2000 - elapsed)
       setTimeout(() => {
+        // Maximize BEFORE show to avoid flash of non-maximized window
+        if (state.isMaximized) mainWindow!.maximize()
         mainWindow!.show()
         closeSplashWindow()
       }, remaining)
