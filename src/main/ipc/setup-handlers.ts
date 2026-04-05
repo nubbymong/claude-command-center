@@ -211,14 +211,31 @@ export function registerSetupHandlers(): void {
     const { cmd } = resolveClaudeForPty()
     logInfo(`[setup] Spawning CLI setup PTY: ${cmd} in ${cwd}`)
 
-    cliSetupPty = pty.spawn(cmd, [], {
-      name: 'xterm-256color',
-      cols: cols || 100,
-      rows: rows || 20,
-      cwd,
-      env: process.env as Record<string, string>,
-      useConpty: false
-    })
+    if (process.platform === 'win32') {
+      // Windows: spawn claude directly
+      cliSetupPty = pty.spawn(cmd, [], {
+        name: 'xterm-256color',
+        cols: cols || 100,
+        rows: rows || 20,
+        cwd,
+        env: process.env as Record<string, string>,
+        useConpty: false
+      })
+    } else {
+      // macOS/Linux: spawn interactive login shell so PATH includes Homebrew etc.
+      const shell = process.env.SHELL || '/bin/zsh'
+      cliSetupPty = pty.spawn(shell, ['-l'], {
+        name: 'xterm-256color',
+        cols: cols || 100,
+        rows: rows || 20,
+        cwd,
+        env: process.env as Record<string, string>,
+      })
+      // Send the claude command after a brief delay for shell init
+      setTimeout(() => {
+        if (cliSetupPty) cliSetupPty.write(`${cmd}\r`)
+      }, 500)
+    }
 
     const win = BrowserWindow.fromWebContents(event.sender)
 
