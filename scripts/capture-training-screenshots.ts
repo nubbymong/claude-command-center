@@ -20,6 +20,9 @@ import * as path from 'path'
 const SCREENSHOT_DIR = path.join(__dirname, '..', 'src', 'renderer', 'assets', 'training')
 const BUILT_APP = path.join(__dirname, '..', 'out', 'main', 'index.js')
 
+// Platform suffix: running on macOS saves as step-welcome-mac.jpg, Windows as step-welcome.jpg (no suffix)
+const PLATFORM_SUFFIX = process.platform === 'darwin' ? '-mac' : ''
+
 const WIDTH = 1280
 const HEIGHT = 800
 const JPEG_QUALITY = 85
@@ -86,15 +89,18 @@ async function main() {
     await window.waitForTimeout(500)
   }
 
-  // Helper: capture and save screenshot
+  // Helper: capture and save screenshot (adds platform suffix on macOS)
   async function capture(filename: string, description: string) {
-    const outputPath = path.join(SCREENSHOT_DIR, filename)
+    const platformFilename = PLATFORM_SUFFIX
+      ? filename.replace('.jpg', `${PLATFORM_SUFFIX}.jpg`)
+      : filename
+    const outputPath = path.join(SCREENSHOT_DIR, platformFilename)
     await window.screenshot({
       path: outputPath,
       type: 'jpeg',
       quality: JPEG_QUALITY,
     })
-    console.log(`[capture] Saved: ${filename} (${description})`)
+    console.log(`[capture] Saved: ${platformFilename} (${description})`)
   }
 
   // ── Step 1: Welcome — sessions view with sidebar visible ──
