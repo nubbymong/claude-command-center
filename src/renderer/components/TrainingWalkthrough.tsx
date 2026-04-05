@@ -17,6 +17,15 @@ for (const [path, url] of Object.entries(screenshotModules)) {
   if (filename) screenshotMap[filename] = url
 }
 
+// Platform-aware screenshot resolution: prefer platform-specific (e.g. step-welcome-mac.jpg)
+// then fall back to generic (step-welcome.jpg)
+function getScreenshot(filename: string): string | undefined {
+  const platform = window.electronPlatform === 'darwin' ? 'mac' : 'win'
+  const base = filename.replace('.jpg', '')
+  const platformFile = `${base}-${platform}.jpg`
+  return screenshotMap[platformFile] || screenshotMap[filename]
+}
+
 interface Props {
   onClose: () => void
   showAll?: boolean
@@ -78,7 +87,7 @@ export default function TrainingWalkthrough({ onClose, showAll = false }: Props)
     return null
   }
 
-  const imgSrc = screenshotMap[step.screenshotFilename]
+  const imgSrc = getScreenshot(step.screenshotFilename)
   const showFallback = imgBad.has(currentIndex)
 
   return (
