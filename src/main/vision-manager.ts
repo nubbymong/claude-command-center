@@ -567,24 +567,34 @@ export function tryReconnectGlobalVision(): void {
 
 // === Browser launching (unchanged) ===
 
+function getBrowserPaths(browser: 'chrome' | 'edge'): string[] {
+  if (process.platform === 'darwin') {
+    if (browser === 'edge') return [
+      '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+    ]
+    return [
+      '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    ]
+  }
+  // Windows paths
+  if (browser === 'edge') return [
+    'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+    'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+  ]
+  return [
+    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+  ]
+}
+
 export function launchBrowser(browser: 'chrome' | 'edge', debugPort: number, url?: string, headless: boolean = true): { pid: number; command: string } {
   const tmpDir = process.env.TEMP || process.env.TMP || os.tmpdir()
   const profileDir = path.join(tmpDir, `${browser}-debug-${debugPort}`)
 
-  let executable: string
-  if (browser === 'edge') {
-    const edgePaths = [
-      'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-      'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
-    ]
-    executable = edgePaths.find(p => fs.existsSync(p)) || 'msedge'
-  } else {
-    const chromePaths = [
-      'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-      'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-    ]
-    executable = chromePaths.find(p => fs.existsSync(p)) || 'chrome'
-  }
+  const fallback = process.platform === 'darwin'
+    ? (browser === 'edge' ? 'Microsoft Edge' : 'Google Chrome')
+    : (browser === 'edge' ? 'msedge' : 'chrome')
+  const executable = getBrowserPaths(browser).find(p => fs.existsSync(p)) || fallback
 
   const args = [
     `--remote-debugging-port=${debugPort}`,

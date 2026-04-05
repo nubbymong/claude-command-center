@@ -397,4 +397,6 @@ const electronAPI: ElectronAPI = {
   },
 }
 
+// Expose platform for renderer-side platform checks
+contextBridge.exposeInMainWorld('electronPlatform', process.platform)
 contextBridge.exposeInMainWorld('electronAPI', electronAPI)

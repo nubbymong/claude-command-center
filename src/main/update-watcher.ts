@@ -23,9 +23,8 @@ export function getInstallPath(): string {
   return readRegistry('InstallPath') || ''
 }
 
-// Set source path in Windows registry
+// Set source path in registry (Windows) or config file (macOS/Linux)
 export function setSourcePathInRegistry(sourcePath: string): boolean {
-  if (process.platform !== 'win32') return false
   const ok = writeRegistry('SourcePath', sourcePath)
   if (ok) {
     logInfo(`[update-watcher] Set source path in registry: ${sourcePath}`)

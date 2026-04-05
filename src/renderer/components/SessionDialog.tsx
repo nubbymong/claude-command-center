@@ -346,7 +346,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                   <input
                     value={workingDir}
                     onChange={(e) => setWorkingDir(e.target.value)}
-                    placeholder="C:\path\to\project"
+                    placeholder={window.electronPlatform === 'win32' ? 'C:\\path\\to\\project' : '~/path/to/project'}
                     className="flex-1 bg-base border border-surface1 rounded px-3 py-2 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue"
                   />
                   <button
@@ -548,7 +548,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                         onChange={(e) => setPartnerElevated(e.target.checked)}
                         className="rounded border-surface1"
                       />
-                      Run as Administrator (requires gsudo)
+                      {`Run as Administrator (requires ${window.electronPlatform === 'win32' ? 'gsudo' : 'sudo'})`}
                     </label>
                   </>
                 )}
@@ -622,7 +622,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
             )}
 
             {/* PowerShell tool toggle (local Windows sessions only) */}
-            {!shellOnly && sessionType === 'local' && (
+            {!shellOnly && sessionType === 'local' && window.electronPlatform === 'win32' && (
               <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
                 <input
                   type="checkbox"

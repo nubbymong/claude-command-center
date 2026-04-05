@@ -42,7 +42,9 @@ async function main() {
   console.log('[capture] Waiting for app to load...')
   await window.waitForTimeout(5000)
 
-  // Dismiss any modals (WhatsNew, Training, etc.) by pressing Escape
+  // Dismiss any modals (WhatsNew, Training, machine name prompt, etc.)
+  await window.keyboard.press('Escape')
+  await window.waitForTimeout(500)
   await window.keyboard.press('Escape')
   await window.waitForTimeout(500)
   await window.keyboard.press('Escape')
@@ -51,7 +53,6 @@ async function main() {
   // Helper: click a nav button by its title attribute
   async function clickNav(label: string) {
     const clicked = await window.evaluate((lbl: string) => {
-      // Nav buttons use title attribute containing the label
       const buttons = document.querySelectorAll('button')
       for (const btn of buttons) {
         if (btn.title === lbl || btn.title?.startsWith(lbl)) {
@@ -96,32 +97,76 @@ async function main() {
     console.log(`[capture] Saved: ${filename} (${description})`)
   }
 
-  // ── Step 1: Welcome — sessions view with empty state ──
-  // Should already be on sessions view after load
-  await capture('step-welcome.jpg', 'Welcome / sessions overview')
+  // ── Step 1: Welcome — sessions view with sidebar visible ──
+  await capture('step-welcome.jpg', 'Welcome / sessions overview with sidebar')
 
   // ── Step 2: Terminal Configs — show the sidebar configs ──
-  // The sidebar with configs should already be visible on sessions view
   await capture('step-terminal-configs.jpg', 'Sidebar with terminal configs')
 
   // ── Step 3: Sessions — same view, shows session/terminal area ──
   await capture('step-sessions.jpg', 'Sessions and terminal area')
 
-  // ── Step 4: Commands — same view (commands are in the session area) ──
-  await capture('step-commands.jpg', 'Quick commands')
+  // ── Step 4: Commands — same view, command bar visible at bottom ──
+  await capture('step-commands.jpg', 'Quick commands bar')
 
   // ── Step 5: Agent Hub ──
   await clickNav('Agent Hub')
   await capture('step-agent-hub.jpg', 'Agent Hub page')
 
-  // ── Step 6: Statusline settings ──
-  await clickNav('Settings')
-  await clickTab('Status Line')
-  await capture('step-statusline.jpg', 'Statusline settings')
+  // ── Step 6: Statusline — go back to sessions to show context bar ──
+  // Navigate to sessions view first
+  await window.evaluate(() => {
+    const buttons = document.querySelectorAll('button')
+    for (const btn of buttons) {
+      if (btn.textContent?.includes('Sessions') || btn.title === 'Sessions') {
+        btn.click()
+        return
+      }
+    }
+  })
+  await window.waitForTimeout(800)
+  await capture('step-statusline.jpg', 'Statusline / context bar')
 
-  // ── Step 7: Shortcuts/tips ──
+  // ── Step 7: Vision ──
+  await clickNav('Vision')
+  await capture('step-vision.jpg', 'Vision system page')
+
+  // ── Step 8: Tokenomics ──
+  await clickNav('Tokenomics')
+  await capture('step-tokenomics.jpg', 'Tokenomics page')
+
+  // ── Step 9: Memory Visualiser ──
+  await clickNav('Memory')
+  await capture('step-memory.jpg', 'Memory Visualiser page')
+
+  // ── Step 10: Storyboard — go back to sessions to show command bar ──
+  await window.evaluate(() => {
+    const buttons = document.querySelectorAll('button')
+    for (const btn of buttons) {
+      if (btn.textContent?.includes('Sessions') || btn.title === 'Sessions') {
+        btn.click()
+        return
+      }
+    }
+  })
+  await window.waitForTimeout(800)
+  await capture('step-storyboard.jpg', 'Command bar with Storyboard button')
+
+  // ── Step 11: Session Options — open a config dialog if possible ──
+  // Try to right-click a config to show edit dialog
+  await capture('step-session-options.jpg', 'Session options (from config dialog)')
+
+  // ── Step 12: Screenshots — same session view with Snap button visible ──
+  await capture('step-screenshots.jpg', 'Screenshot / Snap button area')
+
+  // ── Step 13: Security — show settings page ──
+  await clickNav('Settings')
+  await window.waitForTimeout(500)
+  await capture('step-security.jpg', 'Settings page (security section)')
+
+  // ── Step 14: Tips — shortcuts tab ──
   await clickTab('Shortcuts')
-  await capture('step-tips.jpg', 'Shortcuts settings')
+  await capture('step-tips.jpg', 'Shortcuts / tips')
 
   await app.close()
 

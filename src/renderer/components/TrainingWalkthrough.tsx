@@ -7,23 +7,14 @@ import {
   type TrainingStep,
 } from '../training-steps'
 
-// Vite static imports for training screenshots
-import imgWelcome from '../assets/training/step-welcome.jpg'
-import imgTerminalConfigs from '../assets/training/step-terminal-configs.jpg'
-import imgSessions from '../assets/training/step-sessions.jpg'
-import imgCommands from '../assets/training/step-commands.jpg'
-import imgAgentHub from '../assets/training/step-agent-hub.jpg'
-import imgStatusline from '../assets/training/step-statusline.jpg'
-import imgTips from '../assets/training/step-tips.jpg'
+// Vite glob import for training screenshots — automatically picks up all JPGs in the directory
+const screenshotModules = import.meta.glob('../assets/training/*.jpg', { eager: true, as: 'url' })
 
-const screenshotMap: Record<string, string> = {
-  'step-welcome.jpg': imgWelcome,
-  'step-terminal-configs.jpg': imgTerminalConfigs,
-  'step-sessions.jpg': imgSessions,
-  'step-commands.jpg': imgCommands,
-  'step-agent-hub.jpg': imgAgentHub,
-  'step-statusline.jpg': imgStatusline,
-  'step-tips.jpg': imgTips,
+// Build a map from filename to resolved URL
+const screenshotMap: Record<string, string> = {}
+for (const [path, url] of Object.entries(screenshotModules)) {
+  const filename = path.split('/').pop()
+  if (filename) screenshotMap[filename] = url
 }
 
 interface Props {

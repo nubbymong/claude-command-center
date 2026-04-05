@@ -10,6 +10,13 @@ import { readRegistry, writeRegistry } from '../registry'
 
 // Lazy getter for default data dir - can't call app.getPath() at module load time
 function getDefaultDataDir(): string {
+  if (process.platform === 'darwin') {
+    return path.join(app.getPath('home'), 'Library', 'Application Support', 'Claude Conductor')
+  }
+  if (process.platform === 'linux') {
+    return path.join(app.getPath('home'), '.claude-conductor', 'data')
+  }
+  // Windows
   return path.join(app.getPath('localAppData'), 'Claude Command Center')
 }
 
@@ -72,15 +79,11 @@ function setResourcesDirectory(resourcesDir: string): boolean {
   }
 }
 
-// Check if setup is complete (uses cached registry check — no extra reg query)
+// Check if setup is complete (uses cached registry/config check)
 export function isSetupComplete(): boolean {
-  if (process.platform === 'win32') {
-    // Ensure getDataDirectory() has been called at least once to populate cache
-    getDataDirectory()
-    return dataDirFromRegistry
-  }
-  // Non-Windows: check if data dir exists
-  return fs.existsSync(getDefaultDataDir())
+  // Ensure getDataDirectory() has been called at least once to populate cache
+  getDataDirectory()
+  return dataDirFromRegistry
 }
 
 // Set data directory in registry and create folders
