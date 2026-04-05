@@ -90,6 +90,13 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
       window.electronAPI.pty.write(sessionId, data)
     })
 
+    // Handle resize — created early but observer attached once container is ready
+    const resizeObserver = new ResizeObserver(() => {
+      if (fitAddonRef.current) {
+        try { fitAddonRef.current.fit() } catch { /* ignore */ }
+      }
+    })
+
     // Wait for container to have dimensions, then open terminal and spawn PTY
     const tryOpen = () => {
       const container = termContainerRef.current
@@ -99,6 +106,7 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
       }
       term.open(container)
       fitAddon.fit()
+      resizeObserver.observe(container)
 
       // Spawn CLI setup PTY (listeners already subscribed above)
       const cols = term.cols
@@ -108,14 +116,6 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
       })
     }
     requestAnimationFrame(tryOpen)
-
-    // Handle resize
-    const resizeObserver = new ResizeObserver(() => {
-      if (fitAddonRef.current) {
-        try { fitAddonRef.current.fit() } catch { /* ignore */ }
-      }
-    })
-    resizeObserver.observe(termContainerRef.current)
 
     return () => {
       resizeObserver.disconnect()
