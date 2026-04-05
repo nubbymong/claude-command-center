@@ -123,8 +123,8 @@ export async function checkGitHubRelease(): Promise<ReleaseInfo | null> {
         return null
       }
 
-      const tagName = release.tagName as string // e.g. "v1.2.80"
-      const latestVersion = tagName.replace(/^v/, '')
+      const tagName = release.tagName as string // e.g. "v1.2.80" or "v1.2.80-beta"
+      const latestVersion = tagName.replace(/^v/, '').replace(/-beta$/, '')
 
       if (compareSemver(latestVersion, currentVersion) <= 0) {
         logInfo(`[github-update] Up to date (latest: v${latestVersion})`)
