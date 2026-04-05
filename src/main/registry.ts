@@ -1,26 +1,62 @@
 /**
- * Centralized Windows registry helper with dual-key fallback.
+ * Centralized config/registry helper with cross-platform support.
  *
+ * On Windows: Uses the Windows Registry with dual-key fallback.
  * During the rename from "Claude Conductor" → "Claude Command Center",
  * existing installations still have values under the old key. This module
  * reads from the new key first, falls back to the old key, and auto-migrates
  * values it finds in the old key to the new key.
  *
+ * On macOS/Linux: Uses a JSON file at ~/.claude-conductor/platform-config.json
+ * as a cross-platform fallback store.
+ *
  * The startup function `migrateRegistryKeys()` copies ALL values from the
  * old key to the new key (if the old key still exists) and then deletes it.
+ * On non-Windows platforms it is a no-op.
  */
 import { execSync } from 'child_process'
+import { homedir } from 'os'
+import { join } from 'path'
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { logInfo } from './debug-logger'
 
 const OLD_KEY = 'Software\\Claude Conductor'
 const NEW_KEY = 'Software\\Claude Command Center'
 
+// --- Cross-platform JSON fallback (macOS / Linux) ---
+
+const FALLBACK_CONFIG_DIR = join(homedir(), '.claude-conductor')
+const FALLBACK_CONFIG_FILE = join(FALLBACK_CONFIG_DIR, 'platform-config.json')
+
+function readFallbackConfig(): Record<string, string> {
+  try {
+    if (existsSync(FALLBACK_CONFIG_FILE)) {
+      return JSON.parse(readFileSync(FALLBACK_CONFIG_FILE, 'utf-8'))
+    }
+  } catch {}
+  return {}
+}
+
+function writeFallbackConfig(config: Record<string, string>): void {
+  try {
+    if (!existsSync(FALLBACK_CONFIG_DIR)) mkdirSync(FALLBACK_CONFIG_DIR, { recursive: true })
+    writeFileSync(FALLBACK_CONFIG_FILE, JSON.stringify(config, null, 2))
+  } catch {}
+}
+
+// --- Public API ---
+
 /**
- * Read a registry value, trying the new key first then falling back to old.
+ * Read a registry value (Windows) or JSON config value (macOS/Linux).
+ * On Windows, tries the new key first then falls back to the old key.
  * If found under the old key, auto-migrates the value to the new key.
  */
 export function readRegistry(valueName: string): string | null {
-  if (process.platform !== 'win32') return null
+  if (process.platform !== 'win32') {
+    // Cross-platform fallback: read from JSON file
+    const config = readFallbackConfig()
+    return config[valueName] ?? null
+  }
 
   // Try new key first
   const newVal = readRegValue(NEW_KEY, valueName)
@@ -39,16 +75,27 @@ export function readRegistry(valueName: string): string | null {
 }
 
 /**
- * Write a registry value to the new key.
+ * Write a registry value (Windows) or JSON config value (macOS/Linux).
  */
 export function writeRegistry(valueName: string, value: string): boolean {
-  if (process.platform !== 'win32') return false
+  if (process.platform !== 'win32') {
+    // Cross-platform fallback: write to JSON file
+    try {
+      const config = readFallbackConfig()
+      config[valueName] = value
+      writeFallbackConfig(config)
+      return true
+    } catch {
+      return false
+    }
+  }
   return writeRegValue(NEW_KEY, valueName, value)
 }
 
 /**
  * Startup migration: copy all values from old key to new key, then delete old key.
  * Safe to call multiple times — no-ops if old key doesn't exist.
+ * No-op on non-Windows platforms.
  */
 export function migrateRegistryKeys(): void {
   if (process.platform !== 'win32') return

@@ -38,9 +38,8 @@ function getUpdateServerUrl(): string {
   return readRegistry('UpdateServer') || DEFAULT_UPDATE_SERVER
 }
 
-// Set update server URL in registry
+// Set update server URL in registry (Windows) or config file (macOS/Linux)
 export function setUpdateServerUrl(url: string): boolean {
-  if (process.platform !== 'win32') return false
   const ok = writeRegistry('UpdateServer', url)
   if (ok) {
     logInfo(`[update-client] Set update server URL: ${url}`)
