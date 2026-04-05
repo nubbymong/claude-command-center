@@ -60,7 +60,6 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
   // Terminal setup for step 2
   useEffect(() => {
     if (step !== 2) return
-    if (!termContainerRef.current) return
 
     const term = new Terminal({
       theme: THEME,
