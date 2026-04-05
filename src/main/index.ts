@@ -358,7 +358,9 @@ function createWindow(): void {
         execSync('where claude.cmd', { encoding: 'utf-8', timeout: 5000, windowsHide: true })
         return true
       } else {
-        execSync('which claude', { encoding: 'utf-8', timeout: 5000 })
+        // Use login shell to pick up Homebrew/nvm PATH entries
+        const shell = process.env.SHELL || '/bin/zsh'
+        execSync(`${shell} -l -c "which claude"`, { encoding: 'utf-8', timeout: 5000 })
         return true
       }
     } catch {
