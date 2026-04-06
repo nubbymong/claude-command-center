@@ -157,12 +157,9 @@ jobs:
       - name: Package macOS DMG
         env:
           CSC_KEYCHAIN: ${{ runner.temp }}/build.keychain-db
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.ELECTRON }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           npx electron-builder --mac dmg --publish never \
-            --config.mac.notarize.teamId="$APPLE_TEAM_ID"
+            --config.mac.notarize=null
 
       - name: Determine DMG filename
         id: dmg
