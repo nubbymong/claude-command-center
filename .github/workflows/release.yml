@@ -196,29 +196,32 @@ jobs:
             --notes "$(echo -e "${BODY}")" \
             artifacts/*
 
-      - name: VirusTotal scan (Windows)
+      - name: VirusTotal scan
         if: ${{ !inputs.skip_vt }}
         env:
           VT_API_KEY: ${{ secrets.VT_API_KEY }}
         run: |
-          INSTALLER=$(ls artifacts/*.exe 2>/dev/null | head -1)
-          if [ -z "$INSTALLER" ] || [ -z "$VT_API_KEY" ]; then
-            echo "Skipping VT scan (no installer or no API key)"
+          if [ -z "$VT_API_KEY" ]; then
+            echo "Skipping VT scan (no API key)"
             exit 0
           fi
-          echo "Uploading $(basename $INSTALLER) to VirusTotal..."
           # Get upload URL for large files
           UPLOAD_URL=$(curl -s --request GET \
             --url "https://www.virustotal.com/api/v3/files/upload_url" \
             --header "x-apikey: ${VT_API_KEY}" | jq -r '.data')
-          # Upload
-          RESULT=$(curl -s --request POST \
-            --url "${UPLOAD_URL}" \
-            --header "x-apikey: ${VT_API_KEY}" \
-            --form "file=@${INSTALLER}")
-          ANALYSIS_ID=$(echo "$RESULT" | jq -r '.data.id // empty')
-          if [ -n "$ANALYSIS_ID" ]; then
-            echo "VirusTotal analysis: https://www.virustotal.com/gui/file-analysis/${ANALYSIS_ID}"
-          else
-            echo "VirusTotal upload response: ${RESULT}"
-          fi
+
+          # Scan each installer (EXE + DMG)
+          for FILE in artifacts/*.exe artifacts/*.dmg; do
+            [ -f "$FILE" ] || continue
+            echo "Uploading $(basename $FILE) to VirusTotal..."
+            RESULT=$(curl -s --request POST \
+              --url "${UPLOAD_URL}" \
+              --header "x-apikey: ${VT_API_KEY}" \
+              --form "file=@${FILE}")
+            ANALYSIS_ID=$(echo "$RESULT" | jq -r '.data.id // empty')
+            if [ -n "$ANALYSIS_ID" ]; then
+              echo "  VirusTotal: https://www.virustotal.com/gui/file-analysis/${ANALYSIS_ID}"
+            else
+              echo "  Upload response: ${RESULT}"
+            fi
+          done
