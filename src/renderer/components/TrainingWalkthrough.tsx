@@ -105,7 +105,7 @@ export default function TrainingWalkthrough({ onClose, showAll = false }: Props)
         <div>
           <h2 className="text-xl font-bold text-text">{step.title}</h2>
           <span className="text-xs text-overlay0">
-            Step {currentIndex + 1} of {steps.length}
+            {currentIndex + 1} of {steps.length}
           </span>
         </div>
         <button
