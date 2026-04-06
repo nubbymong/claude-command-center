@@ -25,23 +25,11 @@ export const trainingSteps: TrainingStep[] = [
     sinceVersion: '1.0.0',
     bullets: [
       'Press **Ctrl+T** to create a new terminal from any config',
-      'Organize configs into **groups and sections** for quick access',
       'Set working directories, models, and custom prompts per config',
       'Connect to remote machines via **SSH** with full Claude support',
+      'Configure **effort level**, flicker-free rendering, and auto-memory per session',
     ],
-    screenshotFilename: 'step-terminal-configs.jpg',
-  },
-  {
-    id: 'sessions',
-    title: 'Sessions & Terminal',
-    sinceVersion: '1.0.0',
-    bullets: [
-      'Each tab is an independent Claude Code session with its own context',
-      '**Status indicators** show idle, busy, and error states at a glance',
-      'The **context bar** displays real-time token usage and model info',
-      'Sessions are saved and restored automatically across restarts',
-    ],
-    screenshotFilename: 'step-sessions.jpg',
+    screenshotFilename: 'step-session-options.jpg',
   },
   {
     id: 'commands',
@@ -49,9 +37,9 @@ export const trainingSteps: TrainingStep[] = [
     sinceVersion: '1.0.0',
     bullets: [
       'Create reusable **prompt buttons** that paste into any session',
-      'Commands can be **global** or scoped to specific terminal configs',
+      'Commands separate **base prompt** from **arguments** — Ctrl+click to customize',
+      'Organize buttons into **named sections** — drag to reorder',
       'Use variables like **{clipboard}** and **{selection}** in prompts',
-      'Access commands from the sidebar or with keyboard shortcuts',
     ],
     screenshotFilename: 'step-commands.jpg',
   },
@@ -68,36 +56,12 @@ export const trainingSteps: TrainingStep[] = [
     screenshotFilename: 'step-agent-hub.jpg',
   },
   {
-    id: 'statusline-basics',
-    title: 'Statusline Metrics',
+    id: 'statusline',
+    title: 'Statusline & Monitoring',
     sinceVersion: '1.0.0',
-    bullets: [
-      'Live **token count** and **context window** usage per session',
-      'Track **API cost estimates** and **lines changed** in real time',
-      '**Rate limit bars** show 5-hour and 7-day usage at a glance',
-      'Fully customizable — toggle each metric in Settings > Status Line',
-    ],
-    screenshotFilename: 'step-statusline.jpg',
-  },
-  {
-    id: 'tips',
-    title: 'Tips & Shortcuts',
-    sinceVersion: '1.0.0',
-    bullets: [
-      '**Ctrl+Tab** / **Ctrl+Shift+Tab** to cycle between sessions',
-      '**Ctrl+1-9** to jump directly to a session by number',
-      'Check **Settings** to customize fonts, shortcuts, and status line',
-      'Visit **Insights** for cross-session analytics and trends',
-    ],
-    screenshotFilename: 'step-tips.jpg',
-  },
-  {
-    id: 'statusline-advanced',
-    title: 'Peak Hours & Service Status',
-    sinceVersion: '1.2.144',
     bullets: [
       'Live **context bar** showing model, tokens, cost, and context usage per session',
-      '**Rate limits** with 5-hour and 7-day utilization bars and reset timers',
+      '**Rate limit bars** show 5-hour and 7-day utilization at a glance',
       '**Peak/off-peak** indicator based on Anthropic API hours (05:00-11:00 PT)',
       '**Service status** gradient across the title bar when Claude is degraded',
     ],
@@ -140,18 +104,6 @@ export const trainingSteps: TrainingStep[] = [
     screenshotFilename: 'step-memory.jpg',
   },
   {
-    id: 'command-args',
-    title: 'Command Arguments',
-    sinceVersion: '1.2.152',
-    bullets: [
-      'Command buttons now separate **base command** from **arguments**',
-      'Normal click runs with **default arguments** — no modal needed',
-      '**Ctrl+click** any command button to customize arguments before running',
-      'Organize buttons into **named sections** — drag to reorder',
-    ],
-    screenshotFilename: 'step-commands.jpg',
-  },
-  {
     id: 'storyboard',
     title: 'Storyboard Capture',
     sinceVersion: '1.2.152',
@@ -164,18 +116,6 @@ export const trainingSteps: TrainingStep[] = [
     screenshotFilename: 'step-storyboard.jpg',
   },
   {
-    id: 'session-options',
-    title: 'Session Options',
-    sinceVersion: '1.2.152',
-    bullets: [
-      'Set **effort level** per session (Low/Medium/High) to control thinking depth',
-      'Enable **flicker-free rendering** for reduced terminal flicker',
-      'Platform-specific tools: **PowerShell** on Windows, native shell on macOS',
-      'Disable **auto-memory** to prevent Claude writing to ~/.claude/memory/',
-    ],
-    screenshotFilename: 'step-session-options.jpg',
-  },
-  {
     id: 'security',
     title: 'Security & Updates',
     sinceVersion: '1.2.155',
@@ -186,6 +126,18 @@ export const trainingSteps: TrainingStep[] = [
       'All IPC calls are **validated with zod** schemas at the boundary',
     ],
     screenshotFilename: 'step-security.jpg',
+  },
+  {
+    id: 'tips',
+    title: 'Tips & Shortcuts',
+    sinceVersion: '1.0.0',
+    bullets: [
+      '**Ctrl+Tab** / **Ctrl+Shift+Tab** to cycle between sessions',
+      '**Ctrl+1-9** to jump directly to a session by number',
+      'Check **Settings** to customize fonts, shortcuts, and status line',
+      'Visit **Insights** for cross-session analytics and trends',
+    ],
+    screenshotFilename: 'step-tips.jpg',
   },
 ]
 
