@@ -31,8 +31,27 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python setuptools
+        run: pip install setuptools
+
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
+
+      - name: Rebuild native modules
+        shell: bash
+        run: |
+          node -e "
+          const { rebuild } = require('@electron/rebuild');
+          rebuild({
+            buildPath: process.cwd(),
+            electronVersion: require('./node_modules/electron/package.json').version,
+            onlyModules: ['node-pty', 'better-sqlite3']
+          }).then(() => console.log('rebuild done')).catch(e => { console.error(e); process.exit(1) })
+          "
 
       - name: Run tests
         run: npx vitest run
@@ -78,6 +97,13 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python setuptools
+        run: pip install setuptools
+
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
@@ -87,7 +113,7 @@ jobs:
           const { rebuild } = require('@electron/rebuild');
           rebuild({
             buildPath: process.cwd(),
-            electronVersion: '33.4.11',
+            electronVersion: require('./node_modules/electron/package.json').version,
             onlyModules: ['node-pty', 'better-sqlite3']
           }).then(() => console.log('rebuild done')).catch(e => { console.error(e); process.exit(1) })
           "
