@@ -154,12 +154,19 @@ jobs:
           # Verify
           security find-identity -v -p codesigning $KEYCHAIN_PATH
 
+      - name: Disable notarization
+        run: |
+          node -e "
+          const pkg = require('./package.json');
+          delete pkg.build.mac.notarize;
+          require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+          console.log('Notarization disabled in package.json');
+          "
+
       - name: Package macOS DMG
         env:
           CSC_KEYCHAIN: ${{ runner.temp }}/build.keychain-db
-        run: |
-          npx electron-builder --mac dmg --publish never \
-            --config.mac.notarize=null
+        run: npx electron-builder --mac dmg --publish never
 
       - name: Determine DMG filename
         id: dmg
