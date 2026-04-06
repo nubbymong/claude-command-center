@@ -8,40 +8,16 @@ export interface TrainingStep {
 
 export const trainingSteps: TrainingStep[] = [
   {
-    id: 'welcome',
-    title: 'Welcome to Claude Command Center',
+    id: 'session-options',
+    title: 'Session Configuration',
     sinceVersion: '1.0.0',
     bullets: [
-      '**Multi-session orchestrator** for Claude Code terminals',
-      'Run multiple Claude agents side-by-side with independent contexts',
-      'Monitor token usage, costs, and rate limits across all sessions',
-      'Everything you need to manage Claude at scale, in one window',
-    ],
-    screenshotFilename: 'step-welcome.jpg',
-  },
-  {
-    id: 'terminal-configs',
-    title: 'Terminal Configs',
-    sinceVersion: '1.0.0',
-    bullets: [
-      'Press **Ctrl+T** to create a new terminal from any config',
-      'Set working directories, models, and custom prompts per config',
+      'Create **terminal configs** with custom working directories and models',
+      'Set **effort level** (Low/Medium/High) to control thinking depth and cost',
+      'Enable **flicker-free rendering** and platform-specific tools per session',
       'Connect to remote machines via **SSH** with full Claude support',
-      'Configure **effort level**, flicker-free rendering, and auto-memory per session',
     ],
     screenshotFilename: 'step-session-options.jpg',
-  },
-  {
-    id: 'commands',
-    title: 'Quick Commands',
-    sinceVersion: '1.0.0',
-    bullets: [
-      'Create reusable **prompt buttons** that paste into any session',
-      'Commands separate **base prompt** from **arguments** — Ctrl+click to customize',
-      'Organize buttons into **named sections** — drag to reorder',
-      'Use variables like **{clipboard}** and **{selection}** in prompts',
-    ],
-    screenshotFilename: 'step-commands.jpg',
   },
   {
     id: 'agent-hub',
@@ -54,18 +30,6 @@ export const trainingSteps: TrainingStep[] = [
       'Monitor all running agents from a single dashboard',
     ],
     screenshotFilename: 'step-agent-hub.jpg',
-  },
-  {
-    id: 'statusline',
-    title: 'Statusline & Monitoring',
-    sinceVersion: '1.0.0',
-    bullets: [
-      'Live **context bar** showing model, tokens, cost, and context usage per session',
-      '**Rate limit bars** show 5-hour and 7-day utilization at a glance',
-      '**Peak/off-peak** indicator based on Anthropic API hours (05:00-11:00 PT)',
-      '**Service status** gradient across the title bar when Claude is degraded',
-    ],
-    screenshotFilename: 'step-statusline.jpg',
   },
   {
     id: 'vision',
@@ -104,25 +68,13 @@ export const trainingSteps: TrainingStep[] = [
     screenshotFilename: 'step-memory.jpg',
   },
   {
-    id: 'storyboard',
-    title: 'Storyboard Capture',
-    sinceVersion: '1.2.152',
-    bullets: [
-      'Record a **sequence of screenshots** at a set interval (1-5 seconds)',
-      'Click **Storyboard** in the command bar, select a screen region, and record',
-      'Review captured frames: **annotate each**, select/deselect, add context text',
-      'Sends a **structured prompt** with numbered frames to Claude',
-    ],
-    screenshotFilename: 'step-storyboard.jpg',
-  },
-  {
-    id: 'security',
-    title: 'Security & Updates',
+    id: 'settings',
+    title: 'Settings & Security',
     sinceVersion: '1.2.155',
     bullets: [
       '**Sandbox enabled** — renderer runs in a sandboxed process',
-      'SSH passwords are **resolved in the main process** — never visible to the UI',
-      'Choose **Stable or Beta** update channel in Settings',
+      'Choose **Stable or Beta** update channel for app updates',
+      'Customize **keyboard shortcuts**, terminal font size, and status line metrics',
       'All IPC calls are **validated with zod** schemas at the boundary',
     ],
     screenshotFilename: 'step-security.jpg',
@@ -134,8 +86,8 @@ export const trainingSteps: TrainingStep[] = [
     bullets: [
       '**Ctrl+Tab** / **Ctrl+Shift+Tab** to cycle between sessions',
       '**Ctrl+1-9** to jump directly to a session by number',
-      'Check **Settings** to customize fonts, shortcuts, and status line',
-      'Visit **Insights** for cross-session analytics and trends',
+      'Create **quick command buttons** with customizable arguments',
+      'Live **statusline** shows tokens, cost, rate limits, and peak hours',
     ],
     screenshotFilename: 'step-tips.jpg',
   },
