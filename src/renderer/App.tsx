@@ -17,6 +17,7 @@ import MemoryPage from './components/MemoryPage'
 import SetupDialog from './components/SetupDialog'
 import WhatsNewModal, { shouldShowWhatsNew, markWhatsNewSeen } from './components/WhatsNewModal'
 import TrainingWalkthrough, { shouldShowTraining, isFirstInstall } from './components/TrainingWalkthrough'
+import GuidedConfigView from './components/GuidedConfigView'
 import ErrorBoundary from './components/ErrorBoundary'
 import CloseDialog from './components/CloseDialog'
 import { useSessionStore, Session } from './stores/sessionStore'
@@ -54,6 +55,7 @@ export default function App() {
   const [showWhatsNew, setShowWhatsNew] = useState(false)
   const [showTraining, setShowTraining] = useState(false)
   const [showTrainingAll, setShowTrainingAll] = useState(false)
+  const [showGuidedConfig, setShowGuidedConfig] = useState(false)
   const [partnerActive, setPartnerActive] = useState<Set<string>>(new Set())
   const [showMachineNamePrompt, setShowMachineNamePrompt] = useState(false)
   const [machineNameInput, setMachineNameInput] = useState('')
@@ -494,7 +496,7 @@ export default function App() {
         )}
         <TitleBar sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
         <div className="flex flex-1 overflow-hidden">
-          <Sidebar currentView={view} onViewChange={setView} collapsed={!sidebarOpen} onShowHelp={() => { setShowTrainingAll(true); setShowTraining(true) }} onUpdateRequested={() => {
+          <Sidebar currentView={view} onViewChange={setView} collapsed={!sidebarOpen} onShowFirstRun={() => setShowGuidedConfig(true)} onShowHelp={() => { setShowTrainingAll(true); setShowTraining(true) }} onUpdateRequested={() => {
             const state = useSessionStore.getState()
             if (state.sessions.length === 0) {
               setIsClosing(true)
@@ -507,6 +509,44 @@ export default function App() {
           <main className="flex-1 flex flex-col overflow-hidden titlebar-no-drag">
             {showTraining ? (
               <TrainingWalkthrough onClose={() => { setShowTraining(false); setShowTrainingAll(false) }} showAll={showTrainingAll} />
+            ) : showGuidedConfig ? (
+              <GuidedConfigView
+                onSkip={() => setShowGuidedConfig(false)}
+                onConfirm={async (configDraft, sshPassword) => {
+                  const { generateId } = await import('./utils/id')
+                  const configId = generateId()
+                  if (sshPassword) {
+                    await window.electronAPI.credentials.save(configId, sshPassword)
+                  }
+                  const newConfig = { ...configDraft, id: configId }
+                  useConfigStore.getState().addConfig(newConfig)
+                  useAppMetaStore.getState().update({ hasCreatedFirstConfig: true })
+
+                  const session: Session = {
+                    id: generateId(),
+                    configId: newConfig.id,
+                    label: newConfig.label,
+                    workingDirectory: newConfig.workingDirectory,
+                    model: newConfig.model,
+                    color: newConfig.color,
+                    status: 'idle',
+                    createdAt: Date.now(),
+                    sessionType: newConfig.sessionType,
+                    shellOnly: newConfig.shellOnly,
+                    sshConfig: newConfig.sshConfig,
+                    flickerFree: newConfig.flickerFree,
+                    powershellTool: newConfig.powershellTool,
+                    effortLevel: newConfig.effortLevel,
+                    disableAutoMemory: newConfig.disableAutoMemory,
+                  }
+                  if (!session.shellOnly && session.sessionType === 'local') {
+                    markSessionForResumePicker(session.id)
+                  }
+                  useSessionStore.getState().addSession(session)
+                  setShowGuidedConfig(false)
+                  setView('sessions')
+                }}
+              />
             ) : (
               <>
                 {renderSessions()}
