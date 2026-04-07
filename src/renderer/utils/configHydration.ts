@@ -3,6 +3,7 @@ import { useConfigStore } from '../stores/configStore'
 import { useMagicButtonStore } from '../stores/magicButtonStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useAppMetaStore } from '../stores/appMetaStore'
+import { useTipsStore, UsageTracking } from '../stores/tipsStore'
 import { useCloudAgentStore } from '../stores/cloudAgentStore'
 import { useAgentLibraryStore } from '../stores/agentLibraryStore'
 import { useTeamStore } from '../stores/teamStore'
@@ -174,6 +175,9 @@ export function hydrateStores(configData: Record<string, unknown>): void {
   const agentTeams = (configData.agentTeams as any[]) || []
   const agentTeamRuns = (configData.agentTeamRuns as any[]) || []
   useTeamStore.getState().hydrate(agentTeams, agentTeamRuns)
+
+  const usageTracking = (configData.usageTracking as UsageTracking) || undefined
+  useTipsStore.getState().hydrate(usageTracking as UsageTracking)
 
   console.log('[App] All stores hydrated from CONFIG/')
 }
