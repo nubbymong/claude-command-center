@@ -2,10 +2,12 @@ import React, { useState, useRef, useEffect } from 'react'
 import { useMagicButtonStore } from '../stores/magicButtonStore'
 import MagicButtonSettingsDialog from './MagicButtonSettingsDialog'
 import WindowPickerModal from './WindowPickerModal'
-import { getScreenshotPathForSession } from '../utils/screenshotPath'
+import { sendImageToSession } from '../utils/imageTransfer'
 
 interface Props {
   sessionId: string
+  // sessionType is no longer needed for image transport — both local and SSH
+  // sessions use the conductor-vision MCP server's fetch_host_screenshot tool.
   sessionType: 'local' | 'ssh'
 }
 
@@ -46,8 +48,7 @@ export default function ScreenshotButton({ sessionId, sessionType }: Props) {
     try {
       const path = await window.electronAPI.screenshot.captureRectangle()
       if (path) {
-        const sessionPath = getScreenshotPathForSession(path, sessionType)
-        window.electronAPI.pty.write(sessionId, sessionPath + '\r')
+        sendImageToSession(sessionId, path, 'I just snapped a region of my screen — please view it.')
       }
     } finally {
       setCapturing(false)
@@ -60,8 +61,7 @@ export default function ScreenshotButton({ sessionId, sessionType }: Props) {
     try {
       const path = await window.electronAPI.screenshot.captureWindow(sourceId)
       if (path) {
-        const sessionPath = getScreenshotPathForSession(path, sessionType)
-        window.electronAPI.pty.write(sessionId, sessionPath + '\r')
+        sendImageToSession(sessionId, path, 'I just captured a window from my screen — please view it.')
       }
     } finally {
       setCapturing(false)

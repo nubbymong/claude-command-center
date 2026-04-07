@@ -6,8 +6,9 @@ import { startSessionLog, logSessionData, endSessionLog } from './session-logger
 import { logPtyOutput, isDebugModeEnabled } from './debug-capture'
 import { logInfo, logDebug, logError } from './debug-logger'
 import { writeCliSetupPty, getResourcesDirectory } from './ipc/setup-handlers'
-import { isGlobalVisionRunning, getGlobalVisionConfig } from './vision-manager'
+import { isGlobalVisionRunning, getGlobalVisionConfig, getConductorMcpPort } from './vision-manager'
 import { resolveVersionBinary } from './legacy-version-manager'
+import { dispatchSSHStatuslineUpdate } from './statusline-watcher'
 
 import * as path from 'path'
 import * as fs from 'fs'
@@ -51,45 +52,128 @@ export interface SSHOptions {
 
 const ptySessions = new Map<string, PtySession>()
 
+// === SSH OSC sentinel parser ===
+//
+// Remote SSH sessions can't write status files to the local host, so the
+// SSH_STATUSLINE_SHIM (deployed during remote setup) emits an OSC sentinel
+// to /dev/tty containing the status JSON. The sentinel travels back through
+// the SSH PTY stream to this process.
+//
+// We extract sentinels from each chunk before forwarding the cleaned data to
+// xterm, then dispatch the parsed JSON via statusline-watcher's existing pipeline.
+const SSH_OSC_PREFIX = '\x1b]9999;CMSTATUS='
+const SSH_OSC_TERMINATOR = '\x07'
+const MAX_OSC_BUFFER = 32 * 1024  // cap to prevent runaway memory on malformed streams
+const sshOscBuffers = new Map<string, string>()
+
+/**
+ * Strip SSH OSC sentinels from a PTY data chunk.
+ * Returns the cleaned chunk (sentinels removed). Parsed sentinel payloads
+ * are dispatched to statusline-watcher synchronously.
+ *
+ * Handles partial sentinels split across chunks via per-session buffering.
+ */
+function extractSshOscSentinels(sessionId: string, chunk: string): string {
+  const combined = (sshOscBuffers.get(sessionId) || '') + chunk
+  let cleaned = ''
+  let i = 0
+  while (i < combined.length) {
+    const start = combined.indexOf(SSH_OSC_PREFIX, i)
+    if (start === -1) {
+      cleaned += combined.slice(i)
+      sshOscBuffers.delete(sessionId)
+      return cleaned
+    }
+    cleaned += combined.slice(i, start)
+    const end = combined.indexOf(SSH_OSC_TERMINATOR, start + SSH_OSC_PREFIX.length)
+    if (end === -1) {
+      // Partial sentinel — buffer the leftover for the next chunk
+      const leftover = combined.slice(start)
+      if (leftover.length > MAX_OSC_BUFFER) {
+        // Likely a false start or junk — drop the buffer
+        sshOscBuffers.delete(sessionId)
+      } else {
+        sshOscBuffers.set(sessionId, leftover)
+      }
+      return cleaned
+    }
+    const json = combined.slice(start + SSH_OSC_PREFIX.length, end)
+    try { dispatchSSHStatuslineUpdate(json) } catch { /* ignore */ }
+    i = end + SSH_OSC_TERMINATOR.length
+  }
+  sshOscBuffers.delete(sessionId)
+  return cleaned
+}
+
+/**
+ * SSH statusline shim — Node.js script written to the REMOTE host at
+ * ~/.claude/conductor-ssh-statusline.js during SSH setup.
+ *
+ * Claude Code on the remote runs this as its statusLine command. The shim
+ * receives JSON status data on stdin (from Claude's statusline hook), then
+ * emits an OSC sentinel directly to the controlling TTY (/dev/tty).
+ *
+ * The OSC sentinel travels back through the SSH PTY to the local Conductor,
+ * where pty-manager's OSC parser extracts and dispatches it to the renderer.
+ *
+ * /dev/tty is used (not stdout) because Claude captures the script's stdout
+ * for its own statusline display — writing the sentinel there would either
+ * be re-rendered visibly or stripped. /dev/tty bypasses Claude entirely.
+ */
+const SSH_STATUSLINE_SHIM = `#!/usr/bin/env node
+const fs=require('fs');
+let input='';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data',c=>input+=c);
+process.stdin.on('end',()=>{
+try{
+const data=JSON.parse(input);
+const sid=process.env.CLAUDE_MULTI_SESSION_ID||'unknown';
+const cw=data.context_window||{};
+const u=cw.current_usage||{};
+const it=(u.input_tokens||0)+(u.cache_creation_input_tokens||0)+(u.cache_read_input_tokens||0);
+const cost=data.cost||{};
+const m=data.model||{};
+const s={sessionId:sid,model:m.display_name||m.id,contextUsedPercent:cw.used_percentage,contextRemainingPercent:cw.remaining_percentage,contextWindowSize:cw.context_window_size,inputTokens:it||undefined,outputTokens:u.output_tokens,costUsd:cost.total_cost_usd,totalDurationMs:cost.total_duration_ms,linesAdded:cost.total_lines_added,linesRemoved:cost.total_lines_removed,timestamp:Date.now()};
+const sentinel='\\x1b]9999;CMSTATUS='+JSON.stringify(s)+'\\x07';
+try{fs.writeFileSync('/dev/tty',sentinel);}catch(e){process.stdout.write(sentinel);}
+process.stdout.write(' ');
+}catch(e){process.stdout.write(' ');}
+});
+`
+
 /**
  * Generate a single node script that handles ALL remote setup:
- * - Probes for mounted resources directory
- * - Configures statusline in settings.json
+ * - Writes the SSH statusline shim to ~/.claude/conductor-ssh-statusline.js
+ * - Configures statusline in settings.json to invoke the shim
  * - Configures MCP vision server (if running) in settings.json
  * - Cleans up legacy CLAUDE.md vision markers
  *
- * Returns the script content to write to ~/.claude/conductor-setup.js
- * The PTY then only needs to write: `node ~/.claude/conductor-setup.js && claude`
+ * Returns the script content. The PTY base64-encodes and pipes it to node.
  */
 function generateRemoteSetupScript(sessionId: string): string {
-  const hasVision = isGlobalVisionRunning()
-  const mcpPort = getGlobalVisionConfig()?.mcpPort || 19333
+  // Conductor MCP server is always running (independent of browser/vision config),
+  // so SSH sessions always get the conductor-vision MCP entry pointing at the
+  // reverse-tunneled MCP port. The fetch_host_screenshot tool is always available;
+  // browser tools fall back to "vision not connected" if no browser is attached.
+  const mcpPort = getConductorMcpPort() || 19333
+  const hasVision = mcpPort > 0
+  // Embed the shim as a JSON string literal — Node parses it back to source
+  const shimLiteral = JSON.stringify(SSH_STATUSLINE_SHIM)
 
   return `
 const fs=require('fs'),path=require('path'),os=require('os');
 const home=os.homedir(),claudeDir=path.join(home,'.claude');
 try{fs.mkdirSync(claudeDir,{recursive:true})}catch{}
 
-// Probe for mounted resources
-let ccres='';
-try{
-  const dirs=['/mnt','/mnt'];
-  for(const base of fs.readdirSync('/mnt')){
-    const d=path.join('/mnt',base,'scripts');
-    if(fs.existsSync(path.join(d,'claude-multi-statusline.js'))){ccres=d;break}
-    try{for(const sub of fs.readdirSync(path.join('/mnt',base))){
-      const d2=path.join('/mnt',base,sub,'scripts');
-      if(fs.existsSync(path.join(d2,'claude-multi-statusline.js'))){ccres=d2;break}
-    }}catch{}
-    if(ccres)break;
-  }
-}catch{}
-if(!ccres)ccres='/mnt/resources/scripts';
+// Write SSH statusline shim — bypasses the need for SMB-mounted resources
+const shimPath=path.join(claudeDir,'conductor-ssh-statusline.js');
+try{fs.writeFileSync(shimPath,${shimLiteral},{mode:0o755})}catch{}
 
 // Configure statusline + MCP vision in settings.json
 const sp=path.join(claudeDir,'settings.json');
 let s={};try{s=JSON.parse(fs.readFileSync(sp,'utf-8'))}catch{}
-s.statusLine={type:'command',command:'CLAUDE_MULTI_SESSION_ID=${sessionId} node '+ccres+'/claude-multi-statusline.js'};
+s.statusLine={type:'command',command:'CLAUDE_MULTI_SESSION_ID=${sessionId} node '+shimPath};
 ${hasVision ? `if(!s.mcpServers)s.mcpServers={};s.mcpServers['conductor-vision']={url:'http://localhost:${mcpPort}/sse'};` : `if(s.mcpServers&&s.mcpServers['conductor-vision'])delete s.mcpServers['conductor-vision'];`}
 fs.writeFileSync(sp,JSON.stringify(s,null,2));
 
@@ -180,9 +264,10 @@ export function spawnPty(
       '-o', 'StrictHostKeyChecking=accept-new'
     ]
 
-    // Add reverse tunnel for MCP vision server so remote sessions can reach it
-    if (isGlobalVisionRunning()) {
-      const mcpPort = getGlobalVisionConfig()?.mcpPort || 19333
+    // Add reverse tunnel for the Conductor MCP server so remote sessions can reach
+    // both fetch_host_screenshot (always) and vision tools (when browser connected).
+    const mcpPort = getConductorMcpPort()
+    if (mcpPort > 0) {
       sshArgs.push('-R', `${mcpPort}:localhost:${mcpPort}`)
     }
 
@@ -219,8 +304,11 @@ export function spawnPty(
     const sudoPassword = ssh.sudoPassword
     const startClaudeAfter = ssh.startClaudeAfter
 
-    ptyProcess.onData((data) => {
+    ptyProcess.onData((rawData) => {
       if (win.isDestroyed()) return
+      // Strip SSH statusline OSC sentinels before forwarding to xterm.
+      // Parsed sentinels are dispatched to the statusline pipeline as a side effect.
+      const data = extractSshOscSentinels(sessionId, rawData)
       win.webContents.send(`pty:data:${sessionId}`, data)
 
       const dataLower = data.toLowerCase()
@@ -568,6 +656,7 @@ export function killPty(sessionId: string): void {
   }
   pendingWrites.delete(sessionId)
   recentWrites.delete(sessionId)
+  sshOscBuffers.delete(sessionId)
 }
 
 export function killAllPty(): void {

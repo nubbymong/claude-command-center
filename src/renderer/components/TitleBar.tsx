@@ -6,16 +6,49 @@ interface Props {
   onToggleSidebar: () => void
 }
 
+interface ComponentStatus {
+  id: string
+  label: string
+  status: string
+  name: string
+}
+
+interface ServiceStatusPayload {
+  fetchedAt: string
+  claudeCode: ComponentStatus | null
+  claudeAi: ComponentStatus | null
+  api: ComponentStatus | null
+  worst: string
+}
+
 const STATUS_COLORS: Record<string, string> = {
   operational: 'bg-green',
+  under_maintenance: 'bg-blue',
   degraded_performance: 'bg-yellow',
   partial_outage: 'bg-peach',
   major_outage: 'bg-red',
 }
 
+const STATUS_TEXT_COLORS: Record<string, string> = {
+  operational: 'text-green',
+  under_maintenance: 'text-blue',
+  degraded_performance: 'text-yellow',
+  partial_outage: 'text-peach',
+  major_outage: 'text-red',
+}
+
 const STATUS_LABELS: Record<string, string> = {
-  operational: 'Operational',
+  operational: 'OK',
+  under_maintenance: 'Maint.',
   degraded_performance: 'Degraded',
+  partial_outage: 'Partial',
+  major_outage: 'Outage',
+}
+
+const STATUS_LONG_LABELS: Record<string, string> = {
+  operational: 'Operational',
+  under_maintenance: 'Under Maintenance',
+  degraded_performance: 'Degraded Performance',
   partial_outage: 'Partial Outage',
   major_outage: 'Major Outage',
 }
@@ -26,9 +59,56 @@ const STATUS_GRADIENT_COLORS: Record<string, string> = {
   major_outage: '#F38BA8',
 }
 
+function formatRelative(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime()
+  if (ms < 60_000) return 'just now'
+  const mins = Math.floor(ms / 60_000)
+  if (mins < 60) return `${mins}m ago`
+  const hours = Math.floor(mins / 60)
+  return `${hours}h ago`
+}
+
+interface StatusPillProps {
+  label: string
+  status: string | undefined
+  highlight?: boolean
+}
+
+function StatusPill({ label, status, highlight }: StatusPillProps) {
+  if (!status) {
+    return (
+      <div
+        className="flex items-center gap-1 px-1.5 py-0.5 rounded border border-surface0/60 bg-surface0/40"
+        title={`${label}: status unknown`}
+      >
+        <div className="w-1.5 h-1.5 rounded-full bg-overlay0" />
+        <span className="text-[10px] text-overlay0 font-medium leading-none">{label}</span>
+      </div>
+    )
+  }
+  const dot = STATUS_COLORS[status] || 'bg-overlay0'
+  const txt = status === 'operational' ? 'text-overlay1' : (STATUS_TEXT_COLORS[status] || 'text-text')
+  return (
+    <div
+      className={`flex items-center gap-1 px-1.5 py-0.5 rounded border ${
+        highlight && status !== 'operational'
+          ? 'border-current bg-surface0/70'
+          : 'border-surface0/60 bg-surface0/40'
+      }`}
+      title={`${label}: ${STATUS_LONG_LABELS[status] || status}`}
+    >
+      <div className={`w-1.5 h-1.5 rounded-full ${dot}`} />
+      <span className={`text-[10px] font-medium leading-none ${txt}`}>{label}</span>
+      {status !== 'operational' && (
+        <span className={`text-[10px] font-semibold leading-none ${txt}`}>{STATUS_LABELS[status] || status}</span>
+      )}
+    </div>
+  )
+}
+
 export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
   const [maximized, setMaximized] = useState(false)
-  const [serviceStatus, setServiceStatus] = useState<string | null>(null)
+  const [serviceStatus, setServiceStatus] = useState<ServiceStatusPayload | null>(null)
 
   // Account switcher state
   const [accountOpen, setAccountOpen] = useState(false)
@@ -46,8 +126,8 @@ export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
   }, [])
 
   useEffect(() => {
-    const unsub = window.electronAPI.serviceStatus.onUpdate((data) => {
-      setServiceStatus(data.status)
+    const unsub = window.electronAPI.serviceStatus.onUpdate((data: ServiceStatusPayload) => {
+      setServiceStatus(data)
     })
     return unsub
   }, [])
@@ -119,8 +199,18 @@ export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
     ? `Account: ${activeAccount.label}`
     : 'Account Switcher'
 
-  const isHealthy = !serviceStatus || serviceStatus === 'operational'
-  const gradientColor = serviceStatus ? STATUS_GRADIENT_COLORS[serviceStatus] : undefined
+  const worst = serviceStatus?.worst || 'operational'
+  const isHealthy = !serviceStatus || worst === 'operational'
+  const gradientColor = STATUS_GRADIENT_COLORS[worst]
+  const apiStatus = serviceStatus?.api?.status
+  const tooltipLines: string[] = []
+  if (serviceStatus) {
+    if (serviceStatus.claudeCode) tooltipLines.push(`Claude Code: ${STATUS_LONG_LABELS[serviceStatus.claudeCode.status] || serviceStatus.claudeCode.status}`)
+    if (serviceStatus.claudeAi) tooltipLines.push(`Claude.ai: ${STATUS_LONG_LABELS[serviceStatus.claudeAi.status] || serviceStatus.claudeAi.status}`)
+    if (serviceStatus.api) tooltipLines.push(`API: ${STATUS_LONG_LABELS[serviceStatus.api.status] || serviceStatus.api.status}`)
+    tooltipLines.push(`Last checked ${formatRelative(serviceStatus.fetchedAt)}`)
+  }
+  const tooltip = tooltipLines.join(' · ')
 
   return (
     <div
@@ -236,24 +326,26 @@ export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
       </div>
 
       <div className="titlebar-no-drag flex items-center gap-1">
-        {serviceStatus && !isHealthy && (
+        {/* Claude service status — two pills (Claude Code + Claude.ai) with API in tooltip */}
+        {serviceStatus && (
           <div
-            className="flex items-center gap-1.5 mr-2"
-            title={`Claude Code: ${STATUS_LABELS[serviceStatus] || serviceStatus}`}
+            className="flex items-center gap-1 mr-2"
+            title={tooltip}
           >
-            <div className={`w-2 h-2 rounded-full ${STATUS_COLORS[serviceStatus] || 'bg-overlay0'}`}
-              style={gradientColor ? { boxShadow: `0 0 6px 1px ${gradientColor}60` } : undefined}
+            <StatusPill
+              label="Code"
+              status={serviceStatus.claudeCode?.status}
+              highlight={!isHealthy}
             />
-            <span className="text-xs font-medium" style={{ color: gradientColor || undefined }}>
-              Claude {STATUS_LABELS[serviceStatus] || serviceStatus}
-            </span>
+            <StatusPill
+              label="Claude.ai"
+              status={serviceStatus.claudeAi?.status}
+              highlight={!isHealthy}
+            />
+            {apiStatus && apiStatus !== 'operational' && (
+              <StatusPill label="API" status={apiStatus} highlight />
+            )}
           </div>
-        )}
-        {serviceStatus === 'operational' && (
-          <div
-            className={`w-2 h-2 rounded-full ${STATUS_COLORS[serviceStatus]}`}
-            title="Claude Code: Operational"
-          />
         )}
         <button
           onClick={() => window.electronAPI.window.minimize()}
