@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import NoteDialog from './NoteDialog'
+import { trackUsage } from '../stores/tipsStore'
 
 interface NoteEntry {
   id: string
@@ -35,6 +36,7 @@ export default function NotesBar({ configId }: Props) {
 
   const handleSave = async (id: string, label: string, content: string, color: string, noteConfigId?: string) => {
     await window.electronAPI.notes.save(id, label, content, color, noteConfigId)
+    trackUsage('security.encrypted-notes')
     setShowDialog(false)
     setEditingNote(null)
     loadNotes()

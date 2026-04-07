@@ -3,14 +3,16 @@ import { Session, useSessionStore } from '../stores/sessionStore'
 import { killSessionPty, clearSpawned } from '../ptyTracker'
 import { markSessionForResumePicker } from '../utils/resumePicker'
 import NotesBar from './NotesBar'
+import TipPill from './TipPill'
 
 interface Props {
   session: Session
   isShowingPartner?: boolean
   sidebarCollapsed?: boolean
+  onShowTip?: () => void
 }
 
-export default function SessionHeader({ session, isShowingPartner, sidebarCollapsed }: Props) {
+export default function SessionHeader({ session, isShowingPartner, sidebarCollapsed, onShowTip }: Props) {
   const updateSession = useSessionStore((s) => s.updateSession)
   const [recoverMenu, setRecoverMenu] = useState<{ x: number; y: number } | null>(null)
 
@@ -117,6 +119,8 @@ export default function SessionHeader({ session, isShowingPartner, sidebarCollap
       <NotesBar configId={session.configId} />
 
       <div className="flex-1" />
+
+      {onShowTip && <TipPill onClick={onShowTip} />}
 
       <button
         onClick={handleRestart}
