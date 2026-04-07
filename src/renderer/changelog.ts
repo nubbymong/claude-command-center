@@ -15,6 +15,19 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '1.2.159',
+    date: '2026-04-07',
+    highlights: "First CI/CD release: parallel Windows + macOS builds with signing",
+    changes: [
+      { type: 'feature', description: "GitHub Actions workflow builds Windows EXE and macOS DMG in parallel" },
+      { type: 'feature', description: "macOS DMG is code-signed and notarized via Apple Developer ID" },
+      { type: 'improvement', description: "Tour walkthrough consolidated to 7 focused steps with matching screenshots" },
+      { type: 'fix', description: "Splash screen now shows before main window renders" },
+      { type: 'fix', description: "CLI setup dialog now works on macOS via login shell PATH" },
+      { type: 'fix', description: "Setup dialog no longer crashes with null ResizeObserver target" },
+    ]
+  },
+  {
     version: '1.2.158',
     date: '2026-02-11',
     highlights: "Maintenance release with internal improvements",
