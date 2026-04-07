@@ -43,7 +43,9 @@ export default function SettingsPage() {
   }, [])
 
   const save = async (updates: Partial<typeof settings>) => {
-    updateSettings(updates)
+    // Await the IPC write so any read-after-write (e.g. the main process
+    // re-reading settings for an update check) sees the new value.
+    await updateSettings(updates)
     if ('debugMode' in updates) {
       if (updates.debugMode) {
         await window.electronAPI.debug.enable()

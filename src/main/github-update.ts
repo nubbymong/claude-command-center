@@ -167,11 +167,25 @@ function compareTags(aTag: string, bTag: string): number {
 
 /**
  * Compare a GitHub tag against the currently-running app version.
- * The running app version does not carry a prerelease suffix (electron-builder
- * strips it), so we compare it as if it were a final release at that base
- * version. This means a user on 1.2.3 running the stable channel will NOT be
- * offered 1.2.3-beta.1 (good) but a user running 1.2.3-beta.1 installed via
- * beta channel will still see 1.2.3 as an upgrade path.
+ *
+ * The running app version (from `app.getVersion()` which reads `package.json`)
+ * does not carry a prerelease suffix — electron-builder strips it from the
+ * packaged version. So we compare it as if it were a final release at that
+ * base version.
+ *
+ * Implications:
+ *   - A user on 1.2.3 running the stable channel will NOT be offered
+ *     1.2.3-beta.1, because 1.2.3 > 1.2.3-beta.1 under our ordering. ✓
+ *   - A user on 1.2.3 running the beta channel will NOT be offered
+ *     1.2.3-beta.2 either, for the same reason. They must wait for 1.2.4-beta.*
+ *     or a newer final release. ✓
+ *   - A user with `package.json` version 1.2.3 WILL be offered 1.2.4-beta.1
+ *     on the beta channel, 1.2.4 on stable, etc. ✓
+ *
+ * In other words: because the in-memory version never has a prerelease suffix,
+ * prerelease ordering only matters when comparing two GitHub tags against
+ * each other (to pick the newest candidate), not when comparing a tag to the
+ * running app.
  */
 function compareTagToCurrentVersion(tag: string, currentVersion: string): number {
   // Build a synthetic "final release" tag from the current version for comparison

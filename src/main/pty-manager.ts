@@ -509,8 +509,10 @@ export function writePty(sessionId: string, data: string): void {
     const recent = recentWrites.get(sessionId)
     const now = Date.now()
     if (recent && recent.data === data && (now - recent.ts) < DEDUPE_WINDOW_MS) {
-      const preview = data.length > 60 ? data.slice(0, 60) + '...' : data
-      logError(`[pty] DUPLICATE SUBMIT SUPPRESSED for ${sessionId} (${now - recent.ts}ms apart, ${data.length} bytes): ${JSON.stringify(preview)}`)
+      // Do NOT log the payload content — it can contain user prompts,
+      // credentials, or other sensitive text that we don't want in log files.
+      // Only log the metadata needed to diagnose the source of the duplicate.
+      logInfo(`[pty] DUPLICATE SUBMIT SUPPRESSED for ${sessionId} (${now - recent.ts}ms apart, ${data.length} bytes)`)
       return
     }
     recentWrites.set(sessionId, { data, ts: now })
