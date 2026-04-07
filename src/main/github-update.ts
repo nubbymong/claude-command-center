@@ -170,22 +170,26 @@ function compareTags(aTag: string, bTag: string): number {
  *
  * The running app version (from `app.getVersion()` which reads `package.json`)
  * does not carry a prerelease suffix — electron-builder strips it from the
- * packaged version. So we compare it as if it were a final release at that
- * base version.
+ * packaged version. So we compare the running version as if it were a final
+ * release at that base version.
  *
  * Implications:
  *   - A user on 1.2.3 running the stable channel will NOT be offered
- *     1.2.3-beta.1, because 1.2.3 > 1.2.3-beta.1 under our ordering. ✓
+ *     1.2.3-beta.1 (1.2.3 > 1.2.3-beta.1 under our ordering). ✓
  *   - A user on 1.2.3 running the beta channel will NOT be offered
- *     1.2.3-beta.2 either, for the same reason. They must wait for 1.2.4-beta.*
- *     or a newer final release. ✓
- *   - A user with `package.json` version 1.2.3 WILL be offered 1.2.4-beta.1
- *     on the beta channel, 1.2.4 on stable, etc. ✓
+ *     1.2.3-beta.2 either — they must wait for 1.2.4-beta.* or a newer
+ *     final release.
  *
- * In other words: because the in-memory version never has a prerelease suffix,
- * prerelease ordering only matters when comparing two GitHub tags against
- * each other (to pick the newest candidate), not when comparing a tag to the
- * running app.
+ * Release-process constraint: this means our release workflow CANNOT
+ * publish hotfix prereleases with a `.N` suffix (v1.2.3-beta.1 →
+ * v1.2.3-beta.2) and expect existing users to see them. Every release
+ * must bump the base version. `.github/workflows/release.yml` enforces
+ * this by only emitting `v${version}-beta` and `v${version}-dev` tags
+ * with no `.N` suffix — so the edge case above cannot occur in practice.
+ *
+ * If that ever changes, we'd need to persist the installed tag (including
+ * any prerelease suffix) in app-meta at install time and compare against
+ * that instead of `app.getVersion()`.
  */
 function compareTagToCurrentVersion(tag: string, currentVersion: string): number {
   // Build a synthetic "final release" tag from the current version for comparison

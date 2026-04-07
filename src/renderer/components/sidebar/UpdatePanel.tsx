@@ -95,6 +95,10 @@ function ChannelSelector({ onChannelChange }: { onChannelChange: () => void }) {
       const target = e.target as Node
       if (!menuRef.current?.contains(target) && !triggerRef.current?.contains(target)) {
         setOpen(false)
+        // Restore focus to the trigger — otherwise focus is left on a removed
+        // menu item, which is bad for keyboard/screen-reader users. Mirrors
+        // the Escape/handlePick behavior.
+        triggerRef.current?.focus()
       }
     }
     document.addEventListener('keydown', onKeyDown)
