@@ -15,6 +15,21 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '1.2.162',
+    date: '2026-04-07',
+    highlights: "Update system refactor: GitHub-only with stable/beta/dev channels + PTY dedupe",
+    changes: [
+      { type: 'feature', description: "Update checker now polls GitHub releases directly instead of a local WebSocket server" },
+      { type: 'feature', description: "New update channel selector next to Check for Updates button — stable / beta / dev with full keyboard accessibility" },
+      { type: 'feature', description: "Dev channel for experimental builds (alongside existing stable and beta)" },
+      { type: 'fix', description: "Duplicate Claude prompts: PTY now suppresses identical submitted payloads within 300ms (prevents double-sends that triggered rate limits)" },
+      { type: 'improvement', description: "Update checker works without gh CLI once the repo is public (tries public GitHub API first, falls back to gh CLI only when needed)" },
+      { type: 'improvement', description: "Safer update downloads: HTTPS-only redirects, Windows retry safety (unlinks stale files before rename), no shell injection risk" },
+      { type: 'improvement', description: "Proper prerelease ordering (beta.2 > beta.1, final > beta)" },
+      { type: 'improvement', description: "CI workflow on every PR — typecheck, tests, build on both Windows and macOS" },
+    ]
+  },
+  {
     version: '1.2.161',
     date: '2026-04-07',
     highlights: "Intelligent tips system with 26 seed tips and transparency disclosures",
