@@ -15,6 +15,19 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '1.2.161',
+    date: '2026-04-07',
+    highlights: "Intelligent tips system with 26 seed tips and transparency disclosures",
+    changes: [
+      { type: 'feature', description: "Animated tip pill in the session header shows contextual, one-per-session feature discovery hints" },
+      { type: 'feature', description: "Clicking a tip opens a platform-aware modal with full details, optional navigation, and dismiss/silence controls" },
+      { type: 'feature', description: "New Transparency category: explicit tips about statusline injection, Vision MCP, session logging, credential storage, resources folder, and all network activity" },
+      { type: 'feature', description: "Usage tracking persists to CONFIG/usage-tracking.json — tips intelligently skip features you've already used or show 'did you know' variants" },
+      { type: 'feature', description: "Toggle 'Show intelligent tips' in Settings > General to disable the system" },
+      { type: 'improvement', description: "Platform-aware tip copy: Partner Terminal, Credential Storage, Resources Folder, and Session Logs tips show correct Windows vs macOS paths" },
+    ]
+  },
+  {
     version: '1.2.160',
     date: '2026-04-07',
     highlights: "Guided first-run config + terminal column fix",
