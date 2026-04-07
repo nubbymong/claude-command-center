@@ -93,24 +93,29 @@ export function registerUpdateHandlers(): void {
       )
     }
 
-    // 3. Dev-only fallback: look for a locally-built installer in the source folder
+    // 3. Dev-only fallback: look for a locally-built installer in the source folder.
+    // Checks both a `-latest` convention file and a versioned file, in both repo root
+    // and `dist/`, using the correct extension for the current platform.
     if (!installerPath && !isPackagedApp()) {
       const projectRoot = getProjectRootPath()
       if (projectRoot) {
-        let src = path.join(projectRoot, 'ClaudeCommandCenter-latest.exe')
-        if (!fs.existsSync(src)) {
-          try {
-            const pkg = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf-8'))
-            const ext = process.platform === 'darwin' ? '.dmg' : '.exe'
-            const candidates = [
-              path.join(projectRoot, `ClaudeCommandCenter-Beta-${pkg.version}${ext}`),
-              path.join(projectRoot, 'dist', `ClaudeCommandCenter-Beta-${pkg.version}${ext}`),
-            ]
-            src = candidates.find(p => fs.existsSync(p)) || ''
-          } catch { /* fall through */ }
-        }
-        if (src && fs.existsSync(src)) {
+        const ext = process.platform === 'darwin' ? '.dmg' : '.exe'
+        const candidates: string[] = [
+          path.join(projectRoot, `ClaudeCommandCenter-latest${ext}`),
+          path.join(projectRoot, 'dist', `ClaudeCommandCenter-latest${ext}`),
+        ]
+        try {
+          const pkg = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf-8'))
+          candidates.push(
+            path.join(projectRoot, `ClaudeCommandCenter-Beta-${pkg.version}${ext}`),
+            path.join(projectRoot, 'dist', `ClaudeCommandCenter-Beta-${pkg.version}${ext}`),
+          )
+        } catch { /* fall through */ }
+
+        const src = candidates.find((p) => fs.existsSync(p))
+        if (src) {
           const downloadsDir = path.join(os.homedir(), 'Downloads')
+          try { fs.mkdirSync(downloadsDir, { recursive: true }) } catch {}
           const dest = path.join(downloadsDir, path.basename(src))
           fs.copyFileSync(src, dest)
           installerPath = dest

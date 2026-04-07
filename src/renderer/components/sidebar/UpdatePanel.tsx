@@ -135,6 +135,7 @@ function ChannelSelector({ onChannelChange }: { onChannelChange: () => void }) {
             <button
               key={c}
               ref={(el) => { itemRefs.current[i] = el }}
+              type="button"
               role="menuitemradio"
               aria-checked={channel === c}
               onClick={() => handlePick(c)}

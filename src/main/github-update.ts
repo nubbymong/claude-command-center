@@ -190,7 +190,7 @@ function getUpdateChannel(): UpdateChannel {
 
 // ── Public GitHub API (anonymous) ────────────────────────────────────────
 
-function httpGetJson<T = unknown>(url: string, timeoutMs = 10000): Promise<{ status: number; body: T | null }> {
+function httpGetJson<T = unknown>(url: string, timeoutMs = 10000): Promise<{ status: number; headers: Record<string, string | string[] | undefined>; body: T | null }> {
   return new Promise((resolve, reject) => {
     const req = https.get(url, {
       headers: {
@@ -205,11 +205,12 @@ function httpGetJson<T = unknown>(url: string, timeoutMs = 10000): Promise<{ sta
       res.on('end', () => {
         const text = Buffer.concat(chunks).toString('utf-8')
         const status = res.statusCode || 0
+        const headers = res.headers as Record<string, string | string[] | undefined>
         try {
           const body = status >= 200 && status < 300 ? JSON.parse(text) as T : null
-          resolve({ status, body })
+          resolve({ status, headers, body })
         } catch {
-          resolve({ status, body: null })
+          resolve({ status, headers, body: null })
         }
       })
     })
@@ -218,26 +219,57 @@ function httpGetJson<T = unknown>(url: string, timeoutMs = 10000): Promise<{ sta
   })
 }
 
+/** Public API fetch result — lets callers distinguish "should fall back" from "give up". */
+type PublicFetchResult =
+  | { kind: 'ok'; releases: GitHubRelease[] }
+  | { kind: 'not-found' }        // 404 — repo might be private, try gh CLI
+  | { kind: 'rate-limited' }     // 403 with rate-limit header — don't fall back, just wait
+  | { kind: 'error' }            // Network error or unexpected status — try gh CLI as best-effort
+
 /**
  * Fetch releases via the public GitHub API.
- * Returns null (not throw) if the repo is private/not found so callers can fall back.
+ *
+ * Distinguishes between:
+ *   - 404: the repo doesn't exist or is private — try the gh CLI fallback
+ *   - 403 with rate-limit header: API rate limit hit, gh CLI won't help — give up
+ *   - 403 otherwise: treated as "error" and fall through to gh CLI
  */
-async function fetchReleasesPublic(limit = 30): Promise<GitHubRelease[] | null> {
+async function fetchReleasesPublic(limit = 30): Promise<PublicFetchResult> {
   try {
     const url = `https://api.github.com/repos/${REPO}/releases?per_page=${limit}`
-    const { status, body } = await httpGetJson<GitHubRelease[]>(url)
-    if (status === 404 || status === 403) {
-      logInfo(`[github-update] Public API returned ${status} — repo may be private`)
-      return null
-    }
+    const { status, headers, body } = await httpGetJson<GitHubRelease[]>(url)
+
     if (status >= 200 && status < 300 && Array.isArray(body)) {
-      return body
+      return { kind: 'ok', releases: body }
     }
+
+    if (status === 404) {
+      logInfo('[github-update] Public API returned 404 — repo not found or private, will try gh CLI')
+      return { kind: 'not-found' }
+    }
+
+    if (status === 403) {
+      // Distinguish "you hit the rate limit" from other 403s by checking the header.
+      // Anonymous rate limit is 60 req/hour for public API — easy to exceed in dev.
+      const remainingHeader = headers['x-ratelimit-remaining']
+      const remaining = typeof remainingHeader === 'string' ? parseInt(remainingHeader, 10) : NaN
+      if (!isNaN(remaining) && remaining === 0) {
+        const resetHeader = headers['x-ratelimit-reset']
+        const reset = typeof resetHeader === 'string' ? parseInt(resetHeader, 10) : 0
+        const resetDate = reset ? new Date(reset * 1000).toISOString() : 'unknown'
+        logError(`[github-update] Public API rate-limited (resets at ${resetDate}) — skipping update check`)
+        return { kind: 'rate-limited' }
+      }
+      // Not a rate limit — could be anything else. Try gh CLI as a best effort.
+      logInfo('[github-update] Public API returned 403 (not rate-limited) — will try gh CLI')
+      return { kind: 'error' }
+    }
+
     logInfo(`[github-update] Public API unexpected status ${status}`)
-    return null
+    return { kind: 'error' }
   } catch (err) {
     logInfo(`[github-update] Public API error: ${(err as Error).message}`)
-    return null
+    return { kind: 'error' }
   }
 }
 
@@ -269,12 +301,20 @@ async function fetchReleasesGhCli(limit = 30): Promise<GitHubRelease[] | null> {
   }
 }
 
-/** Try public API first, fall back to gh CLI if it fails. */
+/**
+ * Try public API first, fall back to gh CLI when appropriate.
+ *   - ok          → return releases
+ *   - not-found   → try gh CLI (repo might be private)
+ *   - error       → try gh CLI as a best-effort recovery
+ *   - rate-limited → give up (gh CLI won't help, user should wait)
+ */
 async function fetchReleases(): Promise<GitHubRelease[] | null> {
   const publicResult = await fetchReleasesPublic()
-  if (publicResult && publicResult.length > 0) return publicResult
 
-  // Only fall back to gh CLI if public API returned no usable data (private repo, etc)
+  if (publicResult.kind === 'ok') return publicResult.releases
+  if (publicResult.kind === 'rate-limited') return null
+
+  // not-found or error — try gh CLI
   logInfo('[github-update] Falling back to gh CLI')
   return fetchReleasesGhCli()
 }
@@ -327,14 +367,21 @@ export async function checkGitHubRelease(): Promise<ReleaseInfo | null> {
     a.name.endsWith(INSTALLER_EXT) && a.name.startsWith('ClaudeCommandCenter-')
   )
 
-  logInfo(`[github-update] Update available: v${best.version} (tag: ${best.tag}, channel: ${best.channel}, installer: ${installer?.name || 'none'})`)
+  // If there's no installer for the current platform, don't offer the update.
+  // Otherwise the user would see "update available" but clicking Install fails.
+  if (!installer) {
+    logInfo(`[github-update] Skipping v${best.version} (tag: ${best.tag}) — no ${INSTALLER_EXT} asset for current platform`)
+    return null
+  }
+
+  logInfo(`[github-update] Update available: v${best.version} (tag: ${best.tag}, channel: ${best.channel}, installer: ${installer.name})`)
 
   return {
     version: best.version,
     tagName: best.tag,
     channel: best.channel,
-    installerUrl: installer?.browser_download_url || installer?.url || null,
-    installerName: installer?.name || null,
+    installerUrl: installer.browser_download_url || installer.url || null,
+    installerName: installer.name,
   }
 }
 
@@ -382,17 +429,38 @@ function httpsDownload(url: string, destPath: string, timeoutMs = 300000): Promi
     const doRequest = (reqUrl: string, hopsLeft: number) => {
       if (settled) return
       if (hopsLeft <= 0) { fail(new Error('too many redirects')); return }
+      // Validate that the URL we're about to fetch is HTTPS. Prevents downgrade
+      // to plaintext http:// and rejects anything exotic (ftp:, file:, etc).
+      let parsedUrl: URL
+      try {
+        parsedUrl = new URL(reqUrl)
+      } catch {
+        fail(new Error(`invalid URL: ${reqUrl}`))
+        return
+      }
+      if (parsedUrl.protocol !== 'https:') {
+        fail(new Error(`refusing non-HTTPS URL: ${parsedUrl.protocol}`))
+        return
+      }
       try {
         activeReq = https.get(reqUrl, {
           headers: { 'User-Agent': 'claude-command-center-updater' },
           timeout: timeoutMs,
         }, (res) => {
           if (settled) { res.resume(); return }
-          // Follow redirects
+          // Follow redirects — resolve against the current URL so relative
+          // Location headers work, and re-validate the protocol on each hop.
           if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
             res.resume()
             activeReq = null
-            doRequest(res.headers.location, hopsLeft - 1)
+            let nextUrl: string
+            try {
+              nextUrl = new URL(res.headers.location, reqUrl).toString()
+            } catch {
+              fail(new Error(`invalid redirect Location: ${res.headers.location}`))
+              return
+            }
+            doRequest(nextUrl, hopsLeft - 1)
             return
           }
           if (res.statusCode !== 200) {

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import WhatsNewModal, { markWhatsNewSeen } from './WhatsNewModal'
 import TrainingWalkthrough from './TrainingWalkthrough'
 import { getLatestVersion } from '../changelog'
-import { useSettingsStore, DEFAULT_STATUS_LINE } from '../stores/settingsStore'
+import { useSettingsStore, DEFAULT_STATUS_LINE, UpdateChannel } from '../stores/settingsStore'
 import type { StatusLineSettings } from '../stores/settingsStore'
 import { eventToShortcutString, DEFAULT_SHORTCUTS, SHORTCUT_LABELS } from '../utils/shortcuts'
 declare const __BUILD_TIME__: string
@@ -121,7 +121,7 @@ export default function SettingsPage() {
                 <Field label="Update Channel">
                   <select
                     value={settings.updateChannel}
-                    onChange={(e) => save({ updateChannel: e.target.value as 'stable' | 'beta' | 'dev' })}
+                    onChange={(e) => save({ updateChannel: e.target.value as UpdateChannel })}
                     className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-full focus:outline-none focus:border-blue/50 transition-colors"
                   >
                     <option value="stable">Stable — production releases only</option>

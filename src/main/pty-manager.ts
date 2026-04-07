@@ -478,7 +478,44 @@ function writeChunked(ptyProcess: pty.IPty, data: string): void {
   writeNext()
 }
 
+// Track recent SUBMITTED writes per session to detect + suppress accidental double-sends.
+// A prompt being submitted twice causes two Claude API calls and can trigger rate limits.
+//
+// Only writes that end in \r or \n are considered — those are "submitted" payloads:
+//   - Command button clicks (`fullCommand + '\r'`)
+//   - Screenshot path sends (`path + '\r'`)
+//   - Storyboard line-by-line output
+//   - Right-click paste of multi-line text
+//
+// Individual keystrokes and escape sequences (arrow keys, function keys, Unicode chars,
+// ANSI sequences) do NOT end in \r and pass through unchanged — so terminal navigation,
+// rapid typing, and non-Latin input work normally.
+const DEDUPE_WINDOW_MS = 300
+const recentWrites = new Map<string, { data: string; ts: number }>()
+
+function isSubmittedPayload(data: string): boolean {
+  // Multi-byte payload that ends in \r or \n — treat as an atomic "submit"
+  if (data.length < 2) return false
+  const last = data.charCodeAt(data.length - 1)
+  return last === 13 /* \r */ || last === 10 /* \n */
+}
+
 export function writePty(sessionId: string, data: string): void {
+  // Dedupe guard: suppress identical repeats of submitted payloads within a short window.
+  // This protects against double-sends from double-clicks, React effect races, event
+  // listeners firing twice, etc. Only applies to "submitted" writes (ending in \r or \n)
+  // so keystrokes and escape sequences are never blocked.
+  if (isSubmittedPayload(data)) {
+    const recent = recentWrites.get(sessionId)
+    const now = Date.now()
+    if (recent && recent.data === data && (now - recent.ts) < DEDUPE_WINDOW_MS) {
+      const preview = data.length > 60 ? data.slice(0, 60) + '...' : data
+      logError(`[pty] DUPLICATE SUBMIT SUPPRESSED for ${sessionId} (${now - recent.ts}ms apart, ${data.length} bytes): ${JSON.stringify(preview)}`)
+      return
+    }
+    recentWrites.set(sessionId, { data, ts: now })
+  }
+
   try {
     const session = ptySessions.get(sessionId)
     if (session) {
@@ -528,6 +565,7 @@ export function killPty(sessionId: string): void {
     ptySessions.delete(sessionId)
   }
   pendingWrites.delete(sessionId)
+  recentWrites.delete(sessionId)
 }
 
 export function killAllPty(): void {

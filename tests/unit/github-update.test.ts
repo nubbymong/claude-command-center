@@ -1,24 +1,48 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
 // ── Mock https.get ──────────────────────────────────────────────────────
-type MockResponse = { statusCode: number; body?: unknown; headers?: Record<string, string> }
+// Supports:
+//   1. JSON responses (used by fetchReleasesPublic) — set httpsState.nextResponse
+//   2. Multiple sequential responses for redirect chains — set httpsState.responses
+//   3. Streaming download (pipes body bytes into a write stream) — set .bodyBuffer
+type MockResponse = {
+  statusCode: number
+  body?: unknown              // JSON body (stringified + emitted as data event)
+  bodyBuffer?: Buffer         // Raw buffer for streaming downloads
+  headers?: Record<string, string>
+}
 const httpsState = vi.hoisted(() => ({
   nextResponse: { statusCode: 200, body: [] } as MockResponse,
+  responses: [] as MockResponse[],   // When non-empty, used per-call in order
+  callUrls: [] as string[],          // Track URLs that were requested
 }))
 
 vi.mock('https', () => {
   const { EventEmitter: EE } = require('events')
-  const get = (_url: string, opts: any, cb?: any) => {
+  const get = (url: string, opts: any, cb?: any) => {
     const callback = typeof opts === 'function' ? opts : cb
+    httpsState.callUrls.push(url)
+    const resp = httpsState.responses.length > 0
+      ? httpsState.responses.shift()!
+      : httpsState.nextResponse
     const res = new EE()
-    res.statusCode = httpsState.nextResponse.statusCode
-    res.headers = httpsState.nextResponse.headers || {}
+    res.statusCode = resp.statusCode
+    res.headers = resp.headers || {}
     res.resume = () => {}
-    res.pipe = (stream: any) => stream
+    res.pipe = (stream: any) => {
+      // Simulate streaming bytes from response into the write stream
+      setImmediate(() => {
+        if (resp.bodyBuffer) {
+          stream.write?.(resp.bodyBuffer)
+        }
+        stream.emit?.('finish')
+      })
+      return stream
+    }
     setImmediate(() => {
       callback(res)
-      if (httpsState.nextResponse.body !== undefined && httpsState.nextResponse.body !== null) {
-        res.emit('data', Buffer.from(JSON.stringify(httpsState.nextResponse.body)))
+      if (resp.body !== undefined && resp.body !== null && !resp.bodyBuffer) {
+        res.emit('data', Buffer.from(JSON.stringify(resp.body)))
       }
       res.emit('end')
     })
@@ -54,16 +78,34 @@ vi.mock('util', async () => {
 })
 
 // ── Mock fs ─────────────────────────────────────────────────────────────
+// Download tests need a working createWriteStream that emits 'finish' after
+// piped data, plus a rename that actually makes existsSync return true for destPath.
 const mockExistsSync = vi.fn(() => true)
-vi.mock('fs', () => ({
-  existsSync: (...a: any[]) => mockExistsSync(...a),
-  readFileSync: vi.fn(),
-  writeFileSync: vi.fn(),
-  mkdirSync: vi.fn(),
-  createWriteStream: vi.fn(),
-  unlinkSync: vi.fn(),
-  renameSync: vi.fn(),
-}))
+const mockRenameSync = vi.fn()
+const mockUnlinkSync = vi.fn()
+const mockCreateWriteStream = vi.fn()
+vi.mock('fs', () => {
+  const { EventEmitter: EE } = require('events')
+  return {
+    existsSync: (...a: any[]) => mockExistsSync(...a),
+    readFileSync: vi.fn(),
+    writeFileSync: vi.fn(),
+    mkdirSync: vi.fn(),
+    createWriteStream: (path: string) => {
+      mockCreateWriteStream(path)
+      const stream = new EE() as any
+      stream.closed = false
+      stream.write = vi.fn()
+      stream.close = (cb?: () => void) => {
+        stream.closed = true
+        if (cb) cb()
+      }
+      return stream
+    },
+    unlinkSync: (...a: any[]) => mockUnlinkSync(...a),
+    renameSync: (...a: any[]) => mockRenameSync(...a),
+  }
+})
 
 // ── Mock registry ──────────────────────────────────────────────────────
 const { mockReadRegistry } = vi.hoisted(() => ({ mockReadRegistry: vi.fn(() => null as string | null) }))
@@ -93,14 +135,17 @@ vi.mock('../../src/main/debug-logger', () => ({
   logError: vi.fn(),
 }))
 
-import { checkGitHubRelease } from '../../src/main/github-update'
+import { checkGitHubRelease, downloadGitHubRelease } from '../../src/main/github-update'
 
 describe('github-update', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     httpsState.nextResponse = { statusCode: 200, body: [] }
+    httpsState.responses = []
+    httpsState.callUrls = []
     currentChannel = 'stable'
     mockReadRegistry.mockReturnValue(null)
+    mockExistsSync.mockReturnValue(true)
   })
 
   describe('channel matching', () => {
@@ -276,8 +321,9 @@ describe('github-update', () => {
       expect(result!.installerUrl).toBe(isMac ? 'https://x/mac.dmg' : 'https://x/win.exe')
     })
 
-    it('returns null installerUrl/name when no matching asset', async () => {
-      httpsState.nextResponse ={
+    it('returns null entirely when no installer asset exists for this platform', async () => {
+      // No matching asset — we must not offer an update the user cannot install
+      httpsState.nextResponse = {
         statusCode: 200,
         body: [
           { tag_name: 'v1.2.125', draft: false, prerelease: false, assets: [
@@ -286,9 +332,7 @@ describe('github-update', () => {
         ],
       }
       const result = await checkGitHubRelease()
-      expect(result).not.toBeNull()
-      expect(result!.installerName).toBeNull()
-      expect(result!.installerUrl).toBeNull()
+      expect(result).toBeNull()
     })
   })
 
@@ -348,6 +392,112 @@ describe('github-update', () => {
       const result = await checkGitHubRelease()
       expect(result).not.toBeNull()
       expect(result!.tagName).toBe('v1.2.125')
+    })
+  })
+
+  describe('rate limit handling', () => {
+    it('gives up and does NOT fall back to gh CLI when API rate-limited (403 with x-ratelimit-remaining: 0)', async () => {
+      httpsState.nextResponse = {
+        statusCode: 403,
+        headers: {
+          'x-ratelimit-remaining': '0',
+          'x-ratelimit-reset': String(Math.floor(Date.now() / 1000) + 3600),
+        },
+      }
+      const result = await checkGitHubRelease()
+      expect(result).toBeNull()
+      // Crucial: gh CLI should NOT have been called — it wouldn't help with a public API rate limit
+      expect(mockExecFile).not.toHaveBeenCalled()
+    })
+
+    it('falls back to gh CLI on 403 without rate-limit header', async () => {
+      httpsState.nextResponse = { statusCode: 403, body: null as any }
+      mockExecFile.mockImplementation((_cmd: string, _args: string[], _opts: any, cb: any) => {
+        cb(null, JSON.stringify([
+          { tagName: 'v1.2.125', isPrerelease: false, isDraft: false, assets: [
+            { name: 'ClaudeCommandCenter-Beta-1.2.125.exe', url: 'https://x/y.exe', size: 100 },
+            { name: 'ClaudeCommandCenter-Beta-1.2.125-mac.dmg', url: 'https://x/y.dmg', size: 100 },
+          ] },
+        ]), '')
+      })
+      const result = await checkGitHubRelease()
+      expect(result).not.toBeNull()
+      expect(mockExecFile).toHaveBeenCalled()
+    })
+  })
+
+  describe('downloadGitHubRelease', () => {
+    it('downloads via direct HTTPS when directUrl is provided', async () => {
+      httpsState.nextResponse = {
+        statusCode: 200,
+        bodyBuffer: Buffer.from('fake installer bytes'),
+      }
+      const result = await downloadGitHubRelease('v1.2.125', 'ClaudeCommandCenter-Beta-1.2.125.exe', 'https://x/y.exe')
+      expect(result).not.toBeNull()
+      expect(result).toContain('ClaudeCommandCenter-Beta-1.2.125.exe')
+      // gh CLI should NOT have been called since direct download succeeded
+      expect(mockExecFile).not.toHaveBeenCalled()
+    })
+
+    it('follows HTTPS redirects during download', async () => {
+      // First response: 302 redirect
+      // Second response: 200 with the body
+      httpsState.responses = [
+        { statusCode: 302, headers: { location: 'https://cdn.example.com/real-file.exe' } },
+        { statusCode: 200, bodyBuffer: Buffer.from('final bytes') },
+      ]
+      const result = await downloadGitHubRelease('v1.2.125', 'ClaudeCommandCenter-Beta-1.2.125.exe', 'https://x/redirect.exe')
+      expect(result).not.toBeNull()
+      // Both URLs should have been called in order
+      expect(httpsState.callUrls).toHaveLength(2)
+      expect(httpsState.callUrls[0]).toBe('https://x/redirect.exe')
+      expect(httpsState.callUrls[1]).toBe('https://cdn.example.com/real-file.exe')
+    })
+
+    it('refuses non-HTTPS redirect (security)', async () => {
+      httpsState.responses = [
+        { statusCode: 302, headers: { location: 'http://malicious.example.com/file.exe' } },
+      ]
+      // Direct download fails due to unsafe redirect, then falls back to gh CLI
+      mockExistsSync.mockReturnValue(false)
+      mockExecFile.mockImplementation((_cmd: string, _args: string[], _opts: any, cb: any) => {
+        cb(new Error('gh not available'), '', '')
+      })
+      const result = await downloadGitHubRelease('v1.2.125', 'ClaudeCommandCenter-Beta-1.2.125.exe', 'https://x/redirect.exe')
+      expect(result).toBeNull()
+    })
+
+    it('resolves relative redirect against the source URL', async () => {
+      httpsState.responses = [
+        { statusCode: 302, headers: { location: '/assets/real-file.exe' } },
+        { statusCode: 200, bodyBuffer: Buffer.from('final bytes') },
+      ]
+      const result = await downloadGitHubRelease('v1.2.125', 'ClaudeCommandCenter-Beta-1.2.125.exe', 'https://origin.example.com/redirect.exe')
+      expect(result).not.toBeNull()
+      expect(httpsState.callUrls[1]).toBe('https://origin.example.com/assets/real-file.exe')
+    })
+
+    it('falls back to gh CLI when direct download fails (no directUrl)', async () => {
+      mockExecFile.mockImplementation((_cmd: string, _args: string[], _opts: any, cb: any) => {
+        cb(null, '', '')  // gh exits cleanly
+      })
+      mockExistsSync.mockReturnValue(true)
+      const result = await downloadGitHubRelease('v1.2.125', 'ClaudeCommandCenter-Beta-1.2.125.exe', null)
+      expect(result).not.toBeNull()
+      expect(mockExecFile).toHaveBeenCalled()
+      expect(mockExecFile.mock.calls[0][0]).toBe('gh')
+      // Verify args are an array — no shell string interpolation
+      expect(Array.isArray(mockExecFile.mock.calls[0][1])).toBe(true)
+    })
+
+    it('returns null when both direct download and gh CLI fail', async () => {
+      httpsState.nextResponse = { statusCode: 500, body: null as any }
+      mockExistsSync.mockReturnValue(false)
+      mockExecFile.mockImplementation((_cmd: string, _args: string[], _opts: any, cb: any) => {
+        cb(new Error('gh: command not found'), '', '')
+      })
+      const result = await downloadGitHubRelease('v1.2.125', 'ClaudeCommandCenter-Beta-1.2.125.exe', 'https://x/y.exe')
+      expect(result).toBeNull()
     })
   })
 })
