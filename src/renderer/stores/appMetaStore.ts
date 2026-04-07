@@ -7,6 +7,8 @@ export interface AppMeta {
   lastTrainingVersion?: string
   commandsSeeded?: boolean
   colorMigrated?: boolean
+  hasCreatedFirstConfig?: boolean
+  firstRunCardDismissed?: boolean
 }
 
 interface AppMetaState {

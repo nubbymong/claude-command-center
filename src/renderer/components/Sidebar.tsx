@@ -23,6 +23,8 @@ import SessionSectionHeader from './sidebar/SessionSectionHeader'
 import SessionGroupHeader from './sidebar/SessionGroupHeader'
 import UpdatePanel from './sidebar/UpdatePanel'
 import PinnedConfigsPanel from './sidebar/PinnedConfigsPanel'
+import FirstRunCard from './FirstRunCard'
+import { useAppMetaStore } from '../stores/appMetaStore'
 
 // Inject keyframes for attention pulse animation (shared with TabBar)
 const ATTENTION_STYLES_ID = 'attention-pulse-styles'
@@ -55,11 +57,15 @@ interface Props {
   onUpdateRequested?: () => void
   collapsed?: boolean
   onShowHelp?: () => void
+  onShowFirstRun?: () => void
 }
 
-export default function Sidebar({ currentView, onViewChange, onUpdateRequested, collapsed, onShowHelp }: Props) {
+export default function Sidebar({ currentView, onViewChange, onUpdateRequested, collapsed, onShowHelp, onShowFirstRun }: Props) {
   const { sessions, activeSessionId, setActiveSession, removeSession, addSession, updateSession } = useSessionStore()
   const { configs, groups, sections, addConfig, updateConfig, removeConfig, addGroup, renameGroup, removeGroup, toggleGroupCollapsed, moveConfigToGroup, addSection, renameSection, removeSection, toggleSectionCollapsed, moveGroupToSection, moveConfigToSection, togglePinned, duplicateConfig, reorderConfigs } = useConfigStore()
+  const appMeta = useAppMetaStore((s) => s.meta)
+  const updateAppMeta = useAppMetaStore((s) => s.update)
+  const showFirstRunCard = configs.length === 0 && !appMeta.hasCreatedFirstConfig && !appMeta.firstRunCardDismissed
   const insightsStatus = useInsightsStore((s) => s.status)
   const insightsMessage = useInsightsStore((s) => s.statusMessage)
   const cloudAgentRunning = useCloudAgentStore((s) => s.agents.filter(a => a.status === 'running' || a.status === 'pending').length)
@@ -887,7 +893,14 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
           }
         }}
       >
-        {sessions.length === 0 && (
+        {showFirstRunCard && onShowFirstRun && (
+          <FirstRunCard
+            onGetStarted={onShowFirstRun}
+            onDismiss={() => updateAppMeta({ firstRunCardDismissed: true })}
+          />
+        )}
+
+        {sessions.length === 0 && !showFirstRunCard && (
           <div className="text-xs text-overlay0 text-center py-4">
             No active sessions.
           </div>
