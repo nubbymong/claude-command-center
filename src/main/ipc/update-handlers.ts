@@ -94,21 +94,26 @@ export function registerUpdateHandlers(): void {
     }
 
     // 3. Dev-only fallback: look for a locally-built installer in the source folder.
-    // Checks both a `-latest` convention file and a versioned file, in both repo root
-    // and `dist/`, using the correct extension for the current platform.
+    // Uses the same naming convention as electron-builder's `artifactName`:
+    //   Windows: ClaudeCommandCenter-Beta-${version}.exe
+    //   macOS:   ClaudeCommandCenter-Beta-${version}-mac.dmg
+    // Checks both a `-latest` convenience file and the versioned file, in both
+    // repo root and `dist/`.
     if (!installerPath && !isPackagedApp()) {
       const projectRoot = getProjectRootPath()
       if (projectRoot) {
-        const ext = process.platform === 'darwin' ? '.dmg' : '.exe'
+        const isMac = process.platform === 'darwin'
+        const ext = isMac ? '.dmg' : '.exe'
+        const macSuffix = isMac ? '-mac' : ''
         const candidates: string[] = [
-          path.join(projectRoot, `ClaudeCommandCenter-latest${ext}`),
-          path.join(projectRoot, 'dist', `ClaudeCommandCenter-latest${ext}`),
+          path.join(projectRoot, `ClaudeCommandCenter-latest${macSuffix}${ext}`),
+          path.join(projectRoot, 'dist', `ClaudeCommandCenter-latest${macSuffix}${ext}`),
         ]
         try {
           const pkg = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf-8'))
           candidates.push(
-            path.join(projectRoot, `ClaudeCommandCenter-Beta-${pkg.version}${ext}`),
-            path.join(projectRoot, 'dist', `ClaudeCommandCenter-Beta-${pkg.version}${ext}`),
+            path.join(projectRoot, `ClaudeCommandCenter-Beta-${pkg.version}${macSuffix}${ext}`),
+            path.join(projectRoot, 'dist', `ClaudeCommandCenter-Beta-${pkg.version}${macSuffix}${ext}`),
           )
         } catch { /* fall through */ }
 

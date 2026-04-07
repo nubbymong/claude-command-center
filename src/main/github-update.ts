@@ -476,6 +476,12 @@ function httpsDownload(url: string, destPath: string, timeoutMs = 300000): Promi
             activeReq = null
             file.close(() => {
               try {
+                // On Windows, renameSync fails if the destination already exists.
+                // Remove any stale file (e.g. from a previous failed install attempt)
+                // before the rename so retries work reliably on every platform.
+                if (fs.existsSync(destPath)) {
+                  try { fs.unlinkSync(destPath) } catch { /* non-fatal */ }
+                }
                 fs.renameSync(tmpPath, destPath)
                 resolve(true)
               } catch (err) {

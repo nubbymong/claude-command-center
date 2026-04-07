@@ -484,6 +484,20 @@ describe('github-update', () => {
       expect(Array.isArray(mockExecFile.mock.calls[0][1])).toBe(true)
     })
 
+    it('removes stale destPath before rename (Windows retry safety)', async () => {
+      httpsState.nextResponse = {
+        statusCode: 200,
+        bodyBuffer: Buffer.from('fresh bytes'),
+      }
+      // Simulate that the destination file already exists from a previous attempt
+      mockExistsSync.mockReturnValue(true)
+      const result = await downloadGitHubRelease('v1.2.125', 'ClaudeCommandCenter-Beta-1.2.125.exe', 'https://x/y.exe')
+      expect(result).not.toBeNull()
+      // unlink should have been called to remove the stale file before rename
+      expect(mockUnlinkSync).toHaveBeenCalled()
+      expect(mockRenameSync).toHaveBeenCalled()
+    })
+
     it('returns null when both direct download and gh CLI fail', async () => {
       httpsState.nextResponse = { statusCode: 500, body: null as any }
       mockExistsSync.mockReturnValue(false)
