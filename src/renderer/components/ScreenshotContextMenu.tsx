@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { getScreenshotPathForSession, formatTimestamp } from '../utils/screenshotPath'
+import { formatTimestamp } from '../utils/screenshotPath'
+import { sendStoryboardToSession } from '../utils/imageTransfer'
 
 interface ScreenshotEntry {
   filename: string
@@ -16,7 +17,7 @@ interface Props {
   onClose: () => void
 }
 
-export default function ScreenshotContextMenu({ x, y, sessionId, sessionType, onClose }: Props) {
+export default function ScreenshotContextMenu({ x, y, sessionId, sessionType: _sessionType, onClose }: Props) {
   const [screenshots, setScreenshots] = useState<ScreenshotEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -70,11 +71,12 @@ export default function ScreenshotContextMenu({ x, y, sessionId, sessionType, on
   const handleInsert = () => {
     const paths = screenshots
       .filter((s) => selected.has(s.filename))
-      .map((s) => getScreenshotPathForSession(s.path, sessionType))
+      .map((s) => s.path)
 
     if (paths.length > 0) {
-      const text = paths.join('\n') + '\r'
-      window.electronAPI.pty.write(sessionId, text)
+      // Both local and SSH sessions use the conductor MCP fetch_host_screenshot
+      // tool — Claude calls it once per filename to load each image inline.
+      sendStoryboardToSession(sessionId, paths, 'Please look at the following screenshots from my host machine.')
     }
     onClose()
   }

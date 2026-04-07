@@ -500,6 +500,38 @@ export function cleanupLegacyVisionMarkers(): void {
 
 // === Public API (global singleton) ===
 
+/** Default MCP port used when no visionGlobal config exists. */
+export const DEFAULT_MCP_PORT = 19333
+
+let conductorMcpPort: number = 0
+
+/**
+ * Start the Conductor MCP server independently of vision/browser config.
+ * This runs at app launch so the fetch_host_screenshot tool is always available
+ * for image transfer between the Conductor and Claude Code (local + SSH sessions).
+ *
+ * Vision/browser tools become available later when startGlobalVision is called.
+ * The MCP server uses a getter for the vision manager so tools can check at
+ * call time whether browser automation is available.
+ */
+export async function startConductorMcpServer(
+  preferredPort?: number
+): Promise<void> {
+  const port = preferredPort || DEFAULT_MCP_PORT
+  if (conductorMcpPort === port) {
+    logInfo(`[mcp] Conductor MCP server already running on port ${port}`)
+    return
+  }
+  await startMcpServer(port, () => globalManager)
+  conductorMcpPort = port
+  injectMcpSettings(port)
+  logInfo(`[mcp] Conductor MCP server started on port ${port} (vision: ${globalManager ? 'connected' : 'idle'})`)
+}
+
+export function getConductorMcpPort(): number {
+  return conductorMcpPort
+}
+
 export async function startGlobalVision(
   config: GlobalVisionConfig,
   getWindow: () => BrowserWindow | null
@@ -514,11 +546,13 @@ export async function startGlobalVision(
   await manager.start(getWindow)
   globalManager = manager
 
-  // Start MCP SSE server
-  await startMcpServer(config.mcpPort, manager)
-
-  // Inject MCP settings into Claude Code
-  injectMcpSettings(config.mcpPort)
+  // Ensure the MCP server is running on the configured port. If the conductor
+  // MCP was already started on a different port, restart it on the new port.
+  if (conductorMcpPort !== config.mcpPort) {
+    stopMcpServer()
+    conductorMcpPort = 0
+    await startConductorMcpServer(config.mcpPort)
+  }
 
   // Clean up any legacy CLAUDE.md markers
   cleanupLegacyVisionMarkers()
@@ -528,20 +562,31 @@ export async function startGlobalVision(
 
 export async function stopGlobalVision(): Promise<void> {
   if (globalManager) {
-    // Sync cleanup first (safe to run without await — critical for before-quit handler)
-    stopMcpServer()
-    removeMcpSettings()
-    // Async cleanup (CDP disconnect)
+    // Async cleanup (CDP disconnect). MCP server stays running so the
+    // fetch_host_screenshot tool remains available for image transfer.
     await globalManager.stop()
     globalManager = null
-    logInfo('[vision] Global vision stopped')
+    logInfo('[vision] Browser automation stopped (MCP server continues running)')
   }
   globalConfig = null
 }
 
+/**
+ * Fully shut down the Conductor MCP server. Called only at app quit.
+ */
+export function stopConductorMcpServer(): void {
+  if (conductorMcpPort !== 0) {
+    stopMcpServer()
+    removeMcpSettings()
+    conductorMcpPort = 0
+    logInfo('[mcp] Conductor MCP server stopped')
+  }
+}
+
 export function getGlobalVisionStatus(): { running: boolean; connected: boolean; browser: string; mcpPort: number } {
   if (!globalManager || !globalConfig) {
-    return { running: false, connected: false, browser: 'chrome', mcpPort: 0 }
+    // Even with no browser connected, the MCP server may still be running
+    return { running: false, connected: false, browser: 'chrome', mcpPort: conductorMcpPort }
   }
   return {
     running: true,

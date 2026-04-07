@@ -362,8 +362,8 @@ const electronAPI: ElectronAPI = {
     },
   },
   serviceStatus: {
-    onUpdate: (callback: (data: { status: string; description: string }) => void) => {
-      const handler = (_: unknown, data: { status: string; description: string }) => callback(data)
+    onUpdate: (callback: (data: any) => void) => {
+      const handler = (_: unknown, data: any) => callback(data)
       ipcRenderer.on(IPC.SERVICE_STATUS, handler)
       return () => ipcRenderer.removeListener(IPC.SERVICE_STATUS, handler)
     }

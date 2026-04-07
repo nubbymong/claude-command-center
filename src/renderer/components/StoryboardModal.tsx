@@ -47,27 +47,31 @@ export default function StoryboardModal({ frames, sessionId, sessionType, onSend
     const included = frameData.filter((f) => f.included)
     if (included.length === 0) return
 
+    // Use the conductor-vision MCP fetch_host_screenshot tool for both local
+    // and SSH sessions — Claude calls the tool once per filename to view each
+    // frame inline. SSH sessions reach the MCP via the existing reverse tunnel.
+    const basename = (p: string): string => {
+      const normalized = p.replace(/\\/g, '/')
+      return normalized.split('/').pop() || p
+    }
+
     const lines: string[] = []
     if (context.trim()) {
       lines.push(context.trim())
       lines.push('')
     }
+    lines.push(`Please review the following ${included.length} storyboard frame(s) in order. For each frame, call mcp__conductor-vision__fetch_host_screenshot with the filename to load it.`)
+    lines.push('')
 
     included.forEach((frame, i) => {
+      const filename = basename(frame.path)
       const label = `Frame ${i + 1} of ${included.length}`
       if (frame.annotation.trim()) {
         lines.push(`${label}: ${frame.annotation.trim()}`)
       } else {
         lines.push(label)
       }
-      // Convert path for SSH sessions
-      let filePath = frame.path
-      if (sessionType === 'ssh') {
-        const normalized = filePath.replace(/\\/g, '/')
-        const filename = normalized.split('/').pop() || filePath
-        filePath = `/mnt/resources/SCREENSHOTS/${filename}`
-      }
-      lines.push(filePath)
+      lines.push(`filename: ${filename}`)
       lines.push('')
     })
 

@@ -15,6 +15,22 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '1.2.163',
+    date: '2026-04-08',
+    highlights: "SSH statusline + unified MCP image transport + dual service status indicator",
+    changes: [
+      { type: 'fix', description: "SSH statusline now updates: a tiny shim deployed to the remote ~/.claude emits an OSC sentinel via /dev/tty that the host parses out of the PTY stream (no SMB mount needed)" },
+      { type: 'feature', description: "Image paste, snap, and storyboard now work in BOTH local and SSH sessions via the conductor-vision MCP fetch_host_screenshot tool — one unified code path, no path-vs-base64 hacks" },
+      { type: 'feature', description: "vision_screenshot returns inline image content directly — no second Read tool call needed to view the captured browser screenshot" },
+      { type: 'feature', description: "Conductor MCP server now starts at app launch independent of browser/vision config so fetch_host_screenshot is always available" },
+      { type: 'feature', description: "Title bar service status redesigned: separate Claude Code + Claude.ai pills with colored dots, plus API status surfacing only when degraded" },
+      { type: 'fix', description: "'Got it' tip button now actually clears the tip pill from the session header (markTipActed clears currentTipId)" },
+      { type: 'fix', description: "Snap, storyboard, and clipboard image resize now preserve aspect ratio — was previously distorting non-square images by passing both width and height to nativeImage.resize()" },
+      { type: 'improvement', description: "All screenshot capture sites cap longest edge to 1920px and use JPEG q85 (q78 for storyboard frames) to reduce token cost" },
+      { type: 'improvement', description: "Clipboard paste regression fixed — was sending raw base64 to the PTY, now uses saveImage path through the MCP fetch tool" },
+    ]
+  },
+  {
     version: '1.2.162',
     date: '2026-04-07',
     highlights: "Update system refactor: GitHub-only with stable/beta/dev channels + PTY dedupe",
