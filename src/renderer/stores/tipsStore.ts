@@ -136,7 +136,12 @@ export const useTipsStore = create<TipsState>((set, get) => ({
         tipsActed: { ...state.tracking.tipsActed, [tipId]: Date.now() },
       }
       saveConfigNow('usageTracking', tracking)
-      return { tracking }
+      // Acknowledged tips disappear from the pill for the rest of this session.
+      // They can come back in a future launch (unlike permanent dismiss).
+      return {
+        tracking,
+        currentTipId: state.currentTipId === tipId ? null : state.currentTipId,
+      }
     })
   },
 

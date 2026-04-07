@@ -140,7 +140,7 @@ export default function TipModal({ onClose, onNavigate }: Props) {
               </button>
             ) : (
               <button
-                onClick={onClose}
+                onClick={() => { markTipActed(tip.id); onClose() }}
                 className="px-4 py-1.5 bg-mauve hover:bg-pink text-base font-medium rounded text-sm transition-colors"
               >
                 Got it
