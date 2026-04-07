@@ -128,6 +128,16 @@ export default function SettingsPage() {
                     <option value="beta">Beta (pre-release builds)</option>
                   </select>
                 </Field>
+                <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer mt-3">
+                  <input
+                    type="checkbox"
+                    checked={settings.showTips}
+                    onChange={(e) => save({ showTips: e.target.checked })}
+                    className="rounded border-surface1"
+                  />
+                  Show intelligent tips
+                  <span className="text-[10px] text-overlay0">(Contextual feature discovery in session header)</span>
+                </label>
               </Section>
 
               <Section title="Security" icon={<path d="M8 2L3 5v4c0 3.5 2.1 6.4 5 7.5 2.9-1.1 5-4 5-7.5V5L8 2z" stroke="currentColor" strokeWidth="1.2" fill="none" />}>

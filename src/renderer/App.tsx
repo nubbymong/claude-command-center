@@ -18,6 +18,8 @@ import SetupDialog from './components/SetupDialog'
 import WhatsNewModal, { shouldShowWhatsNew, markWhatsNewSeen } from './components/WhatsNewModal'
 import TrainingWalkthrough, { shouldShowTraining, isFirstInstall } from './components/TrainingWalkthrough'
 import GuidedConfigView from './components/GuidedConfigView'
+import TipModal from './components/TipModal'
+import { useTipsStore, trackUsage } from './stores/tipsStore'
 import ErrorBoundary from './components/ErrorBoundary'
 import CloseDialog from './components/CloseDialog'
 import { useSessionStore, Session } from './stores/sessionStore'
@@ -45,7 +47,22 @@ declare const __APP_VERSION__: string
 
 export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true)
-  const [view, setView] = useState<ViewType>('sessions')
+  const [viewRaw, setViewRaw] = useState<ViewType>('sessions')
+  const view = viewRaw
+  const setView = (v: ViewType) => {
+    setViewRaw(v)
+    // Track view usage for the tips system
+    const map: Record<string, string> = {
+      'memory': 'memory.memory-page',
+      'tokenomics': 'tokenomics.dashboard',
+      'vision': 'vision.toggle-vision',
+      'insights': 'advanced.insights',
+      'logs': 'advanced.log-viewer',
+      'cloud-agents': 'agents.cloud-agent-dispatch',
+    }
+    const featureId = map[v]
+    if (featureId) trackUsage(featureId)
+  }
   const [setupComplete, setSetupComplete] = useState<boolean | null>(null)
   const [configLoaded, setConfigLoaded] = useState(false)
   const [needsCliSetup, setNeedsCliSetup] = useState(false)
@@ -56,6 +73,7 @@ export default function App() {
   const [showTraining, setShowTraining] = useState(false)
   const [showTrainingAll, setShowTrainingAll] = useState(false)
   const [showGuidedConfig, setShowGuidedConfig] = useState(false)
+  const [showTipModal, setShowTipModal] = useState(false)
   const [partnerActive, setPartnerActive] = useState<Set<string>>(new Set())
   const [showMachineNamePrompt, setShowMachineNamePrompt] = useState(false)
   const [machineNameInput, setMachineNameInput] = useState('')
@@ -165,6 +183,11 @@ export default function App() {
           else if (shouldShowTraining()) setShowTraining(true)
         }
       }, 500)
+
+      // Pick a tip for this session (one per app launch)
+      setTimeout(() => {
+        useTipsStore.getState().pickNextTip()
+      }, 2000)
     }
 
     postConfigInit()
@@ -323,7 +346,7 @@ export default function App() {
     return (
       <div className="flex-1 flex flex-col" style={{ display: view === 'sessions' ? 'flex' : 'none', minHeight: 0 }}>
         <TabBar />
-        <SessionHeader session={activeSession} isShowingPartner={partnerActive.has(activeSession.id)} sidebarCollapsed={!sidebarOpen} />
+        <SessionHeader session={activeSession} isShowingPartner={partnerActive.has(activeSession.id)} sidebarCollapsed={!sidebarOpen} onShowTip={() => setShowTipModal(true)} />
         {sessions.map((session) => {
           const isShowingPartner = partnerActive.has(session.id)
           const hasPartner = !!session.partnerTerminalPath
@@ -430,6 +453,7 @@ export default function App() {
     <ErrorBoundary>
       <div className="flex flex-col h-screen bg-base text-text">
         {showWhatsNew && <WhatsNewModal onClose={handleWhatsNewClose} />}
+        {showTipModal && <TipModal onClose={() => setShowTipModal(false)} onNavigate={(v) => setView(v)} />}
 
         {showMachineNamePrompt && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
@@ -521,6 +545,14 @@ export default function App() {
                   const newConfig = { ...configDraft, id: configId }
                   useConfigStore.getState().addConfig(newConfig)
                   useAppMetaStore.getState().update({ hasCreatedFirstConfig: true })
+
+                  // Track feature usage based on config fields set
+                  trackUsage('sessions.create-config')
+                  if (newConfig.sessionType === 'ssh') trackUsage('sessions.session-type')
+                  if (newConfig.flickerFree) trackUsage('sessions.flicker-free')
+                  if (newConfig.effortLevel) trackUsage('sessions.effort-level')
+                  if (newConfig.disableAutoMemory) trackUsage('sessions.disable-auto-memory')
+                  if (newConfig.powershellTool) trackUsage('sessions.powershell-tool')
 
                   const session: Session = {
                     id: generateId(),
