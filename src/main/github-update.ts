@@ -3,14 +3,16 @@
  *
  * Three update channels:
  *   - stable: only final releases (tags matching /^v\d+\.\d+\.\d+$/)
- *   - beta:   stable + pre-release betas (tags matching /^v\d+\.\d+\.\d+(-beta)?$/)
- *   - dev:    all releases including dev builds (any tag)
+ *   - beta:   stable + pre-release betas (e.g. /^v\d+\.\d+\.\d+-beta(?:\.\d+)?$/)
+ *   - dev:    stable + beta + dev (e.g. /^v\d+\.\d+\.\d+-(?:beta|dev)(?:\.\d+)?$/)
  *
  * Two ways to talk to GitHub:
  *   1. Public GitHub API — tried first (zero auth, works for public repos)
- *   2. `gh` CLI fallback — tried if the public call returns 404 (private repo)
+ *   2. `gh` CLI fallback — tried whenever the public API returns no usable
+ *      release data (e.g. private-repo 404/403, network error, empty list)
  *
- * Once the repo is public, step 2 is silently skipped. No code changes needed.
+ * Once the repo is public and the public API returns usable data, step 2
+ * is silently never called.
  *
  * Downloads use direct HTTPS (follows redirects) and `gh release download` as a fallback.
  */
@@ -19,16 +21,35 @@ import * as https from 'https'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
-import { execSync } from 'child_process'
+import { execFile } from 'child_process'
+import { promisify } from 'util'
 import { logInfo, logError } from './debug-logger'
 import { readConfig } from './config-manager'
 import { readRegistry } from './registry'
 
-const STDERR_NULL = process.platform === 'win32' ? '2>nul' : '2>/dev/null'
+const execFileAsync = promisify(execFile)
+
 const INSTALLER_EXT = process.platform === 'darwin' ? '.dmg' : '.exe'
 
 const DEFAULT_REPO = 'nubbymong/claude-command-center'
-const REPO = readRegistry('GitHubRepo') || DEFAULT_REPO
+
+/**
+ * Validate a GitHub `owner/repo` slug against a strict pattern.
+ * Prevents shell/argument injection if the value comes from the registry.
+ * Allowed: alphanumerics, dashes, underscores, dots; one slash separator.
+ */
+const REPO_PATTERN = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/
+
+function getRepo(): string {
+  const fromRegistry = readRegistry('GitHubRepo')
+  if (fromRegistry && REPO_PATTERN.test(fromRegistry)) return fromRegistry
+  if (fromRegistry) {
+    logError(`[github-update] Ignoring invalid GitHubRepo registry value: ${JSON.stringify(fromRegistry)}`)
+  }
+  return DEFAULT_REPO
+}
+
+const REPO = getRepo()
 
 export type UpdateChannel = 'stable' | 'beta' | 'dev'
 
@@ -160,17 +181,17 @@ async function fetchReleasesPublic(limit = 30): Promise<GitHubRelease[] | null> 
 
 async function fetchReleasesGhCli(limit = 30): Promise<GitHubRelease[] | null> {
   try {
-    const result = execSync(
-      `gh release list --repo ${REPO} --limit ${limit} --json tagName,isPrerelease,isDraft,assets ${STDERR_NULL}`,
+    const { stdout } = await execFileAsync(
+      'gh',
+      ['release', 'list', '--repo', REPO, '--limit', String(limit), '--json', 'tagName,isPrerelease,isDraft,assets'],
       { encoding: 'utf-8', timeout: 15000, windowsHide: true }
     )
-    const releases = JSON.parse(result) as Array<{
+    const releases = JSON.parse(stdout) as Array<{
       tagName: string
       isPrerelease: boolean
       isDraft: boolean
       assets: Array<{ name: string; url: string; size: number }>
     }>
-    // Normalize to GitHubRelease shape
     return releases.map((r) => ({
       tag_name: r.tagName,
       tagName: r.tagName,
@@ -253,56 +274,87 @@ export async function checkGitHubRelease(): Promise<ReleaseInfo | null> {
 
 /**
  * Download a file from a URL to a destination path, following redirects.
- * Returns true on success.
+ * Resolves true on success, false on any failure. Never throws or rejects.
+ *
+ * Robustness:
+ *  - Handles file-stream errors (permission, disk full, etc.) without crashing.
+ *  - Tracks a `settled` flag so we never resolve twice.
+ *  - Cleans up the .part file on every failure path.
+ *  - Aborts the active HTTP request when something fails mid-stream.
  */
 function httpsDownload(url: string, destPath: string, timeoutMs = 300000): Promise<boolean> {
   return new Promise((resolve) => {
     const tmpPath = destPath + '.part'
-    const file = fs.createWriteStream(tmpPath)
+    let file: fs.WriteStream
+    try {
+      file = fs.createWriteStream(tmpPath)
+    } catch (err) {
+      logError('[github-update] Failed to open .part file:', err)
+      resolve(false)
+      return
+    }
+
+    let settled = false
+    let activeReq: ReturnType<typeof https.get> | null = null
+
+    const cleanupTmp = () => { try { fs.unlinkSync(tmpPath) } catch {} }
+
+    const fail = (reason?: unknown) => {
+      if (settled) return
+      settled = true
+      if (reason !== undefined) logError('[github-update] Download error:', reason)
+      if (activeReq) { try { activeReq.destroy() } catch {}; activeReq = null }
+      const finish = () => { cleanupTmp(); resolve(false) }
+      if (file.closed) finish()
+      else file.close(() => finish())
+    }
+
+    file.on('error', (err) => fail(err))
 
     const doRequest = (reqUrl: string, hopsLeft: number) => {
-      if (hopsLeft <= 0) {
-        file.close(() => {
-          try { fs.unlinkSync(tmpPath) } catch {}
-          resolve(false)
+      if (settled) return
+      if (hopsLeft <= 0) { fail(new Error('too many redirects')); return }
+      try {
+        activeReq = https.get(reqUrl, {
+          headers: { 'User-Agent': 'claude-command-center-updater' },
+          timeout: timeoutMs,
+        }, (res) => {
+          if (settled) { res.resume(); return }
+          // Follow redirects
+          if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+            res.resume()
+            activeReq = null
+            doRequest(res.headers.location, hopsLeft - 1)
+            return
+          }
+          if (res.statusCode !== 200) {
+            res.resume()
+            fail(new Error(`HTTP ${res.statusCode}`))
+            return
+          }
+          res.on('error', (err) => fail(err))
+          res.pipe(file)
+          file.on('finish', () => {
+            if (settled) return
+            settled = true
+            activeReq = null
+            file.close(() => {
+              try {
+                fs.renameSync(tmpPath, destPath)
+                resolve(true)
+              } catch (err) {
+                logError('[github-update] rename failed:', err)
+                cleanupTmp()
+                resolve(false)
+              }
+            })
+          })
         })
-        return
+        activeReq.on('error', (err) => fail(err))
+        activeReq.on('timeout', () => { try { activeReq?.destroy(new Error('download timeout')) } catch {} })
+      } catch (err) {
+        fail(err)
       }
-      const req = https.get(reqUrl, {
-        headers: { 'User-Agent': 'claude-command-center-updater' },
-        timeout: timeoutMs,
-      }, (res) => {
-        // Follow redirects
-        if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-          res.resume()
-          doRequest(res.headers.location, hopsLeft - 1)
-          return
-        }
-        if (res.statusCode !== 200) {
-          res.resume()
-          file.close(() => {
-            try { fs.unlinkSync(tmpPath) } catch {}
-            logError(`[github-update] Download HTTP ${res.statusCode}`)
-            resolve(false)
-          })
-          return
-        }
-        res.pipe(file)
-        file.on('finish', () => {
-          file.close(() => {
-            try { fs.renameSync(tmpPath, destPath) } catch (err) { logError('[github-update] rename failed', err); resolve(false); return }
-            resolve(true)
-          })
-        })
-      })
-      req.on('error', (err) => {
-        file.close(() => {
-          try { fs.unlinkSync(tmpPath) } catch {}
-          logError('[github-update] Download error:', err)
-          resolve(false)
-        })
-      })
-      req.on('timeout', () => req.destroy(new Error('download timeout')))
     }
 
     doRequest(url, 5)
@@ -332,8 +384,9 @@ export async function downloadGitHubRelease(tagName: string, assetName: string, 
 
   // 2. Fall back to gh CLI (works for private repo)
   try {
-    execSync(
-      `gh release download ${tagName} --repo ${REPO} --pattern "${assetName}" --dir "${downloadsDir}" --clobber`,
+    await execFileAsync(
+      'gh',
+      ['release', 'download', tagName, '--repo', REPO, '--pattern', assetName, '--dir', downloadsDir, '--clobber'],
       { encoding: 'utf-8', timeout: 300000, windowsHide: true }
     )
     if (fs.existsSync(destPath)) {

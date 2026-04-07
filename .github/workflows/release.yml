@@ -10,7 +10,7 @@ on:
           - stable
           - beta
           - dev
-        default: beta
+        default: stable
       skip_vt:
         description: 'Skip VirusTotal scan'
         type: boolean
@@ -219,12 +219,24 @@ jobs:
 
           TITLE="${TAG}"
           case "$CHANNEL" in
-            stable) LABEL="**Stable Release**" ;;
-            beta)   LABEL="**Beta Release** (pre-release)" ;;
-            dev)    LABEL="**Dev Release** (experimental)" ;;
-            *)      LABEL="**${CHANNEL} Release**" ;;
+            stable)
+              RELEASE_NAME="Claude Command Center"
+              LABEL="**Stable Release**"
+              ;;
+            beta)
+              RELEASE_NAME="Claude Command Center Beta"
+              LABEL="**Beta Release** (pre-release)"
+              ;;
+            dev)
+              RELEASE_NAME="Claude Command Center Dev"
+              LABEL="**Dev Release** (experimental)"
+              ;;
+            *)
+              RELEASE_NAME="Claude Command Center ${CHANNEL}"
+              LABEL="**${CHANNEL} Release**"
+              ;;
           esac
-          BODY="## Claude Command Center Beta v${VERSION}\n\n${LABEL}\n\nSHA-256 checksums are in CHECKSUMS.txt attached to this release."
+          BODY="## ${RELEASE_NAME} v${VERSION}\n\n${LABEL}\n\nSHA-256 checksums are in CHECKSUMS.txt attached to this release."
 
           # Tag stable as latest release; beta and dev are pre-releases
           PRERELEASE_FLAG=""

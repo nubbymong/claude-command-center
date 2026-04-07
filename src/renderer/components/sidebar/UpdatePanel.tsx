@@ -35,11 +35,12 @@ function ChannelSelector({ onChannelChange }: { onChannelChange: () => void }) {
   const updateSettings = useSettingsStore((s) => s.updateSettings)
   const [open, setOpen] = React.useState(false)
 
-  const handlePick = (next: Channel) => {
-    updateSettings({ updateChannel: next })
+  const handlePick = async (next: Channel) => {
     setOpen(false)
-    // Re-check for updates on the new channel
-    setTimeout(onChannelChange, 100)
+    // Wait for the IPC save to complete before re-checking. Otherwise the
+    // main process can read the old channel from disk and return stale data.
+    await updateSettings({ updateChannel: next })
+    onChannelChange()
   }
 
   return (

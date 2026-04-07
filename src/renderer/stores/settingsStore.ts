@@ -43,7 +43,7 @@ interface SettingsState {
   settings: AppSettings
   isLoaded: boolean
   hydrate: (settings: AppSettings) => void
-  updateSettings: (updates: Partial<AppSettings>) => void
+  updateSettings: (updates: Partial<AppSettings>) => Promise<unknown>
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -67,10 +67,13 @@ export const useSettingsStore = create<SettingsState>((set) => ({
 
   hydrate: (settings) => set({ settings: { ...DEFAULT_SETTINGS, ...settings }, isLoaded: true }),
 
-  updateSettings: (updates) =>
+  updateSettings: (updates) => {
+    let savePromise: Promise<unknown> = Promise.resolve()
     set((state) => {
       const settings = { ...state.settings, ...updates }
-      saveConfigNow('settings', settings)
+      savePromise = saveConfigNow('settings', settings)
       return { settings }
     })
+    return savePromise
+  }
 }))
