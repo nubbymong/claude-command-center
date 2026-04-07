@@ -3,10 +3,14 @@ name: Release
 on:
   workflow_dispatch:
     inputs:
-      beta:
-        description: 'Beta release (pre-release tag)'
-        type: boolean
-        default: false
+      channel:
+        description: 'Release channel'
+        type: choice
+        options:
+          - stable
+          - beta
+          - dev
+        default: stable
       skip_vt:
         description: 'Skip VirusTotal scan'
         type: boolean
@@ -64,17 +68,18 @@ jobs:
         shell: bash
         run: |
           VERSION=$(node -e "console.log(require('./package.json').version)")
-          BETA="${{ inputs.beta }}"
-          if [ "$BETA" = "true" ]; then
-            TAG="v${VERSION}-beta"
-          else
-            TAG="v${VERSION}"
-          fi
+          CHANNEL="${{ inputs.channel }}"
+          case "$CHANNEL" in
+            beta) TAG="v${VERSION}-beta" ;;
+            dev)  TAG="v${VERSION}-dev"  ;;
+            *)    TAG="v${VERSION}"      ;;
+          esac
           INSTALLER="ClaudeCommandCenter-Beta-${VERSION}.exe"
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "channel=${CHANNEL}" >> $GITHUB_OUTPUT
           echo "installer=${INSTALLER}" >> $GITHUB_OUTPUT
-          echo "Building v${VERSION} (tag: ${TAG})"
+          echo "Building v${VERSION} (tag: ${TAG}, channel: ${CHANNEL})"
 
       - name: Build
         run: npm run build
@@ -210,18 +215,36 @@ jobs:
         run: |
           TAG="${{ needs.build-windows.outputs.tag }}"
           VERSION="${{ needs.build-windows.outputs.version }}"
-          BETA="${{ inputs.beta }}"
+          CHANNEL="${{ inputs.channel }}"
 
           TITLE="${TAG}"
-          BODY="## Claude Command Center Beta v${VERSION}"
-          if [ "$BETA" = "true" ]; then
-            BODY="${BODY}\n\n**Beta Release**"
-          else
-            BODY="${BODY}\n\n**Stable Release**"
-          fi
-          BODY="${BODY}\n\nSHA-256 checksums are in CHECKSUMS.txt attached to this release."
+          case "$CHANNEL" in
+            stable)
+              RELEASE_NAME="Claude Command Center"
+              LABEL="**Stable Release**"
+              ;;
+            beta)
+              RELEASE_NAME="Claude Command Center Beta"
+              LABEL="**Beta Release** (pre-release)"
+              ;;
+            dev)
+              RELEASE_NAME="Claude Command Center Dev"
+              LABEL="**Dev Release** (experimental)"
+              ;;
+            *)
+              RELEASE_NAME="Claude Command Center ${CHANNEL}"
+              LABEL="**${CHANNEL} Release**"
+              ;;
+          esac
+          BODY="## ${RELEASE_NAME} v${VERSION}\n\n${LABEL}\n\nSHA-256 checksums are in CHECKSUMS.txt attached to this release."
 
-          gh release create "${TAG}" \
+          # Tag stable as latest release; beta and dev are pre-releases
+          PRERELEASE_FLAG=""
+          if [ "$CHANNEL" != "stable" ]; then
+            PRERELEASE_FLAG="--prerelease"
+          fi
+
+          gh release create "${TAG}" $PRERELEASE_FLAG \
             --title "${TITLE}" \
             --notes "$(echo -e "${BODY}")" \
             artifacts/*
