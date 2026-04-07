@@ -137,6 +137,21 @@ vi.mock('../../src/main/debug-logger', () => ({
 
 import { checkGitHubRelease, downloadGitHubRelease } from '../../src/main/github-update'
 
+// Helper to build release fixtures with installers for BOTH platforms.
+// checkGitHubRelease now returns null if no matching asset exists for the
+// current platform, so every test fixture needs both .exe and .dmg assets.
+function releaseWithBothAssets(tagName: string, version: string, isPrerelease = false) {
+  return {
+    tag_name: tagName,
+    draft: false,
+    prerelease: isPrerelease,
+    assets: [
+      { name: `ClaudeCommandCenter-Beta-${version}.exe`, browser_download_url: `https://x/${version}.exe` },
+      { name: `ClaudeCommandCenter-Beta-${version}-mac.dmg`, browser_download_url: `https://x/${version}.dmg` },
+    ],
+  }
+}
+
 describe('github-update', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -151,15 +166,11 @@ describe('github-update', () => {
   describe('channel matching', () => {
     it('stable channel only sees vX.Y.Z tags', async () => {
       currentChannel = 'stable'
-      httpsState.nextResponse ={
+      httpsState.nextResponse = {
         statusCode: 200,
         body: [
-          { tag_name: 'v1.2.130-beta', draft: false, prerelease: true, assets: [
-            { name: 'ClaudeCommandCenter-Beta-1.2.130.exe', browser_download_url: 'https://x/y.exe' },
-          ] },
-          { tag_name: 'v1.2.125', draft: false, prerelease: false, assets: [
-            { name: 'ClaudeCommandCenter-Beta-1.2.125.exe', browser_download_url: 'https://x/y.exe' },
-          ] },
+          releaseWithBothAssets('v1.2.130-beta', '1.2.130', true),
+          releaseWithBothAssets('v1.2.125', '1.2.125'),
         ],
       }
       const result = await checkGitHubRelease()
@@ -170,15 +181,11 @@ describe('github-update', () => {
 
     it('beta channel sees both stable and beta tags', async () => {
       currentChannel = 'beta'
-      httpsState.nextResponse ={
+      httpsState.nextResponse = {
         statusCode: 200,
         body: [
-          { tag_name: 'v1.2.130-beta', draft: false, prerelease: true, assets: [
-            { name: 'ClaudeCommandCenter-Beta-1.2.130.exe', browser_download_url: 'https://x/y.exe' },
-          ] },
-          { tag_name: 'v1.2.125', draft: false, prerelease: false, assets: [
-            { name: 'ClaudeCommandCenter-Beta-1.2.125.exe', browser_download_url: 'https://x/y.exe' },
-          ] },
+          releaseWithBothAssets('v1.2.130-beta', '1.2.130', true),
+          releaseWithBothAssets('v1.2.125', '1.2.125'),
         ],
       }
       const result = await checkGitHubRelease()
@@ -189,18 +196,12 @@ describe('github-update', () => {
 
     it('dev channel sees stable, beta, and dev tags', async () => {
       currentChannel = 'dev'
-      httpsState.nextResponse ={
+      httpsState.nextResponse = {
         statusCode: 200,
         body: [
-          { tag_name: 'v1.2.140-dev', draft: false, prerelease: true, assets: [
-            { name: 'ClaudeCommandCenter-Beta-1.2.140.exe', browser_download_url: 'https://x/y.exe' },
-          ] },
-          { tag_name: 'v1.2.130-beta', draft: false, prerelease: true, assets: [
-            { name: 'ClaudeCommandCenter-Beta-1.2.130.exe', browser_download_url: 'https://x/y.exe' },
-          ] },
-          { tag_name: 'v1.2.125', draft: false, prerelease: false, assets: [
-            { name: 'ClaudeCommandCenter-Beta-1.2.125.exe', browser_download_url: 'https://x/y.exe' },
-          ] },
+          releaseWithBothAssets('v1.2.140-dev', '1.2.140', true),
+          releaseWithBothAssets('v1.2.130-beta', '1.2.130', true),
+          releaseWithBothAssets('v1.2.125', '1.2.125'),
         ],
       }
       const result = await checkGitHubRelease()
@@ -211,15 +212,11 @@ describe('github-update', () => {
 
     it('beta channel ignores dev tags', async () => {
       currentChannel = 'beta'
-      httpsState.nextResponse ={
+      httpsState.nextResponse = {
         statusCode: 200,
         body: [
-          { tag_name: 'v1.2.140-dev', draft: false, prerelease: true, assets: [
-            { name: 'ClaudeCommandCenter-Beta-1.2.140.exe', browser_download_url: 'https://x/y.exe' },
-          ] },
-          { tag_name: 'v1.2.130-beta', draft: false, prerelease: true, assets: [
-            { name: 'ClaudeCommandCenter-Beta-1.2.130.exe', browser_download_url: 'https://x/y.exe' },
-          ] },
+          releaseWithBothAssets('v1.2.140-dev', '1.2.140', true),
+          releaseWithBothAssets('v1.2.130-beta', '1.2.130', true),
         ],
       }
       const result = await checkGitHubRelease()
@@ -246,13 +243,9 @@ describe('github-update', () => {
   describe('public API path', () => {
     it('uses public API and does not invoke gh CLI when API returns data', async () => {
       currentChannel = 'stable'
-      httpsState.nextResponse ={
+      httpsState.nextResponse = {
         statusCode: 200,
-        body: [
-          { tag_name: 'v1.2.125', draft: false, prerelease: false, assets: [
-            { name: 'ClaudeCommandCenter-Beta-1.2.125.exe', browser_download_url: 'https://x/y.exe' },
-          ] },
-        ],
+        body: [releaseWithBothAssets('v1.2.125', '1.2.125')],
       }
       const result = await checkGitHubRelease()
       expect(result).not.toBeNull()
@@ -260,7 +253,7 @@ describe('github-update', () => {
     })
 
     it('returns null when up to date via public API', async () => {
-      httpsState.nextResponse ={
+      httpsState.nextResponse = {
         statusCode: 200,
         body: [
           { tag_name: 'v1.2.120', draft: false, prerelease: false, assets: [] },
@@ -271,11 +264,12 @@ describe('github-update', () => {
     })
 
     it('falls back to gh CLI when public API returns 404 (private repo)', async () => {
-      httpsState.nextResponse ={ statusCode: 404, body: null as any }
+      httpsState.nextResponse = { statusCode: 404, body: null as any }
       mockExecFile.mockImplementation((_cmd: string, _args: string[], _opts: any, cb: any) => {
         cb(null, JSON.stringify([
           { tagName: 'v1.2.125', isPrerelease: false, isDraft: false, assets: [
             { name: 'ClaudeCommandCenter-Beta-1.2.125.exe', url: 'https://x/y.exe', size: 100 },
+            { name: 'ClaudeCommandCenter-Beta-1.2.125-mac.dmg', url: 'https://x/y.dmg', size: 100 },
           ] },
         ]), '')
       })
@@ -289,7 +283,7 @@ describe('github-update', () => {
     })
 
     it('returns null when public API and gh CLI both fail', async () => {
-      httpsState.nextResponse ={ statusCode: 404, body: null as any }
+      httpsState.nextResponse = { statusCode: 404, body: null as any }
       mockExecFile.mockImplementation((_cmd: string, _args: string[], _opts: any, cb: any) => {
         cb(new Error('gh: command not found'), '', '')
       })
