@@ -23,13 +23,17 @@ export function saveConfigDebounced(key: string, data: unknown, delay = 300): vo
 /**
  * Save config immediately (no debouncing).
  * Use for explicit user actions like add/remove/rename.
+ *
+ * Returns a Promise that resolves when the IPC save has completed, so callers
+ * that need to read-after-write can `await` it. Existing fire-and-forget call
+ * sites can keep ignoring the return value.
  */
-export function saveConfigNow(key: string, data: unknown): void {
+export function saveConfigNow(key: string, data: unknown): Promise<unknown> {
   // Cancel any pending debounced save for this key
   const existing = timers.get(key)
   if (existing) {
     clearTimeout(existing)
     timers.delete(key)
   }
-  window.electronAPI.config.save(key, data)
+  return window.electronAPI.config.save(key, data)
 }
