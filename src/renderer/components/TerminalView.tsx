@@ -122,8 +122,13 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       terminalRef.current = term
       fitAddonRef.current = fitAddon
 
-      // Fit and spawn PTY
-      requestAnimationFrame(() => {
+      // Wait for custom fonts to load BEFORE computing cols/rows.
+      // xterm.js measures character width using the currently-loaded font.
+      // If we fit() before Cascadia Code loads, cols is computed against
+      // a fallback font with different metrics — result: Claude Code's TUI
+      // thinks it has N cols but xterm displays fewer, causing line wrap
+      // artifacts and text fragments on the right edge.
+      const fitAndSpawn = () => {
         if (disposed || !fitAddon || !term) return
         try { fitAddon.fit() } catch { /* ignore */ }
 
@@ -151,6 +156,13 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
           }
           window.electronAPI.pty.spawn(sessionId, { cwd, cols, rows, ssh, shellOnly, elevated, configId, configLabel, useResumePicker, legacyVersion, agentsConfig, flickerFree, powershellTool, effortLevel, disableAutoMemory })
         }
+      }
+
+      // Wait for custom fonts, then fit + spawn. document.fonts.ready resolves
+      // immediately if all fonts are already loaded, so no delay for subsequent sessions.
+      document.fonts.ready.then(() => {
+        // One more frame to let the browser apply the font to the terminal element
+        requestAnimationFrame(fitAndSpawn)
       })
 
       // Forward xterm keyboard input to PTY
