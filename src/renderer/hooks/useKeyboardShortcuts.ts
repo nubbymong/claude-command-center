@@ -3,6 +3,7 @@ import { useSessionStore } from '../stores/sessionStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { killSessionPty } from '../ptyTracker'
 import { matchesShortcut, DEFAULT_SHORTCUTS } from '../utils/shortcuts'
+import { sendImageToSession } from '../utils/imageTransfer'
 import type { ViewType } from '../types/views'
 
 /**
@@ -54,14 +55,15 @@ export function useKeyboardShortcuts(
         e.preventDefault()
         setSidebarOpen(prev => !prev)
       }
-      // Paste clipboard image
+      // Paste clipboard image — saves to host screenshots dir, then asks Claude
+      // to fetch it via the conductor-vision MCP server (works for local + SSH).
       if (matchesShortcut(e, shortcuts.pasteImage)) {
         e.preventDefault()
         const state = useSessionStore.getState()
         if (state.activeSessionId) {
-          const base64 = await window.electronAPI.clipboard.readImage()
-          if (base64) {
-            window.electronAPI.pty.write(state.activeSessionId, base64)
+          const filePath = await window.electronAPI.clipboard.saveImage()
+          if (filePath) {
+            sendImageToSession(state.activeSessionId, filePath, 'I just pasted an image — please view it.')
           }
         }
       }

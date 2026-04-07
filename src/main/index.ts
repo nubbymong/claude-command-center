@@ -33,7 +33,7 @@ import { initUpdateWatcher, stopUpdateWatcher, getProjectRootPath, isPackagedApp
 import { startUpdateServer, stopUpdateServer } from './update-server'
 import { saveSessionState, loadSessionState, clearSessionState, hasSavedSessionState, SessionState } from './session-state'
 import { getConfigDir, ensureConfigDir } from './config-manager'
-import { stopGlobalVision, startGlobalVision, cleanupLegacyVisionMarkers } from './vision-manager'
+import { stopGlobalVision, startGlobalVision, cleanupLegacyVisionMarkers, startConductorMcpServer, stopConductorMcpServer } from './vision-manager'
 import { readConfig } from './config-manager'
 import { loadCredential, saveCredential, deleteCredential } from './credential-store'
 import type { GlobalVisionConfig } from '../shared/types'
@@ -274,29 +274,33 @@ function createWindow(): void {
     return result.filePaths[0]
   })
 
-  // Clipboard image reading
+  // Constrain to longest-edge max while preserving aspect ratio.
+  // Passing both width and height to nativeImage.resize() distorts non-square images.
+  const constrainToMaxDim = (img: Electron.NativeImage, maxDim: number) => {
+    const size = img.getSize()
+    if (size.width <= maxDim && size.height <= maxDim) return img
+    if (size.width >= size.height) {
+      return img.resize({ width: maxDim, quality: 'good' as const })
+    }
+    return img.resize({ height: maxDim, quality: 'good' as const })
+  }
+
+  // Clipboard image reading (legacy — kept for compatibility, prefer saveImage)
   ipcMain.handle('clipboard:readImage', async () => {
     const img = clipboard.readImage()
     if (img.isEmpty()) return null
-    // Resize if too large, save as JPEG for smaller context usage
-    const size = img.getSize()
-    const maxDim = 1920
-    const resized = (size.width > maxDim || size.height > maxDim)
-      ? img.resize({ width: Math.min(size.width, maxDim), height: Math.min(size.height, maxDim) })
-      : img
+    const resized = constrainToMaxDim(img, 1920)
     return resized.toJPEG(85).toString('base64')
   })
 
-  // Save clipboard image to temp file and return the path
+  // Save clipboard image to a unique file in the host screenshots dir and return its
+  // bare filename so the renderer can use the conductor MCP fetch_host_screenshot tool.
+  // Returns { filename, path } so callers have both the bare name (for the MCP tool)
+  // and the absolute path (for local-only flows that bypass MCP).
   ipcMain.handle('clipboard:saveImage', async () => {
     const img = clipboard.readImage()
     if (img.isEmpty()) return null
-    // Resize large images to max 1920px and save as JPEG for smaller files
-    const size = img.getSize()
-    const maxDim = 1920
-    const resized = (size.width > maxDim || size.height > maxDim)
-      ? img.resize({ width: Math.min(size.width, maxDim), height: Math.min(size.height, maxDim) })
-      : img
+    const resized = constrainToMaxDim(img, 1920)
     const screenshotsDir = join(getResourcesDirectory(), 'screenshots')
     if (!existsSync(screenshotsDir)) mkdirSync(screenshotsDir, { recursive: true })
     const filename = `clipboard-${Date.now()}-${randomBytes(4).toString('hex')}.jpg`
@@ -492,9 +496,20 @@ if (!gotTheLock) {
     // Fetch model pricing in background (non-blocking)
     fetchModelPricing().catch(() => {})
 
-    // Clean up legacy CLAUDE.md vision markers and auto-start global vision if configured
+    // Clean up legacy CLAUDE.md vision markers
     cleanupLegacyVisionMarkers()
+
+    // Start the Conductor MCP server unconditionally so the fetch_host_screenshot
+    // tool is available for image transfer (snap, storyboard, clipboard paste)
+    // in BOTH local and SSH sessions, regardless of whether browser vision is enabled.
     const visionConfig = readConfig<GlobalVisionConfig>('visionGlobal')
+    const mcpPort = visionConfig?.mcpPort || 19333
+    startConductorMcpServer(mcpPort).catch(err => {
+      logError(`[main] Conductor MCP server startup failed: ${err?.message}`)
+    })
+
+    // Auto-start global vision (browser CDP) if configured. The MCP server is
+    // already running — startGlobalVision just attaches the browser manager.
     if (visionConfig?.enabled) {
       startGlobalVision(visionConfig, getWindow).catch(err => {
         logError(`[main] Vision auto-start failed: ${err?.message}`)
@@ -531,6 +546,7 @@ if (!gotTheLock) {
     disableDebugMode()
     closeAllLogs()
     stopGlobalVision()
+    stopConductorMcpServer()
     killAllAgents()
     killAllPty()
     closeDebugLogger()

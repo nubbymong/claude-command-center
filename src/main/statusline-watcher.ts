@@ -254,12 +254,35 @@ export function configureClaudeSettings(): void {
   fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2))
 }
 
+// SSH statusline dispatch — receives parsed status data from pty-manager's
+// OSC sentinel parser and feeds it through the same pipeline as the file watcher.
+let sshDispatchWindow: (() => BrowserWindow | null) | null = null
+
+/**
+ * Dispatch a parsed SSH statusline payload to the renderer + tokenomics.
+ * Called from pty-manager when an OSC sentinel is extracted from an SSH PTY stream.
+ */
+export function dispatchSSHStatuslineUpdate(json: string): void {
+  if (!sshDispatchWindow) return
+  try {
+    const data: StatuslineData = JSON.parse(json)
+    const win = sshDispatchWindow()
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('statusline:update', data)
+    }
+    handleStatuslineUpdate(data)
+  } catch { /* ignore malformed sentinel payloads */ }
+}
+
 /**
  * Watch the status directory for updates and send to the renderer.
  * Uses fs.watch for instant local notifications, plus a polling fallback
  * for remote/SMB writes that don't trigger ReadDirectoryChangesW on Windows.
  */
 export function startStatuslineWatcher(getWindow: () => BrowserWindow | null): () => void {
+  // Register the same window getter for SSH dispatch so OSC sentinels feed the renderer
+  sshDispatchWindow = getWindow
+
   const statusDir = getStatusDir()
   if (!fs.existsSync(statusDir)) {
     fs.mkdirSync(statusDir, { recursive: true })

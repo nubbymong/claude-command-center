@@ -32,6 +32,27 @@ function uniquePath(filename: string): string {
 }
 
 /**
+ * Resize a nativeImage so the longest edge is at most maxDim, preserving aspect ratio.
+ * Returns the original image if it already fits.
+ *
+ * Important: passing both width and height to nativeImage.resize() will distort
+ * non-square images. We compute one dimension from the ratio and pass only that.
+ */
+function constrainToMaxDim(img: ReturnType<typeof nativeImage.createFromBuffer>, maxDim: number) {
+  const size = img.getSize()
+  if (size.width <= maxDim && size.height <= maxDim) return img
+  if (size.width >= size.height) {
+    return img.resize({ width: maxDim, quality: 'good' as const })
+  } else {
+    return img.resize({ height: maxDim, quality: 'good' as const })
+  }
+}
+
+const SCREENSHOT_MAX_DIM = 1920
+const SCREENSHOT_JPEG_QUALITY = 85
+const STORYBOARD_JPEG_QUALITY = 78
+
+/**
  * Capture a rectangle region of the screen.
  * Minimizes the main window, shows a fullscreen overlay for selection,
  * captures the screen, crops to selection, saves to SCREENSHOTS_DIR.
@@ -125,7 +146,9 @@ async function _captureRectangleImpl(mainWindow: BrowserWindow): Promise<string 
 
         const filename = generateFilename()
         const filePath = uniquePath(filename)
-        writeFileSync(filePath, cropped.toJPEG(90))
+        // Cap longest edge to SCREENSHOT_MAX_DIM, preserving aspect ratio
+        const constrained = constrainToMaxDim(cropped, SCREENSHOT_MAX_DIM)
+        writeFileSync(filePath, constrained.toJPEG(SCREENSHOT_JPEG_QUALITY))
         resolve(filePath)
       } catch (err) {
         console.error('[screenshot] captureRectangle error:', err)
@@ -209,7 +232,9 @@ export async function captureWindow(sourceId: string): Promise<string | null> {
 
     const filename = generateFilename()
     const filePath = uniquePath(filename)
-    writeFileSync(filePath, source.thumbnail.toJPEG(90))
+    // Cap longest edge, preserving aspect ratio
+    const constrained = constrainToMaxDim(source.thumbnail, SCREENSHOT_MAX_DIM)
+    writeFileSync(filePath, constrained.toJPEG(SCREENSHOT_JPEG_QUALITY))
     return filePath
   } catch (err) {
     console.error('[screenshot] captureWindow error:', err)
@@ -408,7 +433,10 @@ export async function captureStoryboardFrame(): Promise<string | null> {
     const padded = String(storyboardCounter).padStart(3, '0')
     const dir = getScreenshotsDir()
     const filePath = join(dir, `storyboard-${padded}.jpg`)
-    writeFileSync(filePath, cropped.toJPEG(80))
+    // Cap longest edge, preserving aspect ratio (storyboard frames also benefit
+    // from compression since they're often captured every 1-3 seconds).
+    const constrained = constrainToMaxDim(cropped, SCREENSHOT_MAX_DIM)
+    writeFileSync(filePath, constrained.toJPEG(STORYBOARD_JPEG_QUALITY))
     storyboardFrames.push(filePath)
     return filePath
   } catch (err) {
