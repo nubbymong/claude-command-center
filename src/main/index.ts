@@ -31,7 +31,6 @@ import { killAllAgents } from './cloud-agent-manager'
 import { startServiceStatusPoller, stopServiceStatusPoller } from './service-status'
 import { initUpdateWatcher, stopUpdateWatcher, getProjectRootPath, isPackagedApp } from './update-watcher'
 import { startUpdateServer, stopUpdateServer } from './update-server'
-import { startUpdateClient, stopUpdateClient } from './update-client'
 import { saveSessionState, loadSessionState, clearSessionState, hasSavedSessionState, SessionState } from './session-state'
 import { getConfigDir, ensureConfigDir } from './config-manager'
 import { stopGlobalVision, startGlobalVision, cleanupLegacyVisionMarkers } from './vision-manager'
@@ -503,22 +502,18 @@ if (!gotTheLock) {
     }
 
     // Start update system
-    // Dev mode: run update server to push notifications to production clients
-    // Production mode: connect to dev server as client to receive push notifications
+    // Dev mode: run the local update server + source watcher for live-reload workflow
+    // Production mode: no local polling — updates are checked exclusively against
+    //   GitHub releases via the check-for-updates button (see github-update.ts).
     const projectRoot = getProjectRootPath()
     if (!isPackagedApp()) {
-      // Dev mode - start update server and also the local watcher
       logInfo('[main] Dev mode: starting update server and local watcher')
       if (projectRoot) {
         startUpdateServer(projectRoot)
       }
       initUpdateWatcher(getWindow)
     } else {
-      // Production mode - connect to dev server as client
-      logInfo('[main] Production mode: starting update client')
-      startUpdateClient(getWindow)
-      // Also keep local watcher as fallback for file-based detection
-      initUpdateWatcher(getWindow)
+      logInfo('[main] Production mode: updates via GitHub releases only')
     }
 
     // Start watching for statusline updates
@@ -533,7 +528,6 @@ if (!gotTheLock) {
     stopServiceStatusPoller()
     stopUpdateWatcher()
     stopUpdateServer()
-    stopUpdateClient()
     disableDebugMode()
     closeAllLogs()
     stopGlobalVision()
