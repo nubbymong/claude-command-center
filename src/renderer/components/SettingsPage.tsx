@@ -121,11 +121,12 @@ export default function SettingsPage() {
                 <Field label="Update Channel">
                   <select
                     value={settings.updateChannel}
-                    onChange={(e) => save({ updateChannel: e.target.value as 'stable' | 'beta' })}
+                    onChange={(e) => save({ updateChannel: e.target.value as 'stable' | 'beta' | 'dev' })}
                     className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-full focus:outline-none focus:border-blue/50 transition-colors"
                   >
-                    <option value="stable">Stable</option>
-                    <option value="beta">Beta (pre-release builds)</option>
+                    <option value="stable">Stable — production releases only</option>
+                    <option value="beta">Beta — stable + pre-release builds</option>
+                    <option value="dev">Dev — all builds including experimental</option>
                   </select>
                 </Field>
                 <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer mt-3">

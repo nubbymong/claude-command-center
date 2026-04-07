@@ -34,7 +34,7 @@ export interface AppSettings {
   configPanelPinned: boolean
   statusLine: StatusLineSettings
   localMachineName: string
-  updateChannel: 'stable' | 'beta'
+  updateChannel: 'stable' | 'beta' | 'dev'
   skipPermissionsForAgents: boolean
   showTips: boolean
 }
