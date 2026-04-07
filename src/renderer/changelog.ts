@@ -15,6 +15,15 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '1.2.160',
+    date: '2026-04-07',
+    highlights: "Guided first-run config + terminal column fix",
+    changes: [
+      { type: 'feature', description: "New users see a 'Get Started' card with a guided split-view to create their first config with inline help" },
+      { type: 'fix', description: "Terminal column mismatch: wait for custom fonts to load before computing cols (no more text fragments on the right edge)" },
+    ]
+  },
+  {
     version: '1.2.159',
     date: '2026-04-07',
     highlights: "First CI/CD release: parallel Windows + macOS builds with signing",
