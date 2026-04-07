@@ -33,3 +33,4 @@ test-results/
 *.ps1
 *.log
 process-snapshot-*.txt
+.tip-screenshots/
