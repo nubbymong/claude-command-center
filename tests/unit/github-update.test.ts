@@ -254,20 +254,26 @@ describe('github-update', () => {
   })
 
   describe('asset matching', () => {
-    it('selects ClaudeCommandCenter installer asset', async () => {
-      httpsState.nextResponse ={
+    it('selects ClaudeCommandCenter installer asset for current platform', async () => {
+      const isMac = process.platform === 'darwin'
+      const expectedName = isMac
+        ? 'ClaudeCommandCenter-Beta-1.2.125-mac.dmg'
+        : 'ClaudeCommandCenter-Beta-1.2.125.exe'
+      // Release contains both platform installers; the checker should pick the right one
+      httpsState.nextResponse = {
         statusCode: 200,
         body: [
           { tag_name: 'v1.2.125', draft: false, prerelease: false, assets: [
             { name: 'CHECKSUMS.txt', browser_download_url: 'https://x/c.txt' },
             { name: 'SomeOtherApp.exe', browser_download_url: 'https://x/other.exe' },
-            { name: 'ClaudeCommandCenter-Beta-1.2.125.exe', browser_download_url: 'https://x/y.exe' },
+            { name: 'ClaudeCommandCenter-Beta-1.2.125.exe', browser_download_url: 'https://x/win.exe' },
+            { name: 'ClaudeCommandCenter-Beta-1.2.125-mac.dmg', browser_download_url: 'https://x/mac.dmg' },
           ] },
         ],
       }
       const result = await checkGitHubRelease()
-      expect(result!.installerName).toBe('ClaudeCommandCenter-Beta-1.2.125.exe')
-      expect(result!.installerUrl).toBe('https://x/y.exe')
+      expect(result!.installerName).toBe(expectedName)
+      expect(result!.installerUrl).toBe(isMac ? 'https://x/mac.dmg' : 'https://x/win.exe')
     })
 
     it('returns null installerUrl/name when no matching asset', async () => {
@@ -286,13 +292,62 @@ describe('github-update', () => {
     })
   })
 
-  describe('REPO validation', () => {
-    it('falls back to default repo when registry value is invalid', () => {
-      mockReadRegistry.mockReturnValue('not a valid; rm -rf / # repo')
-      // The constant is read at module load — we just verify the regex
-      // logic by re-importing isn't worth the dance. The tests above already
-      // exercise the happy path. This case is documented.
-      expect(true).toBe(true)
+  describe('prerelease ordering', () => {
+    it('1.2.3-beta.2 is newer than 1.2.3-beta.1', async () => {
+      currentChannel = 'beta'
+      httpsState.nextResponse = {
+        statusCode: 200,
+        body: [
+          { tag_name: 'v1.2.125-beta.2', draft: false, prerelease: true, assets: [
+            { name: 'ClaudeCommandCenter-Beta-1.2.125.exe', browser_download_url: 'https://x/b2.exe' },
+            { name: 'ClaudeCommandCenter-Beta-1.2.125-mac.dmg', browser_download_url: 'https://x/b2.dmg' },
+          ] },
+          { tag_name: 'v1.2.125-beta.1', draft: false, prerelease: true, assets: [
+            { name: 'ClaudeCommandCenter-Beta-1.2.125.exe', browser_download_url: 'https://x/b1.exe' },
+            { name: 'ClaudeCommandCenter-Beta-1.2.125-mac.dmg', browser_download_url: 'https://x/b1.dmg' },
+          ] },
+        ],
+      }
+      const result = await checkGitHubRelease()
+      expect(result).not.toBeNull()
+      expect(result!.tagName).toBe('v1.2.125-beta.2')
+    })
+
+    it('final 1.2.3 outranks 1.2.3-beta', async () => {
+      currentChannel = 'beta'
+      httpsState.nextResponse = {
+        statusCode: 200,
+        body: [
+          { tag_name: 'v1.2.125', draft: false, prerelease: false, assets: [
+            { name: 'ClaudeCommandCenter-Beta-1.2.125.exe', browser_download_url: 'https://x/f.exe' },
+            { name: 'ClaudeCommandCenter-Beta-1.2.125-mac.dmg', browser_download_url: 'https://x/f.dmg' },
+          ] },
+          { tag_name: 'v1.2.125-beta.3', draft: false, prerelease: true, assets: [
+            { name: 'ClaudeCommandCenter-Beta-1.2.125.exe', browser_download_url: 'https://x/b.exe' },
+            { name: 'ClaudeCommandCenter-Beta-1.2.125-mac.dmg', browser_download_url: 'https://x/b.dmg' },
+          ] },
+        ],
+      }
+      const result = await checkGitHubRelease()
+      expect(result).not.toBeNull()
+      expect(result!.tagName).toBe('v1.2.125')
+      expect(result!.channel).toBe('stable')
+    })
+
+    it('ignores unparseable tags', async () => {
+      httpsState.nextResponse = {
+        statusCode: 200,
+        body: [
+          { tag_name: 'garbage-tag', draft: false, prerelease: false, assets: [] },
+          { tag_name: 'v1.2.125', draft: false, prerelease: false, assets: [
+            { name: 'ClaudeCommandCenter-Beta-1.2.125.exe', browser_download_url: 'https://x/y.exe' },
+            { name: 'ClaudeCommandCenter-Beta-1.2.125-mac.dmg', browser_download_url: 'https://x/y.dmg' },
+          ] },
+        ],
+      }
+      const result = await checkGitHubRelease()
+      expect(result).not.toBeNull()
+      expect(result!.tagName).toBe('v1.2.125')
     })
   })
 })

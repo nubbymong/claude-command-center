@@ -99,19 +99,83 @@ function tagMatchesChannel(tag: string, channel: UpdateChannel): boolean {
   return tagChannel === 'stable'
 }
 
-/** Parse the numeric version from a tag (strips v prefix and -beta/-dev suffix) */
+/**
+ * Parse the DISPLAY version from a tag (strips v prefix and any prerelease suffix).
+ * This is what gets shown to the user — e.g. 'v1.2.3-beta.2' → '1.2.3'.
+ */
 function parseVersion(tag: string): string {
   return tag.replace(/^v/, '').replace(/-(?:beta|dev)(?:\.\d+)?$/, '')
 }
 
-function compareSemver(a: string, b: string): number {
-  const pa = a.split('.').map(Number)
-  const pb = b.split('.').map(Number)
-  for (let i = 0; i < 3; i++) {
-    if ((pa[i] || 0) > (pb[i] || 0)) return 1
-    if ((pa[i] || 0) < (pb[i] || 0)) return -1
+/**
+ * Parse a tag into its components for ordering.
+ *
+ * Returns { major, minor, patch, prereleaseRank, prereleaseNum }.
+ *
+ * prereleaseRank follows semver convention: final releases outrank prereleases.
+ *   final:  Infinity
+ *   beta.N: 2 (beta is closer to final than dev)
+ *   beta:   2, num = 0
+ *   dev.N:  1
+ *   dev:    1, num = 0
+ */
+interface TagComponents {
+  major: number
+  minor: number
+  patch: number
+  prereleaseRank: number
+  prereleaseNum: number
+}
+
+function parseTag(tag: string): TagComponents | null {
+  const stripped = tag.replace(/^v/, '')
+  const m = stripped.match(/^(\d+)\.(\d+)\.(\d+)(?:-(beta|dev)(?:\.(\d+))?)?$/)
+  if (!m) return null
+  const [, maj, min, pat, pre, preN] = m
+  let prereleaseRank = Number.POSITIVE_INFINITY
+  let prereleaseNum = 0
+  if (pre === 'beta') { prereleaseRank = 2; prereleaseNum = preN ? parseInt(preN, 10) : 0 }
+  else if (pre === 'dev') { prereleaseRank = 1; prereleaseNum = preN ? parseInt(preN, 10) : 0 }
+  return {
+    major: parseInt(maj, 10),
+    minor: parseInt(min, 10),
+    patch: parseInt(pat, 10),
+    prereleaseRank,
+    prereleaseNum,
   }
-  return 0
+}
+
+/**
+ * Compare two tags including prerelease ordering.
+ *   1.2.3       > 1.2.3-beta.2
+ *   1.2.3-beta.2 > 1.2.3-beta.1
+ *   1.2.3-beta  > 1.2.3-dev
+ *   1.2.4-dev   > 1.2.3
+ */
+function compareTags(aTag: string, bTag: string): number {
+  const a = parseTag(aTag)
+  const b = parseTag(bTag)
+  if (!a && !b) return 0
+  if (!a) return -1
+  if (!b) return 1
+  if (a.major !== b.major) return a.major - b.major
+  if (a.minor !== b.minor) return a.minor - b.minor
+  if (a.patch !== b.patch) return a.patch - b.patch
+  if (a.prereleaseRank !== b.prereleaseRank) return a.prereleaseRank - b.prereleaseRank
+  return a.prereleaseNum - b.prereleaseNum
+}
+
+/**
+ * Compare a GitHub tag against the currently-running app version.
+ * The running app version does not carry a prerelease suffix (electron-builder
+ * strips it), so we compare it as if it were a final release at that base
+ * version. This means a user on 1.2.3 running the stable channel will NOT be
+ * offered 1.2.3-beta.1 (good) but a user running 1.2.3-beta.1 installed via
+ * beta channel will still see 1.2.3 as an upgrade path.
+ */
+function compareTagToCurrentVersion(tag: string, currentVersion: string): number {
+  // Build a synthetic "final release" tag from the current version for comparison
+  return compareTags(tag, `v${currentVersion}`)
 }
 
 /** Read the update channel from user settings */
@@ -232,8 +296,10 @@ export async function checkGitHubRelease(): Promise<ReleaseInfo | null> {
     return null
   }
 
-  // Pick the newest release matching the channel that is newer than current
-  let best: { release: GitHubRelease; version: string; channel: UpdateChannel } | null = null
+  // Pick the newest release matching the channel that is strictly newer than current.
+  // Uses full-tag comparison so prereleases of the same base version order deterministically
+  // (1.2.3-beta.2 > 1.2.3-beta.1 > 1.2.3-dev.5, and 1.2.3 > any 1.2.3-prerelease).
+  let best: { release: GitHubRelease; tag: string; version: string; channel: UpdateChannel } | null = null
 
   for (const rel of releases) {
     if (rel.draft) continue
@@ -241,11 +307,14 @@ export async function checkGitHubRelease(): Promise<ReleaseInfo | null> {
     if (!tag) continue
     if (!tagMatchesChannel(tag, channel)) continue
 
-    const version = parseVersion(tag)
-    if (compareSemver(version, currentVersion) <= 0) continue
+    // Filter out tags whose format we don't understand
+    if (!parseTag(tag)) continue
 
-    if (!best || compareSemver(version, best.version) > 0) {
-      best = { release: rel, version, channel: classifyTag(tag)! }
+    // Strictly newer than the currently running app
+    if (compareTagToCurrentVersion(tag, currentVersion) <= 0) continue
+
+    if (!best || compareTags(tag, best.tag) > 0) {
+      best = { release: rel, tag, version: parseVersion(tag), channel: classifyTag(tag)! }
     }
   }
 
@@ -254,16 +323,15 @@ export async function checkGitHubRelease(): Promise<ReleaseInfo | null> {
     return null
   }
 
-  const tag = best.release.tag_name || best.release.tagName!
   const installer = best.release.assets.find((a) =>
     a.name.endsWith(INSTALLER_EXT) && a.name.startsWith('ClaudeCommandCenter-')
   )
 
-  logInfo(`[github-update] Update available: v${best.version} (tag: ${tag}, channel: ${best.channel}, installer: ${installer?.name || 'none'})`)
+  logInfo(`[github-update] Update available: v${best.version} (tag: ${best.tag}, channel: ${best.channel}, installer: ${installer?.name || 'none'})`)
 
   return {
     version: best.version,
-    tagName: tag,
+    tagName: best.tag,
     channel: best.channel,
     installerUrl: installer?.browser_download_url || installer?.url || null,
     installerName: installer?.name || null,

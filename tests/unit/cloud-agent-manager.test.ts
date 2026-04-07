@@ -118,7 +118,11 @@ describe('cloud-agent-manager', () => {
       // Prompt is written to a temp file and piped via shell command
       const spawnCall = mockSpawn.mock.calls[0]
       const shellCmd = spawnCall[0] as string
-      expect(shellCmd).toMatch(/type ".*ccc-agent-.*\.txt" \| claude --dangerously-skip-permissions/)
+      // Windows uses `type`, macOS/Linux uses `cat`
+      const pipeCmdPattern = process.platform === 'win32'
+        ? /type ".*ccc-agent-.*\.txt" \| claude --dangerously-skip-permissions/
+        : /cat ".*ccc-agent-.*\.txt" \| claude --dangerously-skip-permissions/
+      expect(shellCmd).toMatch(pipeCmdPattern)
       expect(spawnCall[1]).toEqual([])
       expect(spawnCall[2]).toEqual(expect.objectContaining({
         cwd: 'C:\\dev\\project',

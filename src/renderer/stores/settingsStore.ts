@@ -24,6 +24,8 @@ export const DEFAULT_STATUS_LINE: StatusLineSettings = {
   showResetTime: true
 }
 
+export type UpdateChannel = 'stable' | 'beta' | 'dev'
+
 export interface AppSettings {
   defaultModel: string
   defaultWorkingDirectory: string
@@ -34,7 +36,7 @@ export interface AppSettings {
   configPanelPinned: boolean
   statusLine: StatusLineSettings
   localMachineName: string
-  updateChannel: 'stable' | 'beta' | 'dev'
+  updateChannel: UpdateChannel
   skipPermissionsForAgents: boolean
   showTips: boolean
 }
