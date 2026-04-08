@@ -97,6 +97,13 @@ function header(msg) {
   console.log('  ===========================================')
 }
 
+// Cross-platform sleep. Uses Node's setTimeout instead of shelling out to
+// `timeout` (Windows) / `sleep` (POSIX) — the Windows `timeout` builtin
+// requires a terminal and fails silently inside execSync with stdio: 'ignore'.
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 function pickChannel() {
   return new Promise((resolve) => {
     if (FORCE_STABLE) return resolve('stable')
@@ -325,25 +332,35 @@ try {
   fail(`Workflow dispatch failed: ${err.message}`)
 }
 
-// Wait briefly for the run to register, then find the run ID
+// Wait briefly for the run to register, then find the run ID.
+// Note the dispatched run won't appear instantly — GitHub queues it first,
+// so we poll for up to ~20 seconds.
 let runId = ''
+let lastPollError = ''
 console.log('      Waiting for run to register...')
 for (let attempt = 0; attempt < 10; attempt++) {
+  await sleep(2000)
   try {
-    // Sleep before polling — the dispatch is async on GitHub's side
-    execSync(process.platform === 'win32' ? 'timeout /t 2 /nobreak >nul' : 'sleep 2', { stdio: 'ignore' })
-    const json = run('gh run list --workflow=release.yml --limit 1 --json databaseId,status,headBranch')
+    const json = run('gh run list --workflow=release.yml --limit 5 --json databaseId,status,headBranch,event,createdAt')
     const runs = JSON.parse(json)
-    if (runs.length > 0 && runs[0].headBranch === currentBranch) {
-      runId = String(runs[0].databaseId)
+    // Take the most recent workflow_dispatch run — it's the one we just fired.
+    // (Filtering by branch is unreliable because the API may return runs from
+    // older dispatches on the same branch before our new one appears.)
+    const dispatched = runs
+      .filter((r) => r.event === 'workflow_dispatch')
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    if (dispatched.length > 0 && (dispatched[0].status === 'in_progress' || dispatched[0].status === 'queued')) {
+      runId = String(dispatched[0].databaseId)
       break
     }
-  } catch { /* keep trying */ }
+  } catch (err) {
+    lastPollError = err.message
+  }
 }
 
 if (!runId) {
-  warn('Could not detect dispatched run ID — check Actions tab manually')
-  ok(`Manual link: https://github.com/nubbymong/claude-command-center/actions/workflows/release.yml`)
+  warn(`Could not detect dispatched run ID${lastPollError ? ` (${lastPollError})` : ''}`)
+  ok(`Check the Actions tab manually: https://github.com/nubbymong/claude-command-center/actions/workflows/release.yml`)
 } else {
   ok(`Run ID: ${runId}`)
   ok(`Run URL: https://github.com/nubbymong/claude-command-center/actions/runs/${runId}`)
@@ -374,7 +391,7 @@ if (exitCode !== 0) {
 } else {
   try {
     // Wait a few seconds for the release to be visible after workflow completion
-    execSync(process.platform === 'win32' ? 'timeout /t 3 /nobreak >nul' : 'sleep 3', { stdio: 'ignore' })
+    await sleep(3000)
     const releaseJson = run(`gh release view ${tag} --json assets,url -q "{url: .url, names: [.assets[].name]}"`)
     const release = JSON.parse(releaseJson)
     const names = release.names || []
