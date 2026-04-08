@@ -15,6 +15,17 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '1.2.164',
+    date: '2026-04-08',
+    highlights: "Unified release pipeline + channel label on update button",
+    changes: [
+      { type: 'improvement', description: "Release script now dispatches the GitHub Actions workflow for canonical dual-platform builds (Windows EXE + macOS DMG, both signed/notarized, both VirusTotal-scanned, single release with checksums) instead of doing a Windows-only local build" },
+      { type: 'improvement', description: "Local release script does fast smoke checks (typecheck + unit tests + build) for fast feedback before pushing to CI, then watches the workflow run to completion and verifies both .exe and .dmg are attached" },
+      { type: 'improvement', description: "Release script now supports stable / beta / dev channels via --stable / --beta / --dev (default: interactive prompt with beta as fallback)" },
+      { type: 'feature', description: "Check for Updates button now shows the active channel — 'Check for Beta Updates' / 'Check for Stable Updates' / 'Check for Dev Updates' — so you always know what you're checking against without opening the dropdown" },
+    ]
+  },
+  {
     version: '1.2.163',
     date: '2026-04-08',
     highlights: "SSH statusline + unified MCP image transport + dual service status indicator",
