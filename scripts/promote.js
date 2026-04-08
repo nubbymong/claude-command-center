@@ -81,7 +81,11 @@ if (currentBranch !== 'beta') {
 }
 ok(`On beta branch`)
 
-// Clean tree — promoting with uncommitted changes would be ambiguous
+// Clean tree — promoting with uncommitted changes would be ambiguous.
+// If the status check itself fails (git unavailable, corrupt repo, etc.),
+// treat it as a hard failure: we can't safely promote without confirming
+// the working tree is clean, since later steps (checkout main, push) could
+// either fail mid-flow or accidentally promote uncommitted work.
 try {
   const status = run('git status --porcelain')
   if (status.length > 0) {
@@ -93,7 +97,7 @@ try {
   ok('Working tree clean')
 } catch (err) {
   if (err.message.includes('Working tree has')) throw err
-  warn(`Could not check git status: ${err.message}`)
+  fail(`Could not check git status: ${err.message}`)
 }
 
 // gh auth
@@ -129,13 +133,32 @@ try {
   fail(`Could not compare beta refs: ${err.message}`)
 }
 
-// Verify main exists locally
+// Ensure local main exists and is in sync with origin/main before we touch it.
+// A stale or diverged local main can break the ancestry check or result in a
+// surprising push (promoting an unexpected history). We hard-reset local main
+// to origin/main — this is safe because the promote flow only ever
+// fast-forwards main to beta; there should never be local-only commits on main
+// that we want to preserve. If a user has made local commits to main they
+// didn't push, that's a workflow violation the reset cleanly recovers from.
 try {
   run('git rev-parse --verify main')
 } catch {
-  // Create local main tracking origin/main if it doesn't exist
-  run('git branch main origin/main')
+  // Create a local main tracking origin/main if it doesn't exist yet
+  run('git branch --track main origin/main')
   ok('Created local main branch tracking origin/main')
+}
+
+try {
+  const localMain = run('git rev-parse main')
+  const originMain = run('git rev-parse origin/main')
+  if (localMain !== originMain) {
+    run('git branch -f main origin/main')
+    ok(`Reset local main from ${localMain.slice(0, 7)} to origin/main (${originMain.slice(0, 7)})`)
+  } else {
+    ok('Local main matches origin/main')
+  }
+} catch (err) {
+  fail(`Could not synchronize main with origin/main: ${err.message}`)
 }
 
 // --- Step 3: Verify main is strictly behind beta ---
