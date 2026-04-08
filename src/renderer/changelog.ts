@@ -15,6 +15,16 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '1.2.165',
+    date: '2026-04-08',
+    highlights: "Release script hotfix: cross-platform sleep + proper workflow watching",
+    changes: [
+      { type: 'fix', description: "Local release script now uses Node-native sleep instead of shelling out to `timeout`/`sleep`, which was silently failing inside execSync and preventing the script from finding the dispatched workflow run ID" },
+      { type: 'fix', description: "Release script now surfaces real errors from the run-ID polling loop instead of swallowing them — gives a useful hint if GitHub API is unreachable" },
+      { type: 'improvement', description: "Run-ID detection picks the newest workflow_dispatch run regardless of branch, so the filter doesn't miss the just-dispatched run due to API pagination lag" },
+    ]
+  },
+  {
     version: '1.2.164',
     date: '2026-04-08',
     highlights: "Unified release pipeline + channel label on update button",
