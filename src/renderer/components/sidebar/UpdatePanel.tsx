@@ -171,8 +171,19 @@ function ChannelSelector({ onChannelChange }: { onChannelChange: () => void }) {
 }
 
 export default function UpdatePanel({ updateAvailable, updateVersion, updating, checking, onCheckForUpdates, onInstallUpdate }: UpdatePanelProps) {
+  // Read current channel so we can surface it in the button text — users
+  // should always know which channel they're checking against without having
+  // to open the dropdown.
+  const storedChannel = useSettingsStore((s) => s.settings.updateChannel)
+  const currentChannel: UpdateChannel = CHANNELS.includes(storedChannel as UpdateChannel)
+    ? (storedChannel as UpdateChannel)
+    : 'stable'
+  const channelLabel = CHANNEL_LABELS[currentChannel]
+
   return (
     <div className="absolute bottom-2 left-2 right-2 flex flex-col gap-2">
+      {/* sr-only line so screen readers announce the active channel before the button */}
+      <span className="sr-only">Update channel: {channelLabel}</span>
       {updateAvailable ? (
         <>
           <button
@@ -214,7 +225,7 @@ export default function UpdatePanel({ updateAvailable, updateVersion, updating, 
                 onClick={onCheckForUpdates}
                 disabled={checking}
                 className="flex-1 flex items-center justify-center gap-1.5 px-2 py-1 text-[10px] text-overlay0 hover:text-subtext0 transition-colors"
-                title="Re-check for newer version"
+                title={`Re-check for newer version on the ${channelLabel} channel`}
               >
                 {checking ? (
                   <>
@@ -224,7 +235,7 @@ export default function UpdatePanel({ updateAvailable, updateVersion, updating, 
                     <span>Checking...</span>
                   </>
                 ) : (
-                  <span>Re-check for latest</span>
+                  <span>Re-check {channelLabel} channel</span>
                 )}
               </button>
             </div>
@@ -237,13 +248,14 @@ export default function UpdatePanel({ updateAvailable, updateVersion, updating, 
             onClick={onCheckForUpdates}
             disabled={checking}
             className="flex-1 flex items-center justify-center gap-2 px-3 py-1.5 rounded-lg border border-surface1 text-overlay0 hover:text-subtext0 hover:bg-surface0/50 hover:border-surface2 transition-colors"
+            title={`Check the ${channelLabel} channel on GitHub for a newer release`}
           >
             {checking ? (
               <>
                 <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
                   <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" strokeDasharray="32" strokeLinecap="round" />
                 </svg>
-                <span className="text-xs">Checking...</span>
+                <span className="text-xs">Checking {channelLabel}...</span>
               </>
             ) : (
               <>
@@ -251,7 +263,7 @@ export default function UpdatePanel({ updateAvailable, updateVersion, updating, 
                   <path d="M8 2v4M8 14v-4M8 6a2 2 0 110 4 2 2 0 010-4z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
                   <path d="M2 8h4M14 8h-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
                 </svg>
-                <span className="text-xs">Check for Updates</span>
+                <span className="text-xs">Check for {channelLabel} Updates</span>
               </>
             )}
           </button>

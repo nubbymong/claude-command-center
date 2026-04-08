@@ -1,74 +1,63 @@
 #!/usr/bin/env node
 /**
- * Claude Command Center Release Script
+ * Claude Command Center Release Script (workflow-dispatch edition)
  *
- * Full automated release pipeline:
- * 1. Pre-flight checks (npm audit, git clean, gh auth)
- * 2. Auto-increment version
- * 3. Claude CLI generates changelog entry + release notes
- * 4. Unit tests (vitest)
- * 5. Build (electron-vite build)
- * 6. E2E tests (playwright)
- * 7. Package installer (electron-builder --win)
- * 8. SHA-256 checksum
- * 9. VirusTotal scan
- * 10. Git commit, tag, push
- * 11. GitHub Release with assets
- * 12. Push update notification to connected clients
- * 13. Verify
+ * Unified release pipeline. Local script does fast checks + version bump + push,
+ * then dispatches the GitHub Actions workflow for the canonical dual-platform
+ * build (Windows EXE + macOS DMG, both signed/notarized, both VirusTotal-scanned,
+ * single GitHub release with checksums).
  *
- * Usage: npm run release
- *        npm run release -- --minor
- *        npm run release -- --major
- *        npm run release -- --beta          (mark as beta/pre-release)
- *        npm run release -- --skip-vt       (skip VirusTotal)
- *        npm run release -- --skip-claude   (skip changelog generation)
- *        npm run release -- --skip-push     (skip git push + gh release)
- *        npm run release -- --skip-tests    (skip unit + E2E tests)
+ * Local steps (fast feedback before pushing):
+ *   1. Pre-flight checks (gh auth, npm audit, git status)
+ *   2. Channel selection (stable / beta / dev)
+ *   3. Version bump
+ *   4. Update changelog.ts version line
+ *   5. Typecheck + unit tests + build smoke test
+ *   6. Git commit + tag + push
+ *
+ * Remote (GitHub Actions) steps:
+ *   7. Dispatch the .github/workflows/release.yml workflow
+ *   8. Watch the workflow run to completion
+ *   9. Verify the final release has both .exe and .dmg attached
+ *
+ * Usage:
+ *   npm run release                 (interactive channel prompt, patch bump)
+ *   npm run release -- --beta       (force beta channel)
+ *   npm run release -- --stable     (force stable channel)
+ *   npm run release -- --dev        (force dev channel — experimental)
+ *   npm run release -- --minor      (minor version bump)
+ *   npm run release -- --major      (major version bump)
+ *   npm run release -- --skip-tests (skip local typecheck + vitest)
+ *   npm run release -- --skip-build (skip local build smoke test)
+ *   npm run release -- --skip-watch (don't wait for workflow to finish)
+ *   npm run release -- --skip-push  (everything except commit/push/dispatch)
+ *
+ * Notes:
+ *   - VirusTotal scanning is part of the GitHub Actions workflow, not local.
+ *     The workflow scans BOTH the .exe and the .dmg.
+ *   - Changelog generation is hand-authored. Edit src/renderer/changelog.ts to
+ *     add a new entry BEFORE running this script. The script will update the
+ *     version field of the first entry to match the bumped version.
+ *   - The workflow is dispatched on the current branch (typically main).
  */
 
-const { execSync, spawnSync } = require('child_process')
+const { execSync } = require('child_process')
 const fs = require('fs')
 const path = require('path')
-const https = require('https')
-const http = require('http')
-const crypto = require('crypto')
-const { WebSocketServer } = require('ws')
-
-const PROJECT_ROOT = path.resolve(__dirname, '..')
-const APPDATA = process.env.APPDATA || ''
-const HASH_FILE = path.join(APPDATA, 'claude-conductor', 'source-hash.json')
-const SECRETS_DIR = path.join(PROJECT_ROOT, '.secrets')
-
 const readline = require('readline')
 
+const PROJECT_ROOT = path.resolve(__dirname, '..')
+
 const args = process.argv.slice(2)
-const SKIP_VT = args.includes('--skip-vt')
-const SKIP_CLAUDE = args.includes('--skip-claude')
-const SKIP_PUSH = args.includes('--skip-push')
 const SKIP_TESTS = args.includes('--skip-tests')
+const SKIP_BUILD = args.includes('--skip-build')
+const SKIP_WATCH = args.includes('--skip-watch')
+const SKIP_PUSH = args.includes('--skip-push')
 const BUMP_MINOR = args.includes('--minor')
 const BUMP_MAJOR = args.includes('--major')
-const BETA_FLAG = args.includes('--beta')
-
-/**
- * Prompt the user for stable vs beta if --beta was not passed.
- * Returns true if this is a beta release.
- */
-function askBetaOrStable() {
-  return new Promise((resolve) => {
-    if (BETA_FLAG) {
-      resolve(true)
-      return
-    }
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
-    rl.question('Is this a stable or beta release? (s/b): ', (answer) => {
-      rl.close()
-      const trimmed = (answer || '').trim().toLowerCase()
-      resolve(trimmed === 'b' || trimmed === 'beta')
-    })
-  })
-}
+const FORCE_BETA = args.includes('--beta')
+const FORCE_STABLE = args.includes('--stable')
+const FORCE_DEV = args.includes('--dev')
 
 // ============================================================
 // HELPERS
@@ -99,15 +88,38 @@ function fail(msg) {
   process.exit(1)
 }
 
-function readSecret(filename) {
-  const p = path.join(SECRETS_DIR, filename)
-  if (!fs.existsSync(p)) return null
-  return fs.readFileSync(p, 'utf-8').trim()
+function header(msg) {
+  console.log('')
+  console.log('  ===========================================')
+  for (const line of msg.split('\n')) {
+    console.log(`    ${line}`)
+  }
+  console.log('  ===========================================')
 }
 
-function sha256File(filePath) {
-  const data = fs.readFileSync(filePath)
-  return crypto.createHash('sha256').update(data).digest('hex')
+function pickChannel() {
+  return new Promise((resolve) => {
+    if (FORCE_STABLE) return resolve('stable')
+    if (FORCE_BETA) return resolve('beta')
+    if (FORCE_DEV) return resolve('dev')
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
+    rl.question('Release channel? (s)table / (b)eta / (d)ev: ', (answer) => {
+      rl.close()
+      const a = (answer || '').trim().toLowerCase()
+      if (a === 'd' || a === 'dev') return resolve('dev')
+      if (a === 's' || a === 'stable') return resolve('stable')
+      // Default to beta for safety — most releases are betas
+      resolve('beta')
+    })
+  })
+}
+
+function tagFor(version, channel) {
+  switch (channel) {
+    case 'beta': return `v${version}-beta`
+    case 'dev':  return `v${version}-dev`
+    default:     return `v${version}`
+  }
 }
 
 // ============================================================
@@ -116,53 +128,64 @@ function sha256File(filePath) {
 
 ;(async () => {
 
-const IS_BETA = await askBetaOrStable()
-if (IS_BETA) {
-  console.log('\n  Release channel: BETA (pre-release)\n')
-} else {
-  console.log('\n  Release channel: STABLE\n')
-}
-
-const TOTAL_STEPS = 13
+const TOTAL_STEPS = 9
 let exitCode = 0
+
+const channel = await pickChannel()
+header(`Claude Command Center Beta\n  Release channel: ${channel.toUpperCase()}`)
 
 // --- Step 1: Pre-flight checks ---
 step(1, TOTAL_STEPS, 'Pre-flight checks...')
 
-// npm audit
+// gh auth
+try {
+  run('gh auth status 2>&1')
+  ok('GitHub CLI authenticated')
+} catch {
+  fail('GitHub CLI not authenticated. Run: gh auth login')
+}
+
+// npm audit (non-fatal warning)
 try {
   const auditResult = run('npm audit --audit-level=critical 2>&1 || true')
   if (auditResult.includes('critical')) {
     fail('npm audit found CRITICAL vulnerabilities. Fix before releasing.')
   }
   ok('npm audit clean (no critical vulnerabilities)')
-} catch (err) {
+} catch {
   warn('npm audit check failed (non-fatal)')
 }
 
-// git clean check
+// Verify the workflow file exists
+const workflowPath = path.join(PROJECT_ROOT, '.github', 'workflows', 'release.yml')
+if (!fs.existsSync(workflowPath)) {
+  fail(`Workflow not found at ${workflowPath}`)
+}
+ok('Workflow file present')
+
+// Determine current branch — workflow is dispatched on this branch
+let currentBranch = 'main'
+try {
+  currentBranch = run('git rev-parse --abbrev-ref HEAD')
+} catch {
+  warn('Could not detect current branch, defaulting to main')
+}
+if (currentBranch !== 'main') {
+  warn(`On branch '${currentBranch}' — workflow will dispatch on this branch, not main`)
+}
+ok(`Current branch: ${currentBranch}`)
+
+// Git status (uncommitted changes will be included in the release commit)
 try {
   const status = run('git status --porcelain')
   if (status.length > 0) {
-    // That's OK for first release or if we have uncommitted changes
-    // We'll commit everything as part of the release
-    warn(`${status.split('\n').length} uncommitted changes (will be included in release commit)`)
+    const lineCount = status.split('\n').length
+    warn(`${lineCount} uncommitted change(s) (will be included in release commit)`)
   } else {
     ok('Git working tree clean')
   }
-} catch (err) {
+} catch {
   warn('Git status check failed (non-fatal)')
-}
-
-// gh auth check
-try {
-  run('gh auth status 2>&1')
-  ok('GitHub CLI authenticated')
-} catch (err) {
-  if (!SKIP_PUSH) {
-    fail('GitHub CLI not authenticated. Run: gh auth login')
-  }
-  warn('GitHub CLI not authenticated (push skipped)')
 }
 
 // --- Step 2: Version bump ---
@@ -185,543 +208,201 @@ const version = parts.join('.')
 pkg.version = version
 fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n', 'utf-8')
 
+const tag = tagFor(version, channel)
+
 console.log('')
-console.log('  ===========================================')
-console.log(`    Claude Command Center Beta  v${version}`)
-console.log(`    (from v${oldVersion})`)
-console.log(`    Channel: ${IS_BETA ? 'BETA' : 'STABLE'}`)
-console.log('  ===========================================')
+console.log(`      v${oldVersion} → v${version}  (tag: ${tag}, channel: ${channel})`)
 
-// --- Step 3: Claude changelog + release notes ---
-step(3, TOTAL_STEPS, 'Generating changelog and release notes...')
+// --- Step 3: Sync changelog version ---
+step(3, TOTAL_STEPS, 'Aligning changelog version with bumped version...')
 
-let releaseNotesBody = ''
-let changelogGenerated = false
-
-if (SKIP_CLAUDE) {
-  warn('Skipped (--skip-claude)')
-  releaseNotesBody = `## v${version}\n\nPatch release.\n`
-} else {
-  try {
-    // Get diff since last tag (or all files if no tags yet)
-    let diffText = ''
-    try {
-      const lastTag = run('git describe --tags --abbrev=0 2>&1')
-      diffText = run(`git diff ${lastTag}..HEAD -- src/ build/ scripts/ package.json 2>&1`)
-    } catch {
-      // No tags yet — use all staged/tracked files summary
-      diffText = run('git diff --cached --stat 2>&1 || git status --short 2>&1')
-    }
-
-    if (!diffText || diffText.length < 20) {
-      diffText = 'Initial release with all features.'
-    }
-
-    // Truncate diff if too large (Claude CLI has input limits)
-    if (diffText.length > 15000) {
-      diffText = diffText.substring(0, 15000) + '\n\n... (diff truncated)'
-    }
-
-    // Read current changelog format for reference
-    const changelogPath = path.join(PROJECT_ROOT, 'src', 'renderer', 'changelog.ts')
-    const changelogContent = fs.readFileSync(changelogPath, 'utf-8')
-    // Extract just the first entry as format example
-    const formatExample = changelogContent.substring(0, 1500)
-
-    const prompt = `You are generating release notes for Claude Command Center Beta v${version} (previously v${oldVersion}).
-
-CRITICAL RULES:
-- Do NOT include any file paths, usernames, machine names, API keys, or personal information
-- Do NOT mention the developer or any individual by name
-- Focus ONLY on what changed functionally from the user's perspective
-- Be concise — each change description should be one sentence
-
-Here is the git diff of changes since last release:
-\`\`\`
-${diffText}
-\`\`\`
-
-Generate TWO things as valid JSON (no markdown fences, just raw JSON):
-
-{
-  "changelog": {
-    "version": "${version}",
-    "date": "${new Date().toISOString().split('T')[0]}",
-    "highlights": "Brief 1-line summary of this release",
-    "changes": [
-      { "type": "feature|fix|improvement", "description": "What changed" }
-    ]
-  },
-  "releaseNotes": "Markdown release notes for GitHub. Include a ## What's New section with bullet points. End with:\\n\\nSHA-256 checksums and VirusTotal scan results are attached to this release."
-}
-
-Return ONLY the JSON object, no other text.`
-
-    // Pipe prompt via stdin to avoid Windows command line length limits
-    // shell:true required on Windows — 'claude' with shell finds .exe or .cmd
-    const claudeBin = 'claude'
-    console.log('      Spawning Claude CLI for changelog generation...')
-    const claudeResult = spawnSync(claudeBin, ['-p'], {
-      cwd: PROJECT_ROOT,
-      encoding: 'utf-8',
-      timeout: 120000,
-      windowsHide: true,
-      shell: true,
-      input: prompt
-    })
-
-    if (claudeResult.stderr) {
-      console.log(`      Claude stderr: ${claudeResult.stderr.substring(0, 300)}`)
-    }
-
-    if (claudeResult.status === 0 && claudeResult.stdout) {
-      let output = claudeResult.stdout.trim()
-      // Strip markdown fences if Claude wraps them anyway
-      output = output.replace(/^```json?\s*/m, '').replace(/\s*```\s*$/m, '')
-
-      // Extract JSON object from output — Claude sometimes adds preamble/postamble text
-      // Find the first '{' and last '}' to extract the JSON block
-      const firstBrace = output.indexOf('{')
-      const lastBrace = output.lastIndexOf('}')
-      if (firstBrace !== -1 && lastBrace > firstBrace) {
-        output = output.substring(firstBrace, lastBrace + 1)
-      }
-
-      try {
-        const parsed = JSON.parse(output)
-
-        // Write changelog entry
-        if (parsed.changelog) {
-          const entry = parsed.changelog
-          const newEntry = `  {
-    version: '${entry.version}',
-    date: '${entry.date}',
-    highlights: ${JSON.stringify(entry.highlights)},
-    changes: [
-${entry.changes.map(c => `      { type: '${c.type}', description: ${JSON.stringify(c.description)} }`).join(',\n')}
-    ]
-  },`
-
-          // Insert after the '= [' that opens the array (not the [] in the type annotation)
-          const marker = 'ChangelogEntry[] = ['
-          const insertPoint = changelogContent.indexOf(marker)
-          if (insertPoint !== -1) {
-            const bracketPos = insertPoint + marker.length
-            const updatedChangelog = changelogContent.slice(0, bracketPos) + '\n' + newEntry + changelogContent.slice(bracketPos)
-            fs.writeFileSync(changelogPath, updatedChangelog, 'utf-8')
-            changelogGenerated = true
-            ok(`Changelog entry written (${entry.changes.length} changes)`)
-            console.log(`      Highlights: ${entry.highlights}`)
-          }
-        }
-
-        // Write release notes
-        if (parsed.releaseNotes) {
-          releaseNotesBody = parsed.releaseNotes
-          ok('Release notes generated')
-        }
-      } catch (parseErr) {
-        warn(`Claude output not valid JSON, using fallback. Parse error: ${parseErr.message}`)
-        releaseNotesBody = `## v${version}\n\nPatch release with improvements and fixes.\n`
-      }
-    } else {
-      warn('Claude CLI returned no output, using fallback')
-      if (claudeResult.stderr) console.log(`      stderr: ${claudeResult.stderr.substring(0, 200)}`)
-      releaseNotesBody = `## v${version}\n\nPatch release with improvements and fixes.\n`
-    }
-  } catch (err) {
-    warn(`Claude generation failed: ${err.message}`)
-    releaseNotesBody = `## v${version}\n\nPatch release with improvements and fixes.\n`
+const changelogPath = path.join(PROJECT_ROOT, 'src', 'renderer', 'changelog.ts')
+try {
+  let changelogContent = fs.readFileSync(changelogPath, 'utf-8')
+  // Match the FIRST `version: '...'` entry — that's the topmost (newest) entry
+  const versionRegex = /version:\s*'(\d+\.\d+\.\d+)'/
+  const match = changelogContent.match(versionRegex)
+  if (!match) {
+    warn('Could not locate first version entry in changelog.ts')
+  } else if (match[1] === version) {
+    ok(`Changelog already on v${version}`)
+  } else {
+    changelogContent = changelogContent.replace(versionRegex, `version: '${version}'`)
+    fs.writeFileSync(changelogPath, changelogContent, 'utf-8')
+    ok(`Changelog version: v${match[1]} → v${version}`)
+    warn('Hand-author the changelog body BEFORE the next release for accurate notes')
   }
+} catch (err) {
+  warn(`Changelog sync skipped: ${err.message}`)
 }
 
-// Fallback: update changelog version if Claude didn't generate
-if (!changelogGenerated) {
-  try {
-    const changelogPath = path.join(PROJECT_ROOT, 'src', 'renderer', 'changelog.ts')
-    let changelogContent = fs.readFileSync(changelogPath, 'utf-8')
-    const versionRegex = /version:\s*'(\d+\.\d+\.\d+)'/
-    const match = changelogContent.match(versionRegex)
-    if (match && match[1] !== version) {
-      changelogContent = changelogContent.replace(versionRegex, `version: '${version}'`)
-      fs.writeFileSync(changelogPath, changelogContent, 'utf-8')
-      ok(`Changelog version updated: ${match[1]} -> ${version}`)
-    }
-  } catch (err) {
-    warn('Could not update changelog version')
-  }
-}
-
-// Prepend release channel label to release notes
-const channelLabel = IS_BETA ? '**Beta Release**' : '**Stable Release**'
-releaseNotesBody = channelLabel + '\n\n' + releaseNotesBody
-
-// --- Step 4: Unit tests ---
-step(4, TOTAL_STEPS, 'Running unit tests...')
+// --- Step 4: Local smoke tests (fast feedback before pushing to CI) ---
+step(4, TOTAL_STEPS, 'Local smoke tests (typecheck + unit tests + build)...')
 
 if (SKIP_TESTS) {
   warn('Skipped (--skip-tests)')
 } else {
   try {
-    runInherit('npx vitest run --reporter=verbose')
-    ok('All unit tests passed')
-  } catch (err) {
+    runInherit('npx tsc --noEmit')
+    ok('Typecheck passed')
+  } catch {
+    fail('TYPECHECK FAILED — fix before releasing')
+  }
+  try {
+    runInherit('npx vitest run')
+    ok('Unit tests passed')
+  } catch {
     fail('UNIT TESTS FAILED — fix before releasing')
   }
 }
 
-// --- Step 5: Build ---
-step(5, TOTAL_STEPS, 'Building...')
-try {
-  runInherit('npx electron-vite build')
-  ok('Build complete')
-} catch (err) {
-  fail('BUILD FAILED')
-}
-
-// --- Step 6: E2E tests ---
-step(6, TOTAL_STEPS, 'Running E2E tests...')
-
-if (SKIP_TESTS) {
-  warn('Skipped (--skip-tests)')
+if (SKIP_BUILD) {
+  warn('Build skipped (--skip-build)')
 } else {
   try {
-    runInherit('npx playwright test --reporter=list')
-    ok('All E2E tests passed')
-  } catch (err) {
-    fail('E2E TESTS FAILED — fix before releasing')
+    runInherit('npx electron-vite build')
+    ok('Build succeeded (smoke test only — installer will be built in CI)')
+  } catch {
+    fail('BUILD FAILED — fix before releasing')
   }
 }
 
-// --- Step 7: Package ---
-step(7, TOTAL_STEPS, 'Packaging installer...')
-try {
-  runInherit('npx electron-builder --win')
-  ok('Package complete')
-} catch (err) {
-  fail('PACKAGE FAILED')
-}
-
-// --- Step 8: Post-build (copy, hash, checksum) ---
-step(8, TOTAL_STEPS, 'Post-build: copy installer, generate checksums...')
-
-const installerName = `ClaudeCommandCenter-Beta-${version}.exe`
-const installerSrc = path.join(PROJECT_ROOT, 'dist', installerName)
-const installerDst = path.join(PROJECT_ROOT, installerName)
-const installerLatest = path.join(PROJECT_ROOT, 'ClaudeCommandCenter-latest.exe')
-const checksumsPath = path.join(PROJECT_ROOT, 'CHECKSUMS.txt')
-
-if (fs.existsSync(installerSrc)) {
-  // Clean up old versioned installers from project root
-  const oldExes = fs.readdirSync(PROJECT_ROOT).filter(f =>
-    (f.startsWith('ClaudeCommandCenter-') || f.startsWith('ClaudeConductor-')) && f.endsWith('.exe') && f !== installerName && f !== 'ClaudeCommandCenter-latest.exe'
-  )
-  if (oldExes.length > 0) {
-    oldExes.forEach(f => {
-      try { fs.unlinkSync(path.join(PROJECT_ROOT, f)) } catch {}
-    })
-    ok(`Cleaned up ${oldExes.length} old installer(s): ${oldExes.join(', ')}`)
-  }
-
-  fs.copyFileSync(installerSrc, installerDst)
-  fs.copyFileSync(installerSrc, installerLatest)
-  ok(`Copied: ${installerName}`)
-
-  // SHA-256
-  const hash = sha256File(installerDst)
-  const checksumContent = `SHA-256 Checksums for Claude Command Center Beta v${version}\nGenerated: ${new Date().toISOString()}\n\n${hash}  ${installerName}\n`
-  fs.writeFileSync(checksumsPath, checksumContent, 'utf-8')
-  ok(`SHA-256: ${hash.substring(0, 16)}...`)
-} else {
-  console.error(`      INSTALLER NOT FOUND: ${installerSrc}`)
-  exitCode = 1
-}
-
-// Delete source-hash.json
-try {
-  if (fs.existsSync(HASH_FILE)) {
-    fs.unlinkSync(HASH_FILE)
-    ok('source-hash.json deleted')
-  }
-} catch (err) {
-  warn('Could not delete source-hash.json (non-fatal)')
-}
-
-// --- Step 9: VirusTotal scan ---
-step(9, TOTAL_STEPS, 'VirusTotal scan...')
-
-let vtUrl = null
-
-if (SKIP_VT) {
-  warn('Skipped (--skip-vt)')
-} else {
-  const vtKey = readSecret('virus-total-api-key.txt')
-  if (!vtKey) {
-    warn('No API key found at .secrets/virus-total-api-key.txt')
-  } else if (!fs.existsSync(installerDst)) {
-    warn('Installer not found, skipping VT scan')
-  } else {
-    try {
-      // Upload file to VirusTotal
-      console.log('      Uploading installer to VirusTotal...')
-      const fileSize = fs.statSync(installerDst).size
-      const sizeMB = (fileSize / (1024 * 1024)).toFixed(1)
-      console.log(`      File: ${installerName} (${sizeMB} MB)`)
-
-      // Files > 32MB need a special upload URL
-      let uploadUrl = 'https://www.virustotal.com/api/v3/files'
-      if (fileSize > 32 * 1024 * 1024) {
-        console.log('      File exceeds 32MB, requesting large file upload URL...')
-        const urlResult = run(
-          `curl -s --request GET --url https://www.virustotal.com/api/v3/files/upload_url ` +
-          `--header "x-apikey: ${vtKey}"`,
-          { timeout: 30000 }
-        )
-        const urlJson = JSON.parse(urlResult)
-        if (urlJson.data) {
-          uploadUrl = urlJson.data
-          ok('Got large file upload URL')
-        } else {
-          warn('Could not get large file upload URL, trying standard endpoint')
-        }
-      }
-
-      // Upload the file
-      const vtResult = run(
-        `curl -s --request POST --url "${uploadUrl}" ` +
-        `--header "x-apikey: ${vtKey}" ` +
-        `--form "file=@${installerDst.replace(/\\/g, '/')}"`,
-        { timeout: 600000 }  // 10 min timeout for large file upload
-      )
-
-      const vtJson = JSON.parse(vtResult)
-      if (vtJson.data && vtJson.data.id) {
-        const analysisId = vtJson.data.id
-        vtUrl = `https://www.virustotal.com/gui/file-analysis/${analysisId}`
-        ok(`Uploaded! Analysis: ${vtUrl}`)
-        console.log('      (Results take 2-5 minutes to complete)')
-
-        // Also get the permanent file URL via SHA-256
-        const fileHash = sha256File(installerDst)
-        const permanentUrl = `https://www.virustotal.com/gui/file/${fileHash}`
-        console.log(`      Permanent link: ${permanentUrl}`)
-        vtUrl = permanentUrl  // Use permanent link in release notes
-      } else {
-        warn('VirusTotal upload returned unexpected response')
-        if (vtResult.length < 500) console.log(`      Response: ${vtResult}`)
-      }
-    } catch (err) {
-      warn(`VirusTotal upload failed: ${err.message}`)
-    }
-  }
-}
-
-// Append VT link to release notes if available
-if (vtUrl) {
-  releaseNotesBody += `\n\n## Security\n- [VirusTotal Scan Results](${vtUrl})\n`
-}
-
-// Write release notes to file
-const releaseNotesPath = path.join(PROJECT_ROOT, 'RELEASE_NOTES.md')
-fs.writeFileSync(releaseNotesPath, releaseNotesBody, 'utf-8')
-
-// --- Step 10: Git commit, tag, push ---
-step(10, TOTAL_STEPS, 'Git commit and tag...')
+// --- Step 5: Git commit + tag + push ---
+step(5, TOTAL_STEPS, 'Git commit, tag, push...')
 
 if (SKIP_PUSH) {
-  warn('Skipped (--skip-push)')
+  warn('Skipped (--skip-push) — workflow will not be dispatched')
+  process.exit(0)
+}
+
+try {
+  run('git add -A')
+  const staged = run('git diff --cached --stat 2>&1 || echo ""')
+  if (staged.length > 0) {
+    run(`git commit -m "Release v${version}"`)
+    ok(`Committed: Release v${version}`)
+  } else {
+    ok('Nothing to commit')
+  }
+
+  // Tag — clean up any pre-existing tag with the same name (rare edge case)
+  try {
+    run(`git tag ${tag}`)
+    ok(`Tagged: ${tag}`)
+  } catch {
+    warn(`Tag ${tag} may already exist locally — continuing`)
+  }
+
+  console.log('      Pushing to origin...')
+  run(`git push origin ${currentBranch} --tags 2>&1`, { timeout: 60000 })
+  ok(`Pushed ${currentBranch} + tags to origin`)
+} catch (err) {
+  fail(`Git push failed: ${err.message}`)
+}
+
+// --- Step 6: Pre-clean any existing GitHub release for this tag ---
+step(6, TOTAL_STEPS, 'Checking for stale GitHub release...')
+try {
+  const existing = run(`gh release view ${tag} --json tagName -q .tagName 2>&1 || echo ""`)
+  if (existing.trim() === tag) {
+    warn(`A release for ${tag} already exists — deleting so the workflow can recreate cleanly`)
+    run(`gh release delete ${tag} --yes`)
+    ok('Stale release deleted (tag preserved)')
+  } else {
+    ok('No existing release for this tag')
+  }
+} catch (err) {
+  warn(`Could not check/delete existing release: ${err.message}`)
+}
+
+// --- Step 7: Dispatch GitHub Actions workflow ---
+step(7, TOTAL_STEPS, 'Dispatching GitHub Actions release workflow...')
+
+try {
+  run(`gh workflow run release.yml --ref ${currentBranch} -f channel=${channel} -f skip_vt=false`)
+  ok(`Workflow dispatched (channel=${channel}, ref=${currentBranch})`)
+} catch (err) {
+  fail(`Workflow dispatch failed: ${err.message}`)
+}
+
+// Wait briefly for the run to register, then find the run ID
+let runId = ''
+console.log('      Waiting for run to register...')
+for (let attempt = 0; attempt < 10; attempt++) {
+  try {
+    // Sleep before polling — the dispatch is async on GitHub's side
+    execSync(process.platform === 'win32' ? 'timeout /t 2 /nobreak >nul' : 'sleep 2', { stdio: 'ignore' })
+    const json = run('gh run list --workflow=release.yml --limit 1 --json databaseId,status,headBranch')
+    const runs = JSON.parse(json)
+    if (runs.length > 0 && runs[0].headBranch === currentBranch) {
+      runId = String(runs[0].databaseId)
+      break
+    }
+  } catch { /* keep trying */ }
+}
+
+if (!runId) {
+  warn('Could not detect dispatched run ID — check Actions tab manually')
+  ok(`Manual link: https://github.com/nubbymong/claude-command-center/actions/workflows/release.yml`)
+} else {
+  ok(`Run ID: ${runId}`)
+  ok(`Run URL: https://github.com/nubbymong/claude-command-center/actions/runs/${runId}`)
+}
+
+// --- Step 8: Watch the workflow to completion ---
+step(8, TOTAL_STEPS, 'Watching workflow run...')
+
+if (SKIP_WATCH || !runId) {
+  warn(SKIP_WATCH ? 'Skipped (--skip-watch)' : 'No run ID — cannot watch')
+} else {
+  console.log('      Streaming run status (may take 5-10 minutes for both platforms)...')
+  console.log('')
+  try {
+    runInherit(`gh run watch ${runId} --exit-status --interval 15`)
+    ok('Workflow completed successfully')
+  } catch {
+    warn('Workflow failed or was cancelled — check the Actions tab')
+    exitCode = 1
+  }
+}
+
+// --- Step 9: Verify final release has both platforms ---
+step(9, TOTAL_STEPS, 'Verifying release artifacts...')
+
+if (exitCode !== 0) {
+  warn('Skipping verification because workflow did not complete cleanly')
 } else {
   try {
-    // Stage source files (not .exe, not dist/, not secrets)
-    run('git add -A')
+    // Wait a few seconds for the release to be visible after workflow completion
+    execSync(process.platform === 'win32' ? 'timeout /t 3 /nobreak >nul' : 'sleep 3', { stdio: 'ignore' })
+    const releaseJson = run(`gh release view ${tag} --json assets,url -q "{url: .url, names: [.assets[].name]}"`)
+    const release = JSON.parse(releaseJson)
+    const names = release.names || []
+    const hasExe = names.some((n) => n.endsWith('.exe'))
+    const hasDmg = names.some((n) => n.endsWith('.dmg'))
+    const hasChecksums = names.some((n) => n.toLowerCase().includes('checksum'))
 
-    // Check if there's anything to commit
-    const staged = run('git diff --cached --stat 2>&1 || echo ""')
-    if (staged.length > 0) {
-      run(`git commit -m "Release v${version}"`)
-      ok(`Committed: Release v${version}`)
-    } else {
-      ok('Nothing new to commit')
-    }
-
-    // Tag — beta releases get -beta suffix
-    const tagName = IS_BETA ? `v${version}-beta` : `v${version}`
-    try {
-      run(`git tag ${tagName}`)
-      ok(`Tagged: ${tagName}`)
-    } catch (err) {
-      warn(`Tag ${tagName} may already exist`)
-    }
-
-    // Push
-    console.log('      Pushing to origin...')
-    run('git push origin main --tags 2>&1', { timeout: 60000 })
-    ok('Pushed to origin/main with tags')
+    console.log(`      Release URL: ${release.url}`)
+    console.log(`      Assets: ${names.join(', ')}`)
+    if (hasExe) ok('Windows installer (.exe) attached')
+    else { warn('Windows installer NOT found'); exitCode = 1 }
+    if (hasDmg) ok('macOS installer (.dmg) attached')
+    else { warn('macOS installer NOT found'); exitCode = 1 }
+    if (hasChecksums) ok('CHECKSUMS.txt attached')
+    else warn('CHECKSUMS.txt not found (workflow normally generates this)')
   } catch (err) {
-    warn(`Git operations failed: ${err.message}`)
+    warn(`Could not verify release: ${err.message}`)
     exitCode = 1
   }
 }
 
-// --- Step 11: GitHub Release ---
-step(11, TOTAL_STEPS, 'Creating GitHub Release...')
+// --- Done ---
+header(
+  exitCode === 0
+    ? `${channel.toUpperCase()} Release v${version} complete!\n  Tag: ${tag}`
+    : `Release completed with warnings.\n  Tag: ${tag}`
+)
 
-let releaseUrl = ''
-
-if (SKIP_PUSH) {
-  warn('Skipped (--skip-push)')
-} else {
-  try {
-    // Create release with assets
-    const ghReleaseTag = IS_BETA ? `v${version}-beta` : `v${version}`
-    const ghCmd = [
-      'gh', 'release', 'create', ghReleaseTag,
-      '--title', ghReleaseTag,
-      '--notes-file', releaseNotesPath,
-    ]
-
-    // Note: --prerelease is intentionally NOT used yet.
-    // Existing installs (stable channel) use `gh release view` which skips prereleases.
-    // Until all users have the updateChannel setting, beta releases are published as
-    // regular releases with -beta tag suffix for labeling only.
-    // TODO: Enable --prerelease once user base has updateChannel support
-    // if (IS_BETA) {
-    //   ghCmd.push('--prerelease')
-    // }
-
-    // Add installer as asset if it exists
-    if (fs.existsSync(installerDst)) {
-      ghCmd.push(installerDst)
-    }
-    // Add checksums
-    if (fs.existsSync(checksumsPath)) {
-      ghCmd.push(checksumsPath)
-    }
-
-    const ghResult = run(ghCmd.map(a => `"${a}"`).join(' '), { timeout: 120000 })
-    releaseUrl = ghResult.trim()
-    ok(`GitHub Release created: ${releaseUrl}`)
-  } catch (err) {
-    warn(`GitHub Release failed: ${err.message}`)
-    exitCode = 1
-  }
-}
-
-// --- Step 12: Push update notification ---
-step(12, TOTAL_STEPS, 'Pushing update notification...')
-
-pushNotification()
-
-function pushNotification() {
-  const PORT = 9847
-  let server = null
-  let wss = null
-  let clientsSent = 0
-
-  try {
-    server = http.createServer()
-    wss = new WebSocketServer({ server })
-
-    wss.on('connection', (ws) => {
-      ws.send(JSON.stringify({
-        type: 'update_available',
-        timestamp: Date.now(),
-        hash: 'release-' + version,
-        version: version,
-        installerPath: installerLatest
-      }))
-      clientsSent++
-      console.log(`      Notified client (${clientsSent} total)`)
-    })
-
-    server.on('error', (err) => {
-      if (err.code === 'EADDRINUSE') {
-        console.log('      Update server already running on port ' + PORT)
-        console.log('      Production clients will be notified via existing server.')
-        finishUp()
-        return
-      }
-    })
-
-    server.listen(PORT, '0.0.0.0', () => {
-      console.log(`      Listening on port ${PORT} for production clients...`)
-      console.log('      (waiting 15s for connections)')
-
-      setTimeout(() => {
-        if (clientsSent === 0) {
-          console.log('      No production clients connected.')
-        } else {
-          console.log(`      Done - notified ${clientsSent} client(s).`)
-        }
-        wss.close()
-        server.close()
-        finishUp()
-      }, 15000)
-    })
-  } catch (err) {
-    warn('Could not start notification server (non-fatal)')
-    finishUp()
-  }
-}
-
-function finishUp() {
-  // --- Step 13: Verify ---
-  step(13, TOTAL_STEPS, 'Verification...')
-
-  const checks = []
-  const installerSize = fs.existsSync(installerDst)
-    ? (fs.statSync(installerDst).size / (1024 * 1024)).toFixed(1) + ' MB'
-    : null
-
-  if (installerSize) {
-    checks.push(`  OK   Installer: ${installerName} (${installerSize})`)
-  } else {
-    checks.push('  FAIL Installer not found')
-    exitCode = 1
-  }
-
-  if (fs.existsSync(checksumsPath)) {
-    checks.push('  OK   CHECKSUMS.txt generated')
-  }
-
-  if (!SKIP_PUSH) {
-    try {
-      const verifyTag = IS_BETA ? `v${version}-beta` : `v${version}`
-      run(`git tag -l ${verifyTag}`)
-      checks.push(`  OK   Git tag: ${verifyTag}`)
-    } catch { /* ignore */ }
-  }
-
-  if (releaseUrl) {
-    checks.push(`  OK   GitHub Release: ${releaseUrl}`)
-  }
-
-  if (vtUrl) {
-    checks.push(`  OK   VirusTotal: ${vtUrl}`)
-  }
-
-  if (!fs.existsSync(HASH_FILE)) {
-    checks.push('  OK   source-hash.json deleted')
-  }
-
-  if (changelogGenerated) {
-    checks.push('  OK   Changelog entry generated by Claude')
-  }
-
-  console.log('')
-  console.log(checks.join('\n'))
-  console.log('')
-  console.log('  ===========================================')
-  if (exitCode === 0) {
-    console.log(`    ${IS_BETA ? 'Beta' : 'Stable'} Release v${version} complete!`)
-    if (releaseUrl) console.log(`    ${releaseUrl}`)
-  } else {
-    console.log('    Release completed with warnings.')
-  }
-  console.log('  ===========================================')
-  console.log('')
-
-  process.exit(exitCode)
-}
+process.exit(exitCode)
 
 })()
