@@ -172,47 +172,79 @@ try {
     if (FF_ONLY) process.exit(0)
     // Fall through to release step — maybe they want to re-ship stable
   } else {
-    // Check: is main an ancestor of beta? (i.e. can we fast-forward?)
+    // Check: is main an ancestor of beta? (i.e. can we merge cleanly?)
     try {
       run(`git merge-base --is-ancestor main beta`)
       const ahead = run('git rev-list --count main..beta')
-      ok(`Main can fast-forward to beta (${ahead} commit(s) ahead)`)
+      ok(`Beta is ${ahead} commit(s) ahead of main — ready to merge`)
     } catch {
       fail(
-        `Cannot fast-forward: beta has diverged from main. This means main has commits ` +
+        `Cannot merge: beta has diverged from main. This means main has commits ` +
         `not on beta (e.g. a hotfix landed directly on main). Resolve by merging main ` +
         `into beta first: git checkout beta && git merge main && git push`
       )
     }
   }
 } catch (err) {
-  if (err.message.includes('Cannot fast-forward')) throw err
+  if (err.message.includes('Cannot merge')) throw err
   fail(`Ancestry check failed: ${err.message}`)
 }
 
-// --- Step 4: Fast-forward main to beta ---
-step(4, TOTAL, 'Fast-forwarding main to beta...')
+// --- Step 4: Find and merge the beta→main PR ---
+step(4, TOTAL, 'Merging beta → main PR...')
+
+let prNumber = null
 try {
-  run('git checkout main')
-  run('git merge --ff-only beta')
-  ok('Fast-forwarded main → beta')
+  const prJson = run('gh pr list --base main --head beta --state open --json number,title --limit 1')
+  const prs = JSON.parse(prJson)
+  if (prs.length > 0) {
+    prNumber = prs[0].number
+    ok(`Found open PR #${prNumber}: ${prs[0].title}`)
+  } else {
+    // No PR exists — create one on the fly so the merge is recorded as a PR event
+    warn('No open beta→main PR found — creating one now')
+    const version = run("node -e \"console.log(require('./package.json').version)\"")
+    const createResult = run(
+      `gh pr create --base main --head beta ` +
+      `--title "Beta v${version} → stable promotion" ` +
+      `--body "Automated promotion from beta to main for stable release v${version}."`
+    )
+    // Extract PR number from the URL returned by gh pr create
+    const match = createResult.match(/\/pull\/(\d+)/)
+    if (match) {
+      prNumber = parseInt(match[1], 10)
+      ok(`Created PR #${prNumber}`)
+    } else {
+      fail(`Could not parse PR number from: ${createResult}`)
+    }
+  }
 } catch (err) {
-  fail(`Fast-forward failed: ${err.message}`)
+  fail(`PR lookup/creation failed: ${err.message}`)
 }
 
-// --- Step 5: Push main ---
-step(5, TOTAL, 'Pushing main to origin...')
+// Merge the PR with a merge commit (Style A — visible "promoted" marker in history)
 try {
-  run('git push origin main 2>&1', { timeout: 60000 })
-  ok('Pushed main to origin')
+  run(`gh pr merge ${prNumber} --merge --subject "Promote beta → main (stable)" --delete-branch=false`)
+  ok(`Merged PR #${prNumber} into main`)
 } catch (err) {
-  fail(`Push failed: ${err.message}`)
+  fail(`PR merge failed: ${err.message}`)
+}
+
+// --- Step 5: Sync local main after the remote merge ---
+step(5, TOTAL, 'Syncing local main after merge...')
+try {
+  run('git fetch origin main')
+  run('git branch -f main origin/main')
+  ok('Local main updated to match origin/main')
+} catch (err) {
+  fail(`Could not sync local main: ${err.message}`)
 }
 
 if (FF_ONLY) {
   console.log('')
   console.log('  ===========================================')
   console.log('    Main is promoted. Run the release manually:')
+  console.log('      git checkout main')
   console.log('      npm run release -- --stable --no-bump')
   console.log('    Then: git checkout beta')
   console.log('  ===========================================')
@@ -229,6 +261,9 @@ if (!AUTO_YES) {
 
 if (confirm === 'y' || confirm === 'yes') {
   try {
+    // Checkout main for the release script's branch enforcement check
+    run('git checkout main')
+    ok('Switched to main branch')
     runInherit('node scripts/release.js --stable --no-bump')
     ok('Stable release dispatched')
   } catch {
@@ -240,11 +275,19 @@ if (confirm === 'y' || confirm === 'yes') {
   console.log('    npm run release -- --stable --no-bump')
 }
 
+// Switch back to beta so the user is on the correct branch for continued work
+try {
+  run('git checkout beta')
+  ok('Switched back to beta branch')
+} catch {
+  warn('Could not switch back to beta — run `git checkout beta` manually')
+}
+
 console.log('')
 console.log('  ===========================================')
-console.log('    Promote complete. Remember to:')
-console.log('      git checkout beta')
-console.log('    ... before continuing feature work.')
+console.log('    Promote complete!')
+console.log('    You are on the beta branch, ready for')
+console.log('    continued feature work.')
 console.log('  ===========================================')
 
 })()

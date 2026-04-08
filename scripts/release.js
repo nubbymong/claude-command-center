@@ -162,7 +162,7 @@ function tagFor(version, channel) {
 
 ;(async () => {
 
-const TOTAL_STEPS = 9
+const TOTAL_STEPS = 10
 let exitCode = 0
 
 const channel = await pickChannel()
@@ -353,8 +353,53 @@ try {
   fail(`Git push failed: ${err.message}`)
 }
 
-// --- Step 6: Pre-clean any existing GitHub release for this tag ---
-step(6, TOTAL_STEPS, 'Checking for stale GitHub release...')
+// --- Step 6: Create or update beta→main PR (beta/dev releases only) ---
+if (channel === 'beta' || channel === 'dev') {
+  step(6, TOTAL_STEPS, 'Creating/updating beta → main PR...')
+  try {
+    // Check if there's already an open PR from beta → main
+    const existingPrJson = run(
+      'gh pr list --base main --head beta --state open --json number,title --limit 1'
+    )
+    const existingPrs = JSON.parse(existingPrJson)
+
+    const prTitle = `Beta v${version} → stable promotion candidate`
+    const prBody = [
+      '## What this is',
+      '',
+      'This PR tracks everything on the `beta` branch that is a candidate for the next stable release.',
+      '',
+      `**Current beta release**: [${tag}](https://github.com/nubbymong/claude-command-center/releases/tag/${tag})`,
+      '',
+      'Merging this PR promotes all these changes to the stable channel.',
+      '',
+      '## How to promote',
+      '',
+      'Run `npm run promote` from the `beta` branch. It will merge this PR and cut a stable release.',
+    ].join('\n')
+
+    if (existingPrs.length > 0) {
+      // Update the existing PR title to reflect the new version
+      const prNumber = existingPrs[0].number
+      run(`gh pr edit ${prNumber} --title "${prTitle}" --body "${prBody.replace(/"/g, '\\"')}"`)
+      ok(`Updated PR #${prNumber}: ${prTitle}`)
+    } else {
+      // Create a new PR for this promotion cycle
+      const createResult = run(
+        `gh pr create --base main --head beta --title "${prTitle}" --body "${prBody.replace(/"/g, '\\"')}"`
+      )
+      ok(`Created PR: ${createResult}`)
+    }
+  } catch (err) {
+    // PR creation is non-fatal — the release still ships without it
+    warn(`PR create/update failed: ${err.message}`)
+  }
+} else {
+  step(6, TOTAL_STEPS, 'Skipping PR (stable releases do not create beta→main PRs)')
+}
+
+// --- Step 7: Pre-clean any existing GitHub release for this tag ---
+step(7, TOTAL_STEPS, 'Checking for stale GitHub release...')
 try {
   const existing = run(`gh release view ${tag} --json tagName -q .tagName 2>&1 || echo ""`)
   if (existing.trim() === tag) {
@@ -368,8 +413,8 @@ try {
   warn(`Could not check/delete existing release: ${err.message}`)
 }
 
-// --- Step 7: Dispatch GitHub Actions workflow ---
-step(7, TOTAL_STEPS, 'Dispatching GitHub Actions release workflow...')
+// --- Step 8: Dispatch GitHub Actions workflow ---
+step(8, TOTAL_STEPS, 'Dispatching GitHub Actions release workflow...')
 
 try {
   run(`gh workflow run release.yml --ref ${currentBranch} -f channel=${channel} -f skip_vt=false`)
@@ -412,8 +457,8 @@ if (!runId) {
   ok(`Run URL: https://github.com/nubbymong/claude-command-center/actions/runs/${runId}`)
 }
 
-// --- Step 8: Watch the workflow to completion ---
-step(8, TOTAL_STEPS, 'Watching workflow run...')
+// --- Step 9: Watch the workflow to completion ---
+step(9, TOTAL_STEPS, 'Watching workflow run...')
 
 if (SKIP_WATCH || !runId) {
   warn(SKIP_WATCH ? 'Skipped (--skip-watch)' : 'No run ID — cannot watch')
@@ -429,8 +474,8 @@ if (SKIP_WATCH || !runId) {
   }
 }
 
-// --- Step 9: Verify final release has both platforms ---
-step(9, TOTAL_STEPS, 'Verifying release artifacts...')
+// --- Step 10: Verify final release has both platforms ---
+step(10, TOTAL_STEPS, 'Verifying release artifacts...')
 
 if (exitCode !== 0) {
   warn('Skipping verification because workflow did not complete cleanly')
