@@ -15,13 +15,24 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '1.2.167',
+    date: '2026-04-08',
+    highlights: "PR-based promote flow + auto-PR on beta releases",
+    changes: [
+      { type: 'feature', description: "Beta releases now auto-create (or update) a PR from beta → main so there is always a reviewable promotion candidate on GitHub" },
+      { type: 'improvement', description: "`npm run promote` now merges the beta→main PR via GitHub (creating a merge commit as a visible 'promoted to stable' marker in git history) instead of doing a raw git fast-forward" },
+      { type: 'improvement', description: "Promote script automatically switches you back to the beta branch when done — no need to remember `git checkout beta`" },
+      { type: 'fix', description: "promote.js: hard-fail if git status check fails (was non-fatal warn); sync local main to origin/main before ancestry check; use --track for proper upstream setup (Copilot review feedback)" },
+    ]
+  },
+  {
     version: '1.2.166',
     date: '2026-04-08',
     highlights: "Branching model: beta + main with promote flow",
     changes: [
       { type: 'improvement', description: "New branching model: all feature work happens on the `beta` branch; the `main` branch is stable-only and receives fast-forwards from beta" },
       { type: 'improvement', description: "Release script now enforces branch ↔ channel correspondence — --stable must run on main, --beta/--dev must run on beta (bypass with --skip-branch-check in emergencies)" },
-      { type: 'feature', description: "New `npm run promote` command fast-forwards main to beta and ships a stable release at the same version as the current beta (so v1.2.166-beta and v1.2.166 stable are literally the same code, different tags)" },
+      { type: 'feature', description: "New `npm run promote` command merges the beta→main PR and ships a stable release at the same version as the current beta" },
       { type: 'feature', description: "New --no-bump flag on the release script reuses the current package.json version instead of incrementing — used by the promote flow to keep beta and stable version numbers aligned" },
       { type: 'feature', description: "New --ff-only and --yes flags on the promote script for partial/automated runs" },
     ]
