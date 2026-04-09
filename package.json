@@ -1,6 +1,6 @@
 {
   "name": "claude-conductor",
-  "version": "1.2.165",
+  "version": "1.2.168",
   "description": "Multi-session Claude Code terminal orchestrator",
   "author": "Nicholas Moger",
   "main": "./out/main/index.js",
@@ -15,6 +15,7 @@
     "test:unit": "vitest run",
     "test:e2e": "npx playwright test",
     "release": "node scripts/release.js",
+    "promote": "node scripts/promote.js",
     "update-server": "node scripts/update-server.js",
     "postinstall": "npx @electron/rebuild --only node-pty --only better-sqlite3",
     "rebuild": "npx @electron/rebuild",
@@ -86,9 +87,7 @@
       "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
-      "notarize": {
-        "teamId": "APPLE_TEAM_ID"
-      }
+      "notarize": true
     },
     "dmg": {
       "sign": false

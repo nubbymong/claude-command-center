@@ -24,6 +24,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
   const [dragOverId, setDragOverId] = useState<string | null>(null)
   const [argsPopover, setArgsPopover] = useState<{ cmd: CustomCommand; rect: DOMRect } | null>(null)
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set())
+  const [sectionInput, setSectionInput] = useState<{ x: number; y: number } | null>(null)
 
   const visibleCommands = commands
     .filter((c) => c.scope === 'global' || (c.scope === 'config' && c.configId === configId))
@@ -221,11 +222,13 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
     return (
       <>
         {unsectioned.map(renderCommandButton)}
-        {activeSections.map((section) => {
+        {activeSections.map((section, idx) => {
           const sectionCmds = bySectionId.get(section.id) || []
           const isCollapsed = collapsedSections.has(section.id)
+          const showDivider = unsectioned.length > 0 || idx > 0
           return (
             <React.Fragment key={section.id}>
+              {showDivider && <div className="w-px h-4 bg-surface1/60 mx-0.5 shrink-0" />}
               <button
                 onClick={() => toggleSection(section.id)}
                 className="flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] text-overlay0 hover:text-subtext0 transition-colors shrink-0 rounded hover:bg-surface0/50"
@@ -361,6 +364,10 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
           {...contextMenu}
           onClose={() => setContextMenu(null)}
           onAdd={() => { setContextMenu(null); setShowDialog(true) }}
+          onAddSection={() => {
+            setSectionInput({ x: contextMenu.x, y: contextMenu.y })
+            setContextMenu(null)
+          }}
           onEdit={contextMenu.commandId ? () => {
             const cmd = commands.find(c => c.id === contextMenu.commandId)
             if (cmd) { setEditingCommand(cmd); setContextMenu(null) }
@@ -369,6 +376,23 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
             removeCommand(contextMenu.commandId!)
             setContextMenu(null)
           } : undefined}
+        />
+      )}
+      {sectionInput && (
+        <SectionNameInput
+          x={sectionInput.x}
+          y={sectionInput.y}
+          onConfirm={(name) => {
+            const { addSection } = useCommandStore.getState()
+            addSection({
+              id: generateId(),
+              name,
+              scope: configId ? 'config' : 'global',
+              configId,
+            })
+            setSectionInput(null)
+          }}
+          onCancel={() => setSectionInput(null)}
         />
       )}
       {argsPopover && (
@@ -392,10 +416,11 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
   )
 }
 
-function ContextMenuOverlay({ x, y, onClose, onAdd, onEdit, onDelete }: {
+function ContextMenuOverlay({ x, y, onClose, onAdd, onAddSection, onEdit, onDelete }: {
   x: number; y: number
   onClose: () => void
   onAdd: () => void
+  onAddSection: () => void
   onEdit?: () => void
   onDelete?: () => void
 }) {
@@ -428,6 +453,10 @@ function ContextMenuOverlay({ x, y, onClose, onAdd, onEdit, onDelete }: {
         <button onClick={onAdd} className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface1 transition-colors flex items-center gap-2">
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2"><line x1="6" y1="2" x2="6" y2="10"/><line x1="2" y1="6" x2="10" y2="6"/></svg>
           Add Command
+        </button>
+        <button onClick={onAddSection} className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface1 transition-colors flex items-center gap-2">
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2"><path d="M2 6h8"/><path d="M2 3h8"/><path d="M2 9h8"/></svg>
+          Add Section
         </button>
         {onEdit && (
           <button onClick={onEdit} className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface1 transition-colors flex items-center gap-2">
@@ -603,6 +632,65 @@ function ArgsPopover({ cmd, rect, onRun, onSetDefault, onClose }: {
             title="Save selected args as the new default"
           >
             Set as Default
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/** Floating input for creating a new section from the context menu */
+function SectionNameInput({ x, y, onConfirm, onCancel }: {
+  x: number; y: number
+  onConfirm: (name: string) => void
+  onCancel: () => void
+}) {
+  const [name, setName] = React.useState('')
+  const ref = React.useRef<HTMLDivElement>(null)
+  const [pos, setPos] = React.useState<{ left: number; top?: number; bottom?: number }>({ left: x })
+
+  React.useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    const viewH = window.innerHeight
+    const viewW = window.innerWidth
+    const left = Math.max(8, Math.min(x, viewW - rect.width - 8))
+    if (y + rect.height > viewH - 8) {
+      setPos({ left, bottom: viewH - y })
+    } else {
+      setPos({ left, top: y })
+    }
+  }, [x, y])
+
+  return (
+    <div className="fixed inset-0 z-50" onClick={onCancel}>
+      <div
+        ref={ref}
+        className="fixed bg-surface0 border border-surface1 rounded-lg shadow-xl p-3 min-w-[220px]"
+        style={pos}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="text-xs text-subtext0 mb-2 font-medium">New Section</div>
+        <div className="flex gap-1">
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && name.trim()) { e.preventDefault(); onConfirm(name.trim()) }
+              if (e.key === 'Escape') onCancel()
+            }}
+            className="flex-1 px-2 py-1 bg-crust text-text text-xs rounded border border-surface1 outline-none focus:border-blue"
+            placeholder="Section name"
+            autoFocus
+          />
+          <button
+            onClick={() => name.trim() && onConfirm(name.trim())}
+            disabled={!name.trim()}
+            className="px-2 py-1 text-xs bg-blue text-crust rounded hover:bg-blue/80 disabled:opacity-40"
+          >
+            Add
           </button>
         </div>
       </div>

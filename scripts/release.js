@@ -20,17 +20,26 @@
  *   8. Watch the workflow run to completion
  *   9. Verify the final release has both .exe and .dmg attached
  *
+ * Branching model:
+ *   - Work on the `beta` branch. Beta/dev releases cut from there.
+ *   - When a beta is stable, use `npm run promote` to merge the beta→main PR
+ *     with a merge commit, then cut a stable release at the SAME version
+ *     (no bump — the code is identical).
+ *   - Hotfixes can land directly on main and release as stable from there.
+ *
  * Usage:
  *   npm run release                 (interactive channel prompt, patch bump)
- *   npm run release -- --beta       (force beta channel)
- *   npm run release -- --stable     (force stable channel)
- *   npm run release -- --dev        (force dev channel — experimental)
+ *   npm run release -- --beta       (force beta channel — must be on beta branch)
+ *   npm run release -- --stable     (force stable channel — must be on main branch)
+ *   npm run release -- --dev        (force dev channel — must be on beta branch)
  *   npm run release -- --minor      (minor version bump)
  *   npm run release -- --major      (major version bump)
+ *   npm run release -- --no-bump    (reuse current version — used by promote flow)
  *   npm run release -- --skip-tests (skip local typecheck + vitest)
  *   npm run release -- --skip-build (skip local build smoke test)
  *   npm run release -- --skip-watch (don't wait for workflow to finish)
  *   npm run release -- --skip-push  (everything except commit/push/dispatch)
+ *   npm run release -- --skip-branch-check  (bypass branch ↔ channel enforcement)
  *
  * Notes:
  *   - VirusTotal scanning is part of the GitHub Actions workflow, not local.
@@ -43,6 +52,7 @@
 
 const { execSync } = require('child_process')
 const fs = require('fs')
+const os = require('os')
 const path = require('path')
 const readline = require('readline')
 
@@ -53,11 +63,30 @@ const SKIP_TESTS = args.includes('--skip-tests')
 const SKIP_BUILD = args.includes('--skip-build')
 const SKIP_WATCH = args.includes('--skip-watch')
 const SKIP_PUSH = args.includes('--skip-push')
+const SKIP_BRANCH_CHECK = args.includes('--skip-branch-check')
+const NO_BUMP = args.includes('--no-bump')
 const BUMP_MINOR = args.includes('--minor')
 const BUMP_MAJOR = args.includes('--major')
 const FORCE_BETA = args.includes('--beta')
 const FORCE_STABLE = args.includes('--stable')
 const FORCE_DEV = args.includes('--dev')
+
+/**
+ * Branching model:
+ *   - `main`  : stable-only branch. Only stable releases are cut here.
+ *   - `beta`  : default working branch. All features land here first.
+ *               Beta and dev releases are cut from beta.
+ *
+ * Channel → required branch:
+ *   stable → main  (release must be reviewed + promoted from beta)
+ *   beta   → beta  (daily releases)
+ *   dev    → beta  (experimental, released from the same branch as beta)
+ */
+const CHANNEL_BRANCH = {
+  stable: 'main',
+  beta: 'beta',
+  dev: 'beta',
+}
 
 // ============================================================
 // HELPERS
@@ -135,7 +164,7 @@ function tagFor(version, channel) {
 
 ;(async () => {
 
-const TOTAL_STEPS = 9
+const TOTAL_STEPS = 10
 let exitCode = 0
 
 const channel = await pickChannel()
@@ -177,10 +206,23 @@ try {
 } catch {
   warn('Could not detect current branch, defaulting to main')
 }
-if (currentBranch !== 'main') {
-  warn(`On branch '${currentBranch}' — workflow will dispatch on this branch, not main`)
-}
 ok(`Current branch: ${currentBranch}`)
+
+// Enforce branch ↔ channel correspondence to prevent shipping beta code as
+// stable (or vice versa). `--skip-branch-check` exists for emergencies but
+// should not be used in normal operation.
+const requiredBranch = CHANNEL_BRANCH[channel]
+if (!SKIP_BRANCH_CHECK && currentBranch !== requiredBranch) {
+  fail(
+    `Channel '${channel}' must be released from the '${requiredBranch}' branch, ` +
+    `but current branch is '${currentBranch}'.\n      ` +
+    `Run: git checkout ${requiredBranch}\n      ` +
+    `(or pass --skip-branch-check to bypass — not recommended)`
+  )
+}
+if (SKIP_BRANCH_CHECK && currentBranch !== requiredBranch) {
+  warn(`Branch check skipped: releasing ${channel} from '${currentBranch}' instead of '${requiredBranch}'`)
+}
 
 // Git status (uncommitted changes will be included in the release commit)
 try {
@@ -195,30 +237,36 @@ try {
   warn('Git status check failed (non-fatal)')
 }
 
-// --- Step 2: Version bump ---
-step(2, TOTAL_STEPS, 'Incrementing version...')
+// --- Step 2: Version bump (or reuse) ---
+step(2, TOTAL_STEPS, NO_BUMP ? 'Reusing current version (--no-bump)...' : 'Incrementing version...')
 
 const pkgPath = path.join(PROJECT_ROOT, 'package.json')
 const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'))
 const oldVersion = pkg.version
-const parts = oldVersion.split('.').map(Number)
 
-if (BUMP_MAJOR) {
-  parts[0] += 1; parts[1] = 0; parts[2] = 0
-} else if (BUMP_MINOR) {
-  parts[1] += 1; parts[2] = 0
+let version
+if (NO_BUMP) {
+  // Used by the promote flow: stable release reuses the beta's version so
+  // v1.2.166-beta → v1.2.166 (same code, different tag, no version drift).
+  version = oldVersion
 } else {
-  parts[2] = (parts[2] || 0) + 1
+  const parts = oldVersion.split('.').map(Number)
+  if (BUMP_MAJOR) {
+    parts[0] += 1; parts[1] = 0; parts[2] = 0
+  } else if (BUMP_MINOR) {
+    parts[1] += 1; parts[2] = 0
+  } else {
+    parts[2] = (parts[2] || 0) + 1
+  }
+  version = parts.join('.')
+  pkg.version = version
+  fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n', 'utf-8')
 }
-
-const version = parts.join('.')
-pkg.version = version
-fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n', 'utf-8')
 
 const tag = tagFor(version, channel)
 
 console.log('')
-console.log(`      v${oldVersion} → v${version}  (tag: ${tag}, channel: ${channel})`)
+console.log(`      ${NO_BUMP ? `v${version} (reused)` : `v${oldVersion} → v${version}`}  (tag: ${tag}, channel: ${channel})`)
 
 // --- Step 3: Sync changelog version ---
 step(3, TOTAL_STEPS, 'Aligning changelog version with bumped version...')
@@ -307,8 +355,63 @@ try {
   fail(`Git push failed: ${err.message}`)
 }
 
-// --- Step 6: Pre-clean any existing GitHub release for this tag ---
-step(6, TOTAL_STEPS, 'Checking for stale GitHub release...')
+// --- Step 6: Create or update beta→main PR (beta/dev releases only) ---
+if (channel === 'beta' || channel === 'dev') {
+  step(6, TOTAL_STEPS, 'Creating/updating beta → main PR...')
+  try {
+    // Check if there's already an open PR from beta → main
+    const existingPrJson = run(
+      'gh pr list --base main --head beta --state open --json number,title --limit 1'
+    )
+    const existingPrs = JSON.parse(existingPrJson)
+
+    const prTitle = `Beta v${version} → stable promotion candidate`
+    const prBody = [
+      '## What this is',
+      '',
+      'This PR tracks everything on the `beta` branch that is a candidate for the next stable release.',
+      '',
+      `**Current beta release**: [${tag}](https://github.com/nubbymong/claude-command-center/releases/tag/${tag})`,
+      '',
+      'Merging this PR promotes all these changes to the stable channel.',
+      '',
+      '## How to promote',
+      '',
+      'Run `npm run promote` from the `beta` branch. It will merge this PR and cut a stable release.',
+    ].join('\n')
+
+    // Write PR body to a unique temp file to avoid shell escaping issues
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-pr-body-'))
+    const tmpBody = path.join(tmpDir, 'body.md')
+
+    try {
+      fs.writeFileSync(tmpBody, prBody)
+
+      if (existingPrs.length > 0) {
+        // Update the existing PR title to reflect the new version
+        const prNumber = existingPrs[0].number
+        run(`gh pr edit ${prNumber} --title "${prTitle}" --body-file "${tmpBody}"`)
+        ok(`Updated PR #${prNumber}: ${prTitle}`)
+      } else {
+        // Create a new PR for this promotion cycle
+        const createResult = run(
+          `gh pr create --base main --head beta --title "${prTitle}" --body-file "${tmpBody}"`
+        )
+        ok(`Created PR: ${createResult}`)
+      }
+    } finally {
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }) } catch (_) {}
+    }
+  } catch (err) {
+    // PR creation is non-fatal — the release still ships without it
+    warn(`PR create/update failed: ${err.message}`)
+  }
+} else {
+  step(6, TOTAL_STEPS, 'Skipping PR (stable releases do not create beta→main PRs)')
+}
+
+// --- Step 7: Pre-clean any existing GitHub release for this tag ---
+step(7, TOTAL_STEPS, 'Checking for stale GitHub release...')
 try {
   const existing = run(`gh release view ${tag} --json tagName -q .tagName 2>&1 || echo ""`)
   if (existing.trim() === tag) {
@@ -322,8 +425,8 @@ try {
   warn(`Could not check/delete existing release: ${err.message}`)
 }
 
-// --- Step 7: Dispatch GitHub Actions workflow ---
-step(7, TOTAL_STEPS, 'Dispatching GitHub Actions release workflow...')
+// --- Step 8: Dispatch GitHub Actions workflow ---
+step(8, TOTAL_STEPS, 'Dispatching GitHub Actions release workflow...')
 
 try {
   run(`gh workflow run release.yml --ref ${currentBranch} -f channel=${channel} -f skip_vt=false`)
@@ -366,8 +469,8 @@ if (!runId) {
   ok(`Run URL: https://github.com/nubbymong/claude-command-center/actions/runs/${runId}`)
 }
 
-// --- Step 8: Watch the workflow to completion ---
-step(8, TOTAL_STEPS, 'Watching workflow run...')
+// --- Step 9: Watch the workflow to completion ---
+step(9, TOTAL_STEPS, 'Watching workflow run...')
 
 if (SKIP_WATCH || !runId) {
   warn(SKIP_WATCH ? 'Skipped (--skip-watch)' : 'No run ID — cannot watch')
@@ -383,8 +486,8 @@ if (SKIP_WATCH || !runId) {
   }
 }
 
-// --- Step 9: Verify final release has both platforms ---
-step(9, TOTAL_STEPS, 'Verifying release artifacts...')
+// --- Step 10: Verify final release has both platforms ---
+step(10, TOTAL_STEPS, 'Verifying release artifacts...')
 
 if (exitCode !== 0) {
   warn('Skipping verification because workflow did not complete cleanly')
