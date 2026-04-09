@@ -4,24 +4,23 @@
  *
  * Branching model:
  *   - `beta` is the working branch where all features land.
- *   - `main` is stable-only — it only receives fast-forwards from beta.
+ *   - `main` is stable-only — it receives changes by merging the beta → main PR.
  *
  * What this script does:
  *   1. Verifies you're on `beta`, tree is clean, `main` is a strict ancestor.
  *   2. Fetches the latest state of both branches from origin.
- *   3. Fast-forwards local `main` to match `beta`.
- *   4. Pushes `main` to origin.
+ *   3. Merges the beta → main PR via `gh pr merge`, promoting beta to main.
+ *   4. Syncs local main to match the merged remote main.
  *   5. Optionally runs `node scripts/release.js --stable --no-bump` from main
  *      to ship a stable release at the same version as the current beta.
  *
  * Usage:
  *   npm run promote           (interactive — asks before running release)
  *   npm run promote -- --yes  (no prompts, immediately releases stable)
- *   npm run promote -- --ff-only  (just FF main, don't run release)
+ *   npm run promote -- --ff-only  (just promote main, don't run release)
  *
- * After this script runs, you'll be left on `main` with the stable release
- * either shipped (default) or ready to ship (--ff-only). In either case,
- * remember to `git checkout beta` before continuing feature work.
+ * After this script runs, you'll be left on `beta` ready for the next
+ * round of feature work.
  */
 
 const { execSync } = require('child_process')

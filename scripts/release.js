@@ -51,6 +51,7 @@
 
 const { execSync } = require('child_process')
 const fs = require('fs')
+const os = require('os')
 const path = require('path')
 const readline = require('readline')
 
@@ -378,18 +379,24 @@ if (channel === 'beta' || channel === 'dev') {
       'Run `npm run promote` from the `beta` branch. It will merge this PR and cut a stable release.',
     ].join('\n')
 
+    // Write PR body to temp file to avoid shell escaping issues with backticks/newlines
+    const tmpBody = path.join(os.tmpdir(), 'ccc-pr-body.md')
+    fs.writeFileSync(tmpBody, prBody)
+
     if (existingPrs.length > 0) {
       // Update the existing PR title to reflect the new version
       const prNumber = existingPrs[0].number
-      run(`gh pr edit ${prNumber} --title "${prTitle}" --body "${prBody.replace(/"/g, '\\"')}"`)
+      run(`gh pr edit ${prNumber} --title "${prTitle}" --body-file "${tmpBody}"`)
       ok(`Updated PR #${prNumber}: ${prTitle}`)
     } else {
       // Create a new PR for this promotion cycle
       const createResult = run(
-        `gh pr create --base main --head beta --title "${prTitle}" --body "${prBody.replace(/"/g, '\\"')}"`
+        `gh pr create --base main --head beta --title "${prTitle}" --body-file "${tmpBody}"`
       )
       ok(`Created PR: ${createResult}`)
     }
+
+    try { fs.unlinkSync(tmpBody) } catch (_) {}
   } catch (err) {
     // PR creation is non-fatal — the release still ships without it
     warn(`PR create/update failed: ${err.message}`)

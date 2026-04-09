@@ -2,10 +2,7 @@
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability in Claude Command Center, please report it privately:
-
-1. **GitHub Security Advisories** (preferred): [Create a new advisory](../../security/advisories/new)
-2. **Email**: Open a private advisory on GitHub — do not file a public issue
+If you discover a security vulnerability in Claude Command Center, please report it privately via [GitHub Security Advisories](../../security/advisories/new). Do not file a public issue.
 
 We will acknowledge receipt within 48 hours and aim to provide a fix within 7 days for critical issues.
 
