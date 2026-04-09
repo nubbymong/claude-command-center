@@ -274,12 +274,15 @@ if (confirm === 'y' || confirm === 'yes') {
   console.log('    npm run release -- --stable --no-bump')
 }
 
-// Switch back to beta so the user is on the correct branch for continued work
+// Switch back to beta and merge main into it so the merge commit exists on both branches.
+// This keeps the ancestry check clean for the next promote cycle.
 try {
   run('git checkout beta')
-  ok('Switched back to beta branch')
+  run('git merge main --no-edit')
+  run('git push origin beta')
+  ok('Switched to beta and synced with main (merge commit now on both branches)')
 } catch {
-  warn('Could not switch back to beta — run `git checkout beta` manually')
+  warn('Could not sync beta with main — run `git checkout beta && git merge main` manually')
 }
 
 console.log('')

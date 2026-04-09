@@ -22,8 +22,9 @@
  *
  * Branching model:
  *   - Work on the `beta` branch. Beta/dev releases cut from there.
- *   - When a beta is stable, use `npm run promote` to fast-forward main and
- *     cut a stable release at the SAME version (no bump — the code is identical).
+ *   - When a beta is stable, use `npm run promote` to merge the beta→main PR
+ *     with a merge commit, then cut a stable release at the SAME version
+ *     (no bump — the code is identical).
  *   - Hotfixes can land directly on main and release as stable from there.
  *
  * Usage:
@@ -379,24 +380,28 @@ if (channel === 'beta' || channel === 'dev') {
       'Run `npm run promote` from the `beta` branch. It will merge this PR and cut a stable release.',
     ].join('\n')
 
-    // Write PR body to temp file to avoid shell escaping issues with backticks/newlines
-    const tmpBody = path.join(os.tmpdir(), 'ccc-pr-body.md')
-    fs.writeFileSync(tmpBody, prBody)
+    // Write PR body to a unique temp file to avoid shell escaping issues
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-pr-body-'))
+    const tmpBody = path.join(tmpDir, 'body.md')
 
-    if (existingPrs.length > 0) {
-      // Update the existing PR title to reflect the new version
-      const prNumber = existingPrs[0].number
-      run(`gh pr edit ${prNumber} --title "${prTitle}" --body-file "${tmpBody}"`)
-      ok(`Updated PR #${prNumber}: ${prTitle}`)
-    } else {
-      // Create a new PR for this promotion cycle
-      const createResult = run(
-        `gh pr create --base main --head beta --title "${prTitle}" --body-file "${tmpBody}"`
-      )
-      ok(`Created PR: ${createResult}`)
+    try {
+      fs.writeFileSync(tmpBody, prBody)
+
+      if (existingPrs.length > 0) {
+        // Update the existing PR title to reflect the new version
+        const prNumber = existingPrs[0].number
+        run(`gh pr edit ${prNumber} --title "${prTitle}" --body-file "${tmpBody}"`)
+        ok(`Updated PR #${prNumber}: ${prTitle}`)
+      } else {
+        // Create a new PR for this promotion cycle
+        const createResult = run(
+          `gh pr create --base main --head beta --title "${prTitle}" --body-file "${tmpBody}"`
+        )
+        ok(`Created PR: ${createResult}`)
+      }
+    } finally {
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }) } catch (_) {}
     }
-
-    try { fs.unlinkSync(tmpBody) } catch (_) {}
   } catch (err) {
     // PR creation is non-fatal — the release still ships without it
     warn(`PR create/update failed: ${err.message}`)
