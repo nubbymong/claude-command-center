@@ -194,23 +194,7 @@ describe('github-update', () => {
       expect(result!.channel).toBe('beta')
     })
 
-    it('dev channel sees stable, beta, and dev tags', async () => {
-      currentChannel = 'dev'
-      httpsState.nextResponse = {
-        statusCode: 200,
-        body: [
-          releaseWithBothAssets('v1.2.140-dev', '1.2.140', true),
-          releaseWithBothAssets('v1.2.130-beta', '1.2.130', true),
-          releaseWithBothAssets('v1.2.125', '1.2.125'),
-        ],
-      }
-      const result = await checkGitHubRelease()
-      expect(result).not.toBeNull()
-      expect(result!.version).toBe('1.2.140')
-      expect(result!.channel).toBe('dev')
-    })
-
-    it('beta channel ignores dev tags', async () => {
+    it('beta channel ignores unknown tags', async () => {
       currentChannel = 'beta'
       httpsState.nextResponse = {
         statusCode: 200,
@@ -221,7 +205,7 @@ describe('github-update', () => {
       }
       const result = await checkGitHubRelease()
       expect(result).not.toBeNull()
-      expect(result!.version).toBe('1.2.130')  // skipped the dev
+      expect(result!.version).toBe('1.2.130')  // skipped the unrecognized dev tag
       expect(result!.channel).toBe('beta')
     })
 
