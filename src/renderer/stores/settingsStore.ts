@@ -24,7 +24,7 @@ export const DEFAULT_STATUS_LINE: StatusLineSettings = {
   showResetTime: true
 }
 
-export type UpdateChannel = 'stable' | 'beta' | 'dev'
+export type UpdateChannel = 'stable' | 'beta'
 
 export interface AppSettings {
   defaultModel: string

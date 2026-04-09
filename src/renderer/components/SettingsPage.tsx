@@ -128,7 +128,6 @@ export default function SettingsPage() {
                   >
                     <option value="stable">Stable — production releases only</option>
                     <option value="beta">Beta — stable + pre-release builds</option>
-                    <option value="dev">Dev — all builds including experimental</option>
                   </select>
                 </Field>
                 <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer mt-3">

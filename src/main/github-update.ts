@@ -51,7 +51,7 @@ function getRepo(): string {
 
 const REPO = getRepo()
 
-export type UpdateChannel = 'stable' | 'beta' | 'dev'
+export type UpdateChannel = 'stable' | 'beta'
 
 interface GitHubAsset {
   name: string
@@ -83,7 +83,6 @@ function classifyTag(tag: string): UpdateChannel | null {
   const stripped = tag.replace(/^v/, '')
   if (/^\d+\.\d+\.\d+$/.test(stripped)) return 'stable'
   if (/^\d+\.\d+\.\d+-beta(\.\d+)?$/.test(stripped)) return 'beta'
-  if (/^\d+\.\d+\.\d+-dev(\.\d+)?$/.test(stripped)) return 'dev'
   return null  // unknown format — ignore
 }
 
@@ -91,8 +90,6 @@ function classifyTag(tag: string): UpdateChannel | null {
 function tagMatchesChannel(tag: string, channel: UpdateChannel): boolean {
   const tagChannel = classifyTag(tag)
   if (!tagChannel) return false
-  // dev sees everything
-  if (channel === 'dev') return true
   // beta sees stable + beta
   if (channel === 'beta') return tagChannel === 'stable' || tagChannel === 'beta'
   // stable sees stable only
@@ -129,13 +126,12 @@ interface TagComponents {
 
 function parseTag(tag: string): TagComponents | null {
   const stripped = tag.replace(/^v/, '')
-  const m = stripped.match(/^(\d+)\.(\d+)\.(\d+)(?:-(beta|dev)(?:\.(\d+))?)?$/)
+  const m = stripped.match(/^(\d+)\.(\d+)\.(\d+)(?:-(beta)(?:\.(\d+))?)?$/)
   if (!m) return null
   const [, maj, min, pat, pre, preN] = m
   let prereleaseRank = Number.POSITIVE_INFINITY
   let prereleaseNum = 0
   if (pre === 'beta') { prereleaseRank = 2; prereleaseNum = preN ? parseInt(preN, 10) : 0 }
-  else if (pre === 'dev') { prereleaseRank = 1; prereleaseNum = preN ? parseInt(preN, 10) : 0 }
   return {
     major: parseInt(maj, 10),
     minor: parseInt(min, 10),
@@ -200,7 +196,6 @@ function compareTagToCurrentVersion(tag: string, currentVersion: string): number
 function getUpdateChannel(): UpdateChannel {
   try {
     const settings = readConfig<{ updateChannel?: string }>('settings')
-    if (settings?.updateChannel === 'dev') return 'dev'
     if (settings?.updateChannel === 'beta') return 'beta'
   } catch { /* fall through */ }
   return 'stable'

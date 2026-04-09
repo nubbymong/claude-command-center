@@ -13,22 +13,19 @@ interface UpdatePanelProps {
 const CHANNEL_LABELS: Record<UpdateChannel, string> = {
   stable: 'Stable',
   beta: 'Beta',
-  dev: 'Dev',
 }
 
 const CHANNEL_DESCRIPTIONS: Record<UpdateChannel, string> = {
   stable: 'Production releases only',
   beta: 'Stable + pre-release builds',
-  dev: 'All builds including experimental',
 }
 
 const CHANNEL_COLORS: Record<UpdateChannel, string> = {
   stable: 'text-green border-green/40 bg-green/5',
   beta: 'text-yellow border-yellow/40 bg-yellow/5',
-  dev: 'text-mauve border-mauve/40 bg-mauve/5',
 }
 
-const CHANNELS: UpdateChannel[] = ['stable', 'beta', 'dev']
+const CHANNELS: UpdateChannel[] = ['stable', 'beta']
 
 function ChannelSelector({ onChannelChange }: { onChannelChange: () => void }) {
   const storedChannel = useSettingsStore((s) => s.settings.updateChannel)
