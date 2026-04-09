@@ -1,18 +1,16 @@
 /**
  * GitHub Release update checker.
  *
- * Three update channels:
+ * Two update channels:
  *   - stable: only final releases (tags matching /^v\d+\.\d+\.\d+$/)
  *   - beta:   stable + pre-release betas (e.g. /^v\d+\.\d+\.\d+-beta(?:\.\d+)?$/)
- *   - dev:    stable + beta + dev (e.g. /^v\d+\.\d+\.\d+-(?:beta|dev)(?:\.\d+)?$/)
  *
- * Two ways to talk to GitHub:
- *   1. Public GitHub API — tried first (zero auth, works for public repos)
- *   2. `gh` CLI fallback — tried whenever the public API returns no usable
- *      release data (e.g. private-repo 404/403, network error, empty list)
+ * Three ways to talk to GitHub (cascading):
+ *   1. Public GitHub API (anonymous) — works for public repos
+ *   2. Authenticated API (gh auth token) — works for private repos if gh CLI is authed
+ *   3. gh CLI (`gh release list`) — last resort fallback
  *
- * Once the repo is public and the public API returns usable data, step 2
- * is silently never called.
+ * Once the repo is public, step 1 succeeds and steps 2-3 are never called.
  *
  * Downloads use direct HTTPS (follows redirects) and `gh release download` as a fallback.
  */
@@ -203,14 +201,16 @@ function getUpdateChannel(): UpdateChannel {
 
 // ── Public GitHub API (anonymous) ────────────────────────────────────────
 
-function httpGetJson<T = unknown>(url: string, timeoutMs = 10000): Promise<{ status: number; headers: Record<string, string | string[] | undefined>; body: T | null }> {
+function httpGetJson<T = unknown>(url: string, timeoutMs = 10000, authToken?: string): Promise<{ status: number; headers: Record<string, string | string[] | undefined>; body: T | null }> {
   return new Promise((resolve, reject) => {
+    const hdrs: Record<string, string> = {
+      'User-Agent': 'claude-command-center-updater',
+      'Accept': 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+    }
+    if (authToken) hdrs['Authorization'] = `Bearer ${authToken}`
     const req = https.get(url, {
-      headers: {
-        'User-Agent': 'claude-command-center-updater',
-        'Accept': 'application/vnd.github+json',
-        'X-GitHub-Api-Version': '2022-11-28',
-      },
+      headers: hdrs,
       timeout: timeoutMs,
     }, (res) => {
       const chunks: Buffer[] = []
@@ -286,6 +286,48 @@ async function fetchReleasesPublic(limit = 30): Promise<PublicFetchResult> {
   }
 }
 
+// ── Authenticated API fallback (for private repos) ──────────────────────
+
+/** Try to get a GitHub token from `gh auth token` */
+async function getGhToken(): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync('gh', ['auth', 'token'], {
+      encoding: 'utf-8',
+      timeout: 5000,
+      windowsHide: true,
+    })
+    const token = stdout.trim()
+    return token.length > 0 ? token : null
+  } catch {
+    return null
+  }
+}
+
+/** Fetch releases using an authenticated GitHub API call */
+async function fetchReleasesAuthenticated(limit = 30): Promise<GitHubRelease[] | null> {
+  const token = await getGhToken()
+  if (!token) {
+    logInfo('[github-update] No gh auth token available — skipping authenticated API')
+    return null
+  }
+
+  try {
+    const url = `https://api.github.com/repos/${REPO}/releases?per_page=${limit}`
+    const { status, body } = await httpGetJson<GitHubRelease[]>(url, 10000, token)
+
+    if (status >= 200 && status < 300 && Array.isArray(body)) {
+      logInfo(`[github-update] Authenticated API returned ${body.length} releases`)
+      return body
+    }
+
+    logInfo(`[github-update] Authenticated API returned status ${status}`)
+    return null
+  } catch (err) {
+    logInfo(`[github-update] Authenticated API error: ${(err as Error).message}`)
+    return null
+  }
+}
+
 // ── gh CLI fallback (for private repos during dev) ───────────────────────
 
 async function fetchReleasesGhCli(limit = 30): Promise<GitHubRelease[] | null> {
@@ -315,11 +357,12 @@ async function fetchReleasesGhCli(limit = 30): Promise<GitHubRelease[] | null> {
 }
 
 /**
- * Try public API first, fall back to gh CLI when appropriate.
- *   - ok          → return releases
- *   - not-found   → try gh CLI (repo might be private)
- *   - error       → try gh CLI as a best-effort recovery
- *   - rate-limited → give up (gh CLI won't help, user should wait)
+ * Cascading release fetch:
+ *   1. Public API (anonymous) — works for public repos
+ *   2. Authenticated API (gh auth token) — works for private repos if user has gh CLI auth
+ *   3. gh CLI (`gh release list`) — last resort, may fail if gh isn't on PATH
+ *
+ * Rate-limited → give up (no fallback will help, user should wait)
  */
 async function fetchReleases(): Promise<GitHubRelease[] | null> {
   const publicResult = await fetchReleasesPublic()
@@ -327,7 +370,11 @@ async function fetchReleases(): Promise<GitHubRelease[] | null> {
   if (publicResult.kind === 'ok') return publicResult.releases
   if (publicResult.kind === 'rate-limited') return null
 
-  // not-found or error — try gh CLI
+  // not-found or error — try authenticated API first, then gh CLI
+  logInfo('[github-update] Falling back to authenticated API')
+  const authed = await fetchReleasesAuthenticated()
+  if (authed) return authed
+
   logInfo('[github-update] Falling back to gh CLI')
   return fetchReleasesGhCli()
 }
