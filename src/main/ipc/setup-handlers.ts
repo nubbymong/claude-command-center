@@ -109,8 +109,8 @@ function setDataDirectory(dataDir: string): boolean {
 
 /**
  * Convert a filesystem path to Claude's project folder name convention.
- * e.g. C:\Users\nicho\AppData\Local\Programs\claude-conductor
- *   -> C--Users-nicho-AppData-Local-Programs-claude-conductor
+ * e.g. C:\Users\jane\AppData\Local\Programs\claude-conductor
+ *   -> C--Users-jane-AppData-Local-Programs-claude-conductor
  */
 function pathToClaudeProjectFolder(fsPath: string): string {
   return fsPath

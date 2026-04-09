@@ -62,7 +62,7 @@ const KNOWN_FRONTMATTER_FIELDS = new Set(['name', 'description', 'type'])
  *
  * Examples:
  *   "F--CLAUDE-MULTI-APP" → "claude-multi-app"
- *   "C--Users-nicho"      → "home"
+ *   "C--Users-jane"       → "home"
  */
 function cleanProjectName(dirName: string): string {
   // Replace -- with / to reconstruct path-like structure
