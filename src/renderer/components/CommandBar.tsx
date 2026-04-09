@@ -655,7 +655,7 @@ function SectionNameInput({ x, y, onConfirm, onCancel }: {
     const rect = el.getBoundingClientRect()
     const viewH = window.innerHeight
     const viewW = window.innerWidth
-    const left = Math.min(x, viewW - rect.width - 8)
+    const left = Math.max(8, Math.min(x, viewW - rect.width - 8))
     if (y + rect.height > viewH - 8) {
       setPos({ left, bottom: viewH - y })
     } else {
