@@ -55,7 +55,7 @@ npx tsc --noEmit       # Type-check only
 ## Branching Model
 
 - `beta` — default working branch (all development happens here)
-- `main` — stable releases only (receives fast-forwards from beta via `npm run promote`)
+- `main` — stable releases only (updated by merging the `beta` → `main` GitHub PR with a merge commit)
 
 ### For contributors
 
