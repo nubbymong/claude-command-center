@@ -228,20 +228,21 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
           const showDivider = unsectioned.length > 0 || idx > 0
           return (
             <React.Fragment key={section.id}>
-              {showDivider && <div className="w-px h-4 bg-surface1/60 mx-0.5 shrink-0" />}
+              {showDivider && <div className="w-px h-5 bg-surface1 mx-1 shrink-0" />}
               <button
                 onClick={() => toggleSection(section.id)}
-                className="flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] text-overlay0 hover:text-subtext0 transition-colors shrink-0 rounded hover:bg-surface0/50"
-                title={`${section.name} (${sectionCmds.length} commands)`}
+                className="flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium text-subtext0 hover:text-text transition-colors shrink-0 rounded hover:bg-surface0/50 border border-surface1/40"
+                title={`${section.name} (${sectionCmds.length} commands) — click to ${isCollapsed ? 'expand' : 'collapse'}`}
               >
                 <svg
-                  width="6" height="6" viewBox="0 0 8 8" fill="none" stroke="currentColor" strokeWidth="1.5"
+                  width="7" height="7" viewBox="0 0 8 8" fill="none" stroke="currentColor" strokeWidth="1.5"
                   className="shrink-0 transition-transform"
                   style={{ transform: isCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)' }}
                 >
                   <path d="M1.5 2.5l2.5 3 2.5-3" />
                 </svg>
                 {section.name}
+                <span className="text-[9px] text-overlay0 font-normal">{sectionCmds.length}</span>
               </button>
               {!isCollapsed && sectionCmds.map(renderCommandButton)}
             </React.Fragment>
