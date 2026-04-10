@@ -252,7 +252,7 @@ export default function UpdatePanel({ updateAvailable, updateVersion, updating, 
                 <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
                   <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" strokeDasharray="32" strokeLinecap="round" />
                 </svg>
-                <span className="text-xs">Checking {channelLabel}...</span>
+                <span className="text-xs">Checking...</span>
               </>
             ) : (
               <>
@@ -260,7 +260,7 @@ export default function UpdatePanel({ updateAvailable, updateVersion, updating, 
                   <path d="M8 2v4M8 14v-4M8 6a2 2 0 110 4 2 2 0 010-4z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
                   <path d="M2 8h4M14 8h-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
                 </svg>
-                <span className="text-xs">Check for {channelLabel} Updates</span>
+                <span className="text-xs">Check for Updates</span>
               </>
             )}
           </button>
