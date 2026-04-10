@@ -15,7 +15,7 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
-    version: '1.2.169',
+    version: '1.2.170',
     date: '2026-04-08',
     highlights: "PR-based promote flow + auto-PR on beta releases",
     changes: [
