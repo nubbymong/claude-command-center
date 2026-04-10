@@ -345,7 +345,7 @@ export function spawnPty(
           if (postCommand) {
             ptyProcess.write(`${setupCmd} && ${postCommand}\r`)
             postCommandSent = true
-          } else if (startClaudeAfter && !options?.shellOnly) {
+          } else if (!options?.shellOnly) {
             claudeSent = true
             ptyProcess.write(`${setupCmd} && ${claudeCmd}\r`)
           } else {
