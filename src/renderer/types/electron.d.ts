@@ -299,6 +299,9 @@ export interface ElectronAPI {
     delete: (filePath: string) => Promise<void>
     writeFrontmatter: (filePath: string, frontmatter: { name?: string; description?: string; type?: string }) => Promise<void>
   }
+  shell: {
+    openExternal: (url: string) => Promise<void>
+  }
 }
 
 declare global {

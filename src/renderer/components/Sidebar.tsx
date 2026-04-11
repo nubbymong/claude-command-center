@@ -8,6 +8,7 @@ import { useVisionStore } from '../stores/visionStore'
 import SessionDialog from './SessionDialog'
 import { killSessionPty } from '../ptyTracker'
 import { ViewType } from '../types/views'
+import { trackUsage } from '../stores/tipsStore'
 import { generateId } from '../utils/id'
 import { matchesShortcut, DEFAULT_SHORTCUTS } from '../utils/shortcuts'
 import { markSessionForResumePicker } from '../utils/resumePicker'
@@ -814,10 +815,12 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
           }}
           onPin={() => {
             togglePinned(contextMenuConfig.configId)
+            trackUsage('sessions.pin-config')
             setContextMenuConfig(null)
           }}
           onDuplicate={() => {
             duplicateConfig(contextMenuConfig.configId)
+            trackUsage('sessions.duplicate-config')
             setContextMenuConfig(null)
           }}
           onClose={() => setContextMenuConfig(null)}

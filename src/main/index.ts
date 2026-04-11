@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, clipboard, Menu, session } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, clipboard, Menu, session, shell } from 'electron'
 import { join } from 'path'
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
 import { randomBytes } from 'crypto'
@@ -489,6 +489,13 @@ if (!gotTheLock) {
     registerAccountHandlers()
     registerTokenomicsHandlers(getWindow)
     registerMemoryHandlers()
+
+    // Shell — open URLs in system browser
+    ipcMain.handle('shell:openExternal', async (_event, url: string) => {
+      if (typeof url === 'string' && (url.startsWith('https://') || url.startsWith('http://'))) {
+        await shell.openExternal(url)
+      }
+    })
 
     // Auto-detect current account from credentials (fire-and-forget)
     initAccounts().catch(() => {})

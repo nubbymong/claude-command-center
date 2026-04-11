@@ -161,30 +161,25 @@ function generateRemoteSetupScript(sessionId: string): string {
   // Embed the shim as a JSON string literal — Node parses it back to source
   const shimLiteral = JSON.stringify(SSH_STATUSLINE_SHIM)
 
-  return `
-const fs=require('fs'),path=require('path'),os=require('os');
-const home=os.homedir(),claudeDir=path.join(home,'.claude');
-try{fs.mkdirSync(claudeDir,{recursive:true})}catch{}
-
-// Write SSH statusline shim — bypasses the need for SMB-mounted resources
-const shimPath=path.join(claudeDir,'conductor-ssh-statusline.js');
-try{fs.writeFileSync(shimPath,${shimLiteral},{mode:0o755})}catch{}
-
-// Configure statusline + MCP vision in settings.json
-const sp=path.join(claudeDir,'settings.json');
-let s={};try{s=JSON.parse(fs.readFileSync(sp,'utf-8'))}catch{}
-s.statusLine={type:'command',command:'CLAUDE_MULTI_SESSION_ID=${sessionId} node '+shimPath};
-${hasVision ? `if(!s.mcpServers)s.mcpServers={};s.mcpServers['conductor-vision']={url:'http://localhost:${mcpPort}/sse'};` : `if(s.mcpServers&&s.mcpServers['conductor-vision'])delete s.mcpServers['conductor-vision'];`}
-fs.writeFileSync(sp,JSON.stringify(s,null,2));
-
-// Also clean conductor-vision from ~/.claude.json if present (wrong schema for that file)
-try{const cj=path.join(home,'.claude.json');if(fs.existsSync(cj)){let c=JSON.parse(fs.readFileSync(cj,'utf-8'));if(c.mcpServers&&c.mcpServers['conductor-vision']){delete c.mcpServers['conductor-vision'];fs.writeFileSync(cj,JSON.stringify(c,null,2))}}}catch{}
-
-// Clean up legacy CLAUDE.md vision markers
-try{const md=path.join(claudeDir,'CLAUDE.md');let c=fs.readFileSync(md,'utf-8');const rx=/\\n?\\n?<!-- VISION-INSTRUCTIONS-START -->[\\s\\S]*?<!-- VISION-INSTRUCTIONS-END -->\\n?/g;if(rx.test(c)){c=c.replace(rx,'').trim();c?fs.writeFileSync(md,c+'\\n'):fs.unlinkSync(md)}}catch{}
-
-process.stdout.write('setup ok\\n');
-`.trim().replace(/\n/g, '')  // Single line for PTY safety
+  // Build as semicolon-separated statements — NO comments (they break single-lining)
+  const lines = [
+    `const fs=require('fs'),path=require('path'),os=require('os')`,
+    `const home=os.homedir(),claudeDir=path.join(home,'.claude')`,
+    `try{fs.mkdirSync(claudeDir,{recursive:true})}catch{}`,
+    `const shimPath=path.join(claudeDir,'conductor-ssh-statusline.js')`,
+    `try{fs.writeFileSync(shimPath,${shimLiteral},{mode:0o755})}catch{}`,
+    `const sp=path.join(claudeDir,'settings.json')`,
+    `let s={};try{s=JSON.parse(fs.readFileSync(sp,'utf-8'))}catch{}`,
+    `s.statusLine={type:'command',command:'CLAUDE_MULTI_SESSION_ID=${sessionId} node '+shimPath}`,
+    hasVision
+      ? `if(!s.mcpServers)s.mcpServers={};s.mcpServers['conductor-vision']={url:'http://localhost:${mcpPort}/sse'}`
+      : `if(s.mcpServers&&s.mcpServers['conductor-vision'])delete s.mcpServers['conductor-vision']`,
+    `fs.writeFileSync(sp,JSON.stringify(s,null,2))`,
+    `try{const cj=path.join(home,'.claude.json');if(fs.existsSync(cj)){let c=JSON.parse(fs.readFileSync(cj,'utf-8'));if(c.mcpServers&&c.mcpServers['conductor-vision']){delete c.mcpServers['conductor-vision'];fs.writeFileSync(cj,JSON.stringify(c,null,2))}}}catch{}`,
+    `try{const md=path.join(claudeDir,'CLAUDE.md');let c=fs.readFileSync(md,'utf-8');const rx=/\\n?\\n?<!-- VISION-INSTRUCTIONS-START -->[\\s\\S]*?<!-- VISION-INSTRUCTIONS-END -->\\n?/g;if(rx.test(c)){c=c.replace(rx,'').trim();c?fs.writeFileSync(md,c+'\\n'):fs.unlinkSync(md)}}catch{}`,
+    `process.stdout.write('setup ok\\n')`,
+  ]
+  return lines.join(';')
 }
 
 /**

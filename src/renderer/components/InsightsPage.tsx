@@ -238,6 +238,27 @@ export default function InsightsPage() {
     }
   }, [selectedRunId, catalogue])
 
+  // Intercept link clicks inside the iframe and open in system browser
+  useEffect(() => {
+    const iframe = iframeRef.current
+    if (!iframe || !reportHtml) return
+
+    const onLoad = () => {
+      const doc = iframe.contentDocument
+      if (!doc) return
+      doc.addEventListener('click', (e: MouseEvent) => {
+        const anchor = (e.target as HTMLElement).closest('a')
+        if (anchor && anchor.href && !anchor.href.startsWith('about:')) {
+          e.preventDefault()
+          window.electronAPI.shell.openExternal(anchor.href)
+        }
+      })
+    }
+
+    iframe.addEventListener('load', onLoad)
+    return () => iframe.removeEventListener('load', onLoad)
+  }, [reportHtml])
+
   const completedRuns = catalogue?.runs.filter((r) => r.status === 'complete') || []
   const isRunning = status === 'running' || status === 'extracting_kpis'
 

@@ -1,5 +1,7 @@
 import * as fs from 'fs'
+import * as fsp from 'fs/promises'
 import * as path from 'path'
+import * as readline from 'readline'
 import { getDataDirectory } from './ipc/setup-handlers'
 
 // Get log base from custom data directory
@@ -114,7 +116,7 @@ export function closeAllLogs(): void {
   sessionMeta.clear()
 }
 
-// --- Query functions for log viewer ---
+// --- Query functions for log viewer (all async to avoid blocking UI) ---
 
 export interface LogSessionInfo {
   configLabel: string
@@ -125,48 +127,74 @@ export interface LogSessionInfo {
   size: number
 }
 
-export function listLogSessions(): LogSessionInfo[] {
+/** Read only the first and last lines of a file without loading it all into memory */
+async function readFirstLastTimestamps(logPath: string): Promise<{ start?: number; end?: number }> {
+  try {
+    const fd = await fsp.open(logPath, 'r')
+    try {
+      // Read first line
+      let start: number | undefined
+      const rl = readline.createInterface({ input: fd.createReadStream({ encoding: 'utf-8' }), crlfDelay: Infinity })
+      for await (const line of rl) {
+        try { start = JSON.parse(line).ts } catch { /* skip */ }
+        break
+      }
+
+      // Read last line — read from end of file in chunks
+      const stat = await fd.stat()
+      let end: number | undefined
+      if (stat.size > 0) {
+        const chunkSize = Math.min(4096, stat.size)
+        const buf = Buffer.alloc(chunkSize)
+        const { bytesRead } = await fd.read(buf, 0, chunkSize, Math.max(0, stat.size - chunkSize))
+        const tail = buf.subarray(0, bytesRead).toString('utf-8')
+        const lines = tail.trim().split('\n')
+        if (lines.length > 0) {
+          try { end = JSON.parse(lines[lines.length - 1]).ts } catch { /* skip */ }
+        }
+      }
+
+      return { start, end }
+    } finally {
+      await fd.close()
+    }
+  } catch {
+    return {}
+  }
+}
+
+export async function listLogSessions(): Promise<LogSessionInfo[]> {
   const results: LogSessionInfo[] = []
-  if (!fs.existsSync(getLogBase())) return results
+  const logBase = getLogBase()
+  if (!fs.existsSync(logBase)) return results
 
   try {
-    const configDirs = fs.readdirSync(getLogBase())
+    const configDirs = await fsp.readdir(logBase)
     for (const configLabel of configDirs) {
-      const configPath = path.join(getLogBase(), configLabel)
-      if (!fs.statSync(configPath).isDirectory()) continue
+      const configPath = path.join(logBase, configLabel)
+      const configStat = await fsp.stat(configPath)
+      if (!configStat.isDirectory()) continue
 
-      const sessionDirs = fs.readdirSync(configPath)
+      const sessionDirs = await fsp.readdir(configPath)
       for (const sessionId of sessionDirs) {
         const sessionPath = path.join(configPath, sessionId)
-        if (!fs.statSync(sessionPath).isDirectory()) continue
+        const sessionStat = await fsp.stat(sessionPath)
+        if (!sessionStat.isDirectory()) continue
 
         const logPath = path.join(sessionPath, 'session.jsonl')
-        if (!fs.existsSync(logPath)) continue
-
-        const stat = fs.statSync(logPath)
-        let startTime: number | undefined
-        let endTime: number | undefined
-
-        // Read first and last lines for timestamps
         try {
-          const content = fs.readFileSync(logPath, 'utf-8')
-          const lines = content.trim().split('\n')
-          if (lines.length > 0) {
-            const first = JSON.parse(lines[0])
-            startTime = first.ts
-            const last = JSON.parse(lines[lines.length - 1])
-            endTime = last.ts
-          }
-        } catch { /* ignore */ }
+          const fileStat = await fsp.stat(logPath)
+          const { start, end } = await readFirstLastTimestamps(logPath)
 
-        results.push({
-          configLabel,
-          sessionId,
-          logDir: sessionPath,
-          startTime,
-          endTime,
-          size: stat.size
-        })
+          results.push({
+            configLabel,
+            sessionId,
+            logDir: sessionPath,
+            startTime: start,
+            endTime: end,
+            size: fileStat.size
+          })
+        } catch { /* file doesn't exist, skip */ }
       }
     }
   } catch { /* ignore */ }
@@ -174,16 +202,20 @@ export function listLogSessions(): LogSessionInfo[] {
   return results.sort((a, b) => (b.startTime || 0) - (a.startTime || 0))
 }
 
-export function readLogEntries(
+export async function readLogEntries(
   logDir: string,
   offset = 0,
   limit = 500
-): { entries: LogEntry[]; total: number } {
+): Promise<{ entries: LogEntry[]; total: number }> {
   const logPath = path.join(logDir, 'session.jsonl')
-  if (!fs.existsSync(logPath)) return { entries: [], total: 0 }
+  try {
+    await fsp.access(logPath)
+  } catch {
+    return { entries: [], total: 0 }
+  }
 
   try {
-    const content = fs.readFileSync(logPath, 'utf-8')
+    const content = await fsp.readFile(logPath, 'utf-8')
     const lines = content.trim().split('\n').filter(Boolean)
     const total = lines.length
     const entries = lines.slice(offset, offset + limit).map((line) => {
@@ -195,18 +227,22 @@ export function readLogEntries(
   }
 }
 
-export function searchLogs(
+export async function searchLogs(
   logDir: string,
   query: string
-): LogEntry[] {
+): Promise<LogEntry[]> {
   const logPath = path.join(logDir, 'session.jsonl')
-  if (!fs.existsSync(logPath)) return []
+  try {
+    await fsp.access(logPath)
+  } catch {
+    return []
+  }
 
   const lowerQuery = query.toLowerCase()
   const results: LogEntry[] = []
 
   try {
-    const content = fs.readFileSync(logPath, 'utf-8')
+    const content = await fsp.readFile(logPath, 'utf-8')
     const lines = content.trim().split('\n').filter(Boolean)
     for (const line of lines) {
       try {

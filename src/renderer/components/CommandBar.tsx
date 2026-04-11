@@ -1,9 +1,10 @@
 import React, { useState } from 'react'
-import { useCommandStore, CustomCommand } from '../stores/commandStore'
+import { useCommandStore, CustomCommand, CommandSection } from '../stores/commandStore'
 import CommandDialog from './CommandDialog'
 import ScreenshotButton from './ScreenshotButton'
 import StoryboardButton from './StoryboardButton'
 import { generateId } from '../utils/id'
+import { trackUsage } from '../stores/tipsStore'
 
 interface Props {
   sessionId: string
@@ -16,15 +17,18 @@ interface Props {
 }
 
 export default function CommandBar({ sessionId, configId, sessionType = 'local', partnerEnabled, isPartnerActive, onTogglePartner, partnerSessionId }: Props) {
-  const { commands, sections, addCommand, updateCommand, removeCommand, reorderCommands } = useCommandStore()
+  const { commands, sections, addCommand, updateCommand, removeCommand, reorderCommands, updateSection, removeSection, reorderSections } = useCommandStore()
   const [showDialog, setShowDialog] = useState(false)
   const [editingCommand, setEditingCommand] = useState<CustomCommand | null>(null)
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; commandId?: string } | null>(null)
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; commandId?: string; sectionId?: string } | null>(null)
   const [dragId, setDragId] = useState<string | null>(null)
   const [dragOverId, setDragOverId] = useState<string | null>(null)
+  const [dragOverSectionId, setDragOverSectionId] = useState<string | null>(null)
+  const [dragSectionId, setDragSectionId] = useState<string | null>(null)
+  const [dragOverSectionTargetId, setDragOverSectionTargetId] = useState<string | null>(null)
   const [argsPopover, setArgsPopover] = useState<{ cmd: CustomCommand; rect: DOMRect } | null>(null)
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set())
-  const [sectionInput, setSectionInput] = useState<{ x: number; y: number } | null>(null)
+  const [sectionInput, setSectionInput] = useState<{ x: number; y: number; editSection?: CommandSection } | null>(null)
 
   const visibleCommands = commands
     .filter((c) => c.scope === 'global' || (c.scope === 'config' && c.configId === configId))
@@ -87,6 +91,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
 
   const handleAdd = (data: Omit<CustomCommand, 'id'>) => {
     addCommand({ ...data, id: generateId() })
+    trackUsage('commands.create-command')
     setShowDialog(false)
   }
 
@@ -97,10 +102,12 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
     }
   }
 
+  // --- Command drag-and-drop ---
   const handleDragStart = (e: React.DragEvent, cmd: CustomCommand) => {
     setDragId(cmd.id)
     e.dataTransfer.effectAllowed = 'move'
     e.dataTransfer.setData('text/plain', cmd.id)
+    e.dataTransfer.setData('application/x-command', cmd.id)
   }
 
   const handleDragOver = (e: React.DragEvent, cmd: CustomCommand) => {
@@ -119,15 +126,87 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
     const toIdx = newCommands.findIndex((c) => c.id === targetCmd.id)
     if (fromIdx === -1 || toIdx === -1) return
     const [moved] = newCommands.splice(fromIdx, 1)
+    // Assign to same section as target
+    moved.sectionId = targetCmd.sectionId
     newCommands.splice(toIdx, 0, moved)
     reorderCommands(newCommands)
     setDragId(null)
     setDragOverId(null)
+    setDragOverSectionId(null)
   }
 
   const handleDragEnd = () => {
     setDragId(null)
     setDragOverId(null)
+    setDragOverSectionId(null)
+    setDragSectionId(null)
+    setDragOverSectionTargetId(null)
+  }
+
+  // --- Drop command onto section header to assign it ---
+  const handleSectionDragOver = (e: React.DragEvent, sectionId: string) => {
+    e.preventDefault()
+    e.stopPropagation()
+    // Only accept command drags (not section drags)
+    if (dragId && !dragSectionId) {
+      e.dataTransfer.dropEffect = 'move'
+      setDragOverSectionId(sectionId)
+    }
+    // Accept section drags for reordering
+    if (dragSectionId && dragSectionId !== sectionId) {
+      e.dataTransfer.dropEffect = 'move'
+      setDragOverSectionTargetId(sectionId)
+    }
+  }
+
+  const handleSectionDrop = (e: React.DragEvent, sectionId: string) => {
+    e.preventDefault()
+    e.stopPropagation()
+    // Command dropped on section header — assign it
+    if (dragId && !dragSectionId) {
+      updateCommand(dragId, { sectionId })
+      setDragId(null)
+      setDragOverSectionId(null)
+      return
+    }
+    // Section dropped on section — reorder
+    if (dragSectionId && dragSectionId !== sectionId) {
+      const newSections = [...sections]
+      const fromIdx = newSections.findIndex((s) => s.id === dragSectionId)
+      const toIdx = newSections.findIndex((s) => s.id === sectionId)
+      if (fromIdx !== -1 && toIdx !== -1) {
+        const [moved] = newSections.splice(fromIdx, 1)
+        newSections.splice(toIdx, 0, moved)
+        reorderSections(newSections)
+      }
+      setDragSectionId(null)
+      setDragOverSectionTargetId(null)
+    }
+  }
+
+  // --- Drop command on unsectioned area to unassign from section ---
+  const handleUnsectionedDragOver = (e: React.DragEvent) => {
+    if (dragId && !dragSectionId) {
+      e.preventDefault()
+      e.dataTransfer.dropEffect = 'move'
+      setDragOverSectionId('__unsectioned__')
+    }
+  }
+
+  const handleUnsectionedDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    if (dragId && !dragSectionId) {
+      updateCommand(dragId, { sectionId: undefined })
+      setDragId(null)
+      setDragOverSectionId(null)
+    }
+  }
+
+  // --- Section header drag-and-drop ---
+  const handleSectionDragStart = (e: React.DragEvent, section: CommandSection) => {
+    setDragSectionId(section.id)
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('application/x-section', section.id)
   }
 
   /** Toggle section collapse */
@@ -216,35 +295,63 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
       }
     }
 
-    // Only show sections that have commands
-    const activeSections = visibleSections.filter((s) => bySectionId.has(s.id))
+    const isUnsectionedDropTarget = dragOverSectionId === '__unsectioned__'
 
     return (
       <>
-        {unsectioned.map(renderCommandButton)}
-        {activeSections.map((section, idx) => {
+        {/* Unsectioned commands — also a drop target to unassign from sections */}
+        <div
+          className={`flex items-center gap-1 shrink-0 rounded px-0.5 transition-colors ${isUnsectionedDropTarget ? 'bg-blue/10 ring-1 ring-blue/30' : ''}`}
+          onDragOver={handleUnsectionedDragOver}
+          onDrop={handleUnsectionedDrop}
+          onDragLeave={() => { if (dragOverSectionId === '__unsectioned__') setDragOverSectionId(null) }}
+        >
+          {unsectioned.map(renderCommandButton)}
+        </div>
+        {/* All sections — always shown, even when empty */}
+        {visibleSections.map((section, idx) => {
           const sectionCmds = bySectionId.get(section.id) || []
           const isCollapsed = collapsedSections.has(section.id)
+          const isDropTarget = dragOverSectionId === section.id
+          const isSectionDragging = dragSectionId === section.id
+          const isSectionDropTarget = dragOverSectionTargetId === section.id
           const showDivider = unsectioned.length > 0 || idx > 0
           return (
             <React.Fragment key={section.id}>
               {showDivider && <div className="w-px h-5 bg-surface1 mx-1 shrink-0" />}
-              <button
-                onClick={() => toggleSection(section.id)}
-                className="flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium text-subtext0 hover:text-text transition-colors shrink-0 rounded hover:bg-surface0/50 border border-surface1/40"
-                title={`${section.name} (${sectionCmds.length} commands) — click to ${isCollapsed ? 'expand' : 'collapse'}`}
+              {/* Section header — drop target for commands + draggable for reorder */}
+              <div
+                className={`flex items-center gap-1 shrink-0 rounded transition-all ${isDropTarget ? 'bg-blue/15 ring-1 ring-blue/40' : ''} ${isSectionDropTarget ? 'ring-1 ring-mauve/40' : ''}`}
+                onDragOver={(e) => handleSectionDragOver(e, section.id)}
+                onDrop={(e) => handleSectionDrop(e, section.id)}
+                onDragLeave={() => {
+                  if (dragOverSectionId === section.id) setDragOverSectionId(null)
+                  if (dragOverSectionTargetId === section.id) setDragOverSectionTargetId(null)
+                }}
               >
-                <svg
-                  width="7" height="7" viewBox="0 0 8 8" fill="none" stroke="currentColor" strokeWidth="1.5"
-                  className="shrink-0 transition-transform"
-                  style={{ transform: isCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)' }}
+                <button
+                  draggable
+                  onDragStart={(e) => handleSectionDragStart(e, section)}
+                  onDragEnd={handleDragEnd}
+                  onClick={() => toggleSection(section.id)}
+                  onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setContextMenu({ x: e.clientX, y: e.clientY, sectionId: section.id }) }}
+                  className={`flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium text-subtext0 hover:text-text transition-colors shrink-0 rounded hover:bg-surface0/50 border cursor-grab ${
+                    isDropTarget ? 'border-blue/50 bg-blue/10 text-text' : 'border-surface1/40'
+                  } ${isSectionDragging ? 'opacity-40' : ''}`}
+                  title={`${section.name} (${sectionCmds.length}) — click to ${isCollapsed ? 'expand' : 'collapse'}, drag to reorder, right-click for options`}
                 >
-                  <path d="M1.5 2.5l2.5 3 2.5-3" />
-                </svg>
-                {section.name}
-                <span className="text-[9px] text-overlay0 font-normal">{sectionCmds.length}</span>
-              </button>
-              {!isCollapsed && sectionCmds.map(renderCommandButton)}
+                  <svg
+                    width="7" height="7" viewBox="0 0 8 8" fill="none" stroke="currentColor" strokeWidth="1.5"
+                    className="shrink-0 transition-transform"
+                    style={{ transform: isCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)', color: section.color || undefined }}
+                  >
+                    <path d="M1.5 2.5l2.5 3 2.5-3" />
+                  </svg>
+                  <span style={{ color: section.color || undefined }}>{section.name}</span>
+                  {isCollapsed && sectionCmds.length > 0 && <span className="text-[9px] text-overlay0 font-normal">{sectionCmds.length}</span>}
+                </button>
+                {!isCollapsed && sectionCmds.map(renderCommandButton)}
+              </div>
             </React.Fragment>
           )
         })}
@@ -363,6 +470,8 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
       {contextMenu && (
         <ContextMenuOverlay
           {...contextMenu}
+          sections={sections.filter((s) => s.scope === 'global' || (s.scope === 'config' && s.configId === configId))}
+          commandSectionId={contextMenu.commandId ? commands.find(c => c.id === contextMenu.commandId)?.sectionId : undefined}
           onClose={() => setContextMenu(null)}
           onAdd={() => { setContextMenu(null); setShowDialog(true) }}
           onAddSection={() => {
@@ -377,20 +486,43 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
             removeCommand(contextMenu.commandId!)
             setContextMenu(null)
           } : undefined}
+          onMoveToSection={contextMenu.commandId ? (sectionId: string | undefined) => {
+            updateCommand(contextMenu.commandId!, { sectionId })
+            setContextMenu(null)
+          } : undefined}
+          onRenameSection={contextMenu.sectionId ? () => {
+            const section = sections.find(s => s.id === contextMenu.sectionId)
+            if (section) {
+              setSectionInput({ x: contextMenu.x, y: contextMenu.y, editSection: section })
+              setContextMenu(null)
+            }
+          } : undefined}
+          onDeleteSection={contextMenu.sectionId ? () => {
+            removeSection(contextMenu.sectionId!)
+            setContextMenu(null)
+          } : undefined}
         />
       )}
       {sectionInput && (
         <SectionNameInput
           x={sectionInput.x}
           y={sectionInput.y}
-          onConfirm={(name) => {
-            const { addSection } = useCommandStore.getState()
-            addSection({
-              id: generateId(),
-              name,
-              scope: configId ? 'config' : 'global',
-              configId,
-            })
+          initialName={sectionInput.editSection?.name}
+          initialColor={sectionInput.editSection?.color}
+          onConfirm={(name, color) => {
+            if (sectionInput.editSection) {
+              updateSection(sectionInput.editSection.id, { name, color })
+            } else {
+              const { addSection } = useCommandStore.getState()
+              addSection({
+                id: generateId(),
+                name,
+                color,
+                scope: configId ? 'config' : 'global',
+                configId,
+              })
+              trackUsage('commands.command-sections')
+            }
             setSectionInput(null)
           }}
           onCancel={() => setSectionInput(null)}
@@ -417,16 +549,22 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
   )
 }
 
-function ContextMenuOverlay({ x, y, onClose, onAdd, onAddSection, onEdit, onDelete }: {
+function ContextMenuOverlay({ x, y, onClose, onAdd, onAddSection, onEdit, onDelete, onMoveToSection, onRenameSection, onDeleteSection, sections, commandSectionId }: {
   x: number; y: number
+  sections: CommandSection[]
+  commandSectionId?: string
   onClose: () => void
   onAdd: () => void
   onAddSection: () => void
   onEdit?: () => void
   onDelete?: () => void
+  onMoveToSection?: (sectionId: string | undefined) => void
+  onRenameSection?: () => void
+  onDeleteSection?: () => void
 }) {
   const menuRef = React.useRef<HTMLDivElement>(null)
   const [pos, setPos] = React.useState<{ left: number; top?: number; bottom?: number }>({ left: x })
+  const [showSectionSubmenu, setShowSectionSubmenu] = React.useState(false)
 
   React.useEffect(() => {
     const el = menuRef.current
@@ -442,6 +580,33 @@ function ContextMenuOverlay({ x, y, onClose, onAdd, onAddSection, onEdit, onDele
       setPos({ left, top: y })
     }
   }, [x, y])
+
+  // Section-specific context menu
+  if (onRenameSection || onDeleteSection) {
+    return (
+      <div className="fixed inset-0 z-50" onClick={onClose}>
+        <div
+          ref={menuRef}
+          className="fixed bg-surface0 border border-surface1 rounded-lg shadow-xl py-1 min-w-[160px]"
+          style={pos}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {onRenameSection && (
+            <button onClick={onRenameSection} className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface1 transition-colors flex items-center gap-2">
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2"><path d="M8.5 1.5l2 2-7 7H1.5v-2z"/></svg>
+              Rename Section
+            </button>
+          )}
+          {onDeleteSection && (
+            <button onClick={onDeleteSection} className="w-full text-left px-3 py-1.5 text-xs text-red hover:bg-surface1 transition-colors flex items-center gap-2">
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2"><line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/></svg>
+              Delete Section
+            </button>
+          )}
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="fixed inset-0 z-50" onClick={onClose}>
@@ -459,11 +624,52 @@ function ContextMenuOverlay({ x, y, onClose, onAdd, onAddSection, onEdit, onDele
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2"><path d="M2 6h8"/><path d="M2 3h8"/><path d="M2 9h8"/></svg>
           Add Section
         </button>
+        {onMoveToSection && sections.length > 0 && (
+          <>
+            <div className="h-px bg-surface1 my-1" />
+            <div
+              className="relative"
+              onMouseEnter={() => setShowSectionSubmenu(true)}
+              onMouseLeave={() => setShowSectionSubmenu(false)}
+            >
+              <button className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface1 transition-colors flex items-center gap-2">
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2"><path d="M2 6h8"/><path d="M2 3h8"/><path d="M2 9h8"/></svg>
+                Move to Section
+                <svg width="8" height="8" viewBox="0 0 8 8" className="ml-auto opacity-60"><path d="M3 1.5l3 2.5-3 2.5" stroke="currentColor" strokeWidth="1.2" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
+              </button>
+              {showSectionSubmenu && (
+                <div className="absolute left-full top-0 ml-0.5 bg-surface0 border border-surface1 rounded-lg shadow-xl py-1 min-w-[140px]">
+                  {commandSectionId && (
+                    <button
+                      onClick={() => onMoveToSection(undefined)}
+                      className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface1 transition-colors"
+                    >
+                      <span className="text-overlay0">No section</span>
+                    </button>
+                  )}
+                  {sections.map((s) => (
+                    <button
+                      key={s.id}
+                      onClick={() => onMoveToSection(s.id)}
+                      className={`w-full text-left px-3 py-1.5 text-xs hover:bg-surface1 transition-colors ${commandSectionId === s.id ? 'text-blue font-medium' : 'text-text'}`}
+                    >
+                      {s.name}
+                      {commandSectionId === s.id && <span className="ml-2 text-[9px] text-overlay0">current</span>}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        )}
         {onEdit && (
-          <button onClick={onEdit} className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface1 transition-colors flex items-center gap-2">
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2"><path d="M8.5 1.5l2 2-7 7H1.5v-2z"/></svg>
-            Edit
-          </button>
+          <>
+            <div className="h-px bg-surface1 my-1" />
+            <button onClick={onEdit} className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface1 transition-colors flex items-center gap-2">
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2"><path d="M8.5 1.5l2 2-7 7H1.5v-2z"/></svg>
+              Edit
+            </button>
+          </>
         )}
         {onDelete && (
           <button onClick={onDelete} className="w-full text-left px-3 py-1.5 text-xs text-red hover:bg-surface1 transition-colors flex items-center gap-2">
@@ -640,13 +846,23 @@ function ArgsPopover({ cmd, rect, onRun, onSetDefault, onClose }: {
   )
 }
 
-/** Floating input for creating a new section from the context menu */
-function SectionNameInput({ x, y, onConfirm, onCancel }: {
+const SECTION_TEXT_COLORS = [
+  null,     // default (inherit)
+  '#89B4FA', '#A6E3A1', '#F9E2AF', '#F38BA8',
+  '#CBA6F7', '#94E2D5', '#FAB387', '#74C7EC',
+  '#F5C2E7', '#B4BEFE', '#A6ADC8',
+]
+
+/** Floating input for creating/renaming a section */
+function SectionNameInput({ x, y, initialName, initialColor, onConfirm, onCancel }: {
   x: number; y: number
-  onConfirm: (name: string) => void
+  initialName?: string
+  initialColor?: string
+  onConfirm: (name: string, color?: string) => void
   onCancel: () => void
 }) {
-  const [name, setName] = React.useState('')
+  const [name, setName] = React.useState(initialName || '')
+  const [color, setColor] = React.useState<string | undefined>(initialColor)
   const ref = React.useRef<HTMLDivElement>(null)
   const [pos, setPos] = React.useState<{ left: number; top?: number; bottom?: number }>({ left: x })
 
@@ -664,6 +880,8 @@ function SectionNameInput({ x, y, onConfirm, onCancel }: {
     }
   }, [x, y])
 
+  const submit = () => { if (name.trim()) onConfirm(name.trim(), color) }
+
   return (
     <div className="fixed inset-0 z-50" onClick={onCancel}>
       <div
@@ -672,27 +890,42 @@ function SectionNameInput({ x, y, onConfirm, onCancel }: {
         style={pos}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="text-xs text-subtext0 mb-2 font-medium">New Section</div>
-        <div className="flex gap-1">
+        <div className="text-xs text-subtext0 mb-2 font-medium">{initialName ? 'Rename Section' : 'New Section'}</div>
+        <div className="flex gap-1 mb-2">
           <input
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && name.trim()) { e.preventDefault(); onConfirm(name.trim()) }
+              if (e.key === 'Enter' && name.trim()) { e.preventDefault(); submit() }
               if (e.key === 'Escape') onCancel()
             }}
-            className="flex-1 px-2 py-1 bg-crust text-text text-xs rounded border border-surface1 outline-none focus:border-blue"
+            className="flex-1 px-2 py-1 bg-crust text-xs rounded border border-surface1 outline-none focus:border-blue"
+            style={{ color: color || undefined }}
             placeholder="Section name"
             autoFocus
           />
           <button
-            onClick={() => name.trim() && onConfirm(name.trim())}
+            onClick={submit}
             disabled={!name.trim()}
             className="px-2 py-1 text-xs bg-blue text-crust rounded hover:bg-blue/80 disabled:opacity-40"
           >
-            Add
+            {initialName ? 'Save' : 'Add'}
           </button>
+        </div>
+        <div className="flex items-center gap-1 flex-wrap">
+          <span className="text-[10px] text-overlay0 mr-0.5">Color:</span>
+          {SECTION_TEXT_COLORS.map((c, i) => (
+            <button
+              key={i}
+              onClick={() => setColor(c || undefined)}
+              className={`w-4 h-4 rounded-full border transition-all shrink-0 ${
+                (c || undefined) === color ? 'ring-1 ring-offset-1 ring-offset-surface0 ring-blue scale-110' : 'hover:scale-110'
+              }`}
+              style={{ backgroundColor: c || '#a6adc8', borderColor: c ? c + '60' : '#585b7060' }}
+              title={c || 'Default'}
+            />
+          ))}
         </div>
       </div>
     </div>

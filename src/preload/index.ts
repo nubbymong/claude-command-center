@@ -128,6 +128,9 @@ export interface ElectronAPI {
     delete: (id: string) => Promise<boolean>
     reorder: (ids: string[]) => Promise<boolean>
   }
+  shell: {
+    openExternal: (url: string) => Promise<void>
+  }
 }
 
 const electronAPI: ElectronAPI = {
@@ -394,6 +397,9 @@ const electronAPI: ElectronAPI = {
     delete: (filePath: string) => ipcRenderer.invoke('memory:delete', filePath),
     writeFrontmatter: (filePath: string, frontmatter: { name?: string; description?: string; type?: string }) =>
       ipcRenderer.invoke('memory:writeFrontmatter', filePath, frontmatter),
+  },
+  shell: {
+    openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
   },
 }
 

@@ -343,6 +343,7 @@ export default function MemoryPage() {
   } = useMemoryStore()
 
   const [searchInput, setSearchInput] = useState('')
+  const [warningsExpanded, setWarningsExpanded] = useState(false)
 
   useEffect(() => { scan() }, [])
 
@@ -393,17 +394,33 @@ export default function MemoryPage() {
 
       {/* Warning Banner */}
       {warnings.length > 0 && (
-        <div className="flex items-center gap-2 px-5 py-2 bg-yellow/[0.06] border-b border-yellow/10 shrink-0">
-          <svg className="text-yellow opacity-80 shrink-0" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
-          </svg>
-          <span className="font-mono text-[11px] text-yellow flex-1">{warnings[0].message}</span>
-          {warnings.length > 1 && (
-            <span className="font-mono text-[10px] text-yellow/60">+{warnings.length - 1} more</span>
+        <div className="flex flex-col bg-yellow/[0.06] border-b border-yellow/10 shrink-0">
+          <div className="flex items-center gap-2 px-5 py-2">
+            <svg className="text-yellow opacity-80 shrink-0" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+            <span className="font-mono text-[11px] text-yellow flex-1">{warnings[0].message}{warnings[0].file ? ` (${warnings[0].file})` : ''}</span>
+            {warnings.length > 1 && (
+              <button
+                onClick={() => setWarningsExpanded(!warningsExpanded)}
+                className="font-mono text-[10px] text-yellow/60 hover:text-yellow cursor-pointer"
+              >
+                {warningsExpanded ? 'collapse' : `+${warnings.length - 1} more`}
+              </button>
+            )}
+            <button onClick={dismissWarnings} className="font-mono text-[10px] text-yellow border border-yellow/20 bg-transparent px-2 py-0.5 rounded-sm cursor-pointer hover:bg-yellow/10">
+              Dismiss
+            </button>
+          </div>
+          {warningsExpanded && warnings.length > 1 && (
+            <div className="px-5 pb-2 flex flex-col gap-0.5 max-h-[200px] overflow-y-auto">
+              {warnings.slice(1).map((w, i) => (
+                <span key={i} className="font-mono text-[10px] text-yellow/70 pl-[22px]">
+                  {w.message}{w.file ? ` (${w.file})` : ''}
+                </span>
+              ))}
+            </div>
           )}
-          <button onClick={dismissWarnings} className="font-mono text-[10px] text-yellow border border-yellow/20 bg-transparent px-2 py-0.5 rounded-sm cursor-pointer hover:bg-yellow/10">
-            Dismiss
-          </button>
         </div>
       )}
 

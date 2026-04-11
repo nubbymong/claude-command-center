@@ -19,6 +19,7 @@ export interface CommandSection {
   name: string
   scope: 'global' | 'config'
   configId?: string
+  color?: string
 }
 
 interface CommandState {

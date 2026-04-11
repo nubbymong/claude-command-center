@@ -315,16 +315,22 @@ function spawnClaudeInsights(timeoutMs = 600000): Promise<{ code: number; output
   })
 }
 
-function spawnClaude(args: string[], timeoutMs = 600000): Promise<{ code: number; stdout: string; stderr: string }> {
+function spawnClaude(args: string[], timeoutMs = 600000, stdinData?: string): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
     // Use native CLI (claude.exe) or npm wrapper (claude.cmd) — 'claude' with shell:true finds either
-    logInfo(`[insights] Spawning: claude ${args.join(' ')}`)
+    logInfo(`[insights] Spawning: claude ${args.join(' ')}${stdinData ? ' (with stdin)' : ''}`)
 
     const proc = spawn('claude', args, {
       shell: true,
       windowsHide: true,
       env: { ...process.env }
     })
+
+    // Pipe prompt via stdin if provided
+    if (stdinData && proc.stdin) {
+      proc.stdin.write(stdinData)
+      proc.stdin.end()
+    }
 
     let stdout = ''
     let stderr = ''
@@ -439,16 +445,19 @@ async function extractKpis(archiveDir: string, runId: string): Promise<boolean> 
   const skipPerms = settings?.skipPermissionsForAgents !== false // default true
 
   const spawnArgs = [
-    '-p', `"${prompt.replace(/"/g, '\\"')}"`,
+    '-p',
     '--allowedTools', 'Read',
     ...(skipPerms ? ['--dangerously-skip-permissions'] : []),
     '--output-format', 'json'
   ]
 
-  const result = await spawnClaude(spawnArgs)
+  // Pipe the prompt via stdin — passing multi-KB prompts with embedded JSON
+  // as shell arguments is unreliable on Windows (quoting/escaping breaks).
+  const result = await spawnClaude(spawnArgs, 600000, prompt)
 
   if (result.code !== 0) {
-    logError('[insights] KPI extraction failed:', result.stderr)
+    logError('[insights] KPI extraction failed (code ' + result.code + '):', result.stderr)
+    logError('[insights] stdout:', result.stdout.slice(0, 500))
     return false
   }
 

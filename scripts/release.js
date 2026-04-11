@@ -170,6 +170,30 @@ let exitCode = 0
 const channel = await pickChannel()
 header(`Claude Command Center Beta\n  Release channel: ${channel.toUpperCase()}`)
 
+// --- Pre-release reminder (must be acknowledged) ---
+console.log('')
+console.log('  ┌─────────────────────────────────────────────┐')
+console.log('  │          PRE-RELEASE CHECKLIST               │')
+console.log('  │                                              │')
+console.log('  │  Before shipping, confirm you have:          │')
+console.log('  │                                              │')
+console.log('  │  □ Updated tips in tips-library.ts if any    │')
+console.log('  │    new features were added this release      │')
+console.log('  │  □ Added trackUsage() calls for new features │')
+console.log('  │  □ Updated changelog.ts with release notes   │')
+console.log('  │  □ Tested new features visually in dev mode  │')
+console.log('  │                                              │')
+console.log('  └─────────────────────────────────────────────┘')
+console.log('')
+
+await new Promise((resolve) => {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
+  rl.question('  Press Enter to acknowledge and continue (or Ctrl+C to abort): ', () => {
+    rl.close()
+    resolve()
+  })
+})
+
 // --- Step 1: Pre-flight checks ---
 step(1, TOTAL_STEPS, 'Pre-flight checks...')
 

@@ -152,7 +152,12 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: '📂 Group command buttons into named sections',
         title: 'Command Sections',
-        body: 'Once you have more than 4-5 command buttons they start to get cluttered. Organize them into **named sections** — right-click in the command bar to create one, then drag commands into it.\n\nSections are collapsible, so you can hide rarely-used commands until you need them.\n\nExamples: "Testing", "Deploy", "DB Ops", "Claude prompts".',
+        body: 'Once you have more than 4-5 command buttons they start to get cluttered. Organize them into **named sections**:\n\n• **Right-click** the command bar and choose **Add Section**\n• **Drag any command button** onto a section header to assign it\n• **Drag it back out** to the unsectioned area to unassign\n• **Right-click a command** and use **Move to Section** to assign without dragging\n• **Click a section header** to collapse/expand it\n• **Right-click a section header** to rename, change text color, or delete it\n• **Drag section headers** to reorder them\n\nExamples: "Testing", "Deploy", "DB Ops", "Claude prompts".',
+      },
+      postUse: {
+        shortText: '🎨 Customize section colors and reorder by dragging',
+        title: 'Section Power Tips',
+        body: 'You\'re using sections — here are some extras:\n\n• **Right-click a section header** to rename it or change the **text color** — great for visual grouping\n• **Drag section headers** to reorder entire groups\n• **Right-click a command** > **Move to Section** to quickly reassign without dragging\n• Collapsed sections show a **count badge** so you know how many commands are hidden',
       },
     },
   },

@@ -55,7 +55,7 @@ export interface MemoryScanResult {
 // ---------------------------------------------------------------------------
 
 const VALID_TYPES = new Set(['user', 'feedback', 'project', 'reference', 'snapshot'])
-const KNOWN_FRONTMATTER_FIELDS = new Set(['name', 'description', 'type'])
+const KNOWN_FRONTMATTER_FIELDS = new Set(['name', 'description', 'type', 'originSessionId'])
 
 /**
  * Clean a raw project directory name into a human-friendly project name.

@@ -553,6 +553,7 @@ export default function App() {
                   if (newConfig.effortLevel) trackUsage('sessions.effort-level')
                   if (newConfig.disableAutoMemory) trackUsage('sessions.disable-auto-memory')
                   if (newConfig.powershellTool) trackUsage('sessions.powershell-tool')
+                  if (newConfig.partnerTerminalPath) trackUsage('sessions.partner-terminal')
 
                   const session: Session = {
                     id: generateId(),
