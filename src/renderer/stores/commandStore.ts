@@ -20,6 +20,7 @@ export interface CommandSection {
   scope: 'global' | 'config'
   configId?: string
   color?: string
+  target?: 'claude' | 'partner'
 }
 
 interface CommandState {

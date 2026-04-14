@@ -20,7 +20,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
   const { commands, sections, addCommand, updateCommand, removeCommand, reorderCommands, updateSection, removeSection, reorderSections } = useCommandStore()
   const [showDialog, setShowDialog] = useState(false)
   const [editingCommand, setEditingCommand] = useState<CustomCommand | null>(null)
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; commandId?: string; sectionId?: string } | null>(null)
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; commandId?: string; sectionId?: string; rowTarget?: 'claude' | 'partner' } | null>(null)
   const [dragId, setDragId] = useState<string | null>(null)
   const [dragOverId, setDragOverId] = useState<string | null>(null)
   const [dragOverSectionId, setDragOverSectionId] = useState<string | null>(null)
@@ -28,7 +28,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
   const [dragOverSectionTargetId, setDragOverSectionTargetId] = useState<string | null>(null)
   const [argsPopover, setArgsPopover] = useState<{ cmd: CustomCommand; rect: DOMRect } | null>(null)
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set())
-  const [sectionInput, setSectionInput] = useState<{ x: number; y: number; editSection?: CommandSection } | null>(null)
+  const [sectionInput, setSectionInput] = useState<{ x: number; y: number; editSection?: CommandSection; rowTarget?: 'claude' | 'partner' } | null>(null)
 
   const visibleCommands = commands
     .filter((c) => c.scope === 'global' || (c.scope === 'config' && c.configId === configId))
@@ -41,8 +41,8 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
     }
   }
 
-  // Split commands by target
-  const claudeCommands = visibleCommands.filter((c) => !c.target || c.target === 'any' || c.target === 'claude')
+  // Split commands by target — no 'any' concept, default is 'claude'
+  const claudeCommands = visibleCommands.filter((c) => !c.target || c.target === 'claude' || c.target === 'any')
   const partnerCommands = visibleCommands.filter((c) => c.target === 'partner')
 
   /** Build the full command string (prompt + default args) */
@@ -84,9 +84,9 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
     sendCommand(cmd, buildFullCommand(cmd))
   }
 
-  const handleContextMenu = (e: React.MouseEvent, commandId?: string) => {
+  const handleContextMenu = (e: React.MouseEvent, commandId?: string, rowTarget?: 'claude' | 'partner') => {
     e.preventDefault()
-    setContextMenu({ x: e.clientX, y: e.clientY, commandId })
+    setContextMenu({ x: e.clientX, y: e.clientY, commandId, rowTarget })
   }
 
   const handleAdd = (data: Omit<CustomCommand, 'id'>) => {
@@ -279,9 +279,10 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
   }
 
   /** Render commands grouped by section */
-  const renderGroupedCommands = (cmds: CustomCommand[]) => {
+  const renderGroupedCommands = (cmds: CustomCommand[], rowTarget: 'claude' | 'partner') => {
     const visibleSections = sections.filter(
-      (s) => s.scope === 'global' || (s.scope === 'config' && s.configId === configId)
+      (s) => (s.scope === 'global' || (s.scope === 'config' && s.configId === configId))
+        && (!s.target || s.target === rowTarget)
     )
 
     // Group by sectionId
@@ -360,7 +361,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
   }
 
   return (
-    <div className="flex flex-col shrink-0" onContextMenu={(e) => handleContextMenu(e)}>
+    <div className="flex flex-col shrink-0" onContextMenu={(e) => handleContextMenu(e, undefined, 'claude')}>
       {/* Row 1: Magic buttons */}
       <div className="flex items-center gap-1 px-2 py-0.5 bg-crust border-t border-surface0">
         {/* Section icon: sparkle/wand */}
@@ -423,7 +424,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
 
       {/* Row 2: Claude commands */}
       {claudeCommands.length > 0 && (
-        <div className="flex items-center gap-1 px-2 py-0.5 bg-crust border-t border-surface0/50 overflow-x-auto">
+        <div className="flex items-center gap-1 px-2 py-0.5 bg-crust border-t border-surface0/50 overflow-x-auto" onContextMenu={(e) => { e.stopPropagation(); handleContextMenu(e, undefined, 'claude') }}>
           {/* Section icon: Claude asterisk */}
           <div className="shrink-0 text-peach/60" title="Claude Commands">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
@@ -431,13 +432,13 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
             </svg>
           </div>
           <div className="w-px h-4 bg-surface1 mx-0.5" />
-          {renderGroupedCommands(claudeCommands)}
+          {renderGroupedCommands(claudeCommands, 'claude')}
         </div>
       )}
 
       {/* Row 3: Partner commands */}
       {partnerEnabled && partnerCommands.length > 0 && (
-        <div className="flex items-center gap-1 px-2 py-0.5 bg-crust border-t border-surface0/50 overflow-x-auto">
+        <div className="flex items-center gap-1 px-2 py-0.5 bg-crust border-t border-surface0/50 overflow-x-auto" onContextMenu={(e) => { e.stopPropagation(); handleContextMenu(e, undefined, 'partner') }}>
           {/* Section icon: </> code */}
           <div className="shrink-0 text-green/60" title="Partner Terminal Commands">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -447,7 +448,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
             </svg>
           </div>
           <div className="w-px h-4 bg-surface1 mx-0.5" />
-          {renderGroupedCommands(partnerCommands)}
+          {renderGroupedCommands(partnerCommands, 'partner')}
         </div>
       )}
 
@@ -470,12 +471,12 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
       {contextMenu && (
         <ContextMenuOverlay
           {...contextMenu}
-          sections={sections.filter((s) => s.scope === 'global' || (s.scope === 'config' && s.configId === configId))}
+          sections={sections.filter((s) => (s.scope === 'global' || (s.scope === 'config' && s.configId === configId)) && (!s.target || s.target === (contextMenu.rowTarget || 'claude')))}
           commandSectionId={contextMenu.commandId ? commands.find(c => c.id === contextMenu.commandId)?.sectionId : undefined}
           onClose={() => setContextMenu(null)}
           onAdd={() => { setContextMenu(null); setShowDialog(true) }}
           onAddSection={() => {
-            setSectionInput({ x: contextMenu.x, y: contextMenu.y })
+            setSectionInput({ x: contextMenu.x, y: contextMenu.y, rowTarget: contextMenu.rowTarget })
             setContextMenu(null)
           }}
           onEdit={contextMenu.commandId ? () => {
@@ -518,6 +519,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
                 id: generateId(),
                 name,
                 color,
+                target: sectionInput.rowTarget,
                 scope: configId ? 'config' : 'global',
                 configId,
               })
