@@ -119,11 +119,11 @@ describe('memory-scanner', () => {
       expect(result.projects[0].name).toBe('claude-multi-app')
     })
 
-    it('cleans project name: C--Users-nicho becomes users-nicho', async () => {
-      // C--Users-nicho → replace '--' with '/' → 'C/Users-nicho'
-      // Strip drive letter → 'Users-nicho' (single segment, no further --)
-      // Last segment → 'Users-nicho' → lowercased → 'users-nicho'
-      const memoryDir = path.join(projectsRoot, 'C--Users-nicho', 'memory')
+    it('cleans project name: C--Users-testuser becomes users-testuser', async () => {
+      // C--Users-testuser → replace '--' with '/' → 'C/Users-testuser'
+      // Strip drive letter → 'Users-testuser' (single segment, no further --)
+      // Last segment → 'Users-testuser' → lowercased → 'users-testuser'
+      const memoryDir = path.join(projectsRoot, 'C--Users-testuser', 'memory')
 
       ;(fs.existsSync as any).mockImplementation((p: string) => {
         if (p === projectsRoot || p === memoryDir) return true
@@ -134,19 +134,19 @@ describe('memory-scanner', () => {
         return { size: 50, mtimeMs: Date.now() }
       })
       ;(fs.readdirSync as any).mockImplementation((p: string) => {
-        if (p === projectsRoot) return [{ name: 'C--Users-nicho', isDirectory: () => true }]
+        if (p === projectsRoot) return [{ name: 'C--Users-testuser', isDirectory: () => true }]
         if (p === memoryDir) return ['test.md']
         return []
       })
       ;(fs.readFileSync as any).mockReturnValue('Content')
 
       const result = await scanLocalMemory()
-      expect(result.projects[0].name).toBe('users-nicho')
+      expect(result.projects[0].name).toBe('users-testuser')
     })
 
-    it('cleans project name: C--Users--nicho becomes home (short last segment)', async () => {
-      // C--Users--nicho → 'C/Users/nicho' → strip drive → 'Users/nicho'
-      // Last segment → 'nicho' (5 chars > 2) → 'nicho'
+    it('cleans project name: C--Users--testuser becomes home (short last segment)', async () => {
+      // C--Users--testuser → 'C/Users/testuser' → strip drive → 'Users/testuser'
+      // Last segment → 'testuser' (5 chars > 2) → 'testuser'
       // BUT if dir was 'C--Users--me' → 'C/Users/me' → last='me' (len 2) → 'home'
       const memoryDir = path.join(projectsRoot, 'C--Users--me', 'memory')
 
