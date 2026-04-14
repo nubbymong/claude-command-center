@@ -121,11 +121,11 @@ function extractSshOscSentinels(sessionId: string, chunk: string): string {
  * be re-rendered visibly or stripped. /dev/tty bypasses Claude entirely.
  */
 const SSH_STATUSLINE_SHIM = `#!/usr/bin/env node
-const fs=require('fs');
+const fs=require('fs'),https=require('https');
 let input='';
 process.stdin.setEncoding('utf8');
 process.stdin.on('data',c=>input+=c);
-process.stdin.on('end',()=>{
+process.stdin.on('end',async()=>{
 try{
 const data=JSON.parse(input);
 const sid=process.env.CLAUDE_MULTI_SESSION_ID||'unknown';
@@ -135,6 +135,12 @@ const it=(u.input_tokens||0)+(u.cache_creation_input_tokens||0)+(u.cache_read_in
 const cost=data.cost||{};
 const m=data.model||{};
 const s={sessionId:sid,model:m.display_name||m.id,contextUsedPercent:cw.used_percentage,contextRemainingPercent:cw.remaining_percentage,contextWindowSize:cw.context_window_size,inputTokens:it||undefined,outputTokens:u.output_tokens,costUsd:cost.total_cost_usd,totalDurationMs:cost.total_duration_ms,linesAdded:cost.total_lines_added,linesRemoved:cost.total_lines_removed,timestamp:Date.now()};
+const cacheFile='/tmp/claude-command-center-usage-cache.json';
+let limits=null;
+try{const st=fs.statSync(cacheFile);if((Date.now()-st.mtimeMs)/1000<60)limits=JSON.parse(fs.readFileSync(cacheFile,'utf-8'));}catch{}
+if(!limits){try{const home=require('os').homedir();const creds=JSON.parse(fs.readFileSync(home+'/.claude/.credentials.json','utf-8'));const tok=creds.claudeAiOauth?.accessToken;if(tok){limits=await new Promise((res)=>{const req=https.get('https://api.anthropic.com/api/oauth/usage',{headers:{Authorization:'Bearer '+tok},timeout:5000},(r)=>{let b='';r.on('data',c=>b+=c);r.on('end',()=>{try{res(JSON.parse(b));}catch{res(null);}});});req.on('error',()=>res(null));req.on('timeout',()=>{req.destroy();res(null);});});if(limits)try{fs.writeFileSync(cacheFile,JSON.stringify(limits));}catch{}}}catch{}}
+if(limits){if(limits.five_hour){s.rateLimitCurrent=Math.round(Number(limits.five_hour.utilization)||0);s.rateLimitCurrentResets=limits.five_hour.resets_at||'';}if(limits.seven_day){s.rateLimitWeekly=Math.round(Number(limits.seven_day.utilization)||0);s.rateLimitWeeklyResets=limits.seven_day.resets_at||'';}if(limits.extra_usage&&limits.extra_usage.is_enabled){s.rateLimitExtra={enabled:true,utilization:Math.round(Number(limits.extra_usage.utilization)||0),usedUsd:Math.round(Number(limits.extra_usage.used_credits||0))/100,limitUsd:Math.round(Number(limits.extra_usage.monthly_limit||0))/100};}}
+const now=new Date();const yr=now.getUTCFullYear();const m2=new Date(Date.UTC(yr,2,8));m2.setUTCDate(8+(7-m2.getUTCDay())%7);const n1=new Date(Date.UTC(yr,10,1));n1.setUTCDate(1+(7-n1.getUTCDay())%7);const ptOff=(now>=m2&&now<n1)?-7:-8;const ptH=(now.getUTCHours()+ptOff+24)%24;const ptD=new Date(now.getTime()+ptOff*3600000).getUTCDay();s.isPeak=(ptD>=1&&ptD<=5&&ptH>=5&&ptH<11);
 const sentinel='\\x1b]9999;CMSTATUS='+JSON.stringify(s)+'\\x07';
 try{fs.writeFileSync('/dev/tty',sentinel);}catch(e){process.stdout.write(sentinel);}
 process.stdout.write(' ');
@@ -188,9 +194,10 @@ function generateRemoteSetupScript(sessionId: string): string {
  */
 function getRemoteSetupCommand(sessionId: string, remotePath: string): string {
   const script = generateRemoteSetupScript(sessionId)
-  // Base64-encode the script so the PTY only echoes a short command
+  // Base64-encode the script so the PTY only echoes a short command.
+  // Wrap in stty -echo/echo to suppress the long base64 blob from rendering.
   const b64 = Buffer.from(script).toString('base64')
-  return `echo '${b64}' | base64 -d | node 2>/dev/null; cd ${remotePath}`
+  return `stty -echo 2>/dev/null; echo '${b64}' | base64 -d | node 2>/dev/null; stty echo 2>/dev/null; cd ${remotePath} && clear`
 }
 
 /**
