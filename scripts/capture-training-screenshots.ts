@@ -56,21 +56,30 @@ function getConfigDir(): string {
 
 // ── Sample data ──
 
+// Use sanitized paths — never expose real OS username in screenshots
 const homePath = process.platform === 'win32'
-  ? `C:\\Users\\${os.userInfo().username}\\Projects`
-  : `${os.homedir()}/Projects`
+  ? 'C:\\Users\\developer\\Projects'
+  : '/Users/developer/Projects'
 
 const SAMPLE_CONFIGS = [
   { id: 'demo-webapp', label: 'Web App', workingDirectory: path.join(homePath, 'web-app'), model: '', color: '#89B4FA', sessionType: 'local' },
   { id: 'demo-api', label: 'API Server', workingDirectory: path.join(homePath, 'api-server'), model: '', color: '#A6E3A1', sessionType: 'local' },
   { id: 'demo-mobile', label: 'Mobile App', workingDirectory: path.join(homePath, 'mobile'), model: '', color: '#F9E2AF', sessionType: 'local' },
   { id: 'demo-infra', label: 'Infrastructure', workingDirectory: path.join(homePath, 'infra'), model: '', color: '#CBA6F7', sessionType: 'local' },
+  { id: 'demo-gpu', label: 'GPU Server', workingDirectory: '/home/developer/ml-pipeline', model: '', color: '#F38BA8', sessionType: 'ssh', sshConfig: { host: '10.0.1.50', port: 22, username: 'developer', remotePath: '/home/developer/ml-pipeline' } },
 ]
 
 const SAMPLE_COMMANDS = [
-  { id: 'demo-cmd-review', label: 'Code Review', prompt: 'Review the recent changes', scope: 'global', color: '#89B4FA', defaultArgs: ['--focus security'] },
-  { id: 'demo-cmd-test', label: 'Run Tests', prompt: 'Run all tests and fix failures', scope: 'global', color: '#A6E3A1', defaultArgs: [] },
+  { id: 'demo-cmd-review', label: 'Code Review', prompt: 'Review the recent changes', scope: 'global', color: '#89B4FA', defaultArgs: ['--focus security'], sectionId: 'demo-section-dev' },
+  { id: 'demo-cmd-test', label: 'Run Tests', prompt: 'Run all tests and fix failures', scope: 'global', color: '#A6E3A1', defaultArgs: [], sectionId: 'demo-section-dev' },
   { id: 'demo-cmd-docs', label: 'Update Docs', prompt: 'Update documentation', scope: 'global', color: '#F9E2AF', defaultArgs: [] },
+  { id: 'demo-cmd-deploy', label: 'Deploy Staging', prompt: 'Deploy to staging environment', scope: 'global', color: '#F38BA8', target: 'partner', sectionId: 'demo-section-ops' },
+  { id: 'demo-cmd-git', label: 'Git Status', prompt: 'git status', scope: 'global', color: '#CBA6F7', target: 'partner' },
+]
+
+const SAMPLE_SECTIONS = [
+  { id: 'demo-section-dev', name: 'Development', scope: 'global', target: 'claude', color: '#89B4FA' },
+  { id: 'demo-section-ops', name: 'Operations', scope: 'global', target: 'partner', color: '#F38BA8' },
 ]
 
 const SAMPLE_CLOUD_AGENTS = [
@@ -126,13 +135,35 @@ function seedSampleData(): BackupInfo {
   console.log(`[capture] Config dir: ${configDir}`)
 
   const backedUpFiles: string[] = []
+  // Generate realistic tokenomics data with sanitized project names
+  const now = Date.now()
+  const day = 24 * 60 * 60 * 1000
+  const sampleTokenomics = {
+    sessions: [
+      { sessionId: 'demo-s1', projectDir: 'web-app', model: 'claude-sonnet-4-5-20250514', firstTimestamp: now - 2 * 3600000, lastTimestamp: now - 1800000, totalInputTokens: 45000, totalOutputTokens: 18000, cacheReadTokens: 12000, cacheWriteTokens: 8000, totalCostUsd: 0.42, durationMs: 5400000 },
+      { sessionId: 'demo-s2', projectDir: 'api-server', model: 'claude-sonnet-4-5-20250514', firstTimestamp: now - 8 * 3600000, lastTimestamp: now - 6 * 3600000, totalInputTokens: 82000, totalOutputTokens: 35000, cacheReadTokens: 25000, cacheWriteTokens: 15000, totalCostUsd: 0.89, durationMs: 7200000 },
+      { sessionId: 'demo-s3', projectDir: 'web-app', model: 'claude-opus-4-5-20250514', firstTimestamp: now - day - 3600000, lastTimestamp: now - day, totalInputTokens: 120000, totalOutputTokens: 55000, cacheReadTokens: 40000, cacheWriteTokens: 20000, totalCostUsd: 3.15, durationMs: 3600000 },
+    ],
+    daily: [
+      { date: new Date(now).toISOString().slice(0, 10), totalCostUsd: 1.31, totalInputTokens: 127000, totalOutputTokens: 53000, sessionCount: 2 },
+      { date: new Date(now - day).toISOString().slice(0, 10), totalCostUsd: 3.15, totalInputTokens: 120000, totalOutputTokens: 55000, sessionCount: 1 },
+      { date: new Date(now - 2 * day).toISOString().slice(0, 10), totalCostUsd: 2.47, totalInputTokens: 95000, totalOutputTokens: 42000, sessionCount: 3 },
+      { date: new Date(now - 3 * day).toISOString().slice(0, 10), totalCostUsd: 1.89, totalInputTokens: 78000, totalOutputTokens: 31000, sessionCount: 2 },
+      { date: new Date(now - 4 * day).toISOString().slice(0, 10), totalCostUsd: 4.22, totalInputTokens: 165000, totalOutputTokens: 72000, sessionCount: 4 },
+      { date: new Date(now - 5 * day).toISOString().slice(0, 10), totalCostUsd: 0.95, totalInputTokens: 45000, totalOutputTokens: 18000, sessionCount: 1 },
+      { date: new Date(now - 6 * day).toISOString().slice(0, 10), totalCostUsd: 2.78, totalInputTokens: 110000, totalOutputTokens: 48000, sessionCount: 3 },
+    ],
+    lastSeeded: now,
+  }
+
   const fileMap: Record<string, unknown> = {
     'configs.json': SAMPLE_CONFIGS,
     'commands.json': SAMPLE_COMMANDS,
-    'command-sections.json': [{ id: 'demo-section', name: 'Development' }],
+    'command-sections.json': SAMPLE_SECTIONS,
     'settings.json': { localMachineName: process.platform === 'darwin' ? 'Mac Mini' : 'Dev Workstation', terminalFontSize: 14, updateChannel: 'stable' },
     'app-meta.json': { setupVersion: '99.99.99', lastTrainingVersion: '99.99.99', lastWhatsNewVersion: '99.99.99', lastSeenVersion: '99.99.99' },
     'cloud-agents.json': SAMPLE_CLOUD_AGENTS,
+    'tokenomics.json': sampleTokenomics,
   }
 
   for (const [filename, data] of Object.entries(fileMap)) {
@@ -163,7 +194,7 @@ function seedSampleData(): BackupInfo {
 
 function cleanupSampleData(info: BackupInfo): void {
   console.log('[capture] Cleaning up...')
-  const files = ['configs.json', 'commands.json', 'command-sections.json', 'settings.json', 'app-meta.json', 'cloud-agents.json']
+  const files = ['configs.json', 'commands.json', 'command-sections.json', 'settings.json', 'app-meta.json', 'cloud-agents.json', 'tokenomics.json']
   for (const filename of files) {
     const filePath = path.join(info.configDir, filename)
     const backupPath = filePath + BACKUP_SUFFIX
@@ -225,10 +256,33 @@ async function dismissModals(window: any): Promise<void> {
   for (let i = 0; i < 4; i++) { await window.keyboard.press('Escape'); await window.waitForTimeout(400) }
 }
 
+const DOCS_SCREENSHOT_DIR = path.join(__dirname, '..', 'docs', 'screenshots')
+
+// Map from training filenames to docs filenames (for README screenshots)
+const DOCS_COPY_MAP: Record<string, string> = {
+  'step-session-options.jpg': 'session-config.jpg',
+  'step-tokenomics.jpg': 'tokenomics.jpg',
+  'step-memory.jpg': 'memory.jpg',
+  'step-agent-hub.jpg': 'agent-hub.jpg',
+  'step-vision.jpg': 'vision.jpg',
+  'step-security.jpg': 'settings.jpg',
+  'step-tips.jpg': 'shortcuts.jpg',
+}
+
 async function capture(window: any, filename: string, description: string): Promise<void> {
   const platformFilename = PLATFORM_SUFFIX ? filename.replace('.jpg', `${PLATFORM_SUFFIX}.jpg`) : filename
-  await window.screenshot({ path: path.join(SCREENSHOT_DIR, platformFilename), type: 'jpeg', quality: JPEG_QUALITY })
+  const trainingPath = path.join(SCREENSHOT_DIR, platformFilename)
+  await window.screenshot({ path: trainingPath, type: 'jpeg', quality: JPEG_QUALITY })
   console.log(`[capture] Saved: ${platformFilename} (${description})`)
+
+  // Also copy to docs/screenshots/ if this file maps to a docs screenshot
+  const docsName = DOCS_COPY_MAP[filename]
+  if (docsName) {
+    const docsPlatformName = PLATFORM_SUFFIX ? docsName.replace('.jpg', `${PLATFORM_SUFFIX}.jpg`) : docsName
+    fs.mkdirSync(DOCS_SCREENSHOT_DIR, { recursive: true })
+    fs.copyFileSync(trainingPath, path.join(DOCS_SCREENSHOT_DIR, docsPlatformName))
+    console.log(`[capture]   -> docs/screenshots/${docsPlatformName}`)
+  }
 }
 
 // ── Main ──
