@@ -373,3 +373,34 @@ export interface SplitNode {
 }
 
 export type LayoutNode = SplitNode | PaneNode
+
+// ── Diff Viewer (v2) ──
+
+export interface DiffLineComment {
+  id: string
+  text: string
+  timestamp: number
+}
+
+export interface DiffLine {
+  type: 'context' | 'addition' | 'removal'
+  content: string
+  oldLineNumber?: number
+  newLineNumber?: number
+  comments?: DiffLineComment[]
+}
+
+export interface DiffHunk {
+  header: string
+  lines: DiffLine[]
+}
+
+export interface DiffFile {
+  path: string
+  status: 'added' | 'modified' | 'deleted' | 'renamed'
+  oldPath?: string         // for renames
+  linesAdded: number
+  linesRemoved: number
+  isBinary?: boolean
+  hunks: DiffHunk[]
+}
