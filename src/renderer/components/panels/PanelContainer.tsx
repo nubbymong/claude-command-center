@@ -1,7 +1,7 @@
 import React, { useCallback, useRef } from 'react'
 import type { LayoutNode, SplitNode, PaneNode } from '../../../shared/types'
 import { usePanelStore } from '../../stores/panelStore'
-import { countPanes } from '../../utils/panel-layout'
+import { countPanes, findMaximizedPane } from '../../utils/panel-layout'
 import PaneHeader from './PaneHeader'
 import { getPaneComponent } from './PaneRegistry'
 
@@ -120,8 +120,9 @@ function SplitView({ node, sessionId, isActive, totalPanes }: SplitViewProps) {
   }, [sessionId, node.id, resizeSplit])
 
   const isHorizontal = node.direction === 'horizontal'
-  const firstSize = `${node.ratio * 100}%`
-  const secondSize = `${(1 - node.ratio) * 100}%`
+  // Subtract 2px from each side to account for the 4px divider
+  const firstSize = `calc(${node.ratio * 100}% - 2px)`
+  const secondSize = `calc(${(1 - node.ratio) * 100}% - 2px)`
 
   const renderChild = (child: LayoutNode) => {
     if (child.type === 'pane') {
@@ -152,13 +153,7 @@ export default function PanelContainer({ sessionId, isActive }: Props) {
 
   const totalPanes = countPanes(layout)
 
-  // If any pane is maximized, render only that pane
-  const findMaximized = (node: LayoutNode): PaneNode | null => {
-    if (node.type === 'pane') return node.maximized ? node : null
-    return findMaximized(node.children[0]) || findMaximized(node.children[1])
-  }
-
-  const maximized = findMaximized(layout)
+  const maximized = findMaximizedPane(layout)
   if (maximized) {
     return (
       <div className="flex flex-col flex-1 min-h-0 min-w-0 overflow-hidden">

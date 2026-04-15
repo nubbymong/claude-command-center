@@ -55,7 +55,7 @@ export const usePanelStore = create<PanelState>((set, get) => ({
       layouts: { ...layouts, [sessionId]: updated },
       userCustomized: { ...get().userCustomized, [sessionId]: true },
     })
-    saveConfigDebounced()
+    saveConfigDebounced('panelLayouts', get().layouts)
   },
 
   removePane: (sessionId, paneId) => {
@@ -67,7 +67,7 @@ export const usePanelStore = create<PanelState>((set, get) => ({
       layouts: { ...layouts, [sessionId]: updated },
       userCustomized: { ...get().userCustomized, [sessionId]: true },
     })
-    saveConfigDebounced()
+    saveConfigDebounced('panelLayouts', get().layouts)
   },
 
   toggleMaximized: (sessionId, paneId) => {
@@ -85,7 +85,7 @@ export const usePanelStore = create<PanelState>((set, get) => ({
       layouts: { ...layouts, [sessionId]: updateRatio(layout, splitId, ratio) },
       userCustomized: { ...get().userCustomized, [sessionId]: true },
     })
-    saveConfigDebounced()
+    saveConfigDebounced('panelLayouts', get().layouts)
   },
 
   removeSession: (sessionId) => {
@@ -108,7 +108,7 @@ export const usePanelStore = create<PanelState>((set, get) => ({
       layouts: { ...get().layouts, [sessionId]: createDefaultLayout(windowWidth) },
       userCustomized: { ...get().userCustomized, [sessionId]: false },
     })
-    saveConfigDebounced()
+    saveConfigDebounced('panelLayouts', get().layouts)
   },
 
   reset: () => set({ layouts: {}, userCustomized: {} }),
