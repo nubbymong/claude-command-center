@@ -1,0 +1,74 @@
+name: Bug Report
+description: Report a bug or unexpected behavior
+labels: ["bug"]
+body:
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Windows
+        - macOS
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: App Version
+      description: "Check Settings or the title bar (e.g. 1.3.0)"
+      placeholder: "1.3.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: Installation Method
+      options:
+        - Installer (exe/dmg)
+        - Built from source
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear description of the bug
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps to reproduce the issue
+      placeholder: |
+        1. Open the app
+        2. Navigate to...
+        3. Click on...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: "Paste any relevant logs or attach screenshots. Debug logs are in your Data Directory under debug/app.log, session logs under logs/."
+    validations:
+      required: false
+  - type: dropdown
+    id: session-type
+    attributes:
+      label: Session Type
+      description: "Was this in a local or SSH session?"
+      options:
+        - Local
+        - SSH
+        - Both
+        - N/A
+    validations:
+      required: false
