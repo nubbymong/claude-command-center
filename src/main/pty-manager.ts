@@ -52,6 +52,10 @@ export interface SSHOptions {
 
 const ptySessions = new Map<string, PtySession>()
 
+// Buffer recent output per session for side chat context extraction
+const ptyOutputBuffers = new Map<string, string>()
+const MAX_OUTPUT_BUFFER = 50000 // ~50KB per session
+
 // === SSH OSC sentinel parser ===
 //
 // Remote SSH sessions can't write status files to the local host, so the
@@ -525,6 +529,10 @@ export function spawnPty(
     ptyProcess.onData((data) => {
       if (win.isDestroyed()) return
       win.webContents.send(`pty:data:${sessionId}`, data)
+      // Buffer output for side chat context extraction
+      const existing = ptyOutputBuffers.get(sessionId) || ''
+      const updated = existing + data
+      ptyOutputBuffers.set(sessionId, updated.length > MAX_OUTPUT_BUFFER ? updated.slice(-MAX_OUTPUT_BUFFER) : updated)
     })
   }
 
@@ -674,6 +682,7 @@ export function killPty(sessionId: string): void {
   pendingWrites.delete(sessionId)
   recentWrites.delete(sessionId)
   sshOscBuffers.delete(sessionId)
+  ptyOutputBuffers.delete(sessionId)
 }
 
 export function killAllPty(): void {
@@ -681,6 +690,10 @@ export function killAllPty(): void {
   for (const [id] of ptySessions) {
     killPty(id)
   }
+}
+
+export function getPtyOutputBuffer(sessionId: string): string | undefined {
+  return ptyOutputBuffers.get(sessionId)
 }
 
 /**
