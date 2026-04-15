@@ -594,4 +594,25 @@ export const TIPS_LIBRARY: Tip[] = [
       },
     },
   },
+
+  {
+    id: 'tip.diff-viewer',
+    category: 'productivity',
+    complexity: 'intermediate',
+    priority: 88,
+    variants: {
+      primary: {
+        shortText: 'Review changes Claude made with the Diff Viewer',
+        title: 'Diff Viewer',
+        body: 'When Claude edits files, a **+N -M** badge appears in the session header showing how many lines changed. Click it to open the Diff Viewer pane, or add it from **Views**. You\'ll see a file list on the left and syntax-highlighted diffs on the right.',
+        bodyMac: 'When Claude edits files, a **+N -M** badge appears in the session header showing how many lines changed. Click it to open the Diff Viewer pane, or add it from **Views** (Cmd+Shift+D). You\'ll see a file list on the left and syntax-highlighted diffs on the right.',
+        focusHint: 'Look for the +/- badge next to the model name in the session header',
+      },
+      postUse: {
+        shortText: 'The Diff Viewer updates in real-time as files change',
+        title: 'Diff Viewer Power Tips',
+        body: 'The Diff Viewer watches your project directory and updates automatically when files change. It shows git diffs against HEAD, so you can see everything Claude has changed since your last commit. Binary files are listed but marked accordingly.',
+      },
+    },
+  },
 ]
