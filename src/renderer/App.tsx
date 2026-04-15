@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef } from 'react'
 import './components/panels'
 import { PanelContainer } from './components/panels'
 import { usePanelStore } from './stores/panelStore'
+import { findPaneByType } from './utils/panel-layout'
 import TitleBar from './components/TitleBar'
 import Sidebar from './components/Sidebar'
 import TabBar from './components/TabBar'
@@ -99,14 +100,15 @@ export default function App() {
     // Auto-add partner pane for newly added sessions with partnerTerminalPath
     sessions.forEach(s => {
       if (!sessionIdsRef.current.has(s.id) && s.partnerTerminalPath) {
-        // PanelContainer self-initializes the layout, but we need to add partner pane
-        // Use a microtask to ensure the layout exists first (self-init runs in useEffect)
-        queueMicrotask(() => {
-          const layout = usePanelStore.getState().layouts[s.id]
-          if (layout && layout.type === 'pane') {
-            usePanelStore.getState().addPane(s.id, layout.id, 'partner-terminal', 'vertical', { isPartner: true })
+        // Ensure layout exists synchronously, then find the claude-terminal pane to split
+        usePanelStore.getState().initSession(s.id, window.innerWidth)
+        const layout = usePanelStore.getState().layouts[s.id]
+        if (layout) {
+          const terminalPane = findPaneByType(layout, 'claude-terminal')
+          if (terminalPane) {
+            usePanelStore.getState().addPane(s.id, terminalPane.id, 'partner-terminal', 'vertical')
           }
-        })
+        }
       }
     })
     sessionIdsRef.current = currentIds
@@ -239,8 +241,11 @@ export default function App() {
         usePanelStore.getState().initSession(s.id, window.innerWidth)
         if (s.partnerTerminalPath) {
           const layout = usePanelStore.getState().layouts[s.id]
-          if (layout && layout.type === 'pane') {
-            usePanelStore.getState().addPane(s.id, layout.id, 'partner-terminal', 'vertical', { isPartner: true })
+          if (layout) {
+            const terminalPane = findPaneByType(layout, 'claude-terminal')
+            if (terminalPane) {
+              usePanelStore.getState().addPane(s.id, terminalPane.id, 'partner-terminal', 'vertical')
+            }
           }
         }
       })
@@ -555,8 +560,11 @@ export default function App() {
                   // If config has a partner terminal, add partner pane
                   if (newConfig.partnerTerminalPath) {
                     const layout = usePanelStore.getState().layouts[session.id]
-                    if (layout && layout.type === 'pane') {
-                      usePanelStore.getState().addPane(session.id, layout.id, 'partner-terminal', 'vertical', { isPartner: true })
+                    if (layout) {
+                      const terminalPane = findPaneByType(layout, 'claude-terminal')
+                      if (terminalPane) {
+                        usePanelStore.getState().addPane(session.id, terminalPane.id, 'partner-terminal', 'vertical')
+                      }
                     }
                   }
                   setShowGuidedConfig(false)

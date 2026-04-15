@@ -3,11 +3,11 @@ import TerminalView from '../TerminalView'
 import { useSessionStore } from '../../stores/sessionStore'
 import type { PaneComponentProps } from './PaneRegistry'
 
-export default function TerminalPane({ paneId, sessionId, isActive, props }: PaneComponentProps) {
+export default function TerminalPane({ paneId, paneType, sessionId, isActive, props }: PaneComponentProps) {
   const session = useSessionStore((s) => s.sessions.find((sess) => sess.id === sessionId))
   if (!session) return null
 
-  const isPartner = props.isPartner === true
+  const isPartner = paneType === 'partner-terminal'
   const ptySessionId = isPartner ? `${sessionId}-partner` : sessionId
 
   return (

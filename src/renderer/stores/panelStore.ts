@@ -75,6 +75,7 @@ export const usePanelStore = create<PanelState>((set, get) => ({
     const layout = layouts[sessionId]
     if (!layout) return
     set({ layouts: { ...layouts, [sessionId]: setMaximized(layout, paneId) } })
+    saveConfigDebounced('panelLayouts', get().layouts)
   },
 
   resizeSplit: (sessionId, splitId, ratio) => {
@@ -93,6 +94,7 @@ export const usePanelStore = create<PanelState>((set, get) => ({
     const { [sessionId]: _, ...remainingLayouts } = layouts
     const { [sessionId]: __, ...remainingCustom } = userCustomized
     set({ layouts: remainingLayouts, userCustomized: remainingCustom })
+    saveConfigDebounced('panelLayouts', get().layouts)
   },
 
   setLayout: (sessionId, layout) => {

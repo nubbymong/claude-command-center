@@ -75,7 +75,8 @@ function SplitDivider({
 }
 
 function PaneView({ node, sessionId, isActive, canClose }: PaneViewProps) {
-  const { removePane, toggleMaximized } = usePanelStore()
+  const removePane = usePanelStore((s) => s.removePane)
+  const toggleMaximized = usePanelStore((s) => s.toggleMaximized)
   const Component = getPaneComponent(node.paneType)
 
   const handleDragStart = useCallback((e: React.DragEvent) => {
@@ -98,6 +99,7 @@ function PaneView({ node, sessionId, isActive, canClose }: PaneViewProps) {
         {Component ? (
           <Component
             paneId={node.id}
+            paneType={node.paneType}
             sessionId={sessionId}
             isActive={isActive}
             props={node.props}
@@ -113,7 +115,7 @@ function PaneView({ node, sessionId, isActive, canClose }: PaneViewProps) {
 }
 
 function SplitView({ node, sessionId, isActive, totalPanes }: SplitViewProps) {
-  const { resizeSplit } = usePanelStore()
+  const resizeSplit = usePanelStore((s) => s.resizeSplit)
 
   const handleDragUpdate = useCallback((newRatio: number) => {
     resizeSplit(sessionId, node.id, newRatio)

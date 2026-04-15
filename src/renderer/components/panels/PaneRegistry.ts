@@ -3,6 +3,7 @@ import type { PaneType } from '../../../shared/types'
 
 export interface PaneComponentProps {
   paneId: string
+  paneType: PaneType
   sessionId: string
   isActive: boolean
   props: Record<string, unknown>

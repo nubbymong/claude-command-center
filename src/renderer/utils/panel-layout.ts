@@ -83,6 +83,11 @@ export function countPanes(node: LayoutNode): number {
   return countPanes(node.children[0]) + countPanes(node.children[1])
 }
 
+export function findPaneByType(node: LayoutNode, paneType: PaneType): PaneNode | null {
+  if (node.type === 'pane') return node.paneType === paneType ? node : null
+  return findPaneByType(node.children[0], paneType) || findPaneByType(node.children[1], paneType)
+}
+
 export function findMaximizedPane(node: LayoutNode): PaneNode | null {
   if (node.type === 'pane') return node.maximized ? node : null
   return findMaximizedPane(node.children[0]) || findMaximizedPane(node.children[1])
