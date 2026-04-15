@@ -87,12 +87,26 @@ export default function App() {
   // Global keyboard shortcuts
   useKeyboardShortcuts(activeSessionId, setSidebarOpen, setView)
 
-  // Clean up panel layouts when sessions are removed
+  // Sync panel layouts with sessions: clean up removals, auto-add partner panes for new sessions
   useEffect(() => {
     const currentIds = new Set(sessions.map(s => s.id))
+    // Clean up removed sessions
     sessionIdsRef.current.forEach(id => {
       if (!currentIds.has(id)) {
         usePanelStore.getState().removeSession(id)
+      }
+    })
+    // Auto-add partner pane for newly added sessions with partnerTerminalPath
+    sessions.forEach(s => {
+      if (!sessionIdsRef.current.has(s.id) && s.partnerTerminalPath) {
+        // PanelContainer self-initializes the layout, but we need to add partner pane
+        // Use a microtask to ensure the layout exists first (self-init runs in useEffect)
+        queueMicrotask(() => {
+          const layout = usePanelStore.getState().layouts[s.id]
+          if (layout && layout.type === 'pane') {
+            usePanelStore.getState().addPane(s.id, layout.id, 'partner-terminal', 'vertical', { isPartner: true })
+          }
+        })
       }
     })
     sessionIdsRef.current = currentIds

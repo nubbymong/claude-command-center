@@ -1,4 +1,4 @@
-import React, { useCallback, useRef } from 'react'
+import React, { useCallback, useEffect, useRef } from 'react'
 import type { LayoutNode, SplitNode, PaneNode } from '../../../shared/types'
 import { usePanelStore } from '../../stores/panelStore'
 import { countPanes, findMaximizedPane } from '../../utils/panel-layout'
@@ -149,6 +149,16 @@ function SplitView({ node, sessionId, isActive, totalPanes }: SplitViewProps) {
 
 export default function PanelContainer({ sessionId, isActive }: Props) {
   const layout = usePanelStore((s) => s.layouts[sessionId])
+
+  // Self-initialize: if no layout exists for this session, create one.
+  // This handles all session creation paths (Sidebar, ProjectBrowser, restore, etc.)
+  // without requiring each callsite to explicitly init the panel store.
+  useEffect(() => {
+    if (!layout) {
+      usePanelStore.getState().initSession(sessionId, window.innerWidth)
+    }
+  }, [sessionId, layout])
+
   if (!layout) return null
 
   const totalPanes = countPanes(layout)
