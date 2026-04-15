@@ -109,6 +109,17 @@ export default function App() {
       const sideChatSessionId = await window.electronAPI.sideChat.spawn(activeSessionId, {
         cols: 80,
         rows: 24,
+        workingDirectory: activeSession.workingDirectory,
+        parentLabel: activeSession.label,
+        model: activeSession.modelName || activeSession.model,
+        contextPercent: activeSession.contextPercent,
+        ssh: activeSession.sshConfig ? {
+          host: activeSession.sshConfig.host,
+          port: activeSession.sshConfig.port,
+          username: activeSession.sshConfig.username,
+          remotePath: activeSession.sshConfig.remotePath,
+          postCommand: activeSession.sshConfig.postCommand,
+        } : undefined,
       })
       setSideChat({
         parentSessionId: activeSessionId,
@@ -614,7 +625,7 @@ export default function App() {
             ) : (
               <>
                 {renderSessions()}
-                {sideChat && view === 'sessions' && (
+                {sideChat && view === 'sessions' && sideChat.parentSessionId === activeSessionId && (
                   <SideChatPane
                     parentSessionId={sideChat.parentSessionId}
                     sideChatSessionId={sideChat.sideChatSessionId}

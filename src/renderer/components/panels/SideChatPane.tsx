@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import TerminalView from '../TerminalView'
 
 interface Props {
@@ -11,6 +11,7 @@ interface Props {
 export default function SideChatPane({ parentSessionId: _parentSessionId, sideChatSessionId, parentLabel, onClose }: Props) {
   const [isVisible, setIsVisible] = useState(false)
   const [isClosing, setIsClosing] = useState(false)
+  const closingRef = useRef(false)
 
   // Trigger slide-in animation on mount
   useEffect(() => {
@@ -18,24 +19,28 @@ export default function SideChatPane({ parentSessionId: _parentSessionId, sideCh
     return () => cancelAnimationFrame(timer)
   }, [])
 
-  // Close with animation
+  // Close with animation (guarded against double calls)
   const handleClose = () => {
+    if (closingRef.current) return
+    closingRef.current = true
     setIsClosing(true)
-    setTimeout(() => onClose(), 200) // Match animation duration
+    setTimeout(() => onClose(), 200)
   }
 
-  // Escape key closes
+  // Escape key closes (only when terminal doesn't have focus in a mode that needs Escape)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        // Don't intercept if the terminal's textarea has focus (let xterm handle it)
+        const active = document.activeElement
+        if (active && active.tagName === 'TEXTAREA' && active.closest('.xterm')) return
         e.preventDefault()
-        e.stopPropagation()
         handleClose()
       }
     }
-    window.addEventListener('keydown', handleKeyDown, true)
-    return () => window.removeEventListener('keydown', handleKeyDown, true)
-  }, [])
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [onClose])
 
   const slideClass = isVisible && !isClosing ? 'translate-x-0' : 'translate-x-full'
 
@@ -69,14 +74,14 @@ export default function SideChatPane({ parentSessionId: _parentSessionId, sideCh
               className="text-overlay0 hover:text-red text-sm px-1 transition-colors"
               title="Close side chat"
             >
-              {String.fromCodePoint(0x00d7)}
+              {String.fromCodePoint(0x00D7)}
             </button>
           </div>
         </div>
 
         {/* Info bar */}
         <div className="px-3 py-1.5 bg-surface0 text-xs text-subtext0 border-b border-surface1 shrink-0 flex items-center gap-1.5">
-          <span className="text-mauve">{String.fromCodePoint(0x24d8)}</span>
+          <span className="text-mauve">{String.fromCodePoint(0x24D8)}</span>
           Reading context from main session. Changes here won&apos;t affect the main thread.
         </div>
 
