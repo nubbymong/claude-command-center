@@ -194,7 +194,6 @@ export const IPC = {
   // Side Chat
   SIDE_CHAT_SPAWN: 'sideChat:spawn',
   SIDE_CHAT_KILL: 'sideChat:kill',
-  SIDE_CHAT_GET_CONTEXT: 'sideChat:getContext',
 } as const
 
 /** Helper to build per-session PTY data channels */

@@ -55,6 +55,7 @@ export default function PaneHeader({
       className="flex items-center justify-between px-2 py-1 bg-mantle border-b border-surface0 select-none shrink-0"
       draggable
       onDragStart={onDragStart}
+      onDoubleClick={onMaximize}
       style={{ cursor: 'grab' }}
     >
       <div className="flex items-center gap-1.5 text-xs min-w-0">
