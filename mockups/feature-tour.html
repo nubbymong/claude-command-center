@@ -1,0 +1,1014 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Feature Tour — Claude Command Center</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --base: #1e1e2e; --mantle: #181825; --crust: #11111b;
+  --surface0: #313244; --surface1: #45475a; --surface2: #585b70;
+  --overlay0: #6c7086; --overlay1: #7f849c;
+  --subtext0: #a6adc8; --subtext1: #bac2de; --text: #cdd6f4;
+  --blue: #89b4fa; --green: #a6e3a1; --red: #f38ba8;
+  --yellow: #f9e2af; --mauve: #cba6f7; --peach: #fab387;
+  --teal: #94e2d5; --lavender: #b4befe;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  font-family: 'IBM Plex Sans', sans-serif;
+  background: var(--base);
+  color: var(--text);
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+/* Backdrop */
+.backdrop {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.75);
+  backdrop-filter: blur(8px);
+  z-index: 100;
+}
+
+/* Modal */
+.modal {
+  position: fixed;
+  z-index: 101;
+  width: 920px; max-width: 95vw;
+  height: 640px; max-height: 90vh;
+  left: 50%; top: 50%;
+  transform: translate(-50%, -50%) scale(1);
+  background: var(--mantle);
+  border: 1px solid var(--surface0);
+  border-radius: 12px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  animation: modalIn 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 40px 80px rgba(0,0,0,0.5), 0 0 0 1px rgba(137,180,250,0.05);
+}
+@keyframes modalIn {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(0.95) translateY(20px); }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1) translateY(0); }
+}
+
+/* Progress bar */
+.progress-bar {
+  height: 2px;
+  background: var(--surface0);
+  position: relative;
+  flex-shrink: 0;
+}
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--blue), var(--mauve));
+  transition: width 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 0 12px rgba(137,180,250,0.3);
+}
+
+/* Content area */
+.content-area {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+  position: relative;
+}
+
+/* Slide container */
+.slide {
+  display: none;
+  width: 100%;
+  height: 100%;
+  flex-direction: row;
+}
+.slide.active { display: flex; animation: slideIn 0.35s ease-out; }
+@keyframes slideIn {
+  from { opacity: 0; transform: translateX(30px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+.slide.slide-back { animation: slideInBack 0.35s ease-out; }
+@keyframes slideInBack {
+  from { opacity: 0; transform: translateX(-30px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+/* Left: Illustration */
+.slide-illust {
+  width: 55%;
+  background: var(--crust);
+  border-right: 1px solid var(--surface0);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  position: relative;
+  overflow: hidden;
+}
+/* Grid texture */
+.slide-illust::before {
+  content: '';
+  position: absolute; inset: 0;
+  background-image:
+    linear-gradient(var(--surface0) 1px, transparent 1px),
+    linear-gradient(90deg, var(--surface0) 1px, transparent 1px);
+  background-size: 40px 40px;
+  opacity: 0.15;
+}
+
+/* Right: Text content */
+.slide-text {
+  width: 45%;
+  padding: 40px 36px 24px;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+.slide-text::-webkit-scrollbar { width: 4px; }
+.slide-text::-webkit-scrollbar-thumb { background: var(--surface1); border-radius: 2px; }
+
+.step-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  color: var(--blue);
+  margin-bottom: 12px;
+  opacity: 0;
+  animation: fadeUp 0.4s ease 0.15s forwards;
+}
+.step-title {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.3;
+  margin-bottom: 14px;
+  opacity: 0;
+  animation: fadeUp 0.4s ease 0.2s forwards;
+}
+.step-desc {
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--subtext0);
+  margin-bottom: 20px;
+  opacity: 0;
+  animation: fadeUp 0.4s ease 0.25s forwards;
+}
+.step-bullets {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+}
+.step-bullets li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--subtext1);
+  opacity: 0;
+  animation: fadeUp 0.3s ease forwards;
+}
+.step-bullets li:nth-child(1) { animation-delay: 0.3s; }
+.step-bullets li:nth-child(2) { animation-delay: 0.38s; }
+.step-bullets li:nth-child(3) { animation-delay: 0.46s; }
+.step-bullets li:nth-child(4) { animation-delay: 0.54s; }
+.step-bullets li:nth-child(5) { animation-delay: 0.62s; }
+.bullet-icon {
+  width: 18px; height: 18px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.bullet-text strong { color: var(--text); font-weight: 600; }
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Bottom bar */
+.bottom-bar {
+  display: flex;
+  align-items: center;
+  padding: 14px 24px;
+  border-top: 1px solid var(--surface0);
+  flex-shrink: 0;
+  gap: 16px;
+}
+.step-counter {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--overlay0);
+  min-width: 50px;
+}
+.dots {
+  display: flex;
+  gap: 6px;
+  flex: 1;
+  justify-content: center;
+}
+.dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--surface1);
+  cursor: pointer;
+  transition: all 0.25s;
+  border: none;
+}
+.dot:hover { background: var(--overlay0); }
+.dot.active {
+  background: var(--blue);
+  box-shadow: 0 0 8px rgba(137,180,250,0.4);
+  width: 20px;
+  border-radius: 4px;
+}
+.nav-btn {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 8px 20px;
+  border-radius: 6px;
+  border: 1px solid var(--surface1);
+  background: var(--surface0);
+  color: var(--subtext1);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.nav-btn:hover { background: var(--surface1); color: var(--text); }
+.nav-btn.primary {
+  background: var(--blue);
+  border-color: var(--blue);
+  color: var(--crust);
+  font-weight: 600;
+}
+.nav-btn.primary:hover { opacity: 0.9; }
+.skip-link {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--overlay0);
+  cursor: pointer;
+  border: none;
+  background: none;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.skip-link:hover { color: var(--subtext0); }
+
+/* ── Schematic Illustrations ── */
+.schematic {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Welcome illustration */
+.welcome-schematic {
+  width: 380px; height: 280px;
+  position: relative;
+}
+.ws-sidebar {
+  position: absolute; left: 0; top: 0;
+  width: 60px; height: 100%;
+  border: 1px solid var(--surface1);
+  border-radius: 6px 0 0 6px;
+  background: rgba(49,50,68,0.4);
+  animation: drawIn 0.6s ease 0.3s both;
+}
+.ws-nav-dot {
+  width: 24px; height: 24px;
+  border-radius: 4px;
+  background: rgba(137,180,250,0.15);
+  border: 1px solid rgba(137,180,250,0.2);
+  margin: 8px auto;
+}
+.ws-nav-dot:nth-child(1) { animation: pulseGlow 2s ease-in-out infinite; background: rgba(137,180,250,0.3); }
+.ws-nav-dot:nth-child(3) { background: rgba(166,227,161,0.15); border-color: rgba(166,227,161,0.2); }
+.ws-nav-dot:nth-child(5) { background: rgba(203,166,247,0.15); border-color: rgba(203,166,247,0.2); }
+.ws-main {
+  position: absolute; left: 64px; top: 0; right: 0; height: 100%;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.ws-titlebar {
+  height: 28px;
+  border: 1px solid var(--surface1);
+  border-radius: 0 6px 0 0;
+  background: rgba(49,50,68,0.5);
+  display: flex; align-items: center; padding: 0 8px; gap: 6px;
+  animation: drawIn 0.6s ease 0.4s both;
+}
+.ws-tab {
+  height: 16px; width: 60px;
+  border-radius: 3px;
+  background: rgba(137,180,250,0.12);
+  border: 1px solid rgba(137,180,250,0.2);
+}
+.ws-tab:first-child { background: rgba(137,180,250,0.25); }
+.ws-tab:nth-child(2) { background: rgba(166,227,161,0.12); border-color: rgba(166,227,161,0.2); width: 50px; }
+.ws-terminal {
+  flex: 1;
+  border: 1px solid var(--surface1);
+  border-radius: 0 0 6px 0;
+  background: rgba(17,17,27,0.6);
+  padding: 12px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  color: var(--overlay1);
+  line-height: 1.6;
+  animation: drawIn 0.6s ease 0.5s both;
+  overflow: hidden;
+}
+.ws-terminal .line { opacity: 0; animation: typeLine 0.3s ease forwards; }
+.ws-terminal .line:nth-child(1) { animation-delay: 0.8s; }
+.ws-terminal .line:nth-child(2) { animation-delay: 1.1s; color: var(--green); }
+.ws-terminal .line:nth-child(3) { animation-delay: 1.4s; color: var(--blue); }
+.ws-terminal .line:nth-child(4) { animation-delay: 1.7s; }
+.ws-terminal .line:nth-child(5) { animation-delay: 2.0s; color: var(--peach); }
+.ws-contextbar {
+  height: 22px;
+  border: 1px solid var(--surface1);
+  background: rgba(49,50,68,0.3);
+  display: flex; align-items: center; gap: 6px; padding: 0 8px;
+  font-family: 'JetBrains Mono', monospace; font-size: 8px; color: var(--overlay0);
+  animation: drawIn 0.6s ease 0.55s both;
+}
+.ws-ctx-bar {
+  width: 60px; height: 6px; border-radius: 3px;
+  background: linear-gradient(90deg, var(--green) 45%, var(--surface0) 45%);
+}
+.ws-label {
+  position: absolute;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 8px;
+  color: var(--blue);
+  background: rgba(137,180,250,0.08);
+  border: 1px solid rgba(137,180,250,0.15);
+  padding: 1px 5px;
+  border-radius: 3px;
+  white-space: nowrap;
+  opacity: 0;
+  animation: fadeUp 0.3s ease 1.5s forwards;
+}
+@keyframes drawIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes typeLine { from { opacity: 0; transform: translateX(-4px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes pulseGlow {
+  0%, 100% { box-shadow: 0 0 4px rgba(137,180,250,0.2); }
+  50% { box-shadow: 0 0 12px rgba(137,180,250,0.4); }
+}
+
+/* Config illustration */
+.config-schematic { width: 360px; height: 260px; position: relative; }
+.cfg-section {
+  position: absolute;
+  border: 1px solid var(--surface1);
+  border-radius: 6px;
+  padding: 8px;
+  background: rgba(49,50,68,0.3);
+}
+.cfg-section-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 8px;
+  color: var(--overlay0);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 6px;
+}
+.cfg-card {
+  height: 28px;
+  border: 1px solid var(--surface1);
+  border-radius: 4px;
+  background: rgba(17,17,27,0.4);
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  gap: 6px;
+}
+.cfg-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.cfg-name {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 8px;
+  color: var(--subtext0);
+  flex: 1;
+}
+.cfg-badge {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 7px;
+  padding: 1px 4px;
+  border-radius: 2px;
+  background: rgba(137,180,250,0.15);
+  color: var(--blue);
+}
+
+/* Command bar illustration */
+.cmd-schematic { width: 380px; height: 240px; position: relative; }
+.cmd-row {
+  display: flex; gap: 4px; margin-bottom: 6px;
+  align-items: center;
+  padding: 4px 8px;
+  border: 1px solid var(--surface0);
+  border-radius: 4px;
+  background: rgba(17,17,27,0.3);
+}
+.cmd-row-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 7px;
+  color: var(--overlay0);
+  width: 50px;
+  flex-shrink: 0;
+}
+.cmd-btn {
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 3px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  border: 1px solid;
+}
+.cmd-popover {
+  position: absolute;
+  width: 160px;
+  background: var(--surface0);
+  border: 1px solid var(--blue);
+  border-radius: 6px;
+  padding: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  animation: popIn 0.3s ease 0.8s both;
+}
+@keyframes popIn {
+  from { opacity: 0; transform: scale(0.9) translateY(4px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+.cmd-pop-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 8px;
+  color: var(--blue);
+  margin-bottom: 6px;
+}
+.cmd-pop-check {
+  display: flex; align-items: center; gap: 4px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 8px;
+  color: var(--subtext0);
+  margin-bottom: 3px;
+}
+.cmd-pop-box {
+  width: 10px; height: 10px;
+  border: 1px solid var(--surface2);
+  border-radius: 2px;
+  background: var(--crust);
+}
+.cmd-pop-box.checked { background: var(--blue); border-color: var(--blue); }
+
+/* Agent Hub illustration */
+.agent-schematic { width: 360px; height: 260px; position: relative; }
+.agent-card {
+  position: absolute;
+  border: 1px solid var(--surface1);
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: rgba(49,50,68,0.4);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.agent-name {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  font-weight: 500;
+}
+.agent-status {
+  display: flex; align-items: center; gap: 4px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 7px;
+}
+.agent-status-dot { width: 5px; height: 5px; border-radius: 50%; }
+.agent-bar { height: 3px; border-radius: 2px; background: var(--surface0); }
+.agent-bar-fill { height: 100%; border-radius: 2px; }
+
+/* Memory illustration */
+.memory-schematic { width: 380px; height: 260px; position: relative; }
+.mem-project-card {
+  border: 1px solid var(--surface1);
+  border-radius: 6px;
+  padding: 10px;
+  background: rgba(49,50,68,0.3);
+  margin-bottom: 6px;
+}
+.mem-project-name {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+.mem-meta {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 8px;
+  color: var(--overlay0);
+  display: flex;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.mem-type-bar {
+  height: 4px; border-radius: 2px;
+  background: var(--surface0);
+  display: flex;
+  overflow: hidden;
+}
+.mem-type-seg { height: 100%; }
+
+/* Placeholder for steps 6-14 */
+.placeholder-illust {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  z-index: 1;
+}
+.placeholder-icon {
+  width: 64px; height: 64px;
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.placeholder-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--overlay1);
+}
+</style>
+</head>
+<body>
+
+<div class="backdrop"></div>
+
+<div class="modal" id="modal">
+  <div class="progress-bar">
+    <div class="progress-fill" id="progressFill" style="width:7.14%"></div>
+  </div>
+
+  <div class="content-area" id="contentArea"></div>
+
+  <div class="bottom-bar">
+    <span class="step-counter" id="stepCounter">1 of 14</span>
+    <button class="nav-btn" id="btnBack" style="visibility:hidden">Back</button>
+    <div class="dots" id="dots"></div>
+    <button class="nav-btn primary" id="btnNext">Next</button>
+    <button class="skip-link" id="btnSkip">Skip tour</button>
+  </div>
+</div>
+
+<script>
+const STEPS = [
+  {
+    id: 'welcome', label: 'Getting Started', title: 'Welcome to Claude\nCommand Center',
+    desc: 'A multi-session orchestrator for Claude Code. Run agents side-by-side, monitor costs, automate workflows, and manage sessions across local and remote machines.',
+    bullets: [
+      { icon: 'blue', text: '<strong>Multi-session terminals</strong> with independent contexts and tabbed navigation' },
+      { icon: 'green', text: '<strong>SSH support</strong> with auto-login, post-commands, and Docker container integration' },
+      { icon: 'mauve', text: '<strong>Real-time metrics</strong> tracking tokens, costs, rate limits, and context usage' },
+      { icon: 'peach', text: '<strong>Cloud agents</strong> and team pipelines for background automation' },
+      { icon: 'teal', text: '<strong>Vision, Memory, Tokenomics</strong> and more via the sidebar toolbar' },
+    ],
+    illust: 'welcome'
+  },
+  {
+    id: 'configs', label: 'Terminal Configs', title: 'Saved Terminal\nConfigurations',
+    desc: 'Create reusable presets for your projects. Each config remembers its working directory, model, SSH settings, partner terminal, and agent selection.',
+    bullets: [
+      { icon: 'blue', text: '<strong>Local or SSH</strong> sessions with full connection details saved and encrypted' },
+      { icon: 'green', text: '<strong>Sections and groups</strong> for hierarchical organization in the sidebar' },
+      { icon: 'yellow', text: '<strong>Model override</strong> per config — Sonnet, Opus, or Haiku' },
+      { icon: 'mauve', text: '<strong>Partner terminal</strong> for a second shell alongside Claude' },
+      { icon: 'peach', text: '<strong>Launch groups</strong> to open an entire section of configs at once' },
+    ],
+    illust: 'configs'
+  },
+  {
+    id: 'sessions', label: 'Sessions', title: 'Sessions &\nTerminal',
+    desc: 'Each tab is an independent Claude Code session with its own terminal, context bar, and PTY process. Sessions save and restore automatically across app restarts.',
+    bullets: [
+      { icon: 'blue', text: '<strong>Tab bar</strong> with color indicators and attention pulse when input is needed' },
+      { icon: 'green', text: '<strong>Context bar</strong> showing model, token count, cost, and context usage in real time' },
+      { icon: 'yellow', text: '<strong>Session restore</strong> saves all sessions on close, resumes conversations on relaunch' },
+      { icon: 'teal', text: '<strong>Resume picker</strong> shows prior conversations with timestamps and summaries' },
+      { icon: 'red', text: '<strong>Ctrl+1-9</strong> to jump between sessions, Ctrl+Tab to cycle' },
+    ],
+    illust: 'placeholder', placeholderColor: 'blue', placeholderLabel: 'Terminal Session'
+  },
+  {
+    id: 'commands', label: 'Commands', title: 'Quick Commands\n& Arguments',
+    desc: 'Create custom command buttons that send prompts or run scripts. Organize into sections, configure default arguments, and customize on-the-fly with Ctrl+click.',
+    bullets: [
+      { icon: 'green', text: '<strong>Default arguments</strong> run on normal click — no modal, instant execution' },
+      { icon: 'blue', text: '<strong>Ctrl+click</strong> opens an argument popover to customize before running' },
+      { icon: 'yellow', text: '<strong>Sections</strong> group buttons with collapsible headers and drag reordering' },
+      { icon: 'mauve', text: '<strong>Scope</strong> commands globally or to specific terminal configs' },
+      { icon: 'peach', text: '<strong>Target</strong> Claude terminal, Partner terminal, or whichever is active' },
+    ],
+    illust: 'commands'
+  },
+  {
+    id: 'agents', label: 'Agent Hub', title: 'Cloud Agents\n& Teams',
+    desc: 'Run headless Claude sessions in the background. Build multi-step pipelines with Agent Teams that chain agents sequentially or in parallel.',
+    bullets: [
+      { icon: 'blue', text: '<strong>Cloud agents</strong> dispatch headless sessions with cost and duration tracking' },
+      { icon: 'green', text: '<strong>Agent Teams</strong> orchestrate multi-step pipelines with automatic context forwarding' },
+      { icon: 'mauve', text: '<strong>Agent Library</strong> with built-in templates (code-reviewer, code-simplifier) and custom agents' },
+      { icon: 'yellow', text: '<strong>Per-session agents</strong> attach specialized agents via the --agents flag' },
+      { icon: 'red', text: '<strong>Completion hooks</strong> chain team steps automatically on agent finish' },
+    ],
+    illust: 'agents'
+  },
+  {
+    id: 'statusline', label: 'Metrics', title: 'Statusline\nMetrics',
+    desc: 'Live metrics in the context bar below each terminal. Track tokens, costs, rate limits, and peak hours at a glance.',
+    bullets: [
+      { icon: 'green', text: '<strong>Context bar</strong> with model name, token counts, cost, lines changed, duration' },
+      { icon: 'yellow', text: '<strong>Rate limits</strong> showing 5-hour and 7-day utilization with reset timers' },
+      { icon: 'red', text: '<strong>Peak/off-peak</strong> indicator based on Anthropic API hours (05:00-11:00 PT)' },
+      { icon: 'peach', text: '<strong>Service status</strong> gradient across the title bar when Claude is degraded' },
+    ],
+    illust: 'placeholder', placeholderColor: 'green', placeholderLabel: 'Context Bar'
+  },
+  {
+    id: 'vision', label: 'Vision', title: 'Vision\nSystem',
+    desc: 'A global MCP server that gives Claude browser automation via Chrome DevTools Protocol. All sessions share one browser instance.',
+    bullets: [
+      { icon: 'blue', text: '<strong>17 vision tools</strong> exposed to Claude: screenshot, navigate, click, type, eval, and more' },
+      { icon: 'green', text: '<strong>Eye icon</strong> in the sidebar shows connection status (green = connected)' },
+      { icon: 'mauve', text: '<strong>SSH tunnels</strong> automatically added so remote sessions can reach the MCP server' },
+      { icon: 'peach', text: '<strong>Auto-start</strong> on app launch if enabled in Vision settings' },
+    ],
+    illust: 'placeholder', placeholderColor: 'mauve', placeholderLabel: 'MCP Vision Server'
+  },
+  {
+    id: 'tokenomics', label: 'Costs', title: 'Tokenomics',
+    desc: 'Track token usage and costs across all Claude Code sessions. Parses historical JSONL transcripts and streams real-time data from the statusline.',
+    bullets: [
+      { icon: 'green', text: '<strong>Session records</strong> with input, output, cache tokens, cost, and burn rate' },
+      { icon: 'yellow', text: '<strong>Daily aggregates</strong> with cost breakdown by model and time period' },
+      { icon: 'blue', text: '<strong>Burn rate</strong> showing tokens/minute and cost/hour for active sessions' },
+      { icon: 'red', text: '<strong>Rate limit tracking</strong> with 5-hour and 7-day utilization from the API' },
+    ],
+    illust: 'placeholder', placeholderColor: 'yellow', placeholderLabel: 'Cost Dashboard'
+  },
+  {
+    id: 'memory', label: 'Memory', title: 'Memory\nVisualiser',
+    desc: 'Browse, search, and manage Claude Code auto-memory files across all your projects. Drill down from projects to individual memory entries.',
+    bullets: [
+      { icon: 'mauve', text: '<strong>Project cards</strong> with type distribution bars, file counts, and staleness indicators' },
+      { icon: 'blue', text: '<strong>Type groups</strong> collapsible sections: user, feedback, project, reference, snapshot' },
+      { icon: 'green', text: '<strong>Global search</strong> across all memories by name, description, project, or filename' },
+      { icon: 'yellow', text: '<strong>Schema warnings</strong> detect missing MEMORY.md, oversized indexes, unknown types' },
+      { icon: 'red', text: '<strong>Actions</strong> delete stale memories and add/edit YAML frontmatter metadata' },
+    ],
+    illust: 'memory'
+  },
+  {
+    id: 'storyboard', label: 'Capture', title: 'Storyboard\nCapture',
+    desc: 'Record a sequence of screenshots at a set interval to create visual storyboards for Claude. Annotate each frame and send as a structured prompt.',
+    bullets: [
+      { icon: 'blue', text: '<strong>Interval selection</strong> of 1, 2, 3, or 5 seconds between captures' },
+      { icon: 'green', text: '<strong>Region reuse</strong> captures the same screen area repeatedly without re-selecting' },
+      { icon: 'yellow', text: '<strong>Frame review modal</strong> with checkboxes, annotations, and context text' },
+      { icon: 'peach', text: '<strong>Structured prompt</strong> sent as numbered frames with annotations to Claude' },
+    ],
+    illust: 'placeholder', placeholderColor: 'peach', placeholderLabel: 'Screen Recording'
+  },
+  {
+    id: 'session-options', label: 'Options', title: 'Session\nOptions',
+    desc: 'Fine-tune each session with per-config options for thinking depth, rendering mode, and memory control.',
+    bullets: [
+      { icon: 'blue', text: '<strong>Effort level</strong> (Low/Medium/High) controls thinking depth vs cost' },
+      { icon: 'green', text: '<strong>Flicker-free</strong> rendering uses alternate screen buffer for smoother output' },
+      { icon: 'mauve', text: '<strong>PowerShell tool</strong> enables native Windows commands alongside Bash (preview)' },
+      { icon: 'yellow', text: '<strong>Disable auto-memory</strong> prevents Claude from writing to ~/.claude/memory/' },
+    ],
+    illust: 'placeholder', placeholderColor: 'teal', placeholderLabel: 'Config Options'
+  },
+  {
+    id: 'screenshots', label: 'Snap', title: 'Screenshots\n& Snap',
+    desc: 'Capture screen regions or windows and paste them directly into Claude sessions. Images are optimized and auto-cleaned after configurable days.',
+    bullets: [
+      { icon: 'blue', text: '<strong>Rectangle capture</strong> with region selection overlay and dimension display' },
+      { icon: 'green', text: '<strong>Window capture</strong> pick from a list with thumbnail previews' },
+      { icon: 'yellow', text: '<strong>Alt+V</strong> paste clipboard images directly into any session' },
+      { icon: 'red', text: '<strong>Auto-cleanup</strong> configurable retention period (1-365 days)' },
+    ],
+    illust: 'placeholder', placeholderColor: 'blue', placeholderLabel: 'Screenshot Capture'
+  },
+  {
+    id: 'security', label: 'Security', title: 'Security &\nPrivacy',
+    desc: 'Sandboxed renderer, encrypted credentials, validated IPC boundaries, and Content Security Policy. Your data stays local.',
+    bullets: [
+      { icon: 'green', text: '<strong>Sandbox enabled</strong> with Content Security Policy and navigation restrictions' },
+      { icon: 'blue', text: '<strong>SSH passwords encrypted</strong> with OS-level DPAPI, never visible to the renderer' },
+      { icon: 'yellow', text: '<strong>IPC validation</strong> with zod schemas on all security-critical handlers' },
+      { icon: 'red', text: '<strong>No telemetry</strong> — the app collects nothing. All data stays on your machine.' },
+    ],
+    illust: 'placeholder', placeholderColor: 'green', placeholderLabel: 'Security Model'
+  },
+  {
+    id: 'tips', label: 'Shortcuts', title: 'Tips &\nShortcuts',
+    desc: 'Master keyboard shortcuts to navigate the app efficiently. Customize shortcuts in Settings.',
+    bullets: [
+      { icon: 'blue', text: '<strong>Ctrl+Tab</strong> / <strong>Ctrl+Shift+Tab</strong> to cycle between sessions' },
+      { icon: 'green', text: '<strong>Ctrl+1-9</strong> to jump directly to a session by number' },
+      { icon: 'yellow', text: '<strong>Ctrl+B</strong> toggle sidebar, <strong>Alt+V</strong> paste image' },
+      { icon: 'mauve', text: '<strong>Help icon (?)</strong> in the sidebar to replay this tour anytime' },
+    ],
+    illust: 'placeholder', placeholderColor: 'lavender', placeholderLabel: 'Keyboard Reference'
+  }
+]
+
+const COLORS = {
+  blue: 'var(--blue)', green: 'var(--green)', red: 'var(--red)',
+  yellow: 'var(--yellow)', mauve: 'var(--mauve)', peach: 'var(--peach)',
+  teal: 'var(--teal)', lavender: 'var(--lavender)'
+}
+
+let current = 0
+let direction = 1
+
+function bulletIcon(color) {
+  const c = COLORS[color] || COLORS.blue
+  return `<div class="bullet-icon" style="background:${c}15;border:1px solid ${c}30">
+    <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="${c}" stroke-width="2">
+      <polyline points="3 8 7 12 13 4"/>
+    </svg>
+  </div>`
+}
+
+function renderWelcomeIllust() {
+  return `<div class="welcome-schematic">
+    <div class="ws-sidebar" style="padding-top:12px">
+      <div class="ws-nav-dot"></div><div class="ws-nav-dot"></div><div class="ws-nav-dot"></div>
+      <div class="ws-nav-dot"></div><div class="ws-nav-dot"></div><div class="ws-nav-dot"></div>
+    </div>
+    <div class="ws-main">
+      <div class="ws-titlebar">
+        <div class="ws-tab"></div><div class="ws-tab"></div>
+      </div>
+      <div class="ws-contextbar">
+        <span>opus 4.6</span>
+        <div class="ws-ctx-bar"></div>
+        <span>45%</span>
+        <span style="color:var(--green)">$0.42</span>
+      </div>
+      <div class="ws-terminal">
+        <div class="line">$ claude --name "App Dev"</div>
+        <div class="line">Claude Code v2.1.89</div>
+        <div class="line">Working in F:\\projects\\my-app</div>
+        <div class="line">> Analyzing codebase...</div>
+        <div class="line">Found 127 TypeScript files</div>
+      </div>
+    </div>
+    <div class="ws-label" style="top:-16px;left:70px">Tabs</div>
+    <div class="ws-label" style="left:-10px;top:50%;transform:translateY(-50%) rotate(-90deg)">Nav</div>
+    <div class="ws-label" style="bottom:-16px;right:40px">Context Bar</div>
+  </div>`
+}
+
+function renderConfigsIllust() {
+  return `<div class="config-schematic">
+    <div class="cfg-section" style="left:0;top:0;width:170px;height:130px;animation:drawIn 0.4s ease 0.3s both">
+      <div class="cfg-section-label">Development</div>
+      <div class="cfg-card"><div class="cfg-dot" style="background:var(--blue)"></div><span class="cfg-name">App Dev</span><span class="cfg-badge">Local</span></div>
+      <div class="cfg-card"><div class="cfg-dot" style="background:var(--green)"></div><span class="cfg-name">API Server</span><span class="cfg-badge">Local</span></div>
+      <div class="cfg-card"><div class="cfg-dot" style="background:var(--mauve)"></div><span class="cfg-name">Widget</span><span class="cfg-badge">Local</span></div>
+    </div>
+    <div class="cfg-section" style="left:185px;top:0;width:170px;height:100px;animation:drawIn 0.4s ease 0.5s both">
+      <div class="cfg-section-label">Remote</div>
+      <div class="cfg-card"><div class="cfg-dot" style="background:var(--peach)"></div><span class="cfg-name">GPU Server</span><span class="cfg-badge" style="background:rgba(249,226,175,0.15);color:var(--yellow)">SSH</span></div>
+      <div class="cfg-card"><div class="cfg-dot" style="background:var(--red)"></div><span class="cfg-name">Build Box</span><span class="cfg-badge" style="background:rgba(249,226,175,0.15);color:var(--yellow)">SSH</span></div>
+    </div>
+    <div class="cfg-section" style="left:0;top:145px;width:355px;height:110px;animation:drawIn 0.4s ease 0.7s both">
+      <div class="cfg-section-label">Testing</div>
+      <div style="display:flex;gap:6px">
+        <div style="flex:1"><div class="cfg-card"><div class="cfg-dot" style="background:var(--teal)"></div><span class="cfg-name">E2E Tests</span></div></div>
+        <div style="flex:1"><div class="cfg-card"><div class="cfg-dot" style="background:var(--yellow)"></div><span class="cfg-name">Integration</span></div></div>
+      </div>
+      <div class="cfg-card"><div class="cfg-dot" style="background:var(--lavender)"></div><span class="cfg-name">Staging Deploy</span><span class="cfg-badge" style="background:rgba(249,226,175,0.15);color:var(--yellow)">SSH</span></div>
+    </div>
+  </div>`
+}
+
+function renderCommandsIllust() {
+  return `<div class="cmd-schematic">
+    <div class="cmd-row" style="animation:drawIn 0.4s ease 0.3s both">
+      <span class="cmd-row-label">Tools</span>
+      <div class="cmd-btn" style="background:rgba(137,180,250,0.12);border-color:rgba(137,180,250,0.3);color:var(--blue)">Snap</div>
+      <div class="cmd-btn" style="background:rgba(203,166,247,0.12);border-color:rgba(203,166,247,0.3);color:var(--mauve)">Storyboard</div>
+      <div style="flex:1"></div>
+      <div class="cmd-btn" style="background:rgba(137,180,250,0.08);border-color:rgba(137,180,250,0.2);color:var(--overlay1)">+</div>
+    </div>
+    <div class="cmd-row" style="animation:drawIn 0.4s ease 0.5s both">
+      <span class="cmd-row-label">Servers</span>
+      <div class="cmd-btn" style="background:rgba(166,227,161,0.12);border-color:rgba(166,227,161,0.3);color:var(--green)">Start Server <span style="font-size:7px;opacity:0.6">v</span></div>
+      <div class="cmd-btn" style="background:rgba(243,139,168,0.12);border-color:rgba(243,139,168,0.3);color:var(--red)">Stop Server</div>
+      <div class="cmd-btn" style="background:rgba(137,180,250,0.12);border-color:rgba(137,180,250,0.3);color:var(--blue)">Deploy</div>
+    </div>
+    <div class="cmd-row" style="animation:drawIn 0.4s ease 0.7s both">
+      <span class="cmd-row-label">Claude</span>
+      <div class="cmd-btn" style="background:rgba(203,166,247,0.12);border-color:rgba(203,166,247,0.3);color:var(--mauve)">Update MEMORY</div>
+      <div class="cmd-btn" style="background:rgba(243,139,168,0.12);border-color:rgba(243,139,168,0.3);color:var(--red)">Compaction Alert</div>
+    </div>
+    <div class="cmd-popover" style="top:42px;right:20px">
+      <div class="cmd-pop-label">Arguments</div>
+      <div class="cmd-pop-check"><div class="cmd-pop-box checked"></div> -Background</div>
+      <div class="cmd-pop-check"><div class="cmd-pop-box checked"></div> -External</div>
+      <div class="cmd-pop-check"><div class="cmd-pop-box"></div> -Port 8080</div>
+      <div style="display:flex;gap:4px;margin-top:8px">
+        <div class="cmd-btn" style="background:var(--blue);border-color:var(--blue);color:var(--crust);font-size:7px;flex:1;justify-content:center">Run</div>
+        <div class="cmd-btn" style="border-color:var(--surface1);color:var(--overlay1);font-size:7px;flex:1;justify-content:center">Set Default</div>
+      </div>
+    </div>
+    <div class="ws-label" style="top:70px;left:200px;animation-delay:1.2s">Ctrl+click</div>
+  </div>`
+}
+
+function renderAgentsIllust() {
+  return `<div class="agent-schematic">
+    <div class="agent-card" style="left:0;top:0;width:150px;animation:drawIn 0.4s ease 0.3s both">
+      <span class="agent-name" style="color:var(--green)">code-reviewer</span>
+      <div class="agent-status"><div class="agent-status-dot" style="background:var(--green)"></div><span style="color:var(--green)">completed</span></div>
+      <div class="agent-bar"><div class="agent-bar-fill" style="width:100%;background:var(--green)"></div></div>
+    </div>
+    <div class="agent-card" style="left:170px;top:0;width:150px;animation:drawIn 0.4s ease 0.5s both">
+      <span class="agent-name" style="color:var(--blue)">code-simplifier</span>
+      <div class="agent-status"><div class="agent-status-dot" style="background:var(--blue);animation:pulseGlow 2s infinite"></div><span style="color:var(--blue)">running</span></div>
+      <div class="agent-bar"><div class="agent-bar-fill" style="width:60%;background:var(--blue)"></div></div>
+    </div>
+    <div class="agent-card" style="left:40px;top:90px;width:260px;animation:drawIn 0.4s ease 0.7s both">
+      <span class="agent-name" style="color:var(--mauve)">Team: Full Review Pipeline</span>
+      <div style="display:flex;gap:4px;margin-top:4px">
+        <div style="flex:1;text-align:center;padding:4px;border:1px solid var(--surface1);border-radius:3px;font-family:'JetBrains Mono';font-size:7px;color:var(--green)">Lint</div>
+        <svg width="16" height="16" viewBox="0 0 16 16" style="flex-shrink:0;margin-top:2px"><path d="M4 8h8M9 5l3 3-3 3" stroke="var(--overlay0)" fill="none" stroke-width="1.2"/></svg>
+        <div style="flex:1;text-align:center;padding:4px;border:1px solid var(--blue);border-radius:3px;font-family:'JetBrains Mono';font-size:7px;color:var(--blue)">Review</div>
+        <svg width="16" height="16" viewBox="0 0 16 16" style="flex-shrink:0;margin-top:2px"><path d="M4 8h8M9 5l3 3-3 3" stroke="var(--overlay0)" fill="none" stroke-width="1.2"/></svg>
+        <div style="flex:1;text-align:center;padding:4px;border:1px solid var(--surface1);border-radius:3px;font-family:'JetBrains Mono';font-size:7px;color:var(--overlay0)">Test</div>
+      </div>
+    </div>
+    <div class="agent-card" style="left:0;top:180px;width:320px;animation:drawIn 0.4s ease 0.9s both">
+      <span class="agent-name" style="color:var(--yellow)">Agent Library</span>
+      <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px">
+        <span style="font-family:'JetBrains Mono';font-size:7px;padding:2px 6px;border-radius:3px;background:rgba(137,180,250,0.1);color:var(--blue);border:1px solid rgba(137,180,250,0.2)">code-reviewer</span>
+        <span style="font-family:'JetBrains Mono';font-size:7px;padding:2px 6px;border-radius:3px;background:rgba(166,227,161,0.1);color:var(--green);border:1px solid rgba(166,227,161,0.2)">code-simplifier</span>
+        <span style="font-family:'JetBrains Mono';font-size:7px;padding:2px 6px;border-radius:3px;background:rgba(203,166,247,0.1);color:var(--mauve);border:1px solid rgba(203,166,247,0.2)">+ custom</span>
+      </div>
+    </div>
+  </div>`
+}
+
+function renderMemoryIllust() {
+  return `<div class="memory-schematic">
+    <div class="mem-project-card" style="animation:drawIn 0.4s ease 0.3s both">
+      <div class="mem-project-name">flexspec-soma</div>
+      <div class="mem-meta"><span>53 files</span><span>160KB</span><span style="color:var(--green)">1d ago</span></div>
+      <div class="mem-type-bar">
+        <div class="mem-type-seg" style="width:15%;background:var(--blue)"></div>
+        <div class="mem-type-seg" style="width:25%;background:var(--yellow)"></div>
+        <div class="mem-type-seg" style="width:30%;background:var(--green)"></div>
+        <div class="mem-type-seg" style="width:20%;background:var(--mauve)"></div>
+        <div class="mem-type-seg" style="width:10%;background:var(--overlay0)"></div>
+      </div>
+    </div>
+    <div class="mem-project-card" style="animation:drawIn 0.4s ease 0.5s both">
+      <div class="mem-project-name">claude-multi-app</div>
+      <div class="mem-meta"><span>4 files</span><span>13KB</span><span style="color:var(--yellow)">6d ago</span></div>
+      <div class="mem-type-bar">
+        <div class="mem-type-seg" style="width:25%;background:var(--mauve)"></div>
+        <div class="mem-type-seg" style="width:75%;background:var(--green)"></div>
+      </div>
+    </div>
+    <div class="mem-project-card" style="animation:drawIn 0.4s ease 0.7s both">
+      <div class="mem-project-name">platform-v9-extension</div>
+      <div class="mem-meta"><span>30 files</span><span>130KB</span><span style="color:var(--red)">17d ago</span></div>
+      <div class="mem-type-bar">
+        <div class="mem-type-seg" style="width:40%;background:var(--mauve)"></div>
+        <div class="mem-type-seg" style="width:20%;background:var(--yellow)"></div>
+        <div class="mem-type-seg" style="width:25%;background:var(--green)"></div>
+        <div class="mem-type-seg" style="width:15%;background:var(--blue)"></div>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:8px;animation:drawIn 0.4s ease 0.9s both">
+      <span style="display:flex;align-items:center;gap:3px;font-family:'JetBrains Mono';font-size:7px;color:var(--overlay0)"><span style="width:6px;height:6px;border-radius:50%;background:var(--blue)"></span>User</span>
+      <span style="display:flex;align-items:center;gap:3px;font-family:'JetBrains Mono';font-size:7px;color:var(--overlay0)"><span style="width:6px;height:6px;border-radius:50%;background:var(--yellow)"></span>Feedback</span>
+      <span style="display:flex;align-items:center;gap:3px;font-family:'JetBrains Mono';font-size:7px;color:var(--overlay0)"><span style="width:6px;height:6px;border-radius:50%;background:var(--green)"></span>Project</span>
+      <span style="display:flex;align-items:center;gap:3px;font-family:'JetBrains Mono';font-size:7px;color:var(--overlay0)"><span style="width:6px;height:6px;border-radius:50%;background:var(--mauve)"></span>Reference</span>
+    </div>
+  </div>`
+}
+
+function renderPlaceholderIllust(color, label) {
+  const c = COLORS[color] || COLORS.blue
+  return `<div class="placeholder-illust">
+    <div class="placeholder-icon" style="background:${c}12;border:1px solid ${c}25">
+      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="3" width="18" height="18" rx="3"/>
+        <line x1="3" y1="9" x2="21" y2="9"/>
+        <line x1="9" y1="9" x2="9" y2="21"/>
+      </svg>
+    </div>
+    <span class="placeholder-label">${label}</span>
+  </div>`
+}
+
+function renderIllust(step) {
+  if (step.illust === 'welcome') return renderWelcomeIllust()
+  if (step.illust === 'configs') return renderConfigsIllust()
+  if (step.illust === 'commands') return renderCommandsIllust()
+  if (step.illust === 'agents') return renderAgentsIllust()
+  if (step.illust === 'memory') return renderMemoryIllust()
+  return renderPlaceholderIllust(step.placeholderColor || 'blue', step.placeholderLabel || step.title.replace('\n', ' '))
+}
+
+function renderSlide(step, idx) {
+  const title = step.title.replace('\n', '<br>')
+  const bullets = step.bullets.map(b => `<li>${bulletIcon(b.icon)}<span class="bullet-text">${b.text}</span></li>`).join('')
+  return `<div class="slide ${idx === current ? 'active' : ''}" data-idx="${idx}">
+    <div class="slide-illust">${renderIllust(step)}</div>
+    <div class="slide-text">
+      <div class="step-label">${step.label}</div>
+      <h2 class="step-title">${title}</h2>
+      <p class="step-desc">${step.desc}</p>
+      <ul class="step-bullets">${bullets}</ul>
+    </div>
+  </div>`
+}
+
+function render() {
+  const area = document.getElementById('contentArea')
+  area.innerHTML = STEPS.map((s, i) => renderSlide(s, i)).join('')
+
+  document.getElementById('progressFill').style.width = ((current + 1) / STEPS.length * 100) + '%'
+  document.getElementById('stepCounter').textContent = `${current + 1} of ${STEPS.length}`
+  document.getElementById('btnBack').style.visibility = current === 0 ? 'hidden' : 'visible'
+  document.getElementById('btnNext').textContent = current === STEPS.length - 1 ? 'Get Started' : 'Next'
+
+  const dots = document.getElementById('dots')
+  dots.innerHTML = STEPS.map((_, i) => `<button class="dot ${i === current ? 'active' : ''}" data-idx="${i}"></button>`).join('')
+  dots.querySelectorAll('.dot').forEach(d => d.addEventListener('click', () => goTo(parseInt(d.dataset.idx))))
+}
+
+function goTo(idx) {
+  if (idx < 0 || idx >= STEPS.length || idx === current) return
+  direction = idx > current ? 1 : -1
+  current = idx
+  render()
+  const slide = document.querySelector('.slide.active')
+  if (direction === -1 && slide) slide.classList.add('slide-back')
+}
+
+document.getElementById('btnNext').addEventListener('click', () => {
+  if (current === STEPS.length - 1) {
+    document.querySelector('.modal').style.animation = 'none'
+    document.querySelector('.modal').style.opacity = '0'
+    document.querySelector('.modal').style.transform = 'translate(-50%,-50%) scale(0.95)'
+    document.querySelector('.modal').style.transition = 'all 0.3s ease'
+    document.querySelector('.backdrop').style.opacity = '0'
+    document.querySelector('.backdrop').style.transition = 'opacity 0.3s ease'
+    return
+  }
+  goTo(current + 1)
+})
+document.getElementById('btnBack').addEventListener('click', () => goTo(current - 1))
+document.getElementById('btnSkip').addEventListener('click', () => {
+  document.querySelector('.modal').style.opacity = '0'
+  document.querySelector('.modal').style.transition = 'opacity 0.2s'
+  document.querySelector('.backdrop').style.opacity = '0'
+  document.querySelector('.backdrop').style.transition = 'opacity 0.2s'
+})
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowRight') goTo(current + 1)
+  if (e.key === 'ArrowLeft') goTo(current - 1)
+  if (e.key === 'Escape') document.getElementById('btnSkip').click()
+})
+
+render()
+</script>
+</body>
+</html>
