@@ -11,7 +11,7 @@ const readline = require('readline')
 
 // ── Path encoding ───────────────────────────────────────────────────
 // Matches how Claude CLI encodes project paths to directory names.
-// F:\scratch_space\rune → F--scratch-space-rune
+// C:\Projects\my-app → C--Projects-my-app
 function encodeProjectPath(p) {
   const norm = p.replace(/\//g, '\\')
   let encoded = norm.replace(/:\\/, '--')
