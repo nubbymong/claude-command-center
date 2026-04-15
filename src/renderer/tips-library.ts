@@ -534,4 +534,41 @@ export const TIPS_LIBRARY: Tip[] = [
       },
     },
   },
+
+  {
+    id: 'tip.panel-layout',
+    category: 'ui-navigation',
+    complexity: 'intermediate',
+    priority: 85,
+    variants: {
+      primary: {
+        shortText: 'Arrange your workspace with drag-and-drop panels',
+        title: 'Drag-and-Drop Panel Layout',
+        body: 'Click **Views** in the session header to add panels like Diff Viewer, Preview, or File Editor alongside your terminal. Drag panel headers to rearrange, drag edges to resize, and double-click a header to maximize any panel.',
+        actionLabel: 'Open a session to try it',
+        actionTarget: 'sessions',
+        focusHint: 'Look for the "Views" button in the session header bar',
+      },
+      postUse: {
+        shortText: 'You can save and restore panel layouts',
+        title: 'Panel Layout Power Tips',
+        body: 'Your panel layout is saved per session and restored on restart. Use **Reset Layout** in the Views menu to return to the default. On ultrawide monitors, new sessions auto-start with a side-by-side layout.',
+      },
+    },
+  },
+
+  {
+    id: 'tip.panel-maximize',
+    category: 'productivity',
+    complexity: 'simple',
+    priority: 70,
+    requires: ['panels.add-pane'],
+    variants: {
+      primary: {
+        shortText: 'Double-click a panel header to maximize it',
+        title: 'Maximize Panels',
+        body: 'When you have multiple panels open, double-click any panel header to maximize it to full size. Double-click again to restore the split layout. Great for focusing on a diff or preview temporarily.',
+      },
+    },
+  },
 ]
