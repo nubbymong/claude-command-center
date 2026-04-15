@@ -1,9 +1,11 @@
 import React, { useEffect, useState, useRef } from 'react'
+import './components/panels'
+import { PanelContainer } from './components/panels'
+import { usePanelStore } from './stores/panelStore'
 import TitleBar from './components/TitleBar'
 import Sidebar from './components/Sidebar'
 import TabBar from './components/TabBar'
 import SessionHeader from './components/SessionHeader'
-import TerminalView, { killSessionPty } from './components/TerminalView'
 import StatusBar from './components/StatusBar'
 import UsageDashboard from './components/UsageDashboard'
 import ProjectBrowser from './components/ProjectBrowser'
@@ -74,25 +76,27 @@ export default function App() {
   const [showTrainingAll, setShowTrainingAll] = useState(false)
   const [showGuidedConfig, setShowGuidedConfig] = useState(false)
   const [showTipModal, setShowTipModal] = useState(false)
-  const [partnerActive, setPartnerActive] = useState<Set<string>>(new Set())
   const [showMachineNamePrompt, setShowMachineNamePrompt] = useState(false)
   const [machineNameInput, setMachineNameInput] = useState('')
   const activeSessionId = useSessionStore((s) => s.activeSessionId)
   const sessions = useSessionStore((s) => s.sessions)
   const activeSession = sessions.find((s) => s.id === activeSessionId)
   const hasRestoredRef = useRef(false)
+  const sessionIdsRef = useRef<Set<string>>(new Set())
 
   // Global keyboard shortcuts
   useKeyboardShortcuts(activeSessionId, setSidebarOpen, setView)
 
-  const togglePartner = (sessionId: string) => {
-    setPartnerActive(prev => {
-      const next = new Set(prev)
-      if (next.has(sessionId)) next.delete(sessionId)
-      else next.add(sessionId)
-      return next
+  // Clean up panel layouts when sessions are removed
+  useEffect(() => {
+    const currentIds = new Set(sessions.map(s => s.id))
+    sessionIdsRef.current.forEach(id => {
+      if (!currentIds.has(id)) {
+        usePanelStore.getState().removeSession(id)
+      }
     })
-  }
+    sessionIdsRef.current = currentIds
+  }, [sessions])
 
   // Load config and hydrate stores after setup is complete
   useEffect(() => {
@@ -215,6 +219,17 @@ export default function App() {
 
       useSessionStore.getState().restoreSessions(restoredSessions, savedState.activeSessionId)
       await window.electronAPI.session.clear()
+
+      // After restoring sessions, init panel layouts
+      restoredSessions.forEach(s => {
+        usePanelStore.getState().initSession(s.id, window.innerWidth)
+        if (s.partnerTerminalPath) {
+          const layout = usePanelStore.getState().layouts[s.id]
+          if (layout && layout.type === 'pane') {
+            usePanelStore.getState().addPane(s.id, layout.id, 'partner-terminal', 'vertical', { isPartner: true })
+          }
+        }
+      })
 
       console.log('[App] Sessions restored')
     } catch (err) {
@@ -346,73 +361,19 @@ export default function App() {
     return (
       <div className="flex-1 flex flex-col" style={{ display: view === 'sessions' ? 'flex' : 'none', minHeight: 0 }}>
         <TabBar />
-        <SessionHeader session={activeSession} isShowingPartner={partnerActive.has(activeSession.id)} sidebarCollapsed={!sidebarOpen} onShowTip={() => setShowTipModal(true)} />
-        {sessions.map((session) => {
-          const isShowingPartner = partnerActive.has(session.id)
-          const hasPartner = !!session.partnerTerminalPath
-          const partnerPtyId = session.id + '-partner'
-          return (
-            <div
-              key={session.id + '-' + session.createdAt}
-              className="flex-1 flex flex-col"
-              style={{
-                display: session.id === activeSessionId ? 'flex' : 'none',
-                minHeight: 0,
-              }}
-            >
-              <div
-                className="flex-1 flex flex-col"
-                style={{
-                  display: isShowingPartner ? 'none' : 'flex',
-                  minHeight: 0,
-                }}
-              >
-                <TerminalView
-                  key={session.id + '-main-' + session.createdAt}
-                  sessionId={session.id}
-                  configId={session.configId}
-                  cwd={session.sessionType === 'local' ? session.workingDirectory : undefined}
-                  shellOnly={session.shellOnly}
-                  ssh={session.sshConfig}
-                  isActive={session.id === activeSessionId && view === 'sessions' && !isShowingPartner}
-                  partnerEnabled={hasPartner}
-                  isPartnerActive={isShowingPartner}
-                  onTogglePartner={() => togglePartner(session.id)}
-                  partnerSessionId={hasPartner ? partnerPtyId : undefined}
-                  legacyVersion={session.legacyVersion}
-                  agentIds={session.agentIds}
-                  flickerFree={session.flickerFree}
-                  powershellTool={session.powershellTool}
-                  effortLevel={session.effortLevel}
-                  disableAutoMemory={session.disableAutoMemory}
-                />
-              </div>
-              {hasPartner && (
-                <div
-                  className="flex-1 flex flex-col"
-                  style={{
-                    display: isShowingPartner ? 'flex' : 'none',
-                    minHeight: 0,
-                  }}
-                >
-                  <TerminalView
-                    key={partnerPtyId + '-' + session.createdAt}
-                    sessionId={partnerPtyId}
-                    configId={session.configId}
-                    cwd={session.partnerTerminalPath}
-                    shellOnly={true}
-                    elevated={session.partnerElevated}
-                    isActive={session.id === activeSessionId && view === 'sessions' && isShowingPartner}
-                    partnerEnabled={true}
-                    isPartnerActive={isShowingPartner}
-                    onTogglePartner={() => togglePartner(session.id)}
-                    partnerSessionId={partnerPtyId}
-                  />
-                </div>
-              )}
-            </div>
-          )
-        })}
+        <SessionHeader session={activeSession} sidebarCollapsed={!sidebarOpen} onShowTip={() => setShowTipModal(true)} />
+        {sessions.map((session) => (
+          <div
+            key={session.id + '-' + session.createdAt}
+            className="flex-1 flex flex-col"
+            style={{
+              display: session.id === activeSessionId ? 'flex' : 'none',
+              minHeight: 0,
+            }}
+          >
+            <PanelContainer sessionId={session.id} isActive={session.id === activeSessionId && view === 'sessions'} />
+          </div>
+        ))}
       </div>
     )
   }
@@ -576,6 +537,14 @@ export default function App() {
                     markSessionForResumePicker(session.id)
                   }
                   useSessionStore.getState().addSession(session)
+                  usePanelStore.getState().initSession(session.id, window.innerWidth)
+                  // If config has a partner terminal, add partner pane
+                  if (newConfig.partnerTerminalPath) {
+                    const layout = usePanelStore.getState().layouts[session.id]
+                    if (layout && layout.type === 'pane') {
+                      usePanelStore.getState().addPane(session.id, layout.id, 'partner-terminal', 'vertical', { isPartner: true })
+                    }
+                  }
                   setShowGuidedConfig(false)
                   setView('sessions')
                 }}
