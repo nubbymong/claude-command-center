@@ -4,32 +4,36 @@ import { killSessionPty, clearSpawned } from '../ptyTracker'
 import { markSessionForResumePicker } from '../utils/resumePicker'
 import NotesBar from './NotesBar'
 import TipPill from './TipPill'
+import { usePanelStore } from '../stores/panelStore'
+import { getAllPaneIds } from '../utils/panel-layout'
+import type { PaneType } from '../../shared/types'
 
 interface Props {
   session: Session
-  isShowingPartner?: boolean
   sidebarCollapsed?: boolean
   onShowTip?: () => void
 }
 
-export default function SessionHeader({ session, isShowingPartner, sidebarCollapsed, onShowTip }: Props) {
+export default function SessionHeader({ session, sidebarCollapsed, onShowTip }: Props) {
   const updateSession = useSessionStore((s) => s.updateSession)
   const [recoverMenu, setRecoverMenu] = useState<{ x: number; y: number } | null>(null)
+  const [viewsMenu, setViewsMenu] = useState(false)
+  const layout = usePanelStore((s) => s.layouts[session.id])
+
+  const addPane = (paneType: PaneType) => {
+    setViewsMenu(false)
+    if (!layout) return
+    const paneIds = getAllPaneIds(layout)
+    if (paneIds.length === 0) return
+    usePanelStore.getState().addPane(session.id, paneIds[0], paneType, 'horizontal')
+  }
+
+  const resetLayout = () => {
+    setViewsMenu(false)
+    usePanelStore.getState().resetLayout(session.id, window.innerWidth)
+  }
 
   const handleRestart = () => {
-    if (isShowingPartner) {
-      // Partner terminal: just kill partner PTY, leave main Claude untouched
-      const partnerPtyId = session.id + '-partner'
-      // Only kill the partner — don't use killSessionPty which also kills main+partner
-      window.electronAPI.pty.kill(partnerPtyId)
-      // Clear partner from spawn tracker so it respawns on remount
-      clearSpawned(partnerPtyId)
-      // Force re-mount by bumping createdAt
-      const store = useSessionStore.getState()
-      store.removeSession(session.id)
-      store.addSession({ ...session, id: session.id, status: session.status, createdAt: Date.now() })
-      return
-    }
     // Kill the old PTY (also clears spawn tracker so new one will spawn)
     killSessionPty(session.id)
     // Show resume picker on restart so user can pick a conversation
@@ -122,6 +126,38 @@ export default function SessionHeader({ session, isShowingPartner, sidebarCollap
 
       {onShowTip && <TipPill onClick={onShowTip} />}
 
+      <div className="relative ml-auto">
+        <button
+          onClick={() => setViewsMenu(!viewsMenu)}
+          className="text-xs text-overlay1 hover:text-text px-2 py-0.5 rounded hover:bg-surface0 transition-colors"
+        >
+          Views
+        </button>
+        {viewsMenu && (
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => setViewsMenu(false)} />
+            <div className="absolute right-0 top-full mt-1 bg-surface0 border border-surface1 rounded-lg shadow-xl py-1 z-50 min-w-[160px]">
+              <button onClick={() => addPane('diff-viewer')} className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface1 transition-colors">
+                Diff Viewer
+              </button>
+              <button onClick={() => addPane('preview')} className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface1 transition-colors">
+                Preview
+              </button>
+              <button onClick={() => addPane('file-editor')} className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface1 transition-colors">
+                File Editor
+              </button>
+              <button onClick={() => addPane('partner-terminal')} className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface1 transition-colors">
+                Partner Terminal
+              </button>
+              <div className="border-t border-surface1 my-1" />
+              <button onClick={resetLayout} className="w-full text-left px-3 py-1.5 text-xs text-overlay1 hover:bg-surface1 transition-colors">
+                Reset Layout
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+
       <button
         onClick={handleRestart}
         onContextMenu={(e) => {
@@ -130,7 +166,7 @@ export default function SessionHeader({ session, isShowingPartner, sidebarCollap
           setRecoverMenu({ x: e.clientX, y: e.clientY })
         }}
         className="px-2.5 py-1 rounded text-xs font-medium text-overlay1 hover:text-text hover:bg-surface0 transition-colors"
-        title={isShowingPartner ? 'Restart partner terminal (right-click to recover)' : 'Restart Claude session (right-click to recover)'}
+        title="Restart Claude session (right-click to recover)"
       >
         Restart
       </button>
@@ -141,18 +177,16 @@ export default function SessionHeader({ session, isShowingPartner, sidebarCollap
           y={recoverMenu.y}
           onClose={() => setRecoverMenu(null)}
           onRecover={handleRecover}
-          isShowingPartner={isShowingPartner}
         />
       )}
     </div>
   )
 }
 
-function RecoverContextMenu({ x, y, onClose, onRecover, isShowingPartner }: {
+function RecoverContextMenu({ x, y, onClose, onRecover }: {
   x: number; y: number
   onClose: () => void
   onRecover: () => void
-  isShowingPartner?: boolean
 }) {
   const menuRef = React.useRef<HTMLDivElement>(null)
   const [pos, setPos] = React.useState<{ left: number; top?: number; bottom?: number }>({ left: x })
@@ -187,7 +221,7 @@ function RecoverContextMenu({ x, y, onClose, onRecover, isShowingPartner }: {
             <path d="M1 4v6h6" />
             <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
           </svg>
-          {isShowingPartner ? 'Recover Partner Terminal' : 'Recover All Terminals'}
+          Recover All Terminals
         </button>
         <div className="px-3 py-1 text-[10px] text-overlay0">
           Force-kills all PTYs and respawns fresh.
