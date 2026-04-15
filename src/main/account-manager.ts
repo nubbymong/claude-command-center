@@ -137,6 +137,8 @@ function saveAccountsData(data: AccountsData): void {
 /**
  * Generate a short fingerprint from the refresh token to distinguish accounts.
  * Uses a SHA-256 hash truncated to 8 hex chars instead of exposing raw token chars.
+ * NOTE: This is NOT password hashing -- it's a display-only identifier derived from
+ * the token. SHA-256 is appropriate here (no need for bcrypt/argon2).
  */
 function tokenFingerprint(creds: any): string {
   const rt = creds?.claudeAiOauth?.refreshToken || ''

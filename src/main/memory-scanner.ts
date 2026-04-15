@@ -401,7 +401,7 @@ export async function writeMemoryFrontmatter(
     if (value) {
       // Quote values that contain colons or special YAML characters
       const needsQuotes = /[:#\[\]{}&*!|>'"%@`]/.test(value) || value.includes('\n')
-      yamlLines.push(needsQuotes ? `${key}: "${value.replace(/"/g, '\\"')}"` : `${key}: ${value}`)
+      yamlLines.push(needsQuotes ? `${key}: "${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"` : `${key}: ${value}`)
     }
   }
 
