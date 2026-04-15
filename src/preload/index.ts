@@ -145,7 +145,7 @@ export interface ElectronAPI {
     subscribe: (sessionId: string, cwd: string) => Promise<void>
     unsubscribe: (sessionId: string) => void
     onUpdate: (callback: (sessionId: string, diffs: import('../shared/types').DiffFile[]) => void) => () => void
-    getStats: (sessionId: string) => Promise<{ added: number; removed: number }>
+    getStats: (sessionId: string, cwd?: string) => Promise<{ added: number; removed: number }>
   }
 }
 
@@ -432,7 +432,7 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.on(IPC.DIFF_UPDATE, handler)
       return () => ipcRenderer.removeListener(IPC.DIFF_UPDATE, handler)
     },
-    getStats: (sessionId: string) => ipcRenderer.invoke(IPC.DIFF_STATS, sessionId),
+    getStats: (sessionId: string, cwd?: string) => ipcRenderer.invoke(IPC.DIFF_STATS, sessionId, cwd),
   },
 }
 

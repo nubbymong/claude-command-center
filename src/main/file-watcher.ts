@@ -1,5 +1,6 @@
 import { BrowserWindow } from 'electron'
 import * as chokidar from 'chokidar'
+import { IPC } from '../shared/ipc-channels'
 import { logInfo, logError } from './debug-logger'
 import { getGitDiff, isGitRepo } from './diff-generator'
 
@@ -55,7 +56,7 @@ export async function startFileWatcher(
     if (win.isDestroyed()) return
     try {
       const diffs = await getGitDiff(cwd)
-      win.webContents.send('diff:update', sessionId, diffs)
+      win.webContents.send(IPC.DIFF_UPDATE, sessionId, diffs)
     } catch (err) {
       logError(`[file-watcher] Error getting diffs for ${sessionId}: ${err}`)
     }

@@ -32,9 +32,9 @@ export function registerDiffHandlers(getWindow: () => BrowserWindow | null): voi
     subscribedSessions.delete(sessionId)
   })
 
-  ipcMain.handle(IPC.DIFF_STATS, async (_event, sessionId: string) => {
-    const cwd = subscribedSessions.get(sessionId)
-    if (!cwd) return { added: 0, removed: 0 }
-    return getGitDiffStats(cwd)
+  ipcMain.handle(IPC.DIFF_STATS, async (_event, sessionId: string, cwd?: string) => {
+    const workDir = cwd || subscribedSessions.get(sessionId)
+    if (!workDir) return { added: 0, removed: 0 }
+    return getGitDiffStats(workDir)
   })
 }

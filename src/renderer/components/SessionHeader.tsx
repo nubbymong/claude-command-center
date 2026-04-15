@@ -26,7 +26,7 @@ export default function SessionHeader({ session, sidebarCollapsed, onShowTip }: 
 
     const fetchStats = async () => {
       try {
-        const stats = await window.electronAPI.diff.getStats(session.id)
+        const stats = await window.electronAPI.diff.getStats(session.id, session.workingDirectory)
         if (stats.added > 0 || stats.removed > 0) {
           setDiffStats(stats)
         } else {
