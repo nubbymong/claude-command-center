@@ -27,6 +27,8 @@ import { registerMemoryHandlers } from './ipc/memory-handlers'
 import { registerTokenomicsHandlers } from './ipc/tokenomics-handlers'
 import { registerSideChatHandlers } from './ipc/side-chat-handlers'
 import { killAllSideChats } from './side-chat-manager'
+import { registerDiffHandlers } from './ipc/diff-handlers'
+import { stopAllFileWatchers } from './file-watcher'
 import { fetchModelPricing } from './tokenomics-manager'
 import { initAccounts } from './account-manager'
 import { killAllAgents } from './cloud-agent-manager'
@@ -492,6 +494,7 @@ if (!gotTheLock) {
     registerTokenomicsHandlers(getWindow)
     registerMemoryHandlers()
     registerSideChatHandlers(getWindow)
+    registerDiffHandlers(getWindow)
 
     // Shell — open URLs in system browser
     ipcMain.handle('shell:openExternal', async (_event, url: string) => {
@@ -559,6 +562,7 @@ if (!gotTheLock) {
     stopConductorMcpServer()
     killAllAgents()
     killAllSideChats()
+    stopAllFileWatchers()
     killAllPty()
     closeDebugLogger()
   })

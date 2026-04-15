@@ -194,6 +194,13 @@ export const IPC = {
   // Side Chat
   SIDE_CHAT_SPAWN: 'sideChat:spawn',
   SIDE_CHAT_KILL: 'sideChat:kill',
+
+  // Diff Viewer
+  DIFF_GET: 'diff:get',
+  DIFF_SUBSCRIBE: 'diff:subscribe',
+  DIFF_UNSUBSCRIBE: 'diff:unsubscribe',
+  DIFF_UPDATE: 'diff:update',
+  DIFF_STATS: 'diff:stats',
 } as const
 
 /** Helper to build per-session PTY data channels */

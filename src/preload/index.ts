@@ -140,6 +140,13 @@ export interface ElectronAPI {
     }) => Promise<string>
     kill: (sideChatSessionId: string) => void
   }
+  diff: {
+    get: (sessionId: string) => Promise<import('../shared/types').DiffFile[]>
+    subscribe: (sessionId: string, cwd: string) => Promise<void>
+    unsubscribe: (sessionId: string) => void
+    onUpdate: (callback: (sessionId: string, diffs: import('../shared/types').DiffFile[]) => void) => () => void
+    getStats: (sessionId: string) => Promise<{ added: number; removed: number }>
+  }
 }
 
 const electronAPI: ElectronAPI = {
@@ -415,6 +422,17 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.invoke(IPC.SIDE_CHAT_SPAWN, parentSessionId, options),
     kill: (sideChatSessionId: string) =>
       ipcRenderer.send(IPC.SIDE_CHAT_KILL, sideChatSessionId),
+  },
+  diff: {
+    get: (sessionId: string) => ipcRenderer.invoke(IPC.DIFF_GET, sessionId),
+    subscribe: (sessionId: string, cwd: string) => ipcRenderer.invoke(IPC.DIFF_SUBSCRIBE, sessionId, cwd),
+    unsubscribe: (sessionId: string) => ipcRenderer.send(IPC.DIFF_UNSUBSCRIBE, sessionId),
+    onUpdate: (callback: (sessionId: string, diffs: any[]) => void) => {
+      const handler = (_event: any, sessionId: string, diffs: any[]) => callback(sessionId, diffs)
+      ipcRenderer.on(IPC.DIFF_UPDATE, handler)
+      return () => ipcRenderer.removeListener(IPC.DIFF_UPDATE, handler)
+    },
+    getStats: (sessionId: string) => ipcRenderer.invoke(IPC.DIFF_STATS, sessionId),
   },
 }
 
