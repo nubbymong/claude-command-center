@@ -131,6 +131,13 @@ export interface ElectronAPI {
   shell: {
     openExternal: (url: string) => Promise<void>
   }
+  sideChat: {
+    spawn: (parentSessionId: string, options?: { cols?: number; rows?: number }) => Promise<string>
+    kill: (sideChatSessionId: string) => void
+    getContext: (parentSessionId: string) => Promise<string>
+    onData: (sideChatSessionId: string, callback: (data: string) => void) => () => void
+    onExit: (sideChatSessionId: string, callback: (code: number) => void) => () => void
+  }
 }
 
 const electronAPI: ElectronAPI = {
@@ -400,6 +407,26 @@ const electronAPI: ElectronAPI = {
   },
   shell: {
     openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
+  },
+  sideChat: {
+    spawn: (parentSessionId: string, options?: { cols?: number; rows?: number }) =>
+      ipcRenderer.invoke(IPC.SIDE_CHAT_SPAWN, parentSessionId, options),
+    kill: (sideChatSessionId: string) =>
+      ipcRenderer.send(IPC.SIDE_CHAT_KILL, sideChatSessionId),
+    getContext: (parentSessionId: string) =>
+      ipcRenderer.invoke(IPC.SIDE_CHAT_GET_CONTEXT, parentSessionId),
+    onData: (sideChatSessionId: string, callback: (data: string) => void) => {
+      const channel = ptyDataChannel(sideChatSessionId)
+      const handler = (_event: any, data: string) => callback(data)
+      ipcRenderer.on(channel, handler)
+      return () => ipcRenderer.removeListener(channel, handler)
+    },
+    onExit: (sideChatSessionId: string, callback: (code: number) => void) => {
+      const channel = ptyExitChannel(sideChatSessionId)
+      const handler = (_event: any, code: number) => callback(code)
+      ipcRenderer.on(channel, handler)
+      return () => ipcRenderer.removeListener(channel, handler)
+    },
   },
 }
 
