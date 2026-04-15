@@ -351,3 +351,25 @@ export interface MemoryScanResult {
   totalSize: number
   scannedAt: number
 }
+
+// ── Panel System (v2) ──
+
+export type PaneType = 'claude-terminal' | 'partner-terminal' | 'diff-viewer' | 'preview' | 'file-editor'
+
+export interface PaneNode {
+  type: 'pane'
+  id: string
+  paneType: PaneType
+  props: Record<string, unknown>
+  maximized?: boolean
+}
+
+export interface SplitNode {
+  type: 'split'
+  id: string
+  direction: 'horizontal' | 'vertical'
+  ratio: number
+  children: [LayoutNode, LayoutNode]
+}
+
+export type LayoutNode = SplitNode | PaneNode
