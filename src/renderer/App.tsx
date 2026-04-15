@@ -17,6 +17,7 @@ import CloudAgentsPage from './components/CloudAgentsPage'
 import TokenomicsPage from './components/TokenomicsPage'
 import VisionPage from './components/VisionPage'
 import MemoryPage from './components/MemoryPage'
+import SideChatPane from './components/panels/SideChatPane'
 import SetupDialog from './components/SetupDialog'
 import WhatsNewModal, { shouldShowWhatsNew, markWhatsNewSeen } from './components/WhatsNewModal'
 import TrainingWalkthrough, { shouldShowTraining, isFirstInstall } from './components/TrainingWalkthrough'
@@ -79,14 +80,48 @@ export default function App() {
   const [showTipModal, setShowTipModal] = useState(false)
   const [showMachineNamePrompt, setShowMachineNamePrompt] = useState(false)
   const [machineNameInput, setMachineNameInput] = useState('')
+  const [sideChat, setSideChat] = useState<{ parentSessionId: string; sideChatSessionId: string; parentLabel: string } | null>(null)
   const activeSessionId = useSessionStore((s) => s.activeSessionId)
   const sessions = useSessionStore((s) => s.sessions)
   const activeSession = sessions.find((s) => s.id === activeSessionId)
   const hasRestoredRef = useRef(false)
   const sessionIdsRef = useRef<Set<string>>(new Set())
 
+  const closeSideChat = () => {
+    if (sideChat) {
+      window.electronAPI.sideChat.kill(sideChat.sideChatSessionId)
+      setSideChat(null)
+    }
+  }
+
+  const toggleSideChat = async () => {
+    if (!activeSessionId || !activeSession) return
+
+    if (sideChat && sideChat.parentSessionId === activeSessionId) {
+      // Close existing side chat
+      window.electronAPI.sideChat.kill(sideChat.sideChatSessionId)
+      setSideChat(null)
+      return
+    }
+
+    // Spawn new side chat for active session
+    try {
+      const sideChatSessionId = await window.electronAPI.sideChat.spawn(activeSessionId, {
+        cols: 80,
+        rows: 24,
+      })
+      setSideChat({
+        parentSessionId: activeSessionId,
+        sideChatSessionId,
+        parentLabel: activeSession.label,
+      })
+    } catch (err) {
+      console.error('[App] Failed to spawn side chat:', err)
+    }
+  }
+
   // Global keyboard shortcuts
-  useKeyboardShortcuts(activeSessionId, setSidebarOpen, setView)
+  useKeyboardShortcuts(activeSessionId, setSidebarOpen, setView, () => { void toggleSideChat() })
 
   // Sync panel layouts with sessions: clean up removals, auto-add partner panes for new sessions
   useEffect(() => {
@@ -112,7 +147,12 @@ export default function App() {
       }
     })
     sessionIdsRef.current = currentIds
-  }, [sessions])
+    // Close side chat if its parent session was removed
+    if (sideChat && !currentIds.has(sideChat.parentSessionId)) {
+      window.electronAPI.sideChat.kill(sideChat.sideChatSessionId)
+      setSideChat(null)
+    }
+  }, [sessions, sideChat])
 
   // Load config and hydrate stores after setup is complete
   useEffect(() => {
@@ -510,7 +550,7 @@ export default function App() {
               setCloseDialog('update')
             }
           }} />
-          <main className="flex-1 flex flex-col overflow-hidden titlebar-no-drag">
+          <main className="flex-1 flex flex-col overflow-hidden relative titlebar-no-drag">
             {showTraining ? (
               <TrainingWalkthrough onClose={() => { setShowTraining(false); setShowTrainingAll(false) }} showAll={showTrainingAll} />
             ) : showGuidedConfig ? (
@@ -574,6 +614,14 @@ export default function App() {
             ) : (
               <>
                 {renderSessions()}
+                {sideChat && view === 'sessions' && (
+                  <SideChatPane
+                    parentSessionId={sideChat.parentSessionId}
+                    sideChatSessionId={sideChat.sideChatSessionId}
+                    parentLabel={sideChat.parentLabel}
+                    onClose={closeSideChat}
+                  />
+                )}
                 {renderOverlayView()}
               </>
             )}

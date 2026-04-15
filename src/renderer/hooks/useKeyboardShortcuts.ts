@@ -12,7 +12,8 @@ import type { ViewType } from '../types/views'
 export function useKeyboardShortcuts(
   activeSessionId: string | null,
   setSidebarOpen: React.Dispatch<React.SetStateAction<boolean>>,
-  setView: React.Dispatch<React.SetStateAction<ViewType>>
+  setView: React.Dispatch<React.SetStateAction<ViewType>>,
+  toggleSideChat?: () => void,
 ) {
   useEffect(() => {
     const handleKeyDown = async (e: KeyboardEvent) => {
@@ -54,6 +55,11 @@ export function useKeyboardShortcuts(
       if (matchesShortcut(e, shortcuts.toggleSidebar)) {
         e.preventDefault()
         setSidebarOpen(prev => !prev)
+      }
+      // Side Chat toggle (Ctrl+; / Cmd+;)
+      if ((e.ctrlKey || e.metaKey) && e.key === ';') {
+        e.preventDefault()
+        if (toggleSideChat) toggleSideChat()
       }
       // Paste clipboard image — saves to host screenshots dir, then asks Claude
       // to fetch it via the conductor-vision MCP server (works for local + SSH).
