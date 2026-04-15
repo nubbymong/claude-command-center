@@ -571,4 +571,27 @@ export const TIPS_LIBRARY: Tip[] = [
       },
     },
   },
+
+  {
+    id: 'tip.side-chat',
+    category: 'productivity',
+    complexity: 'intermediate',
+    priority: 90,
+    variants: {
+      primary: {
+        shortText: 'Ask questions without derailing your session',
+        title: 'Side Chat',
+        body: 'Press **Ctrl+;** to open a Side Chat that branches from your current session. It reads context from the main thread but keeps its own conversation, so you can ask questions without losing your place. Close it when done and your main session continues undisturbed.',
+        bodyMac: 'Press **Cmd+;** to open a Side Chat that branches from your current session. It reads context from the main thread but keeps its own conversation, so you can ask questions without losing your place. Close it when done and your main session continues undisturbed.',
+        focusHint: 'Press Ctrl+; (Cmd+; on Mac) while a session is active',
+        focusHintMac: 'Press Cmd+; while a session is active',
+      },
+      postUse: {
+        shortText: 'Side Chat reads your main session context',
+        title: 'Side Chat Power Tips',
+        body: 'Each Side Chat gets the last 100 lines of your main session injected as context. Use it to ask "why did you do that?" or "explain this approach" without breaking Claude\'s flow. Only one Side Chat per session at a time. Press Escape or Ctrl+; again to close.',
+        bodyMac: 'Each Side Chat gets the last 100 lines of your main session injected as context. Use it to ask "why did you do that?" or "explain this approach" without breaking Claude\'s flow. Only one Side Chat per session at a time. Press Escape or Cmd+; again to close.',
+      },
+    },
+  },
 ]
