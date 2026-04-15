@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { Session, useSessionStore } from '../stores/sessionStore'
 import { killSessionPty, clearSpawned } from '../ptyTracker'
 import { markSessionForResumePicker } from '../utils/resumePicker'
@@ -18,7 +18,27 @@ export default function SessionHeader({ session, sidebarCollapsed, onShowTip }: 
   const updateSession = useSessionStore((s) => s.updateSession)
   const [recoverMenu, setRecoverMenu] = useState<{ x: number; y: number } | null>(null)
   const [viewsMenu, setViewsMenu] = useState(false)
+  const [diffStats, setDiffStats] = useState<{ added: number; removed: number } | null>(null)
   const layout = usePanelStore((s) => s.layouts[session.id])
+
+  useEffect(() => {
+    if (!session.workingDirectory) return
+
+    const fetchStats = async () => {
+      try {
+        const stats = await window.electronAPI.diff.getStats(session.id)
+        if (stats.added > 0 || stats.removed > 0) {
+          setDiffStats(stats)
+        } else {
+          setDiffStats(null)
+        }
+      } catch { setDiffStats(null) }
+    }
+
+    fetchStats()
+    const interval = setInterval(fetchStats, 5000)
+    return () => clearInterval(interval)
+  }, [session.id, session.workingDirectory])
 
   const addPane = (paneType: PaneType) => {
     setViewsMenu(false)
@@ -95,6 +115,16 @@ export default function SessionHeader({ session, sidebarCollapsed, onShowTip }: 
       <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: session.color }} />
       <span className="font-medium text-sm text-text">{session.label}</span>
       <span className="text-xs text-overlay0">{session.model || 'default'}</span>
+      {diffStats && (
+        <button
+          onClick={() => addPane('diff-viewer')}
+          className="text-xs px-1.5 py-0.5 rounded bg-surface0 hover:bg-surface1 transition-colors transition-opacity duration-200 flex items-center gap-1"
+          title="Open Diff Viewer"
+        >
+          <span className="text-green">+{diffStats.added}</span>
+          <span className="text-red">-{diffStats.removed}</span>
+        </button>
+      )}
       {sidebarCollapsed && session.contextPercent != null && (
         <span className="text-xs text-overlay0">{Math.round(session.contextPercent)}%</span>
       )}
