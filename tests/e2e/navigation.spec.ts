@@ -4,6 +4,7 @@
 
 import { test, expect, _electron as electron, ElectronApplication, Page } from '@playwright/test'
 import path from 'path'
+import { waitForAppReady } from './helpers'
 
 const APP_PATH = path.resolve(__dirname, '../../out/main/index.js')
 
@@ -16,8 +17,7 @@ test.beforeAll(async () => {
     env: { ...process.env, NODE_ENV: 'test', E2E_HEADLESS: '1' },
   })
   page = await app.firstWindow()
-  await page.waitForLoadState('domcontentloaded')
-  await page.waitForTimeout(3000) // Wait for setup check + config load
+  await waitForAppReady(page)
 })
 
 test.afterAll(async () => {
