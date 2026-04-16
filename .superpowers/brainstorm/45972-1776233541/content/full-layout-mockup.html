@@ -1,0 +1,337 @@
+<h2>Claude Command Center: Full Drag-and-Drop Layout</h2>
+<p class="subtitle">All pane types shown in a typical working arrangement</p>
+
+<div class="mockup" style="margin-bottom:24px">
+  <div class="mockup-header" style="display:flex;justify-content:space-between;align-items:center">
+    <span>Default Layout -- Session "API Refactor"</span>
+    <span style="font-size:10px;color:#a6adc8">Drag pane headers to rearrange | Drag edges to resize</span>
+  </div>
+  <div class="mockup-body" style="height:420px;display:flex;flex-direction:column;gap:1px;background:#11111b;font-family:'Segoe UI',system-ui,sans-serif">
+
+    <!-- Title Bar -->
+    <div style="background:#181825;padding:4px 12px;display:flex;justify-content:space-between;align-items:center;font-size:10px">
+      <div style="display:flex;gap:12px;align-items:center">
+        <span style="color:#cdd6f4;font-weight:600">Claude Command Center</span>
+        <span style="color:#45475a">|</span>
+        <span style="color:#89b4fa">API Refactor</span>
+        <span style="color:#a6e3a1">Backend Migration</span>
+        <span style="color:#f9e2af;opacity:0.5">+</span>
+      </div>
+      <div style="display:flex;gap:8px;color:#6c7086">
+        <span>Views</span>
+        <span style="color:#45475a">|</span>
+        <span>claude-3.5-sonnet</span>
+        <span style="color:#45475a">|</span>
+        <span style="color:#a6e3a1">+28 -5</span>
+      </div>
+    </div>
+
+    <!-- Main Content Area -->
+    <div style="flex:1;display:flex;gap:1px">
+
+      <!-- Sidebar -->
+      <div style="width:180px;background:#181825;padding:8px;font-size:10px;display:flex;flex-direction:column;gap:8px">
+        <div style="color:#6c7086;text-transform:uppercase;font-size:9px;letter-spacing:0.5px">Sessions</div>
+        <div style="background:#313244;border-radius:4px;padding:6px;border-left:2px solid #89b4fa">
+          <div style="color:#cdd6f4">API Refactor</div>
+          <div style="color:#6c7086;font-size:9px">src/main/ | 42%</div>
+        </div>
+        <div style="border-radius:4px;padding:6px;border-left:2px solid #a6e3a1">
+          <div style="color:#a6adc8">Backend Migration</div>
+          <div style="color:#6c7086;font-size:9px">src/api/ | 18%</div>
+        </div>
+        <div style="margin-top:auto;color:#6c7086;font-size:9px">
+          <div style="margin-bottom:4px;text-transform:uppercase;letter-spacing:0.5px">Views</div>
+          <div style="color:#a6adc8;padding:2px 0">Sessions</div>
+          <div style="color:#a6adc8;padding:2px 0">Logs</div>
+          <div style="color:#a6adc8;padding:2px 0">Settings</div>
+          <div style="color:#a6adc8;padding:2px 0">Insights</div>
+          <div style="color:#a6adc8;padding:2px 0">Tokenomics</div>
+        </div>
+      </div>
+
+      <!-- Main Pane Area (drag-and-drop grid) -->
+      <div style="flex:1;display:flex;flex-direction:column;gap:1px">
+
+        <!-- Top Row -->
+        <div style="flex:2;display:flex;gap:1px">
+
+          <!-- Claude Terminal (Primary) -->
+          <div style="flex:2;background:#1e1e2e;display:flex;flex-direction:column">
+            <div style="background:#181825;padding:4px 8px;display:flex;justify-content:space-between;align-items:center;cursor:grab;font-size:10px">
+              <div style="display:flex;align-items:center;gap:6px">
+                <span style="color:#89b4fa;font-size:9px">&#9654;</span>
+                <span style="color:#cdd6f4;font-weight:500">Claude Terminal</span>
+              </div>
+              <div style="display:flex;gap:4px;color:#6c7086">
+                <span title="Drag to rearrange" style="cursor:grab">&#8942;&#8942;</span>
+                <span title="Close pane" style="cursor:pointer">&times;</span>
+              </div>
+            </div>
+            <div style="flex:1;padding:8px;font-family:'Cascadia Code',monospace;font-size:11px;color:#cdd6f4;overflow:hidden">
+              <div style="color:#a6adc8">$ claude</div>
+              <div style="color:#6c7086;margin:4px 0">Claude Code v1.0.33</div>
+              <div style="margin-top:8px"><span style="color:#cba6f7">></span> Refactoring the authentication middleware to use JWT tokens instead of session cookies...</div>
+              <div style="margin-top:4px;color:#a6e3a1">&#10003; Updated src/main/auth.ts</div>
+              <div style="color:#a6e3a1">&#10003; Updated src/main/middleware.ts</div>
+              <div style="color:#f9e2af">&#9998; Editing src/main/routes.ts...</div>
+            </div>
+          </div>
+
+          <!-- Diff Viewer -->
+          <div style="flex:1;background:#1e1e2e;display:flex;flex-direction:column">
+            <div style="background:#181825;padding:4px 8px;display:flex;justify-content:space-between;align-items:center;cursor:grab;font-size:10px">
+              <div style="display:flex;align-items:center;gap:6px">
+                <span style="color:#f9e2af;font-size:9px">&#9650;&#9660;</span>
+                <span style="color:#cdd6f4;font-weight:500">Diff Viewer</span>
+                <span style="background:#313244;color:#a6e3a1;padding:1px 6px;border-radius:3px;font-size:9px">+28 -5</span>
+              </div>
+              <div style="display:flex;gap:4px;color:#6c7086">
+                <span style="cursor:grab">&#8942;&#8942;</span>
+                <span style="cursor:pointer">&times;</span>
+              </div>
+            </div>
+            <div style="display:flex;flex:1;overflow:hidden">
+              <!-- File List -->
+              <div style="width:120px;background:#181825;border-right:1px solid #313244;padding:4px;font-size:9px">
+                <div style="padding:3px 4px;background:#313244;border-radius:3px;color:#cdd6f4;margin-bottom:2px">auth.ts <span style="color:#a6e3a1">+12</span></div>
+                <div style="padding:3px 4px;color:#a6adc8;margin-bottom:2px">middleware.ts <span style="color:#a6e3a1">+8</span></div>
+                <div style="padding:3px 4px;color:#a6adc8">routes.ts <span style="color:#f9e2af">~</span></div>
+              </div>
+              <!-- Diff Content -->
+              <div style="flex:1;padding:6px;font-family:monospace;font-size:10px;overflow:hidden">
+                <div style="color:#6c7086;margin-bottom:4px">src/main/auth.ts</div>
+                <div style="color:#585b70">@@ -15,6 +15,18 @@</div>
+                <div style="color:#a6adc8"> import { Router } from 'express';</div>
+                <div style="background:rgba(166,227,161,0.1);color:#a6e3a1">+import jwt from 'jsonwebtoken';</div>
+                <div style="background:rgba(166,227,161,0.1);color:#a6e3a1">+import { JWTPayload } from './types';</div>
+                <div style="color:#a6adc8"> </div>
+                <div style="background:rgba(243,139,168,0.1);color:#f38ba8">-const session = require('express-session');</div>
+                <div style="background:rgba(166,227,161,0.1);color:#a6e3a1">+export function generateToken(user) {</div>
+                <div style="background:rgba(166,227,161,0.1);color:#a6e3a1">+  return jwt.sign({ id: user.id },</div>
+                <div style="background:rgba(166,227,161,0.1);color:#a6e3a1">+    process.env.JWT_SECRET);</div>
+                <div style="background:rgba(166,227,161,0.1);color:#a6e3a1">+}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Bottom Row -->
+        <div style="flex:1;display:flex;gap:1px">
+
+          <!-- Partner Terminal -->
+          <div style="flex:1;background:#1e1e2e;display:flex;flex-direction:column">
+            <div style="background:#181825;padding:4px 8px;display:flex;justify-content:space-between;align-items:center;cursor:grab;font-size:10px">
+              <div style="display:flex;align-items:center;gap:6px">
+                <span style="color:#a6e3a1;font-size:9px">&#9654;</span>
+                <span style="color:#cdd6f4;font-weight:500">Partner Terminal</span>
+              </div>
+              <div style="display:flex;gap:4px;color:#6c7086">
+                <span style="cursor:grab">&#8942;&#8942;</span>
+                <span style="cursor:pointer">&times;</span>
+              </div>
+            </div>
+            <div style="flex:1;padding:8px;font-family:monospace;font-size:11px;color:#a6adc8;overflow:hidden">
+              <div>PS F:\project> npm run dev</div>
+              <div style="color:#a6e3a1;margin-top:4px">Server running on http://localhost:3000</div>
+              <div style="color:#6c7086">Watching for changes...</div>
+            </div>
+          </div>
+
+          <!-- Preview Pane -->
+          <div style="flex:1;background:#1e1e2e;display:flex;flex-direction:column">
+            <div style="background:#181825;padding:4px 8px;display:flex;justify-content:space-between;align-items:center;cursor:grab;font-size:10px">
+              <div style="display:flex;align-items:center;gap:6px">
+                <span style="color:#94e2d5;font-size:9px">&#9673;</span>
+                <span style="color:#cdd6f4;font-weight:500">Preview</span>
+                <span style="color:#6c7086;font-size:9px">localhost:3000</span>
+              </div>
+              <div style="display:flex;gap:4px;color:#6c7086">
+                <span title="Refresh" style="cursor:pointer">&#8635;</span>
+                <span style="cursor:grab">&#8942;&#8942;</span>
+                <span style="cursor:pointer">&times;</span>
+              </div>
+            </div>
+            <div style="flex:1;background:#ffffff;padding:12px;overflow:hidden">
+              <div style="background:#f0f0f0;padding:8px;border-radius:4px;margin-bottom:8px">
+                <div style="font-size:11px;color:#333;font-weight:600">Dashboard</div>
+              </div>
+              <div style="display:flex;gap:8px">
+                <div style="flex:1;background:#e8f5e9;padding:8px;border-radius:4px;font-size:10px;color:#2e7d32">Users: 1,234</div>
+                <div style="flex:1;background:#e3f2fd;padding:8px;border-radius:4px;font-size:10px;color:#1565c0">API calls: 5.2k</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Status Bar -->
+    <div style="background:#181825;padding:3px 12px;display:flex;justify-content:space-between;font-size:9px;color:#6c7086">
+      <div style="display:flex;gap:12px">
+        <span>2 sessions active</span>
+        <span style="color:#a6e3a1">&#9679; CLI available</span>
+      </div>
+      <div style="display:flex;gap:12px">
+        <span>Layout: Custom</span>
+        <span>v1.3.1-beta</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Side Chat Overlay -->
+<h2 style="margin-top:32px">Side Chat (Ctrl+;)</h2>
+<p class="subtitle">Slides in as an overlay from the right, reads main session context but doesn't write back</p>
+
+<div class="mockup">
+  <div class="mockup-header">Side Chat overlaying the workspace</div>
+  <div class="mockup-body" style="height:300px;display:flex;gap:1px;background:#11111b;position:relative">
+
+    <!-- Dimmed Main Content -->
+    <div style="flex:1;display:flex;gap:1px;opacity:0.4">
+      <div style="width:140px;background:#181825"></div>
+      <div style="flex:1;display:flex;flex-direction:column;gap:1px">
+        <div style="flex:2;display:flex;gap:1px">
+          <div style="flex:2;background:#1e1e2e;padding:8px">
+            <div style="color:#6c7086;font-size:10px;font-family:monospace">Claude Terminal (dimmed)</div>
+          </div>
+          <div style="flex:1;background:#1e1e2e;padding:8px">
+            <div style="color:#6c7086;font-size:10px">Diff Viewer (dimmed)</div>
+          </div>
+        </div>
+        <div style="flex:1;display:flex;gap:1px">
+          <div style="flex:1;background:#1e1e2e"></div>
+          <div style="flex:1;background:#1e1e2e"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Side Chat Panel -->
+    <div style="position:absolute;right:0;top:0;bottom:0;width:38%;background:#1e1e2e;border-left:2px solid #cba6f7;display:flex;flex-direction:column;box-shadow:-8px 0 30px rgba(0,0,0,0.6);z-index:10">
+      <div style="background:#181825;padding:6px 10px;display:flex;justify-content:space-between;align-items:center;font-size:10px">
+        <div style="display:flex;align-items:center;gap:6px">
+          <span style="color:#cba6f7;font-weight:600">Side Chat</span>
+          <span style="color:#6c7086;font-size:9px">branched from "API Refactor"</span>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <span style="color:#6c7086;font-size:9px">Ctrl+;</span>
+          <span style="color:#6c7086;cursor:pointer">&times;</span>
+        </div>
+      </div>
+
+      <div style="padding:6px 10px;background:#313244;font-size:9px;color:#a6adc8;border-bottom:1px solid #45475a">
+        <span style="color:#cba6f7">&#9432;</span> Reading context from main session. Changes here won't affect the main thread.
+      </div>
+
+      <div style="flex:1;padding:10px;font-size:11px;overflow:hidden;display:flex;flex-direction:column;gap:8px">
+        <div style="color:#cdd6f4">
+          <div style="color:#cba6f7;font-size:9px;margin-bottom:2px">YOU</div>
+          Can you explain why we're using JWT instead of session cookies here? What are the security trade-offs?
+        </div>
+        <div style="color:#a6adc8">
+          <div style="color:#89b4fa;font-size:9px;margin-bottom:2px">CLAUDE</div>
+          Looking at the changes in your main session, the move from session cookies to JWT tokens has several implications:
+          <div style="margin-top:6px;padding:6px;background:#313244;border-radius:4px;font-size:10px;border-left:2px solid #89b4fa">
+            <div><strong style="color:#a6e3a1">Pros:</strong> Stateless auth, works across microservices, no server-side session store needed</div>
+            <div style="margin-top:4px"><strong style="color:#f38ba8">Cons:</strong> Can't revoke individual tokens without a blocklist, larger payload than session ID</div>
+          </div>
+        </div>
+      </div>
+
+      <div style="padding:8px 10px;background:#181825;border-top:1px solid #313244">
+        <div style="background:#313244;border-radius:6px;padding:8px;font-size:11px;color:#6c7086">
+          Ask a follow-up question...
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- File Editor Pane -->
+<h2 style="margin-top:32px">File Editor Pane</h2>
+<p class="subtitle">Click any file path in chat or diff to open. Warns on disk changes. Click line numbers in diff to comment.</p>
+
+<div class="mockup">
+  <div class="mockup-header">File Editor -- opened from diff viewer click</div>
+  <div class="mockup-body" style="height:250px;background:#1e1e2e;display:flex;flex-direction:column">
+    <div style="background:#181825;padding:4px 8px;display:flex;justify-content:space-between;align-items:center;font-size:10px">
+      <div style="display:flex;align-items:center;gap:6px">
+        <span style="color:#fab387;font-size:9px">&#128196;</span>
+        <span style="color:#cdd6f4;font-weight:500">File Editor</span>
+        <span style="color:#6c7086">src/main/auth.ts</span>
+        <span style="color:#f9e2af;font-size:9px">&#9679; modified</span>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;font-size:9px">
+        <span style="background:#a6e3a1;color:#1e1e2e;padding:1px 8px;border-radius:3px;cursor:pointer">Save</span>
+        <span style="color:#f38ba8;cursor:pointer">Discard</span>
+        <span style="color:#6c7086;cursor:grab">&#8942;&#8942;</span>
+        <span style="color:#6c7086;cursor:pointer">&times;</span>
+      </div>
+    </div>
+    <div style="flex:1;padding:0;font-family:monospace;font-size:11px;overflow:hidden;display:flex">
+      <!-- Line Numbers -->
+      <div style="width:36px;background:#181825;padding:6px 4px;text-align:right;color:#45475a;font-size:10px;line-height:1.6">
+        14<br>15<br>16<br>17<br>18<br>19<br>20<br>21<br>22<br>23
+      </div>
+      <!-- Code -->
+      <div style="flex:1;padding:6px 8px;color:#cdd6f4;line-height:1.6;font-size:10px">
+        <div><span style="color:#cba6f7">import</span> jwt <span style="color:#cba6f7">from</span> <span style="color:#a6e3a1">'jsonwebtoken'</span>;</div>
+        <div><span style="color:#cba6f7">import</span> { JWTPayload } <span style="color:#cba6f7">from</span> <span style="color:#a6e3a1">'./types'</span>;</div>
+        <div></div>
+        <div><span style="color:#cba6f7">export function</span> <span style="color:#89b4fa">generateToken</span>(user: User) {</div>
+        <div>  <span style="color:#cba6f7">return</span> jwt.<span style="color:#89b4fa">sign</span>(</div>
+        <div>    { <span style="color:#fab387">id</span>: user.id, <span style="color:#fab387">role</span>: user.role },</div>
+        <div>    process.env.<span style="color:#f9e2af">JWT_SECRET</span>,</div>
+        <div>    { <span style="color:#fab387">expiresIn</span>: <span style="color:#a6e3a1">'24h'</span> }</div>
+        <div>  );</div>
+        <div>}</div>
+      </div>
+    </div>
+    <!-- Disk change warning bar -->
+    <div style="background:#f9e2af;padding:4px 10px;font-size:10px;color:#1e1e2e;display:flex;justify-content:space-between;align-items:center">
+      <span>&#9888; File changed on disk since you opened it</span>
+      <div style="display:flex;gap:8px">
+        <span style="cursor:pointer;text-decoration:underline">Reload from disk</span>
+        <span style="cursor:pointer;text-decoration:underline">Override</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Pane Type Summary -->
+<h2 style="margin-top:32px">All Pane Types</h2>
+<p class="subtitle">Available from the Views menu in the session toolbar</p>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px">
+  <div style="background:#181825;border-radius:8px;padding:12px;border-left:3px solid #89b4fa">
+    <h3 style="color:#89b4fa;font-size:13px;margin-bottom:4px">Claude Terminal</h3>
+    <p style="color:#a6adc8;font-size:11px">Primary Claude Code session. Always present. xterm.js with statusline integration.</p>
+    <p style="color:#6c7086;font-size:10px;margin-top:4px">Shortcut: always visible</p>
+  </div>
+  <div style="background:#181825;border-radius:8px;padding:12px;border-left:3px solid #a6e3a1">
+    <h3 style="color:#a6e3a1;font-size:13px;margin-bottom:4px">Partner Terminal</h3>
+    <p style="color:#a6adc8;font-size:11px">Companion shell for dev servers, tests, builds. Existing feature, now a draggable pane.</p>
+    <p style="color:#6c7086;font-size:10px;margin-top:4px">Shortcut: existing toggle</p>
+  </div>
+  <div style="background:#181825;border-radius:8px;padding:12px;border-left:3px solid #f9e2af">
+    <h3 style="color:#f9e2af;font-size:13px;margin-bottom:4px">Diff Viewer</h3>
+    <p style="color:#a6adc8;font-size:11px">Auto-populated via git diff when files change. File list + inline diff with line comments.</p>
+    <p style="color:#6c7086;font-size:10px;margin-top:4px">Shortcut: Ctrl+Shift+D</p>
+  </div>
+  <div style="background:#181825;border-radius:8px;padding:12px;border-left:3px solid #94e2d5">
+    <h3 style="color:#94e2d5;font-size:13px;margin-bottom:4px">Preview Pane</h3>
+    <p style="color:#a6adc8;font-size:11px">Embedded webview for dev servers, HTML, PDF, images. Auto-detects localhost URLs in terminal output.</p>
+    <p style="color:#6c7086;font-size:10px;margin-top:4px">Shortcut: Ctrl+Shift+P</p>
+  </div>
+  <div style="background:#181825;border-radius:8px;padding:12px;border-left:3px solid #fab387">
+    <h3 style="color:#fab387;font-size:13px;margin-bottom:4px">File Editor</h3>
+    <p style="color:#a6adc8;font-size:11px">Monaco-based editor. Click file paths in chat/diff to open. Save, discard, disk-change warnings.</p>
+    <p style="color:#6c7086;font-size:10px;margin-top:4px">Shortcut: click file path</p>
+  </div>
+  <div style="background:#181825;border-radius:8px;padding:12px;border-left:3px solid #cba6f7">
+    <h3 style="color:#cba6f7;font-size:13px;margin-bottom:4px">Side Chat</h3>
+    <p style="color:#a6adc8;font-size:11px">Branched conversation overlay. Full PTY session. Reads main context, doesn't write back. Works over SSH.</p>
+    <p style="color:#6c7086;font-size:10px;margin-top:4px">Shortcut: Ctrl+;</p>
+  </div>
+</div>
