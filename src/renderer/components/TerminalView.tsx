@@ -9,6 +9,7 @@ import CommandBar from './CommandBar'
 import { shouldUseResumePicker } from '../utils/resumePicker'
 import { stripCursorSequences } from '../utils/terminalFormatting'
 import { THEME } from './terminal/terminalTheme'
+import { useSettingsStore, DEFAULT_TERMINAL_SETTINGS } from '../stores/settingsStore'
 import { ContextBar, ScrollToBottomButton } from './terminal'
 import { useStatuslineSubscription } from '../hooks/useStatuslineSubscription'
 import { useActiveTabEffect } from '../hooks/useActiveTabEffect'
@@ -96,13 +97,17 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         ? THEME
         : { ...THEME, cursor: '#0f1218', cursorAccent: '#0f1218' }
 
+      const ts = useSettingsStore.getState().settings.terminal || DEFAULT_TERMINAL_SETTINGS
+      const fontFallbacks = "'Cascadia Code', 'Fira Code', 'JetBrains Mono', Consolas, monospace"
+      const fontFamily = ts.fontFamily ? `'${ts.fontFamily}', ${fontFallbacks}` : fontFallbacks
+
       term = new Terminal({
         theme: termTheme,
-        fontFamily: "'Cascadia Code', 'Fira Code', 'JetBrains Mono', Consolas, monospace",
-        fontSize: 14,
-        lineHeight: 1.2,
-        cursorBlink: false,
-        cursorStyle: 'bar',
+        fontFamily,
+        fontSize: ts.fontSize || 14,
+        lineHeight: ts.lineHeight || 1.2,
+        cursorBlink: ts.cursorBlink ?? false,
+        cursorStyle: ts.cursorStyle || 'bar',
         cursorWidth: 1,
         cursorInactiveStyle: 'none',
         scrollback: 10000,

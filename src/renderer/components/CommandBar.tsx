@@ -1,8 +1,10 @@
-import React, { useState } from 'react'
+import React, { useState, useCallback } from 'react'
 import { useCommandStore, CustomCommand, CommandSection } from '../stores/commandStore'
+import { useSessionStore } from '../stores/sessionStore'
 import CommandDialog from './CommandDialog'
 import ScreenshotButton from './ScreenshotButton'
 import StoryboardButton from './StoryboardButton'
+import ToolbarPopup from './ToolbarPopup'
 import { generateId } from '../utils/id'
 import { trackUsage } from '../stores/tipsStore'
 
@@ -29,6 +31,62 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
   const [argsPopover, setArgsPopover] = useState<{ cmd: CustomCommand; rect: DOMRect } | null>(null)
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set())
   const [sectionInput, setSectionInput] = useState<{ x: number; y: number; editSection?: CommandSection; rowTarget?: 'claude' | 'partner' } | null>(null)
+
+  // --- Model/Effort/Mode pickers ---
+  const [openPicker, setOpenPicker] = useState<'model' | 'mode' | null>(null)
+  const [currentEffort, setCurrentEffort] = useState<string>('medium')
+  const [currentMode, setCurrentMode] = useState<string>('acceptEdits')
+  const activeSession = useSessionStore((s) => s.sessions.find((sess) => sess.id === sessionId))
+
+  const MODELS = [
+    { label: 'Opus 4.6 1M', value: 'opus' },
+    { label: 'Sonnet 4.6', value: 'sonnet' },
+    { label: 'Haiku 4.5', value: 'haiku' },
+  ]
+  const EFFORTS = [
+    { label: 'Low', value: 'low' },
+    { label: 'Medium', value: 'medium' },
+    { label: 'High', value: 'high' },
+    { label: 'Max', value: 'max' },
+  ]
+  const PERMISSION_MODES = [
+    { label: 'Ask permissions', value: 'default', hint: 'Claude asks before most actions' },
+    { label: 'Accept edits', value: 'acceptEdits', hint: 'Auto-accept file edits, ask for others' },
+    { label: 'Auto', value: 'auto', hint: 'Auto-accept most actions' },
+    { label: 'Plan mode', value: 'plan', hint: 'Read-only, no file edits' },
+    { label: "Don't ask", value: 'dontAsk', hint: 'Accept everything without asking' },
+  ]
+  const MODE_LABELS: Record<string, string> = {
+    default: 'Ask', acceptEdits: 'Accept edits', auto: 'Auto',
+    plan: 'Plan', dontAsk: "Don't ask",
+  }
+
+  const shortModelName = (fullName?: string): string => {
+    // Try statusline modelName first, then fall back to session config model
+    const name = fullName || activeSession?.model
+    if (!name) return 'default'
+    const lower = name.toLowerCase()
+    if (lower.includes('opus')) return 'Opus 4.6 1M'
+    if (lower.includes('sonnet')) return 'Sonnet 4.6'
+    if (lower.includes('haiku')) return 'Haiku 4.5'
+    return name.replace('claude-', '').replace(/-/g, ' ')
+  }
+
+  const handleModelSelect = useCallback((si: number, value: string) => {
+    if (si === 0) {
+      window.electronAPI.pty.write(sessionId, `/model ${value}\n`)
+    } else {
+      setCurrentEffort(value)
+      window.electronAPI.pty.write(sessionId, `/effort ${value}\n`)
+    }
+    setOpenPicker(null)
+  }, [sessionId])
+
+  const handleModeSelect = useCallback((_si: number, value: string) => {
+    setCurrentMode(value)
+    window.electronAPI.pty.write(sessionId, `/permission-mode ${value}\n`)
+    setOpenPicker(null)
+  }, [sessionId])
 
   const visibleCommands = commands
     .filter((c) => c.scope === 'global' || (c.scope === 'config' && c.configId === configId))
@@ -411,8 +469,75 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
             )}
           </>
         )}
-        {/* Spacer to push + to the right */}
+        {/* Spacer */}
         <div className="flex-1" />
+
+        {/* Permission mode picker */}
+        <div className="relative shrink-0">
+          <button
+            onClick={() => setOpenPicker(openPicker === 'mode' ? null : 'mode')}
+            className="flex items-center gap-1 px-2 py-0.5 text-xs text-subtext0 hover:text-text rounded bg-surface0/50 hover:bg-surface0 border border-surface1/40 hover:border-surface1 transition-colors shrink-0 cursor-pointer"
+          >
+            {MODE_LABELS[currentMode] || currentMode}
+            <svg width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.4" className="opacity-50">
+              <path d="M2.5 4l2.5 2.5L7.5 4" />
+            </svg>
+          </button>
+          {openPicker === 'mode' && (
+            <ToolbarPopup
+              sections={[{
+                title: 'Mode',
+                shortcut: 'Shift+Ctrl+M',
+                items: PERMISSION_MODES.map((m) => ({ ...m, active: m.value === currentMode })),
+              }]}
+              onSelect={handleModeSelect}
+              onClose={() => setOpenPicker(null)}
+            />
+          )}
+        </div>
+
+        <div className="w-px h-4 bg-surface1 mx-0.5" />
+
+        {/* Model + Effort picker */}
+        <div className="relative shrink-0">
+          <button
+            onClick={() => setOpenPicker(openPicker === 'model' ? null : 'model')}
+            className="flex items-center gap-1 px-2 py-0.5 text-xs text-subtext0 hover:text-text rounded bg-surface0/50 hover:bg-surface0 border border-surface1/40 hover:border-surface1 transition-colors shrink-0 cursor-pointer"
+          >
+            <span className="text-blue">{shortModelName(activeSession?.modelName)}</span>
+            <span className="text-overlay0">{String.fromCodePoint(0x00B7)}</span>
+            <span>{currentEffort.charAt(0).toUpperCase() + currentEffort.slice(1)}</span>
+            <svg width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.4" className="opacity-50">
+              <path d="M2.5 4l2.5 2.5L7.5 4" />
+            </svg>
+          </button>
+          {openPicker === 'model' && (
+            <ToolbarPopup
+              alignRight
+              sections={[
+                {
+                  title: 'Models',
+                  shortcut: 'Shift+Ctrl+I',
+                  items: MODELS.map((m) => ({
+                    ...m,
+                    active: (activeSession?.modelName || activeSession?.model || '')
+                      .toLowerCase()
+                      .includes(m.value),
+                  })),
+                },
+                {
+                  title: 'Effort',
+                  shortcut: 'Shift+Ctrl+E',
+                  items: EFFORTS.map((e) => ({ ...e, active: e.value === currentEffort })),
+                },
+              ]}
+              onSelect={handleModelSelect}
+              onClose={() => setOpenPicker(null)}
+            />
+          )}
+        </div>
+
+        <div className="w-px h-4 bg-surface1 mx-0.5" />
         <button
           onClick={() => setShowDialog(true)}
           className="px-1.5 py-0.5 text-xs text-overlay0 hover:text-text rounded hover:bg-surface0 shrink-0"
