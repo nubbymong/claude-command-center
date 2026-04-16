@@ -9,10 +9,9 @@ dist/
 .env
 
 # Personal/local config
-.claude/settings.local.json
-.claude/projects/
-.claude/todos/
-.claude/skills/
+.claude/
+.copilot-review-notes.md
+.superpowers/
 USER/
 memory/
 
