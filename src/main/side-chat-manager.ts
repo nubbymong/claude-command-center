@@ -10,7 +10,10 @@ const activeSideChats = new Map<string, { sideChatId: string; contextFile?: stri
  * Generate a side chat session ID from the parent session ID.
  */
 export function generateSideChatId(parentSessionId: string): string {
-  return `${parentSessionId}-sidechat-${Date.now()}`
+  const unique = typeof crypto !== 'undefined' && crypto.randomUUID
+    ? crypto.randomUUID().slice(0, 8)
+    : `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  return `${parentSessionId}-sidechat-${unique}`
 }
 
 /**

@@ -165,7 +165,7 @@ export default function SessionHeader({ session, sidebarCollapsed, onShowTip }: 
         </button>
         {viewsMenu && (
           <>
-            <div className="fixed inset-0 z-40" onClick={() => setViewsMenu(false)} />
+            <div className="fixed inset-0 z-40" onPointerDown={() => setViewsMenu(false)} />
             <div className="absolute right-0 top-full mt-1 bg-surface0 border border-surface1 rounded-lg shadow-xl py-1 z-50 min-w-[160px]">
               <button onClick={() => addPane('diff-viewer')} className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface1 transition-colors">
                 Diff Viewer

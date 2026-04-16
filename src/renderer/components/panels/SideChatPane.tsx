@@ -50,7 +50,7 @@ export default function SideChatPane({ parentSessionId: _parentSessionId, sideCh
       <div
         className="flex-1 transition-opacity duration-200"
         style={{ backgroundColor: isVisible && !isClosing ? 'rgba(0,0,0,0.5)' : 'transparent' }}
-        onClick={handleClose}
+        onPointerDown={handleClose}
       />
 
       {/* Side Chat Panel */}

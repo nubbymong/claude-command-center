@@ -18,9 +18,9 @@ import { generateSideChatId, buildContextInjection } from '../../src/main/side-c
 
 describe('side-chat-manager', () => {
   describe('generateSideChatId', () => {
-    it('generates ID with parent prefix and timestamp', () => {
+    it('generates ID with parent prefix and unique suffix', () => {
       const id = generateSideChatId('session-123')
-      expect(id).toMatch(/^session-123-sidechat-\d+$/)
+      expect(id).toMatch(/^session-123-sidechat-.+$/)
     })
 
     it('generates unique IDs', () => {

@@ -150,9 +150,13 @@ export default function App() {
         usePanelStore.getState().initSession(s.id, window.innerWidth)
         const layout = usePanelStore.getState().layouts[s.id]
         if (layout) {
-          const terminalPane = findPaneByType(layout, 'claude-terminal')
-          if (terminalPane) {
-            usePanelStore.getState().addPane(s.id, terminalPane.id, 'partner-terminal', 'vertical')
+          // Guard against duplicate partner panes (restore path may have already added one)
+          const existingPartner = findPaneByType(layout, 'partner-terminal')
+          if (!existingPartner) {
+            const terminalPane = findPaneByType(layout, 'claude-terminal')
+            if (terminalPane) {
+              usePanelStore.getState().addPane(s.id, terminalPane.id, 'partner-terminal', 'vertical')
+            }
           }
         }
       }
