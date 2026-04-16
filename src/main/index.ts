@@ -170,8 +170,53 @@ function closeSplashWindow(): void {
   }, 500)
 }
 
+function clampToVisibleDisplay(state: WindowState): WindowState {
+  const { screen } = require('electron')
+  const displays = screen.getAllDisplays()
+  const primaryWorkArea = screen.getPrimaryDisplay().workArea
+
+  // Clamp size to primary display work area
+  const width = Math.min(state.width, primaryWorkArea.width)
+  const height = Math.min(state.height, primaryWorkArea.height)
+
+  // If no position saved, center on primary display
+  if (state.x === undefined || state.y === undefined) {
+    return {
+      ...state,
+      width,
+      height,
+      x: primaryWorkArea.x + Math.round((primaryWorkArea.width - width) / 2),
+      y: primaryWorkArea.y + Math.round((primaryWorkArea.height - height) / 2),
+    }
+  }
+
+  // Check if saved position is visible on any display
+  const isVisible = displays.some((display: Electron.Display) => {
+    const wa = display.workArea
+    return (
+      state.x! >= wa.x - 100 &&
+      state.y! >= wa.y - 100 &&
+      state.x! < wa.x + wa.width - 50 &&
+      state.y! < wa.y + wa.height - 50
+    )
+  })
+
+  if (isVisible) {
+    return { ...state, width, height }
+  }
+
+  // Off-screen: center on primary display
+  return {
+    ...state,
+    width,
+    height,
+    x: primaryWorkArea.x + Math.round((primaryWorkArea.width - width) / 2),
+    y: primaryWorkArea.y + Math.round((primaryWorkArea.height - height) / 2),
+  }
+}
+
 function createWindow(): void {
-  const state = loadWindowState()
+  const state = clampToVisibleDisplay(loadWindowState())
 
   mainWindow = new BrowserWindow({
     width: state.width,
