@@ -469,14 +469,25 @@ async function extractKpis(archiveDir: string, runId: string): Promise<boolean> 
     // Try parsing directly first
     try {
       const parsed = JSON.parse(trimmed)
-      // If it has a "result" key that's a string, parse that
+      // If it has a "result" key that's a string, extract KPI JSON from it
       if (parsed.result && typeof parsed.result === 'string') {
-        kpiData = JSON.parse(parsed.result)
+        const resultStr = parsed.result
+        try {
+          kpiData = JSON.parse(resultStr)
+        } catch {
+          // Result has text preamble before JSON -- extract the JSON object
+          const jsonMatch = resultStr.match(/\{[\s\S]*\}/)
+          if (jsonMatch) {
+            kpiData = JSON.parse(jsonMatch[0])
+          } else {
+            throw new Error('No JSON found in result string')
+          }
+        }
       } else {
         kpiData = parsed
       }
     } catch {
-      // Try extracting JSON from the output (might have text around it)
+      // Try extracting JSON from the raw output
       const jsonMatch = trimmed.match(/\{[\s\S]*\}/)
       if (jsonMatch) {
         kpiData = JSON.parse(jsonMatch[0])

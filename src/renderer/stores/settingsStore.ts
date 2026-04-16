@@ -26,10 +26,29 @@ export const DEFAULT_STATUS_LINE: StatusLineSettings = {
 
 export type UpdateChannel = 'stable' | 'beta'
 
+export type CursorStyle = 'bar' | 'block' | 'underline'
+
+export interface TerminalSettings {
+  fontFamily: string
+  fontSize: number
+  lineHeight: number
+  cursorStyle: CursorStyle
+  cursorBlink: boolean
+}
+
+export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
+  fontFamily: 'Cascadia Code',
+  fontSize: 14,
+  lineHeight: 1.2,
+  cursorStyle: 'bar',
+  cursorBlink: false,
+}
+
 export interface AppSettings {
   defaultModel: string
   defaultWorkingDirectory: string
   terminalFontSize: number
+  terminal: TerminalSettings
   debugMode: boolean
   keyboardShortcuts: Record<string, string>
   inputBarMaxHeight: number
@@ -52,6 +71,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   defaultModel: 'sonnet',
   defaultWorkingDirectory: '',
   terminalFontSize: 14,
+  terminal: { ...DEFAULT_TERMINAL_SETTINGS },
   debugMode: false,
   keyboardShortcuts: { ...DEFAULT_SHORTCUTS },
   inputBarMaxHeight: 400,
