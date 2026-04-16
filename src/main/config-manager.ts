@@ -29,6 +29,7 @@ const CONFIG_FILES = {
   visionGlobal: 'vision-global.json',
   commandSections: 'command-sections.json',
   usageTracking: 'usage-tracking.json',
+  previewSuppressed: 'preview-suppressed.json',
 } as const
 
 export type ConfigKey = keyof typeof CONFIG_FILES

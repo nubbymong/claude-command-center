@@ -615,4 +615,45 @@ export const TIPS_LIBRARY: Tip[] = [
       },
     },
   },
+
+  {
+    id: 'tip.preview-pane',
+    category: 'ui-navigation',
+    complexity: 'intermediate',
+    priority: 82,
+    variants: {
+      primary: {
+        shortText: 'Preview dev servers, HTML, and images inline',
+        title: 'Preview Pane',
+        body: 'The **Preview Pane** lets you view dev servers, HTML files, and images right next to your terminal. Open it from the **Views** menu (Ctrl+Shift+P) or let it auto-open when a dev server starts.\n\nPerfect for seeing changes as Claude makes them without switching to a browser. The preview reloads automatically when files change, so your feedback loop stays tight.',
+        bodyMac: 'The **Preview Pane** lets you view dev servers, HTML files, and images right next to your terminal. Open it from the **Views** menu (Cmd+Shift+P) or let it auto-open when a dev server starts.\n\nPerfect for seeing changes as Claude makes them without switching to a browser. The preview reloads automatically when files change, so your feedback loop stays tight.',
+        focusHint: 'Open from the Views button in the session header, or wait for a dev server to start',
+      },
+      postUse: {
+        shortText: 'You previewed content inline -- nice workflow',
+        title: 'Preview Pane Tips',
+        body: 'You\'ve used the Preview Pane. A few things you might not know:\n\n• The preview auto-reloads when it detects file changes in your project\n• You can enter any URL manually in the address bar\n• Drag the panel edge to resize the preview alongside your terminal\n• Double-click the panel header to maximize the preview temporarily',
+      },
+    },
+  },
+
+  {
+    id: 'tip.preview-dev-server',
+    category: 'productivity',
+    complexity: 'intermediate',
+    priority: 75,
+    variants: {
+      primary: {
+        shortText: 'Auto-detect dev servers and preview them inline',
+        title: 'Dev Server Detection',
+        body: 'The app auto-detects when a dev server starts in your terminal -- **Vite**, **Next.js**, **Express**, and others. When a local URL like `http://localhost:3000` appears in the output, you\'ll get an offer to open it in the Preview Pane.\n\nChoose **"Don\'t Ask Again"** if you always want auto-open for a particular config, or dismiss if you prefer opening previews manually from the Views menu.',
+        focusHint: 'Start a dev server (e.g. npm run dev) and watch for the preview prompt',
+      },
+      postUse: {
+        shortText: 'Dev server auto-detection is working for you',
+        title: 'Dev Server Detection Tips',
+        body: 'Auto-detection picked up your dev server. The app recognizes common frameworks like Vite, Next.js, Express, and any server that prints a `localhost` or `127.0.0.1` URL. If you chose "Don\'t Ask Again", you can re-enable the prompt from your config settings.',
+      },
+    },
+  },
 ]

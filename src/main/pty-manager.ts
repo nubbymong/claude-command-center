@@ -9,6 +9,8 @@ import { writeCliSetupPty, getResourcesDirectory } from './ipc/setup-handlers'
 import { isGlobalVisionRunning, getGlobalVisionConfig, getConductorMcpPort } from './vision-manager'
 import { resolveVersionBinary } from './legacy-version-manager'
 import { dispatchSSHStatuslineUpdate } from './statusline-watcher'
+import { checkForDevServer, clearDetectedServers } from './preview-manager'
+import { IPC } from '../shared/ipc-channels'
 
 import * as path from 'path'
 import * as fs from 'fs'
@@ -395,6 +397,7 @@ export function spawnPty(
   } else {
     // Local session
     const shellOnly = options?.shellOnly
+    const resolvedCwd = resolveCwd(options?.cwd)
 
     if (shellOnly) {
       // Shell only: spawn a shell without Claude
@@ -416,8 +419,6 @@ export function spawnPty(
         spawnCmd = shell
         spawnArgs = []
       }
-
-      const resolvedCwd = resolveCwd(options?.cwd)
       logInfo(`[pty-manager] Launching shell-only PTY: ${spawnCmd} ${spawnArgs.join(' ')} cwd=${resolvedCwd}${elevated ? ' (elevated)' : ''}`)
 
       const shellEnv: Record<string, string> = { ...process.env, CLAUDE_MULTI_SESSION_ID: sessionId } as Record<string, string>
@@ -452,7 +453,6 @@ export function spawnPty(
       // Without the explicit cd, conversations get stored under the wrong project hash
       // and won't appear when the user tries to /resume.
       const { cmd } = resolveClaudeForPty(options?.legacyVersion)
-      const resolvedCwd = resolveCwd(options?.cwd)
       const shell = os.platform() === 'win32' ? 'powershell.exe' : process.env.SHELL || '/bin/bash'
       logInfo(`[pty-manager] Launching Claude via shell in PTY: ${shell} -> ${cmd} cwd=${resolvedCwd} (resumePicker=${!!options?.useResumePicker})`)
 
@@ -533,6 +533,11 @@ export function spawnPty(
       const existing = ptyOutputBuffers.get(sessionId) || ''
       const updated = existing + data
       ptyOutputBuffers.set(sessionId, updated.length > MAX_OUTPUT_BUFFER ? updated.slice(-MAX_OUTPUT_BUFFER) : updated)
+      // Detect dev server URLs for Preview Pane
+      const devUrl = checkForDevServer(sessionId, data, resolvedCwd)
+      if (devUrl) {
+        win.webContents.send(IPC.PREVIEW_DEV_SERVER_DETECTED, sessionId, devUrl)
+      }
     })
   }
 
@@ -683,6 +688,7 @@ export function killPty(sessionId: string): void {
   recentWrites.delete(sessionId)
   sshOscBuffers.delete(sessionId)
   ptyOutputBuffers.delete(sessionId)
+  clearDetectedServers(sessionId)
 }
 
 export function killAllPty(): void {

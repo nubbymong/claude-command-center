@@ -201,6 +201,11 @@ export const IPC = {
   DIFF_UNSUBSCRIBE: 'diff:unsubscribe',
   DIFF_UPDATE: 'diff:update',
   DIFF_STATS: 'diff:stats',
+
+  // Preview Pane
+  PREVIEW_OPEN_FILE: 'preview:open-file',
+  PREVIEW_DEV_SERVER_DETECTED: 'preview:dev-server-detected',
+  PREVIEW_DISMISS_SERVER: 'preview:dismiss-server',
 } as const
 
 /** Helper to build per-session PTY data channels */

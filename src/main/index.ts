@@ -28,7 +28,9 @@ import { registerTokenomicsHandlers } from './ipc/tokenomics-handlers'
 import { registerSideChatHandlers } from './ipc/side-chat-handlers'
 import { killAllSideChats } from './side-chat-manager'
 import { registerDiffHandlers } from './ipc/diff-handlers'
+import { registerPreviewHandlers } from './ipc/preview-handlers'
 import { stopAllFileWatchers } from './file-watcher'
+import { initPreviewManager } from './preview-manager'
 import { fetchModelPricing } from './tokenomics-manager'
 import { initAccounts } from './account-manager'
 import { killAllAgents } from './cloud-agent-manager'
@@ -465,7 +467,7 @@ if (!gotTheLock) {
         responseHeaders: {
           ...details.responseHeaders,
           'Content-Security-Policy': [
-            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' ws://localhost:* http://localhost:*"
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' ws://localhost:* http://localhost:*; frame-src 'self' http://localhost:* http://127.0.0.1:* file:"
           ]
         }
       })
@@ -495,6 +497,7 @@ if (!gotTheLock) {
     registerMemoryHandlers()
     registerSideChatHandlers(getWindow)
     registerDiffHandlers(getWindow)
+    registerPreviewHandlers(getWindow)
 
     // Shell — open URLs in system browser
     ipcMain.handle('shell:openExternal', async (_event, url: string) => {
@@ -508,6 +511,9 @@ if (!gotTheLock) {
 
     // Fetch model pricing in background (non-blocking)
     fetchModelPricing().catch(() => {})
+
+    // Initialize preview manager (load suppressed projects)
+    initPreviewManager()
 
     // Clean up legacy CLAUDE.md vision markers
     cleanupLegacyVisionMarkers()

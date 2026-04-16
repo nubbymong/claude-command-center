@@ -147,6 +147,11 @@ export interface ElectronAPI {
     onUpdate: (callback: (sessionId: string, diffs: import('../shared/types').DiffFile[]) => void) => () => void
     getStats: (sessionId: string, cwd?: string) => Promise<{ added: number; removed: number }>
   }
+  preview: {
+    openFile: (filePath: string) => Promise<{ url: string; contentType: string } | null>
+    onDevServerDetected: (callback: (sessionId: string, url: string) => void) => () => void
+    dismissServer: (projectPath: string) => void
+  }
 }
 
 const electronAPI: ElectronAPI = {
@@ -433,6 +438,15 @@ const electronAPI: ElectronAPI = {
       return () => ipcRenderer.removeListener(IPC.DIFF_UPDATE, handler)
     },
     getStats: (sessionId: string, cwd?: string) => ipcRenderer.invoke(IPC.DIFF_STATS, sessionId, cwd),
+  },
+  preview: {
+    openFile: (filePath: string) => ipcRenderer.invoke(IPC.PREVIEW_OPEN_FILE, filePath),
+    onDevServerDetected: (callback: (sessionId: string, url: string) => void) => {
+      const handler = (_event: unknown, sessionId: string, url: string) => callback(sessionId, url)
+      ipcRenderer.on(IPC.PREVIEW_DEV_SERVER_DETECTED, handler)
+      return () => ipcRenderer.removeListener(IPC.PREVIEW_DEV_SERVER_DETECTED, handler)
+    },
+    dismissServer: (projectPath: string) => ipcRenderer.send(IPC.PREVIEW_DISMISS_SERVER, projectPath),
   },
 }
 
