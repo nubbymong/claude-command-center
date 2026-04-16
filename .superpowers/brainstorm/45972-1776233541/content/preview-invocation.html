@@ -1,0 +1,90 @@
+<h2>Preview Pane: How Content Gets In</h2>
+<p class="subtitle">Multiple triggers, one consistent pane</p>
+
+<div class="options" data-multiselect>
+  <div class="option" data-choice="auto-url" onclick="toggleSelect(this)">
+    <div class="letter">1</div>
+    <div class="content">
+      <h3>Auto-detect Dev Server URLs</h3>
+      <p>When terminal output contains <code>localhost:3000</code> or similar, show a toast: <em>"Dev server detected -- Open in Preview?"</em>. Click to open. Also detect common frameworks: Next.js, Vite, Express startup messages.</p>
+      <div class="mockup" style="margin-top:8px">
+        <div class="mockup-body" style="height:80px;background:#1e1e2e;padding:8px;font-family:monospace;font-size:11px;position:relative">
+          <div style="color:#a6adc8">PS F:\project> npm run dev</div>
+          <div style="color:#a6e3a1">  VITE v5.0.0  ready in 340ms</div>
+          <div style="color:#a6e3a1">  Local: http://localhost:5173/</div>
+          <div style="position:absolute;bottom:8px;right:8px;background:#313244;border:1px solid #45475a;border-radius:6px;padding:6px 10px;font-family:system-ui;font-size:10px;display:flex;align-items:center;gap:6px">
+            <span style="color:#94e2d5">&#9673;</span>
+            <span style="color:#cdd6f4">Dev server detected</span>
+            <span style="background:#89b4fa;color:#1e1e2e;padding:2px 8px;border-radius:3px;cursor:pointer">Open Preview</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="click-path" onclick="toggleSelect(this)">
+    <div class="letter">2</div>
+    <div class="content">
+      <h3>Click File Paths in Terminal</h3>
+      <p>File paths in terminal output (already linkified by xterm WebLinksAddon) become clickable. <code>.html/.pdf/.png/.jpg/.svg</code> open in Preview. Other files open in File Editor. Right-click gives "Open in Preview" / "Open in Editor" choice.</p>
+      <div class="mockup" style="margin-top:8px">
+        <div class="mockup-body" style="height:60px;background:#1e1e2e;padding:8px;font-family:monospace;font-size:11px">
+          <div style="color:#a6e3a1">&#10003; Created <span style="color:#89b4fa;text-decoration:underline;cursor:pointer">src/renderer/components/Dashboard.tsx</span></div>
+          <div style="color:#a6e3a1">&#10003; Generated <span style="color:#94e2d5;text-decoration:underline;cursor:pointer">docs/api-reference.html</span> <span style="color:#6c7086;font-size:9px">&#8592; click opens in Preview</span></div>
+          <div style="color:#a6e3a1">&#10003; Saved <span style="color:#94e2d5;text-decoration:underline;cursor:pointer">screenshots/dashboard.png</span> <span style="color:#6c7086;font-size:9px">&#8592; click opens in Preview</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="views-menu" onclick="toggleSelect(this)">
+    <div class="letter">3</div>
+    <div class="content">
+      <h3>Views Menu: Manual URL / File</h3>
+      <p>Session toolbar "Views" menu has "Preview" option. Opens pane with URL bar where user can type any URL or browse for a local file. Also accessible via <code>Ctrl+Shift+P</code>.</p>
+      <div class="mockup" style="margin-top:8px">
+        <div class="mockup-body" style="height:50px;background:#181825;padding:8px;display:flex;align-items:center;gap:8px">
+          <div style="background:#313244;border-radius:4px;padding:4px 8px;font-size:10px;color:#6c7086;display:flex;align-items:center;gap:4px">
+            <span style="color:#94e2d5">&#9673;</span> Preview
+          </div>
+          <div style="flex:1;background:#313244;border-radius:4px;padding:4px 8px;font-size:11px;color:#a6adc8;font-family:monospace">
+            http://localhost:5173
+          </div>
+          <div style="background:#313244;border-radius:4px;padding:4px 8px;font-size:10px;color:#6c7086;cursor:pointer">&#8635; Refresh</div>
+          <div style="background:#313244;border-radius:4px;padding:4px 8px;font-size:10px;color:#6c7086;cursor:pointer">&#128193; Browse</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="diff-click" onclick="toggleSelect(this)">
+    <div class="letter">4</div>
+    <div class="content">
+      <h3>From Diff Viewer: Preview Changed Files</h3>
+      <p>When viewing diffs, HTML/image files get a "Preview" button next to the filename. Click to see the rendered result alongside the diff. Great for verifying CSS/HTML changes visually.</p>
+      <div class="mockup" style="margin-top:8px">
+        <div class="mockup-body" style="height:50px;background:#181825;padding:8px;font-size:10px;display:flex;align-items:center;gap:8px">
+          <div style="padding:3px 6px;background:#313244;border-radius:3px;color:#cdd6f4">index.html <span style="color:#a6e3a1">+12</span></div>
+          <div style="padding:3px 6px;background:#313244;border-radius:3px;color:#cdd6f4">styles.css <span style="color:#a6e3a1">+5</span></div>
+          <div style="margin-left:auto;display:flex;gap:4px">
+            <span style="background:#94e2d5;color:#1e1e2e;padding:2px 8px;border-radius:3px;cursor:pointer;font-size:9px">&#9673; Preview</span>
+            <span style="background:#313244;color:#6c7086;padding:2px 8px;border-radius:3px;cursor:pointer;font-size:9px">&#128196; Edit</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="command-bar" onclick="toggleSelect(this)">
+    <div class="letter">5</div>
+    <div class="content">
+      <h3>Command Bar Integration</h3>
+      <p>Custom commands can target the Preview pane. E.g., a "Preview Storybook" command that opens <code>localhost:6006</code> in preview after running the command in partner terminal. Extends existing command target system (claude/partner/preview).</p>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top:24px;padding:16px;background:#181825;border-radius:8px;border-left:3px solid #94e2d5">
+  <h3 style="color:#94e2d5;margin-bottom:8px">Recommendation: All of the above</h3>
+  <p style="color:#cdd6f4;font-size:13px">These aren't mutually exclusive -- they're all entry points into the same Preview pane. Auto-detect handles the common case (dev servers), click-paths handle file previews, Views menu is the manual fallback, diff integration is the power feature, and Command Bar extends it for custom workflows.</p>
+</div>

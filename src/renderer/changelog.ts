@@ -15,7 +15,7 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
-    version: '1.3.0',
+    version: '1.3.1',
     date: '2026-04-15',
     highlights: "First public release — open-sourced on GitHub",
     changes: [
