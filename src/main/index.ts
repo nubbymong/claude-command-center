@@ -29,7 +29,10 @@ import { registerSideChatHandlers } from './ipc/side-chat-handlers'
 import { killAllSideChats } from './side-chat-manager'
 import { registerDiffHandlers } from './ipc/diff-handlers'
 import { registerPreviewHandlers } from './ipc/preview-handlers'
+import { registerTranscriptHandlers } from './ipc/transcript-handlers'
+import { registerResumePickerHandlers } from './ipc/resume-picker-handlers'
 import { stopAllFileWatchers } from './file-watcher'
+import { stopAllTranscriptWatchers } from './transcript-watcher'
 import { initPreviewManager } from './preview-manager'
 import { fetchModelPricing } from './tokenomics-manager'
 import { initAccounts } from './account-manager'
@@ -226,7 +229,7 @@ function createWindow(): void {
     minWidth: 1280,
     minHeight: 720,
     frame: false,
-    backgroundColor: '#1E1E2E',
+    backgroundColor: '#1a1a1a',
     show: false,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -543,6 +546,8 @@ if (!gotTheLock) {
     registerSideChatHandlers(getWindow)
     registerDiffHandlers(getWindow)
     registerPreviewHandlers(getWindow)
+    registerTranscriptHandlers(getWindow)
+    registerResumePickerHandlers()
 
     // Shell — open URLs in system browser
     ipcMain.handle('shell:openExternal', async (_event, url: string) => {
@@ -614,6 +619,7 @@ if (!gotTheLock) {
     killAllAgents()
     killAllSideChats()
     stopAllFileWatchers()
+    stopAllTranscriptWatchers()
     killAllPty()
     closeDebugLogger()
   })

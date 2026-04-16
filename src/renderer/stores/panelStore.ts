@@ -6,8 +6,10 @@ import type { LayoutNode, PaneType, PaneNode, SplitNode } from '../../shared/typ
 interface PanelState {
   layouts: Record<string, LayoutNode>
   userCustomized: Record<string, boolean>
+  focusedPaneId: Record<string, string>
 
   initSession: (sessionId: string, windowWidth?: number) => void
+  setFocusedPane: (sessionId: string, paneId: string) => void
   addPane: (sessionId: string, targetPaneId: string, paneType: PaneType, direction: 'horizontal' | 'vertical', props?: Record<string, unknown>) => void
   removePane: (sessionId: string, paneId: string) => void
   toggleMaximized: (sessionId: string, paneId: string) => void
@@ -37,6 +39,11 @@ function createDefaultLayout(windowWidth?: number): LayoutNode {
 export const usePanelStore = create<PanelState>((set, get) => ({
   layouts: {},
   userCustomized: {},
+  focusedPaneId: {},
+
+  setFocusedPane: (sessionId, paneId) => {
+    set({ focusedPaneId: { ...get().focusedPaneId, [sessionId]: paneId } })
+  },
 
   initSession: (sessionId, windowWidth) => {
     const { layouts } = get()

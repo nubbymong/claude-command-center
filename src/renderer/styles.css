@@ -1,46 +1,150 @@
 @import "tailwindcss";
 
+/* ============================================================
+   Design tokens: warm neutral palette with light/dark modes.
+   Inspired by Claude Desktop's design language.
+   All colours are CSS custom properties set on :root / .light.
+   Tailwind @theme maps to these variables.
+   ============================================================ */
+
+:root {
+  /* Dark mode (default) */
+  --color-base: #1a1a1a;
+  --color-mantle: #141414;
+  --color-crust: #0e0e0e;
+  --color-surface0: #222222;
+  --color-surface1: #2a2a2a;
+  --color-surface2: #333333;
+  --color-overlay0: #555555;
+  --color-overlay1: #777777;
+  --color-overlay2: #999999;
+  --color-subtext0: #aaaaaa;
+  --color-subtext1: #cccccc;
+  --color-text: #e8e8e8;
+
+  /* Accent colours -- functional, not decorative */
+  --color-blue: #6ea8fe;
+  --color-green: #5cb85c;
+  --color-yellow: #e8a84e;
+  --color-red: #e55c5c;
+  --color-mauve: #a78bfa;
+  --color-teal: #5bbfb5;
+  --color-peach: #e8915c;
+  --color-pink: #e87bb5;
+  --color-sky: #5cc0e8;
+  --color-lavender: #9ca8fa;
+  --color-sapphire: #5ca8e8;
+  --color-flamingo: #e8a8a8;
+  --color-rosewater: #e8c8c0;
+  --color-maroon: #c87878;
+
+  /* Semantic tokens */
+  --color-border: rgba(255, 255, 255, 0.06);
+  --color-border-hover: rgba(255, 255, 255, 0.12);
+  --color-bg-hover: rgba(255, 255, 255, 0.04);
+  --color-bg-active: rgba(255, 255, 255, 0.06);
+  --color-bg-input: rgba(255, 255, 255, 0.04);
+  --color-bg-input-border: rgba(255, 255, 255, 0.08);
+  --color-shadow: rgba(0, 0, 0, 0.3);
+
+  color-scheme: dark;
+}
+
+/* Light mode */
+.light {
+  --color-base: #ffffff;
+  --color-mantle: #f8f8f8;
+  --color-crust: #f0f0f0;
+  --color-surface0: #eeeeee;
+  --color-surface1: #e2e2e2;
+  --color-surface2: #d4d4d4;
+  --color-overlay0: #a0a0a0;
+  --color-overlay1: #888888;
+  --color-overlay2: #666666;
+  --color-subtext0: #555555;
+  --color-subtext1: #333333;
+  --color-text: #1a1a1a;
+
+  /* Accent colours -- slightly deeper for light backgrounds */
+  --color-blue: #2563eb;
+  --color-green: #16a34a;
+  --color-yellow: #ca8a04;
+  --color-red: #dc2626;
+  --color-mauve: #7c3aed;
+  --color-teal: #0d9488;
+  --color-peach: #ea580c;
+  --color-pink: #db2777;
+  --color-sky: #0284c7;
+  --color-lavender: #6366f1;
+  --color-sapphire: #2563eb;
+  --color-flamingo: #e11d48;
+  --color-rosewater: #be123c;
+  --color-maroon: #9f1239;
+
+  /* Semantic tokens -- inverted for light */
+  --color-border: rgba(0, 0, 0, 0.08);
+  --color-border-hover: rgba(0, 0, 0, 0.15);
+  --color-bg-hover: rgba(0, 0, 0, 0.04);
+  --color-bg-active: rgba(0, 0, 0, 0.06);
+  --color-bg-input: rgba(0, 0, 0, 0.03);
+  --color-bg-input-border: rgba(0, 0, 0, 0.1);
+  --color-shadow: rgba(0, 0, 0, 0.08);
+
+  color-scheme: light;
+}
+
+/* Tailwind @theme maps to CSS variables */
 @theme {
-  /* Platform v9 dark palette */
-  --color-base: #0f1218;
-  --color-mantle: #0b0e14;
-  --color-crust: #080a10;
-  --color-surface0: #161c26;
-  --color-surface1: #1e2530;
-  --color-surface2: #2a3342;
-  --color-overlay0: #4a5568;
-  --color-overlay1: #64748b;
-  --color-overlay2: #8892a4;
-  --color-subtext0: #94a3b8;
-  --color-subtext1: #b8c5d6;
-  --color-text: #f0f4fc;
-  --color-lavender: #B4BEFE;
-  --color-blue: #89B4FA;
-  --color-sapphire: #74C7EC;
-  --color-sky: #89DCEB;
-  --color-teal: #94E2D5;
-  --color-green: #A6E3A1;
-  --color-yellow: #F9E2AF;
-  --color-peach: #FAB387;
-  --color-maroon: #EBA0AC;
-  --color-red: #F38BA8;
-  --color-mauve: #CBA6F7;
-  --color-pink: #F5C2E7;
-  --color-flamingo: #F2CDCD;
-  --color-rosewater: #F5E0DC;
+  --color-base: var(--color-base);
+  --color-mantle: var(--color-mantle);
+  --color-crust: var(--color-crust);
+  --color-surface0: var(--color-surface0);
+  --color-surface1: var(--color-surface1);
+  --color-surface2: var(--color-surface2);
+  --color-overlay0: var(--color-overlay0);
+  --color-overlay1: var(--color-overlay1);
+  --color-overlay2: var(--color-overlay2);
+  --color-subtext0: var(--color-subtext0);
+  --color-subtext1: var(--color-subtext1);
+  --color-text: var(--color-text);
+  --color-lavender: var(--color-lavender);
+  --color-blue: var(--color-blue);
+  --color-sapphire: var(--color-sapphire);
+  --color-sky: var(--color-sky);
+  --color-teal: var(--color-teal);
+  --color-green: var(--color-green);
+  --color-yellow: var(--color-yellow);
+  --color-peach: var(--color-peach);
+  --color-maroon: var(--color-maroon);
+  --color-red: var(--color-red);
+  --color-mauve: var(--color-mauve);
+  --color-pink: var(--color-pink);
+  --color-flamingo: var(--color-flamingo);
+  --color-rosewater: var(--color-rosewater);
+}
+
+/* ============================================================
+   Global styles
+   ============================================================ */
+
+body {
+  font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--color-base);
+  color: var(--color-text);
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
 /* Scrollbar styling */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: var(--color-mantle);
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
   background: var(--color-surface1);
-  border-radius: 4px;
+  border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
   background: var(--color-surface2);
@@ -54,9 +158,30 @@
   -webkit-app-region: no-drag;
 }
 
+/* Prose styling for markdown rendered content */
+.prose { color: var(--color-text); line-height: 1.7; }
+.prose h1, .prose h2, .prose h3, .prose h4 { color: var(--color-text); font-weight: 600; margin-top: 1.2em; margin-bottom: 0.5em; }
+.prose h1 { font-size: 1.3em; }
+.prose h2 { font-size: 1.15em; }
+.prose h3 { font-size: 1.05em; }
+.prose p { margin-bottom: 0.6em; }
+.prose ul, .prose ol { padding-left: 1.5em; margin-bottom: 0.6em; }
+.prose li { margin-bottom: 0.2em; }
+.prose code { background: rgba(255,255,255,0.06); padding: 1px 5px; border-radius: 3px; font-size: 0.9em; font-family: 'Geist Mono', 'SF Mono', monospace; }
+.prose pre { background: rgba(0,0,0,0.3); padding: 12px 16px; border-radius: 8px; overflow-x: auto; margin: 8px 0; }
+.prose pre code { background: none; padding: 0; font-size: 12px; }
+.prose table { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 0.9em; }
+.prose th, .prose td { padding: 6px 12px; text-align: left; border: 1px solid var(--color-border); }
+.prose th { background: rgba(255,255,255,0.04); font-weight: 500; }
+.prose a { color: var(--color-blue); text-decoration: none; }
+.prose a:hover { text-decoration: underline; }
+.prose blockquote { border-left: 3px solid var(--color-border); padding-left: 12px; color: var(--color-subtext0); margin: 8px 0; }
+.prose strong { font-weight: 600; color: var(--color-text); }
+.prose hr { border: none; border-top: 1px solid var(--color-border); margin: 16px 0; }
+
 /* Selection */
 ::selection {
-  background: color-mix(in srgb, var(--color-blue) 30%, transparent);
+  background: color-mix(in srgb, var(--color-blue) 25%, transparent);
 }
 
 /* Ensure xterm.js textarea can receive keyboard input */

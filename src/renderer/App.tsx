@@ -17,6 +17,8 @@ import CloudAgentsPage from './components/CloudAgentsPage'
 import TokenomicsPage from './components/TokenomicsPage'
 import VisionPage from './components/VisionPage'
 import MemoryPage from './components/MemoryPage'
+import CommandBar from './components/CommandBar'
+import { ContextBar } from './components/terminal'
 import SideChatPane from './components/panels/SideChatPane'
 import SetupDialog from './components/SetupDialog'
 import WhatsNewModal, { shouldShowWhatsNew, markWhatsNewSeen } from './components/WhatsNewModal'
@@ -446,6 +448,31 @@ export default function App() {
             }}
           >
             <PanelContainer sessionId={session.id} isActive={session.id === activeSessionId && view === 'sessions'} />
+            {session.contextPercent != null && (
+              <ContextBar
+                modelName={session.modelName}
+                inputTokens={session.inputTokens}
+                contextWindowSize={session.contextWindowSize}
+                contextPercent={session.contextPercent}
+                costUsd={session.costUsd}
+                linesAdded={session.linesAdded}
+                linesRemoved={session.linesRemoved}
+                totalDurationMs={session.totalDurationMs}
+                rateLimitCurrent={session.rateLimitCurrent}
+                rateLimitCurrentResets={session.rateLimitCurrentResets}
+                rateLimitWeekly={session.rateLimitWeekly}
+                rateLimitWeeklyResets={session.rateLimitWeeklyResets}
+                rateLimitExtra={session.rateLimitExtra}
+                isPeak={session.isPeak}
+              />
+            )}
+            <CommandBar
+              sessionId={session.id}
+              configId={session.configId}
+              sessionType={session.sessionType === 'ssh' ? 'ssh' : 'local'}
+              partnerEnabled={!!session.partnerTerminalPath}
+              partnerSessionId={session.partnerTerminalPath ? session.id + '-partner' : undefined}
+            />
           </div>
         ))}
       </div>

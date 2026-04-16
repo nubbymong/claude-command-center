@@ -267,7 +267,7 @@ function getResumePickerPath(): string | null {
 export function spawnPty(
   win: BrowserWindow,
   sessionId: string,
-  options?: { cwd?: string; cols?: number; rows?: number; ssh?: SSHOptions; shellOnly?: boolean; elevated?: boolean; configLabel?: string; useResumePicker?: boolean; legacyVersion?: { enabled: boolean; version: string }; agentsConfig?: Array<{ name: string; description: string; prompt: string; model?: string; tools?: string[] }>; flickerFree?: boolean; powershellTool?: boolean; effortLevel?: 'low' | 'medium' | 'high'; disableAutoMemory?: boolean }
+  options?: { cwd?: string; cols?: number; rows?: number; ssh?: SSHOptions; shellOnly?: boolean; elevated?: boolean; configLabel?: string; useResumePicker?: boolean; resumeSessionId?: string; legacyVersion?: { enabled: boolean; version: string }; agentsConfig?: Array<{ name: string; description: string; prompt: string; model?: string; tools?: string[] }>; flickerFree?: boolean; powershellTool?: boolean; effortLevel?: 'low' | 'medium' | 'high'; disableAutoMemory?: boolean }
 ): void {
   logInfo(`[pty] Spawning PTY for session ${sessionId} (ssh=${!!options?.ssh}, shellOnly=${!!options?.shellOnly}, cwd=${options?.cwd || 'default'})`)
   killPty(sessionId)
@@ -500,10 +500,20 @@ export function spawnPty(
         logInfo(`[pty] Agents flag for ${sessionId}: ${agentsFlag.slice(0, 200)}...`)
       }
 
+      // Build --resume flag if resuming a specific session
+      let resumeFlag = ''
+      if (options?.resumeSessionId) {
+        resumeFlag = ` --resume "${escapeShellArg(options.resumeSessionId)}"`
+      }
+
       // When useResumePicker is true, run the resume-picker script instead of Claude directly.
-      // The picker shows prior conversations and launches Claude with --resume or plain.
       let escapedCmd: string
-      if (options?.useResumePicker) {
+      if (options?.resumeSessionId) {
+        // Direct resume -- bypass picker script entirely
+        escapedCmd = os.platform() === 'win32'
+          ? `Set-Location '${escapedCwd}'; & "${cmd}"${resumeFlag}${agentsFlag}${extraFlags}; exit`
+          : `cd '${escapedCwd.replace(/'/g, "'\\''")}' && "${cmd}"${resumeFlag}${agentsFlag}${extraFlags}; exit`
+      } else if (options?.useResumePicker) {
         const pickerScript = getResumePickerPath()
         if (pickerScript && os.platform() === 'win32') {
           const escapedScript = pickerScript.replace(/'/g, "''")

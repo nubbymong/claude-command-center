@@ -25,11 +25,13 @@ export const DEFAULT_STATUS_LINE: StatusLineSettings = {
 }
 
 export type UpdateChannel = 'stable' | 'beta'
+export type ThemeMode = 'dark' | 'light' | 'system'
 
 export interface AppSettings {
   defaultModel: string
   defaultWorkingDirectory: string
   terminalFontSize: number
+  theme: ThemeMode
   debugMode: boolean
   keyboardShortcuts: Record<string, string>
   inputBarMaxHeight: number
@@ -52,6 +54,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   defaultModel: 'sonnet',
   defaultWorkingDirectory: '',
   terminalFontSize: 14,
+  theme: 'dark' as ThemeMode,
   debugMode: false,
   keyboardShortcuts: { ...DEFAULT_SHORTCUTS },
   inputBarMaxHeight: 400,

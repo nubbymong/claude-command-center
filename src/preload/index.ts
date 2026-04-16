@@ -46,6 +46,7 @@ export interface ElectronAPI {
       configId?: string
       configLabel?: string
       useResumePicker?: boolean
+      resumeSessionId?: string
       agentsConfig?: Array<{
         name: string; description: string; prompt: string
         model?: string; tools?: string[]
@@ -151,6 +152,14 @@ export interface ElectronAPI {
     openFile: (filePath: string) => Promise<{ url: string; contentType: string } | null>
     onDevServerDetected: (callback: (sessionId: string, url: string) => void) => () => void
     dismissServer: (projectPath: string) => void
+  }
+  transcript: {
+    start: (sessionId: string, workingDirectory: string) => Promise<void>
+    stop: (sessionId: string) => void
+    onEntries: (callback: (sessionId: string, entries: unknown[]) => void) => () => void
+  }
+  resumePicker: {
+    list: (workingDirectory: string) => Promise<import('../shared/types').ConversationSummary[]>
   }
 }
 
@@ -447,6 +456,22 @@ const electronAPI: ElectronAPI = {
       return () => ipcRenderer.removeListener(IPC.PREVIEW_DEV_SERVER_DETECTED, handler)
     },
     dismissServer: (projectPath: string) => ipcRenderer.send(IPC.PREVIEW_DISMISS_SERVER, projectPath),
+  },
+  transcript: {
+    start: (sessionId: string, workingDirectory: string) =>
+      ipcRenderer.invoke(IPC.TRANSCRIPT_START, sessionId, workingDirectory),
+    stop: (sessionId: string) =>
+      ipcRenderer.send(IPC.TRANSCRIPT_STOP, sessionId),
+    onEntries: (callback: (sessionId: string, entries: unknown[]) => void) => {
+      const handler = (_event: unknown, sessionId: string, entries: unknown[]) =>
+        callback(sessionId, entries)
+      ipcRenderer.on(IPC.TRANSCRIPT_ENTRIES, handler)
+      return () => ipcRenderer.removeListener(IPC.TRANSCRIPT_ENTRIES, handler)
+    },
+  },
+  resumePicker: {
+    list: (workingDirectory: string) =>
+      ipcRenderer.invoke(IPC.RESUME_PICKER_LIST, workingDirectory) as Promise<import('../shared/types').ConversationSummary[]>,
   },
 }
 

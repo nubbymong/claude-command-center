@@ -152,16 +152,20 @@ export default function SessionHeader({ session, sidebarCollapsed, onShowTip }: 
       {/* Secret notes */}
       <NotesBar configId={session.configId} />
 
-      <div className="flex-1" />
-
       {onShowTip && <TipPill onClick={onShowTip} />}
 
-      <div className="relative ml-auto">
+      <div className="flex-1" />
+
+      <div className="flex items-center gap-2">
+      <div className="relative">
         <button
           onClick={() => setViewsMenu(!viewsMenu)}
-          className="text-xs text-overlay1 hover:text-text px-2 py-0.5 rounded hover:bg-surface0 transition-colors"
+          className="text-xs bg-surface0 hover:bg-surface1 text-text px-3 py-1 rounded transition-colors duration-150 flex items-center gap-1"
         >
           Views
+          <svg width="8" height="8" viewBox="0 0 8 8" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="ml-0.5">
+            <path d="M1.5 3L4 5.5L6.5 3" />
+          </svg>
         </button>
         {viewsMenu && (
           <>
@@ -195,11 +199,12 @@ export default function SessionHeader({ session, sidebarCollapsed, onShowTip }: 
           e.stopPropagation()
           setRecoverMenu({ x: e.clientX, y: e.clientY })
         }}
-        className="px-2.5 py-1 rounded text-xs font-medium text-overlay1 hover:text-text hover:bg-surface0 transition-colors"
+        className="border border-surface1 hover:bg-surface0 text-overlay1 hover:text-text px-3 py-1 rounded text-xs font-medium transition-colors duration-150"
         title="Restart Claude session (right-click to recover)"
       >
         Restart
       </button>
+      </div>
 
       {recoverMenu && (
         <RecoverContextMenu

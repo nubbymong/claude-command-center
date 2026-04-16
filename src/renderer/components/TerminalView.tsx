@@ -5,11 +5,10 @@ import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { useSessionStore } from '../stores/sessionStore'
 import { hasSpawned, markSpawned, killSessionPty } from '../ptyTracker'
-import CommandBar from './CommandBar'
 import { shouldUseResumePicker } from '../utils/resumePicker'
 import { stripCursorSequences } from '../utils/terminalFormatting'
 import { THEME } from './terminal/terminalTheme'
-import { ContextBar, ScrollToBottomButton } from './terminal'
+import { ScrollToBottomButton } from './terminal'
 import { useStatuslineSubscription } from '../hooks/useStatuslineSubscription'
 import { useActiveTabEffect } from '../hooks/useActiveTabEffect'
 import { useCursorLayerVisibility } from '../hooks/useCursorLayerVisibility'
@@ -34,10 +33,6 @@ interface Props {
     dockerContainer?: string
   }
   isActive?: boolean
-  partnerEnabled?: boolean
-  isPartnerActive?: boolean
-  onTogglePartner?: () => void
-  partnerSessionId?: string
   legacyVersion?: {
     enabled: boolean
     version: string
@@ -49,7 +44,7 @@ interface Props {
   disableAutoMemory?: boolean
 }
 
-export default function TerminalView({ sessionId, configId, cwd, shellOnly, elevated, ssh, isActive = true, partnerEnabled, isPartnerActive, onTogglePartner, partnerSessionId, legacyVersion, agentIds, flickerFree, powershellTool, effortLevel, disableAutoMemory }: Props) {
+export default function TerminalView({ sessionId, configId, cwd, shellOnly, elevated, ssh, isActive = true, legacyVersion, agentIds, flickerFree, powershellTool, effortLevel, disableAutoMemory }: Props) {
   const xtermContainerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
@@ -358,8 +353,6 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
     }
   }, [sessionId])
 
-  const needsAttention = session?.needsAttention ?? false
-
   return (
     <div className="flex-1 flex flex-col titlebar-no-drag overflow-hidden relative" style={{ minHeight: 0 }}>
       <div
@@ -376,33 +369,6 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
           }}
         />
       )}
-      {session && session.contextPercent != null && (
-        <ContextBar
-          modelName={session.modelName}
-          inputTokens={session.inputTokens}
-          contextWindowSize={session.contextWindowSize}
-          contextPercent={session.contextPercent}
-          costUsd={session.costUsd}
-          linesAdded={session.linesAdded}
-          linesRemoved={session.linesRemoved}
-          totalDurationMs={session.totalDurationMs}
-          rateLimitCurrent={session.rateLimitCurrent}
-          rateLimitCurrentResets={session.rateLimitCurrentResets}
-          rateLimitWeekly={session.rateLimitWeekly}
-          rateLimitWeeklyResets={session.rateLimitWeeklyResets}
-          rateLimitExtra={session.rateLimitExtra}
-          isPeak={session.isPeak}
-        />
-      )}
-      <CommandBar
-        sessionId={sessionId}
-        configId={configId}
-        sessionType={ssh ? 'ssh' : 'local'}
-        partnerEnabled={partnerEnabled}
-        isPartnerActive={isPartnerActive}
-        onTogglePartner={onTogglePartner}
-        partnerSessionId={partnerSessionId}
-      />
     </div>
   )
 }

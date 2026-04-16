@@ -354,6 +354,18 @@ export interface MemoryScanResult {
 
 // ── Panel System (v2) ──
 
+// ── Resume Picker ──
+
+export interface ConversationSummary {
+  sessionId: string      // UUID from filename
+  firstMessage: string   // First user message
+  lastMessages: string[] // Last 5 user messages
+  model: string | null   // Model used
+  timeAgo: string        // "1h ago", "3d ago" etc
+  size: string           // "187 KB"
+  mtimeMs: number        // For sorting
+}
+
 export type PaneType = 'claude-terminal' | 'partner-terminal' | 'diff-viewer' | 'preview' | 'file-editor'
 
 export interface PaneNode {

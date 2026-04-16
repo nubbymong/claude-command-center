@@ -206,6 +206,14 @@ export const IPC = {
   PREVIEW_OPEN_FILE: 'preview:open-file',
   PREVIEW_DEV_SERVER_DETECTED: 'preview:dev-server-detected',
   PREVIEW_DISMISS_SERVER: 'preview:dismiss-server',
+
+  // Transcript
+  TRANSCRIPT_START: 'transcript:start',
+  TRANSCRIPT_STOP: 'transcript:stop',
+  TRANSCRIPT_ENTRIES: 'transcript:entries',
+
+  // Resume Picker
+  RESUME_PICKER_LIST: 'resumePicker:list',
 } as const
 
 /** Helper to build per-session PTY data channels */
