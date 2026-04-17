@@ -1,12 +1,13 @@
 # GitHub Sidebar — Design Spec
 
-Date: 2026-04-17 (rev 2)
+Date: 2026-04-17 (rev 3)
 Branch: beta
 Status: Approved design, ready for implementation plan
 
 Rev history:
 - rev 1 (initial) — internal review pass.
 - rev 2 — addressed reviewer findings: removed DiffViewerPane dependency, dropped PTY push-trigger, notifications per-profile, gh CLI concurrency, factual rate-limit corrections, expanded security coverage, added Session Context section.
+- rev 3 — second independent review pass: tightened tool-call inspection field allowlist, disambiguated Session Context vs Issues sections, expanded Session Context priority rules + SSH behavior + empty-session behavior, dropped Discussions from v1 scope, renamed `neverExpires` → `expiryObservable`, cache-corruption backup retention, `gh auth status` parsing approach documented.
 
 ## 1. Goal & user value
 

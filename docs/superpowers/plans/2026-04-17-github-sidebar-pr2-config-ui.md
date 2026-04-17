@@ -16,7 +16,7 @@
 
 ## Cross-Platform Notes (Windows + macOS)
 
-- **Keyboard shortcut labels:** `Ctrl+/` on Windows, `⌘+/` on macOS. The `GitHubPanel` keyboard handler already branches on `navigator.platform`. UI copy that mentions the shortcut (tips, tooltips, onboarding) must use the matching glyph per platform.
+- **Keyboard shortcut labels:** `Ctrl+/` on Windows, `⌘+/` on macOS. The `GitHubPanel` keyboard handler branches on `window.electronPlatform === 'darwin'` (exposed by preload — the app-wide convention). UI copy that mentions the shortcut (tips, tooltips, onboarding) must use the same check so labels stay consistent with handler behavior.
 - **Training walkthrough screenshots:** existing `getScreenshot()` helper in `TrainingWalkthrough.tsx` prefers `<name>-mac.jpg` on macOS, falls back to `<name>.jpg`. The GitHub onboarding modal uses the same convention — plan handles capture in PR 3.
 - **Modal / button chrome:** the app uses custom Catppuccin-themed controls (not native). Platform differences are minimal, but test the OAuth modal's clipboard copy button on both (macOS `navigator.clipboard.writeText` sometimes prompts for permission; Windows typically doesn't).
 - **Window controls on frameless window:** macOS traffic lights vs Windows title-bar buttons — already handled by existing chrome code, just don't mount the panel in a way that overlaps either set.
@@ -25,7 +25,7 @@
 ## Conventions
 
 - No default exports except React components.
-- No renderer Node imports. Every GitHub call goes through `window.electron.github.*` (wired in PR 1).
+- No renderer Node imports. Every GitHub call goes through `window.electronAPI.github.*` (wired in PR 1).
 - Markdown sanitizer is the only `dangerouslySetInnerHTML` site; it MUST go through `renderCommentMarkdown`.
 - TDD: failing test → run → implement → run → commit. Components with polling/state transitions require tests.
 - Commit prefixes same as PR 1.
@@ -244,7 +244,7 @@ export const useGitHubStore = create<GitHubStoreState>((set, get) => ({
   syncStatus: {},
 
   loadConfig: async () => {
-    const config = await window.electron.github.getConfig()
+    const config = await window.electronAPI.github.getConfig()
     set({
       config,
       profiles: config ? Object.values(config.authProfiles) : [],
@@ -252,17 +252,17 @@ export const useGitHubStore = create<GitHubStoreState>((set, get) => ({
   },
 
   updateConfig: async (patch) => {
-    const updated = await window.electron.github.updateConfig(patch)
+    const updated = await window.electronAPI.github.updateConfig(patch)
     set({ config: updated, profiles: Object.values(updated.authProfiles) })
   },
 
   removeProfile: async (id) => {
-    await window.electron.github.removeProfile(id)
+    await window.electronAPI.github.removeProfile(id)
     await get().loadConfig()
   },
 
   renameProfile: async (id, label) => {
-    await window.electron.github.renameProfile(id, label)
+    await window.electronAPI.github.renameProfile(id, label)
     await get().loadConfig()
   },
 
@@ -296,10 +296,10 @@ let unsubData: (() => void) | null = null
 let unsubSync: (() => void) | null = null
 export function setupGitHubListener() {
   if (unsubData) return
-  unsubData = window.electron.github.onDataUpdate((p) =>
+  unsubData = window.electronAPI.github.onDataUpdate((p) =>
     useGitHubStore.getState().handleDataUpdate(p as any),
   )
-  unsubSync = window.electron.github.onSyncStateUpdate((p) =>
+  unsubSync = window.electronAPI.github.onSyncStateUpdate((p) =>
     useGitHubStore.getState().handleSyncStateUpdate(p as any),
   )
 }
@@ -567,7 +567,7 @@ export default function AuthProfilesList() {
 
   const doTest = async (id: string) => {
     setTesting(id)
-    const r = await window.electron.github.testProfile(id)
+    const r = await window.electronAPI.github.testProfile(id)
     setTesting(null)
     setTestResult((prev) => ({
       ...prev,
@@ -693,18 +693,18 @@ export default function AddProfileModal({ onClose }: Props) {
   const [patSaving, setPatSaving] = useState(false)
 
   useEffect(() => {
-    window.electron.github.ghcliDetect().then((r) => setGhUsers(r.users))
+    window.electronAPI.github.ghcliDetect().then((r) => setGhUsers(r.users))
   }, [])
 
   const startOAuth = async () => {
     setStarting(true)
-    const r = await window.electron.github.oauthStart(oauthMode)
+    const r = await window.electronAPI.github.oauthStart(oauthMode)
     setStarting(false)
     setOauthState(r)
   }
 
   const adoptGh = async (username: string) => {
-    const r = await window.electron.github.adoptGhCli(username)
+    const r = await window.electronAPI.github.adoptGhCli(username)
     if (r.ok) {
       await loadConfig()
       onClose()
@@ -715,7 +715,7 @@ export default function AddProfileModal({ onClose }: Props) {
     setPatSaving(true)
     setPatError(null)
     const repos = patRepos.split(/[\s,]+/).filter(Boolean)
-    const r = await window.electron.github.addPat({
+    const r = await window.electronAPI.github.addPat({
       kind: patKind,
       label: patLabel || 'PAT',
       rawToken: patToken,
@@ -861,7 +861,7 @@ export default function OAuthDeviceFlow({ flow, onDone, onCancel }: Props) {
         await new Promise((r) => setTimeout(r, (flow.interval + 1) * 1000))
         if (cancelled || !pollingRef.current) break
         try {
-          const r = await window.electron.github.oauthPoll(flow.flowId)
+          const r = await window.electronAPI.github.oauthPoll(flow.flowId)
           if (r.ok && r.profileId) {
             onDone()
             return
@@ -890,12 +890,13 @@ export default function OAuthDeviceFlow({ flow, onDone, onCancel }: Props) {
   }
 
   const openGitHub = () => {
-    window.open(flow.verificationUri, '_blank', 'noopener')
+    // App denies window.open via setWindowOpenHandler; use shell.openExternal instead
+    void window.electronAPI.shell.openExternal(flow.verificationUri)
   }
 
   const cancel = async () => {
     pollingRef.current = false
-    await window.electron.github.oauthCancel(flow.flowId)
+    await window.electronAPI.github.oauthCancel(flow.flowId)
     onCancel()
   }
 
@@ -1227,7 +1228,7 @@ export default function SyncSettings() {
     setLastClick(Date.now())
     // Active session id isn't known here; the button only triggers a global
     // "sync focused session" call — the main process resolves it. Pass null.
-    await window.electron.github.syncNow('')
+    await window.electronAPI.github.syncNow('')
   }
 
   return (
@@ -1266,11 +1267,11 @@ export default function SyncSettings() {
         </label>
         <div className="flex gap-2 pt-2 border-t border-surface0">
           <button
-            onClick={() => window.electron.github.syncPause()}
+            onClick={() => window.electronAPI.github.syncPause()}
             className="bg-surface0 px-3 py-1 rounded text-xs"
           >Pause syncs</button>
           <button
-            onClick={() => window.electron.github.syncResume()}
+            onClick={() => window.electronAPI.github.syncResume()}
             className="bg-surface0 px-3 py-1 rounded text-xs"
           >Resume</button>
           <button
@@ -1399,7 +1400,7 @@ export default function SessionGitHubConfig({ sessionId, cwd, initial }: Props) 
 
   useEffect(() => {
     if (!initial?.repoUrl && cwd) {
-      window.electron.github.repoDetect(cwd).then((r) => {
+      window.electronAPI.github.repoDetect(cwd).then((r) => {
         if (r.ok && r.slug) setDetected(r.slug)
       })
     }
@@ -1416,7 +1417,7 @@ export default function SessionGitHubConfig({ sessionId, cwd, initial }: Props) 
       authProfileId: profileId || undefined,
       autoDetected: false,
     }
-    const r = await window.electron.github.updateSessionConfig(sessionId, patch)
+    const r = await window.electronAPI.github.updateSessionConfig(sessionId, patch)
     setSaving(false)
     setTestResult(r.ok ? 'Saved ✓' : `Error: ${r.error ?? 'unknown'}`)
     setTimeout(() => setTestResult(null), 2000)
@@ -1718,7 +1719,7 @@ export default function GitHubPanel({ sessionId, slug, branch, ahead, behind, di
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const isMac = typeof navigator !== 'undefined' && navigator.platform.toUpperCase().includes('MAC')
+      const isMac = (window as any).electronPlatform === 'darwin'
       if (e.key === '/' && (isMac ? e.metaKey : e.ctrlKey)) {
         e.preventDefault()
         togglePanel()
@@ -1771,7 +1772,7 @@ export default function GitHubPanel({ sessionId, slug, branch, ahead, behind, di
         syncState={sync?.state ?? 'idle'}
         syncedAt={sync?.at}
         nextResetAt={sync?.nextResetAt}
-        onRefresh={() => slug && window.electron.github.syncNow(sessionId)}
+        onRefresh={() => slug && window.electronAPI.github.syncNow(sessionId)}
       />
       <div className="flex-1 overflow-y-auto" aria-live="polite">
         <SessionContextSection sessionId={sessionId} />
@@ -1917,7 +1918,7 @@ EOF
 
 ## Self-Review Checklist
 
-1. **Depends on PR 1 merged** — all `window.electron.github.*` calls reference IPC channels registered there.
+1. **Depends on PR 1 merged** — all `window.electronAPI.github.*` calls reference IPC channels registered there.
 2. **Isomorphic-dompurify installed** in this PR, `marked@15` untouched.
 3. **Markdown sanitizer tests cover:** `<script>`, `javascript:`, `<img onerror>`, `onclick`, `data:` URIs.
 4. **FeatureTogglesList disables** when capability missing (UX decision from spec §4).

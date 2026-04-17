@@ -12,7 +12,7 @@
 
 ## Cross-Platform Notes (Windows + macOS)
 
-- **Keyboard shortcut labels:** tips, tooltips, onboarding copy must show `Ctrl+/` on Windows and `⌘+/` on macOS. Resolve via `navigator.platform.toUpperCase().includes('MAC')` at render time.
+- **Keyboard shortcut labels:** tips, tooltips, onboarding copy must show `Ctrl+/` on Windows and `⌘+/` on macOS. Resolve via `window.electronPlatform === 'darwin'` at render time (or a shared helper built on that value) — matches the existing renderer convention. Do not use `navigator.platform` (deprecated and inconsistent with the rest of the codebase).
 - **Training walkthrough screenshots:** ship both `github-panel.jpg` and `github-panel-mac.jpg` (Task N3 below).
 - **`gh auth status` output on Windows:** same regex matches because we parse the github.com line, not the decorative characters. Verify on a Windows machine with gh installed via `winget install GitHub.cli`.
 - **Keychain semantics differ:** on Windows, `safeStorage.isEncryptionAvailable()` can return false if DPAPI isn't initialized for the user context (rare but seen in RDP / some corporate images). Surface this as a Config page warning, not a crash.
@@ -594,7 +594,7 @@ export default function LocalGitSection({ sessionId, cwd }: Props) {
     if (!cwd) return
     let alive = true
     const poll = async () => {
-      const r = await window.electron.github.getLocalGit(cwd)
+      const r = await window.electronAPI.github.getLocalGit(cwd)
       if (alive && r.ok) setState(r.state)
     }
     poll()
@@ -688,7 +688,7 @@ export default function SessionContextSection({ sessionId }: Props) {
   useEffect(() => {
     let alive = true
     const poll = async () => {
-      const r = await window.electron.github.getSessionContext(sessionId)
+      const r = await window.electronAPI.github.getSessionContext(sessionId)
       if (alive && r.ok) setCtx(r.data)
     }
     poll()
@@ -779,10 +779,11 @@ export default function ActivePRSection({ sessionId, slug }: Props) {
   if (!slug) return <SectionFrame sessionId={sessionId} id="activePR" title="Active PR" emptyIndicator><div className="text-xs text-overlay0">No repo configured</div></SectionFrame>
   if (!pr) return <SectionFrame sessionId={sessionId} id="activePR" title="Active PR" emptyIndicator><div className="text-xs text-overlay0">No PR for this branch</div></SectionFrame>
 
-  const open = () => window.open(pr.url, '_blank', 'noopener')
-  const ready = async () => { await window.electron.github.readyPR(slug, pr.number) }
+  // App denies window.open; always use shell.openExternal for external navigation
+  const open = () => void window.electronAPI.shell.openExternal(pr.url)
+  const ready = async () => { await window.electronAPI.github.readyPR(slug, pr.number) }
   const merge = async (method: 'merge' | 'squash' | 'rebase') => {
-    await window.electron.github.mergePR(slug, pr.number, method)
+    await window.electronAPI.github.mergePR(slug, pr.number, method)
   }
 
   return (
@@ -852,7 +853,7 @@ export default function CISection({ sessionId, slug }: Props) {
   const rerun = async (id: number) => {
     if (!slug) return
     setRerunning(id)
-    await window.electron.github.rerunActionsRun(slug, id)
+    await window.electronAPI.github.rerunActionsRun(slug, id)
     setRerunning(null)
   }
 
@@ -866,7 +867,7 @@ export default function CISection({ sessionId, slug }: Props) {
           <div key={r.id} className="flex items-center gap-2">
             <span className={runColor(r)} aria-label={r.conclusion ?? r.status}>{runIcon(r)}</span>
             <span className="text-text truncate flex-1" title={r.workflowName}>{r.workflowName}</span>
-            <a href={r.url} target="_blank" rel="noreferrer" className="text-overlay1 hover:text-text">↗</a>
+            <button onClick={() => void window.electronAPI.shell.openExternal(r.url)} className="text-overlay1 hover:text-text" aria-label="Open run in GitHub">↗</button>
             {r.conclusion === 'failure' && slug && (
               <button
                 onClick={() => rerun(r.id)}
@@ -914,7 +915,7 @@ export default function ReviewsSection({ sessionId, slug }: Props) {
 
   const send = async (threadId: string) => {
     if (!slug) return
-    await window.electron.github.replyToReview(slug, threadId, replyText)
+    await window.electronAPI.github.replyToReview(slug, threadId, replyText)
     setReplyingTo(null)
     setReplyText('')
   }
@@ -998,7 +999,7 @@ export default function IssuesSection({ sessionId, slug }: Props) {
       <ul className="space-y-1 text-xs">
         {issues.map((i) => (
           <li key={i.number} className="flex items-start gap-2">
-            <a href={i.url} target="_blank" rel="noreferrer" className="text-blue">#{i.number}</a>
+            <button onClick={() => void window.electronAPI.shell.openExternal(i.url)} className="text-blue hover:underline">#{i.number}</button>
             {i.primary && <span className="bg-mauve/20 text-mauve text-[10px] px-1 rounded">primary</span>}
             <span className={i.state === 'open' ? 'text-green' : 'text-overlay0'}>{i.state}</span>
             <span className="text-text truncate flex-1" title={i.title}>{i.title}</span>
@@ -1075,12 +1076,12 @@ export default function NotificationsSection({ sessionId }: Props) {
       <ul className="space-y-1 text-xs">
         {items.map((i) => (
           <li key={i.id} className="flex gap-2">
-            {i.unread && <span className="text-fab387 w-2">●</span>}
-            <a href={i.url} target="_blank" rel="noreferrer" className="text-blue">{i.repo}</a>
+            {i.unread && <span className="text-peach w-2">●</span>}
+            <button onClick={() => void window.electronAPI.shell.openExternal(i.url)} className="text-blue hover:underline">{i.repo}</button>
             <span className="text-text truncate flex-1" title={i.title}>{i.title}</span>
             {i.unread && (
               <button
-                onClick={() => window.electron.github.markNotifRead(selectedId, i.id)}
+                onClick={() => window.electronAPI.github.markNotifRead(selectedId, i.id)}
                 className="text-overlay1 text-[10px]"
               >mark read</button>
             )}
@@ -1129,7 +1130,17 @@ export default function OnboardingModal({ onClose, onSetup }: Props) {
       <div className="bg-mantle p-6 rounded max-w-lg text-text">
         <h3 className="text-lg mb-3">New: GitHub sidebar</h3>
         <div className="bg-surface0 rounded overflow-hidden mb-3">
-          <img src={new URL('../../../../docs/screenshots/github-panel.jpg', import.meta.url).toString()} alt="GitHub panel preview" className="w-full" />
+          {/*
+            Image lives at src/renderer/assets/training/github-panel.jpg (see N3).
+            Loaded via Vite glob in TrainingWalkthrough — here we use a plain
+            new URL(...) since we're in a React component. Vite resolves the
+            relative path at build time and bundles the image for packaged builds.
+          */}
+          <img
+            src={new URL('../../../assets/training/github-panel.jpg', import.meta.url).toString()}
+            alt="GitHub panel preview"
+            className="w-full"
+          />
         </div>
         <p className="text-sm text-subtext0 mb-3">
           See PR, CI, reviews, issues, and session context for whatever you're working on — next to the terminal.
@@ -1194,41 +1205,49 @@ git commit -m "feat(github): onboarding modal with post-update trigger"
 
 ### Task N3: Screenshots for onboarding + tour (BOTH platforms)
 
-**Files:** CREATE `docs/screenshots/github-panel.jpg` AND `docs/screenshots/github-panel-mac.jpg`.
+**Files:** CREATE `src/renderer/assets/training/github-panel.jpg` AND `src/renderer/assets/training/github-panel-mac.jpg`. Also optional copies under `docs/screenshots/` for markdown/README use.
 
-The existing `getScreenshot()` helper in `TrainingWalkthrough.tsx` prefers `<name>-mac.jpg` on macOS and falls back to `<name>.jpg`. Ship both so the tour looks right on either OS.
+The existing `getScreenshot()` helper in `TrainingWalkthrough.tsx` (via `import.meta.glob('../assets/training/*.jpg')`) prefers `<name>-mac.jpg` on macOS and falls back to `<name>.jpg`. Ship both so the tour looks right on either OS. The onboarding modal (Task N1) loads the same asset via `new URL('../../../assets/training/github-panel.jpg', import.meta.url)` so it gets bundled in packaged builds.
 
 - [ ] **Step 1: Capture Windows screenshot**
 
 ```bash
-# On the Windows dev machine (primary)
+# On your Windows dev machine
 npm run dev
 # In the running app: switch to APP_DEV, sign in, enable a session on nubbymong/claude-command-center
 # Wait for panel to populate (PR card, CI, Session Context)
 # Capture the right panel region at ~600×800px, save as:
-# docs/screenshots/github-panel.jpg
+# src/renderer/assets/training/github-panel.jpg
 ```
 
 - [ ] **Step 2: Capture macOS screenshot**
 
-On your Mac build host (Apple Silicon Mac Mini at `nicholasmoger@192.168.50.254` per MEMORY):
+On your macOS build host (whichever Mac you use for the Mac installer build — see `.github/workflows/release.yml` for the job config):
 ```bash
-ssh nicholasmoger@192.168.50.254
-cd ~/claude-command-center   # or wherever your Mac checkout lives
+# SSH to your Mac build host (exact address lives in your local notes/1Password; keep it out of the public repo)
+# Pull the branch, install, run dev
 git pull  # get feature/github-sidebar-pr3
 npm install
 npm run dev
 # Same repro: APP_DEV session, sign in, enable panel. Capture at 2x retina.
-# Save as docs/screenshots/github-panel-mac.jpg. Scp back or push via branch.
+# Save as src/renderer/assets/training/github-panel-mac.jpg and scp / commit / push.
 ```
 
-If direct ssh capture is impractical, capture manually on Mac and copy the file into the branch before pushing.
+If direct ssh capture is impractical, capture manually on any macOS machine and drop the file into the branch before pushing.
 
 - [ ] **Step 3: Commit both**
 
 ```bash
-git add docs/screenshots/github-panel.jpg docs/screenshots/github-panel-mac.jpg
+git add src/renderer/assets/training/github-panel.jpg src/renderer/assets/training/github-panel-mac.jpg
 git commit -m "docs(github): add panel screenshots (Windows + macOS)"
+```
+
+Optionally also copy to `docs/screenshots/` for use in README/docs:
+
+```bash
+cp src/renderer/assets/training/github-panel*.jpg docs/screenshots/
+git add docs/screenshots/github-panel*.jpg
+git commit -m "docs(github): mirror panel screenshots in docs/screenshots for README use"
 ```
 
 - [ ] **Step 4: Update existing screenshots if panel overlaps other captures**
@@ -1393,7 +1412,7 @@ export default function AutoDetectBanner({ sessionId, cwd, onAccept, onEdit, onD
   const [slug, setSlug] = useState<string | null>(null)
 
   useEffect(() => {
-    window.electron.github.repoDetect(cwd).then((r) => { if (r.ok) setSlug(r.slug) })
+    window.electronAPI.github.repoDetect(cwd).then((r) => { if (r.ok) setSlug(r.slug) })
   }, [cwd])
 
   if (!slug) return null
@@ -1431,13 +1450,21 @@ import type { AuthProfile } from '../../../shared/github-types'
 
 interface Props { profile: AuthProfile; onRenew: () => void }
 
+// Static className map — Tailwind's class scanner cannot resolve dynamic
+// `bg-${tone}/10` strings, so we ship the complete class strings here.
+const TONE_CLASSES = {
+  red:    'bg-red/10    text-red    border-red/30',
+  peach:  'bg-peach/10  text-peach  border-peach/30',
+  yellow: 'bg-yellow/10 text-yellow border-yellow/30',
+} as const
+
 export default function ExpiryBanner({ profile, onRenew }: Props) {
   if (!profile.expiryObservable || !profile.expiresAt) return null
   const daysLeft = (profile.expiresAt - Date.now()) / 86_400_000
   if (daysLeft > 7) return null
-  const tone = daysLeft < 2 ? 'red' : daysLeft < 7 ? 'peach' : 'yellow'
+  const tone: keyof typeof TONE_CLASSES = daysLeft < 2 ? 'red' : daysLeft < 7 ? 'peach' : 'yellow'
   return (
-    <div className={`bg-${tone}/10 text-${tone} px-3 py-2 text-xs border-b border-${tone}/30 flex items-center gap-2`}>
+    <div className={`${TONE_CLASSES[tone]} px-3 py-2 text-xs border-b flex items-center gap-2`}>
       <span>{profile.label}: PAT expires in {Math.max(Math.ceil(daysLeft), 0)} days.</span>
       <button onClick={onRenew} className="bg-surface0 px-2 py-0.5 rounded">Renew</button>
     </div>

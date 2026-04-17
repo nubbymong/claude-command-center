@@ -3319,7 +3319,10 @@ git commit -m "feat(github): register IPC handlers + wire session config persist
 
 - [ ] **Step 1: Extend preload**
 
-Inside the existing `contextBridge.exposeInMainWorld('electron', { ... })` bridge, add a `github` key. At the top of the file, make sure `IPC` is imported; if another bridged namespace uses `IPC.XXX`, follow that same pattern.
+The existing preload exposes the renderer API as `electronAPI` (not `electron`) via `contextBridge.exposeInMainWorld('electronAPI', electronAPI)`. Also exposed separately: `contextBridge.exposeInMainWorld('electronPlatform', process.platform)`. Extend the existing `electronAPI` object by adding a `github` key inside it; do NOT introduce a separate `window.electron` root.
+
+```ts
+// Inside the existing `const electronAPI: ElectronAPI = { ... }` object:
 
 ```ts
 github: {
@@ -3371,7 +3374,7 @@ github: {
 
 - [ ] **Step 2: Extend `electron.d.ts`**
 
-Add to the `window.electron` interface:
+Add to the `ElectronAPI` interface (the one referenced by `window.electronAPI`):
 
 ```ts
 github: {
@@ -3459,8 +3462,8 @@ npm run dev
 ```
 Open devtools → Console, run:
 ```js
-await window.electron.github.getConfig()   // → null
-await window.electron.github.ghcliDetect() // → { ok: true, users: [...] } (if you have gh authed)
+await window.electronAPI.github.getConfig()   // → null
+await window.electronAPI.github.ghcliDetect() // → { ok: true, users: [...] } (if you have gh authed)
 ```
 
 - [ ] **Step 3: Rebase against latest beta**
@@ -3510,7 +3513,7 @@ gh pr create --base beta --title "feat(github): sidebar infrastructure (PR 1/3)"
 - [x] Unit tests in `tests/unit/github/*` all pass
 - [x] `npm run typecheck` clean
 - [x] `npm run build` clean
-- [ ] Manual: `window.electron.github.ghcliDetect()` returns authed accounts
+- [ ] Manual: `window.electronAPI.github.ghcliDetect()` returns authed accounts
 - [ ] Manual: Add a fine-grained PAT → appears encrypted in `APP_DEV/github-config.json`
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
