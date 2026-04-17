@@ -24,7 +24,7 @@ Each tier produces the same `AuthProfile` abstraction. The rest of the system is
 
 ### Tier 1 — `gh` CLI delegation (zero setup)
 
-- On startup, main runs `gh auth status` to enumerate authed accounts.
+- On startup, main runs `gh auth status 2>&1` (gh writes status to stderr) and parses lines matching `/Logged in to github\.com account (\S+)/` to enumerate authed accounts. The app **never uses `--show-token`** — tokens stay in gh's keychain, fetched per-call as below.
 - For each detected account, an `AuthProfile` with `kind: 'gh-cli'` is created automatically.
 - Tokens fetched fresh per API call via `gh auth token --user <username>` — `--user` is **mandatory**; the app never calls `gh auth switch` itself and never relies on the active-user state. This prevents races if the user runs `gh auth switch` in another terminal.
 - Multi-account comes free — user runs `gh auth login --user <other>` once, the app picks it up on next detection.
@@ -36,9 +36,9 @@ Fail mode: if `gh` binary is missing, or no accounts are authed, the UI shows an
 - One OAuth App registered under the Conductor distributor's GitHub account. Client ID shipped in the bundle as a public constant (RFC 8628 public client). No client secret anywhere.
 - Client ID: `Ov23liOJO5KaUDD9D1bY`
 - User clicks **Sign in with GitHub** → device flow. Scopes requested:
-  - Public-repo default: `public_repo read:org notifications workflow read:discussion`
-  - Private-repo mode (when user toggles "I work on private repos"): `repo read:org notifications workflow read:discussion`
-  - `workflow` included because re-running Actions requires it. `read:discussion` optional (enables the Discussions feature toggle).
+  - Public-repo default: `public_repo read:org notifications workflow`
+  - Private-repo mode (when user toggles "I work on private repos"): `repo read:org notifications workflow`
+  - `workflow` included because re-running Actions requires it. Discussions feature is deferred to v1.x — no `read:discussion` scope requested in v1 to avoid asking for permissions the panel doesn't use.
 - Device code displayed with a one-click **Open GitHub** button opening `https://github.com/login/device`.
 - On approval, main stores the token via `safeStorage` (OS keychain) keyed by profile id.
 
@@ -96,7 +96,9 @@ AuthProfile {
   lastVerifiedAt: number
   lastAuthErrorAt?: number
   expiresAt?: number                      // present only for fine-grained PAT & tokens returning the header
-  neverExpires?: boolean                  // true for OAuth/gh-cli/classic-without-expiry; UI hides expiry for these
+  expiryObservable: boolean               // true if we can observe expiry (fine-grained PAT); false otherwise.
+                                          // OAuth/gh-cli/classic-no-expiry set this false; UI hides expiry field and
+                                          // shows rate-limit + last-verified instead. Revocation still detected via 401.
   rateLimits?: {
     core?: RateLimitSnapshot
     search?: RateLimitSnapshot
@@ -160,6 +162,7 @@ NotificationsCache {
 - Soft cap: 50 repos in `repos` map. On exceed, LRU eviction runs at save time.
 - Hard cap: 10 MB JSON size. On exceed, prune aggressively (evict half LRU) and log.
 - Load failure (JSON parse error / schema version unknown): back up broken file to `github-cache.corrupt-<timestamp>.json`, start fresh, log once. Never throw — cache is a performance optimization, the panel runs without it.
+- **Backup retention:** keep at most the **3 most recent** `.corrupt-*.json` files per cache kind. On each corruption event, after writing the new backup, delete older ones beyond that limit. Prevents disk bloat from repeated corruption (e.g., disk-full scenarios).
 
 Cache survives app restarts. Panel renders instantly on app open from last known data; refresh runs in background.
 
@@ -242,10 +245,30 @@ New section/tab in the existing session config drawer:
 Each has `▼ Name [summary] [primary action]`. Click header toggles collapse. Empty sections collapse to `—` indicator by default.
 
 **Section 1 — Session Context** (session-aware interpretation)
-- Detected issue (with title, state, assignee) — source: branch name + (opt-in) transcript + OAuth enrichment.
-- Files Claude has edited recently — source: session transcript tool-call inspection (always available; not gated behind transcript opt-in because tool-call metadata is not conversation content).
-- Active PR for this branch — source: OAuth enrichment of local branch name.
-- Collapses with "No session context yet" when no signals detected.
+
+The "what is this session working on right now" view. **Single primary item per category** — the Issues section handles exhaustive lists (see Section 5 below for the disambiguation).
+
+Content:
+
+- **Primary detected issue** — *one* issue chosen by priority:
+  1. Branch name matches `^(?:fix|feat|feature|issue|chore|bug)[-_/](\d+)` or bare `^(\d+)[-_]` patterns.
+  2. Most recently mentioned issue in transcript (only if transcript-scanning toggle is ON).
+  3. Issue referenced by `closes|fixes|resolves #NNN` in the linked PR body.
+  Title/state/assignee rendered when OAuth is available; text-only `#NNN` fallback otherwise. If signals disagree, the priority above wins; a small `▸ Other signals (N)` expander lists the non-winning ones.
+
+- **Files Claude recently edited** — derived from session tool-call inspection. **Exact field allowlist (no other tool-call fields are read):**
+  - `Read`, `Write`, `Edit`, `NotebookEdit`, `MultiEdit`: `file_path` argument
+  - `Bash`: the **first token** of the `command` argument only (to categorize), plus extracted path-like arguments when the first token is `git`, `gh`, `cat`, `rm`, `mv`, `cp`, `ls`, `mkdir` (path-arg regex: `^(?:/|~|\./|\.\./|[A-Za-z]:|\w+/)`)
+  - Nothing else is inspected. `old_string`, `new_string`, command bodies beyond the first token, tool-call *results*, assistant message text — never read by this path.
+  - **Cap:** last 20 *distinct* file paths within the last 100 tool calls or last 30 minutes, whichever cap hits first.
+
+- **Active PR for this branch** — derived from session's branch + repo; OAuth-gated. Shows the number + state only (not full CI; that's Section 2).
+
+- **Brand-new session behavior** — if no transcript events exist yet, render whatever local-git + OAuth-enrichment signals are available (branch name, PR for branch). The section is never blank unless the session has no git repo AND no auth.
+
+- **When nothing detectable** — collapses to "No session context yet" placeholder (keeps the section visible so users know the detection is running).
+
+- **SSH session behavior** — tool-call inspection works identically (tool calls live in the local JSONL transcript regardless of where the pty runs). Local git state comes from the same SSH mechanism as repo-URL detection (Section 5).
 
 **Section 2 — Active PR**
 - Title, author, draft state, age.
@@ -268,12 +291,16 @@ Each has `▼ Name [summary] [primary action]`. Click header toggles collapse. E
 - No inline diff viewer in v1. Click-through to GitHub for full context.
 
 **Section 5 — Issues**
+
+**Exhaustive list** of all issues linked to the active PR or the current branch. Contrast with Session Context (Section 1), which shows only the *single primary* issue the session is working on.
+
 - Linked issues detected from:
   - PR body (`closes #N`, `fixes #N`, `resolves #N`).
   - Branch name (e.g. `fix-247-login` → #247).
-  - (Opt-in) recent Claude transcript in the session.
+  - (Opt-in) recent Claude transcript in the session — **all** matched references, not just the primary.
 - Per issue: number, title, state, assignee.
 - Click → Open in GitHub.
+- **Deduplication with Session Context:** if an issue appears as primary in Section 1, it also appears here (for completeness) but with a small `primary` badge so the user knows the two sections agree.
 
 **Section 6 — Local git** (works without auth)
 - File-level breakdown: staged / unstaged / untracked (three expandable lists).
@@ -358,7 +385,7 @@ Content:
 | < 2 days | Red persistent banner; also on app launch |
 | Expired | Panel sections tied to profile show empty state; "Token expired — [Replace]" |
 
-For profiles with `neverExpires: true` (OAuth, gh CLI, classic without expiry), the expiry UI is hidden entirely — the profile shows its rate-limit gauge and last-verified date instead.
+For profiles with `expiryObservable: false` (OAuth, gh CLI, classic without expiry), the expiry UI is hidden entirely — the profile shows its rate-limit gauge and last-verified date instead. Revocation is still detected at runtime via 401 responses; the "Sign in again" banner appears the same way.
 
 Expiry data captured from the response header on every authenticated call — no extra API calls.
 
@@ -380,7 +407,6 @@ Single source of truth for Config page educational text and capability routing.
 | Notifications | **unavailable** | `notifications` | `notifications` | Yes (if login included) |
 | Merge / close PR | Pull requests (RW) | `repo` | `repo` | Yes |
 | Reply / resolve threads | Pull requests (RW) | `repo` | `repo` | Yes |
-| Discussions | Discussions (R / RW) | `repo` | `read:discussion`, `write:discussion` | Yes |
 
 Known fine-grained PAT gaps (feature toggles disabled + tooltip when only fine-grained available):
 - Checks API
@@ -429,7 +455,7 @@ All GitHub-sourced content is treated as untrusted.
 ### Transcript scanning — privacy
 
 - Default **off**. Opt-in via explicit toggle in Config page.
-- When on: scans **last 50 user and assistant messages** of the active session's Claude transcript. Tool call content is *not* scanned (only message text).
+- When on: scans **last 50 user and assistant messages** of the active session's Claude transcript. **Only plain message text is read.** Tool call arguments (`old_string`, `new_string`, command bodies) and tool call results are never read by this scanner. (Note: the Session Context section inspects a narrow allowlist of tool-call *fields* — only `file_path` and first-token-of-command — via a separate code path. That is not transcript scanning; see Section 6 Section 1.)
 - Detection regexes: `#(\d+)\b`, `\bGH-(\d+)\b`, `https?://github\.com/([A-Za-z0-9-]+)/([A-Za-z0-9._-]+)/(?:issues|pull)/(\d+)`.
 - Matched references are rendered as `#N` or `owner/repo#N` text only — no message content excerpt is ever displayed in the panel.
 - Scanning runs in main, results passed to renderer as normalized reference objects. Raw transcript content never crosses IPC for this feature.
@@ -476,6 +502,7 @@ This feature sends no usage data to Anthropic or third parties. Only destination
 - **Cherry-pick / branch-compare UI.**
 - **Inline diff viewer** — gets its own spec when we decide to build it. Would serve multiple surfaces (local git, PR review, agent-intent previews) and deserves independent scoping.
 - **GitHub App installation** — for users who want Checks via properly-scoped app permissions.
+- **Discussions support** — removed from v1 after review (no panel section consumed the `read:discussion`/`write:discussion` OAuth scopes). Add later with a dedicated panel section if user demand materializes.
 
 ## 12. Verification checklist (pre-PR)
 
@@ -493,6 +520,7 @@ This feature sends no usage data to Anthropic or third parties. Only destination
 - gh CLI delegation detects authed accounts on startup; `gh auth switch` in another terminal doesn't poison the app (explicit test)
 - Sanitization test: malicious comment body `<script>alert(1)</script>` + `<a href="javascript:...">` renders safely
 - Cache corruption test: manually break `github-cache.json` → app starts cleanly, logs once, backs file up, cache starts fresh
+- Cache backup retention: simulate 5 corruption events → only 3 most recent `.corrupt-*.json` remain
 - Transcript scanning disabled by default; enabling toggle + resyncing surfaces detected issues
 - Feature toggles for Checks/Notifications on fine-grained-only: disabled with tooltip; adding a classic PAT enables them
 
