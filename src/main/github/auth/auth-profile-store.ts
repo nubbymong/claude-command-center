@@ -13,19 +13,35 @@ export interface AuthProfileStoreIO {
   writeConfig(config: GitHubConfig): Promise<void>
 }
 
-export interface AddProfileInput {
-  kind: AuthProfile['kind']
+/**
+ * Discriminated union keyed by `kind`. Forces callers to supply the right
+ * credential material for each auth flavor at compile time:
+ *   - gh-cli: ghCliUsername required, rawToken forbidden (tokens fetched
+ *     on-demand from gh — never stored)
+ *   - oauth / pat-classic / pat-fine-grained: rawToken required,
+ *     ghCliUsername forbidden
+ */
+interface AddProfileInputCommon {
   label: string
   username: string
   avatarUrl?: string
   scopes: string[]
   capabilities: AuthProfile['capabilities']
   allowedRepos?: string[]
-  rawToken?: string
-  ghCliUsername?: string
   expiresAt?: number
   expiryObservable: boolean
 }
+export type AddProfileInput =
+  | (AddProfileInputCommon & {
+      kind: 'gh-cli'
+      ghCliUsername: string
+      rawToken?: never
+    })
+  | (AddProfileInputCommon & {
+      kind: 'oauth' | 'pat-classic' | 'pat-fine-grained'
+      rawToken: string
+      ghCliUsername?: never
+    })
 
 // Whitelist of fields callers may patch via updateProfile.
 // `tokenCiphertext` is DELIBERATELY excluded — token rotation must go through

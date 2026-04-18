@@ -26,24 +26,35 @@ const UA = 'ClaudeCommandCenter'
  *
  * Return semantics:
  *   - VerifyResult on 2xx
- *   - null on 401 (bad/expired token) or 403 when response body indicates
- *     bad credentials — caller re-prompts for a new token
- *   - THROWS VerifyTransientError on any other non-2xx (5xx, 403 rate-limit,
- *     network-edge) so callers can retry / surface a "temporary issue" state
- *     rather than telling the user their token is bad
+ *   - null on 401 (bad/expired token) or 403 when `x-ratelimit-remaining` is
+ *     not `'0'` (treated as auth failure — could be SSO, org block, or bad
+ *     credentials; caller re-prompts for a new token)
+ *   - THROWS VerifyTransientError on:
+ *       - 403 with `x-ratelimit-remaining: 0` (we hit the rate limit)
+ *       - any other non-2xx status (5xx, 429, etc.)
+ *       - network-level failure (DNS/TCP/timeout — fetch itself throws)
+ *     so callers can retry / show a "temporary issue" state rather than
+ *     telling the user their token is bad
  *
  * Reads scopes from `x-oauth-scopes` (classic PATs and OAuth tokens only —
  * fine-grained PATs return an empty header; capability derivation for those
  * goes through probeRepoAccess).
  */
 export async function verifyToken(token: string): Promise<VerifyResult | null> {
-  const r = await fetch(`${GITHUB_API_BASE}/user`, {
-    headers: {
-      Authorization: `token ${token}`,
-      Accept: 'application/vnd.github+json',
-      'User-Agent': UA,
-    },
-  })
+  let r: Response
+  try {
+    r = await fetch(`${GITHUB_API_BASE}/user`, {
+      headers: {
+        Authorization: `token ${token}`,
+        Accept: 'application/vnd.github+json',
+        'User-Agent': UA,
+      },
+    })
+  } catch {
+    // Network-level failures (DNS, TCP reset, TLS error, timeout) are transient
+    // by definition — never let them surface as "invalid token".
+    throw new VerifyTransientError(0)
+  }
   if (r.ok) {
     const u = (await r.json()) as { login: string; avatar_url?: string }
     const scopes = (r.headers.get('x-oauth-scopes') ?? '')
@@ -60,9 +71,11 @@ export async function verifyToken(token: string): Promise<VerifyResult | null> {
   }
   if (r.status === 401) return null
   if (r.status === 403) {
-    // 403 is ambiguous: bad credentials, rate limited, or blocked by SSO.
-    // x-ratelimit-remaining === '0' means rate-limited; otherwise treat as
-    // an auth failure and return null so the UI prompts re-auth.
+    // 403 is ambiguous: rate-limit vs SSO-blocked vs org-policy vs bad token.
+    // We use `x-ratelimit-remaining === '0'` as the rate-limit signal because
+    // GitHub always sets that header; deeper body inspection would require a
+    // second read and doesn't add reliability. Any other 403 → null (caller
+    // prompts re-auth).
     const remaining = r.headers.get('x-ratelimit-remaining')
     if (remaining === '0') throw new VerifyTransientError(r.status)
     return null

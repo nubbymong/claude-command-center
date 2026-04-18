@@ -1,4 +1,4 @@
-import { promises as fs, existsSync, statSync } from 'node:fs'
+import { promises as fs, existsSync } from 'node:fs'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { GitHubConfig } from '../../shared/github-types'
@@ -32,19 +32,26 @@ export class GitHubConfigStore {
   }
 
   async read(): Promise<GitHubConfig | null> {
-    try {
-      const raw = await fs.readFile(this.filePath, 'utf8')
-      const parsed = JSON.parse(raw)
-      if (parsed.schemaVersion !== GITHUB_CONFIG_SCHEMA_VERSION) {
-        await this.backupUnknownSchemaFile(raw, parsed.schemaVersion)
+    // Serialize with write() on the same mutex. The overwrite path uses
+    // copyFile which is NOT atomic at the byte level — a concurrent read
+    // could observe a partially-copied destination and fail JSON.parse.
+    // Reads don't mutate, so they queue behind writes without blocking
+    // each other (the mutex just prevents interleaving with write chunks).
+    return this.mutex.run(async () => {
+      try {
+        const raw = await fs.readFile(this.filePath, 'utf8')
+        const parsed = JSON.parse(raw)
+        if (parsed.schemaVersion !== GITHUB_CONFIG_SCHEMA_VERSION) {
+          await this.backupUnknownSchemaFile(raw, parsed.schemaVersion)
+          return null
+        }
+        return parsed as GitHubConfig
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null
+        console.warn('[github-config] read failed:', redactTokens(String(err)))
         return null
       }
-      return parsed as GitHubConfig
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null
-      console.warn('[github-config] read failed:', redactTokens(String(err)))
-      return null
-    }
+    })
   }
 
   async write(config: GitHubConfig): Promise<void> {
@@ -111,24 +118,40 @@ export class GitHubConfigStore {
 
   private async pruneBackups(): Promise<void> {
     // Keep the most-recent CACHE_CORRUPT_BACKUPS_KEEP backups; delete older
-    // ones so the dir doesn't grow unbounded.
+    // ones so the dir doesn't grow unbounded. Fully async — don't block the
+    // event loop with statSync.
     try {
       const entries = await fs.readdir(this.dir)
-      const backups = entries
-        .filter((e) => e.startsWith(`${FILENAME}.v`) && e.endsWith('.bak'))
-        .map((name) => {
+      const candidates = entries.filter(
+        (e) => e.startsWith(`${FILENAME}.v`) && e.endsWith('.bak'),
+      )
+      // Stat all candidates in parallel. Tolerate races where a file
+      // disappears between readdir and stat (another process or retention
+      // pass could have removed it).
+      const stats = await Promise.all(
+        candidates.map(async (name) => {
           const full = path.join(this.dir, name)
-          return { name, full, mtimeMs: statSync(full).mtimeMs }
-        })
+          try {
+            const s = await fs.stat(full)
+            return { full, mtimeMs: s.mtimeMs }
+          } catch {
+            return null
+          }
+        }),
+      )
+      const backups = stats
+        .filter((s): s is { full: string; mtimeMs: number } => s !== null)
         .sort((a, b) => b.mtimeMs - a.mtimeMs)
 
-      for (const old of backups.slice(CACHE_CORRUPT_BACKUPS_KEEP)) {
-        try {
-          await fs.unlink(old.full)
-        } catch {
-          /* ignore single-file prune failures */
-        }
-      }
+      await Promise.all(
+        backups.slice(CACHE_CORRUPT_BACKUPS_KEEP).map(async (old) => {
+          try {
+            await fs.unlink(old.full)
+          } catch {
+            /* ignore single-file prune failures */
+          }
+        }),
+      )
     } catch {
       /* best-effort */
     }
