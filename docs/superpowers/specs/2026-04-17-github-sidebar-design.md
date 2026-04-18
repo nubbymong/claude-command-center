@@ -1,8 +1,8 @@
 # GitHub Sidebar — Design Spec
 
-Date: 2026-04-17 (rev 5)
+Date: 2026-04-17 (rev 6)
 Branch: beta
-Status: Approved design, ready for implementation plan
+Status: Under review — iterating on PR #13. Implementation begins after PR #13 merges to main and beta is synced.
 
 Rev history:
 - rev 1 (initial) — internal review pass.
@@ -10,6 +10,7 @@ Rev history:
 - rev 3 — second independent review pass: tightened tool-call inspection field allowlist, disambiguated Session Context vs Issues sections, expanded Session Context priority rules + SSH behavior + empty-session behavior, dropped Discussions from v1 scope, renamed `neverExpires` → `expiryObservable`, cache-corruption backup retention, `gh auth status` parsing approach documented.
 - rev 4 — Copilot re-review pass: dropped `<img>` from markdown allowlist to match app CSP, added `seenOnboardingVersion` to the `GitHubConfig` data model, reconciled the "Master enable toggle" copy with `enabledByDefault`-only semantics, corrected GraphQL rate-limit budget (point/cost based, not requests/hour) and per-bucket shield math, removed a leftover `neverExpires` reference.
 - rev 5 — Copilot 3rd pass (CSP ripple effects): explicit `dangerouslySetInnerHTML` carve-out for a single audited `SanitizedMarkdown` render site; sanitizer URL scheme policy narrowed to `https:` only; delegated anchor-click routing through `window.electronAPI.shell.openExternal`; avatar strategy standardized on initials monograms (no remote `<img>`, no CSP loosening); dedicated `GITHUB_SYNC_FOCUSED_NOW` IPC replaces the ambiguous empty-string sentinel; onboarding logic explicitly treats `'permanent'` as terminal opt-out.
+- rev 6 — Copilot 4th pass: aligned status header with PR-review posture; narrowed `SessionGitHubIntegration.authProfileId` sentinel to `undefined` only (dropped `null` from spec prose); PR 3 rate-limit-aware `scheduleNext` race fixed (backoff timer no longer clobbered by outer `finally`); PR 2 feature toggle forced to `false` when capability becomes unavailable so config and UI stay consistent; PR 3 SSH repo detector contract documents `cwd` as shell-escape-required for any downstream use in `sendOneShot`.
 
 ## 1. Goal & user value
 
@@ -119,7 +120,7 @@ Capability = 'pulls' | 'issues' | 'contents' | 'statuses' |
              'checks' | 'actions' | 'notifications' | 'discussions'
 ```
 
-**Semantics of `SessionConfig.githubIntegration.authProfileId`:** undefined/null means "use capability routing fallback" (not "no auth" — the session still gets auth if a profile can serve it). `enabled: false` is the explicit opt-out.
+**Semantics of `SessionConfig.githubIntegration.authProfileId`:** `undefined` (the field is absent, or cleared to `undefined`) means "use capability routing fallback" — the session still gets auth if a profile can serve it. `null` is not a valid value; code must treat an unset preference as `undefined` only. `enabled: false` is the explicit opt-out.
 
 Per-session extension in `SessionConfig`:
 
@@ -128,7 +129,7 @@ session.githubIntegration?: {
   enabled: boolean
   repoUrl?: string
   repoSlug?: string                       // derived, normalized owner/repo
-  authProfileId?: string                  // explicit preference; null = use fallback
+  authProfileId?: string                  // explicit preference; absent/undefined = use fallback (null is not a valid value)
   autoDetected: boolean
   panelWidth?: number
   collapsedSections?: Record<string, boolean>

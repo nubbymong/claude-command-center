@@ -8,7 +8,7 @@
 
 **Tech Stack:** Electron 33 + TypeScript; Node built-in `fetch`; `isomorphic-dompurify` (installed in PR 2); vitest.
 
-**Spec:** `docs/superpowers/specs/2026-04-17-github-sidebar-design.md` (rev 5).
+**Spec:** `docs/superpowers/specs/2026-04-17-github-sidebar-design.md` (rev 6).
 
 **Branch:** `feature/github-sidebar-pr1` off `beta`. **PR target:** `beta`.
 
@@ -3511,7 +3511,7 @@ gh pr create --base beta --title "feat(github): sidebar infrastructure (PR 1/3)"
 
 ## Spec
 
-`docs/superpowers/specs/2026-04-17-github-sidebar-design.md` (rev 5)
+`docs/superpowers/specs/2026-04-17-github-sidebar-design.md` (rev 6)
 
 ## Test plan
 

@@ -8,7 +8,7 @@
 
 **Tech Stack:** React 18 + TypeScript + Zustand 5; `marked@15` (already installed) + `isomorphic-dompurify` (installed in this PR); existing Tailwind theme.
 
-**Spec:** `docs/superpowers/specs/2026-04-17-github-sidebar-design.md` (rev 5).
+**Spec:** `docs/superpowers/specs/2026-04-17-github-sidebar-design.md` (rev 6).
 
 **Branch:** `feature/github-sidebar-pr2` off `beta`. **PR target:** `beta`.
 
@@ -1055,22 +1055,46 @@ export default function FeatureTogglesList() {
   const availableCaps = new Set<Capability>()
   for (const p of profiles) for (const c of p.capabilities) availableCaps.add(c)
 
+  // Reconcile persisted toggle state with current capability availability.
+  // If a feature's capabilities became unreachable (profile removed, scopes
+  // narrowed, etc.), force the stored toggle to false so config, UI, and
+  // PermissionsSummary stay consistent. Fires as an effect so it persists,
+  // not just a render-time mask.
+  useEffect(() => {
+    if (!config) return
+    const fixed: Record<string, boolean> = { ...config.featureToggles }
+    let changed = false
+    for (const f of FEATURES) {
+      const unavailable = f.requiredCapabilities.some((c) => !availableCaps.has(c))
+      if (unavailable && fixed[f.key]) {
+        fixed[f.key] = false
+        changed = true
+      }
+    }
+    if (changed) updateConfig({ featureToggles: fixed })
+  }, [config?.featureToggles, profiles])
+
   return (
     <section>
       <h3 className="text-sm uppercase text-subtext0 mb-3">Features</h3>
       <div className="space-y-2">
         {FEATURES.map((f) => {
           const unavailable = f.requiredCapabilities.some((c) => !availableCaps.has(c))
-          const enabled = !!config.featureToggles[f.key]
+          // enabled is gated on availability — a disabled+unavailable toggle
+          // never persists as true thanks to the reconcile effect above.
+          const enabled = !unavailable && !!config.featureToggles[f.key]
           return (
             <div key={f.key} className="bg-mantle p-3 rounded flex items-start gap-3" style={{ opacity: unavailable ? 0.6 : 1 }}>
               <input
                 type="checkbox"
                 disabled={unavailable}
-                checked={enabled && !unavailable}
-                onChange={(e) => updateConfig({
-                  featureToggles: { ...config.featureToggles, [f.key]: e.target.checked },
-                })}
+                checked={enabled}
+                onChange={(e) => {
+                  if (unavailable) return // defensive — input is disabled but belt-and-braces
+                  updateConfig({
+                    featureToggles: { ...config.featureToggles, [f.key]: e.target.checked },
+                  })
+                }}
                 className="mt-1"
                 aria-label={f.label}
               />

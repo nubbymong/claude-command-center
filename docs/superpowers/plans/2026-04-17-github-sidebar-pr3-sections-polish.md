@@ -126,12 +126,19 @@ const START = '__CC_GIT_START__'
 const END = '__CC_GIT_END__'
 
 /**
- * Sends a one-shot command to an SSH pty and extracts the remote URL from
- * between sentinels. `sendOneShot` is provided by the caller (pty-manager).
+ * Sends a one-shot command to an SSH pty and returns its stdout.
+ *
+ * IMPORTANT: This type intentionally does NOT take a `cwd` argument.
+ * The detector builds its own `git -C <escaped cwd>` command and hands
+ * the fully-shell-escaped string to `sendOneShot`. If a helper variant
+ * accepts a `cwd` and internally interpolates it into a shell string
+ * (e.g. `cd ${cwd} && ${cmd}`), the interpolation MUST use a POSIX
+ * single-quote escape — mirror `posixShellEscape` in pty-manager, or
+ * reuse this helper. Never pass a raw user-influenced `cwd` into any
+ * shell fragment without escaping.
  */
 export type SendOneShotSSH = (
   sessionId: string,
-  cwd: string,
   command: string,
   timeoutMs?: number,
 ) => Promise<string>
@@ -142,7 +149,7 @@ export type SendOneShotSSH = (
  * leaving an injection path if `cwd` contains `$(rm -rf ~)` etc.
  * Single-quote wrapping disables all expansion; escape embedded `'` as `'\''`.
  */
-function posixShellEscape(arg: string): string {
+export function posixShellEscape(arg: string): string {
   return `'${arg.replace(/'/g, `'\\''`)}'`
 }
 
@@ -158,7 +165,10 @@ export async function detectRepoFromSshSession(
   const cmd = `echo ${START}; git -C ${posixShellEscape(cwd)} remote get-url origin 2>/dev/null; echo ${END}`
   let output: string
   try {
-    output = await sendOneShot(sessionId, cwd, cmd, 5000)
+    // cwd is NOT passed to sendOneShot — the command already embeds it safely
+    // via posixShellEscape. This keeps the injection surface to a single, audited
+    // interpolation site.
+    output = await sendOneShot(sessionId, cmd, 5000)
   } catch {
     return null
   }
@@ -333,6 +343,9 @@ interface SessionState {
   timer?: NodeJS.Timeout
   focused: boolean
   lastSync: number
+  // Set by doSync when a RateLimitError lands; scheduleNext reads this to
+  // delay the next attempt until after the reset. Cleared on next success.
+  rateLimitedUntil?: number
 }
 
 export class SyncOrchestrator {
@@ -372,13 +385,26 @@ export class SyncOrchestrator {
     const s = this.sessions.get(id)
     if (!s) return
     if (s.timer) clearTimeout(s.timer)
-    const cfg = await this.deps.getConfig()
-    const intervalSec = s.focused
-      ? cfg?.syncIntervals.activeSessionSec ?? 60
-      : cfg?.syncIntervals.backgroundSec ?? 300
+
+    // If we're in rate-limit backoff, wait until reset before next sync.
+    // Without this, the outer `finally(() => scheduleNext)` below would
+    // immediately replace the reset-based timer with the normal interval
+    // and defeat the backoff — defeating the whole point of the shield.
+    let delayMs: number
+    const now = Date.now()
+    if (s.rateLimitedUntil && now < s.rateLimitedUntil) {
+      delayMs = Math.max(s.rateLimitedUntil - now + 1000, 1000)
+    } else {
+      const cfg = await this.deps.getConfig()
+      const intervalSec = s.focused
+        ? cfg?.syncIntervals.activeSessionSec ?? 60
+        : cfg?.syncIntervals.backgroundSec ?? 300
+      delayMs = intervalSec * 1000
+    }
+
     s.timer = setTimeout(() => {
       this.doSync(id).finally(() => this.scheduleNext(id))
-    }, intervalSec * 1000)
+    }, delayMs)
   }
 
   private async doSync(sessionId: string) {
@@ -420,20 +446,22 @@ export class SyncOrchestrator {
       this.deps.emitData({ slug: s.slug, data: existing })
       this.deps.emitSyncState({ slug: s.slug, state: 'synced', at: Date.now() })
       s.lastSync = Date.now()
+      // Clear any prior rate-limit backoff — we just succeeded.
+      s.rateLimitedUntil = undefined
     } catch (err: any) {
       if (err?.name === 'RateLimitError') {
+        // Record the backoff deadline on the session. scheduleNext honors it
+        // and schedules the next attempt for that time — don't set a timer
+        // here directly: the outer `finally(() => scheduleNext)` would race
+        // and clobber it. `rateLimitedUntil` is cleared on the next successful
+        // sync (see the try-branch above).
+        s.rateLimitedUntil = err.resetAt
         this.deps.emitSyncState({
           slug: s.slug,
           state: 'rate-limited',
           at: Date.now(),
           nextResetAt: err.resetAt,
         })
-        // Skip further scheduleNext until reset
-        if (s.timer) clearTimeout(s.timer)
-        s.timer = setTimeout(
-          () => this.doSync(sessionId).finally(() => this.scheduleNext(sessionId)),
-          Math.max(err.resetAt - Date.now() + 1000, 1000),
-        )
       } else {
         this.deps.emitSyncState({ slug: s.slug, state: 'error', at: Date.now() })
       }
@@ -1628,7 +1656,7 @@ PR 1 + PR 2 merged
 
 ## Spec
 
-`docs/superpowers/specs/2026-04-17-github-sidebar-design.md` (rev 5)
+`docs/superpowers/specs/2026-04-17-github-sidebar-design.md` (rev 6)
 
 ## Test plan
 
