@@ -913,7 +913,7 @@ git commit -m "feat(github): CISection with workflow runs + re-run action"
 import React, { useState } from 'react'
 import SectionFrame from '../SectionFrame'
 import { useGitHubStore } from '../../../stores/githubStore'
-import { renderCommentMarkdown } from '../../../utils/markdownSanitizer'
+import { SanitizedMarkdown } from '../../SanitizedMarkdown'
 
 interface Props { sessionId: string; slug?: string }
 
@@ -945,7 +945,13 @@ export default function ReviewsSection({ sessionId, slug }: Props) {
       <div className="space-y-3 text-xs">
         {reviews.map((r) => (
           <div key={r.id} className="flex items-center gap-2 text-overlay1">
-            {r.reviewerAvatarUrl && <img src={r.reviewerAvatarUrl} alt={r.reviewer} className="w-5 h-5 rounded-full" />}
+            {/* Initials monogram per spec §9 avatar strategy — CSP blocks remote https <img>. */}
+            <div
+              className="w-5 h-5 rounded-full bg-surface0 text-text flex items-center justify-center text-[9px] font-semibold shrink-0"
+              aria-hidden="true"
+            >
+              {r.reviewer.trim().slice(0, 2).toUpperCase()}
+            </div>
             <span>@{r.reviewer}</span>
             <span className={r.state === 'APPROVED' ? 'text-green' : r.state === 'CHANGES_REQUESTED' ? 'text-red' : 'text-overlay1'}>
               {r.state.toLowerCase().replace('_', ' ')}
@@ -957,11 +963,12 @@ export default function ReviewsSection({ sessionId, slug }: Props) {
             <div className="text-overlay0">
               @{t.commenter} on <code className="text-peach">{t.file}:{t.line}</code>
             </div>
-            <div
-              className="prose prose-invert prose-sm max-w-none text-text"
-              // eslint-disable-next-line react/no-danger -- sanitized via renderCommentMarkdown
-              dangerouslySetInnerHTML={{ __html: renderCommentMarkdown(t.bodyMarkdown) }}
-            />
+            {/* Spec §9: the ONLY dangerouslySetInnerHTML site in the feature lives
+                inside SanitizedMarkdown (see PR 2 plan). It also installs the delegated
+                onClick that routes <a href=https://...> clicks through
+                window.electronAPI.shell.openExternal — required because the app blocks
+                will-navigate and denies window.open, so raw anchors would be inert. */}
+            <SanitizedMarkdown source={t.bodyMarkdown} />
             {replyingTo === t.id ? (
               <div className="flex gap-1">
                 <input
@@ -1120,7 +1127,7 @@ git commit -m "feat(github): NotificationsSection (per-profile selector)"
 
 - [ ] **Dispatch `superpowers:code-reviewer`** with prompt:
 
-> "Review PR 3 panel section implementations (L2a–L2g). Verify: ReviewsSection is the ONLY `dangerouslySetInnerHTML` in the feature's React tree and uses `renderCommentMarkdown`; all external links use `rel='noreferrer'`; polling timers clean up on unmount; error/empty states render safely without crashing."
+> "Review PR 3 panel section implementations (L2a–L2g). Verify: the `SanitizedMarkdown` wrapper (defined in PR 2) is the ONLY `dangerouslySetInnerHTML` render site in the feature's React tree, and every rendered markdown body passes through it; anchor clicks inside that container route through `window.electronAPI.shell.openExternal` and drop non-https; polling timers clean up on unmount; error/empty states render safely without crashing."
 
 Apply findings before Phase N.
 
@@ -1185,6 +1192,10 @@ const githubConfig = useGitHubStore((s) => s.config)
 
 useEffect(() => {
   if (!githubConfig) return
+  // 'permanent' is the terminal opt-out set by the "Don't show again" checkbox.
+  // Must be checked BEFORE the version comparison, otherwise users who opted
+  // out would see the modal re-open on every app update.
+  if (githubConfig.seenOnboardingVersion === 'permanent') return
   const currentVersion = __APP_VERSION__ /* inject in vite config or import */
   if (githubConfig.seenOnboardingVersion !== currentVersion) {
     setShowOnboard(true)
@@ -1617,7 +1628,7 @@ PR 1 + PR 2 merged
 
 ## Spec
 
-`docs/superpowers/specs/2026-04-17-github-sidebar-design.md` (rev 4)
+`docs/superpowers/specs/2026-04-17-github-sidebar-design.md` (rev 5)
 
 ## Test plan
 

@@ -8,7 +8,7 @@
 
 **Tech Stack:** React 18 + TypeScript + Zustand 5; `marked@15` (already installed) + `isomorphic-dompurify` (installed in this PR); existing Tailwind theme.
 
-**Spec:** `docs/superpowers/specs/2026-04-17-github-sidebar-design.md` (rev 4).
+**Spec:** `docs/superpowers/specs/2026-04-17-github-sidebar-design.md` (rev 5).
 
 **Branch:** `feature/github-sidebar-pr2` off `beta`. **PR target:** `beta`.
 
@@ -349,9 +349,18 @@ describe('renderCommentMarkdown', () => {
   it('keeps https: links', () => {
     expect(renderCommentMarkdown('[x](https://example.com)')).toContain('href="https://example.com"')
   })
-  it('keeps image with https:', () => {
+  it('strips <img> entirely (CSP img-src does not allow https:)', () => {
     const h = renderCommentMarkdown('![alt](https://a/b.png)')
-    expect(h).toContain('src="https://a/b.png"')
+    expect(h).not.toMatch(/<img/i)
+  })
+  it('strips http: links (https only)', () => {
+    expect(renderCommentMarkdown('[x](http://example.com)')).not.toMatch(/href="http:/i)
+  })
+  it('strips mailto: links (navigation would be inert under app CSP)', () => {
+    expect(renderCommentMarkdown('[x](mailto:a@b)')).not.toMatch(/href="mailto:/i)
+  })
+  it('strips bare fragment # links', () => {
+    expect(renderCommentMarkdown('[x](#anchor)')).not.toMatch(/href="#/i)
   })
   it('strips data: URIs', () => {
     const h = renderCommentMarkdown('[x](data:text/html,<script>bad</script>)')
@@ -375,14 +384,17 @@ import DOMPurify from 'isomorphic-dompurify'
 
 marked.setOptions({ breaks: true, gfm: true })
 
+// No <img>: app CSP is `img-src 'self' data: file:` so remote https images
+// would not render; loosening CSP would expose a remote-image attack surface.
+// No <table> either (reviews/PRs rarely need tables and the simpler allowlist
+// leaves less attack surface).
 const ALLOWED_TAGS = [
   'a', 'p', 'br', 'em', 'strong', 'code', 'pre',
   'ul', 'ol', 'li', 'blockquote', 'hr',
   'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
-  'img', 'table', 'thead', 'tbody', 'tr', 'th', 'td',
   'del', 's',
 ]
-const ALLOWED_ATTR = ['href', 'title', 'src', 'alt']
+const ALLOWED_ATTR = ['href', 'title']
 
 export function renderCommentMarkdown(md: string): string {
   if (typeof md !== 'string') return ''
@@ -390,18 +402,61 @@ export function renderCommentMarkdown(md: string): string {
   return DOMPurify.sanitize(raw, {
     ALLOWED_TAGS,
     ALLOWED_ATTR,
-    ALLOWED_URI_REGEXP: /^(?:https?:|mailto:|#)/i,
+    // https only. `will-navigate` is blocked and `window.open` is denied, so
+    // any navigation has to go through `shell.openExternal(https://...)` in
+    // main. mailto: / http: / # / javascript: are stripped by this regex.
+    ALLOWED_URI_REGEXP: /^https:/i,
     FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover'],
   })
 }
 ```
 
-- [ ] **Step 4: Run + commit**
+- [ ] **Step 4: Add `SanitizedMarkdown` React wrapper**
+
+Spec §9 carves out exactly one audited `dangerouslySetInnerHTML` site per markdown render. This component is that site. No other component in the feature may use `dangerouslySetInnerHTML`.
+
+```tsx
+// src/renderer/components/github/SanitizedMarkdown.tsx
+import { renderCommentMarkdown } from '../../utils/markdownSanitizer'
+
+/**
+ * Single audited render site for sanitized GitHub markdown.
+ *
+ * Sanitizer output only: never pass user-provided HTML directly.
+ * Anchor click routing: renderer blocks `will-navigate` and `window.open`, so
+ * raw `<a href>` links would be inert. Delegated onClick intercepts `<a>`
+ * clicks, preventDefaults the navigation, validates https-only, and routes
+ * through `window.electronAPI.shell.openExternal`.
+ */
+export function SanitizedMarkdown({ source }: { source: string }) {
+  const html = renderCommentMarkdown(source)
+  return (
+    <div
+      className="prose prose-invert text-sm max-w-none"
+      dangerouslySetInnerHTML={{ __html: html }}
+      onClick={(e) => {
+        const target = (e.target as HTMLElement).closest('a') as HTMLAnchorElement | null
+        if (!target) return
+        e.preventDefault()
+        const href = target.getAttribute('href') ?? ''
+        if (/^https:/i.test(href)) {
+          window.electronAPI.shell.openExternal(href)
+        }
+        // non-https anchors are inert by design; sanitizer strips them anyway.
+      }}
+    />
+  )
+}
+```
+
+- [ ] **Step 5: Run + commit**
 
 ```bash
 npx vitest run tests/unit/github/markdown-sanitizer.test.ts
-git add src/renderer/utils/markdownSanitizer.ts tests/unit/github/markdown-sanitizer.test.ts
-git commit -m "feat(github): markdown sanitizer (marked + DOMPurify allowlist + XSS coverage)"
+git add src/renderer/utils/markdownSanitizer.ts \
+        src/renderer/components/github/SanitizedMarkdown.tsx \
+        tests/unit/github/markdown-sanitizer.test.ts
+git commit -m "feat(github): markdown sanitizer + SanitizedMarkdown render site (https-only, CSP-safe)"
 ```
 
 ---
@@ -597,9 +652,16 @@ export default function AuthProfilesList() {
         )}
         {profiles.map((p) => (
           <div key={p.id} className="bg-mantle p-3 rounded flex items-start gap-3">
-            {p.avatarUrl && (
-              <img src={p.avatarUrl} alt={p.username} className="w-8 h-8 rounded-full" />
-            )}
+            {/* Per spec §9 avatar strategy: no remote https <img> under app CSP.
+                v1 ships initials-only; avatarUrl is persisted for future main-process
+                proxy that converts to data: URLs. */}
+            <div
+              className="w-8 h-8 rounded-full bg-surface0 text-text text-xs font-semibold flex items-center justify-center shrink-0"
+              aria-label={`${p.username} avatar`}
+              title={p.username}
+            >
+              {(p.label || p.username).trim().slice(0, 2).toUpperCase()}
+            </div>
             <div className="flex-1 min-w-0">
               {editingId === p.id ? (
                 <input
@@ -1226,9 +1288,10 @@ export default function SyncSettings() {
   const syncActiveNow = async () => {
     if (Date.now() - lastClick < 5000) return
     setLastClick(Date.now())
-    // Active session id isn't known here; the button only triggers a global
-    // "sync focused session" call — the main process resolves it. Pass null.
-    await window.electronAPI.github.syncNow('')
+    // Active session id is not known to this component; use the dedicated
+    // "sync focused session" IPC so main resolves it explicitly. Avoids
+    // an ambiguous empty-string sentinel on the per-session syncNow channel.
+    await window.electronAPI.github.syncFocusedNow()
   }
 
   return (

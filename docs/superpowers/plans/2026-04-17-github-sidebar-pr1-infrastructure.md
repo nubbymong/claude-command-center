@@ -8,7 +8,7 @@
 
 **Tech Stack:** Electron 33 + TypeScript; Node built-in `fetch`; `isomorphic-dompurify` (installed in PR 2); vitest.
 
-**Spec:** `docs/superpowers/specs/2026-04-17-github-sidebar-design.md` (rev 4).
+**Spec:** `docs/superpowers/specs/2026-04-17-github-sidebar-design.md` (rev 5).
 
 **Branch:** `feature/github-sidebar-pr1` off `beta`. **PR target:** `beta`.
 
@@ -510,6 +510,7 @@ Append (inside the `export const IPC = { ... }` object):
   GITHUB_SESSION_CONTEXT_GET: 'github:session:context:get',
   GITHUB_LOCALGIT_GET: 'github:localgit:get',
   GITHUB_SYNC_NOW: 'github:sync:now',
+  GITHUB_SYNC_FOCUSED_NOW: 'github:sync:focused:now',
   GITHUB_SYNC_PAUSE: 'github:sync:pause',
   GITHUB_SYNC_RESUME: 'github:sync:resume',
   GITHUB_DATA_GET: 'github:data:get',
@@ -3253,6 +3254,9 @@ export function registerGitHubHandlers(deps: RegisterDeps) {
   ipcMain.handle(IPC.GITHUB_DATA_GET, async () => ({ ok: true, data: null }))
   ipcMain.handle(IPC.GITHUB_SESSION_CONTEXT_GET, async () => ({ ok: true, data: null }))
   ipcMain.handle(IPC.GITHUB_SYNC_NOW, async () => ({ ok: true }))
+  // Resolves the focused session server-side so renderer never needs to know
+  // which sessionId is active. Real implementation lands in PR 3 orchestrator.
+  ipcMain.handle(IPC.GITHUB_SYNC_FOCUSED_NOW, async () => ({ ok: true }))
   ipcMain.handle(IPC.GITHUB_SYNC_PAUSE, async () => ({ ok: true }))
   ipcMain.handle(IPC.GITHUB_SYNC_RESUME, async () => ({ ok: true }))
   ipcMain.handle(IPC.GITHUB_ACTIONS_RERUN, async () => ({ ok: true }))
@@ -3344,6 +3348,7 @@ github: {
     ipcRenderer.invoke(IPC.GITHUB_SESSION_CONFIG_UPDATE, sessionId, patch),
   getLocalGit: (cwd: string) => ipcRenderer.invoke(IPC.GITHUB_LOCALGIT_GET, cwd),
   syncNow: (sessionId: string) => ipcRenderer.invoke(IPC.GITHUB_SYNC_NOW, sessionId),
+  syncFocusedNow: () => ipcRenderer.invoke(IPC.GITHUB_SYNC_FOCUSED_NOW),
   syncPause: () => ipcRenderer.invoke(IPC.GITHUB_SYNC_PAUSE),
   syncResume: () => ipcRenderer.invoke(IPC.GITHUB_SYNC_RESUME),
   getData: (slug: string) => ipcRenderer.invoke(IPC.GITHUB_DATA_GET, slug),
@@ -3506,7 +3511,7 @@ gh pr create --base beta --title "feat(github): sidebar infrastructure (PR 1/3)"
 
 ## Spec
 
-`docs/superpowers/specs/2026-04-17-github-sidebar-design.md` (rev 4)
+`docs/superpowers/specs/2026-04-17-github-sidebar-design.md` (rev 5)
 
 ## Test plan
 

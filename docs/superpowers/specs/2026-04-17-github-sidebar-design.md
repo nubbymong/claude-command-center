@@ -1,6 +1,6 @@
 # GitHub Sidebar — Design Spec
 
-Date: 2026-04-17 (rev 4)
+Date: 2026-04-17 (rev 5)
 Branch: beta
 Status: Approved design, ready for implementation plan
 
@@ -9,6 +9,7 @@ Rev history:
 - rev 2 — addressed reviewer findings: removed DiffViewerPane dependency, dropped PTY push-trigger, notifications per-profile, gh CLI concurrency, factual rate-limit corrections, expanded security coverage, added Session Context section.
 - rev 3 — second independent review pass: tightened tool-call inspection field allowlist, disambiguated Session Context vs Issues sections, expanded Session Context priority rules + SSH behavior + empty-session behavior, dropped Discussions from v1 scope, renamed `neverExpires` → `expiryObservable`, cache-corruption backup retention, `gh auth status` parsing approach documented.
 - rev 4 — Copilot re-review pass: dropped `<img>` from markdown allowlist to match app CSP, added `seenOnboardingVersion` to the `GitHubConfig` data model, reconciled the "Master enable toggle" copy with `enabledByDefault`-only semantics, corrected GraphQL rate-limit budget (point/cost based, not requests/hour) and per-bucket shield math, removed a leftover `neverExpires` reference.
+- rev 5 — Copilot 3rd pass (CSP ripple effects): explicit `dangerouslySetInnerHTML` carve-out for a single audited `SanitizedMarkdown` render site; sanitizer URL scheme policy narrowed to `https:` only; delegated anchor-click routing through `window.electronAPI.shell.openExternal`; avatar strategy standardized on initials monograms (no remote `<img>`, no CSP loosening); dedicated `GITHUB_SYNC_FOCUSED_NOW` IPC replaces the ambiguous empty-string sentinel; onboarding logic explicitly treats `'permanent'` as terminal opt-out.
 
 ## 1. Goal & user value
 
@@ -183,7 +184,7 @@ New tab in the existing Settings/Config UI.
 - To fully disable GitHub activity globally, the user removes all auth profiles (no profile → no calls) and disables the feature toggles — there is no separate global kill-switch in v1.
 
 **Auth profiles list**
-- Per profile: avatar, username, label, kind badge, scopes summary, expiry (shown only when `expiryObservable` is true on the profile), rate-limit gauge (core bucket).
+- Per profile: avatar (initials badge per §9 avatar strategy — no remote `<img>`), username, label, kind badge, scopes summary, expiry (shown only when `expiryObservable` is true on the profile), rate-limit gauge (core bucket).
 - Per-profile actions: Test (hits `/user` + `/rate_limit`), Rename, Remove.
 - Primary CTA: **Sign in with GitHub** → Tier 2 device flow.
 - Secondary: `▸ Advanced auth options` expands to show detected gh CLI accounts (auto-listed, one-click "Use this") and PAT paste forms (fine-grained + classic).
@@ -452,10 +453,13 @@ A redaction wrapper sits in front of the existing logger. Any log line containin
 
 All GitHub-sourced content is treated as untrusted.
 
-- Comment bodies: rendered as markdown via a sanitized pipeline (e.g., `marked` + `DOMPurify`), allowlist for `<a>`, `<code>`, `<pre>`, `<ul>`, `<ol>`, `<li>`, `<em>`, `<strong>`, `<blockquote>`. Do **not** allow `<img>` — the app CSP restricts `img-src 'self' data: file:` (no `https:`), so remote images from GitHub comments would not render and loosening CSP would allow arbitrary remote-image loads from untrusted content. Images in comment bodies are rendered as their source-URL link text instead. No `<script>`, no inline event handlers, no `javascript:` href.
+- Comment bodies: rendered as markdown via a sanitized pipeline (`marked` + `isomorphic-dompurify`). Tag allowlist: `<a>`, `<code>`, `<pre>`, `<ul>`, `<ol>`, `<li>`, `<em>`, `<strong>`, `<blockquote>`. Do **not** allow `<img>` — the app CSP restricts `img-src 'self' data: file:` (no `https:`), so remote images would not render and loosening CSP would expose a remote-image attack surface from untrusted comment content. Images in markdown source are rendered as their source-URL link text instead. No `<script>`, no inline event handlers, no `javascript:` href.
+- Sanitizer URL scheme policy: allow `https:` only on `<a href>`. Strip `http:`, `mailto:`, `javascript:`, bare fragment `#`, and all other schemes — the renderer blocks `will-navigate` and `window.open`, so the only navigation that actually works is main-process `shell.openExternal(https://...)`.
+- Anchor click routing: the single sanitized-HTML render site wraps its output in a container with a delegated `onClick` handler that intercepts `<a>` clicks, calls `event.preventDefault()`, validates the href is `https://`, and routes through `window.electronAPI.shell.openExternal(href)`. Non-https anchors are inert by design.
 - Usernames, branch names, PR titles, issue titles, repo names, file paths: rendered as text, never `dangerouslySetInnerHTML`.
 - Workflow log tails: rendered as plain text in a `<pre>` block; ANSI codes stripped.
-- No `dangerouslySetInnerHTML` anywhere in the feature's React tree.
+- `dangerouslySetInnerHTML` policy: **forbidden everywhere in the feature's React tree except one audited render site** used to display already-sanitized markdown HTML from the approved sanitizer pipeline above. That render site must only accept sanitizer output (never caller-provided HTML) and must implement the anchor click routing described above. No other component in this feature may use `dangerouslySetInnerHTML`.
+- Avatar strategy (applies everywhere avatars are shown: Config auth list, Reviews, PR author chip): the renderer must **not** load remote `https:` avatar URLs directly — CSP `img-src 'self' data: file:` blocks them and loosening CSP is out of scope. v1 uses a CSP-safe non-image fallback: a deterministic initials/monogram badge generated from the profile's `label`/`username` (2-char uppercase, Catppuccin-mantle background, centered text). A future enhancement may add main-process avatar proxying that converts remote avatars to `data:` URLs and caches them under the resources directory, but PR2/PR3 ship initials-only — no broken `<img>` placeholders, no silent CSP exceptions.
 
 ### SSRF / URL handling
 
