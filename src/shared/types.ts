@@ -65,6 +65,7 @@ export interface SavedSession {
   effortLevel?: 'low' | 'medium' | 'high'
   disableAutoMemory?: boolean
   machineName?: string
+  githubIntegration?: import('./github-types').SessionGitHubIntegration
 }
 
 export interface SessionState {
