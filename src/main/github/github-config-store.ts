@@ -33,10 +33,12 @@ export class GitHubConfigStore {
 
   async read(): Promise<GitHubConfig | null> {
     // Serialize with write() on the same mutex. The overwrite path uses
-    // copyFile which is NOT atomic at the byte level — a concurrent read
-    // could observe a partially-copied destination and fail JSON.parse.
-    // Reads don't mutate, so they queue behind writes without blocking
-    // each other (the mutex just prevents interleaving with write chunks).
+    // copyFile which is NOT atomic at the byte level — without this, a
+    // concurrent read could observe a partially-copied destination and
+    // fail JSON.parse. AsyncMutex is exclusive (no reader/writer split),
+    // so reads also serialize against other reads. That's acceptable here:
+    // read() is called O(1)-ish per feature event (app start, profile
+    // list, after a push), not on a hot path.
     return this.mutex.run(async () => {
       try {
         const raw = await fs.readFile(this.filePath, 'utf8')

@@ -104,6 +104,34 @@ describe('AuthProfileStore', () => {
     expect((await store.listProfiles()).length).toBe(1)
   })
 
+  it('refuses empty/whitespace rawToken for non-gh-cli kinds', async () => {
+    await expect(
+      store.addProfile({
+        // @ts-expect-error — runtime guard must still catch callers bypassing the discriminated union
+        kind: 'pat-classic',
+        label: 'x',
+        username: 'x',
+        scopes: [],
+        capabilities: [],
+        rawToken: '',
+        expiryObservable: false,
+      }),
+    ).rejects.toThrow(/non-empty/i)
+    await expect(
+      store.addProfile({
+        // @ts-expect-error
+        kind: 'oauth',
+        label: 'x',
+        username: 'x',
+        scopes: [],
+        capabilities: [],
+        rawToken: '   ',
+        expiryObservable: false,
+      }),
+    ).rejects.toThrow(/non-empty/i)
+    expect(mem.config).toBeNull()
+  })
+
   it('refuses to write when safeStorage is unavailable — config stays untouched', async () => {
     mockSafeStorage.isEncryptionAvailable.mockReturnValue(false)
     await expect(

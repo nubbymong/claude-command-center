@@ -96,4 +96,33 @@ describe('probeRepoAccess', () => {
     ) as unknown as typeof fetch
     expect(await probeRepoAccess('ghp_', 'a/b')).toBe(false)
   })
+  it('false on network-level failure (best-effort contract)', async () => {
+    globalThis.fetch = vi.fn(async () => {
+      throw new Error('getaddrinfo ENOTFOUND')
+    }) as unknown as typeof fetch
+    expect(await probeRepoAccess('ghp_', 'a/b')).toBe(false)
+  })
+})
+
+describe('verifyToken network + parse failures', () => {
+  it('throws VerifyTransientError on fetch network error (DNS/TCP)', async () => {
+    globalThis.fetch = vi.fn(async () => {
+      throw new Error('getaddrinfo ENOTFOUND')
+    }) as unknown as typeof fetch
+    await expect(verifyToken('x')).rejects.toBeInstanceOf(VerifyTransientError)
+  })
+  it('throws VerifyTransientError on 2xx body that fails to parse as JSON', async () => {
+    globalThis.fetch = vi.fn(
+      async () =>
+        ({
+          ok: true,
+          status: 200,
+          headers: { get: () => null },
+          json: async () => {
+            throw new Error('Unexpected token < in JSON')
+          },
+        }) as unknown as Response,
+    ) as unknown as typeof fetch
+    await expect(verifyToken('x')).rejects.toBeInstanceOf(VerifyTransientError)
+  })
 })

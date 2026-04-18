@@ -89,7 +89,15 @@ export class AuthProfileStore {
       const config = await this.load()
 
       let tokenCiphertext: string | undefined
-      if (input.rawToken && input.kind !== 'gh-cli') {
+      if (input.kind !== 'gh-cli') {
+        // Non-gh-cli kinds are typed as requiring rawToken (discriminated
+        // union), but the runtime must still reject empty/whitespace tokens
+        // — a caller bypassing the type at the IPC boundary could otherwise
+        // create a profile with no usable credential and get silent auth
+        // failures downstream.
+        if (typeof input.rawToken !== 'string' || input.rawToken.trim().length === 0) {
+          throw new Error(`${input.kind} profile requires a non-empty rawToken`)
+        }
         if (!safeStorage.isEncryptionAvailable()) {
           // Do NOT write anything — abort so the config file stays clean.
           throw new Error('OS keychain unavailable; cannot encrypt token')

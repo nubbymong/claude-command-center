@@ -56,7 +56,15 @@ export async function verifyToken(token: string): Promise<VerifyResult | null> {
     throw new VerifyTransientError(0)
   }
   if (r.ok) {
-    const u = (await r.json()) as { login: string; avatar_url?: string }
+    // 2xx body parsing can still fail if GitHub returns HTML (edge cache
+    // errors) or truncated JSON. Treat parse failures as transient rather
+    // than letting a generic Error escape this function's contract.
+    let u: { login: string; avatar_url?: string }
+    try {
+      u = (await r.json()) as { login: string; avatar_url?: string }
+    } catch {
+      throw new VerifyTransientError(r.status)
+    }
     const scopes = (r.headers.get('x-oauth-scopes') ?? '')
       .split(',')
       .map((s) => s.trim())
@@ -85,18 +93,24 @@ export async function verifyToken(token: string): Promise<VerifyResult | null> {
 
 /**
  * Probes whether a token has access to a specific repo.
- * 200 → true, anything else → false (401/403/404 are all "no").
- * Used by fine-grained PAT flows to populate `allowedRepos`.
+ * 200 → true, anything else (including network failure) → false.
+ * 401/403/404 are all "no"; network failures (DNS/TCP/timeout) collapse
+ * into "no" as well because this is best-effort population of
+ * `allowedRepos` — callers should re-probe later when connectivity returns.
  */
 export async function probeRepoAccess(token: string, slug: string): Promise<boolean> {
-  const r = await fetch(`${GITHUB_API_BASE}/repos/${slug}`, {
-    headers: {
-      Authorization: `token ${token}`,
-      Accept: 'application/vnd.github+json',
-      'User-Agent': UA,
-    },
-  })
-  return r.ok
+  try {
+    const r = await fetch(`${GITHUB_API_BASE}/repos/${slug}`, {
+      headers: {
+        Authorization: `token ${token}`,
+        Accept: 'application/vnd.github+json',
+        'User-Agent': UA,
+      },
+    })
+    return r.ok
+  } catch {
+    return false
+  }
 }
 
 /**
