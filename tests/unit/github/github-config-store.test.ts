@@ -49,12 +49,30 @@ describe('GitHubConfigStore', () => {
     expect(await store.read()).toBeNull()
   })
 
-  it('unknown schemaVersion → null', async () => {
-    await fs.writeFile(
-      path.join(tmp, 'github-config.json'),
-      JSON.stringify({ schemaVersion: 9999 }),
-      'utf8',
-    )
+  it('unknown schemaVersion → null AND backs up file before any write clobbers it', async () => {
+    const payload = JSON.stringify({ schemaVersion: 9999, mine: 'data' })
+    const configPath = path.join(tmp, 'github-config.json')
+    await fs.writeFile(configPath, payload, 'utf8')
     expect(await store.read()).toBeNull()
+    // Backup must exist with original contents preserved.
+    const entries = await fs.readdir(tmp)
+    const backup = entries.find((e) => e.startsWith('github-config.json.v9999.bak'))
+    expect(backup).toBeDefined()
+    expect(await fs.readFile(path.join(tmp, backup!), 'utf8')).toBe(payload)
+  })
+
+  it('serializes concurrent writes without truncation or lost tmp files', async () => {
+    const writes = Array.from({ length: 10 }, (_, i) => {
+      const c = sample()
+      c.enabledByDefault = i % 2 === 0
+      return store.write(c)
+    })
+    await Promise.all(writes)
+    // Only the final config file should remain — no leaked `.tmp` files.
+    const entries = await fs.readdir(tmp)
+    expect(entries).toEqual(['github-config.json'])
+    // File must be valid JSON (not a half-written / interleaved blob).
+    const raw = await fs.readFile(path.join(tmp, 'github-config.json'), 'utf8')
+    expect(() => JSON.parse(raw)).not.toThrow()
   })
 })

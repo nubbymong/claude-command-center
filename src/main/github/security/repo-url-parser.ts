@@ -1,6 +1,7 @@
 import { validateSlug } from './slug-validator'
 
-const HTTPS_RE = /^https?:\/\/github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?$/i
+// https only — plain http:// enables DNS-spoof attacks on local networks.
+const HTTPS_RE = /^https:\/\/github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?$/i
 const SSH_RE = /^git@github\.com:([^/\s]+)\/([^/\s]+?)(?:\.git)?$/i
 const SSH_URL_RE = /^ssh:\/\/git@github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?$/i
 

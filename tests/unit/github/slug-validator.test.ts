@@ -10,6 +10,15 @@ describe('validateSlug', () => {
   it('rejects bare . and .. as repo names', () => {
     expect(validateSlug('owner/.')).toBe(false)
     expect(validateSlug('owner/..')).toBe(false)
+    expect(validateSlug('owner/...')).toBe(false)
+  })
+  it('rejects repo names ending in .git (any casing)', () => {
+    expect(validateSlug('owner/name.git')).toBe(false)
+    expect(validateSlug('owner/name.GIT')).toBe(false)
+    expect(validateSlug('owner/.git')).toBe(false)
+  })
+  it('rejects repo names starting with a dot', () => {
+    expect(validateSlug('owner/.hidden')).toBe(false)
   })
   it('rejects missing or extra slashes', () => {
     expect(validateSlug('no-slash')).toBe(false)
