@@ -25,6 +25,7 @@ import { registerLegacyVersionHandlers } from './ipc/legacy-version-handlers'
 import { registerAccountHandlers } from './ipc/account-handlers'
 import { registerMemoryHandlers } from './ipc/memory-handlers'
 import { registerTokenomicsHandlers } from './ipc/tokenomics-handlers'
+import { registerGitHubHandlers } from './ipc/github-handlers'
 import { fetchModelPricing } from './tokenomics-manager'
 import { initAccounts } from './account-manager'
 import { killAllAgents } from './cloud-agent-manager'
@@ -534,6 +535,22 @@ if (!gotTheLock) {
     registerAccountHandlers()
     registerTokenomicsHandlers(getWindow)
     registerMemoryHandlers()
+    // GitHub sidebar — reads/writes github-config.json + encrypted auth profiles
+    // under the CONFIG dir alongside other app config. Session-level integration
+    // state piggybacks on the existing session-state persistence helpers.
+    registerGitHubHandlers({
+      resourcesDir: getConfigDir(),
+      getWindow,
+      loadSessions: async () => loadSessionState()?.sessions ?? [],
+      saveSessions: async (sessions) => {
+        const existing = loadSessionState()
+        saveSessionState({
+          sessions,
+          activeSessionId: existing?.activeSessionId ?? null,
+          savedAt: Date.now(),
+        })
+      },
+    })
 
     // Shell — open URLs in system browser
     ipcMain.handle('shell:openExternal', async (_event, url: string) => {
