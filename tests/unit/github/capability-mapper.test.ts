@@ -45,4 +45,15 @@ describe('scopesToCapabilities', () => {
   it('empty scopes → empty caps', () => {
     expect(scopesToCapabilities('classic', [])).toEqual([])
   })
+  it('ignores prototype-chain keys (toString, hasOwnProperty, __proto__)', () => {
+    expect(() =>
+      scopesToCapabilities('classic', ['toString', 'hasOwnProperty', '__proto__', 'constructor']),
+    ).not.toThrow()
+    expect(
+      scopesToCapabilities('classic', ['toString', 'hasOwnProperty', '__proto__']),
+    ).toEqual([])
+  })
+  it('ignores unknown scopes silently', () => {
+    expect(scopesToCapabilities('fine-grained', ['not_a_real_permission'])).toEqual([])
+  })
 })

@@ -16,8 +16,10 @@ export function scopesToCapabilities(
       : CLASSIC_PAT_SCOPE_CAPABILITIES
   const set = new Set<Capability>()
   for (const scope of scopes) {
+    if (!Object.prototype.hasOwnProperty.call(table, scope)) continue
     const caps = table[scope]
-    if (caps) caps.forEach((c) => set.add(c))
+    if (!Array.isArray(caps)) continue
+    caps.forEach((c) => set.add(c))
   }
   return Array.from(set)
 }

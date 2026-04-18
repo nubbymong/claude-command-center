@@ -29,14 +29,22 @@ export const TRANSCRIPT_URL_REGEX =
 // Token redactor patterns applied before any log write.
 // Deliberately does NOT include the public OAuth Client ID (`Ov23li...`) —
 // that is a public identifier and redacting it harms debuggability.
+//
+// Each pattern uses (?<![A-Za-z0-9]) / (?![A-Za-z0-9]) instead of \b, because
+// \b does NOT fire between two word chars. Real-world log lines like
+// `FOO_ghp_abc` or `MY_TOKEN=ghp_abc` must redact — `\b` fails the first.
+//
+// Minimum length {20,} prevents stray short test fixtures (e.g. 'ghp_X') from
+// being redacted while matching every real GitHub token (all real tokens
+// are 36+ chars after the prefix).
 export const TOKEN_REDACTION_PATTERNS: RegExp[] = [
-  /\bghp_[A-Za-z0-9]+\b/g,
-  /\bgithub_pat_[A-Za-z0-9_]+\b/g,
-  /\bgho_[A-Za-z0-9]+\b/g,
-  /\bghu_[A-Za-z0-9]+\b/g,
-  /\bghs_[A-Za-z0-9]+\b/g,
-  /\bghr_[A-Za-z0-9]+\b/g,
-  /\bghi_[A-Za-z0-9]+\b/g,
+  /(?<![A-Za-z0-9])ghp_[A-Za-z0-9]{20,}(?![A-Za-z0-9])/g,
+  /(?<![A-Za-z0-9])github_pat_[A-Za-z0-9_]{20,}(?![A-Za-z0-9])/g,
+  /(?<![A-Za-z0-9])gho_[A-Za-z0-9]{20,}(?![A-Za-z0-9])/g,
+  /(?<![A-Za-z0-9])ghu_[A-Za-z0-9]{20,}(?![A-Za-z0-9])/g,
+  /(?<![A-Za-z0-9])ghs_[A-Za-z0-9]{20,}(?![A-Za-z0-9])/g,
+  /(?<![A-Za-z0-9])ghr_[A-Za-z0-9]{20,}(?![A-Za-z0-9])/g,
+  /(?<![A-Za-z0-9])ghi_[A-Za-z0-9]{20,}(?![A-Za-z0-9])/g,
   /access_token=[^&\s]+/g,
 ]
 
