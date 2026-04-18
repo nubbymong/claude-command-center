@@ -422,7 +422,10 @@ export class SyncOrchestrator {
       if (prR.status === 'ok') {
         existing.pr = mapPR(prR.data)
       } else if (prR.status === 'empty') {
-        existing.pr = null
+        // RepoCache.pr is `pr?: PRSnapshot` (optional, not nullable).
+        // Use `undefined`, not `null`, so we don't split "no PR" across two
+        // sentinels that render code has to handle separately.
+        existing.pr = undefined
       }
       // runs
       const runsR = await this.deps.fetchers.runs(s.slug, s.branch)
@@ -440,7 +443,13 @@ export class SyncOrchestrator {
       existing.lastSynced = Date.now()
       existing.accessedAt = Date.now()
       cache.repos[s.slug] = existing
-      if (!cache.lru.includes(s.slug)) cache.lru.push(s.slug)
+      // LRU: true access-order. Previous impl only appended on first use,
+      // so frequently-used repos kept their original (old) position and
+      // would be evicted as "oldest". Remove-then-push moves the slug to
+      // the most-recent end every access.
+      const lruIndex = cache.lru.indexOf(s.slug)
+      if (lruIndex !== -1) cache.lru.splice(lruIndex, 1)
+      cache.lru.push(s.slug)
       await this.deps.cacheStore.save(cache)
 
       this.deps.emitData({ slug: s.slug, data: existing })

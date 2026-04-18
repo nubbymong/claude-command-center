@@ -1153,11 +1153,26 @@ const FEATURE_CAPABILITIES: Record<GitHubFeatureKey, Capability[]> = {
   sessionContext: [],
 }
 
-// Minimum scopes per auth kind to achieve the capability set
-function capsToOAuthScopes(caps: Set<Capability>): string[] {
+// Minimum scopes per auth kind to achieve the capability set.
+// `mode` matches the Tier 2 device flow split from spec §2: public-repo
+// default asks for `public_repo`; private-repo mode asks for `repo`.
+// PermissionsSummary renders BOTH variants so the user can see which
+// scope list matches their repo visibility.
+function capsToOAuthScopes(
+  caps: Set<Capability>,
+  mode: 'public' | 'private',
+): string[] {
   const set = new Set<string>()
-  if (caps.has('pulls') || caps.has('issues') || caps.has('contents') || caps.has('statuses') || caps.has('checks') || caps.has('actions')) {
-    set.add('public_repo')
+  const repoScope = mode === 'private' ? 'repo' : 'public_repo'
+  if (
+    caps.has('pulls') ||
+    caps.has('issues') ||
+    caps.has('contents') ||
+    caps.has('statuses') ||
+    caps.has('checks') ||
+    caps.has('actions')
+  ) {
+    set.add(repoScope)
   }
   if (caps.has('actions')) set.add('workflow')
   if (caps.has('notifications')) set.add('notifications')
@@ -1178,7 +1193,7 @@ function capsToFineGrainedPermissions(caps: Set<Capability>): string[] {
 
 export default function PermissionsSummary() {
   const config = useGitHubStore((s) => s.config)
-  const [copied, setCopied] = useState(false)
+  const [copied, setCopied] = useState<'public' | 'private' | null>(null)
   if (!config) return null
 
   const required = new Set<Capability>()
@@ -1187,25 +1202,35 @@ export default function PermissionsSummary() {
     for (const c of FEATURE_CAPABILITIES[key as GitHubFeatureKey] ?? []) required.add(c)
   }
 
-  const oauth = capsToOAuthScopes(required)
+  const oauthPublic = capsToOAuthScopes(required, 'public')
+  const oauthPrivate = capsToOAuthScopes(required, 'private')
   const fine = capsToFineGrainedPermissions(required)
 
-  const copyScopes = async () => {
-    await navigator.clipboard.writeText(oauth.join(' '))
-    setCopied(true)
-    setTimeout(() => setCopied(false), 1500)
+  const copyScopes = async (scopes: string[], which: 'public' | 'private') => {
+    await navigator.clipboard.writeText(scopes.join(' '))
+    setCopied(which)
+    setTimeout(() => setCopied(null), 1500)
   }
 
   return (
     <section>
       <h3 className="text-sm uppercase text-subtext0 mb-3">Permissions you'd need</h3>
-      <div className="bg-mantle p-3 rounded text-sm space-y-2">
+      <div className="bg-mantle p-3 rounded text-sm space-y-3">
         <div>
-          <div className="text-subtext0 text-xs mb-1">OAuth / Classic PAT scopes</div>
-          <code className="text-blue">{oauth.join(' ') || '(none — local only)'}</code>
-          {oauth.length > 0 && (
-            <button onClick={copyScopes} className="ml-3 text-xs bg-surface0 px-2 py-0.5 rounded">
-              {copied ? 'Copied' : 'Copy'}
+          <div className="text-subtext0 text-xs mb-1">OAuth / Classic PAT scopes — public repos only</div>
+          <code className="text-blue">{oauthPublic.join(' ') || '(none — local only)'}</code>
+          {oauthPublic.length > 0 && (
+            <button onClick={() => copyScopes(oauthPublic, 'public')} className="ml-3 text-xs bg-surface0 px-2 py-0.5 rounded">
+              {copied === 'public' ? 'Copied' : 'Copy'}
+            </button>
+          )}
+        </div>
+        <div>
+          <div className="text-subtext0 text-xs mb-1">OAuth / Classic PAT scopes — includes private repos</div>
+          <code className="text-blue">{oauthPrivate.join(' ') || '(none — local only)'}</code>
+          {oauthPrivate.length > 0 && (
+            <button onClick={() => copyScopes(oauthPrivate, 'private')} className="ml-3 text-xs bg-surface0 px-2 py-0.5 rounded">
+              {copied === 'private' ? 'Copied' : 'Copy'}
             </button>
           )}
         </div>
@@ -1648,8 +1673,14 @@ export default function SectionFrame({
         <span className="text-xs text-mauve w-3" aria-hidden="true">{collapsed ? '▶' : '▼'}</span>
         <span className="text-xs font-medium uppercase text-subtext0 tracking-wide">{title}</span>
         {summary && <span className="text-xs text-overlay1 ml-2 truncate">{summary}</span>}
-        {emptyIndicator && <span className="text-xs text-overlay0 ml-auto">—</span>}
-        {rightAction && <span className="ml-auto">{rightAction}</span>}
+        {/* Group right-side items into a single container so `ml-auto` applies
+            once and emptyIndicator + rightAction can coexist without reflow. */}
+        {(emptyIndicator || rightAction) && (
+          <span className="ml-auto flex items-center gap-2 shrink-0">
+            {emptyIndicator && <span className="text-xs text-overlay0" aria-label="empty">—</span>}
+            {rightAction && <span>{rightAction}</span>}
+          </span>
+        )}
       </button>
       {!collapsed && <div id={`sec-body-${id}`} className="px-3 pb-3">{children}</div>}
     </section>
