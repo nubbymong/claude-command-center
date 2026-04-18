@@ -8,7 +8,7 @@
 
 **Tech Stack:** React 18 + TypeScript + Zustand 5; `marked@15` (already installed) + `isomorphic-dompurify` (installed in this PR); existing Tailwind theme.
 
-**Spec:** `docs/superpowers/specs/2026-04-17-github-sidebar-design.md` (rev 3).
+**Spec:** `docs/superpowers/specs/2026-04-17-github-sidebar-design.md` (rev 4).
 
 **Branch:** `feature/github-sidebar-pr2` off `beta`. **PR target:** `beta`.
 
@@ -1748,7 +1748,11 @@ export default function GitHubPanel({ sessionId, slug, branch, ahead, behind, di
   if (!visible) {
     return (
       <aside className="w-7 bg-mantle border-l border-surface0 flex flex-col items-center py-3" aria-label="GitHub panel (collapsed)">
-        <button onClick={togglePanel} title="Show GitHub panel (Ctrl+/)" className="text-subtext0 text-xs">GH</button>
+        <button
+          onClick={togglePanel}
+          title={`Show GitHub panel (${window.electronPlatform === 'darwin' ? '⌘+/' : 'Ctrl+/'})`}
+          className="text-subtext0 text-xs"
+        >GH</button>
       </aside>
     )
   }

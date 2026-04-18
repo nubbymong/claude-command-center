@@ -1,6 +1,6 @@
 # GitHub Sidebar — Design Spec
 
-Date: 2026-04-17 (rev 3)
+Date: 2026-04-17 (rev 4)
 Branch: beta
 Status: Approved design, ready for implementation plan
 
@@ -8,6 +8,7 @@ Rev history:
 - rev 1 (initial) — internal review pass.
 - rev 2 — addressed reviewer findings: removed DiffViewerPane dependency, dropped PTY push-trigger, notifications per-profile, gh CLI concurrency, factual rate-limit corrections, expanded security coverage, added Session Context section.
 - rev 3 — second independent review pass: tightened tool-call inspection field allowlist, disambiguated Session Context vs Issues sections, expanded Session Context priority rules + SSH behavior + empty-session behavior, dropped Discussions from v1 scope, renamed `neverExpires` → `expiryObservable`, cache-corruption backup retention, `gh auth status` parsing approach documented.
+- rev 4 — Copilot re-review pass: dropped `<img>` from markdown allowlist to match app CSP, added `seenOnboardingVersion` to the `GitHubConfig` data model, reconciled the "Master enable toggle" copy with `enabledByDefault`-only semantics, corrected GraphQL rate-limit budget (point/cost based, not requests/hour) and per-bucket shield math, removed a leftover `neverExpires` reference.
 
 ## 1. Goal & user value
 
@@ -80,6 +81,10 @@ GitHubConfig {
   }
   enabledByDefault: boolean               // applied to new sessions
   transcriptScanningOptIn: boolean        // default false; see Section 10
+  seenOnboardingVersion?: string          // app version at last onboarding dismissal,
+                                          //   or 'permanent' for "Don't show again";
+                                          //   unset means modal has never been shown.
+                                          //   See Section 8 for trigger logic.
 }
 
 AuthProfile {
@@ -171,10 +176,14 @@ Cache survives app restarts. Panel renders instantly on app open from last known
 
 New tab in the existing Settings/Config UI.
 
-**Master enable toggle** — at top. When off, no GitHub API calls, panel hidden, no scanning.
+**Default enabled for new sessions** — toggle at top. Controls `GitHubConfig.enabledByDefault` only.
+- When on: newly created sessions start with GitHub features enabled.
+- When off: newly created sessions start with GitHub disabled until explicitly enabled for that session.
+- Existing sessions keep their current per-session `enabled` state — changing this setting does not retroactively hide the panel or stop activity for already-created sessions. Panel visibility, API calls, and scanning are driven by the per-session `SessionGitHubIntegration.enabled` flag.
+- To fully disable GitHub activity globally, the user removes all auth profiles (no profile → no calls) and disables the feature toggles — there is no separate global kill-switch in v1.
 
 **Auth profiles list**
-- Per profile: avatar, username, label, kind badge, scopes summary, expiry (if applicable — hidden for `neverExpires` profiles), rate-limit gauge (core bucket).
+- Per profile: avatar, username, label, kind badge, scopes summary, expiry (shown only when `expiryObservable` is true on the profile), rate-limit gauge (core bucket).
 - Per-profile actions: Test (hits `/user` + `/rate_limit`), Rename, Remove.
 - Primary CTA: **Sign in with GitHub** → Tier 2 device flow.
 - Secondary: `▸ Advanced auth options` expands to show detected gh CLI accounts (auto-listed, one-click "Use this") and PAT paste forms (fine-grained + classic).
@@ -288,7 +297,7 @@ Content:
 **Section 4 — Reviews & Comments**
 - Unresolved threads grouped by file.
 - Avatar stack of approvers at top.
-- Per thread: commenter, file:line anchor, comment body rendered as **sanitized markdown → HTML** (allowlist: links, code, lists, emphasis, images; no raw HTML), `[Reply]` inline composer (requires RW), `[View in GitHub]` link-out.
+- Per thread: commenter, file:line anchor, comment body rendered as **sanitized markdown → HTML** (allowlist: links, code, lists, emphasis; image tags are stripped and rendered as link text per §9; no raw HTML), `[Reply]` inline composer (requires RW), `[View in GitHub]` link-out.
 - No inline diff viewer in v1. Click-through to GitHub for full context.
 
 **Section 5 — Issues**
@@ -334,15 +343,16 @@ Content:
 
 ## 7. Rate-limit & sync strategy
 
-Budgets:
-- Classic PAT / OAuth / Fine-grained PAT: **5000 req/hr per user, primary limit** across core + graphql buckets (separate accounting). Secondary/abuse limits apply per resource owner.
-- Unauthenticated: 60 req/hr (we never hit this — panel stays in auth-free local mode if no auth).
+Budgets (REST and GraphQL are separate buckets with different accounting models):
+- **REST (core) primary limit:** Classic PAT / OAuth / Fine-grained PAT use the authenticated REST request budget, typically **5000 requests/hour** per user. This budget is request-count based. Secondary/abuse limits still apply per resource owner and burst pattern.
+- **GraphQL primary limit:** budget separately from REST. GitHub's GraphQL API is **point/cost based per hour** (typically 5000 points/hr for authenticated use), not "requests/hour". One query may consume more than one point depending on query shape. Remaining budget must be tracked using the `rateLimit { cost, remaining, resetAt }` fields returned in the GraphQL response, not a request count.
+- **Unauthenticated:** 60 REST req/hr for public endpoints only (we never rely on this — panel stays in auth-free local mode if no auth).
 
 Techniques:
 
-1. **ETag caching on every REST call.** Each response's `ETag` header is persisted per-endpoint in `RepoCache.etags`. Next request sends `If-None-Match`. **Conditional requests (304s) still count against the primary rate limit** — correction from rev 1. The real wins are bandwidth, latency, and secondary-limit avoidance. The rate-limit shield math counts every outbound call regardless of status.
+1. **ETag caching on every REST call.** Each response's `ETag` header is persisted per-endpoint in `RepoCache.etags`. Next request sends `If-None-Match`. **Conditional requests (304s) still count against the primary REST rate limit** — correction from rev 1. The real wins are bandwidth, latency, and secondary-limit avoidance. The REST shield math counts every outbound REST call regardless of status.
 
-2. **GraphQL for PR card.** One GraphQL query covers PR + workflow runs + reviews + comments for a branch. REST used for log content, rerun actions, notifications (no GraphQL equivalent). **Fallback:** if a GraphQL query returns permission errors for the configured auth, the panel falls back to equivalent REST calls automatically and logs once.
+2. **GraphQL for PR card.** One GraphQL query covers PR + workflow runs + reviews + comments for a branch. REST used for log content, rerun actions, notifications (no GraphQL equivalent). **Budgeting note:** GraphQL throttling is per-query cost against the hourly point budget — one GraphQL operation must NOT be treated as equivalent to one REST request in implementation or tests. The shield for GraphQL reads `cost` + `remaining` from each query's `rateLimit` selection and pauses on that bucket independently of the REST core bucket. **Fallback:** if a GraphQL query returns permission errors for the configured auth, the panel falls back to equivalent REST calls automatically and logs once.
 
 3. **Tiered sync intervals (user-configurable):**
    - Active session (panel visible + session focused): default 60s
@@ -352,7 +362,7 @@ Techniques:
 
 4. **Push-triggered sync — dropped from v1.** PTY buffer scanning is unreliable (false positives, same anti-pattern as the SSH paste-leak regex already tracked in the repo). Intervals + manual refresh cover v1. When HTTP Hooks Gateway ships, it becomes the correct mechanism for "Claude did a thing → app reacts"; the sync loop will expose a `refreshSession(sessionId)` hook for that integration.
 
-5. **Per-bucket rate-limit shield.** Each profile's `rateLimits.{core,search,graphql}` tracked separately. When any bucket used by the next request is < 10% remaining, pause syncs using that profile. Yellow banner with reset time. Resume automatically at reset.
+5. **Per-bucket rate-limit shield.** Each profile's `rateLimits.{core,search,graphql}` tracked separately with the correct unit per bucket: `core`/`search` count **requests remaining**, `graphql` counts **points remaining** (sourced from the `rateLimit { remaining }` field in each GraphQL response). When any bucket used by the next request is < 10% of its own limit, pause syncs using that profile on that bucket only (REST and GraphQL budgets are independent; exhausting one does not pause the other). Yellow banner with reset time. Resume automatically at reset.
 
 6. **Cache-first render.** Panel always renders from cached data instantly on session switch/app start; refresh fires in background. Stale indicator shown if cache older than 2× applicable sync interval.
 
@@ -442,7 +452,7 @@ A redaction wrapper sits in front of the existing logger. Any log line containin
 
 All GitHub-sourced content is treated as untrusted.
 
-- Comment bodies: rendered as markdown via a sanitized pipeline (e.g., `marked` + `DOMPurify`), allowlist for `<a>`, `<code>`, `<pre>`, `<ul>`, `<ol>`, `<li>`, `<em>`, `<strong>`, `<blockquote>`, `<img>` with `https:` src only. No `<script>`, no inline event handlers, no `javascript:` href.
+- Comment bodies: rendered as markdown via a sanitized pipeline (e.g., `marked` + `DOMPurify`), allowlist for `<a>`, `<code>`, `<pre>`, `<ul>`, `<ol>`, `<li>`, `<em>`, `<strong>`, `<blockquote>`. Do **not** allow `<img>` — the app CSP restricts `img-src 'self' data: file:` (no `https:`), so remote images from GitHub comments would not render and loosening CSP would allow arbitrary remote-image loads from untrusted content. Images in comment bodies are rendered as their source-URL link text instead. No `<script>`, no inline event handlers, no `javascript:` href.
 - Usernames, branch names, PR titles, issue titles, repo names, file paths: rendered as text, never `dangerouslySetInnerHTML`.
 - Workflow log tails: rendered as plain text in a `<pre>` block; ANSI codes stripped.
 - No `dangerouslySetInnerHTML` anywhere in the feature's React tree.

@@ -136,12 +136,26 @@ export type SendOneShotSSH = (
   timeoutMs?: number,
 ) => Promise<string>
 
+/**
+ * POSIX single-quote shell escape. Safer than `JSON.stringify(arg)` because
+ * double-quoted shell strings still expand `$(...)`, backticks, and `$VAR`,
+ * leaving an injection path if `cwd` contains `$(rm -rf ~)` etc.
+ * Single-quote wrapping disables all expansion; escape embedded `'` as `'\''`.
+ */
+function posixShellEscape(arg: string): string {
+  return `'${arg.replace(/'/g, `'\\''`)}'`
+}
+
 export async function detectRepoFromSshSession(
   sessionId: string,
   cwd: string,
   sendOneShot: SendOneShotSSH,
 ): Promise<string | null> {
-  const cmd = `echo ${START}; git -C ${JSON.stringify(cwd)} remote get-url origin 2>/dev/null; echo ${END}`
+  // START/END sentinels are module-local hardcoded strings — safe to inline unquoted.
+  // `cwd` is attacker-influenceable (user-pasted path on remote host), so it MUST
+  // go through posixShellEscape. Do not use JSON.stringify — double quotes still
+  // permit $()/`` substitution on POSIX shells.
+  const cmd = `echo ${START}; git -C ${posixShellEscape(cwd)} remote get-url origin 2>/dev/null; echo ${END}`
   let output: string
   try {
     output = await sendOneShot(sessionId, cwd, cmd, 5000)
@@ -1603,7 +1617,7 @@ PR 1 + PR 2 merged
 
 ## Spec
 
-`docs/superpowers/specs/2026-04-17-github-sidebar-design.md` (rev 3)
+`docs/superpowers/specs/2026-04-17-github-sidebar-design.md` (rev 4)
 
 ## Test plan
 
