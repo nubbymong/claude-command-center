@@ -12,7 +12,7 @@
 
 ## Cross-Platform Notes (Windows + macOS)
 
-- **Keyboard shortcut labels:** tips, tooltips, onboarding copy must show `Ctrl+/` on Windows and `⌘+/` on macOS. Resolve via `navigator.platform.toUpperCase().includes('MAC')` at render time.
+- **Keyboard shortcut labels:** tips, tooltips, onboarding copy must show `Ctrl+/` on Windows and `⌘+/` on macOS. Resolve via `window.electronPlatform === 'darwin'` at render time (or a shared helper built on that value) — matches the existing renderer convention. Do not use `navigator.platform` (deprecated and inconsistent with the rest of the codebase).
 - **Training walkthrough screenshots:** ship both `github-panel.jpg` and `github-panel-mac.jpg` (Task N3 below).
 - **`gh auth status` output on Windows:** same regex matches because we parse the github.com line, not the decorative characters. Verify on a Windows machine with gh installed via `winget install GitHub.cli`.
 - **Keychain semantics differ:** on Windows, `safeStorage.isEncryptionAvailable()` can return false if DPAPI isn't initialized for the user context (rare but seen in RDP / some corporate images). Surface this as a Config page warning, not a crash.
@@ -126,25 +126,49 @@ const START = '__CC_GIT_START__'
 const END = '__CC_GIT_END__'
 
 /**
- * Sends a one-shot command to an SSH pty and extracts the remote URL from
- * between sentinels. `sendOneShot` is provided by the caller (pty-manager).
+ * Sends a one-shot command to an SSH pty and returns its stdout.
+ *
+ * IMPORTANT: This type intentionally does NOT take a `cwd` argument.
+ * The detector builds its own `git -C <escaped cwd>` command and hands
+ * the fully-shell-escaped string to `sendOneShot`. If a helper variant
+ * accepts a `cwd` and internally interpolates it into a shell string
+ * (e.g. `cd ${cwd} && ${cmd}`), the interpolation MUST use a POSIX
+ * single-quote escape — mirror `posixShellEscape` in pty-manager, or
+ * reuse this helper. Never pass a raw user-influenced `cwd` into any
+ * shell fragment without escaping.
  */
 export type SendOneShotSSH = (
   sessionId: string,
-  cwd: string,
   command: string,
   timeoutMs?: number,
 ) => Promise<string>
+
+/**
+ * POSIX single-quote shell escape. Safer than `JSON.stringify(arg)` because
+ * double-quoted shell strings still expand `$(...)`, backticks, and `$VAR`,
+ * leaving an injection path if `cwd` contains `$(rm -rf ~)` etc.
+ * Single-quote wrapping disables all expansion; escape embedded `'` as `'\''`.
+ */
+export function posixShellEscape(arg: string): string {
+  return `'${arg.replace(/'/g, `'\\''`)}'`
+}
 
 export async function detectRepoFromSshSession(
   sessionId: string,
   cwd: string,
   sendOneShot: SendOneShotSSH,
 ): Promise<string | null> {
-  const cmd = `echo ${START}; git -C ${JSON.stringify(cwd)} remote get-url origin 2>/dev/null; echo ${END}`
+  // START/END sentinels are module-local hardcoded strings — safe to inline unquoted.
+  // `cwd` is attacker-influenceable (user-pasted path on remote host), so it MUST
+  // go through posixShellEscape. Do not use JSON.stringify — double quotes still
+  // permit $()/`` substitution on POSIX shells.
+  const cmd = `echo ${START}; git -C ${posixShellEscape(cwd)} remote get-url origin 2>/dev/null; echo ${END}`
   let output: string
   try {
-    output = await sendOneShot(sessionId, cwd, cmd, 5000)
+    // cwd is NOT passed to sendOneShot — the command already embeds it safely
+    // via posixShellEscape. This keeps the injection surface to a single, audited
+    // interpolation site.
+    output = await sendOneShot(sessionId, cmd, 5000)
   } catch {
     return null
   }
@@ -319,6 +343,9 @@ interface SessionState {
   timer?: NodeJS.Timeout
   focused: boolean
   lastSync: number
+  // Set by doSync when a RateLimitError lands; scheduleNext reads this to
+  // delay the next attempt until after the reset. Cleared on next success.
+  rateLimitedUntil?: number
 }
 
 export class SyncOrchestrator {
@@ -358,13 +385,26 @@ export class SyncOrchestrator {
     const s = this.sessions.get(id)
     if (!s) return
     if (s.timer) clearTimeout(s.timer)
-    const cfg = await this.deps.getConfig()
-    const intervalSec = s.focused
-      ? cfg?.syncIntervals.activeSessionSec ?? 60
-      : cfg?.syncIntervals.backgroundSec ?? 300
+
+    // If we're in rate-limit backoff, wait until reset before next sync.
+    // Without this, the outer `finally(() => scheduleNext)` below would
+    // immediately replace the reset-based timer with the normal interval
+    // and defeat the backoff — defeating the whole point of the shield.
+    let delayMs: number
+    const now = Date.now()
+    if (s.rateLimitedUntil && now < s.rateLimitedUntil) {
+      delayMs = Math.max(s.rateLimitedUntil - now + 1000, 1000)
+    } else {
+      const cfg = await this.deps.getConfig()
+      const intervalSec = s.focused
+        ? cfg?.syncIntervals.activeSessionSec ?? 60
+        : cfg?.syncIntervals.backgroundSec ?? 300
+      delayMs = intervalSec * 1000
+    }
+
     s.timer = setTimeout(() => {
       this.doSync(id).finally(() => this.scheduleNext(id))
-    }, intervalSec * 1000)
+    }, delayMs)
   }
 
   private async doSync(sessionId: string) {
@@ -382,7 +422,10 @@ export class SyncOrchestrator {
       if (prR.status === 'ok') {
         existing.pr = mapPR(prR.data)
       } else if (prR.status === 'empty') {
-        existing.pr = null
+        // RepoCache.pr is `pr?: PRSnapshot` (optional, not nullable).
+        // Use `undefined`, not `null`, so we don't split "no PR" across two
+        // sentinels that render code has to handle separately.
+        existing.pr = undefined
       }
       // runs
       const runsR = await this.deps.fetchers.runs(s.slug, s.branch)
@@ -400,26 +443,34 @@ export class SyncOrchestrator {
       existing.lastSynced = Date.now()
       existing.accessedAt = Date.now()
       cache.repos[s.slug] = existing
-      if (!cache.lru.includes(s.slug)) cache.lru.push(s.slug)
+      // LRU: true access-order. Previous impl only appended on first use,
+      // so frequently-used repos kept their original (old) position and
+      // would be evicted as "oldest". Remove-then-push moves the slug to
+      // the most-recent end every access.
+      const lruIndex = cache.lru.indexOf(s.slug)
+      if (lruIndex !== -1) cache.lru.splice(lruIndex, 1)
+      cache.lru.push(s.slug)
       await this.deps.cacheStore.save(cache)
 
       this.deps.emitData({ slug: s.slug, data: existing })
       this.deps.emitSyncState({ slug: s.slug, state: 'synced', at: Date.now() })
       s.lastSync = Date.now()
+      // Clear any prior rate-limit backoff — we just succeeded.
+      s.rateLimitedUntil = undefined
     } catch (err: any) {
       if (err?.name === 'RateLimitError') {
+        // Record the backoff deadline on the session. scheduleNext honors it
+        // and schedules the next attempt for that time — don't set a timer
+        // here directly: the outer `finally(() => scheduleNext)` would race
+        // and clobber it. `rateLimitedUntil` is cleared on the next successful
+        // sync (see the try-branch above).
+        s.rateLimitedUntil = err.resetAt
         this.deps.emitSyncState({
           slug: s.slug,
           state: 'rate-limited',
           at: Date.now(),
           nextResetAt: err.resetAt,
         })
-        // Skip further scheduleNext until reset
-        if (s.timer) clearTimeout(s.timer)
-        s.timer = setTimeout(
-          () => this.doSync(sessionId).finally(() => this.scheduleNext(sessionId)),
-          Math.max(err.resetAt - Date.now() + 1000, 1000),
-        )
       } else {
         this.deps.emitSyncState({ slug: s.slug, state: 'error', at: Date.now() })
       }
@@ -594,7 +645,7 @@ export default function LocalGitSection({ sessionId, cwd }: Props) {
     if (!cwd) return
     let alive = true
     const poll = async () => {
-      const r = await window.electron.github.getLocalGit(cwd)
+      const r = await window.electronAPI.github.getLocalGit(cwd)
       if (alive && r.ok) setState(r.state)
     }
     poll()
@@ -688,7 +739,7 @@ export default function SessionContextSection({ sessionId }: Props) {
   useEffect(() => {
     let alive = true
     const poll = async () => {
-      const r = await window.electron.github.getSessionContext(sessionId)
+      const r = await window.electronAPI.github.getSessionContext(sessionId)
       if (alive && r.ok) setCtx(r.data)
     }
     poll()
@@ -779,10 +830,11 @@ export default function ActivePRSection({ sessionId, slug }: Props) {
   if (!slug) return <SectionFrame sessionId={sessionId} id="activePR" title="Active PR" emptyIndicator><div className="text-xs text-overlay0">No repo configured</div></SectionFrame>
   if (!pr) return <SectionFrame sessionId={sessionId} id="activePR" title="Active PR" emptyIndicator><div className="text-xs text-overlay0">No PR for this branch</div></SectionFrame>
 
-  const open = () => window.open(pr.url, '_blank', 'noopener')
-  const ready = async () => { await window.electron.github.readyPR(slug, pr.number) }
+  // App denies window.open; always use shell.openExternal for external navigation
+  const open = () => void window.electronAPI.shell.openExternal(pr.url)
+  const ready = async () => { await window.electronAPI.github.readyPR(slug, pr.number) }
   const merge = async (method: 'merge' | 'squash' | 'rebase') => {
-    await window.electron.github.mergePR(slug, pr.number, method)
+    await window.electronAPI.github.mergePR(slug, pr.number, method)
   }
 
   return (
@@ -852,7 +904,7 @@ export default function CISection({ sessionId, slug }: Props) {
   const rerun = async (id: number) => {
     if (!slug) return
     setRerunning(id)
-    await window.electron.github.rerunActionsRun(slug, id)
+    await window.electronAPI.github.rerunActionsRun(slug, id)
     setRerunning(null)
   }
 
@@ -866,7 +918,7 @@ export default function CISection({ sessionId, slug }: Props) {
           <div key={r.id} className="flex items-center gap-2">
             <span className={runColor(r)} aria-label={r.conclusion ?? r.status}>{runIcon(r)}</span>
             <span className="text-text truncate flex-1" title={r.workflowName}>{r.workflowName}</span>
-            <a href={r.url} target="_blank" rel="noreferrer" className="text-overlay1 hover:text-text">↗</a>
+            <button onClick={() => void window.electronAPI.shell.openExternal(r.url)} className="text-overlay1 hover:text-text" aria-label="Open run in GitHub">↗</button>
             {r.conclusion === 'failure' && slug && (
               <button
                 onClick={() => rerun(r.id)}
@@ -898,7 +950,7 @@ git commit -m "feat(github): CISection with workflow runs + re-run action"
 import React, { useState } from 'react'
 import SectionFrame from '../SectionFrame'
 import { useGitHubStore } from '../../../stores/githubStore'
-import { renderCommentMarkdown } from '../../../utils/markdownSanitizer'
+import { SanitizedMarkdown } from '../../SanitizedMarkdown'
 
 interface Props { sessionId: string; slug?: string }
 
@@ -914,7 +966,7 @@ export default function ReviewsSection({ sessionId, slug }: Props) {
 
   const send = async (threadId: string) => {
     if (!slug) return
-    await window.electron.github.replyToReview(slug, threadId, replyText)
+    await window.electronAPI.github.replyToReview(slug, threadId, replyText)
     setReplyingTo(null)
     setReplyText('')
   }
@@ -930,7 +982,13 @@ export default function ReviewsSection({ sessionId, slug }: Props) {
       <div className="space-y-3 text-xs">
         {reviews.map((r) => (
           <div key={r.id} className="flex items-center gap-2 text-overlay1">
-            {r.reviewerAvatarUrl && <img src={r.reviewerAvatarUrl} alt={r.reviewer} className="w-5 h-5 rounded-full" />}
+            {/* Initials monogram per spec §9 avatar strategy — CSP blocks remote https <img>. */}
+            <div
+              className="w-5 h-5 rounded-full bg-surface0 text-text flex items-center justify-center text-[9px] font-semibold shrink-0"
+              aria-hidden="true"
+            >
+              {r.reviewer.trim().slice(0, 2).toUpperCase()}
+            </div>
             <span>@{r.reviewer}</span>
             <span className={r.state === 'APPROVED' ? 'text-green' : r.state === 'CHANGES_REQUESTED' ? 'text-red' : 'text-overlay1'}>
               {r.state.toLowerCase().replace('_', ' ')}
@@ -942,11 +1000,12 @@ export default function ReviewsSection({ sessionId, slug }: Props) {
             <div className="text-overlay0">
               @{t.commenter} on <code className="text-peach">{t.file}:{t.line}</code>
             </div>
-            <div
-              className="prose prose-invert prose-sm max-w-none text-text"
-              // eslint-disable-next-line react/no-danger -- sanitized via renderCommentMarkdown
-              dangerouslySetInnerHTML={{ __html: renderCommentMarkdown(t.bodyMarkdown) }}
-            />
+            {/* Spec §9: the ONLY dangerouslySetInnerHTML site in the feature lives
+                inside SanitizedMarkdown (see PR 2 plan). It also installs the delegated
+                onClick that routes <a href=https://...> clicks through
+                window.electronAPI.shell.openExternal — required because the app blocks
+                will-navigate and denies window.open, so raw anchors would be inert. */}
+            <SanitizedMarkdown source={t.bodyMarkdown} />
             {replyingTo === t.id ? (
               <div className="flex gap-1">
                 <input
@@ -998,7 +1057,7 @@ export default function IssuesSection({ sessionId, slug }: Props) {
       <ul className="space-y-1 text-xs">
         {issues.map((i) => (
           <li key={i.number} className="flex items-start gap-2">
-            <a href={i.url} target="_blank" rel="noreferrer" className="text-blue">#{i.number}</a>
+            <button onClick={() => void window.electronAPI.shell.openExternal(i.url)} className="text-blue hover:underline">#{i.number}</button>
             {i.primary && <span className="bg-mauve/20 text-mauve text-[10px] px-1 rounded">primary</span>}
             <span className={i.state === 'open' ? 'text-green' : 'text-overlay0'}>{i.state}</span>
             <span className="text-text truncate flex-1" title={i.title}>{i.title}</span>
@@ -1075,12 +1134,12 @@ export default function NotificationsSection({ sessionId }: Props) {
       <ul className="space-y-1 text-xs">
         {items.map((i) => (
           <li key={i.id} className="flex gap-2">
-            {i.unread && <span className="text-fab387 w-2">●</span>}
-            <a href={i.url} target="_blank" rel="noreferrer" className="text-blue">{i.repo}</a>
+            {i.unread && <span className="text-peach w-2">●</span>}
+            <button onClick={() => void window.electronAPI.shell.openExternal(i.url)} className="text-blue hover:underline">{i.repo}</button>
             <span className="text-text truncate flex-1" title={i.title}>{i.title}</span>
             {i.unread && (
               <button
-                onClick={() => window.electron.github.markNotifRead(selectedId, i.id)}
+                onClick={() => window.electronAPI.github.markNotifRead(selectedId, i.id)}
                 className="text-overlay1 text-[10px]"
               >mark read</button>
             )}
@@ -1105,7 +1164,7 @@ git commit -m "feat(github): NotificationsSection (per-profile selector)"
 
 - [ ] **Dispatch `superpowers:code-reviewer`** with prompt:
 
-> "Review PR 3 panel section implementations (L2a–L2g). Verify: ReviewsSection is the ONLY `dangerouslySetInnerHTML` in the feature's React tree and uses `renderCommentMarkdown`; all external links use `rel='noreferrer'`; polling timers clean up on unmount; error/empty states render safely without crashing."
+> "Review PR 3 panel section implementations (L2a–L2g). Verify: the `SanitizedMarkdown` wrapper (defined in PR 2) is the ONLY `dangerouslySetInnerHTML` render site in the feature's React tree, and every rendered markdown body passes through it; anchor clicks inside that container route through `window.electronAPI.shell.openExternal` and drop non-https; polling timers clean up on unmount; error/empty states render safely without crashing."
 
 Apply findings before Phase N.
 
@@ -1129,7 +1188,17 @@ export default function OnboardingModal({ onClose, onSetup }: Props) {
       <div className="bg-mantle p-6 rounded max-w-lg text-text">
         <h3 className="text-lg mb-3">New: GitHub sidebar</h3>
         <div className="bg-surface0 rounded overflow-hidden mb-3">
-          <img src={new URL('../../../../docs/screenshots/github-panel.jpg', import.meta.url).toString()} alt="GitHub panel preview" className="w-full" />
+          {/*
+            Image lives at src/renderer/assets/training/github-panel.jpg (see N3).
+            Loaded via Vite glob in TrainingWalkthrough — here we use a plain
+            new URL(...) since we're in a React component. Vite resolves the
+            relative path at build time and bundles the image for packaged builds.
+          */}
+          <img
+            src={new URL('../../../assets/training/github-panel.jpg', import.meta.url).toString()}
+            alt="GitHub panel preview"
+            className="w-full"
+          />
         </div>
         <p className="text-sm text-subtext0 mb-3">
           See PR, CI, reviews, issues, and session context for whatever you're working on — next to the terminal.
@@ -1160,6 +1229,10 @@ const githubConfig = useGitHubStore((s) => s.config)
 
 useEffect(() => {
   if (!githubConfig) return
+  // 'permanent' is the terminal opt-out set by the "Don't show again" checkbox.
+  // Must be checked BEFORE the version comparison, otherwise users who opted
+  // out would see the modal re-open on every app update.
+  if (githubConfig.seenOnboardingVersion === 'permanent') return
   const currentVersion = __APP_VERSION__ /* inject in vite config or import */
   if (githubConfig.seenOnboardingVersion !== currentVersion) {
     setShowOnboard(true)
@@ -1194,41 +1267,49 @@ git commit -m "feat(github): onboarding modal with post-update trigger"
 
 ### Task N3: Screenshots for onboarding + tour (BOTH platforms)
 
-**Files:** CREATE `docs/screenshots/github-panel.jpg` AND `docs/screenshots/github-panel-mac.jpg`.
+**Files:** CREATE `src/renderer/assets/training/github-panel.jpg` AND `src/renderer/assets/training/github-panel-mac.jpg`. Also optional copies under `docs/screenshots/` for markdown/README use.
 
-The existing `getScreenshot()` helper in `TrainingWalkthrough.tsx` prefers `<name>-mac.jpg` on macOS and falls back to `<name>.jpg`. Ship both so the tour looks right on either OS.
+The existing `getScreenshot()` helper in `TrainingWalkthrough.tsx` (via `import.meta.glob('../assets/training/*.jpg')`) prefers `<name>-mac.jpg` on macOS and falls back to `<name>.jpg`. Ship both so the tour looks right on either OS. The onboarding modal (Task N1) loads the same asset via `new URL('../../../assets/training/github-panel.jpg', import.meta.url)` so it gets bundled in packaged builds.
 
 - [ ] **Step 1: Capture Windows screenshot**
 
 ```bash
-# On the Windows dev machine (primary)
+# On your Windows dev machine
 npm run dev
 # In the running app: switch to APP_DEV, sign in, enable a session on nubbymong/claude-command-center
 # Wait for panel to populate (PR card, CI, Session Context)
 # Capture the right panel region at ~600×800px, save as:
-# docs/screenshots/github-panel.jpg
+# src/renderer/assets/training/github-panel.jpg
 ```
 
 - [ ] **Step 2: Capture macOS screenshot**
 
-On your Mac build host (Apple Silicon Mac Mini at `nicholasmoger@192.168.50.254` per MEMORY):
+On your macOS build host (whichever Mac you use for the Mac installer build — see `.github/workflows/release.yml` for the job config):
 ```bash
-ssh nicholasmoger@192.168.50.254
-cd ~/claude-command-center   # or wherever your Mac checkout lives
+# SSH to your Mac build host (exact address lives in your local notes/1Password; keep it out of the public repo)
+# Pull the branch, install, run dev
 git pull  # get feature/github-sidebar-pr3
 npm install
 npm run dev
 # Same repro: APP_DEV session, sign in, enable panel. Capture at 2x retina.
-# Save as docs/screenshots/github-panel-mac.jpg. Scp back or push via branch.
+# Save as src/renderer/assets/training/github-panel-mac.jpg and scp / commit / push.
 ```
 
-If direct ssh capture is impractical, capture manually on Mac and copy the file into the branch before pushing.
+If direct ssh capture is impractical, capture manually on any macOS machine and drop the file into the branch before pushing.
 
 - [ ] **Step 3: Commit both**
 
 ```bash
-git add docs/screenshots/github-panel.jpg docs/screenshots/github-panel-mac.jpg
+git add src/renderer/assets/training/github-panel.jpg src/renderer/assets/training/github-panel-mac.jpg
 git commit -m "docs(github): add panel screenshots (Windows + macOS)"
+```
+
+Optionally also copy to `docs/screenshots/` for use in README/docs:
+
+```bash
+cp src/renderer/assets/training/github-panel*.jpg docs/screenshots/
+git add docs/screenshots/github-panel*.jpg
+git commit -m "docs(github): mirror panel screenshots in docs/screenshots for README use"
 ```
 
 - [ ] **Step 4: Update existing screenshots if panel overlaps other captures**
@@ -1393,7 +1474,7 @@ export default function AutoDetectBanner({ sessionId, cwd, onAccept, onEdit, onD
   const [slug, setSlug] = useState<string | null>(null)
 
   useEffect(() => {
-    window.electron.github.repoDetect(cwd).then((r) => { if (r.ok) setSlug(r.slug) })
+    window.electronAPI.github.repoDetect(cwd).then((r) => { if (r.ok) setSlug(r.slug) })
   }, [cwd])
 
   if (!slug) return null
@@ -1431,13 +1512,21 @@ import type { AuthProfile } from '../../../shared/github-types'
 
 interface Props { profile: AuthProfile; onRenew: () => void }
 
+// Static className map — Tailwind's class scanner cannot resolve dynamic
+// `bg-${tone}/10` strings, so we ship the complete class strings here.
+const TONE_CLASSES = {
+  red:    'bg-red/10    text-red    border-red/30',
+  peach:  'bg-peach/10  text-peach  border-peach/30',
+  yellow: 'bg-yellow/10 text-yellow border-yellow/30',
+} as const
+
 export default function ExpiryBanner({ profile, onRenew }: Props) {
   if (!profile.expiryObservable || !profile.expiresAt) return null
   const daysLeft = (profile.expiresAt - Date.now()) / 86_400_000
   if (daysLeft > 7) return null
-  const tone = daysLeft < 2 ? 'red' : daysLeft < 7 ? 'peach' : 'yellow'
+  const tone: keyof typeof TONE_CLASSES = daysLeft < 2 ? 'red' : daysLeft < 7 ? 'peach' : 'yellow'
   return (
-    <div className={`bg-${tone}/10 text-${tone} px-3 py-2 text-xs border-b border-${tone}/30 flex items-center gap-2`}>
+    <div className={`${TONE_CLASSES[tone]} px-3 py-2 text-xs border-b flex items-center gap-2`}>
       <span>{profile.label}: PAT expires in {Math.max(Math.ceil(daysLeft), 0)} days.</span>
       <button onClick={onRenew} className="bg-surface0 px-2 py-0.5 rounded">Renew</button>
     </div>
@@ -1576,7 +1665,7 @@ PR 1 + PR 2 merged
 
 ## Spec
 
-`docs/superpowers/specs/2026-04-17-github-sidebar-design.md` (rev 3)
+`docs/superpowers/specs/2026-04-17-github-sidebar-design.md` (rev 6)
 
 ## Test plan
 

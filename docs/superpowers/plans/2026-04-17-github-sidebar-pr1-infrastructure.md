@@ -8,7 +8,7 @@
 
 **Tech Stack:** Electron 33 + TypeScript; Node built-in `fetch`; `isomorphic-dompurify` (installed in PR 2); vitest.
 
-**Spec:** `docs/superpowers/specs/2026-04-17-github-sidebar-design.md` (rev 3, `b765a28`).
+**Spec:** `docs/superpowers/specs/2026-04-17-github-sidebar-design.md` (rev 6).
 
 **Branch:** `feature/github-sidebar-pr1` off `beta`. **PR target:** `beta`.
 
@@ -510,6 +510,7 @@ Append (inside the `export const IPC = { ... }` object):
   GITHUB_SESSION_CONTEXT_GET: 'github:session:context:get',
   GITHUB_LOCALGIT_GET: 'github:localgit:get',
   GITHUB_SYNC_NOW: 'github:sync:now',
+  GITHUB_SYNC_FOCUSED_NOW: 'github:sync:focused:now',
   GITHUB_SYNC_PAUSE: 'github:sync:pause',
   GITHUB_SYNC_RESUME: 'github:sync:resume',
   GITHUB_DATA_GET: 'github:data:get',
@@ -3253,6 +3254,9 @@ export function registerGitHubHandlers(deps: RegisterDeps) {
   ipcMain.handle(IPC.GITHUB_DATA_GET, async () => ({ ok: true, data: null }))
   ipcMain.handle(IPC.GITHUB_SESSION_CONTEXT_GET, async () => ({ ok: true, data: null }))
   ipcMain.handle(IPC.GITHUB_SYNC_NOW, async () => ({ ok: true }))
+  // Resolves the focused session server-side so renderer never needs to know
+  // which sessionId is active. Real implementation lands in PR 3 orchestrator.
+  ipcMain.handle(IPC.GITHUB_SYNC_FOCUSED_NOW, async () => ({ ok: true }))
   ipcMain.handle(IPC.GITHUB_SYNC_PAUSE, async () => ({ ok: true }))
   ipcMain.handle(IPC.GITHUB_SYNC_RESUME, async () => ({ ok: true }))
   ipcMain.handle(IPC.GITHUB_ACTIONS_RERUN, async () => ({ ok: true }))
@@ -3319,7 +3323,10 @@ git commit -m "feat(github): register IPC handlers + wire session config persist
 
 - [ ] **Step 1: Extend preload**
 
-Inside the existing `contextBridge.exposeInMainWorld('electron', { ... })` bridge, add a `github` key. At the top of the file, make sure `IPC` is imported; if another bridged namespace uses `IPC.XXX`, follow that same pattern.
+The existing preload exposes the renderer API as `electronAPI` (not `electron`) via `contextBridge.exposeInMainWorld('electronAPI', electronAPI)`. Also exposed separately: `contextBridge.exposeInMainWorld('electronPlatform', process.platform)`. Extend the existing `electronAPI` object by adding a `github` key inside it; do NOT introduce a separate `window.electron` root.
+
+```ts
+// Inside the existing `const electronAPI: ElectronAPI = { ... }` object:
 
 ```ts
 github: {
@@ -3341,6 +3348,7 @@ github: {
     ipcRenderer.invoke(IPC.GITHUB_SESSION_CONFIG_UPDATE, sessionId, patch),
   getLocalGit: (cwd: string) => ipcRenderer.invoke(IPC.GITHUB_LOCALGIT_GET, cwd),
   syncNow: (sessionId: string) => ipcRenderer.invoke(IPC.GITHUB_SYNC_NOW, sessionId),
+  syncFocusedNow: () => ipcRenderer.invoke(IPC.GITHUB_SYNC_FOCUSED_NOW),
   syncPause: () => ipcRenderer.invoke(IPC.GITHUB_SYNC_PAUSE),
   syncResume: () => ipcRenderer.invoke(IPC.GITHUB_SYNC_RESUME),
   getData: (slug: string) => ipcRenderer.invoke(IPC.GITHUB_DATA_GET, slug),
@@ -3371,7 +3379,7 @@ github: {
 
 - [ ] **Step 2: Extend `electron.d.ts`**
 
-Add to the `window.electron` interface:
+Add to the `ElectronAPI` interface (the one referenced by `window.electronAPI`):
 
 ```ts
 github: {
@@ -3459,8 +3467,8 @@ npm run dev
 ```
 Open devtools → Console, run:
 ```js
-await window.electron.github.getConfig()   // → null
-await window.electron.github.ghcliDetect() // → { ok: true, users: [...] } (if you have gh authed)
+await window.electronAPI.github.getConfig()   // → null
+await window.electronAPI.github.ghcliDetect() // → { ok: true, users: [...] } (if you have gh authed)
 ```
 
 - [ ] **Step 3: Rebase against latest beta**
@@ -3503,14 +3511,14 @@ gh pr create --base beta --title "feat(github): sidebar infrastructure (PR 1/3)"
 
 ## Spec
 
-`docs/superpowers/specs/2026-04-17-github-sidebar-design.md` (rev 3)
+`docs/superpowers/specs/2026-04-17-github-sidebar-design.md` (rev 6)
 
 ## Test plan
 
 - [x] Unit tests in `tests/unit/github/*` all pass
 - [x] `npm run typecheck` clean
 - [x] `npm run build` clean
-- [ ] Manual: `window.electron.github.ghcliDetect()` returns authed accounts
+- [ ] Manual: `window.electronAPI.github.ghcliDetect()` returns authed accounts
 - [ ] Manual: Add a fine-grained PAT → appears encrypted in `APP_DEV/github-config.json`
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
