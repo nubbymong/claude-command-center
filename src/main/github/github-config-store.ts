@@ -63,11 +63,15 @@ export class GitHubConfigStore {
       const tmp = `${this.filePath}.${randomUUID()}.tmp`
       await fs.writeFile(tmp, JSON.stringify(config, null, 2), 'utf8')
       try {
-        // Windows cross-platform atomic write. fs.rename fails on Windows
-        // when the destination file already exists — see
-        // src/main/config-manager.ts for the reference pattern. copyFile
-        // atomically overwrites an existing destination on every OS; plain
-        // rename is used only for the first write when no dest exists yet.
+        // Windows cross-platform write. fs.rename fails on Windows when the
+        // destination already exists — see src/main/config-manager.ts for
+        // the reference pattern. copyFile gives us Windows overwrite
+        // compatibility, but it is NOT crash-safe atomic: a process crash
+        // mid-copy could leave a partially-written dest. The mutex above
+        // prevents concurrent reads from observing a partial write, and a
+        // future hardening could add fsync, but single-process crash-safety
+        // is not a goal here. Plain rename is used only for the first write
+        // when no dest exists yet.
         if (existsSync(this.filePath)) {
           await fs.copyFile(tmp, this.filePath)
           try {

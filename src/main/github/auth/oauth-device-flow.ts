@@ -7,7 +7,8 @@ import type { DeviceCodeResponse, OAuthTokenResponse } from '../../../shared/git
 
 /**
  * Step 1 of RFC 8628: request a device code + user_code.
- * Public client — no client secret. Throws on HTTP error.
+ * Public client — no client secret. Throws on HTTP error or non-JSON body
+ * (proxies and edge caches can return 2xx with HTML in edge cases).
  */
 export async function requestDeviceCode(scope: string): Promise<DeviceCodeResponse> {
   const body = new URLSearchParams({ client_id: GITHUB_OAUTH_CLIENT_ID, scope })
@@ -20,7 +21,11 @@ export async function requestDeviceCode(scope: string): Promise<DeviceCodeRespon
     body: body.toString(),
   })
   if (!r.ok) throw new Error(`device_code HTTP ${r.status}`)
-  return (await r.json()) as DeviceCodeResponse
+  try {
+    return (await r.json()) as DeviceCodeResponse
+  } catch {
+    throw new Error('device_code endpoint returned non-JSON body')
+  }
 }
 
 export type Sleep = (ms: number) => Promise<void>

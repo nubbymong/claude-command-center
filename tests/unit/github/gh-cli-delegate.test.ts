@@ -45,11 +45,21 @@ describe('ghAuthToken', () => {
 })
 
 describe('ghAuthStatus', () => {
-  it('tolerates non-zero exit (status writes to stderr)', async () => {
+  it('parses account list when gh writes to stderr (normal exit=0 path)', async () => {
     const run = vi.fn().mockResolvedValue({
       stdout: '',
       stderr: '✓ Logged in to github.com account nubby (keyring)',
       code: 0,
+    })
+    expect(await ghAuthStatus(run)).toEqual(['nubby'])
+  })
+  it('tolerates non-zero exit and still parses accounts from stderr', async () => {
+    // `gh auth status` can exit non-zero when some hosts are authed and
+    // others aren't. ghAuthStatus should still return the github.com accounts.
+    const run = vi.fn().mockResolvedValue({
+      stdout: '',
+      stderr: '✓ Logged in to github.com account nubby (keyring)',
+      code: 1,
     })
     expect(await ghAuthStatus(run)).toEqual(['nubby'])
   })

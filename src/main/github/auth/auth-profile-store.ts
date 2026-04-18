@@ -183,6 +183,11 @@ export class AuthProfileStore {
       if (existing.kind === 'gh-cli') {
         throw new Error('Cannot rotate token on gh-cli profile')
       }
+      // Mirror the addProfile guard — rotating to an empty/whitespace token
+      // would persist a profile that always fails downstream auth.
+      if (typeof rawToken !== 'string' || rawToken.trim().length === 0) {
+        throw new Error('rotateToken requires a non-empty rawToken')
+      }
       if (!safeStorage.isEncryptionAvailable()) {
         throw new Error('OS keychain unavailable; cannot encrypt token')
       }

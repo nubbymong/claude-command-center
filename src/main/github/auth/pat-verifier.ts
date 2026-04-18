@@ -8,14 +8,32 @@ export interface VerifyResult {
 }
 
 /** Thrown on transient / server-side failures so callers can distinguish them
- *  from an invalid-token verdict. 401 / 403-with-auth-failure return null; all
- *  other non-2xx statuses throw this. */
+ *  from an invalid-token verdict. 401 / 403-with-auth-failure return null;
+ *  transient failures (5xx, rate-limit, network, parse failure) throw this.
+ *
+ *  `status` is the HTTP status when available, or 0 for pre-response failures
+ *  (network, parse). `kind` disambiguates so callers can log accurately.
+ *  The underlying error (fetch rejection, JSON parse error) is preserved via
+ *  the standard ES2022 `cause` option.
+ */
 export class VerifyTransientError extends Error {
   readonly status: number
-  constructor(status: number) {
-    super(`GitHub /user returned HTTP ${status}`)
+  readonly kind: 'http' | 'network' | 'parse'
+  constructor(
+    kind: 'http' | 'network' | 'parse',
+    status: number,
+    options?: { cause?: unknown },
+  ) {
+    const msg =
+      kind === 'http'
+        ? `GitHub /user returned HTTP ${status}`
+        : kind === 'network'
+        ? `network failure contacting GitHub /user`
+        : `failed to parse GitHub /user response body`
+    super(msg, options)
     this.name = 'VerifyTransientError'
     this.status = status
+    this.kind = kind
   }
 }
 
@@ -50,10 +68,11 @@ export async function verifyToken(token: string): Promise<VerifyResult | null> {
         'User-Agent': UA,
       },
     })
-  } catch {
+  } catch (err) {
     // Network-level failures (DNS, TCP reset, TLS error, timeout) are transient
-    // by definition — never let them surface as "invalid token".
-    throw new VerifyTransientError(0)
+    // by definition — never let them surface as "invalid token". Preserve the
+    // original error via `cause` so logs can diagnose connectivity issues.
+    throw new VerifyTransientError('network', 0, { cause: err })
   }
   if (r.ok) {
     // 2xx body parsing can still fail if GitHub returns HTML (edge cache
@@ -62,8 +81,8 @@ export async function verifyToken(token: string): Promise<VerifyResult | null> {
     let u: { login: string; avatar_url?: string }
     try {
       u = (await r.json()) as { login: string; avatar_url?: string }
-    } catch {
-      throw new VerifyTransientError(r.status)
+    } catch (err) {
+      throw new VerifyTransientError('parse', r.status, { cause: err })
     }
     const scopes = (r.headers.get('x-oauth-scopes') ?? '')
       .split(',')
@@ -85,10 +104,10 @@ export async function verifyToken(token: string): Promise<VerifyResult | null> {
     // second read and doesn't add reliability. Any other 403 → null (caller
     // prompts re-auth).
     const remaining = r.headers.get('x-ratelimit-remaining')
-    if (remaining === '0') throw new VerifyTransientError(r.status)
+    if (remaining === '0') throw new VerifyTransientError('http', r.status)
     return null
   }
-  throw new VerifyTransientError(r.status)
+  throw new VerifyTransientError('http', r.status)
 }
 
 /**
