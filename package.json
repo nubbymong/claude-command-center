@@ -30,6 +30,7 @@
     "@xterm/xterm": "^5.5.0",
     "better-sqlite3": "^11.7.0",
     "chrome-remote-interface": "^0.34.0",
+    "isomorphic-dompurify": "^3.9.0",
     "marked": "^15.0.0",
     "node-pty": "^1.2.0-beta.10",
     "react": "^18.3.1",
