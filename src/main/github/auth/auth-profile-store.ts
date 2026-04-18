@@ -106,8 +106,18 @@ export class AuthProfileStore {
     const config = await this.load()
     const p = config.authProfiles[id]
     if (!p || !p.tokenCiphertext) return null
-    const buf = Buffer.from(p.tokenCiphertext, 'base64')
-    return safeStorage.decryptString(buf)
+    // Decryption can throw if:
+    //   - OS keychain is unavailable (logged out, locked, deleted entry)
+    //   - ciphertext was produced on a different machine/user (config copied)
+    //   - the base64 blob is corrupt
+    // Any of those should return null (callers flag for re-auth), not crash.
+    if (!safeStorage.isEncryptionAvailable()) return null
+    try {
+      const buf = Buffer.from(p.tokenCiphertext, 'base64')
+      return safeStorage.decryptString(buf)
+    } catch {
+      return null
+    }
   }
 
   async removeProfile(id: string): Promise<void> {
@@ -124,9 +134,18 @@ export class AuthProfileStore {
       const config = await this.load()
       const existing = config.authProfiles[id]
       if (!existing) throw new Error(`Profile not found: ${id}`)
-      // Strip id / kind / tokenCiphertext defensively in case caller bypassed types.
-      const { id: _i, kind: _k, tokenCiphertext: _t, createdAt: _c, ...safePatch } =
-        patch as Partial<AuthProfile>
+      // Strip all immutable-by-design fields even if a caller bypassed the
+      // ProfilePatch compile-time type. `ghCliUsername` is included because
+      // it's the primary key for gh-cli profiles — patching it would silently
+      // hijack the mapping to another gh account.
+      const {
+        id: _i,
+        kind: _k,
+        tokenCiphertext: _t,
+        createdAt: _c,
+        ghCliUsername: _g,
+        ...safePatch
+      } = patch as Partial<AuthProfile>
       config.authProfiles[id] = { ...existing, ...safePatch }
       await this.io.writeConfig(config)
     })

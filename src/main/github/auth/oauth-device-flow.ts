@@ -64,7 +64,20 @@ export async function pollForAccessToken(
       },
       body: body.toString(),
     })
-    const json = (await r.json()) as OAuthTokenResponse
+    // Handle HTTP-level failures explicitly. GitHub normally returns 200
+    // with an `error` field in the body (even for authorization_pending),
+    // so any non-2xx means the token endpoint itself failed — not a user
+    // decision. Fail fast rather than letting `await r.json()` throw on a
+    // non-JSON error page, or silently looping on an empty/unknown body.
+    if (!r.ok) {
+      throw new Error(`OAuth token endpoint HTTP ${r.status}`)
+    }
+    let json: OAuthTokenResponse
+    try {
+      json = (await r.json()) as OAuthTokenResponse
+    } catch {
+      throw new Error('OAuth token endpoint returned non-JSON body')
+    }
     if (json.access_token) return json
     if (json.error === 'authorization_pending') continue
     if (json.error === 'slow_down') {
@@ -72,7 +85,8 @@ export async function pollForAccessToken(
       continue
     }
     if (json.error) throw new Error(`OAuth error: ${json.error}`)
-    // No token, no known error — defensive: treat as pending to avoid busy-loop.
-    continue
+    // 2xx JSON body with neither access_token nor a known error code —
+    // treat as an unrecognized response and fail fast rather than looping.
+    throw new Error('OAuth token endpoint returned unrecognized body')
   }
 }

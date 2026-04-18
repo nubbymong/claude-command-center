@@ -7,13 +7,34 @@ export interface VerifyResult {
   expiresAt?: number
 }
 
+/** Thrown on transient / server-side failures so callers can distinguish them
+ *  from an invalid-token verdict. 401 / 403-with-auth-failure return null; all
+ *  other non-2xx statuses throw this. */
+export class VerifyTransientError extends Error {
+  readonly status: number
+  constructor(status: number) {
+    super(`GitHub /user returned HTTP ${status}`)
+    this.name = 'VerifyTransientError'
+    this.status = status
+  }
+}
+
 const UA = 'ClaudeCommandCenter'
 
 /**
- * Verifies a PAT by hitting /user. Returns null on 401 (bad/expired token).
+ * Verifies a PAT by hitting /user.
+ *
+ * Return semantics:
+ *   - VerifyResult on 2xx
+ *   - null on 401 (bad/expired token) or 403 when response body indicates
+ *     bad credentials — caller re-prompts for a new token
+ *   - THROWS VerifyTransientError on any other non-2xx (5xx, 403 rate-limit,
+ *     network-edge) so callers can retry / surface a "temporary issue" state
+ *     rather than telling the user their token is bad
+ *
  * Reads scopes from `x-oauth-scopes` (classic PATs and OAuth tokens only —
  * fine-grained PATs return an empty header; capability derivation for those
- * goes through the per-repo probeRepoAccess path instead).
+ * goes through probeRepoAccess).
  */
 export async function verifyToken(token: string): Promise<VerifyResult | null> {
   const r = await fetch(`${GITHUB_API_BASE}/user`, {
@@ -23,19 +44,30 @@ export async function verifyToken(token: string): Promise<VerifyResult | null> {
       'User-Agent': UA,
     },
   })
-  if (!r.ok) return null
-  const u = (await r.json()) as { login: string; avatar_url?: string }
-  const scopes = (r.headers.get('x-oauth-scopes') ?? '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean)
-  const exp = r.headers.get('github-authentication-token-expiration')
-  return {
-    username: u.login,
-    avatarUrl: u.avatar_url,
-    scopes,
-    expiresAt: exp ? parseExpiryHeader(exp) : undefined,
+  if (r.ok) {
+    const u = (await r.json()) as { login: string; avatar_url?: string }
+    const scopes = (r.headers.get('x-oauth-scopes') ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+    const exp = r.headers.get('github-authentication-token-expiration')
+    return {
+      username: u.login,
+      avatarUrl: u.avatar_url,
+      scopes,
+      expiresAt: exp ? parseExpiryHeader(exp) : undefined,
+    }
   }
+  if (r.status === 401) return null
+  if (r.status === 403) {
+    // 403 is ambiguous: bad credentials, rate limited, or blocked by SSO.
+    // x-ratelimit-remaining === '0' means rate-limited; otherwise treat as
+    // an auth failure and return null so the UI prompts re-auth.
+    const remaining = r.headers.get('x-ratelimit-remaining')
+    if (remaining === '0') throw new VerifyTransientError(r.status)
+    return null
+  }
+  throw new VerifyTransientError(r.status)
 }
 
 /**

@@ -99,4 +99,31 @@ describe('pollForAccessToken', () => {
     expect(r.access_token).toBeUndefined()
     expect(r.error).toBe('cancelled')
   })
+
+  it('throws on non-2xx token endpoint response (no infinite loop)', async () => {
+    globalThis.fetch = vi.fn(
+      async () => ({ ok: false, status: 503 }) as unknown as Response,
+    ) as unknown as typeof fetch
+    await expect(pollForAccessToken('D', 5, fakeSleep)).rejects.toThrow(/HTTP 503/)
+  })
+
+  it('throws on non-JSON body (HTML error page)', async () => {
+    globalThis.fetch = vi.fn(
+      async () =>
+        ({
+          ok: true,
+          json: async () => {
+            throw new Error('not JSON')
+          },
+        }) as unknown as Response,
+    ) as unknown as typeof fetch
+    await expect(pollForAccessToken('D', 5, fakeSleep)).rejects.toThrow(/non-JSON/)
+  })
+
+  it('throws on empty / unrecognized 2xx body (no busy-loop)', async () => {
+    globalThis.fetch = vi.fn(
+      async () => ({ ok: true, json: async () => ({}) }) as unknown as Response,
+    ) as unknown as typeof fetch
+    await expect(pollForAccessToken('D', 5, fakeSleep)).rejects.toThrow(/unrecognized/)
+  })
 })

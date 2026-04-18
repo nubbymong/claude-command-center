@@ -3,6 +3,7 @@ import {
   verifyToken,
   probeRepoAccess,
   parseExpiryHeader,
+  VerifyTransientError,
 } from '../../../src/main/github/auth/pat-verifier'
 
 const orig = globalThis.fetch
@@ -49,6 +50,36 @@ describe('verifyToken', () => {
       async () => ({ ok: false, status: 401 }) as unknown as Response,
     ) as unknown as typeof fetch
     expect(await verifyToken('bad')).toBeNull()
+  })
+  it('returns null on 403 when NOT rate-limited', async () => {
+    globalThis.fetch = vi.fn(
+      async () =>
+        ({
+          ok: false,
+          status: 403,
+          headers: { get: (_h: string) => null },
+        }) as unknown as Response,
+    ) as unknown as typeof fetch
+    expect(await verifyToken('bad')).toBeNull()
+  })
+  it('throws VerifyTransientError on 403 rate-limit (remaining=0)', async () => {
+    globalThis.fetch = vi.fn(
+      async () =>
+        ({
+          ok: false,
+          status: 403,
+          headers: {
+            get: (h: string) => (h.toLowerCase() === 'x-ratelimit-remaining' ? '0' : null),
+          },
+        }) as unknown as Response,
+    ) as unknown as typeof fetch
+    await expect(verifyToken('x')).rejects.toBeInstanceOf(VerifyTransientError)
+  })
+  it('throws VerifyTransientError on 5xx', async () => {
+    globalThis.fetch = vi.fn(
+      async () => ({ ok: false, status: 503 }) as unknown as Response,
+    ) as unknown as typeof fetch
+    await expect(verifyToken('x')).rejects.toBeInstanceOf(VerifyTransientError)
   })
 })
 

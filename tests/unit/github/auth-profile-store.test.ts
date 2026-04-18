@@ -120,17 +120,16 @@ describe('AuthProfileStore', () => {
     expect(mem.config).toBeNull()
   })
 
-  it('updateProfile cannot patch tokenCiphertext, id, kind, or createdAt', async () => {
+  it('updateProfile cannot patch tokenCiphertext, id, kind, createdAt, or ghCliUsername', async () => {
     const id = await store.addProfile({
-      kind: 'pat-classic',
+      kind: 'gh-cli',
       label: 'original',
       username: 'x',
       scopes: [],
       capabilities: [],
-      rawToken: 'ghp_original',
+      ghCliUsername: 'nubbymong',
       expiryObservable: false,
     })
-    const originalCiphertext = mem.config!.authProfiles[id].tokenCiphertext
     const originalCreatedAt = mem.config!.authProfiles[id].createdAt
     await store.updateProfile(id, {
       // @ts-expect-error — whitelist blocks these fields at compile time; runtime guard backs it up
@@ -138,17 +137,56 @@ describe('AuthProfileStore', () => {
       // @ts-expect-error
       id: 'hijack',
       // @ts-expect-error
-      kind: 'gh-cli',
+      kind: 'pat-classic',
       // @ts-expect-error
       createdAt: 0,
+      // @ts-expect-error — ghCliUsername must stay immutable; patching it would hijack the gh account binding
+      ghCliUsername: 'attacker',
       label: 'renamed',
     })
     const p = mem.config!.authProfiles[id]
-    expect(p.tokenCiphertext).toBe(originalCiphertext)
+    expect(p.tokenCiphertext).toBeUndefined()
     expect(p.id).toBe(id)
-    expect(p.kind).toBe('pat-classic')
+    expect(p.kind).toBe('gh-cli')
     expect(p.createdAt).toBe(originalCreatedAt)
+    expect(p.ghCliUsername).toBe('nubbymong')
     expect(p.label).toBe('renamed')
+  })
+
+  it('getToken returns null (does not throw) when decryption fails', async () => {
+    const id = await store.addProfile({
+      kind: 'pat-classic',
+      label: 'x',
+      username: 'x',
+      scopes: [],
+      capabilities: [],
+      rawToken: 'ghp_ok',
+      expiryObservable: false,
+    })
+    const originalDecrypt = mockSafeStorage.decryptString
+    ;(mockSafeStorage as unknown as { decryptString: () => string }).decryptString = () => {
+      throw new Error('decrypt failed — corrupt ciphertext or wrong machine')
+    }
+    try {
+      await expect(store.getToken(id)).resolves.toBeNull()
+    } finally {
+      ;(mockSafeStorage as unknown as { decryptString: typeof originalDecrypt }).decryptString = originalDecrypt
+    }
+  })
+
+  it('getToken returns null when safeStorage.isEncryptionAvailable() becomes false', async () => {
+    const id = await store.addProfile({
+      kind: 'pat-classic',
+      label: 'x',
+      username: 'x',
+      scopes: [],
+      capabilities: [],
+      rawToken: 'ghp_ok',
+      expiryObservable: false,
+    })
+    // Keychain flipped unavailable after profile creation (e.g., user logged out).
+    mockSafeStorage.isEncryptionAvailable.mockReturnValue(false)
+    await expect(store.getToken(id)).resolves.toBeNull()
   })
 
   it('rotateToken re-encrypts through safeStorage', async () => {

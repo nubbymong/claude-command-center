@@ -25,8 +25,9 @@ describe('redactTokens', () => {
     expect(redactTokens('x?access_token=secret&other=ok')).toBe('x?[REDACTED]&other=ok')
   })
   it('redacts token with underscore-prefix (env-var style) — regression for \\b bypass', () => {
-    // `\b` does NOT fire between two word chars like `_` and `g`.
-    // Patterns must use (?<![A-Za-z0-9_]) to catch shell env dumps.
+    // `\b` does NOT fire between two word chars. Patterns use
+    // (?<![A-Za-z0-9]) — `_` is deliberately NOT in the exclusion class, so
+    // `prefix_ghp_...` and `MY_TOKEN=ghp_...` both redact.
     expect(redactTokens(`MY_TOKEN=${PAT_CLASSIC}`)).toBe('MY_TOKEN=[REDACTED]')
     expect(redactTokens(`prefix_${PAT_CLASSIC}`)).toBe('prefix_[REDACTED]')
   })
