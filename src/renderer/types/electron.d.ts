@@ -302,6 +302,92 @@ export interface ElectronAPI {
   shell: {
     openExternal: (url: string) => Promise<void>
   }
+  github: {
+    getConfig: () => Promise<import('../../shared/github-types').GitHubConfig | null>
+    updateConfig: (
+      patch: Partial<import('../../shared/github-types').GitHubConfig>,
+    ) => Promise<import('../../shared/github-types').GitHubConfig>
+    addPat: (input: {
+      kind: 'pat-classic' | 'pat-fine-grained'
+      label: string
+      rawToken: string
+      allowedRepos?: string[]
+    }) => Promise<{ ok: boolean; id?: string; error?: string }>
+    adoptGhCli: (username: string) => Promise<{ ok: boolean; id?: string; error?: string }>
+    removeProfile: (id: string) => Promise<{ ok: boolean }>
+    renameProfile: (id: string, label: string) => Promise<{ ok: boolean }>
+    testProfile: (id: string) => Promise<{
+      ok: boolean
+      username?: string
+      scopes?: string[]
+      expiresAt?: number
+      error?: string
+    }>
+    oauthStart: (mode: 'public' | 'private') => Promise<{
+      flowId: string
+      userCode: string
+      verificationUri: string
+      expiresIn: number
+      interval: number
+    }>
+    oauthPoll: (flowId: string) => Promise<{
+      ok: boolean
+      profileId?: string
+      error?: string
+    }>
+    oauthCancel: (flowId: string) => Promise<{ ok: boolean }>
+    ghcliDetect: () => Promise<{ ok: boolean; users: string[] }>
+    repoDetect: (cwd: string) => Promise<{ ok: boolean; slug: string | null }>
+    updateSessionConfig: (
+      sessionId: string,
+      patch: Partial<import('../../shared/github-types').SessionGitHubIntegration>,
+    ) => Promise<{ ok: boolean; error?: string }>
+    getLocalGit: (
+      cwd: string,
+    ) => Promise<{
+      ok: boolean
+      state: import('../../shared/github-types').LocalGitState
+    }>
+    syncNow: (sessionId: string) => Promise<{ ok: boolean }>
+    syncFocusedNow: () => Promise<{ ok: boolean }>
+    syncPause: () => Promise<{ ok: boolean }>
+    syncResume: () => Promise<{ ok: boolean }>
+    getData: (
+      slug: string,
+    ) => Promise<{
+      ok: boolean
+      data: import('../../shared/github-types').RepoCache | null
+    }>
+    getSessionContext: (
+      sessionId: string,
+    ) => Promise<{
+      ok: boolean
+      data: import('../../shared/github-types').SessionContextResult | null
+    }>
+    onDataUpdate: (
+      cb: (p: {
+        slug: string
+        data: import('../../shared/github-types').RepoCache
+      }) => void,
+    ) => () => void
+    onSyncStateUpdate: (
+      cb: (p: {
+        slug: string
+        state: 'syncing' | 'synced' | 'rate-limited' | 'error' | 'idle'
+        at: number
+        nextResetAt?: number
+      }) => void,
+    ) => () => void
+    rerunActionsRun: (slug: string, runId: number) => Promise<{ ok: boolean }>
+    mergePR: (
+      slug: string,
+      prNumber: number,
+      method: 'merge' | 'squash' | 'rebase',
+    ) => Promise<{ ok: boolean }>
+    readyPR: (slug: string, prNumber: number) => Promise<{ ok: boolean }>
+    replyToReview: (slug: string, threadId: string, body: string) => Promise<{ ok: boolean }>
+    markNotifRead: (profileId: string, notifId: string) => Promise<{ ok: boolean }>
+  }
 }
 
 declare global {
