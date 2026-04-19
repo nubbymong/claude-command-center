@@ -719,6 +719,10 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
     IPC.GITHUB_NOTIF_MARK_READ,
     async (_e, profileId: string, threadId: string) => {
       if (!profileId || !threadId) return { ok: false, error: 'missing-args' }
+      // threadId is string-typed on the wire; reject anything other than a
+      // strict positive integer to avoid path-traversal into unintended
+      // endpoints. GitHub's notification thread ids are numeric.
+      if (!/^[1-9]\d*$/.test(threadId)) return { ok: false, error: 'invalid-thread-id' }
       try {
         const r = await githubFetch(`/notifications/threads/${threadId}`, {
           tokenFn: tokenFnForProfile(profileId),

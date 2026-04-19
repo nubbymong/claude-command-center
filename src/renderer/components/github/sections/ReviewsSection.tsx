@@ -40,6 +40,11 @@ export default function ReviewsSection({ sessionId, slug }: Props) {
         // can retry instead of losing their reply to a transient failure.
         setReplyError(r.error ?? 'Failed to send')
       }
+    } catch (err) {
+      // IPC rejection path — without this, a main-side throw leaves the
+      // button click as an unhandled promise rejection and the user gets
+      // no feedback. Preserve composer state so retry is one click.
+      setReplyError(err instanceof Error ? err.message : 'Failed to send reply')
     } finally {
       setReplySending(false)
     }

@@ -46,6 +46,13 @@ export default function ActivePRSection({ sessionId, slug }: Props) {
         setActionError(r.error ?? `${kind} failed`)
         setTimeout(() => setActionError(null), 4000)
       }
+    } catch (err) {
+      // IPC rejection (handler threw, main-side network error surfaced as
+      // a throw, renderer navigating). Surface to the user rather than
+      // letting it propagate as an unhandled promise rejection from the
+      // click callback.
+      setActionError(err instanceof Error ? err.message : `${kind} failed`)
+      setTimeout(() => setActionError(null), 4000)
     } finally {
       setPending(null)
     }

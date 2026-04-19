@@ -39,6 +39,11 @@ export default function CISection({ sessionId, slug }: Props) {
         setRerunError(r.error ?? 'Re-run failed')
         setTimeout(() => setRerunError(null), 4000)
       }
+    } catch (err) {
+      // Catch IPC rejections so they don't bubble up as unhandled promise
+      // rejections from the click handler. try/finally alone re-throws.
+      setRerunError(err instanceof Error ? err.message : 'Re-run failed')
+      setTimeout(() => setRerunError(null), 4000)
     } finally {
       // Always clear, even on rejection — otherwise a network error leaves
       // the Re-run button permanently disabled.
