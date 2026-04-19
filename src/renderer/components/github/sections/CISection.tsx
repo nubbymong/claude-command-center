@@ -31,8 +31,13 @@ export default function CISection({ sessionId, slug }: Props) {
   const rerun = async (id: number) => {
     if (!slug) return
     setRerunning(id)
-    await window.electronAPI.github.rerunActionsRun(slug, id)
-    setRerunning(null)
+    try {
+      await window.electronAPI.github.rerunActionsRun(slug, id)
+    } finally {
+      // Always clear, even on rejection — otherwise a network error leaves
+      // the Re-run button permanently disabled.
+      setRerunning(null)
+    }
   }
 
   const failed = runs.filter((r) => r.conclusion === 'failure').length

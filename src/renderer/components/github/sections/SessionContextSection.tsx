@@ -62,8 +62,8 @@ export default function SessionContextSection({ sessionId }: Props) {
                 Other signals ({ctx.otherSignals.length})
               </summary>
               <ul className="ml-4">
-                {ctx.otherSignals.map((s, i) => (
-                  <li key={i}>
+                {ctx.otherSignals.map((s) => (
+                  <li key={`${s.source}:${s.repo ?? ''}:${s.number}`}>
                     #{s.number} <span className="text-overlay0">({s.source})</span>
                   </li>
                 ))}

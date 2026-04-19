@@ -3,6 +3,7 @@ import { homedir } from 'node:os'
 import path from 'node:path'
 import type { TranscriptToolCall } from './tool-call-inspector'
 import type { TranscriptMessage } from './transcript-scanner'
+import { pathToClaudeProjectFolder } from '../../utils/claude-project-path'
 
 /**
  * Loads the most-recently-touched JSONL transcript under
@@ -23,11 +24,11 @@ import type { TranscriptMessage } from './transcript-scanner'
  *   - JSONL parse errors (best-effort line-by-line)
  */
 
-function pathToClaudeProjectFolder(fsPath: string): string {
-  return fsPath.replace(/:/g, '-').replace(/[\\/]+/g, '-')
-}
-
 const MAX_LINES = 500
+// Cap the bytes we read off disk so a long-lived transcript doesn't turn
+// the Session Context poll into an O(N bytes) hit every 20s. ~1MB is
+// plenty of tail for issue references + recent tool calls.
+const MAX_BYTES = 1_000_000
 
 export interface TranscriptEvents {
   messages: TranscriptMessage[]
@@ -86,7 +87,27 @@ export async function loadTranscriptEvents(cwd: string | undefined): Promise<Tra
 
   let raw: string
   try {
-    raw = await fs.readFile(newestFile, 'utf8')
+    // Tail-read when the file is huge so we don't load tens of MB into
+    // memory every poll. The first partial line (before the first \n) is
+    // dropped when we slice — newline-delimited JSON tolerates it.
+    const st = await fs.stat(newestFile)
+    if (st.size > MAX_BYTES) {
+      const fh = await fs.open(newestFile, 'r')
+      try {
+        const buf = Buffer.alloc(MAX_BYTES)
+        const start = st.size - MAX_BYTES
+        await fh.read(buf, 0, MAX_BYTES, start)
+        const tail = buf.toString('utf8')
+        // Drop whatever precedes the first newline — it's almost certainly
+        // a partial JSON line that can't parse.
+        const nl = tail.indexOf('\n')
+        raw = nl >= 0 ? tail.slice(nl + 1) : tail
+      } finally {
+        await fh.close()
+      }
+    } else {
+      raw = await fs.readFile(newestFile, 'utf8')
+    }
   } catch {
     return empty
   }

@@ -379,15 +379,19 @@ export interface ElectronAPI {
         nextResetAt?: number
       }) => void,
     ) => () => void
-    rerunActionsRun: (slug: string, runId: number) => Promise<{ ok: boolean }>
+    rerunActionsRun: (slug: string, runId: number) => Promise<{ ok: boolean; error?: string }>
     mergePR: (
       slug: string,
       prNumber: number,
       method: 'merge' | 'squash' | 'rebase',
-    ) => Promise<{ ok: boolean }>
-    readyPR: (slug: string, prNumber: number) => Promise<{ ok: boolean }>
-    replyToReview: (slug: string, threadId: string, body: string) => Promise<{ ok: boolean }>
-    markNotifRead: (profileId: string, notifId: string) => Promise<{ ok: boolean }>
+    ) => Promise<{ ok: boolean; error?: string }>
+    readyPR: (slug: string, prNumber: number) => Promise<{ ok: boolean; error?: string }>
+    replyToReview: (
+      slug: string,
+      threadId: string,
+      body: string,
+    ) => Promise<{ ok: boolean; error?: string }>
+    markNotifRead: (profileId: string, notifId: string) => Promise<{ ok: boolean; error?: string }>
   }
 }
 

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import SectionFrame from '../SectionFrame'
 import type { NotificationSummary } from '../../../../shared/github-types'
 import { useGitHubStore } from '../../../stores/githubStore'
@@ -11,6 +11,19 @@ export default function NotificationsSection({ sessionId }: Props) {
   const profiles = useGitHubStore((s) => s.profiles)
   const notifCapable = profiles.filter((p) => p.capabilities.includes('notifications'))
   const [selectedId, setSelectedId] = useState(notifCapable[0]?.id ?? '')
+  // Re-sync the selection when profiles hydrate after mount (or when the
+  // previously-selected profile is removed). useState's initializer only
+  // fires once — without this, selectedId can stay '' and markNotifRead
+  // would fire with an empty profile id.
+  useEffect(() => {
+    if (notifCapable.length === 0) {
+      if (selectedId !== '') setSelectedId('')
+      return
+    }
+    if (!notifCapable.some((p) => p.id === selectedId)) {
+      setSelectedId(notifCapable[0].id)
+    }
+  }, [notifCapable, selectedId])
   // Local-only for now — main's notifications fetch pushes through the
   // data channel in a follow-up. The empty state below is the correct
   // UX until that lands: "no notifications right now" with no fake data.
@@ -41,17 +54,20 @@ export default function NotificationsSection({ sessionId }: Props) {
       emptyIndicator={items.length === 0}
     >
       {notifCapable.length > 1 && (
-        <select
-          value={selectedId}
-          onChange={(e) => setSelectedId(e.target.value)}
-          className="bg-surface0 p-1 rounded text-xs mb-2"
-        >
-          {notifCapable.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.label} ({p.username})
-            </option>
-          ))}
-        </select>
+        <label className="mb-2 flex items-center gap-2 text-xs text-text">
+          <span className="text-subtext0">Profile</span>
+          <select
+            value={selectedId}
+            onChange={(e) => setSelectedId(e.target.value)}
+            className="bg-surface0 p-1 rounded text-xs"
+          >
+            {notifCapable.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label} ({p.username})
+              </option>
+            ))}
+          </select>
+        </label>
       )}
       <ul className="space-y-1 text-xs">
         {items.map((i) => (

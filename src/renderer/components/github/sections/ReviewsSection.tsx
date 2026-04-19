@@ -18,11 +18,31 @@ export default function ReviewsSection({ sessionId, slug }: Props) {
   const unresolved = allThreads.filter((t) => !t.resolved)
   const empty = allThreads.length === 0 && reviews.length === 0
 
+  const [replyError, setReplyError] = useState<string | null>(null)
+  const [replySending, setReplySending] = useState(false)
+
   const send = async (threadId: string) => {
     if (!slug) return
-    await window.electronAPI.github.replyToReview(slug, threadId, replyText)
-    setReplyingTo(null)
-    setReplyText('')
+    const trimmed = replyText.trim()
+    if (!trimmed) {
+      setReplyError('Reply cannot be empty')
+      return
+    }
+    setReplyError(null)
+    setReplySending(true)
+    try {
+      const r = await window.electronAPI.github.replyToReview(slug, threadId, trimmed)
+      if (r.ok) {
+        setReplyingTo(null)
+        setReplyText('')
+      } else {
+        // Keep the composer open + preserve the typed text so the user
+        // can retry instead of losing their reply to a transient failure.
+        setReplyError(r.error ?? 'Failed to send')
+      }
+    } finally {
+      setReplySending(false)
+    }
   }
 
   return (
@@ -74,22 +94,34 @@ export default function ReviewsSection({ sessionId, slug }: Props) {
                 anchor clicks would otherwise be inert. */}
             <SanitizedMarkdown source={t.bodyMarkdown} />
             {replyingTo === t.id ? (
-              <div className="flex gap-1">
-                <input
-                  value={replyText}
-                  onChange={(e) => setReplyText(e.target.value)}
-                  className="flex-1 bg-surface0 p-1 rounded text-xs"
-                  placeholder="Reply"
-                />
-                <button
-                  onClick={() => send(t.id)}
-                  className="bg-blue text-base px-2 py-0.5 rounded text-xs"
-                >
-                  Send
-                </button>
-                <button onClick={() => setReplyingTo(null)} className="text-overlay1">
-                  {String.fromCodePoint(0x00d7)}
-                </button>
+              <div className="space-y-1">
+                <div className="flex gap-1">
+                  <input
+                    value={replyText}
+                    onChange={(e) => setReplyText(e.target.value)}
+                    className="flex-1 bg-surface0 p-1 rounded text-xs"
+                    placeholder="Reply"
+                    aria-label="Reply to review comment"
+                  />
+                  <button
+                    onClick={() => send(t.id)}
+                    disabled={replySending || replyText.trim().length === 0}
+                    className="bg-blue text-base px-2 py-0.5 rounded text-xs disabled:opacity-50"
+                  >
+                    {replySending ? 'Sending' : 'Send'}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setReplyingTo(null)
+                      setReplyError(null)
+                    }}
+                    className="text-overlay1"
+                    aria-label="Cancel reply"
+                  >
+                    {String.fromCodePoint(0x00d7)}
+                  </button>
+                </div>
+                {replyError && <div className="text-red text-[10px]">{replyError}</div>}
               </div>
             ) : (
               <button

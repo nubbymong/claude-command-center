@@ -12,6 +12,10 @@ export default function LocalGitSection({ sessionId, cwd }: Props) {
   const [state, setState] = useState<LocalGitState | null>(null)
 
   useEffect(() => {
+    // Reset to loading state on cwd change so the section doesn't briefly
+    // render the previous repo's branch/status while the first new poll
+    // is in flight.
+    setState(null)
     if (!cwd) return
     let alive = true
     const poll = async () => {

@@ -503,7 +503,13 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
     const sessions = await deps.loadSessions()
     const session = sessions.find((s) => s.id === sessionId)
     const integration = session?.githubIntegration
-    if (!integration?.repoSlug) return { ok: true, data: null }
+    // Validate slug shape before interpolating into REST paths (enrichIssue,
+    // below). session-state.json is author-trusted but has been machine-
+    // round-tripped; a corrupted or hand-edited slug could otherwise build
+    // an arbitrary API URL.
+    if (!integration?.repoSlug || !validateSlug(integration.repoSlug)) {
+      return { ok: true, data: null }
+    }
 
     // Transcript scanning is opt-in per spec §10 — default off. Tool-call
     // signals (recent files edited via Read/Edit/Bash) come from a
