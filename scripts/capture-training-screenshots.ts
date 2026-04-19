@@ -101,6 +101,46 @@ const SAMPLE_CLOUD_AGENTS = [
   },
 ]
 
+// Fake GitHub config + auth profile for the Settings > GitHub screenshot.
+// The "token" entry here is a label only — the real token lives in OS
+// credential storage and is not captured in the JSON file. These fields
+// populate the AuthProfilesList render so the screenshot shows a realistic
+// signed-in state instead of the empty "No auth profiles yet" placeholder.
+// Importantly: no real usernames, repo owners, or tokens in this demo.
+const SAMPLE_GITHUB_CONFIG = {
+  schemaVersion: 1,
+  authProfiles: {
+    'demo-github-profile': {
+      id: 'demo-github-profile',
+      kind: 'oauth' as const,
+      label: 'developer',
+      username: 'developer',
+      scopes: ['repo', 'notifications'],
+      capabilities: ['pulls', 'issues', 'contents', 'statuses', 'checks', 'actions', 'notifications'],
+      createdAt: Date.now() - 86_400_000,
+      lastVerifiedAt: Date.now() - 3_600_000,
+      expiryObservable: false,
+      rateLimits: {
+        core: { limit: 5000, remaining: 4732, resetAt: Date.now() + 1800_000, capturedAt: Date.now() },
+      },
+    },
+  },
+  defaultAuthProfileId: 'demo-github-profile',
+  featureToggles: {
+    sessionContext: true,
+    activePR: true,
+    ci: true,
+    reviews: true,
+    issues: true,
+    notifications: true,
+    localGit: true,
+    agentIntent: false,
+  },
+  syncIntervals: { activeSessionSec: 60, backgroundSec: 300, notificationsSec: 300 },
+  enabledByDefault: false,
+  transcriptScanningOptIn: false,
+}
+
 const SAMPLE_MEMORY_PROJECTS = [
   {
     projectDir: 'demo-web-app',
@@ -163,6 +203,7 @@ function seedSampleData(): BackupInfo {
     'app-meta.json': { setupVersion: '99.99.99', lastTrainingVersion: '99.99.99', lastWhatsNewVersion: '99.99.99', lastSeenVersion: '99.99.99' },
     'cloud-agents.json': SAMPLE_CLOUD_AGENTS,
     'tokenomics.json': sampleTokenomics,
+    'github-config.json': SAMPLE_GITHUB_CONFIG,
   }
 
   for (const [filename, data] of Object.entries(fileMap)) {
@@ -203,7 +244,7 @@ function seedSampleData(): BackupInfo {
 
 function cleanupSampleData(info: BackupInfo): void {
   console.log('[capture] Cleaning up...')
-  const files = ['configs.json', 'commands.json', 'command-sections.json', 'settings.json', 'app-meta.json', 'cloud-agents.json', 'tokenomics.json']
+  const files = ['configs.json', 'commands.json', 'command-sections.json', 'settings.json', 'app-meta.json', 'cloud-agents.json', 'tokenomics.json', 'github-config.json']
   for (const filename of files) {
     const filePath = path.join(info.configDir, filename)
     const backupPath = filePath + BACKUP_SUFFIX
@@ -384,6 +425,15 @@ async function main() {
     await clickTab(window, 'Shortcuts')
     await window.waitForTimeout(500)
     await capture(window, 'step-tips.jpg', 'Shortcuts tab')
+
+    // Step 8: GitHub sidebar (Settings > GitHub tab)
+    // Captured here because the full panel needs a running sync and cached
+    // PR/CI data that we can't reliably seed without network access. The
+    // Settings page is the user's entry point per the onboarding modal and
+    // tips — most visually meaningful no-network shot for the tour.
+    await clickTab(window, 'GitHub')
+    await window.waitForTimeout(600)
+    await capture(window, 'github-panel.jpg', 'Settings > GitHub tab (onboarding entry point)')
 
     console.log('[capture] Closing app...')
     await app.close()
