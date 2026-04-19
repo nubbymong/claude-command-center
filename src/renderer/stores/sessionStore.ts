@@ -60,6 +60,10 @@ export interface Session {
   effortLevel?: 'low' | 'medium' | 'high'
   disableAutoMemory?: boolean
   machineName?: string
+  // Optional per-session GitHub integration state. Hydrated from SavedSession
+  // on restore so the panel can gate on the per-session `enabled` flag instead
+  // of the global `enabledByDefault`. Shape lives in shared/github-types.ts.
+  githubIntegration?: import('../../shared/github-types').SessionGitHubIntegration
 }
 
 interface SessionState {

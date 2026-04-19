@@ -352,6 +352,7 @@ export interface ElectronAPI {
     syncFocusedNow: () => Promise<{ ok: boolean }>
     syncPause: () => Promise<{ ok: boolean }>
     syncResume: () => Promise<{ ok: boolean }>
+    notifyFocusChanged: (sessionId: string | null) => void
     getData: (
       slug: string,
     ) => Promise<{

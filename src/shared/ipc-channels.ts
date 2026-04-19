@@ -209,6 +209,7 @@ export const IPC = {
   GITHUB_LOCALGIT_GET: 'github:localgit:get',
   GITHUB_SYNC_NOW: 'github:sync:now',
   GITHUB_SYNC_FOCUSED_NOW: 'github:sync:focused:now',
+  GITHUB_FOCUS_CHANGED: 'github:focus:changed',
   GITHUB_SYNC_PAUSE: 'github:sync:pause',
   GITHUB_SYNC_RESUME: 'github:sync:resume',
   GITHUB_DATA_GET: 'github:data:get',
