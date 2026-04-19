@@ -552,14 +552,170 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
     return { ok: true, data: ctx }
   })
 
-  // Still stubs — PR 3b action handlers below cover merge/rerun/reply; the
-  // mark-read call still needs per-profile notification plumbing that
-  // piggybacks on a dedicated PR 3b step (task 78).
-  ipcMain.handle(IPC.GITHUB_ACTIONS_RERUN, async () => ({ ok: true }))
-  ipcMain.handle(IPC.GITHUB_PR_MERGE, async () => ({ ok: true }))
-  ipcMain.handle(IPC.GITHUB_PR_READY, async () => ({ ok: true }))
-  ipcMain.handle(IPC.GITHUB_REVIEW_REPLY, async () => ({ ok: true }))
-  ipcMain.handle(IPC.GITHUB_NOTIF_MARK_READ, async () => ({ ok: true }))
+  // Helper: resolve a token for an action IPC. Every action needs a token
+  // scoped to SOMETHING — the focused session for merge / rerun / reply, or
+  // a specific profile id for notification mark-read. Missing token falls
+  // back to error:'no-token' so the renderer surfaces the auth gap.
+  function tokenFnForSession(sessionId: string) {
+    return async () => {
+      const t = await getTokenForSession(sessionId)
+      if (!t) throw new Error('no-token')
+      return t
+    }
+  }
+
+  function tokenFnForProfile(profileId: string) {
+    return async () => {
+      const t = await profileStore.getToken(profileId)
+      if (!t) throw new Error('no-token')
+      return t
+    }
+  }
+
+  ipcMain.handle(
+    IPC.GITHUB_ACTIONS_RERUN,
+    async (_e, slug: string, runId: number) => {
+      if (!validateSlug(slug)) return { ok: false, error: 'invalid-slug' }
+      const id = focusedSessionResolver()
+      if (!id) return { ok: false, error: 'no-focused-session' }
+      try {
+        // rerun-failed-jobs re-runs only the failed jobs from the run, which
+        // is the action users click 'Re-run' for 99% of the time. Use /rerun
+        // (full re-run) instead if we later want a separate control.
+        const r = await githubFetch(
+          `/repos/${slug}/actions/runs/${runId}/rerun-failed-jobs`,
+          { tokenFn: tokenFnForSession(id), shield, etags, method: 'POST' },
+        )
+        return r.ok
+          ? { ok: true }
+          : { ok: false, error: `http-${r.status}` }
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      }
+    },
+  )
+
+  ipcMain.handle(
+    IPC.GITHUB_PR_MERGE,
+    async (
+      _e,
+      slug: string,
+      prNumber: number,
+      method: 'merge' | 'squash' | 'rebase',
+    ) => {
+      if (!validateSlug(slug)) return { ok: false, error: 'invalid-slug' }
+      if (!['merge', 'squash', 'rebase'].includes(method)) {
+        return { ok: false, error: 'invalid-method' }
+      }
+      const id = focusedSessionResolver()
+      if (!id) return { ok: false, error: 'no-focused-session' }
+      try {
+        const r = await githubFetch(`/repos/${slug}/pulls/${prNumber}/merge`, {
+          tokenFn: tokenFnForSession(id),
+          shield,
+          etags,
+          method: 'PUT',
+          body: { merge_method: method },
+        })
+        return r.ok
+          ? { ok: true }
+          : { ok: false, error: `http-${r.status}` }
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      }
+    },
+  )
+
+  ipcMain.handle(
+    IPC.GITHUB_PR_READY,
+    async (_e, slug: string, prNumber: number) => {
+      if (!validateSlug(slug)) return { ok: false, error: 'invalid-slug' }
+      const id = focusedSessionResolver()
+      if (!id) return { ok: false, error: 'no-focused-session' }
+      try {
+        // Draft→ready canonically lives behind the GraphQL mutation
+        // markPullRequestReadyForReview. First resolve the PR's GraphQL
+        // node id via REST, then run the mutation.
+        const prGet = await githubFetch(`/repos/${slug}/pulls/${prNumber}`, {
+          tokenFn: tokenFnForSession(id),
+          shield,
+          etags,
+        })
+        if (!prGet.ok) return { ok: false, error: `http-${prGet.status}` }
+        const prJson = (await prGet.json()) as { node_id?: string }
+        if (!prJson.node_id) return { ok: false, error: 'no-node-id' }
+        const gql = await githubFetch('/graphql', {
+          tokenFn: tokenFnForSession(id),
+          shield,
+          etags,
+          method: 'POST',
+          bucket: 'graphql',
+          baseUrl: 'https://api.github.com',
+          body: {
+            query: `mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id}){clientMutationId}}`,
+            variables: { id: prJson.node_id },
+          },
+        })
+        return gql.ok
+          ? { ok: true }
+          : { ok: false, error: `http-${gql.status}` }
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      }
+    },
+  )
+
+  ipcMain.handle(
+    IPC.GITHUB_REVIEW_REPLY,
+    async (_e, slug: string, threadId: string, body: string) => {
+      if (!validateSlug(slug)) return { ok: false, error: 'invalid-slug' }
+      if (!body || typeof body !== 'string') return { ok: false, error: 'empty-body' }
+      const id = focusedSessionResolver()
+      if (!id) return { ok: false, error: 'no-focused-session' }
+      // threadId here is the root-comment id of the review thread (the shape
+      // populated by PR 3c when fetchPRReviewComments is wired in). The
+      // /comments/{id}/replies endpoint posts under the same thread.
+      const commentId = Number(threadId)
+      if (!Number.isFinite(commentId)) return { ok: false, error: 'invalid-thread-id' }
+      try {
+        const r = await githubFetch(
+          `/repos/${slug}/pulls/comments/${commentId}/replies`,
+          {
+            tokenFn: tokenFnForSession(id),
+            shield,
+            etags,
+            method: 'POST',
+            body: { body },
+          },
+        )
+        return r.ok
+          ? { ok: true }
+          : { ok: false, error: `http-${r.status}` }
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      }
+    },
+  )
+
+  ipcMain.handle(
+    IPC.GITHUB_NOTIF_MARK_READ,
+    async (_e, profileId: string, threadId: string) => {
+      if (!profileId || !threadId) return { ok: false, error: 'missing-args' }
+      try {
+        const r = await githubFetch(`/notifications/threads/${threadId}`, {
+          tokenFn: tokenFnForProfile(profileId),
+          shield,
+          etags,
+          method: 'PATCH',
+        })
+        return r.ok
+          ? { ok: true }
+          : { ok: false, error: `http-${r.status}` }
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      }
+    },
+  )
 
   // Kick off background registration for any session that already had
   // integration enabled when the app was closed. Fire-and-forget because
