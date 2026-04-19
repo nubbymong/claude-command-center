@@ -10,6 +10,18 @@ import { verifyToken, probeRepoAccess } from '../github/auth/pat-verifier'
 import { scopesToCapabilities } from '../github/auth/capability-mapper'
 import { detectRepoFromCwd, defaultGitRun } from '../github/session/repo-detector'
 import { readLocalGitState } from '../github/session/local-git-reader'
+// Small branch-only helper for orchestrator registration. readLocalGitState
+// does too much work (status, stash, log) for this path — but reusing its
+// `run` callable keeps the git invocation consistent.
+async function readCurrentBranch(cwd: string | undefined): Promise<string> {
+  if (!cwd) return 'main'
+  try {
+    const state = await readLocalGitState(cwd, defaultGitRun())
+    return state.branch || 'main'
+  } catch {
+    return 'main'
+  }
+}
 import { validateSlug } from '../github/security/slug-validator'
 import { CacheStore } from '../github/cache/cache-store'
 import { EtagCache } from '../github/client/etag-cache'
@@ -117,7 +129,6 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
   const orchestrator = new SyncOrchestrator({
     cacheStore,
     getConfig: () => configStore.read(),
-    getTokenForSession,
     emitData: (p) => deps.getWindow()?.webContents.send(IPC.GITHUB_DATA_UPDATE, p),
     emitSyncState: (p: SyncStateEvent) =>
       deps.getWindow()?.webContents.send(IPC.GITHUB_SYNC_STATE_UPDATE, p),
@@ -335,12 +346,20 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
       // registerSession already clears any prior timer for this id, so no
       // explicit unregister-then-register dance.
       if (merged.enabled && merged.repoSlug) {
+        const branch = await readCurrentBranch(sessions[idx].workingDirectory)
         orchestrator.registerSession({
           sessionId,
           slug: merged.repoSlug,
-          branch: 'main',
+          branch,
           integration: merged,
         })
+        // If the user had this session focused before enabling integration,
+        // setFocus was a no-op because the session wasn't registered yet.
+        // Replay pending focus now so interval tiering (active vs bg) kicks
+        // in without needing another tab switch.
+        if (focusedSessionResolver() === sessionId) {
+          orchestrator.setFocus(sessionId, true)
+        }
       } else {
         orchestrator.unregisterSession(sessionId)
       }
@@ -368,12 +387,16 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
     const session = sessions.find((s) => s.id === sessionId)
     const integration = session?.githubIntegration
     if (integration?.enabled && integration.repoSlug) {
+      const branch = await readCurrentBranch(session?.workingDirectory)
       orchestrator.registerSession({
         sessionId,
         slug: integration.repoSlug,
-        branch: 'main',
+        branch,
         integration,
       })
+      if (focusedSessionResolver() === sessionId) {
+        orchestrator.setFocus(sessionId, true)
+      }
     }
     await orchestrator.syncNow(sessionId)
     return { ok: true }
@@ -425,12 +448,16 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
       for (const s of sessions) {
         const integ = s.githubIntegration
         if (integ?.enabled && integ.repoSlug) {
+          const branch = await readCurrentBranch(s.workingDirectory)
           orchestrator.registerSession({
             sessionId: s.id,
             slug: integ.repoSlug,
-            branch: 'main',
+            branch,
             integration: integ,
           })
+          if (focusedSessionResolver() === s.id) {
+            orchestrator.setFocus(s.id, true)
+          }
         }
       }
     } catch {

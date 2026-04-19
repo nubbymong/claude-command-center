@@ -37,7 +37,6 @@ export interface SyncStateEvent {
 export interface SyncOrchestratorDeps {
   cacheStore: CacheStore
   getConfig: () => Promise<GitHubConfig | null>
-  getTokenForSession: (sessionId: string) => Promise<string | null>
   emitData: (p: { slug: string; data: RepoCache }) => void
   emitSyncState: (p: SyncStateEvent) => void
   fetchers: OrchestratorFetchers
@@ -134,6 +133,12 @@ export class SyncOrchestrator {
       delayMs = Math.max(s.rateLimitedUntil - now + 1000, 1000)
     } else {
       const cfg = await this.deps.getConfig()
+      // Re-check after the await: unregisterSession could have run while
+      // getConfig was in flight. If we leaked a setTimeout here the timer
+      // would fire against a stale SessionState and the orchestrator would
+      // keep doing background work for a session that no longer exists.
+      const current = this.sessions.get(id)
+      if (!current || current !== s) return
       const intervalSec = s.focused
         ? cfg?.syncIntervals.activeSessionSec ?? 60
         : cfg?.syncIntervals.backgroundSec ?? 300
@@ -170,8 +175,11 @@ export class SyncOrchestrator {
         existing.pr = mapPR(prR.data)
       } else if (prR.status === 'empty') {
         // RepoCache.pr is optional; use undefined (not null) so render code
-        // only has one "no PR" sentinel to handle.
+        // only has one "no PR" sentinel to handle. Reviews are derived from
+        // the PR — clear them too so stale review state doesn't linger in
+        // the cache/UI after a branch loses its PR (e.g. on merge).
         existing.pr = undefined
+        existing.reviews = undefined
       }
       // 'unchanged' intentionally leaves existing.pr alone — that's the
       // whole point of the 304 path; we preserve what the previous sync

@@ -34,11 +34,23 @@ export default function GitHubPanel({
   const togglePanel = useGitHubStore((s) => s.togglePanel)
   const sessionState = useGitHubStore((s) => s.sessionStates[sessionId])
   const setPanelWidth = useGitHubStore((s) => s.setPanelWidth)
-  const sync = useGitHubStore((s) => (slug ? s.syncStatus[slug] : undefined))
   const session = useSessionStore((s) => s.sessions.find((x) => x.id === sessionId))
   const integrationEnabled = session?.githubIntegration?.enabled ?? false
+  // Derive the slug from the session's integration; `slug` prop is kept for
+  // tests / future external drivers but isn't wired from App.tsx anymore.
+  // Without this fall-through the panel header would be stuck at 'idle'
+  // because syncStatus is keyed by slug.
+  const repoSlug = slug ?? session?.githubIntegration?.repoSlug
+  const sync = useGitHubStore((s) => (repoSlug ? s.syncStatus[repoSlug] : undefined))
   const [showSetup, setShowSetup] = useState(false)
   const width = sessionState?.panelWidth ?? 340
+
+  // Auto-close the setup modal once the user saves + integration flips on.
+  // Without this, disabling integration later would re-enter the rail
+  // branch with `showSetup` still true and spontaneously pop the modal.
+  useEffect(() => {
+    if (integrationEnabled && showSetup) setShowSetup(false)
+  }, [integrationEnabled, showSetup])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -93,6 +105,7 @@ export default function GitHubPanel({
         >
           <button
             onClick={() => setShowSetup(true)}
+            aria-label="Configure GitHub integration for this session"
             title="Configure GitHub integration for this session"
             className="text-subtext0 text-xs hover:text-text"
           >
@@ -104,9 +117,12 @@ export default function GitHubPanel({
             className="fixed inset-0 bg-base/80 z-50 flex items-center justify-center"
             role="dialog"
             aria-modal="true"
+            aria-labelledby="gh-setup-title"
           >
             <div className="bg-mantle p-6 rounded max-w-md w-full">
-              <h3 className="text-lg mb-3 text-text">Configure GitHub for this session</h3>
+              <h3 id="gh-setup-title" className="text-lg mb-3 text-text">
+                Configure GitHub for this session
+              </h3>
               <SessionGitHubConfig
                 sessionId={sessionId}
                 cwd={session?.workingDirectory ?? ''}
@@ -161,6 +177,8 @@ export default function GitHubPanel({
         syncedAt={sync?.at}
         nextResetAt={sync?.nextResetAt}
         onRefresh={() => void window.electronAPI.github.syncNow(sessionId)}
+        // branch / ahead / behind / dirty still come from props; PR 3b wires
+        // them to a local-git poller so the header reflects live state.
       />
       <div className="flex-1 overflow-y-auto" aria-live="polite">
         <SessionContextSection sessionId={sessionId} />

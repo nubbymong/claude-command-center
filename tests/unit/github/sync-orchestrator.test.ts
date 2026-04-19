@@ -29,7 +29,6 @@ describe('SyncOrchestrator', () => {
     const orch = new SyncOrchestrator({
       cacheStore,
       getConfig: async () => null,
-      getTokenForSession: async () => 'gho_x',
       emitData: () => {},
       emitSyncState: (p) => states.push(p),
       fetchers: {
@@ -86,7 +85,6 @@ describe('SyncOrchestrator', () => {
     const orch = new SyncOrchestrator({
       cacheStore,
       getConfig: async () => null,
-      getTokenForSession: async () => 'gho_x',
       emitData: () => {},
       emitSyncState: () => {},
       fetchers: {
@@ -131,7 +129,6 @@ describe('SyncOrchestrator', () => {
     const orch = new SyncOrchestrator({
       cacheStore,
       getConfig: async () => null,
-      getTokenForSession: async () => null,
       emitData: () => {},
       emitSyncState: () => {},
       fetchers: {
@@ -158,7 +155,6 @@ describe('SyncOrchestrator', () => {
     const orch = new SyncOrchestrator({
       cacheStore,
       getConfig: async () => null,
-      getTokenForSession: async () => 'gho_x',
       emitData: () => {},
       emitSyncState: (p) => states.push(p),
       fetchers: {
@@ -187,7 +183,6 @@ describe('SyncOrchestrator', () => {
     const orch = new SyncOrchestrator({
       cacheStore,
       getConfig: async () => null,
-      getTokenForSession: async () => null,
       emitData: () => {},
       emitSyncState: () => {},
       fetchers: {
@@ -220,7 +215,6 @@ describe('SyncOrchestrator', () => {
     const orch = new SyncOrchestrator({
       cacheStore,
       getConfig: async () => null,
-      getTokenForSession: async () => null,
       emitData: () => {},
       emitSyncState: () => {},
       fetchers: {
