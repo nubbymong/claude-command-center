@@ -379,6 +379,12 @@ export interface ElectronAPI {
         nextResetAt?: number
       }) => void,
     ) => () => void
+    onNotificationsUpdate: (
+      cb: (p: {
+        profileId: string
+        items: import('../../shared/github-types').NotificationSummary[]
+      }) => void,
+    ) => () => void
     rerunActionsRun: (slug: string, runId: number) => Promise<{ ok: boolean; error?: string }>
     mergePR: (
       slug: string,

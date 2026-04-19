@@ -9,6 +9,7 @@ interface Props {
 
 export default function NotificationsSection({ sessionId }: Props) {
   const profiles = useGitHubStore((s) => s.profiles)
+  const notificationsByProfile = useGitHubStore((s) => s.notificationsByProfile)
   // Memoize so the filtered list has stable identity between renders.
   // Without this, the hydration effect below depends on a new array
   // every render and runs on every render tick.
@@ -30,10 +31,10 @@ export default function NotificationsSection({ sessionId }: Props) {
       setSelectedId(notifCapable[0].id)
     }
   }, [notifCapable, selectedId])
-  // Local-only for now — main's notifications fetch pushes through the
-  // data channel in a follow-up. The empty state below is the correct
-  // UX until that lands: "no notifications right now" with no fake data.
-  const items: NotificationSummary[] = []
+  // Pushed from the NotificationsPoller in main via onNotificationsUpdate;
+  // keyed by profileId. An unknown profile id yields [] (first-render,
+  // pre-poll state) which renders the empty-state message below.
+  const items: NotificationSummary[] = notificationsByProfile[selectedId] ?? []
 
   if (notifCapable.length === 0) {
     return (

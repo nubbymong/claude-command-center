@@ -24,6 +24,7 @@ import {
   SyncOrchestrator,
   type SyncStateEvent,
 } from '../github/session/sync-orchestrator'
+import { NotificationsPoller } from '../github/session/notifications-poller'
 import { buildSessionContext } from '../github/session/session-context-service'
 import { extractFileSignals } from '../github/session/tool-call-inspector'
 import { scanTranscriptMessages } from '../github/session/transcript-scanner'
@@ -156,6 +157,31 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
     return cachedConfig
   }
 
+  // Profile-scoped notifications poller. Registered lazily as profiles with
+  // the 'notifications' capability appear; unregistered on profile removal.
+  // Hydrates the currently-configured profiles at handler-start time.
+  const notificationsPoller = new NotificationsPoller({
+    cacheStore,
+    getConfig: getCachedConfig,
+    getToken: (profileId) => profileStore.getToken(profileId),
+    shield,
+    etags,
+    emitNotifications: (p) =>
+      deps.getWindow()?.webContents.send(IPC.GITHUB_NOTIFICATIONS_UPDATE, p),
+  })
+
+  async function syncNotificationsPollerToConfig(): Promise<void> {
+    // Snapshot notifications-capable profile ids from config. Profile ids
+    // without that capability are skipped — no endpoint access means no
+    // work to do, and trying would just log RateLimit/403 noise.
+    const cfg = await getCachedConfig()
+    const wanted = new Set<string>()
+    for (const p of Object.values(cfg?.authProfiles ?? {})) {
+      if (p.capabilities.includes('notifications')) wanted.add(p.id)
+    }
+    notificationsPoller.syncTo(wanted)
+  }
+
   const orchestrator = new SyncOrchestrator({
     cacheStore,
     getConfig: getCachedConfig,
@@ -244,6 +270,8 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
         expiresAt: v.expiresAt,
         expiryObservable: !!v.expiresAt,
       })
+      cachedConfig = undefined
+      void syncNotificationsPollerToConfig()
       return { ok: true, id }
     },
   )
@@ -271,11 +299,15 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
       ghCliUsername: username,
       expiryObservable: false,
     })
+    cachedConfig = undefined
+    void syncNotificationsPollerToConfig()
     return { ok: true, id }
   })
 
   ipcMain.handle(IPC.GITHUB_PROFILE_REMOVE, async (_e, id: string) => {
     await profileStore.removeProfile(id)
+    cachedConfig = undefined
+    void syncNotificationsPollerToConfig()
     return { ok: true }
   })
 
@@ -341,6 +373,8 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
           expiryObservable: false,
         })
         activeFlows.delete(flowId)
+        cachedConfig = undefined
+        void syncNotificationsPollerToConfig()
         return { ok: true, profileId: id }
       }
       if (r.error === 'cancelled') {
@@ -769,6 +803,14 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
     } catch {
       // Best-effort; if session state can't be read the orchestrator stays
       // empty and syncNow / config-update will register sessions on demand.
+    }
+    // Hydrate notifications poller from config — runs after orchestrator
+    // setup so a slow loadSessions doesn't delay notification registration.
+    // Still fire-and-forget.
+    try {
+      await syncNotificationsPollerToConfig()
+    } catch {
+      // Same best-effort posture — next profile-add / config-update retries.
     }
   })()
 
