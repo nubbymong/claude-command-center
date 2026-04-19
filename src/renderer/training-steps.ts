@@ -80,18 +80,6 @@ export const trainingSteps: TrainingStep[] = [
     screenshotFilename: 'step-security.jpg',
   },
   {
-    id: 'tips',
-    title: 'Tips & Shortcuts',
-    sinceVersion: '1.0.0',
-    bullets: [
-      '**Ctrl+Tab** / **Ctrl+Shift+Tab** to cycle between sessions',
-      '**Ctrl+1-9** to jump directly to a session by number',
-      'Create **quick command buttons** with customizable arguments',
-      'Live **statusline** shows tokens, cost, rate limits, and peak hours',
-    ],
-    screenshotFilename: 'step-tips.jpg',
-  },
-  {
     id: 'github-sidebar',
     title: 'GitHub sidebar',
     sinceVersion: '1.4.0',
@@ -103,6 +91,18 @@ export const trainingSteps: TrainingStep[] = [
       'Find it in **Settings > GitHub**',
     ],
     screenshotFilename: 'github-panel.jpg',
+  },
+  {
+    id: 'tips',
+    title: 'Tips & Shortcuts',
+    sinceVersion: '1.0.0',
+    bullets: [
+      '**Ctrl+Tab** / **Ctrl+Shift+Tab** to cycle between sessions',
+      '**Ctrl+1-9** to jump directly to a session by number',
+      'Create **quick command buttons** with customizable arguments',
+      'Live **statusline** shows tokens, cost, rate limits, and peak hours',
+    ],
+    screenshotFilename: 'step-tips.jpg',
   },
 ]
 
