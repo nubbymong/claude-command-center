@@ -34,6 +34,8 @@ import { gatherLocalStorageData, hydrateStores } from './utils/configHydration'
 import { setupCloudAgentListener } from './stores/cloudAgentStore'
 import { setupTokenomicsListener } from './stores/tokenomicsStore'
 import { setupVisionListener, useVisionStore } from './stores/visionStore'
+import { setupGitHubListener, useGitHubStore } from './stores/githubStore'
+import GitHubPanel from './components/github/GitHubPanel'
 import type { SessionState, SavedSession } from './types/electron'
 
 // Re-export ViewType from its canonical location for backwards compatibility
@@ -80,6 +82,7 @@ export default function App() {
   const activeSessionId = useSessionStore((s) => s.activeSessionId)
   const sessions = useSessionStore((s) => s.sessions)
   const activeSession = sessions.find((s) => s.id === activeSessionId)
+  const githubPanelEnabled = useGitHubStore((s) => s.config?.enabledByDefault ?? false)
   const hasRestoredRef = useRef(false)
 
   // Global keyboard shortcuts
@@ -161,6 +164,8 @@ export default function App() {
       setupCloudAgentListener()
       setupTokenomicsListener()
       setupVisionListener()
+      setupGitHubListener()
+      useGitHubStore.getState().loadConfig()
       useVisionStore.getState().loadConfig()
       useVisionStore.getState().fetchStatus()
 
@@ -347,72 +352,79 @@ export default function App() {
       <div className="flex-1 flex flex-col" style={{ display: view === 'sessions' ? 'flex' : 'none', minHeight: 0 }}>
         <TabBar />
         <SessionHeader session={activeSession} isShowingPartner={partnerActive.has(activeSession.id)} sidebarCollapsed={!sidebarOpen} onShowTip={() => setShowTipModal(true)} />
-        {sessions.map((session) => {
-          const isShowingPartner = partnerActive.has(session.id)
-          const hasPartner = !!session.partnerTerminalPath
-          const partnerPtyId = session.id + '-partner'
-          return (
-            <div
-              key={session.id + '-' + session.createdAt}
-              className="flex-1 flex flex-col"
-              style={{
-                display: session.id === activeSessionId ? 'flex' : 'none',
-                minHeight: 0,
-              }}
-            >
-              <div
-                className="flex-1 flex flex-col"
-                style={{
-                  display: isShowingPartner ? 'none' : 'flex',
-                  minHeight: 0,
-                }}
-              >
-                <TerminalView
-                  key={session.id + '-main-' + session.createdAt}
-                  sessionId={session.id}
-                  configId={session.configId}
-                  cwd={session.sessionType === 'local' ? session.workingDirectory : undefined}
-                  shellOnly={session.shellOnly}
-                  ssh={session.sshConfig}
-                  isActive={session.id === activeSessionId && view === 'sessions' && !isShowingPartner}
-                  partnerEnabled={hasPartner}
-                  isPartnerActive={isShowingPartner}
-                  onTogglePartner={() => togglePartner(session.id)}
-                  partnerSessionId={hasPartner ? partnerPtyId : undefined}
-                  legacyVersion={session.legacyVersion}
-                  agentIds={session.agentIds}
-                  flickerFree={session.flickerFree}
-                  powershellTool={session.powershellTool}
-                  effortLevel={session.effortLevel}
-                  disableAutoMemory={session.disableAutoMemory}
-                />
-              </div>
-              {hasPartner && (
+        <div className="flex-1 flex flex-row" style={{ minHeight: 0 }}>
+          <div className="flex-1 flex flex-col" style={{ minWidth: 0, minHeight: 0 }}>
+            {sessions.map((session) => {
+              const isShowingPartner = partnerActive.has(session.id)
+              const hasPartner = !!session.partnerTerminalPath
+              const partnerPtyId = session.id + '-partner'
+              return (
                 <div
+                  key={session.id + '-' + session.createdAt}
                   className="flex-1 flex flex-col"
                   style={{
-                    display: isShowingPartner ? 'flex' : 'none',
+                    display: session.id === activeSessionId ? 'flex' : 'none',
                     minHeight: 0,
                   }}
                 >
-                  <TerminalView
-                    key={partnerPtyId + '-' + session.createdAt}
-                    sessionId={partnerPtyId}
-                    configId={session.configId}
-                    cwd={session.partnerTerminalPath}
-                    shellOnly={true}
-                    elevated={session.partnerElevated}
-                    isActive={session.id === activeSessionId && view === 'sessions' && isShowingPartner}
-                    partnerEnabled={true}
-                    isPartnerActive={isShowingPartner}
-                    onTogglePartner={() => togglePartner(session.id)}
-                    partnerSessionId={partnerPtyId}
-                  />
+                  <div
+                    className="flex-1 flex flex-col"
+                    style={{
+                      display: isShowingPartner ? 'none' : 'flex',
+                      minHeight: 0,
+                    }}
+                  >
+                    <TerminalView
+                      key={session.id + '-main-' + session.createdAt}
+                      sessionId={session.id}
+                      configId={session.configId}
+                      cwd={session.sessionType === 'local' ? session.workingDirectory : undefined}
+                      shellOnly={session.shellOnly}
+                      ssh={session.sshConfig}
+                      isActive={session.id === activeSessionId && view === 'sessions' && !isShowingPartner}
+                      partnerEnabled={hasPartner}
+                      isPartnerActive={isShowingPartner}
+                      onTogglePartner={() => togglePartner(session.id)}
+                      partnerSessionId={hasPartner ? partnerPtyId : undefined}
+                      legacyVersion={session.legacyVersion}
+                      agentIds={session.agentIds}
+                      flickerFree={session.flickerFree}
+                      powershellTool={session.powershellTool}
+                      effortLevel={session.effortLevel}
+                      disableAutoMemory={session.disableAutoMemory}
+                    />
+                  </div>
+                  {hasPartner && (
+                    <div
+                      className="flex-1 flex flex-col"
+                      style={{
+                        display: isShowingPartner ? 'flex' : 'none',
+                        minHeight: 0,
+                      }}
+                    >
+                      <TerminalView
+                        key={partnerPtyId + '-' + session.createdAt}
+                        sessionId={partnerPtyId}
+                        configId={session.configId}
+                        cwd={session.partnerTerminalPath}
+                        shellOnly={true}
+                        elevated={session.partnerElevated}
+                        isActive={session.id === activeSessionId && view === 'sessions' && isShowingPartner}
+                        partnerEnabled={true}
+                        isPartnerActive={isShowingPartner}
+                        onTogglePartner={() => togglePartner(session.id)}
+                        partnerSessionId={partnerPtyId}
+                      />
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
-          )
-        })}
+              )
+            })}
+          </div>
+          {githubPanelEnabled && activeSession && (
+            <GitHubPanel sessionId={activeSession.id} />
+          )}
+        </div>
       </div>
     )
   }
