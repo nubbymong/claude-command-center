@@ -178,6 +178,7 @@ interface GitHubBridge {
   syncFocusedNow: () => Promise<{ ok: boolean }>
   syncPause: () => Promise<{ ok: boolean }>
   syncResume: () => Promise<{ ok: boolean }>
+  notifyFocusChanged: (sessionId: string | null) => void
   getData: (slug: string) => Promise<{ ok: boolean; data: unknown }>
   getSessionContext: (sessionId: string) => Promise<{ ok: boolean; data: unknown }>
   onDataUpdate: (cb: (p: { slug: string; data: unknown }) => void) => () => void
@@ -486,6 +487,8 @@ const electronAPI: ElectronAPI = {
     getLocalGit: (cwd) => ipcRenderer.invoke(IPC.GITHUB_LOCALGIT_GET, cwd),
     syncNow: (sessionId) => ipcRenderer.invoke(IPC.GITHUB_SYNC_NOW, sessionId),
     syncFocusedNow: () => ipcRenderer.invoke(IPC.GITHUB_SYNC_FOCUSED_NOW),
+    notifyFocusChanged: (sessionId: string | null) =>
+      ipcRenderer.send(IPC.GITHUB_FOCUS_CHANGED, sessionId),
     syncPause: () => ipcRenderer.invoke(IPC.GITHUB_SYNC_PAUSE),
     syncResume: () => ipcRenderer.invoke(IPC.GITHUB_SYNC_RESUME),
     getData: (slug) => ipcRenderer.invoke(IPC.GITHUB_DATA_GET, slug),

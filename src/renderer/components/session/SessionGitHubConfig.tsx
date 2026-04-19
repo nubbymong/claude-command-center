@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useGitHubStore } from '../../stores/githubStore'
+import { useSessionStore } from '../../stores/sessionStore'
 import { parseRepoUrlClient } from './parseRepoUrlClient'
 import type { SessionGitHubIntegration } from '../../../shared/github-types'
 
@@ -12,6 +13,7 @@ interface Props {
 export default function SessionGitHubConfig({ sessionId, cwd, initial }: Props) {
   const config = useGitHubStore((s) => s.config)
   const profiles = useGitHubStore((s) => s.profiles)
+  const updateSession = useSessionStore((s) => s.updateSession)
   const [enabled, setEnabled] = useState(initial?.enabled ?? config?.enabledByDefault ?? false)
   const [userTouchedEnabled, setUserTouchedEnabled] = useState(false)
   const [repoUrl, setRepoUrl] = useState(initial?.repoUrl ?? '')
@@ -49,6 +51,15 @@ export default function SessionGitHubConfig({ sessionId, cwd, initial }: Props) 
   const slug = parseRepoUrlClient(repoUrl)
 
   const save = async () => {
+    // Prevent save when integration is toggled on with no valid repo. The
+    // panel gate would flip true but sync registration requires a repoSlug,
+    // so the user would silently get a panel with no sync. Block it here
+    // with a visible error instead.
+    if (enabled && !slug) {
+      setTestResult('A repo URL is required to enable integration')
+      setTimeout(() => setTestResult(null), 2500)
+      return
+    }
     setSaving(true)
     const patch: Partial<SessionGitHubIntegration> = {
       enabled,
@@ -59,6 +70,18 @@ export default function SessionGitHubConfig({ sessionId, cwd, initial }: Props) 
     }
     const r = await window.electronAPI.github.updateSessionConfig(sessionId, patch)
     setSaving(false)
+    if (r.ok) {
+      // Mirror the patch into the renderer session store so the GitHub panel's
+      // enable-gate reacts immediately — otherwise the change only shows up on
+      // the next app restart when SavedSession rehydrates.
+      const prior = useSessionStore.getState().getSession(sessionId)
+      updateSession(sessionId, {
+        githubIntegration: {
+          ...(prior?.githubIntegration ?? { enabled: false, autoDetected: false }),
+          ...patch,
+        },
+      })
+    }
     setTestResult(r.ok ? 'Saved' : `Error: ${r.error ?? 'unknown'}`)
     setTimeout(() => setTestResult(null), 2000)
   }
@@ -136,7 +159,7 @@ export default function SessionGitHubConfig({ sessionId, cwd, initial }: Props) 
       <div className="flex gap-2">
         <button
           onClick={save}
-          disabled={saving || (!!repoUrl && !slug)}
+          disabled={saving || (!!repoUrl && !slug) || (enabled && !slug)}
           className="bg-blue text-base px-3 py-1 rounded text-sm"
         >
           {saving ? 'Saving' : 'Save'}

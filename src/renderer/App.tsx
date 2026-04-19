@@ -82,8 +82,14 @@ export default function App() {
   const activeSessionId = useSessionStore((s) => s.activeSessionId)
   const sessions = useSessionStore((s) => s.sessions)
   const activeSession = sessions.find((s) => s.id === activeSessionId)
-  const githubPanelEnabled = useGitHubStore((s) => s.config?.enabledByDefault ?? false)
   const hasRestoredRef = useRef(false)
+
+  // Push focus changes to main so the sync orchestrator can shift the
+  // active session to the fast interval and the background ones to the
+  // slow interval. ipcRenderer.send, not invoke — fire-and-forget.
+  useEffect(() => {
+    window.electronAPI.github.notifyFocusChanged(activeSessionId ?? null)
+  }, [activeSessionId])
 
   // Global keyboard shortcuts
   useKeyboardShortcuts(activeSessionId, setSidebarOpen, setView)
@@ -255,6 +261,7 @@ export default function App() {
         } : undefined,
         legacyVersion: s.legacyVersion,
         agentIds: s.agentIds,
+        githubIntegration: s.githubIntegration,
       })),
       activeSessionId: state.activeSessionId,
       savedAt: Date.now(),
@@ -421,9 +428,7 @@ export default function App() {
               )
             })}
           </div>
-          {githubPanelEnabled && activeSession && (
-            <GitHubPanel sessionId={activeSession.id} />
-          )}
+          {activeSession && <GitHubPanel sessionId={activeSession.id} />}
         </div>
       </div>
     )
