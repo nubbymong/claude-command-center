@@ -140,9 +140,20 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
   // Populated at register time alongside the profile id cache.
   const cwdBySession = new Map<string, string>()
 
+  // In-memory config cache. scheduleNext() calls getConfig before every
+  // timer arm — doing a disk-read + JSON parse each time was adding
+  // filesystem I/O proportional to (sessions × tick rate). Invalidated
+  // from the CONFIG_UPDATE handler below on every write.
+  let cachedConfig: GitHubConfig | null | undefined
+  async function getCachedConfig(): Promise<GitHubConfig | null> {
+    if (cachedConfig !== undefined) return cachedConfig
+    cachedConfig = (await configStore.read()) ?? null
+    return cachedConfig
+  }
+
   const orchestrator = new SyncOrchestrator({
     cacheStore,
-    getConfig: () => configStore.read(),
+    getConfig: getCachedConfig,
     emitData: (p) => deps.getWindow()?.webContents.send(IPC.GITHUB_DATA_UPDATE, p),
     emitSyncState: (p: SyncStateEvent) =>
       deps.getWindow()?.webContents.send(IPC.GITHUB_SYNC_STATE_UPDATE, p),
@@ -187,6 +198,7 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
     const cur = (await configStore.read()) ?? emptyConfig()
     const next = { ...cur, ...patch }
     await configStore.write(next)
+    cachedConfig = next
     return next
   })
 

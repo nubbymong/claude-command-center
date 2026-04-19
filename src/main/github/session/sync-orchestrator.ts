@@ -64,6 +64,10 @@ interface SessionState extends RegisterSessionInput {
   // Set when a RateLimitError lands; scheduleNext reads it to delay the next
   // attempt until after the reset, then clears on the next successful sync.
   rateLimitedUntil?: number
+  // Last known PR number — cached across sync ticks so doSync doesn't have
+  // to re-read the whole cache JSON just to decide whether to follow up
+  // with a reviews fetch when the PR endpoint returns 304 (unchanged).
+  lastPRNumber?: number
 }
 
 interface RateLimitErrorLike {
@@ -93,7 +97,25 @@ export class SyncOrchestrator {
     const prev = this.sessions.get(input.sessionId)
     if (prev?.timer) clearTimeout(prev.timer)
     const isFirst = !prev
-    this.sessions.set(input.sessionId, { ...input, focused: false, lastSync: 0 })
+    const state: SessionState = { ...input, focused: false, lastSync: 0 }
+    this.sessions.set(input.sessionId, state)
+
+    // One-time warm of s.lastPRNumber from the on-disk cache. Without
+    // this, a post-restart sync that returns 304 on the PR endpoint has
+    // no way to know which PR number to request reviews for — the in-
+    // memory number starts undefined. Fire-and-forget so register stays
+    // synchronous; doSync will just skip reviews on its very first tick
+    // if the hydration hasn't resolved yet, which is harmless.
+    void this.deps.cacheStore
+      .load()
+      .then((c) => {
+        const pr = c.repos[state.slug]?.pr
+        if (pr && this.sessions.get(input.sessionId) === state) {
+          state.lastPRNumber = pr.number
+        }
+      })
+      .catch(() => {})
+
     if (isFirst && !this.paused) {
       // Kick off an immediate sync on first registration so the panel has
       // data to show instead of sitting at 'idle' for 60-300s. doSync's
@@ -213,20 +235,17 @@ export class SyncOrchestrator {
       const prR = await this.deps.fetchers.pr(ctx)
       const runsR = await this.deps.fetchers.runs(ctx)
 
-      // Peek at the current cache to know if we already have a PR number
-      // (for the reviews follow-up call when the PR fetch is 'unchanged').
-      const peeked = await this.deps.cacheStore.load()
-      const prior: RepoCache = peeked.repos[s.slug] ?? {
-        etags: {},
-        lastSynced: 0,
-        accessedAt: 0,
-      }
-
-      // Determine the PR we'll use for the reviews call. 'ok' and 'unchanged'
-      // both keep a PR; 'empty' clears it.
+      // Determine the PR we'll use for the reviews call. 'ok' and
+      // 'unchanged' both keep a PR; 'empty' clears it. Use the cached
+      // s.lastPRNumber for the 'unchanged' case instead of reading the
+      // whole cache JSON just to grab one integer — update() below runs
+      // its own load inside the mutex anyway.
       let prForReviews: number | undefined
-      if (prR.status === 'ok') prForReviews = (prR.data as { number?: number }).number
-      else if (prR.status === 'unchanged') prForReviews = prior.pr?.number
+      if (prR.status === 'ok') {
+        prForReviews = (prR.data as { number?: number }).number
+      } else if (prR.status === 'unchanged') {
+        prForReviews = s.lastPRNumber
+      }
 
       let revR: FetchResult<unknown[]> | null = null
       if (prForReviews !== undefined) {
@@ -241,12 +260,18 @@ export class SyncOrchestrator {
         }
         if (prR.status === 'ok') {
           existing.pr = mapPR(prR.data)
+          s.lastPRNumber = existing.pr.number
         } else if (prR.status === 'empty') {
           // RepoCache.pr is optional; use undefined (not null) so render
           // code only has one "no PR" sentinel. Reviews are PR-derived so
           // clear them too — otherwise a merged branch keeps stale reviews.
           existing.pr = undefined
           existing.reviews = undefined
+          s.lastPRNumber = undefined
+        } else if (prR.status === 'unchanged' && existing.pr) {
+          // Re-sync the in-memory cache from the cold-start case where
+          // lastPRNumber is undefined but disk has a PR.
+          s.lastPRNumber = existing.pr.number
         }
         // 'unchanged' intentionally leaves existing.pr alone — the point
         // of the 304 path is to preserve what the previous sync loaded.
