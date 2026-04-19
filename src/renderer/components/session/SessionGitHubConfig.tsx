@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useGitHubStore } from '../../stores/githubStore'
+import { useSessionStore } from '../../stores/sessionStore'
 import { parseRepoUrlClient } from './parseRepoUrlClient'
 import type { SessionGitHubIntegration } from '../../../shared/github-types'
 
@@ -12,6 +13,7 @@ interface Props {
 export default function SessionGitHubConfig({ sessionId, cwd, initial }: Props) {
   const config = useGitHubStore((s) => s.config)
   const profiles = useGitHubStore((s) => s.profiles)
+  const updateSession = useSessionStore((s) => s.updateSession)
   const [enabled, setEnabled] = useState(initial?.enabled ?? config?.enabledByDefault ?? false)
   const [userTouchedEnabled, setUserTouchedEnabled] = useState(false)
   const [repoUrl, setRepoUrl] = useState(initial?.repoUrl ?? '')
@@ -59,6 +61,18 @@ export default function SessionGitHubConfig({ sessionId, cwd, initial }: Props) 
     }
     const r = await window.electronAPI.github.updateSessionConfig(sessionId, patch)
     setSaving(false)
+    if (r.ok) {
+      // Mirror the patch into the renderer session store so the GitHub panel's
+      // enable-gate reacts immediately — otherwise the change only shows up on
+      // the next app restart when SavedSession rehydrates.
+      const prior = useSessionStore.getState().getSession(sessionId)
+      updateSession(sessionId, {
+        githubIntegration: {
+          ...(prior?.githubIntegration ?? { enabled: false, autoDetected: false }),
+          ...patch,
+        },
+      })
+    }
     setTestResult(r.ok ? 'Saved' : `Error: ${r.error ?? 'unknown'}`)
     setTimeout(() => setTestResult(null), 2000)
   }

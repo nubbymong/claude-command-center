@@ -82,7 +82,11 @@ export default function App() {
   const activeSessionId = useSessionStore((s) => s.activeSessionId)
   const sessions = useSessionStore((s) => s.sessions)
   const activeSession = sessions.find((s) => s.id === activeSessionId)
-  const githubPanelEnabled = useGitHubStore((s) => s.config?.enabledByDefault ?? false)
+  // Panel shows only when the active session has opted in. Global
+  // `enabledByDefault` is the default applied to new sessions at creation,
+  // not a runtime gate — per-session `enabled` lets users keep the panel off
+  // for sessions that don't need it (e.g. experimental terminals).
+  const githubPanelEnabled = activeSession?.githubIntegration?.enabled ?? false
   const hasRestoredRef = useRef(false)
 
   // Global keyboard shortcuts
@@ -255,6 +259,7 @@ export default function App() {
         } : undefined,
         legacyVersion: s.legacyVersion,
         agentIds: s.agentIds,
+        githubIntegration: s.githubIntegration,
       })),
       activeSessionId: state.activeSessionId,
       savedAt: Date.now(),
