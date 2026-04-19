@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
+import { useFocusTrap } from '../../../hooks/useFocusTrap'
 
 interface Props {
   onClose: () => void
@@ -28,41 +29,10 @@ function resolveImage(filename: string): string | undefined {
 
 export default function OnboardingModal({ onClose, onSetup }: Props) {
   const dialogRef = useRef<HTMLDivElement | null>(null)
-  const previouslyFocused = useRef<HTMLElement | null>(null)
   const [imgFailed, setImgFailed] = useState(false)
   const imgSrc = resolveImage('github-panel.jpg')
 
-  useEffect(() => {
-    previouslyFocused.current = document.activeElement as HTMLElement | null
-    const firstBtn = dialogRef.current?.querySelector<HTMLButtonElement>('button')
-    firstBtn?.focus()
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        onClose()
-      }
-      if (e.key === 'Tab' && dialogRef.current) {
-        const focusables = dialogRef.current.querySelectorAll<HTMLElement>(
-          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
-        )
-        if (focusables.length === 0) return
-        const first = focusables[0]
-        const last = focusables[focusables.length - 1]
-        if (e.shiftKey && document.activeElement === first) {
-          e.preventDefault()
-          last.focus()
-        } else if (!e.shiftKey && document.activeElement === last) {
-          e.preventDefault()
-          first.focus()
-        }
-      }
-    }
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('keydown', onKey)
-      previouslyFocused.current?.focus?.()
-    }
-  }, [onClose])
+  useFocusTrap(dialogRef, true, onClose)
 
   return (
     <div

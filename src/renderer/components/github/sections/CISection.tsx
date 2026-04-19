@@ -63,7 +63,11 @@ export default function CISection({ sessionId, slug }: Props) {
       emptyIndicator={empty}
     >
       <div className="space-y-1 text-xs">
-        {rerunError && <div className="text-red text-[10px]">{rerunError}</div>}
+        {rerunError && (
+          <div className="text-red text-[10px]" role="alert" aria-live="polite">
+            {rerunError}
+          </div>
+        )}
         {runs.map((r) => (
           <div key={r.id} className="flex items-center gap-2">
             <span className={runColor(r)} aria-label={r.conclusion ?? r.status}>
