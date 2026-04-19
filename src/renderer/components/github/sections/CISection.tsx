@@ -26,13 +26,19 @@ export default function CISection({ sessionId, slug }: Props) {
   const data = useGitHubStore((s) => (slug ? s.repoData[slug] : undefined))
   const runs = data?.actions ?? []
   const [rerunning, setRerunning] = useState<number | null>(null)
+  const [rerunError, setRerunError] = useState<string | null>(null)
   const empty = runs.length === 0
 
   const rerun = async (id: number) => {
     if (!slug) return
     setRerunning(id)
+    setRerunError(null)
     try {
-      await window.electronAPI.github.rerunActionsRun(slug, id)
+      const r = await window.electronAPI.github.rerunActionsRun(slug, id)
+      if (!r.ok) {
+        setRerunError(r.error ?? 'Re-run failed')
+        setTimeout(() => setRerunError(null), 4000)
+      }
     } finally {
       // Always clear, even on rejection — otherwise a network error leaves
       // the Re-run button permanently disabled.
@@ -52,6 +58,7 @@ export default function CISection({ sessionId, slug }: Props) {
       emptyIndicator={empty}
     >
       <div className="space-y-1 text-xs">
+        {rerunError && <div className="text-red text-[10px]">{rerunError}</div>}
         {runs.map((r) => (
           <div key={r.id} className="flex items-center gap-2">
             <span className={runColor(r)} aria-label={r.conclusion ?? r.status}>

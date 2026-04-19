@@ -19,8 +19,14 @@ export default function LocalGitSection({ sessionId, cwd }: Props) {
     if (!cwd) return
     let alive = true
     const poll = async () => {
-      const r = await window.electronAPI.github.getLocalGit(cwd)
-      if (alive && r.ok) setState(r.state as LocalGitState)
+      try {
+        const r = await window.electronAPI.github.getLocalGit(cwd)
+        if (alive && r.ok) setState(r.state as LocalGitState)
+      } catch {
+        // Keep the previous state; a transient IPC failure shouldn't
+        // flip the section to empty, and swallowing here prevents an
+        // unhandled rejection every poll tick.
+      }
     }
     void poll()
     const t = setInterval(poll, 15_000)
@@ -47,8 +53,11 @@ export default function LocalGitSection({ sessionId, cwd }: Props) {
   }
 
   const dirtyCount = state.staged.length + state.unstaged.length + state.untracked.length
-  const summary = dirtyCount > 0 ? `${dirtyCount} changes` : 'clean'
   const empty = !state.branch
+  // Suppress summary when there's no branch — "clean" against a missing
+  // repo would mislead the user. The empty indicator in the section
+  // header already conveys the "no git here" state at a glance.
+  const summary = empty ? undefined : dirtyCount > 0 ? `${dirtyCount} changes` : 'clean'
 
   return (
     <SectionFrame

@@ -582,6 +582,12 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
     IPC.GITHUB_ACTIONS_RERUN,
     async (_e, slug: string, runId: number) => {
       if (!validateSlug(slug)) return { ok: false, error: 'invalid-slug' }
+      // Fail fast on non-finite IDs — GitHub returns HTML error pages for
+      // malformed paths which the shield-aware fetch would then parse as
+      // a generic HTTP failure. Validating here gives a clearer error.
+      if (!Number.isFinite(runId) || runId <= 0) {
+        return { ok: false, error: 'invalid-run-id' }
+      }
       const id = focusedSessionResolver()
       if (!id) return { ok: false, error: 'no-focused-session' }
       try {
@@ -613,6 +619,9 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
       if (!['merge', 'squash', 'rebase'].includes(method)) {
         return { ok: false, error: 'invalid-method' }
       }
+      if (!Number.isFinite(prNumber) || prNumber <= 0) {
+        return { ok: false, error: 'invalid-pr-number' }
+      }
       const id = focusedSessionResolver()
       if (!id) return { ok: false, error: 'no-focused-session' }
       try {
@@ -636,6 +645,9 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
     IPC.GITHUB_PR_READY,
     async (_e, slug: string, prNumber: number) => {
       if (!validateSlug(slug)) return { ok: false, error: 'invalid-slug' }
+      if (!Number.isFinite(prNumber) || prNumber <= 0) {
+        return { ok: false, error: 'invalid-pr-number' }
+      }
       const id = focusedSessionResolver()
       if (!id) return { ok: false, error: 'no-focused-session' }
       try {

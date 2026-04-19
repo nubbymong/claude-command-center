@@ -13,8 +13,13 @@ export default function SessionContextSection({ sessionId }: Props) {
   useEffect(() => {
     let alive = true
     const poll = async () => {
-      const r = await window.electronAPI.github.getSessionContext(sessionId)
-      if (alive && r.ok) setCtx(r.data as SessionContextResult | null)
+      try {
+        const r = await window.electronAPI.github.getSessionContext(sessionId)
+        if (alive && r.ok) setCtx(r.data as SessionContextResult | null)
+      } catch {
+        // Swallow — preserve the last good context rather than crashing
+        // the poll loop on a transient IPC failure.
+      }
     }
     void poll()
     const t = setInterval(poll, 20_000)
@@ -36,26 +41,28 @@ export default function SessionContextSection({ sessionId }: Props) {
       summary={summary}
       emptyIndicator={empty}
     >
-      {ctx?.primaryIssue ? (
+      {ctx && !empty ? (
         <div className="text-xs space-y-2">
-          <div>
-            <span className="text-subtext0">Working on: </span>
-            <span className="text-blue">#{ctx.primaryIssue.number}</span>
-            {ctx.primaryIssue.title && (
-              <span className="text-text ml-1">{ctx.primaryIssue.title}</span>
-            )}
-            {ctx.primaryIssue.state && (
-              <span
-                className={`ml-2 text-[10px] px-1 rounded ${
-                  ctx.primaryIssue.state === 'open'
-                    ? 'bg-green/20 text-green'
-                    : 'bg-overlay0/20 text-overlay1'
-                }`}
-              >
-                {ctx.primaryIssue.state}
-              </span>
-            )}
-          </div>
+          {ctx.primaryIssue && (
+            <div>
+              <span className="text-subtext0">Working on: </span>
+              <span className="text-blue">#{ctx.primaryIssue.number}</span>
+              {ctx.primaryIssue.title && (
+                <span className="text-text ml-1">{ctx.primaryIssue.title}</span>
+              )}
+              {ctx.primaryIssue.state && (
+                <span
+                  className={`ml-2 text-[10px] px-1 rounded ${
+                    ctx.primaryIssue.state === 'open'
+                      ? 'bg-green/20 text-green'
+                      : 'bg-overlay0/20 text-overlay1'
+                  }`}
+                >
+                  {ctx.primaryIssue.state}
+                </span>
+              )}
+            </div>
+          )}
           {ctx.otherSignals.length > 0 && (
             <details className="text-overlay1">
               <summary className="cursor-pointer">

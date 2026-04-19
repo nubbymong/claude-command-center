@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import SectionFrame from '../SectionFrame'
 import { useGitHubStore } from '../../../stores/githubStore'
 import { relativeTime } from '../../../utils/relativeTime'
@@ -10,6 +11,8 @@ interface Props {
 export default function ActivePRSection({ sessionId, slug }: Props) {
   const data = useGitHubStore((s) => (slug ? s.repoData[slug] : undefined))
   const pr = data?.pr
+  const [pending, setPending] = useState<'ready' | 'merge' | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
 
   if (!slug) {
     return (
@@ -30,12 +33,27 @@ export default function ActivePRSection({ sessionId, slug }: Props) {
   // must route through shell.openExternal (https-only enforcement lives
   // in the main-side handler).
   const open = () => void window.electronAPI.shell.openExternal(pr.url)
-  const ready = async () => {
-    await window.electronAPI.github.readyPR(slug, pr.number)
+
+  const runAction = async (
+    kind: 'ready' | 'merge',
+    fn: () => Promise<{ ok: boolean; error?: string }>,
+  ) => {
+    setPending(kind)
+    setActionError(null)
+    try {
+      const r = await fn()
+      if (!r.ok) {
+        setActionError(r.error ?? `${kind} failed`)
+        setTimeout(() => setActionError(null), 4000)
+      }
+    } finally {
+      setPending(null)
+    }
   }
-  const merge = async (method: 'merge' | 'squash' | 'rebase') => {
-    await window.electronAPI.github.mergePR(slug, pr.number, method)
-  }
+  const ready = () =>
+    runAction('ready', () => window.electronAPI.github.readyPR(slug, pr.number))
+  const merge = (method: 'merge' | 'squash' | 'rebase') =>
+    runAction('merge', () => window.electronAPI.github.mergePR(slug, pr.number, method))
 
   return (
     <SectionFrame sessionId={sessionId} id="activePR" title="Active PR" summary={`#${pr.number}`}>
@@ -68,9 +86,10 @@ export default function ActivePRSection({ sessionId, slug }: Props) {
           {pr.draft && (
             <button
               onClick={ready}
-              className="bg-surface0 hover:bg-surface1 px-2 py-0.5 rounded text-xs"
+              disabled={pending === 'ready'}
+              className="bg-surface0 hover:bg-surface1 px-2 py-0.5 rounded text-xs disabled:opacity-50"
             >
-              Ready for review
+              {pending === 'ready' ? 'Marking' : 'Ready for review'}
             </button>
           )}
           {pr.mergeableState === 'clean' &&
@@ -78,12 +97,14 @@ export default function ActivePRSection({ sessionId, slug }: Props) {
               <button
                 key={m}
                 onClick={() => merge(m)}
-                className="bg-blue/20 hover:bg-blue/40 text-blue px-2 py-0.5 rounded text-xs capitalize"
+                disabled={pending === 'merge'}
+                className="bg-blue/20 hover:bg-blue/40 text-blue px-2 py-0.5 rounded text-xs capitalize disabled:opacity-50"
               >
                 {m}
               </button>
             ))}
         </div>
+        {actionError && <div className="text-red text-[10px]">{actionError}</div>}
       </div>
     </SectionFrame>
   )

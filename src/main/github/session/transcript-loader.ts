@@ -96,8 +96,11 @@ export async function loadTranscriptEvents(cwd: string | undefined): Promise<Tra
       try {
         const buf = Buffer.alloc(MAX_BYTES)
         const start = st.size - MAX_BYTES
-        await fh.read(buf, 0, MAX_BYTES, start)
-        const tail = buf.toString('utf8')
+        // Slice by bytesRead so a short read (file shrank, filesystem
+        // quirk, etc.) doesn't leave trailing zero bytes in the decoded
+        // string that would corrupt line splitting / JSON parsing.
+        const { bytesRead } = await fh.read(buf, 0, MAX_BYTES, start)
+        const tail = buf.subarray(0, bytesRead).toString('utf8')
         // Drop whatever precedes the first newline — it's almost certainly
         // a partial JSON line that can't parse.
         const nl = tail.indexOf('\n')

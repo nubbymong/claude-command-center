@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import SectionFrame from '../SectionFrame'
 import type { NotificationSummary } from '../../../../shared/github-types'
 import { useGitHubStore } from '../../../stores/githubStore'
@@ -9,7 +9,13 @@ interface Props {
 
 export default function NotificationsSection({ sessionId }: Props) {
   const profiles = useGitHubStore((s) => s.profiles)
-  const notifCapable = profiles.filter((p) => p.capabilities.includes('notifications'))
+  // Memoize so the filtered list has stable identity between renders.
+  // Without this, the hydration effect below depends on a new array
+  // every render and runs on every render tick.
+  const notifCapable = useMemo(
+    () => profiles.filter((p) => p.capabilities.includes('notifications')),
+    [profiles],
+  )
   const [selectedId, setSelectedId] = useState(notifCapable[0]?.id ?? '')
   // Re-sync the selection when profiles hydrate after mount (or when the
   // previously-selected profile is removed). useState's initializer only

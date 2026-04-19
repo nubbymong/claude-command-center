@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
+import { pathToClaudeProjectFolder } from '../../../src/main/utils/claude-project-path'
 
 // loadTranscriptEvents reads from ~/.claude/projects/. os.homedir() reads
 // HOME (POSIX) and USERPROFILE (Windows), so we stub both via vi.stubEnv
@@ -21,8 +22,9 @@ afterEach(async () => {
 })
 
 async function writeProjectJsonl(cwd: string, filename: string, lines: string[], mtime?: number) {
-  // Mirror the convention in src/main/utils/claude-project-path.ts.
-  const folder = cwd.replace(/:/g, '-').replace(/[\\/]+/g, '-')
+  // Reuse the shared helper so the test can't drift from the production
+  // mapping if Claude CLI's folder convention ever changes.
+  const folder = pathToClaudeProjectFolder(cwd)
   const dir = path.join(fakeHome, '.claude', 'projects', folder)
   await fs.mkdir(dir, { recursive: true })
   const full = path.join(dir, filename)
