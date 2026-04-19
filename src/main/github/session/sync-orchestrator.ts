@@ -40,6 +40,14 @@ export interface SyncOrchestratorDeps {
   emitData: (p: { slug: string; data: RepoCache }) => void
   emitSyncState: (p: SyncStateEvent) => void
   fetchers: OrchestratorFetchers
+  /**
+   * Optional per-session branch refresher. Called immediately before each
+   * sync so a `git checkout` away from the branch registered at session-
+   * setup time doesn't leave the orchestrator polling the stale branch's
+   * PR / runs / reviews. Return `null` to keep the last known value (e.g.
+   * on transient git failure).
+   */
+  getBranch?: (sessionId: string) => Promise<string | null>
 }
 
 export interface RegisterSessionInput {
@@ -84,8 +92,18 @@ export class SyncOrchestrator {
     // the previous timer, which still holds a closure on the old state.
     const prev = this.sessions.get(input.sessionId)
     if (prev?.timer) clearTimeout(prev.timer)
+    const isFirst = !prev
     this.sessions.set(input.sessionId, { ...input, focused: false, lastSync: 0 })
-    void this.scheduleNext(input.sessionId)
+    if (isFirst && !this.paused) {
+      // Kick off an immediate sync on first registration so the panel has
+      // data to show instead of sitting at 'idle' for 60-300s. doSync's
+      // finally chains to scheduleNext which arms the normal interval.
+      void this.doSync(input.sessionId).finally(() =>
+        void this.scheduleNext(input.sessionId),
+      )
+    } else {
+      void this.scheduleNext(input.sessionId)
+    }
   }
 
   unregisterSession(id: string): void {
@@ -166,6 +184,18 @@ export class SyncOrchestrator {
     if (!s) return
 
     this.deps.emitSyncState({ slug: s.slug, state: 'syncing', at: Date.now() })
+
+    // Refresh the branch if the host provided a resolver. Without this,
+    // the orchestrator would keep polling whatever branch was active at
+    // registration time even after the user `git checkout`s elsewhere.
+    if (this.deps.getBranch) {
+      try {
+        const fresh = await this.deps.getBranch(s.sessionId)
+        if (fresh) s.branch = fresh
+      } catch {
+        /* leave s.branch alone on transient failure */
+      }
+    }
 
     const ctx: FetcherContext = {
       sessionId: s.sessionId,

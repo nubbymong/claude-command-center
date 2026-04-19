@@ -10,22 +10,6 @@ import { verifyToken, probeRepoAccess } from '../github/auth/pat-verifier'
 import { scopesToCapabilities } from '../github/auth/capability-mapper'
 import { detectRepoFromCwd, defaultGitRun } from '../github/session/repo-detector'
 import { readLocalGitState } from '../github/session/local-git-reader'
-// Lightweight branch-only read for orchestrator registration. readLocalGitState
-// runs status + stash + log + ahead/behind — far more than we need when we
-// only want the current branch. A single `git rev-parse` is ~10x faster and
-// keeps enable/startup paths snappy.
-async function readCurrentBranch(cwd: string | undefined): Promise<string> {
-  if (!cwd) return 'main'
-  try {
-    const run = defaultGitRun()
-    const out = (await run(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim()
-    // Detached HEAD returns 'HEAD' — treat as 'main' so sync still targets
-    // a sensible default rather than a non-branch name.
-    return out && out !== 'HEAD' ? out : 'main'
-  } catch {
-    return 'main'
-  }
-}
 import { validateSlug } from '../github/security/slug-validator'
 import { CacheStore } from '../github/cache/cache-store'
 import { EtagCache } from '../github/client/etag-cache'
@@ -62,6 +46,23 @@ interface OAuthFlow {
   intervalSec: number
   scope: string
   cancelled: boolean
+}
+
+// Lightweight branch-only read for orchestrator registration. readLocalGitState
+// runs status + stash + log + ahead/behind — far more than we need when we
+// only want the current branch. A single `git rev-parse` is ~10x faster and
+// keeps enable / startup / sync-now paths snappy.
+async function readCurrentBranch(cwd: string | undefined): Promise<string> {
+  if (!cwd) return 'main'
+  try {
+    const run = defaultGitRun()
+    const out = (await run(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim()
+    // Detached HEAD returns literal 'HEAD' — fall back to 'main' rather
+    // than passing a non-branch name to the sync fetchers.
+    return out && out !== 'HEAD' ? out : 'main'
+  } catch {
+    return 'main'
+  }
 }
 
 function emptyConfig(): GitHubConfig {
@@ -135,12 +136,27 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
     }
   }
 
+  // Cache session cwds so getBranch doesn't hit disk on every sync tick.
+  // Populated at register time alongside the profile id cache.
+  const cwdBySession = new Map<string, string>()
+
   const orchestrator = new SyncOrchestrator({
     cacheStore,
     getConfig: () => configStore.read(),
     emitData: (p) => deps.getWindow()?.webContents.send(IPC.GITHUB_DATA_UPDATE, p),
     emitSyncState: (p: SyncStateEvent) =>
       deps.getWindow()?.webContents.send(IPC.GITHUB_SYNC_STATE_UPDATE, p),
+    getBranch: async (sessionId) => {
+      const cwd = cwdBySession.get(sessionId)
+      if (!cwd) return null
+      try {
+        const run = defaultGitRun()
+        const out = (await run(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim()
+        return out && out !== 'HEAD' ? out : null
+      } catch {
+        return null
+      }
+    },
     fetchers: {
       pr: async (ctx) =>
         fetchPRByBranch(ctx.slug, ctx.branch, {
@@ -358,6 +374,9 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
         const branch = await readCurrentBranch(sessions[idx].workingDirectory)
         if (merged.authProfileId) profileIdBySession.set(sessionId, merged.authProfileId)
         else profileIdBySession.delete(sessionId)
+        if (sessions[idx].workingDirectory) {
+          cwdBySession.set(sessionId, sessions[idx].workingDirectory)
+        }
         orchestrator.registerSession({
           sessionId,
           slug: merged.repoSlug,
@@ -373,6 +392,7 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
         }
       } else {
         profileIdBySession.delete(sessionId)
+        cwdBySession.delete(sessionId)
         orchestrator.unregisterSession(sessionId)
       }
       return { ok: true }
@@ -401,6 +421,7 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
     if (integration?.enabled && integration.repoSlug) {
       const branch = await readCurrentBranch(session?.workingDirectory)
       if (integration.authProfileId) profileIdBySession.set(sessionId, integration.authProfileId)
+      if (session?.workingDirectory) cwdBySession.set(sessionId, session.workingDirectory)
       orchestrator.registerSession({
         sessionId,
         slug: integration.repoSlug,
@@ -418,6 +439,25 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
   ipcMain.handle(IPC.GITHUB_SYNC_FOCUSED_NOW, async () => {
     const id = focusedSessionResolver()
     if (!id) return { ok: false, error: 'no-focused-session' }
+    // Mirror SYNC_NOW: auto-register if the session has integration but
+    // isn't tracked yet. Without this, the Settings > Sync button would
+    // silently no-op when the focused session hadn't been sync-ed yet.
+    const sessions = await deps.loadSessions()
+    const session = sessions.find((s) => s.id === id)
+    const integration = session?.githubIntegration
+    if (!integration?.enabled || !integration.repoSlug) {
+      return { ok: false, error: 'not-enabled' }
+    }
+    const branch = await readCurrentBranch(session?.workingDirectory)
+    if (integration.authProfileId) profileIdBySession.set(id, integration.authProfileId)
+    if (session?.workingDirectory) cwdBySession.set(id, session.workingDirectory)
+    orchestrator.registerSession({
+      sessionId: id,
+      slug: integration.repoSlug,
+      branch,
+      integration,
+    })
+    orchestrator.setFocus(id, true)
     await orchestrator.syncNow(id)
     return { ok: true }
   })
@@ -463,6 +503,7 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
         if (integ?.enabled && integ.repoSlug) {
           const branch = await readCurrentBranch(s.workingDirectory)
           if (integ.authProfileId) profileIdBySession.set(s.id, integ.authProfileId)
+          if (s.workingDirectory) cwdBySession.set(s.id, s.workingDirectory)
           orchestrator.registerSession({
             sessionId: s.id,
             slug: integ.repoSlug,

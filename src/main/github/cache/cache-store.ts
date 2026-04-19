@@ -58,8 +58,12 @@ export class CacheStore {
    * Atomic read-modify-write. Prefer this over separate `load`/`save` calls
    * when concurrent writers are possible (e.g. the SyncOrchestrator running
    * multiple sessions): two sessions both loading the same snapshot and
-   * saving sequentially will lose the earlier write. The mutex on `run` is
-   * re-entrant with load/save, so nested reads via await are safe.
+   * saving sequentially will lose the earlier write.
+   *
+   * IMPORTANT: AsyncMutex is NOT re-entrant. `fn` MUST NOT call load(),
+   * save(), or update() on the same CacheStore — doing so will deadlock.
+   * The internal readUnlocked / writeUnlocked helpers side-step the public
+   * API precisely because they execute inside the already-held mutex.
    */
   async update(fn: (cache: GitHubCache) => void | Promise<void>): Promise<void> {
     await this.mutex.run(async () => {
