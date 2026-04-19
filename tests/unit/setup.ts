@@ -127,7 +127,16 @@ const mockElectronAPI = {
   },
 }
 
-// Install on globalThis so store imports can find it
-;(globalThis as any).window = {
-  electronAPI: mockElectronAPI,
+// Install on globalThis so store imports can find it. Augment an existing
+// `window` (e.g. one provided by `@vitest-environment jsdom` in a per-file
+// override) instead of replacing it — replacing it would clobber jsdom's
+// document/DOM and break any test that depends on a real DOM (like the
+// markdown sanitizer tests).
+const existingWindow = (globalThis as unknown as { window?: Record<string, unknown> }).window
+if (existingWindow) {
+  existingWindow.electronAPI = mockElectronAPI
+} else {
+  ;(globalThis as any).window = {
+    electronAPI: mockElectronAPI,
+  }
 }
