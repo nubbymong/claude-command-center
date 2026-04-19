@@ -258,10 +258,18 @@ function cleanupSampleData(info: BackupInfo): void {
   const projectsBackup = projectsDir + '-real-bak'
   if (info.projectsRenamed) {
     try {
-      // Remove the demo projects dir and restore the real one
-      fs.rmSync(projectsDir, { recursive: true, force: true })
-      fs.renameSync(projectsBackup, projectsDir)
-      console.log('[capture] Restored real projects directory')
+      // CRITICAL: verify the backup exists BEFORE removing projectsDir.
+      // The error-path caller in main() passes a fabricated
+      // `projectsRenamed: true`, so a failure before seedSampleData
+      // actually ran the rename would otherwise destroy the user's real
+      // projects and then fail to restore them.
+      if (!fs.existsSync(projectsBackup)) {
+        console.warn('[capture] Backup directory missing; skipping restore to protect real data')
+      } else {
+        fs.rmSync(projectsDir, { recursive: true, force: true })
+        fs.renameSync(projectsBackup, projectsDir)
+        console.log('[capture] Restored real projects directory')
+      }
     } catch (err) {
       console.error('[capture] WARNING: Failed to restore projects directory!', err)
       console.error(`[capture] Your real projects are at: ${projectsBackup}`)

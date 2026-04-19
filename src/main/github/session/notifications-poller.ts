@@ -195,17 +195,15 @@ export class NotificationsPoller {
         etags: this.deps.etags,
       })
 
-      let items: NotificationSummary[] | null = null
+      // Only 'ok' writes to cache. 'unchanged' (304) preserves the previous
+      // payload; 'error' (non-200) preserves it too, so a transient 403/502
+      // doesn't wipe good items from the UI and force a full refetch.
       if (r.status === 'ok') {
-        items = mapMany(r.data)
-      }
-      // 304 => keep existing cached items; nothing to persist.
-
-      if (items) {
+        const items = mapMany(r.data)
         await this.deps.cacheStore.update(async (cache) => {
           cache.notificationsByProfile[profileId] = {
             lastFetched: Date.now(),
-            items: items as NotificationSummary[],
+            items,
           }
         })
         this.deps.emitNotifications({ profileId, items })

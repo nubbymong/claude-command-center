@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react'
+import React, { useCallback, useEffect, useState, useRef } from 'react'
 import TitleBar from './components/TitleBar'
 import Sidebar from './components/Sidebar'
 import TabBar from './components/TabBar'
@@ -222,7 +222,12 @@ export default function App() {
     setShowGitHubOnboarding(true)
   }, [githubConfig, showWhatsNew, showTraining, showTrainingAll, needsCliSetup])
 
-  const dismissGitHubOnboarding = async () => {
+  // useCallback: passed to OnboardingModal as `onClose`, which forwards it
+  // to useFocusTrap. Without stable identity, the focus-trap effect re-runs
+  // every App render — which resets previouslyFocused to the currently-
+  // focused node (a button inside the modal) and yanks focus back to the
+  // first focusable on every parent re-render. Stable identity fixes both.
+  const dismissGitHubOnboarding = useCallback(async () => {
     setShowGitHubOnboarding(false)
     try {
       await useGitHubStore
@@ -233,7 +238,7 @@ export default function App() {
       // won't re-open the modal this session because showGitHubOnboarding
       // state is already false; a restart may show it again.
     }
-  }
+  }, [])
 
   // Restore saved sessions on startup
   async function restoreSavedSessions() {

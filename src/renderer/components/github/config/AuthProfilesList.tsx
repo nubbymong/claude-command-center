@@ -20,14 +20,31 @@ export default function AuthProfilesList() {
 
   const doTest = async (id: string) => {
     setTesting(id)
-    const r = await window.electronAPI.github.testProfile(id)
-    setTesting(null)
-    setTestResult((prev) => ({
-      ...prev,
-      [id]: r.ok
-        ? { ok: true, msg: String.fromCodePoint(0x2713) + ' ' + (r.username ?? '') }
-        : { ok: false, msg: String.fromCodePoint(0x2717) + ' ' + (r.error ?? 'error') },
-    }))
+    try {
+      const r = await window.electronAPI.github.testProfile(id)
+      setTestResult((prev) => ({
+        ...prev,
+        [id]: r.ok
+          ? { ok: true, msg: String.fromCodePoint(0x2713) + ' ' + (r.username ?? '') }
+          : { ok: false, msg: String.fromCodePoint(0x2717) + ' ' + (r.error ?? 'error') },
+      }))
+    } catch (err) {
+      // IPC throw leaves `testing` stuck at the profile id without the
+      // finally below. Surface the error to the user in the same slot
+      // the normal fail path uses.
+      setTestResult((prev) => ({
+        ...prev,
+        [id]: {
+          ok: false,
+          msg:
+            String.fromCodePoint(0x2717) +
+            ' ' +
+            (err instanceof Error ? err.message : 'test failed'),
+        },
+      }))
+    } finally {
+      setTesting(null)
+    }
   }
 
   const startRename = (p: AuthProfile) => {
@@ -40,6 +57,10 @@ export default function AuthProfilesList() {
     try {
       await renameProfile(editingId, newLabel)
       setEditingId(null)
+    } catch {
+      // IPC throw on renameProfile — leave the input open so the user can
+      // retry. Silent: no dedicated error slot for rename in this list,
+      // and the label stays as what the user typed.
     } finally {
       renamingRef.current = false
     }
@@ -59,7 +80,12 @@ export default function AuthProfilesList() {
           <ExpiryBanner
             profile={p}
             onRenew={() => {
-              startRename(p)
+              // Opens the add-auth modal so the user can drop in a fresh
+              // PAT / re-run OAuth. Re-auth flow keeps the old profile id
+              // untouched; a follow-up improvement could refresh in-place
+              // via updateProfile, but opening the add modal is the
+              // correct UX signal ("your PAT expires — add a fresh one").
+              setAdding(true)
             }}
           />
           <div className="p-3 flex items-start gap-3">

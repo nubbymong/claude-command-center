@@ -10,6 +10,24 @@ interface Props {
 export default function NotificationsSection({ sessionId }: Props) {
   const profiles = useGitHubStore((s) => s.profiles)
   const notificationsByProfile = useGitHubStore((s) => s.notificationsByProfile)
+  const [markError, setMarkError] = useState<string | null>(null)
+
+  const markRead = async (profileId: string, notifId: string) => {
+    try {
+      const r = await window.electronAPI.github.markNotifRead(profileId, notifId)
+      if (!r.ok) {
+        setMarkError(r.error ?? 'Failed to mark read')
+        setTimeout(() => setMarkError(null), 3000)
+      }
+    } catch (err) {
+      // IPC rejection — without this catch the onClick's promise rejects
+      // unhandled. The next poll tick (up to 5 min away) would eventually
+      // reflect the server truth, but the user sees no feedback why their
+      // click did nothing.
+      setMarkError(err instanceof Error ? err.message : 'Failed to mark read')
+      setTimeout(() => setMarkError(null), 3000)
+    }
+  }
   // Memoize so the filtered list has stable identity between renders.
   // Without this, the hydration effect below depends on a new array
   // every render and runs on every render tick.
@@ -76,6 +94,11 @@ export default function NotificationsSection({ sessionId }: Props) {
           </select>
         </label>
       )}
+      {markError && (
+        <div className="text-red text-[10px] mb-1" role="alert" aria-live="polite">
+          {markError}
+        </div>
+      )}
       <ul className="space-y-1 text-xs">
         {items.map((i) => (
           <li key={i.id} className="flex gap-2">
@@ -95,9 +118,7 @@ export default function NotificationsSection({ sessionId }: Props) {
             </span>
             {i.unread && (
               <button
-                onClick={() =>
-                  void window.electronAPI.github.markNotifRead(selectedId, i.id)
-                }
+                onClick={() => void markRead(selectedId, i.id)}
                 className="text-overlay1 text-[10px]"
               >
                 mark read
