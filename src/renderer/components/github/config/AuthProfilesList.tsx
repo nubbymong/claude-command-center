@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import type { AuthProfile } from '../../../../shared/github-types'
 import { useGitHubStore } from '../../../stores/githubStore'
 import AddProfileModal from './AddProfileModal'
@@ -12,6 +12,10 @@ export default function AuthProfilesList() {
   const [newLabel, setNewLabel] = useState('')
   const [testing, setTesting] = useState<string | null>(null)
   const [testResult, setTestResult] = useState<Record<string, { ok: boolean; msg: string }>>({})
+  // In-flight guard for commitRename: pressing Enter fires onKeyDown AND
+  // onBlur (the input loses focus when the form processes the key), so
+  // without this the IPC would fire twice per commit.
+  const renamingRef = useRef(false)
 
   const doTest = async (id: string) => {
     setTesting(id)
@@ -30,9 +34,13 @@ export default function AuthProfilesList() {
     setNewLabel(p.label)
   }
   const commitRename = async () => {
-    if (editingId) {
+    if (!editingId || renamingRef.current) return
+    renamingRef.current = true
+    try {
       await renameProfile(editingId, newLabel)
       setEditingId(null)
+    } finally {
+      renamingRef.current = false
     }
   }
 

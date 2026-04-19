@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { useGitHubStore } from '../../stores/githubStore'
 import PanelHeader from './PanelHeader'
@@ -47,7 +47,16 @@ export default function GitHubPanel({
     return () => window.removeEventListener('keydown', onKey)
   }, [togglePanel])
 
+  // Store the active drag's teardown so we can detach listeners even when
+  // the panel unmounts (or the user toggles visibility via Ctrl+/) mid-drag,
+  // instead of relying solely on pointerup.
+  const dragCleanupRef = useRef<(() => void) | null>(null)
+  useEffect(() => {
+    return () => dragCleanupRef.current?.()
+  }, [])
+
   const startResize = (e: ReactPointerEvent) => {
+    dragCleanupRef.current?.()
     const startX = e.clientX
     const startW = width
     const onMove = (ev: PointerEvent) => {
@@ -56,12 +65,15 @@ export default function GitHubPanel({
       const newW = Math.max(280, Math.min(520, startW - (ev.clientX - startX)))
       setPanelWidth(sessionId, newW)
     }
-    const onUp = () => {
+    const cleanup = () => {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
+      dragCleanupRef.current = null
     }
+    const onUp = () => cleanup()
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
+    dragCleanupRef.current = cleanup
   }
 
   if (!visible) {
@@ -102,9 +114,7 @@ export default function GitHubPanel({
         syncState={sync?.state ?? 'idle'}
         syncedAt={sync?.at}
         nextResetAt={sync?.nextResetAt}
-        onRefresh={() => {
-          if (slug) void window.electronAPI.github.syncNow(sessionId)
-        }}
+        onRefresh={() => void window.electronAPI.github.syncNow(sessionId)}
       />
       <div className="flex-1 overflow-y-auto" aria-live="polite">
         <SessionContextSection sessionId={sessionId} />
