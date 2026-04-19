@@ -1,6 +1,7 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { useGitHubStore } from '../../stores/githubStore'
+import { useSessionStore } from '../../stores/sessionStore'
 import PanelHeader from './PanelHeader'
 import SessionContextSection from './sections/SessionContextSection'
 import ActivePRSection from './sections/ActivePRSection'
@@ -10,6 +11,7 @@ import IssuesSection from './sections/IssuesSection'
 import LocalGitSection from './sections/LocalGitSection'
 import NotificationsSection from './sections/NotificationsSection'
 import AgentIntentSection from './sections/AgentIntentSection'
+import SessionGitHubConfig from '../session/SessionGitHubConfig'
 
 interface Props {
   sessionId: string
@@ -33,6 +35,9 @@ export default function GitHubPanel({
   const sessionState = useGitHubStore((s) => s.sessionStates[sessionId])
   const setPanelWidth = useGitHubStore((s) => s.setPanelWidth)
   const sync = useGitHubStore((s) => (slug ? s.syncStatus[slug] : undefined))
+  const session = useSessionStore((s) => s.sessions.find((x) => x.id === sessionId))
+  const integrationEnabled = session?.githubIntegration?.enabled ?? false
+  const [showSetup, setShowSetup] = useState(false)
   const width = sessionState?.panelWidth ?? 340
 
   useEffect(() => {
@@ -74,6 +79,47 @@ export default function GitHubPanel({
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
     dragCleanupRef.current = cleanup
+  }
+
+  // Integration-not-enabled: render the rail only, with "Configure" click.
+  // The rail still answers Ctrl+/ but there's nothing to show until the user
+  // opts this session in via the setup modal.
+  if (!integrationEnabled) {
+    return (
+      <>
+        <aside
+          className="w-7 bg-mantle border-l border-surface0 flex flex-col items-center py-3"
+          aria-label="GitHub panel (integration not configured)"
+        >
+          <button
+            onClick={() => setShowSetup(true)}
+            title="Configure GitHub integration for this session"
+            className="text-subtext0 text-xs hover:text-text"
+          >
+            GH
+          </button>
+        </aside>
+        {showSetup && (
+          <div
+            className="fixed inset-0 bg-base/80 z-50 flex items-center justify-center"
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="bg-mantle p-6 rounded max-w-md w-full">
+              <h3 className="text-lg mb-3 text-text">Configure GitHub for this session</h3>
+              <SessionGitHubConfig
+                sessionId={sessionId}
+                cwd={session?.workingDirectory ?? ''}
+                initial={session?.githubIntegration}
+              />
+              <button onClick={() => setShowSetup(false)} className="mt-4 text-xs text-subtext0">
+                Close
+              </button>
+            </div>
+          </div>
+        )}
+      </>
+    )
   }
 
   if (!visible) {
