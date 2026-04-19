@@ -7,6 +7,7 @@ import type {
   WorkflowRunSnapshot,
 } from '../../../shared/github-types'
 import type { CacheStore } from '../cache/cache-store'
+import { scanPrBodyRefs } from './pr-body-scanner'
 
 type FetchResult<T> =
   | { status: 'unchanged' }
@@ -331,6 +332,7 @@ interface RawPR {
   updated_at: string
   mergeable?: boolean | null
   html_url: string
+  body?: string | null
 }
 
 function mapPR(raw: unknown): PRSnapshot {
@@ -351,6 +353,9 @@ function mapPR(raw: unknown): PRSnapshot {
         ? 'clean'
         : 'conflict',
     url: r.html_url,
+    // Scan the PR body once here so SESSION_CONTEXT_GET doesn't re-parse
+    // on every panel mount. Empty-body PRs just get an undefined bodyRefs.
+    bodyRefs: scanPrBodyRefs(r.body),
   }
 }
 

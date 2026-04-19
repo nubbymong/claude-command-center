@@ -523,13 +523,17 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
     const branchName = await readCurrentBranch(session?.workingDirectory)
     const repoSlug = integration.repoSlug
 
+    // PR bodyRefs are pre-scanned by the orchestrator at sync time (see
+    // mapPR in sync-orchestrator.ts) so reading them here is a one-off
+    // cache load. An empty or missing cache entry yields [] which keeps
+    // the Session Context priority algorithm well-defined.
+    const cacheSnap = await cacheStore.load()
+    const prBodyRefs = cacheSnap.repos[repoSlug]?.pr?.bodyRefs ?? []
+
     const ctx = await buildSessionContext({
       branchName,
       transcriptRefs,
-      // prBodyRefs needs the PR body text — not stored on RepoCache yet.
-      // Deferred to a PR-body-scan follow-up; empty array keeps the priority
-      // algorithm well-defined in the meantime.
-      prBodyRefs: [],
+      prBodyRefs,
       recentFiles,
       sessionRepo: repoSlug,
       enrichIssue: async (repo, n) => {
