@@ -14,6 +14,7 @@ import { validateSlug } from '../github/security/slug-validator'
 import { CacheStore } from '../github/cache/cache-store'
 import { EtagCache } from '../github/client/etag-cache'
 import { RateLimitShield } from '../github/client/rate-limit-shield'
+import { githubFetch } from '../github/client/github-fetch'
 import {
   fetchPRByBranch,
   fetchPRReviews,
@@ -23,6 +24,10 @@ import {
   SyncOrchestrator,
   type SyncStateEvent,
 } from '../github/session/sync-orchestrator'
+import { buildSessionContext } from '../github/session/session-context-service'
+import { extractFileSignals } from '../github/session/tool-call-inspector'
+import { scanTranscriptMessages } from '../github/session/transcript-scanner'
+import { loadTranscriptEvents } from '../github/session/transcript-loader'
 import {
   DEFAULT_FEATURE_TOGGLES,
   DEFAULT_SYNC_INTERVALS,
@@ -494,10 +499,62 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
     return { ok: true }
   })
 
-  // Still stubs — real implementations require section-side machinery
-  // (transcript reader, merge/rerun/reply endpoint wrappers) that land in
-  // PR 3b alongside the populated panel sections.
-  ipcMain.handle(IPC.GITHUB_SESSION_CONTEXT_GET, async () => ({ ok: true, data: null }))
+  ipcMain.handle(IPC.GITHUB_SESSION_CONTEXT_GET, async (_e, sessionId: string) => {
+    const sessions = await deps.loadSessions()
+    const session = sessions.find((s) => s.id === sessionId)
+    const integration = session?.githubIntegration
+    if (!integration?.repoSlug) return { ok: true, data: null }
+
+    // Transcript scanning is opt-in per spec §10 — default off. Tool-call
+    // signals (recent files edited via Read/Edit/Bash) come from a
+    // separate, narrower inspector that never reads message bodies.
+    const cfg = await getCachedConfig()
+    const events = await loadTranscriptEvents(session?.workingDirectory)
+    const recentFiles = extractFileSignals(events.toolCalls)
+    const transcriptRefs = cfg?.transcriptScanningOptIn
+      ? scanTranscriptMessages(events.messages)
+      : []
+    const branchName = await readCurrentBranch(session?.workingDirectory)
+    const repoSlug = integration.repoSlug
+
+    const ctx = await buildSessionContext({
+      branchName,
+      transcriptRefs,
+      // prBodyRefs needs the PR body text — not stored on RepoCache yet.
+      // Deferred to a PR-body-scan follow-up; empty array keeps the priority
+      // algorithm well-defined in the meantime.
+      prBodyRefs: [],
+      recentFiles,
+      sessionRepo: repoSlug,
+      enrichIssue: async (repo, n) => {
+        try {
+          const r = await githubFetch(`/repos/${repo}/issues/${n}`, {
+            tokenFn: makeTokenFn(sessionId),
+            shield,
+            etags,
+          })
+          if (!r.ok) return null
+          const j = (await r.json()) as {
+            title?: string
+            state?: 'open' | 'closed'
+            assignee?: { login?: string } | null
+          }
+          return {
+            title: j.title,
+            state: j.state,
+            assignee: j.assignee?.login,
+          }
+        } catch {
+          return null
+        }
+      },
+    })
+    return { ok: true, data: ctx }
+  })
+
+  // Still stubs — PR 3b action handlers below cover merge/rerun/reply; the
+  // mark-read call still needs per-profile notification plumbing that
+  // piggybacks on a dedicated PR 3b step (task 78).
   ipcMain.handle(IPC.GITHUB_ACTIONS_RERUN, async () => ({ ok: true }))
   ipcMain.handle(IPC.GITHUB_PR_MERGE, async () => ({ ok: true }))
   ipcMain.handle(IPC.GITHUB_PR_READY, async () => ({ ok: true }))
