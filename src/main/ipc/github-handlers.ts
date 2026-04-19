@@ -14,6 +14,7 @@ import { validateSlug } from '../github/security/slug-validator'
 import { CacheStore } from '../github/cache/cache-store'
 import { EtagCache } from '../github/client/etag-cache'
 import { RateLimitShield } from '../github/client/rate-limit-shield'
+import { githubFetch } from '../github/client/github-fetch'
 import {
   fetchPRByBranch,
   fetchPRReviews,
@@ -23,6 +24,10 @@ import {
   SyncOrchestrator,
   type SyncStateEvent,
 } from '../github/session/sync-orchestrator'
+import { buildSessionContext } from '../github/session/session-context-service'
+import { extractFileSignals } from '../github/session/tool-call-inspector'
+import { scanTranscriptMessages } from '../github/session/transcript-scanner'
+import { loadTranscriptEvents } from '../github/session/transcript-loader'
 import {
   DEFAULT_FEATURE_TOGGLES,
   DEFAULT_SYNC_INTERVALS,
@@ -494,15 +499,245 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
     return { ok: true }
   })
 
-  // Still stubs — real implementations require section-side machinery
-  // (transcript reader, merge/rerun/reply endpoint wrappers) that land in
-  // PR 3b alongside the populated panel sections.
-  ipcMain.handle(IPC.GITHUB_SESSION_CONTEXT_GET, async () => ({ ok: true, data: null }))
-  ipcMain.handle(IPC.GITHUB_ACTIONS_RERUN, async () => ({ ok: true }))
-  ipcMain.handle(IPC.GITHUB_PR_MERGE, async () => ({ ok: true }))
-  ipcMain.handle(IPC.GITHUB_PR_READY, async () => ({ ok: true }))
-  ipcMain.handle(IPC.GITHUB_REVIEW_REPLY, async () => ({ ok: true }))
-  ipcMain.handle(IPC.GITHUB_NOTIF_MARK_READ, async () => ({ ok: true }))
+  ipcMain.handle(IPC.GITHUB_SESSION_CONTEXT_GET, async (_e, sessionId: string) => {
+    const sessions = await deps.loadSessions()
+    const session = sessions.find((s) => s.id === sessionId)
+    const integration = session?.githubIntegration
+    // Validate slug shape before interpolating into REST paths (enrichIssue,
+    // below). session-state.json is author-trusted but has been machine-
+    // round-tripped; a corrupted or hand-edited slug could otherwise build
+    // an arbitrary API URL.
+    if (!integration?.repoSlug || !validateSlug(integration.repoSlug)) {
+      return { ok: true, data: null }
+    }
+
+    // Transcript scanning is opt-in per spec §10 — default off. Tool-call
+    // signals (recent files edited via Read/Edit/Bash) come from a
+    // separate, narrower inspector that never reads message bodies.
+    const cfg = await getCachedConfig()
+    const events = await loadTranscriptEvents(session?.workingDirectory)
+    const recentFiles = extractFileSignals(events.toolCalls)
+    const transcriptRefs = cfg?.transcriptScanningOptIn
+      ? scanTranscriptMessages(events.messages)
+      : []
+    const branchName = await readCurrentBranch(session?.workingDirectory)
+    const repoSlug = integration.repoSlug
+
+    const ctx = await buildSessionContext({
+      branchName,
+      transcriptRefs,
+      // prBodyRefs needs the PR body text — not stored on RepoCache yet.
+      // Deferred to a PR-body-scan follow-up; empty array keeps the priority
+      // algorithm well-defined in the meantime.
+      prBodyRefs: [],
+      recentFiles,
+      sessionRepo: repoSlug,
+      enrichIssue: async (repo, n) => {
+        try {
+          const r = await githubFetch(`/repos/${repo}/issues/${n}`, {
+            tokenFn: makeTokenFn(sessionId),
+            shield,
+            etags,
+          })
+          if (!r.ok) return null
+          const j = (await r.json()) as {
+            title?: string
+            state?: 'open' | 'closed'
+            assignee?: { login?: string } | null
+          }
+          return {
+            title: j.title,
+            state: j.state,
+            assignee: j.assignee?.login,
+          }
+        } catch {
+          return null
+        }
+      },
+    })
+    return { ok: true, data: ctx }
+  })
+
+  // Helper: resolve a token for an action IPC. Every action needs a token
+  // scoped to SOMETHING — the focused session for merge / rerun / reply, or
+  // a specific profile id for notification mark-read. Missing token falls
+  // back to error:'no-token' so the renderer surfaces the auth gap.
+  function tokenFnForSession(sessionId: string) {
+    return async () => {
+      const t = await getTokenForSession(sessionId)
+      if (!t) throw new Error('no-token')
+      return t
+    }
+  }
+
+  function tokenFnForProfile(profileId: string) {
+    return async () => {
+      const t = await profileStore.getToken(profileId)
+      if (!t) throw new Error('no-token')
+      return t
+    }
+  }
+
+  ipcMain.handle(
+    IPC.GITHUB_ACTIONS_RERUN,
+    async (_e, slug: string, runId: number) => {
+      if (!validateSlug(slug)) return { ok: false, error: 'invalid-slug' }
+      // Fail fast on non-finite IDs — GitHub returns HTML error pages for
+      // malformed paths which the shield-aware fetch would then parse as
+      // a generic HTTP failure. Validating here gives a clearer error.
+      if (!Number.isFinite(runId) || runId <= 0) {
+        return { ok: false, error: 'invalid-run-id' }
+      }
+      const id = focusedSessionResolver()
+      if (!id) return { ok: false, error: 'no-focused-session' }
+      try {
+        // rerun-failed-jobs re-runs only the failed jobs from the run, which
+        // is the action users click 'Re-run' for 99% of the time. Use /rerun
+        // (full re-run) instead if we later want a separate control.
+        const r = await githubFetch(
+          `/repos/${slug}/actions/runs/${runId}/rerun-failed-jobs`,
+          { tokenFn: tokenFnForSession(id), shield, etags, method: 'POST' },
+        )
+        return r.ok
+          ? { ok: true }
+          : { ok: false, error: `http-${r.status}` }
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      }
+    },
+  )
+
+  ipcMain.handle(
+    IPC.GITHUB_PR_MERGE,
+    async (
+      _e,
+      slug: string,
+      prNumber: number,
+      method: 'merge' | 'squash' | 'rebase',
+    ) => {
+      if (!validateSlug(slug)) return { ok: false, error: 'invalid-slug' }
+      if (!['merge', 'squash', 'rebase'].includes(method)) {
+        return { ok: false, error: 'invalid-method' }
+      }
+      if (!Number.isFinite(prNumber) || prNumber <= 0) {
+        return { ok: false, error: 'invalid-pr-number' }
+      }
+      const id = focusedSessionResolver()
+      if (!id) return { ok: false, error: 'no-focused-session' }
+      try {
+        const r = await githubFetch(`/repos/${slug}/pulls/${prNumber}/merge`, {
+          tokenFn: tokenFnForSession(id),
+          shield,
+          etags,
+          method: 'PUT',
+          body: { merge_method: method },
+        })
+        return r.ok
+          ? { ok: true }
+          : { ok: false, error: `http-${r.status}` }
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      }
+    },
+  )
+
+  ipcMain.handle(
+    IPC.GITHUB_PR_READY,
+    async (_e, slug: string, prNumber: number) => {
+      if (!validateSlug(slug)) return { ok: false, error: 'invalid-slug' }
+      if (!Number.isFinite(prNumber) || prNumber <= 0) {
+        return { ok: false, error: 'invalid-pr-number' }
+      }
+      const id = focusedSessionResolver()
+      if (!id) return { ok: false, error: 'no-focused-session' }
+      try {
+        // Draft→ready canonically lives behind the GraphQL mutation
+        // markPullRequestReadyForReview. First resolve the PR's GraphQL
+        // node id via REST, then run the mutation.
+        const prGet = await githubFetch(`/repos/${slug}/pulls/${prNumber}`, {
+          tokenFn: tokenFnForSession(id),
+          shield,
+          etags,
+        })
+        if (!prGet.ok) return { ok: false, error: `http-${prGet.status}` }
+        const prJson = (await prGet.json()) as { node_id?: string }
+        if (!prJson.node_id) return { ok: false, error: 'no-node-id' }
+        const gql = await githubFetch('/graphql', {
+          tokenFn: tokenFnForSession(id),
+          shield,
+          etags,
+          method: 'POST',
+          bucket: 'graphql',
+          baseUrl: 'https://api.github.com',
+          body: {
+            query: `mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id}){clientMutationId}}`,
+            variables: { id: prJson.node_id },
+          },
+        })
+        return gql.ok
+          ? { ok: true }
+          : { ok: false, error: `http-${gql.status}` }
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      }
+    },
+  )
+
+  ipcMain.handle(
+    IPC.GITHUB_REVIEW_REPLY,
+    async (_e, slug: string, threadId: string, body: string) => {
+      if (!validateSlug(slug)) return { ok: false, error: 'invalid-slug' }
+      if (!body || typeof body !== 'string') return { ok: false, error: 'empty-body' }
+      const id = focusedSessionResolver()
+      if (!id) return { ok: false, error: 'no-focused-session' }
+      // threadId here is the root-comment id of the review thread (the shape
+      // populated by PR 3c when fetchPRReviewComments is wired in). The
+      // /comments/{id}/replies endpoint posts under the same thread.
+      const commentId = Number(threadId)
+      if (!Number.isFinite(commentId)) return { ok: false, error: 'invalid-thread-id' }
+      try {
+        const r = await githubFetch(
+          `/repos/${slug}/pulls/comments/${commentId}/replies`,
+          {
+            tokenFn: tokenFnForSession(id),
+            shield,
+            etags,
+            method: 'POST',
+            body: { body },
+          },
+        )
+        return r.ok
+          ? { ok: true }
+          : { ok: false, error: `http-${r.status}` }
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      }
+    },
+  )
+
+  ipcMain.handle(
+    IPC.GITHUB_NOTIF_MARK_READ,
+    async (_e, profileId: string, threadId: string) => {
+      if (!profileId || !threadId) return { ok: false, error: 'missing-args' }
+      // threadId is string-typed on the wire; reject anything other than a
+      // strict positive integer to avoid path-traversal into unintended
+      // endpoints. GitHub's notification thread ids are numeric.
+      if (!/^[1-9]\d*$/.test(threadId)) return { ok: false, error: 'invalid-thread-id' }
+      try {
+        const r = await githubFetch(`/notifications/threads/${threadId}`, {
+          tokenFn: tokenFnForProfile(profileId),
+          shield,
+          etags,
+          method: 'PATCH',
+        })
+        return r.ok
+          ? { ok: true }
+          : { ok: false, error: `http-${r.status}` }
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      }
+    },
+  )
 
   // Kick off background registration for any session that already had
   // integration enabled when the app was closed. Fire-and-forget because

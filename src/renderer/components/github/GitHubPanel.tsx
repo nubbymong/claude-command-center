@@ -192,11 +192,11 @@ export default function GitHubPanel({
       />
       <div className="flex-1 overflow-y-auto" aria-live="polite">
         <SessionContextSection sessionId={sessionId} />
-        <ActivePRSection sessionId={sessionId} />
-        <CISection sessionId={sessionId} />
-        <ReviewsSection sessionId={sessionId} />
-        <IssuesSection sessionId={sessionId} />
-        <LocalGitSection sessionId={sessionId} />
+        <ActivePRSection sessionId={sessionId} slug={repoSlug} />
+        <CISection sessionId={sessionId} slug={repoSlug} />
+        <ReviewsSection sessionId={sessionId} slug={repoSlug} />
+        <IssuesSection sessionId={sessionId} slug={repoSlug} />
+        <LocalGitSection sessionId={sessionId} cwd={session?.workingDirectory} />
         <NotificationsSection sessionId={sessionId} />
         <AgentIntentSection sessionId={sessionId} />
       </div>
