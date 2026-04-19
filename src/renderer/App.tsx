@@ -36,6 +36,7 @@ import { setupTokenomicsListener } from './stores/tokenomicsStore'
 import { setupVisionListener, useVisionStore } from './stores/visionStore'
 import { setupGitHubListener, useGitHubStore } from './stores/githubStore'
 import GitHubPanel from './components/github/GitHubPanel'
+import OnboardingModal from './components/github/onboarding/OnboardingModal'
 import type { SessionState, SavedSession } from './types/electron'
 
 // Re-export ViewType from its canonical location for backwards compatibility
@@ -74,6 +75,7 @@ export default function App() {
   const [showWhatsNew, setShowWhatsNew] = useState(false)
   const [showTraining, setShowTraining] = useState(false)
   const [showTrainingAll, setShowTrainingAll] = useState(false)
+  const [showGitHubOnboarding, setShowGitHubOnboarding] = useState(false)
   const [showGuidedConfig, setShowGuidedConfig] = useState(false)
   const [showTipModal, setShowTipModal] = useState(false)
   const [partnerActive, setPartnerActive] = useState<Set<string>>(new Set())
@@ -203,6 +205,34 @@ export default function App() {
 
     postConfigInit()
   }, [configLoaded])
+
+  // Show GitHub sidebar onboarding once per version bump after config
+  // hydrates. `seenOnboardingVersion === 'permanent'` opts out forever —
+  // MUST be checked before the version compare so dismissed users don't
+  // see the modal on every app update.
+  const githubConfig = useGitHubStore((s) => s.config)
+  useEffect(() => {
+    if (!githubConfig) return
+    if (githubConfig.seenOnboardingVersion === 'permanent') return
+    if (githubConfig.seenOnboardingVersion === __APP_VERSION__) return
+    // Defer to other first-launch modals (what's new, training, setup) so
+    // this doesn't stack on top of them.
+    if (showWhatsNew || showTraining || showTrainingAll || needsCliSetup) return
+    setShowGitHubOnboarding(true)
+  }, [githubConfig, showWhatsNew, showTraining, showTrainingAll, needsCliSetup])
+
+  const dismissGitHubOnboarding = async () => {
+    setShowGitHubOnboarding(false)
+    try {
+      await useGitHubStore
+        .getState()
+        .updateConfig({ seenOnboardingVersion: __APP_VERSION__ })
+    } catch {
+      // Persist failure falls back to in-session dismissal. The effect above
+      // won't re-open the modal this session because showGitHubOnboarding
+      // state is already false; a restart may show it again.
+    }
+  }
 
   // Restore saved sessions on startup
   async function restoreSavedSessions() {
@@ -471,6 +501,18 @@ export default function App() {
       <div className="flex flex-col h-screen bg-base text-text">
         {showWhatsNew && <WhatsNewModal onClose={handleWhatsNewClose} />}
         {showTipModal && <TipModal onClose={() => setShowTipModal(false)} onNavigate={(v) => setView(v)} />}
+        {showGitHubOnboarding && (
+          <OnboardingModal
+            onClose={dismissGitHubOnboarding}
+            onSetup={() => {
+              // Dismiss-and-navigate: persist seenOnboardingVersion and
+              // open the GitHub settings tab so users immediately land where
+              // they can sign in.
+              void dismissGitHubOnboarding()
+              setView('settings')
+            }}
+          />
+        )}
 
         {showMachineNamePrompt && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
