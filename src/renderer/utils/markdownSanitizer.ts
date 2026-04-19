@@ -1,5 +1,11 @@
 import { marked } from 'marked'
-import DOMPurify from 'isomorphic-dompurify'
+import createDOMPurify from 'dompurify'
+// Plain `dompurify` instead of `isomorphic-dompurify` because the renderer
+// runs in Electron's real DOM — the isomorphic variant dragged jsdom into
+// the renderer bundle. Unit tests opt into a DOM via `@vitest-environment
+// jsdom` in the sanitizer test file. `dompurify` v3's default export is a
+// factory — we bind it to the runtime window once at module load.
+const DOMPurify = createDOMPurify(window)
 
 marked.setOptions({ breaks: true, gfm: true })
 

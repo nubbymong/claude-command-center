@@ -18,33 +18,36 @@ export default function OAuthDeviceFlow({ flow, onDone, onCancel }: Props) {
   const pollingRef = useRef(true)
 
   useEffect(() => {
+    // Main's oauthPoll runs its own long-lived polling loop inside
+    // pollForAccessToken: it waits interval seconds between GitHub calls and
+    // only returns once a token arrives, the flow is cancelled, or the
+    // endpoint errors. So the renderer calls oauthPoll exactly once and
+    // awaits. A prior iteration wrapped this in an outer while-loop with an
+    // extra setTimeout per tick — that was a double-wait and the outer loop
+    // never actually iterated because the single IPC call was terminal.
     let cancelled = false
-    async function pollLoop() {
-      while (!cancelled && pollingRef.current) {
-        await new Promise((r) => setTimeout(r, (flow.interval + 1) * 1000))
-        if (cancelled || !pollingRef.current) break
-        try {
-          const r = await window.electronAPI.github.oauthPoll(flow.flowId)
-          if (r.ok && r.profileId) {
-            onDone()
-            return
-          }
-          if (!r.ok && r.error && r.error !== 'pending') {
-            setError(r.error)
-            return
-          }
-        } catch (e) {
-          setError(e instanceof Error ? e.message : String(e))
+    async function start() {
+      try {
+        const r = await window.electronAPI.github.oauthPoll(flow.flowId)
+        if (cancelled || !pollingRef.current) return
+        if (r.ok && r.profileId) {
+          onDone()
           return
         }
+        if (r.error && r.error !== 'pending' && r.error !== 'cancelled') {
+          setError(r.error)
+        }
+      } catch (e) {
+        if (cancelled || !pollingRef.current) return
+        setError(e instanceof Error ? e.message : String(e))
       }
     }
-    void pollLoop()
+    void start()
     return () => {
       cancelled = true
       pollingRef.current = false
     }
-  }, [flow.flowId, flow.interval, onDone])
+  }, [flow.flowId, onDone])
 
   const copy = async () => {
     await navigator.clipboard.writeText(flow.userCode)

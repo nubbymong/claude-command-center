@@ -11,6 +11,15 @@ describe('parseRepoUrlClient', () => {
   it('parses SSH', () => {
     expect(parseRepoUrlClient('git@github.com:a/b.git')).toBe('a/b')
   })
+  it('parses SSH URL form', () => {
+    expect(parseRepoUrlClient('ssh://git@github.com/a/b.git')).toBe('a/b')
+  })
+  it('rejects plain http (DNS-spoof risk on local networks)', () => {
+    expect(parseRepoUrlClient('http://github.com/a/b')).toBeUndefined()
+  })
+  it('rejects repo names starting with a dot', () => {
+    expect(parseRepoUrlClient('https://github.com/a/.hidden')).toBeUndefined()
+  })
   it('rejects invalid owner (leading hyphen)', () => {
     expect(parseRepoUrlClient('https://github.com/-bad/b')).toBeUndefined()
   })

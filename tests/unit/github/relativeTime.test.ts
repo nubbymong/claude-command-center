@@ -25,6 +25,12 @@ describe('relativeTime', () => {
   it('years', () => {
     expect(relativeTime(NOW - 400 * 86_400_000, NOW)).toBe('1y ago')
   })
+  it('months→years boundary never produces "0y ago"', () => {
+    // 364 days: 30-day months gives mo=12, but 365-day years gives y=0.
+    // Regression guard: mo-derived years must yield at least "1y ago" once
+    // we cross the 12-month threshold.
+    expect(relativeTime(NOW - 364 * 86_400_000, NOW)).toBe('1y ago')
+  })
   it('future timestamps clamp to "just now"', () => {
     expect(relativeTime(NOW + 10_000, NOW)).toBe('just now')
   })

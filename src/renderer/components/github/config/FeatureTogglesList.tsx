@@ -68,7 +68,7 @@ export default function FeatureTogglesList() {
   // feature's required capability goes away (profile removed, scopes narrowed),
   // force the stored toggle false so config, UI, and PermissionsSummary agree.
   // Runs as an effect so the reconciled value actually persists — not just a
-  // render-time mask that would re-divergee on the next reload.
+  // render-time mask that would re-diverge on the next reload.
   useEffect(() => {
     if (!config) return
     const fixed: Record<string, boolean> = { ...config.featureToggles }

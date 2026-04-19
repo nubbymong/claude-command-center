@@ -19,6 +19,9 @@ export function relativeTime(epochMs: number, now: number = Date.now()): string 
   if (d < 30) return `${d}d ago`
   const mo = Math.floor(d / 30)
   if (mo < 12) return `${mo}mo ago`
-  const y = Math.floor(d / 365)
+  // Derive years from the month count, not days. 30-day months and 365-day
+  // years don't agree at the boundary — 364d gives mo=12 but d/365=0, which
+  // would render as "0y ago". Flooring on months keeps y>=1 once we're here.
+  const y = Math.floor(mo / 12)
   return `${y}y ago`
 }

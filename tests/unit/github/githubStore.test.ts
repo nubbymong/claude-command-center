@@ -1,56 +1,88 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { useGitHubStore } from '../../../src/renderer/stores/githubStore'
 
-function setupMockElectron() {
-  // Per codebase convention the bridge is exposed as `window.electronAPI`
-  // (not `window.electron`). Matches preload + all existing renderer call sites.
-  ;(globalThis as unknown as { window: Record<string, unknown> }).window = {
-    electronAPI: {
-      github: {
-        getConfig: vi.fn().mockResolvedValue({
-          schemaVersion: 1,
-          authProfiles: {
-            p1: {
-              id: 'p1',
-              kind: 'oauth',
-              label: 'nub',
-              username: 'nub',
-              scopes: ['public_repo'],
-              capabilities: ['pulls'],
-              createdAt: 0,
-              lastVerifiedAt: 0,
-              expiryObservable: false,
-            },
-          },
-          featureToggles: {
-            activePR: true,
-            ci: true,
-            reviews: true,
-            linkedIssues: true,
-            notifications: false,
-            localGit: true,
-            sessionContext: true,
-          },
-          syncIntervals: { activeSessionSec: 60, backgroundSec: 300, notificationsSec: 180 },
-          enabledByDefault: false,
-          transcriptScanningOptIn: false,
-        }),
-        updateConfig: vi.fn().mockImplementation(async (patch: Record<string, unknown>) => ({
-          schemaVersion: 1,
-          authProfiles: {},
-          featureToggles: {},
-          syncIntervals: { activeSessionSec: 60, backgroundSec: 300, notificationsSec: 180 },
-          enabledByDefault: false,
-          transcriptScanningOptIn: false,
-          ...patch,
-        })),
-        removeProfile: vi.fn().mockResolvedValue({ ok: true }),
-        renameProfile: vi.fn().mockResolvedValue({ ok: true }),
-        onDataUpdate: vi.fn().mockImplementation(() => () => {}),
-        onSyncStateUpdate: vi.fn().mockImplementation(() => () => {}),
+// Patch `window.electronAPI.github` onto the existing window rather than
+// replacing `globalThis.window` wholesale. The Vitest global setup installs a
+// shared window.electronAPI mock that other renderer tests rely on; clobbering
+// it here leaked across files and broke unrelated suites when this test ran
+// first.
+let originalElectronAPI: unknown
+let windowCreatedByTest = false
+
+function buildGithubMock() {
+  return {
+    getConfig: vi.fn().mockResolvedValue({
+      schemaVersion: 1,
+      authProfiles: {
+        p1: {
+          id: 'p1',
+          kind: 'oauth',
+          label: 'nub',
+          username: 'nub',
+          scopes: ['public_repo'],
+          capabilities: ['pulls'],
+          createdAt: 0,
+          lastVerifiedAt: 0,
+          expiryObservable: false,
+        },
       },
-    },
+      featureToggles: {
+        activePR: true,
+        ci: true,
+        reviews: true,
+        linkedIssues: true,
+        notifications: false,
+        localGit: true,
+        sessionContext: true,
+      },
+      syncIntervals: { activeSessionSec: 60, backgroundSec: 300, notificationsSec: 180 },
+      enabledByDefault: false,
+      transcriptScanningOptIn: false,
+    }),
+    updateConfig: vi.fn().mockImplementation(async (patch: Record<string, unknown>) => ({
+      schemaVersion: 1,
+      authProfiles: {},
+      featureToggles: {},
+      syncIntervals: { activeSessionSec: 60, backgroundSec: 300, notificationsSec: 180 },
+      enabledByDefault: false,
+      transcriptScanningOptIn: false,
+      ...patch,
+    })),
+    removeProfile: vi.fn().mockResolvedValue({ ok: true }),
+    renameProfile: vi.fn().mockResolvedValue({ ok: true }),
+    onDataUpdate: vi.fn().mockImplementation(() => () => {}),
+    onSyncStateUpdate: vi.fn().mockImplementation(() => () => {}),
   }
+}
+
+function setupMockElectron() {
+  const root = globalThis as unknown as { window?: Record<string, unknown> }
+  if (root.window) {
+    originalElectronAPI = root.window.electronAPI
+    root.window.electronAPI = {
+      ...((root.window.electronAPI as Record<string, unknown> | undefined) ?? {}),
+      github: buildGithubMock(),
+    }
+  } else {
+    windowCreatedByTest = true
+    root.window = { electronAPI: { github: buildGithubMock() } }
+  }
+}
+
+function restoreMockElectron() {
+  const root = globalThis as unknown as { window?: Record<string, unknown> }
+  if (!root.window) return
+  if (windowCreatedByTest) {
+    delete root.window
+    windowCreatedByTest = false
+    return
+  }
+  if (originalElectronAPI === undefined) {
+    delete (root.window as Record<string, unknown>).electronAPI
+  } else {
+    root.window.electronAPI = originalElectronAPI as Record<string, unknown>
+  }
+  originalElectronAPI = undefined
 }
 
 describe('githubStore', () => {
@@ -64,6 +96,9 @@ describe('githubStore', () => {
       sessionStates: {},
       syncStatus: {},
     })
+  })
+  afterEach(() => {
+    restoreMockElectron()
   })
 
   it('loadConfig populates config + profiles', async () => {

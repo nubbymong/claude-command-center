@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { describe, it, expect } from 'vitest'
 import { renderCommentMarkdown } from '../../../src/renderer/utils/markdownSanitizer'
 

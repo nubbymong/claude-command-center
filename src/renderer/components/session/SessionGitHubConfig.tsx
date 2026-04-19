@@ -13,17 +13,36 @@ export default function SessionGitHubConfig({ sessionId, cwd, initial }: Props) 
   const config = useGitHubStore((s) => s.config)
   const profiles = useGitHubStore((s) => s.profiles)
   const [enabled, setEnabled] = useState(initial?.enabled ?? config?.enabledByDefault ?? false)
+  const [userTouchedEnabled, setUserTouchedEnabled] = useState(false)
   const [repoUrl, setRepoUrl] = useState(initial?.repoUrl ?? '')
   const [profileId, setProfileId] = useState(initial?.authProfileId ?? '')
   const [detected, setDetected] = useState<string | null>(null)
   const [testResult, setTestResult] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
 
+  // Sync enabled from enabledByDefault when the github config hydrates after
+  // mount. useState initializers run once, so if the store hadn't loaded yet
+  // the first render defaulted to false even when the user's global default
+  // was true. Once the user interacts with the checkbox we stop overriding.
   useEffect(() => {
+    if (userTouchedEnabled) return
+    if (initial?.enabled !== undefined) return
+    if (config?.enabledByDefault !== undefined) setEnabled(config.enabledByDefault)
+  }, [config?.enabledByDefault, initial?.enabled, userTouchedEnabled])
+
+  useEffect(() => {
+    // Guard state updates against unmount / rapid cwd change. Without this,
+    // a stale repoDetect resolving after the component has moved on would
+    // call setDetected on a dead component.
+    let cancelled = false
     if (!initial?.repoUrl && cwd) {
       window.electronAPI.github.repoDetect(cwd).then((r) => {
+        if (cancelled) return
         if (r.ok && r.slug) setDetected(r.slug)
       })
+    }
+    return () => {
+      cancelled = true
     }
   }, [cwd, initial?.repoUrl])
 
@@ -66,7 +85,14 @@ export default function SessionGitHubConfig({ sessionId, cwd, initial }: Props) 
   return (
     <div className="space-y-3 text-sm">
       <label className="flex items-center gap-2">
-        <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(e) => {
+            setUserTouchedEnabled(true)
+            setEnabled(e.target.checked)
+          }}
+        />
         <span>Enable GitHub integration for this session</span>
       </label>
 
