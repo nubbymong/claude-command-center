@@ -13,6 +13,7 @@ import LocalGitSection from './sections/LocalGitSection'
 import NotificationsSection from './sections/NotificationsSection'
 import AgentIntentSection from './sections/AgentIntentSection'
 import SessionGitHubConfig from '../session/SessionGitHubConfig'
+import RateLimitBanner from './RateLimitBanner'
 
 interface Props {
   sessionId: string
@@ -192,6 +193,9 @@ export default function GitHubPanel({
         // branch / ahead / behind / dirty still come from props; PR 3b wires
         // them to a local-git poller so the header reflects live state.
       />
+      {sync?.state === 'rate-limited' && sync.nextResetAt && (
+        <RateLimitBanner resetAt={sync.nextResetAt} />
+      )}
       <div className="flex-1 overflow-y-auto" aria-live="polite">
         <SessionContextSection sessionId={sessionId} />
         <ActivePRSection sessionId={sessionId} slug={repoSlug} />

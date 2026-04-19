@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import type { AuthProfile } from '../../../../shared/github-types'
 import { useGitHubStore } from '../../../stores/githubStore'
 import AddProfileModal from './AddProfileModal'
+import ExpiryBanner from '../ExpiryBanner'
 
 export default function AuthProfilesList() {
   const profiles = useGitHubStore((s) => s.profiles)
@@ -54,7 +55,14 @@ export default function AuthProfilesList() {
           </div>
         )}
         {profiles.map((p) => (
-          <div key={p.id} className="bg-mantle p-3 rounded flex items-start gap-3">
+          <div key={p.id} className="bg-mantle rounded">
+          <ExpiryBanner
+            profile={p}
+            onRenew={() => {
+              startRename(p)
+            }}
+          />
+          <div className="p-3 flex items-start gap-3">
             {/* Initials avatar: CSP blocks remote https <img>; avatarUrl persisted for a future main-process data:-URL proxy. */}
             <div
               className="w-8 h-8 rounded-full bg-surface0 text-text text-xs font-semibold flex items-center justify-center shrink-0"
@@ -121,6 +129,7 @@ export default function AuthProfilesList() {
                 Remove
               </button>
             </div>
+          </div>
           </div>
         ))}
       </div>

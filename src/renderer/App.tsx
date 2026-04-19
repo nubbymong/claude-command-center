@@ -37,6 +37,7 @@ import { setupVisionListener, useVisionStore } from './stores/visionStore'
 import { setupGitHubListener, useGitHubStore } from './stores/githubStore'
 import GitHubPanel from './components/github/GitHubPanel'
 import OnboardingModal from './components/github/onboarding/OnboardingModal'
+import AutoDetectBanner from './components/github/AutoDetectBanner'
 import type { SessionState, SavedSession } from './types/electron'
 
 // Re-export ViewType from its canonical location for backwards compatibility
@@ -389,6 +390,38 @@ export default function App() {
       <div className="flex-1 flex flex-col" style={{ display: view === 'sessions' ? 'flex' : 'none', minHeight: 0 }}>
         <TabBar />
         <SessionHeader session={activeSession} isShowingPartner={partnerActive.has(activeSession.id)} sidebarCollapsed={!sidebarOpen} onShowTip={() => setShowTipModal(true)} />
+        {(() => {
+          const gi = activeSession.githubIntegration
+          const shouldShow =
+            !gi?.enabled &&
+            !gi?.repoUrl &&
+            !gi?.dismissedAutoDetect &&
+            !!activeSession.workingDirectory
+          if (!shouldShow) return null
+          return (
+            <AutoDetectBanner
+              cwd={activeSession.workingDirectory!}
+              onAccept={() => setView('settings')}
+              onEdit={() => setView('settings')}
+              onDismiss={async () => {
+                try {
+                  await window.electronAPI.github.updateSessionConfig(activeSession.id, {
+                    dismissedAutoDetect: true,
+                  })
+                  useSessionStore.getState().updateSession(activeSession.id, {
+                    githubIntegration: {
+                      ...(gi ?? { enabled: false, autoDetected: false }),
+                      dismissedAutoDetect: true,
+                    },
+                  })
+                } catch {
+                  // IPC failure leaves the banner visible for the user to
+                  // retry; better than silently swallowing the dismissal.
+                }
+              }}
+            />
+          )
+        })()}
         <div className="flex-1 flex flex-row" style={{ minHeight: 0 }}>
           <div className="flex-1 flex flex-col" style={{ minWidth: 0, minHeight: 0 }}>
             {sessions.map((session) => {
