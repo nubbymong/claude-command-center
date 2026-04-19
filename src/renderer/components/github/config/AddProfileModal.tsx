@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useGitHubStore } from '../../../stores/githubStore'
+import { trackUsage } from '../../../stores/tipsStore'
 import OAuthDeviceFlow from './OAuthDeviceFlow'
 
 interface OAuthFlowStart {
@@ -50,6 +51,7 @@ export default function AddProfileModal({ onClose }: Props) {
   const adoptGh = async (username: string) => {
     const r = await window.electronAPI.github.adoptGhCli(username)
     if (r.ok) {
+      trackUsage('github.signed-in')
       await loadConfig()
       onClose()
     }
@@ -67,6 +69,7 @@ export default function AddProfileModal({ onClose }: Props) {
     })
     setPatSaving(false)
     if (r.ok) {
+      trackUsage('github.signed-in')
       await loadConfig()
       onClose()
     } else {
@@ -79,6 +82,7 @@ export default function AddProfileModal({ onClose }: Props) {
       <OAuthDeviceFlow
         flow={oauthFlow}
         onDone={async () => {
+          trackUsage('github.signed-in')
           await loadConfig()
           onClose()
         }}

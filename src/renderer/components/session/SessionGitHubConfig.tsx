@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useGitHubStore } from '../../stores/githubStore'
 import { useSessionStore } from '../../stores/sessionStore'
+import { trackUsage } from '../../stores/tipsStore'
 import { parseRepoUrlClient } from './parseRepoUrlClient'
 import type { SessionGitHubIntegration } from '../../../shared/github-types'
 
@@ -81,6 +82,7 @@ export default function SessionGitHubConfig({ sessionId, cwd, initial }: Props) 
           ...patch,
         },
       })
+      if (enabled) trackUsage('github.session-enabled')
     }
     setTestResult(r.ok ? 'Saved' : `Error: ${r.error ?? 'unknown'}`)
     setTimeout(() => setTestResult(null), 2000)

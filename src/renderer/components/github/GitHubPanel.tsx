@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { useGitHubStore } from '../../stores/githubStore'
 import { useSessionStore } from '../../stores/sessionStore'
+import { trackUsage } from '../../stores/tipsStore'
 import PanelHeader from './PanelHeader'
 import SessionContextSection from './sections/SessionContextSection'
 import ActivePRSection from './sections/ActivePRSection'
@@ -68,6 +69,7 @@ export default function GitHubPanel({
       if (e.key === '/' && (isMac ? e.metaKey : e.ctrlKey)) {
         e.preventDefault()
         togglePanel()
+        trackUsage('github.panel-toggled')
       }
     }
     window.addEventListener('keydown', onKey)
