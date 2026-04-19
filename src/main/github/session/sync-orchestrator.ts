@@ -13,10 +13,16 @@ type FetchResult<T> =
   | { status: 'empty' }
   | { status: 'ok'; data: T }
 
+export interface FetcherContext {
+  sessionId: string
+  slug: string
+  branch: string
+}
+
 export interface OrchestratorFetchers {
-  pr: (slug: string, branch: string) => Promise<FetchResult<unknown>>
-  runs: (slug: string, branch: string) => Promise<FetchResult<unknown[]>>
-  reviews: (slug: string, prNumber: number) => Promise<FetchResult<unknown[]>>
+  pr: (ctx: FetcherContext) => Promise<FetchResult<unknown>>
+  runs: (ctx: FetcherContext) => Promise<FetchResult<unknown[]>>
+  reviews: (ctx: FetcherContext, prNumber: number) => Promise<FetchResult<unknown[]>>
 }
 
 export type SyncState = 'syncing' | 'synced' | 'rate-limited' | 'error' | 'idle'
@@ -74,6 +80,11 @@ export class SyncOrchestrator {
   constructor(private deps: SyncOrchestratorDeps) {}
 
   registerSession(input: RegisterSessionInput): void {
+    // Clear any existing timer for this id — re-registering an already-
+    // registered session (e.g. after the user edits the slug) must not leak
+    // the previous timer, which still holds a closure on the old state.
+    const prev = this.sessions.get(input.sessionId)
+    if (prev?.timer) clearTimeout(prev.timer)
     this.sessions.set(input.sessionId, { ...input, focused: false, lastSync: 0 })
     void this.scheduleNext(input.sessionId)
   }
@@ -147,8 +158,14 @@ export class SyncOrchestrator {
       accessedAt: 0,
     }
 
+    const ctx: FetcherContext = {
+      sessionId: s.sessionId,
+      slug: s.slug,
+      branch: s.branch,
+    }
+
     try {
-      const prR = await this.deps.fetchers.pr(s.slug, s.branch)
+      const prR = await this.deps.fetchers.pr(ctx)
       if (prR.status === 'ok') {
         existing.pr = mapPR(prR.data)
       } else if (prR.status === 'empty') {
@@ -160,13 +177,13 @@ export class SyncOrchestrator {
       // whole point of the 304 path; we preserve what the previous sync
       // loaded rather than blanking the card while polling.
 
-      const runsR = await this.deps.fetchers.runs(s.slug, s.branch)
+      const runsR = await this.deps.fetchers.runs(ctx)
       if (runsR.status === 'ok') {
         existing.actions = mapRuns(runsR.data)
       }
 
       if (existing.pr) {
-        const revR = await this.deps.fetchers.reviews(s.slug, existing.pr.number)
+        const revR = await this.deps.fetchers.reviews(ctx, existing.pr.number)
         if (revR.status === 'ok') {
           existing.reviews = mapReviews(revR.data)
         }

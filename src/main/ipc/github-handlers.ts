@@ -1,6 +1,6 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { IPC } from '../../shared/ipc-channels'
-import type { GitHubConfig, SessionGitHubIntegration } from '../../shared/github-types'
+import type { GitHubConfig, RepoCache, SessionGitHubIntegration } from '../../shared/github-types'
 import type { SavedSession } from '../session-state'
 import { GitHubConfigStore } from '../github/github-config-store'
 import { AuthProfileStore } from '../github/auth/auth-profile-store'
@@ -11,6 +11,18 @@ import { scopesToCapabilities } from '../github/auth/capability-mapper'
 import { detectRepoFromCwd, defaultGitRun } from '../github/session/repo-detector'
 import { readLocalGitState } from '../github/session/local-git-reader'
 import { validateSlug } from '../github/security/slug-validator'
+import { CacheStore } from '../github/cache/cache-store'
+import { EtagCache } from '../github/client/etag-cache'
+import { RateLimitShield } from '../github/client/rate-limit-shield'
+import {
+  fetchPRByBranch,
+  fetchPRReviews,
+  fetchWorkflowRuns,
+} from '../github/client/rest-fallback'
+import {
+  SyncOrchestrator,
+  type SyncStateEvent,
+} from '../github/session/sync-orchestrator'
 import {
   DEFAULT_FEATURE_TOGGLES,
   DEFAULT_SYNC_INTERVALS,
@@ -57,13 +69,79 @@ function emptyConfig(): GitHubConfig {
  * in PR 3. Defining them now keeps the IPC surface complete so the renderer
  * doesn't see missing-channel errors during PR 2 dev.
  */
-export function registerGitHubHandlers(deps: RegisterDeps) {
+export interface GitHubHandlersHandle {
+  orchestrator: SyncOrchestrator
+  resolveSessionIdFromWindow: () => string | null
+  setFocusedSessionResolver: (fn: () => string | null) => void
+}
+
+export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle {
   const configStore = new GitHubConfigStore(deps.resourcesDir)
   const profileStore = new AuthProfileStore({
     readConfig: () => configStore.read(),
     writeConfig: (c) => configStore.write(c),
   })
   const activeFlows = new Map<string, OAuthFlow>()
+
+  // Orchestrator dependencies. The RateLimitShield and EtagCache are shared
+  // across all syncs — the shield tracks per-bucket reset times regardless
+  // of slug, and the etag store is keyed by `METHOD path` which is already
+  // unique per endpoint/slug. Persistence of etags across restarts can come
+  // later; in-memory is fine for a running session.
+  const cacheStore = new CacheStore(deps.resourcesDir)
+  const shield = new RateLimitShield()
+  const etagStore: Record<string, string> = {}
+  const etags = new EtagCache(etagStore)
+
+  let focusedSessionResolver: () => string | null = () => null
+
+  async function getTokenForSession(sessionId: string): Promise<string | null> {
+    const sessions = await deps.loadSessions()
+    const session = sessions.find((s) => s.id === sessionId)
+    const profileId = session?.githubIntegration?.authProfileId
+    if (!profileId) return null
+    return profileStore.getToken(profileId)
+  }
+
+  // tokenFn closes over a specific sessionId — orchestrator's catch turns a
+  // throw into an 'error' sync state, which is the right UX when the user
+  // hasn't selected an auth profile yet for this session.
+  function makeTokenFn(sessionId: string) {
+    return async () => {
+      const t = await getTokenForSession(sessionId)
+      if (!t) throw new Error('no-token')
+      return t
+    }
+  }
+
+  const orchestrator = new SyncOrchestrator({
+    cacheStore,
+    getConfig: () => configStore.read(),
+    getTokenForSession,
+    emitData: (p) => deps.getWindow()?.webContents.send(IPC.GITHUB_DATA_UPDATE, p),
+    emitSyncState: (p: SyncStateEvent) =>
+      deps.getWindow()?.webContents.send(IPC.GITHUB_SYNC_STATE_UPDATE, p),
+    fetchers: {
+      pr: async (ctx) =>
+        fetchPRByBranch(ctx.slug, ctx.branch, {
+          tokenFn: makeTokenFn(ctx.sessionId),
+          shield,
+          etags,
+        }),
+      runs: async (ctx) =>
+        fetchWorkflowRuns(ctx.slug, ctx.branch, {
+          tokenFn: makeTokenFn(ctx.sessionId),
+          shield,
+          etags,
+        }),
+      reviews: async (ctx, prNumber) =>
+        fetchPRReviews(ctx.slug, prNumber, {
+          tokenFn: makeTokenFn(ctx.sessionId),
+          shield,
+          etags,
+        }),
+    },
+  })
 
   ipcMain.handle(IPC.GITHUB_CONFIG_GET, async () => {
     return (await configStore.read()) ?? null
@@ -249,11 +327,23 @@ export function registerGitHubHandlers(deps: RegisterDeps) {
         enabled: false,
         autoDetected: false,
       }
-      sessions[idx] = {
-        ...sessions[idx],
-        githubIntegration: { ...current, ...patch },
-      }
+      const merged: SessionGitHubIntegration = { ...current, ...patch }
+      sessions[idx] = { ...sessions[idx], githubIntegration: merged }
       await deps.saveSessions(sessions)
+      // Register or refresh the orchestrator's view of this session. On
+      // disable/slug-clear, unregister so its timer doesn't keep firing.
+      // registerSession already clears any prior timer for this id, so no
+      // explicit unregister-then-register dance.
+      if (merged.enabled && merged.repoSlug) {
+        orchestrator.registerSession({
+          sessionId,
+          slug: merged.repoSlug,
+          branch: 'main',
+          integration: merged,
+        })
+      } else {
+        orchestrator.unregisterSession(sessionId)
+      }
       return { ok: true }
     },
   )
@@ -263,17 +353,97 @@ export function registerGitHubHandlers(deps: RegisterDeps) {
     return { ok: true, state }
   })
 
-  // Stubs — real implementations land in PR 3 (sync orchestrator + sections).
-  // Defined here so renderer doesn't see missing-channel errors during PR 2.
-  ipcMain.handle(IPC.GITHUB_DATA_GET, async () => ({ ok: true, data: null }))
+  ipcMain.handle(IPC.GITHUB_DATA_GET, async (_e, slug: string) => {
+    const c = await cacheStore.load()
+    const data: RepoCache | null = c.repos[slug] ?? null
+    return { ok: true, data }
+  })
+
+  ipcMain.handle(IPC.GITHUB_SYNC_NOW, async (_e, sessionId: string) => {
+    // Renderer may hit this before the orchestrator saw the session (e.g.
+    // restart before restore completes, or renderer-first enable). Look up
+    // the current integration and auto-register so manual refresh always
+    // works rather than silently no-op'ing.
+    const sessions = await deps.loadSessions()
+    const session = sessions.find((s) => s.id === sessionId)
+    const integration = session?.githubIntegration
+    if (integration?.enabled && integration.repoSlug) {
+      orchestrator.registerSession({
+        sessionId,
+        slug: integration.repoSlug,
+        branch: 'main',
+        integration,
+      })
+    }
+    await orchestrator.syncNow(sessionId)
+    return { ok: true }
+  })
+
+  ipcMain.handle(IPC.GITHUB_SYNC_FOCUSED_NOW, async () => {
+    const id = focusedSessionResolver()
+    if (!id) return { ok: false, error: 'no-focused-session' }
+    await orchestrator.syncNow(id)
+    return { ok: true }
+  })
+
+  // Renderer pushes the active session id on every tab switch. We also use
+  // this value as the focused-session resolver so SYNC_FOCUSED_NOW resolves
+  // correctly without needing a separate session-state round-trip.
+  ipcMain.on(IPC.GITHUB_FOCUS_CHANGED, (_e, sessionId: string | null) => {
+    const prev = focusedSessionResolver()
+    focusedSessionResolver = () => sessionId
+    if (prev && prev !== sessionId) orchestrator.setFocus(prev, false)
+    if (sessionId) orchestrator.setFocus(sessionId, true)
+  })
+
+  ipcMain.handle(IPC.GITHUB_SYNC_PAUSE, async () => {
+    orchestrator.pause()
+    return { ok: true }
+  })
+
+  ipcMain.handle(IPC.GITHUB_SYNC_RESUME, async () => {
+    orchestrator.resume()
+    return { ok: true }
+  })
+
+  // Still stubs — real implementations require section-side machinery
+  // (transcript reader, merge/rerun/reply endpoint wrappers) that land in
+  // PR 3b alongside the populated panel sections.
   ipcMain.handle(IPC.GITHUB_SESSION_CONTEXT_GET, async () => ({ ok: true, data: null }))
-  ipcMain.handle(IPC.GITHUB_SYNC_NOW, async () => ({ ok: true }))
-  ipcMain.handle(IPC.GITHUB_SYNC_FOCUSED_NOW, async () => ({ ok: true }))
-  ipcMain.handle(IPC.GITHUB_SYNC_PAUSE, async () => ({ ok: true }))
-  ipcMain.handle(IPC.GITHUB_SYNC_RESUME, async () => ({ ok: true }))
   ipcMain.handle(IPC.GITHUB_ACTIONS_RERUN, async () => ({ ok: true }))
   ipcMain.handle(IPC.GITHUB_PR_MERGE, async () => ({ ok: true }))
   ipcMain.handle(IPC.GITHUB_PR_READY, async () => ({ ok: true }))
   ipcMain.handle(IPC.GITHUB_REVIEW_REPLY, async () => ({ ok: true }))
   ipcMain.handle(IPC.GITHUB_NOTIF_MARK_READ, async () => ({ ok: true }))
+
+  // Kick off background registration for any session that already had
+  // integration enabled when the app was closed. Fire-and-forget because
+  // loadSessions hits disk and we don't want to block handler registration.
+  void (async () => {
+    try {
+      const sessions = await deps.loadSessions()
+      for (const s of sessions) {
+        const integ = s.githubIntegration
+        if (integ?.enabled && integ.repoSlug) {
+          orchestrator.registerSession({
+            sessionId: s.id,
+            slug: integ.repoSlug,
+            branch: 'main',
+            integration: integ,
+          })
+        }
+      }
+    } catch {
+      // Best-effort; if session state can't be read the orchestrator stays
+      // empty and syncNow / config-update will register sessions on demand.
+    }
+  })()
+
+  return {
+    orchestrator,
+    resolveSessionIdFromWindow: () => focusedSessionResolver(),
+    setFocusedSessionResolver: (fn) => {
+      focusedSessionResolver = fn
+    },
+  }
 }

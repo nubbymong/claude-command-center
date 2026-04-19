@@ -84,6 +84,13 @@ export default function App() {
   const activeSession = sessions.find((s) => s.id === activeSessionId)
   const hasRestoredRef = useRef(false)
 
+  // Push focus changes to main so the sync orchestrator can shift the
+  // active session to the fast interval and the background ones to the
+  // slow interval. ipcRenderer.send, not invoke — fire-and-forget.
+  useEffect(() => {
+    window.electronAPI.github.notifyFocusChanged(activeSessionId ?? null)
+  }, [activeSessionId])
+
   // Global keyboard shortcuts
   useKeyboardShortcuts(activeSessionId, setSidebarOpen, setView)
 
