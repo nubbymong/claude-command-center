@@ -51,6 +51,15 @@ export default function SessionGitHubConfig({ sessionId, cwd, initial }: Props) 
   const slug = parseRepoUrlClient(repoUrl)
 
   const save = async () => {
+    // Prevent save when integration is toggled on with no valid repo. The
+    // panel gate would flip true but sync registration requires a repoSlug,
+    // so the user would silently get a panel with no sync. Block it here
+    // with a visible error instead.
+    if (enabled && !slug) {
+      setTestResult('A repo URL is required to enable integration')
+      setTimeout(() => setTestResult(null), 2500)
+      return
+    }
     setSaving(true)
     const patch: Partial<SessionGitHubIntegration> = {
       enabled,
@@ -150,7 +159,7 @@ export default function SessionGitHubConfig({ sessionId, cwd, initial }: Props) 
       <div className="flex gap-2">
         <button
           onClick={save}
-          disabled={saving || (!!repoUrl && !slug)}
+          disabled={saving || (!!repoUrl && !slug) || (enabled && !slug)}
           className="bg-blue text-base px-3 py-1 rounded text-sm"
         >
           {saving ? 'Saving' : 'Save'}

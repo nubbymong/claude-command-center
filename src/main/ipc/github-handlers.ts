@@ -10,14 +10,18 @@ import { verifyToken, probeRepoAccess } from '../github/auth/pat-verifier'
 import { scopesToCapabilities } from '../github/auth/capability-mapper'
 import { detectRepoFromCwd, defaultGitRun } from '../github/session/repo-detector'
 import { readLocalGitState } from '../github/session/local-git-reader'
-// Small branch-only helper for orchestrator registration. readLocalGitState
-// does too much work (status, stash, log) for this path — but reusing its
-// `run` callable keeps the git invocation consistent.
+// Lightweight branch-only read for orchestrator registration. readLocalGitState
+// runs status + stash + log + ahead/behind — far more than we need when we
+// only want the current branch. A single `git rev-parse` is ~10x faster and
+// keeps enable/startup paths snappy.
 async function readCurrentBranch(cwd: string | undefined): Promise<string> {
   if (!cwd) return 'main'
   try {
-    const state = await readLocalGitState(cwd, defaultGitRun())
-    return state.branch || 'main'
+    const run = defaultGitRun()
+    const out = (await run(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'])).trim()
+    // Detached HEAD returns 'HEAD' — treat as 'main' so sync still targets
+    // a sensible default rather than a non-branch name.
+    return out && out !== 'HEAD' ? out : 'main'
   } catch {
     return 'main'
   }
@@ -76,10 +80,10 @@ function emptyConfig(): GitHubConfig {
  * the glue between renderer calls and the main-process modules in
  * src/main/github/**.
  *
- * Data-path handlers (GITHUB_DATA_GET, GITHUB_SYNC_*, GITHUB_SESSION_CONTEXT_GET,
- * etc.) are intentional stubs here — they're wired to the sync orchestrator
- * in PR 3. Defining them now keeps the IPC surface complete so the renderer
- * doesn't see missing-channel errors during PR 2 dev.
+ * Data-path handlers (GITHUB_DATA_GET, GITHUB_SYNC_*) now drive a live
+ * SyncOrchestrator. The remaining stubs (SESSION_CONTEXT_GET, PR_MERGE,
+ * ACTIONS_RERUN, REVIEW_REPLY, NOTIF_MARK_READ) depend on section-side
+ * machinery that lands in PR 3b alongside the populated panel sections.
  */
 export interface GitHubHandlersHandle {
   orchestrator: SyncOrchestrator
@@ -107,10 +111,15 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
 
   let focusedSessionResolver: () => string | null = () => null
 
+  // Authored-profile-id by sessionId. Populated at register-time (from
+  // SavedSession) so fetchers don't need to re-read session-state.json on
+  // every request. Previously the fetcher path did a full disk load for
+  // every GitHub API call — at 3 requests per session per sync, that was
+  // 3N reads per cycle.
+  const profileIdBySession = new Map<string, string>()
+
   async function getTokenForSession(sessionId: string): Promise<string | null> {
-    const sessions = await deps.loadSessions()
-    const session = sessions.find((s) => s.id === sessionId)
-    const profileId = session?.githubIntegration?.authProfileId
+    const profileId = profileIdBySession.get(sessionId)
     if (!profileId) return null
     return profileStore.getToken(profileId)
   }
@@ -347,6 +356,8 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
       // explicit unregister-then-register dance.
       if (merged.enabled && merged.repoSlug) {
         const branch = await readCurrentBranch(sessions[idx].workingDirectory)
+        if (merged.authProfileId) profileIdBySession.set(sessionId, merged.authProfileId)
+        else profileIdBySession.delete(sessionId)
         orchestrator.registerSession({
           sessionId,
           slug: merged.repoSlug,
@@ -361,6 +372,7 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
           orchestrator.setFocus(sessionId, true)
         }
       } else {
+        profileIdBySession.delete(sessionId)
         orchestrator.unregisterSession(sessionId)
       }
       return { ok: true }
@@ -388,6 +400,7 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
     const integration = session?.githubIntegration
     if (integration?.enabled && integration.repoSlug) {
       const branch = await readCurrentBranch(session?.workingDirectory)
+      if (integration.authProfileId) profileIdBySession.set(sessionId, integration.authProfileId)
       orchestrator.registerSession({
         sessionId,
         slug: integration.repoSlug,
@@ -449,6 +462,7 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
         const integ = s.githubIntegration
         if (integ?.enabled && integ.repoSlug) {
           const branch = await readCurrentBranch(s.workingDirectory)
+          if (integ.authProfileId) profileIdBySession.set(s.id, integ.authProfileId)
           orchestrator.registerSession({
             sessionId: s.id,
             slug: integ.repoSlug,

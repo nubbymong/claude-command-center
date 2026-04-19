@@ -54,6 +54,73 @@ export class CacheStore {
     })
   }
 
+  /**
+   * Atomic read-modify-write. Prefer this over separate `load`/`save` calls
+   * when concurrent writers are possible (e.g. the SyncOrchestrator running
+   * multiple sessions): two sessions both loading the same snapshot and
+   * saving sequentially will lose the earlier write. The mutex on `run` is
+   * re-entrant with load/save, so nested reads via await are safe.
+   */
+  async update(fn: (cache: GitHubCache) => void | Promise<void>): Promise<void> {
+    await this.mutex.run(async () => {
+      const cache = await this.readUnlocked()
+      await fn(cache)
+      await this.writeUnlocked(cache)
+    })
+  }
+
+  private async readUnlocked(): Promise<GitHubCache> {
+    let raw: string
+    try {
+      raw = await fs.readFile(this.filePath, 'utf8')
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return empty()
+      console.warn('[github-cache] read failed:', redactTokens(String(err)))
+      return empty()
+    }
+    try {
+      const parsed = JSON.parse(raw)
+      if (parsed.schemaVersion !== GITHUB_CACHE_SCHEMA_VERSION) {
+        await this.backupCorrupt()
+        return empty()
+      }
+      return parsed as GitHubCache
+    } catch {
+      await this.backupCorrupt()
+      return empty()
+    }
+  }
+
+  private async writeUnlocked(cache: GitHubCache): Promise<void> {
+    const lru = cache.lru.filter((s) => s in cache.repos)
+    while (Object.keys(cache.repos).length > CACHE_MAX_REPOS && lru.length > 0) {
+      const evict = lru.shift()!
+      delete cache.repos[evict]
+    }
+    cache.lru = lru
+    const tmp = `${this.filePath}.${randomUUID()}.tmp`
+    await fs.writeFile(tmp, JSON.stringify(cache), 'utf8')
+    try {
+      if (existsSync(this.filePath)) {
+        await fs.copyFile(tmp, this.filePath)
+        try {
+          await fs.unlink(tmp)
+        } catch {
+          /* ignore */
+        }
+      } else {
+        await fs.rename(tmp, this.filePath)
+      }
+    } catch (err) {
+      try {
+        await fs.unlink(tmp)
+      } catch {
+        /* ignore */
+      }
+      throw err
+    }
+  }
+
   async save(cache: GitHubCache): Promise<void> {
     await this.mutex.run(async () => {
       // LRU: drop entries no longer in repos (stale after manual edits), then

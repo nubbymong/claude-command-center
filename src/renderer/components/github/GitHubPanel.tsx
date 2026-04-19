@@ -52,6 +52,16 @@ export default function GitHubPanel({
     if (integrationEnabled && showSetup) setShowSetup(false)
   }, [integrationEnabled, showSetup])
 
+  // Reset the setup modal when the active session changes. App.tsx mounts a
+  // single <GitHubPanel> instance and only swaps the sessionId prop, so
+  // component state survives tab switches — without this, opening setup for
+  // session A and then switching to session B would leave the modal open
+  // but targeting B's sessionId / cwd. Clearing on id change keeps the
+  // modal strictly scoped to an explicit click.
+  useEffect(() => {
+    setShowSetup(false)
+  }, [sessionId])
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const isMac = window.electronPlatform === 'darwin'

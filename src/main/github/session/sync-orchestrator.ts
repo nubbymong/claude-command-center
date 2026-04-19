@@ -103,6 +103,17 @@ export class SyncOrchestrator {
 
   pause(): void {
     this.paused = true
+    // Cancel any in-flight timers. Without this, the last scheduleNext()
+    // already armed a setTimeout that fires even after pause() flips the
+    // flag — doSync then runs because pause is only checked before arming,
+    // not before execution. Clearing here makes "Pause syncs" effective
+    // immediately.
+    this.sessions.forEach((s) => {
+      if (s.timer) {
+        clearTimeout(s.timer)
+        s.timer = undefined
+      }
+    })
   }
 
   resume(): void {
@@ -156,62 +167,85 @@ export class SyncOrchestrator {
 
     this.deps.emitSyncState({ slug: s.slug, state: 'syncing', at: Date.now() })
 
-    const cache = await this.deps.cacheStore.load()
-    const existing: RepoCache = cache.repos[s.slug] ?? {
-      etags: {},
-      lastSynced: 0,
-      accessedAt: 0,
-    }
-
     const ctx: FetcherContext = {
       sessionId: s.sessionId,
       slug: s.slug,
       branch: s.branch,
     }
 
+    // Run the fetches outside the cache mutex — network I/O shouldn't block
+    // other sessions' cache reads — and commit the result atomically via
+    // update(). Prior impl loaded the cache, did all fetches, then saved
+    // the snapshot; two concurrent sessions could both load the same base
+    // and the later save clobbered the earlier session's updates.
+    let emitted: RepoCache | null = null
     try {
       const prR = await this.deps.fetchers.pr(ctx)
-      if (prR.status === 'ok') {
-        existing.pr = mapPR(prR.data)
-      } else if (prR.status === 'empty') {
-        // RepoCache.pr is optional; use undefined (not null) so render code
-        // only has one "no PR" sentinel to handle. Reviews are derived from
-        // the PR — clear them too so stale review state doesn't linger in
-        // the cache/UI after a branch loses its PR (e.g. on merge).
-        existing.pr = undefined
-        existing.reviews = undefined
-      }
-      // 'unchanged' intentionally leaves existing.pr alone — that's the
-      // whole point of the 304 path; we preserve what the previous sync
-      // loaded rather than blanking the card while polling.
-
       const runsR = await this.deps.fetchers.runs(ctx)
-      if (runsR.status === 'ok') {
-        existing.actions = mapRuns(runsR.data)
+
+      // Peek at the current cache to know if we already have a PR number
+      // (for the reviews follow-up call when the PR fetch is 'unchanged').
+      const peeked = await this.deps.cacheStore.load()
+      const prior: RepoCache = peeked.repos[s.slug] ?? {
+        etags: {},
+        lastSynced: 0,
+        accessedAt: 0,
       }
 
-      if (existing.pr) {
-        const revR = await this.deps.fetchers.reviews(ctx, existing.pr.number)
-        if (revR.status === 'ok') {
+      // Determine the PR we'll use for the reviews call. 'ok' and 'unchanged'
+      // both keep a PR; 'empty' clears it.
+      let prForReviews: number | undefined
+      if (prR.status === 'ok') prForReviews = (prR.data as { number?: number }).number
+      else if (prR.status === 'unchanged') prForReviews = prior.pr?.number
+
+      let revR: FetchResult<unknown[]> | null = null
+      if (prForReviews !== undefined) {
+        revR = await this.deps.fetchers.reviews(ctx, prForReviews)
+      }
+
+      await this.deps.cacheStore.update(async (cache) => {
+        const existing: RepoCache = cache.repos[s.slug] ?? {
+          etags: {},
+          lastSynced: 0,
+          accessedAt: 0,
+        }
+        if (prR.status === 'ok') {
+          existing.pr = mapPR(prR.data)
+        } else if (prR.status === 'empty') {
+          // RepoCache.pr is optional; use undefined (not null) so render
+          // code only has one "no PR" sentinel. Reviews are PR-derived so
+          // clear them too — otherwise a merged branch keeps stale reviews.
+          existing.pr = undefined
+          existing.reviews = undefined
+        }
+        // 'unchanged' intentionally leaves existing.pr alone — the point
+        // of the 304 path is to preserve what the previous sync loaded.
+
+        if (runsR.status === 'ok') {
+          existing.actions = mapRuns(runsR.data)
+        }
+
+        if (revR && revR.status === 'ok') {
           existing.reviews = mapReviews(revR.data)
         }
+
+        existing.lastSynced = Date.now()
+        existing.accessedAt = Date.now()
+        cache.repos[s.slug] = existing
+        // True access-order LRU: move the slug to the most-recent end every
+        // access. Previous impl only appended on first use, so hot repos
+        // kept their original position and got evicted as "oldest".
+        const lruIndex = cache.lru.indexOf(s.slug)
+        if (lruIndex !== -1) cache.lru.splice(lruIndex, 1)
+        cache.lru.push(s.slug)
+        emitted = existing
+      })
+
+      if (emitted) {
+        this.deps.emitData({ slug: s.slug, data: emitted })
       }
-
-      existing.lastSynced = Date.now()
-      existing.accessedAt = Date.now()
-      cache.repos[s.slug] = existing
-      // True access-order LRU: move the slug to the most-recent end every
-      // access. Previous impl only appended on first use, so hot repos kept
-      // their original position and were wrongly evicted as "oldest".
-      const lruIndex = cache.lru.indexOf(s.slug)
-      if (lruIndex !== -1) cache.lru.splice(lruIndex, 1)
-      cache.lru.push(s.slug)
-      await this.deps.cacheStore.save(cache)
-
-      this.deps.emitData({ slug: s.slug, data: existing })
       this.deps.emitSyncState({ slug: s.slug, state: 'synced', at: Date.now() })
       s.lastSync = Date.now()
-      // Clear any prior rate-limit deadline — we just succeeded.
       s.rateLimitedUntil = undefined
     } catch (err: unknown) {
       if (isRateLimitError(err)) {
