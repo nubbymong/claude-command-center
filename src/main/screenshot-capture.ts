@@ -100,7 +100,17 @@ async function _captureRectangleImpl(mainWindow: BrowserWindow): Promise<string 
       alwaysOnTop: true,
       skipTaskbar: true,
       resizable: false,
-      fullscreen: true,
+      // NO `fullscreen: true` on Windows: combining fullscreen + transparent
+      // drops this window into the exclusive-compositor path that doesn't
+      // route mouse/keyboard input reliably after another window was just
+      // minimized. The explicit x/y/width/height already fills the display.
+      // `show: false` delays the first paint until we can `focus()` the
+      // window ourselves — on Windows, minimize() of the prior window can
+      // leave focus on the desktop, and a same-tick construction doesn't
+      // grab it back, which is why the crosshair rendered but drag / escape
+      // were dead until you Ctrl+Alt+Del'd out of it.
+      show: false,
+      focusable: true,
       webPreferences: {
         preload: join(__dirname, '../preload/screenshot-overlay.js'),
         contextIsolation: true,
@@ -110,7 +120,18 @@ async function _captureRectangleImpl(mainWindow: BrowserWindow): Promise<string 
     })
 
     let resolved = false
+    // Safety net: if for any reason the overlay still fails to capture
+    // input (OS compositor edge case, focus-stealer race), auto-cancel
+    // after 2 minutes so the user can never get stuck needing task
+    // manager to dismiss a ghost crosshair window.
+    const safetyTimer = setTimeout(() => {
+      if (resolved) return
+      console.warn('[screenshot] overlay safety timeout — auto-cancelling')
+      handleCancel()
+    }, 120_000)
+
     const cleanup = () => {
+      clearTimeout(safetyTimer)
       if (!overlay.isDestroyed()) overlay.destroy()
       mainWindow.restore()
       mainWindow.focus()
@@ -179,7 +200,20 @@ async function _captureRectangleImpl(mainWindow: BrowserWindow): Promise<string 
       }
     })
 
-    // Load inline HTML for the overlay
+    // Show + focus only after the page is ready. Showing before load can
+    // leave the window in the Windows "created but unfocused" state where
+    // input events never reach the renderer; waiting for did-finish-load
+    // gives Chromium time to register input handlers before we ask the
+    // OS to focus it. Also force-elevate to 'screen-saver' so the overlay
+    // sits above taskbar popups and always-on-top apps on Windows.
+    overlay.once('ready-to-show', () => {
+      if (overlay.isDestroyed()) return
+      overlay.setAlwaysOnTop(true, 'screen-saver')
+      overlay.show()
+      overlay.focus()
+      overlay.moveTop()
+    })
+
     const html = getOverlayHtml()
     overlay.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
   })
@@ -347,7 +381,12 @@ export async function startStoryboard(mainWindow: BrowserWindow): Promise<{ x: n
       alwaysOnTop: true,
       skipTaskbar: true,
       resizable: false,
-      fullscreen: true,
+      // See matching comment in captureRectangle: fullscreen + transparent
+      // on Windows breaks input capture when opened right after a
+      // minimize(). Explicit sizing fills the display; show/focus happen
+      // after ready-to-show so the OS has a chance to route input here.
+      show: false,
+      focusable: true,
       webPreferences: {
         preload: join(__dirname, '../preload/screenshot-overlay.js'),
         contextIsolation: true,
@@ -357,7 +396,16 @@ export async function startStoryboard(mainWindow: BrowserWindow): Promise<{ x: n
     })
 
     let resolved = false
+    // Same safety net as captureRectangle: auto-cancel after 2 min so
+    // the overlay can never get stuck as a ghost window.
+    const safetyTimer = setTimeout(() => {
+      if (resolved) return
+      console.warn('[storyboard] overlay safety timeout — auto-cancelling')
+      handleCancel()
+    }, 120_000)
+
     const cleanup = () => {
+      clearTimeout(safetyTimer)
       if (!overlay.isDestroyed()) overlay.destroy()
       mainWindow.restore()
       mainWindow.focus()
@@ -395,6 +443,14 @@ export async function startStoryboard(mainWindow: BrowserWindow): Promise<{ x: n
         mainWindow.focus()
         resolve(null)
       }
+    })
+
+    overlay.once('ready-to-show', () => {
+      if (overlay.isDestroyed()) return
+      overlay.setAlwaysOnTop(true, 'screen-saver')
+      overlay.show()
+      overlay.focus()
+      overlay.moveTop()
     })
 
     const html = getOverlayHtml()
