@@ -236,14 +236,31 @@ export default function App() {
   // on reload, which is the intended behavior: persist failure shouldn't
   // silently suppress the modal across restarts.
   const onboardingDismissedThisSessionRef = useRef(false)
+
+  // Decides whether github onboarding is due right now. Reads persistent
+  // state only — safe to call from anywhere and will not flicker with
+  // react render timing the way `showWhatsNew` / `showTraining` did.
+  const isGitHubOnboardingDue = (): boolean => {
+    if (!githubConfig) return false
+    if (onboardingDismissedThisSessionRef.current) return false
+    if (githubConfig.seenOnboardingVersion === 'permanent') return false
+    if (githubConfig.seenOnboardingVersion === __APP_VERSION__) return false
+    if (needsCliSetup) return false
+    return true
+  }
+
   useEffect(() => {
-    if (!githubConfig) return
-    if (onboardingDismissedThisSessionRef.current) return
-    if (githubConfig.seenOnboardingVersion === 'permanent') return
-    if (githubConfig.seenOnboardingVersion === __APP_VERSION__) return
-    // Defer to other first-launch modals (what's new, training, setup) so
-    // this doesn't stack on top of them.
-    if (showWhatsNew || showTraining || showTrainingAll || needsCliSetup) return
+    if (!isGitHubOnboardingDue()) return
+    // Defer while an earlier modal is currently open OR still-pending.
+    // Prior versions checked only the `show*` state, which is set by
+    // postConfigInit's 500ms setTimeout — so if github config hydrated
+    // first, the guard saw `false` for all of them, dispatched github,
+    // and then whats-new / training landed on top a moment later.
+    // `shouldShow*()` reads persistent state so the guard holds even
+    // before the timer fires. The chain in handleWhatsNewClose /
+    // handleTrainingClose will dispatch us when the earlier modal closes.
+    if (showWhatsNew || showTraining || showTrainingAll) return
+    if (isFirstInstall() || shouldShowWhatsNew() || shouldShowTraining()) return
     setShowGitHubOnboarding(true)
   }, [githubConfig, showWhatsNew, showTraining, showTrainingAll, needsCliSetup])
 
@@ -589,8 +606,21 @@ export default function App() {
   const handleWhatsNewClose = () => {
     markWhatsNewSeen()
     setShowWhatsNew(false)
+    // Advance the first-launch queue: training next if due, then github
+    // onboarding. 300ms delay lets the closing modal finish its exit
+    // transition before the next one mounts so they don't cross-fade.
     if (shouldShowTraining()) {
       setTimeout(() => setShowTraining(true), 300)
+    } else if (isGitHubOnboardingDue()) {
+      setTimeout(() => setShowGitHubOnboarding(true), 300)
+    }
+  }
+
+  const handleTrainingClose = () => {
+    setShowTraining(false)
+    setShowTrainingAll(false)
+    if (isGitHubOnboardingDue()) {
+      setTimeout(() => setShowGitHubOnboarding(true), 300)
     }
   }
 
@@ -692,7 +722,7 @@ export default function App() {
           }} />
           <main className="flex-1 flex flex-col overflow-hidden titlebar-no-drag">
             {showTraining ? (
-              <TrainingWalkthrough onClose={() => { setShowTraining(false); setShowTrainingAll(false) }} showAll={showTrainingAll} />
+              <TrainingWalkthrough onClose={handleTrainingClose} showAll={showTrainingAll} />
             ) : showGuidedConfig ? (
               <GuidedConfigView
                 onSkip={() => setShowGuidedConfig(false)}
