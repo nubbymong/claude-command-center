@@ -333,10 +333,15 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
           navigator.clipboard.writeText(sel)
         } else {
           navigator.clipboard.readText().then((text) => {
-            if (text) {
-              // Paste directly into the PTY (like real Claude Code terminal)
-              window.electronAPI.pty.write(sessionId, text)
-            }
+            if (!text) return
+            // Route through xterm's paste() so bracketed-paste mode is
+            // respected. Writing the raw text straight to the PTY skipped
+            // the \x1b[200~...\x1b[201~ wrapping that apps like Claude
+            // Code CLI use to distinguish pastes from keystrokes, causing
+            // embedded \n to submit the first line and strand the rest
+            // in the input buffer. xterm emits the (possibly wrapped)
+            // payload via onData, which already forwards to pty.write.
+            term?.paste(text)
           })
         }
       }
