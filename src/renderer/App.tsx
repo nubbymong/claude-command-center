@@ -606,13 +606,13 @@ export default function App() {
   const handleWhatsNewClose = () => {
     markWhatsNewSeen()
     setShowWhatsNew(false)
-    // Advance the first-launch queue: training next if due, then github
-    // onboarding. 300ms delay lets the closing modal finish its exit
-    // transition before the next one mounts so they don't cross-fade.
+    // Advance the queue. The short 120ms delay overlaps with the next
+    // modal's 200ms fade-in so the user sees a smooth cross-fade rather
+    // than a 300ms gap of dead space.
     if (shouldShowTraining()) {
-      setTimeout(() => setShowTraining(true), 300)
+      setTimeout(() => setShowTraining(true), 120)
     } else if (isGitHubOnboardingDue()) {
-      setTimeout(() => setShowGitHubOnboarding(true), 300)
+      setTimeout(() => setShowGitHubOnboarding(true), 120)
     }
   }
 
@@ -620,7 +620,7 @@ export default function App() {
     setShowTraining(false)
     setShowTrainingAll(false)
     if (isGitHubOnboardingDue()) {
-      setTimeout(() => setShowGitHubOnboarding(true), 300)
+      setTimeout(() => setShowGitHubOnboarding(true), 120)
     }
   }
 

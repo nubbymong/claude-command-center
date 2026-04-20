@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import { changelog, ChangelogEntry } from '../changelog'
 
 declare const __BUILD_TIME__: string
@@ -62,16 +62,37 @@ function VersionSection({ entry }: { entry: ChangelogEntry }) {
 export default function WhatsNewModal({ onClose, showAllVersions = false }: Props) {
   const latestVersion = changelog[0]
   const versionsToShow = showAllVersions ? changelog : [latestVersion]
+  // Animation state: `entering` false on mount → true after one frame
+  // fades the dialog in. `closing` flips true when the user dismisses,
+  // giving the fade-out 180ms before we actually call the parent onClose.
+  // Keeps the transition between first-launch modals from feeling abrupt.
+  const [entering, setEntering] = useState(false)
+  const [closing, setClosing] = useState(false)
+
+  useEffect(() => {
+    const t = requestAnimationFrame(() => setEntering(true))
+    return () => cancelAnimationFrame(t)
+  }, [])
+
+  const dismiss = () => {
+    if (closing) return
+    setClosing(true)
+    setTimeout(onClose, 180)
+  }
+
+  const visible = entering && !closing
+  const backdropClass = `fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 transition-opacity duration-200 ease-out ${visible ? 'opacity-100' : 'opacity-0'}`
+  const dialogClass = `bg-mantle rounded-lg shadow-2xl border border-surface0 w-full max-w-lg max-h-[80vh] flex flex-col transition-all duration-200 ease-out ${visible ? 'opacity-100 scale-100 translate-y-0' : 'opacity-0 scale-95 translate-y-2'}`
 
   return (
-    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-      <div className="bg-mantle rounded-lg shadow-2xl border border-surface0 w-full max-w-lg max-h-[80vh] flex flex-col">
+    <div className={backdropClass}>
+      <div className={dialogClass}>
         {/* Header */}
         <div className="p-4 border-b border-surface0">
           <div className="flex items-center justify-between">
             <h2 className="text-xl font-bold text-text">What's New</h2>
             <button
-              onClick={onClose}
+              onClick={dismiss}
               className="text-overlay0 hover:text-text transition-colors text-xl leading-none"
             >
               &times;
@@ -101,7 +122,7 @@ export default function WhatsNewModal({ onClose, showAllVersions = false }: Prop
           )}
           <div className="flex-1" />
           <button
-            onClick={onClose}
+            onClick={dismiss}
             className="px-4 py-2 bg-blue text-base rounded font-medium hover:bg-blue/80 transition-colors"
           >
             Got it
