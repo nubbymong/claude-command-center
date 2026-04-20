@@ -354,7 +354,8 @@ function mapPR(raw: unknown): PRSnapshot {
         : 'conflict',
     url: r.html_url,
     // Scan the PR body once here so SESSION_CONTEXT_GET doesn't re-parse
-    // on every panel mount. Empty-body PRs just get an undefined bodyRefs.
+    // on every panel mount. Empty or missing PR bodies produce an empty
+    // bodyRefs array (scanPrBodyRefs never returns undefined).
     bodyRefs: scanPrBodyRefs(r.body),
   }
 }

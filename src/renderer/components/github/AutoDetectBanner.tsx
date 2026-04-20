@@ -4,7 +4,11 @@ interface Props {
   cwd: string
   onAccept: (slug: string) => void
   onEdit: () => void
-  onDismiss: () => void
+  // Allowed to return a Promise — the dismiss button awaits it so the
+  // disabled state stays on screen until the IPC write lands. Without
+  // awaiting, setDismissing(false) fires synchronously before the IPC
+  // completes and lets the user click the button multiple times.
+  onDismiss: () => void | Promise<void>
 }
 
 export default function AutoDetectBanner({ cwd, onAccept, onEdit, onDismiss }: Props) {
@@ -39,10 +43,10 @@ export default function AutoDetectBanner({ cwd, onAccept, onEdit, onDismiss }: P
     onAccept(slug)
   }
 
-  const handleDismiss = () => {
+  const handleDismiss = async () => {
     setDismissing(true)
     try {
-      onDismiss()
+      await onDismiss()
     } finally {
       setDismissing(false)
     }

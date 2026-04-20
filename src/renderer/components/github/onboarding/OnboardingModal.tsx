@@ -35,12 +35,7 @@ export default function OnboardingModal({ onClose, onSetup }: Props) {
   useFocusTrap(dialogRef, true, onClose)
 
   return (
-    <div
-      className="fixed inset-0 bg-base/80 flex items-center justify-center z-50"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose()
-      }}
-    >
+    <div className="fixed inset-0 bg-base/80 flex items-center justify-center z-50">
       <div
         ref={dialogRef}
         role="dialog"

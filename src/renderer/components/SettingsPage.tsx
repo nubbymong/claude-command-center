@@ -28,12 +28,19 @@ function formatBuildTime(iso: string): string {
   }
 }
 
-export default function SettingsPage() {
+interface SettingsPageProps {
+  // Initial tab selection used on first render. Allows callers (onboarding
+  // modal "Set up now" + auto-detect banner Accept/Edit) to deep-link into
+  // the GitHub tab instead of landing on the default General view.
+  initialTab?: SettingsTab
+}
+
+export default function SettingsPage({ initialTab }: SettingsPageProps = {}) {
   const settings = useSettingsStore((s) => s.settings)
   const updateSettings = useSettingsStore((s) => s.updateSettings)
   const [showWhatsNew, setShowWhatsNew] = useState(false)
   const [showTraining, setShowTraining] = useState(false)
-  const [activeTab, setActiveTab] = useState<SettingsTab>('general')
+  const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab ?? 'general')
   const latestVersion = getLatestVersion()
 
   useEffect(() => {

@@ -130,12 +130,7 @@ export default function GitHubPanel({
           </button>
         </aside>
         {showSetup && (
-          <div
-            className="fixed inset-0 bg-base/80 z-50 flex items-center justify-center"
-            onClick={(e) => {
-              if (e.target === e.currentTarget) closeSetup()
-            }}
-          >
+          <div className="fixed inset-0 bg-base/80 z-50 flex items-center justify-center">
             <div
               ref={setupDialogRef}
               role="dialog"

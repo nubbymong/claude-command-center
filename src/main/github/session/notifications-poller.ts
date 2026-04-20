@@ -18,13 +18,17 @@ import { fetchNotifications } from '../client/rest-fallback'
  * (fallback 300s) and are re-read on every tick so renderer changes to
  * sync intervals take effect immediately.
  *
- * Persistence lives in `cacheStore.notificationsByProfile[profileId]` with
- * an optional etag so 304 responses keep the existing payload without
- * re-downloading it.
+ * Persisted notification items live in
+ * `cacheStore.notificationsByProfile[profileId]`. ETags are tracked
+ * separately in the in-memory `EtagCache`, so 304 responses can keep
+ * using the existing persisted payload for the current process lifetime
+ * without re-downloading it.
  *
- * NOTE on register-time behavior: a newly registered profile runs an
- * immediate one-shot fetch so the panel has data within seconds instead
- * of waiting a full interval. Subsequent ticks honor the interval.
+ * NOTE on register-time behavior: a newly registered profile emits any
+ * persisted items immediately (so the panel paints from cache while the
+ * network call is in flight), then runs a one-shot fetch so fresh data
+ * lands within seconds instead of waiting a full interval. Subsequent
+ * ticks honor the interval.
  */
 
 export interface NotificationsPollerDeps {
@@ -56,20 +60,20 @@ interface RawNotification {
 
 function mapOne(raw: RawNotification): NotificationSummary | null {
   if (!raw.id) return null
-  // html_url isn't returned on the /notifications endpoint; we translate the
-  // API url to a web url so the "open" button lands on github.com. If the
-  // shape doesn't match the expected pattern we keep the api url — openExternal
-  // still works, just lands in the less-useful API view.
+  // html_url isn't returned on the /notifications endpoint; we translate
+  // the API url to a web url so the "open" button lands on github.com.
+  // Rejecting the row entirely when there's no usable URL (rare — only
+  // seen on malformed/partial payloads) prevents the renderer from
+  // calling shell.openExternal('') and getting an unhandled rejection.
   const apiUrl = raw.subject?.url
-  let url = apiUrl ?? ''
-  if (apiUrl) {
-    const m = apiUrl.match(
-      /api\.github\.com\/repos\/([^/]+)\/([^/]+)\/(issues|pulls)\/(\d+)/,
-    )
-    if (m) {
-      const kind = m[3] === 'pulls' ? 'pull' : 'issues'
-      url = `https://github.com/${m[1]}/${m[2]}/${kind}/${m[4]}`
-    }
+  if (!apiUrl) return null
+  let url = apiUrl
+  const m = apiUrl.match(
+    /api\.github\.com\/repos\/([^/]+)\/([^/]+)\/(issues|pulls)\/(\d+)/,
+  )
+  if (m) {
+    const kind = m[3] === 'pulls' ? 'pull' : 'issues'
+    url = `https://github.com/${m[1]}/${m[2]}/${kind}/${m[4]}`
   }
   return {
     id: raw.id,
@@ -108,10 +112,30 @@ export class NotificationsPoller {
     if (this.profiles.has(profileId)) return
     const state: ProfileState = { profileId }
     this.profiles.set(profileId, state)
+    // Emit whatever is already on disk FIRST so the panel paints from
+    // cache immediately on register. Without this, if the first network
+    // poll returns 304 (nothing new since last run) or a transient
+    // non-200, the renderer store would stay empty until a real 'ok'
+    // tick — which could be up to a full sync interval away.
+    void this.emitCachedItems(profileId)
     // Immediate first fetch so the panel populates without waiting for the
     // full interval. finally → scheduleNext mirrors the orchestrator pattern.
     if (!this.paused) {
       void this.doPoll(profileId).finally(() => void this.scheduleNext(profileId))
+    }
+  }
+
+  private async emitCachedItems(profileId: string): Promise<void> {
+    try {
+      const cache = await this.deps.cacheStore.load()
+      const entry = cache.notificationsByProfile[profileId]
+      if (entry && entry.items.length > 0) {
+        this.deps.emitNotifications({ profileId, items: entry.items })
+      }
+    } catch {
+      // Cache read can't meaningfully fail here (the orchestrator has
+      // already loaded the store at handler-init time); swallow and
+      // let the live fetch provide data.
     }
   }
 

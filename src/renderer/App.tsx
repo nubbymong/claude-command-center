@@ -77,6 +77,22 @@ export default function App() {
   const [showTraining, setShowTraining] = useState(false)
   const [showTrainingAll, setShowTrainingAll] = useState(false)
   const [showGitHubOnboarding, setShowGitHubOnboarding] = useState(false)
+  // Deep-link the Settings page to a specific tab the next time it opens.
+  // Set by the onboarding "Set up now" button and the auto-detect banner
+  // Accept/Edit actions; consumed once by SettingsPage's initialTab prop.
+  const [pendingSettingsTab, setPendingSettingsTab] = useState<
+    'general' | 'statusline' | 'shortcuts' | 'github' | 'about' | null
+  >(null)
+
+  // Clear the pending tab once SettingsPage has consumed it (i.e. we've
+  // navigated away from the settings view). A return visit then defaults to
+  // General as expected, rather than sticking on whatever tab the deep link
+  // originally requested.
+  useEffect(() => {
+    if (view !== 'settings' && pendingSettingsTab) {
+      setPendingSettingsTab(null)
+    }
+  }, [view, pendingSettingsTab])
   const [showGuidedConfig, setShowGuidedConfig] = useState(false)
   const [showTipModal, setShowTipModal] = useState(false)
   const [partnerActive, setPartnerActive] = useState<Set<string>>(new Set())
@@ -365,7 +381,7 @@ export default function App() {
   // Render non-session views (shown on top of sessions)
   const renderOverlayView = () => {
     if (view === 'logs') return <LogViewer />
-    if (view === 'settings') return <SettingsPage />
+    if (view === 'settings') return <SettingsPage initialTab={pendingSettingsTab ?? undefined} />
     if (view === 'insights') return <InsightsPage />
     if (view === 'cloud-agents') return <CloudAgentsPage />
     if (view === 'tokenomics') return <TokenomicsPage />
@@ -406,8 +422,39 @@ export default function App() {
           return (
             <AutoDetectBanner
               cwd={activeSession.workingDirectory!}
-              onAccept={() => setView('settings')}
-              onEdit={() => setView('settings')}
+              onAccept={async (slug) => {
+                // Persist the detected repo onto the session BEFORE
+                // navigating so the GitHub config tab reflects the
+                // auto-filled value. Without this write the slug was
+                // silently discarded and the user had to re-enter it.
+                try {
+                  const patch = {
+                    repoUrl: `https://github.com/${slug}`,
+                    repoSlug: slug,
+                    autoDetected: true,
+                  }
+                  await window.electronAPI.github.updateSessionConfig(
+                    activeSession.id,
+                    patch,
+                  )
+                  useSessionStore.getState().updateSession(activeSession.id, {
+                    githubIntegration: {
+                      ...(gi ?? { enabled: false, autoDetected: false }),
+                      ...patch,
+                    },
+                  })
+                } catch {
+                  // Fall through: we still send the user to the GitHub
+                  // tab so they can configure manually. Losing the write
+                  // is fine; losing the navigation would be worse.
+                }
+                setPendingSettingsTab('github')
+                setView('settings')
+              }}
+              onEdit={() => {
+                setPendingSettingsTab('github')
+                setView('settings')
+              }}
               onDismiss={async () => {
                 try {
                   await window.electronAPI.github.updateSessionConfig(activeSession.id, {
@@ -545,8 +592,11 @@ export default function App() {
             onSetup={() => {
               // Dismiss-and-navigate: persist seenOnboardingVersion and
               // open the GitHub settings tab so users immediately land where
-              // they can sign in.
+              // they can sign in. The pendingSettingsTab handoff is required
+              // because SettingsPage's activeTab is local state that
+              // otherwise defaults to 'general' on mount.
               void dismissGitHubOnboarding()
+              setPendingSettingsTab('github')
               setView('settings')
             }}
           />
