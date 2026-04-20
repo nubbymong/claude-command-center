@@ -41,6 +41,14 @@ export default function SettingsPage({ initialTab }: SettingsPageProps = {}) {
   const [showWhatsNew, setShowWhatsNew] = useState(false)
   const [showTraining, setShowTraining] = useState(false)
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab ?? 'general')
+
+  // useState's initializer only reads initialTab once on mount. If a parent
+  // updates the deep-link prop while SettingsPage is already mounted (e.g.
+  // user is on Settings, a post-update trigger fires the onboarding modal,
+  // they click Set up now), the new tab wouldn't apply without this sync.
+  useEffect(() => {
+    if (initialTab) setActiveTab(initialTab)
+  }, [initialTab])
   const latestVersion = getLatestVersion()
 
   useEffect(() => {
