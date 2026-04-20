@@ -9,6 +9,44 @@ interface Props {
 
 export default function NotificationsSection({ sessionId }: Props) {
   const profiles = useGitHubStore((s) => s.profiles)
+  const notificationsByProfile = useGitHubStore((s) => s.notificationsByProfile)
+  const [markError, setMarkError] = useState<string | null>(null)
+
+  const markRead = async (profileId: string, notifId: string) => {
+    // Optimistic update: flip the item to read immediately so the UI
+    // reacts without waiting up to a full 5-minute poll tick for the
+    // NotificationsPoller to re-fetch truth. Revert on failure so a
+    // network error doesn't leave the user with a stale read state.
+    const store = useGitHubStore.getState()
+    const prev = store.notificationsByProfile[profileId]
+    if (prev) {
+      const updated = prev.map((i) =>
+        i.id === notifId ? { ...i, unread: false } : i,
+      )
+      store.handleNotificationsUpdate({ profileId, items: updated })
+    }
+    const failed = (msg: string) => {
+      // Only revert if the store still reflects our optimistic update.
+      // If the NotificationsPoller emitted fresh truth mid-await, its
+      // payload is newer than `prev` and we must not clobber it.
+      const current =
+        useGitHubStore.getState().notificationsByProfile[profileId]
+      const stillOptimistic = current?.some(
+        (i) => i.id === notifId && !i.unread,
+      )
+      if (prev && stillOptimistic) {
+        store.handleNotificationsUpdate({ profileId, items: prev })
+      }
+      setMarkError(msg)
+      setTimeout(() => setMarkError(null), 3000)
+    }
+    try {
+      const r = await window.electronAPI.github.markNotifRead(profileId, notifId)
+      if (!r.ok) failed(r.error ?? 'Failed to mark read')
+    } catch (err) {
+      failed(err instanceof Error ? err.message : 'Failed to mark read')
+    }
+  }
   // Memoize so the filtered list has stable identity between renders.
   // Without this, the hydration effect below depends on a new array
   // every render and runs on every render tick.
@@ -30,10 +68,10 @@ export default function NotificationsSection({ sessionId }: Props) {
       setSelectedId(notifCapable[0].id)
     }
   }, [notifCapable, selectedId])
-  // Local-only for now — main's notifications fetch pushes through the
-  // data channel in a follow-up. The empty state below is the correct
-  // UX until that lands: "no notifications right now" with no fake data.
-  const items: NotificationSummary[] = []
+  // Pushed from the NotificationsPoller in main via onNotificationsUpdate;
+  // keyed by profileId. An unknown profile id yields [] (first-render,
+  // pre-poll state) which renders the empty-state message below.
+  const items: NotificationSummary[] = notificationsByProfile[selectedId] ?? []
 
   if (notifCapable.length === 0) {
     return (
@@ -75,6 +113,11 @@ export default function NotificationsSection({ sessionId }: Props) {
           </select>
         </label>
       )}
+      {markError && (
+        <div className="text-red text-[10px] mb-1" role="alert" aria-live="polite">
+          {markError}
+        </div>
+      )}
       <ul className="space-y-1 text-xs">
         {items.map((i) => (
           <li key={i.id} className="flex gap-2">
@@ -94,9 +137,7 @@ export default function NotificationsSection({ sessionId }: Props) {
             </span>
             {i.unread && (
               <button
-                onClick={() =>
-                  void window.electronAPI.github.markNotifRead(selectedId, i.id)
-                }
+                onClick={() => void markRead(selectedId, i.id)}
                 className="text-overlay1 text-[10px]"
               >
                 mark read

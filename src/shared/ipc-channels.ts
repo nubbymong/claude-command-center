@@ -220,6 +220,7 @@ export const IPC = {
   GITHUB_PR_READY: 'github:pr:ready',
   GITHUB_REVIEW_REPLY: 'github:review:reply',
   GITHUB_NOTIF_MARK_READ: 'github:notif:markRead',
+  GITHUB_NOTIFICATIONS_UPDATE: 'github:notifications:update',
 } as const
 
 /** Helper to build per-session PTY data channels */

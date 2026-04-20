@@ -28,12 +28,27 @@ function formatBuildTime(iso: string): string {
   }
 }
 
-export default function SettingsPage() {
+interface SettingsPageProps {
+  // Initial tab selection used on first render. Allows callers (onboarding
+  // modal "Set up now" + auto-detect banner Accept/Edit) to deep-link into
+  // the GitHub tab instead of landing on the default General view.
+  initialTab?: SettingsTab
+}
+
+export default function SettingsPage({ initialTab }: SettingsPageProps = {}) {
   const settings = useSettingsStore((s) => s.settings)
   const updateSettings = useSettingsStore((s) => s.updateSettings)
   const [showWhatsNew, setShowWhatsNew] = useState(false)
   const [showTraining, setShowTraining] = useState(false)
-  const [activeTab, setActiveTab] = useState<SettingsTab>('general')
+  const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab ?? 'general')
+
+  // useState's initializer only reads initialTab once on mount. If a parent
+  // updates the deep-link prop while SettingsPage is already mounted (e.g.
+  // user is on Settings, a post-update trigger fires the onboarding modal,
+  // they click Set up now), the new tab wouldn't apply without this sync.
+  useEffect(() => {
+    if (initialTab) setActiveTab(initialTab)
+  }, [initialTab])
   const latestVersion = getLatestVersion()
 
   useEffect(() => {

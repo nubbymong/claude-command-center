@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { useGitHubStore } from '../../stores/githubStore'
 import { useSessionStore } from '../../stores/sessionStore'
+import { trackUsage } from '../../stores/tipsStore'
+import { useFocusTrap } from '../../hooks/useFocusTrap'
 import PanelHeader from './PanelHeader'
 import SessionContextSection from './sections/SessionContextSection'
 import ActivePRSection from './sections/ActivePRSection'
@@ -12,6 +14,7 @@ import LocalGitSection from './sections/LocalGitSection'
 import NotificationsSection from './sections/NotificationsSection'
 import AgentIntentSection from './sections/AgentIntentSection'
 import SessionGitHubConfig from '../session/SessionGitHubConfig'
+import RateLimitBanner from './RateLimitBanner'
 
 interface Props {
   sessionId: string
@@ -43,6 +46,9 @@ export default function GitHubPanel({
   const repoSlug = slug ?? session?.githubIntegration?.repoSlug
   const sync = useGitHubStore((s) => (repoSlug ? s.syncStatus[repoSlug] : undefined))
   const [showSetup, setShowSetup] = useState(false)
+  const setupDialogRef = useRef<HTMLDivElement | null>(null)
+  const closeSetup = useCallback(() => setShowSetup(false), [])
+  useFocusTrap(setupDialogRef, showSetup, closeSetup)
   const width = sessionState?.panelWidth ?? 340
 
   // Auto-close the setup modal once the user saves + integration flips on.
@@ -68,6 +74,7 @@ export default function GitHubPanel({
       if (e.key === '/' && (isMac ? e.metaKey : e.ctrlKey)) {
         e.preventDefault()
         togglePanel()
+        trackUsage('github.panel-toggled')
       }
     }
     window.addEventListener('keydown', onKey)
@@ -123,13 +130,14 @@ export default function GitHubPanel({
           </button>
         </aside>
         {showSetup && (
-          <div
-            className="fixed inset-0 bg-base/80 z-50 flex items-center justify-center"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="gh-setup-title"
-          >
-            <div className="bg-mantle p-6 rounded max-w-md w-full">
+          <div className="fixed inset-0 bg-base/80 z-50 flex items-center justify-center">
+            <div
+              ref={setupDialogRef}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="gh-setup-title"
+              className="bg-mantle p-6 rounded max-w-md w-full"
+            >
               <h3 id="gh-setup-title" className="text-lg mb-3 text-text">
                 Configure GitHub for this session
               </h3>
@@ -138,7 +146,11 @@ export default function GitHubPanel({
                 cwd={session?.workingDirectory ?? ''}
                 initial={session?.githubIntegration}
               />
-              <button onClick={() => setShowSetup(false)} className="mt-4 text-xs text-subtext0">
+              <button
+                onClick={closeSetup}
+                className="mt-4 text-xs text-subtext0 hover:text-text transition-colors"
+                aria-label="Close GitHub configuration"
+              >
                 Close
               </button>
             </div>
@@ -190,6 +202,9 @@ export default function GitHubPanel({
         // branch / ahead / behind / dirty still come from props; PR 3b wires
         // them to a local-git poller so the header reflects live state.
       />
+      {sync?.state === 'rate-limited' && sync.nextResetAt && (
+        <RateLimitBanner resetAt={sync.nextResetAt} />
+      )}
       <div className="flex-1 overflow-y-auto" aria-live="polite">
         <SessionContextSection sessionId={sessionId} />
         <ActivePRSection sessionId={sessionId} slug={repoSlug} />

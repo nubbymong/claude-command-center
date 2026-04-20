@@ -126,7 +126,15 @@ export default function ReviewsSection({ sessionId, slug }: Props) {
                     {String.fromCodePoint(0x00d7)}
                   </button>
                 </div>
-                {replyError && <div className="text-red text-[10px]">{replyError}</div>}
+                {replyError && (
+                  <div
+                    className="text-red text-[10px]"
+                    role="alert"
+                    aria-live="polite"
+                  >
+                    {replyError}
+                  </div>
+                )}
               </div>
             ) : (
               <button

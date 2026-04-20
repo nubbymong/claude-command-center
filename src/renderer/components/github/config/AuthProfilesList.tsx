@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import type { AuthProfile } from '../../../../shared/github-types'
 import { useGitHubStore } from '../../../stores/githubStore'
 import AddProfileModal from './AddProfileModal'
+import ExpiryBanner from '../ExpiryBanner'
 
 export default function AuthProfilesList() {
   const profiles = useGitHubStore((s) => s.profiles)
@@ -19,14 +20,31 @@ export default function AuthProfilesList() {
 
   const doTest = async (id: string) => {
     setTesting(id)
-    const r = await window.electronAPI.github.testProfile(id)
-    setTesting(null)
-    setTestResult((prev) => ({
-      ...prev,
-      [id]: r.ok
-        ? { ok: true, msg: String.fromCodePoint(0x2713) + ' ' + (r.username ?? '') }
-        : { ok: false, msg: String.fromCodePoint(0x2717) + ' ' + (r.error ?? 'error') },
-    }))
+    try {
+      const r = await window.electronAPI.github.testProfile(id)
+      setTestResult((prev) => ({
+        ...prev,
+        [id]: r.ok
+          ? { ok: true, msg: String.fromCodePoint(0x2713) + ' ' + (r.username ?? '') }
+          : { ok: false, msg: String.fromCodePoint(0x2717) + ' ' + (r.error ?? 'error') },
+      }))
+    } catch (err) {
+      // IPC throw leaves `testing` stuck at the profile id without the
+      // finally below. Surface the error to the user in the same slot
+      // the normal fail path uses.
+      setTestResult((prev) => ({
+        ...prev,
+        [id]: {
+          ok: false,
+          msg:
+            String.fromCodePoint(0x2717) +
+            ' ' +
+            (err instanceof Error ? err.message : 'test failed'),
+        },
+      }))
+    } finally {
+      setTesting(null)
+    }
   }
 
   const startRename = (p: AuthProfile) => {
@@ -39,6 +57,10 @@ export default function AuthProfilesList() {
     try {
       await renameProfile(editingId, newLabel)
       setEditingId(null)
+    } catch {
+      // IPC throw on renameProfile — leave the input open so the user can
+      // retry. Silent: no dedicated error slot for rename in this list,
+      // and the label stays as what the user typed.
     } finally {
       renamingRef.current = false
     }
@@ -54,7 +76,19 @@ export default function AuthProfilesList() {
           </div>
         )}
         {profiles.map((p) => (
-          <div key={p.id} className="bg-mantle p-3 rounded flex items-start gap-3">
+          <div key={p.id} className="bg-mantle rounded">
+          <ExpiryBanner
+            profile={p}
+            onRenew={() => {
+              // Opens the add-auth modal so the user can drop in a fresh
+              // PAT / re-run OAuth. Re-auth flow keeps the old profile id
+              // untouched; a follow-up improvement could refresh in-place
+              // via updateProfile, but opening the add modal is the
+              // correct UX signal ("your PAT expires — add a fresh one").
+              setAdding(true)
+            }}
+          />
+          <div className="p-3 flex items-start gap-3">
             {/* Initials avatar: CSP blocks remote https <img>; avatarUrl persisted for a future main-process data:-URL proxy. */}
             <div
               className="w-8 h-8 rounded-full bg-surface0 text-text text-xs font-semibold flex items-center justify-center shrink-0"
@@ -121,6 +155,7 @@ export default function AuthProfilesList() {
                 Remove
               </button>
             </div>
+          </div>
           </div>
         ))}
       </div>

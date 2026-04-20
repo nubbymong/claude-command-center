@@ -1,5 +1,10 @@
 import { create } from 'zustand'
-import type { GitHubConfig, AuthProfile, RepoCache } from '../../shared/github-types'
+import type {
+  GitHubConfig,
+  AuthProfile,
+  RepoCache,
+  NotificationSummary,
+} from '../../shared/github-types'
 import {
   DEFAULT_FEATURE_TOGGLES,
   DEFAULT_SYNC_INTERVALS,
@@ -38,6 +43,7 @@ interface GitHubStoreState {
   panelVisible: boolean
   sessionStates: Record<string, SessionPanelState>
   syncStatus: Record<string, SyncStatus>
+  notificationsByProfile: Record<string, NotificationSummary[]>
 
   loadConfig: () => Promise<void>
   updateConfig: (patch: Partial<GitHubConfig>) => Promise<void>
@@ -53,6 +59,10 @@ interface GitHubStoreState {
     at: number
     nextResetAt?: number
   }) => void
+  handleNotificationsUpdate: (p: {
+    profileId: string
+    items: NotificationSummary[]
+  }) => void
 }
 
 const DEFAULT_PANEL_WIDTH = 340
@@ -64,6 +74,7 @@ export const useGitHubStore = create<GitHubStoreState>((set, get) => ({
   panelVisible: true,
   sessionStates: {},
   syncStatus: {},
+  notificationsByProfile: {},
 
   loadConfig: async () => {
     const config = await window.electronAPI.github.getConfig()
@@ -128,12 +139,18 @@ export const useGitHubStore = create<GitHubStoreState>((set, get) => ({
     set((s) => ({
       syncStatus: { ...s.syncStatus, [slug]: { state, at, nextResetAt } },
     })),
+
+  handleNotificationsUpdate: ({ profileId, items }) =>
+    set((s) => ({
+      notificationsByProfile: { ...s.notificationsByProfile, [profileId]: items },
+    })),
 }))
 
 // Module-local unsubscribes so setupGitHubListener is idempotent — calling it
 // multiple times (e.g. in strict-mode dev) doesn't install duplicate listeners.
 let unsubData: (() => void) | null = null
 let unsubSync: (() => void) | null = null
+let unsubNotif: (() => void) | null = null
 
 export function setupGitHubListener(): void {
   if (unsubData) return
@@ -143,11 +160,16 @@ export function setupGitHubListener(): void {
   unsubSync = window.electronAPI.github.onSyncStateUpdate((p) =>
     useGitHubStore.getState().handleSyncStateUpdate(p),
   )
+  unsubNotif = window.electronAPI.github.onNotificationsUpdate((p) =>
+    useGitHubStore.getState().handleNotificationsUpdate(p),
+  )
 }
 
 export function teardownGitHubListener(): void {
   unsubData?.()
   unsubSync?.()
+  unsubNotif?.()
   unsubData = null
   unsubSync = null
+  unsubNotif = null
 }

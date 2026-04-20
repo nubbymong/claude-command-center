@@ -80,9 +80,19 @@ export async function fetchRepoMergeSettings(slug: string, opts: Opts) {
   return { status: 'ok' as const, data: { allowedMergeMethods: methods } }
 }
 
-export async function fetchNotifications(opts: Opts) {
+export async function fetchNotifications(
+  opts: Opts,
+): Promise<
+  | { status: 'unchanged' }
+  | { status: 'error'; httpStatus: number }
+  | { status: 'ok'; data: unknown[] }
+> {
   const r = await githubFetch('/notifications', opts)
-  if (r.status === 304) return { status: 'unchanged' as const }
-  if (!r.ok) return { status: 'ok' as const, data: [] as unknown[] }
-  return { status: 'ok' as const, data: (await r.json()) as unknown[] }
+  if (r.status === 304) return { status: 'unchanged' }
+  // Prior impl returned { status: 'ok', data: [] } on non-200, which made
+  // the poller wipe the previously-good cache on a transient 403/502.
+  // Distinguishing 'error' keeps the last good payload visible until a
+  // real fresh response arrives.
+  if (!r.ok) return { status: 'error', httpStatus: r.status }
+  return { status: 'ok', data: (await r.json()) as unknown[] }
 }

@@ -32,19 +32,31 @@ export default function PanelHeader({
         </span>
       )}
       {typeof ahead === 'number' && ahead > 0 && (
-        <span className="text-green text-xs">
+        <span
+          className="text-green text-xs"
+          aria-label={`${ahead} ${ahead === 1 ? 'commit' : 'commits'} ahead`}
+          title={`${ahead} ahead`}
+        >
           {String.fromCodePoint(0x2191)}
           {ahead}
         </span>
       )}
       {typeof behind === 'number' && behind > 0 && (
-        <span className="text-teal text-xs">
+        <span
+          className="text-teal text-xs"
+          aria-label={`${behind} ${behind === 1 ? 'commit' : 'commits'} behind`}
+          title={`${behind} behind`}
+        >
           {String.fromCodePoint(0x2193)}
           {behind}
         </span>
       )}
       {typeof dirty === 'number' && dirty > 0 && (
-        <span className="text-peach text-xs">
+        <span
+          className="text-peach text-xs"
+          aria-label={`${dirty} uncommitted ${dirty === 1 ? 'change' : 'changes'}`}
+          title={`${dirty} uncommitted`}
+        >
           {String.fromCodePoint(0x25cf)}
           {dirty}
         </span>

@@ -107,6 +107,10 @@ export interface PRSnapshot {
   mergeableState: 'clean' | 'conflict' | 'blocked' | 'unknown'
   allowedMergeMethods?: Array<'merge' | 'squash' | 'rebase'>
   url: string
+  /** Pre-scanned issue numbers referenced in the PR body (#N, closes #N,
+   * owner/repo#N), deduped. Sized by the source PR's `body` field at
+   * sync time so the renderer doesn't re-parse on every context build. */
+  bodyRefs?: number[]
 }
 
 export interface WorkflowRunSnapshot {

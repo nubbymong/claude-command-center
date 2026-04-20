@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useGitHubStore } from '../../../stores/githubStore'
+import { trackUsage } from '../../../stores/tipsStore'
 import OAuthDeviceFlow from './OAuthDeviceFlow'
 
 interface OAuthFlowStart {
@@ -48,10 +49,20 @@ export default function AddProfileModal({ onClose }: Props) {
   }
 
   const adoptGh = async (username: string) => {
-    const r = await window.electronAPI.github.adoptGhCli(username)
-    if (r.ok) {
-      await loadConfig()
-      onClose()
+    try {
+      const r = await window.electronAPI.github.adoptGhCli(username)
+      if (r.ok) {
+        trackUsage('github.signed-in')
+        await loadConfig()
+        onClose()
+      } else {
+        setOauthError(r.error ?? 'Failed to adopt gh account')
+      }
+    } catch (err) {
+      // Main-side throw — without the catch this becomes an unhandled
+      // promise rejection from the click handler and the user gets no
+      // feedback why the button click did nothing.
+      setOauthError(err instanceof Error ? err.message : 'Failed to adopt gh account')
     }
   }
 
@@ -59,18 +70,27 @@ export default function AddProfileModal({ onClose }: Props) {
     setPatSaving(true)
     setPatError(null)
     const repos = patRepos.split(/[\s,]+/).filter(Boolean)
-    const r = await window.electronAPI.github.addPat({
-      kind: patKind,
-      label: patLabel || 'PAT',
-      rawToken: patToken,
-      allowedRepos: patKind === 'pat-fine-grained' && repos.length > 0 ? repos : undefined,
-    })
-    setPatSaving(false)
-    if (r.ok) {
-      await loadConfig()
-      onClose()
-    } else {
-      setPatError(r.error ?? 'error')
+    try {
+      const r = await window.electronAPI.github.addPat({
+        kind: patKind,
+        label: patLabel || 'PAT',
+        rawToken: patToken,
+        allowedRepos: patKind === 'pat-fine-grained' && repos.length > 0 ? repos : undefined,
+      })
+      if (r.ok) {
+        trackUsage('github.signed-in')
+        await loadConfig()
+        onClose()
+      } else {
+        setPatError(r.error ?? 'error')
+      }
+    } catch (err) {
+      // Main-side throw (network error on verify, IPC crash). Without this
+      // catch, patSaving stays true forever because the sync reset below
+      // is skipped on throw.
+      setPatError(err instanceof Error ? err.message : 'Failed to save PAT')
+    } finally {
+      setPatSaving(false)
     }
   }
 
@@ -79,6 +99,7 @@ export default function AddProfileModal({ onClose }: Props) {
       <OAuthDeviceFlow
         flow={oauthFlow}
         onDone={async () => {
+          trackUsage('github.signed-in')
           await loadConfig()
           onClose()
         }}
@@ -125,7 +146,11 @@ export default function AddProfileModal({ onClose }: Props) {
         >
           {starting ? 'Starting' : 'Sign in with GitHub'}
         </button>
-        {oauthError && <div className="text-xs text-red mb-2">{oauthError}</div>}
+        {oauthError && (
+          <div className="text-xs text-red mb-2" role="alert" aria-live="polite">
+            {oauthError}
+          </div>
+        )}
 
         <button onClick={() => setAdvanced(!advanced)} className="text-xs text-subtext0 mb-2 mt-2">
           {advanced ? 'Hide' : 'Show'} advanced auth options
@@ -179,7 +204,11 @@ export default function AddProfileModal({ onClose }: Props) {
                   className="w-full bg-surface0 p-2 rounded text-sm mb-2"
                 />
               )}
-              {patError && <div className="text-xs text-red mb-2">{patError}</div>}
+              {patError && (
+                <div className="text-xs text-red mb-2" role="alert" aria-live="polite">
+                  {patError}
+                </div>
+              )}
               <button
                 onClick={submitPat}
                 disabled={patSaving || !patToken}

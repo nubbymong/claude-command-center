@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useGitHubStore } from '../../stores/githubStore'
 import { useSessionStore } from '../../stores/sessionStore'
+import { trackUsage } from '../../stores/tipsStore'
 import { parseRepoUrlClient } from './parseRepoUrlClient'
 import type { SessionGitHubIntegration } from '../../../shared/github-types'
 
@@ -68,22 +69,33 @@ export default function SessionGitHubConfig({ sessionId, cwd, initial }: Props) 
       authProfileId: profileId || undefined,
       autoDetected: false,
     }
-    const r = await window.electronAPI.github.updateSessionConfig(sessionId, patch)
-    setSaving(false)
-    if (r.ok) {
-      // Mirror the patch into the renderer session store so the GitHub panel's
-      // enable-gate reacts immediately — otherwise the change only shows up on
-      // the next app restart when SavedSession rehydrates.
-      const prior = useSessionStore.getState().getSession(sessionId)
-      updateSession(sessionId, {
-        githubIntegration: {
-          ...(prior?.githubIntegration ?? { enabled: false, autoDetected: false }),
-          ...patch,
-        },
-      })
+    try {
+      const r = await window.electronAPI.github.updateSessionConfig(sessionId, patch)
+      if (r.ok) {
+        // Mirror the patch into the renderer session store so the GitHub
+        // panel's enable-gate reacts immediately — otherwise the change only
+        // shows up on the next app restart when SavedSession rehydrates.
+        const prior = useSessionStore.getState().getSession(sessionId)
+        updateSession(sessionId, {
+          githubIntegration: {
+            ...(prior?.githubIntegration ?? { enabled: false, autoDetected: false }),
+            ...patch,
+          },
+        })
+        if (enabled) trackUsage('github.session-enabled')
+      }
+      setTestResult(r.ok ? 'Saved' : `Error: ${r.error ?? 'unknown'}`)
+    } catch (err) {
+      // Main-side throw — without this catch the button stays in 'Saving'
+      // state forever because the sync reset below is skipped on throw,
+      // and the user sees no feedback why their save appeared to vanish.
+      setTestResult(
+        `Error: ${err instanceof Error ? err.message : 'save failed'}`,
+      )
+    } finally {
+      setSaving(false)
+      setTimeout(() => setTestResult(null), 2000)
     }
-    setTestResult(r.ok ? 'Saved' : `Error: ${r.error ?? 'unknown'}`)
-    setTimeout(() => setTestResult(null), 2000)
   }
 
   const useDetected = () => {
