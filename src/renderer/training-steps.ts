@@ -80,19 +80,6 @@ export const trainingSteps: TrainingStep[] = [
     screenshotFilename: 'step-security.jpg',
   },
   {
-    id: 'github-sidebar',
-    title: 'GitHub sidebar',
-    sinceVersion: '1.4.0',
-    bullets: [
-      'Collapsible right panel next to the terminal. Toggle with **Ctrl+/** (**⌘+/** on Mac)',
-      'Shows the **PR** for your current branch, **CI runs**, **reviews**, **linked issues**, and **local git state**',
-      '**Session Context** explains what this session is actually working on: issue inferred from branch or conversation, files Claude just edited',
-      '**Sign in with GitHub** to unlock PR/CI/review data. Per-session enable: nothing runs until you opt in',
-      'Find it in **Settings > GitHub**',
-    ],
-    screenshotFilename: 'github-panel.jpg',
-  },
-  {
     id: 'tips',
     title: 'Tips & Shortcuts',
     sinceVersion: '1.0.0',

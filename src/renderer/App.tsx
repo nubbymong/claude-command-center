@@ -619,21 +619,8 @@ export default function App() {
   const handleTrainingClose = () => {
     setShowTraining(false)
     setShowTrainingAll(false)
-    // The training walkthrough's github-sidebar step covers the same
-    // content as the standalone OnboardingModal. If the user just
-    // completed training, treat github onboarding as seen so we don't
-    // stack a second "here's the github sidebar" modal on top. This
-    // also suppresses the chain-to-onboarding that would otherwise
-    // fire when onboarding was due but deferred behind training.
-    onboardingDismissedThisSessionRef.current = true
     if (isGitHubOnboardingDue()) {
-      // Still due per persisted state — persist now so a restart
-      // doesn't re-open it. Swallow the IPC failure; the ref guard
-      // above covers the in-session case.
-      void useGitHubStore
-        .getState()
-        .updateConfig({ seenOnboardingVersion: __APP_VERSION__ })
-        .catch(() => {})
+      setTimeout(() => setShowGitHubOnboarding(true), 300)
     }
   }
 
