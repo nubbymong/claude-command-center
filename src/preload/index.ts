@@ -190,6 +190,9 @@ interface GitHubBridge {
       nextResetAt?: number
     }) => void,
   ) => () => void
+  onNotificationsUpdate: (
+    cb: (p: { profileId: string; items: unknown[] }) => void,
+  ) => () => void
   rerunActionsRun: (slug: string, runId: number) => Promise<{ ok: boolean; error?: string }>
   mergePR: (
     slug: string,
@@ -509,6 +512,12 @@ const electronAPI: ElectronAPI = {
         cb(p as Parameters<typeof cb>[0])
       ipcRenderer.on(IPC.GITHUB_SYNC_STATE_UPDATE, l)
       return () => ipcRenderer.removeListener(IPC.GITHUB_SYNC_STATE_UPDATE, l)
+    },
+    onNotificationsUpdate: (cb) => {
+      const l = (_e: Electron.IpcRendererEvent, p: unknown) =>
+        cb(p as Parameters<typeof cb>[0])
+      ipcRenderer.on(IPC.GITHUB_NOTIFICATIONS_UPDATE, l)
+      return () => ipcRenderer.removeListener(IPC.GITHUB_NOTIFICATIONS_UPDATE, l)
     },
     rerunActionsRun: (slug, runId) =>
       ipcRenderer.invoke(IPC.GITHUB_ACTIONS_RERUN, slug, runId),

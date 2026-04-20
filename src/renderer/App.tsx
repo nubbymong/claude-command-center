@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react'
+import React, { useCallback, useEffect, useState, useRef } from 'react'
 import TitleBar from './components/TitleBar'
 import Sidebar from './components/Sidebar'
 import TabBar from './components/TabBar'
@@ -36,6 +36,8 @@ import { setupTokenomicsListener } from './stores/tokenomicsStore'
 import { setupVisionListener, useVisionStore } from './stores/visionStore'
 import { setupGitHubListener, useGitHubStore } from './stores/githubStore'
 import GitHubPanel from './components/github/GitHubPanel'
+import OnboardingModal from './components/github/onboarding/OnboardingModal'
+import AutoDetectBanner from './components/github/AutoDetectBanner'
 import type { SessionState, SavedSession } from './types/electron'
 
 // Re-export ViewType from its canonical location for backwards compatibility
@@ -74,6 +76,23 @@ export default function App() {
   const [showWhatsNew, setShowWhatsNew] = useState(false)
   const [showTraining, setShowTraining] = useState(false)
   const [showTrainingAll, setShowTrainingAll] = useState(false)
+  const [showGitHubOnboarding, setShowGitHubOnboarding] = useState(false)
+  // Deep-link the Settings page to a specific tab the next time it opens.
+  // Set by the onboarding "Set up now" button and the auto-detect banner
+  // Accept/Edit actions; consumed once by SettingsPage's initialTab prop.
+  const [pendingSettingsTab, setPendingSettingsTab] = useState<
+    'general' | 'statusline' | 'shortcuts' | 'github' | 'about' | null
+  >(null)
+
+  // Clear the pending tab once SettingsPage has consumed it (i.e. we've
+  // navigated away from the settings view). A return visit then defaults to
+  // General as expected, rather than sticking on whatever tab the deep link
+  // originally requested.
+  useEffect(() => {
+    if (view !== 'settings' && pendingSettingsTab) {
+      setPendingSettingsTab(null)
+    }
+  }, [view, pendingSettingsTab])
   const [showGuidedConfig, setShowGuidedConfig] = useState(false)
   const [showTipModal, setShowTipModal] = useState(false)
   const [partnerActive, setPartnerActive] = useState<Set<string>>(new Set())
@@ -204,6 +223,52 @@ export default function App() {
     postConfigInit()
   }, [configLoaded])
 
+  // Show GitHub sidebar onboarding once per version bump after config
+  // hydrates. `seenOnboardingVersion === 'permanent'` opts out forever —
+  // MUST be checked before the version compare so dismissed users don't
+  // see the modal on every app update.
+  const githubConfig = useGitHubStore((s) => s.config)
+  // Session-scoped dismissal guard. Needed because dismissGitHubOnboarding's
+  // updateConfig IPC can fail (swallowed in its catch). Without this ref,
+  // a later unrelated githubConfig mutation would re-fire the effect,
+  // find seenOnboardingVersion still unpersisted, and re-open the modal —
+  // trapping the user in a loop. The ref survives re-renders but resets
+  // on reload, which is the intended behavior: persist failure shouldn't
+  // silently suppress the modal across restarts.
+  const onboardingDismissedThisSessionRef = useRef(false)
+  useEffect(() => {
+    if (!githubConfig) return
+    if (onboardingDismissedThisSessionRef.current) return
+    if (githubConfig.seenOnboardingVersion === 'permanent') return
+    if (githubConfig.seenOnboardingVersion === __APP_VERSION__) return
+    // Defer to other first-launch modals (what's new, training, setup) so
+    // this doesn't stack on top of them.
+    if (showWhatsNew || showTraining || showTrainingAll || needsCliSetup) return
+    setShowGitHubOnboarding(true)
+  }, [githubConfig, showWhatsNew, showTraining, showTrainingAll, needsCliSetup])
+
+  // useCallback: passed to OnboardingModal as `onClose`, which forwards it
+  // to useFocusTrap. Without stable identity, the focus-trap effect re-runs
+  // every App render — which resets previouslyFocused to the currently-
+  // focused node (a button inside the modal) and yanks focus back to the
+  // first focusable on every parent re-render. Stable identity fixes both.
+  const dismissGitHubOnboarding = useCallback(async () => {
+    // Flip the ref BEFORE the setState so any render-pass that reads
+    // the effect deps sees the guard already in place, not just the
+    // showGitHubOnboarding flip.
+    onboardingDismissedThisSessionRef.current = true
+    setShowGitHubOnboarding(false)
+    try {
+      await useGitHubStore
+        .getState()
+        .updateConfig({ seenOnboardingVersion: __APP_VERSION__ })
+    } catch {
+      // Persist failure falls back to the in-session ref guard above.
+      // A restart will show the modal again, which is fine — the user
+      // never actually opted out of future reminders from the server side.
+    }
+  }, [])
+
   // Restore saved sessions on startup
   async function restoreSavedSessions() {
     try {
@@ -329,7 +394,7 @@ export default function App() {
   // Render non-session views (shown on top of sessions)
   const renderOverlayView = () => {
     if (view === 'logs') return <LogViewer />
-    if (view === 'settings') return <SettingsPage />
+    if (view === 'settings') return <SettingsPage initialTab={pendingSettingsTab ?? undefined} />
     if (view === 'insights') return <InsightsPage />
     if (view === 'cloud-agents') return <CloudAgentsPage />
     if (view === 'tokenomics') return <TokenomicsPage />
@@ -359,6 +424,69 @@ export default function App() {
       <div className="flex-1 flex flex-col" style={{ display: view === 'sessions' ? 'flex' : 'none', minHeight: 0 }}>
         <TabBar />
         <SessionHeader session={activeSession} isShowingPartner={partnerActive.has(activeSession.id)} sidebarCollapsed={!sidebarOpen} onShowTip={() => setShowTipModal(true)} />
+        {(() => {
+          const gi = activeSession.githubIntegration
+          const shouldShow =
+            !gi?.enabled &&
+            !gi?.repoUrl &&
+            !gi?.dismissedAutoDetect &&
+            !!activeSession.workingDirectory
+          if (!shouldShow) return null
+          return (
+            <AutoDetectBanner
+              cwd={activeSession.workingDirectory!}
+              onAccept={async (slug) => {
+                // Persist the detected repo onto the session BEFORE
+                // navigating so the GitHub config tab reflects the
+                // auto-filled value. Without this write the slug was
+                // silently discarded and the user had to re-enter it.
+                try {
+                  const patch = {
+                    repoUrl: `https://github.com/${slug}`,
+                    repoSlug: slug,
+                    autoDetected: true,
+                  }
+                  await window.electronAPI.github.updateSessionConfig(
+                    activeSession.id,
+                    patch,
+                  )
+                  useSessionStore.getState().updateSession(activeSession.id, {
+                    githubIntegration: {
+                      ...(gi ?? { enabled: false, autoDetected: false }),
+                      ...patch,
+                    },
+                  })
+                } catch {
+                  // Fall through: we still send the user to the GitHub
+                  // tab so they can configure manually. Losing the write
+                  // is fine; losing the navigation would be worse.
+                }
+                setPendingSettingsTab('github')
+                setView('settings')
+              }}
+              onEdit={() => {
+                setPendingSettingsTab('github')
+                setView('settings')
+              }}
+              onDismiss={async () => {
+                try {
+                  await window.electronAPI.github.updateSessionConfig(activeSession.id, {
+                    dismissedAutoDetect: true,
+                  })
+                  useSessionStore.getState().updateSession(activeSession.id, {
+                    githubIntegration: {
+                      ...(gi ?? { enabled: false, autoDetected: false }),
+                      dismissedAutoDetect: true,
+                    },
+                  })
+                } catch {
+                  // IPC failure leaves the banner visible for the user to
+                  // retry; better than silently swallowing the dismissal.
+                }
+              }}
+            />
+          )
+        })()}
         <div className="flex-1 flex flex-row" style={{ minHeight: 0 }}>
           <div className="flex-1 flex flex-col" style={{ minWidth: 0, minHeight: 0 }}>
             {sessions.map((session) => {
@@ -471,6 +599,21 @@ export default function App() {
       <div className="flex flex-col h-screen bg-base text-text">
         {showWhatsNew && <WhatsNewModal onClose={handleWhatsNewClose} />}
         {showTipModal && <TipModal onClose={() => setShowTipModal(false)} onNavigate={(v) => setView(v)} />}
+        {showGitHubOnboarding && (
+          <OnboardingModal
+            onClose={dismissGitHubOnboarding}
+            onSetup={() => {
+              // Dismiss-and-navigate: persist seenOnboardingVersion and
+              // open the GitHub settings tab so users immediately land where
+              // they can sign in. The pendingSettingsTab handoff is required
+              // because SettingsPage's activeTab is local state that
+              // otherwise defaults to 'general' on mount.
+              void dismissGitHubOnboarding()
+              setPendingSettingsTab('github')
+              setView('settings')
+            }}
+          />
+        )}
 
         {showMachineNamePrompt && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">

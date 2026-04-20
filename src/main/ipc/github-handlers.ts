@@ -24,6 +24,7 @@ import {
   SyncOrchestrator,
   type SyncStateEvent,
 } from '../github/session/sync-orchestrator'
+import { NotificationsPoller } from '../github/session/notifications-poller'
 import { buildSessionContext } from '../github/session/session-context-service'
 import { extractFileSignals } from '../github/session/tool-call-inspector'
 import { scanTranscriptMessages } from '../github/session/transcript-scanner'
@@ -156,6 +157,31 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
     return cachedConfig
   }
 
+  // Profile-scoped notifications poller. Registered lazily as profiles with
+  // the 'notifications' capability appear; unregistered on profile removal.
+  // Hydrates the currently-configured profiles at handler-start time.
+  const notificationsPoller = new NotificationsPoller({
+    cacheStore,
+    getConfig: getCachedConfig,
+    getToken: (profileId) => profileStore.getToken(profileId),
+    shield,
+    etags,
+    emitNotifications: (p) =>
+      deps.getWindow()?.webContents.send(IPC.GITHUB_NOTIFICATIONS_UPDATE, p),
+  })
+
+  async function syncNotificationsPollerToConfig(): Promise<void> {
+    // Snapshot notifications-capable profile ids from config. Profile ids
+    // without that capability are skipped — no endpoint access means no
+    // work to do, and trying would just log RateLimit/403 noise.
+    const cfg = await getCachedConfig()
+    const wanted = new Set<string>()
+    for (const p of Object.values(cfg?.authProfiles ?? {})) {
+      if (p.capabilities.includes('notifications')) wanted.add(p.id)
+    }
+    notificationsPoller.syncTo(wanted)
+  }
+
   const orchestrator = new SyncOrchestrator({
     cacheStore,
     getConfig: getCachedConfig,
@@ -244,6 +270,8 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
         expiresAt: v.expiresAt,
         expiryObservable: !!v.expiresAt,
       })
+      cachedConfig = undefined
+      void syncNotificationsPollerToConfig()
       return { ok: true, id }
     },
   )
@@ -271,11 +299,15 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
       ghCliUsername: username,
       expiryObservable: false,
     })
+    cachedConfig = undefined
+    void syncNotificationsPollerToConfig()
     return { ok: true, id }
   })
 
   ipcMain.handle(IPC.GITHUB_PROFILE_REMOVE, async (_e, id: string) => {
     await profileStore.removeProfile(id)
+    cachedConfig = undefined
+    void syncNotificationsPollerToConfig()
     return { ok: true }
   })
 
@@ -341,6 +373,8 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
           expiryObservable: false,
         })
         activeFlows.delete(flowId)
+        cachedConfig = undefined
+        void syncNotificationsPollerToConfig()
         return { ok: true, profileId: id }
       }
       if (r.error === 'cancelled') {
@@ -491,11 +525,17 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
 
   ipcMain.handle(IPC.GITHUB_SYNC_PAUSE, async () => {
     orchestrator.pause()
+    // Also pause the notifications poller so "Pause sync" is a complete
+    // network-silence. Previously the orchestrator paused but the
+    // notifications timer kept ticking, which both violated the user's
+    // explicit pause and consumed rate-limit budget for nothing.
+    notificationsPoller.pause()
     return { ok: true }
   })
 
   ipcMain.handle(IPC.GITHUB_SYNC_RESUME, async () => {
     orchestrator.resume()
+    notificationsPoller.resume()
     return { ok: true }
   })
 
@@ -523,13 +563,17 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
     const branchName = await readCurrentBranch(session?.workingDirectory)
     const repoSlug = integration.repoSlug
 
+    // PR bodyRefs are pre-scanned by the orchestrator at sync time (see
+    // mapPR in sync-orchestrator.ts) so reading them here is a one-off
+    // cache load. An empty or missing cache entry yields [] which keeps
+    // the Session Context priority algorithm well-defined.
+    const cacheSnap = await cacheStore.load()
+    const prBodyRefs = cacheSnap.repos[repoSlug]?.pr?.bodyRefs ?? []
+
     const ctx = await buildSessionContext({
       branchName,
       transcriptRefs,
-      // prBodyRefs needs the PR body text — not stored on RepoCache yet.
-      // Deferred to a PR-body-scan follow-up; empty array keeps the priority
-      // algorithm well-defined in the meantime.
-      prBodyRefs: [],
+      prBodyRefs,
       recentFiles,
       sessionRepo: repoSlug,
       enrichIssue: async (repo, n) => {
@@ -765,6 +809,14 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
     } catch {
       // Best-effort; if session state can't be read the orchestrator stays
       // empty and syncNow / config-update will register sessions on demand.
+    }
+    // Hydrate notifications poller from config — runs after orchestrator
+    // setup so a slow loadSessions doesn't delay notification registration.
+    // Still fire-and-forget.
+    try {
+      await syncNotificationsPollerToConfig()
+    } catch {
+      // Same best-effort posture — next profile-add / config-update retries.
     }
   })()
 

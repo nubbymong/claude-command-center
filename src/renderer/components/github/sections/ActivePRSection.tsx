@@ -111,7 +111,11 @@ export default function ActivePRSection({ sessionId, slug }: Props) {
               </button>
             ))}
         </div>
-        {actionError && <div className="text-red text-[10px]">{actionError}</div>}
+        {actionError && (
+          <div className="text-red text-[10px]" role="alert" aria-live="polite">
+            {actionError}
+          </div>
+        )}
       </div>
     </SectionFrame>
   )

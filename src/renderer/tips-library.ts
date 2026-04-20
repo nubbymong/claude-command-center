@@ -26,6 +26,7 @@ export type TipCategory =
   | 'ui-navigation'
   | 'advanced'
   | 'transparency'
+  | 'github'
 
 export type TipComplexity = 'simple' | 'intermediate' | 'advanced'
 
@@ -517,6 +518,92 @@ export const TIPS_LIBRARY: Tip[] = [
         body: 'The app uses a **Resources Directory** for all user data. Configurable at first-run setup.\n\nContents:\n• `CONFIG/` — JSON files for your configs, commands, settings, encrypted credentials, tokenomics, usage tracking\n• `logs/` — per-session JSONL activity logs\n• `screenshots/` — any screenshots captured by the Snap / Storyboard features\n• `insights/` — AI-generated usage reports\n• `status/` — real-time session metrics (written by the statusline script)\n• `scripts/` — deployed helper scripts like the statusline\n• `claude-versions/` — installed legacy Claude CLI versions\n\nBack up the whole `resources/` folder to move to a new machine (note: encrypted credentials won\'t transfer — see the credential tip).',
         bodyMac: 'The app stores everything under `~/Library/Application Support/Claude Conductor/resources/`:\n\n• `CONFIG/` — JSON files for configs, commands, settings, encrypted credentials, tokenomics, usage tracking\n• `logs/` — per-session JSONL activity logs\n• `screenshots/` — captured by Snap / Storyboard features\n• `insights/` — AI usage reports\n• `status/` — real-time session metrics (from statusline script)\n• `scripts/` — deployed helper scripts\n• `claude-versions/` — installed legacy Claude CLI versions\n\nBack up the whole `resources/` folder to move to a new machine (encrypted credentials won\'t transfer since they\'re tied to Keychain).',
         bodyWin: 'The app stores everything under `%LOCALAPPDATA%\\Claude Conductor\\resources\\`:\n\n• `CONFIG\\` — JSON files for configs, commands, settings, encrypted credentials, tokenomics, usage tracking\n• `logs\\` — per-session JSONL activity logs\n• `screenshots\\` — captured by Snap / Storyboard features\n• `insights\\` — AI usage reports\n• `status\\` — real-time session metrics (from statusline script)\n• `scripts\\` — deployed helper scripts\n• `claude-versions\\` — installed legacy Claude CLI versions\n\nBack up the whole `resources\\` folder to move to a new machine (encrypted credentials won\'t transfer since they\'re tied to DPAPI).',
+      },
+    },
+  },
+
+  // ── GitHub ──────────────────────────────────────────────────────────────
+
+  {
+    id: 'tip.github.signin',
+    category: 'github',
+    complexity: 'simple',
+    priority: 72,
+    excludes: ['github.signed-in'],
+    variants: {
+      primary: {
+        shortText: '🐙 Sign in with GitHub to light up the sidebar',
+        title: 'Sign in with GitHub',
+        body: 'The GitHub sidebar shows the PR, CI runs, reviews, linked issues, and local git state for your current session. Sign in to unlock it.\n\nYou can use **OAuth device flow** (recommended), **paste a fine-grained PAT** if your org requires it, or let the app auto-detect a **gh CLI** login.\n\nFind it in **Settings > GitHub**. Nothing runs until you opt in per session.',
+        actionLabel: 'Open GitHub settings',
+        actionTarget: 'settings',
+        focusHint: 'Settings page > GitHub tab',
+      },
+    },
+  },
+
+  {
+    id: 'tip.github.panel-shortcut',
+    category: 'github',
+    complexity: 'simple',
+    priority: 50,
+    requires: ['github.signed-in'],
+    excludes: ['github.panel-toggled'],
+    variants: {
+      primary: {
+        shortText: '⌨ Ctrl+/ toggles the GitHub panel',
+        title: 'Toggle the GitHub panel',
+        body: 'Press **Ctrl+/** to show or hide the GitHub panel from anywhere in the app.',
+        bodyMac: 'Press **⌘+/** to show or hide the GitHub panel from anywhere in the app.',
+      },
+    },
+  },
+
+  {
+    id: 'tip.github.session-enable',
+    category: 'github',
+    complexity: 'simple',
+    priority: 55,
+    requires: ['github.signed-in'],
+    excludes: ['github.session-enabled'],
+    variants: {
+      primary: {
+        shortText: '🔛 Enable GitHub on a session to start syncing',
+        title: 'Enable GitHub per session',
+        body: 'Integration is **off by default per session** so nothing hits your API budget until you opt in.\n\nFor a session with a detected GitHub repo, click **Configure** on the collapsed rail and toggle **Enable**. The panel will start populating PR, CI, reviews, and issues automatically.',
+      },
+    },
+  },
+
+  {
+    id: 'tip.github.rate-limit',
+    category: 'github',
+    complexity: 'intermediate',
+    priority: 40,
+    excludes: ['github.rate-limit-seen'],
+    variants: {
+      primary: {
+        shortText: 'ℹ How the sidebar respects your GitHub rate limit',
+        title: 'GitHub Rate-Limit Handling',
+        body: 'The sidebar polls conservatively and falls back gracefully when you hit a rate limit:\n\n• **Tiered intervals** — active session polls faster, background sessions slower\n• **304-aware** — unchanged responses cost 0 against your quota\n• **Per-bucket shields** — REST vs GraphQL counted separately\n• **Automatic pause + resume** — when a bucket is exhausted, sync pauses until the reset time, then auto-resumes\n\nYou can lengthen intervals further in **Settings > GitHub > Sync**.',
+        actionLabel: 'Open sync settings',
+        actionTarget: 'settings',
+      },
+    },
+  },
+
+  {
+    id: 'tip.github.session-context',
+    category: 'github',
+    complexity: 'intermediate',
+    priority: 45,
+    requires: ['github.signed-in'],
+    excludes: ['github.session-context-seen'],
+    variants: {
+      primary: {
+        shortText: '🔎 The panel figures out which issue you are on',
+        title: 'Session Context',
+        body: 'The **Session Context** section infers which issue your current session is actually working on.\n\nIt checks (in priority order): linked issues on the active PR, issue references in your branch name, issue numbers mentioned in your Claude transcript, and recent file edits.\n\nYou can opt in to transcript scanning in **Settings > GitHub > Features** — it stays entirely local; the transcript never leaves your machine.',
       },
     },
   },
