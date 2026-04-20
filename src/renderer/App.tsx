@@ -228,8 +228,17 @@ export default function App() {
   // MUST be checked before the version compare so dismissed users don't
   // see the modal on every app update.
   const githubConfig = useGitHubStore((s) => s.config)
+  // Session-scoped dismissal guard. Needed because dismissGitHubOnboarding's
+  // updateConfig IPC can fail (swallowed in its catch). Without this ref,
+  // a later unrelated githubConfig mutation would re-fire the effect,
+  // find seenOnboardingVersion still unpersisted, and re-open the modal —
+  // trapping the user in a loop. The ref survives re-renders but resets
+  // on reload, which is the intended behavior: persist failure shouldn't
+  // silently suppress the modal across restarts.
+  const onboardingDismissedThisSessionRef = useRef(false)
   useEffect(() => {
     if (!githubConfig) return
+    if (onboardingDismissedThisSessionRef.current) return
     if (githubConfig.seenOnboardingVersion === 'permanent') return
     if (githubConfig.seenOnboardingVersion === __APP_VERSION__) return
     // Defer to other first-launch modals (what's new, training, setup) so
@@ -244,15 +253,19 @@ export default function App() {
   // focused node (a button inside the modal) and yanks focus back to the
   // first focusable on every parent re-render. Stable identity fixes both.
   const dismissGitHubOnboarding = useCallback(async () => {
+    // Flip the ref BEFORE the setState so any render-pass that reads
+    // the effect deps sees the guard already in place, not just the
+    // showGitHubOnboarding flip.
+    onboardingDismissedThisSessionRef.current = true
     setShowGitHubOnboarding(false)
     try {
       await useGitHubStore
         .getState()
         .updateConfig({ seenOnboardingVersion: __APP_VERSION__ })
     } catch {
-      // Persist failure falls back to in-session dismissal. The effect above
-      // won't re-open the modal this session because showGitHubOnboarding
-      // state is already false; a restart may show it again.
+      // Persist failure falls back to the in-session ref guard above.
+      // A restart will show the modal again, which is fine — the user
+      // never actually opted out of future reminders from the server side.
     }
   }, [])
 

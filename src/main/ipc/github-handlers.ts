@@ -525,11 +525,17 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
 
   ipcMain.handle(IPC.GITHUB_SYNC_PAUSE, async () => {
     orchestrator.pause()
+    // Also pause the notifications poller so "Pause sync" is a complete
+    // network-silence. Previously the orchestrator paused but the
+    // notifications timer kept ticking, which both violated the user's
+    // explicit pause and consumed rate-limit budget for nothing.
+    notificationsPoller.pause()
     return { ok: true }
   })
 
   ipcMain.handle(IPC.GITHUB_SYNC_RESUME, async () => {
     orchestrator.resume()
+    notificationsPoller.resume()
     return { ok: true }
   })
 

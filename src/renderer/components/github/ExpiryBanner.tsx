@@ -19,18 +19,19 @@ export default function ExpiryBanner({ profile, onRenew }: Props) {
   if (!profile.expiryObservable || typeof profile.expiresAt !== 'number') return null
   const daysLeft = (profile.expiresAt - Date.now()) / DAY_MS
   if (!Number.isFinite(daysLeft) || daysLeft > 7) return null
-  const tone: keyof typeof TONE_CLASSES =
-    daysLeft < 2 ? 'red' : daysLeft < 7 ? 'peach' : 'yellow'
+  const expired = daysLeft <= 0
+  const tone: keyof typeof TONE_CLASSES = expired || daysLeft < 2 ? 'red' : daysLeft < 7 ? 'peach' : 'yellow'
   const whole = Math.max(Math.ceil(daysLeft), 0)
+  const message = expired
+    ? `${profile.label}: PAT has expired.`
+    : `${profile.label}: PAT expires in ${whole} ${whole === 1 ? 'day' : 'days'}.`
   return (
     <div
       role="status"
       aria-live="polite"
       className={`${TONE_CLASSES[tone]} px-3 py-2 text-xs border-b flex items-center gap-2`}
     >
-      <span>
-        {profile.label}: PAT expires in {whole} {whole === 1 ? 'day' : 'days'}.
-      </span>
+      <span>{message}</span>
       <button
         onClick={onRenew}
         className="bg-surface0 hover:bg-surface1 transition-colors px-2 py-0.5 rounded"

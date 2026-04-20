@@ -58,23 +58,40 @@ interface RawNotification {
   }
 }
 
-function mapOne(raw: RawNotification): NotificationSummary | null {
-  if (!raw.id) return null
-  // html_url isn't returned on the /notifications endpoint; we translate
-  // the API url to a web url so the "open" button lands on github.com.
-  // Rejecting the row entirely when there's no usable URL (rare — only
-  // seen on malformed/partial payloads) prevents the renderer from
-  // calling shell.openExternal('') and getting an unhandled rejection.
-  const apiUrl = raw.subject?.url
-  if (!apiUrl) return null
-  let url = apiUrl
-  const m = apiUrl.match(
-    /api\.github\.com\/repos\/([^/]+)\/([^/]+)\/(issues|pulls)\/(\d+)/,
+/**
+ * Convert a /notifications subject URL (which is an api.github.com URL)
+ * into a web URL suitable for shell.openExternal. Returns null when the
+ * input isn't convertible to a github.com web URL — those rows are then
+ * dropped in mapOne. We refuse to return api.github.com URLs here because
+ * openExternal on them lands users on a JSON response that may prompt
+ * for auth; dropping the row is a better UX than surfacing a broken link.
+ */
+function toNotificationWebUrl(apiOrWebUrl?: string): string | null {
+  if (!apiOrWebUrl) return null
+  let parsed: URL
+  try {
+    parsed = new URL(apiOrWebUrl)
+  } catch {
+    return null
+  }
+  if (parsed.protocol !== 'https:') return null
+  if (parsed.hostname === 'github.com' || parsed.hostname === 'www.github.com') {
+    return parsed.toString()
+  }
+  const m = apiOrWebUrl.match(
+    /^https:\/\/api\.github\.com\/repos\/([^/]+)\/([^/]+)\/(issues|pulls)\/(\d+)(?:\/)?$/,
   )
   if (m) {
     const kind = m[3] === 'pulls' ? 'pull' : 'issues'
-    url = `https://github.com/${m[1]}/${m[2]}/${kind}/${m[4]}`
+    return `https://github.com/${m[1]}/${m[2]}/${kind}/${m[4]}`
   }
+  return null
+}
+
+function mapOne(raw: RawNotification): NotificationSummary | null {
+  if (!raw.id) return null
+  const url = toNotificationWebUrl(raw.subject?.url)
+  if (!url) return null
   return {
     id: raw.id,
     type: (raw.reason ?? 'subscribed') as NotificationSummary['type'],

@@ -13,19 +13,38 @@ export default function NotificationsSection({ sessionId }: Props) {
   const [markError, setMarkError] = useState<string | null>(null)
 
   const markRead = async (profileId: string, notifId: string) => {
+    // Optimistic update: flip the item to read immediately so the UI
+    // reacts without waiting up to a full 5-minute poll tick for the
+    // NotificationsPoller to re-fetch truth. Revert on failure so a
+    // network error doesn't leave the user with a stale read state.
+    const store = useGitHubStore.getState()
+    const prev = store.notificationsByProfile[profileId]
+    if (prev) {
+      const updated = prev.map((i) =>
+        i.id === notifId ? { ...i, unread: false } : i,
+      )
+      store.handleNotificationsUpdate({ profileId, items: updated })
+    }
+    const failed = (msg: string) => {
+      // Only revert if the store still reflects our optimistic update.
+      // If the NotificationsPoller emitted fresh truth mid-await, its
+      // payload is newer than `prev` and we must not clobber it.
+      const current =
+        useGitHubStore.getState().notificationsByProfile[profileId]
+      const stillOptimistic = current?.some(
+        (i) => i.id === notifId && !i.unread,
+      )
+      if (prev && stillOptimistic) {
+        store.handleNotificationsUpdate({ profileId, items: prev })
+      }
+      setMarkError(msg)
+      setTimeout(() => setMarkError(null), 3000)
+    }
     try {
       const r = await window.electronAPI.github.markNotifRead(profileId, notifId)
-      if (!r.ok) {
-        setMarkError(r.error ?? 'Failed to mark read')
-        setTimeout(() => setMarkError(null), 3000)
-      }
+      if (!r.ok) failed(r.error ?? 'Failed to mark read')
     } catch (err) {
-      // IPC rejection — without this catch the onClick's promise rejects
-      // unhandled. The next poll tick (up to 5 min away) would eventually
-      // reflect the server truth, but the user sees no feedback why their
-      // click did nothing.
-      setMarkError(err instanceof Error ? err.message : 'Failed to mark read')
-      setTimeout(() => setMarkError(null), 3000)
+      failed(err instanceof Error ? err.message : 'Failed to mark read')
     }
   }
   // Memoize so the filtered list has stable identity between renders.
