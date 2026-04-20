@@ -15,6 +15,20 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '1.3.2',
+    date: '2026-04-20',
+    highlights: "GitHub sidebar: PR, CI, reviews, linked issues, and session context next to the terminal",
+    changes: [
+      { type: 'feature', description: "New GitHub sidebar. Collapsible right panel that shows the PR for your current branch, CI runs, reviews, linked issues, local git state, and a session-context summary of what this terminal is working on" },
+      { type: 'feature', description: "Sign in with GitHub via OAuth device flow, fine-grained PAT, or gh CLI adoption. Nothing runs until you opt in per session" },
+      { type: 'feature', description: "Per-session enable with repo auto-detection banner. Ctrl+/ (Cmd+/ on Mac) toggles the panel" },
+      { type: 'feature', description: "PR-body reference scanning. Closes/fixes/resolves #N and owner/repo#N refs in a PR body all surface in the session context" },
+      { type: 'feature', description: "Notifications mini-section with mark-read, plus rate-limit and expiry banners on your auth profiles" },
+      { type: 'feature', description: "First-launch onboarding modal and a new GitHub step in the training walkthrough" },
+      { type: 'fix', description: "Right-click paste in terminals now respects bracketed-paste mode. Pasting multi-line text into Claude Code (or any other app that enables the mode) lands as a single atomic paste instead of submitting on the first newline" },
+    ]
+  },
+  {
     version: '1.3.1',
     date: '2026-04-15',
     highlights: "First public release — open-sourced on GitHub",
