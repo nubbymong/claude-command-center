@@ -33,8 +33,10 @@ test.beforeAll(async () => {
   })
   page = await app.firstWindow()
   await page.waitForLoadState('domcontentloaded')
-  // Give React + store hydration time to complete.
-  await page.waitForTimeout(2500)
+  // Wait for the Settings sidebar button — a deterministic readiness
+  // signal for React + store hydration. Fixed waitForTimeout calls are
+  // flaky on slower CI workers and waste time on fast ones.
+  await page.waitForSelector('button[title="Settings"]', { timeout: 15000 })
 })
 
 test.afterAll(async () => {

@@ -2,6 +2,7 @@ import type {
   GitHubConfig,
   NotificationSummary,
 } from '../../../shared/github-types'
+import { DEFAULT_SYNC_INTERVALS } from '../../../shared/github-constants'
 import type { CacheStore } from '../cache/cache-store'
 import type { RateLimitShield } from '../client/rate-limit-shield'
 import type { EtagCache } from '../client/etag-cache'
@@ -15,7 +16,8 @@ import { fetchNotifications } from '../client/rest-fallback'
  * Each profile runs its own setTimeout chain keyed by profileId — keeping
  * them independent means a slow or rate-limited profile can't stall other
  * profiles' polls. Intervals come from `GitHubConfig.syncIntervals.notificationsSec`
- * (fallback 300s) and are re-read on every tick so renderer changes to
+ * (falling back to DEFAULT_SYNC_INTERVALS.notificationsSec) and are
+ * re-read on every tick so renderer changes to
  * sync intervals take effect immediately.
  *
  * Persisted notification items live in
@@ -217,7 +219,11 @@ export class NotificationsPoller {
     // wedge a profile's poller that's supposed to be stopped.
     const current = this.profiles.get(profileId)
     if (!current || current !== s) return
-    const intervalSec = cfg?.syncIntervals.notificationsSec ?? 300
+    // Use the shared default so first-launch (null config) polls at the
+    // same cadence as every other sync interval definition in the repo.
+    // Previously the hardcoded 300 diverged from DEFAULT_SYNC_INTERVALS.
+    const intervalSec =
+      cfg?.syncIntervals.notificationsSec ?? DEFAULT_SYNC_INTERVALS.notificationsSec
     s.timer = setTimeout(() => {
       void this.doPoll(profileId).finally(() => void this.scheduleNext(profileId))
     }, intervalSec * 1000)

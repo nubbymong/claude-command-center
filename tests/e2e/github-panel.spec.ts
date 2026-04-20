@@ -31,7 +31,11 @@ test.beforeAll(async () => {
   })
   page = await app.firstWindow()
   await page.waitForLoadState('domcontentloaded')
-  await page.waitForTimeout(2500)
+  // Wait on a deterministic readiness signal rather than a fixed sleep:
+  // the sidebar Settings button is rendered after React has hydrated the
+  // top-level shell, so once it's visible we know the app is interactive.
+  // Fixed timeouts are flaky on slower CI workers.
+  await page.waitForSelector('button[title="Settings"]', { timeout: 15000 })
 })
 
 test.afterAll(async () => {
@@ -84,11 +88,13 @@ test.describe('GitHub Panel states', () => {
   })
 
   test('Ctrl+/ toggles panel visibility in store', async () => {
-    // Read panel visibility via the Zustand store directly — avoids
-    // depending on which aria-label is currently rendered.
+    // We probe the DOM for the panel aside rather than reaching into the
+    // Zustand store — the store isn't exposed on window in production
+    // builds and this test runs against the packaged renderer. The check
+    // here is "the keypress doesn't crash the app", not a strict
+    // before/after visibility assertion (the rail also renders for the
+    // integration-disabled case, so visibility may not flip).
     const before = await page.evaluate(() => {
-      // The store is attached to window for test-time introspection only in
-      // e2e builds; fall back to checking the DOM if unavailable.
       return document.querySelector('aside[aria-label^="GitHub panel"]') !== null
     })
     // Dispatch Ctrl+/ (or Cmd+/ on Mac) — the panel's own useEffect handles
