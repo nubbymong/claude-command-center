@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import SectionFrame from '../SectionFrame'
 import type { SessionContextResult } from '../../../../shared/github-types'
 import { relativeTime } from '../../../utils/relativeTime'
+import { trackUsage } from '../../../stores/tipsStore'
 
 interface Props {
   sessionId: string
@@ -32,6 +33,14 @@ export default function SessionContextSection({ sessionId }: Props) {
   const empty =
     !ctx || (!ctx.primaryIssue && !ctx.activePR && ctx.recentFiles.length === 0)
   const summary = ctx?.primaryIssue ? `#${ctx.primaryIssue.number}` : undefined
+
+  // Fire the tracking tag once the section has genuinely-useful data.
+  // The corresponding tip in TIPS_LIBRARY excludes on this key, so it
+  // stops surfacing once the user has actually seen session-context
+  // work. Guarded by `empty` so the empty-state render doesn't count.
+  useEffect(() => {
+    if (!empty) trackUsage('github.session-context-seen')
+  }, [empty])
 
   return (
     <SectionFrame
