@@ -603,7 +603,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: '🔎 The panel figures out which issue you are on',
         title: 'Session Context',
-        body: 'The **Session Context** section infers which issue your current session is actually working on.\n\nIt checks (in priority order): linked issues on the active PR, issue references in your branch name, issue numbers mentioned in your Claude transcript, and recent file edits.\n\nYou can opt in to transcript scanning in **Settings > GitHub > Features** — it stays entirely local; the transcript never leaves your machine.',
+        body: 'The **Session Context** section infers which issue your current session is actually working on.\n\nIt checks (in priority order): issue numbers in your current **branch name**, most-recent issue referenced in your **Claude transcript**, first issue referenced in the active **PR body**. Recent file edits show alongside as additional signal.\n\nYou can opt in to transcript scanning under **Settings > GitHub > Privacy** — it stays entirely local; the transcript never leaves your machine.',
       },
     },
   },

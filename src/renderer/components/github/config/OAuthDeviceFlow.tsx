@@ -17,18 +17,17 @@ export default function OAuthDeviceFlow({ flow, onDone, onCancel }: Props) {
   const [error, setError] = useState<string | null>(null)
   const pollingRef = useRef(true)
 
-  // Hold the latest onDone / onCancel in refs so the polling effect never has
-  // to list them as deps. Inline-arrow props get a fresh identity on every
-  // parent re-render, which would otherwise tear down and restart the poll
-  // mid-flight — and the restart races the in-flight main-side poll for the
-  // single-use device_code. Observed as "GitHub says authorised but modal
-  // stays on Waiting".
+  // Hold onDone in a ref so the polling effect can invoke it without listing
+  // it as a dep. Inline-arrow props get a fresh identity on every parent
+  // re-render, which would otherwise tear down and restart the poll mid-
+  // flight — racing the in-flight main-side poll for the single-use
+  // device_code. Observed as "GitHub says authorised but modal stays on
+  // Waiting". onCancel is only called from the Cancel button handler
+  // directly, so it doesn't need the ref indirection.
   const onDoneRef = useRef(onDone)
-  const onCancelRef = useRef(onCancel)
   useEffect(() => {
     onDoneRef.current = onDone
-    onCancelRef.current = onCancel
-  }, [onDone, onCancel])
+  }, [onDone])
 
   useEffect(() => {
     // Main's oauthPoll runs its own long-lived polling loop inside
@@ -61,9 +60,16 @@ export default function OAuthDeviceFlow({ flow, onDone, onCancel }: Props) {
   }, [flow.flowId])
 
   const copy = async () => {
-    await navigator.clipboard.writeText(flow.userCode)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 1500)
+    // Clipboard access can reject when the window isn't focused or OS policy
+    // blocks it. Swallow so the click doesn't surface as an unhandled promise
+    // rejection; the button simply doesn't flip to "Copied" on failure.
+    try {
+      await navigator.clipboard.writeText(flow.userCode)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch {
+      // ignore — user can still see and type the code
+    }
   }
 
   const openGitHub = () => {
@@ -73,8 +79,16 @@ export default function OAuthDeviceFlow({ flow, onDone, onCancel }: Props) {
 
   const cancel = async () => {
     pollingRef.current = false
-    await window.electronAPI.github.oauthCancel(flow.flowId)
-    onCancel()
+    // Run oauthCancel in a try/finally so a rejected IPC (main crash, channel
+    // torn down during shutdown) can't leave the modal open. The user clicked
+    // Cancel, so always tear down the modal.
+    try {
+      await window.electronAPI.github.oauthCancel(flow.flowId)
+    } catch {
+      // ignore — we're cancelling anyway
+    } finally {
+      onCancel()
+    }
   }
 
   return (

@@ -93,9 +93,15 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         return
       }
 
+      // For Claude Code sessions we hide the cursor (Claude renders its own
+      // input bar), so paint the cursor layer in the same background colour.
+      // Deriving from THEME.background keeps this in lockstep if the palette
+      // ever changes again — the old literal (#0f1218) went stale when the
+      // theme moved to #1a1a1a and made the cursor effectively invisible
+      // against the old tone.
       const termTheme = shellOnly
         ? THEME
-        : { ...THEME, cursor: '#0f1218', cursorAccent: '#0f1218' }
+        : { ...THEME, cursor: THEME.background, cursorAccent: THEME.background }
 
       const ts = useSettingsStore.getState().settings.terminal || DEFAULT_TERMINAL_SETTINGS
       const fontFallbacks = "'Cascadia Code', 'Fira Code', 'JetBrains Mono', Consolas, monospace"

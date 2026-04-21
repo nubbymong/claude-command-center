@@ -27,7 +27,9 @@ export function SanitizedMarkdown({ source }: { source: string }) {
         e.preventDefault()
         const href = anchor.getAttribute('href') ?? ''
         if (/^https:/i.test(href)) {
-          window.electronAPI.shell.openExternal(href)
+          // `void` + `.catch` so an IPC rejection during app teardown doesn't
+          // surface as an unhandled promise rejection on a plain click.
+          void window.electronAPI.shell.openExternal(href).catch(() => {})
         }
       }}
     />

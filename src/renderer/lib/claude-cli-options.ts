@@ -35,7 +35,7 @@ export const PERMISSION_MODES: OptionItem[] = [
   { label: 'Bypass', value: 'bypassPermissions', hint: 'Skip every permission prompt' },
 ]
 
-export const MODE_LABELS: Record<string, string> = Object.fromEntries(
+export const PERMISSION_MODE_LABELS: Record<string, string> = Object.fromEntries(
   PERMISSION_MODES.map((m) => [m.value, m.label]),
 )
 

@@ -239,8 +239,10 @@ export default function App() {
   const onboardingDismissedThisSessionRef = useRef(false)
 
   // Decides whether github onboarding is due right now. Reads persistent
-  // state only — safe to call from anywhere and will not flicker with
-  // react render timing the way `showWhatsNew` / `showTraining` did.
+  // config state plus the session dismissal ref and component `needsCliSetup`
+  // — NOT a pure persistent-state read, but stable across React render
+  // timing in a way that `showWhatsNew` / `showTraining` are not (those flip
+  // after a 500ms postConfigInit timer).
   const isGitHubOnboardingDue = (): boolean => {
     if (!githubConfig) return false
     if (onboardingDismissedThisSessionRef.current) return false
@@ -250,19 +252,21 @@ export default function App() {
     return true
   }
 
+  // Single source of truth for when the GitHub onboarding modal opens. The
+  // previous design also had handleWhatsNewClose / handleTrainingClose
+  // scheduling setShowGitHubOnboarding(true) via setTimeout — but this effect
+  // already re-runs when showWhatsNew/showTraining flip to false, which meant
+  // the effect opened onboarding immediately and the handler's delay was
+  // bypassed (a double setState with the first one winning). Keep the 120ms
+  // gap here in the effect so it applies uniformly regardless of which
+  // earlier modal just closed, and clean up the timer if the conditions
+  // change before it fires.
   useEffect(() => {
     if (!isGitHubOnboardingDue()) return
-    // Defer while an earlier modal is currently open OR still-pending.
-    // Prior versions checked only the `show*` state, which is set by
-    // postConfigInit's 500ms setTimeout — so if github config hydrated
-    // first, the guard saw `false` for all of them, dispatched github,
-    // and then whats-new / training landed on top a moment later.
-    // `shouldShow*()` reads persistent state so the guard holds even
-    // before the timer fires. The chain in handleWhatsNewClose /
-    // handleTrainingClose will dispatch us when the earlier modal closes.
     if (showWhatsNew || showTraining || showTrainingAll) return
     if (isFirstInstall() || shouldShowWhatsNew() || shouldShowTraining()) return
-    setShowGitHubOnboarding(true)
+    const t = setTimeout(() => setShowGitHubOnboarding(true), 120)
+    return () => clearTimeout(t)
   }, [githubConfig, showWhatsNew, showTraining, showTrainingAll, needsCliSetup])
 
   // useCallback: passed to OnboardingModal as `onClose`, which forwards it
@@ -572,22 +576,20 @@ export default function App() {
   const handleWhatsNewClose = () => {
     markWhatsNewSeen()
     setShowWhatsNew(false)
-    // Advance the queue. The short 120ms delay overlaps with the next
-    // modal's 200ms fade-in so the user sees a smooth cross-fade rather
-    // than a 300ms gap of dead space.
+    // Training is opened directly here because it's not managed by the
+    // onboarding effect. Onboarding is handled by the useEffect above,
+    // which re-runs when showWhatsNew flips to false and applies its own
+    // 120ms delay so the cross-fade stays smooth.
     if (shouldShowTraining()) {
       setTimeout(() => setShowTraining(true), 120)
-    } else if (isGitHubOnboardingDue()) {
-      setTimeout(() => setShowGitHubOnboarding(true), 120)
     }
   }
 
   const handleTrainingClose = () => {
     setShowTraining(false)
     setShowTrainingAll(false)
-    if (isGitHubOnboardingDue()) {
-      setTimeout(() => setShowGitHubOnboarding(true), 120)
-    }
+    // Onboarding is handled by the useEffect above; no need to schedule it
+    // here.
   }
 
   return (

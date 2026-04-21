@@ -11,7 +11,7 @@ import {
   MODELS,
   EFFORTS,
   PERMISSION_MODES,
-  MODE_LABELS,
+  PERMISSION_MODE_LABELS,
   shortModelName as resolveModelName,
   isModelActive,
 } from '../lib/claude-cli-options'
@@ -461,7 +461,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
             onClick={() => setOpenPicker(openPicker === 'mode' ? null : 'mode')}
             className="flex items-center gap-1 px-2 py-0.5 text-xs text-subtext0 hover:text-text rounded bg-surface0/50 hover:bg-surface0 border border-surface1/40 hover:border-surface1 transition-colors shrink-0 cursor-pointer"
           >
-            {MODE_LABELS[currentMode] || currentMode}
+            {PERMISSION_MODE_LABELS[currentMode] || currentMode}
             <svg width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.4" className="opacity-50">
               <path d="M2.5 4l2.5 2.5L7.5 4" />
             </svg>

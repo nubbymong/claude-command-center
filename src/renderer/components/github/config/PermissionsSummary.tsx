@@ -62,9 +62,16 @@ export default function PermissionsSummary() {
   const fine = capsToFineGrainedPermissions(required)
 
   const copyScopes = async (scopes: string[], which: 'public' | 'private') => {
-    await navigator.clipboard.writeText(scopes.join(' '))
-    setCopied(which)
-    setTimeout(() => setCopied(null), 1500)
+    // Clipboard access can reject when the window isn't focused or OS policy
+    // blocks it. Swallow so the click doesn't surface as an unhandled promise
+    // rejection — the user can still read and manually copy the scopes.
+    try {
+      await navigator.clipboard.writeText(scopes.join(' '))
+      setCopied(which)
+      setTimeout(() => setCopied(null), 1500)
+    } catch {
+      // ignore
+    }
   }
 
   return (

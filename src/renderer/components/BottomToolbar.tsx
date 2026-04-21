@@ -5,7 +5,7 @@ import {
   MODELS,
   EFFORTS,
   PERMISSION_MODES,
-  MODE_LABELS,
+  PERMISSION_MODE_LABELS,
   shortModelName,
   isModelActive,
 } from '../lib/claude-cli-options'
@@ -70,7 +70,7 @@ export default function BottomToolbar() {
 
   const modelDisplay = shortModelName(activeSession.modelName || activeSession.model)
   const effortDisplay = currentEffort.charAt(0).toUpperCase() + currentEffort.slice(1)
-  const modeDisplay = MODE_LABELS[currentMode] || currentMode
+  const modeDisplay = PERMISSION_MODE_LABELS[currentMode] || currentMode
 
   return (
     <div

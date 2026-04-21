@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { changelog, ChangelogEntry } from '../changelog'
 
 declare const __BUILD_TIME__: string
@@ -68,16 +68,30 @@ export default function WhatsNewModal({ onClose, showAllVersions = false }: Prop
   // Keeps the transition between first-launch modals from feeling abrupt.
   const [entering, setEntering] = useState(false)
   const [closing, setClosing] = useState(false)
+  // Track the dismiss timer in a ref so we can cancel it on unmount. Without
+  // this, unmounting mid-fade (e.g. parent tears the modal down for another
+  // reason before the 180ms elapses) would still call onClose late and push
+  // state into a parent that may no longer expect it.
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     const t = requestAnimationFrame(() => setEntering(true))
     return () => cancelAnimationFrame(t)
   }, [])
 
+  useEffect(() => {
+    return () => {
+      if (closeTimerRef.current) clearTimeout(closeTimerRef.current)
+    }
+  }, [])
+
   const dismiss = () => {
     if (closing) return
     setClosing(true)
-    setTimeout(onClose, 180)
+    closeTimerRef.current = setTimeout(() => {
+      closeTimerRef.current = null
+      onClose()
+    }, 180)
   }
 
   const visible = entering && !closing
