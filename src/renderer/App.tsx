@@ -39,6 +39,7 @@ import GitHubPanel from './components/github/GitHubPanel'
 import OnboardingModal from './components/github/onboarding/OnboardingModal'
 import AutoDetectBanner from './components/github/AutoDetectBanner'
 import type { SessionState, SavedSession } from './types/electron'
+import { buildSessionState } from './session-persistence'
 
 // Re-export ViewType from its canonical location for backwards compatibility
 export type { ViewType } from './types/views'
@@ -312,41 +313,6 @@ export default function App() {
       console.log('[App] Sessions restored')
     } catch (err) {
       console.error('[App] Failed to restore sessions:', err)
-    }
-  }
-
-  // Build session state object for saving
-  const buildSessionState = (): SessionState => {
-    const state = useSessionStore.getState()
-    return {
-      sessions: state.sessions.map(s => ({
-        id: s.id,
-        configId: s.configId,
-        label: s.label,
-        workingDirectory: s.workingDirectory,
-        model: s.model,
-        color: s.color,
-        sessionType: s.sessionType,
-        shellOnly: s.shellOnly,
-        partnerTerminalPath: s.partnerTerminalPath,
-        partnerElevated: s.partnerElevated,
-        sshConfig: s.sshConfig ? {
-          host: s.sshConfig.host,
-          port: s.sshConfig.port,
-          username: s.sshConfig.username,
-          remotePath: s.sshConfig.remotePath,
-          hasPassword: s.sshConfig.hasPassword,
-          postCommand: s.sshConfig.postCommand,
-          hasSudoPassword: s.sshConfig.hasSudoPassword,
-          startClaudeAfter: s.sshConfig.startClaudeAfter,
-          dockerContainer: s.sshConfig.dockerContainer,
-        } : undefined,
-        legacyVersion: s.legacyVersion,
-        agentIds: s.agentIds,
-        githubIntegration: s.githubIntegration,
-      })),
-      activeSessionId: state.activeSessionId,
-      savedAt: Date.now(),
     }
   }
 
