@@ -7,6 +7,14 @@ import StoryboardButton from './StoryboardButton'
 import ToolbarPopup from './ToolbarPopup'
 import { generateId } from '../utils/id'
 import { trackUsage } from '../stores/tipsStore'
+import {
+  MODELS,
+  EFFORTS,
+  PERMISSION_MODES,
+  MODE_LABELS,
+  shortModelName as resolveModelName,
+  isModelActive,
+} from '../lib/claude-cli-options'
 
 interface Props {
   sessionId: string
@@ -38,39 +46,8 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
   const [currentMode, setCurrentMode] = useState<string>('acceptEdits')
   const activeSession = useSessionStore((s) => s.sessions.find((sess) => sess.id === sessionId))
 
-  const MODELS = [
-    { label: 'Opus 4.6 1M', value: 'opus' },
-    { label: 'Sonnet 4.6', value: 'sonnet' },
-    { label: 'Haiku 4.5', value: 'haiku' },
-  ]
-  const EFFORTS = [
-    { label: 'Low', value: 'low' },
-    { label: 'Medium', value: 'medium' },
-    { label: 'High', value: 'high' },
-    { label: 'Max', value: 'max' },
-  ]
-  const PERMISSION_MODES = [
-    { label: 'Ask permissions', value: 'default', hint: 'Claude asks before most actions' },
-    { label: 'Accept edits', value: 'acceptEdits', hint: 'Auto-accept file edits, ask for others' },
-    { label: 'Auto', value: 'auto', hint: 'Auto-accept most actions' },
-    { label: 'Plan mode', value: 'plan', hint: 'Read-only, no file edits' },
-    { label: "Don't ask", value: 'dontAsk', hint: 'Accept everything without asking' },
-  ]
-  const MODE_LABELS: Record<string, string> = {
-    default: 'Ask', acceptEdits: 'Accept edits', auto: 'Auto',
-    plan: 'Plan', dontAsk: "Don't ask",
-  }
-
-  const shortModelName = (fullName?: string): string => {
-    // Try statusline modelName first, then fall back to session config model
-    const name = fullName || activeSession?.model
-    if (!name) return 'default'
-    const lower = name.toLowerCase()
-    if (lower.includes('opus')) return 'Opus 4.6 1M'
-    if (lower.includes('sonnet')) return 'Sonnet 4.6'
-    if (lower.includes('haiku')) return 'Haiku 4.5'
-    return name.replace('claude-', '').replace(/-/g, ' ')
-  }
+  const shortModelName = (fullName?: string): string =>
+    resolveModelName(fullName || activeSession?.model)
 
   const handleModelSelect = useCallback((si: number, value: string) => {
     if (si === 0) {
@@ -343,11 +320,17 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
         && (!s.target || s.target === rowTarget)
     )
 
-    // Group by sectionId
-    const unsectioned = cmds.filter((c) => !c.sectionId)
+    // Orphan commands — those whose sectionId points to a section not visible
+    // on the current config — fall through to the unsectioned row. Without
+    // this, a global command parked inside a config-scoped section would
+    // render only on that config, breaking the "global applies to all" promise.
+    const visibleSectionIds = new Set(visibleSections.map((s) => s.id))
+    const unsectioned = cmds.filter(
+      (c) => !c.sectionId || !visibleSectionIds.has(c.sectionId),
+    )
     const bySectionId = new Map<string, CustomCommand[]>()
     for (const cmd of cmds) {
-      if (cmd.sectionId) {
+      if (cmd.sectionId && visibleSectionIds.has(cmd.sectionId)) {
         const list = bySectionId.get(cmd.sectionId) || []
         list.push(cmd)
         bySectionId.set(cmd.sectionId, list)
@@ -520,9 +503,10 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
                   shortcut: 'Shift+Ctrl+I',
                   items: MODELS.map((m) => ({
                     ...m,
-                    active: (activeSession?.modelName || activeSession?.model || '')
-                      .toLowerCase()
-                      .includes(m.value),
+                    active: isModelActive(
+                      m.value,
+                      activeSession?.modelName || activeSession?.model || '',
+                    ),
                   })),
                 },
                 {

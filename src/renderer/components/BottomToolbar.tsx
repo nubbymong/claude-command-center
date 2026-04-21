@@ -1,50 +1,16 @@
 import React, { useState, useCallback } from 'react'
 import { useSessionStore } from '../stores/sessionStore'
 import ToolbarPopup from './ToolbarPopup'
+import {
+  MODELS,
+  EFFORTS,
+  PERMISSION_MODES,
+  MODE_LABELS,
+  shortModelName,
+  isModelActive,
+} from '../lib/claude-cli-options'
 
 type PopupType = 'model' | 'mode' | null
-
-const MODELS = [
-  { label: 'Opus 4.6', value: 'claude-opus-4-6' },
-  { label: 'Opus 4.6 1M', value: 'claude-opus-4-6-max-200k' },
-  { label: 'Sonnet 4.6', value: 'claude-sonnet-4-6' },
-  { label: 'Haiku 4.5', value: 'claude-haiku-4-5-20251001' },
-]
-
-const EFFORTS = [
-  { label: 'Low', value: 'low' },
-  { label: 'Medium', value: 'medium' },
-  { label: 'High', value: 'high' },
-  { label: 'Max', value: 'max' },
-]
-
-const PERMISSION_MODES = [
-  { label: 'Ask permissions', value: 'default' },
-  { label: 'Accept edits', value: 'acceptEdits' },
-  { label: 'Auto', value: 'auto' },
-  { label: 'Plan mode', value: 'plan' },
-  { label: 'Don\'t ask', value: 'dontAsk' },
-]
-
-function shortModelName(fullName?: string): string {
-  if (!fullName) return 'default'
-  if (fullName.includes('opus') && fullName.includes('200k')) return 'Opus 4.6 1M'
-  if (fullName.includes('opus') && fullName.includes('1m')) return 'Opus 4.6 1M'
-  if (fullName.includes('opus')) return 'Opus 4.6'
-  if (fullName.includes('sonnet')) return 'Sonnet 4.6'
-  if (fullName.includes('haiku')) return 'Haiku 4.5'
-  // Fallback: strip 'claude-' prefix and clean up
-  return fullName.replace('claude-', '').replace(/-/g, ' ')
-}
-
-const MODE_LABELS: Record<string, string> = {
-  default: 'Ask permissions',
-  acceptEdits: 'Accept edits',
-  auto: 'Auto',
-  plan: 'Plan mode',
-  dontAsk: 'Don\'t ask',
-  bypassPermissions: 'Bypass',
-}
 
 export default function BottomToolbar() {
   const activeSessionId = useSessionStore((s) => s.activeSessionId)
@@ -201,10 +167,10 @@ export default function BottomToolbar() {
                 shortcut: 'Shift+Ctrl+I',
                 items: MODELS.map((m) => ({
                   ...m,
-                  active:
-                    (activeSession.modelName || activeSession.model || '')
-                      .toLowerCase()
-                      .includes(m.value.replace('claude-', '').split('-')[0]),
+                  active: isModelActive(
+                    m.value,
+                    activeSession.modelName || activeSession.model || '',
+                  ),
                 })),
               },
               {
