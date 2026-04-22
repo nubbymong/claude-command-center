@@ -10,12 +10,28 @@ interface Props {
 
 export default function ReviewsSection({ sessionId, slug }: Props) {
   const data = useGitHubStore((s) => (slug ? s.repoData[slug] : undefined))
-  const reviews = data?.reviews ?? []
+  const allReviews = data?.reviews ?? []
   const [replyingTo, setReplyingTo] = useState<string | null>(null)
   const [replyText, setReplyText] = useState('')
 
-  const allThreads = reviews.flatMap((r) => r.threads)
+  const allThreads = allReviews.flatMap((r) => r.threads)
   const unresolved = allThreads.filter((t) => !t.resolved)
+
+  // Filter the top-level review list. A PR with 15 Copilot auto-review passes
+  // would otherwise show 15 "@copilot-pull-request-reviewer[bot] commented"
+  // rows with no body, which is pure noise. Rules:
+  //   • Drop reviews whose state is COMMENTED with no threaded comments —
+  //     they carry no actionable signal.
+  //   • Dedupe by reviewer, keeping the LATEST review only (list arrives in
+  //     chronological order, so the last occurrence wins). This surfaces the
+  //     reviewer's current verdict, not their entire history.
+  const actionable = allReviews.filter(
+    (r) => r.state !== 'COMMENTED' || r.threads.some((t) => !t.resolved),
+  )
+  const latestByReviewer = new Map<string, typeof actionable[number]>()
+  for (const r of actionable) latestByReviewer.set(r.reviewer, r)
+  const reviews = Array.from(latestByReviewer.values())
+
   const empty = allThreads.length === 0 && reviews.length === 0
 
   const [replyError, setReplyError] = useState<string | null>(null)
