@@ -74,8 +74,15 @@ export default function SessionGitHubConfig({ sessionId, cwd, initial }: Props) 
       // Flush current sessions to session-state.json before invoking the
       // main-side handler. session.save is otherwise only called on graceful
       // close, so freshly-opened sessions aren't on disk — and the handler
-      // looks them up there and returns "not-found".
-      await window.electronAPI.session.save(buildSessionState())
+      // looks them up there and returns "not-found". Bail if the flush
+      // fails; without it the next call would hit the same not-found path
+      // and surface a confusing error.
+      const saved = await window.electronAPI.session.save(buildSessionState())
+      if (!saved) {
+        setTestResult('Error: Failed to persist session state before save')
+        setTimeout(() => setTestResult(null), 3000)
+        return
+      }
       const r = await window.electronAPI.github.updateSessionConfig(sessionId, patch)
       if (r.ok) {
         // Mirror the patch into the renderer session store so the GitHub
