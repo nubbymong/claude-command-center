@@ -8,11 +8,18 @@ import {
   type RingBufferEntry,
 } from './hooks-types'
 import { redactHookPayload } from './hook-payload-redactor'
+import { IPC } from '../../shared/ipc-channels'
 import type {
   HookEvent,
   HookEventKind,
   HooksGatewayStatus,
 } from '../../shared/hook-types'
+
+// Cap the incoming HTTP body at 256 KiB. Claude Code hook payloads top out
+// around a few KB; anything beyond this is either a misbehaving client or
+// a local-process attack attempt. 413 back before buffering avoids memory
+// pressure from a single fat request tying up the main process.
+const MAX_REQUEST_BODY_BYTES = 256 * 1024
 
 export interface HooksGatewayOptions {
   defaultPort?: number
@@ -104,7 +111,7 @@ export class HooksGateway {
     this.buffers.delete(sessionId)
     this.overflowLatched.delete(sessionId)
     try {
-      this.emit('hooks:sessionEnded', sessionId)
+      this.emit(IPC.HOOKS_SESSION_ENDED, sessionId)
     } catch {
       /* webContents destroyed — drop silently */
     }
@@ -159,8 +166,30 @@ export class HooksGateway {
     req: http.IncomingMessage,
     res: http.ServerResponse,
   ): Promise<void> {
+    // Body-size cap: stream chunks into a running total, bail with 413
+    // and destroy the socket as soon as the cap is exceeded. Avoids the
+    // previous unbounded buffering path that a local process could abuse.
     const chunks: Buffer[] = []
-    for await (const c of req) chunks.push(c as Buffer)
+    let total = 0
+    try {
+      for await (const c of req) {
+        const buf = c as Buffer
+        total += buf.length
+        if (total > MAX_REQUEST_BODY_BYTES) {
+          res.statusCode = 413
+          res.setHeader('content-type', 'application/json')
+          res.end('{}')
+          req.destroy()
+          return
+        }
+        chunks.push(buf)
+      }
+    } catch {
+      res.statusCode = 400
+      res.setHeader('content-type', 'application/json')
+      res.end('{}')
+      return
+    }
     const body = Buffer.concat(chunks).toString('utf-8')
     const result = await this._handleRequestForTest({
       remoteAddress: req.socket.remoteAddress,
@@ -201,8 +230,16 @@ export class HooksGateway {
   }
 
   private ingest(sid: string, parsed: Record<string, unknown>): void {
-    const event =
-      typeof parsed.event === 'string' ? (parsed.event as HookEventKind) : 'Unknown'
+    // Reject payloads with a missing/non-string event field rather than
+    // forging an 'Unknown' sentinel: the shared HookEventKind union
+    // doesn't include it, so forging would propagate a type-contract
+    // violation into the renderer (where KIND_LABEL / KIND_COLOR keyed
+    // lookups would miss). The redactor test's malformed-payload case
+    // is the only in-tree caller that hits this; returning early means
+    // it gets dropped silently, matching the spec's "strict contract"
+    // posture.
+    if (typeof parsed.event !== 'string') return
+    const event = parsed.event as HookEventKind
     const toolName =
       typeof parsed.tool_name === 'string'
         ? (parsed.tool_name as string)
@@ -237,7 +274,7 @@ export class HooksGateway {
       if (!this.overflowLatched.has(sid)) {
         this.overflowLatched.add(sid)
         try {
-          this.emit('hooks:dropped', { sessionId: sid })
+          this.emit(IPC.HOOKS_DROPPED, { sessionId: sid })
         } catch {
           /* destroyed window */
         }
@@ -246,7 +283,7 @@ export class HooksGateway {
     this.buffers.set(sid, buf)
 
     try {
-      this.emit('hooks:event', entry as HookEvent)
+      this.emit(IPC.HOOKS_EVENT, entry as HookEvent)
     } catch {
       /* webContents destroyed — spec §Error handling says drop silently */
     }

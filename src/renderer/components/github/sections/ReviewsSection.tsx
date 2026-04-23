@@ -40,7 +40,13 @@ export default function ReviewsSection({ sessionId, slug }: Props) {
   }
   const reviews = Array.from(latestByReviewer.values())
 
-  const empty = allThreads.length === 0 && reviews.length === 0
+  // Empty-state must match what's actually rendered below: only `unresolved`
+  // threads reach the DOM, and `reviews` is the filter+dedupe output (not
+  // `allReviews`). If a PR has only resolved threads and only COMMENTED
+  // reviews, `allThreads.length` would be >0 but the section renders zero
+  // rows — the old guard let that case fall through as "not empty" and
+  // surfaced `0 open` with no content.
+  const empty = unresolved.length === 0 && reviews.length === 0
 
   const [replyError, setReplyError] = useState<string | null>(null)
   const [replySending, setReplySending] = useState(false)

@@ -68,9 +68,12 @@ export default function LiveActivityFooter({ sessionId }: Props) {
     return () => clearInterval(id)
   }, [])
 
-  // On pause: capture the current event list. On resume: drop the snapshot.
+  // On pause: capture a FROZEN COPY of the current event list. On resume:
+  // drop the snapshot. Must clone the array — the hooksStore.ingest reducer
+  // copies-on-write today, but a future in-place cap/trim (common for ring
+  // buffers) would mutate the same reference and the snapshot would drift.
   useEffect(() => {
-    if (paused) setPausedSnapshot(events)
+    if (paused) setPausedSnapshot([...events])
     else setPausedSnapshot(null)
     // Intentionally NOT depending on `events` — snapshot is taken once at
     // the transition, not updated while paused.

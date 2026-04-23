@@ -26,9 +26,15 @@ export default function HooksGatewaySection() {
   }
 
   const savePort = async (port: number) => {
+    // Only cycle the gateway if it was already running. Otherwise a port
+    // change with hooks disabled would silently enable them — surprising
+    // side-effect for a setting that reads as purely numeric.
+    const wasRunning = settings.hooksEnabled || status?.listening === true
     await updateSettings({ hooksPort: port })
-    await window.electronAPI.hooks.toggle(false)
-    await window.electronAPI.hooks.toggle(true)
+    if (wasRunning) {
+      await window.electronAPI.hooks.toggle(false)
+      await window.electronAPI.hooks.toggle(true)
+    }
     setEditingPort(false)
   }
 
