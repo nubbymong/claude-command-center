@@ -39,6 +39,7 @@ import GitHubPanel from './components/github/GitHubPanel'
 import OnboardingModal from './components/github/onboarding/OnboardingModal'
 import AutoDetectBanner from './components/github/AutoDetectBanner'
 import type { SessionState, SavedSession } from './types/electron'
+import { buildSessionState } from './session-persistence'
 
 // Re-export ViewType from its canonical location for backwards compatibility
 export type { ViewType } from './types/views'
@@ -236,15 +237,36 @@ export default function App() {
   // on reload, which is the intended behavior: persist failure shouldn't
   // silently suppress the modal across restarts.
   const onboardingDismissedThisSessionRef = useRef(false)
+
+  // Decides whether github onboarding is due right now. Reads persistent
+  // config state plus the session dismissal ref and component `needsCliSetup`
+  // — NOT a pure persistent-state read, but stable across React render
+  // timing in a way that `showWhatsNew` / `showTraining` are not (those flip
+  // after a 500ms postConfigInit timer).
+  const isGitHubOnboardingDue = (): boolean => {
+    if (!githubConfig) return false
+    if (onboardingDismissedThisSessionRef.current) return false
+    if (githubConfig.seenOnboardingVersion === 'permanent') return false
+    if (githubConfig.seenOnboardingVersion === __APP_VERSION__) return false
+    if (needsCliSetup) return false
+    return true
+  }
+
+  // Single source of truth for when the GitHub onboarding modal opens. The
+  // previous design also had handleWhatsNewClose / handleTrainingClose
+  // scheduling setShowGitHubOnboarding(true) via setTimeout — but this effect
+  // already re-runs when showWhatsNew/showTraining flip to false, which meant
+  // the effect opened onboarding immediately and the handler's delay was
+  // bypassed (a double setState with the first one winning). Keep the 120ms
+  // gap here in the effect so it applies uniformly regardless of which
+  // earlier modal just closed, and clean up the timer if the conditions
+  // change before it fires.
   useEffect(() => {
-    if (!githubConfig) return
-    if (onboardingDismissedThisSessionRef.current) return
-    if (githubConfig.seenOnboardingVersion === 'permanent') return
-    if (githubConfig.seenOnboardingVersion === __APP_VERSION__) return
-    // Defer to other first-launch modals (what's new, training, setup) so
-    // this doesn't stack on top of them.
-    if (showWhatsNew || showTraining || showTrainingAll || needsCliSetup) return
-    setShowGitHubOnboarding(true)
+    if (!isGitHubOnboardingDue()) return
+    if (showWhatsNew || showTraining || showTrainingAll) return
+    if (isFirstInstall() || shouldShowWhatsNew() || shouldShowTraining()) return
+    const t = setTimeout(() => setShowGitHubOnboarding(true), 120)
+    return () => clearTimeout(t)
   }, [githubConfig, showWhatsNew, showTraining, showTrainingAll, needsCliSetup])
 
   // useCallback: passed to OnboardingModal as `onClose`, which forwards it
@@ -295,41 +317,6 @@ export default function App() {
       console.log('[App] Sessions restored')
     } catch (err) {
       console.error('[App] Failed to restore sessions:', err)
-    }
-  }
-
-  // Build session state object for saving
-  const buildSessionState = (): SessionState => {
-    const state = useSessionStore.getState()
-    return {
-      sessions: state.sessions.map(s => ({
-        id: s.id,
-        configId: s.configId,
-        label: s.label,
-        workingDirectory: s.workingDirectory,
-        model: s.model,
-        color: s.color,
-        sessionType: s.sessionType,
-        shellOnly: s.shellOnly,
-        partnerTerminalPath: s.partnerTerminalPath,
-        partnerElevated: s.partnerElevated,
-        sshConfig: s.sshConfig ? {
-          host: s.sshConfig.host,
-          port: s.sshConfig.port,
-          username: s.sshConfig.username,
-          remotePath: s.sshConfig.remotePath,
-          hasPassword: s.sshConfig.hasPassword,
-          postCommand: s.sshConfig.postCommand,
-          hasSudoPassword: s.sshConfig.hasSudoPassword,
-          startClaudeAfter: s.sshConfig.startClaudeAfter,
-          dockerContainer: s.sshConfig.dockerContainer,
-        } : undefined,
-        legacyVersion: s.legacyVersion,
-        agentIds: s.agentIds,
-        githubIntegration: s.githubIntegration,
-      })),
-      activeSessionId: state.activeSessionId,
-      savedAt: Date.now(),
     }
   }
 
@@ -589,9 +576,20 @@ export default function App() {
   const handleWhatsNewClose = () => {
     markWhatsNewSeen()
     setShowWhatsNew(false)
+    // Training is opened directly here because it's not managed by the
+    // onboarding effect. Onboarding is handled by the useEffect above,
+    // which re-runs when showWhatsNew flips to false and applies its own
+    // 120ms delay so the cross-fade stays smooth.
     if (shouldShowTraining()) {
-      setTimeout(() => setShowTraining(true), 300)
+      setTimeout(() => setShowTraining(true), 120)
     }
+  }
+
+  const handleTrainingClose = () => {
+    setShowTraining(false)
+    setShowTrainingAll(false)
+    // Onboarding is handled by the useEffect above; no need to schedule it
+    // here.
   }
 
   return (
@@ -692,7 +690,7 @@ export default function App() {
           }} />
           <main className="flex-1 flex flex-col overflow-hidden titlebar-no-drag">
             {showTraining ? (
-              <TrainingWalkthrough onClose={() => { setShowTraining(false); setShowTrainingAll(false) }} showAll={showTrainingAll} />
+              <TrainingWalkthrough onClose={handleTrainingClose} showAll={showTrainingAll} />
             ) : showGuidedConfig ? (
               <GuidedConfigView
                 onSkip={() => setShowGuidedConfig(false)}

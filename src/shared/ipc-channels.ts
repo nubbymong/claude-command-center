@@ -221,6 +221,15 @@ export const IPC = {
   GITHUB_REVIEW_REPLY: 'github:review:reply',
   GITHUB_NOTIF_MARK_READ: 'github:notif:markRead',
   GITHUB_NOTIFICATIONS_UPDATE: 'github:notifications:update',
+
+  // Hooks gateway
+  HOOKS_TOGGLE: 'hooks:toggle',
+  HOOKS_GET_BUFFER: 'hooks:getBuffer',
+  HOOKS_GET_STATUS: 'hooks:getStatus',
+  HOOKS_EVENT: 'hooks:event',
+  HOOKS_SESSION_ENDED: 'hooks:sessionEnded',
+  HOOKS_DROPPED: 'hooks:dropped',
+  HOOKS_STATUS: 'hooks:status',
 } as const
 
 /** Helper to build per-session PTY data channels */

@@ -1,4 +1,3 @@
-import { useEffect } from 'react'
 import type { Capability, GitHubFeatureKey } from '../../../../shared/github-types'
 import { useGitHubStore } from '../../../stores/githubStore'
 
@@ -64,25 +63,13 @@ export default function FeatureTogglesList() {
     for (const p of profiles) for (const c of p.capabilities) availableCaps.add(c)
   }
 
-  // Reconcile persisted toggles with current capability availability. When a
-  // feature's required capability goes away (profile removed, scopes narrowed),
-  // force the stored toggle false so config, UI, and PermissionsSummary agree.
-  // Runs as an effect so the reconciled value actually persists — not just a
-  // render-time mask that would re-diverge on the next reload.
-  useEffect(() => {
-    if (!config) return
-    const fixed: Record<string, boolean> = { ...config.featureToggles }
-    let changed = false
-    for (const f of FEATURES) {
-      const unavailable = f.requiredCapabilities.some((c) => !availableCaps.has(c))
-      if (unavailable && fixed[f.key]) {
-        fixed[f.key] = false
-        changed = true
-      }
-    }
-    if (changed) void updateConfig({ featureToggles: fixed as typeof config.featureToggles })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [config?.featureToggles, profiles])
+  // Capability availability is a RENDER-TIME MASK — never persisted. An earlier
+  // iteration reconciled into config on every render whose caps were missing,
+  // but that ran during first-launch (before the user signs in) and silently
+  // flipped every default-on feature to false. After sign-in the config kept
+  // them false even though the auth now supplied the required capabilities, so
+  // the user saw nothing tick back on. The config always stores user intent;
+  // the UI just dims the checkbox when the required scope isn't connected.
 
   if (!config) return null
 
@@ -92,7 +79,7 @@ export default function FeatureTogglesList() {
       <div className="space-y-2">
         {FEATURES.map((f) => {
           const unavailable = f.requiredCapabilities.some((c) => !availableCaps.has(c))
-          const enabled = !unavailable && !!config.featureToggles[f.key]
+          const checked = !!config.featureToggles[f.key]
           return (
             <div
               key={f.key}
@@ -103,7 +90,7 @@ export default function FeatureTogglesList() {
               <input
                 type="checkbox"
                 disabled={unavailable}
-                checked={enabled}
+                checked={checked}
                 onChange={(e) => {
                   if (unavailable) return
                   void updateConfig({

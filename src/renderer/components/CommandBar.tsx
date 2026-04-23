@@ -7,6 +7,13 @@ import StoryboardButton from './StoryboardButton'
 import ToolbarPopup from './ToolbarPopup'
 import { generateId } from '../utils/id'
 import { trackUsage } from '../stores/tipsStore'
+import {
+  MODELS,
+  EFFORTS,
+  PERMISSION_MODES,
+  shortModelName as resolveModelName,
+  isModelActive,
+} from '../lib/claude-cli-options'
 
 interface Props {
   sessionId: string
@@ -33,57 +40,31 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
   const [sectionInput, setSectionInput] = useState<{ x: number; y: number; editSection?: CommandSection; rowTarget?: 'claude' | 'partner' } | null>(null)
 
   // --- Model/Effort/Mode pickers ---
+  // Effort and permission mode are NOT present in Claude Code's statusline
+  // JSON schema (code.claude.com/docs/en/statusline), so there's no authoritative
+  // way to display the current value. We track the last-clicked value in memory
+  // only — used for the dropdown checkmark, never shown as an always-visible
+  // label. Reloading the app or changing via terminal clears the checkmark.
   const [openPicker, setOpenPicker] = useState<'model' | 'mode' | null>(null)
-  const [currentEffort, setCurrentEffort] = useState<string>('medium')
-  const [currentMode, setCurrentMode] = useState<string>('acceptEdits')
+  const [lastEffort, setLastEffort] = useState<string | null>(null)
+  const [lastMode, setLastMode] = useState<string | null>(null)
   const activeSession = useSessionStore((s) => s.sessions.find((sess) => sess.id === sessionId))
 
-  const MODELS = [
-    { label: 'Opus 4.6 1M', value: 'opus' },
-    { label: 'Sonnet 4.6', value: 'sonnet' },
-    { label: 'Haiku 4.5', value: 'haiku' },
-  ]
-  const EFFORTS = [
-    { label: 'Low', value: 'low' },
-    { label: 'Medium', value: 'medium' },
-    { label: 'High', value: 'high' },
-    { label: 'Max', value: 'max' },
-  ]
-  const PERMISSION_MODES = [
-    { label: 'Ask permissions', value: 'default', hint: 'Claude asks before most actions' },
-    { label: 'Accept edits', value: 'acceptEdits', hint: 'Auto-accept file edits, ask for others' },
-    { label: 'Auto', value: 'auto', hint: 'Auto-accept most actions' },
-    { label: 'Plan mode', value: 'plan', hint: 'Read-only, no file edits' },
-    { label: "Don't ask", value: 'dontAsk', hint: 'Accept everything without asking' },
-  ]
-  const MODE_LABELS: Record<string, string> = {
-    default: 'Ask', acceptEdits: 'Accept edits', auto: 'Auto',
-    plan: 'Plan', dontAsk: "Don't ask",
-  }
-
-  const shortModelName = (fullName?: string): string => {
-    // Try statusline modelName first, then fall back to session config model
-    const name = fullName || activeSession?.model
-    if (!name) return 'default'
-    const lower = name.toLowerCase()
-    if (lower.includes('opus')) return 'Opus 4.6 1M'
-    if (lower.includes('sonnet')) return 'Sonnet 4.6'
-    if (lower.includes('haiku')) return 'Haiku 4.5'
-    return name.replace('claude-', '').replace(/-/g, ' ')
-  }
+  const shortModelName = (fullName?: string): string =>
+    resolveModelName(fullName || activeSession?.model)
 
   const handleModelSelect = useCallback((si: number, value: string) => {
     if (si === 0) {
       window.electronAPI.pty.write(sessionId, `/model ${value}\n`)
     } else {
-      setCurrentEffort(value)
+      setLastEffort(value)
       window.electronAPI.pty.write(sessionId, `/effort ${value}\n`)
     }
     setOpenPicker(null)
   }, [sessionId])
 
   const handleModeSelect = useCallback((_si: number, value: string) => {
-    setCurrentMode(value)
+    setLastMode(value)
     window.electronAPI.pty.write(sessionId, `/permission-mode ${value}\n`)
     setOpenPicker(null)
   }, [sessionId])
@@ -343,11 +324,17 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
         && (!s.target || s.target === rowTarget)
     )
 
-    // Group by sectionId
-    const unsectioned = cmds.filter((c) => !c.sectionId)
+    // Orphan commands — those whose sectionId points to a section not visible
+    // on the current config — fall through to the unsectioned row. Without
+    // this, a global command parked inside a config-scoped section would
+    // render only on that config, breaking the "global applies to all" promise.
+    const visibleSectionIds = new Set(visibleSections.map((s) => s.id))
+    const unsectioned = cmds.filter(
+      (c) => !c.sectionId || !visibleSectionIds.has(c.sectionId),
+    )
     const bySectionId = new Map<string, CustomCommand[]>()
     for (const cmd of cmds) {
-      if (cmd.sectionId) {
+      if (cmd.sectionId && visibleSectionIds.has(cmd.sectionId)) {
         const list = bySectionId.get(cmd.sectionId) || []
         list.push(cmd)
         bySectionId.set(cmd.sectionId, list)
@@ -478,7 +465,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
             onClick={() => setOpenPicker(openPicker === 'mode' ? null : 'mode')}
             className="flex items-center gap-1 px-2 py-0.5 text-xs text-subtext0 hover:text-text rounded bg-surface0/50 hover:bg-surface0 border border-surface1/40 hover:border-surface1 transition-colors shrink-0 cursor-pointer"
           >
-            {MODE_LABELS[currentMode] || currentMode}
+            Mode
             <svg width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.4" className="opacity-50">
               <path d="M2.5 4l2.5 2.5L7.5 4" />
             </svg>
@@ -488,7 +475,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
               sections={[{
                 title: 'Mode',
                 shortcut: 'Shift+Ctrl+M',
-                items: PERMISSION_MODES.map((m) => ({ ...m, active: m.value === currentMode })),
+                items: PERMISSION_MODES.map((m) => ({ ...m, active: m.value === lastMode })),
               }]}
               onSelect={handleModeSelect}
               onClose={() => setOpenPicker(null)}
@@ -505,8 +492,6 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
             className="flex items-center gap-1 px-2 py-0.5 text-xs text-subtext0 hover:text-text rounded bg-surface0/50 hover:bg-surface0 border border-surface1/40 hover:border-surface1 transition-colors shrink-0 cursor-pointer"
           >
             <span className="text-blue">{shortModelName(activeSession?.modelName)}</span>
-            <span className="text-overlay0">{String.fromCodePoint(0x00B7)}</span>
-            <span>{currentEffort.charAt(0).toUpperCase() + currentEffort.slice(1)}</span>
             <svg width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.4" className="opacity-50">
               <path d="M2.5 4l2.5 2.5L7.5 4" />
             </svg>
@@ -520,15 +505,16 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
                   shortcut: 'Shift+Ctrl+I',
                   items: MODELS.map((m) => ({
                     ...m,
-                    active: (activeSession?.modelName || activeSession?.model || '')
-                      .toLowerCase()
-                      .includes(m.value),
+                    active: isModelActive(
+                      m.value,
+                      activeSession?.modelName || activeSession?.model || '',
+                    ),
                   })),
                 },
                 {
                   title: 'Effort',
                   shortcut: 'Shift+Ctrl+E',
-                  items: EFFORTS.map((e) => ({ ...e, active: e.value === currentEffort })),
+                  items: EFFORTS.map((e) => ({ ...e, active: e.value === lastEffort })),
                 },
               ]}
               onSelect={handleModelSelect}

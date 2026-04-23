@@ -286,8 +286,17 @@ async function main() {
   })
 }
 
+// Forwarded args come via this script's own argv — pty-manager passes
+// things like `--settings <path>` in when the hooks gateway is active.
+// They're appended after `--resume <id>` so the resume verb stays first.
+function getForwardedArgs() {
+  // node resume-picker.js [ --settings <path> ] [ other flags ... ]
+  return process.argv.slice(2)
+}
+
 function launchClaude(resumeId) {
-  const args = resumeId ? ['--resume', resumeId] : []
+  const forwarded = getForwardedArgs()
+  const args = resumeId ? ['--resume', resumeId, ...forwarded] : [...forwarded]
 
   // Resolve claude command — try native .exe first, then npm .cmd
   let cmd = 'claude'
@@ -310,8 +319,8 @@ function launchClaude(resumeId) {
 
   // If resume failed (conversation no longer exists), fall back to fresh session
   if (resumeId && result.status !== 0) {
-    console.log('\n  Conversation no longer available — starting fresh session...\n')
-    const fresh = spawnSync(cmd, [], {
+    console.log('\n  Conversation no longer available - starting fresh session...\n')
+    const fresh = spawnSync(cmd, forwarded, {
       stdio: 'inherit',
       shell: os.platform() === 'win32',
       windowsHide: false

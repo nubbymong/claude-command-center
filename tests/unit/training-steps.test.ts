@@ -8,8 +8,8 @@ import {
 
 describe('training-steps', () => {
   describe('trainingSteps array', () => {
-    it('has exactly 8 steps', () => {
-      expect(trainingSteps).toHaveLength(8)
+    it('has exactly 7 steps', () => {
+      expect(trainingSteps).toHaveLength(7)
     })
 
     it('every step has required fields', () => {

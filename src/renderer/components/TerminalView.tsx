@@ -93,9 +93,15 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         return
       }
 
+      // For Claude Code sessions we hide the cursor (Claude renders its own
+      // input bar), so paint the cursor layer in the same background colour.
+      // Deriving from THEME.background keeps this in lockstep if the palette
+      // ever changes again — the old literal (#0f1218) went stale when the
+      // theme moved to #1a1a1a and made the cursor effectively invisible
+      // against the old tone.
       const termTheme = shellOnly
         ? THEME
-        : { ...THEME, cursor: '#0f1218', cursorAccent: '#0f1218' }
+        : { ...THEME, cursor: THEME.background, cursorAccent: THEME.background }
 
       const ts = useSettingsStore.getState().settings.terminal || DEFAULT_TERMINAL_SETTINGS
       const fontFallbacks = "'Cascadia Code', 'Fira Code', 'JetBrains Mono', Consolas, monospace"
@@ -170,8 +176,12 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         requestAnimationFrame(fitAndSpawn)
       })
 
-      // Forward xterm keyboard input to PTY
+      // Forward xterm keyboard input to PTY. User typing also resets the
+      // attention-acked flag — we treat keystrokes as "user is kicking off
+      // new work", so when Claude next hits a prompt we should re-surface
+      // it if they've tabbed away by then.
       term.onData((data) => {
+        attentionAckedRef.current = false
         window.electronAPI.pty.write(sessionId, data)
       })
 
@@ -225,11 +235,15 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
             contextBuffer = ''
           }
 
-          // Attention detection
-          const visibleText = stripped.replace(/\s+/g, '')
-          if (visibleText.length > 2) {
-            attentionAckedRef.current = false
-          }
+          // Attention detection. Ack is reset by user keystrokes (above)
+          // — NOT by output. Previously any burst with >2 visible chars
+          // reset ack, which meant Claude Code's spinner animation
+          // (`✢ Mulling…` frames) kept wiping the ack while the user was
+          // on a different tab, so the pulsing came back every time they
+          // left even though nothing had actually changed. Tying the
+          // reset to user input instead matches the user's mental model:
+          // "I've seen this prompt; don't tell me again until I've
+          // started a new task."
           if (attentionTimerRef.current) clearTimeout(attentionTimerRef.current)
           const promptPattern = /[❯$#>]\s*$|\(y\/n\)\s*$|\?\s*$|Do you want|Yes\/No|Accept\?|approve/i
           if (promptPattern.test(stripped.trim()) && !attentionAckedRef.current) {
