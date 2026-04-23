@@ -3,8 +3,20 @@ import type { HookEvent, HookEventKind } from '../../shared/hook-types'
 
 const MAX_PER_SESSION = 200
 
+/**
+ * Renderer-only wrapper on top of HookEvent that carries a monotonic
+ * sequence number assigned at ingest time. Needed as a stable React key
+ * in list views: two events can arrive in the same millisecond with the
+ * same kind+tool under bursty hook streams, so `ts + event + toolName`
+ * is not guaranteed unique. __seq is monotonic across all sessions and
+ * never changes once assigned.
+ */
+export type StoredHookEvent = HookEvent & { __seq: number }
+
+let nextSeq = 1
+
 interface State {
-  eventsBySession: Map<string, HookEvent[]>
+  eventsBySession: Map<string, StoredHookEvent[]>
   droppedBySession: Map<string, boolean>
   paused: boolean
   filter: Set<HookEventKind> | null
@@ -26,7 +38,7 @@ export const useHooksStore = create<State>((set) => ({
     set((s) => {
       const next = new Map(s.eventsBySession)
       const list = next.get(e.sessionId) ?? []
-      const appended = [...list, e]
+      const appended: StoredHookEvent[] = [...list, { ...e, __seq: nextSeq++ }]
       if (appended.length > MAX_PER_SESSION) {
         appended.splice(0, appended.length - MAX_PER_SESSION)
       }
@@ -38,7 +50,9 @@ export const useHooksStore = create<State>((set) => ({
   rehydrate: (sid, events) => {
     set((s) => {
       const next = new Map(s.eventsBySession)
-      next.set(sid, events.slice(-MAX_PER_SESSION))
+      // Attach seq to rehydrated events too so list keys stay stable.
+      const tagged: StoredHookEvent[] = events.map((e) => ({ ...e, __seq: nextSeq++ }))
+      next.set(sid, tagged.slice(-MAX_PER_SESSION))
       return { eventsBySession: next }
     })
   },

@@ -241,16 +241,20 @@ function generateRemoteSetupScript(
     `try{fs.mkdirSync(claudeDir,{recursive:true})}catch{}`,
     `const shimPath=path.join(claudeDir,'conductor-ssh-statusline.js')`,
     `try{fs.writeFileSync(shimPath,${shimLiteral},{mode:0o755})}catch{}`,
-    // Per-session settings — owns statusLine with this session's id baked in,
-    // mcpServers (conductor-vision) when enabled, and hooks when the gateway
-    // is running.
+    // Read the user's shared settings FIRST so the per-session file can
+    // inherit every top-level key (outputStyle, permissions, future
+    // additions). The three CCC-owned keys (statusLine, mcpServers, hooks)
+    // then override whatever the shared file had. This makes the local
+    // and SSH behaviour identical under `--settings` regardless of
+    // whether Claude Code treats that flag as MERGE or REPLACE.
+    `const sp=path.join(claudeDir,'settings.json')`,
+    `let s={};try{s=JSON.parse(fs.readFileSync(sp,'utf-8'))}catch{}`,
+    // Per-session settings — clone of shared with CCC keys overridden.
     `const sesPath=path.join(claudeDir,'settings-${safeSid}.json')`,
-    `const sesCfg={${sesCfgParts.join(',')}}`,
+    `const sesCfg=Object.assign({},s,{${sesCfgParts.join(',')}})`,
     `try{fs.writeFileSync(sesPath,JSON.stringify(sesCfg,null,2))}catch{}`,
     // Shared settings — owns MCP vision only. Strip any legacy statusLine
     // stanza a prior install wrote; it would override the per-session file.
-    `const sp=path.join(claudeDir,'settings.json')`,
-    `let s={};try{s=JSON.parse(fs.readFileSync(sp,'utf-8'))}catch{}`,
     `if(s.statusLine&&typeof s.statusLine.command==='string'&&s.statusLine.command.includes('conductor-ssh-statusline'))delete s.statusLine`,
     hasVision
       ? `if(!s.mcpServers)s.mcpServers={};s.mcpServers['conductor-vision']={url:'http://localhost:${mcpPort}/sse'}`

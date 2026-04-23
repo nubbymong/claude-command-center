@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useHooksStore } from '../../../stores/hooksStore'
+import { useHooksStore, type StoredHookEvent } from '../../../stores/hooksStore'
 import type { HookEvent, HookEventKind } from '../../../../shared/hook-types'
 
 interface Props { sessionId: string }
 
-const EMPTY: HookEvent[] = []
+const EMPTY: StoredHookEvent[] = []
 
 const KIND_LABEL: Record<HookEventKind, string> = {
   PreToolUse: 'Tool',
@@ -47,14 +47,21 @@ export default function LiveActivityFooter({ sessionId }: Props) {
   // the UI renders from this snapshot; the store keeps accumulating so
   // resuming reveals everything that arrived in the interim (per spec
   // §Expanded state). `null` means "not paused / use live events".
-  const [pausedSnapshot, setPausedSnapshot] = useState<HookEvent[] | null>(null)
+  const [pausedSnapshot, setPausedSnapshot] = useState<StoredHookEvent[] | null>(null)
 
   useEffect(() => {
     let cancelled = false
-    window.electronAPI.hooks.getBuffer(sessionId).then((buf: HookEvent[]) => {
-      if (cancelled) return
-      useHooksStore.getState().rehydrate(sessionId, buf)
-    })
+    window.electronAPI.hooks
+      .getBuffer(sessionId)
+      .then((buf: HookEvent[]) => {
+        if (cancelled) return
+        useHooksStore.getState().rehydrate(sessionId, buf)
+      })
+      .catch(() => {
+        // IPC can reject during renderer/app teardown (channel gone, window
+        // destroyed). The footer's rehydration isn't critical — new events
+        // still arrive via the HOOKS_EVENT listener — so fail silently.
+      })
     return () => { cancelled = true }
   }, [sessionId])
 
@@ -132,7 +139,7 @@ export default function LiveActivityFooter({ sessionId }: Props) {
 }
 
 interface ExpandedProps {
-  events: HookEvent[]
+  events: StoredHookEvent[]
   dropped: boolean
   paused: boolean
   setPaused: (p: boolean) => void
@@ -198,7 +205,7 @@ function ExpandedList({ events, dropped, paused, setPaused, filter, setFilter }:
 
       <ul className="space-y-0.5 font-mono text-[11px]">
         {visibleSlice.map((e) => (
-          <li key={`${e.ts}-${e.event}-${e.toolName ?? ''}`} className="flex gap-2 items-baseline">
+          <li key={e.__seq} className="flex gap-2 items-baseline">
             <span className="text-overlay0 tabular-nums">{formatClock(e.ts)}</span>
             <span className={`${KIND_COLOR[e.event as HookEventKind] ?? 'text-overlay1'} w-14`}>
               {KIND_LABEL[e.event as HookEventKind] ?? e.event}

@@ -13,14 +13,15 @@ export function getLocalSessionSettingsPath(sessionId: string): string {
 }
 
 /**
- * Seed a local-session settings file with the user's statusLine and
- * mcpServers entries copied from the shared ~/.claude/settings.json.
- *
- * Claude Code's `--settings` flag OVERRIDES user settings entirely, so
- * any config we want Claude to see (statusline, MCP vision, hooks) must
- * be present in the per-session file. Hooks get layered on afterwards by
- * `injectHooks` — this function only handles the statusline + MCP copy
- * so the hooks injection can reuse the same read-merge-write path.
+ * Seed a local-session settings file as a full clone of the user's
+ * ~/.claude/settings.json. Claude Code's `--settings` flag may either
+ * REPLACE user settings entirely or MERGE onto them — both assumptions
+ * live in the tree's comments and Claude Code docs are ambiguous. Copying
+ * every top-level key (not just the three CCC cares about) is safe under
+ * both semantics: user-owned fields like `outputStyle`, `permissions`, or
+ * future additions survive. The caller (pty-manager) overlays the fields
+ * CCC must own (hooks via injectHooks, plus statusLine/mcpServers which
+ * are already correct in the clone).
  */
 export function writeLocalSessionSettings(sessionId: string): string {
   const claudeDir = path.join(os.homedir(), '.claude')
@@ -42,9 +43,10 @@ export function writeLocalSessionSettings(sessionId: string): string {
     /* shared settings may not exist yet (fresh install) — start empty */
   }
 
-  const sesCfg: Record<string, unknown> = {}
-  if (shared.statusLine) sesCfg.statusLine = shared.statusLine
-  if (shared.mcpServers) sesCfg.mcpServers = shared.mcpServers
+  // Clone every top-level key from shared. injectHooks will overlay the
+  // `hooks` key afterwards. `statusLine` and `mcpServers` are already
+  // copied verbatim, so the user's existing config is preserved exactly.
+  const sesCfg: Record<string, unknown> = { ...shared }
 
   const sesPath = getLocalSessionSettingsPath(sessionId)
   // Atomic write — tmp + rename so a crash mid-write can't leave the
