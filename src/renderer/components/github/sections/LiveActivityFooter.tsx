@@ -43,6 +43,11 @@ export default function LiveActivityFooter({ sessionId }: Props) {
   const [pulseKey, setPulseKey] = useState(0)
   const lastLenRef = useRef(events.length)
   const [now, setNow] = useState(Date.now())
+  // Snapshot of events frozen at the moment the user hit Pause. When paused,
+  // the UI renders from this snapshot; the store keeps accumulating so
+  // resuming reveals everything that arrived in the interim (per spec
+  // §Expanded state). `null` means "not paused / use live events".
+  const [pausedSnapshot, setPausedSnapshot] = useState<HookEvent[] | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -63,10 +68,20 @@ export default function LiveActivityFooter({ sessionId }: Props) {
     return () => clearInterval(id)
   }, [])
 
+  // On pause: capture the current event list. On resume: drop the snapshot.
+  useEffect(() => {
+    if (paused) setPausedSnapshot(events)
+    else setPausedSnapshot(null)
+    // Intentionally NOT depending on `events` — snapshot is taken once at
+    // the transition, not updated while paused.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paused])
+
+  const source = pausedSnapshot ?? events
   const visible = useMemo(() => {
-    if (!filter) return events
-    return events.filter((e) => filter.has(e.event as HookEventKind))
-  }, [events, filter])
+    if (!filter) return source
+    return source.filter((e) => filter.has(e.event as HookEventKind))
+  }, [source, filter])
 
   const latest = events[events.length - 1]
   const agoLabel = latest ? relativeTime(now - latest.ts) : '-'

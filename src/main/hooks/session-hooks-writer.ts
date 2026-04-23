@@ -78,12 +78,28 @@ function readJsonSafe(file: string): Record<string, unknown> {
   }
 }
 
-// NOT atomic on win32. fs.renameSync fails with EPERM/EEXIST when the
-// destination is held open by another process. Claude Code only re-reads
-// settings on /reload, so a partial read during rewrite is vanishingly
-// unlikely — direct writeFileSync is the right tradeoff here.
+// Write via a per-pid temp file + rename so a crash mid-write cannot leave
+// the settings file truncated (which Claude Code would then fail to parse
+// on /reload). renameSync within the same directory is atomic on every
+// platform Node supports, and the destination-held-open EPERM the prior
+// comment warned about was a theoretical concern from the SSH setup script
+// — in practice Claude Code only opens settings to read, releases the
+// handle, and uses /reload to refresh, so rename-over a just-released
+// handle is safe. Using a `.tmp.<pid>` suffix keeps concurrent callers
+// (different Electron processes in dev) from colliding on the tmp path.
 function writeJson(file: string, data: unknown): void {
   const dir = path.dirname(file)
   fs.mkdirSync(dir, { recursive: true })
-  fs.writeFileSync(file, JSON.stringify(data, null, 2))
+  const tmp = `${file}.tmp.${process.pid}`
+  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf-8')
+  try {
+    fs.renameSync(tmp, file)
+  } catch (err) {
+    // Best-effort cleanup; fall back to direct write so caller isn't
+    // blocked by a Windows rename quirk. This matches the prior
+    // behaviour; only the success path gets the atomicity upgrade.
+    try { fs.unlinkSync(tmp) } catch { /* ignore */ }
+    fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf-8')
+    void err
+  }
 }

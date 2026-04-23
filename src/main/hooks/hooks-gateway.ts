@@ -75,10 +75,16 @@ export class HooksGateway {
       this.overflowLatched.clear()
       return
     }
+    // Flip `enabled` SYNCHRONOUSLY before awaiting socket close so any
+    // in-flight request that makes it through the loopback check inside
+    // _handleRequestForTest short-circuits at the `!this._status.enabled`
+    // guard and returns 503. Without this, a request landing during the
+    // `server.close()` await window would still pass the enabled gate and
+    // hit secret validation against the cleared secrets map.
+    this._status = { enabled: false, listening: false, port: null }
     const s = this.server
     this.server = null
     await new Promise<void>((resolve) => s.close(() => resolve()))
-    this._status = { enabled: false, listening: false, port: null }
     // Clear ALL per-session state so a subsequent start() (e.g. via the
     // port-change restart) doesn't carry stale buffers/latches from the
     // previous run.

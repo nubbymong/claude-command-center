@@ -10,10 +10,9 @@ import { isGlobalVisionRunning, getGlobalVisionConfig, getConductorMcpPort } fro
 import { resolveVersionBinary } from './legacy-version-manager'
 import { dispatchSSHStatuslineUpdate } from './statusline-watcher'
 import { getGateway } from './hooks'
-import { injectHooks, removeHooks, buildHooksBlock } from './hooks/session-hooks-writer'
+import { injectHooks, buildHooksBlock } from './hooks/session-hooks-writer'
 import {
   writeLocalSessionSettings,
-  getLocalSessionSettingsPath,
   removeLocalSessionSettings,
 } from './hooks/per-session-settings'
 
@@ -643,14 +642,16 @@ export function spawnPty(
 
       // When useResumePicker is true, run the resume-picker script instead of Claude directly.
       // The picker shows prior conversations and launches Claude with --resume or plain.
+      // Any claude flags we've already built up (notably --settings for hooks) must be
+      // forwarded through the picker so the child claude process sees them too.
       let escapedCmd: string
       if (options?.useResumePicker) {
         const pickerScript = getResumePickerPath()
         if (pickerScript && os.platform() === 'win32') {
           const escapedScript = pickerScript.replace(/'/g, "''")
-          escapedCmd = `Set-Location '${escapedCwd}'; node '${escapedScript}'; exit`
+          escapedCmd = `Set-Location '${escapedCwd}'; node '${escapedScript}'${extraFlags}; exit`
         } else if (pickerScript) {
-          escapedCmd = `cd '${escapedCwd.replace(/'/g, "'\\''")}' && node '${pickerScript.replace(/'/g, "'\\''")}'; exit`
+          escapedCmd = `cd '${escapedCwd.replace(/'/g, "'\\''")}' && node '${pickerScript.replace(/'/g, "'\\''")}'${extraFlags}; exit`
         } else {
           // Fallback: no picker script found, launch Claude directly
           escapedCmd = os.platform() === 'win32'
@@ -712,9 +713,6 @@ export function spawnPty(
       if (gwExit) gwExit.unregisterSession(sessionId)
     } catch { /* gateway may have already stopped during shutdown */ }
     removeLocalSessionSettings(sessionId)
-    try {
-      removeHooks({ settingsPath: getLocalSessionSettingsPath(sessionId) })
-    } catch { /* path may not exist — removeHooks is a no-op in that case */ }
 
     if (win.isDestroyed()) {
       logDebug(`[pty] Window already destroyed, skipping exit notification for ${sessionId}`)

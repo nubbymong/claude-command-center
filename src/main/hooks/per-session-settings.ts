@@ -47,7 +47,17 @@ export function writeLocalSessionSettings(sessionId: string): string {
   if (shared.mcpServers) sesCfg.mcpServers = shared.mcpServers
 
   const sesPath = getLocalSessionSettingsPath(sessionId)
-  fs.writeFileSync(sesPath, JSON.stringify(sesCfg, null, 2), 'utf-8')
+  // Atomic write — tmp + rename so a crash mid-write can't leave the
+  // per-session file truncated. Claude Code re-reads settings on /reload,
+  // so rename-over-just-released-handle is fine in practice.
+  const tmp = `${sesPath}.tmp.${process.pid}`
+  fs.writeFileSync(tmp, JSON.stringify(sesCfg, null, 2), 'utf-8')
+  try {
+    fs.renameSync(tmp, sesPath)
+  } catch {
+    try { fs.unlinkSync(tmp) } catch { /* ignore */ }
+    fs.writeFileSync(sesPath, JSON.stringify(sesCfg, null, 2), 'utf-8')
+  }
   return sesPath
 }
 
