@@ -24,7 +24,20 @@ function runColor(r: WorkflowRunSnapshot): string {
 
 export default function CISection({ sessionId, slug }: Props) {
   const data = useGitHubStore((s) => (slug ? s.repoData[slug] : undefined))
-  const runs = data?.actions ?? []
+  const allRuns = data?.actions ?? []
+  // Dedupe by workflow name — keep the FIRST run per workflow since the list
+  // arrives in reverse-chronological order, so the first occurrence is the
+  // latest attempt. Without this, a repo with one workflow (.github/workflows/
+  // ci.yml → "CI") shows ten identical "CI" rows because every push creates
+  // a new run. Users want to see "is CI currently passing?" not "how many
+  // times has CI run this week?".
+  const seen = new Set<string>()
+  const runs: WorkflowRunSnapshot[] = []
+  for (const r of allRuns) {
+    if (seen.has(r.workflowName)) continue
+    seen.add(r.workflowName)
+    runs.push(r)
+  }
   const [rerunning, setRerunning] = useState<number | null>(null)
   const [rerunError, setRerunError] = useState<string | null>(null)
   const empty = runs.length === 0

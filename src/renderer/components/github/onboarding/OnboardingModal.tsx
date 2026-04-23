@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useFocusTrap } from '../../../hooks/useFocusTrap'
 
 interface Props {
@@ -31,17 +31,28 @@ export default function OnboardingModal({ onClose, onSetup }: Props) {
   const dialogRef = useRef<HTMLDivElement | null>(null)
   const [imgFailed, setImgFailed] = useState(false)
   const imgSrc = resolveImage('github-panel.jpg')
+  // Matches the WhatsNewModal fade-in pattern so the handoff from
+  // whats-new → onboarding reads as a smooth transition instead of a
+  // blink-and-reappear. Fade + slight scale-up over 200ms on mount.
+  const [entering, setEntering] = useState(false)
+  useEffect(() => {
+    const t = requestAnimationFrame(() => setEntering(true))
+    return () => cancelAnimationFrame(t)
+  }, [])
 
   useFocusTrap(dialogRef, true, onClose)
 
+  const backdropClass = `fixed inset-0 bg-base/80 flex items-center justify-center z-50 transition-opacity duration-200 ease-out ${entering ? 'opacity-100' : 'opacity-0'}`
+  const dialogClass = `bg-mantle p-6 rounded max-w-lg text-text shadow-lg border border-surface0 transition-all duration-200 ease-out ${entering ? 'opacity-100 scale-100 translate-y-0' : 'opacity-0 scale-95 translate-y-2'}`
+
   return (
-    <div className="fixed inset-0 bg-base/80 flex items-center justify-center z-50">
+    <div className={backdropClass}>
       <div
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="github-onboarding-title"
-        className="bg-mantle p-6 rounded max-w-lg text-text shadow-lg border border-surface0"
+        className={dialogClass}
       >
         <h3 id="github-onboarding-title" className="text-lg font-semibold mb-3">
           New: GitHub sidebar

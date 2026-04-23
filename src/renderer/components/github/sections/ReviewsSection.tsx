@@ -10,13 +10,43 @@ interface Props {
 
 export default function ReviewsSection({ sessionId, slug }: Props) {
   const data = useGitHubStore((s) => (slug ? s.repoData[slug] : undefined))
-  const reviews = data?.reviews ?? []
+  const allReviews = data?.reviews ?? []
   const [replyingTo, setReplyingTo] = useState<string | null>(null)
   const [replyText, setReplyText] = useState('')
 
-  const allThreads = reviews.flatMap((r) => r.threads)
+  const allThreads = allReviews.flatMap((r) => r.threads)
   const unresolved = allThreads.filter((t) => !t.resolved)
-  const empty = allThreads.length === 0 && reviews.length === 0
+
+  // Filter the top-level review list. A PR with 15 Copilot auto-review passes
+  // would otherwise show 15 "@copilot-pull-request-reviewer[bot] commented"
+  // rows with no body, which is pure noise. Rules:
+  //   • Drop reviews whose state is COMMENTED unless they have at least one
+  //     UNRESOLVED threaded comment — pure "I looked and left a top-level
+  //     note" reviews and already-resolved-threads reviews carry no
+  //     actionable signal today.
+  //   • Dedupe by reviewer, keeping the LATEST review only (list arrives in
+  //     chronological order, so the last occurrence wins). This surfaces the
+  //     reviewer's current verdict, not their entire history. delete-then-set
+  //     is needed because Map.set() on an existing key does NOT move the key
+  //     to the end of iteration order — so without the delete, the reviewer
+  //     would stay positioned at their earliest review.
+  const actionable = allReviews.filter(
+    (r) => r.state !== 'COMMENTED' || r.threads.some((t) => !t.resolved),
+  )
+  const latestByReviewer = new Map<string, typeof actionable[number]>()
+  for (const r of actionable) {
+    if (latestByReviewer.has(r.reviewer)) latestByReviewer.delete(r.reviewer)
+    latestByReviewer.set(r.reviewer, r)
+  }
+  const reviews = Array.from(latestByReviewer.values())
+
+  // Empty-state must match what's actually rendered below: only `unresolved`
+  // threads reach the DOM, and `reviews` is the filter+dedupe output (not
+  // `allReviews`). If a PR has only resolved threads and only COMMENTED
+  // reviews, `allThreads.length` would be >0 but the section renders zero
+  // rows — the old guard let that case fall through as "not empty" and
+  // surfaced `0 open` with no content.
+  const empty = unresolved.length === 0 && reviews.length === 0
 
   const [replyError, setReplyError] = useState<string | null>(null)
   const [replySending, setReplySending] = useState(false)

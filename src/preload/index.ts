@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC, ptyDataChannel, ptyExitChannel } from '../shared/ipc-channels'
+import type { HookEvent, HooksGatewayStatus } from '../shared/hook-types'
 
 export interface ElectronAPI {
   config: {
@@ -132,6 +133,17 @@ export interface ElectronAPI {
     openExternal: (url: string) => Promise<void>
   }
   github: GitHubBridge
+  hooks: HooksBridge
+}
+
+interface HooksBridge {
+  toggle: (enabled: boolean) => Promise<HooksGatewayStatus>
+  getBuffer: (sessionId: string) => Promise<HookEvent[]>
+  getStatus: () => Promise<HooksGatewayStatus>
+  onEvent: (cb: (e: HookEvent) => void) => () => void
+  onSessionEnded: (cb: (sid: string) => void) => () => void
+  onDropped: (cb: (p: { sessionId: string }) => void) => () => void
+  onStatus: (cb: (s: HooksGatewayStatus) => void) => () => void
 }
 
 // GitHub sidebar bridge — see Phase A-H plan. 'GitHubBridge' is declared
@@ -528,6 +540,31 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.invoke(IPC.GITHUB_REVIEW_REPLY, slug, threadId, body),
     markNotifRead: (profileId, notifId) =>
       ipcRenderer.invoke(IPC.GITHUB_NOTIF_MARK_READ, profileId, notifId),
+  },
+  hooks: {
+    toggle: (enabled) => ipcRenderer.invoke(IPC.HOOKS_TOGGLE, { enabled }),
+    getBuffer: (sessionId) => ipcRenderer.invoke(IPC.HOOKS_GET_BUFFER, { sessionId }),
+    getStatus: () => ipcRenderer.invoke(IPC.HOOKS_GET_STATUS),
+    onEvent: (cb) => {
+      const handler = (_: unknown, e: HookEvent) => cb(e)
+      ipcRenderer.on(IPC.HOOKS_EVENT, handler)
+      return () => ipcRenderer.removeListener(IPC.HOOKS_EVENT, handler)
+    },
+    onSessionEnded: (cb) => {
+      const handler = (_: unknown, sid: string) => cb(sid)
+      ipcRenderer.on(IPC.HOOKS_SESSION_ENDED, handler)
+      return () => ipcRenderer.removeListener(IPC.HOOKS_SESSION_ENDED, handler)
+    },
+    onDropped: (cb) => {
+      const handler = (_: unknown, p: { sessionId: string }) => cb(p)
+      ipcRenderer.on(IPC.HOOKS_DROPPED, handler)
+      return () => ipcRenderer.removeListener(IPC.HOOKS_DROPPED, handler)
+    },
+    onStatus: (cb) => {
+      const handler = (_: unknown, s: HooksGatewayStatus) => cb(s)
+      ipcRenderer.on(IPC.HOOKS_STATUS, handler)
+      return () => ipcRenderer.removeListener(IPC.HOOKS_STATUS, handler)
+    },
   },
 }
 

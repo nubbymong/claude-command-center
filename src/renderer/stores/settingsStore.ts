@@ -58,6 +58,8 @@ export interface AppSettings {
   updateChannel: UpdateChannel
   skipPermissionsForAgents: boolean
   showTips: boolean
+  hooksEnabled: boolean
+  hooksPort: number
 }
 
 interface SettingsState {
@@ -80,7 +82,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   localMachineName: '',
   updateChannel: 'stable' as const,
   skipPermissionsForAgents: true,
-  showTips: true
+  showTips: true,
+  hooksEnabled: true,
+  hooksPort: 19334,
 }
 
 export const useSettingsStore = create<SettingsState>((set) => ({

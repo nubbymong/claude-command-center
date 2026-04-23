@@ -127,8 +127,26 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
 
   async function getTokenForSession(sessionId: string): Promise<string | null> {
     const profileId = profileIdBySession.get(sessionId)
-    if (!profileId) return null
-    return profileStore.getToken(profileId)
+    if (profileId) {
+      const t = await profileStore.getToken(profileId)
+      if (t) return t
+      // Explicit profile is gone (removed from store) — fall through to the
+      // capability-routing path so the session keeps working instead of
+      // locking into an error state until the user manually re-picks a
+      // profile. Clear the stale binding so we don't keep trying.
+      profileIdBySession.delete(sessionId)
+    }
+    // "Auto — capability routing": pick the first available profile. The UI
+    // dropdown's default option promises this; the prior implementation just
+    // returned null, which threw 'no-token' from makeTokenFn and flipped the
+    // panel to 'error'. For now we treat any profile as usable; a future
+    // enhancement could match by the specific capability a request needs.
+    const cfg = await getCachedConfig()
+    for (const profile of Object.values(cfg?.authProfiles ?? {})) {
+      const t = await profileStore.getToken(profile.id)
+      if (t) return t
+    }
+    return null
   }
 
   // tokenFn closes over a specific sessionId — orchestrator's catch turns a
@@ -308,6 +326,43 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
     await profileStore.removeProfile(id)
     cachedConfig = undefined
     void syncNotificationsPollerToConfig()
+
+    // Clear the in-memory session → profile-id map entries that point at the
+    // removed profile. Without this, getTokenForSession looks up a now-gone
+    // id and sync stays in the 'error' state even after the user adds a
+    // replacement profile. The auto-routing fallback in getTokenForSession
+    // handles the post-clear state transparently.
+    for (const [sid, pid] of profileIdBySession) {
+      if (pid === id) profileIdBySession.delete(sid)
+    }
+
+    // Persist the same cleanup into session-state.json so a restart doesn't
+    // re-hydrate the stale binding. Scan all sessions, null any
+    // authProfileId matching the removed id, write back only if something
+    // actually changed.
+    try {
+      const sessions = await deps.loadSessions()
+      let changed = false
+      const patched = sessions.map((s) => {
+        if (s.githubIntegration?.authProfileId === id) {
+          changed = true
+          return {
+            ...s,
+            githubIntegration: { ...s.githubIntegration, authProfileId: undefined },
+          }
+        }
+        return s
+      })
+      if (changed) await deps.saveSessions(patched)
+    } catch {
+      // A loadSessions failure here shouldn't block the profile removal
+      // that already succeeded; the in-memory cleanup above is still valid
+      // and auto-routing will pick the new profile on the next sync tick.
+    }
+
+    // Nudge the renderer to refresh: sending a dummy slug-agnostic sync state
+    // would be noisy; instead, let the next scheduled tick emit a fresh state.
+
     return { ok: true }
   })
 

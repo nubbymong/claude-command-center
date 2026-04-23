@@ -231,20 +231,28 @@ html,body{width:100vw;height:100vh;overflow:hidden;background:transparent;cursor
 #selection{position:fixed;border:2px dashed #00FFFF;background:rgba(0,255,255,0.08);display:none;pointer-events:none;z-index:10}
 #hint{position:fixed;bottom:40px;left:50%;transform:translateX(-50%);color:#fff;font-family:'Segoe UI',system-ui,sans-serif;font-size:14px;background:rgba(0,0,0,0.7);padding:8px 16px;border-radius:6px;z-index:20}
 #dimensions{position:fixed;color:#00FFFF;font-family:'Cascadia Code',monospace;font-size:12px;background:rgba(0,0,0,0.7);padding:2px 6px;border-radius:3px;display:none;pointer-events:none;z-index:20}
+#cancel-btn{position:fixed;top:20px;right:20px;background:rgba(0,0,0,0.8);color:#fff;border:1px solid #666;font-family:'Segoe UI',system-ui,sans-serif;font-size:13px;padding:8px 18px;border-radius:6px;cursor:pointer;z-index:30}
+#cancel-btn:hover{background:rgba(255,80,80,0.85);border-color:#ff5050}
 </style>
 </head>
 <body>
 <div id="overlay"></div>
 <div id="selection"></div>
-<div id="hint">Click and drag to select region \\u2022 Escape to cancel</div>
+<div id="hint">Click and drag to select region &bull; Esc or click Cancel to exit</div>
 <div id="dimensions"></div>
+<button id="cancel-btn" type="button">Cancel</button>
 <script>
-const sel=document.getElementById('selection'),hint=document.getElementById('hint'),dims=document.getElementById('dimensions');
+const sel=document.getElementById('selection'),hint=document.getElementById('hint'),dims=document.getElementById('dimensions'),cancelBtn=document.getElementById('cancel-btn');
 let sx=0,sy=0,dragging=false;
-document.addEventListener('mousedown',e=>{sx=e.clientX;sy=e.clientY;dragging=true;sel.style.display='block';sel.style.left=sx+'px';sel.style.top=sy+'px';sel.style.width='0px';sel.style.height='0px';hint.style.display='none'});
-document.addEventListener('mousemove',e=>{if(!dragging)return;const x=Math.min(e.clientX,sx),y=Math.min(e.clientY,sy),w=Math.abs(e.clientX-sx),h=Math.abs(e.clientY-sy);sel.style.left=x+'px';sel.style.top=y+'px';sel.style.width=w+'px';sel.style.height=h+'px';dims.style.display='block';dims.style.left=(x+w+8)+'px';dims.style.top=(y+h+8)+'px';dims.textContent=w+' \\u00d7 '+h});
+document.addEventListener('mousedown',e=>{if(e.target===cancelBtn)return;sx=e.clientX;sy=e.clientY;dragging=true;sel.style.display='block';sel.style.left=sx+'px';sel.style.top=sy+'px';sel.style.width='0px';sel.style.height='0px';hint.style.display='none'});
+document.addEventListener('mousemove',e=>{if(!dragging)return;const x=Math.min(e.clientX,sx),y=Math.min(e.clientY,sy),w=Math.abs(e.clientX-sx),h=Math.abs(e.clientY-sy);sel.style.left=x+'px';sel.style.top=y+'px';sel.style.width=w+'px';sel.style.height=h+'px';dims.style.display='block';dims.style.left=(x+w+8)+'px';dims.style.top=(y+h+8)+'px';dims.textContent=w+' × '+h});
 document.addEventListener('mouseup',e=>{if(!dragging)return;dragging=false;const x=Math.min(e.clientX,sx),y=Math.min(e.clientY,sy),w=Math.abs(e.clientX-sx),h=Math.abs(e.clientY-sy);if(w<10||h<10){sel.style.display='none';dims.style.display='none';hint.style.display='block';return}window.screenshotAPI.selectRegion({x,y,width:w,height:h})});
 document.addEventListener('keydown',e=>{if(e.key==='Escape')window.screenshotAPI.cancel()});
+cancelBtn.addEventListener('click',()=>window.screenshotAPI.cancel());
+// Keep keyboard focus on the overlay body so Esc always reaches our handler
+// even if Windows steals focus after the prior window minimise.
+document.body.tabIndex=0;document.body.focus();
+window.addEventListener('blur',()=>{setTimeout(()=>{try{document.body.focus()}catch(e){}},100)});
 </script>
 </body>
 </html>`
