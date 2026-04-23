@@ -178,8 +178,9 @@ export class HooksGateway {
         if (total > MAX_REQUEST_BODY_BYTES) {
           res.statusCode = 413
           res.setHeader('content-type', 'application/json')
-          res.end('{}')
-          req.destroy()
+          // Destroy the socket only after the 413 body has flushed, else
+          // a fast client may see a reset instead of a clean 413.
+          res.end('{}', () => { req.destroy() })
           return
         }
         chunks.push(buf)
