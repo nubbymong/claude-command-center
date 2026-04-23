@@ -24,18 +24,36 @@ export interface RemoveArgs {
   settingsPath: string
 }
 
+/**
+ * Build the `hooks` block for a Claude Code settings file. Returns the
+ * object literal shape that goes under the `hooks` key of settings.json —
+ * one array entry per MVP event kind, each pointing at the session's
+ * gateway endpoint with the per-session secret in an X-CCC-Hook-Token
+ * header.
+ *
+ * Exported so the SSH path can embed the same shape in its remote setup
+ * script literal without re-implementing the endpoint/headers format.
+ */
+export function buildHooksBlock(
+  sessionId: string,
+  port: number,
+  secret: string,
+): Record<string, unknown[]> {
+  const endpoint = `http://localhost:${port}/hook/${sessionId}`
+  const headers = { 'X-CCC-Hook-Token': secret }
+  const hooks: Record<string, unknown[]> = {}
+  for (const kind of MVP_EVENTS) {
+    hooks[kind] = [{ type: 'http', url: endpoint, headers }]
+  }
+  return hooks
+}
+
 // NOTE: this writer is NOT diff-aware. It rewrites the entire `hooks` key
 // on every inject. Per-session settings files are ours to manage — if a
 // user hand-edits hooks in one of them their edits are lost on next spawn.
 export function injectHooks(a: InjectArgs): void {
   const settings = readJsonSafe(a.settingsPath)
-  const endpoint = `http://localhost:${a.port}/hook/${a.sessionId}`
-  const headers = { 'X-CCC-Hook-Token': a.secret }
-  const hooks: Record<string, unknown[]> = {}
-  for (const kind of MVP_EVENTS) {
-    hooks[kind] = [{ type: 'http', url: endpoint, headers }]
-  }
-  settings.hooks = hooks
+  settings.hooks = buildHooksBlock(a.sessionId, a.port, a.secret)
   writeJson(a.settingsPath, settings)
 }
 

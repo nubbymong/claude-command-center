@@ -9,6 +9,13 @@ import { writeCliSetupPty, getResourcesDirectory } from './ipc/setup-handlers'
 import { isGlobalVisionRunning, getGlobalVisionConfig, getConductorMcpPort } from './vision-manager'
 import { resolveVersionBinary } from './legacy-version-manager'
 import { dispatchSSHStatuslineUpdate } from './statusline-watcher'
+import { getGateway } from './hooks'
+import { injectHooks, removeHooks, buildHooksBlock } from './hooks/session-hooks-writer'
+import {
+  writeLocalSessionSettings,
+  getLocalSessionSettingsPath,
+  removeLocalSessionSettings,
+} from './hooks/per-session-settings'
 
 import * as path from 'path'
 import * as fs from 'fs'
@@ -164,7 +171,10 @@ process.stdout.write(' ');
  *
  * Returns the script content. The PTY base64-encodes and pipes it to node.
  */
-function generateRemoteSetupScript(sessionId: string): string {
+function generateRemoteSetupScript(
+  sessionId: string,
+  hooksConfig: { port: number; secret: string } | null,
+): string {
   // Conductor MCP server is always running (independent of browser/vision config),
   // so SSH sessions always get the conductor-vision MCP entry pointing at the
   // reverse-tunneled MCP port. The fetch_host_screenshot tool is always available;
@@ -188,6 +198,14 @@ function generateRemoteSetupScript(sessionId: string): string {
   // We also still touch shared settings.json for the MCP server entry (vision),
   // and we clean up the legacy statusLine stanza so old installs don't keep
   // overriding via the shared file.
+  //
+  // Hooks: when the HTTP Hooks Gateway is running, the per-session file also
+  // carries a `hooks` block pointing at `http://localhost:<hooksPort>/hook/<sid>`
+  // — the SSH connection's `-R <hooksPort>:localhost:<hooksPort>` tunnel makes
+  // that loopback URL resolve to the host's gateway.
+  const hooksLiteral = hooksConfig
+    ? JSON.stringify(buildHooksBlock(sessionId, hooksConfig.port, hooksConfig.secret))
+    : null
 
   // Build as semicolon-separated statements — NO comments (they break single-lining)
   const lines = [
@@ -198,7 +216,9 @@ function generateRemoteSetupScript(sessionId: string): string {
     `try{fs.writeFileSync(shimPath,${shimLiteral},{mode:0o755})}catch{}`,
     // Per-session settings — owns statusLine with this session's id baked in
     `const sesPath=path.join(claudeDir,'settings-${safeSid}.json')`,
-    `const sesCfg={statusLine:{type:'command',command:'CLAUDE_MULTI_SESSION_ID=${sessionId} node '+shimPath}}`,
+    hooksLiteral
+      ? `const sesCfg={statusLine:{type:'command',command:'CLAUDE_MULTI_SESSION_ID=${sessionId} node '+shimPath},hooks:${hooksLiteral}}`
+      : `const sesCfg={statusLine:{type:'command',command:'CLAUDE_MULTI_SESSION_ID=${sessionId} node '+shimPath}}`,
     `try{fs.writeFileSync(sesPath,JSON.stringify(sesCfg,null,2))}catch{}`,
     // Shared settings — owns MCP vision only. Strip any legacy statusLine
     // stanza a prior install wrote; it would override the per-session file.
@@ -245,8 +265,12 @@ function remoteSessionSettingsPath(sessionId: string): string {
  * All errors are suppressed (2>/dev/null) so a failed setup doesn't break
  * the SSH session — the user can still use Claude, just without statusline.
  */
-function getRemoteSetupCommand(sessionId: string, remotePath: string): string {
-  const script = generateRemoteSetupScript(sessionId)
+function getRemoteSetupCommand(
+  sessionId: string,
+  remotePath: string,
+  hooksConfig: { port: number; secret: string } | null,
+): string {
+  const script = generateRemoteSetupScript(sessionId, hooksConfig)
   const b64 = Buffer.from(script).toString('base64')
   return `stty -echo 2>/dev/null; echo '${b64}' | base64 -d | node 2>/dev/null; stty echo 2>/dev/null; cd ${remotePath} && clear`
 }
@@ -322,6 +346,20 @@ export function spawnPty(
     const mcpPort = getConductorMcpPort()
     if (mcpPort > 0) {
       sshArgs.push('-R', `${mcpPort}:localhost:${mcpPort}`)
+    }
+
+    // HTTP Hooks Gateway: when enabled, tunnel the gateway's loopback port so
+    // Claude Code inside the SSH session can reach it via http://localhost:<port>.
+    // Register the session secret up-front so the generated setup script can
+    // bake the URL + X-CCC-Hook-Token header into the remote settings file.
+    const gw = getGateway()
+    const gwStatus = gw?.status()
+    const hooksReady = !!(gw && gwStatus?.enabled && gwStatus?.listening && gwStatus?.port)
+    let hooksConfig: { port: number; secret: string } | null = null
+    if (hooksReady && gw && gwStatus?.port) {
+      const secret = gw.registerSession(sessionId)
+      hooksConfig = { port: gwStatus.port, secret }
+      sshArgs.push('-R', `${gwStatus.port}:localhost:${gwStatus.port}`)
     }
 
     const sshBinary = os.platform() === 'win32' ? 'ssh.exe' : 'ssh'
@@ -435,7 +473,7 @@ export function spawnPty(
         setTimeout(() => {
           // Run the consolidated setup script (statusline + vision + CLAUDE.md)
           // then cd to project and optionally start Claude
-          const setupCmd = getRemoteSetupCommand(sessionId, remotePath)
+          const setupCmd = getRemoteSetupCommand(sessionId, remotePath, hooksConfig)
           if (postCommand) {
             ptyProcess.write(`${setupCmd} && ${postCommand}\r`)
             postCommandSent = true
@@ -561,6 +599,32 @@ export function spawnPty(
         extraFlags += ` --effort ${options.effortLevel}`
       }
 
+      // HTTP Hooks Gateway: when enabled, seed a per-session settings file
+      // (statusLine + mcpServers from the shared settings.json) then overlay
+      // the hooks block via injectHooks. Pass --settings so Claude Code
+      // reads that file instead of the user's settings.json. --settings
+      // replaces user settings entirely, so we must copy the pieces Claude
+      // still needs to see.
+      const gwLocal = getGateway()
+      const gwLocalStatus = gwLocal?.status()
+      const hooksReadyLocal = !!(gwLocal && gwLocalStatus?.enabled && gwLocalStatus?.listening && gwLocalStatus?.port)
+      if (hooksReadyLocal && gwLocal && gwLocalStatus?.port) {
+        try {
+          const sesPath = writeLocalSessionSettings(sessionId)
+          const secret = gwLocal.registerSession(sessionId)
+          injectHooks({ sessionId, settingsPath: sesPath, port: gwLocalStatus.port, secret })
+          if (os.platform() === 'win32') {
+            const escapedSesPath = sesPath.replace(/'/g, "''")
+            extraFlags += ` --settings '${escapedSesPath}'`
+          } else {
+            const escapedSesPath = sesPath.replace(/'/g, "'\\''")
+            extraFlags += ` --settings '${escapedSesPath}'`
+          }
+        } catch (err) {
+          logError(`[hooks] Failed to seed per-session settings for ${sessionId}: ${(err as Error)?.message ?? err}`)
+        }
+      }
+
       // Build --agents flag if agent templates are configured
       let agentsFlag = ''
       if (options?.agentsConfig && options.agentsConfig.length > 0) {
@@ -637,6 +701,21 @@ export function spawnPty(
     logInfo(`[pty] PTY exited for session ${sessionId} with code ${exitCode}`)
     endSessionLog(sessionId)
     ptySessions.delete(sessionId)
+
+    // Hooks: unregister the session secret so the gateway stops accepting
+    // requests for this sid, and remove the local per-session settings file.
+    // (SSH leaves a stale settings-<sid>.json on the remote host — harmless
+    // because the gateway rejects unknown sids with 404 and boot-cleanup
+    // takes care of the local copy on next launch.)
+    try {
+      const gwExit = getGateway()
+      if (gwExit) gwExit.unregisterSession(sessionId)
+    } catch { /* gateway may have already stopped during shutdown */ }
+    removeLocalSessionSettings(sessionId)
+    try {
+      removeHooks({ settingsPath: getLocalSessionSettingsPath(sessionId) })
+    } catch { /* path may not exist — removeHooks is a no-op in that case */ }
+
     if (win.isDestroyed()) {
       logDebug(`[pty] Window already destroyed, skipping exit notification for ${sessionId}`)
       return
