@@ -128,8 +128,20 @@ function extractSshOscSentinels(sessionId: string, chunk: string): string {
 // smaller, zero-network, and survives token-format changes. Trade-off: stdin
 // doesn't expose `extra_usage`, so SSH statuslines no longer show the extra
 // top-up bar (local sessions still do). Re-add via API later if needed.
+// Fallback order for the OSC sentinel:
+//   1. /dev/tty — correct path. Bypasses Claude entirely; flows through the
+//      ssh PTY back to pty-manager.
+//   2. stderr — Claude captures stdout as the statusline text, so stdout is
+//      a dead-end (the sentinel gets displayed or stripped). stderr is NOT
+//      captured by Claude Code's statusline handler and, in a PTY context,
+//      travels back through the ssh PTY just like stdout would.
+//   3. Append a trace line to ~/.claude/conductor-shim.log on any failure
+//      path so we can diagnose "no statusline ever appeared" issues without
+//      guesswork. The log is capped via append-and-forget; grows slowly.
 const SSH_STATUSLINE_SHIM = `#!/usr/bin/env node
-const fs=require('fs');
+const fs=require('fs'),os=require('os'),path=require('path');
+const logPath=path.join(os.homedir(),'.claude','conductor-shim.log');
+const trace=(m)=>{try{fs.appendFileSync(logPath,new Date().toISOString()+' '+m+'\\n');}catch{}};
 let input='';
 process.stdin.setEncoding('utf8');
 process.stdin.on('data',c=>input+=c);
@@ -149,9 +161,11 @@ if(rl.five_hour){s.rateLimitCurrent=Math.round(Number(rl.five_hour.used_percenta
 if(rl.seven_day){s.rateLimitWeekly=Math.round(Number(rl.seven_day.used_percentage)||0);s.rateLimitWeeklyResets=iso(rl.seven_day.resets_at);}
 const now=new Date();const yr=now.getUTCFullYear();const m2=new Date(Date.UTC(yr,2,8));m2.setUTCDate(8+(7-m2.getUTCDay())%7);const n1=new Date(Date.UTC(yr,10,1));n1.setUTCDate(1+(7-n1.getUTCDay())%7);const ptOff=(now>=m2&&now<n1)?-7:-8;const ptH=(now.getUTCHours()+ptOff+24)%24;const ptD=new Date(now.getTime()+ptOff*3600000).getUTCDay();s.isPeak=(ptD>=1&&ptD<=5&&ptH>=5&&ptH<11);
 const sentinel='\\x1b]9999;CMSTATUS='+JSON.stringify(s)+'\\x07';
-try{fs.writeFileSync('/dev/tty',sentinel);}catch(e){process.stdout.write(sentinel);}
+let tty_ok=false;
+try{fs.writeFileSync('/dev/tty',sentinel);tty_ok=true;}catch(e){trace('tty-fail sid='+sid+' err='+(e&&e.code||e.message||'unknown'));}
+if(!tty_ok){try{process.stderr.write(sentinel);trace('stderr-fallback sid='+sid);}catch(e2){trace('stderr-fail sid='+sid+' err='+(e2&&e2.message||'unknown'));}}
 process.stdout.write(' ');
-}catch(e){process.stdout.write(' ');}
+}catch(e){trace('parse-fail err='+(e&&e.message||'unknown'));process.stdout.write(' ');}
 });
 `
 

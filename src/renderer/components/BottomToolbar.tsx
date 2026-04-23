@@ -5,7 +5,6 @@ import {
   MODELS,
   EFFORTS,
   PERMISSION_MODES,
-  PERMISSION_MODE_LABELS,
   shortModelName,
   isModelActive,
 } from '../lib/claude-cli-options'
@@ -18,9 +17,15 @@ export default function BottomToolbar() {
     s.sessions.find((sess) => sess.id === s.activeSessionId)
   )
 
+  // Effort and permission mode aren't part of Claude Code's statusline JSON
+  // schema, so we have no authoritative way to display the current value.
+  // Track the last-clicked pick in memory only, used for the dropdown
+  // checkmark — never shown as an always-visible label. Typing `/effort` or
+  // `/permission-mode` directly in the terminal won't update this, and that's
+  // OK: we don't lie about a current value we can't verify.
   const [openPopup, setOpenPopup] = useState<PopupType>(null)
-  const [currentEffort, setCurrentEffort] = useState<string>('medium')
-  const [currentMode, setCurrentMode] = useState<string>('acceptEdits')
+  const [lastEffort, setLastEffort] = useState<string | null>(null)
+  const [lastMode, setLastMode] = useState<string | null>(null)
 
   const writeToTerminal = useCallback(
     (text: string) => {
@@ -33,11 +38,9 @@ export default function BottomToolbar() {
   const handleModelSelect = useCallback(
     (_sectionIndex: number, value: string) => {
       if (_sectionIndex === 0) {
-        // Model selection
         writeToTerminal(`/model ${value}\n`)
       } else {
-        // Effort selection
-        setCurrentEffort(value)
+        setLastEffort(value)
         writeToTerminal(`/effort ${value}\n`)
       }
       setOpenPopup(null)
@@ -47,7 +50,7 @@ export default function BottomToolbar() {
 
   const handleModeSelect = useCallback(
     (_sectionIndex: number, value: string) => {
-      setCurrentMode(value)
+      setLastMode(value)
       writeToTerminal(`/permission-mode ${value}\n`)
       setOpenPopup(null)
     },
@@ -69,8 +72,6 @@ export default function BottomToolbar() {
   if (!activeSession) return null
 
   const modelDisplay = shortModelName(activeSession.modelName || activeSession.model)
-  const effortDisplay = currentEffort.charAt(0).toUpperCase() + currentEffort.slice(1)
-  const modeDisplay = PERMISSION_MODE_LABELS[currentMode] || currentMode
 
   return (
     <div
@@ -99,7 +100,7 @@ export default function BottomToolbar() {
               e.currentTarget.style.background = 'transparent'
           }}
         >
-          {modeDisplay}
+          Mode
         </button>
         {openPopup === 'mode' && (
           <ToolbarPopup
@@ -109,7 +110,7 @@ export default function BottomToolbar() {
                 shortcut: 'Shift+Ctrl+M',
                 items: PERMISSION_MODES.map((m) => ({
                   ...m,
-                  active: m.value === currentMode,
+                  active: m.value === lastMode,
                 })),
               },
             ]}
@@ -155,8 +156,6 @@ export default function BottomToolbar() {
           }}
         >
           <span className="text-blue">{modelDisplay}</span>
-          <span className="text-overlay0">{String.fromCodePoint(0x00B7)}</span>
-          <span>{effortDisplay}</span>
         </button>
         {openPopup === 'model' && (
           <ToolbarPopup
@@ -178,7 +177,7 @@ export default function BottomToolbar() {
                 shortcut: 'Shift+Ctrl+E',
                 items: EFFORTS.map((e) => ({
                   ...e,
-                  active: e.value === currentEffort,
+                  active: e.value === lastEffort,
                 })),
               },
             ]}

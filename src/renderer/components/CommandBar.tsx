@@ -11,7 +11,6 @@ import {
   MODELS,
   EFFORTS,
   PERMISSION_MODES,
-  PERMISSION_MODE_LABELS,
   shortModelName as resolveModelName,
   isModelActive,
 } from '../lib/claude-cli-options'
@@ -41,9 +40,14 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
   const [sectionInput, setSectionInput] = useState<{ x: number; y: number; editSection?: CommandSection; rowTarget?: 'claude' | 'partner' } | null>(null)
 
   // --- Model/Effort/Mode pickers ---
+  // Effort and permission mode are NOT present in Claude Code's statusline
+  // JSON schema (code.claude.com/docs/en/statusline), so there's no authoritative
+  // way to display the current value. We track the last-clicked value in memory
+  // only — used for the dropdown checkmark, never shown as an always-visible
+  // label. Reloading the app or changing via terminal clears the checkmark.
   const [openPicker, setOpenPicker] = useState<'model' | 'mode' | null>(null)
-  const [currentEffort, setCurrentEffort] = useState<string>('medium')
-  const [currentMode, setCurrentMode] = useState<string>('acceptEdits')
+  const [lastEffort, setLastEffort] = useState<string | null>(null)
+  const [lastMode, setLastMode] = useState<string | null>(null)
   const activeSession = useSessionStore((s) => s.sessions.find((sess) => sess.id === sessionId))
 
   const shortModelName = (fullName?: string): string =>
@@ -53,14 +57,14 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
     if (si === 0) {
       window.electronAPI.pty.write(sessionId, `/model ${value}\n`)
     } else {
-      setCurrentEffort(value)
+      setLastEffort(value)
       window.electronAPI.pty.write(sessionId, `/effort ${value}\n`)
     }
     setOpenPicker(null)
   }, [sessionId])
 
   const handleModeSelect = useCallback((_si: number, value: string) => {
-    setCurrentMode(value)
+    setLastMode(value)
     window.electronAPI.pty.write(sessionId, `/permission-mode ${value}\n`)
     setOpenPicker(null)
   }, [sessionId])
@@ -461,7 +465,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
             onClick={() => setOpenPicker(openPicker === 'mode' ? null : 'mode')}
             className="flex items-center gap-1 px-2 py-0.5 text-xs text-subtext0 hover:text-text rounded bg-surface0/50 hover:bg-surface0 border border-surface1/40 hover:border-surface1 transition-colors shrink-0 cursor-pointer"
           >
-            {PERMISSION_MODE_LABELS[currentMode] || currentMode}
+            Mode
             <svg width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.4" className="opacity-50">
               <path d="M2.5 4l2.5 2.5L7.5 4" />
             </svg>
@@ -471,7 +475,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
               sections={[{
                 title: 'Mode',
                 shortcut: 'Shift+Ctrl+M',
-                items: PERMISSION_MODES.map((m) => ({ ...m, active: m.value === currentMode })),
+                items: PERMISSION_MODES.map((m) => ({ ...m, active: m.value === lastMode })),
               }]}
               onSelect={handleModeSelect}
               onClose={() => setOpenPicker(null)}
@@ -488,8 +492,6 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
             className="flex items-center gap-1 px-2 py-0.5 text-xs text-subtext0 hover:text-text rounded bg-surface0/50 hover:bg-surface0 border border-surface1/40 hover:border-surface1 transition-colors shrink-0 cursor-pointer"
           >
             <span className="text-blue">{shortModelName(activeSession?.modelName)}</span>
-            <span className="text-overlay0">{String.fromCodePoint(0x00B7)}</span>
-            <span>{currentEffort.charAt(0).toUpperCase() + currentEffort.slice(1)}</span>
             <svg width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.4" className="opacity-50">
               <path d="M2.5 4l2.5 2.5L7.5 4" />
             </svg>
@@ -512,7 +514,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
                 {
                   title: 'Effort',
                   shortcut: 'Shift+Ctrl+E',
-                  items: EFFORTS.map((e) => ({ ...e, active: e.value === currentEffort })),
+                  items: EFFORTS.map((e) => ({ ...e, active: e.value === lastEffort })),
                 },
               ]}
               onSelect={handleModelSelect}
