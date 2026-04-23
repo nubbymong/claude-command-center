@@ -219,6 +219,20 @@ function generateRemoteSetupScript(
   const hooksLiteral = hooksConfig
     ? JSON.stringify(buildHooksBlock(sessionId, hooksConfig.port, hooksConfig.secret))
     : null
+  // MCP vision: prior builds relied on Claude Code's `--settings` MERGING
+  // the per-session file onto the user settings (which held mcpServers in
+  // the shared settings.json write below). That assumption is undocumented.
+  // Include the conductor-vision entry in the per-session file too, so even
+  // if a future Claude Code build flips `--settings` to REPLACE semantics,
+  // SSH sessions keep seeing the reverse-tunnelled MCP server.
+  const mcpServersLiteral = hasVision
+    ? JSON.stringify({ 'conductor-vision': { url: `http://localhost:${mcpPort}/sse` } })
+    : null
+  const sesCfgParts: string[] = [
+    `statusLine:{type:'command',command:'CLAUDE_MULTI_SESSION_ID=${sessionId} node '+shimPath}`,
+  ]
+  if (mcpServersLiteral) sesCfgParts.push(`mcpServers:${mcpServersLiteral}`)
+  if (hooksLiteral) sesCfgParts.push(`hooks:${hooksLiteral}`)
 
   // Build as semicolon-separated statements — NO comments (they break single-lining)
   const lines = [
@@ -227,11 +241,11 @@ function generateRemoteSetupScript(
     `try{fs.mkdirSync(claudeDir,{recursive:true})}catch{}`,
     `const shimPath=path.join(claudeDir,'conductor-ssh-statusline.js')`,
     `try{fs.writeFileSync(shimPath,${shimLiteral},{mode:0o755})}catch{}`,
-    // Per-session settings — owns statusLine with this session's id baked in
+    // Per-session settings — owns statusLine with this session's id baked in,
+    // mcpServers (conductor-vision) when enabled, and hooks when the gateway
+    // is running.
     `const sesPath=path.join(claudeDir,'settings-${safeSid}.json')`,
-    hooksLiteral
-      ? `const sesCfg={statusLine:{type:'command',command:'CLAUDE_MULTI_SESSION_ID=${sessionId} node '+shimPath},hooks:${hooksLiteral}}`
-      : `const sesCfg={statusLine:{type:'command',command:'CLAUDE_MULTI_SESSION_ID=${sessionId} node '+shimPath}}`,
+    `const sesCfg={${sesCfgParts.join(',')}}`,
     `try{fs.writeFileSync(sesPath,JSON.stringify(sesCfg,null,2))}catch{}`,
     // Shared settings — owns MCP vision only. Strip any legacy statusLine
     // stanza a prior install wrote; it would override the per-session file.

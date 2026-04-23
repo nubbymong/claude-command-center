@@ -63,10 +63,15 @@ export default function LiveActivityFooter({ sessionId }: Props) {
     lastLenRef.current = events.length
   }, [events.length])
 
+  // Tick `now` only while there's actually something to relative-time.
+  // Without events the collapsed row renders "-" and every 1s setState would
+  // re-render the whole footer for no visible change.
+  const hasEvents = events.length > 0
   useEffect(() => {
+    if (!hasEvents) return
     const id = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(id)
-  }, [])
+  }, [hasEvents])
 
   // On pause: capture a FROZEN COPY of the current event list. On resume:
   // drop the snapshot. Must clone the array — the hooksStore.ingest reducer
@@ -192,8 +197,8 @@ function ExpandedList({ events, dropped, paused, setPaused, filter, setFilter }:
       )}
 
       <ul className="space-y-0.5 font-mono text-[11px]">
-        {visibleSlice.map((e, i) => (
-          <li key={`${e.ts}-${i}`} className="flex gap-2 items-baseline">
+        {visibleSlice.map((e) => (
+          <li key={`${e.ts}-${e.event}-${e.toolName ?? ''}`} className="flex gap-2 items-baseline">
             <span className="text-overlay0 tabular-nums">{formatClock(e.ts)}</span>
             <span className={`${KIND_COLOR[e.event as HookEventKind] ?? 'text-overlay1'} w-14`}>
               {KIND_LABEL[e.event as HookEventKind] ?? e.event}

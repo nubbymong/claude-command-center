@@ -7,6 +7,7 @@ export default function HooksGatewaySection() {
   const updateSettings = useSettingsStore((s) => s.updateSettings)
   const [status, setStatus] = useState<HooksGatewayStatus | null>(null)
   const [editingPort, setEditingPort] = useState(false)
+  const [actionError, setActionError] = useState<string | null>(null)
 
   useEffect(() => {
     let active = true
@@ -20,22 +21,48 @@ export default function HooksGatewaySection() {
     }
   }, [])
 
-  const toggleEnabled = async (next: boolean) => {
-    await window.electronAPI.hooks.toggle(next)
-    await updateSettings({ hooksEnabled: next })
+  // Persist `hooksEnabled` only AFTER the gateway start/stop has resolved.
+  // A bind failure (e.g. port in use and retries exhausted) now surfaces an
+  // inline error instead of becoming an unhandled-promise toast and leaving
+  // persisted state diverged from listener reality.
+  const toggleEnabled = async (next: boolean): Promise<void> => {
+    setActionError(null)
+    try {
+      const result = await window.electronAPI.hooks.toggle(next)
+      // Main-side status is authoritative. If start() returned enabled=false
+      // (e.g. bind-failed), don't persist hooksEnabled=true against reality.
+      const effectiveEnabled = next ? !!result.listening : false
+      await updateSettings({ hooksEnabled: effectiveEnabled })
+      if (next && !result.listening) {
+        setActionError(result.error ? `Could not start gateway: ${result.error}` : 'Could not start gateway')
+      }
+    } catch (err) {
+      setActionError(`Toggle failed: ${(err as Error)?.message ?? String(err)}`)
+    }
   }
 
-  const savePort = async (port: number) => {
+  const savePort = async (port: number): Promise<void> => {
     // Only cycle the gateway if it was already running. Otherwise a port
     // change with hooks disabled would silently enable them — surprising
     // side-effect for a setting that reads as purely numeric.
+    setActionError(null)
     const wasRunning = settings.hooksEnabled || status?.listening === true
-    await updateSettings({ hooksPort: port })
-    if (wasRunning) {
-      await window.electronAPI.hooks.toggle(false)
-      await window.electronAPI.hooks.toggle(true)
+    try {
+      await updateSettings({ hooksPort: port })
+      if (wasRunning) {
+        await window.electronAPI.hooks.toggle(false)
+        const restart = await window.electronAPI.hooks.toggle(true)
+        if (!restart.listening) {
+          // Persist false so the UI reflects reality; the user can retry.
+          await updateSettings({ hooksEnabled: false })
+          setActionError(restart.error ? `Restart failed on port ${port}: ${restart.error}` : `Restart failed on port ${port}`)
+          return
+        }
+      }
+      setEditingPort(false)
+    } catch (err) {
+      setActionError(`Port change failed: ${(err as Error)?.message ?? String(err)}`)
     }
-    setEditingPort(false)
   }
 
   return (
@@ -74,6 +101,12 @@ export default function HooksGatewaySection() {
           change port
         </button>
       </div>
+
+      {actionError && (
+        <div className="text-[11px] text-red" role="alert">
+          {actionError}
+        </div>
+      )}
 
       {editingPort && (
         <PortEditor
