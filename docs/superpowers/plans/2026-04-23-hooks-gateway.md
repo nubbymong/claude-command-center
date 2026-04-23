@@ -282,21 +282,24 @@ Expected: FAIL — module does not exist.
 // messages, so this redaction is non-negotiable per the design spec
 // (§Schemas, §Security).
 
+// All quantifiers are bounded ({n,M}) to defeat ReDoS on adversarial
+// inputs. 512 chars is well over any legitimate token length.
 const PATTERNS: Array<[RegExp, string]> = [
   // Anthropic / OpenAI / many providers use `sk-` prefixed keys
-  [/sk-[A-Za-z0-9_\-]{32,}/g, '[REDACTED]'],
+  [/sk-[A-Za-z0-9_\-]{32,512}/g, '[REDACTED]'],
   // Slack bot/user tokens
-  [/xox[bpsar]-[A-Za-z0-9-]{10,}/g, '[REDACTED]'],
-  // AWS access key IDs
+  [/xox[bpsar]-[A-Za-z0-9-]{10,256}/g, '[REDACTED]'],
+  // AWS access key IDs (fixed length)
   [/AKIA[A-Z0-9]{16}/g, '[REDACTED]'],
   // GitHub PATs + OAuth tokens (covered elsewhere for logs, re-included here
   // so a hook payload containing one doesn't leak via IPC)
-  [/gh[pousr]_[A-Za-z0-9]{30,}/g, '[REDACTED]'],
-  // PEM-wrapped private keys — collapse the entire block, not just the header
-  [/-----BEGIN (?:OPENSSH|RSA|EC|DSA|PGP) PRIVATE KEY-----[\s\S]*?-----END (?:OPENSSH|RSA|EC|DSA|PGP) PRIVATE KEY-----/g, '[REDACTED]'],
+  [/gh[pousr]_[A-Za-z0-9]{30,256}/g, '[REDACTED]'],
+  // PEM-wrapped private keys — cap the body at 16KB. Genuine keys are 1–4KB.
+  [/-----BEGIN (?:OPENSSH|RSA|EC|DSA|PGP) PRIVATE KEY-----[\s\S]{0,16384}?-----END (?:OPENSSH|RSA|EC|DSA|PGP) PRIVATE KEY-----/g, '[REDACTED]'],
   // password/secret/token/api_key assignments — catch `FOO_TOKEN=abc123`
-  // style. Keep the key visible; replace the value only.
-  [/((?:password|secret|token|api[_-]?key)\s*[:=]\s*)(["']?)[^\s"'&]{6,}\2/gi, '$1[REDACTED]'],
+  // style. Keep the key visible; replace the value only. {3,512} bound
+  // catches short real values while preventing unbounded backtracking.
+  [/((?:password|secret|token|api[_-]?key)\s*[:=]\s*)(["']?)[^\s"'&]{3,512}\2/gi, '$1[REDACTED]'],
 ]
 
 function redactString(s: string): string {
@@ -544,7 +547,12 @@ export class HooksGateway {
     this.server = null
     await new Promise<void>((resolve) => s.close(() => resolve()))
     this._status = { ...this._status, listening: false, port: null }
+    // Clear ALL per-session state so a subsequent start() (e.g. via the
+    // port-change restart in Task 17) doesn't carry stale buffers/latches
+    // from the previous run. secrets.clear() on its own would leak them.
     this.secrets.clear()
+    this.buffers.clear()
+    this.overflowLatched.clear()
   }
 
   registerSession(sessionId: string): string {
@@ -900,6 +908,13 @@ describe('HooksGateway.ingest', () => {
 
 - [ ] **Step 2: Implement**
 
+Add imports at the top of `hooks-gateway.ts` (if not already present):
+
+```ts
+import { RING_BUFFER_CAP, type RingBufferEntry } from './hooks-types'
+import { redactHookPayload } from './hook-payload-redactor'
+```
+
 Add fields:
 
 ```ts
@@ -981,7 +996,7 @@ unregisterSession(sessionId: string): void {
 }
 ```
 
-Import `RING_BUFFER_CAP`, `RingBufferEntry`, `redactHookPayload` at top.
+(Imports already added at Step 2.)
 
 - [ ] **Step 3: Run tests** — all tests in file pass.
 
@@ -1111,7 +1126,7 @@ export function injectHooks(a: InjectArgs): void {
     hooks[kind] = [{ type: 'http', url: endpoint, headers }]
   }
   settings.hooks = hooks
-  writeJsonAtomic(a.settingsPath, settings)
+  writeJson(a.settingsPath, settings)
 }
 
 export function removeHooks(a: RemoveArgs): void {
@@ -1119,7 +1134,7 @@ export function removeHooks(a: RemoveArgs): void {
   const settings = readJsonSafe(a.settingsPath)
   if (!('hooks' in settings)) return
   delete settings.hooks
-  writeJsonAtomic(a.settingsPath, settings)
+  writeJson(a.settingsPath, settings)
 }
 
 function readJsonSafe(file: string): Record<string, unknown> {
@@ -1133,12 +1148,15 @@ function readJsonSafe(file: string): Record<string, unknown> {
   }
 }
 
-function writeJsonAtomic(file: string, data: unknown): void {
-  const tmp = `${file}.tmp.${process.pid}.${Date.now()}`
+// NOT atomic on win32. fs.renameSync() fails with EPERM/EEXIST when the
+// destination exists and is held open by another process — Claude Code is
+// reading this file while we rewrite it. Atomicity isn't critical: Claude
+// Code re-reads settings only on /reload, so a partial read during rewrite
+// is vanishingly unlikely. Direct writeFileSync is the right tradeoff.
+function writeJson(file: string, data: unknown): void {
   const dir = path.dirname(file)
   fs.mkdirSync(dir, { recursive: true })
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2))
-  fs.renameSync(tmp, file)
+  fs.writeFileSync(file, JSON.stringify(data, null, 2))
 }
 ```
 
@@ -1169,7 +1187,8 @@ import path from 'node:path'
 import os from 'node:os'
 import { removeHooks } from './session-hooks-writer'
 
-const SID_FROM_FILENAME = /^settings-(.+)\.json$/
+// Non-greedy before `.json` so `settings-foo.json.bak` doesn't match.
+const SID_FROM_FILENAME = /^settings-([^.]+)\.json$/
 
 export function cleanupStaleHookEntries(activeSessionIds: ReadonlySet<string>): number {
   const dir = path.join(os.homedir(), '.claude')
@@ -1304,15 +1323,22 @@ import { IPC } from '../../shared/ipc-channels'
 import type { HooksGateway } from '../hooks/hooks-gateway'
 import type { HooksToggleRequest, HooksGetBufferRequest } from '../../shared/hook-types'
 
-export function registerHooksHandlers(gateway: HooksGateway, saveConfig: (patch: Record<string, unknown>) => void) {
+// persistPatch is called with a partial-config patch. It's the caller's
+// responsibility to merge with current config and pass to the
+// `(key, data)` two-arg `saveConfigDebounced` (see repo memory —
+// zero-arg variant is a known foot-gun).
+export function registerHooksHandlers(
+  gateway: HooksGateway,
+  persistPatch: (patch: Record<string, unknown>) => void,
+) {
   ipcMain.handle(IPC.HOOKS_TOGGLE, async (_, req: HooksToggleRequest) => {
     if (req.enabled) {
       const status = await gateway.start()
-      saveConfig({ hooksEnabled: true })
+      persistPatch({ hooksEnabled: true })
       return status
     } else {
       await gateway.stop()
-      saveConfig({ hooksEnabled: false })
+      persistPatch({ hooksEnabled: false })
       return gateway.status()
     }
   })
@@ -1348,7 +1374,11 @@ app.whenReady().then(async () => {
     cleanupStaleHookEntries(new Set())
     await gateway.start()
   }
-  registerHooksHandlers(gateway, (patch) => saveConfigDebounced('appConfig', { ...config, ...patch }))
+  registerHooksHandlers(gateway, (patch) => {
+    // saveConfigDebounced takes (key, data) — two args, per repo memory.
+    Object.assign(config, patch)
+    saveConfigDebounced('appConfig', config)
+  })
 })
 
 app.on('will-quit', async () => {
@@ -1380,10 +1410,16 @@ git commit -m "feat(hooks): register IPC handlers + start gateway on boot"
 **Files:**
 - Modify: `src/main/pty-manager.ts`
 
-Find the spot where the local-session per-session settings file is written (around line 200 per the existing grep). Right after it's written successfully, register the session with the gateway, generate a secret, and inject hooks. For SSH sessions, the settings file is written on the remote host — we skip injection for remote for MVP (spec explicitly allows this; remote injection comes in a follow-up). Actually **re-read spec §Data flow/Session spawn**: the injection pattern applies local-only unless SSH pre-setup writes the file we control. Check what `remoteSessionSettingsPath` actually does — if we write the file ourselves via the setup script, we CAN inject. For this MVP:
+Find the spot where the local-session per-session settings file is written (around line 200 per the existing grep). Right after it's written successfully, register the session with the gateway, generate a secret, and inject hooks.
 
-- Local sessions: inject after local settings-file write.
-- SSH sessions: the setup script is generated locally and writes the remote settings file in base64. Extend the script to include the `hooks` block. **Reuse the same `url` (localhost:19334) because the SSH command already includes `-R 19334:localhost:19334`** — verify this flag is in `pty-manager.ts` and add it if missing (grep for `-R` and the vision port).
+SSH sessions are **in scope for this PR** per spec §Data flow/Session spawn ("Zero extra work on the remote side. Already validated for vision MCP."). Two changes to the SSH path:
+
+- **Add `-R 19334:localhost:19334` to the SSH command** if the gateway is listening. Grep the existing ssh-flag construction (`-R` already used for vision MCP, model after it). Use the actual bound port from `gw.status().port` — don't hardcode 19334, because the retry logic may have picked a different port.
+- **Extend the remote settings-file setup script** to include the `hooks` block alongside the existing statusline. The generated script is a single-lined semicolon-joined bash string (see memory note — no comments in the script). Generate the hooks JSON main-side, base64-encode, inline into the script, decode on the remote, write into `~/.claude/settings-<sid>.json`. Mirror the existing statusline pattern exactly.
+
+Treat this as a required part of the task, not a bonus. Local-only would miss the SSH use case the spec explicitly covers.
+
+Be defensive with the SSH script extension: it's single-lined, any syntax bug breaks the whole Claude Code spawn. Before committing, smoke test against Asustor with `npm run dev` and a real SSH session.
 
 - [ ] **Step 1: Extend local spawn**
 
@@ -1412,7 +1448,7 @@ Find the SSH ssh command construction. Add `-R 19334:localhost:19334` IF gateway
 
 Don't over-engineer. If the SSH script template is fiddly and risks breaking the already-debugged statusline pipeline, punt SSH hooks to a follow-up and document in the PR description. Spec §Non-goals explicitly allows partial coverage.
 
-**Decision rule:** if extending the SSH template takes >200 LOC or touches the regex that matches the password prompt, stop and gate SSH on a follow-up PR. Local-only is already user-visible progress.
+**Regex safety:** do NOT touch the prompt/password regex in pty-manager while adding SSH hooks. If the hooks-block addition to the setup script accidentally triggers either regex, the ssh flow breaks. Test by grepping the final generated script for tokens the regex might match (e.g. `Password:`, `❯`).
 
 - [ ] **Step 3: Extend cleanup**
 
@@ -1598,8 +1634,13 @@ In `src/renderer/main.tsx` (or equivalent root), before rendering the app:
 
 ```ts
 import { useHooksStore } from './stores/hooksStore'
+
+// Ingest unconditionally. `paused` is a UI-side-only filter per spec
+// §Expanded state ("Pause stops new events being added to the UI list,
+// store keeps collecting"). Do NOT gate ingestion on paused — that
+// would drop events and break the "resume to see what happened"
+// contract.
 window.electronAPI.hooks.onEvent((e) => {
-  if (useHooksStore.getState().paused) return
   useHooksStore.getState().ingest(e)
 })
 window.electronAPI.hooks.onSessionEnded((sid) => {
@@ -1608,14 +1649,6 @@ window.electronAPI.hooks.onSessionEnded((sid) => {
 window.electronAPI.hooks.onDropped((p) => {
   useHooksStore.getState().markDropped(p.sessionId)
 })
-```
-
-Actually — reconsider. Pause should stop UI from appending but **the store should still accumulate** per spec. Revise: remove the `paused` early-return above. `paused` is a UI-side-only filter; the store ingests unconditionally.
-
-Replace the onEvent handler with:
-
-```ts
-window.electronAPI.hooks.onEvent((e) => useHooksStore.getState().ingest(e))
 ```
 
 - [ ] **Step 4: Run tests** + commit.
@@ -1644,6 +1677,12 @@ import { useHooksStore } from '../../../stores/hooksStore'
 import type { HookEvent, HookEventKind } from '../../../../shared/hook-types'
 
 interface Props { sessionId: string }
+
+// Hoisted above the component so the selector in useHooksStore can
+// return a stable reference when a session has no events yet (avoids
+// re-renders caused by `?? []` creating a new array identity each
+// render). Keep immutable.
+const EMPTY: HookEvent[] = []
 
 export default function LiveActivityFooter({ sessionId }: Props) {
   const events = useHooksStore((s) => s.eventsBySession.get(sessionId) ?? EMPTY)
@@ -1699,9 +1738,14 @@ export default function LiveActivityFooter({ sessionId }: Props) {
           <span className="text-overlay1">{expanded ? '▼' : '▶'}</span>
           <span className="text-text">Live Activity</span>
           {events.length > 0 && (
+            // One-shot 300ms flash on each new event. Tailwind's
+            // `animate-pulse` is infinite — not what the spec asks for
+            // ("blinks when a new event arrives"). Custom keyframe
+            // `hooks-pulse` lives in src/renderer/styles.css. Forcing a
+            // remount via `key={pulseKey}` restarts the animation.
             <span
               key={pulseKey}
-              className="w-1.5 h-1.5 rounded-full bg-green animate-pulse"
+              className="w-1.5 h-1.5 rounded-full bg-green [animation:hooks-pulse_300ms_ease-out]"
               aria-hidden="true"
             />
           )}
@@ -1724,8 +1768,6 @@ export default function LiveActivityFooter({ sessionId }: Props) {
   )
 }
 
-const EMPTY: HookEvent[] = []
-
 function relativeTime(ms: number): string {
   if (ms < 1500) return 'just now'
   if (ms < 60_000) return `${Math.round(ms / 1000)}s ago`
@@ -1739,11 +1781,23 @@ function ExpandedList(_: unknown): JSX.Element { return <div /> }
 
 Leave `ExpandedList` as a stub for now; Task 15 fills it in.
 
-- [ ] **Step 2: Typecheck + commit**
+- [ ] **Step 2: Add the keyframe to `src/renderer/styles.css`**
+
+Find the `@theme` block. Outside it (keyframes don't live in `@theme`), append:
+
+```css
+@keyframes hooks-pulse {
+  0%   { transform: scale(1);   opacity: 1; }
+  50%  { transform: scale(1.8); opacity: 1; }
+  100% { transform: scale(1);   opacity: 0.55; }
+}
+```
+
+- [ ] **Step 3: Typecheck + commit**
 
 ```bash
 npm run typecheck
-git add src/renderer/components/github/sections/LiveActivityFooter.tsx
+git add src/renderer/components/github/sections/LiveActivityFooter.tsx src/renderer/styles.css
 git commit -m "feat(hooks): live-activity footer collapsed shell"
 ```
 
@@ -2114,9 +2168,20 @@ function claudeOnPath(): string | null {
   } catch { return null }
 }
 
+// Confirm --settings is supported by this claude build. The flag was
+// added relatively recently; older installs will silently ignore it and
+// the test will fail with zero events (false negative).
+function supportsSettingsFlag(claude: string): boolean {
+  try {
+    const help = execFileSync(claude, ['--help'], { encoding: 'utf-8' })
+    return /--settings/.test(help)
+  } catch { return false }
+}
+
 describe('integration: real Claude Code', () => {
   const claude = claudeOnPath()
-  const maybeIt = claude ? it : it.skip
+  const canRun = claude !== null && supportsSettingsFlag(claude)
+  const maybeIt = canRun ? it : it.skip
 
   let gw: HooksGateway | null = null
   let tmpDir = ''
@@ -2149,15 +2214,17 @@ describe('integration: real Claude Code', () => {
       { cwd: process.cwd(), stdio: ['ignore', 'pipe', 'pipe'] },
     )
 
+    // 60s, not 30: cold-cache `claude --print` with a tool round-trip
+    // regularly takes 20-40s on a freshly-opened project.
     const done = new Promise<void>((resolve) => child.on('close', () => resolve()))
-    await Promise.race([done, new Promise<void>((r) => setTimeout(r, 30_000))])
+    await Promise.race([done, new Promise<void>((r) => setTimeout(r, 60_000))])
     child.kill('SIGKILL')
 
     const pre = events.filter((e) => e.channel === 'hooks:event' && e.payload.event === 'PreToolUse')
     const post = events.filter((e) => e.channel === 'hooks:event' && e.payload.event === 'PostToolUse')
     expect(pre.length).toBeGreaterThan(0)
     expect(post.length).toBeGreaterThan(0)
-  }, 35_000)
+  }, 65_000)
 })
 ```
 
@@ -2295,6 +2362,18 @@ EOF
    - §Risks/Claude Code http hook → exercised by Task 19 (real-Claude test is the spike)
 2. **Placeholder scan** — no `TBD` / `TODO` / "similar to Task N" / handwavy "add error handling". All code is concrete.
 3. **Type consistency** — `HookEvent`, `HookEventKind`, `HooksGatewayStatus` names match across tasks. `injectHooks`/`removeHooks` names match. `registerSession`/`unregisterSession` names match.
+
+4. **Review-round-1 fixes folded in (2026-04-23):**
+   - Redactor regex quantifiers bounded `{n,M}` to defeat ReDoS (Task 3).
+   - `stop()` now clears `buffers` and `overflowLatched` alongside `secrets` (Task 5).
+   - Settings file writer switched from `renameSync` to plain `writeFileSync` — rename-over-open-file fails on win32 (Task 8).
+   - Buggy `paused` early-return in IPC wiring deleted; only the correct ingest-unconditionally version remains (Task 13).
+   - SSH hooks injection is explicitly in scope (not punted). Task 12 carries both `-R` tunnel and setup-script extension.
+   - `saveConfig` callback renamed to `persistPatch`; main-side merge handles the two-arg `saveConfigDebounced(key, data)` contract correctly (Task 11).
+   - `SID_FROM_FILENAME` regex tightened to `[^.]+` so `settings-foo.json.bak` doesn't match (Task 9).
+   - `EMPTY` sentinel hoisted above the component (Task 14).
+   - Pulse dot switched from infinite `animate-pulse` to a one-shot `hooks-pulse` keyframe per spec §Collapsed state (Task 14).
+   - Real-Claude test timeout raised to 60s and gated on `--help | grep --settings` (Task 19).
 
 ---
 
