@@ -5,6 +5,7 @@ import FeatureTogglesList from './FeatureTogglesList'
 import PermissionsSummary from './PermissionsSummary'
 import PrivacySettings from './PrivacySettings'
 import SyncSettings from './SyncSettings'
+import HooksGatewaySection from './HooksGatewaySection'
 
 export default function GitHubConfigTab() {
   const config = useGitHubStore((s) => s.config)
@@ -37,6 +38,7 @@ export default function GitHubConfigTab() {
       <PermissionsSummary />
       <PrivacySettings />
       <SyncSettings />
+      <HooksGatewaySection />
       <div className="text-xs text-overlay0 pt-4 border-t border-surface0">
         <strong>No telemetry.</strong> This feature sends no usage data to Anthropic
         or third parties. All requests go to github.com using your configured auth.
