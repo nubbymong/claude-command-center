@@ -45,10 +45,102 @@ All new files ≤300 LOC.
 
 ## Task 1: Edit-delta derivation in hooksStore
 
-**Files:**
-- Modify: `src/renderer/stores/hooksStore.ts` — add `editDeltasBySession: Record<sessionId, Record<filePath, { added: number; removed: number }>>`.
+> **Corrected from reviewer B1:** an earlier draft assumed the hook payload
+> exposed pre-computed `added` / `removed` integer fields. It doesn't.
+> Claude Code's PostToolUse Edit payload actually looks like:
+>
+> ```json
+> { "tool_input": { "file_path": "/x/App.tsx",
+>                   "old_string": "…",
+>                   "new_string": "…" },
+>   "tool_response": { "filePath": "…", "success": true, … } }
+> ```
+>
+> and MultiEdit exposes `tool_input.edits: Array<{ old_string, new_string }>`,
+> while Write exposes `tool_input.content` for a whole-file payload.
+>
+> The store must therefore derive deltas from the strings themselves, via a
+> small multi-set line diff, and handle the three tool shapes explicitly.
+> Without this, the store silently records `{ added: 0, removed: 0 }` for
+> every real edit — a bug that would only surface in human testing.
 
-- [ ] **Step 1: Failing test**
+**Files:**
+- Create: `src/renderer/stores/line-diff.ts` — pure helper for line-bag deltas.
+- Modify: `src/renderer/stores/hooksStore.ts` — add `editDeltasBySession: Record<sessionId, Record<filePath, { added: number; removed: number }>>` and dispatch per tool shape.
+
+- [ ] **Step 1: Line-diff helper — failing test**
+
+Create `tests/unit/renderer/stores/line-diff.test.ts`:
+
+```ts
+import { describe, it, expect } from 'vitest'
+import { countLineDelta } from '../../../src/renderer/stores/line-diff'
+
+describe('countLineDelta', () => {
+  it('returns zero for identical strings', () => {
+    expect(countLineDelta('a\nb\nc', 'a\nb\nc')).toEqual({ added: 0, removed: 0 })
+  })
+  it('pure append — 2 added, 0 removed', () => {
+    expect(countLineDelta('a\nb', 'a\nb\nc\nd')).toEqual({ added: 2, removed: 0 })
+  })
+  it('pure delete — 0 added, 2 removed', () => {
+    expect(countLineDelta('a\nb\nc\nd', 'a\nb')).toEqual({ added: 0, removed: 2 })
+  })
+  it('in-place line swap counts as 1 added + 1 removed', () => {
+    expect(countLineDelta('a\nold\nc', 'a\nnew\nc')).toEqual({ added: 1, removed: 1 })
+  })
+  it('empty to non-empty whole-file write — all added', () => {
+    expect(countLineDelta('', 'a\nb\nc')).toEqual({ added: 3, removed: 0 })
+  })
+  it('non-empty to empty', () => {
+    expect(countLineDelta('a\nb\nc', '')).toEqual({ added: 0, removed: 3 })
+  })
+  it('duplicate lines use multiset semantics', () => {
+    // two copies of "x" in old, one copy in new — one removed.
+    expect(countLineDelta('x\nx\ny', 'x\ny')).toEqual({ added: 0, removed: 1 })
+  })
+})
+```
+
+- [ ] **Step 2: Run — FAIL** (`line-diff.ts` does not exist).
+
+Run: `npx vitest run tests/unit/renderer/stores/line-diff.test.ts`
+
+- [ ] **Step 3: Implement `line-diff.ts`**
+
+Create `src/renderer/stores/line-diff.ts`:
+
+```ts
+/**
+ * Multiset line diff. Treats each string as a bag of lines and computes how
+ * many lines would need to be added vs removed to turn `oldStr` into `newStr`.
+ * Identical lines cancel; in-place edits count as one added + one removed.
+ *
+ * This is not a minimal Myers-style diff — it intentionally trades precision
+ * for simplicity and stability under reordering. For the sidebar badge
+ * (`+N/-M` summary across a session) that tradeoff is correct: reordering
+ * lines should not balloon the counts, and we don't need character-accurate
+ * patches.
+ */
+export function countLineDelta(oldStr: string, newStr: string): { added: number; removed: number } {
+  if (oldStr === newStr) return { added: 0, removed: 0 }
+  // Empty-string edge cases: "" splits to [""], which would overcount by 1.
+  const oldLines = oldStr === '' ? [] : oldStr.split('\n')
+  const newLines = newStr === '' ? [] : newStr.split('\n')
+  const oldBag = new Map<string, number>()
+  for (const l of oldLines) oldBag.set(l, (oldBag.get(l) ?? 0) + 1)
+  const newBag = new Map<string, number>()
+  for (const l of newLines) newBag.set(l, (newBag.get(l) ?? 0) + 1)
+  let added = 0, removed = 0
+  for (const [l, n] of newBag) added += Math.max(0, n - (oldBag.get(l) ?? 0))
+  for (const [l, n] of oldBag) removed += Math.max(0, n - (newBag.get(l) ?? 0))
+  return { added, removed }
+}
+```
+
+- [ ] **Step 4: Test passes (7 tests).**
+
+- [ ] **Step 5: hooksStore delta derivation — failing test**
 
 Create `tests/unit/renderer/stores/hooksStore-deltas.test.ts`:
 
@@ -57,89 +149,187 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import type { HookEvent } from '../../../src/shared/hook-types'
 import { useHooksStore } from '../../../src/renderer/stores/hooksStore'
 
+/**
+ * Builders that match the real Claude Code PostToolUse payload shape.
+ * `tool_input` carries old/new strings; `tool_response` carries the
+ * server-side result. The store only needs tool_input for deltas.
+ */
+function mkEdit(sid: string, file: string, oldStr: string, newStr: string): HookEvent {
+  return {
+    sessionId: sid,
+    event: 'PostToolUse',
+    toolName: 'Edit',
+    payload: {
+      tool_input: { file_path: file, old_string: oldStr, new_string: newStr },
+      tool_response: { filePath: file, success: true },
+    },
+    ts: Date.now(),
+  }
+}
+
+function mkWrite(sid: string, file: string, content: string): HookEvent {
+  return {
+    sessionId: sid,
+    event: 'PostToolUse',
+    toolName: 'Write',
+    payload: {
+      tool_input: { file_path: file, content },
+      tool_response: { filePath: file, success: true, type: 'create' },
+    },
+    ts: Date.now(),
+  }
+}
+
+function mkMultiEdit(sid: string, file: string, edits: Array<{ old: string; new: string }>): HookEvent {
+  return {
+    sessionId: sid,
+    event: 'PostToolUse',
+    toolName: 'MultiEdit',
+    payload: {
+      tool_input: {
+        file_path: file,
+        edits: edits.map(e => ({ old_string: e.old, new_string: e.new })),
+      },
+      tool_response: { filePath: file, success: true },
+    },
+    ts: Date.now(),
+  }
+}
+
 describe('hooksStore edit deltas', () => {
   beforeEach(() => { useHooksStore.getState().clearAllForTests() })
 
-  it('aggregates PostToolUse Edit events into (filePath → {added, removed})', () => {
-    const ev: HookEvent = {
-      sessionId: 's1', event: 'PostToolUse', toolName: 'Edit',
-      payload: { file_path: '/x/App.tsx', added: 3, removed: 1 },
-      ts: Date.now(),
-    }
-    useHooksStore.getState().ingestEvent(ev)
+  it('Edit event — computes added/removed from old_string vs new_string', () => {
+    useHooksStore.getState().ingestEvent(mkEdit('s1', '/x/App.tsx', 'a\nb', 'a\nb\nc\nd'))
     const deltas = useHooksStore.getState().editDeltasBySession['s1']
-    expect(deltas['/x/App.tsx']).toEqual({ added: 3, removed: 1 })
+    expect(deltas['/x/App.tsx']).toEqual({ added: 2, removed: 0 })
+  })
+
+  it('Edit event — in-place swap counts as 1+/1-', () => {
+    useHooksStore.getState().ingestEvent(mkEdit('s1', '/x/App.tsx', 'a\nold\nc', 'a\nnew\nc'))
+    expect(useHooksStore.getState().editDeltasBySession['s1']['/x/App.tsx']).toEqual({ added: 1, removed: 1 })
+  })
+
+  it('Write event — whole content counts as all-added (no prior content in payload)', () => {
+    useHooksStore.getState().ingestEvent(mkWrite('s1', '/x/new.tsx', 'a\nb\nc'))
+    expect(useHooksStore.getState().editDeltasBySession['s1']['/x/new.tsx']).toEqual({ added: 3, removed: 0 })
+  })
+
+  it('MultiEdit event — sums deltas across each edit in the array', () => {
+    useHooksStore.getState().ingestEvent(mkMultiEdit('s1', '/x/big.ts', [
+      { old: 'a',       new: 'a\nappend1' },       // +1 / -0
+      { old: 'drop',    new: '' },                  // +0 / -1
+      { old: 'x\ny',    new: 'x\ny\nz' },           // +1 / -0
+    ]))
+    expect(useHooksStore.getState().editDeltasBySession['s1']['/x/big.ts']).toEqual({ added: 2, removed: 1 })
   })
 
   it('accumulates across multiple edits to the same file', () => {
-    const mk = (added: number, removed: number): HookEvent => ({
-      sessionId: 's1', event: 'PostToolUse', toolName: 'Edit',
-      payload: { file_path: '/x/App.tsx', added, removed }, ts: Date.now(),
-    })
-    useHooksStore.getState().ingestEvent(mk(3, 1))
-    useHooksStore.getState().ingestEvent(mk(5, 2))
-    expect(useHooksStore.getState().editDeltasBySession['s1']['/x/App.tsx']).toEqual({ added: 8, removed: 3 })
+    useHooksStore.getState().ingestEvent(mkEdit('s1', '/x/App.tsx', 'a\nb', 'a\nb\nc\nd\ne'))  // +3
+    useHooksStore.getState().ingestEvent(mkEdit('s1', '/x/App.tsx', 'a\nb\nc\nd\ne', 'a\nb\nc\nd'))  // -1
+    expect(useHooksStore.getState().editDeltasBySession['s1']['/x/App.tsx']).toEqual({ added: 3, removed: 1 })
   })
 
   it('is scoped per session', () => {
-    const mk = (sid: string): HookEvent => ({
-      sessionId: sid, event: 'PostToolUse', toolName: 'Edit',
-      payload: { file_path: '/x/App.tsx', added: 1, removed: 0 }, ts: Date.now(),
-    })
-    useHooksStore.getState().ingestEvent(mk('s1'))
-    useHooksStore.getState().ingestEvent(mk('s2'))
+    useHooksStore.getState().ingestEvent(mkEdit('s1', '/x/App.tsx', 'a', 'a\nb'))
+    useHooksStore.getState().ingestEvent(mkEdit('s2', '/x/App.tsx', 'a', 'a\nb'))
     expect(useHooksStore.getState().editDeltasBySession['s1']['/x/App.tsx']).toEqual({ added: 1, removed: 0 })
     expect(useHooksStore.getState().editDeltasBySession['s2']['/x/App.tsx']).toEqual({ added: 1, removed: 0 })
   })
 
-  it('resets when session ends (hooks:sessionEnded)', () => {
-    const ev: HookEvent = {
-      sessionId: 's1', event: 'PostToolUse', toolName: 'Edit',
-      payload: { file_path: '/x/App.tsx', added: 1, removed: 0 }, ts: Date.now(),
-    }
-    useHooksStore.getState().ingestEvent(ev)
+  it('clearSession drops deltas for that session', () => {
+    useHooksStore.getState().ingestEvent(mkEdit('s1', '/x/App.tsx', 'a', 'a\nb'))
     useHooksStore.getState().clearSession('s1')
+    expect(useHooksStore.getState().editDeltasBySession['s1']).toBeUndefined()
+  })
+
+  it('malformed payload without tool_input contributes zero (defensive)', () => {
+    useHooksStore.getState().ingestEvent({
+      sessionId: 's1', event: 'PostToolUse', toolName: 'Edit',
+      payload: {} as any, ts: Date.now(),
+    })
     expect(useHooksStore.getState().editDeltasBySession['s1']).toBeUndefined()
   })
 })
 ```
 
-- [ ] **Step 2: Run — FAIL** (store doesn't have `editDeltasBySession` or `ingestEvent` yet).
+- [ ] **Step 6: Run — FAIL** (store doesn't have `editDeltasBySession` / `ingestEvent` logic yet).
 
-- [ ] **Step 3: Extend hooksStore**
+- [ ] **Step 7: Extend hooksStore**
 
-Where `hooksStore.ts` already ingests hook events (from Phase 1/feat/hooks-gateway), augment the reducer to update `editDeltasBySession`:
+Where `hooksStore.ts` already ingests hook events (from Phase 1 / `feat/hooks-gateway`), augment the reducer to update `editDeltasBySession`. Dispatch on `toolName` because each shape needs different field extraction:
 
 ```ts
+import { countLineDelta } from './line-diff'
+
+type ToolInputEdit = { file_path?: string; old_string?: string; new_string?: string }
+type ToolInputWrite = { file_path?: string; content?: string }
+type ToolInputMultiEdit = { file_path?: string; edits?: Array<{ old_string?: string; new_string?: string }> }
+
+function deltaFromEvent(ev: HookEvent): { file: string; added: number; removed: number } | null {
+  if (ev.event !== 'PostToolUse') return null
+  const ti = (ev.payload as { tool_input?: unknown })?.tool_input
+  if (!ti || typeof ti !== 'object') return null
+
+  if (ev.toolName === 'Edit') {
+    const { file_path, old_string = '', new_string = '' } = ti as ToolInputEdit
+    if (!file_path) return null
+    const d = countLineDelta(old_string, new_string)
+    return { file: file_path, added: d.added, removed: d.removed }
+  }
+
+  if (ev.toolName === 'Write') {
+    // Whole-file write: we have no record of previous content in the payload.
+    // Treat every write as all-added. If the file existed, downstream UX is
+    // still useful — it surfaces "this file got rewritten".
+    const { file_path, content = '' } = ti as ToolInputWrite
+    if (!file_path) return null
+    const d = countLineDelta('', content)
+    return { file: file_path, added: d.added, removed: d.removed }
+  }
+
+  if (ev.toolName === 'MultiEdit') {
+    const { file_path, edits = [] } = ti as ToolInputMultiEdit
+    if (!file_path || edits.length === 0) return null
+    let added = 0, removed = 0
+    for (const e of edits) {
+      const d = countLineDelta(e.old_string ?? '', e.new_string ?? '')
+      added += d.added
+      removed += d.removed
+    }
+    return { file: file_path, added, removed }
+  }
+
+  return null
+}
+
 function updateDeltas(state: State, ev: HookEvent): State {
-  if (ev.event !== 'PostToolUse') return state
-  if (ev.toolName !== 'Edit' && ev.toolName !== 'Write' && ev.toolName !== 'MultiEdit') return state
-  const filePath = (ev.payload.file_path as string | undefined) ?? (ev.payload.filePath as string | undefined)
-  if (!filePath) return state
-  const added = Number((ev.payload.added as number | undefined) ?? 0)
-  const removed = Number((ev.payload.removed as number | undefined) ?? 0)
+  const d = deltaFromEvent(ev)
+  if (!d) return state
   const sid = ev.sessionId
   const perSid = state.editDeltasBySession[sid] ?? {}
-  const cur = perSid[filePath] ?? { added: 0, removed: 0 }
+  const cur = perSid[d.file] ?? { added: 0, removed: 0 }
   return {
     ...state,
     editDeltasBySession: {
       ...state.editDeltasBySession,
-      [sid]: { ...perSid, [filePath]: { added: cur.added + added, removed: cur.removed + removed } },
+      [sid]: { ...perSid, [d.file]: { added: cur.added + d.added, removed: cur.removed + d.removed } },
     },
   }
 }
 ```
 
-Call it inside `ingestEvent`; add `clearSession(sid)` that drops `editDeltasBySession[sid]`; wire `clearSession` into the existing `hooks:sessionEnded` IPC listener.
+Call `updateDeltas` inside `ingestEvent`. Add `clearSession(sid)` which drops `editDeltasBySession[sid]` (and any other per-session state). Wire `clearSession` into the existing `hooks:sessionEnded` IPC listener that Phase 1 / Groups C-F provides.
 
-- [ ] **Step 4: Passes (4 tests).**
+- [ ] **Step 8: Passes (8 tests).**
 
-- [ ] **Step 5: Commit**
+Run: `npx vitest run tests/unit/renderer/stores/hooksStore-deltas.test.ts tests/unit/renderer/stores/line-diff.test.ts`
+
+- [ ] **Step 9: Commit**
 
 ```bash
-git add src/renderer/stores/hooksStore.ts tests/unit/renderer/stores/hooksStore-deltas.test.ts
-git commit -m "feat(sidebar-4): hooksStore derives edit deltas per session per file"
+git add src/renderer/stores/hooksStore.ts src/renderer/stores/line-diff.ts tests/unit/renderer/stores/hooksStore-deltas.test.ts tests/unit/renderer/stores/line-diff.test.ts
+git commit -m "feat(sidebar-4): hooksStore derives edit deltas from tool_input strings"
 ```
 
 ---

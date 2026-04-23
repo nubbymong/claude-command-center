@@ -591,6 +591,247 @@ git commit -m "feat(account): capture oauthAccount snapshot; real labels"
 
 ---
 
+### Task 5A: Retire + delete account mechanism
+
+**Why this task exists:** B6 from the reviewer findings. The self-review on line 1079 claimed the `retiredAccountIds` mechanism was "covered in Task 5 label fallback change" — it isn't. Without this, deleting an account fails silently: `initAccounts()` on the next launch re-reads `.credentials.json`, sees no matching stored account, and auto-saves the credentials right back into an empty slot (primary/secondary). The user deletes, restarts, and the account returns from the dead.
+
+**Files:**
+- Modify: `src/main/account-manager.ts`
+- Modify: `src/shared/ipc-channels.ts`
+- Modify: `src/main/ipc/account-handlers.ts`
+- Modify: `src/preload/index.ts`
+- Modify: `src/renderer/types/electron.d.ts`
+- Create: `tests/unit/main/account-manager-retire.test.ts`
+
+- [ ] **Step 1: Failing test**
+
+Create `tests/unit/main/account-manager-retire.test.ts`. Mock `config-manager` so each test starts with an empty store. Assertions:
+
+```ts
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { deleteAccount, getAccounts, initAccounts, saveCurrentAs } from '../../../src/main/account-manager'
+
+vi.mock('../../../src/main/config-manager', () => {
+  let store: any = { accounts: [], retiredAccountIds: [] }
+  return {
+    readConfig: vi.fn((key: string) => key === 'accounts' ? structuredClone(store) : null),
+    writeConfig: vi.fn((key: string, data: any) => { if (key === 'accounts') store = structuredClone(data) }),
+    saveConfigDebounced: vi.fn((key: string, data: any) => { if (key === 'accounts') store = structuredClone(data) }),
+    __reset: () => { store = { accounts: [], retiredAccountIds: [] } },
+  }
+})
+vi.mock('../../../src/main/account/oauth-reader', () => ({
+  readOAuthAccount: vi.fn(() => ({ emailAddress: 'a@b.c', accountUuid: 'uuid-1' })),
+}))
+// Fake credentials file reader returning stable refreshToken + fingerprint
+// (match the plan's `tokenFingerprint` strategy — hash of refreshToken).
+vi.mock('fs', async () => {
+  const real = await vi.importActual<any>('fs')
+  return {
+    ...real,
+    readFileSync: vi.fn((p: string, enc: any) =>
+      p.endsWith('.credentials.json')
+        ? JSON.stringify({ claudeAiOauth: { refreshToken: 'rt-FIXED', subscriptionType: 'max' } })
+        : real.readFileSync(p, enc)
+    ),
+    existsSync: vi.fn((p: string) => p.endsWith('.credentials.json') || real.existsSync(p)),
+  }
+})
+
+describe('deleteAccount + retiredAccountIds', () => {
+  beforeEach(() => { /* __reset would be called via the mock's exported helper */ })
+
+  it('deleteAccount removes entry AND records its fingerprint in retiredAccountIds', async () => {
+    await saveCurrentAs('acct-doomed', 'Doomed')
+    const before = getAccounts()
+    expect(before.find(a => a.id === 'acct-doomed')).toBeDefined()
+    const fp = before.find(a => a.id === 'acct-doomed')?.fingerprintShort
+    expect(fp).toBeDefined()
+
+    const res = deleteAccount('acct-doomed')
+    expect(res.ok).toBe(true)
+    expect(getAccounts().find(a => a.id === 'acct-doomed')).toBeUndefined()
+
+    // retiredAccountIds populated
+    const { readConfig } = await import('../../../src/main/config-manager') as any
+    const data = readConfig('accounts')
+    expect(data.retiredAccountIds).toContain(fp)
+  })
+
+  it('initAccounts does NOT auto-save when current credentials match a retired fingerprint', async () => {
+    await saveCurrentAs('acct-doomed', 'Doomed')
+    deleteAccount('acct-doomed')
+    // Now simulate a fresh launch — initAccounts reads .credentials.json (mocked above, same refresh token)
+    await initAccounts()
+    expect(getAccounts()).toHaveLength(0) // not re-created
+  })
+
+  it('deleteAccount is idempotent and does not duplicate entries in retiredAccountIds', async () => {
+    await saveCurrentAs('acct-x', 'X')
+    deleteAccount('acct-x')
+    deleteAccount('acct-x') // second call — already gone
+    const { readConfig } = await import('../../../src/main/config-manager') as any
+    const data = readConfig('accounts')
+    const fp = data.retiredAccountIds[0]
+    expect(data.retiredAccountIds.filter((x: string) => x === fp)).toHaveLength(1)
+  })
+})
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `npx vitest run tests/unit/main/account-manager-retire.test.ts`
+Expected: FAIL — `deleteAccount` not exported.
+
+- [ ] **Step 3: Extend `AccountsData` in `account-manager.ts`**
+
+Modify the interface near the top of `src/main/account-manager.ts`:
+
+```ts
+interface AccountsData {
+  accounts: StoredAccount[]
+  lastActiveId?: string
+  /**
+   * Fingerprints of accounts the user has explicitly deleted. `initAccounts` must
+   * consult this before auto-saving ~/.claude/.credentials.json into an empty slot,
+   * otherwise a deleted account resurrects on next app launch.
+   * Uses `fingerprintShort` (stable hash of refreshToken) as the retirement key.
+   */
+  retiredAccountIds: string[]
+}
+```
+
+Update `loadAccountsData` to default the new field:
+
+```ts
+function loadAccountsData(): AccountsData {
+  const data = readConfig<AccountsData>('accounts')
+  return {
+    accounts: data?.accounts ?? [],
+    lastActiveId: data?.lastActiveId,
+    retiredAccountIds: data?.retiredAccountIds ?? [],
+  }
+}
+```
+
+And `saveAccountsData` so the new field is persisted (not dropped by the `toSave` projection):
+
+```ts
+function saveAccountsData(data: AccountsData): void {
+  const toSave: AccountsData = {
+    accounts: data.accounts.map(/* existing encryption logic unchanged */),
+    lastActiveId: data.lastActiveId,
+    retiredAccountIds: data.retiredAccountIds ?? [],
+  }
+  saveConfigDebounced('accounts', toSave)
+}
+```
+
+- [ ] **Step 4: Export `retireAccount` + `deleteAccount`**
+
+Add at the bottom of `account-manager.ts`:
+
+```ts
+/**
+ * Mark an account's fingerprint as retired without removing the stored entry.
+ * Rarely used directly — most flows go through `deleteAccount` which calls this.
+ */
+export function retireAccount(fingerprintShort: string): void {
+  const data = loadAccountsData()
+  if (!data.retiredAccountIds.includes(fingerprintShort)) {
+    data.retiredAccountIds.push(fingerprintShort)
+    saveAccountsData(data)
+    logInfo(`[account-manager] Retired fingerprint: ${fingerprintShort}`)
+  }
+}
+
+/**
+ * Remove a stored account AND record its fingerprint in retiredAccountIds
+ * so `initAccounts` does not auto-recreate it on next launch.
+ *
+ * If the deleted account was `lastActiveId`, clears that pointer.
+ */
+export function deleteAccount(id: string): { ok: boolean; error?: string } {
+  const data = loadAccountsData()
+  const idx = data.accounts.findIndex(a => a.profile.id === id)
+  if (idx < 0) return { ok: false, error: `Account "${id}" not found.` }
+  const fp = data.accounts[idx].profile.fingerprintShort
+  data.accounts.splice(idx, 1)
+  if (data.lastActiveId === id) data.lastActiveId = undefined
+  if (fp && !data.retiredAccountIds.includes(fp)) {
+    data.retiredAccountIds.push(fp)
+  }
+  saveAccountsData(data)
+  logInfo(`[account-manager] Deleted account ${id}${fp ? ` (retired fp ${fp})` : ''}`)
+  return { ok: true }
+}
+```
+
+- [ ] **Step 5: Gate `initAccounts` on the retired list**
+
+Inside `initAccounts()`, after reading `creds` and computing `fp = tokenFingerprint(creds)` (move that computation up if currently done later), and BEFORE the auto-save branch:
+
+```ts
+const data = loadAccountsData()
+const fp = tokenFingerprint(creds)
+
+// Retirement gate: if the user deleted an account whose credentials match
+// what we just read from ~/.claude/.credentials.json, refuse to auto-recreate.
+if (data.retiredAccountIds.includes(fp)) {
+  logInfo(`[account-manager] Skipping auto-detect: fingerprint ${fp} is retired`)
+  return
+}
+
+// …existing existingMatch / slotId / auto-save logic below
+```
+
+- [ ] **Step 6: IPC + preload bridge for `deleteAccount`**
+
+`src/shared/ipc-channels.ts` — add under ACCOUNT section:
+
+```ts
+  ACCOUNT_DELETE: 'account:delete',
+```
+
+`src/main/ipc/account-handlers.ts` — register:
+
+```ts
+import { deleteAccount } from '../account-manager'
+
+ipcMain.handle(IPC.ACCOUNT_DELETE, async (_e, id: string) => deleteAccount(id))
+```
+
+`src/preload/index.ts` — inside the `account` namespace:
+
+```ts
+delete: (id: string) => ipcRenderer.invoke(IPC.ACCOUNT_DELETE, id),
+```
+
+`src/renderer/types/electron.d.ts`:
+
+```ts
+delete(id: string): Promise<{ ok: boolean; error?: string }>
+```
+
+- [ ] **Step 7: Tests pass**
+
+Run: `npx vitest run tests/unit/main/account-manager-retire.test.ts`
+Expected: PASS (all 3 tests).
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add src/main/account-manager.ts src/shared/ipc-channels.ts src/main/ipc/account-handlers.ts src/preload/index.ts src/renderer/types/electron.d.ts tests/unit/main/account-manager-retire.test.ts
+git commit -m "feat(account): retiredAccountIds gate + deleteAccount IPC"
+```
+
+**Downstream callers that must be updated to respect retired list:**
+- Task 15 (dropdown rich row layout) — add a "Delete" destructive action per row that calls `window.electronAPI.account.delete(id)`. Confirm with a small dialog; on success, remove the row. Existing swap path already re-queries `getAccounts()`.
+- Task 20 (AccountPicker modal) — `getAccounts()` already excludes retired entries because they aren't in `data.accounts` anymore. Nothing to do beyond using the existing list.
+- Task 22 (`recordHostAccount`) — unchanged; retired accounts cannot be active so this path never fires for them.
+
+---
+
 ### Task 6: Wire IPC + preload bridge for oauth snapshot
 
 **Files:**
@@ -1076,7 +1317,7 @@ gh pr create --title "account rework: real labels, save-and-restore swap, per-ho
   - [x] B4 new-launch race → `session-launch-flow.ts` awaits `restorePhase === 'done'` before appending
   - [x] B5 stale renderer snapshot → two-phase ACK with `snapshotTimeoutMs` + stale warning
   - [x] B6 remote script → `set -euo pipefail` + trap-exits-nonzero in `buildRemotePushPayload`
-  - [x] B7 slot semantics → `retiredAccountIds` list (covered in Task 5 label fallback change)
+  - [x] B7 slot semantics → `retiredAccountIds` list (Task 5A: extends `AccountsData`, gates `initAccounts`, exports `retireAccount` + `deleteAccount`, IPC bridged)
 - [ ] Scope cuts respected: no Manage Hosts UI; no `useCustomLabel` toggle (field exists, UI deferred); no blocking recovery modal; no first-push extra checkbox; no single-account picker.
 - [ ] Every code step shows full code; no placeholders.
 - [ ] Types used in later tasks are defined in earlier tasks (OAuthAccountSnapshot Task 1 → referenced throughout).

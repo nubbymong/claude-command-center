@@ -304,7 +304,11 @@ export function createMarkerParser(): MarkerParser {
         kept.push(raw)
       }
     }
-    carry = ''
+    // DO NOT reset `carry` here — lines above may have set it (partial OSC at
+    // 279, partial phase tail at 301) or ingest may have pre-set it to the
+    // post-newline tail before calling process(). An unconditional reset
+    // wipes state that must survive to the next ingest() call, breaking
+    // every split-across-chunks test.
     return { cleaned: kept.join('\n'), markers }
   }
 
@@ -341,7 +345,14 @@ export function createMarkerParser(): MarkerParser {
 }
 ```
 
-(Implementation note: the above is the strawman — tune regex to cover all test cases; the tests drive correctness. If any test fails after the first implementation, tighten the regex or the partial-detection logic and iterate.)
+(Implementation note: the above is a strawman. Tests are the source of truth — the strawman **passes** the straightforward cases and **is expected to fail** on edge cases flagged in `docs/superpowers/plan-review-findings-2026-04-23.md` under `ssh-session-redesign`. Specifically:
+
+- **B1 (fixed above)** — the `carry = ''` reset inside `process()` was the primary bug. It has been removed with an inline comment explaining why. Do not re-add it.
+- **B2** — `isPotentialPartial` fast-path. Audit whether the `endsWith` check adds anything the subsequent loop does not already cover; simplify if redundant.
+- **B3** — overflow path currently emits the "oldest portion" as `cleaned` without running it through `process()`, so any marker in that region is dropped silently. Either route the emit through `process()`, or only trigger overflow when `isPotentialPartial` was false (so the emitted region is known marker-free).
+- **B4** — ANSI-wrapped marker preserves only marker, not prefix. For input like `'prefix \x1b[0m__CCC_PHASE_SETUP_OK__\x1b[0m\n'`, the current regex `^.*?__CCC_PHASE_...` greedily consumes `'prefix '`. Change capture group so the prefix is emitted to `kept[]` before the marker: use `^(.*?)__CCC_PHASE_([A-Z_]+)__([^\r]*)\r?$` and push `m[1]` into `kept` when non-empty.
+
+Tune the regex and loops until ALL 8 tests pass. Don't ship until green.)
 
 - [ ] **Step 4: Passes (all 8 tests)**
 
