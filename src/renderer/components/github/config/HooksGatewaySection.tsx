@@ -11,9 +11,15 @@ export default function HooksGatewaySection() {
 
   useEffect(() => {
     let active = true
-    window.electronAPI.hooks.getStatus().then((s) => {
-      if (active) setStatus(s)
-    })
+    window.electronAPI.hooks
+      .getStatus()
+      .then((s) => {
+        if (active) setStatus(s)
+      })
+      .catch(() => {
+        // IPC can reject during renderer/app teardown. Subsequent
+        // onStatus pushes will populate state when the channel recovers.
+      })
     const off = window.electronAPI.hooks.onStatus(setStatus)
     return () => {
       active = false
@@ -42,19 +48,22 @@ export default function HooksGatewaySection() {
   }
 
   const savePort = async (port: number): Promise<void> => {
-    // Only cycle the gateway if it was already running. Otherwise a port
-    // change with hooks disabled would silently enable them — surprising
-    // side-effect for a setting that reads as purely numeric.
+    // Only cycle the gateway if the user has enabled hooks. A port change
+    // with hooks disabled would silently enable them — surprising side-
+    // effect for a setting that reads as purely numeric. Gating on
+    // persisted intent (not `status.listening`) avoids the edge case
+    // where a stale `listening=true` would trigger a restart and then
+    // leave persisted `hooksEnabled=false` diverged from reality.
     setActionError(null)
-    const wasRunning = settings.hooksEnabled || status?.listening === true
+    const shouldRestart = settings.hooksEnabled === true
     try {
       await updateSettings({ hooksPort: port })
-      if (wasRunning) {
+      if (shouldRestart) {
         await window.electronAPI.hooks.toggle(false)
         const restart = await window.electronAPI.hooks.toggle(true)
+        // Reconcile persisted intent with actual listener state.
+        await updateSettings({ hooksEnabled: !!restart.listening })
         if (!restart.listening) {
-          // Persist false so the UI reflects reality; the user can retry.
-          await updateSettings({ hooksEnabled: false })
           setActionError(restart.error ? `Restart failed on port ${port}: ${restart.error}` : `Restart failed on port ${port}`)
           return
         }

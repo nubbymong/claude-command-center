@@ -59,19 +59,25 @@ function VersionSection({ entry }: { entry: ChangelogEntry }) {
   )
 }
 
+// Must match the Tailwind `duration-200` transition on the backdrop + dialog.
+// Single source of truth so a future tweak to one keeps the other in sync.
+const CLOSE_ANIMATION_MS = 200
+
 export default function WhatsNewModal({ onClose, showAllVersions = false }: Props) {
   const latestVersion = changelog[0]
   const versionsToShow = showAllVersions ? changelog : [latestVersion]
   // Animation state: `entering` false on mount → true after one frame
   // fades the dialog in. `closing` flips true when the user dismisses,
-  // giving the fade-out 180ms before we actually call the parent onClose.
-  // Keeps the transition between first-launch modals from feeling abrupt.
+  // giving the fade-out CLOSE_ANIMATION_MS before we call the parent's
+  // onClose. Must match the CSS transition duration (duration-200) below;
+  // a mismatch truncates the fade. Derived from the shared constant so
+  // they can't drift.
   const [entering, setEntering] = useState(false)
   const [closing, setClosing] = useState(false)
   // Track the dismiss timer in a ref so we can cancel it on unmount. Without
   // this, unmounting mid-fade (e.g. parent tears the modal down for another
-  // reason before the 180ms elapses) would still call onClose late and push
-  // state into a parent that may no longer expect it.
+  // reason before the timeout elapses) would still call onClose late and
+  // push state into a parent that may no longer expect it.
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
@@ -91,7 +97,7 @@ export default function WhatsNewModal({ onClose, showAllVersions = false }: Prop
     closeTimerRef.current = setTimeout(() => {
       closeTimerRef.current = null
       onClose()
-    }, 180)
+    }, CLOSE_ANIMATION_MS)
   }
 
   const visible = entering && !closing
