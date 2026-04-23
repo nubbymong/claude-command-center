@@ -51,6 +51,8 @@ import type {
   TokenomicsData,
   TokenomicsSyncProgress,
 } from '../../shared/types'
+import type { HookEvent, HooksGatewayStatus } from '../../shared/hook-types'
+export type { HookEvent, HookEventKind, HooksGatewayStatus } from '../../shared/hook-types'
 
 export interface ElectronAPI {
   config: {
@@ -398,6 +400,15 @@ export interface ElectronAPI {
       body: string,
     ) => Promise<{ ok: boolean; error?: string }>
     markNotifRead: (profileId: string, notifId: string) => Promise<{ ok: boolean; error?: string }>
+  }
+  hooks: {
+    toggle: (enabled: boolean) => Promise<HooksGatewayStatus>
+    getBuffer: (sessionId: string) => Promise<HookEvent[]>
+    getStatus: () => Promise<HooksGatewayStatus>
+    onEvent: (cb: (e: HookEvent) => void) => () => void
+    onSessionEnded: (cb: (sid: string) => void) => () => void
+    onDropped: (cb: (p: { sessionId: string }) => void) => () => void
+    onStatus: (cb: (s: HooksGatewayStatus) => void) => () => void
   }
 }
 
