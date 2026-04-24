@@ -166,6 +166,13 @@ export class HooksGateway {
     req: http.IncomingMessage,
     res: http.ServerResponse,
   ): Promise<void> {
+    // Send Connection: close on every response so Node's fetch client
+    // doesn't put the socket back into its keep-alive pool. Pool reuse
+    // surfaced as "socket connection was closed unexpectedly" errors
+    // on subsequent hook POSTs when Node aged the connection out
+    // between calls. Hook events are low-frequency enough that the
+    // per-request handshake cost is negligible.
+    res.setHeader('Connection', 'close')
     // Body-size cap: stream chunks into a running total, bail with 413
     // and destroy the socket as soon as the cap is exceeded. Avoids the
     // previous unbounded buffering path that a local process could abuse.
