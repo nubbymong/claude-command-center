@@ -15,7 +15,7 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
-    version: '1.3.2',
+    version: '1.4.0',
     date: '2026-04-24',
     highlights: "GitHub sidebar + HTTP Hooks Gateway with Live Activity feed",
     changes: [
