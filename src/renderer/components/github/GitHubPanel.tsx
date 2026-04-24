@@ -14,8 +14,6 @@ import LocalGitSection from './sections/LocalGitSection'
 import NotificationsSection from './sections/NotificationsSection'
 import SessionGitHubConfig from '../session/SessionGitHubConfig'
 import RateLimitBanner from './RateLimitBanner'
-import LiveActivityFooter from './sections/LiveActivityFooter'
-import { useSettingsStore } from '../../stores/settingsStore'
 
 interface Props {
   sessionId: string
@@ -51,7 +49,6 @@ export default function GitHubPanel({
   const closeSetup = useCallback(() => setShowSetup(false), [])
   useFocusTrap(setupDialogRef, showSetup, closeSetup)
   const width = sessionState?.panelWidth ?? 340
-  const hooksEnabled = useSettingsStore((s) => s.settings.hooksEnabled)
 
   // Auto-close the setup modal once the user saves + integration flips on.
   // Without this, disabling integration later would re-enter the rail
@@ -219,7 +216,6 @@ export default function GitHubPanel({
         <LocalGitSection sessionId={sessionId} cwd={session?.workingDirectory} />
         <NotificationsSection sessionId={sessionId} />
       </div>
-      {hooksEnabled && <LiveActivityFooter sessionId={sessionId} />}
     </aside>
   )
 }
