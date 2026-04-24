@@ -28,9 +28,12 @@ describe('session-hooks-writer', () => {
     const settings = JSON.parse(fs.readFileSync(file, 'utf-8'))
     for (const kind of MVP_EVENTS) {
       expect(Array.isArray(settings.hooks[kind])).toBe(true)
-      expect(settings.hooks[kind][0].type).toBe('http')
-      expect(settings.hooks[kind][0].url).toBe('http://localhost:19334/hook/sid-a')
-      expect(settings.hooks[kind][0].headers['X-CCC-Hook-Token']).toBe('abc123')
+      const wrapper = settings.hooks[kind][0]
+      expect(wrapper.matcher).toBe('')
+      expect(Array.isArray(wrapper.hooks)).toBe(true)
+      expect(wrapper.hooks[0].type).toBe('http')
+      expect(wrapper.hooks[0].url).toBe('http://localhost:19334/hook/sid-a')
+      expect(wrapper.hooks[0].headers['X-CCC-Hook-Token']).toBe('abc123')
     }
   })
 
@@ -51,7 +54,7 @@ describe('session-hooks-writer', () => {
     injectHooks({ sessionId: 'sid-a', settingsPath: file, port: 19334, secret: 'def' })
     const settings = JSON.parse(fs.readFileSync(file, 'utf-8'))
     expect(settings.hooks.PreToolUse.length).toBe(1)
-    expect(settings.hooks.PreToolUse[0].headers['X-CCC-Hook-Token']).toBe('def')
+    expect(settings.hooks.PreToolUse[0].hooks[0].headers['X-CCC-Hook-Token']).toBe('def')
   })
 
   it('remove strips only the hooks key', () => {

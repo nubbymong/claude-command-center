@@ -16,8 +16,8 @@ export interface ChangelogEntry {
 export const changelog: ChangelogEntry[] = [
   {
     version: '1.3.2',
-    date: '2026-04-20',
-    highlights: "GitHub sidebar: PR, CI, reviews, linked issues, and session context next to the terminal",
+    date: '2026-04-24',
+    highlights: "GitHub sidebar + HTTP Hooks Gateway with Live Activity feed",
     changes: [
       { type: 'feature', description: "New GitHub sidebar. Collapsible right panel that shows the PR for your current branch, CI runs, reviews, linked issues, local git state, and a session-context summary of what this terminal is working on" },
       { type: 'feature', description: "Sign in with GitHub via OAuth device flow, fine-grained PAT, or gh CLI adoption. Nothing runs until you opt in per session" },
@@ -25,7 +25,13 @@ export const changelog: ChangelogEntry[] = [
       { type: 'feature', description: "PR-body reference scanning. Closes/fixes/resolves #N and owner/repo#N refs in a PR body all surface in the session context" },
       { type: 'feature', description: "Notifications mini-section with mark-read, plus rate-limit and expiry banners on your auth profiles" },
       { type: 'feature', description: "First-launch onboarding modal for the GitHub sidebar, with a Set up now button that deep-links into the GitHub settings tab" },
+      { type: 'feature', description: "HTTP Hooks Gateway. Loopback 127.0.0.1 listener receives tool-call, permission, and lifecycle events from your Claude Code sessions via per-session UUID secrets. No telemetry; reverse-tunnelled into SSH sessions automatically" },
+      { type: 'feature', description: "Live Activity feed. Footer on each GitHub-enabled session expands into a timeline of recent hook events with Pause/Resume, type filters, and collapsed summary. Ring-buffered to 200 events per session" },
+      { type: 'feature', description: "Hooks Gateway settings panel under GitHub. Enable/disable toggle, port change with bind-failure surfacing, and inline reconciliation so persisted state never drifts from the actual listener" },
       { type: 'fix', description: "Right-click paste in terminals now respects bracketed-paste mode. Pasting multi-line text into Claude Code (or any other app that enables the mode) lands as a single atomic paste instead of submitting on the first newline" },
+      { type: 'fix', description: "Hooks settings schema matches current Claude CLI. Per-session settings files now emit the matcher-wrapped shape Claude requires after its recent update — old flat entries were rejected with a parse error" },
+      { type: 'fix', description: "Session labels no longer leak into Claude as user prompts. Dropped the --name CLI flag whose value was being split by Windows shell quoting, sending part of the label as the first message" },
+      { type: 'improvement', description: "What's New modal fade-out now uses a shared 200 ms constant matched to the Tailwind transition, so the animation never truncates" },
     ]
   },
   {
