@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC, ptyDataChannel, ptyExitChannel } from '../shared/ipc-channels'
+import type { HookEvent, HooksGatewayStatus } from '../shared/hook-types'
 
 export interface ElectronAPI {
   config: {
@@ -131,6 +132,92 @@ export interface ElectronAPI {
   shell: {
     openExternal: (url: string) => Promise<void>
   }
+  github: GitHubBridge
+  hooks: HooksBridge
+}
+
+interface HooksBridge {
+  toggle: (enabled: boolean) => Promise<HooksGatewayStatus>
+  getBuffer: (sessionId: string) => Promise<HookEvent[]>
+  getStatus: () => Promise<HooksGatewayStatus>
+  onEvent: (cb: (e: HookEvent) => void) => () => void
+  onSessionEnded: (cb: (sid: string) => void) => () => void
+  onDropped: (cb: (p: { sessionId: string }) => void) => () => void
+  onStatus: (cb: (s: HooksGatewayStatus) => void) => () => void
+}
+
+// GitHub sidebar bridge — see Phase A-H plan. 'GitHubBridge' is declared
+// inline here so preload doesn't need to pull types from src/shared at
+// compile time; the renderer-facing d.ts in src/renderer/types/electron.d.ts
+// redeclares this shape with precise return types sourced from
+// shared/github-types.ts.
+interface GitHubBridge {
+  getConfig: () => Promise<unknown>
+  updateConfig: (patch: unknown) => Promise<unknown>
+  addPat: (input: {
+    kind: 'pat-classic' | 'pat-fine-grained'
+    label: string
+    rawToken: string
+    allowedRepos?: string[]
+  }) => Promise<{ ok: boolean; id?: string; error?: string }>
+  adoptGhCli: (username: string) => Promise<{ ok: boolean; id?: string; error?: string }>
+  removeProfile: (id: string) => Promise<{ ok: boolean }>
+  renameProfile: (id: string, label: string) => Promise<{ ok: boolean }>
+  testProfile: (id: string) => Promise<{
+    ok: boolean
+    username?: string
+    scopes?: string[]
+    expiresAt?: number
+    error?: string
+  }>
+  oauthStart: (mode: 'public' | 'private') => Promise<{
+    flowId: string
+    userCode: string
+    verificationUri: string
+    expiresIn: number
+    interval: number
+  }>
+  oauthPoll: (flowId: string) => Promise<{ ok: boolean; profileId?: string; error?: string }>
+  oauthCancel: (flowId: string) => Promise<{ ok: boolean }>
+  ghcliDetect: () => Promise<{ ok: boolean; users: string[] }>
+  repoDetect: (cwd: string) => Promise<{ ok: boolean; slug: string | null }>
+  updateSessionConfig: (
+    sessionId: string,
+    patch: unknown,
+  ) => Promise<{ ok: boolean; error?: string }>
+  getLocalGit: (cwd: string) => Promise<{ ok: boolean; state: unknown }>
+  syncNow: (sessionId: string) => Promise<{ ok: boolean }>
+  syncFocusedNow: () => Promise<{ ok: boolean }>
+  syncPause: () => Promise<{ ok: boolean }>
+  syncResume: () => Promise<{ ok: boolean }>
+  notifyFocusChanged: (sessionId: string | null) => void
+  getData: (slug: string) => Promise<{ ok: boolean; data: unknown }>
+  getSessionContext: (sessionId: string) => Promise<{ ok: boolean; data: unknown }>
+  onDataUpdate: (cb: (p: { slug: string; data: unknown }) => void) => () => void
+  onSyncStateUpdate: (
+    cb: (p: {
+      slug: string
+      state: 'syncing' | 'synced' | 'rate-limited' | 'error' | 'idle'
+      at: number
+      nextResetAt?: number
+    }) => void,
+  ) => () => void
+  onNotificationsUpdate: (
+    cb: (p: { profileId: string; items: unknown[] }) => void,
+  ) => () => void
+  rerunActionsRun: (slug: string, runId: number) => Promise<{ ok: boolean; error?: string }>
+  mergePR: (
+    slug: string,
+    prNumber: number,
+    method: 'merge' | 'squash' | 'rebase',
+  ) => Promise<{ ok: boolean; error?: string }>
+  readyPR: (slug: string, prNumber: number) => Promise<{ ok: boolean; error?: string }>
+  replyToReview: (
+    slug: string,
+    threadId: string,
+    body: string,
+  ) => Promise<{ ok: boolean; error?: string }>
+  markNotifRead: (profileId: string, notifId: string) => Promise<{ ok: boolean; error?: string }>
 }
 
 const electronAPI: ElectronAPI = {
@@ -400,6 +487,84 @@ const electronAPI: ElectronAPI = {
   },
   shell: {
     openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
+  },
+  github: {
+    getConfig: () => ipcRenderer.invoke(IPC.GITHUB_CONFIG_GET),
+    updateConfig: (patch) => ipcRenderer.invoke(IPC.GITHUB_CONFIG_UPDATE, patch),
+    addPat: (input) => ipcRenderer.invoke(IPC.GITHUB_PROFILE_ADD_PAT, input),
+    adoptGhCli: (username) => ipcRenderer.invoke(IPC.GITHUB_PROFILE_ADOPT_GHCLI, username),
+    removeProfile: (id) => ipcRenderer.invoke(IPC.GITHUB_PROFILE_REMOVE, id),
+    renameProfile: (id, label) => ipcRenderer.invoke(IPC.GITHUB_PROFILE_RENAME, id, label),
+    testProfile: (id) => ipcRenderer.invoke(IPC.GITHUB_PROFILE_TEST, id),
+    oauthStart: (mode) => ipcRenderer.invoke(IPC.GITHUB_OAUTH_START, mode),
+    oauthPoll: (flowId) => ipcRenderer.invoke(IPC.GITHUB_OAUTH_POLL, flowId),
+    oauthCancel: (flowId) => ipcRenderer.invoke(IPC.GITHUB_OAUTH_CANCEL, flowId),
+    ghcliDetect: () => ipcRenderer.invoke(IPC.GITHUB_GHCLI_DETECT),
+    repoDetect: (cwd) => ipcRenderer.invoke(IPC.GITHUB_REPO_DETECT, cwd),
+    updateSessionConfig: (sessionId, patch) =>
+      ipcRenderer.invoke(IPC.GITHUB_SESSION_CONFIG_UPDATE, sessionId, patch),
+    getLocalGit: (cwd) => ipcRenderer.invoke(IPC.GITHUB_LOCALGIT_GET, cwd),
+    syncNow: (sessionId) => ipcRenderer.invoke(IPC.GITHUB_SYNC_NOW, sessionId),
+    syncFocusedNow: () => ipcRenderer.invoke(IPC.GITHUB_SYNC_FOCUSED_NOW),
+    notifyFocusChanged: (sessionId: string | null) =>
+      ipcRenderer.send(IPC.GITHUB_FOCUS_CHANGED, sessionId),
+    syncPause: () => ipcRenderer.invoke(IPC.GITHUB_SYNC_PAUSE),
+    syncResume: () => ipcRenderer.invoke(IPC.GITHUB_SYNC_RESUME),
+    getData: (slug) => ipcRenderer.invoke(IPC.GITHUB_DATA_GET, slug),
+    getSessionContext: (sessionId) =>
+      ipcRenderer.invoke(IPC.GITHUB_SESSION_CONTEXT_GET, sessionId),
+    onDataUpdate: (cb) => {
+      const l = (_e: Electron.IpcRendererEvent, p: unknown) =>
+        cb(p as Parameters<typeof cb>[0])
+      ipcRenderer.on(IPC.GITHUB_DATA_UPDATE, l)
+      return () => ipcRenderer.removeListener(IPC.GITHUB_DATA_UPDATE, l)
+    },
+    onSyncStateUpdate: (cb) => {
+      const l = (_e: Electron.IpcRendererEvent, p: unknown) =>
+        cb(p as Parameters<typeof cb>[0])
+      ipcRenderer.on(IPC.GITHUB_SYNC_STATE_UPDATE, l)
+      return () => ipcRenderer.removeListener(IPC.GITHUB_SYNC_STATE_UPDATE, l)
+    },
+    onNotificationsUpdate: (cb) => {
+      const l = (_e: Electron.IpcRendererEvent, p: unknown) =>
+        cb(p as Parameters<typeof cb>[0])
+      ipcRenderer.on(IPC.GITHUB_NOTIFICATIONS_UPDATE, l)
+      return () => ipcRenderer.removeListener(IPC.GITHUB_NOTIFICATIONS_UPDATE, l)
+    },
+    rerunActionsRun: (slug, runId) =>
+      ipcRenderer.invoke(IPC.GITHUB_ACTIONS_RERUN, slug, runId),
+    mergePR: (slug, prNumber, method) =>
+      ipcRenderer.invoke(IPC.GITHUB_PR_MERGE, slug, prNumber, method),
+    readyPR: (slug, prNumber) => ipcRenderer.invoke(IPC.GITHUB_PR_READY, slug, prNumber),
+    replyToReview: (slug, threadId, body) =>
+      ipcRenderer.invoke(IPC.GITHUB_REVIEW_REPLY, slug, threadId, body),
+    markNotifRead: (profileId, notifId) =>
+      ipcRenderer.invoke(IPC.GITHUB_NOTIF_MARK_READ, profileId, notifId),
+  },
+  hooks: {
+    toggle: (enabled) => ipcRenderer.invoke(IPC.HOOKS_TOGGLE, { enabled }),
+    getBuffer: (sessionId) => ipcRenderer.invoke(IPC.HOOKS_GET_BUFFER, { sessionId }),
+    getStatus: () => ipcRenderer.invoke(IPC.HOOKS_GET_STATUS),
+    onEvent: (cb) => {
+      const handler = (_: unknown, e: HookEvent) => cb(e)
+      ipcRenderer.on(IPC.HOOKS_EVENT, handler)
+      return () => ipcRenderer.removeListener(IPC.HOOKS_EVENT, handler)
+    },
+    onSessionEnded: (cb) => {
+      const handler = (_: unknown, sid: string) => cb(sid)
+      ipcRenderer.on(IPC.HOOKS_SESSION_ENDED, handler)
+      return () => ipcRenderer.removeListener(IPC.HOOKS_SESSION_ENDED, handler)
+    },
+    onDropped: (cb) => {
+      const handler = (_: unknown, p: { sessionId: string }) => cb(p)
+      ipcRenderer.on(IPC.HOOKS_DROPPED, handler)
+      return () => ipcRenderer.removeListener(IPC.HOOKS_DROPPED, handler)
+    },
+    onStatus: (cb) => {
+      const handler = (_: unknown, s: HooksGatewayStatus) => cb(s)
+      ipcRenderer.on(IPC.HOOKS_STATUS, handler)
+      return () => ipcRenderer.removeListener(IPC.HOOKS_STATUS, handler)
+    },
   },
 }
 

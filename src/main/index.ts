@@ -25,6 +25,12 @@ import { registerLegacyVersionHandlers } from './ipc/legacy-version-handlers'
 import { registerAccountHandlers } from './ipc/account-handlers'
 import { registerMemoryHandlers } from './ipc/memory-handlers'
 import { registerTokenomicsHandlers } from './ipc/tokenomics-handlers'
+import { registerGitHubHandlers } from './ipc/github-handlers'
+import { registerHooksHandlers } from './ipc/hooks-handlers'
+import { HooksGateway } from './hooks/hooks-gateway'
+import { setGateway } from './hooks'
+import { cleanupStaleHookEntries } from './hooks/boot-cleanup'
+import { DEFAULT_HOOKS_PORT } from './hooks/hooks-types'
 import { fetchModelPricing } from './tokenomics-manager'
 import { initAccounts } from './account-manager'
 import { killAllAgents } from './cloud-agent-manager'
@@ -534,6 +540,46 @@ if (!gotTheLock) {
     registerAccountHandlers()
     registerTokenomicsHandlers(getWindow)
     registerMemoryHandlers()
+    // GitHub sidebar — reads/writes github-config.json + encrypted auth profiles
+    // under the CONFIG dir alongside other app config. Session-level integration
+    // state piggybacks on the existing session-state persistence helpers.
+    registerGitHubHandlers({
+      resourcesDir: getConfigDir(),
+      getWindow,
+      loadSessions: async () => loadSessionState()?.sessions ?? [],
+      saveSessions: async (sessions) => {
+        const existing = loadSessionState()
+        saveSessionState({
+          sessions,
+          activeSessionId: existing?.activeSessionId ?? null,
+          savedAt: Date.now(),
+        })
+      },
+    })
+
+    // HTTP Hooks Gateway: loopback HTTP server that Claude Code calls when a hook
+    // fires (PreToolUse, PostToolUse, etc.). Bound to 127.0.0.1 with per-session
+    // UUID secrets. Renderer consumes events via the HOOKS_EVENT IPC channel.
+    const hooksSettings = readConfig<{ hooksEnabled?: boolean; hooksPort?: number }>('settings')
+    const hooksEnabled = hooksSettings?.hooksEnabled !== false
+    const hooksPort = hooksSettings?.hooksPort ?? DEFAULT_HOOKS_PORT
+    const hooksGateway = new HooksGateway({
+      defaultPort: hooksPort,
+      emit: (channel, payload) => {
+        const win = getWindow()
+        if (win && !win.isDestroyed()) {
+          try { win.webContents.send(channel, payload) } catch { /* destroyed */ }
+        }
+      },
+    })
+    setGateway(hooksGateway)
+    registerHooksHandlers(hooksGateway)
+    if (hooksEnabled) {
+      cleanupStaleHookEntries(new Set())
+      hooksGateway.start().catch((err) => {
+        logError(`[hooks] Gateway failed to start: ${err?.message ?? err}`)
+      })
+    }
 
     // Shell — open URLs in system browser
     ipcMain.handle('shell:openExternal', async (_event, url: string) => {
@@ -601,6 +647,7 @@ if (!gotTheLock) {
     stopConductorMcpServer()
     killAllAgents()
     killAllPty()
+    hooksGateway.stop().catch(() => { /* ignore shutdown error */ })
     closeDebugLogger()
   })
 

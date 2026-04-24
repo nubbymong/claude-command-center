@@ -2,17 +2,19 @@ import React, { useState, useEffect, useRef } from 'react'
 import WhatsNewModal, { markWhatsNewSeen } from './WhatsNewModal'
 import TrainingWalkthrough from './TrainingWalkthrough'
 import { getLatestVersion } from '../changelog'
-import { useSettingsStore, DEFAULT_STATUS_LINE, UpdateChannel } from '../stores/settingsStore'
-import type { StatusLineSettings } from '../stores/settingsStore'
+import { useSettingsStore, DEFAULT_STATUS_LINE, DEFAULT_TERMINAL_SETTINGS, UpdateChannel } from '../stores/settingsStore'
+import type { StatusLineSettings, TerminalSettings, CursorStyle } from '../stores/settingsStore'
 import { eventToShortcutString, DEFAULT_SHORTCUTS, SHORTCUT_LABELS } from '../utils/shortcuts'
+import GitHubConfigTab from './github/config/GitHubConfigTab'
 declare const __BUILD_TIME__: string
 
-type SettingsTab = 'general' | 'statusline' | 'shortcuts' | 'about'
+type SettingsTab = 'general' | 'statusline' | 'shortcuts' | 'github' | 'about'
 
 const TABS: { id: SettingsTab; label: string }[] = [
   { id: 'general', label: 'General' },
   { id: 'statusline', label: 'Status Line' },
   { id: 'shortcuts', label: 'Shortcuts' },
+  { id: 'github', label: 'GitHub' },
   { id: 'about', label: 'About' }
 ]
 
@@ -26,12 +28,27 @@ function formatBuildTime(iso: string): string {
   }
 }
 
-export default function SettingsPage() {
+interface SettingsPageProps {
+  // Initial tab selection used on first render. Allows callers (onboarding
+  // modal "Set up now" + auto-detect banner Accept/Edit) to deep-link into
+  // the GitHub tab instead of landing on the default General view.
+  initialTab?: SettingsTab
+}
+
+export default function SettingsPage({ initialTab }: SettingsPageProps = {}) {
   const settings = useSettingsStore((s) => s.settings)
   const updateSettings = useSettingsStore((s) => s.updateSettings)
   const [showWhatsNew, setShowWhatsNew] = useState(false)
   const [showTraining, setShowTraining] = useState(false)
-  const [activeTab, setActiveTab] = useState<SettingsTab>('general')
+  const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab ?? 'general')
+
+  // useState's initializer only reads initialTab once on mount. If a parent
+  // updates the deep-link prop while SettingsPage is already mounted (e.g.
+  // user is on Settings, a post-update trigger fires the onboarding modal,
+  // they click Set up now), the new tab wouldn't apply without this sync.
+  useEffect(() => {
+    if (initialTab) setActiveTab(initialTab)
+  }, [initialTab])
   const latestVersion = getLatestVersion()
 
   useEffect(() => {
@@ -155,17 +172,81 @@ export default function SettingsPage() {
                 </label>
               </Section>
 
-              <Section title="Appearance" icon={<><circle cx="8" cy="8" r="3" stroke="currentColor" strokeWidth="1.2" fill="none" /><path d="M8 2v2M8 12v2M2 8h2M12 8h2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" /></>}>
-                <Field label="Terminal Font Size">
-                  <input
-                    type="number"
-                    value={settings.terminalFontSize}
-                    onChange={e => save({ terminalFontSize: parseInt(e.target.value) || 14 })}
-                    min={10}
-                    max={24}
-                    className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-24 focus:outline-none focus:border-blue/50 tabular-nums transition-colors"
-                  />
+              <Section title="Terminal" icon={<><rect x="2" y="3" width="12" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.2" fill="none" /><path d="M5 7l2 2-2 2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" /><line x1="9" y1="11" x2="11" y2="11" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" /></>}>
+                <Field label="Font Family">
+                  <select
+                    value={(settings.terminal || DEFAULT_TERMINAL_SETTINGS).fontFamily}
+                    onChange={e => save({ terminal: { ...(settings.terminal || DEFAULT_TERMINAL_SETTINGS), fontFamily: e.target.value } })}
+                    className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-48 focus:outline-none focus:border-blue/50 transition-colors"
+                  >
+                    {['Cascadia Code', 'JetBrains Mono', 'Fira Code', 'Consolas', 'Courier New'].map(f => (
+                      <option key={f} value={f}>{f}</option>
+                    ))}
+                  </select>
                 </Field>
+                <Field label="Font Size">
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="range"
+                      min={11}
+                      max={20}
+                      value={(settings.terminal || DEFAULT_TERMINAL_SETTINGS).fontSize}
+                      onChange={e => {
+                        const sz = parseInt(e.target.value)
+                        save({ terminal: { ...(settings.terminal || DEFAULT_TERMINAL_SETTINGS), fontSize: sz }, terminalFontSize: sz })
+                      }}
+                      className="w-32"
+                    />
+                    <span className="text-sm text-subtext0 tabular-nums w-8">{(settings.terminal || DEFAULT_TERMINAL_SETTINGS).fontSize}px</span>
+                  </div>
+                </Field>
+                <Field label="Line Height">
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="range"
+                      min={10}
+                      max={16}
+                      value={Math.round(((settings.terminal || DEFAULT_TERMINAL_SETTINGS).lineHeight) * 10)}
+                      onChange={e => save({ terminal: { ...(settings.terminal || DEFAULT_TERMINAL_SETTINGS), lineHeight: parseInt(e.target.value) / 10 } })}
+                      className="w-32"
+                    />
+                    <span className="text-sm text-subtext0 tabular-nums w-8">{((settings.terminal || DEFAULT_TERMINAL_SETTINGS).lineHeight).toFixed(1)}</span>
+                  </div>
+                </Field>
+                <Field label="Cursor Style">
+                  <div className="flex gap-1">
+                    {(['bar', 'block', 'underline'] as CursorStyle[]).map(style => (
+                      <button
+                        key={style}
+                        onClick={() => save({ terminal: { ...(settings.terminal || DEFAULT_TERMINAL_SETTINGS), cursorStyle: style } })}
+                        className={`px-3 py-1.5 rounded-md text-xs transition-colors ${
+                          (settings.terminal || DEFAULT_TERMINAL_SETTINGS).cursorStyle === style
+                            ? 'bg-blue/20 text-blue border border-blue/30'
+                            : 'bg-surface0/60 text-overlay1 border border-surface0/80 hover:text-text'
+                        }`}
+                      >
+                        {style.charAt(0).toUpperCase() + style.slice(1)}
+                      </button>
+                    ))}
+                  </div>
+                </Field>
+                <Field label="Cursor Blink">
+                  <button
+                    onClick={() => save({ terminal: { ...(settings.terminal || DEFAULT_TERMINAL_SETTINGS), cursorBlink: !(settings.terminal || DEFAULT_TERMINAL_SETTINGS).cursorBlink } })}
+                    className={`relative w-11 h-6 rounded-full transition-colors duration-200 ${
+                      (settings.terminal || DEFAULT_TERMINAL_SETTINGS).cursorBlink ? 'bg-green' : 'bg-surface1'
+                    }`}
+                  >
+                    <div
+                      className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-200 ${
+                        (settings.terminal || DEFAULT_TERMINAL_SETTINGS).cursorBlink ? 'translate-x-6' : 'translate-x-1'
+                      }`}
+                    />
+                  </button>
+                </Field>
+                <p className="text-[11px] text-overlay0 mt-2 leading-relaxed">
+                  Terminal settings apply to new terminals. Restart sessions for changes to take effect.
+                </p>
               </Section>
 
               <Section title="Debug Logging" icon={<path d="M4 4l8 8M4 12l8-8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />}>
@@ -236,6 +317,8 @@ export default function SettingsPage() {
               </button>
             </Section>
           )}
+
+          {activeTab === 'github' && <GitHubConfigTab />}
 
           {activeTab === 'about' && (
             <Section title="About" icon={<><circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.2" fill="none" /><path d="M8 7v4M8 5.5v.01" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" /></>}>

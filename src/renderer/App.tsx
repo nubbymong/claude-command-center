@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react'
+import React, { useCallback, useEffect, useState, useRef } from 'react'
 import TitleBar from './components/TitleBar'
 import Sidebar from './components/Sidebar'
 import TabBar from './components/TabBar'
@@ -34,7 +34,12 @@ import { gatherLocalStorageData, hydrateStores } from './utils/configHydration'
 import { setupCloudAgentListener } from './stores/cloudAgentStore'
 import { setupTokenomicsListener } from './stores/tokenomicsStore'
 import { setupVisionListener, useVisionStore } from './stores/visionStore'
+import { setupGitHubListener, useGitHubStore } from './stores/githubStore'
+import GitHubPanel from './components/github/GitHubPanel'
+import OnboardingModal from './components/github/onboarding/OnboardingModal'
+import AutoDetectBanner from './components/github/AutoDetectBanner'
 import type { SessionState, SavedSession } from './types/electron'
+import { buildSessionState } from './session-persistence'
 
 // Re-export ViewType from its canonical location for backwards compatibility
 export type { ViewType } from './types/views'
@@ -72,6 +77,23 @@ export default function App() {
   const [showWhatsNew, setShowWhatsNew] = useState(false)
   const [showTraining, setShowTraining] = useState(false)
   const [showTrainingAll, setShowTrainingAll] = useState(false)
+  const [showGitHubOnboarding, setShowGitHubOnboarding] = useState(false)
+  // Deep-link the Settings page to a specific tab the next time it opens.
+  // Set by the onboarding "Set up now" button and the auto-detect banner
+  // Accept/Edit actions; consumed once by SettingsPage's initialTab prop.
+  const [pendingSettingsTab, setPendingSettingsTab] = useState<
+    'general' | 'statusline' | 'shortcuts' | 'github' | 'about' | null
+  >(null)
+
+  // Clear the pending tab once SettingsPage has consumed it (i.e. we've
+  // navigated away from the settings view). A return visit then defaults to
+  // General as expected, rather than sticking on whatever tab the deep link
+  // originally requested.
+  useEffect(() => {
+    if (view !== 'settings' && pendingSettingsTab) {
+      setPendingSettingsTab(null)
+    }
+  }, [view, pendingSettingsTab])
   const [showGuidedConfig, setShowGuidedConfig] = useState(false)
   const [showTipModal, setShowTipModal] = useState(false)
   const [partnerActive, setPartnerActive] = useState<Set<string>>(new Set())
@@ -81,6 +103,13 @@ export default function App() {
   const sessions = useSessionStore((s) => s.sessions)
   const activeSession = sessions.find((s) => s.id === activeSessionId)
   const hasRestoredRef = useRef(false)
+
+  // Push focus changes to main so the sync orchestrator can shift the
+  // active session to the fast interval and the background ones to the
+  // slow interval. ipcRenderer.send, not invoke — fire-and-forget.
+  useEffect(() => {
+    window.electronAPI.github.notifyFocusChanged(activeSessionId ?? null)
+  }, [activeSessionId])
 
   // Global keyboard shortcuts
   useKeyboardShortcuts(activeSessionId, setSidebarOpen, setView)
@@ -161,6 +190,8 @@ export default function App() {
       setupCloudAgentListener()
       setupTokenomicsListener()
       setupVisionListener()
+      setupGitHubListener()
+      useGitHubStore.getState().loadConfig()
       useVisionStore.getState().loadConfig()
       useVisionStore.getState().fetchStatus()
 
@@ -193,6 +224,73 @@ export default function App() {
     postConfigInit()
   }, [configLoaded])
 
+  // Show GitHub sidebar onboarding once per version bump after config
+  // hydrates. `seenOnboardingVersion === 'permanent'` opts out forever —
+  // MUST be checked before the version compare so dismissed users don't
+  // see the modal on every app update.
+  const githubConfig = useGitHubStore((s) => s.config)
+  // Session-scoped dismissal guard. Needed because dismissGitHubOnboarding's
+  // updateConfig IPC can fail (swallowed in its catch). Without this ref,
+  // a later unrelated githubConfig mutation would re-fire the effect,
+  // find seenOnboardingVersion still unpersisted, and re-open the modal —
+  // trapping the user in a loop. The ref survives re-renders but resets
+  // on reload, which is the intended behavior: persist failure shouldn't
+  // silently suppress the modal across restarts.
+  const onboardingDismissedThisSessionRef = useRef(false)
+
+  // Decides whether github onboarding is due right now. Reads persistent
+  // config state plus the session dismissal ref and component `needsCliSetup`
+  // — NOT a pure persistent-state read, but stable across React render
+  // timing in a way that `showWhatsNew` / `showTraining` are not (those flip
+  // after a 500ms postConfigInit timer).
+  const isGitHubOnboardingDue = (): boolean => {
+    if (!githubConfig) return false
+    if (onboardingDismissedThisSessionRef.current) return false
+    if (githubConfig.seenOnboardingVersion === 'permanent') return false
+    if (githubConfig.seenOnboardingVersion === __APP_VERSION__) return false
+    if (needsCliSetup) return false
+    return true
+  }
+
+  // Single source of truth for when the GitHub onboarding modal opens. The
+  // previous design also had handleWhatsNewClose / handleTrainingClose
+  // scheduling setShowGitHubOnboarding(true) via setTimeout — but this effect
+  // already re-runs when showWhatsNew/showTraining flip to false, which meant
+  // the effect opened onboarding immediately and the handler's delay was
+  // bypassed (a double setState with the first one winning). Keep the 120ms
+  // gap here in the effect so it applies uniformly regardless of which
+  // earlier modal just closed, and clean up the timer if the conditions
+  // change before it fires.
+  useEffect(() => {
+    if (!isGitHubOnboardingDue()) return
+    if (showWhatsNew || showTraining || showTrainingAll) return
+    if (isFirstInstall() || shouldShowWhatsNew() || shouldShowTraining()) return
+    const t = setTimeout(() => setShowGitHubOnboarding(true), 120)
+    return () => clearTimeout(t)
+  }, [githubConfig, showWhatsNew, showTraining, showTrainingAll, needsCliSetup])
+
+  // useCallback: passed to OnboardingModal as `onClose`, which forwards it
+  // to useFocusTrap. Without stable identity, the focus-trap effect re-runs
+  // every App render — which resets previouslyFocused to the currently-
+  // focused node (a button inside the modal) and yanks focus back to the
+  // first focusable on every parent re-render. Stable identity fixes both.
+  const dismissGitHubOnboarding = useCallback(async () => {
+    // Flip the ref BEFORE the setState so any render-pass that reads
+    // the effect deps sees the guard already in place, not just the
+    // showGitHubOnboarding flip.
+    onboardingDismissedThisSessionRef.current = true
+    setShowGitHubOnboarding(false)
+    try {
+      await useGitHubStore
+        .getState()
+        .updateConfig({ seenOnboardingVersion: __APP_VERSION__ })
+    } catch {
+      // Persist failure falls back to the in-session ref guard above.
+      // A restart will show the modal again, which is fine — the user
+      // never actually opted out of future reminders from the server side.
+    }
+  }, [])
+
   // Restore saved sessions on startup
   async function restoreSavedSessions() {
     try {
@@ -219,40 +317,6 @@ export default function App() {
       console.log('[App] Sessions restored')
     } catch (err) {
       console.error('[App] Failed to restore sessions:', err)
-    }
-  }
-
-  // Build session state object for saving
-  const buildSessionState = (): SessionState => {
-    const state = useSessionStore.getState()
-    return {
-      sessions: state.sessions.map(s => ({
-        id: s.id,
-        configId: s.configId,
-        label: s.label,
-        workingDirectory: s.workingDirectory,
-        model: s.model,
-        color: s.color,
-        sessionType: s.sessionType,
-        shellOnly: s.shellOnly,
-        partnerTerminalPath: s.partnerTerminalPath,
-        partnerElevated: s.partnerElevated,
-        sshConfig: s.sshConfig ? {
-          host: s.sshConfig.host,
-          port: s.sshConfig.port,
-          username: s.sshConfig.username,
-          remotePath: s.sshConfig.remotePath,
-          hasPassword: s.sshConfig.hasPassword,
-          postCommand: s.sshConfig.postCommand,
-          hasSudoPassword: s.sshConfig.hasSudoPassword,
-          startClaudeAfter: s.sshConfig.startClaudeAfter,
-          dockerContainer: s.sshConfig.dockerContainer,
-        } : undefined,
-        legacyVersion: s.legacyVersion,
-        agentIds: s.agentIds,
-      })),
-      activeSessionId: state.activeSessionId,
-      savedAt: Date.now(),
     }
   }
 
@@ -317,7 +381,7 @@ export default function App() {
   // Render non-session views (shown on top of sessions)
   const renderOverlayView = () => {
     if (view === 'logs') return <LogViewer />
-    if (view === 'settings') return <SettingsPage />
+    if (view === 'settings') return <SettingsPage initialTab={pendingSettingsTab ?? undefined} />
     if (view === 'insights') return <InsightsPage />
     if (view === 'cloud-agents') return <CloudAgentsPage />
     if (view === 'tokenomics') return <TokenomicsPage />
@@ -347,72 +411,140 @@ export default function App() {
       <div className="flex-1 flex flex-col" style={{ display: view === 'sessions' ? 'flex' : 'none', minHeight: 0 }}>
         <TabBar />
         <SessionHeader session={activeSession} isShowingPartner={partnerActive.has(activeSession.id)} sidebarCollapsed={!sidebarOpen} onShowTip={() => setShowTipModal(true)} />
-        {sessions.map((session) => {
-          const isShowingPartner = partnerActive.has(session.id)
-          const hasPartner = !!session.partnerTerminalPath
-          const partnerPtyId = session.id + '-partner'
+        {(() => {
+          const gi = activeSession.githubIntegration
+          const shouldShow =
+            !gi?.enabled &&
+            !gi?.repoUrl &&
+            !gi?.dismissedAutoDetect &&
+            !!activeSession.workingDirectory
+          if (!shouldShow) return null
           return (
-            <div
-              key={session.id + '-' + session.createdAt}
-              className="flex-1 flex flex-col"
-              style={{
-                display: session.id === activeSessionId ? 'flex' : 'none',
-                minHeight: 0,
+            <AutoDetectBanner
+              cwd={activeSession.workingDirectory!}
+              onAccept={async (slug) => {
+                // Persist the detected repo onto the session BEFORE
+                // navigating so the GitHub config tab reflects the
+                // auto-filled value. Without this write the slug was
+                // silently discarded and the user had to re-enter it.
+                try {
+                  const patch = {
+                    repoUrl: `https://github.com/${slug}`,
+                    repoSlug: slug,
+                    autoDetected: true,
+                  }
+                  await window.electronAPI.github.updateSessionConfig(
+                    activeSession.id,
+                    patch,
+                  )
+                  useSessionStore.getState().updateSession(activeSession.id, {
+                    githubIntegration: {
+                      ...(gi ?? { enabled: false, autoDetected: false }),
+                      ...patch,
+                    },
+                  })
+                } catch {
+                  // Fall through: we still send the user to the GitHub
+                  // tab so they can configure manually. Losing the write
+                  // is fine; losing the navigation would be worse.
+                }
+                setPendingSettingsTab('github')
+                setView('settings')
               }}
-            >
-              <div
-                className="flex-1 flex flex-col"
-                style={{
-                  display: isShowingPartner ? 'none' : 'flex',
-                  minHeight: 0,
-                }}
-              >
-                <TerminalView
-                  key={session.id + '-main-' + session.createdAt}
-                  sessionId={session.id}
-                  configId={session.configId}
-                  cwd={session.sessionType === 'local' ? session.workingDirectory : undefined}
-                  shellOnly={session.shellOnly}
-                  ssh={session.sshConfig}
-                  isActive={session.id === activeSessionId && view === 'sessions' && !isShowingPartner}
-                  partnerEnabled={hasPartner}
-                  isPartnerActive={isShowingPartner}
-                  onTogglePartner={() => togglePartner(session.id)}
-                  partnerSessionId={hasPartner ? partnerPtyId : undefined}
-                  legacyVersion={session.legacyVersion}
-                  agentIds={session.agentIds}
-                  flickerFree={session.flickerFree}
-                  powershellTool={session.powershellTool}
-                  effortLevel={session.effortLevel}
-                  disableAutoMemory={session.disableAutoMemory}
-                />
-              </div>
-              {hasPartner && (
+              onEdit={() => {
+                setPendingSettingsTab('github')
+                setView('settings')
+              }}
+              onDismiss={async () => {
+                try {
+                  await window.electronAPI.github.updateSessionConfig(activeSession.id, {
+                    dismissedAutoDetect: true,
+                  })
+                  useSessionStore.getState().updateSession(activeSession.id, {
+                    githubIntegration: {
+                      ...(gi ?? { enabled: false, autoDetected: false }),
+                      dismissedAutoDetect: true,
+                    },
+                  })
+                } catch {
+                  // IPC failure leaves the banner visible for the user to
+                  // retry; better than silently swallowing the dismissal.
+                }
+              }}
+            />
+          )
+        })()}
+        <div className="flex-1 flex flex-row" style={{ minHeight: 0 }}>
+          <div className="flex-1 flex flex-col" style={{ minWidth: 0, minHeight: 0 }}>
+            {sessions.map((session) => {
+              const isShowingPartner = partnerActive.has(session.id)
+              const hasPartner = !!session.partnerTerminalPath
+              const partnerPtyId = session.id + '-partner'
+              return (
                 <div
+                  key={session.id + '-' + session.createdAt}
                   className="flex-1 flex flex-col"
                   style={{
-                    display: isShowingPartner ? 'flex' : 'none',
+                    display: session.id === activeSessionId ? 'flex' : 'none',
                     minHeight: 0,
                   }}
                 >
-                  <TerminalView
-                    key={partnerPtyId + '-' + session.createdAt}
-                    sessionId={partnerPtyId}
-                    configId={session.configId}
-                    cwd={session.partnerTerminalPath}
-                    shellOnly={true}
-                    elevated={session.partnerElevated}
-                    isActive={session.id === activeSessionId && view === 'sessions' && isShowingPartner}
-                    partnerEnabled={true}
-                    isPartnerActive={isShowingPartner}
-                    onTogglePartner={() => togglePartner(session.id)}
-                    partnerSessionId={partnerPtyId}
-                  />
+                  <div
+                    className="flex-1 flex flex-col"
+                    style={{
+                      display: isShowingPartner ? 'none' : 'flex',
+                      minHeight: 0,
+                    }}
+                  >
+                    <TerminalView
+                      key={session.id + '-main-' + session.createdAt}
+                      sessionId={session.id}
+                      configId={session.configId}
+                      cwd={session.sessionType === 'local' ? session.workingDirectory : undefined}
+                      shellOnly={session.shellOnly}
+                      ssh={session.sshConfig}
+                      isActive={session.id === activeSessionId && view === 'sessions' && !isShowingPartner}
+                      partnerEnabled={hasPartner}
+                      isPartnerActive={isShowingPartner}
+                      onTogglePartner={() => togglePartner(session.id)}
+                      partnerSessionId={hasPartner ? partnerPtyId : undefined}
+                      legacyVersion={session.legacyVersion}
+                      agentIds={session.agentIds}
+                      flickerFree={session.flickerFree}
+                      powershellTool={session.powershellTool}
+                      effortLevel={session.effortLevel}
+                      disableAutoMemory={session.disableAutoMemory}
+                    />
+                  </div>
+                  {hasPartner && (
+                    <div
+                      className="flex-1 flex flex-col"
+                      style={{
+                        display: isShowingPartner ? 'flex' : 'none',
+                        minHeight: 0,
+                      }}
+                    >
+                      <TerminalView
+                        key={partnerPtyId + '-' + session.createdAt}
+                        sessionId={partnerPtyId}
+                        configId={session.configId}
+                        cwd={session.partnerTerminalPath}
+                        shellOnly={true}
+                        elevated={session.partnerElevated}
+                        isActive={session.id === activeSessionId && view === 'sessions' && isShowingPartner}
+                        partnerEnabled={true}
+                        isPartnerActive={isShowingPartner}
+                        onTogglePartner={() => togglePartner(session.id)}
+                        partnerSessionId={partnerPtyId}
+                      />
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
-          )
-        })}
+              )
+            })}
+          </div>
+          {activeSession && <GitHubPanel sessionId={activeSession.id} />}
+        </div>
       </div>
     )
   }
@@ -444,9 +576,20 @@ export default function App() {
   const handleWhatsNewClose = () => {
     markWhatsNewSeen()
     setShowWhatsNew(false)
+    // Training is opened directly here because it's not managed by the
+    // onboarding effect. Onboarding is handled by the useEffect above,
+    // which re-runs when showWhatsNew flips to false and applies its own
+    // 120ms delay so the cross-fade stays smooth.
     if (shouldShowTraining()) {
-      setTimeout(() => setShowTraining(true), 300)
+      setTimeout(() => setShowTraining(true), 120)
     }
+  }
+
+  const handleTrainingClose = () => {
+    setShowTraining(false)
+    setShowTrainingAll(false)
+    // Onboarding is handled by the useEffect above; no need to schedule it
+    // here.
   }
 
   return (
@@ -454,6 +597,21 @@ export default function App() {
       <div className="flex flex-col h-screen bg-base text-text">
         {showWhatsNew && <WhatsNewModal onClose={handleWhatsNewClose} />}
         {showTipModal && <TipModal onClose={() => setShowTipModal(false)} onNavigate={(v) => setView(v)} />}
+        {showGitHubOnboarding && (
+          <OnboardingModal
+            onClose={dismissGitHubOnboarding}
+            onSetup={() => {
+              // Dismiss-and-navigate: persist seenOnboardingVersion and
+              // open the GitHub settings tab so users immediately land where
+              // they can sign in. The pendingSettingsTab handoff is required
+              // because SettingsPage's activeTab is local state that
+              // otherwise defaults to 'general' on mount.
+              void dismissGitHubOnboarding()
+              setPendingSettingsTab('github')
+              setView('settings')
+            }}
+          />
+        )}
 
         {showMachineNamePrompt && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
@@ -532,7 +690,7 @@ export default function App() {
           }} />
           <main className="flex-1 flex flex-col overflow-hidden titlebar-no-drag">
             {showTraining ? (
-              <TrainingWalkthrough onClose={() => { setShowTraining(false); setShowTrainingAll(false) }} showAll={showTrainingAll} />
+              <TrainingWalkthrough onClose={handleTrainingClose} showAll={showTrainingAll} />
             ) : showGuidedConfig ? (
               <GuidedConfigView
                 onSkip={() => setShowGuidedConfig(false)}

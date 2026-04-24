@@ -183,6 +183,24 @@ Customizable keyboard shortcuts, status line metrics, font size, update channel,
 - **Markdown rendering** - read memory content with formatted display
 - **Memory management** - delete outdated entries directly from the UI
 
+### GitHub Sidebar
+
+- **PR snapshot for current branch** - status, CI runs, reviews, unresolved threads, linked issues
+- **Session context inference** - detect which issue/PR your terminal is working on from branch name, transcript, or PR body
+- **Local git state** - ahead/behind, dirty/clean, staged/unstaged at a glance
+- **Sign-in flexibility** - OAuth device flow, fine-grained PAT, or adopt your existing `gh` CLI auth
+- **Per-session opt-in** - nothing runs until you enable it for a specific session
+- **Ctrl+/ toggle** (`Cmd+/` on macOS) - collapsible right panel keeps terminal space when hidden
+
+### HTTP Hooks Gateway & Live Activity
+
+- **Loopback hooks listener** - 127.0.0.1 HTTP server receives tool-call, permission, and lifecycle events from your Claude sessions
+- **Per-session UUID secrets** - each session registers its own `X-CCC-Hook-Token`; other sessions can't read each other's events
+- **Live Activity feed** - collapsible footer on each session shows a real-time timeline of recent hook events with Pause/Resume and type filters
+- **Ring buffer** - 200 events per session cap with a "dropped" indicator when older events age out
+- **SSH reverse tunnel** - remote sessions hook through the same gateway via an auto-added `-R` port forward
+- **No telemetry** - listener is localhost-only; events never leave your machine
+
 ### Session Logs & History
 
 - **Full session logging** - all terminal output recorded to JSONL files
@@ -260,7 +278,7 @@ Every release also includes `CHECKSUMS.txt` (SHA256) and is scanned by [VirusTot
 | Terminal | xterm.js 5.5 + node-pty |
 | Build | electron-vite |
 | MCP | @modelcontextprotocol/sdk |
-| Tests | Vitest (264 tests) |
+| Tests | Vitest (536 tests) |
 
 The app runs a frameless Electron window with a React renderer. Each Claude session spawns a PTY process via node-pty. The Vision system runs a local MCP server that Claude Code discovers via `settings.json`. SSH sessions get a reverse tunnel to the MCP server automatically.
 

@@ -31,6 +31,10 @@ export interface SavedSession {
     startClaudeAfter?: boolean
     dockerContainer?: string
   }
+  // Optional per-session GitHub integration state. See src/shared/github-types.ts
+  // for the SessionGitHubIntegration shape. Undefined means the session has
+  // never opted in to the GitHub panel.
+  githubIntegration?: import('../shared/github-types').SessionGitHubIntegration
 }
 
 export interface SessionState {
