@@ -11,7 +11,6 @@ import { stripCursorSequences } from '../utils/terminalFormatting'
 import { THEME } from './terminal/terminalTheme'
 import { useSettingsStore, DEFAULT_TERMINAL_SETTINGS } from '../stores/settingsStore'
 import { ContextBar, ScrollToBottomButton } from './terminal'
-import LiveActivityFooter from './github/sections/LiveActivityFooter'
 import { useStatuslineSubscription } from '../hooks/useStatuslineSubscription'
 import { useActiveTabEffect } from '../hooks/useActiveTabEffect'
 import { useCursorLayerVisibility } from '../hooks/useCursorLayerVisibility'
@@ -61,7 +60,6 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
   const isScrolledUpRef = useRef(false)
   const updateSession = useSessionStore((s) => s.updateSession)
   const session = useSessionStore((s) => s.sessions.find((sess) => sess.id === sessionId))
-  const hooksEnabled = useSettingsStore((s) => s.settings.hooksEnabled)
 
   // Extracted hooks
   useStatuslineSubscription(sessionId)
@@ -427,7 +425,6 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
           isPeak={session.isPeak}
         />
       )}
-      {hooksEnabled && <LiveActivityFooter sessionId={sessionId} />}
       <CommandBar
         sessionId={sessionId}
         configId={configId}

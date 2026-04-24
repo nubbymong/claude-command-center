@@ -609,23 +609,6 @@ export const TIPS_LIBRARY: Tip[] = [
   },
 
   {
-    id: 'tip.github.hooks-gateway',
-    category: 'github',
-    complexity: 'intermediate',
-    priority: 60,
-    excludes: ['hooks.gateway-seen'],
-    variants: {
-      primary: {
-        shortText: '🪝 Live Activity feed shows what Claude is doing',
-        title: 'HTTP Hooks Gateway & Live Activity',
-        body: 'The **Live Activity** footer sits below every terminal (above the command bar) and shows a real-time timeline of Claude Code hook events — tool calls, permission requests, session lifecycle, and stop failures.\n\nExpand it to see the last 20 events with **Pause/Resume** (freezes the view while the store keeps accumulating) and **type filters** (toggle chips to include/exclude kinds). Events are ring-buffered to 200 per session; older ones are dropped with an indicator.\n\nUnder the hood: a loopback HTTP listener on **127.0.0.1** receives events from Claude Code via per-session UUID secrets. Zero telemetry — the listener is localhost-only and auto-reverse-tunnels into SSH sessions. Toggle or change the port under **Settings > GitHub > HTTP Hooks Gateway**.',
-        actionLabel: 'Open GitHub Settings',
-        actionTarget: 'settings-github',
-      },
-    },
-  },
-
-  {
     id: 'tip.transparency.network-activity',
     category: 'transparency',
     complexity: 'intermediate',

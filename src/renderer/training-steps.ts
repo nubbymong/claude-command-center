@@ -103,18 +103,6 @@ export const trainingSteps: TrainingStep[] = [
     ],
     screenshotFilename: 'step-github-sidebar.jpg',
   },
-  {
-    id: 'hooks-gateway',
-    title: 'Live Activity & Hooks',
-    sinceVersion: '1.4.0',
-    bullets: [
-      '**Live Activity feed** on each session shows a real-time timeline of Claude hook events',
-      '**Pause/Resume** and **type filters** let you focus on what matters — tools, notifications, lifecycle',
-      'Loopback-only **HTTP hooks gateway** on 127.0.0.1 — per-session UUID secrets, no telemetry',
-      'SSH sessions **auto reverse-tunnel** the gateway port so remote events flow back seamlessly',
-    ],
-    screenshotFilename: 'step-hooks-gateway.jpg',
-  },
 ]
 
 /** Returns the highest sinceVersion across all training steps */

@@ -8,8 +8,8 @@ import {
 
 describe('training-steps', () => {
   describe('trainingSteps array', () => {
-    it('has exactly 9 steps', () => {
-      expect(trainingSteps).toHaveLength(9)
+    it('has exactly 8 steps', () => {
+      expect(trainingSteps).toHaveLength(8)
     })
 
     it('every step has required fields', () => {
@@ -33,9 +33,9 @@ describe('training-steps', () => {
       expect(new Set(filenames).size).toBe(filenames.length)
     })
 
-    it('steps are in logical order starting with session-options and ending with hooks-gateway', () => {
+    it('steps are in logical order starting with session-options and ending with github-sidebar', () => {
       expect(trainingSteps[0].id).toBe('session-options')
-      expect(trainingSteps[trainingSteps.length - 1].id).toBe('hooks-gateway')
+      expect(trainingSteps[trainingSteps.length - 1].id).toBe('github-sidebar')
     })
   })
 
