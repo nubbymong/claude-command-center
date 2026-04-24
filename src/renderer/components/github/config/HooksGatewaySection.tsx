@@ -80,9 +80,10 @@ export default function HooksGatewaySection() {
         <div>
           <h3 className="text-sm font-semibold text-text">HTTP Hooks Gateway</h3>
           <p className="text-xs text-subtext0 mt-1 max-w-md">
-            Receives tool-call, permission, and lifecycle events from Claude Code sessions.
-            Powers the Live Activity feed. No telemetry - listener is 127.0.0.1 only;
-            reverse-tunnelled into SSH sessions you start.
+            Opt-in loopback listener that receives tool-call, permission, and lifecycle events
+            from your Claude Code sessions. Foundation for upcoming desktop notifications and
+            external automations. No telemetry - listener is 127.0.0.1 only; reverse-tunnelled
+            into SSH sessions you start.
           </p>
         </div>
         <label className="flex items-center gap-2 text-sm cursor-pointer">
@@ -126,12 +127,6 @@ export default function HooksGatewaySection() {
       )}
 
       <div className="pl-4 space-y-1 text-xs">
-        <label className="flex items-center gap-2">
-          <input type="checkbox" checked readOnly disabled />
-          <span>
-            Live Activity feed <span className="text-overlay1">- show recent events in sidebar</span>
-          </span>
-        </label>
         <label className="flex items-center gap-2 opacity-60">
           <input type="checkbox" checked={false} disabled />
           <span>

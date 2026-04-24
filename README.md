@@ -192,15 +192,6 @@ Customizable keyboard shortcuts, status line metrics, font size, update channel,
 - **Per-session opt-in** - nothing runs until you enable it for a specific session
 - **Ctrl+/ toggle** (`Cmd+/` on macOS) - collapsible right panel keeps terminal space when hidden
 
-### HTTP Hooks Gateway & Live Activity
-
-- **Loopback hooks listener** - 127.0.0.1 HTTP server receives tool-call, permission, and lifecycle events from your Claude sessions
-- **Per-session UUID secrets** - each session registers its own `X-CCC-Hook-Token`; other sessions can't read each other's events
-- **Live Activity feed** - collapsible footer on each session shows a real-time timeline of recent hook events with Pause/Resume and type filters
-- **Ring buffer** - 200 events per session cap with a "dropped" indicator when older events age out
-- **SSH reverse tunnel** - remote sessions hook through the same gateway via an auto-added `-R` port forward
-- **No telemetry** - listener is localhost-only; events never leave your machine
-
 ### Session Logs & History
 
 - **Full session logging** - all terminal output recorded to JSONL files
