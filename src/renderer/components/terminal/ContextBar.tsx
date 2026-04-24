@@ -47,9 +47,9 @@ export default function ContextBar({
                 className="h-full rounded-full transition-all duration-500"
                 style={{
                   width: `${contextPercent}%`,
-                  backgroundColor: contextPercent > 80 ? '#F38BA8'
-                    : contextPercent > 50 ? '#F9E2AF'
-                    : '#A6E3A1'
+                  backgroundColor: contextPercent > 80 ? '#e55c5c'
+                    : contextPercent > 50 ? '#e8a84e'
+                    : '#5cb85c'
                 }}
               />
             </div>

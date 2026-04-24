@@ -107,16 +107,11 @@ function setDataDirectory(dataDir: string): boolean {
   }
 }
 
-/**
- * Convert a filesystem path to Claude's project folder name convention.
- * e.g. C:\Users\jane\AppData\Local\Programs\claude-conductor
- *   -> C--Users-jane-AppData-Local-Programs-claude-conductor
- */
-function pathToClaudeProjectFolder(fsPath: string): string {
-  return fsPath
-    .replace(/:/g, '-')     // Colons become hyphens (C: -> C-)
-    .replace(/[\\/]+/g, '-') // Path separators become hyphens
-}
+// Shared helper lives in utils/claude-project-path. Both this module and the
+// GitHub transcript loader map cwd → Claude's ~/.claude/projects/<folder>/
+// convention; keeping one source of truth avoids drift if the convention
+// ever changes upstream.
+import { pathToClaudeProjectFolder } from '../utils/claude-project-path'
 
 /**
  * Check if the install path is already trusted by Claude CLI.

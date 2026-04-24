@@ -51,6 +51,8 @@ import type {
   TokenomicsData,
   TokenomicsSyncProgress,
 } from '../../shared/types'
+import type { HookEvent, HooksGatewayStatus } from '../../shared/hook-types'
+export type { HookEvent, HookEventKind, HooksGatewayStatus } from '../../shared/hook-types'
 
 export interface ElectronAPI {
   config: {
@@ -301,6 +303,112 @@ export interface ElectronAPI {
   }
   shell: {
     openExternal: (url: string) => Promise<void>
+  }
+  github: {
+    getConfig: () => Promise<import('../../shared/github-types').GitHubConfig | null>
+    updateConfig: (
+      patch: Partial<import('../../shared/github-types').GitHubConfig>,
+    ) => Promise<import('../../shared/github-types').GitHubConfig>
+    addPat: (input: {
+      kind: 'pat-classic' | 'pat-fine-grained'
+      label: string
+      rawToken: string
+      allowedRepos?: string[]
+    }) => Promise<{ ok: boolean; id?: string; error?: string }>
+    adoptGhCli: (username: string) => Promise<{ ok: boolean; id?: string; error?: string }>
+    removeProfile: (id: string) => Promise<{ ok: boolean }>
+    renameProfile: (id: string, label: string) => Promise<{ ok: boolean }>
+    testProfile: (id: string) => Promise<{
+      ok: boolean
+      username?: string
+      scopes?: string[]
+      expiresAt?: number
+      error?: string
+    }>
+    oauthStart: (mode: 'public' | 'private') => Promise<{
+      flowId: string
+      userCode: string
+      verificationUri: string
+      expiresIn: number
+      interval: number
+    }>
+    oauthPoll: (flowId: string) => Promise<{
+      ok: boolean
+      profileId?: string
+      error?: string
+    }>
+    oauthCancel: (flowId: string) => Promise<{ ok: boolean }>
+    ghcliDetect: () => Promise<{ ok: boolean; users: string[] }>
+    repoDetect: (cwd: string) => Promise<{ ok: boolean; slug: string | null }>
+    updateSessionConfig: (
+      sessionId: string,
+      patch: Partial<import('../../shared/github-types').SessionGitHubIntegration>,
+    ) => Promise<{ ok: boolean; error?: string }>
+    getLocalGit: (
+      cwd: string,
+    ) => Promise<{
+      ok: boolean
+      state: import('../../shared/github-types').LocalGitState
+    }>
+    syncNow: (sessionId: string) => Promise<{ ok: boolean }>
+    syncFocusedNow: () => Promise<{ ok: boolean }>
+    syncPause: () => Promise<{ ok: boolean }>
+    syncResume: () => Promise<{ ok: boolean }>
+    notifyFocusChanged: (sessionId: string | null) => void
+    getData: (
+      slug: string,
+    ) => Promise<{
+      ok: boolean
+      data: import('../../shared/github-types').RepoCache | null
+    }>
+    getSessionContext: (
+      sessionId: string,
+    ) => Promise<{
+      ok: boolean
+      data: import('../../shared/github-types').SessionContextResult | null
+    }>
+    onDataUpdate: (
+      cb: (p: {
+        slug: string
+        data: import('../../shared/github-types').RepoCache
+      }) => void,
+    ) => () => void
+    onSyncStateUpdate: (
+      cb: (p: {
+        slug: string
+        state: 'syncing' | 'synced' | 'rate-limited' | 'error' | 'idle'
+        at: number
+        nextResetAt?: number
+      }) => void,
+    ) => () => void
+    onNotificationsUpdate: (
+      cb: (p: {
+        profileId: string
+        items: import('../../shared/github-types').NotificationSummary[]
+      }) => void,
+    ) => () => void
+    rerunActionsRun: (slug: string, runId: number) => Promise<{ ok: boolean; error?: string }>
+    mergePR: (
+      slug: string,
+      prNumber: number,
+      method: 'merge' | 'squash' | 'rebase',
+    ) => Promise<{ ok: boolean; error?: string }>
+    readyPR: (slug: string, prNumber: number) => Promise<{ ok: boolean; error?: string }>
+    replyToReview: (
+      slug: string,
+      threadId: string,
+      body: string,
+    ) => Promise<{ ok: boolean; error?: string }>
+    markNotifRead: (profileId: string, notifId: string) => Promise<{ ok: boolean; error?: string }>
+  }
+  hooks: {
+    toggle: (enabled: boolean) => Promise<HooksGatewayStatus>
+    getBuffer: (sessionId: string) => Promise<HookEvent[]>
+    getStatus: () => Promise<HooksGatewayStatus>
+    onEvent: (cb: (e: HookEvent) => void) => () => void
+    onSessionEnded: (cb: (sid: string) => void) => () => void
+    onDropped: (cb: (p: { sessionId: string }) => void) => () => void
+    onStatus: (cb: (s: HooksGatewayStatus) => void) => () => void
   }
 }
 
