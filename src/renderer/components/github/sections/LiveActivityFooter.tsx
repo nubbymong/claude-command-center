@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useHooksStore, type StoredHookEvent } from '../../../stores/hooksStore'
+import { trackUsage } from '../../../stores/tipsStore'
 import type { HookEvent, HookEventKind } from '../../../../shared/hook-types'
 
 interface Props { sessionId: string }
@@ -105,7 +106,12 @@ export default function LiveActivityFooter({ sessionId }: Props) {
     <div className="border-t border-surface0 bg-mantle text-xs">
       <button
         className="w-full flex items-center justify-between gap-2 px-3 py-2 hover:bg-surface0 transition-colors duration-150"
-        onClick={() => setExpanded((v) => !v)}
+        onClick={() => {
+          setExpanded((v) => {
+            if (!v) trackUsage('hooks.gateway-seen')
+            return !v
+          })
+        }}
         aria-expanded={expanded}
         aria-label="Toggle Live Activity"
       >

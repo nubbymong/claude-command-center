@@ -91,6 +91,30 @@ export const trainingSteps: TrainingStep[] = [
     ],
     screenshotFilename: 'step-tips.jpg',
   },
+  {
+    id: 'github-sidebar',
+    title: 'GitHub Sidebar',
+    sinceVersion: '1.3.2',
+    bullets: [
+      '**PR snapshot** for your current branch — status, CI runs, reviews, unresolved threads',
+      '**Session context** infers the issue you are on from branch, transcript, or PR body',
+      '**Local git state** — ahead/behind, dirty/clean, staged/unstaged — always visible',
+      'Sign in via **OAuth**, PAT, or adopt your existing **gh CLI** auth. Per-session opt-in',
+    ],
+    screenshotFilename: 'step-github-sidebar.jpg',
+  },
+  {
+    id: 'hooks-gateway',
+    title: 'Live Activity & Hooks',
+    sinceVersion: '1.3.2',
+    bullets: [
+      '**Live Activity feed** on each session shows a real-time timeline of Claude hook events',
+      '**Pause/Resume** and **type filters** let you focus on what matters — tools, notifications, lifecycle',
+      'Loopback-only **HTTP hooks gateway** on 127.0.0.1 — per-session UUID secrets, no telemetry',
+      'SSH sessions **auto reverse-tunnel** the gateway port so remote events flow back seamlessly',
+    ],
+    screenshotFilename: 'step-hooks-gateway.jpg',
+  },
 ]
 
 /** Returns the highest sinceVersion across all training steps */

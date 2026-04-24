@@ -428,7 +428,6 @@ export function spawnPty(
       // host don't clobber each other's statusline sessionId binding.
       `--settings ${remoteSessionSettingsPath(sessionId)}`,
       options?.effortLevel ? `--effort ${options.effortLevel}` : '',
-      options?.configLabel ? `--name "${escapeShellArg(options.configLabel)}"` : '',
     ].filter(Boolean).join(' ')
     const claudeCmd = [claudeEnvPrefix, 'claude', claudeFlags].filter(Boolean).join(' ')
     const password = ssh.password
@@ -621,11 +620,12 @@ export function spawnPty(
       // regardless of PowerShell profile scripts or PTY cwd propagation issues.
       const escapedCwd = resolvedCwd.replace(/'/g, "''")
 
-      // Build extra CLI flags (--name, --effort)
+      // Build extra CLI flags (--effort, --settings). --name is deliberately
+      // NOT passed: the current Claude CLI treats `--name "<label>"` as the
+      // [prompt] positional, so the label gets sent as the user's first
+      // message. Our own UI already shows the session label — there's no
+      // benefit to passing it to Claude.
       let extraFlags = ''
-      if (options?.configLabel) {
-        extraFlags += ` --name "${escapeShellArg(options.configLabel)}"`
-      }
       if (options?.effortLevel) {
         extraFlags += ` --effort ${options.effortLevel}`
       }

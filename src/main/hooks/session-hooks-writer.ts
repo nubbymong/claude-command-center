@@ -42,8 +42,18 @@ export function buildHooksBlock(
   const endpoint = `http://localhost:${port}/hook/${sessionId}`
   const headers = { 'X-CCC-Hook-Token': secret }
   const hooks: Record<string, unknown[]> = {}
+  // Claude Code's hooks schema requires a matcher-wrapped entry:
+  //   hooks.<Event> = [{ matcher: "<tool-name-regex-or-empty>", hooks: [<entry>] }]
+  // Empty matcher matches every tool for the event. A flat
+  // `[{ type, url, headers }]` was the earlier schema and is rejected by
+  // newer Claude Code builds with "hooks: Expected array, but received undefined".
   for (const kind of MVP_EVENTS) {
-    hooks[kind] = [{ type: 'http', url: endpoint, headers }]
+    hooks[kind] = [
+      {
+        matcher: '',
+        hooks: [{ type: 'http', url: endpoint, headers }],
+      },
+    ]
   }
   return hooks
 }
