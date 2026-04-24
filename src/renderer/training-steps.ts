@@ -94,7 +94,7 @@ export const trainingSteps: TrainingStep[] = [
   {
     id: 'github-sidebar',
     title: 'GitHub Sidebar',
-    sinceVersion: '1.3.2',
+    sinceVersion: '1.4.0',
     bullets: [
       '**PR snapshot** for your current branch — status, CI runs, reviews, unresolved threads',
       '**Session context** infers the issue you are on from branch, transcript, or PR body',
@@ -106,7 +106,7 @@ export const trainingSteps: TrainingStep[] = [
   {
     id: 'hooks-gateway',
     title: 'Live Activity & Hooks',
-    sinceVersion: '1.3.2',
+    sinceVersion: '1.4.0',
     bullets: [
       '**Live Activity feed** on each session shows a real-time timeline of Claude hook events',
       '**Pause/Resume** and **type filters** let you focus on what matters — tools, notifications, lifecycle',
