@@ -1,6 +1,7 @@
 import React from 'react'
 import { useSessionStore } from '../stores/sessionStore'
 import { killSessionPty } from './TerminalView'
+import ThemeToggle from './ThemeToggle'
 
 // Inject keyframes for attention pulse animation
 const ATTENTION_STYLES_ID = 'attention-pulse-styles'
@@ -31,7 +32,8 @@ export default function TabBar() {
   if (sessions.length === 0) return null
 
   return (
-    <div className="flex items-center bg-crust border-b border-surface0 overflow-x-auto shrink-0">
+    <div className="flex items-center bg-crust border-b border-surface0 shrink-0">
+      <div className="flex items-center overflow-x-auto flex-1 min-w-0">
       {sessions.map((session) => {
         const needsAttention = session.needsAttention && activeSessionId !== session.id
         const isActive = activeSessionId === session.id
@@ -74,6 +76,13 @@ export default function TabBar() {
           </button>
         )
       })}
+      </div>
+      {/* Right slot — theme toggle. Tab header was empty here before; keep
+          it minimal so the chrome doesn't compete with the active tab
+          underline / status pills. */}
+      <div className="flex items-center px-2 shrink-0 border-l border-surface0">
+        <ThemeToggle />
+      </div>
     </div>
   )
 }

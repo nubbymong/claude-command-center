@@ -8,7 +8,7 @@ import { hasSpawned, markSpawned, killSessionPty } from '../ptyTracker'
 import CommandBar from './CommandBar'
 import { shouldUseResumePicker } from '../utils/resumePicker'
 import { stripCursorSequences } from '../utils/terminalFormatting'
-import { THEME } from './terminal/terminalTheme'
+import { THEME, getTerminalTheme } from './terminal/terminalTheme'
 import { useSettingsStore, DEFAULT_TERMINAL_SETTINGS } from '../stores/settingsStore'
 import { ContextBar, ScrollToBottomButton } from './terminal'
 import { useStatuslineSubscription } from '../hooks/useStatuslineSubscription'
@@ -60,11 +60,31 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
   const isScrolledUpRef = useRef(false)
   const updateSession = useSessionStore((s) => s.updateSession)
   const session = useSessionStore((s) => s.sessions.find((sess) => sess.id === sessionId))
+  const themeMode = useSettingsStore((s) => s.settings.theme)
 
   // Extracted hooks
   useStatuslineSubscription(sessionId)
   useActiveTabEffect(sessionId, isActive, terminalRef, attentionTimerRef, attentionAckedRef)
   useCursorLayerVisibility(xtermContainerRef, isActive, shellOnly)
+
+  // When the user flips theme mode, re-read the CSS palette and push the
+  // new colours into xterm. Have to bridge through term.options because
+  // xterm reapplies its theme on assignment — there's no public method
+  // for "refresh from CSS". `themeMode === 'system'` flips don't fire
+  // here when the OS pref changes; that's handled in useThemeController
+  // by mutating data-theme on <html>, but the terminal would still need
+  // a kick. Listening on a MediaQueryList here would double-handle, so
+  // we keep this dependency on themeMode only — flipping the OS while
+  // in 'system' mode is a rare path; users typically pick light/dark
+  // explicitly.
+  useEffect(() => {
+    const term = terminalRef.current
+    if (!term) return
+    const live = getTerminalTheme()
+    term.options.theme = shellOnly
+      ? live
+      : { ...live, cursor: 'rgba(0,0,0,0)', cursorAccent: 'rgba(0,0,0,0)' }
+  }, [themeMode, shellOnly])
 
   // Core terminal initialization + PTY wiring
   useEffect(() => {
@@ -99,9 +119,19 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       // ever changes again — the old literal (#0f1218) went stale when the
       // theme moved to #1a1a1a and made the cursor effectively invisible
       // against the old tone.
+      // For Claude sessions, paint the cursor in fully transparent rgba so
+      // every render path (canvas layer, focused-row span, Webgl if it ever
+      // lands) draws nothing visible. Plain hex colours don't carry alpha
+      // — Claude's "thinking" spinner moves the cursor across glyphs that
+      // already have a non-default background, so cursor=THEME.background
+      // (#1a1a1a) became visible whenever a colored span sat under it.
+      // Transparent alpha-zero is invisible regardless of the cell behind.
+      // Use getTerminalTheme() so the colour ramp tracks the live CSS
+      // palette (light vs dark) at init time.
+      const liveTheme = getTerminalTheme()
       const termTheme = shellOnly
-        ? THEME
-        : { ...THEME, cursor: THEME.background, cursorAccent: THEME.background }
+        ? liveTheme
+        : { ...liveTheme, cursor: 'rgba(0,0,0,0)', cursorAccent: 'rgba(0,0,0,0)' }
 
       const ts = useSettingsStore.getState().settings.terminal || DEFAULT_TERMINAL_SETTINGS
       const fontFallbacks = "'Cascadia Code', 'Fira Code', 'JetBrains Mono', Consolas, monospace"

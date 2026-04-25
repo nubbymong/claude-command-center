@@ -1,7 +1,11 @@
 @import "tailwindcss";
 
 @theme {
-  /* Warm neutral dark palette */
+  /* Warm neutral dark palette — default. Light mode overrides below via
+     [data-theme="light"] on <html>. Tailwind v4 reads --color-* tokens at
+     build time for utility generation, but the runtime CSS variables are
+     overridable, so utilities like `bg-base` rebind to the light value at
+     paint when data-theme flips. */
   --color-base: #1a1a1a;
   --color-mantle: #141414;
   --color-crust: #0e0e0e;
@@ -28,6 +32,48 @@
   --color-pink: #e87bb5;
   --color-flamingo: #e8a8a8;
   --color-rosewater: #e8c8c0;
+}
+
+/* Light theme — designed greys-first, pure white deliberately avoided.
+   Background is a paper-warm off-white (#f6f5f3) so it isn't the harsh
+   #ffffff that produces eye strain in dim rooms. Text is a soft near-
+   black (#1c1c1c) rather than absolute #000 to match the warm tone.
+   Surface ramp matches the dark theme's role-by-role contrast steps but
+   inverted: mantle/crust are SUBTLY DEEPER than base for header/chrome
+   layering, surface0..2 become slightly lighter cards on top.
+
+   Accent colors are rebalanced for white-bg legibility — every dark-mode
+   accent is visible against #1a1a1a but several (blue/green) wash out
+   against off-white, so saturate + darken for AA contrast. Catppuccin
+   Latte was the starting reference but greyer / less pastel per the
+   "not blinding, use greys" brief. */
+[data-theme="light"] {
+  --color-base: #f6f5f3;
+  --color-mantle: #eceae6;
+  --color-crust: #e3e0db;
+  --color-surface0: #dcd9d3;
+  --color-surface1: #cfccc5;
+  --color-surface2: #bcb8b1;
+  --color-overlay0: #908b82;
+  --color-overlay1: #6f6a61;
+  --color-overlay2: #5a564e;
+  --color-subtext0: #4a4640;
+  --color-subtext1: #353129;
+  --color-text: #1c1c1c;
+  --color-lavender: #5a64c2;
+  --color-blue: #1d4ed8;
+  --color-sapphire: #1f6fb8;
+  --color-sky: #1d83a8;
+  --color-teal: #157d77;
+  --color-green: #168041;
+  --color-yellow: #9c6b18;
+  --color-peach: #b25c2c;
+  --color-maroon: #a04848;
+  --color-red: #b3261c;
+  --color-mauve: #6f4ec0;
+  --color-pink: #b34185;
+  --color-flamingo: #a06868;
+  --color-rosewater: #95736a;
 }
 
 body {

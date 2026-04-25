@@ -29,6 +29,7 @@ import { useMagicButtonStore } from './stores/magicButtonStore'
 import { useAppMetaStore } from './stores/appMetaStore'
 import { useSettingsStore } from './stores/settingsStore'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
+import { useThemeController } from './hooks/useThemeController'
 import { markSessionForResumePicker } from './utils/resumePicker'
 import { gatherLocalStorageData, hydrateStores } from './utils/configHydration'
 import { setupCloudAgentListener } from './stores/cloudAgentStore'
@@ -113,6 +114,9 @@ export default function App() {
 
   // Global keyboard shortcuts
   useKeyboardShortcuts(activeSessionId, setSidebarOpen, setView)
+  // Stamp data-theme on <html> from the persisted setting + listen for
+  // OS prefers-color-scheme changes when in 'system' mode.
+  useThemeController()
 
   const togglePartner = (sessionId: string) => {
     setPartnerActive(prev => {
