@@ -1,6 +1,7 @@
 import React, { useState, useCallback } from 'react'
 import { useCommandStore, CustomCommand, CommandSection } from '../stores/commandStore'
 import { useSessionStore } from '../stores/sessionStore'
+import { useCommandBarStore } from '../stores/commandBarStore'
 import CommandDialog from './CommandDialog'
 import ScreenshotButton from './ScreenshotButton'
 import StoryboardButton from './StoryboardButton'
@@ -36,7 +37,12 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
   const [dragSectionId, setDragSectionId] = useState<string | null>(null)
   const [dragOverSectionTargetId, setDragOverSectionTargetId] = useState<string | null>(null)
   const [argsPopover, setArgsPopover] = useState<{ cmd: CustomCommand; rect: DOMRect } | null>(null)
-  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set())
+  // Section collapse state lives in a shared store so the Claude and Partner
+  // CommandBar instances within the same config see the same set. Local
+  // useState would diverge across the two terminal views and only "feel"
+  // persistent when bouncing back to the original side.
+  const collapsedSectionIds = useCommandBarStore((s) => s.state.collapsedSectionIds)
+  const toggleSectionCollapse = useCommandBarStore((s) => s.toggleSection)
   const [sectionInput, setSectionInput] = useState<{ x: number; y: number; editSection?: CommandSection; rowTarget?: 'claude' | 'partner' } | null>(null)
 
   // --- Model/Effort/Mode pickers ---
@@ -248,14 +254,9 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
     e.dataTransfer.setData('application/x-section', section.id)
   }
 
-  /** Toggle section collapse */
+  /** Toggle section collapse via shared store (synced across Claude/Partner). */
   const toggleSection = (sectionId: string) => {
-    setCollapsedSections((prev) => {
-      const next = new Set(prev)
-      if (next.has(sectionId)) next.delete(sectionId)
-      else next.add(sectionId)
-      return next
-    })
+    toggleSectionCollapse(sectionId)
   }
 
   // Render a single command button with full-color styling
@@ -357,7 +358,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
         {/* All sections — always shown, even when empty */}
         {visibleSections.map((section, idx) => {
           const sectionCmds = bySectionId.get(section.id) || []
-          const isCollapsed = collapsedSections.has(section.id)
+          const isCollapsed = collapsedSectionIds.includes(section.id)
           const isDropTarget = dragOverSectionId === section.id
           const isSectionDragging = dragSectionId === section.id
           const isSectionDropTarget = dragOverSectionTargetId === section.id
@@ -535,7 +536,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
 
       {/* Row 2: Claude commands */}
       {claudeCommands.length > 0 && (
-        <div className="flex items-center gap-1 px-2 py-0.5 bg-crust border-t border-surface0/50 overflow-x-auto" onContextMenu={(e) => { e.stopPropagation(); handleContextMenu(e, undefined, 'claude') }}>
+        <div className="flex items-center gap-1 px-2 py-0.5 bg-crust border-t border-surface0 overflow-x-auto" onContextMenu={(e) => { e.stopPropagation(); handleContextMenu(e, undefined, 'claude') }}>
           {/* Section icon: Claude asterisk */}
           <div className="shrink-0 text-peach/60" title="Claude Commands">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
@@ -549,7 +550,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
 
       {/* Row 3: Partner commands */}
       {partnerEnabled && partnerCommands.length > 0 && (
-        <div className="flex items-center gap-1 px-2 py-0.5 bg-crust border-t border-surface0/50 overflow-x-auto" onContextMenu={(e) => { e.stopPropagation(); handleContextMenu(e, undefined, 'partner') }}>
+        <div className="flex items-center gap-1 px-2 py-0.5 bg-crust border-t border-surface0 overflow-x-auto" onContextMenu={(e) => { e.stopPropagation(); handleContextMenu(e, undefined, 'partner') }}>
           {/* Section icon: </> code */}
           <div className="shrink-0 text-green/60" title="Partner Terminal Commands">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">

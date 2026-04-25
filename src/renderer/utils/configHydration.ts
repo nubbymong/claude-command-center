@@ -7,6 +7,7 @@ import { useTipsStore, UsageTracking } from '../stores/tipsStore'
 import { useCloudAgentStore } from '../stores/cloudAgentStore'
 import { useAgentLibraryStore } from '../stores/agentLibraryStore'
 import { useTeamStore } from '../stores/teamStore'
+import { useCommandBarStore } from '../stores/commandBarStore'
 
 /**
  * Gather all relevant localStorage keys for migration to CONFIG/.
@@ -178,6 +179,9 @@ export function hydrateStores(configData: Record<string, unknown>): void {
 
   const usageTracking = (configData.usageTracking as UsageTracking) || undefined
   useTipsStore.getState().hydrate(usageTracking as UsageTracking)
+
+  const commandBarUi = (configData.commandBarUi as { collapsedSectionIds?: string[] }) || {}
+  useCommandBarStore.getState().hydrate(commandBarUi)
 
   console.log('[App] All stores hydrated from CONFIG/')
 }

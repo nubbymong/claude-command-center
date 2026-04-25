@@ -88,8 +88,10 @@ export default function SessionHeader({ session, isShowingPartner, sidebarCollap
       className="flex items-center gap-3 px-4 py-2 border-b border-surface0 bg-mantle shrink-0"
       style={{ borderTopWidth: '3px', borderTopStyle: 'solid', borderTopColor: session.color }}
     >
+      {/* Color dot kept as the at-a-glance identifier — the session name lives
+          in the tab strip directly above and was repeated here verbatim before.
+          UX audit 2026-04-25: drop the redundant label, keep dot + metadata. */}
       <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: session.color }} />
-      <span className="font-medium text-sm text-text">{session.label}</span>
       <span className="text-xs text-overlay0">{session.model || 'default'}</span>
       {sidebarCollapsed && session.contextPercent != null && (
         <span className="text-xs text-overlay0">{Math.round(session.contextPercent)}%</span>

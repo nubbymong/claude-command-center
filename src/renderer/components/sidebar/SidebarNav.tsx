@@ -121,7 +121,8 @@ function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMe
     <button
       onClick={() => onViewChange(item.view)}
       title={title}
-      className={`${isCollapsed ? 'w-10 h-10' : 'flex-1 py-2'} flex items-center justify-center rounded-lg transition-colors relative ${
+      aria-label={title}
+      className={`group ${isCollapsed ? 'w-10 h-10' : 'flex-1 py-2'} flex items-center justify-center rounded-lg transition-colors relative ${
         currentView === item.view
           ? 'bg-surface0 text-text'
           : isInsightsAnimating
@@ -132,6 +133,18 @@ function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMe
       }`}
     >
       {item.icon}
+      {/* Fast inline tooltip — appears immediately on hover instead of waiting
+          for the OS native `title` delay. Pointer-events:none so it doesn't
+          block clicks. Only rendered for the collapsed/icon-strip layout
+          where the label isn't already visible. */}
+      {isCollapsed && (
+        <span
+          className="pointer-events-none absolute left-full ml-2 z-40 px-2 py-0.5 text-[11px] rounded bg-surface1 text-text border border-surface2 shadow-md whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-100"
+          role="tooltip"
+        >
+          {title}
+        </span>
+      )}
       {isInsightsActive && insightsDotColor && (
         <span
           className={`absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ${isInsightsAnimating ? 'insights-pulse-dot' : ''}`}
@@ -168,13 +181,22 @@ export default function SidebarNav({ currentView, onViewChange, insightsStatus, 
     <button
       onClick={onShowHelp}
       title="Feature Guide"
-      className={`${collapsed ? 'w-10 h-10' : 'flex-1 py-2'} flex items-center justify-center rounded-lg transition-colors text-overlay0 hover:text-text hover:bg-surface0/50`}
+      aria-label="Feature Guide"
+      className={`group ${collapsed ? 'w-10 h-10' : 'flex-1 py-2'} flex items-center justify-center rounded-lg transition-colors text-overlay0 hover:text-text hover:bg-surface0/50 relative`}
     >
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
         <circle cx="12" cy="12" r="10" />
         <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
         <line x1="12" y1="17" x2="12.01" y2="17" />
       </svg>
+      {collapsed && (
+        <span
+          className="pointer-events-none absolute left-full ml-2 z-40 px-2 py-0.5 text-[11px] rounded bg-surface1 text-text border border-surface2 shadow-md whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-100"
+          role="tooltip"
+        >
+          Feature Guide
+        </span>
+      )}
     </button>
   ) : null
 
