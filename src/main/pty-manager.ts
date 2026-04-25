@@ -733,18 +733,31 @@ export function spawnPty(
   ptyProcess.onExit(({ exitCode }) => {
     logInfo(`[pty] PTY exited for session ${sessionId} with code ${exitCode}`)
     endSessionLog(sessionId)
-    ptySessions.delete(sessionId)
 
-    // Hooks: unregister the session secret so the gateway stops accepting
-    // requests for this sid, and remove the local per-session settings file.
-    // (SSH leaves a stale settings-<sid>.json on the remote host — harmless
-    // because the gateway rejects unknown sids with 404 and boot-cleanup
-    // takes care of the local copy on next launch.)
-    try {
-      const gwExit = getGateway()
-      if (gwExit) gwExit.unregisterSession(sessionId)
-    } catch { /* gateway may have already stopped during shutdown */ }
-    removeLocalSessionSettings(sessionId)
+    // Restart-race guard: the renderer's restart flow kills the old PTY
+    // and re-spawns synchronously with the SAME sessionId. node-pty's
+    // exit callback is async — by the time it fires, the new PTY has
+    // already written its settings file, registered its hook secret,
+    // and replaced the ptySessions entry. If we ran the old exit's
+    // cleanup unconditionally we'd:
+    //   - delete the NEW PTY's settings file → claude --settings fails
+    //     with "Settings file not found" on the new spawn
+    //   - unregister the NEW PTY's hook secret in the gateway → 404s
+    //   - delete the ptySessions entry pointing at the new ptyProcess
+    // Identity-check the map: only run cleanup when the entry still
+    // points at OUR ptyProcess (or there's no entry at all).
+    const current = ptySessions.get(sessionId)
+    const weAreCurrent = !current || current.ptyProcess === ptyProcess
+    if (weAreCurrent) {
+      ptySessions.delete(sessionId)
+      try {
+        const gwExit = getGateway()
+        if (gwExit) gwExit.unregisterSession(sessionId)
+      } catch { /* gateway may have already stopped during shutdown */ }
+      removeLocalSessionSettings(sessionId)
+    } else {
+      logInfo(`[pty] Stale exit for ${sessionId} — newer PTY has taken over, skipping cleanup`)
+    }
 
     if (win.isDestroyed()) {
       logDebug(`[pty] Window already destroyed, skipping exit notification for ${sessionId}`)
