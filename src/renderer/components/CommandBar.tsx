@@ -268,6 +268,12 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
     const argsTitle = cmd.defaultArgs?.length
       ? `${cmd.prompt}\nArgs: ${cmd.defaultArgs.join(' ')}\nCtrl+click to customize args`
       : cmd.prompt
+    // Sophistication pass 2026-04-25: command-button colour now reads as a
+     // small dot in front of the label rather than tinting the whole button.
+     // The previous saturated chip-per-button row dominated the bottom strip
+     // visually and clashed with the active-tab marker. Buttons now inherit
+     // a neutral surface chip; the dot carries identity. Drag-over still
+     // uses the blue ring for clarity since that's a transient affordance.
     return (
       <button
         key={cmd.id}
@@ -278,29 +284,24 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
         onDragEnd={handleDragEnd}
         onClick={(e) => handleClick(cmd, e)}
         onContextMenu={(e) => { e.stopPropagation(); handleContextMenu(e, cmd.id) }}
-        className="flex items-center gap-1 px-2.5 py-0.5 text-xs rounded border text-subtext0 hover:text-text transition-colors whitespace-nowrap shrink-0"
+        className={`flex items-center gap-1.5 px-2.5 py-0.5 text-xs rounded border whitespace-nowrap shrink-0 transition-colors ${
+          isDragOver
+            ? 'border-blue/50 bg-surface0/70 text-text'
+            : 'border-surface1/60 bg-surface0/40 text-subtext0 hover:bg-surface0 hover:text-text hover:border-surface1'
+        }`}
         style={{
-          backgroundColor: color + '20',
-          borderColor: isDragOver ? '#89B4FA' : color + '40',
           opacity: isDragging ? 0.4 : 1,
           cursor: isDragging ? 'grabbing' : 'grab',
           borderLeftWidth: isDragOver ? '2px' : undefined,
           borderLeftColor: isDragOver ? '#89B4FA' : undefined,
         }}
-        onMouseEnter={(e) => {
-          if (!isDragging) {
-            (e.currentTarget as HTMLElement).style.backgroundColor = color + '35'
-            if (!isDragOver) (e.currentTarget as HTMLElement).style.borderColor = color + '60'
-          }
-        }}
-        onMouseLeave={(e) => {
-          if (!isDragging) {
-            (e.currentTarget as HTMLElement).style.backgroundColor = color + '20'
-            if (!isDragOver) (e.currentTarget as HTMLElement).style.borderColor = color + '40'
-          }
-        }}
         title={argsTitle}
       >
+        <span
+          className="inline-block w-1.5 h-1.5 rounded-full shrink-0"
+          style={{ backgroundColor: color }}
+          aria-hidden
+        />
         {cmd.scope === 'global' && (
           <svg width="8" height="8" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-overlay0 shrink-0 opacity-60">
             <circle cx="8" cy="8" r="6.5" />
