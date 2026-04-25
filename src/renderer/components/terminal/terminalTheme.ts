@@ -76,14 +76,18 @@ export function injectGlobalStyles() {
   style.id = GLOBAL_STYLES_ID
   style.textContent = `
     .xterm-cursor-layer,
-    .xterm-cursor,
-    .xterm-helper-textarea {
+    .xterm-cursor {
       display: none !important;
       visibility: hidden !important;
       opacity: 0 !important;
     }
+    /* Do NOT hide .xterm-helper-textarea — it is xterm's offscreen
+       INPUT capture element. Hiding it breaks all keyboard input
+       to the terminal. Caret on it is invisible via caret-color
+       below; visual hiding stays scoped to actual cursor surfaces. */
     .xterm,
-    .xterm-screen {
+    .xterm-screen,
+    .xterm-helper-textarea {
       caret-color: transparent !important;
     }
     /* xterm renders the focused-row cursor as inline spans with these
