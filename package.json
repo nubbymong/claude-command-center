@@ -20,7 +20,8 @@
     "postinstall": "npx @electron/rebuild --only node-pty --only better-sqlite3",
     "rebuild": "npx @electron/rebuild",
     "capture-training": "npx tsx scripts/capture-training-screenshots.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:minimal": "electron test/minimal/main.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.28.0",

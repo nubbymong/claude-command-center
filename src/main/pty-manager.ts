@@ -401,7 +401,7 @@ export function spawnPty(
       rows,
       cwd: os.homedir(),
       env: process.env as Record<string, string>,
-      useConpty: false
+      useConpty: true
     })
 
     let cdSent = false
@@ -419,6 +419,8 @@ export function spawnPty(
     let setupDone = false
     const remotePath = ssh.remotePath || '~'
     const claudeEnvPrefix = [
+      // TEST 1: NO_FLICKER (fullscreen-rendering research preview)
+      // intentionally OFF for diagnosis; toggleable from options.
       options?.flickerFree ? 'CLAUDE_CODE_NO_FLICKER=1' : '',
       options?.powershellTool ? 'CLAUDE_CODE_USE_POWERSHELL_TOOL=1' : '',
       options?.disableAutoMemory ? 'CLAUDE_CODE_DISABLE_AUTO_MEMORY=1' : '',
@@ -566,7 +568,7 @@ export function spawnPty(
       logInfo(`[pty-manager] Launching shell-only PTY: ${spawnCmd} ${spawnArgs.join(' ')} cwd=${resolvedCwd}${elevated ? ' (elevated)' : ''}`)
 
       const shellEnv: Record<string, string> = { ...process.env, CLAUDE_MULTI_SESSION_ID: sessionId } as Record<string, string>
-      if (options?.flickerFree) shellEnv.CLAUDE_CODE_NO_FLICKER = '1'
+      // TEST 1: see parallel comment in the Claude-launch branch below.
       if (options?.powershellTool) shellEnv.CLAUDE_CODE_USE_POWERSHELL_TOOL = '1'
 
       ptyProcess = pty.spawn(spawnCmd, spawnArgs, {
@@ -575,7 +577,7 @@ export function spawnPty(
         rows,
         cwd: resolvedCwd,
         env: shellEnv,
-        useConpty: false
+        useConpty: true
       })
 
       // Explicitly cd to ensure the shell is in the right directory
@@ -602,7 +604,11 @@ export function spawnPty(
       logInfo(`[pty-manager] Launching Claude via shell in PTY: ${shell} -> ${cmd} cwd=${resolvedCwd} (resumePicker=${!!options?.useResumePicker})`)
 
       const claudeEnv: Record<string, string> = { ...process.env, CLAUDE_MULTI_SESSION_ID: sessionId } as Record<string, string>
-      if (options?.flickerFree) claudeEnv.CLAUDE_CODE_NO_FLICKER = '1'
+      // TEST 1: deliberately NOT setting CLAUDE_CODE_NO_FLICKER. The
+      // "fullscreen rendering" path is a research preview and may be
+      // interacting badly with ConPTY on Windows. macOS doesn't show
+      // the rogue artifact even without it. Restore conditional/
+      // unconditional setting after diagnosis.
       if (options?.powershellTool) claudeEnv.CLAUDE_CODE_USE_POWERSHELL_TOOL = '1'
       if (options?.disableAutoMemory) claudeEnv.CLAUDE_CODE_DISABLE_AUTO_MEMORY = '1'
 
@@ -612,7 +618,7 @@ export function spawnPty(
         rows,
         cwd: resolvedCwd,
         env: claudeEnv,
-        useConpty: false
+        useConpty: true
       })
 
       // Explicitly cd to the project directory, then launch Claude.

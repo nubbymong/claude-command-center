@@ -3,6 +3,7 @@ import '@xterm/xterm/css/xterm.css'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
+import { WebglAddon } from '@xterm/addon-webgl'
 import { useSessionStore } from '../stores/sessionStore'
 import { hasSpawned, markSpawned, killSessionPty } from '../ptyTracker'
 import CommandBar from './CommandBar'
@@ -91,6 +92,16 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         } catch {
           /* terminal may have been disposed mid-flip */
         }
+        // Theme flip can recreate the cursor canvas; re-stamp the
+        // inline hide for Claude sessions. Cheap & idempotent.
+        if (!shellOnly && term.element) {
+          term.element.querySelectorAll('.xterm-cursor-layer').forEach((el) => {
+            const node = el as HTMLElement
+            node.style.setProperty('display', 'none', 'important')
+            node.style.setProperty('visibility', 'hidden', 'important')
+            node.style.setProperty('opacity', '0', 'important')
+          })
+        }
       })
       return raf
     }
@@ -138,24 +149,21 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         return
       }
 
-      // For Claude Code sessions we hide the cursor (Claude renders its own
-      // input bar), so paint the cursor layer in the same background colour.
-      // Deriving from THEME.background keeps this in lockstep if the palette
-      // ever changes again — the old literal (#0f1218) went stale when the
-      // theme moved to #1a1a1a and made the cursor effectively invisible
-      // against the old tone.
-      // For Claude sessions, paint the cursor in the same colour as the
-      // background so it's invisible against the cell behind. Claude
-      // renders its own input affordance (highlighted char at the input
-      // position) so xterm's cursor is redundant noise. shellOnly
-      // sessions keep the visible cursor — that's bash/PowerShell where
-      // the cursor IS the user's input indicator.
-      // Use getTerminalTheme() so the colour ramp tracks the live CSS
-      // palette (light vs dark) at init time.
+      // Claude's TUI draws its own input cursor as a coloured cell at
+      // the prompt position, and leaves xterm's real cursor wherever
+      // its last write landed — usually somewhere off-screen for the
+      // user. So in Claude sessions we hide xterm's cursor entirely
+      // (theme paints it in the background colour, plus a CSS class
+      // hides any focused-row cursor span). The user still sees
+      // Claude's own input cursor; only the redundant xterm one is
+      // suppressed. Shell sessions keep the normal visible cursor.
       const liveTheme = getTerminalTheme()
       const termTheme = shellOnly
         ? liveTheme
         : { ...liveTheme, cursor: liveTheme.background, cursorAccent: liveTheme.background }
+      if (!shellOnly) {
+        container.classList.add('claude-session')
+      }
 
       const ts = useSettingsStore.getState().settings.terminal || DEFAULT_TERMINAL_SETTINGS
       const fontFallbacks = "'Cascadia Code', 'Fira Code', 'JetBrains Mono', Consolas, monospace"
@@ -180,9 +188,43 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
 
       term.open(container)
 
-      if (!shellOnly) {
-        term.write('\x1b[?25l')
+      // Load WebGL renderer (Codex recommendation #2). This swaps
+      // xterm's default 2D-canvas glyph rendering for GPU-textured
+      // glyphs — different cursor draw path, different glyph
+      // fallback, and uniform across platforms. Fails gracefully if
+      // WebGL is unavailable in the Electron renderer.
+      try {
+        const webglAddon = new WebglAddon()
+        webglAddon.onContextLoss(() => webglAddon.dispose())
+        term.loadAddon(webglAddon)
+      } catch (e) {
+        // Stay on default renderer — WebGL not available in this env.
       }
+
+      // Belt-and-braces hide for xterm's caret in Claude sessions.
+      // The .claude-session class + global CSS rule should already
+      // hide it, but xterm sets inline styles on the cursor canvas
+      // each time it (re)creates the layer — on open, theme flip,
+      // resize — and inline styles can race the CSS class. So we
+      // also walk the DOM and stamp display:none directly with
+      // !important. Idempotent and cheap.
+      const hideClaudeCursorLayer = () => {
+        if (shellOnly) return
+        container.querySelectorAll('.xterm-cursor-layer').forEach((el) => {
+          const node = el as HTMLElement
+          node.style.setProperty('display', 'none', 'important')
+          node.style.setProperty('visibility', 'hidden', 'important')
+          node.style.setProperty('opacity', '0', 'important')
+        })
+        container.querySelectorAll('.xterm-screen [class*="cursor"]').forEach((el) => {
+          const node = el as HTMLElement
+          node.style.setProperty('background', 'transparent', 'important')
+          node.style.setProperty('color', 'inherit', 'important')
+          node.style.setProperty('border', '0', 'important')
+          node.style.setProperty('outline', '0', 'important')
+        })
+      }
+      hideClaudeCursorLayer()
 
       terminalRef.current = term
       fitAddonRef.current = fitAddon
@@ -354,9 +396,15 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         } catch { /* terminal may be disposed */ }
       })
 
-      // Receive PTY output
+      // Receive PTY output. Pass through with minimal mutation —
+      // Claude Code's TUI in alternate-screen mode (CLAUDE_CODE_NO_FLICKER=1)
+      // handles its own cursor visibility / repaint; xterm renders
+      // faithfully on top of ConPTY. The narrow stripCursorSequences
+      // call still fights cursor blink and DECSCUSR styles that would
+      // override our settings, but no longer touches reverse video,
+      // backgrounds, or spinner glyphs.
       unsubData = window.electronAPI.pty.onData(sessionId, (data) => {
-        const filtered = shellOnly ? data : stripCursorSequences(data) + '\x1b[?25l'
+        const filtered = shellOnly ? data : stripCursorSequences(data)
         term?.write(filtered)
 
         // Only auto-scroll if user hasn't scrolled up
@@ -378,6 +426,9 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         try {
           fitAddon.fit()
           window.electronAPI.pty.resize(sessionId, term.cols, term.rows)
+          // xterm recreates / resizes the cursor canvas after fit;
+          // re-stamp the inline hide so the caret stays gone.
+          hideClaudeCursorLayer()
         } catch { /* ignore */ }
       })
       resizeObserver.observe(container)

@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Minimal Terminal Repro</title>
+  <link rel="stylesheet" href="../../node_modules/@xterm/xterm/css/xterm.css">
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background: #1a1a1a;
+      overflow: hidden;
+      font-family: 'Cascadia Code', Consolas, monospace;
+    }
+    #terminal {
+      width: 100vw;
+      height: 100vh;
+      padding: 8px;
+      box-sizing: border-box;
+    }
+    #banner {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      background: #2a2a2a;
+      color: #ddd;
+      padding: 6px 10px;
+      font-size: 12px;
+      font-family: system-ui, sans-serif;
+      border-bottom: 1px solid #444;
+      z-index: 1;
+    }
+    #terminal { padding-top: 38px; }
+
+    /* SLICE 3: terminalTheme.ts cursor-hide CSS, ported verbatim. */
+    .xterm,
+    .xterm-screen,
+    .xterm-helper-textarea {
+      caret-color: transparent !important;
+    }
+    .claude-session .xterm-cursor,
+    .claude-session .xterm-cursor-blink,
+    .claude-session .xterm-cursor-bar,
+    .claude-session .xterm-cursor-block,
+    .claude-session .xterm-cursor-underline,
+    .claude-session .xterm-cursor-outline,
+    .claude-session .xterm-cursor-pointer,
+    .claude-session .xterm-cursor-layer,
+    .claude-session [class*="xterm-cursor"] {
+      display: none !important;
+      visibility: hidden !important;
+      opacity: 0 !important;
+      width: 0 !important;
+      height: 0 !important;
+      min-width: 0 !important;
+      min-height: 0 !important;
+      background: transparent !important;
+      background-color: transparent !important;
+      color: transparent !important;
+      border: 0 !important;
+      outline: 0 !important;
+      box-shadow: none !important;
+      pointer-events: none !important;
+      transform: scale(0) !important;
+    }
+    .claude-session {
+      --cursor-color: transparent !important;
+      --xterm-cursor-color: transparent !important;
+    }
+  </style>
+</head>
+<body>
+  <div id="banner">Minimal repro — type <code>claude</code> and trigger thinking. Look for the rogue yellow square.</div>
+  <div id="terminal" class="claude-session"></div>
+
+  <script src="../../node_modules/@xterm/xterm/lib/xterm.js"></script>
+  <script src="../../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
+  <script src="../../node_modules/@xterm/addon-webgl/lib/addon-webgl.js"></script>
+
+  <script>
+    // SLICE 1: Add main app's cursor-hiding options to see if they
+    // are what triggers the rogue square. Theme paints the cursor in
+    // the same colour as the background and cursorInactiveStyle:'none'
+    // is supposed to hide the cursor when xterm thinks it's
+    // unfocused. If the rogue artefact appears with these set, the
+    // problem is HERE.
+    const term = new Terminal({
+      fontFamily: "'Cascadia Code', Consolas, monospace",
+      fontSize: 14,
+      cols: 120,
+      rows: 30,
+      cursorBlink: false,
+      cursorStyle: 'bar',
+      cursorInactiveStyle: 'none',
+      cursorWidth: 1,
+      theme: {
+        background: '#1a1a1a',
+        foreground: '#e8e8e8',
+        cursor: '#1a1a1a',
+        cursorAccent: '#1a1a1a',
+      },
+    })
+
+    const fit = new FitAddon.FitAddon()
+    term.loadAddon(fit)
+
+    term.open(document.getElementById('terminal'))
+
+    try {
+      const webgl = new WebglAddon.WebglAddon()
+      term.loadAddon(webgl)
+    } catch (e) {
+      console.warn('WebGL addon failed', e)
+    }
+
+    fit.fit()
+    window.pty.resize(term.cols, term.rows)
+
+    term.onData((data) => window.pty.write(data))
+
+    // SLICE 2: Mirror main app's stripCursorSequences before
+    // forwarding to xterm. Strips cursor-blink mode (`\x1b[?12h/l`)
+    // and DECSCUSR cursor-style (`\x1b[N q`). If the rogue square
+    // appears with this enabled, our data mutation is what triggers
+    // it.
+    function stripCursorSequences(data) {
+      return data
+        .replace(/\x1b\[\?12[hl]/g, '')
+        .replace(/\x1b\[\d+ q/g, '')
+    }
+    window.pty.onData((data) => term.write(stripCursorSequences(data)))
+
+    window.addEventListener('resize', () => {
+      fit.fit()
+      window.pty.resize(term.cols, term.rows)
+    })
+
+    term.focus()
+  </script>
+</body>
+</html>
