@@ -4,7 +4,6 @@ import { useSessionStore } from '../stores/sessionStore'
 import { useCommandBarStore } from '../stores/commandBarStore'
 import CommandDialog from './CommandDialog'
 import ScreenshotButton from './ScreenshotButton'
-import StoryboardButton from './StoryboardButton'
 import ToolbarPopup from './ToolbarPopup'
 import { generateId } from '../utils/id'
 import { trackUsage } from '../stores/tipsStore'
@@ -420,7 +419,6 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
         </div>
         <div className="w-px h-4 bg-surface1 mx-0.5" />
         <ScreenshotButton sessionId={sessionId} sessionType={sessionType} />
-        <StoryboardButton sessionId={sessionId} sessionType={sessionType} />
         {/* Back to Claude / Partner toggle - on magic row */}
         {partnerEnabled && onTogglePartner && (
           <>

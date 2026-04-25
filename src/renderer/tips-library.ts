@@ -397,21 +397,6 @@ export const TIPS_LIBRARY: Tip[] = [
   // ── Advanced ────────────────────────────────────────────────────────────
 
   {
-    id: 'tip.storyboard',
-    category: 'advanced',
-    complexity: 'intermediate',
-    priority: 35,
-    excludes: ['advanced.storyboard'],
-    variants: {
-      primary: {
-        shortText: '🎬 Record a sequence of screenshots',
-        title: 'Storyboard Capture',
-        body: '**Storyboard** records timed screenshots of a screen region — perfect for showing Claude a UI flow you want to replicate or a bug you\'re trying to reproduce.\n\nClick the Storyboard button in the command bar, pick an interval (1-5s), select a region, and let it roll. Review the captured frames, annotate each, deselect noise frames, and send a structured prompt with numbered frames to Claude.',
-      },
-    },
-  },
-
-  {
     id: 'tip.insights',
     category: 'advanced',
     complexity: 'advanced',
@@ -515,9 +500,9 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'ℹ Where the app stores everything',
         title: 'Resources Folder',
-        body: 'The app uses a **Resources Directory** for all user data. Configurable at first-run setup.\n\nContents:\n• `CONFIG/` — JSON files for your configs, commands, settings, encrypted credentials, tokenomics, usage tracking\n• `logs/` — per-session JSONL activity logs\n• `screenshots/` — any screenshots captured by the Snap / Storyboard features\n• `insights/` — AI-generated usage reports\n• `status/` — real-time session metrics (written by the statusline script)\n• `scripts/` — deployed helper scripts like the statusline\n• `claude-versions/` — installed legacy Claude CLI versions\n\nBack up the whole `resources/` folder to move to a new machine (note: encrypted credentials won\'t transfer — see the credential tip).',
-        bodyMac: 'The app stores everything under `~/Library/Application Support/Claude Conductor/resources/`:\n\n• `CONFIG/` — JSON files for configs, commands, settings, encrypted credentials, tokenomics, usage tracking\n• `logs/` — per-session JSONL activity logs\n• `screenshots/` — captured by Snap / Storyboard features\n• `insights/` — AI usage reports\n• `status/` — real-time session metrics (from statusline script)\n• `scripts/` — deployed helper scripts\n• `claude-versions/` — installed legacy Claude CLI versions\n\nBack up the whole `resources/` folder to move to a new machine (encrypted credentials won\'t transfer since they\'re tied to Keychain).',
-        bodyWin: 'The app stores everything under `%LOCALAPPDATA%\\Claude Conductor\\resources\\`:\n\n• `CONFIG\\` — JSON files for configs, commands, settings, encrypted credentials, tokenomics, usage tracking\n• `logs\\` — per-session JSONL activity logs\n• `screenshots\\` — captured by Snap / Storyboard features\n• `insights\\` — AI usage reports\n• `status\\` — real-time session metrics (from statusline script)\n• `scripts\\` — deployed helper scripts\n• `claude-versions\\` — installed legacy Claude CLI versions\n\nBack up the whole `resources\\` folder to move to a new machine (encrypted credentials won\'t transfer since they\'re tied to DPAPI).',
+        body: 'The app uses a **Resources Directory** for all user data. Configurable at first-run setup.\n\nContents:\n• `CONFIG/` — JSON files for your configs, commands, settings, encrypted credentials, tokenomics, usage tracking\n• `logs/` — per-session JSONL activity logs\n• `screenshots/` — any screenshots captured by the Snap features\n• `insights/` — AI-generated usage reports\n• `status/` — real-time session metrics (written by the statusline script)\n• `scripts/` — deployed helper scripts like the statusline\n• `claude-versions/` — installed legacy Claude CLI versions\n\nBack up the whole `resources/` folder to move to a new machine (note: encrypted credentials won\'t transfer — see the credential tip).',
+        bodyMac: 'The app stores everything under `~/Library/Application Support/Claude Conductor/resources/`:\n\n• `CONFIG/` — JSON files for configs, commands, settings, encrypted credentials, tokenomics, usage tracking\n• `logs/` — per-session JSONL activity logs\n• `screenshots/` — captured by Snap features\n• `insights/` — AI usage reports\n• `status/` — real-time session metrics (from statusline script)\n• `scripts/` — deployed helper scripts\n• `claude-versions/` — installed legacy Claude CLI versions\n\nBack up the whole `resources/` folder to move to a new machine (encrypted credentials won\'t transfer since they\'re tied to Keychain).',
+        bodyWin: 'The app stores everything under `%LOCALAPPDATA%\\Claude Conductor\\resources\\`:\n\n• `CONFIG\\` — JSON files for configs, commands, settings, encrypted credentials, tokenomics, usage tracking\n• `logs\\` — per-session JSONL activity logs\n• `screenshots\\` — captured by Snap features\n• `insights\\` — AI usage reports\n• `status\\` — real-time session metrics (from statusline script)\n• `scripts\\` — deployed helper scripts\n• `claude-versions\\` — installed legacy Claude CLI versions\n\nBack up the whole `resources\\` folder to move to a new machine (encrypted credentials won\'t transfer since they\'re tied to DPAPI).',
       },
     },
   },

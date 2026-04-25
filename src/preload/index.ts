@@ -109,12 +109,6 @@ export interface ElectronAPI {
     listRecent: () => Promise<Array<{ filename: string; path: string; timestamp: number; thumbnail: string }>>
     cleanup: (maxAgeDays: number) => Promise<number>
   }
-  storyboard: {
-    start: () => Promise<{ x: number; y: number; width: number; height: number } | null>
-    captureFrame: () => Promise<string | null>
-    stop: () => Promise<string[]>
-    isActive: () => Promise<boolean>
-  }
   session: {
     save: (state: unknown) => Promise<boolean>
     load: () => Promise<unknown | null>
@@ -356,12 +350,6 @@ const electronAPI: ElectronAPI = {
     listWindows: () => ipcRenderer.invoke(IPC.SCREENSHOT_LIST_WINDOWS),
     listRecent: () => ipcRenderer.invoke(IPC.SCREENSHOT_LIST_RECENT),
     cleanup: (maxAgeDays: number) => ipcRenderer.invoke(IPC.SCREENSHOT_CLEANUP, maxAgeDays)
-  },
-  storyboard: {
-    start: () => ipcRenderer.invoke(IPC.STORYBOARD_START),
-    captureFrame: () => ipcRenderer.invoke(IPC.STORYBOARD_CAPTURE_FRAME),
-    stop: () => ipcRenderer.invoke(IPC.STORYBOARD_STOP),
-    isActive: () => ipcRenderer.invoke(IPC.STORYBOARD_IS_ACTIVE),
   },
   session: {
     save: (state: unknown) => ipcRenderer.invoke(IPC.SESSION_SAVE, state),
