@@ -1,38 +1,58 @@
 /**
  * Strip cursor-related escape sequences from terminal data.
- * This removes the yellow block cursor that Claude's TUI renders.
  *
- * Two layers of defense:
- * 1. Remove cursor control sequences (show/hide/blink/style)
- * 2. Replace yellow background colors with default background.
- *    Claude's TUI paints a yellow block cursor using yellow bg (SGR 43/103)
- *    or 256-color/truecolor yellow bg sequences. We replace them with
- *    default bg (SGR 49) so the cursor block becomes invisible.
+ * Claude Code's TUI draws its own "cursor" by painting a colored block
+ * character (white, yellow, sometimes other shades) at the input
+ * position, and during "thinking" it animates that block across the
+ * screen. From the user's perspective it looks like a flashing cursor
+ * jumping around, even with xterm's own cursor disabled.
+ *
+ * Defense in depth:
+ * 1. Remove cursor SHOW / blink / style escape sequences so xterm's
+ *    own cursor stays hidden no matter what Claude requests.
+ * 2. Walk every SGR sequence's parameter list and drop:
+ *    - reverse-video (7) and reverse-off (27)
+ *    - 8-color and bright backgrounds (40-47, 100-107)
+ *    - 256-color backgrounds (48;5;N — three consecutive tokens)
+ *    - truecolor backgrounds (48;2;R;G;B — five consecutive tokens)
+ *    Foreground tokens (38;5;* and 38;2;*) are kept verbatim so syntax
+ *    highlighting still renders.
+ *
+ * Why a single param-walker (not a sequence of standalone regexes):
+ * Claude composes SGR aggressively — `\x1b[1;7;43m` (bold+inverse+yellow-bg),
+ * `\x1b[38;2;255;0;0;48;2;0;0;0m` (FG+BG truecolor in one). Standalone
+ * regexes only match isolated sequences and silently miss the compound
+ * ones — that lets the white/yellow block keep rendering. Walking
+ * params catches every variant.
+ *
+ * Trade-off: legit BG highlighting in tools like `bat`, `diff`, `cat`
+ * also goes flat — by far the right call given this was the #1 complaint.
  */
 export function stripCursorSequences(data: string): string {
   return data
     .replace(/\x1b\[\?25h/g, '')        // strip cursor SHOW only (keep hide sequences)
     .replace(/\x1b\[\?12[hl]/g, '')     // blink on/off
     .replace(/\x1b\[\d+ q/g, '')        // cursor style
-    // Strip reverse video (SGR 7) from ANY SGR sequence — Claude's TUI uses it for block cursor.
-    // Handles standalone \x1b[7m and combined like \x1b[7;33m, \x1b[1;7m, \x1b[7;38;2;...m
-    .replace(/\x1b\[([0-9;]*)m/g, (_match, params: string) => {
-      if (!params) return _match
+    .replace(/\x1b\[([0-9;]*)m/g, (match, params: string) => {
+      if (!params) return match
       const parts = params.split(';')
-      const filtered = parts.filter(p => p !== '7' && p !== '27')
-      if (filtered.length === parts.length) return _match  // no reverse video, keep as-is
-      if (filtered.length === 0) return ''  // was only reverse video
-      return '\x1b[' + filtered.join(';') + 'm'
-    })
-    // Yellow/bright-yellow background → default background
-    .replace(/\x1b\[(?:43|103)m/g, '\x1b[49m')
-    // 256-color yellow/orange backgrounds
-    .replace(/\x1b\[48;5;(?:3|11|178|179|180|184|185|186|187|190|191|192|208|214|220|221|226|227|228|229)m/g, '\x1b[49m')
-    // Truecolor yellow/orange/amber backgrounds (R>150, G>100, B<100)
-    .replace(/\x1b\[48;2;(\d+);(\d+);(\d+)m/g, (_match, r, g, b) => {
-      const ri = parseInt(r), gi = parseInt(g), bi = parseInt(b)
-      if (ri > 150 && gi > 100 && bi < 100) return '\x1b[49m'
-      return _match
+      const out: string[] = []
+      for (let i = 0; i < parts.length; i++) {
+        const p = parts[i]
+        if (p === '7' || p === '27') continue                  // reverse video
+        if (/^(?:4[0-7]|10[0-7])$/.test(p)) continue           // 8-color / bright bg
+        if (p === '48') {
+          const sub = parts[i + 1]
+          if (sub === '5') { i += 2; continue }                // 48;5;N
+          if (sub === '2') { i += 4; continue }                // 48;2;R;G;B
+          // Malformed 48 with no sub — drop the lone 48 token.
+          continue
+        }
+        out.push(p)
+      }
+      if (out.length === parts.length) return match            // nothing changed
+      if (out.length === 0) return ''                          // SGR collapsed empty
+      return '\x1b[' + out.join(';') + 'm'
     })
 }
 

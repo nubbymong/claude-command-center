@@ -23,7 +23,13 @@ export default function SectionFrame({
   children,
 }: Props) {
   const saved = useGitHubStore((s) => s.sessionStates[sessionId]?.collapsedSections[id])
-  const collapsed = saved ?? defaultCollapsed ?? false
+  // Auto-collapse empty sections so the right rail isn't dominated by
+  // four "No PR for this branch / No issues / No reviews / No context"
+  // body strings stacked vertically. Header still shows with its em-dash
+  // empty indicator; user can expand to read the placeholder if curious.
+  // Once the user makes an explicit choice (saved !== undefined), respect
+  // it — that includes "I expanded the empty section deliberately".
+  const collapsed = saved ?? (emptyIndicator ? true : (defaultCollapsed ?? false))
   const setCollapsed = useGitHubStore((s) => s.setSectionCollapsed)
 
   return (
@@ -34,7 +40,15 @@ export default function SectionFrame({
         className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-surface0/50 focus:outline focus:outline-2 focus:outline-blue"
         onClick={() => setCollapsed(sessionId, id, !collapsed)}
       >
-        <span className="text-xs text-mauve w-3" aria-hidden="true">
+        {/* Expanded chevron picks up the per-session accent (CSS var set by
+            GitHubPanel) so the active section feels owned by this session.
+            Collapsed chevron stays muted — colorising the closed state would
+            shout from every empty section header. */}
+        <span
+          className="text-xs w-3"
+          style={{ color: collapsed ? 'var(--color-overlay0)' : 'var(--session-color, var(--color-mauve))' }}
+          aria-hidden="true"
+        >
           {collapsed ? String.fromCodePoint(0x25b6) : String.fromCodePoint(0x25bc)}
         </span>
         <span className="text-xs font-medium uppercase text-subtext0 tracking-wide">{title}</span>

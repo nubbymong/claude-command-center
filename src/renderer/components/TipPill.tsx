@@ -29,34 +29,30 @@ export default function TipPill({ onClick }: Props) {
   return (
     <button
       onClick={onClick}
-      className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs
-        bg-gradient-to-r from-mauve/20 to-blue/10
-        border border-mauve/40
-        text-subtext1 hover:text-text hover:border-mauve
-        transition-all max-w-[340px] truncate
-        ${mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-1'}
-        hover:scale-[1.02]`}
-      style={{
-        animation: mounted ? 'tip-pulse 4s ease-in-out infinite' : undefined,
-      }}
+      className={`flex items-center gap-1.5 px-2.5 py-0.5 rounded text-xs
+        bg-surface0/70 hover:bg-surface0
+        border border-surface1 hover:border-surface2
+        text-subtext0 hover:text-text
+        transition-all duration-200 max-w-[340px] truncate
+        ${mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-1'}`}
       title="Click for details"
+      aria-label="Tip"
     >
-      <span className="text-mauve shrink-0" aria-hidden>💡</span>
+      <svg
+        width="11"
+        height="11"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className="shrink-0 opacity-70"
+        aria-hidden
+      >
+        <path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.74V17h8v-2.26A7 7 0 0 0 12 2z" />
+      </svg>
       <span className="truncate">{current.content.shortText}</span>
     </button>
   )
-}
-
-// Inject keyframes once
-const TIP_STYLE_ID = 'tip-pulse-keyframes'
-if (typeof document !== 'undefined' && !document.getElementById(TIP_STYLE_ID)) {
-  const style = document.createElement('style')
-  style.id = TIP_STYLE_ID
-  style.textContent = `
-    @keyframes tip-pulse {
-      0%, 100% { box-shadow: 0 0 0 0 rgba(203, 166, 247, 0); }
-      50% { box-shadow: 0 0 12px 2px rgba(203, 166, 247, 0.25); }
-    }
-  `
-  document.head.appendChild(style)
 }
