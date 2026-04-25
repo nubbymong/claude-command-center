@@ -28,7 +28,7 @@ import { registerTokenomicsHandlers } from './ipc/tokenomics-handlers'
 import { registerGitHubHandlers } from './ipc/github-handlers'
 import { registerHooksHandlers } from './ipc/hooks-handlers'
 import { HooksGateway } from './hooks/hooks-gateway'
-import { setGateway } from './hooks'
+import { setGateway, getGateway } from './hooks'
 import { cleanupStaleHookEntries } from './hooks/boot-cleanup'
 import { DEFAULT_HOOKS_PORT } from './hooks/hooks-types'
 import { fetchModelPricing } from './tokenomics-manager'
@@ -647,7 +647,13 @@ if (!gotTheLock) {
     stopConductorMcpServer()
     killAllAgents()
     killAllPty()
-    hooksGateway.stop().catch(() => { /* ignore shutdown error */ })
+    // Pull from the singleton barrel — `hooksGateway` declared inside the
+     // app.whenReady() callback above is out of scope here, which threw an
+     // uncaught ReferenceError on every quit and crashed the app before it
+     // could emit any cleanup logs (visible in dev logs as the trigger that
+     // killed an actively-spawning PTY mid-launch and removed its
+     // settings-<sid>.json before claude could read it).
+    try { getGateway()?.stop().catch(() => { /* ignore shutdown error */ }) } catch { /* gateway never started */ }
     closeDebugLogger()
   })
 
