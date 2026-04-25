@@ -26,6 +26,11 @@ export const DEFAULT_STATUS_LINE: StatusLineSettings = {
 
 export type UpdateChannel = 'stable' | 'beta'
 
+// 'system' follows the OS prefers-color-scheme; explicit 'dark' / 'light'
+// overrides regardless of OS. Default is 'dark' so existing users see no
+// visual change unless they opt in.
+export type ThemeMode = 'dark' | 'light' | 'system'
+
 export type CursorStyle = 'bar' | 'block' | 'underline'
 
 export interface TerminalSettings {
@@ -60,6 +65,7 @@ export interface AppSettings {
   showTips: boolean
   hooksEnabled: boolean
   hooksPort: number
+  theme: ThemeMode
 }
 
 interface SettingsState {
@@ -85,6 +91,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   showTips: true,
   hooksEnabled: true,
   hooksPort: 19334,
+  theme: 'dark',
 }
 
 export const useSettingsStore = create<SettingsState>((set) => ({

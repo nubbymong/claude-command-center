@@ -39,7 +39,28 @@ export function stripCursorSequences(data: string): string {
       const out: string[] = []
       for (let i = 0; i < parts.length; i++) {
         const p = parts[i]
-        if (p === '7' || p === '27') continue                  // reverse video
+        // Foreground color compounds — pass through verbatim, advancing
+        // past their sub-tokens so the blink-mode check below doesn't
+        // mistake the `5` in `38;5;N` for SGR 5 (slow blink).
+        if (p === '38') {
+          const sub = parts[i + 1]
+          if (sub === '5' && parts[i + 2] !== undefined) {
+            out.push(p, sub, parts[i + 2])
+            i += 2
+            continue
+          }
+          if (sub === '2' && parts[i + 4] !== undefined) {
+            out.push(p, sub, parts[i + 2], parts[i + 3], parts[i + 4])
+            i += 4
+            continue
+          }
+          // Malformed FG colour escape — keep the lone 38 token, the
+          // ECMA spec leaves the next token as a no-op then.
+          out.push(p)
+          continue
+        }
+        if (p === '7' || p === '27') continue                  // reverse video on/off
+        if (p === '5' || p === '6' || p === '25') continue     // slow blink, fast blink, blink-off
         if (/^(?:4[0-7]|10[0-7])$/.test(p)) continue           // 8-color / bright bg
         if (p === '48') {
           const sub = parts[i + 1]
