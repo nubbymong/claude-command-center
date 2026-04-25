@@ -99,12 +99,6 @@ export const IPC = {
   SCREENSHOT_REGION_SELECTED: 'screenshot:regionSelected',
   SCREENSHOT_CANCELLED: 'screenshot:cancelled',
 
-  // Storyboard
-  STORYBOARD_START: 'storyboard:start',
-  STORYBOARD_CAPTURE_FRAME: 'storyboard:captureFrame',
-  STORYBOARD_STOP: 'storyboard:stop',
-  STORYBOARD_IS_ACTIVE: 'storyboard:isActive',
-
   // Session persistence
   SESSION_SAVE: 'session:save',
   SESSION_LOAD: 'session:load',

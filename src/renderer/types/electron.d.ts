@@ -209,12 +209,6 @@ export interface ElectronAPI {
     listRecent: () => Promise<Array<{ filename: string; path: string; timestamp: number; thumbnail: string }>>
     cleanup: (maxAgeDays: number) => Promise<number>
   }
-  storyboard: {
-    start: () => Promise<{ x: number; y: number; width: number; height: number } | null>
-    captureFrame: () => Promise<string | null>
-    stop: () => Promise<string[]>
-    isActive: () => Promise<boolean>
-  }
   session: {
     save: (state: SessionState) => Promise<boolean>
     load: () => Promise<SessionState | null>
