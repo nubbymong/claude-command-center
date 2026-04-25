@@ -60,31 +60,56 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
   const isScrolledUpRef = useRef(false)
   const updateSession = useSessionStore((s) => s.updateSession)
   const session = useSessionStore((s) => s.sessions.find((sess) => sess.id === sessionId))
-  const themeMode = useSettingsStore((s) => s.settings.theme)
 
   // Extracted hooks
   useStatuslineSubscription(sessionId)
   useActiveTabEffect(sessionId, isActive, terminalRef, attentionTimerRef, attentionAckedRef)
   useCursorLayerVisibility(xtermContainerRef, isActive, shellOnly)
 
-  // When the user flips theme mode, re-read the CSS palette and push the
-  // new colours into xterm. Have to bridge through term.options because
-  // xterm reapplies its theme on assignment — there's no public method
-  // for "refresh from CSS". `themeMode === 'system'` flips don't fire
-  // here when the OS pref changes; that's handled in useThemeController
-  // by mutating data-theme on <html>, but the terminal would still need
-  // a kick. Listening on a MediaQueryList here would double-handle, so
-  // we keep this dependency on themeMode only — flipping the OS while
-  // in 'system' mode is a rare path; users typically pick light/dark
-  // explicitly.
+  // Repaint the terminal whenever the resolved theme changes.
+  // Watching data-theme on <html> via MutationObserver covers BOTH:
+  //   - explicit user flips through ThemeToggle (settings.theme changes)
+  //   - OS prefers-color-scheme changes while in 'system' mode (the
+  //     useThemeController hook mutates data-theme directly in that case
+  //     without touching settings.theme)
+  // term.options.theme = X only colours new writes, so we also call
+  // term.refresh(0, rows-1) to repaint existing scrollback. requestAnimationFrame
+  // gives the browser a tick to recompute CSS variables before we read them.
   useEffect(() => {
     const term = terminalRef.current
     if (!term) return
-    const live = getTerminalTheme()
-    term.options.theme = shellOnly
-      ? live
-      : { ...live, cursor: 'rgba(0,0,0,0)', cursorAccent: 'rgba(0,0,0,0)' }
-  }, [themeMode, shellOnly])
+
+    const apply = () => {
+      const raf = requestAnimationFrame(() => {
+        if (!terminalRef.current) return
+        const live = getTerminalTheme()
+        term.options.theme = shellOnly
+          ? live
+          : { ...live, cursor: 'rgba(0,0,0,0)', cursorAccent: 'rgba(0,0,0,0)' }
+        try {
+          term.refresh(0, term.rows - 1)
+        } catch {
+          /* terminal may have been disposed mid-flip */
+        }
+      })
+      return raf
+    }
+
+    let pendingRaf = apply()
+    const observer = new MutationObserver(() => {
+      if (pendingRaf !== undefined) cancelAnimationFrame(pendingRaf)
+      pendingRaf = apply()
+    })
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme'],
+    })
+
+    return () => {
+      observer.disconnect()
+      if (pendingRaf !== undefined) cancelAnimationFrame(pendingRaf)
+    }
+  }, [shellOnly])
 
   // Core terminal initialization + PTY wiring
   useEffect(() => {
