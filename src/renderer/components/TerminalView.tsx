@@ -85,7 +85,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         const live = getTerminalTheme()
         term.options.theme = shellOnly
           ? live
-          : { ...live, cursor: 'rgba(0,0,0,0)', cursorAccent: 'rgba(0,0,0,0)' }
+          : { ...live, cursor: live.background, cursorAccent: live.background }
         try {
           term.refresh(0, term.rows - 1)
         } catch {
@@ -144,19 +144,18 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       // ever changes again — the old literal (#0f1218) went stale when the
       // theme moved to #1a1a1a and made the cursor effectively invisible
       // against the old tone.
-      // For Claude sessions, paint the cursor in fully transparent rgba so
-      // every render path (canvas layer, focused-row span, Webgl if it ever
-      // lands) draws nothing visible. Plain hex colours don't carry alpha
-      // — Claude's "thinking" spinner moves the cursor across glyphs that
-      // already have a non-default background, so cursor=THEME.background
-      // (#1a1a1a) became visible whenever a colored span sat under it.
-      // Transparent alpha-zero is invisible regardless of the cell behind.
+      // For Claude sessions, paint the cursor in the same colour as the
+      // background so it's invisible against the cell behind. Claude
+      // renders its own input affordance (highlighted char at the input
+      // position) so xterm's cursor is redundant noise. shellOnly
+      // sessions keep the visible cursor — that's bash/PowerShell where
+      // the cursor IS the user's input indicator.
       // Use getTerminalTheme() so the colour ramp tracks the live CSS
       // palette (light vs dark) at init time.
       const liveTheme = getTerminalTheme()
       const termTheme = shellOnly
         ? liveTheme
-        : { ...liveTheme, cursor: 'rgba(0,0,0,0)', cursorAccent: 'rgba(0,0,0,0)' }
+        : { ...liveTheme, cursor: liveTheme.background, cursorAccent: liveTheme.background }
 
       const ts = useSettingsStore.getState().settings.terminal || DEFAULT_TERMINAL_SETTINGS
       const fontFallbacks = "'Cascadia Code', 'Fira Code', 'JetBrains Mono', Consolas, monospace"
