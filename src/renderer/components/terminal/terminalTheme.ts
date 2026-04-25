@@ -60,47 +60,107 @@ export function getTerminalTheme() {
 // each time they re-render.
 export const THEME = getTerminalTheme()
 
-// Hide every xterm-rendered cursor surface. The cursor-layer canvas was
-// the only target the previous selector hit, but Claude's TUI moves the
-// cursor across glyphs during the "thinking" spinner faster than our
-// per-write `\x1b[?25l` can suppress, and xterm renders the cursor as a
-// styled span on the focused row when the canvas layer is masked. Match
-// every variant: the canvas layer, the focused-row cursor span, any
-// element whose class contains "cursor", and force `caret-color:
-// transparent` on the root so the focus ring on inactive panes stays
-// invisible too.
+// Cursor visibility for `.claude-session` panes — xterm's DOM
+// renderer creates the cursor as a positioned `<div class="xterm-cursor
+// xterm-cursor-bar">` (or -block/-underline/-outline) inside .xterm-screen.
+// During Claude's thinking animation the cursor is repositioned at the
+// "end of last write" of every redrawn region, which is what the user
+// has been seeing as a rogue yellow square jumping around the screen.
+// We nuke every conceivable cursor variant with a wide net of !important
+// declarations because:
+//   * xterm sets the cursor colour via the `--cursor-color` CSS var
+//     (and may override at runtime if the TUI sends an OSC 12)
+//   * xterm may toggle inline styles on the cursor element across
+//     focus / animation frames
+//   * we don't want to depend on which specific modifier class is
+//     active in any given xterm release
+//
+// `caret-color: transparent` on the helper-textarea stays
+// unconditional — that textarea is xterm's offscreen keyboard input
+// capture (must remain focusable), but its blinking browser caret
+// would otherwise show through.
 const GLOBAL_STYLES_ID = 'claude-multi-terminal-styles'
+const STYLE_TEXT = `
+  .xterm,
+  .xterm-screen,
+  .xterm-helper-textarea {
+    caret-color: transparent !important;
+  }
+
+  /* THE WINDOWS-ONLY ROGUE-RECTANGLE FIX.
+     xterm repositions a real <textarea class="xterm-helper-textarea">
+     to the cursor position on every cursor move (so IME composition
+     works). When the terminal has focus, that textarea has focus,
+     and Chromium on Windows draws a yellow rounded focus outline
+     around it — which looks like a rogue caret jumping with the
+     cursor as Claude's TUI repaints during animations. macOS draws
+     a different (invisible-against-dark-bg) outline. Killing every
+     browser-drawn chrome on this textarea makes the artifact go
+     away on Windows and stays a no-op on macOS. */
+  .xterm-helper-textarea,
+  .xterm-helper-textarea:focus,
+  .xterm-helper-textarea:focus-visible,
+  .xterm-helper-textarea:active {
+    outline: none !important;
+    outline-color: transparent !important;
+    border: 0 !important;
+    background: transparent !important;
+    background-color: transparent !important;
+    box-shadow: none !important;
+    -webkit-appearance: none !important;
+    appearance: none !important;
+    color: transparent !important;
+  }
+
+  /* Full-nuke for the xterm cursor in Claude sessions. Covers DOM
+     renderer (.xterm-cursor + modifier classes), canvas renderer
+     (.xterm-cursor-layer canvas) and any future variant whose
+     class contains "xterm-cursor". */
+  .claude-session .xterm-cursor,
+  .claude-session .xterm-cursor-blink,
+  .claude-session .xterm-cursor-bar,
+  .claude-session .xterm-cursor-block,
+  .claude-session .xterm-cursor-underline,
+  .claude-session .xterm-cursor-outline,
+  .claude-session .xterm-cursor-pointer,
+  .claude-session .xterm-cursor-layer,
+  .claude-session [class*="xterm-cursor"] {
+    display: none !important;
+    visibility: hidden !important;
+    opacity: 0 !important;
+    width: 0 !important;
+    height: 0 !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
+    background: transparent !important;
+    background-color: transparent !important;
+    color: transparent !important;
+    border: 0 !important;
+    outline: 0 !important;
+    box-shadow: none !important;
+    pointer-events: none !important;
+    transform: scale(0) !important;
+  }
+
+  /* xterm DOM renderer reads its cursor colour from a CSS var; force
+     it transparent at the .claude-session level so even if the
+     element happens to render, it draws nothing. Belt + braces. */
+  .claude-session {
+    --cursor-color: transparent !important;
+    --xterm-cursor-color: transparent !important;
+  }
+`
 export function injectGlobalStyles() {
-  if (document.getElementById(GLOBAL_STYLES_ID)) return
-  const style = document.createElement('style')
-  style.id = GLOBAL_STYLES_ID
-  style.textContent = `
-    .xterm-cursor-layer,
-    .xterm-cursor {
-      display: none !important;
-      visibility: hidden !important;
-      opacity: 0 !important;
-    }
-    /* Do NOT hide .xterm-helper-textarea — it is xterm's offscreen
-       INPUT capture element. Hiding it breaks all keyboard input
-       to the terminal. Caret on it is invisible via caret-color
-       below; visual hiding stays scoped to actual cursor surfaces. */
-    .xterm,
-    .xterm-screen,
-    .xterm-helper-textarea {
-      caret-color: transparent !important;
-    }
-    /* xterm renders the focused-row cursor as inline spans with these
-       classes on the text layer when the cursor canvas is masked.
-       Catch every flavour. */
-    .xterm-screen [class*="cursor"] {
-      background: transparent !important;
-      color: inherit !important;
-      border: 0 !important;
-      outline: 0 !important;
-    }
-  `
-  document.head.appendChild(style)
+  let style = document.getElementById(GLOBAL_STYLES_ID) as HTMLStyleElement | null
+  if (!style) {
+    style = document.createElement('style')
+    style.id = GLOBAL_STYLES_ID
+    document.head.appendChild(style)
+  }
+  // Always refresh the textContent — under HMR / repeat module
+  // imports, an early-return on element-exists would lock stale CSS
+  // into place and silently block updates.
+  style.textContent = STYLE_TEXT
 }
 
 // Auto-inject on import

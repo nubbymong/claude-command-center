@@ -59,14 +59,19 @@ interface Props {
   collapsed?: boolean
   onShowHelp?: () => void
   onShowFirstRun?: () => void
+  // Suppresses the FirstRunCard while the training/walkthrough is
+  // open — clicking "Create Config" otherwise opens GuidedConfigView
+  // behind the tour, which the user can't see and which doesn't
+  // dismiss the tour. macOS and Windows both affected.
+  tourActive?: boolean
 }
 
-export default function Sidebar({ currentView, onViewChange, onUpdateRequested, collapsed, onShowHelp, onShowFirstRun }: Props) {
+export default function Sidebar({ currentView, onViewChange, onUpdateRequested, collapsed, onShowHelp, onShowFirstRun, tourActive }: Props) {
   const { sessions, activeSessionId, setActiveSession, removeSession, addSession, updateSession } = useSessionStore()
   const { configs, groups, sections, addConfig, updateConfig, removeConfig, addGroup, renameGroup, removeGroup, toggleGroupCollapsed, moveConfigToGroup, addSection, renameSection, removeSection, toggleSectionCollapsed, moveGroupToSection, moveConfigToSection, togglePinned, duplicateConfig, reorderConfigs } = useConfigStore()
   const appMeta = useAppMetaStore((s) => s.meta)
   const updateAppMeta = useAppMetaStore((s) => s.update)
-  const showFirstRunCard = configs.length === 0 && !appMeta.hasCreatedFirstConfig && !appMeta.firstRunCardDismissed
+  const showFirstRunCard = configs.length === 0 && !appMeta.hasCreatedFirstConfig && !appMeta.firstRunCardDismissed && !tourActive
   const insightsStatus = useInsightsStore((s) => s.status)
   const insightsMessage = useInsightsStore((s) => s.statusMessage)
   const cloudAgentRunning = useCloudAgentStore((s) => s.agents.filter(a => a.status === 'running' || a.status === 'pending').length)
