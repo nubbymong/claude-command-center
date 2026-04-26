@@ -1,5 +1,5 @@
 import { BrowserWindow, WebContentsView, net, session } from 'electron'
-import { logInfo, logError } from './logger'
+import { logInfo, logError } from './debug-logger'
 
 interface ManagedView {
   view: WebContentsView
