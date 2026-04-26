@@ -383,15 +383,20 @@ export function spawnPty(
     // Claude Code inside the SSH session can reach it via http://localhost:<port>.
     // Register the session secret up-front so the generated setup script can
     // bake the URL + X-CCC-Hook-Token header into the remote settings file.
+    // HOOKS INJECTION DISABLED — the Live Activity feed UI was cut in
+    // commit c957e5d, leaving the gateway running with no consumer. We
+    // were still injecting `hooks` blocks into per-session settings,
+    // which made every Pre/PostToolUse call from Claude Code fire at
+    // http://localhost:<port>/hook/<sid> — fine on local sessions, but
+    // on SSH the `-R port:localhost:port` reverse tunnel often can't be
+    // established (sshd's AllowTcpForwarding etc.) and every tool call
+    // logs a ECONNREFUSED. Re-enable when a consumer feature ships
+    // (live activity v2, hook-driven analytics, etc.) and revisit the
+    // SSH tunnel-failure UX.
     const gw = getGateway()
     const gwStatus = gw?.status()
-    const hooksReady = !!(gw && gwStatus?.enabled && gwStatus?.listening && gwStatus?.port)
-    let hooksConfig: { port: number; secret: string } | null = null
-    if (hooksReady && gw && gwStatus?.port) {
-      const secret = gw.registerSession(sessionId)
-      hooksConfig = { port: gwStatus.port, secret }
-      sshArgs.push('-R', `${gwStatus.port}:localhost:${gwStatus.port}`)
-    }
+    void gw; void gwStatus
+    const hooksConfig: { port: number; secret: string } | null = null
 
     const sshBinary = os.platform() === 'win32' ? 'ssh.exe' : 'ssh'
 
@@ -753,20 +758,15 @@ export function spawnPty(
         extraFlags += ` --effort ${options.effortLevel}`
       }
 
-      // HTTP Hooks Gateway: when enabled, seed a per-session settings file
-      // (statusLine + mcpServers from the shared settings.json) then overlay
-      // the hooks block via injectHooks. Pass --settings so Claude Code
-      // reads that file instead of the user's settings.json. --settings
-      // replaces user settings entirely, so we must copy the pieces Claude
-      // still needs to see.
-      const gwLocal = getGateway()
-      const gwLocalStatus = gwLocal?.status()
-      const hooksReadyLocal = !!(gwLocal && gwLocalStatus?.enabled && gwLocalStatus?.listening && gwLocalStatus?.port)
-      if (hooksReadyLocal && gwLocal && gwLocalStatus?.port) {
+      // HOOKS INJECTION DISABLED — see the SSH branch above for the same
+      // gate. With no consumer feature attached, every Pre/PostToolUse
+      // call was firing at a localhost URL nobody listens to, logging
+      // ECONNREFUSED on every Bash/Read/Edit. Re-enable when a hook
+      // consumer (live activity v2, analytics, etc.) ships.
+      void getGateway, writeLocalSessionSettings, injectHooks
+      if (false as boolean) {
         try {
           const sesPath = writeLocalSessionSettings(sessionId)
-          const secret = gwLocal.registerSession(sessionId)
-          injectHooks({ sessionId, settingsPath: sesPath, port: gwLocalStatus.port, secret })
           if (os.platform() === 'win32') {
             const escapedSesPath = sesPath.replace(/'/g, "''")
             extraFlags += ` --settings '${escapedSesPath}'`

@@ -15,6 +15,8 @@ import { disableDebugMode } from './debug-capture'
 import { registerUpdateHandlers } from './ipc/update-handlers'
 import { registerSetupHandlers, getResourcesDirectory } from './ipc/setup-handlers'
 import { registerScreenshotHandlers } from './ipc/screenshot-handlers'
+import { registerWebviewHandlers } from './ipc/webview-handlers'
+import { closeAllWebviews } from './webview-manager'
 import { registerInsightsHandlers } from './ipc/insights-handlers'
 import { registerNotesHandlers } from './ipc/notes-handlers'
 import { registerVisionHandlers } from './ipc/vision-handlers'
@@ -531,6 +533,7 @@ if (!gotTheLock) {
     registerSetupHandlers()
     registerConfigHandlers()
     registerScreenshotHandlers(getWindow)
+    registerWebviewHandlers(getWindow)
     registerInsightsHandlers(getWindow)
     registerNotesHandlers()
     registerVisionHandlers(getWindow)
@@ -647,6 +650,7 @@ if (!gotTheLock) {
     stopConductorMcpServer()
     killAllAgents()
     killAllPty()
+    closeAllWebviews()
     // Pull from the singleton barrel — `hooksGateway` declared inside the
      // app.whenReady() callback above is out of scope here, which threw an
      // uncaught ReferenceError on every quit and crashed the app before it

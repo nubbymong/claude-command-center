@@ -209,6 +209,17 @@ export interface ElectronAPI {
     listRecent: () => Promise<Array<{ filename: string; path: string; timestamp: number; thumbnail: string }>>
     cleanup: (maxAgeDays: number) => Promise<number>
   }
+  webview: {
+    check: (url: string) => Promise<{ reachable: boolean; status?: number }>
+    open: (sessionId: string, url: string, bounds: { x: number; y: number; width: number; height: number }) => Promise<boolean>
+    close: (sessionId: string) => Promise<boolean>
+    setBounds: (sessionId: string, bounds: { x: number; y: number; width: number; height: number }) => Promise<void>
+    reload: (sessionId: string) => Promise<void>
+    capture: (sessionId: string) => Promise<string | null>
+    navBack: (sessionId: string) => Promise<void>
+    navForward: (sessionId: string) => Promise<void>
+    goHome: (sessionId: string) => Promise<void>
+  }
   session: {
     save: (state: SessionState) => Promise<boolean>
     load: () => Promise<SessionState | null>
