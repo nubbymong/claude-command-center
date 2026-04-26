@@ -501,20 +501,29 @@ export function spawnPty(
       const data = extractSshOscSentinels(sessionId, rawData)
       win.webContents.send(`pty:data:${sessionId}`, data)
 
-      // HARD LATCH: once we've written claudeCmd, watch for Claude Code
-      // UI markers (`╭`/`╰` box drawings or the `❯ ` prompt cursor) and
-      // permanently disable any further auto-writes. This is the last
-      // line of defence against the base64 setup blob landing in a
-      // running Claude's prompt textarea — even if some state flag
-      // check somewhere mis-evaluates, this latch prevents the leak.
-      // Gated on claudeSent so a fancy bash prompt using box-drawing
-      // glyphs (Powerlevel10k etc.) before setup can't latch us early.
-      if (claudeSent && !claudeRunning && /[╭╰]|❯ /.test(data)) {
+      // HARD LATCH: detect Claude Code UI ANYWHERE — even before we've
+      // written setupCmd. Required because some flows land us inside an
+      // already-running Claude:
+      //   - Saved-session restore where the previous Claude survived
+      //     on the remote and the SSH reconnect lands inside it.
+      //   - SSH ControlMaster reuse — fast reconnect skips login and
+      //     drops straight into whatever was active.
+      //   - In-app Restart that kills our PTY but the remote Claude
+      //     stays alive (e.g. inside a tmux/screen wrapper).
+      //
+      // Markers must be specific enough to NOT false-positive on fancy
+      // bash prompts (Powerlevel10k uses `╭─` with 1–2 dashes for the
+      // prompt left edge). Claude's input box uses long horizontal
+      // rules (5+ box-drawing dashes), so we require that. The `❯ `
+      // (with trailing space) cursor is also Claude-specific in
+      // practice — bash never emits that exact byte sequence.
+      if (!claudeRunning && /╭─{5,}|╰─{5,}|❯ /.test(data)) {
         claudeRunning = true
         if (setupTimeoutHandle) {
           clearTimeout(setupTimeoutHandle)
           setupTimeoutHandle = null
         }
+        logInfo(`[ssh] ${sessionId}: Claude UI detected — claudeRunning latched, no further auto-writes`)
       }
 
       // Step 1 completion sentinel: the remote node script writes
@@ -528,6 +537,7 @@ export function spawnPty(
           clearTimeout(setupTimeoutHandle)
           setupTimeoutHandle = null
         }
+        logInfo(`[ssh] ${sessionId}: host setup ok received`)
       }
 
       // Container setup completion: same sentinel, but we only consider
@@ -538,6 +548,7 @@ export function spawnPty(
           clearTimeout(setupTimeoutHandle)
           setupTimeoutHandle = null
         }
+        logInfo(`[ssh] ${sessionId}: container setup ok received`)
       }
 
       // Auto-type SSH password only on a real password prompt, not any MOTD
@@ -580,6 +591,7 @@ export function spawnPty(
       // takes over the screen (Claude, container shell, etc.).
       if (!setupSent && sawShellPrompt) {
         setupSent = true
+        logInfo(`[ssh] ${sessionId}: STEP 1 — writing host setupCmd`)
         setupTimeoutHandle = setTimeout(() => {
           setupTimeoutHandle = null
           if (!setupDone) {
@@ -597,6 +609,8 @@ export function spawnPty(
       // proceed to the next stage based on session config.
       if (setupSent && setupDone && !setupShellReady && sawShellPrompt) {
         setupShellReady = true
+        const next = postCommand ? 'postCommand' : (options?.shellOnly ? 'shellOnly-noop' : 'claudeCmd')
+        logInfo(`[ssh] ${sessionId}: STEP 2 — host setup done, writing ${next}`)
         setTimeout(() => {
           if (postCommand) {
             // Two more steps to go: enter container/shell, then claude.
@@ -628,6 +642,7 @@ export function spawnPty(
         if (sudoHandled) {
           postCommandShellReady = true
           containerSetupSent = true
+          logInfo(`[ssh] ${sessionId}: STEP 2.5 — postCommand done, inner shell ready, re-running setup inside container`)
           setupTimeoutHandle = setTimeout(() => {
             setupTimeoutHandle = null
             if (!containerSetupDone) {
@@ -655,6 +670,7 @@ export function spawnPty(
         && sawShellPrompt
       ) {
         containerSetupShellReady = true
+        logInfo(`[ssh] ${sessionId}: STEP 3 — container setup done, writing claudeCmd inside container`)
         setTimeout(() => {
           claudeSent = true
           ptyProcess.write(claudeCmd + '\r')
