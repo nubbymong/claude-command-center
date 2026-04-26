@@ -505,11 +505,13 @@ export function spawnPty(
       emitSshFlowState(win, sessionId, s, info)
     }
 
-    // Idle-data fallback. If onData has been quiet for 1.5 s while we're
-    // still in 'connecting', force-advance state. The shell prompt
-    // regex has missed real bash prompts in the wild on certain non-
-    // standard PS1s — silence after a burst of MOTD/login output is a
-    // robust signal that the shell is idle and waiting for input.
+    // Idle-data fallback. Every onData re-arms a 1.5 s timer; when it
+    // fires (no PTY data for 1.5 s), we advance state based on the
+    // current sentinel/flag state. This is independent of the
+    // shell-prompt regex — bash prompts with non-standard PS1s
+    // sometimes never match the regex, and silence after a burst of
+    // setup/MOTD output is a robust "shell is idle, ready for next
+    // command" signal regardless of styling.
     const IDLE_FALLBACK_MS = 1500
     let idleFallbackHandle: ReturnType<typeof setTimeout> | null = null
     let receivedAnyData = false
@@ -517,14 +519,66 @@ export function spawnPty(
       if (idleFallbackHandle) clearTimeout(idleFallbackHandle)
       idleFallbackHandle = setTimeout(() => {
         idleFallbackHandle = null
-        if (currentFlowState !== 'connecting' || !receivedAnyData) return
-        logInfo(`[ssh] ${sessionId}: idle ${IDLE_FALLBACK_MS}ms → advancing state via fallback`)
-        if (ssh.postCommand) {
-          setFlowState('awaiting-postcommand', 'idle-fallback')
-        } else if (options?.shellOnly) {
-          setFlowState('shell-only', 'idle-fallback')
-        } else {
-          setFlowState('awaiting-claude', 'host (fallback)')
+        if (!receivedAnyData) return
+
+        // connecting → awaiting-{postcommand|claude} or shell-only.
+        if (currentFlowState === 'connecting') {
+          logInfo(`[ssh] ${sessionId}: idle ${IDLE_FALLBACK_MS}ms → advancing from connecting`)
+          if (ssh.postCommand) setFlowState('awaiting-postcommand', 'idle-fallback')
+          else if (options?.shellOnly) setFlowState('shell-only', 'idle-fallback')
+          else setFlowState('awaiting-claude', 'host (fallback)')
+          return
+        }
+
+        // running-setup (host) + setupDone → write next stage.
+        if (
+          currentFlowState === 'running-setup'
+          && currentFlowInfo === 'host'
+          && setupDone
+          && !setupShellReady
+        ) {
+          setupShellReady = true
+          logInfo(`[ssh] ${sessionId}: idle after host setup ok → advancing`)
+          if (ssh.postCommand && !postCommandSent) writePostCommand()
+          else if (!options?.shellOnly && !claudeSent) writeClaudeCmd()
+          else if (options?.shellOnly) setFlowState('shell-only', 'host setup done')
+          return
+        }
+
+        // running-postcommand + we've seen the inner shell idle →
+        // advance to awaiting-claude (manual) or container setup (auto).
+        if (
+          currentFlowState === 'running-postcommand'
+          && postCommandSent
+          && !postCommandShellReady
+          && (!sudoPassword || sudoPasswordSent)
+        ) {
+          postCommandShellReady = true
+          inInnerShell = true
+          logInfo(`[ssh] ${sessionId}: idle after postCommand → inner shell ready`)
+          if (options?.shellOnly) {
+            setFlowState('shell-only', 'inner shell ready')
+          } else if (flowMode === 'auto' && ssh.startClaudeAfter) {
+            writeContainerSetupCmd()
+          } else {
+            setFlowState('awaiting-claude', 'inner')
+          }
+          return
+        }
+
+        // running-setup (container) + containerSetupDone → write claudeCmd.
+        if (
+          currentFlowState === 'running-setup'
+          && currentFlowInfo === 'container'
+          && containerSetupDone
+          && !containerSetupShellReady
+          && !claudeSent
+          && !options?.shellOnly
+        ) {
+          containerSetupShellReady = true
+          logInfo(`[ssh] ${sessionId}: idle after container setup ok → writing claudeCmd`)
+          writeClaudeCmd()
+          return
         }
       }, IDLE_FALLBACK_MS)
     }
@@ -681,12 +735,16 @@ export function spawnPty(
       const data = extractSshOscSentinels(sessionId, rawData)
       win.webContents.send(`pty:data:${sessionId}`, data)
 
-      // Arm the idle-data fallback for the very-still-connecting case.
-      // Re-arms on every data chunk; only fires when no data for
-      // 1.5 s AND state is still 'connecting'.
-      if (data.length > 0) {
+      // Arm the idle-data fallback. Re-arms on every chunk so the timer
+      // tracks the most recent activity. The handler itself decides
+      // whether to advance state — many of our transitions are gated on
+      // sentinel flags (setupDone, containerSetupDone, etc.) that only
+      // become true after specific output. We re-arm here for all
+      // states except claude-running (handled by the backstop below)
+      // since once Claude is running we never want auto-writes again.
+      if (data.length > 0 && !claudeRunning) {
         receivedAnyData = true
-        if (currentFlowState === 'connecting') armIdleFallback()
+        armIdleFallback()
       }
 
       // HARD LATCH: detect Claude Code UI ANYWHERE — even before we've
