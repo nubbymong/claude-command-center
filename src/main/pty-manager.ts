@@ -74,6 +74,9 @@ export interface SshFlowController {
   launchClaude: () => void
   skip: () => void
   destroy: () => void
+  /** Returns the latest emitted state, used by the renderer overlay
+   * on mount to catch up if it missed earlier emits. */
+  getState: () => { state: SshFlowState; info?: string }
 }
 
 const sshFlows = new Map<string, SshFlowController>()
@@ -491,11 +494,14 @@ export function spawnPty(
     // direct host setup path.
     let inInnerShell = false
     let currentFlowState: SshFlowState = 'connecting'
+    let currentFlowInfo: string | undefined = undefined
     const SETUP_TIMEOUT_MS = 10000
     let setupTimeoutHandle: ReturnType<typeof setTimeout> | null = null
 
     const setFlowState = (s: SshFlowState, info?: string) => {
       currentFlowState = s
+      currentFlowInfo = info
+      logInfo(`[ssh] ${sessionId}: flow → ${s}${info ? ` (${info})` : ''}`)
       emitSshFlowState(win, sessionId, s, info)
     }
     const remotePath = ssh.remotePath || '~'
@@ -603,6 +609,7 @@ export function spawnPty(
      * IPC; main calls these to advance.
      */
     const flowController: SshFlowController = {
+      getState: () => ({ state: currentFlowState, info: currentFlowInfo }),
       runPostCommand: () => {
         // Same chain as the auto state machine: host setup must run first
         // (writes the per-session settings file the inner claude expects),

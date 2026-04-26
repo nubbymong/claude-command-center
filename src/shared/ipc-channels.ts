@@ -43,6 +43,7 @@ export const IPC = {
   // SSH connection-flow controller (manual mode user-gated stages).
   // Main->renderer notification is suffixed with :<sessionId> at runtime.
   SSH_FLOW_STATE: 'ssh:flowState',           // suffix :<sessionId>
+  SSH_FLOW_GET_STATE: 'ssh:flow:getState',
   SSH_FLOW_RUN_POSTCOMMAND: 'ssh:flow:runPostCommand',
   SSH_FLOW_LAUNCH_CLAUDE: 'ssh:flow:launchClaude',
   SSH_FLOW_SKIP: 'ssh:flow:skip',

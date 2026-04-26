@@ -70,6 +70,10 @@ export interface ElectronAPI {
     launchClaude: (sessionId: string) => Promise<void>
     /** User opts out of any further auto-writes; PTY is theirs to drive. */
     skip: (sessionId: string) => Promise<void>
+    /** One-shot query of the current flow state, used to recover from
+     * a missed initial push (renderer subscribes after main has already
+     * emitted). */
+    getState: (sessionId: string) => Promise<{ state: string; info?: string }>
     /** Subscribe to flow-state changes for a session. */
     onFlowState: (sessionId: string, callback: (msg: { state: string; info?: string }) => void) => () => void
   }
@@ -309,6 +313,8 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.invoke(IPC.SSH_FLOW_LAUNCH_CLAUDE, sessionId),
     skip: (sessionId: string) =>
       ipcRenderer.invoke(IPC.SSH_FLOW_SKIP, sessionId),
+    getState: (sessionId: string) =>
+      ipcRenderer.invoke(IPC.SSH_FLOW_GET_STATE, sessionId),
     onFlowState: (sessionId: string, callback: (msg: { state: string; info?: string }) => void) => {
       const channel = `${IPC.SSH_FLOW_STATE}:${sessionId}`
       const handler = (_: unknown, msg: { state: string; info?: string }) => callback(msg)
