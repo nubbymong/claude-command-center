@@ -5,7 +5,9 @@ import TabBar from './components/TabBar'
 import SessionHeader from './components/SessionHeader'
 import TerminalView, { killSessionPty } from './components/TerminalView'
 import WebviewPane from './components/WebviewPane'
+import ExcalidrawPane from './components/ExcalidrawPane'
 import { useWebviewStore } from './stores/webviewStore'
+import { useExcalidrawStore } from './stores/excalidrawStore'
 import StatusBar from './components/StatusBar'
 import UsageDashboard from './components/UsageDashboard'
 import ProjectBrowser from './components/ProjectBrowser'
@@ -105,6 +107,7 @@ export default function App() {
   const activeSessionId = useSessionStore((s) => s.activeSessionId)
   const sessions = useSessionStore((s) => s.sessions)
   const webviewBySession = useWebviewStore((s) => s.bySessionId)
+  const excalidrawBySession = useExcalidrawStore((s) => s.bySessionId)
   const activeSession = sessions.find((s) => s.id === activeSessionId)
   const hasRestoredRef = useRef(false)
 
@@ -488,6 +491,10 @@ export default function App() {
               const hasPartner = !!session.partnerTerminalPath
               const partnerPtyId = session.id + '-partner'
               const isShowingWebview = !!webviewBySession[session.id]?.isOpen
+              const isShowingExcalidraw = !!excalidrawBySession[session.id]?.isOpen
+              // Priority: webview > excalidraw > partner > claude. Each
+              // alternative pane replaces the underlying terminal panes.
+              const altPaneShowing = isShowingWebview || isShowingExcalidraw
               return (
                 <div
                   key={session.id + '-' + session.createdAt}
@@ -500,7 +507,7 @@ export default function App() {
                   <div
                     className="flex-1 flex flex-col"
                     style={{
-                      display: isShowingPartner || isShowingWebview ? 'none' : 'flex',
+                      display: isShowingPartner || altPaneShowing ? 'none' : 'flex',
                       minHeight: 0,
                     }}
                   >
@@ -511,7 +518,7 @@ export default function App() {
                       cwd={session.sessionType === 'local' ? session.workingDirectory : undefined}
                       shellOnly={session.shellOnly}
                       ssh={session.sshConfig}
-                      isActive={session.id === activeSessionId && view === 'sessions' && !isShowingPartner && !isShowingWebview}
+                      isActive={session.id === activeSessionId && view === 'sessions' && !isShowingPartner && !altPaneShowing}
                       partnerEnabled={hasPartner}
                       isPartnerActive={isShowingPartner}
                       onTogglePartner={() => togglePartner(session.id)}
@@ -528,7 +535,7 @@ export default function App() {
                     <div
                       className="flex-1 flex flex-col"
                       style={{
-                        display: isShowingPartner && !isShowingWebview ? 'flex' : 'none',
+                        display: isShowingPartner && !altPaneShowing ? 'flex' : 'none',
                         minHeight: 0,
                       }}
                     >
@@ -539,7 +546,7 @@ export default function App() {
                         cwd={session.partnerTerminalPath}
                         shellOnly={true}
                         elevated={session.partnerElevated}
-                        isActive={session.id === activeSessionId && view === 'sessions' && isShowingPartner && !isShowingWebview}
+                        isActive={session.id === activeSessionId && view === 'sessions' && isShowingPartner && !altPaneShowing}
                         partnerEnabled={true}
                         isPartnerActive={isShowingPartner}
                         onTogglePartner={() => togglePartner(session.id)}
@@ -547,7 +554,14 @@ export default function App() {
                       />
                     </div>
                   )}
-                  {isShowingWebview && <WebviewPane sessionId={session.id} />}
+                  {/* Webview takes precedence over Excalidraw if both are
+                      somehow open (the toggle buttons are independent so
+                      the user CAN have both flags true). Render only one. */}
+                  {isShowingWebview ? (
+                    <WebviewPane sessionId={session.id} isActive={session.id === activeSessionId} />
+                  ) : isShowingExcalidraw ? (
+                    <ExcalidrawPane sessionId={session.id} />
+                  ) : null}
                 </div>
               )
             })}

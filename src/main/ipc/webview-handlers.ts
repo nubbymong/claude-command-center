@@ -6,6 +6,7 @@ import {
   openWebview,
   closeWebview,
   setWebviewBounds,
+  setWebviewVisible,
   reloadWebview,
   captureWebview,
   navBackWebview,
@@ -49,6 +50,11 @@ export function registerWebviewHandlers(getWindow: () => BrowserWindow | null): 
   ipcMain.handle(IPC.WEBVIEW_SET_BOUNDS, async (_event, sessionId: string, bounds: unknown) => {
     sessionIdSchema.parse(sessionId)
     setWebviewBounds(sessionId, boundsSchema.parse(bounds))
+  })
+
+  ipcMain.handle(IPC.WEBVIEW_SET_VISIBLE, async (_event, sessionId: string, visible: boolean) => {
+    sessionIdSchema.parse(sessionId)
+    setWebviewVisible(sessionId, !!visible)
   })
 
   ipcMain.handle(IPC.WEBVIEW_RELOAD, async (_event, sessionId: string) => {

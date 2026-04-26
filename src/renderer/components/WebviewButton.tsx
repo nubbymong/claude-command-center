@@ -7,16 +7,16 @@ interface Props {
 
 /**
  * Tool button that surfaces the webview state. Hidden when status='idle'
- * (no webview-enabled command has fired yet for this session). The pulse
- * colour communicates state without needing the user to click:
- *   pending   — neutral grey pulse, "polling for content"
- *   available — GREEN pulse, "ready to view"
- *   failed    — RED pulse, "URL gave us nothing"
+ * (no webview-enabled command has fired yet for this session).
  *
- * Click toggles the webview pane (handled at the App layout level —
- * we just flip the `isOpen` flag). Clicking when status='available'
- * also dims the pulse (stops bothering the user about new content
- * once they've acknowledged it).
+ * Status communicated as a subtle border tint + small dot rather than
+ * an expanding ring overlay (the ring read as visually aggressive and
+ * fought with the rest of the magic-row chips for attention):
+ *   pending   — neutral border, faint dot
+ *   available — GREEN border + dot, gentle opacity pulse on the dot
+ *   failed    — RED border + dot
+ *
+ * Click toggles the webview pane.
  */
 export default function WebviewButton({ sessionId }: Props) {
   const state = useWebviewStore((s) => s.bySessionId[sessionId])
@@ -30,12 +30,25 @@ export default function WebviewButton({ sessionId }: Props) {
   const isAvailable = status === 'available'
   const isFailed = status === 'failed'
 
-  // Pulse colour scheme — keep neutrals matching Snap so the row reads
-  // as a coherent set of monochrome chips, only highlighting on state.
-  const pulseColor =
-    isAvailable ? 'rgba(166, 227, 161, 0.55)' : // green
-    isFailed ? 'rgba(243, 139, 168, 0.55)' :    // red
-    'rgba(180, 190, 254, 0.35)'                  // neutral
+  // Cattppuccin-leaning accent palette — green for ready, red for
+  // unreachable. Border colour does the heavy lifting; the dot is a
+  // small punctuation that animates only for the success case (so a
+  // failure isn't constantly nagging once acknowledged).
+  let borderClass = 'border-surface1/80'
+  let dotClass = 'bg-overlay1'
+  let dotPulseClass = ''
+  if (isAvailable) {
+    borderClass = 'border-green/60'
+    dotClass = 'bg-green'
+    dotPulseClass = 'animate-pulse'
+  } else if (isFailed) {
+    borderClass = 'border-red/60'
+    dotClass = 'bg-red'
+  } else if (isPending) {
+    borderClass = 'border-blue/40'
+    dotClass = 'bg-blue/70'
+    dotPulseClass = 'animate-pulse'
+  }
 
   const titleParts = [
     isOpen ? 'Hide webview pane' : 'Show webview pane',
@@ -47,27 +60,17 @@ export default function WebviewButton({ sessionId }: Props) {
   return (
     <button
       onClick={() => togglePane(sessionId)}
-      className={`relative flex items-center gap-1.5 px-2 py-0.5 text-xs rounded border transition-colors whitespace-nowrap shrink-0 ${
+      className={`flex items-center gap-1.5 px-2 py-0.5 text-xs rounded border transition-colors whitespace-nowrap shrink-0 ${
         isOpen
-          ? 'bg-surface1 border-surface1 text-text'
-          : 'bg-surface0/60 border-surface1/80 hover:bg-surface1 text-overlay1 hover:text-text'
+          ? `bg-surface1 ${borderClass} text-text`
+          : `bg-surface0/60 ${borderClass} hover:bg-surface1 text-overlay1 hover:text-text`
       }`}
       title={titleParts.join('').trim()}
     >
-      {/* Pulse ring — absolutely positioned so it doesn't move the chip
-          contents. animate-ping is Tailwind's built-in 1s pulse. */}
-      {!isOpen && (isPending || isAvailable || isFailed) && (
-        <span
-          className="absolute inset-0 rounded animate-ping"
-          style={{ backgroundColor: pulseColor }}
-          aria-hidden
-        />
-      )}
       <svg
         width="12" height="12" viewBox="0 0 16 16"
         fill="none" stroke="currentColor" strokeWidth="1.4"
         strokeLinecap="round" strokeLinejoin="round"
-        className="relative z-10"
       >
         {/* Browser-window glyph: rounded rect + dot row + content area */}
         <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" />
@@ -75,7 +78,11 @@ export default function WebviewButton({ sessionId }: Props) {
         <circle cx="3.5" cy="4.25" r="0.5" fill="currentColor" />
         <circle cx="5.5" cy="4.25" r="0.5" fill="currentColor" />
       </svg>
-      <span className="relative z-10">Web</span>
+      <span>Web</span>
+      <span
+        className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 ${dotClass} ${dotPulseClass}`}
+        aria-hidden
+      />
     </button>
   )
 }

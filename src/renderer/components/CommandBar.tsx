@@ -439,7 +439,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
         </div>
         <div className="w-px h-4 bg-surface1 mx-0.5" />
         <ScreenshotButton sessionId={sessionId} sessionType={sessionType} />
-        <ExcalidrawButton />
+        <ExcalidrawButton sessionId={sessionId} />
         <WebviewButton sessionId={sessionId} />
         {/* Back to Claude / Partner toggle - same monochrome tool-button shape as Snap */}
         {partnerEnabled && onTogglePartner && (

@@ -118,6 +118,8 @@ export interface ElectronAPI {
     close: (sessionId: string) => Promise<boolean>
     /** Re-position on resize/scroll. */
     setBounds: (sessionId: string, bounds: { x: number; y: number; width: number; height: number }) => Promise<void>
+    /** Attach/detach without destroying — used to hide on session switch. */
+    setVisible: (sessionId: string, visible: boolean) => Promise<void>
     /** Force-reload bypassing cache. */
     reload: (sessionId: string) => Promise<void>
     /** Capture as PNG dataURL — used by the freeze flow. */
@@ -373,6 +375,7 @@ const electronAPI: ElectronAPI = {
     open: (sessionId: string, url: string, bounds: { x: number; y: number; width: number; height: number }) => ipcRenderer.invoke(IPC.WEBVIEW_OPEN, sessionId, url, bounds),
     close: (sessionId: string) => ipcRenderer.invoke(IPC.WEBVIEW_CLOSE, sessionId),
     setBounds: (sessionId: string, bounds: { x: number; y: number; width: number; height: number }) => ipcRenderer.invoke(IPC.WEBVIEW_SET_BOUNDS, sessionId, bounds),
+    setVisible: (sessionId: string, visible: boolean) => ipcRenderer.invoke(IPC.WEBVIEW_SET_VISIBLE, sessionId, visible),
     reload: (sessionId: string) => ipcRenderer.invoke(IPC.WEBVIEW_RELOAD, sessionId),
     capture: (sessionId: string) => ipcRenderer.invoke(IPC.WEBVIEW_CAPTURE, sessionId),
     navBack: (sessionId: string) => ipcRenderer.invoke(IPC.WEBVIEW_NAV_BACK, sessionId),
