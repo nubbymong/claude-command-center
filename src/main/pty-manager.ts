@@ -520,6 +520,7 @@ export function spawnPty(
       idleFallbackHandle = setTimeout(() => {
         idleFallbackHandle = null
         if (!receivedAnyData) return
+        logInfo(`[ssh] ${sessionId}: idle timer fired in state=${currentFlowState} info=${currentFlowInfo ?? 'none'} flags={setupSent:${setupSent},setupDone:${setupDone},postCommandSent:${postCommandSent},postCommandShellReady:${postCommandShellReady},containerSetupSent:${containerSetupSent},containerSetupDone:${containerSetupDone},claudeSent:${claudeSent},sudoPassword:${!!sudoPassword},sudoPasswordSent:${sudoPasswordSent}}`)
 
         // connecting → awaiting-{postcommand|claude} or shell-only.
         if (currentFlowState === 'connecting') {
@@ -547,11 +548,14 @@ export function spawnPty(
 
         // running-postcommand + we've seen the inner shell idle →
         // advance to awaiting-claude (manual) or container setup (auto).
+        // sudoGate dropped: 1.5 s of true idle is sufficient signal
+        // that the user is past any sudo prompt (sudo would still be
+        // generating output until accepted). Stale keychain creds
+        // were also producing false negatives here.
         if (
           currentFlowState === 'running-postcommand'
           && postCommandSent
           && !postCommandShellReady
-          && (!sudoPassword || sudoPasswordSent)
         ) {
           postCommandShellReady = true
           inInnerShell = true
