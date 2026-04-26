@@ -580,6 +580,21 @@ export function spawnPty(
           writeClaudeCmd()
           return
         }
+
+        // running-claude → claude-running (fallback). Lenient
+        // box-drawing detection above usually catches Claude's UI
+        // rendering, but some output paths (alternate screen buffer
+        // with NO_FLICKER, slow terminals, etc.) don't expose those
+        // markers in our data stream. Once claudeCmd has been
+        // written and the PTY has gone quiet for 1.5 s, Claude is
+        // almost certainly running — flip the latch so the overlay
+        // can disappear and no more auto-writes ever fire.
+        if (currentFlowState === 'running-claude' && claudeSent) {
+          logInfo(`[ssh] ${sessionId}: idle after claudeCmd → assuming claude-running (fallback)`)
+          claudeRunning = true
+          setFlowState('claude-running', 'idle-fallback')
+          return
+        }
       }, IDLE_FALLBACK_MS)
     }
     const remotePath = ssh.remotePath || '~'
@@ -747,29 +762,31 @@ export function spawnPty(
         armIdleFallback()
       }
 
-      // HARD LATCH: detect Claude Code UI ANYWHERE — even before we've
-      // written setupCmd. Required because some flows land us inside an
-      // already-running Claude:
-      //   - Saved-session restore where the previous Claude survived
-      //     on the remote and the SSH reconnect lands inside it.
-      //   - SSH ControlMaster reuse — fast reconnect skips login and
-      //     drops straight into whatever was active.
-      //   - In-app Restart that kills our PTY but the remote Claude
-      //     stays alive (e.g. inside a tmux/screen wrapper).
+      // HARD LATCH: detect Claude Code UI. Two regexes, gated on phase:
       //
-      // Markers must be specific enough to NOT false-positive on fancy
-      // bash prompts (Powerlevel10k uses `╭─` with 1–2 dashes for the
-      // prompt left edge). Claude's input box uses long horizontal
-      // rules (5+ box-drawing dashes), so we require that. The `❯ `
-      // (with trailing space) cursor is also Claude-specific in
-      // practice — bash never emits that exact byte sequence.
-      if (!claudeRunning && /╭─{5,}|╰─{5,}|❯ /.test(data)) {
-        claudeRunning = true
-        if (setupTimeoutHandle) {
-          clearTimeout(setupTimeoutHandle)
-          setupTimeoutHandle = null
+      //   STRICT (any phase): long box-drawing rules `╭─{5,}` or
+      //   `╰─{5,}`. Required to be conservative before claudeSent so
+      //   a fancy bash prompt (Powerlevel10k uses `╭─` with 1-2
+      //   dashes) doesn't latch us early and block setup.
+      //
+      //   LENIENT (claudeSent only): single-dash `╭─` / `╰─` / any
+      //   `❯` / vertical `┃│`. Safe at this stage — we've already
+      //   written claudeCmd, so any box drawing is almost certainly
+      //   Claude rendering its UI rather than the original bash
+      //   prompt (which would have already triggered state advance
+      //   earlier).
+      if (!claudeRunning) {
+        if (/╭─{5,}|╰─{5,}/.test(data)
+          || (claudeSent && /[╭╰┃│]|❯/.test(data))
+        ) {
+          claudeRunning = true
+          if (setupTimeoutHandle) {
+            clearTimeout(setupTimeoutHandle)
+            setupTimeoutHandle = null
+          }
+          logInfo(`[ssh] ${sessionId}: Claude UI detected — claudeRunning latched`)
+          if (currentFlowState !== 'claude-running') setFlowState('claude-running')
         }
-        logInfo(`[ssh] ${sessionId}: Claude UI detected — claudeRunning latched, no further auto-writes`)
       }
 
       // Step 1 completion sentinel: the remote node script writes
