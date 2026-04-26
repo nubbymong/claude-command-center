@@ -5,6 +5,8 @@ import { useCommandBarStore } from '../stores/commandBarStore'
 import CommandDialog from './CommandDialog'
 import ScreenshotButton from './ScreenshotButton'
 import ExcalidrawButton from './ExcalidrawButton'
+import WebviewButton from './WebviewButton'
+import { useWebviewStore, pollUrlForContent } from '../stores/webviewStore'
 import ToolbarPopup from './ToolbarPopup'
 import { generateId } from '../utils/id'
 import { trackUsage } from '../stores/tipsStore'
@@ -99,8 +101,32 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
     return cmd.prompt
   }
 
+  const startActivation = useWebviewStore((s) => s.startActivation)
+  const markAvailable = useWebviewStore((s) => s.markAvailable)
+  const markFailed = useWebviewStore((s) => s.markFailed)
+
   /** Send a command to the appropriate PTY */
   const sendCommand = (cmd: CustomCommand, fullCommand: string) => {
+    // Webview-enabled commands: forced to partner (CommandDialog already
+    // locks the picker but defend in depth in case an older config lacks
+    // the lock). Kick off URL polling immediately after the write so the
+    // button starts pulsing while the user's command is still booting.
+    if (cmd.webView?.enabled && cmd.webView.url && partnerSessionId) {
+      if (!isPartnerActive && onTogglePartner) onTogglePartner()
+      const writeAndPoll = () => {
+        window.electronAPI.pty.write(partnerSessionId, fullCommand + '\r')
+        const url = cmd.webView!.url
+        startActivation(sessionId, url)
+        pollUrlForContent(url).then((reachable) => {
+          if (reachable) markAvailable(sessionId, url)
+          else markFailed(sessionId)
+        })
+      }
+      if (!isPartnerActive && onTogglePartner) setTimeout(writeAndPoll, 100)
+      else writeAndPoll()
+      return
+    }
+
     const target = cmd.target || 'any'
     if (target === 'partner' && !isPartnerActive && onTogglePartner && partnerSessionId) {
       onTogglePartner()
@@ -414,6 +440,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
         <div className="w-px h-4 bg-surface1 mx-0.5" />
         <ScreenshotButton sessionId={sessionId} sessionType={sessionType} />
         <ExcalidrawButton />
+        <WebviewButton sessionId={sessionId} />
         {/* Back to Claude / Partner toggle - same monochrome tool-button shape as Snap */}
         {partnerEnabled && onTogglePartner && (
           <>

@@ -216,6 +216,17 @@ export const IPC = {
   GITHUB_NOTIF_MARK_READ: 'github:notif:markRead',
   GITHUB_NOTIFICATIONS_UPDATE: 'github:notifications:update',
 
+  // Webview pane (per-session WebContentsView)
+  WEBVIEW_CHECK: 'webview:check',                 // HEAD probe (CORS-bypass)
+  WEBVIEW_OPEN: 'webview:open',                   // create+attach view at bounds
+  WEBVIEW_CLOSE: 'webview:close',                 // detach+destroy view
+  WEBVIEW_SET_BOUNDS: 'webview:setBounds',        // re-position on resize/scroll
+  WEBVIEW_RELOAD: 'webview:reload',               // force-reload bypassing cache
+  WEBVIEW_CAPTURE: 'webview:capture',             // capturePage() PNG dataURL for freeze
+  WEBVIEW_NAV_BACK: 'webview:navBack',
+  WEBVIEW_NAV_FORWARD: 'webview:navForward',
+  WEBVIEW_GO_HOME: 'webview:goHome',              // re-load original URL
+
   // Hooks gateway
   HOOKS_TOGGLE: 'hooks:toggle',
   HOOKS_GET_BUFFER: 'hooks:getBuffer',

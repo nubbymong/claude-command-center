@@ -109,6 +109,23 @@ export interface ElectronAPI {
     listRecent: () => Promise<Array<{ filename: string; path: string; timestamp: number; thumbnail: string }>>
     cleanup: (maxAgeDays: number) => Promise<number>
   }
+  webview: {
+    /** HEAD probe (CORS-bypass) — used by the activation poller. */
+    check: (url: string) => Promise<{ reachable: boolean; status?: number }>
+    /** Create a per-session WebContentsView and attach it at the given bounds. */
+    open: (sessionId: string, url: string, bounds: { x: number; y: number; width: number; height: number }) => Promise<boolean>
+    /** Detach + destroy the session's view. */
+    close: (sessionId: string) => Promise<boolean>
+    /** Re-position on resize/scroll. */
+    setBounds: (sessionId: string, bounds: { x: number; y: number; width: number; height: number }) => Promise<void>
+    /** Force-reload bypassing cache. */
+    reload: (sessionId: string) => Promise<void>
+    /** Capture as PNG dataURL — used by the freeze flow. */
+    capture: (sessionId: string) => Promise<string | null>
+    navBack: (sessionId: string) => Promise<void>
+    navForward: (sessionId: string) => Promise<void>
+    goHome: (sessionId: string) => Promise<void>
+  }
   session: {
     save: (state: unknown) => Promise<boolean>
     load: () => Promise<unknown | null>
@@ -350,6 +367,17 @@ const electronAPI: ElectronAPI = {
     listWindows: () => ipcRenderer.invoke(IPC.SCREENSHOT_LIST_WINDOWS),
     listRecent: () => ipcRenderer.invoke(IPC.SCREENSHOT_LIST_RECENT),
     cleanup: (maxAgeDays: number) => ipcRenderer.invoke(IPC.SCREENSHOT_CLEANUP, maxAgeDays)
+  },
+  webview: {
+    check: (url: string) => ipcRenderer.invoke(IPC.WEBVIEW_CHECK, url),
+    open: (sessionId: string, url: string, bounds: { x: number; y: number; width: number; height: number }) => ipcRenderer.invoke(IPC.WEBVIEW_OPEN, sessionId, url, bounds),
+    close: (sessionId: string) => ipcRenderer.invoke(IPC.WEBVIEW_CLOSE, sessionId),
+    setBounds: (sessionId: string, bounds: { x: number; y: number; width: number; height: number }) => ipcRenderer.invoke(IPC.WEBVIEW_SET_BOUNDS, sessionId, bounds),
+    reload: (sessionId: string) => ipcRenderer.invoke(IPC.WEBVIEW_RELOAD, sessionId),
+    capture: (sessionId: string) => ipcRenderer.invoke(IPC.WEBVIEW_CAPTURE, sessionId),
+    navBack: (sessionId: string) => ipcRenderer.invoke(IPC.WEBVIEW_NAV_BACK, sessionId),
+    navForward: (sessionId: string) => ipcRenderer.invoke(IPC.WEBVIEW_NAV_FORWARD, sessionId),
+    goHome: (sessionId: string) => ipcRenderer.invoke(IPC.WEBVIEW_GO_HOME, sessionId),
   },
   session: {
     save: (state: unknown) => ipcRenderer.invoke(IPC.SESSION_SAVE, state),
