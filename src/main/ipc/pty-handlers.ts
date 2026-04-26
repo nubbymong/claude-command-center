@@ -14,9 +14,7 @@ interface RendererSSHOptions {
   username: string
   remotePath: string
   postCommand?: string
-  startClaudeAfter?: boolean
   dockerContainer?: string
-  connectionFlow?: 'auto' | 'manual'
 }
 
 const sshSchema = z.object({
@@ -25,9 +23,7 @@ const sshSchema = z.object({
   username: z.string().min(1),
   remotePath: z.string().min(1),
   postCommand: z.string().optional(),
-  startClaudeAfter: z.boolean().optional(),
   dockerContainer: z.string().optional(),
-  connectionFlow: z.enum(['auto', 'manual']).optional(),
 }).optional()
 
 const spawnOptionsSchema = z.object({

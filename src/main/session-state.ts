@@ -28,7 +28,6 @@ export interface SavedSession {
     hasPassword?: boolean
     postCommand?: string
     hasSudoPassword?: boolean
-    startClaudeAfter?: boolean
     dockerContainer?: string
   }
   // Optional per-session GitHub integration state. See src/shared/github-types.ts

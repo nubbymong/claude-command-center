@@ -53,16 +53,6 @@ export interface SSHOptions {
   password?: string
   postCommand?: string
   sudoPassword?: string
-  startClaudeAfter?: boolean
-  /**
-   * 'manual' (default for SSH) — main process never auto-fires the
-   * setup blob, post-command, or claudeCmd; renderer drives each stage
-   * via SSH_FLOW_* IPC. Eliminates the auto-detection paste-leak class.
-   *
-   * 'auto' — legacy behaviour: state machine watches the data stream
-   * for shell prompts and fires writes itself.
-   */
-  connectionFlow?: 'auto' | 'manual'
 }
 
 /**
@@ -458,23 +448,19 @@ export function spawnPty(
       useConpty: true
     })
 
-    // SSH state machine. Two flavours, selected by ssh.connectionFlow
-    // (default 'manual' — safer):
+    // SSH manual flow state machine. The renderer shows an in-pane
+    // overlay with explicit "Run post-connect command" / "Launch Claude"
+    // / "Skip" buttons. Each click triggers one of the writer helpers
+    // below via SshFlowController IPC. An idle-data fallback timer
+    // (1.5 s of no PTY data) advances "running-X → next" automatically
+    // once the user-gated chain has started, so users never have to
+    // click more than twice per session.
     //
-    //   'auto'   — legacy: regex-watches the data stream for shell prompts
-    //              and fires setup → postCommand → claude itself. Faster,
-    //              but landed setup blobs inside running Claudes on
-    //              restore/restart paths (multiple paste-leak bugs).
-    //
-    //   'manual' — emits SshFlowState changes via IPC and waits for
-    //              renderer-triggered actions to advance. The renderer
-    //              shows an overlay with explicit buttons. Eliminates
-    //              the prompt-detection guessing entirely.
-    //
-    // Either way, the same writer helpers handle the actual `setupCmd` /
-    // `postCommand` / `claudeCmd` writes — auto chains them on prompt
-    // detection, manual chains them on user click.
-    const flowMode: 'auto' | 'manual' = ssh.connectionFlow ?? 'manual'
+    // The legacy auto-detection state machine has been removed — manual
+    // flow + idle fallback covers every permutation (vanilla SSH,
+    // SSH+postCommand, shellOnly variants) without watching the PTY
+    // stream for shell-prompt regexes, eliminating the entire class of
+    // "setup blob pasted into running Claude" bugs.
 
     let passwordSent = false
     let sudoPasswordSent = false
@@ -539,10 +525,11 @@ export function spawnPty(
           && !setupShellReady
         ) {
           setupShellReady = true
-          logInfo(`[ssh] ${sessionId}: idle after host setup ok → advancing`)
-          if (ssh.postCommand && !postCommandSent) writePostCommand()
-          else if (!options?.shellOnly && !claudeSent) writeClaudeCmd()
-          else if (options?.shellOnly) setFlowState('shell-only', 'host setup done')
+          logInfo(`[ssh] ${sessionId}: idle after host setup ok → writing claudeCmd`)
+          // Host setup runs only because user clicked Launch Claude (on
+          // host). Write claudeCmd — don't chain to postCommand even if
+          // configured. shellOnly is ignored: the click is consent.
+          if (!claudeSent) writeClaudeCmd()
           return
         }
 
@@ -560,24 +547,22 @@ export function spawnPty(
           postCommandShellReady = true
           inInnerShell = true
           logInfo(`[ssh] ${sessionId}: idle after postCommand → inner shell ready`)
-          if (options?.shellOnly) {
-            setFlowState('shell-only', 'inner shell ready')
-          } else if (flowMode === 'auto' && ssh.startClaudeAfter) {
-            writeContainerSetupCmd()
-          } else {
-            setFlowState('awaiting-claude', 'inner')
-          }
+          // User decides next via overlay (Launch Claude vs Skip).
+          setFlowState('awaiting-claude', 'inner')
           return
         }
 
         // running-setup (container) + containerSetupDone → write claudeCmd.
+        // shellOnly is intentionally not gated here: in manual flow the
+        // user clicked Launch Claude (which is what triggered container
+        // setup); in auto flow we only reach this branch via
+        // writeContainerSetupCmd() which is already shellOnly-gated upstream.
         if (
           currentFlowState === 'running-setup'
           && currentFlowInfo === 'container'
           && containerSetupDone
           && !containerSetupShellReady
           && !claudeSent
-          && !options?.shellOnly
         ) {
           containerSetupShellReady = true
           logInfo(`[ssh] ${sessionId}: idle after container setup ok → writing claudeCmd`)
@@ -619,7 +604,6 @@ export function spawnPty(
     const password = ssh.password
     const postCommand = ssh.postCommand
     const sudoPassword = ssh.sudoPassword
-    const startClaudeAfter = ssh.startClaudeAfter
 
     // Tight password-prompt match: `password:` or `password?` at the trimmed
     // end of the last line. Previously we matched any chunk containing the
@@ -643,11 +627,12 @@ export function spawnPty(
     }
 
     /**
-     * Writers for the four discrete SSH stages. Both the auto state
-     * machine (legacy) and the manual SshFlowController call these.
-     * Every writer is idempotent — subsequent calls are no-ops once
-     * its `*Sent` flag is set, so an over-eager renderer click can't
-     * double-fire.
+     * Writers for the four discrete SSH stages. The manual
+     * SshFlowController calls these on user button clicks; the idle
+     * fallback calls them when chaining the next stage of an already
+     * user-consented sequence. Every writer is idempotent — subsequent
+     * calls are no-ops once its `*Sent` flag is set, so an over-eager
+     * renderer click or repeated idle fire can't double-fire.
      */
     const writeHostSetupCmd = () => {
       if (setupSent) return
@@ -694,7 +679,11 @@ export function spawnPty(
     }
 
     const writeClaudeCmd = () => {
-      if (claudeSent || options?.shellOnly) return
+      // Idempotent. shellOnly is intentionally NOT gated: this writer
+      // only runs after the user clicked Launch Claude (or after a
+      // user-consented chain reached this stage), so the click is
+      // their explicit consent regardless of any saved shellOnly flag.
+      if (claudeSent) return
       claudeSent = true
       setFlowState('running-claude')
       logInfo(`[ssh] ${sessionId}: writing claudeCmd`)
@@ -727,7 +716,9 @@ export function spawnPty(
         // Two paths depending on whether we already entered the inner
         // shell. Inner shell → container setup + claudeCmd. Host shell
         // (no postCommand or user skipped it) → host setup + claudeCmd.
-        if (options?.shellOnly) return
+        // shellOnly is intentionally ignored: the user just clicked
+        // Launch Claude — that IS their consent, overriding any saved
+        // shellOnly preference on the config.
         if (inInnerShell) {
           writeContainerSetupCmd()
         } else if (!setupSent) {
@@ -860,68 +851,42 @@ export function spawnPty(
       const sawShellPrompt = !!lastLine && SHELL_PROMPT_RE.test(lastLine)
 
       // ---- STAGE TRANSITION DETECTION ----
-      // Same observation logic in both modes. Differs only in what
-      // happens at each transition: auto fires the next writer, manual
-      // emits an "awaiting" state and waits for the user.
+      // Manual flow: shell-prompt detection only emits "awaiting-X"
+      // states. The user's overlay click triggers the next writer.
+      // Once a user-consented chain has started (host setup or
+      // postCommand fired), the chain auto-continues on prompt
+      // detection — the user already consented at the start.
 
-      // First shell prompt after login → either fire setup (auto) or
-      // emit awaiting-postcommand / awaiting-claude (manual).
+      // First shell prompt after login → emit awaiting-postcommand /
+      // awaiting-claude / shell-only and wait for user click.
       if (
         !setupSent
         && !postCommandSent
         && sawShellPrompt
         && (currentFlowState === 'connecting' || currentFlowState === 'skipped')
       ) {
-        if (flowMode === 'manual') {
-          if (postCommand) {
-            setFlowState('awaiting-postcommand')
-          } else if (options?.shellOnly) {
-            setFlowState('shell-only')
-          } else {
-            setFlowState('awaiting-claude', 'host')
-          }
-          // Don't return — fall through to the password handlers above
-          // already returned; the overlay will drive the next write.
-          return
-        }
-        // AUTO: start the chain.
         if (postCommand) {
-          // host setup first, then postCommand fires when setup done.
-          writeHostSetupCmd()
-        } else if (!options?.shellOnly) {
-          writeHostSetupCmd()
+          setFlowState('awaiting-postcommand')
+        } else if (options?.shellOnly) {
+          setFlowState('shell-only')
+        } else {
+          setFlowState('awaiting-claude', 'host')
         }
         return
       }
 
-      // Host setup done + fresh shell prompt → next stage.
+      // Host setup done + fresh shell prompt → write claudeCmd.
+      // Setup ran because user clicked Launch Claude on the host;
+      // claude is the only sensible next stage.
       if (setupSent && setupDone && !setupShellReady && sawShellPrompt) {
         setupShellReady = true
-        if (flowMode === 'auto') {
-          // Auto chains the next write directly.
-          if (postCommand) {
-            writePostCommand()
-          } else if (!options?.shellOnly) {
-            writeClaudeCmd()
-          }
-        } else {
-          // Manual: setup ran (because user clicked launchClaude or
-          // runPostCommand); chain the next stage WITHOUT another user
-          // click — the user already gave consent at the start of this
-          // chain. Two-click max per session.
-          if (postCommand && !postCommandSent) {
-            writePostCommand()
-          } else if (!postCommand && !options?.shellOnly) {
-            writeClaudeCmd()
-          }
-        }
+        if (!claudeSent) writeClaudeCmd()
         return
       }
 
-      // Inner shell prompt after postCommand → mark inInnerShell, then
-      // either fire container setup (auto continuing chain, or manual
-      // continuing user's runPostCommand chain) or wait for the next
-      // user click (manual + user skipped to claude later).
+      // Inner shell prompt after postCommand → emit awaiting-claude.
+      // User picks Launch Claude (→ container setup → claudeCmd) or
+      // Skip (→ drops to inner shell).
       if (
         postCommandSent
         && !postCommandShellReady
@@ -930,33 +895,18 @@ export function spawnPty(
       ) {
         postCommandShellReady = true
         inInnerShell = true
-        if (options?.shellOnly) {
-          setFlowState('shell-only', 'inner shell ready')
-          return
-        }
-        if (flowMode === 'auto') {
-          if (startClaudeAfter) {
-            writeContainerSetupCmd()
-          } else {
-            // Auto config without startClaudeAfter — just leave at inner
-            // shell. Equivalent to shellOnly-after-postCommand.
-            setFlowState('shell-only', 'inner shell ready')
-          }
-        } else {
-          // Manual: emit awaiting-claude. User explicitly clicks to
-          // continue (lets them inspect the inner shell first).
-          setFlowState('awaiting-claude', 'inner')
-        }
+        setFlowState('awaiting-claude', 'inner')
         return
       }
 
       // Container setup done + inner shell prompt → write claudeCmd.
+      // Reaches here only via launchClaude() in the inner shell, so
+      // the user already consented to claude.
       if (
         containerSetupSent
         && containerSetupDone
         && !containerSetupShellReady
         && !claudeSent
-        && !options?.shellOnly
         && sawShellPrompt
       ) {
         containerSetupShellReady = true

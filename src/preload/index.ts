@@ -41,9 +41,7 @@ export interface ElectronAPI {
         username: string
         remotePath: string
         postCommand?: string
-        startClaudeAfter?: boolean
         dockerContainer?: string
-        connectionFlow?: 'auto' | 'manual'
       }
       configId?: string
       configLabel?: string
