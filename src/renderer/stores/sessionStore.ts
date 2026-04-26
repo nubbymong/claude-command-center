@@ -13,6 +13,9 @@ export interface SSHConfig {
   hasSudoPassword?: boolean
   startClaudeAfter?: boolean
   dockerContainer?: string  // Docker container name (enables docker cp for screenshots)
+  /** 'manual' (default) shows an in-pane overlay for explicit user-gated
+   * stage transitions. 'auto' is the legacy state-machine behaviour. */
+  connectionFlow?: 'auto' | 'manual'
 }
 
 export interface Session {

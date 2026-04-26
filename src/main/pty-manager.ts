@@ -54,6 +54,52 @@ export interface SSHOptions {
   postCommand?: string
   sudoPassword?: string
   startClaudeAfter?: boolean
+  /**
+   * 'manual' (default for SSH) — main process never auto-fires the
+   * setup blob, post-command, or claudeCmd; renderer drives each stage
+   * via SSH_FLOW_* IPC. Eliminates the auto-detection paste-leak class.
+   *
+   * 'auto' — legacy behaviour: state machine watches the data stream
+   * for shell prompts and fires writes itself.
+   */
+  connectionFlow?: 'auto' | 'manual'
+}
+
+/**
+ * Per-session SSH flow controller exposed via IPC. Renderer triggers
+ * stage transitions in manual mode by calling these.
+ */
+export interface SshFlowController {
+  runPostCommand: () => void
+  launchClaude: () => void
+  skip: () => void
+  destroy: () => void
+}
+
+const sshFlows = new Map<string, SshFlowController>()
+
+/** Public accessor for IPC handlers. */
+export function getSshFlow(sessionId: string): SshFlowController | undefined {
+  return sshFlows.get(sessionId)
+}
+
+export type SshFlowState =
+  | 'connecting'           // SSH still starting / authenticating
+  | 'awaiting-postcommand' // host shell ready, postCommand configured, awaiting user click
+  | 'awaiting-claude'      // host or inner shell ready, awaiting user click to launch claude
+  | 'running-postcommand'  // postCommand in flight
+  | 'running-setup'        // setup blob in flight
+  | 'running-claude'       // claudeCmd written, claude UI not yet detected
+  | 'claude-running'       // claude UI confirmed; no more prompts needed
+  | 'shell-only'           // session is shell-only and we're done
+  | 'skipped'              // user clicked skip; pty is theirs to drive manually
+  | 'failed'               // setup timed out or post-command errored
+
+function emitSshFlowState(win: BrowserWindow, sessionId: string, state: SshFlowState, info?: string): void {
+  if (win.isDestroyed()) return
+  try {
+    win.webContents.send(`ssh:flowState:${sessionId}`, { state, info })
+  } catch { /* renderer gone */ }
 }
 
 const ptySessions = new Map<string, PtySession>()
@@ -409,50 +455,49 @@ export function spawnPty(
       useConpty: true
     })
 
-    // SSH state machine — strictly sequential, every step gated on a sentinel
-    // or shell-prompt match. Previously we chained `setupCmd && claudeCmd` in
-    // a single ptyProcess.write, but ConPTY can buffer the long base64 blob
-    // and deliver it AFTER claude has started — landing the entire setup
-    // script inside Claude's prompt. The new flow writes each step
-    // independently, waiting for the prior step's completion signal.
+    // SSH state machine. Two flavours, selected by ssh.connectionFlow
+    // (default 'manual' — safer):
+    //
+    //   'auto'   — legacy: regex-watches the data stream for shell prompts
+    //              and fires setup → postCommand → claude itself. Faster,
+    //              but landed setup blobs inside running Claudes on
+    //              restore/restart paths (multiple paste-leak bugs).
+    //
+    //   'manual' — emits SshFlowState changes via IPC and waits for
+    //              renderer-triggered actions to advance. The renderer
+    //              shows an overlay with explicit buttons. Eliminates
+    //              the prompt-detection guessing entirely.
+    //
+    // Either way, the same writer helpers handle the actual `setupCmd` /
+    // `postCommand` / `claudeCmd` writes — auto chains them on prompt
+    // detection, manual chains them on user click.
+    const flowMode: 'auto' | 'manual' = ssh.connectionFlow ?? 'manual'
+
     let passwordSent = false
     let sudoPasswordSent = false
-    // Step 1: setup script written to host shell.
     let setupSent = false
-    // Step 1 complete: remote node script printed `setup ok\n` to stdout.
     let setupDone = false
-    // Step 2 ready: shell prompt observed AFTER setupDone (proves the
-    // setupCmd has fully returned and the shell is idle, ready for the
-    // next write — postCommand or claudeCmd).
     let setupShellReady = false
-    // Step 2 (when postCommand is configured): postCommand written.
     let postCommandSent = false
-    // Step 2 ready: inner shell prompt seen after postCommand (e.g. the
-    // shell INSIDE the docker container after `docker exec -it … bash`).
     let postCommandShellReady = false
-    // Step 3 (postCommand path only): setup script re-run INSIDE the
-    // container/inner shell. Required because `claude --settings` reads
-    // ~/.claude/settings-<sid>.json on whichever host runs claude, and
-    // host ~/.claude is not generally bind-mounted into a docker container.
-    // Re-running the idempotent setup writes the shim + settings file at
-    // the inner shell's ~/.claude so claude can find them.
     let containerSetupSent = false
     let containerSetupDone = false
     let containerSetupShellReady = false
-    // Final step: claude command written.
     let claudeSent = false
-    // HARD LATCH — last line of defence against paste-leaks. Once we see
-    // unmistakable Claude Code UI (`╭`/`╰` box-drawing or `❯` glyph), NO
-    // auto-writes ever fire again, regardless of which state flags are set.
-    // This protects against any edge case where a step's gate could
-    // misfire after Claude has taken over the terminal.
     let claudeRunning = false
-    // Setup-failure timer. If `setup ok` doesn't arrive within this window
-    // we abort the launch chain rather than blindly running claude with a
-    // missing settings file (which itself fails opaquely and leaves the
-    // user staring at a bash prompt).
+    // Tracks whether we're now in the inner shell (after postCommand
+    // completed — e.g. inside the docker container). Drives whether
+    // launchClaude() runs the container-setup re-run path or the
+    // direct host setup path.
+    let inInnerShell = false
+    let currentFlowState: SshFlowState = 'connecting'
     const SETUP_TIMEOUT_MS = 10000
     let setupTimeoutHandle: ReturnType<typeof setTimeout> | null = null
+
+    const setFlowState = (s: SshFlowState, info?: string) => {
+      currentFlowState = s
+      emitSshFlowState(win, sessionId, s, info)
+    }
     const remotePath = ssh.remotePath || '~'
     const claudeEnvPrefix = [
       // TEST 1: NO_FLICKER (fullscreen-rendering research preview)
@@ -493,6 +538,106 @@ export function spawnPty(
       if (line.includes('❯')) return ''
       return line
     }
+
+    /**
+     * Writers for the four discrete SSH stages. Both the auto state
+     * machine (legacy) and the manual SshFlowController call these.
+     * Every writer is idempotent — subsequent calls are no-ops once
+     * its `*Sent` flag is set, so an over-eager renderer click can't
+     * double-fire.
+     */
+    const writeHostSetupCmd = () => {
+      if (setupSent) return
+      setupSent = true
+      setFlowState('running-setup', 'host')
+      logInfo(`[ssh] ${sessionId}: writing host setupCmd`)
+      setupTimeoutHandle = setTimeout(() => {
+        setupTimeoutHandle = null
+        if (!setupDone) {
+          logError(`[ssh] ${sessionId}: setup ok not received within ${SETUP_TIMEOUT_MS}ms`)
+          setFlowState('failed', 'host setup timeout')
+        }
+      }, SETUP_TIMEOUT_MS)
+      setTimeout(() => {
+        const setupCmd = getRemoteSetupCommand(sessionId, remotePath, hooksConfig)
+        ptyProcess.write(setupCmd + '\r')
+      }, 200)
+    }
+
+    const writePostCommand = () => {
+      if (postCommandSent || !postCommand) return
+      postCommandSent = true
+      setFlowState('running-postcommand')
+      logInfo(`[ssh] ${sessionId}: writing post-command`)
+      setTimeout(() => ptyProcess.write(postCommand + '\r'), 200)
+    }
+
+    const writeContainerSetupCmd = () => {
+      if (containerSetupSent) return
+      containerSetupSent = true
+      setFlowState('running-setup', 'container')
+      logInfo(`[ssh] ${sessionId}: re-running setup inside container`)
+      setupTimeoutHandle = setTimeout(() => {
+        setupTimeoutHandle = null
+        if (!containerSetupDone) {
+          logError(`[ssh] ${sessionId}: container setup ok not received within ${SETUP_TIMEOUT_MS}ms`)
+          setFlowState('failed', 'container setup timeout')
+        }
+      }, SETUP_TIMEOUT_MS)
+      setTimeout(() => {
+        const setupCmd = getRemoteSetupCommand(sessionId, remotePath, hooksConfig)
+        ptyProcess.write(setupCmd + '\r')
+      }, 300)
+    }
+
+    const writeClaudeCmd = () => {
+      if (claudeSent || options?.shellOnly) return
+      claudeSent = true
+      setFlowState('running-claude')
+      logInfo(`[ssh] ${sessionId}: writing claudeCmd`)
+      setTimeout(() => ptyProcess.write(claudeCmd + '\r'), 200)
+    }
+
+    /**
+     * Manual-flow controller. Renderer triggers stage transitions via
+     * IPC; main calls these to advance.
+     */
+    const flowController: SshFlowController = {
+      runPostCommand: () => {
+        // Same chain as the auto state machine: host setup must run first
+        // (writes the per-session settings file the inner claude expects),
+        // then postCommand carries us into the inner shell.
+        if (currentFlowState !== 'awaiting-postcommand') return
+        writeHostSetupCmd()
+        // postCommand fires when host setup completes — handled in the
+        // onData transition for 'host setup ok + shell prompt'.
+      },
+      launchClaude: () => {
+        // Two paths depending on whether we already entered the inner
+        // shell. Inner shell → container setup + claudeCmd. Host shell
+        // (no postCommand or user skipped it) → host setup + claudeCmd.
+        if (options?.shellOnly) return
+        if (inInnerShell) {
+          writeContainerSetupCmd()
+        } else if (!setupSent) {
+          writeHostSetupCmd()
+        } else if (setupDone) {
+          // Setup already done from a prior runPostCommand → claude now.
+          writeClaudeCmd()
+        }
+      },
+      skip: () => {
+        setFlowState('skipped')
+      },
+      destroy: () => {
+        if (setupTimeoutHandle) {
+          clearTimeout(setupTimeoutHandle)
+          setupTimeoutHandle = null
+        }
+        sshFlows.delete(sessionId)
+      },
+    }
+    sshFlows.set(sessionId, flowController)
 
     ptyProcess.onData((rawData) => {
       if (win.isDestroyed()) return
@@ -576,91 +721,107 @@ export function spawnPty(
         }
       }
 
-      // BACKSTOP — once Claude is running, no more auto-writes EVER. This is
-      // the line that prevents the base64 setup blob from leaking into the
-      // user's chat textbox. It runs after the password-prompt handlers
-      // (those are still safe — Claude doesn't render `password:` lines).
-      if (claudeRunning) return
+      // BACKSTOP — once Claude is running, no more auto-writes EVER.
+      if (claudeRunning) {
+        if (currentFlowState !== 'claude-running') setFlowState('claude-running')
+        return
+      }
 
       const lastLine = lastPromptLine(data)
       const sawShellPrompt = !!lastLine && SHELL_PROMPT_RE.test(lastLine)
 
-      // STEP 1 — first shell prompt after login: write setupCmd alone.
-      // No `&&` chaining: the long base64 blob can be buffered by ConPTY
-      // and chained writes risk the next command landing inside whatever
-      // takes over the screen (Claude, container shell, etc.).
-      if (!setupSent && sawShellPrompt) {
-        setupSent = true
-        logInfo(`[ssh] ${sessionId}: STEP 1 — writing host setupCmd`)
-        setupTimeoutHandle = setTimeout(() => {
-          setupTimeoutHandle = null
-          if (!setupDone) {
-            logError(`[ssh] ${sessionId}: setup ok not received within ${SETUP_TIMEOUT_MS}ms; aborting auto-launch — user lands at bash prompt`)
+      // ---- STAGE TRANSITION DETECTION ----
+      // Same observation logic in both modes. Differs only in what
+      // happens at each transition: auto fires the next writer, manual
+      // emits an "awaiting" state and waits for the user.
+
+      // First shell prompt after login → either fire setup (auto) or
+      // emit awaiting-postcommand / awaiting-claude (manual).
+      if (
+        !setupSent
+        && !postCommandSent
+        && sawShellPrompt
+        && (currentFlowState === 'connecting' || currentFlowState === 'skipped')
+      ) {
+        if (flowMode === 'manual') {
+          if (postCommand) {
+            setFlowState('awaiting-postcommand')
+          } else if (options?.shellOnly) {
+            setFlowState('shell-only')
+          } else {
+            setFlowState('awaiting-claude', 'host')
           }
-        }, SETUP_TIMEOUT_MS)
-        setTimeout(() => {
-          const setupCmd = getRemoteSetupCommand(sessionId, remotePath, hooksConfig)
-          ptyProcess.write(setupCmd + '\r')
-        }, 200)
+          // Don't return — fall through to the password handlers above
+          // already returned; the overlay will drive the next write.
+          return
+        }
+        // AUTO: start the chain.
+        if (postCommand) {
+          // host setup first, then postCommand fires when setup done.
+          writeHostSetupCmd()
+        } else if (!options?.shellOnly) {
+          writeHostSetupCmd()
+        }
         return
       }
 
-      // STEP 2 — setup completed AND a fresh shell prompt is visible:
-      // proceed to the next stage based on session config.
+      // Host setup done + fresh shell prompt → next stage.
       if (setupSent && setupDone && !setupShellReady && sawShellPrompt) {
         setupShellReady = true
-        const next = postCommand ? 'postCommand' : (options?.shellOnly ? 'shellOnly-noop' : 'claudeCmd')
-        logInfo(`[ssh] ${sessionId}: STEP 2 — host setup done, writing ${next}`)
-        setTimeout(() => {
+        if (flowMode === 'auto') {
+          // Auto chains the next write directly.
           if (postCommand) {
-            // Two more steps to go: enter container/shell, then claude.
-            postCommandSent = true
-            ptyProcess.write(postCommand + '\r')
+            writePostCommand()
           } else if (!options?.shellOnly) {
-            claudeSent = true
-            ptyProcess.write(claudeCmd + '\r')
+            writeClaudeCmd()
           }
-          // shellOnly + no postCommand: leave the user at the host shell.
-        }, 200)
+        } else {
+          // Manual: setup ran (because user clicked launchClaude or
+          // runPostCommand); chain the next stage WITHOUT another user
+          // click — the user already gave consent at the start of this
+          // chain. Two-click max per session.
+          if (postCommand && !postCommandSent) {
+            writePostCommand()
+          } else if (!postCommand && !options?.shellOnly) {
+            writeClaudeCmd()
+          }
+        }
         return
       }
 
-      // STEP 2.5 (postCommand path) — inner shell prompt seen after the
-      // post-command (e.g. `docker exec -it ctr bash`). This shell is
-      // typically inside the target container; re-run the setup script
-      // here so the container has its own ~/.claude/settings-<sid>.json
-      // and conductor-ssh-statusline.js. Skipped for shell-only sessions
-      // (no need to touch container ~/.claude if claude won't run).
+      // Inner shell prompt after postCommand → mark inInnerShell, then
+      // either fire container setup (auto continuing chain, or manual
+      // continuing user's runPostCommand chain) or wait for the next
+      // user click (manual + user skipped to claude later).
       if (
         postCommandSent
         && !postCommandShellReady
-        && startClaudeAfter
-        && !options?.shellOnly
         && sawShellPrompt
+        && (!sudoPassword || sudoPasswordSent)
       ) {
-        const sudoHandled = !sudoPassword || sudoPasswordSent
-        if (sudoHandled) {
-          postCommandShellReady = true
-          containerSetupSent = true
-          logInfo(`[ssh] ${sessionId}: STEP 2.5 — postCommand done, inner shell ready, re-running setup inside container`)
-          setupTimeoutHandle = setTimeout(() => {
-            setupTimeoutHandle = null
-            if (!containerSetupDone) {
-              logError(`[ssh] ${sessionId}: container setup ok not received within ${SETUP_TIMEOUT_MS}ms; user lands at inner shell prompt`)
-            }
-          }, SETUP_TIMEOUT_MS)
-          setTimeout(() => {
-            const setupCmd = getRemoteSetupCommand(sessionId, remotePath, hooksConfig)
-            ptyProcess.write(setupCmd + '\r')
-          }, 300)
+        postCommandShellReady = true
+        inInnerShell = true
+        if (options?.shellOnly) {
+          setFlowState('shell-only', 'inner shell ready')
           return
         }
+        if (flowMode === 'auto') {
+          if (startClaudeAfter) {
+            writeContainerSetupCmd()
+          } else {
+            // Auto config without startClaudeAfter — just leave at inner
+            // shell. Equivalent to shellOnly-after-postCommand.
+            setFlowState('shell-only', 'inner shell ready')
+          }
+        } else {
+          // Manual: emit awaiting-claude. User explicitly clicks to
+          // continue (lets them inspect the inner shell first).
+          setFlowState('awaiting-claude', 'inner')
+        }
+        return
       }
 
-      // STEP 3 (postCommand path) — container setup completed and inner
-      // shell is idle: launch claude. Two distinct gates here so that
-      // a stray "setup ok" doesn't immediately fire claude before the
-      // shell prompt has redrawn.
+      // Container setup done + inner shell prompt → write claudeCmd.
       if (
         containerSetupSent
         && containerSetupDone
@@ -670,11 +831,7 @@ export function spawnPty(
         && sawShellPrompt
       ) {
         containerSetupShellReady = true
-        logInfo(`[ssh] ${sessionId}: STEP 3 — container setup done, writing claudeCmd inside container`)
-        setTimeout(() => {
-          claudeSent = true
-          ptyProcess.write(claudeCmd + '\r')
-        }, 200)
+        writeClaudeCmd()
       }
     })
   } else {
@@ -1016,6 +1173,13 @@ export function killPty(sessionId: string): void {
   pendingWrites.delete(sessionId)
   recentWrites.delete(sessionId)
   sshOscBuffers.delete(sessionId)
+  // Clear the SSH flow controller too — otherwise a stale entry keeps
+  // a closure over the old ptyProcess and a renderer click after
+  // session restart would write to a dead pty.
+  const flow = sshFlows.get(sessionId)
+  if (flow) {
+    try { flow.destroy() } catch { /* noop */ }
+  }
 }
 
 export function killAllPty(): void {

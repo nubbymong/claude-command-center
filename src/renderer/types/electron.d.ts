@@ -96,6 +96,7 @@ export interface ElectronAPI {
         postCommand?: string
         startClaudeAfter?: boolean
         dockerContainer?: string
+        connectionFlow?: 'auto' | 'manual'
       }
       shellOnly?: boolean
       elevated?: boolean
@@ -120,6 +121,12 @@ export interface ElectronAPI {
     kill: (sessionId: string) => void
     onData: (sessionId: string, callback: (data: string) => void) => () => void
     onExit: (sessionId: string, callback: (exitCode: number) => void) => () => void
+  }
+  ssh: {
+    runPostCommand: (sessionId: string) => Promise<void>
+    launchClaude: (sessionId: string) => Promise<void>
+    skip: (sessionId: string) => Promise<void>
+    onFlowState: (sessionId: string, callback: (msg: { state: string; info?: string }) => void) => () => void
   }
   statusline: {
     onUpdate: (callback: (data: {

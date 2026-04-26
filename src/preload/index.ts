@@ -43,6 +43,7 @@ export interface ElectronAPI {
         postCommand?: string
         startClaudeAfter?: boolean
         dockerContainer?: string
+        connectionFlow?: 'auto' | 'manual'
       }
       configId?: string
       configLabel?: string
@@ -61,6 +62,16 @@ export interface ElectronAPI {
     kill: (sessionId: string) => void
     onData: (sessionId: string, callback: (data: string) => void) => () => void
     onExit: (sessionId: string, callback: (exitCode: number) => void) => () => void
+  }
+  ssh: {
+    /** Manually trigger the post-connect command stage. */
+    runPostCommand: (sessionId: string) => Promise<void>
+    /** Manually trigger the Claude launch stage. */
+    launchClaude: (sessionId: string) => Promise<void>
+    /** User opts out of any further auto-writes; PTY is theirs to drive. */
+    skip: (sessionId: string) => Promise<void>
+    /** Subscribe to flow-state changes for a session. */
+    onFlowState: (sessionId: string, callback: (msg: { state: string; info?: string }) => void) => () => void
   }
   statusline: {
     onUpdate: (callback: (data: {
@@ -290,6 +301,20 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.on(channel, handler)
       return () => ipcRenderer.removeListener(channel, handler)
     }
+  },
+  ssh: {
+    runPostCommand: (sessionId: string) =>
+      ipcRenderer.invoke(IPC.SSH_FLOW_RUN_POSTCOMMAND, sessionId),
+    launchClaude: (sessionId: string) =>
+      ipcRenderer.invoke(IPC.SSH_FLOW_LAUNCH_CLAUDE, sessionId),
+    skip: (sessionId: string) =>
+      ipcRenderer.invoke(IPC.SSH_FLOW_SKIP, sessionId),
+    onFlowState: (sessionId: string, callback: (msg: { state: string; info?: string }) => void) => {
+      const channel = `${IPC.SSH_FLOW_STATE}:${sessionId}`
+      const handler = (_: unknown, msg: { state: string; info?: string }) => callback(msg)
+      ipcRenderer.on(channel, handler)
+      return () => ipcRenderer.removeListener(channel, handler)
+    },
   },
   statusline: {
     onUpdate: (callback) => {
