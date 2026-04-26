@@ -105,7 +105,14 @@ export async function openWebview(
     })
     view.setBounds(bounds)
     parent.contentView.addChildView(view)
-    await view.webContents.loadURL(url)
+    // loadURL rejects when the page fails (DNS, refused, etc.). Don't
+    // let that take down the pane — Chromium has already rendered an
+    // error page inside the view, the user can fix DNS / retry from
+    // the toolbar. Without this catch the renderer treats `open`
+    // failure as "close the pane" and the user sees nothing happen.
+    view.webContents.loadURL(url).catch((err) => {
+      logError(`[webview] loadURL failed for ${sessionId} (${url}): ${(err as Error)?.message ?? err} — view stays open with Chromium error page`)
+    })
     views.set(sessionId, { view, url, attachedTo: parent })
     logInfo(`[webview] opened ${sessionId} -> ${url}`)
     return true
