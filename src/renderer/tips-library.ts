@@ -245,12 +245,12 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: '🌐 Run Claude on a remote machine over SSH',
         title: 'SSH Sessions',
-        body: 'Create a config with **SSH** as the session type, enter host/port/user/remote path, and Claude runs on the remote with full file access. Your terminal stays local.\n\nThe Vision system even sets up automatic reverse SSH tunnels so Claude on the remote can control browsers running on your local machine — useful for testing staging apps.\n\nPasswords (if you don\'t use key auth) are encrypted with your OS credential store and only decrypted in the main process, never in the renderer.',
+        body: 'Create a config with **SSH** as the session type, enter host/port/user/remote path, and Claude runs on the remote with full file access. Your terminal stays local.\n\nWhen the session connects, an in-pane overlay shows **Launch Claude / Skip** — your click triggers the statusline injection and runs Claude. No prompt-detection magic, no setup blobs accidentally pasted into a running Claude.\n\nPasswords (if you don\'t use key auth) are encrypted with your OS credential store and only decrypted in the main process, never in the renderer.',
       },
       postUse: {
         shortText: '🐳 Run Claude inside a Docker container via SSH',
-        title: 'Docker-in-SSH',
-        body: 'You\'re already using SSH sessions. Next level: target a **Docker container** on the remote. Edit your SSH config and set a Docker Container name.\n\nThe app will wrap commands with `docker exec -it <container>` so Claude runs inside the container. Screenshots also go through `docker cp`. Great for reproducible builds.',
+        title: 'Docker-in-SSH (post-connect command)',
+        body: 'Edit your SSH config and set a **Post-connect command** like `sudo docker exec -it claude-dev bash`. After SSH login the overlay shows **Run post-connect command / Skip**; click it, and once the inner shell is ready a second overlay offers **Launch Claude / Skip**.\n\nSet the **Docker Container** field too — pasted screenshots get copied in via `docker cp` to that container. Great for reproducible builds and isolating Claude\'s file access from the host.',
       },
     },
   },

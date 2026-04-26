@@ -21,18 +21,7 @@ export interface TerminalConfig {
     hasPassword?: boolean
     postCommand?: string      // Command to run after SSH connects (e.g., docker exec)
     hasSudoPassword?: boolean // Whether sudo password is needed for postCommand
-    startClaudeAfter?: boolean // Start Claude after post-command completes
     dockerContainer?: string  // Docker container name (enables docker cp for screenshots)
-    // SSH connection flow:
-    //   'manual' (default for SSH) — explicit user-gated stages. After SSH
-    //     login a button overlay prompts the user to (1) run the post-connect
-    //     command (if configured), then (2) inject statusline + launch
-    //     Claude. Eliminates the auto-detection paste-leak class entirely.
-    //   'auto' — legacy behaviour: state machine watches the PTY data
-    //     stream for shell prompts and fires writes itself. Faster but
-    //     occasionally lands setup blobs inside a running Claude on
-    //     restore/restart paths. Kept for users who prefer hands-off.
-    connectionFlow?: 'auto' | 'manual'
   }
   legacyVersion?: {
     enabled: boolean

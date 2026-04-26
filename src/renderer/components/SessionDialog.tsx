@@ -63,13 +63,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
   const [postCommand, setPostCommand] = useState(initial?.sshConfig?.postCommand ?? '')
   const [sudoPassword, setSudoPassword] = useState('')
   const [saveSudoPassword, setSaveSudoPassword] = useState(initial?.sshConfig?.hasSudoPassword ?? false)
-  const [startClaudeAfter, setStartClaudeAfter] = useState(initial?.sshConfig?.startClaudeAfter ?? false)
   const [dockerContainer, setDockerContainer] = useState(initial?.sshConfig?.dockerContainer ?? '')
-  // Default new SSH configs to manual flow — auto-detection has been the
-  // root cause of every "setup blob pasted into Claude" report. Existing
-  // configs without the field set fall through to manual via the same
-  // default in pty-manager so the safer behaviour is opt-out, not opt-in.
-  const [connectionFlow, setConnectionFlow] = useState<'auto' | 'manual'>(initial?.sshConfig?.connectionFlow ?? 'manual')
 
   // Legacy version fields
   const [legacyEnabled, setLegacyEnabled] = useState(initial?.legacyVersion?.enabled ?? false)
@@ -232,9 +226,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
         hasPassword: savePassword && sshPassword.length > 0,
         postCommand: postCommand.trim() || undefined,
         hasSudoPassword: saveSudoPassword && sudoPassword.length > 0,
-        startClaudeAfter: postCommand.trim() ? startClaudeAfter : undefined,
         dockerContainer: dockerContainer.trim() || undefined,
-        connectionFlow,
       } : undefined,
       legacyVersion: legacyEnabled && legacyVersion ? {
         enabled: true,
@@ -467,51 +459,12 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                   </div>
                 )}
                 {postCommand && (
-                  <label className="flex items-center gap-2 text-xs text-subtext0 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={startClaudeAfter}
-                      onChange={(e) => setStartClaudeAfter(e.target.checked)}
-                      className="rounded border-surface1"
-                    />
-                    Start Claude after post-command completes
-                  </label>
-                )}
-                <div>
-                  <label className="block text-xs text-subtext0 mb-1">
-                    Connection Flow
-                    <span className="text-overlay0 ml-1">(when Claude / postCommand runs)</span>
-                  </label>
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setConnectionFlow('manual')}
-                      className={`flex-1 py-1.5 px-2 text-xs rounded border ${
-                        connectionFlow === 'manual'
-                          ? 'bg-blue/20 border-blue text-blue'
-                          : 'bg-surface0 border-surface1 text-overlay1'
-                      }`}
-                    >
-                      Manual <span className="text-[10px] opacity-70">(recommended)</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setConnectionFlow('auto')}
-                      className={`flex-1 py-1.5 px-2 text-xs rounded border ${
-                        connectionFlow === 'auto'
-                          ? 'bg-blue/20 border-blue text-blue'
-                          : 'bg-surface0 border-surface1 text-overlay1'
-                      }`}
-                    >
-                      Auto
-                    </button>
-                  </div>
-                  <p className="mt-1 text-[10px] text-overlay0">
-                    {connectionFlow === 'manual'
-                      ? 'After SSH connects you click a button to run the post-connect command, and another to launch Claude. No prompt-detection needed.'
-                      : 'App watches the PTY stream and auto-fires post-connect + Claude. Faster but occasionally lands setup output in a running Claude on restart paths.'}
+                  <p className="text-[10px] text-overlay0 leading-snug">
+                    After connect you'll get an in-pane button to run this
+                    command. Once the inner shell appears, a second button
+                    launches Claude (or Skip drops you to the shell).
                   </p>
-                </div>
+                )}
                 <div>
                   <label className="block text-xs text-subtext0 mb-1">
                     Docker Container

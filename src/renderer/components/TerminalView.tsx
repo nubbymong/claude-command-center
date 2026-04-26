@@ -33,9 +33,7 @@ interface Props {
     username: string
     remotePath: string
     postCommand?: string
-    startClaudeAfter?: boolean
     dockerContainer?: string
-    connectionFlow?: 'auto' | 'manual'
   }
   isActive?: boolean
   partnerEnabled?: boolean
@@ -505,7 +503,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         className="flex-1 bg-base p-1 overflow-hidden"
         style={{ minHeight: 0 }}
       />
-      {ssh && (ssh.connectionFlow ?? 'manual') === 'manual' && (
+      {ssh && (
         <SshFlowOverlay
           sessionId={sessionId}
           hasPostCommand={!!ssh.postCommand}
