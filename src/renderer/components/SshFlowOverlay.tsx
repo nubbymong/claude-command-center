@@ -40,6 +40,8 @@ export default function SshFlowOverlay({ sessionId, hasPostCommand, shellOnly, e
 
   useEffect(() => {
     if (!enabled) return
+    let cancelled = false
+
     const off = window.electronAPI.ssh.onFlowState(sessionId, (msg) => {
       setState(msg.state as FlowState)
       setInfo(msg.info)
@@ -50,7 +52,40 @@ export default function SshFlowOverlay({ sessionId, hasPostCommand, shellOnly, e
       if (msg.state === 'failed') setErrorText(msg.info ?? 'See app.log for details.')
       else setErrorText(null)
     })
-    return off
+
+    // Catch-up: query main for the current state in case the controller
+    // already emitted before this useEffect ran. Polls every 500 ms while
+    // we're still 'connecting' so we don't sit there forever showing
+    // "Waiting for SSH login" if a push got missed. Stops as soon as the
+    // state advances OR the catch-up window runs out (~30 s).
+    let attempt = 0
+    const MAX_ATTEMPTS = 60
+    let timer: number | null = null
+    const tryFetch = async () => {
+      if (cancelled) return
+      attempt += 1
+      try {
+        const cur = await window.electronAPI.ssh.getState(sessionId)
+        if (cancelled) return
+        if (cur && cur.state) {
+          setState(cur.state as FlowState)
+          setInfo(cur.info)
+          // Stop polling as soon as we see a non-connecting state — the
+          // push channel will drive subsequent transitions.
+          if (cur.state !== 'connecting') return
+        }
+      } catch { /* noop */ }
+      if (attempt < MAX_ATTEMPTS && !cancelled) {
+        timer = window.setTimeout(tryFetch, 500)
+      }
+    }
+    tryFetch()
+
+    return () => {
+      cancelled = true
+      if (timer != null) window.clearTimeout(timer)
+      off()
+    }
   }, [sessionId, enabled])
 
   if (!enabled) return null

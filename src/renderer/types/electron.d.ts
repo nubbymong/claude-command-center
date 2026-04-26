@@ -126,6 +126,7 @@ export interface ElectronAPI {
     runPostCommand: (sessionId: string) => Promise<void>
     launchClaude: (sessionId: string) => Promise<void>
     skip: (sessionId: string) => Promise<void>
+    getState: (sessionId: string) => Promise<{ state: string; info?: string }>
     onFlowState: (sessionId: string, callback: (msg: { state: string; info?: string }) => void) => () => void
   }
   statusline: {

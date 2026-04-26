@@ -142,4 +142,9 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     sessionIdSchema.parse(sessionId)
     getSshFlow(sessionId)?.skip()
   })
+
+  ipcMain.handle(IPC.SSH_FLOW_GET_STATE, async (_event, sessionId: string) => {
+    sessionIdSchema.parse(sessionId)
+    return getSshFlow(sessionId)?.getState() ?? { state: 'connecting' }
+  })
 }
