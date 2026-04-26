@@ -404,19 +404,50 @@ export function spawnPty(
       useConpty: true
     })
 
-    let cdSent = false
+    // SSH state machine — strictly sequential, every step gated on a sentinel
+    // or shell-prompt match. Previously we chained `setupCmd && claudeCmd` in
+    // a single ptyProcess.write, but ConPTY can buffer the long base64 blob
+    // and deliver it AFTER claude has started — landing the entire setup
+    // script inside Claude's prompt. The new flow writes each step
+    // independently, waiting for the prior step's completion signal.
     let passwordSent = false
-    let postCommandSent = false
     let sudoPasswordSent = false
-    let claudeSent = false
-    let postCommandShellReady = false
-    // Hard latch: flipped true once the remote setup script prints "setup ok".
-    // Everything after that point — post-command detection, Claude start — must
-    // skip the cd/setup branch. The regex-based prompt detectors below can
-    // otherwise match `❯`/`>` output from Claude Code itself and re-fire the
-    // setup blob inside an active chat, which is how the base64 payload leaks
-    // into the terminal as "hex-looking" text.
+    // Step 1: setup script written to host shell.
+    let setupSent = false
+    // Step 1 complete: remote node script printed `setup ok\n` to stdout.
     let setupDone = false
+    // Step 2 ready: shell prompt observed AFTER setupDone (proves the
+    // setupCmd has fully returned and the shell is idle, ready for the
+    // next write — postCommand or claudeCmd).
+    let setupShellReady = false
+    // Step 2 (when postCommand is configured): postCommand written.
+    let postCommandSent = false
+    // Step 2 ready: inner shell prompt seen after postCommand (e.g. the
+    // shell INSIDE the docker container after `docker exec -it … bash`).
+    let postCommandShellReady = false
+    // Step 3 (postCommand path only): setup script re-run INSIDE the
+    // container/inner shell. Required because `claude --settings` reads
+    // ~/.claude/settings-<sid>.json on whichever host runs claude, and
+    // host ~/.claude is not generally bind-mounted into a docker container.
+    // Re-running the idempotent setup writes the shim + settings file at
+    // the inner shell's ~/.claude so claude can find them.
+    let containerSetupSent = false
+    let containerSetupDone = false
+    let containerSetupShellReady = false
+    // Final step: claude command written.
+    let claudeSent = false
+    // HARD LATCH — last line of defence against paste-leaks. Once we see
+    // unmistakable Claude Code UI (`╭`/`╰` box-drawing or `❯` glyph), NO
+    // auto-writes ever fire again, regardless of which state flags are set.
+    // This protects against any edge case where a step's gate could
+    // misfire after Claude has taken over the terminal.
+    let claudeRunning = false
+    // Setup-failure timer. If `setup ok` doesn't arrive within this window
+    // we abort the launch chain rather than blindly running claude with a
+    // missing settings file (which itself fails opaquely and leaves the
+    // user staring at a bash prompt).
+    const SETUP_TIMEOUT_MS = 10000
+    let setupTimeoutHandle: ReturnType<typeof setTimeout> | null = null
     const remotePath = ssh.remotePath || '~'
     const claudeEnvPrefix = [
       // TEST 1: NO_FLICKER (fullscreen-rendering research preview)
@@ -465,10 +496,43 @@ export function spawnPty(
       const data = extractSshOscSentinels(sessionId, rawData)
       win.webContents.send(`pty:data:${sessionId}`, data)
 
-      // Latch setup-complete the moment the remote setup script echoes its
-      // `setup ok` sentinel. Nothing below may re-fire the setup.
-      if (!setupDone && data.includes('setup ok')) {
+      // HARD LATCH: once we've written claudeCmd, watch for Claude Code
+      // UI markers (`╭`/`╰` box drawings or the `❯ ` prompt cursor) and
+      // permanently disable any further auto-writes. This is the last
+      // line of defence against the base64 setup blob landing in a
+      // running Claude's prompt textarea — even if some state flag
+      // check somewhere mis-evaluates, this latch prevents the leak.
+      // Gated on claudeSent so a fancy bash prompt using box-drawing
+      // glyphs (Powerlevel10k etc.) before setup can't latch us early.
+      if (claudeSent && !claudeRunning && /[╭╰]|❯ /.test(data)) {
+        claudeRunning = true
+        if (setupTimeoutHandle) {
+          clearTimeout(setupTimeoutHandle)
+          setupTimeoutHandle = null
+        }
+      }
+
+      // Step 1 completion sentinel: the remote node script writes
+      // `setup ok\n` to stdout right before exiting. We only treat
+      // sentinels seen AFTER setupSent as completion — otherwise an
+      // earlier sentinel echoed by a previous session in the same
+      // long-running shell could spuriously latch this on connect.
+      if (setupSent && !setupDone && data.includes('setup ok')) {
         setupDone = true
+        if (setupTimeoutHandle) {
+          clearTimeout(setupTimeoutHandle)
+          setupTimeoutHandle = null
+        }
+      }
+
+      // Container setup completion: same sentinel, but we only consider
+      // it after the second setupCmd was written (inside the container).
+      if (containerSetupSent && !containerSetupDone && data.includes('setup ok')) {
+        containerSetupDone = true
+        if (setupTimeoutHandle) {
+          clearTimeout(setupTimeoutHandle)
+          setupTimeoutHandle = null
+        }
       }
 
       // Auto-type SSH password only on a real password prompt, not any MOTD
@@ -485,7 +549,7 @@ export function spawnPty(
       // emits: `[sudo] password for X:`, `password for X:`, `Password:`.
       // End-of-line match avoids false-triggering on a log message that
       // happens to mention `[sudo]` or `password for`.
-      if (!sudoPasswordSent && sudoPassword && postCommandSent) {
+      if (!sudoPasswordSent && sudoPassword && postCommandSent && !claudeSent) {
         const promptLine = lastPromptLine(data)
         if (promptLine && /(\[sudo\].*password.*:|password for .+:|^password:)\s*$/i.test(promptLine)) {
           sudoPasswordSent = true
@@ -496,47 +560,100 @@ export function spawnPty(
         }
       }
 
-      // After SSH login, cd to remotePath and run setup exactly once. Once
-      // setupDone is latched, the shell prompt seen below belongs to Claude
-      // Code or a normal shell — never re-run setup.
+      // BACKSTOP — once Claude is running, no more auto-writes EVER. This is
+      // the line that prevents the base64 setup blob from leaking into the
+      // user's chat textbox. It runs after the password-prompt handlers
+      // (those are still safe — Claude doesn't render `password:` lines).
+      if (claudeRunning) return
+
       const lastLine = lastPromptLine(data)
-      if (!setupDone && !cdSent && lastLine && SHELL_PROMPT_RE.test(lastLine)) {
-        cdSent = true
-        setTimeout(() => {
-          // Run the consolidated setup script (statusline + vision + CLAUDE.md)
-          // then cd to project and optionally start Claude
-          const setupCmd = getRemoteSetupCommand(sessionId, remotePath, hooksConfig)
-          if (postCommand) {
-            ptyProcess.write(`${setupCmd} && ${postCommand}\r`)
-            postCommandSent = true
-          } else if (!options?.shellOnly) {
-            claudeSent = true
-            ptyProcess.write(`${setupCmd} && ${claudeCmd}\r`)
-          } else {
-            ptyProcess.write(`${setupCmd} && clear\r`)
+      const sawShellPrompt = !!lastLine && SHELL_PROMPT_RE.test(lastLine)
+
+      // STEP 1 — first shell prompt after login: write setupCmd alone.
+      // No `&&` chaining: the long base64 blob can be buffered by ConPTY
+      // and chained writes risk the next command landing inside whatever
+      // takes over the screen (Claude, container shell, etc.).
+      if (!setupSent && sawShellPrompt) {
+        setupSent = true
+        setupTimeoutHandle = setTimeout(() => {
+          setupTimeoutHandle = null
+          if (!setupDone) {
+            logError(`[ssh] ${sessionId}: setup ok not received within ${SETUP_TIMEOUT_MS}ms; aborting auto-launch — user lands at bash prompt`)
           }
+        }, SETUP_TIMEOUT_MS)
+        setTimeout(() => {
+          const setupCmd = getRemoteSetupCommand(sessionId, remotePath, hooksConfig)
+          ptyProcess.write(setupCmd + '\r')
         }, 200)
         return
       }
 
-      // After post-command completes (container shell ready), optionally start
-      // Claude. This ONLY runs before claude is launched — once claudeSent is
-      // true the gate is closed. We also require a tight shell-prompt match so
-      // Claude Code's own `❯` doesn't re-trigger, and we do NOT re-run setup
-      // here: the earlier setup call writes idempotent files, and re-running
-      // it after Claude has started is the exact pattern that leaks the blob.
-      if (postCommandSent && !claudeSent && startClaudeAfter && !options?.shellOnly) {
-        const sudoHandled = !sudoPassword || sudoPasswordSent
-        if (sudoHandled && !postCommandShellReady) {
-          const promptLine = lastPromptLine(data)
-          if (promptLine && SHELL_PROMPT_RE.test(promptLine)) {
-            postCommandShellReady = true
-            setTimeout(() => {
-              claudeSent = true
-              ptyProcess.write(`${claudeCmd}\r`)
-            }, 300)
+      // STEP 2 — setup completed AND a fresh shell prompt is visible:
+      // proceed to the next stage based on session config.
+      if (setupSent && setupDone && !setupShellReady && sawShellPrompt) {
+        setupShellReady = true
+        setTimeout(() => {
+          if (postCommand) {
+            // Two more steps to go: enter container/shell, then claude.
+            postCommandSent = true
+            ptyProcess.write(postCommand + '\r')
+          } else if (!options?.shellOnly) {
+            claudeSent = true
+            ptyProcess.write(claudeCmd + '\r')
           }
+          // shellOnly + no postCommand: leave the user at the host shell.
+        }, 200)
+        return
+      }
+
+      // STEP 2.5 (postCommand path) — inner shell prompt seen after the
+      // post-command (e.g. `docker exec -it ctr bash`). This shell is
+      // typically inside the target container; re-run the setup script
+      // here so the container has its own ~/.claude/settings-<sid>.json
+      // and conductor-ssh-statusline.js. Skipped for shell-only sessions
+      // (no need to touch container ~/.claude if claude won't run).
+      if (
+        postCommandSent
+        && !postCommandShellReady
+        && startClaudeAfter
+        && !options?.shellOnly
+        && sawShellPrompt
+      ) {
+        const sudoHandled = !sudoPassword || sudoPasswordSent
+        if (sudoHandled) {
+          postCommandShellReady = true
+          containerSetupSent = true
+          setupTimeoutHandle = setTimeout(() => {
+            setupTimeoutHandle = null
+            if (!containerSetupDone) {
+              logError(`[ssh] ${sessionId}: container setup ok not received within ${SETUP_TIMEOUT_MS}ms; user lands at inner shell prompt`)
+            }
+          }, SETUP_TIMEOUT_MS)
+          setTimeout(() => {
+            const setupCmd = getRemoteSetupCommand(sessionId, remotePath, hooksConfig)
+            ptyProcess.write(setupCmd + '\r')
+          }, 300)
+          return
         }
+      }
+
+      // STEP 3 (postCommand path) — container setup completed and inner
+      // shell is idle: launch claude. Two distinct gates here so that
+      // a stray "setup ok" doesn't immediately fire claude before the
+      // shell prompt has redrawn.
+      if (
+        containerSetupSent
+        && containerSetupDone
+        && !containerSetupShellReady
+        && !claudeSent
+        && !options?.shellOnly
+        && sawShellPrompt
+      ) {
+        containerSetupShellReady = true
+        setTimeout(() => {
+          claudeSent = true
+          ptyProcess.write(claudeCmd + '\r')
+        }, 200)
       }
     })
   } else {
