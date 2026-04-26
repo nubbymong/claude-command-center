@@ -504,6 +504,30 @@ export function spawnPty(
       logInfo(`[ssh] ${sessionId}: flow → ${s}${info ? ` (${info})` : ''}`)
       emitSshFlowState(win, sessionId, s, info)
     }
+
+    // Idle-data fallback. If onData has been quiet for 1.5 s while we're
+    // still in 'connecting', force-advance state. The shell prompt
+    // regex has missed real bash prompts in the wild on certain non-
+    // standard PS1s — silence after a burst of MOTD/login output is a
+    // robust signal that the shell is idle and waiting for input.
+    const IDLE_FALLBACK_MS = 1500
+    let idleFallbackHandle: ReturnType<typeof setTimeout> | null = null
+    let receivedAnyData = false
+    const armIdleFallback = () => {
+      if (idleFallbackHandle) clearTimeout(idleFallbackHandle)
+      idleFallbackHandle = setTimeout(() => {
+        idleFallbackHandle = null
+        if (currentFlowState !== 'connecting' || !receivedAnyData) return
+        logInfo(`[ssh] ${sessionId}: idle ${IDLE_FALLBACK_MS}ms → advancing state via fallback`)
+        if (ssh.postCommand) {
+          setFlowState('awaiting-postcommand', 'idle-fallback')
+        } else if (options?.shellOnly) {
+          setFlowState('shell-only', 'idle-fallback')
+        } else {
+          setFlowState('awaiting-claude', 'host (fallback)')
+        }
+      }, IDLE_FALLBACK_MS)
+    }
     const remotePath = ssh.remotePath || '~'
     const claudeEnvPrefix = [
       // TEST 1: NO_FLICKER (fullscreen-rendering research preview)
@@ -641,6 +665,10 @@ export function spawnPty(
           clearTimeout(setupTimeoutHandle)
           setupTimeoutHandle = null
         }
+        if (idleFallbackHandle) {
+          clearTimeout(idleFallbackHandle)
+          idleFallbackHandle = null
+        }
         sshFlows.delete(sessionId)
       },
     }
@@ -652,6 +680,14 @@ export function spawnPty(
       // Parsed sentinels are dispatched to the statusline pipeline as a side effect.
       const data = extractSshOscSentinels(sessionId, rawData)
       win.webContents.send(`pty:data:${sessionId}`, data)
+
+      // Arm the idle-data fallback for the very-still-connecting case.
+      // Re-arms on every data chunk; only fires when no data for
+      // 1.5 s AND state is still 'connecting'.
+      if (data.length > 0) {
+        receivedAnyData = true
+        if (currentFlowState === 'connecting') armIdleFallback()
+      }
 
       // HARD LATCH: detect Claude Code UI ANYWHERE — even before we've
       // written setupCmd. Required because some flows land us inside an
