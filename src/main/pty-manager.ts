@@ -704,13 +704,20 @@ export function spawnPty(
     const flowController: SshFlowController = {
       getState: () => ({ state: currentFlowState, info: currentFlowInfo }),
       runPostCommand: () => {
-        // Same chain as the auto state machine: host setup must run first
-        // (writes the per-session settings file the inner claude expects),
-        // then postCommand carries us into the inner shell.
+        // postCommand flows (e.g. asustor `sudo docker exec -it ctr bash`)
+        // SKIP host setup entirely. Reasoning:
+        //   - claude runs inside the container, not the host. The
+        //     ~/.claude/settings file claude reads is the one inside
+        //     the container, written by the container-setup step.
+        //   - NAS hosts (Asustor, Synology, etc.) often don't have
+        //     `node` installed on the bare host. Setup blob silently
+        //     fails (2>/dev/null), no `setup ok` arrives, the 10 s
+        //     timeout fires and the flow goes 'failed' — even though
+        //     the user only wanted to enter the container.
+        // Users who want claude on the bare HOST can use "Launch
+        // Claude on host" instead, which DOES run host setup.
         if (currentFlowState !== 'awaiting-postcommand') return
-        writeHostSetupCmd()
-        // postCommand fires when host setup completes — handled in the
-        // onData transition for 'host setup ok + shell prompt'.
+        writePostCommand()
       },
       launchClaude: () => {
         // Two paths depending on whether we already entered the inner

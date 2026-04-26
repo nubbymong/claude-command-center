@@ -128,7 +128,7 @@ export default function SshFlowOverlay({ sessionId, hasPostCommand, shellOnly, e
     ''
 
   return (
-    <div className="absolute top-2 right-2 z-30 max-w-[420px] bg-mantle/95 border border-surface1 rounded-lg shadow-xl backdrop-blur-sm px-3 py-2 text-xs">
+    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-30 w-[460px] max-w-[80%] bg-mantle/95 border border-surface1 rounded-lg shadow-xl backdrop-blur-sm px-4 py-3 text-xs">
       <div className="flex items-center gap-2 mb-1.5">
         <span className="font-medium text-text">{headline}</span>
         {isRunning && (
