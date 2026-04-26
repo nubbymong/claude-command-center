@@ -1,10 +1,11 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { z } from 'zod'
-import { spawnPty, writePty, resizePty, killPty, SSHOptions } from '../pty-manager'
+import { spawnPty, writePty, resizePty, killPty, getSshFlow, SSHOptions } from '../pty-manager'
 import { logUserInput, isDebugModeEnabled } from '../debug-capture'
 import { logInfo } from '../debug-logger'
 import { isVersionInstalled, installVersion } from '../legacy-version-manager'
 import { loadCredential } from '../credential-store'
+import { IPC } from '../../shared/ipc-channels'
 
 /** SSH options as received from the renderer (no passwords — only configId) */
 interface RendererSSHOptions {
@@ -15,6 +16,7 @@ interface RendererSSHOptions {
   postCommand?: string
   startClaudeAfter?: boolean
   dockerContainer?: string
+  connectionFlow?: 'auto' | 'manual'
 }
 
 const sshSchema = z.object({
@@ -25,6 +27,7 @@ const sshSchema = z.object({
   postCommand: z.string().optional(),
   startClaudeAfter: z.boolean().optional(),
   dockerContainer: z.string().optional(),
+  connectionFlow: z.enum(['auto', 'manual']).optional(),
 }).optional()
 
 const spawnOptionsSchema = z.object({
@@ -122,5 +125,21 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
 
   ipcMain.on('pty:kill', (_event, sessionId: string) => {
     killPty(sessionId)
+  })
+
+  // SSH manual-flow controller — renderer drives stage transitions.
+  ipcMain.handle(IPC.SSH_FLOW_RUN_POSTCOMMAND, async (_event, sessionId: string) => {
+    sessionIdSchema.parse(sessionId)
+    getSshFlow(sessionId)?.runPostCommand()
+  })
+
+  ipcMain.handle(IPC.SSH_FLOW_LAUNCH_CLAUDE, async (_event, sessionId: string) => {
+    sessionIdSchema.parse(sessionId)
+    getSshFlow(sessionId)?.launchClaude()
+  })
+
+  ipcMain.handle(IPC.SSH_FLOW_SKIP, async (_event, sessionId: string) => {
+    sessionIdSchema.parse(sessionId)
+    getSshFlow(sessionId)?.skip()
   })
 }

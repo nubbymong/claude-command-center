@@ -7,6 +7,7 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import { useSessionStore } from '../stores/sessionStore'
 import { hasSpawned, markSpawned, killSessionPty } from '../ptyTracker'
 import CommandBar from './CommandBar'
+import SshFlowOverlay from './SshFlowOverlay'
 import { shouldUseResumePicker } from '../utils/resumePicker'
 import { stripCursorSequences } from '../utils/terminalFormatting'
 import { THEME, getTerminalTheme } from './terminal/terminalTheme'
@@ -34,6 +35,7 @@ interface Props {
     postCommand?: string
     startClaudeAfter?: boolean
     dockerContainer?: string
+    connectionFlow?: 'auto' | 'manual'
   }
   isActive?: boolean
   partnerEnabled?: boolean
@@ -503,6 +505,14 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         className="flex-1 bg-base p-1 overflow-hidden"
         style={{ minHeight: 0 }}
       />
+      {ssh && (ssh.connectionFlow ?? 'manual') === 'manual' && (
+        <SshFlowOverlay
+          sessionId={sessionId}
+          hasPostCommand={!!ssh.postCommand}
+          shellOnly={!!shellOnly}
+          enabled
+        />
+      )}
       {isScrolledUp && (
         <ScrollToBottomButton
           onClick={() => {
