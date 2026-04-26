@@ -21,6 +21,8 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId }
   const [sectionId, setSectionId] = useState<string | undefined>(initial?.sectionId)
   const [newSectionName, setNewSectionName] = useState('')
   const [showNewSection, setShowNewSection] = useState(false)
+  const [webViewEnabled, setWebViewEnabled] = useState<boolean>(!!initial?.webView?.enabled)
+  const [webViewUrl, setWebViewUrl] = useState(initial?.webView?.url || '')
 
   const { sections, addSection } = useCommandStore()
   const visibleSections = sections.filter(
@@ -64,15 +66,23 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId }
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (!label.trim() || !prompt.trim()) return
+    if (webViewEnabled && !webViewUrl.trim()) return
+    // Webview-enabled commands always run in the partner shell — that's
+    // where we can detect the launched process, run the URL check, and
+    // load the page. Lock the target server-side too.
+    const effectiveTarget = webViewEnabled ? 'partner' : target
     onConfirm({
       label: label.trim(),
       prompt: prompt.trim(),
       scope,
       configId: scope === 'config' ? configId : undefined,
       color,
-      target: target === 'any' ? undefined : target,
+      target: effectiveTarget === 'any' ? undefined : effectiveTarget,
       defaultArgs: defaultArgs.length > 0 ? defaultArgs : undefined,
       sectionId,
+      webView: webViewEnabled
+        ? { enabled: true, url: webViewUrl.trim() }
+        : undefined,
     })
   }
 
@@ -137,23 +147,60 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId }
             </div>
           </div>
           <div>
-            <label className="block text-xs text-subtext0 mb-1">Target Terminal</label>
+            <label className="block text-xs text-subtext0 mb-1">
+              Target Terminal
+              {webViewEnabled && (
+                <span className="ml-2 text-[10px] text-overlay0 italic">
+                  Locked to Partner — webview is enabled
+                </span>
+              )}
+            </label>
             <div className="flex gap-2">
-              {([['any', 'Any'], ['claude', 'Claude'], ['partner', 'Partner']] as const).map(([val, lbl]) => (
-                <button
-                  key={val}
-                  type="button"
-                  onClick={() => setTarget(val)}
-                  className={`flex-1 py-1.5 text-xs rounded border ${
-                    target === val
-                      ? 'bg-blue/20 border-blue text-blue'
-                      : 'bg-surface0 border-surface1 text-overlay1'
-                  }`}
-                >
-                  {lbl}
-                </button>
-              ))}
+              {([['any', 'Any'], ['claude', 'Claude'], ['partner', 'Partner']] as const).map(([val, lbl]) => {
+                const effectiveTarget = webViewEnabled ? 'partner' : target
+                const isActive = effectiveTarget === val
+                return (
+                  <button
+                    key={val}
+                    type="button"
+                    onClick={() => !webViewEnabled && setTarget(val)}
+                    disabled={webViewEnabled}
+                    className={`flex-1 py-1.5 text-xs rounded border transition-colors ${
+                      isActive
+                        ? 'bg-blue/20 border-blue text-blue'
+                        : 'bg-surface0 border-surface1 text-overlay1'
+                    } ${webViewEnabled && !isActive ? 'opacity-40 cursor-not-allowed' : ''}`}
+                  >
+                    {lbl}
+                  </button>
+                )
+              })}
             </div>
+          </div>
+          <div>
+            <label className="flex items-center gap-2 text-xs text-subtext0 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={webViewEnabled}
+                onChange={(e) => setWebViewEnabled(e.target.checked)}
+                className="accent-blue"
+              />
+              Launch webview on completion
+            </label>
+            {webViewEnabled && (
+              <div className="mt-1.5">
+                <input
+                  type="url"
+                  value={webViewUrl}
+                  onChange={(e) => setWebViewUrl(e.target.value)}
+                  className="w-full px-3 py-1.5 bg-surface0 text-text text-sm rounded border border-surface1 outline-none focus:border-blue font-mono"
+                  placeholder="https://localhost:3000"
+                />
+                <p className="mt-1 text-[10px] text-overlay0">
+                  After the partner shell command is sent, the app polls this URL every second for up to 30 s. The webview button pulses green once content is reachable, red on timeout.
+                </p>
+              </div>
+            )}
           </div>
           <div>
             <label className="block text-xs text-subtext0 mb-1">Arguments (for script commands)</label>

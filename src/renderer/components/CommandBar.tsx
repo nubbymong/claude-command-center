@@ -4,6 +4,7 @@ import { useSessionStore } from '../stores/sessionStore'
 import { useCommandBarStore } from '../stores/commandBarStore'
 import CommandDialog from './CommandDialog'
 import ScreenshotButton from './ScreenshotButton'
+import ExcalidrawButton from './ExcalidrawButton'
 import ToolbarPopup from './ToolbarPopup'
 import { generateId } from '../utils/id'
 import { trackUsage } from '../stores/tipsStore'
@@ -301,13 +302,6 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
           style={{ backgroundColor: color }}
           aria-hidden
         />
-        {cmd.scope === 'global' && (
-          <svg width="8" height="8" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-overlay0 shrink-0 opacity-60">
-            <circle cx="8" cy="8" r="6.5" />
-            <ellipse cx="8" cy="8" rx="3" ry="6.5" />
-            <path d="M1.5 8h13" />
-          </svg>
-        )}
         {cmd.label}
         {hasArgs && (
           <svg width="7" height="7" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.3" className="text-overlay0 shrink-0 opacity-50">
@@ -419,41 +413,29 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
         </div>
         <div className="w-px h-4 bg-surface1 mx-0.5" />
         <ScreenshotButton sessionId={sessionId} sessionType={sessionType} />
-        {/* Back to Claude / Partner toggle - on magic row */}
+        <ExcalidrawButton />
+        {/* Back to Claude / Partner toggle - same monochrome tool-button shape as Snap */}
         {partnerEnabled && onTogglePartner && (
           <>
             <div className="w-px h-4 bg-surface1 mx-0.5" />
-            {isPartnerActive ? (
-              <button
-                onClick={onTogglePartner}
-                className="w-[118px] flex items-center justify-center gap-1.5 py-0.5 text-xs rounded font-medium transition-colors shrink-0"
-                style={{ backgroundColor: 'rgba(227, 148, 85, 0.18)', borderColor: 'rgba(227, 148, 85, 0.4)', color: '#E39455', border: '1px solid rgba(227, 148, 85, 0.4)' }}
-                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'rgba(227, 148, 85, 0.28)' }}
-                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'rgba(227, 148, 85, 0.18)' }}
-                title="Switch back to Claude terminal"
-              >
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+            <button
+              onClick={onTogglePartner}
+              className="flex items-center gap-1.5 px-2 py-0.5 text-xs rounded bg-surface0/60 border border-surface1/80 hover:bg-surface1 text-overlay1 hover:text-text transition-colors whitespace-nowrap shrink-0"
+              title={isPartnerActive ? 'Switch back to Claude terminal' : 'Switch to partner terminal'}
+            >
+              {isPartnerActive ? (
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
                   <path d="M12 2v8.5M12 13.5V22M2 12h8.5M13.5 12H22M4.93 4.93l6.01 6.01M13.06 13.06l6.01 6.01M19.07 4.93l-6.01 6.01M10.94 13.06l-6.01 6.01" />
                 </svg>
-                Claude
-              </button>
-            ) : (
-              <button
-                onClick={onTogglePartner}
-                className="w-[118px] flex items-center justify-center gap-1.5 py-0.5 text-xs rounded font-medium transition-colors shrink-0"
-                style={{ backgroundColor: 'rgba(100, 160, 240, 0.14)', borderColor: 'rgba(100, 160, 240, 0.35)', color: '#64A0F0', border: '1px solid rgba(100, 160, 240, 0.35)' }}
-                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'rgba(100, 160, 240, 0.24)' }}
-                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'rgba(100, 160, 240, 0.14)' }}
-                title="Switch to partner terminal"
-              >
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              ) : (
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <polyline points="7 8 3 12 7 16" />
                   <polyline points="17 8 21 12 17 16" />
                   <line x1="14" y1="4" x2="10" y2="20" />
                 </svg>
-                Partner
-              </button>
-            )}
+              )}
+              {isPartnerActive ? 'Claude' : 'Partner'}
+            </button>
           </>
         )}
         {/* Spacer */}

@@ -12,6 +12,15 @@ export interface CustomCommand {
   sectionId?: string       // Which section this button belongs to
   defaultArgs?: string[]   // Default arguments (run on normal click)
   lastCustomArgs?: string[] // Last custom arguments used (remembered)
+  // When enabled, after the command runs in the partner shell the app polls
+  // `webView.url` for content. First successful response opens the webview
+  // pane in green-pulse state; a 30 s timeout flips the button red. Forces
+  // target='partner' so we have a deterministic place to launch the URL
+  // checker once the shell command settles.
+  webView?: {
+    enabled: boolean
+    url: string
+  }
 }
 
 export interface CommandSection {
