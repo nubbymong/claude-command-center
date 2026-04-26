@@ -221,6 +221,7 @@ export const IPC = {
   WEBVIEW_OPEN: 'webview:open',                   // create+attach view at bounds
   WEBVIEW_CLOSE: 'webview:close',                 // detach+destroy view
   WEBVIEW_SET_BOUNDS: 'webview:setBounds',        // re-position on resize/scroll
+  WEBVIEW_SET_VISIBLE: 'webview:setVisible',      // attach/detach without destroying
   WEBVIEW_RELOAD: 'webview:reload',               // force-reload bypassing cache
   WEBVIEW_CAPTURE: 'webview:capture',             // capturePage() PNG dataURL for freeze
   WEBVIEW_NAV_BACK: 'webview:navBack',

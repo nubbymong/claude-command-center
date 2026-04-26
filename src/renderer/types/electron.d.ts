@@ -214,6 +214,7 @@ export interface ElectronAPI {
     open: (sessionId: string, url: string, bounds: { x: number; y: number; width: number; height: number }) => Promise<boolean>
     close: (sessionId: string) => Promise<boolean>
     setBounds: (sessionId: string, bounds: { x: number; y: number; width: number; height: number }) => Promise<void>
+    setVisible: (sessionId: string, visible: boolean) => Promise<void>
     reload: (sessionId: string) => Promise<void>
     capture: (sessionId: string) => Promise<string | null>
     navBack: (sessionId: string) => Promise<void>

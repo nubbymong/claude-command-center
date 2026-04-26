@@ -136,6 +136,30 @@ export function setWebviewBounds(sessionId: string, bounds: WebviewBounds): void
   try { entry.view.setBounds(bounds) } catch { /* view destroyed */ }
 }
 
+/**
+ * Show or hide the WebContentsView WITHOUT destroying it. Hiding via
+ * `removeChildView` keeps the page state (cookies, JS, scroll position)
+ * intact so re-showing is instant. Used by WebviewPane when the session
+ * tab becomes inactive — bounds-based hiding via setBounds(0,0,1,1) is
+ * unreliable across `display:none` ancestors and has visible flicker
+ * on macOS during the size update.
+ */
+export function setWebviewVisible(sessionId: string, visible: boolean): void {
+  const entry = views.get(sessionId)
+  if (!entry || !entry.attachedTo || entry.attachedTo.isDestroyed()) return
+  try {
+    const children = entry.attachedTo.contentView.children
+    const isAttached = children.includes(entry.view)
+    if (visible && !isAttached) {
+      entry.attachedTo.contentView.addChildView(entry.view)
+    } else if (!visible && isAttached) {
+      entry.attachedTo.contentView.removeChildView(entry.view)
+    }
+  } catch (err) {
+    logError(`[webview] setVisible ${sessionId}=${visible} failed: ${(err as Error)?.message ?? err}`)
+  }
+}
+
 export function reloadWebview(sessionId: string): void {
   const entry = views.get(sessionId)
   if (!entry) return

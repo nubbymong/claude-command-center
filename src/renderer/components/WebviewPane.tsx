@@ -5,69 +5,85 @@ const ExcalidrawModal = lazy(() => import('./ExcalidrawModal'))
 
 interface Props {
   sessionId: string
+  /**
+   * Whether this session is currently the active session tab. When false
+   * the parent's container has display:none, but the WebContentsView is
+   * still attached to the BrowserWindow's contentView and would draw
+   * over the active session. We toggle it via setVisible IPC instead of
+   * relying on bounds=0 (which has flicker + reliability issues).
+   */
+  isActive: boolean
 }
 
 /**
  * Renderer-side host for the per-session WebContentsView. The actual
  * page pixels are drawn by the main process via WebContentsView, NOT
  * inside this React tree — we just reserve the space and stream
- * bounds updates to the main process so the view tracks the
- * placeholder div on resize/scroll.
- *
- * This pattern lets the webview run with full Chrome capability
- * (cookies, JS, navigation) without polluting the renderer's
- * sandbox or bumping into the deprecated `<webview>` tag.
+ * bounds updates so the view tracks the placeholder div on resize.
  */
-export default function WebviewPane({ sessionId }: Props) {
+export default function WebviewPane({ sessionId, isActive }: Props) {
   const state = useWebviewStore((s) => s.bySessionId[sessionId])
   const setOpen = useWebviewStore((s) => s.setOpen)
   const containerRef = useRef<HTMLDivElement>(null)
   const [frozenImage, setFrozenImage] = useState<string | null>(null)
   const [navState, setNavState] = useState<{ loading: boolean }>({ loading: false })
 
-  // Open the WebContentsView when this component mounts (i.e. when
-  // the user toggles the pane open and our parent renders us).
-  // Bounds updates run on every resize via ResizeObserver.
+  // Open + bounds-tracking lifecycle.
+  // Defers webview.open until the placeholder has real dimensions —
+  // first React render runs before layout, so getBoundingClientRect
+  // returns 0×0 for a frame and the WebContentsView would otherwise be
+  // created at full-window initial bounds (manager fallback).
   useEffect(() => {
     const el = containerRef.current
     if (!el || !state?.currentUrl) return
     let cancelled = false
+    let openPending = true
 
-    const reportBounds = () => {
+    const measure = () => {
       const rect = el.getBoundingClientRect()
-      const bounds = {
+      return {
         x: Math.round(rect.left),
         y: Math.round(rect.top),
-        width: Math.max(1, Math.round(rect.width)),
-        height: Math.max(1, Math.round(rect.height)),
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
       }
-      window.electronAPI.webview.setBounds(sessionId, bounds).catch(() => { /* noop */ })
     }
 
-    ;(async () => {
-      const rect = el.getBoundingClientRect()
-      const bounds = {
-        x: Math.round(rect.left),
-        y: Math.round(rect.top),
-        width: Math.max(1, Math.round(rect.width)),
-        height: Math.max(1, Math.round(rect.height)),
+    const reportBounds = () => {
+      const b = measure()
+      // Skip impossible bounds — happens when an ancestor has
+      // display:none, layout pending, etc. The setVisible toggle keeps
+      // the view hidden in those cases, so leaving bounds stale is
+      // safe and avoids 1×1-flicker in the corner of the screen.
+      if (b.width < 1 || b.height < 1) return
+      window.electronAPI.webview.setBounds(sessionId, b).catch(() => { /* noop */ })
+    }
+
+    const tryOpen = async () => {
+      if (cancelled) return
+      const b = measure()
+      if (b.width < 1 || b.height < 1) {
+        // Layout not ready — try next frame.
+        requestAnimationFrame(tryOpen)
+        return
       }
+      openPending = false
       setNavState({ loading: true })
-      const ok = await window.electronAPI.webview.open(sessionId, state.currentUrl!, bounds)
+      const ok = await window.electronAPI.webview.open(sessionId, state.currentUrl!, b)
       if (cancelled) return
       setNavState({ loading: false })
       if (!ok) {
-        // Open failed — close the pane so the user isn't staring
-        // at an empty box, the failed pulse is already on the button.
         setOpen(sessionId, false)
       }
-    })()
+    }
 
-    const ro = new ResizeObserver(() => reportBounds())
+    tryOpen()
+
+    const ro = new ResizeObserver(() => { if (!openPending) reportBounds() })
     ro.observe(el)
     window.addEventListener('resize', reportBounds)
-    // Also push bounds whenever the component re-renders, in case
-    // the parent flexbox shifts without firing resize.
+    // Catch parent-flex changes that don't fire ResizeObserver on this
+    // element (sidebar collapse, GitHubPanel toggle, etc).
     const tick = window.setInterval(reportBounds, 500)
 
     return () => {
@@ -79,6 +95,15 @@ export default function WebviewPane({ sessionId }: Props) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, state?.currentUrl])
+
+  // Show/hide on session-active changes. Without this, the
+  // WebContentsView from an inactive session keeps drawing over the
+  // active session's content (display:none on the React parent doesn't
+  // reach the native view layer).
+  useEffect(() => {
+    if (!state?.isOpen) return
+    window.electronAPI.webview.setVisible(sessionId, isActive).catch(() => { /* noop */ })
+  }, [sessionId, isActive, state?.isOpen])
 
   if (!state || !state.isOpen) return null
 
@@ -96,8 +121,8 @@ export default function WebviewPane({ sessionId }: Props) {
   const handleClose = () => setOpen(sessionId, false)
 
   return (
-    <div className="flex-1 flex flex-col min-h-0 bg-mantle">
-      <div className="flex items-center gap-1 px-2 py-1 border-b border-surface0 bg-crust shrink-0">
+    <div className="flex-1 flex flex-col min-h-0 bg-mantle relative">
+      <div className="flex items-center gap-1 px-2 py-1 border-b border-surface0 bg-crust shrink-0 z-10">
         <button
           onClick={() => window.electronAPI.webview.navBack(sessionId)}
           className="px-1.5 py-0.5 text-xs text-overlay1 hover:text-text rounded hover:bg-surface0"
@@ -153,6 +178,18 @@ export default function WebviewPane({ sessionId }: Props) {
       {/* Placeholder for the WebContentsView — the main process attaches
           a real Chrome view at this rectangle. We just reserve space. */}
       <div ref={containerRef} className="flex-1 min-h-0 bg-crust" />
+      {/* Always-visible escape hatch overlay. The native WebContentsView
+          draws on top of any HTML below the toolbar, so if anything
+          goes wrong with bounds the user can still get out from here.
+          Pinned bottom-right with a high z-index — the native view
+          can't cover it because it's outside the placeholder bounds. */}
+      <button
+        onClick={handleClose}
+        className="absolute right-2 bottom-2 z-20 px-2 py-1 text-[11px] rounded-full bg-red/80 text-crust shadow-lg hover:bg-red transition-colors"
+        title="Force-close webview"
+      >
+        ✕ exit webview
+      </button>
       {frozenImage && (
         <Suspense fallback={null}>
           <ExcalidrawModal backgroundImage={frozenImage} onClose={() => setFrozenImage(null)} />
