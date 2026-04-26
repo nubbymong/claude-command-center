@@ -343,6 +343,50 @@ export const TIPS_LIBRARY: Tip[] = [
   },
 
   {
+    id: 'tip.excalidraw-scratchpad',
+    category: 'productivity',
+    complexity: 'simple',
+    priority: 50,
+    variants: {
+      primary: {
+        shortText: '✏️ Sketch ideas in the Draw scratchpad',
+        title: 'Excalidraw Scratchpad',
+        body: 'The **Draw** button next to Snap opens a full Excalidraw canvas. Sketch architecture, annotate flowcharts, draw selectors over a screenshot — anything you\'d normally reach for a tablet for.\n\n• **Copy to clipboard** exports the canvas as PNG.\n• Hit **Alt+V** in any terminal to paste it directly into Claude.\n• Available in every session — no per-config setup.\n• Closes with **Esc**.',
+      },
+    },
+  },
+
+  {
+    id: 'tip.command-webview',
+    category: 'commands',
+    complexity: 'intermediate',
+    priority: 55,
+    requires: ['sessions.partner-terminal'],
+    variants: {
+      primary: {
+        shortText: '🌐 Open a webview when a command finishes',
+        title: 'Webview on Command Completion',
+        body: 'Building a dev server, generating a docs site, or anything that ends with "now look at this URL"? Tick **Launch webview on completion** when editing a command and enter the URL.\n\nWhat happens:\n• Command runs in the partner shell (locked when webview is on).\n• The app polls the URL every second for up to 30s.\n• A new **Web** button appears next to Snap, pulsing **green** when the URL responds (or **red** on timeout).\n• Click it to swap the active pane to a real Chrome view of the page.\n\nThe pane has back/forward/hard-refresh/home, plus a **Freeze** button that snapshots the page and opens it in Excalidraw for annotation.',
+      },
+    },
+  },
+
+  {
+    id: 'tip.webview-freeze',
+    category: 'productivity',
+    complexity: 'intermediate',
+    priority: 40,
+    requires: ['webview.opened'],
+    variants: {
+      primary: {
+        shortText: '❄️ Freeze + annotate webviews for screenshots',
+        title: 'Freeze Webview + Annotate',
+        body: 'Inside a webview pane, the **Freeze** button captures the current page as an image and opens it in Excalidraw. Draw arrows, circle bugs, redact PII — then **Copy to clipboard** and paste into Claude with **Alt+V**.\n\nFaster than a separate screenshot tool because the snapshot bypasses the OS clipboard until you\'re ready.',
+      },
+    },
+  },
+
+  {
     id: 'tip.statusline-customize',
     category: 'productivity',
     complexity: 'intermediate',
