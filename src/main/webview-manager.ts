@@ -1,4 +1,4 @@
-import { BrowserWindow, WebContentsView, net, session } from 'electron'
+import { BrowserWindow, WebContentsView, net, session, shell } from 'electron'
 import { logInfo, logError } from './debug-logger'
 
 interface ManagedView {
@@ -103,6 +103,37 @@ export async function openWebview(
         partition,
       },
     })
+
+    // Lock down navigation + popups before loadURL so a malicious page
+    // can't escape via location.href = 'file://...' or window.open.
+    // The toolbar's Back/Forward/Reload/Home all stay inside http(s)
+    // because those calls go through `view.webContents.*` directly,
+    // not through the page; this guard catches in-page nav only.
+    const ALLOWED = new Set(['http:', 'https:'])
+    view.webContents.on('will-navigate', (event, target) => {
+      try {
+        if (!ALLOWED.has(new URL(target).protocol)) {
+          event.preventDefault()
+          logError(`[webview] blocked will-navigate to disallowed scheme: ${target}`)
+        }
+      } catch {
+        event.preventDefault()
+      }
+    })
+    view.webContents.setWindowOpenHandler(({ url: openUrl }) => {
+      // Open external links in the system browser via shell, not in
+      // the embedded view. Same allowlist — file://, javascript:,
+      // chrome:// are dropped on the floor.
+      try {
+        if (ALLOWED.has(new URL(openUrl).protocol)) {
+          void shell.openExternal(openUrl)
+        } else {
+          logError(`[webview] blocked window.open to disallowed scheme: ${openUrl}`)
+        }
+      } catch { /* invalid URL — drop */ }
+      return { action: 'deny' }
+    })
+
     view.setBounds(bounds)
     parent.contentView.addChildView(view)
     // loadURL rejects when the page fails (DNS, refused, etc.). Don't

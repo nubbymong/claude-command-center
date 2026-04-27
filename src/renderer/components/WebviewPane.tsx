@@ -25,6 +25,7 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
   const state = useWebviewStore((s) => s.bySessionId[sessionId])
   const setOpen = useWebviewStore((s) => s.setOpen)
   const containerRef = useRef<HTMLDivElement>(null)
+  const tryOpenRef = useRef<(() => void) | null>(null)
   const [frozenImage, setFrozenImage] = useState<string | null>(null)
   const [navState, setNavState] = useState<{ loading: boolean }>({ loading: false })
 
@@ -70,15 +71,26 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
       window.electronAPI.webview.setBounds(sessionId, b).catch(() => { /* noop */ })
     }
 
+    // Try to open the WebContentsView. Two retry mechanisms:
+    //   - When the session is active but bounds aren't laid out yet
+    //     (first render before flex resolves), retry on the next
+    //     animation frame.
+    //   - When the session is inactive (ancestor display:none ⇒
+    //     bounds stay 0×0 forever), DON'T spin at 60 fps. The Effect C
+    //     setVisible call will fire when isActive flips true; that's
+    //     also the moment to retry the open. We listen for it via a
+    //     ref-watching subscription rather than a tight rAF loop.
+    let rafId: number | null = null
     const tryOpen = async () => {
       if (cancelled) return
-      // Wait until this session is the active one — otherwise the
-      // ancestor display:none keeps bounds at 0×0 and the rAF loop
-      // would spin forever. As soon as the session is brought to
-      // front, bounds become valid and tryOpen lands the open call.
       const b = measure()
-      if (!isActiveRef.current || b.width < 1 || b.height < 1) {
-        requestAnimationFrame(tryOpen)
+      if (!isActiveRef.current) {
+        // Park — no rAF spin. The retry trigger is `tryOpen` being
+        // called again from the isActive-watch effect below.
+        return
+      }
+      if (b.width < 1 || b.height < 1) {
+        rafId = requestAnimationFrame(tryOpen)
         return
       }
       openPending = false
@@ -91,6 +103,7 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
       }
     }
 
+    tryOpenRef.current = tryOpen
     tryOpen()
 
     const ro = new ResizeObserver(() => { if (!openPending) reportBounds() })
@@ -99,12 +112,22 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
 
     return () => {
       cancelled = true
+      if (rafId !== null) cancelAnimationFrame(rafId)
       ro.disconnect()
       window.removeEventListener('resize', reportBounds)
+      tryOpenRef.current = null
       window.electronAPI.webview.close(sessionId).catch(() => { /* noop */ })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, state?.currentUrl])
+
+  // When isActive flips true after the lifecycle parked tryOpen
+  // (because the session was inactive at mount), re-trigger the open.
+  // Without this, switching to a session whose pane already mounted
+  // while inactive would never land the WebContentsView.
+  useEffect(() => {
+    if (isActive) tryOpenRef.current?.()
+  }, [isActive])
 
   // Bounds-reporting interval — separate effect so it can pause/resume
   // on session-switch without re-creating the underlying WebContentsView.
