@@ -21,6 +21,26 @@ describe('SyncOrchestrator', () => {
   })
 
   afterEach(async () => {
+    // The orchestrator kicks off an async sync chain on registerSession
+    // that ends with cacheStore.save() — unregisterSession cancels
+    // pending timers but cannot cancel an in-flight save(). On macOS
+    // CI we hit `ENOTEMPTY` on rmdir because a save() was still
+    // landing files when the cleanup raced ahead. Yield a couple of
+    // event-loop turns first, then retry rm with a short backoff so
+    // we don't fail the suite over a benign timing window.
+    await new Promise((r) => setImmediate(r))
+    await new Promise((r) => setImmediate(r))
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        await fs.rm(tmp, { recursive: true, force: true })
+        return
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException)?.code
+        if (code !== 'ENOTEMPTY' && code !== 'EBUSY') throw err
+        await new Promise((r) => setTimeout(r, 25 * (attempt + 1)))
+      }
+    }
+    // Final attempt — if this still fails, surface the error.
     await fs.rm(tmp, { recursive: true, force: true })
   })
 
