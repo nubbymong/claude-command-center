@@ -142,6 +142,13 @@ export interface ElectronAPI {
     goHome: (sessionId: string) => Promise<void>
     /** Emergency: destroy every WebContentsView. Used by the global Esc / "Close webview" pill. */
     closeAll: () => Promise<boolean>
+    /**
+     * Subscribe to "user pressed Esc inside a WebContentsView". Without
+     * this, key events go to the embedded webContents and never reach
+     * the App-level Esc handler — so a stuck/oversized view couldn't
+     * be dismissed by keyboard. Returns an unsubscribe fn.
+     */
+    onEscapePressed: (handler: (sessionId: string) => void) => () => void
   }
   session: {
     save: (state: unknown) => Promise<boolean>
@@ -413,6 +420,11 @@ const electronAPI: ElectronAPI = {
     navForward: (sessionId: string) => ipcRenderer.invoke(IPC.WEBVIEW_NAV_FORWARD, sessionId),
     goHome: (sessionId: string) => ipcRenderer.invoke(IPC.WEBVIEW_GO_HOME, sessionId),
     closeAll: () => ipcRenderer.invoke(IPC.WEBVIEW_CLOSE_ALL),
+    onEscapePressed: (handler: (sessionId: string) => void) => {
+      const fn = (_e: unknown, sessionId: string) => handler(sessionId)
+      ipcRenderer.on(IPC.WEBVIEW_ESCAPE_PRESSED, fn)
+      return () => ipcRenderer.removeListener(IPC.WEBVIEW_ESCAPE_PRESSED, fn)
+    },
   },
   session: {
     save: (state: unknown) => ipcRenderer.invoke(IPC.SESSION_SAVE, state),

@@ -1,5 +1,6 @@
 import { BrowserWindow, WebContentsView, net, session, shell } from 'electron'
 import { logInfo, logError } from './debug-logger'
+import { IPC } from '../shared/ipc-channels'
 
 interface ManagedView {
   view: WebContentsView
@@ -20,8 +21,10 @@ export interface WebviewBounds {
  * HEAD-probe a URL via Electron's net.request (CORS-bypass + same trust
  * store as the main process). Resolves to { reachable, status }.
  *
- * Some servers reject HEAD with 405; we fall back to GET on 4xx so the
- * activation poller doesn't get false-negatives for those origins.
+ * Some servers reject HEAD with 405 ("Method Not Allowed"); we retry
+ * with GET in that single case so the activation poller doesn't get a
+ * false-negative for those origins. We do NOT retry on 404/401/403/etc
+ * — a doubled request count there wouldn't change the verdict.
  */
 export async function checkUrl(url: string, timeoutMs = 3000): Promise<{ reachable: boolean; status?: number }> {
   const probe = (method: 'HEAD' | 'GET') =>
@@ -121,6 +124,22 @@ export async function openWebview(
         }
       } catch {
         event.preventDefault()
+      }
+    })
+    // Forward Escape to the host renderer when focus is inside the
+    // embedded page. Without this hook, key events go to the
+    // WebContentsView's own webContents and never reach the App-level
+    // Esc handler — so a user looking at a stuck/oversized view
+    // couldn't press Esc to close it (they'd have to find the red
+    // banner button). Only main-frame Escape; lets sub-frame inputs
+    // (e.g. an iframed Excalidraw) handle their own cancel paths.
+    view.webContents.on('before-input-event', (_event, input) => {
+      if (input.type === 'keyDown' && input.key === 'Escape') {
+        try {
+          if (parent && !parent.isDestroyed()) {
+            parent.webContents.send(IPC.WEBVIEW_ESCAPE_PRESSED, sessionId)
+          }
+        } catch { /* parent gone */ }
       }
     })
     view.webContents.setWindowOpenHandler(({ url: openUrl }) => {
