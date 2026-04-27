@@ -19,6 +19,7 @@ interface Props {
 export default function ExcalidrawModal({ backgroundImage, onClose }: Props) {
   const apiRef = useRef<ExcalidrawImperativeAPI | null>(null)
   const dialogRef = useRef<HTMLDivElement>(null)
+  const copyResetTimerRef = useRef<number | null>(null)
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copying' | 'copied' | 'failed'>('idle')
   const resolvedTheme = useResolvedTheme()
   // Trap focus inside the modal so keyboard users can't tab into the
@@ -28,9 +29,16 @@ export default function ExcalidrawModal({ backgroundImage, onClose }: Props) {
   // / config modals.
   useFocusTrap(dialogRef, true, onClose)
 
+  // Clear any pending copy-status reset on unmount so a quick close
+  // after pressing Copy doesn't fire setState on an unmounted component.
+  React.useEffect(() => () => {
+    if (copyResetTimerRef.current != null) window.clearTimeout(copyResetTimerRef.current)
+  }, [])
+
   const handleCopy = async () => {
     const api = apiRef.current
     if (!api) return
+    if (copyResetTimerRef.current != null) window.clearTimeout(copyResetTimerRef.current)
     setCopyStatus('copying')
     try {
       const elements = api.getSceneElements()
@@ -44,11 +52,11 @@ export default function ExcalidrawModal({ backgroundImage, onClose }: Props) {
       })
       await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
       setCopyStatus('copied')
-      setTimeout(() => setCopyStatus('idle'), 1500)
+      copyResetTimerRef.current = window.setTimeout(() => setCopyStatus('idle'), 1500)
     } catch (err) {
       console.error('[Excalidraw] copy to clipboard failed', err)
       setCopyStatus('failed')
-      setTimeout(() => setCopyStatus('idle'), 2000)
+      copyResetTimerRef.current = window.setTimeout(() => setCopyStatus('idle'), 2000)
     }
   }
 

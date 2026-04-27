@@ -145,13 +145,19 @@ export default function App() {
   useEffect(() => {
     if (!activeSessionHasWebview) return
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        closeActiveWebview()
-      }
+      if (e.key !== 'Escape') return
+      // Defer to any open modal — pressing Esc inside the Excalidraw
+      // freeze-annotate overlay should dismiss the modal first, not
+      // close the underlying webview pane out from under it. Without
+      // this check the global handler (capture phase) fired first and
+      // collapsed both at once. Switched to bubble phase so the
+      // detection runs after focus settles.
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return
+      e.preventDefault()
+      closeActiveWebview()
     }
-    document.addEventListener('keydown', onKey, true)
-    return () => document.removeEventListener('keydown', onKey, true)
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
   }, [activeSessionHasWebview, closeActiveWebview])
 
   const togglePartner = (sessionId: string) => {
