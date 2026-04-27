@@ -1,10 +1,10 @@
-// Minimal repro for Windows-only xterm.js cursor artifact.
-// This is intentionally bare: Electron + node-pty + xterm.js, nothing
-// else. Same PTY config as the main app (ConPTY, xterm-256color),
-// same xterm.js + WebGL addon stack — but ZERO of our cursor-hide
-// or stripping code. If the rogue square appears here, it's the raw
-// Electron + xterm.js + Claude stack on Windows. If it doesn't, the
-// issue is something we add on top in src/renderer.
+// Minimal repro for the Windows-only xterm.js cursor artifact.
+// Electron + node-pty + xterm.js with the SAME PTY config as the
+// main app (ConPTY, xterm-256color) and the SAME xterm.js + WebGL
+// addon stack. The renderer at index.html now ports our cursor-hide
+// CSS (SLICE 3) and stripCursorSequences (SLICE 2) one slice at a
+// time so we can isolate which mitigation is actually fixing the
+// rogue square. Toggle slices in index.html to bisect.
 
 const { app, BrowserWindow, ipcMain } = require('electron')
 const path = require('path')

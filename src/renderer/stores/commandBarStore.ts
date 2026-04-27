@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { saveConfigNow } from '../utils/config-saver'
+import { saveConfigDebounced } from '../utils/config-saver'
 
 // Section collapse state lives outside CommandBar's local useState so the
 // Claude and Partner terminals (separate TerminalView + CommandBar instances
@@ -33,7 +33,16 @@ export const useCommandBarStore = create<CommandBarStore>((set, get) => ({
 
   hydrate: (next) =>
     set({
-      state: { ...DEFAULTS, ...next, collapsedSectionIds: next.collapsedSectionIds ?? [] },
+      state: {
+        ...DEFAULTS,
+        ...next,
+        // Defend against a hand-edited / corrupted commandBarUi.json
+        // where collapsedSectionIds came back as a string or null.
+        // toggleSection calls .filter on it, which would throw.
+        collapsedSectionIds: Array.isArray(next.collapsedSectionIds)
+          ? next.collapsedSectionIds
+          : [],
+      },
       isLoaded: true,
     }),
 
@@ -47,7 +56,10 @@ export const useCommandBarStore = create<CommandBarStore>((set, get) => ({
         ? current.filter((id) => id !== sectionId)
         : [...current, sectionId]
       const nextState = { ...s.state, collapsedSectionIds }
-      saveConfigNow('commandBarUi', nextState)
+      // Debounced — rapid expand/collapse spam shouldn't write to
+      // disk on every click. config-saver coalesces successive calls
+      // within 300 ms.
+      saveConfigDebounced('commandBarUi', nextState)
       return { state: nextState }
     }),
 }))

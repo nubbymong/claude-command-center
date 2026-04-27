@@ -3,12 +3,15 @@ import { create } from 'zustand'
 /**
  * Per-session state for the webview tool.
  *
- *   idle      → no webview command has been launched (button hidden)
+ *   idle      → no webview command has fired; URL not yet probed
  *   pending   → URL is being polled; button shows neutral pulse
  *   available → URL responded; button pulses GREEN ("ready to view")
- *   failed    → polling timed out; button pulses RED
+ *   failed    → polling timed out / server died; button shows RED
  *
- * The button is only rendered when status !== 'idle'. Clicking it
+ * The button is rendered whenever the session has at least one
+ * webview-enabled command (`hasWebviewCommand` prop on WebviewButton).
+ * In the `idle` state the button is greyed out + disabled with a
+ * tooltip explaining how to activate it. Clicking when non-idle
  * toggles `isOpen`, which the App-level layout uses to swap the
  * webview pane in for the Claude/Partner pane.
  */
