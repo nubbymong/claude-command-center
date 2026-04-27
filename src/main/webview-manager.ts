@@ -161,6 +161,12 @@ export function setWebviewVisible(sessionId: string, visible: boolean): void {
       entry.attachedTo.contentView.addChildView(entry.view)
     } else if (!visible && isAttached) {
       entry.attachedTo.contentView.removeChildView(entry.view)
+      // Belt-and-suspenders: also shrink to 1×1 in the corner. If
+      // removeChildView silently failed (Windows compositor edge case
+      // we've seen during HMR + session-switch), the view is at least
+      // not covering the rest of the UI. Width/height must be ≥ 1
+      // (Electron rejects zero-area rects on some platforms).
+      try { entry.view.setBounds({ x: 0, y: 0, width: 1, height: 1 }) } catch { /* noop */ }
     }
   } catch (err) {
     logError(`[webview] setVisible ${sessionId}=${visible} failed: ${(err as Error)?.message ?? err}`)

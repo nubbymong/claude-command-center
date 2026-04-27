@@ -40,6 +40,12 @@ interface Props {
   isPartnerActive?: boolean
   onTogglePartner?: () => void
   partnerSessionId?: string
+  /**
+   * Owning session id (not PTY id). Threaded down to CommandBar so the
+   * webview store keys off the session, not the partner-PTY suffix.
+   * Defaults to `sessionId` for the main pane TerminalView.
+   */
+  parentSessionId?: string
   legacyVersion?: {
     enabled: boolean
     version: string
@@ -51,7 +57,7 @@ interface Props {
   disableAutoMemory?: boolean
 }
 
-export default function TerminalView({ sessionId, configId, cwd, shellOnly, elevated, ssh, isActive = true, partnerEnabled, isPartnerActive, onTogglePartner, partnerSessionId, legacyVersion, agentIds, flickerFree, powershellTool, effortLevel, disableAutoMemory }: Props) {
+export default function TerminalView({ sessionId, configId, cwd, shellOnly, elevated, ssh, isActive = true, partnerEnabled, isPartnerActive, onTogglePartner, partnerSessionId, parentSessionId, legacyVersion, agentIds, flickerFree, powershellTool, effortLevel, disableAutoMemory }: Props) {
   const xtermContainerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
@@ -546,6 +552,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         isPartnerActive={isPartnerActive}
         onTogglePartner={onTogglePartner}
         partnerSessionId={partnerSessionId}
+        parentSessionId={parentSessionId ?? sessionId}
       />
     </div>
   )

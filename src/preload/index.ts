@@ -140,6 +140,8 @@ export interface ElectronAPI {
     navBack: (sessionId: string) => Promise<void>
     navForward: (sessionId: string) => Promise<void>
     goHome: (sessionId: string) => Promise<void>
+    /** Emergency: destroy every WebContentsView. Used by the global Esc / "Close webview" pill. */
+    closeAll: () => Promise<boolean>
   }
   session: {
     save: (state: unknown) => Promise<boolean>
@@ -410,6 +412,7 @@ const electronAPI: ElectronAPI = {
     navBack: (sessionId: string) => ipcRenderer.invoke(IPC.WEBVIEW_NAV_BACK, sessionId),
     navForward: (sessionId: string) => ipcRenderer.invoke(IPC.WEBVIEW_NAV_FORWARD, sessionId),
     goHome: (sessionId: string) => ipcRenderer.invoke(IPC.WEBVIEW_GO_HOME, sessionId),
+    closeAll: () => ipcRenderer.invoke(IPC.WEBVIEW_CLOSE_ALL),
   },
   session: {
     save: (state: unknown) => ipcRenderer.invoke(IPC.SESSION_SAVE, state),

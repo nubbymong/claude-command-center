@@ -361,12 +361,11 @@ export const TIPS_LIBRARY: Tip[] = [
     category: 'commands',
     complexity: 'intermediate',
     priority: 55,
-    requires: ['sessions.partner-terminal'],
     variants: {
       primary: {
         shortText: '🌐 Open a webview when a command finishes',
         title: 'Webview on Command Completion',
-        body: 'Building a dev server, generating a docs site, or anything that ends with "now look at this URL"? Tick **Launch webview on completion** when editing a command and enter the URL.\n\nWhat happens:\n• Command runs in the partner shell (locked when webview is on).\n• The app polls the URL every second for up to 30s.\n• A new **Web** button appears next to Snap, pulsing **green** when the URL responds (or **red** on timeout).\n• Click it to swap the active pane to a real Chrome view of the page.\n\nThe pane has back/forward/hard-refresh/home, plus a **Freeze** button that snapshots the page and opens it in Excalidraw for annotation.',
+        body: 'Building a dev server, generating a docs site, or anything that ends with "now look at this URL"? Tick **Launch webview on completion** when editing a command and enter the URL.\n\nWhat happens:\n• Command runs in whichever target you pick — Claude, Partner, or Any (works with SSH `shellOnly` sessions too).\n• The app polls the URL every second for up to 30s, then keeps checking every 5s in the background.\n• A **Web** button sits in the toolbar whenever a webview command exists. Greyed when no server is up, **green** the moment the URL responds, **red** on timeout.\n• If a server is already running when the app launches, the button auto-detects it without needing the command.\n• Click it to swap the active pane to a real Chrome view of the page.\n\nThe pane has back/forward/hard-refresh/home, plus a **Freeze** button that snapshots the page and opens it in Excalidraw for annotation.',
       },
     },
   },

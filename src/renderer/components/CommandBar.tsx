@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react'
+import React, { useState, useCallback, useEffect } from 'react'
 import { useCommandStore, CustomCommand, CommandSection } from '../stores/commandStore'
 import { useSessionStore } from '../stores/sessionStore'
 import { useCommandBarStore } from '../stores/commandBarStore'
@@ -6,7 +6,7 @@ import CommandDialog from './CommandDialog'
 import ScreenshotButton from './ScreenshotButton'
 import ExcalidrawButton from './ExcalidrawButton'
 import WebviewButton from './WebviewButton'
-import { useWebviewStore, pollUrlForContent } from '../stores/webviewStore'
+import { useWebviewStore, pollUrlForContent, probeWebviewUrls } from '../stores/webviewStore'
 import ToolbarPopup from './ToolbarPopup'
 import { generateId } from '../utils/id'
 import { trackUsage } from '../stores/tipsStore'
@@ -26,9 +26,20 @@ interface Props {
   isPartnerActive?: boolean
   onTogglePartner?: () => void
   partnerSessionId?: string
+  /**
+   * The owning *session*'s id (not the PTY id). Used to key webview
+   * store state so the Claude and Partner CommandBars within the same
+   * session share one set of pulse/open state — without it, clicking
+   * Web from the partner pane would write `bySessionId[partnerPtyId]`
+   * while App.tsx renders `WebviewPane` keyed by `session.id`,
+   * resulting in the banner triggering but the pane never appearing.
+   * Defaults to `sessionId` so single-pane TerminalViews keep working.
+   */
+  parentSessionId?: string
 }
 
-export default function CommandBar({ sessionId, configId, sessionType = 'local', partnerEnabled, isPartnerActive, onTogglePartner, partnerSessionId }: Props) {
+export default function CommandBar({ sessionId, configId, sessionType = 'local', partnerEnabled, isPartnerActive, onTogglePartner, partnerSessionId, parentSessionId }: Props) {
+  const webviewKey = parentSessionId ?? sessionId
   const { commands, sections, addCommand, updateCommand, removeCommand, reorderCommands, updateSection, removeSection, reorderSections } = useCommandStore()
   const [showDialog, setShowDialog] = useState(false)
   const [editingCommand, setEditingCommand] = useState<CustomCommand | null>(null)
@@ -105,45 +116,74 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
   const markAvailable = useWebviewStore((s) => s.markAvailable)
   const markFailed = useWebviewStore((s) => s.markFailed)
 
+  /**
+   * Kick off polling for a webview-enabled command. Called after the
+   * pty write completes (or after a partner-toggle delay) so the button
+   * starts pulsing in lock-step with the command actually being sent.
+   * Always keyed by the parent session id (not PTY id) so Claude and
+   * Partner CommandBars share the same status.
+   */
+  const startWebviewPolling = (url: string) => {
+    startActivation(webviewKey, url)
+    pollUrlForContent(url).then((reachable) => {
+      if (reachable) markAvailable(webviewKey, url)
+      else markFailed(webviewKey)
+    })
+  }
+
   /** Send a command to the appropriate PTY */
   const sendCommand = (cmd: CustomCommand, fullCommand: string) => {
-    // Webview-enabled commands: forced to partner (CommandDialog already
-    // locks the picker but defend in depth in case an older config lacks
-    // the lock). Kick off URL polling immediately after the write so the
-    // button starts pulsing while the user's command is still booting.
-    if (cmd.webView?.enabled && cmd.webView.url && partnerSessionId) {
-      if (!isPartnerActive && onTogglePartner) onTogglePartner()
-      const writeAndPoll = () => {
-        window.electronAPI.pty.write(partnerSessionId, fullCommand + '\r')
-        const url = cmd.webView!.url
-        startActivation(sessionId, url)
-        pollUrlForContent(url).then((reachable) => {
-          if (reachable) markAvailable(sessionId, url)
-          else markFailed(sessionId)
-        })
+    const target = cmd.target || 'any'
+    const webViewUrl = cmd.webView?.enabled ? cmd.webView.url : null
+
+    const writeTo = (ptyId: string) => {
+      window.electronAPI.pty.write(ptyId, fullCommand + '\r')
+      if (webViewUrl) {
+        // Webview-enabled command — full 30s pending → available/failed
+        // poll, owned by startWebviewPolling.
+        startWebviewPolling(webViewUrl)
+      } else if (webviewUrls.length > 0) {
+        // Any other command-button press is a natural moment to re-verify
+        // the webview URLs for this session — catches "user stopped the
+        // dev server" without burning a background interval. Skipped
+        // when a startWebviewPolling cycle is in flight (pending).
+        void probeWebviewUrls(webviewKey, webviewUrls)
       }
-      if (!isPartnerActive && onTogglePartner) setTimeout(writeAndPoll, 100)
-      else writeAndPoll()
-      return
     }
 
-    const target = cmd.target || 'any'
     if (target === 'partner' && !isPartnerActive && onTogglePartner && partnerSessionId) {
       onTogglePartner()
-      setTimeout(() => window.electronAPI.pty.write(partnerSessionId, fullCommand + '\r'), 100)
+      setTimeout(() => writeTo(partnerSessionId), 100)
       return
     }
     if (target === 'claude' && isPartnerActive && onTogglePartner) {
       onTogglePartner()
-      setTimeout(() => window.electronAPI.pty.write(sessionId, fullCommand + '\r'), 100)
+      setTimeout(() => writeTo(sessionId), 100)
       return
     }
     // 'any' or already on the right terminal
     const targetId = target === 'partner' && partnerSessionId ? partnerSessionId
       : target === 'claude' ? sessionId
       : (isPartnerActive && partnerSessionId ? partnerSessionId : sessionId)
-    window.electronAPI.pty.write(targetId, fullCommand + '\r')
+    writeTo(targetId)
   }
+
+  // One-shot auto-detect on mount — catches a dev server that was
+  // already running before the app launched. No background interval:
+  // re-verification happens when the user clicks any command button
+  // for this session (see writeTo above). Constant polling was the
+  // previous approach; user vetoed it as wasteful.
+  const webviewUrls = visibleCommands
+    .filter((c) => c.webView?.enabled && c.webView.url)
+    .map((c) => c.webView!.url)
+  const webviewUrlsKey = webviewUrls.join('|')
+  useEffect(() => {
+    if (webviewUrls.length === 0) return
+    void probeWebviewUrls(webviewKey, webviewUrls)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [webviewKey, webviewUrlsKey])
+
+  const hasWebviewCommand = webviewUrls.length > 0
 
   const handleClick = (cmd: CustomCommand, e: React.MouseEvent) => {
     // Ctrl+click: show args popover if command has args
@@ -440,7 +480,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
         <div className="w-px h-4 bg-surface1 mx-0.5" />
         <ScreenshotButton sessionId={sessionId} sessionType={sessionType} />
         <ExcalidrawButton sessionId={sessionId} />
-        <WebviewButton sessionId={sessionId} />
+        <WebviewButton sessionId={webviewKey} hasWebviewCommand={hasWebviewCommand} />
         {/* Back to Claude / Partner toggle - same monochrome tool-button shape as Snap */}
         {partnerEnabled && onTogglePartner && (
           <>

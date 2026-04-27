@@ -5,6 +5,7 @@ import {
   checkUrl,
   openWebview,
   closeWebview,
+  closeAllWebviews,
   setWebviewBounds,
   setWebviewVisible,
   reloadWebview,
@@ -80,5 +81,13 @@ export function registerWebviewHandlers(getWindow: () => BrowserWindow | null): 
   ipcMain.handle(IPC.WEBVIEW_GO_HOME, async (_event, sessionId: string) => {
     sessionIdSchema.parse(sessionId)
     goHomeWebview(sessionId)
+  })
+
+  // Emergency escape hatch: destroy every WebContentsView. Called by
+  // the renderer when the user presses Escape or hits the always-visible
+  // pill. Mirrors closeAllWebviews used on app quit.
+  ipcMain.handle(IPC.WEBVIEW_CLOSE_ALL, async () => {
+    closeAllWebviews()
+    return true
   })
 }

@@ -235,6 +235,7 @@ export const IPC = {
   WEBVIEW_NAV_BACK: 'webview:navBack',
   WEBVIEW_NAV_FORWARD: 'webview:navForward',
   WEBVIEW_GO_HOME: 'webview:goHome',              // re-load original URL
+  WEBVIEW_CLOSE_ALL: 'webview:closeAll',          // emergency: destroy every view (escape hatch)
 
   // Hooks gateway
   HOOKS_TOGGLE: 'hooks:toggle',

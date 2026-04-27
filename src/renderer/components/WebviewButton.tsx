@@ -3,29 +3,40 @@ import { useWebviewStore } from '../stores/webviewStore'
 
 interface Props {
   sessionId: string
+  /**
+   * True when the current session/config has at least one webview-enabled
+   * custom command. Drives whether the button renders at all — without it
+   * the toolbar shouldn't surface a webview affordance the user can't use.
+   * Defaults to false so legacy call-sites stay hidden.
+   */
+  hasWebviewCommand?: boolean
 }
 
 /**
- * Tool button that surfaces the webview state. Hidden when status='idle'
- * (no webview-enabled command has fired yet for this session).
+ * Tool button that surfaces the webview state.
  *
- * Status communicated as a subtle border tint + small dot rather than
- * an expanding ring overlay (the ring read as visually aggressive and
- * fought with the rest of the magic-row chips for attention):
+ * Visibility:
+ *   - Hidden entirely when `hasWebviewCommand` is false (no command is
+ *     configured to drive this affordance for this session/scope).
+ *   - Otherwise always rendered; status drives disabled/active styling.
+ *
+ * Status communicated as a subtle border tint + small dot:
+ *   idle      — greyed out, disabled, tooltip explains how to activate
  *   pending   — neutral border, faint dot
  *   available — GREEN border + dot, gentle opacity pulse on the dot
  *   failed    — RED border + dot
  *
- * Click toggles the webview pane.
+ * Click toggles the webview pane (only when status !== 'idle').
  */
-export default function WebviewButton({ sessionId }: Props) {
+export default function WebviewButton({ sessionId, hasWebviewCommand = false }: Props) {
   const state = useWebviewStore((s) => s.bySessionId[sessionId])
   const togglePane = useWebviewStore((s) => s.togglePane)
 
-  if (!state || state.status === 'idle') return null
+  if (!hasWebviewCommand) return null
 
-  const isOpen = state.isOpen
-  const status = state.status
+  const status = state?.status ?? 'idle'
+  const isOpen = state?.isOpen ?? false
+  const isIdle = status === 'idle'
   const isPending = status === 'pending'
   const isAvailable = status === 'available'
   const isFailed = status === 'failed'
@@ -35,7 +46,7 @@ export default function WebviewButton({ sessionId }: Props) {
   // small punctuation that animates only for the success case (so a
   // failure isn't constantly nagging once acknowledged).
   let borderClass = 'border-surface1/80'
-  let dotClass = 'bg-overlay1'
+  let dotClass = 'bg-overlay0/50'
   let dotPulseClass = ''
   if (isAvailable) {
     borderClass = 'border-green/60'
@@ -51,19 +62,29 @@ export default function WebviewButton({ sessionId }: Props) {
   }
 
   const titleParts = [
-    isOpen ? 'Hide webview pane' : 'Show webview pane',
-    state.currentUrl ? `\nURL: ${state.currentUrl}` : '',
+    isIdle
+      ? 'Run a webview-enabled command, or wait for auto-detect when the server starts.'
+      : isOpen
+        ? 'Hide webview pane'
+        : 'Show webview pane',
+    state?.currentUrl ? `\nURL: ${state.currentUrl}` : '',
     isPending ? '\nPolling for content…' : '',
     isFailed ? '\nURL did not respond within 30 s' : '',
   ]
 
+  // Idle = visually present but unactionable. Cursor + opacity signal
+  // "this is here, but there's nothing to click yet."
+  const baseInteractive = isOpen
+    ? `bg-surface1 ${borderClass} text-text`
+    : `bg-surface0/60 ${borderClass} hover:bg-surface1 text-overlay1 hover:text-text`
+  const idleClasses = 'bg-surface0/30 border-surface0 text-overlay0/60 cursor-not-allowed opacity-60'
+
   return (
     <button
-      onClick={() => togglePane(sessionId)}
+      onClick={() => { if (!isIdle) togglePane(sessionId) }}
+      disabled={isIdle}
       className={`flex items-center gap-1.5 px-2 py-0.5 text-xs rounded border transition-colors whitespace-nowrap shrink-0 ${
-        isOpen
-          ? `bg-surface1 ${borderClass} text-text`
-          : `bg-surface0/60 ${borderClass} hover:bg-surface1 text-overlay1 hover:text-text`
+        isIdle ? idleClasses : baseInteractive
       }`}
       title={titleParts.join('').trim()}
     >

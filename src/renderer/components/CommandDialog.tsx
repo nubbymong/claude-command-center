@@ -67,17 +67,13 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId }
     e.preventDefault()
     if (!label.trim() || !prompt.trim()) return
     if (webViewEnabled && !webViewUrl.trim()) return
-    // Webview-enabled commands always run in the partner shell — that's
-    // where we can detect the launched process, run the URL check, and
-    // load the page. Lock the target server-side too.
-    const effectiveTarget = webViewEnabled ? 'partner' : target
     onConfirm({
       label: label.trim(),
       prompt: prompt.trim(),
       scope,
       configId: scope === 'config' ? configId : undefined,
       color,
-      target: effectiveTarget === 'any' ? undefined : effectiveTarget,
+      target: target === 'any' ? undefined : target,
       defaultArgs: defaultArgs.length > 0 ? defaultArgs : undefined,
       sectionId,
       webView: webViewEnabled
@@ -147,29 +143,20 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId }
             </div>
           </div>
           <div>
-            <label className="block text-xs text-subtext0 mb-1">
-              Target Terminal
-              {webViewEnabled && (
-                <span className="ml-2 text-[10px] text-overlay0 italic">
-                  Locked to Partner — webview is enabled
-                </span>
-              )}
-            </label>
+            <label className="block text-xs text-subtext0 mb-1">Target Terminal</label>
             <div className="flex gap-2">
               {([['any', 'Any'], ['claude', 'Claude'], ['partner', 'Partner']] as const).map(([val, lbl]) => {
-                const effectiveTarget = webViewEnabled ? 'partner' : target
-                const isActive = effectiveTarget === val
+                const isActive = target === val
                 return (
                   <button
                     key={val}
                     type="button"
-                    onClick={() => !webViewEnabled && setTarget(val)}
-                    disabled={webViewEnabled}
+                    onClick={() => setTarget(val)}
                     className={`flex-1 py-1.5 text-xs rounded border transition-colors ${
                       isActive
                         ? 'bg-blue/20 border-blue text-blue'
                         : 'bg-surface0 border-surface1 text-overlay1'
-                    } ${webViewEnabled && !isActive ? 'opacity-40 cursor-not-allowed' : ''}`}
+                    }`}
                   >
                     {lbl}
                   </button>
@@ -197,7 +184,7 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId }
                   placeholder="https://localhost:3000"
                 />
                 <p className="mt-1 text-[10px] text-overlay0">
-                  After the partner shell command is sent, the app polls this URL every second for up to 30 s. The webview button pulses green once content is reachable, red on timeout.
+                  After the command is sent, the app polls this URL every second for up to 30 s. The webview button pulses green once content is reachable, red on timeout. The button also auto-detects if the server is already up when the app launches.
                 </p>
               </div>
             )}
