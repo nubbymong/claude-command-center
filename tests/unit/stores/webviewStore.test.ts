@@ -52,6 +52,39 @@ describe('webviewStore', () => {
       useWebviewStore.getState().reset('s1')
       expect(useWebviewStore.getState().bySessionId['s1']).toBeUndefined()
     })
+
+    it('startActivation returns a monotonically-increasing token', () => {
+      const t1 = useWebviewStore.getState().startActivation('s1', 'http://a')
+      const t2 = useWebviewStore.getState().startActivation('s1', 'http://b')
+      const t3 = useWebviewStore.getState().startActivation('s1', 'http://c')
+      expect(t2).toBeGreaterThan(t1)
+      expect(t3).toBeGreaterThan(t2)
+      expect(useWebviewStore.getState().bySessionId['s1'].activationId).toBe(t3)
+    })
+
+    it('markAvailable with stale token is dropped', () => {
+      const t1 = useWebviewStore.getState().startActivation('s1', 'http://a')
+      useWebviewStore.getState().startActivation('s1', 'http://b') // bumps token, status=pending, url=b
+      // Slow earlier poll resolves now with the OLD token + OLD URL.
+      useWebviewStore.getState().markAvailable('s1', 'http://a', t1)
+      const s = useWebviewStore.getState().bySessionId['s1']
+      expect(s.status).toBe('pending')
+      expect(s.currentUrl).toBe('http://b')
+    })
+
+    it('markFailed with stale token is dropped', () => {
+      const t1 = useWebviewStore.getState().startActivation('s1', 'http://a')
+      useWebviewStore.getState().startActivation('s1', 'http://b')
+      useWebviewStore.getState().markFailed('s1', t1)
+      expect(useWebviewStore.getState().bySessionId['s1'].status).toBe('pending')
+    })
+
+    it('mark* without token applies (used by background probe)', () => {
+      // probeWebviewUrls intentionally calls without a token so the
+      // mount-time auto-detect can promote an unrelated session.
+      useWebviewStore.getState().markAvailable('s1', 'http://a')
+      expect(useWebviewStore.getState().bySessionId['s1'].status).toBe('available')
+    })
   })
 
   describe('pollUrlForContent', () => {

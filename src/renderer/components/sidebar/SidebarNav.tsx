@@ -140,7 +140,7 @@ function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMe
       {isCollapsed && (
         <span
           className="pointer-events-none absolute left-full ml-2 z-40 px-2 py-0.5 text-[11px] rounded bg-surface1 text-text border border-surface2 shadow-md whitespace-nowrap opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 transition-opacity duration-100"
-          role="tooltip"
+          aria-hidden="true"
         >
           {title}
         </span>
@@ -192,7 +192,7 @@ export default function SidebarNav({ currentView, onViewChange, insightsStatus, 
       {collapsed && (
         <span
           className="pointer-events-none absolute left-full ml-2 z-40 px-2 py-0.5 text-[11px] rounded bg-surface1 text-text border border-surface2 shadow-md whitespace-nowrap opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 transition-opacity duration-100"
-          role="tooltip"
+          aria-hidden="true"
         >
           Feature Guide
         </span>

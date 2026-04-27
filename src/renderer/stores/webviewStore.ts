@@ -22,6 +22,15 @@ export interface WebviewSessionState {
   currentUrl: string | null
   loadedAt: number | null
   isOpen: boolean
+  /**
+   * Monotonically-incremented per session on every `startActivation`.
+   * Long-running pollers capture this token and pass it back to
+   * `markAvailable` / `markFailed` so a stale poll can't overwrite a
+   * newer one's result. Without this, double-clicking a webview
+   * command (or running two with different URLs) lets the older 30 s
+   * poll win the race and clobber the newer state.
+   */
+  activationId: number
 }
 
 interface State {
@@ -29,13 +38,21 @@ interface State {
 }
 
 interface Actions {
-  /** Begin polling for content. Sets status='pending' and stores URL. */
-  startActivation: (sessionId: string, url: string) => void
-  /** Polling found content. Sets status='available' (green pulse). */
-  markAvailable: (sessionId: string, url: string) => void
-  /** Polling timed out. Sets status='failed' (red pulse). */
-  markFailed: (sessionId: string) => void
-  /** Toggle the pane visibility. Auto-clears the pulse on first open. */
+  /**
+   * Begin polling for content. Sets status='pending', stores URL,
+   * and returns a fresh activation token. Callers that run a long
+   * poll afterwards must pass this token back to mark*() so a stale
+   * resolution doesn't overwrite a newer activation's result.
+   */
+  startActivation: (sessionId: string, url: string) => number
+  /**
+   * Polling found content. When `token` is provided and doesn't
+   * match the latest activationId, the call is dropped (stale poll).
+   */
+  markAvailable: (sessionId: string, url: string, token?: number) => void
+  /** Polling timed out. Same stale-token guard as markAvailable. */
+  markFailed: (sessionId: string, token?: number) => void
+  /** Toggle the pane visibility — flips `isOpen` only. */
   togglePane: (sessionId: string) => void
   /** Explicit set, used by main when WebContentsView errors out. */
   setOpen: (sessionId: string, open: boolean) => void
@@ -54,24 +71,31 @@ const defaultState = (): WebviewSessionState => ({
   currentUrl: null,
   loadedAt: null,
   isOpen: false,
+  activationId: 0,
 })
 
 export const useWebviewStore = create<State & Actions>((set, get) => ({
   bySessionId: {},
   startActivation: (sessionId, url) => {
+    const cur = get().bySessionId[sessionId] || defaultState()
+    const nextToken = cur.activationId + 1
     set((s) => ({
       bySessionId: {
         ...s.bySessionId,
         [sessionId]: {
-          ...(s.bySessionId[sessionId] || defaultState()),
+          ...cur,
           status: 'pending',
           currentUrl: url,
           loadedAt: null,
+          activationId: nextToken,
         },
       },
     }))
+    return nextToken
   },
-  markAvailable: (sessionId, url) => {
+  markAvailable: (sessionId, url, token) => {
+    const cur = get().bySessionId[sessionId]
+    if (token !== undefined && cur && cur.activationId !== token) return
     set((s) => ({
       bySessionId: {
         ...s.bySessionId,
@@ -84,7 +108,9 @@ export const useWebviewStore = create<State & Actions>((set, get) => ({
       },
     }))
   },
-  markFailed: (sessionId) => {
+  markFailed: (sessionId, token) => {
+    const cur = get().bySessionId[sessionId]
+    if (token !== undefined && cur && cur.activationId !== token) return
     set((s) => ({
       bySessionId: {
         ...s.bySessionId,
@@ -95,6 +121,9 @@ export const useWebviewStore = create<State & Actions>((set, get) => ({
       },
     }))
   },
+  // Flip `isOpen` only — status (idle/pending/available/failed) is
+  // owned by activation / probe / poll callers and unaffected by
+  // showing or hiding the pane.
   togglePane: (sessionId) => {
     const cur = get().bySessionId[sessionId] || defaultState()
     set((s) => ({

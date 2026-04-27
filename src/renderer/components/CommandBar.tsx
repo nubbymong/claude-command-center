@@ -122,12 +122,17 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
    * starts pulsing in lock-step with the command actually being sent.
    * Always keyed by the parent session id (not PTY id) so Claude and
    * Partner CommandBars share the same status.
+   *
+   * `startActivation` returns a monotonic token. We pass it to mark*()
+   * so a slow earlier poll can't clobber a newer activation's result —
+   * matters when the user double-taps the command, or runs two
+   * different webview-enabled commands with different URLs back-to-back.
    */
   const startWebviewPolling = (url: string) => {
-    startActivation(webviewKey, url)
+    const token = startActivation(webviewKey, url)
     pollUrlForContent(url).then((reachable) => {
-      if (reachable) markAvailable(webviewKey, url)
-      else markFailed(webviewKey)
+      if (reachable) markAvailable(webviewKey, url, token)
+      else markFailed(webviewKey, token)
     })
   }
 
