@@ -93,10 +93,14 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
         rafId = requestAnimationFrame(tryOpen)
         return
       }
-      openPending = false
       setNavState({ loading: true })
       const ok = await window.electronAPI.webview.open(sessionId, state.currentUrl!, b)
       if (cancelled) return
+      // Only release the bounds-reporting gate AFTER the IPC resolves —
+      // setBounds() before the main-process view exists is a no-op
+      // that floods the IPC channel and (on some Electron builds)
+      // logs warnings. Releasing too early was a Copilot finding.
+      openPending = false
       setNavState({ loading: false })
       if (!ok) {
         setOpen(sessionId, false)
@@ -129,21 +133,33 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
     if (isActive) tryOpenRef.current?.()
   }, [isActive])
 
-  // Bounds-reporting interval — separate effect so it can pause/resume
+  // Bounds-reporting fallback — separate effect so it can pause/resume
   // on session-switch without re-creating the underlying WebContentsView.
+  // ResizeObserver + the window resize listener cover real size changes;
+  // this 500ms tick is a safety net for parent-flex shifts (sidebar
+  // collapse, GitHubPanel toggle) that don't fire either of those.
+  // Only sends a setBounds IPC when the rect *actually changed* since
+  // the last send — pre-fix this fired ~120 IPCs per minute per active
+  // pane regardless of whether anything moved.
   useEffect(() => {
     if (!isActive) return
     const el = containerRef.current
     if (!el) return
+    let last: { x: number; y: number; width: number; height: number } | null = null
     const tick = window.setInterval(() => {
       const rect = el.getBoundingClientRect()
       if (rect.width < 1 || rect.height < 1) return
-      window.electronAPI.webview.setBounds(sessionId, {
+      const next = {
         x: Math.round(rect.left),
         y: Math.round(rect.top),
         width: Math.round(rect.width),
         height: Math.round(rect.height),
-      }).catch(() => { /* noop */ })
+      }
+      if (last && last.x === next.x && last.y === next.y && last.width === next.width && last.height === next.height) {
+        return
+      }
+      last = next
+      window.electronAPI.webview.setBounds(sessionId, next).catch(() => { /* noop */ })
     }, 500)
     return () => window.clearInterval(tick)
   }, [sessionId, isActive])

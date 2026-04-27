@@ -60,8 +60,11 @@ export async function checkUrl(url: string, timeoutMs = 3000): Promise<{ reachab
 
   const head = await probe('HEAD')
   if (head.reachable) return head
-  if (head.status && head.status >= 400 && head.status < 500) {
-    // Some origins reject HEAD entirely (405) — try GET once.
+  // Only retry with GET when the server explicitly told us "method not
+  // allowed" — that's the case the GET fallback was designed for. The
+  // old code retried on any 4xx (404, 401, 403, etc.) which doubled
+  // the per-probe request count without ever changing the answer.
+  if (head.status === 405) {
     const get = await probe('GET')
     if (get.reachable) return get
   }

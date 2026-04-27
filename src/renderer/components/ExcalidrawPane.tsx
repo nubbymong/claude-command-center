@@ -34,6 +34,7 @@ export default function ExcalidrawPane({ sessionId }: Props) {
   const apiRef = useRef<ExcalidrawImperativeAPI | null>(null)
   const saveTimerRef = useRef<number | null>(null)
   const savedFlashTimerRef = useRef<number | null>(null)
+  const copyResetTimerRef = useRef<number | null>(null)
 
   const [renaming, setRenaming] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
@@ -86,17 +87,20 @@ export default function ExcalidrawPane({ sessionId }: Props) {
     }, 300)
   }
 
-  // Clear pending save / saved-flash timers on unmount so a closed
-  // pane can't fire setSaveStatus on an unmounted component.
+  // Clear pending save / saved-flash / copy-reset timers on unmount so
+  // a closed pane can't fire setSaveStatus or setCopyStatus on an
+  // unmounted component.
   useEffect(() => {
     return () => {
       if (saveTimerRef.current != null) window.clearTimeout(saveTimerRef.current)
       if (savedFlashTimerRef.current != null) window.clearTimeout(savedFlashTimerRef.current)
+      if (copyResetTimerRef.current != null) window.clearTimeout(copyResetTimerRef.current)
     }
   }, [])
 
   const handleCopy = async () => {
     if (!apiRef.current) return
+    if (copyResetTimerRef.current != null) window.clearTimeout(copyResetTimerRef.current)
     setCopyStatus('copying')
     try {
       const elements = apiRef.current.getSceneElements()
@@ -110,11 +114,11 @@ export default function ExcalidrawPane({ sessionId }: Props) {
       })
       await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
       setCopyStatus('copied')
-      setTimeout(() => setCopyStatus('idle'), 1500)
+      copyResetTimerRef.current = window.setTimeout(() => setCopyStatus('idle'), 1500)
     } catch (err) {
       console.error('[ExcalidrawPane] copy failed', err)
       setCopyStatus('failed')
-      setTimeout(() => setCopyStatus('idle'), 2000)
+      copyResetTimerRef.current = window.setTimeout(() => setCopyStatus('idle'), 2000)
     }
   }
 
