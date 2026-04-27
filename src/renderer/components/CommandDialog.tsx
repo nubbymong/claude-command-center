@@ -181,7 +181,7 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId }
                   value={webViewUrl}
                   onChange={(e) => setWebViewUrl(e.target.value)}
                   className="w-full px-3 py-1.5 bg-surface0 text-text text-sm rounded border border-surface1 outline-none focus:border-blue font-mono"
-                  placeholder="https://localhost:3000"
+                  placeholder="http://localhost:3000"
                 />
                 <p className="mt-1 text-[10px] text-overlay0">
                   After the command is sent, the app polls this URL every second for up to 30 s. The webview button pulses green once content is reachable, red on timeout. The button also auto-detects if the server is already up when the app launches.

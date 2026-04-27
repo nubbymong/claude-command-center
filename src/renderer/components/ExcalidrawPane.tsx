@@ -32,8 +32,8 @@ export default function ExcalidrawPane({ sessionId }: Props) {
   const resolvedTheme = useResolvedTheme()
 
   const apiRef = useRef<ExcalidrawImperativeAPI | null>(null)
-  const lastSerializedRef = useRef<string>('')
   const saveTimerRef = useRef<number | null>(null)
+  const savedFlashTimerRef = useRef<number | null>(null)
 
   const [renaming, setRenaming] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
@@ -60,22 +60,40 @@ export default function ExcalidrawPane({ sessionId }: Props) {
     return activeDrawing.scene as never
   }, [activeDrawing])
 
-  // Autosave handler — debounced through the store. Tracks save status
-  // for the toolbar indicator.
+  // Autosave handler. Excalidraw fires onChange on every micro-event
+  // (pointer move while drawing, etc.) so we can't write to the store
+  // on each tick — that would trigger a Zustand re-render storm AND
+  // a JSON.stringify on the full scene to dirty-check, which can be
+  // megabytes for a busy whiteboard. The pane debounces store updates
+  // (300 ms idle); the store itself then debounces disk persistence
+  // (400 ms inside excalidrawStore). Combined latency is "300 ms
+  // after last edit → React state, then ~400 ms → disk", which matches
+  // user expectation of "I stopped editing, it's saved".
+  //
+  // No more JSON.stringify dirty-check — Excalidraw bumps versionNonce
+  // on every fire so the equality test almost always missed and just
+  // burned CPU on the serialisation.
   const handleSceneChange = (elements: unknown, appState: unknown, files: unknown) => {
     if (!activeDrawing) return
     const scene = { elements, appState, files }
-    const serialised = JSON.stringify(scene)
-    if (serialised === lastSerializedRef.current) return
-    lastSerializedRef.current = serialised
     setSaveStatus('saving')
     if (saveTimerRef.current != null) window.clearTimeout(saveTimerRef.current)
+    if (savedFlashTimerRef.current != null) window.clearTimeout(savedFlashTimerRef.current)
     saveTimerRef.current = window.setTimeout(() => {
       updateScene(sessionId, activeDrawing.id, scene)
       setSaveStatus('saved')
-      window.setTimeout(() => setSaveStatus('idle'), 1200)
-    }, 400)
+      savedFlashTimerRef.current = window.setTimeout(() => setSaveStatus('idle'), 1200)
+    }, 300)
   }
+
+  // Clear pending save / saved-flash timers on unmount so a closed
+  // pane can't fire setSaveStatus on an unmounted component.
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current != null) window.clearTimeout(saveTimerRef.current)
+      if (savedFlashTimerRef.current != null) window.clearTimeout(savedFlashTimerRef.current)
+    }
+  }, [])
 
   const handleCopy = async () => {
     if (!apiRef.current) return

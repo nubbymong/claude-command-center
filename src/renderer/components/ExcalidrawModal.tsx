@@ -1,8 +1,9 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useRef, useState } from 'react'
 import { Excalidraw, exportToBlob } from '@excalidraw/excalidraw'
 import '@excalidraw/excalidraw/index.css'
 import type { ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types'
 import { useResolvedTheme } from '../hooks/useThemeController'
+import { useFocusTrap } from '../hooks/useFocusTrap'
 
 interface Props {
   /**
@@ -17,16 +18,15 @@ interface Props {
 
 export default function ExcalidrawModal({ backgroundImage, onClose }: Props) {
   const apiRef = useRef<ExcalidrawImperativeAPI | null>(null)
+  const dialogRef = useRef<HTMLDivElement>(null)
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copying' | 'copied' | 'failed'>('idle')
   const resolvedTheme = useResolvedTheme()
-
-  useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-    }
-    document.addEventListener('keydown', handleKey)
-    return () => document.removeEventListener('keydown', handleKey)
-  }, [onClose])
+  // Trap focus inside the modal so keyboard users can't tab into the
+  // underlying app while annotating. Also handles Escape → close, so
+  // we don't need a separate document keydown listener — `useFocusTrap`
+  // owns both concerns the same way it does in the GitHub onboarding
+  // / config modals.
+  useFocusTrap(dialogRef, true, onClose)
 
   const handleCopy = async () => {
     const api = apiRef.current
@@ -60,6 +60,7 @@ export default function ExcalidrawModal({ backgroundImage, onClose }: Props) {
 
   return (
     <div
+      ref={dialogRef}
       className="fixed inset-0 z-50 flex flex-col bg-crust/95 backdrop-blur-sm"
       role="dialog"
       aria-modal="true"

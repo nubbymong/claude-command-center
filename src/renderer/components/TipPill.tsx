@@ -36,7 +36,6 @@ export default function TipPill({ onClick }: Props) {
         transition-all duration-200 max-w-[340px] truncate
         ${mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-1'}`}
       title="Click for details"
-      aria-label="Tip"
     >
       <svg
         width="11"

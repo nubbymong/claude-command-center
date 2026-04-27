@@ -41,7 +41,7 @@ export default function WebviewButton({ sessionId, hasWebviewCommand = false }: 
   const isAvailable = status === 'available'
   const isFailed = status === 'failed'
 
-  // Cattppuccin-leaning accent palette — green for ready, red for
+  // Catppuccin-leaning accent palette — green for ready, red for
   // unreachable. Border colour does the heavy lifting; the dot is a
   // small punctuation that animates only for the success case (so a
   // failure isn't constantly nagging once acknowledged).
