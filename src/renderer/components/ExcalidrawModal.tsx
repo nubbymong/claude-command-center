@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { Excalidraw, exportToBlob } from '@excalidraw/excalidraw'
 import '@excalidraw/excalidraw/index.css'
 import type { ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types'
+import { useResolvedTheme } from '../hooks/useThemeController'
 
 interface Props {
   /**
@@ -17,6 +18,7 @@ interface Props {
 export default function ExcalidrawModal({ backgroundImage, onClose }: Props) {
   const apiRef = useRef<ExcalidrawImperativeAPI | null>(null)
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copying' | 'copied' | 'failed'>('idle')
+  const resolvedTheme = useResolvedTheme()
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -91,7 +93,7 @@ export default function ExcalidrawModal({ backgroundImage, onClose }: Props) {
       <div className="flex-1 min-h-0 relative">
         <Excalidraw
           excalidrawAPI={(api) => { apiRef.current = api }}
-          theme="dark"
+          theme={resolvedTheme}
           initialData={backgroundImage ? {
             elements: [{
               id: 'frozen-bg',
@@ -129,7 +131,7 @@ export default function ExcalidrawModal({ backgroundImage, onClose }: Props) {
                 created: Date.now(),
               },
             } as never,
-            appState: { viewBackgroundColor: '#1e1e2e', exportBackground: true } as never,
+            appState: { viewBackgroundColor: resolvedTheme === 'light' ? '#eff1f5' : '#1e1e2e', exportBackground: true } as never,
           } : undefined}
         />
       </div>

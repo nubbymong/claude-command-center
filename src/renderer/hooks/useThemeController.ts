@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useSettingsStore } from '../stores/settingsStore'
 
 // Resolve the user's chosen mode against OS preference and stamp the
@@ -36,4 +36,25 @@ export function getResolvedTheme(): 'dark' | 'light' {
   const t = useSettingsStore.getState().settings.theme
   if (t === 'dark' || t === 'light') return t
   return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
+}
+
+// Reactive variant — components that need to repaint when the theme
+// flips (Excalidraw modal, etc.) subscribe via this hook so they get
+// re-rendered on settings change AND on OS-level prefers-color-scheme
+// change while in 'system' mode.
+export function useResolvedTheme(): 'dark' | 'light' {
+  const setting = useSettingsStore((s) => s.settings.theme)
+  const [resolved, setResolved] = useState<'dark' | 'light'>(() => getResolvedTheme())
+  useEffect(() => {
+    if (setting === 'dark' || setting === 'light') {
+      setResolved(setting)
+      return undefined
+    }
+    const mq = window.matchMedia('(prefers-color-scheme: light)')
+    setResolved(mq.matches ? 'light' : 'dark')
+    const onChange = (e: MediaQueryListEvent) => setResolved(e.matches ? 'light' : 'dark')
+    mq.addEventListener('change', onChange)
+    return () => mq.removeEventListener('change', onChange)
+  }, [setting])
+  return resolved
 }

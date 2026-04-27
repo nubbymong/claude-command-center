@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
 vi.mock('../../../src/renderer/utils/config-saver', () => ({
+  saveConfigDebounced: vi.fn(),
   saveConfigNow: vi.fn(),
 }))
 
 import { useCommandBarStore } from '../../../src/renderer/stores/commandBarStore'
-import { saveConfigNow } from '../../../src/renderer/utils/config-saver'
+import { saveConfigDebounced } from '../../../src/renderer/utils/config-saver'
 
 describe('useCommandBarStore', () => {
   beforeEach(() => {
@@ -13,7 +14,7 @@ describe('useCommandBarStore', () => {
       state: { collapsedSectionIds: [] },
       isLoaded: false,
     })
-    vi.mocked(saveConfigNow).mockClear()
+    vi.mocked(saveConfigDebounced).mockClear()
   })
 
   it('hydrate seeds collapsedSectionIds from disk and sets isLoaded', () => {
@@ -28,6 +29,17 @@ describe('useCommandBarStore', () => {
     expect(useCommandBarStore.getState().isLoaded).toBe(true)
   })
 
+  it('hydrate normalises non-array collapsedSectionIds (corrupted config)', () => {
+    // Simulating a hand-edited / corrupted commandBarUi.json where the
+    // field came back as a string. Without the Array.isArray guard
+    // toggleSection's later .filter() would throw at runtime.
+    useCommandBarStore.getState().hydrate({ collapsedSectionIds: 'not-an-array' as unknown as string[] })
+    expect(useCommandBarStore.getState().state.collapsedSectionIds).toEqual([])
+    expect(useCommandBarStore.getState().isLoaded).toBe(true)
+    // Confirm the now-normalised state survives a toggle without throwing.
+    expect(() => useCommandBarStore.getState().toggleSection('sec-1')).not.toThrow()
+  })
+
   it('toggleSection adds id when not present, removes when present', () => {
     useCommandBarStore.getState().toggleSection('sec-1')
     expect(useCommandBarStore.getState().state.collapsedSectionIds).toEqual(['sec-1'])
@@ -39,12 +51,12 @@ describe('useCommandBarStore', () => {
     expect(useCommandBarStore.getState().state.collapsedSectionIds).toEqual(['sec-2'])
   })
 
-  it('toggleSection persists to disk on each change', () => {
+  it('toggleSection persists via debounced save on each change', () => {
     useCommandBarStore.getState().toggleSection('sec-x')
-    expect(saveConfigNow).toHaveBeenCalledWith('commandBarUi', { collapsedSectionIds: ['sec-x'] })
+    expect(saveConfigDebounced).toHaveBeenCalledWith('commandBarUi', { collapsedSectionIds: ['sec-x'] })
 
     useCommandBarStore.getState().toggleSection('sec-x')
-    expect(saveConfigNow).toHaveBeenLastCalledWith('commandBarUi', { collapsedSectionIds: [] })
+    expect(saveConfigDebounced).toHaveBeenLastCalledWith('commandBarUi', { collapsedSectionIds: [] })
   })
 
   it('isCollapsed reflects current set membership', () => {

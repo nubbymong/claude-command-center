@@ -15,7 +15,24 @@ import {
   goHomeWebview,
 } from '../webview-manager'
 
-const urlSchema = z.string().url().max(4096)
+// Restrict to plain web schemes — without this the user could
+// (intentionally or via a typo) load file://, chrome://, javascript:,
+// or custom protocols inside a webview that has node integration off
+// but still inherits the main BrowserWindow's session trust. The
+// webview pane is meant for arbitrary user URLs, not for browsing
+// the local filesystem or privileged Chromium internals.
+const ALLOWED_WEBVIEW_PROTOCOLS = new Set(['http:', 'https:'])
+const urlSchema = z
+  .string()
+  .url()
+  .max(4096)
+  .refine((value) => {
+    try {
+      return ALLOWED_WEBVIEW_PROTOCOLS.has(new URL(value).protocol)
+    } catch {
+      return false
+    }
+  }, { message: 'Webview URLs must use http or https' })
 const sessionIdSchema = z.string().min(1).max(200)
 const boundsSchema = z.object({
   x: z.number().int().min(0).max(20000),

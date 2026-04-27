@@ -83,18 +83,21 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
     ro.observe(el)
     window.addEventListener('resize', reportBounds)
     // Catch parent-flex changes that don't fire ResizeObserver on this
-    // element (sidebar collapse, GitHubPanel toggle, etc).
-    const tick = window.setInterval(reportBounds, 500)
+    // element (sidebar collapse, GitHubPanel toggle, etc). Skip the
+    // poll while the session is inactive — the WebContentsView is
+    // detached via setVisible, bounds reads here would just be
+    // wasted IPC + layout reads on a hidden tree.
+    const tick = isActive ? window.setInterval(reportBounds, 500) : null
 
     return () => {
       cancelled = true
       ro.disconnect()
       window.removeEventListener('resize', reportBounds)
-      window.clearInterval(tick)
+      if (tick !== null) window.clearInterval(tick)
       window.electronAPI.webview.close(sessionId).catch(() => { /* noop */ })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, state?.currentUrl])
+  }, [sessionId, state?.currentUrl, isActive])
 
   // Show/hide on session-active changes. Without this, the
   // WebContentsView from an inactive session keeps drawing over the

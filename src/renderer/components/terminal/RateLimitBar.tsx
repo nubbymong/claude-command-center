@@ -6,7 +6,16 @@ import { formatResetTime } from '../../utils/terminalFormatting'
 // flagged the dot row as the hardest-to-parse element on the status line.
 export default function RateLimitBar({ label, pct, resets }: { label: string; pct: number; resets?: string }) {
   const clamped = Math.min(100, Math.max(0, pct))
-  const color = clamped >= 90 ? '#F38BA8' : clamped >= 70 ? '#F9E2AF' : clamped >= 50 ? '#FAB387' : '#A6E3A1'
+  // Drive from theme tokens so the bar adapts to light/dark — hard-
+  // coded Catppuccin Mocha hex didn't repaint when the user flipped
+  // theme and clashed with the lighter palette.
+  const color = clamped >= 90
+    ? 'var(--color-red)'
+    : clamped >= 70
+      ? 'var(--color-yellow)'
+      : clamped >= 50
+        ? 'var(--color-peach)'
+        : 'var(--color-green)'
   return (
     <span
       className="flex items-center gap-1.5"

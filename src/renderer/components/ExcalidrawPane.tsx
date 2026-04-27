@@ -3,6 +3,7 @@ import { Excalidraw, exportToBlob } from '@excalidraw/excalidraw'
 import '@excalidraw/excalidraw/index.css'
 import type { ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types'
 import { useExcalidrawStore, ExcalidrawDrawing } from '../stores/excalidrawStore'
+import { useResolvedTheme } from '../hooks/useThemeController'
 
 interface Props {
   sessionId: string
@@ -28,6 +29,7 @@ export default function ExcalidrawPane({ sessionId }: Props) {
   const renameDrawing = useExcalidrawStore((s) => s.renameDrawing)
   const deleteDrawing = useExcalidrawStore((s) => s.deleteDrawing)
   const updateScene = useExcalidrawStore((s) => s.updateScene)
+  const resolvedTheme = useResolvedTheme()
 
   const apiRef = useRef<ExcalidrawImperativeAPI | null>(null)
   const lastSerializedRef = useRef<string>('')
@@ -246,7 +248,7 @@ export default function ExcalidrawPane({ sessionId }: Props) {
             <Excalidraw
               key={activeDrawing.id}
               excalidrawAPI={(api) => { apiRef.current = api }}
-              theme="dark"
+              theme={resolvedTheme}
               initialData={initialData}
               onChange={handleSceneChange}
             />

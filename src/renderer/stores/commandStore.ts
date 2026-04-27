@@ -12,11 +12,14 @@ export interface CustomCommand {
   sectionId?: string       // Which section this button belongs to
   defaultArgs?: string[]   // Default arguments (run on normal click)
   lastCustomArgs?: string[] // Last custom arguments used (remembered)
-  // When enabled, after the command runs in the partner shell the app polls
-  // `webView.url` for content. First successful response opens the webview
-  // pane in green-pulse state; a 30 s timeout flips the button red. Forces
-  // target='partner' so we have a deterministic place to launch the URL
-  // checker once the shell command settles.
+  // When enabled, the command write triggers a 30 s URL poll against
+  // `webView.url`. First successful response sets the Web button to
+  // green; a 30 s timeout flips it red. The command honours the
+  // user's chosen `target` (Claude / Partner / Any) — works for SSH
+  // shellOnly sessions where Claude isn't running. The CommandBar
+  // also re-probes this URL on any command-button press in the
+  // session, so a stopped server downgrades available → failed
+  // without a background interval.
   webView?: {
     enabled: boolean
     url: string

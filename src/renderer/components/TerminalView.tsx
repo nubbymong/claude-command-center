@@ -10,7 +10,7 @@ import CommandBar from './CommandBar'
 import SshFlowOverlay from './SshFlowOverlay'
 import { shouldUseResumePicker } from '../utils/resumePicker'
 import { stripCursorSequences } from '../utils/terminalFormatting'
-import { THEME, getTerminalTheme } from './terminal/terminalTheme'
+import { getTerminalTheme } from './terminal/terminalTheme'
 import { useSettingsStore, DEFAULT_TERMINAL_SETTINGS } from '../stores/settingsStore'
 import { ContextBar, ScrollToBottomButton } from './terminal'
 import { useStatuslineSubscription } from '../hooks/useStatuslineSubscription'
@@ -82,26 +82,33 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
   // term.options.theme = X only colours new writes, so we also call
   // term.refresh(0, rows-1) to repaint existing scrollback. requestAnimationFrame
   // gives the browser a tick to recompute CSS variables before we read them.
+  // Re-run on `terminalReady` flips — the init effect below sets this
+  // to true after `terminalRef.current = term`, so the MutationObserver
+  // attaches on first paint instead of returning early when the ref
+  // was still null. Without this gate, theme flips never repainted.
+  const [terminalReady, setTerminalReady] = useState(false)
   useEffect(() => {
+    if (!terminalReady) return
     const term = terminalRef.current
     if (!term) return
 
     const apply = () => {
       const raf = requestAnimationFrame(() => {
-        if (!terminalRef.current) return
-        const live = getTerminalTheme()
-        term.options.theme = shellOnly
-          ? live
-          : { ...live, cursor: live.background, cursorAccent: live.background }
+        const live = terminalRef.current
+        if (!live) return
+        const palette = getTerminalTheme()
+        live.options.theme = shellOnly
+          ? palette
+          : { ...palette, cursor: palette.background, cursorAccent: palette.background }
         try {
-          term.refresh(0, term.rows - 1)
+          live.refresh(0, live.rows - 1)
         } catch {
           /* terminal may have been disposed mid-flip */
         }
         // Theme flip can recreate the cursor canvas; re-stamp the
         // inline hide for Claude sessions. Cheap & idempotent.
-        if (!shellOnly && term.element) {
-          term.element.querySelectorAll('.xterm-cursor-layer').forEach((el) => {
+        if (!shellOnly && live.element) {
+          live.element.querySelectorAll('.xterm-cursor-layer').forEach((el) => {
             const node = el as HTMLElement
             node.style.setProperty('display', 'none', 'important')
             node.style.setProperty('visibility', 'hidden', 'important')
@@ -126,7 +133,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       observer.disconnect()
       if (pendingRaf !== undefined) cancelAnimationFrame(pendingRaf)
     }
-  }, [shellOnly])
+  }, [shellOnly, terminalReady])
 
   // Core terminal initialization + PTY wiring
   useEffect(() => {
@@ -234,6 +241,10 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
 
       terminalRef.current = term
       fitAddonRef.current = fitAddon
+      // Tell the theme-observer effect the terminal is live now so it
+      // can attach the MutationObserver — refs alone don't trigger
+      // effects, this state flip does.
+      setTerminalReady(true)
 
       // Wait for custom fonts to load BEFORE computing cols/rows.
       // xterm.js measures character width using the currently-loaded font.
@@ -497,6 +508,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       term?.dispose()
       terminalRef.current = null
       fitAddonRef.current = null
+      setTerminalReady(false)
     }
   }, [sessionId])
 

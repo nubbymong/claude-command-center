@@ -978,11 +978,13 @@ export function spawnPty(
       logInfo(`[pty-manager] Launching Claude via shell in PTY: ${shell} -> ${cmd} cwd=${resolvedCwd} (resumePicker=${!!options?.useResumePicker})`)
 
       const claudeEnv: Record<string, string> = { ...process.env, CLAUDE_MULTI_SESSION_ID: sessionId } as Record<string, string>
-      // TEST 1: deliberately NOT setting CLAUDE_CODE_NO_FLICKER. The
-      // "fullscreen rendering" path is a research preview and may be
-      // interacting badly with ConPTY on Windows. macOS doesn't show
-      // the rogue artifact even without it. Restore conditional/
-      // unconditional setting after diagnosis.
+      // Honour the user's flickerFree toggle — matches the SSH path
+      // which sets CLAUDE_CODE_NO_FLICKER=1 inline. Was previously
+      // commented out during a ConPTY-vs-fullscreen-rendering
+      // investigation; that diagnosis didn't conclude in a "drop the
+      // option" decision, so leaving the UI control as a no-op was
+      // misleading.
+      if (options?.flickerFree) claudeEnv.CLAUDE_CODE_NO_FLICKER = '1'
       if (options?.powershellTool) claudeEnv.CLAUDE_CODE_USE_POWERSHELL_TOOL = '1'
       if (options?.disableAutoMemory) claudeEnv.CLAUDE_CODE_DISABLE_AUTO_MEMORY = '1'
 
