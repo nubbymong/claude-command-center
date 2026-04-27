@@ -85,9 +85,18 @@ export default function SessionHeader({ session, isShowingPartner, sidebarCollap
 
   return (
     <div
-      className="flex items-center gap-3 px-4 py-2 border-b border-surface0 bg-mantle shrink-0"
-      style={{ borderTopWidth: '3px', borderTopStyle: 'solid', borderTopColor: session.color }}
+      className="flex items-center gap-3 px-4 py-2 border-b border-surface0 bg-mantle shrink-0 relative"
     >
+      {/* Session-color accent line that fades out toward the right —
+          replaces the old flat 3px solid border. The gradient stops
+          before fully transparent at ~70% so the colour reads strong
+          on the left where the session label sits, and dissolves as
+          it approaches the toolbar/right rail. */}
+      <div
+        className="absolute top-0 left-0 right-0 h-[2px] pointer-events-none"
+        style={{ background: `linear-gradient(to right, ${session.color} 0%, ${session.color}80 15%, transparent 55%)` }}
+        aria-hidden
+      />
       {/* Color dot kept as the at-a-glance identifier — the session name lives
           in the tab strip directly above and was repeated here verbatim before.
           UX audit 2026-04-25: drop the redundant label, keep dot + metadata. */}

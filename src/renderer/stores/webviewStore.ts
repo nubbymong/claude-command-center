@@ -38,6 +38,12 @@ interface Actions {
   setOpen: (sessionId: string, open: boolean) => void
   /** Wipe state for a session — e.g. on session removal. */
   reset: (sessionId: string) => void
+  /**
+   * Emergency escape hatch — closes every open pane in the renderer.
+   * Used in lock-step with `webview.closeAll()` IPC so the main-process
+   * WebContentsViews are destroyed at the same time as the React state.
+   */
+  closeAllPanes: () => void
 }
 
 const defaultState = (): WebviewSessionState => ({
@@ -111,6 +117,15 @@ export const useWebviewStore = create<State & Actions>((set, get) => ({
       return { bySessionId: next }
     })
   },
+  closeAllPanes: () => {
+    set((s) => {
+      const next: Record<string, WebviewSessionState> = {}
+      for (const [id, st] of Object.entries(s.bySessionId)) {
+        next[id] = { ...st, isOpen: false }
+      }
+      return { bySessionId: next }
+    })
+  },
 }))
 
 /**
@@ -133,6 +148,47 @@ export async function pollUrlForContent(url: string, opts: { intervalMs?: number
     }
     if (Date.now() + interval >= deadline) break
     await new Promise((r) => setTimeout(r, interval))
+  }
+  return false
+}
+
+/**
+ * One round of "is anything serving?" — HEAD-probes each URL in order,
+ * sets the session to `available` for the first that responds, or
+ * downgrades to `failed` when none do *and* we previously thought a
+ * server was up.
+ *
+ * Two callers:
+ *   1. CommandBar mount  — auto-detects a server already running before
+ *      the app launched.
+ *   2. Any command-button press in the session — natural moment to
+ *      re-verify (picked over constant polling, which is wasteful and
+ *      the user vetoed). Catches "user stopped the dev server, then
+ *      clicked a command" without the cost of a background interval.
+ *
+ * Skips when status is `pending` (an active 30s poll owns the state).
+ * Re-probes `available` URLs (intentionally — that's how we catch a
+ * server that died). `failed` → `available` transitions are allowed:
+ * a server can come back up after a previous timeout.
+ */
+export async function probeWebviewUrls(sessionId: string, urls: string[]): Promise<boolean> {
+  if (urls.length === 0) return false
+  const current = useWebviewStore.getState().bySessionId[sessionId]
+  if (current?.status === 'pending') return false
+  for (const url of urls) {
+    try {
+      const result = await window.electronAPI.webview.check(url)
+      if (result?.reachable) {
+        useWebviewStore.getState().markAvailable(sessionId, url)
+        return true
+      }
+    } catch { /* network error — try next URL */ }
+  }
+  // Nothing reachable. Only downgrade if we previously thought a
+  // server was up — leaving `idle` as `idle` (no false-failure state
+  // for sessions that have never seen a reachable URL).
+  if (current?.status === 'available') {
+    useWebviewStore.getState().markFailed(sessionId)
   }
   return false
 }

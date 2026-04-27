@@ -226,6 +226,7 @@ export interface ElectronAPI {
     navBack: (sessionId: string) => Promise<void>
     navForward: (sessionId: string) => Promise<void>
     goHome: (sessionId: string) => Promise<void>
+    closeAll: () => Promise<boolean>
   }
   session: {
     save: (state: SessionState) => Promise<boolean>

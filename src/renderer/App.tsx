@@ -124,6 +124,36 @@ export default function App() {
   // OS prefers-color-scheme changes when in 'system' mode.
   useThemeController()
 
+  // Emergency escape hatch for the WebContentsView pane — Esc closes
+  // the *active* session's webview. Native Electron views render above
+  // all HTML, so a stuck/oversized view can bury the toolbar Close
+  // button and leave the user with no in-pane way out. This handler
+  // runs at document level so it fires regardless of where focus is in
+  // the renderer (the inner page only consumes Esc when *it* has focus).
+  // The "Close all webviews" button stays as a separate safety hatch
+  // for when state has leaked across sessions.
+  const activeSessionHasWebview = !!activeSessionId && !!webviewBySession[activeSessionId]?.isOpen
+  const anyWebviewOpen = Object.values(webviewBySession).some((s) => s?.isOpen)
+  const closeAllWebviews = useCallback(() => {
+    useWebviewStore.getState().closeAllPanes()
+    void window.electronAPI.webview.closeAll().catch(() => { /* noop */ })
+  }, [])
+  const closeActiveWebview = useCallback(() => {
+    if (!activeSessionId) return
+    useWebviewStore.getState().setOpen(activeSessionId, false)
+  }, [activeSessionId])
+  useEffect(() => {
+    if (!activeSessionHasWebview) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        closeActiveWebview()
+      }
+    }
+    document.addEventListener('keydown', onKey, true)
+    return () => document.removeEventListener('keydown', onKey, true)
+  }, [activeSessionHasWebview, closeActiveWebview])
+
   const togglePartner = (sessionId: string) => {
     setPartnerActive(prev => {
       const next = new Set(prev)
@@ -514,6 +544,7 @@ export default function App() {
                     <TerminalView
                       key={session.id + '-main-' + session.createdAt}
                       sessionId={session.id}
+                      parentSessionId={session.id}
                       configId={session.configId}
                       cwd={session.sessionType === 'local' ? session.workingDirectory : undefined}
                       shellOnly={session.shellOnly}
@@ -542,6 +573,7 @@ export default function App() {
                       <TerminalView
                         key={partnerPtyId + '-' + session.createdAt}
                         sessionId={partnerPtyId}
+                        parentSessionId={session.id}
                         configId={session.configId}
                         cwd={session.partnerTerminalPath}
                         shellOnly={true}
@@ -700,6 +732,37 @@ export default function App() {
           </div>
         )}
         <TitleBar sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
+        {/* Always-visible escape hatch for the WebContentsView pane.
+            Rendered above the per-session content row so it sits in
+            HTML-only territory the native view's bounds can never
+            reach. Scoped to the active session — switching to a
+            session without a webview hides the banner. The "Close
+            all" button stays as a safety hatch for state that leaked
+            across sessions (e.g. legacy partner-PTY-keyed entries). */}
+        {activeSessionHasWebview && (
+          <div className="flex items-center justify-center gap-2 px-3 py-1 bg-red/15 border-b border-red/40 text-[11px] text-text">
+            <span className="text-red">Webview pane open</span>
+            <span className="text-overlay1">— press</span>
+            <kbd className="px-1.5 py-0.5 rounded border border-surface1 bg-surface0 text-overlay1 text-[10px]">Esc</kbd>
+            <span className="text-overlay1">to close, or</span>
+            <button
+              onClick={closeActiveWebview}
+              className="px-2 py-0.5 rounded border border-red/60 bg-red/20 text-red hover:bg-red/30 transition-colors"
+              title="Close this session's webview pane"
+            >
+              ✕ Close webview
+            </button>
+            {anyWebviewOpen && (
+              <button
+                onClick={closeAllWebviews}
+                className="px-2 py-0.5 rounded border border-overlay0 bg-surface0 text-overlay1 hover:text-text hover:bg-surface1 transition-colors"
+                title="Force-close every webview pane (safety hatch for stuck state)"
+              >
+                Close all
+              </button>
+            )}
+          </div>
+        )}
         <div className="flex flex-1 overflow-hidden">
           <Sidebar currentView={view} onViewChange={setView} collapsed={!sidebarOpen} tourActive={showTraining || showTrainingAll} onShowFirstRun={() => setShowGuidedConfig(true)} onShowHelp={() => { setShowTrainingAll(true); setShowTraining(true) }} onUpdateRequested={() => {
             const state = useSessionStore.getState()

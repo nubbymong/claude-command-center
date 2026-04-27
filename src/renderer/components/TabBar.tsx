@@ -43,14 +43,13 @@ export default function TabBar() {
           <button
             key={session.id}
             onClick={() => setActiveSession(session.id)}
-            className={`group relative flex items-center gap-2 px-4 py-1.5 text-xs border-r border-surface0 transition-all duration-150 shrink-0 overflow-hidden ${
+            className={`group relative flex items-center gap-2 px-4 py-1.5 mt-1 mx-0.5 text-xs rounded-t-lg transition-all duration-150 shrink-0 overflow-hidden ${
               isActive
                 ? 'text-text'
                 : 'text-overlay1 hover:text-text'
             }`}
             style={{
               backgroundColor: isActive ? color + '20' : undefined,
-              borderBottom: isActive ? `2px solid ${color}` : '2px solid transparent',
             }}
             onMouseEnter={(e) => { if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = color + '12' }}
             onMouseLeave={(e) => { if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = '' }}
