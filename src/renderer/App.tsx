@@ -160,6 +160,19 @@ export default function App() {
     return () => document.removeEventListener('keydown', onKey)
   }, [activeSessionHasWebview, closeActiveWebview])
 
+  // Forward Esc presses that happen INSIDE a WebContentsView (where
+  // keyboard focus belongs to the embedded page, not this renderer
+  // document). The main process's `before-input-event` hook on each
+  // view emits sessionId here; we close that specific session's pane.
+  useEffect(() => {
+    return window.electronAPI.webview.onEscapePressed((sessionId) => {
+      // Skip when an in-renderer modal is showing — the modal's own
+      // focus-trap will own the Esc instead.
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return
+      useWebviewStore.getState().setOpen(sessionId, false)
+    })
+  }, [])
+
   const togglePartner = (sessionId: string) => {
     setPartnerActive(prev => {
       const next = new Set(prev)

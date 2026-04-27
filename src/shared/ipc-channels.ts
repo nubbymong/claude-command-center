@@ -236,6 +236,7 @@ export const IPC = {
   WEBVIEW_NAV_FORWARD: 'webview:navForward',
   WEBVIEW_GO_HOME: 'webview:goHome',              // re-load original URL
   WEBVIEW_CLOSE_ALL: 'webview:closeAll',          // emergency: destroy every view (escape hatch)
+  WEBVIEW_ESCAPE_PRESSED: 'webview:escapePressed', // main → renderer: user pressed Esc inside a WebContentsView
 
   // Hooks gateway
   HOOKS_TOGGLE: 'hooks:toggle',

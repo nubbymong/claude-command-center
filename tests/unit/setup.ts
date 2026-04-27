@@ -137,6 +137,7 @@ const mockElectronAPI = {
     navForward: vi.fn(() => Promise.resolve()),
     goHome: vi.fn(() => Promise.resolve()),
     closeAll: vi.fn(() => Promise.resolve(true)),
+    onEscapePressed: vi.fn(() => () => {}),
   },
 }
 
