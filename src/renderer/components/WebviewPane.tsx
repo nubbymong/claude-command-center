@@ -33,6 +33,16 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
   // first React render runs before layout, so getBoundingClientRect
   // returns 0×0 for a frame and the WebContentsView would otherwise be
   // created at full-window initial bounds (manager fallback).
+  // Track latest isActive in a ref so the bounds-reporting helpers
+  // and the rAF retry loop can read it without forcing the lifecycle
+  // effect to re-fire on session switch (which would destroy the
+  // WebContentsView via the cleanup's webview.close call).
+  const isActiveRef = useRef(isActive)
+  useEffect(() => { isActiveRef.current = isActive }, [isActive])
+
+  // Lifecycle: create the WebContentsView once and tear it down only
+  // when the session id or URL actually changes. Session-switch is
+  // handled separately via setVisible (attach/detach), not destroy.
   useEffect(() => {
     const el = containerRef.current
     if (!el || !state?.currentUrl) return
@@ -50,20 +60,24 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
     }
 
     const reportBounds = () => {
+      // Skip while inactive — view is detached via setVisible, the
+      // IPC + layout reads would just be wasted on a display:none
+      // ancestor.
+      if (!isActiveRef.current) return
       const b = measure()
-      // Skip impossible bounds — happens when an ancestor has
-      // display:none, layout pending, etc. The setVisible toggle keeps
-      // the view hidden in those cases, so leaving bounds stale is
-      // safe and avoids 1×1-flicker in the corner of the screen.
+      // Skip impossible bounds — display:none, layout pending, etc.
       if (b.width < 1 || b.height < 1) return
       window.electronAPI.webview.setBounds(sessionId, b).catch(() => { /* noop */ })
     }
 
     const tryOpen = async () => {
       if (cancelled) return
+      // Wait until this session is the active one — otherwise the
+      // ancestor display:none keeps bounds at 0×0 and the rAF loop
+      // would spin forever. As soon as the session is brought to
+      // front, bounds become valid and tryOpen lands the open call.
       const b = measure()
-      if (b.width < 1 || b.height < 1) {
-        // Layout not ready — try next frame.
+      if (!isActiveRef.current || b.width < 1 || b.height < 1) {
         requestAnimationFrame(tryOpen)
         return
       }
@@ -82,22 +96,34 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
     const ro = new ResizeObserver(() => { if (!openPending) reportBounds() })
     ro.observe(el)
     window.addEventListener('resize', reportBounds)
-    // Catch parent-flex changes that don't fire ResizeObserver on this
-    // element (sidebar collapse, GitHubPanel toggle, etc). Skip the
-    // poll while the session is inactive — the WebContentsView is
-    // detached via setVisible, bounds reads here would just be
-    // wasted IPC + layout reads on a hidden tree.
-    const tick = isActive ? window.setInterval(reportBounds, 500) : null
 
     return () => {
       cancelled = true
       ro.disconnect()
       window.removeEventListener('resize', reportBounds)
-      if (tick !== null) window.clearInterval(tick)
       window.electronAPI.webview.close(sessionId).catch(() => { /* noop */ })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, state?.currentUrl, isActive])
+  }, [sessionId, state?.currentUrl])
+
+  // Bounds-reporting interval — separate effect so it can pause/resume
+  // on session-switch without re-creating the underlying WebContentsView.
+  useEffect(() => {
+    if (!isActive) return
+    const el = containerRef.current
+    if (!el) return
+    const tick = window.setInterval(() => {
+      const rect = el.getBoundingClientRect()
+      if (rect.width < 1 || rect.height < 1) return
+      window.electronAPI.webview.setBounds(sessionId, {
+        x: Math.round(rect.left),
+        y: Math.round(rect.top),
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+      }).catch(() => { /* noop */ })
+    }, 500)
+    return () => window.clearInterval(tick)
+  }, [sessionId, isActive])
 
   // Show/hide on session-active changes. Without this, the
   // WebContentsView from an inactive session keeps drawing over the
