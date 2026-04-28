@@ -40,7 +40,7 @@ import { startServiceStatusPoller, stopServiceStatusPoller } from './service-sta
 import { initUpdateWatcher, stopUpdateWatcher, getProjectRootPath, isPackagedApp } from './update-watcher'
 import { startUpdateServer, stopUpdateServer } from './update-server'
 import { saveSessionState, loadSessionState, clearSessionState, hasSavedSessionState, SessionState } from './session-state'
-import { getConfigDir, ensureConfigDir } from './config-manager'
+import { getConfigDir, ensureConfigDir, snapshotConfig } from './config-manager'
 import { stopGlobalVision, startGlobalVision, cleanupLegacyVisionMarkers, startConductorMcpServer, stopConductorMcpServer } from './vision-manager'
 import { readConfig } from './config-manager'
 import { loadCredential, saveCredential, deleteCredential } from './credential-store'
@@ -509,6 +509,12 @@ if (!gotTheLock) {
 
     const menu = Menu.buildFromTemplate(menuTemplate)
     Menu.setApplicationMenu(menu)
+
+    // Take a daily safety snapshot of the CONFIG directory BEFORE anything
+    // writes to it (deploy/config below, window/handlers later, IPC saves
+    // throughout the session). One snapshot per UTC day, last 7 retained
+    // under CONFIG/_backups/YYYY-MM-DD/. Non-fatal if it fails.
+    try { snapshotConfig() } catch (err) { console.warn('[main] snapshotConfig failed:', err) }
 
     // Deploy statusline script and configure Claude settings
     try {

@@ -15,6 +15,15 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '1.4.1',
+    date: '2026-04-28',
+    highlights: "Safety-net daily backups of your CONFIG directory — never lose a session list to a corrupted write again",
+    changes: [
+      { type: 'feature', description: "Daily auto-backup of CONFIG/*.json under CONFIG/_backups/YYYY-MM-DD/ on every app launch. Last 7 days kept, prunes older. Recovery is a manual copy back into CONFIG/ — but the data is always there if anything goes sideways" },
+      { type: 'fix', description: "Capture-training script no longer destroys real config data on cleanup. PID lock prevents concurrent captures; cleanup only restores files it explicitly backed up; never blind-deletes by filename match" },
+    ]
+  },
+  {
     version: '1.4.0',
     date: '2026-04-24',
     highlights: "GitHub sidebar — PR, CI, reviews, linked issues, and session context next to the terminal",
