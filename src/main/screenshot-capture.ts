@@ -75,36 +75,14 @@ async function _captureRectangleImpl(mainWindow: BrowserWindow): Promise<string 
   const { width: screenW, height: screenH } = primaryDisplay.size
   const scaleFactor = primaryDisplay.scaleFactor
 
-  // Minimize main window. Bound the wait — on some Windows configs
-  // (multi-monitor + alwaysOnTop apps stealing focus) `isMinimized()`
-  // can stay false even after `minimize()` resolves the OS-level call.
-  // Without a timeout we'd block here forever and the user would be
-  // stuck with no way to dismiss Snap.
-  mainWindow.minimize()
-  await new Promise<void>((resolve) => {
-    const start = Date.now()
-    const check = () => {
-      if (mainWindow.isMinimized() || Date.now() - start > 1500) resolve()
-      else setTimeout(check, 50)
-    }
-    setTimeout(check, 100)
-  })
+  console.log(`[screenshot] starting capture flow, display ${screenW}×${screenH} @ ${scaleFactor}x`)
 
-  // Let minimize animation complete
-  await new Promise(r => setTimeout(r, 300))
-
-  // Capture the desktop NOW — before the overlay exists. Two reasons:
-  //   1. The previous design used `transparent: true` on the overlay so
-  //      the user could see through to the live desktop. On Windows the
-  //      transparent compositor silently drops sub-pixel paint for the
-  //      selection rectangle — the user sees the dimming overlay but
-  //      not the rectangle they're dragging. Snipping Tool / ShareX
-  //      avoid this by freezing the desktop into an opaque image and
-  //      letting the user draw on top of THAT. Same trick here.
-  //   2. We previously captured AGAIN after the user clicked-up, which
-  //      meant a second IPC round-trip and a tiny window where another
-  //      app could move/animate between freeze and selection. One
-  //      capture, used for both preview and crop, is correct.
+  // Capture the desktop while the conductor is still visible — the
+  // user explicitly wants to be able to snap parts of the conductor
+  // itself, so minimising would defeat the purpose. The overlay then
+  // shows this frozen capture as its background while the user drags
+  // a rectangle. They see exactly what was on screen at capture time
+  // (including the conductor), and can crop any region of it.
   let desktopImage: ReturnType<typeof nativeImage.createFromBuffer> | null = null
   let desktopDataUrl = ''
   try {
@@ -112,25 +90,27 @@ async function _captureRectangleImpl(mainWindow: BrowserWindow): Promise<string 
       types: ['screen'],
       thumbnailSize: { width: screenW * scaleFactor, height: screenH * scaleFactor },
     })
-    if (sources.length > 0 && !sources[0].thumbnail.isEmpty()) {
-      desktopImage = sources[0].thumbnail
-      // Encode as JPG (much smaller than PNG for photographic content)
-      // for embedding in the overlay HTML. q90 keeps the preview crisp
-      // without blowing the data-URL up — at 1920×1080 this lands around
-      // 300-500 KB; at 4K around 1-2 MB. Both load instantly on a local
-      // data: URL.
-      const previewBytes = desktopImage.toJPEG(90)
-      desktopDataUrl = `data:image/jpeg;base64,${previewBytes.toString('base64')}`
+    console.log(`[screenshot] desktopCapturer returned ${sources.length} source(s)`)
+    if (sources.length === 0) {
+      mainWindow.webContents.send('screenshot:error', 'No screen source available — Windows may have denied screen-recording permission to Electron.')
+      return null
     }
+    if (sources[0].thumbnail.isEmpty()) {
+      console.warn('[screenshot] thumbnail was empty')
+      return null
+    }
+    desktopImage = sources[0].thumbnail
+    // q90 keeps the preview crisp without blowing the data URL up.
+    // 1920×1080 → ~400 KB; 4K → ~1.5 MB. Both load instantly.
+    const previewBytes = desktopImage.toJPEG(90)
+    desktopDataUrl = `data:image/jpeg;base64,${previewBytes.toString('base64')}`
+    console.log(`[screenshot] preview encoded, ${(previewBytes.length / 1024).toFixed(0)} KB`)
   } catch (err) {
-    console.warn('[screenshot] pre-capture failed, falling back to live capture:', err)
+    console.error('[screenshot] desktopCapturer.getSources threw:', err)
+    return null
   }
   if (!desktopImage || !desktopDataUrl) {
-    // Pre-capture is required for the visible-rectangle pattern. If it
-    // failed (no permission, no display source), bail rather than
-    // showing a broken overlay.
-    mainWindow.restore()
-    mainWindow.focus()
+    console.warn('[screenshot] no desktop image after capture; bailing')
     return null
   }
 
@@ -199,7 +179,8 @@ async function _captureRectangleImpl(mainWindow: BrowserWindow): Promise<string 
       try { ipcMain.removeHandler('screenshot:regionSelected') } catch { /* noop */ }
       try { ipcMain.removeHandler('screenshot:cancelled') } catch { /* noop */ }
       if (!overlay.isDestroyed()) overlay.destroy()
-      mainWindow.restore()
+      // No minimize → no restore. Just refocus the conductor so the
+      // user lands back on whatever session was active.
       mainWindow.focus()
     }
 
@@ -262,7 +243,6 @@ async function _captureRectangleImpl(mainWindow: BrowserWindow): Promise<string 
         resolved = true
         ipcMain.removeHandler('screenshot:regionSelected')
         ipcMain.removeHandler('screenshot:cancelled')
-        mainWindow.restore()
         mainWindow.focus()
         resolve(null)
       }
@@ -276,10 +256,18 @@ async function _captureRectangleImpl(mainWindow: BrowserWindow): Promise<string 
     // sits above taskbar popups and always-on-top apps on Windows.
     overlay.once('ready-to-show', () => {
       if (overlay.isDestroyed()) return
+      console.log('[screenshot] overlay ready-to-show; calling show + focus')
       overlay.setAlwaysOnTop(true, 'screen-saver')
       overlay.show()
       overlay.focus()
       overlay.moveTop()
+    })
+
+    overlay.webContents.once('did-finish-load', () => {
+      console.log('[screenshot] overlay HTML loaded')
+    })
+    overlay.webContents.on('console-message', (_event, level, message) => {
+      console.log(`[screenshot:overlay-console] level=${level} ${message}`)
     })
 
     const html = getOverlayHtml(desktopDataUrl)
