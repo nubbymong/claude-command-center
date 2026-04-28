@@ -4,6 +4,7 @@ import {
   trainingSteps,
   getNewSteps,
   currentTrainingVersion,
+  SECTION_LABELS,
   type TrainingStep,
 } from '../training-steps'
 
@@ -210,12 +211,12 @@ export default function TrainingWalkthrough({ onClose, showAll = false, mode = '
           }}
         >
           {/* Screenshot area */}
-          <div className="rounded-lg border border-surface0/60 overflow-hidden bg-crust">
+          <div className="rounded-lg border border-surface0/60 overflow-hidden bg-crust aspect-video">
             {!showFallback && imgSrc ? (
               <img
                 src={imgSrc}
                 alt={step?.title ?? ''}
-                className="w-full h-auto object-contain"
+                className="w-full h-full object-contain"
                 onError={markBad}
                 onLoad={(e) => {
                   const img = e.currentTarget
@@ -223,7 +224,7 @@ export default function TrainingWalkthrough({ onClose, showAll = false, mode = '
                 }}
               />
             ) : (
-              <div className="flex items-center justify-center h-48 text-overlay0">
+              <div className="flex items-center justify-center h-full text-overlay0">
                 <div className="text-center">
                   <div className="text-3xl mb-2 font-mono opacity-40">&gt;_</div>
                   <p className="text-xs">Screenshot will appear here</p>
@@ -232,19 +233,68 @@ export default function TrainingWalkthrough({ onClose, showAll = false, mode = '
             )}
           </div>
 
-          {/* Bullet points */}
-          <ul className="space-y-2.5">
-            {step?.bullets.map((bullet, i) => (
-              <li key={i} className="flex items-start gap-2.5 text-sm text-subtext0">
-                <span className="text-blue mt-0.5 shrink-0">
-                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
-                    <circle cx="8" cy="8" r="3" fill="currentColor" />
-                  </svg>
-                </span>
-                <span>{renderBullet(bullet)}</span>
-              </li>
-            ))}
-          </ul>
+          {/* Body — hero layout when summary is set, legacy bullets otherwise */}
+          {step?.summary ? (
+            <>
+              {step.section && (
+                <div className="text-[10px] uppercase tracking-wider text-overlay0">
+                  {SECTION_LABELS[step.section]} <span className="text-surface2 mx-1">→</span> {step.title}
+                </div>
+              )}
+              <p className="text-sm text-subtext0 leading-relaxed">{step.summary}</p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
+                <div>
+                  <div className="text-[10px] uppercase tracking-wider text-overlay1 font-medium mb-2">Highlights</div>
+                  <ul className="space-y-2">
+                    {(step.highlights ?? step.bullets).map((b, i) => (
+                      <li key={i} className="flex items-start gap-2 text-[13px] text-subtext0 leading-snug">
+                        <span className="text-blue mt-1.5 shrink-0">
+                          <svg width="6" height="6" viewBox="0 0 6 6" fill="currentColor"><circle cx="3" cy="3" r="3" /></svg>
+                        </span>
+                        <span>{renderBullet(b)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                <div className="space-y-3">
+                  {step.howToTrigger && step.howToTrigger.length > 0 && (
+                    <div>
+                      <div className="text-[10px] uppercase tracking-wider text-overlay1 font-medium mb-2">How to open</div>
+                      <dl className="space-y-1.5">
+                        {step.howToTrigger.map((row, i) => (
+                          <div key={i} className="flex items-start gap-2 text-[12px]">
+                            <dt className="text-overlay0 shrink-0 w-16">{row.label}</dt>
+                            <dd className="text-text">{row.value}</dd>
+                          </div>
+                        ))}
+                      </dl>
+                    </div>
+                  )}
+                  {step.proTip && (
+                    <div className="rounded-md border border-blue/25 bg-blue/[0.06] px-3 py-2">
+                      <div className="text-[10px] uppercase tracking-wider text-blue/80 font-medium mb-1">Pro tip</div>
+                      <p className="text-[12px] text-subtext0 leading-snug">{step.proTip}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </>
+          ) : (
+            // Legacy renderer — flat bullet list. Steps migrate to the
+            // hero layout one at a time by adding a `summary` field.
+            <ul className="space-y-2.5">
+              {step?.bullets.map((bullet, i) => (
+                <li key={i} className="flex items-start gap-2.5 text-sm text-subtext0">
+                  <span className="text-blue mt-0.5 shrink-0">
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+                      <circle cx="8" cy="8" r="3" fill="currentColor" />
+                    </svg>
+                  </span>
+                  <span>{renderBullet(bullet)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       </div>
 
@@ -311,7 +361,7 @@ export default function TrainingWalkthrough({ onClose, showAll = false, mode = '
           aria-modal="false"
           aria-label="Help walkthrough"
         >
-          <div className="w-[min(820px,92vw)] h-[min(720px,86vh)] flex pointer-events-auto">
+          <div className="w-[min(1200px,95vw)] h-[min(880px,92vh)] flex pointer-events-auto">
             {card}
           </div>
         </div>
@@ -319,7 +369,7 @@ export default function TrainingWalkthrough({ onClose, showAll = false, mode = '
     }
     return (
       <div
-        className="fixed bottom-4 right-4 z-50 w-[420px] h-[min(600px,80vh)] flex pointer-events-auto"
+        className="fixed bottom-4 right-4 z-50 w-[460px] h-[min(680px,84vh)] flex pointer-events-auto"
         role="dialog"
         aria-modal="false"
         aria-label="Help walkthrough"
@@ -335,7 +385,7 @@ export default function TrainingWalkthrough({ onClose, showAll = false, mode = '
   // accidentally clicking off would lose progress.
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-crust/80 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="Welcome walkthrough">
-      <div className="w-[min(820px,92vw)] h-[min(720px,86vh)] flex">
+      <div className="w-[min(1200px,95vw)] h-[min(880px,92vh)] flex">
         {card}
       </div>
     </div>
