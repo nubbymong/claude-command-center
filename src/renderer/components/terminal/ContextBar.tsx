@@ -40,7 +40,10 @@ export default function ContextBar({
     : ctxThreshold === 'warn' ? 'var(--color-yellow)'
     : 'var(--color-green)'
   return (
-    <div className="flex flex-col shrink-0 bg-crust border-t border-surface0 text-xs font-mono text-subtext0">
+    <div
+      className={`flex flex-col shrink-0 bg-crust border-t border-surface0 text-subtext0 ${sl.font === 'mono' ? 'font-mono' : ''}`}
+      style={{ fontSize: `${sl.fontSize}px` }}
+    >
       {/* Row 1: Context + model + cost + lines */}
       <div className="flex items-center gap-3 px-2 py-1">
         {sl.showModel && modelName && (
@@ -68,10 +71,20 @@ export default function ContextBar({
           <span className="tabular-nums" title="API equivalent cost (not billed on Max plan)">API eq ${costUsd.toFixed(4)}</span>
         )}
         {sl.showLinesChanged && linesAdded != null && (
-          <span className="tabular-nums">+{linesAdded}</span>
+          <span
+            className="tabular-nums"
+            style={{ color: 'color-mix(in srgb, var(--color-green) 65%, var(--color-subtext0))' }}
+          >
+            +{linesAdded}
+          </span>
         )}
         {sl.showLinesChanged && linesRemoved != null && linesRemoved > 0 && (
-          <span className="tabular-nums">−{linesRemoved}</span>
+          <span
+            className="tabular-nums"
+            style={{ color: 'color-mix(in srgb, var(--color-red) 65%, var(--color-subtext0))' }}
+          >
+            −{linesRemoved}
+          </span>
         )}
         {sl.showDuration && totalDurationMs != null && (
           <span className="text-overlay1 tabular-nums">{formatDuration(totalDurationMs)}</span>

@@ -78,8 +78,12 @@ export default function SettingsPage({ initialTab }: SettingsPageProps = {}) {
 
   const sl = settings.statusLine || DEFAULT_STATUS_LINE
 
-  const updateStatusLine = (key: keyof StatusLineSettings) => {
+  const toggleStatusLine = (key: keyof StatusLineSettings) => {
     save({ statusLine: { ...sl, [key]: !sl[key] } })
+  }
+
+  const setStatusLineField = <K extends keyof StatusLineSettings>(key: K, value: StatusLineSettings[K]) => {
+    save({ statusLine: { ...sl, [key]: value } })
   }
 
   return (
@@ -283,7 +287,7 @@ export default function SettingsPage({ initialTab }: SettingsPageProps = {}) {
           )}
 
           {activeTab === 'statusline' && (
-            <StatusLineTab sl={sl} onToggle={updateStatusLine} />
+            <StatusLineTab sl={sl} onToggle={toggleStatusLine} onSet={setStatusLineField} />
           )}
 
           {activeTab === 'shortcuts' && (
@@ -384,7 +388,15 @@ const STATUS_LINE_TOGGLES: { key: keyof StatusLineSettings; label: string; descr
   { key: 'showResetTime', label: 'Reset Time', description: 'Time until rate limit resets' }
 ]
 
-function StatusLineTab({ sl, onToggle }: { sl: StatusLineSettings; onToggle: (key: keyof StatusLineSettings) => void }) {
+function StatusLineTab({
+  sl,
+  onToggle,
+  onSet,
+}: {
+  sl: StatusLineSettings
+  onToggle: (key: keyof StatusLineSettings) => void
+  onSet: <K extends keyof StatusLineSettings>(key: K, value: StatusLineSettings[K]) => void
+}) {
   return (
     <>
       {/* Live Preview */}
@@ -403,6 +415,48 @@ function StatusLineTab({ sl, onToggle }: { sl: StatusLineSettings; onToggle: (ke
           <p className="text-[11px] text-overlay0 mt-2">
             Toggle elements below to see how the status bar changes.
           </p>
+        </div>
+      </div>
+
+      {/* Typography */}
+      <div className="rounded-xl bg-surface0/30 border border-surface0/60 overflow-hidden">
+        <div className="px-4 py-2.5 border-b border-surface0/40 flex items-center gap-2">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="text-overlay1 shrink-0">
+            <path d="M3 4h10M5 4v8h2V4M9 4v8h2V4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+          </svg>
+          <h3 className="text-xs font-semibold text-subtext0 uppercase tracking-wider">Typography</h3>
+        </div>
+        <div className="p-4 space-y-3">
+          <Field label="Font">
+            <div className="flex gap-1">
+              {(['sans', 'mono'] as const).map((f) => (
+                <button
+                  key={f}
+                  onClick={() => onSet('font', f)}
+                  className={`px-3 py-1.5 rounded-md text-xs transition-colors ${
+                    sl.font === f
+                      ? 'bg-blue/20 text-blue border border-blue/30'
+                      : 'bg-surface0/60 text-overlay1 border border-surface0/80 hover:text-text'
+                  }`}
+                >
+                  {f === 'sans' ? 'Sans (Inter)' : 'Mono'}
+                </button>
+              ))}
+            </div>
+          </Field>
+          <Field label="Font Size">
+            <div className="flex items-center gap-3">
+              <input
+                type="range"
+                min={10}
+                max={16}
+                value={sl.fontSize}
+                onChange={(e) => onSet('fontSize', parseInt(e.target.value))}
+                className="w-32"
+              />
+              <span className="text-sm text-subtext0 tabular-nums w-8">{sl.fontSize}px</span>
+            </div>
+          </Field>
         </div>
       </div>
 
@@ -454,22 +508,35 @@ function StatusLinePreview({ sl }: { sl: StatusLineSettings }) {
     on ? '' : 'opacity-30 line-through'
 
   return (
-    <div className="flex flex-col shrink-0 bg-crust border-t border-surface0 text-xs font-mono">
+    <div
+      className={`flex flex-col shrink-0 bg-crust border-t border-surface0 text-subtext0 ${sl.font === 'mono' ? 'font-mono' : ''}`}
+      style={{ fontSize: `${sl.fontSize}px` }}
+    >
       {/* Row 1 */}
       <div className="flex items-center gap-3 px-2 py-1">
-        <span className={`text-blue font-medium ${vis(sl.showModel)}`}>Claude 4 Sonnet</span>
-        <span className={`text-peach ${vis(sl.showTokens)}`}>84K / 200K</span>
+        <span className={`text-text font-medium ${vis(sl.showModel)}`}>Claude 4 Sonnet</span>
+        <span className={`tabular-nums ${vis(sl.showTokens)}`}>84K / 200K</span>
         <div className={`flex items-center gap-1.5 ${!sl.showContextBar ? 'opacity-30' : ''}`}>
           <div className="w-20 h-1.5 bg-surface1 rounded-full overflow-hidden">
-            <div className="h-full rounded-full bg-[#A6E3A1]" style={{ width: '42%' }} />
+            <div className="h-full rounded-full" style={{ width: '42%', backgroundColor: 'var(--color-green)' }} />
           </div>
-          <span className={`text-subtext0 ${!sl.showContextBar ? 'line-through' : ''}`}>42%</span>
+          <span className={`tabular-nums ${!sl.showContextBar ? 'line-through' : ''}`}>42%</span>
         </div>
         <div className="flex-1" />
-        <span className={`text-yellow ${vis(sl.showCost)}`}>API eq $0.1847</span>
-        <span className={`text-green ${vis(sl.showLinesChanged)}`}>+127</span>
-        <span className={`text-red ${vis(sl.showLinesChanged)}`}>-23</span>
-        <span className={`text-overlay0 ${vis(sl.showDuration)}`}>3m 42s</span>
+        <span className={`tabular-nums ${vis(sl.showCost)}`}>API eq $0.1847</span>
+        <span
+          className={`tabular-nums ${vis(sl.showLinesChanged)}`}
+          style={{ color: 'color-mix(in srgb, var(--color-green) 65%, var(--color-subtext0))' }}
+        >
+          +127
+        </span>
+        <span
+          className={`tabular-nums ${vis(sl.showLinesChanged)}`}
+          style={{ color: 'color-mix(in srgb, var(--color-red) 65%, var(--color-subtext0))' }}
+        >
+          −23
+        </span>
+        <span className={`text-overlay1 tabular-nums ${vis(sl.showDuration)}`}>3m 42s</span>
       </div>
       {/* Row 2: Rate limits */}
       <div className={`flex items-center gap-3 px-2 py-0.5 border-t border-surface0/50 ${!sl.showRateLimits && !sl.showResetTime ? 'opacity-30' : ''}`}>
