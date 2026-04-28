@@ -232,13 +232,10 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
         hasPassword: config.sshConfig.hasPassword,
         postCommand: config.sshConfig.postCommand,
         hasSudoPassword: config.sshConfig.hasSudoPassword,
-        dockerContainer: config.sshConfig.dockerContainer
       } : undefined,
       legacyVersion: config.legacyVersion,
       agentIds: config.agentIds,
       machineName: config.machineName,
-      flickerFree: config.flickerFree,
-      powershellTool: config.powershellTool,
       effortLevel: config.effortLevel,
       disableAutoMemory: config.disableAutoMemory,
     }

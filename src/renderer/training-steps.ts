@@ -51,8 +51,8 @@ export const trainingSteps: TrainingStep[] = [
       'Local or SSH — one config form, full Claude support either way',
       'Effort level pins thinking depth (Low / Medium / High / Auto)',
       'Model override (Sonnet / Opus / Haiku) when you need to pin a specific tier',
-      'Per-session toggles: flicker-free rendering, PowerShell tool, Disable auto-memory',
-      'Bundle built-in agents (code-reviewer, test-runner) into the session at spawn',
+      'Disable auto-memory if you want a fully ephemeral Claude session',
+      'Bundle agent templates from your Library into the session at spawn',
     ],
     howToTrigger: [
       { label: 'Create', value: 'Saved Configs → +' },
@@ -64,7 +64,7 @@ export const trainingSteps: TrainingStep[] = [
     bullets: [
       'Create **terminal configs** with custom working directories and models',
       'Set **effort level** (Low/Medium/High) to control thinking depth and cost',
-      'Enable **flicker-free rendering** and platform-specific tools per session',
+      '**Bundle agent templates** from your Library into the spawned session',
       'Connect to remote machines via **SSH** with full Claude support',
     ],
     screenshotFilename: 'step-session-options.jpg',
@@ -75,26 +75,26 @@ export const trainingSteps: TrainingStep[] = [
     sinceVersion: '1.0.0',
     section: 'integrations',
     summary:
-      'Dispatch headless Claude as a background task. Single agents run one prompt to completion; Teams chain multiple agents with explicit dependencies, all monitored from one dashboard with live status, output streaming, and retry.',
+      'Two surfaces in one. Tasks dispatch headless Claude as background jobs. The Library is where you author agent templates — name, prompt, model, tool whitelist — that surface as tickable subagents in every Edit Config dialog.',
     highlights: [
-      'Tasks tab — one-off agent dispatch with prompt, working dir, and model',
+      'Tasks tab — fire-and-forget headless agent runs with live status + output streaming',
       'Teams tab — chain agents (a → b → c) with shared context and per-step prompts',
-      'Library tab — pre-built agent templates ready to drop into any config',
-      'Live status pills, output streaming, retry on failure',
+      'Library tab — author your own templates; built-ins (code-reviewer, test-runner...) are starting points to copy and edit',
+      'Tick a template in Edit Config → Agents and Claude can delegate to it via the Task tool inside the running session',
       'Right-click a task for actions: cancel, retry, remove, copy output',
     ],
     howToTrigger: [
       { label: 'Open', value: 'Click  ☁  in the sidebar nav' },
-      { label: 'New', value: 'Header → + New agent' },
-      { label: 'Library', value: 'Left rail → Library' },
+      { label: 'Author', value: 'Library tab → + New Agent' },
+      { label: 'Bundle into session', value: 'Edit Config → Agents → tick template' },
     ],
     proTip:
-      'Build a Team for your release workflow: lint → test → build → notify. Each step gets the previous step\'s output as context, so failures surface where they happened.',
+      'Library templates aren\'t just for headless Tasks — anything you author there is also a subagent inside any Claude session that has it ticked in the config. Same definition, two delivery surfaces.',
     bullets: [
-      '**Cloud agents** run headless Claude sessions in the background',
-      'Browse and install agents from the **agent library**',
-      '**Agent Teams** orchestrate multi-agent pipelines with dependencies',
-      'Monitor all running agents from a single dashboard',
+      '**Tasks** dispatch headless Claude jobs with live output streaming',
+      '**Library** is where you author agent templates that surface in Edit Config',
+      '**Teams** chain agents with shared context and per-step prompts',
+      'Built-ins (code-reviewer, test-runner...) are **starting points** — copy and edit',
     ],
     screenshotFilename: 'step-agent-hub.jpg',
   },
@@ -126,6 +126,122 @@ export const trainingSteps: TrainingStep[] = [
       'Works over **SSH** too — reverse tunnels connect remote sessions automatically',
     ],
     screenshotFilename: 'step-vision.jpg',
+  },
+  {
+    id: 'webview',
+    title: 'Webview Pane',
+    sinceVersion: '1.4.0',
+    section: 'productivity',
+    summary:
+      'Embed any URL right next to your terminal. Custom commands open dev servers, dashboards, or docs in-app — and freezing the pane drops you straight into Excalidraw to annotate over what you are seeing.',
+    highlights: [
+      'Pinned to the same session — pane state survives tab switches',
+      'Custom commands declare URLs so the toolbar surfaces a Web button automatically',
+      'Status pulse: green when reachable, red when the URL fails to load',
+      'Freeze + Excalidraw — capture a frame and draw over it without leaving the session',
+      'Esc closes the pane back to terminal-only view',
+    ],
+    howToTrigger: [
+      { label: 'Open', value: 'Session toolbar → Web (visible when a webview command exists)' },
+      { label: 'Pin URL', value: 'Custom command → enable webview + URL field' },
+      { label: 'Freeze', value: 'Web pane header → Freeze (opens Excalidraw on the snapshot)' },
+    ],
+    proTip:
+      'Wire your dev server URL into a custom command — every session for that config gets a one-click in-app preview without ever leaving the keyboard.',
+    bullets: [
+      '**Embed any URL** in the session pane via webview-enabled custom commands',
+      '**Freeze** the current frame and annotate it in Excalidraw',
+      'Status indicator turns **green when reachable, red when broken**',
+      'Closes with **Esc** or the toolbar button toggle',
+    ],
+    screenshotFilename: 'step-webview.jpg',
+  },
+  {
+    id: 'excalidraw',
+    title: 'Excalidraw Scratchpad',
+    sinceVersion: '1.4.0',
+    section: 'productivity',
+    summary:
+      'A per-session whiteboard for diagramming, planning, or sketching ideas before you describe them to Claude. Drawings persist with the session and pair cleanly with Freeze for annotating screenshots.',
+    highlights: [
+      'Per-session canvas — switching sessions swaps the drawing in place',
+      'Full Excalidraw toolset: shapes, arrows, text, freehand, libraries',
+      'Drawings auto-save to the session config — closing and reopening the app restores them',
+      'Freeze the webview pane to import a snapshot and draw straight over it',
+      'Replaces the terminal in place — no fullscreen modal eating the toolbar',
+    ],
+    howToTrigger: [
+      { label: 'Open', value: 'Session toolbar → Draw' },
+      { label: 'Switch back', value: 'Click Draw again, or pick a different session' },
+      { label: 'Clear canvas', value: 'Excalidraw header → Reset' },
+    ],
+    proTip:
+      'Sketch the architecture of what you want to build, then ask Claude to look at the drawing in Excalidraw — it will fetch the canvas via the vision MCP and reason about it directly.',
+    bullets: [
+      '**Per-session whiteboard** for diagrams, planning, or quick sketches',
+      'Drawings **persist** with the session config across restarts',
+      'Pair with **Freeze** to annotate webview snapshots',
+      'Replaces the terminal in place — toggle off to return',
+    ],
+    screenshotFilename: 'step-excalidraw.jpg',
+  },
+  {
+    id: 'combined-mode',
+    title: 'Combined Mode',
+    sinceVersion: '1.4.0',
+    section: 'productivity',
+    summary:
+      'Run Claude and a regular shell side-by-side in the same session. Useful when you want to watch logs, run quick git commands, or babysit a long-running build without spawning a second session.',
+    highlights: [
+      'Configure a partner terminal path (cmd, pwsh, bash) per saved config',
+      'Both shells share the same working directory at spawn',
+      'Quick command buttons can target Claude or partner explicitly',
+      'Resize the split bar to favour whichever pane is active',
+      'Optional elevated partner — runs as admin via gsudo on Windows',
+    ],
+    howToTrigger: [
+      { label: 'Configure', value: 'Edit Config → Partner terminal path' },
+      { label: 'Quick commands', value: 'Custom command → Target = Partner' },
+      { label: 'Resize', value: 'Drag the vertical bar between panes' },
+    ],
+    proTip:
+      'Set partner = pwsh.exe on Windows or bash on macOS so you have a familiar shell ready for quick sanity checks while Claude does the heavy lifting in the other pane.',
+    bullets: [
+      '**Side-by-side** Claude + regular shell in the same session',
+      'Configure a **partner terminal** path in the session config',
+      '**Quick commands** can target either pane (Claude or Partner)',
+      'Optional **elevated partner** for admin tasks (Windows: gsudo)',
+    ],
+    screenshotFilename: 'step-combined.jpg',
+  },
+  {
+    id: 'snap',
+    title: 'Snap Screenshot',
+    sinceVersion: '1.4.0',
+    section: 'productivity',
+    summary:
+      'Capture a region of any screen and hand it straight to Claude. Local sessions get the file path written into the prompt; SSH sessions fetch the image over the conductor-vision MCP tunnel.',
+    highlights: [
+      'Region capture with magnifier, mosaic, brush, redo / undo built in',
+      'Window capture mode — pick from a thumbnail list of any open window',
+      'JPEG-encoded at 1920px max long edge to stay under Claude\'s image budget',
+      'Saved to the session resources screenshots/ folder so you can drag-drop later too',
+      'Esc cancels at any point — no stuck overlays',
+    ],
+    howToTrigger: [
+      { label: 'Open', value: 'Session toolbar → Snap' },
+      { label: 'Region', value: 'Click Snap → drag a rectangle on screen' },
+      { label: 'Window', value: 'Click Snap → Window → pick from list' },
+    ],
+    proTip:
+      'Snap a UI bug, then ask Claude to look at the screenshot you just snapped — it ingests the image directly and you skip the upload-and-describe roundtrip.',
+    bullets: [
+      '**Region or window** capture, both routed straight to Claude',
+      'Local sessions get the **file path** in the prompt; SSH uses **vision MCP fetch**',
+      'Encoded at **1920px / JPEG 85** to stay under image budget',
+      '**Esc** cancels mid-drag if you change your mind',
+    ],
+    screenshotFilename: 'step-snap.jpg',
   },
   {
     id: 'tokenomics',
@@ -184,6 +300,64 @@ export const trainingSteps: TrainingStep[] = [
       '**Search** across all memories, view rendered markdown, delete stale entries',
     ],
     screenshotFilename: 'step-memory.jpg',
+  },
+  {
+    id: 'insights',
+    title: 'Insights',
+    sinceVersion: '1.4.0',
+    section: 'admin',
+    summary:
+      'A digest of how Claude is actually performing across your sessions — what is working, what is friction, and where you spend tokens disproportionately. Generated by analysing your transcripts on demand.',
+    highlights: [
+      'Big wins, friction points, and key insight callouts surfaced from real sessions',
+      'Per-project area breakdown — which folders take the most time and cost',
+      'Click through to the underlying transcripts that drive each finding',
+      'Generates fresh on demand — no stale aggregates to second-guess',
+      'Distinct from Tokenomics: qualitative ("what" / "why"), not quantitative',
+    ],
+    howToTrigger: [
+      { label: 'Open', value: 'Click  ✨  in the sidebar nav' },
+      { label: 'Generate', value: 'Insights page → Generate report' },
+      { label: 'Drill in', value: 'Click any project area for a detailed breakdown' },
+    ],
+    proTip:
+      'Run an Insights report after a long working week — the friction list often surfaces patterns (unclear instructions, retries, dead-ends) you can fix with one tweak to your CLAUDE.md.',
+    bullets: [
+      '**Qualitative analysis** of how Claude is performing in your sessions',
+      'Surfaces **big wins**, **friction points**, and per-area breakdowns',
+      'Click through to the **underlying transcripts** that drive each finding',
+      'Distinct from Tokenomics — focused on patterns, not raw cost',
+    ],
+    screenshotFilename: 'step-insights.jpg',
+  },
+  {
+    id: 'logs',
+    title: 'Logs',
+    sinceVersion: '1.4.0',
+    section: 'admin',
+    summary:
+      'Every session writes a structured log of inputs, outputs, and events. Logs lets you scroll back through any past session — search, filter by type, and replay output exactly as it appeared.',
+    highlights: [
+      'Grouped by date (Today / Yesterday / This Week / older) with per-session size',
+      'Search with regex + case-sensitive toggles',
+      'Type filter: events / output / both',
+      'Renders in xterm with the exact ANSI colours from the live session',
+      'Scoped to the current session list — no leak from other workspaces',
+    ],
+    howToTrigger: [
+      { label: 'Open', value: 'Click  📜  in the sidebar nav' },
+      { label: 'Search', value: 'Header search input or  Ctrl+F' },
+      { label: 'Pick session', value: 'Left rail → date group → session entry' },
+    ],
+    proTip:
+      'When something goes wrong overnight, open Logs and search for the error message — you get the exact terminal context without re-running anything.',
+    bullets: [
+      '**Structured logs** of every session\'s input, output, and events',
+      '**Search** with regex + case-sensitive, filter by type',
+      '**xterm-powered playback** preserves ANSI colours',
+      'Grouped by **Today / Yesterday / This Week** for quick triage',
+    ],
+    screenshotFilename: 'step-logs.jpg',
   },
   {
     id: 'settings',

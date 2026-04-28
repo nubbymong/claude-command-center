@@ -391,7 +391,7 @@ function getResumePickerPath(): string | null {
 export function spawnPty(
   win: BrowserWindow,
   sessionId: string,
-  options?: { cwd?: string; cols?: number; rows?: number; ssh?: SSHOptions; shellOnly?: boolean; elevated?: boolean; configLabel?: string; useResumePicker?: boolean; legacyVersion?: { enabled: boolean; version: string }; agentsConfig?: Array<{ name: string; description: string; prompt: string; model?: string; tools?: string[] }>; flickerFree?: boolean; powershellTool?: boolean; effortLevel?: 'low' | 'medium' | 'high'; disableAutoMemory?: boolean; model?: string }
+  options?: { cwd?: string; cols?: number; rows?: number; ssh?: SSHOptions; shellOnly?: boolean; elevated?: boolean; configLabel?: string; useResumePicker?: boolean; legacyVersion?: { enabled: boolean; version: string }; agentsConfig?: Array<{ name: string; description: string; prompt: string; model?: string; tools?: string[] }>; effortLevel?: 'low' | 'medium' | 'high'; disableAutoMemory?: boolean; model?: string }
 ): void {
   logInfo(`[pty] Spawning PTY for session ${sessionId} (ssh=${!!options?.ssh}, shellOnly=${!!options?.shellOnly}, cwd=${options?.cwd || 'default'})`)
   killPty(sessionId)
@@ -588,10 +588,6 @@ export function spawnPty(
     }
     const remotePath = ssh.remotePath || '~'
     const claudeEnvPrefix = [
-      // TEST 1: NO_FLICKER (fullscreen-rendering research preview)
-      // intentionally OFF for diagnosis; toggleable from options.
-      options?.flickerFree ? 'CLAUDE_CODE_NO_FLICKER=1' : '',
-      options?.powershellTool ? 'CLAUDE_CODE_USE_POWERSHELL_TOOL=1' : '',
       options?.disableAutoMemory ? 'CLAUDE_CODE_DISABLE_AUTO_MEMORY=1' : '',
     ].filter(Boolean).join(' ')
     const claudeFlags = [
@@ -946,8 +942,6 @@ export function spawnPty(
       logInfo(`[pty-manager] Launching shell-only PTY: ${spawnCmd} ${spawnArgs.join(' ')} cwd=${resolvedCwd}${elevated ? ' (elevated)' : ''}`)
 
       const shellEnv: Record<string, string> = { ...process.env, CLAUDE_MULTI_SESSION_ID: sessionId } as Record<string, string>
-      // TEST 1: see parallel comment in the Claude-launch branch below.
-      if (options?.powershellTool) shellEnv.CLAUDE_CODE_USE_POWERSHELL_TOOL = '1'
 
       ptyProcess = pty.spawn(spawnCmd, spawnArgs, {
         name: 'xterm-256color',
@@ -982,14 +976,6 @@ export function spawnPty(
       logInfo(`[pty-manager] Launching Claude via shell in PTY: ${shell} -> ${cmd} cwd=${resolvedCwd} (resumePicker=${!!options?.useResumePicker})`)
 
       const claudeEnv: Record<string, string> = { ...process.env, CLAUDE_MULTI_SESSION_ID: sessionId } as Record<string, string>
-      // Honour the user's flickerFree toggle — matches the SSH path
-      // which sets CLAUDE_CODE_NO_FLICKER=1 inline. Was previously
-      // commented out during a ConPTY-vs-fullscreen-rendering
-      // investigation; that diagnosis didn't conclude in a "drop the
-      // option" decision, so leaving the UI control as a no-op was
-      // misleading.
-      if (options?.flickerFree) claudeEnv.CLAUDE_CODE_NO_FLICKER = '1'
-      if (options?.powershellTool) claudeEnv.CLAUDE_CODE_USE_POWERSHELL_TOOL = '1'
       if (options?.disableAutoMemory) claudeEnv.CLAUDE_CODE_DISABLE_AUTO_MEMORY = '1'
 
       ptyProcess = pty.spawn(shell, [], {

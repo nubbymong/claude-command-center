@@ -33,7 +33,6 @@ interface Props {
     username: string
     remotePath: string
     postCommand?: string
-    dockerContainer?: string
   }
   isActive?: boolean
   partnerEnabled?: boolean
@@ -51,8 +50,6 @@ interface Props {
     version: string
   }
   agentIds?: string[]
-  flickerFree?: boolean
-  powershellTool?: boolean
   effortLevel?: 'low' | 'medium' | 'high'
   disableAutoMemory?: boolean
   /** Per-session model override (sonnet | opus | haiku | ''). Empty
@@ -61,7 +58,7 @@ interface Props {
   model?: string
 }
 
-export default function TerminalView({ sessionId, configId, cwd, shellOnly, elevated, ssh, isActive = true, partnerEnabled, isPartnerActive, onTogglePartner, partnerSessionId, parentSessionId, legacyVersion, agentIds, flickerFree, powershellTool, effortLevel, disableAutoMemory, model }: Props) {
+export default function TerminalView({ sessionId, configId, cwd, shellOnly, elevated, ssh, isActive = true, partnerEnabled, isPartnerActive, onTogglePartner, partnerSessionId, parentSessionId, legacyVersion, agentIds, effortLevel, disableAutoMemory, model }: Props) {
   const xtermContainerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
@@ -314,7 +311,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
               }))
             if (agentsConfig.length === 0) agentsConfig = undefined
           }
-          window.electronAPI.pty.spawn(sessionId, { cwd, cols, rows, ssh, shellOnly, elevated, configId, configLabel, useResumePicker, legacyVersion, agentsConfig, flickerFree, powershellTool, effortLevel, disableAutoMemory, model })
+          window.electronAPI.pty.spawn(sessionId, { cwd, cols, rows, ssh, shellOnly, elevated, configId, configLabel, useResumePicker, legacyVersion, agentsConfig, effortLevel, disableAutoMemory, model })
         }
       }
 

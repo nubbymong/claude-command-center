@@ -14,7 +14,6 @@ interface RendererSSHOptions {
   username: string
   remotePath: string
   postCommand?: string
-  dockerContainer?: string
 }
 
 const sshSchema = z.object({
@@ -23,7 +22,6 @@ const sshSchema = z.object({
   username: z.string().min(1),
   remotePath: z.string().min(1),
   postCommand: z.string().optional(),
-  dockerContainer: z.string().optional(),
 }).optional()
 
 const spawnOptionsSchema = z.object({
@@ -46,8 +44,6 @@ const spawnOptionsSchema = z.object({
     model: z.string().optional(),
     tools: z.array(z.string()).optional(),
   })).optional(),
-  flickerFree: z.boolean().optional(),
-  powershellTool: z.boolean().optional(),
   effortLevel: z.enum(['low', 'medium', 'high']).optional(),
   disableAutoMemory: z.boolean().optional(),
 }).optional()
@@ -66,8 +62,6 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     useResumePicker?: boolean
     legacyVersion?: { enabled: boolean; version: string }
     agentsConfig?: Array<{ name: string; description: string; prompt: string; model?: string; tools?: string[] }>
-    flickerFree?: boolean
-    powershellTool?: boolean
     effortLevel?: 'low' | 'medium' | 'high'
     disableAutoMemory?: boolean
   }) => {

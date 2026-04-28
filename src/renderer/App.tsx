@@ -578,8 +578,6 @@ export default function App() {
                       partnerSessionId={hasPartner ? partnerPtyId : undefined}
                       legacyVersion={session.legacyVersion}
                       agentIds={session.agentIds}
-                      flickerFree={session.flickerFree}
-                      powershellTool={session.powershellTool}
                       effortLevel={session.effortLevel}
                       disableAutoMemory={session.disableAutoMemory}
                       model={session.model}
@@ -783,10 +781,8 @@ export default function App() {
                   // Track feature usage based on config fields set
                   trackUsage('sessions.create-config')
                   if (newConfig.sessionType === 'ssh') trackUsage('sessions.session-type')
-                  if (newConfig.flickerFree) trackUsage('sessions.flicker-free')
                   if (newConfig.effortLevel) trackUsage('sessions.effort-level')
                   if (newConfig.disableAutoMemory) trackUsage('sessions.disable-auto-memory')
-                  if (newConfig.powershellTool) trackUsage('sessions.powershell-tool')
                   if (newConfig.partnerTerminalPath) trackUsage('sessions.partner-terminal')
 
                   const session: Session = {
@@ -801,8 +797,6 @@ export default function App() {
                     sessionType: newConfig.sessionType,
                     shellOnly: newConfig.shellOnly,
                     sshConfig: newConfig.sshConfig,
-                    flickerFree: newConfig.flickerFree,
-                    powershellTool: newConfig.powershellTool,
                     effortLevel: newConfig.effortLevel,
                     disableAutoMemory: newConfig.disableAutoMemory,
                   }
