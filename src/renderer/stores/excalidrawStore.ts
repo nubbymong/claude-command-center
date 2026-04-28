@@ -54,6 +54,10 @@ interface Actions {
   updateScene: (sessionId: string, drawingId: string, scene: unknown) => void
   /** Drop session state — call on session removal. */
   reset: (sessionId: string) => void
+  /** Drop entries for any sessionId not in the provided live set. Use to
+   * sweep orphans left behind by removed/expired sessions so the
+   * persisted JSON doesn't grow unbounded. No-op when nothing to drop. */
+  reconcile: (liveSessionIds: string[]) => void
 }
 
 const defaultState = (): ExcalidrawSessionState => ({
@@ -210,6 +214,20 @@ export const useExcalidrawStore = create<State & Actions>((set, get) => ({
   reset: (sessionId) => {
     const next = { ...get().bySessionId }
     delete next[sessionId]
+    const ns: State = { bySessionId: next }
+    set(ns)
+    persist(ns, true)
+  },
+
+  reconcile: (liveSessionIds) => {
+    const live = new Set(liveSessionIds)
+    const current = get().bySessionId
+    const orphanIds = Object.keys(current).filter((sid) => !live.has(sid))
+    if (orphanIds.length === 0) return
+    const next: Record<string, ExcalidrawSessionState> = {}
+    for (const [sid, s] of Object.entries(current)) {
+      if (live.has(sid)) next[sid] = s
+    }
     const ns: State = { bySessionId: next }
     set(ns)
     persist(ns, true)

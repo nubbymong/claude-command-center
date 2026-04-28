@@ -372,6 +372,7 @@ export default function SettingsPage({ initialTab }: SettingsPageProps = {}) {
         <TrainingWalkthrough
           onClose={() => setShowTraining(false)}
           showAll
+          mode="help"
         />
       )}
     </>
