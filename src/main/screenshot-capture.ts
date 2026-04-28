@@ -75,6 +75,24 @@ function getScreenshotsInstance(): Screenshots {
       // display, so a 3-monitor setup doesn't end up with the live
       // taskbars of monitors 2/3 showing under the overlay on
       // monitor 1.
+      // English labels — the library is authored in Chinese and
+      // defaults to 坐标 (Coordinates), 确定 (OK), etc., which leak
+      // into the magnifier + toolbar. These are the user-visible
+      // strings; the library's internal logs stay Chinese (fine).
+      lang: {
+        magnifier_position_label: 'Position',
+        operation_ok_title: 'OK',
+        operation_cancel_title: 'Cancel',
+        operation_save_title: 'Save',
+        operation_redo_title: 'Redo',
+        operation_undo_title: 'Undo',
+        operation_mosaic_title: 'Mosaic',
+        operation_text_title: 'Text',
+        operation_brush_title: 'Brush',
+        operation_arrow_title: 'Arrow',
+        operation_ellipse_title: 'Ellipse',
+        operation_rectangle_title: 'Rectangle',
+      },
     })
   }
   return screenshotsInstance
