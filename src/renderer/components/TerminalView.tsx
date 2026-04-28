@@ -77,6 +77,25 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
   useActiveTabEffect(sessionId, isActive, terminalRef, attentionTimerRef, attentionAckedRef)
   useCursorLayerVisibility(xtermContainerRef, isActive, shellOnly)
 
+  // SSH-specific: when the SshFlowOverlay's Launch Claude button is the
+  // last thing the user clicked, focus stays on it. The overlay unmounts
+  // on `claude-running` → focus falls back to <body> → the trust-this-
+  // folder prompt's Enter goes to nothing. Subscribe to the flow state
+  // here and pull focus into xterm the moment Claude is up. Skipped
+  // when a modal is open so the walkthrough's focus trap wins.
+  useEffect(() => {
+    if (!ssh) return
+    return window.electronAPI.ssh.onFlowState(sessionId, (msg) => {
+      if (msg.state !== 'claude-running') return
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return
+      // requestAnimationFrame so React has time to unmount the overlay
+      // and yield the focus stack before we grab it.
+      requestAnimationFrame(() => {
+        try { terminalRef.current?.focus() } catch { /* ignore */ }
+      })
+    })
+  }, [sessionId, ssh])
+
   // Repaint the terminal whenever the resolved theme changes.
   // Watching data-theme on <html> via MutationObserver covers BOTH:
   //   - explicit user flips through ThemeToggle (settings.theme changes)

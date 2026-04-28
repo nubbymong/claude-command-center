@@ -264,10 +264,15 @@ function getOverlayHtml(): string {
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{width:100vw;height:100vh;overflow:hidden;background:transparent;cursor:crosshair;user-select:none}
-#overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.3)}
-#selection{position:fixed;border:2px dashed #00FFFF;background:rgba(0,255,255,0.08);display:none;pointer-events:none;z-index:10}
+#overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.35)}
+/* Selection rectangle. On Windows transparent BrowserWindow + 8% alpha
+ * fill + dashed border was effectively invisible — the compositor
+ * dropped sub-pixel dashes during drag. Switched to a solid 3px cyan
+ * border with a 1px black outer outline (so it pops against any wall-
+ * paper) and a 15% fill for clear feedback while dragging. */
+#selection{position:fixed;border:3px solid #00FFFF;outline:1px solid rgba(0,0,0,0.6);background:rgba(0,255,255,0.15);display:none;pointer-events:none;z-index:10;box-sizing:border-box}
 #hint{position:fixed;bottom:40px;left:50%;transform:translateX(-50%);color:#fff;font-family:'Segoe UI',system-ui,sans-serif;font-size:14px;background:rgba(0,0,0,0.7);padding:8px 16px;border-radius:6px;z-index:20}
-#dimensions{position:fixed;color:#00FFFF;font-family:'Cascadia Code',monospace;font-size:12px;background:rgba(0,0,0,0.7);padding:2px 6px;border-radius:3px;display:none;pointer-events:none;z-index:20}
+#dimensions{position:fixed;color:#00FFFF;font-family:'Cascadia Code',monospace;font-size:13px;font-weight:600;background:rgba(0,0,0,0.85);padding:3px 8px;border-radius:3px;display:none;pointer-events:none;z-index:20}
 #cancel-btn{position:fixed;top:20px;right:20px;background:rgba(0,0,0,0.8);color:#fff;border:1px solid #666;font-family:'Segoe UI',system-ui,sans-serif;font-size:13px;padding:8px 18px;border-radius:6px;cursor:pointer;z-index:30}
 #cancel-btn:hover{background:rgba(255,80,80,0.85);border-color:#ff5050}
 </style>
