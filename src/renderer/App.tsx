@@ -582,6 +582,7 @@ export default function App() {
                       powershellTool={session.powershellTool}
                       effortLevel={session.effortLevel}
                       disableAutoMemory={session.disableAutoMemory}
+                      model={session.model}
                     />
                   </div>
                   {hasPartner && (

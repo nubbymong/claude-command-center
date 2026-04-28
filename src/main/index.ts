@@ -100,21 +100,31 @@ function saveWindowState(win: BrowserWindow): void {
 let mainWindow: BrowserWindow | null = null
 let splashWindow: BrowserWindow | null = null
 
-function getSplashImagePath(): string {
+function getSplashImagePath(): { path: string; mime: string } | null {
   // In dev: repo root. In production: resources/ directory inside app.
-  const devPath = join(app.getAppPath(), 'splash.webp')
-  if (existsSync(devPath)) return devPath
-  return join(process.resourcesPath, 'splash.webp')
+  // Prefer PNG (new branded asset) then fall back to legacy WebP so
+  // older installs that still ship the .webp keep working.
+  const candidates: { name: string; mime: string }[] = [
+    { name: 'splash.png', mime: 'image/png' },
+    { name: 'splash.webp', mime: 'image/webp' },
+  ]
+  for (const c of candidates) {
+    const dev = join(app.getAppPath(), c.name)
+    if (existsSync(dev)) return { path: dev, mime: c.mime }
+    const prod = join(process.resourcesPath, c.name)
+    if (existsSync(prod)) return { path: prod, mime: c.mime }
+  }
+  return null
 }
 
 function createSplashWindow(): void {
-  const splashPath = getSplashImagePath()
-  if (!existsSync(splashPath)) {
+  const splash = getSplashImagePath()
+  if (!splash) {
     logInfo('[splash] Splash image not found, skipping')
     return
   }
 
-  const imgData = readFileSync(splashPath).toString('base64')
+  const imgData = readFileSync(splash.path).toString('base64')
   const html = `<!DOCTYPE html>
 <html><head><style>
   * { margin: 0; padding: 0; }
@@ -131,7 +141,7 @@ function createSplashWindow(): void {
   @keyframes fadeIn { to { opacity: 1; } }
   img { width: 100%; height: 100%; object-fit: contain; }
 </style></head><body>
-  <img src="data:image/webp;base64,${imgData}" />
+  <img src="data:${splash.mime};base64,${imgData}" />
 </body></html>`
 
   splashWindow = new BrowserWindow({
