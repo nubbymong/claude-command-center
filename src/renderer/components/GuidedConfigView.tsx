@@ -27,9 +27,7 @@ export default function GuidedConfigView({ onConfirm, onSkip }: Props) {
   const [sshPassword, setSshPassword] = useState('')
   const [model, setModel] = useState('')
   const [effortLevel, setEffortLevel] = useState<'low' | 'medium' | 'high' | ''>('')
-  const [flickerFree, setFlickerFree] = useState(false)
   const [disableAutoMemory, setDisableAutoMemory] = useState(false)
-  const [powershellTool, setPowershellTool] = useState(false)
 
   const [activeSection, setActiveSection] = useState<SectionKey>('identity')
   const helpPanelRef = useRef<HTMLDivElement>(null)
@@ -75,8 +73,6 @@ export default function GuidedConfigView({ onConfirm, onSkip }: Props) {
         remotePath: sshRemotePath.trim() || '~',
         hasPassword: sshPassword.length > 0,
       } : undefined,
-      flickerFree: flickerFree || undefined,
-      powershellTool: powershellTool || undefined,
       effortLevel: effortLevel || undefined,
       disableAutoMemory: disableAutoMemory || undefined,
     }
@@ -296,18 +292,6 @@ export default function GuidedConfigView({ onConfirm, onSkip }: Props) {
                 <label className="flex items-start gap-2 cursor-pointer">
                   <input
                     type="checkbox"
-                    checked={flickerFree}
-                    onChange={(e) => setFlickerFree(e.target.checked)}
-                    className="mt-0.5"
-                  />
-                  <div>
-                    <div className="text-sm text-text">Flicker-free rendering</div>
-                    <div className="text-xs text-overlay0">Reduces terminal flicker during long outputs</div>
-                  </div>
-                </label>
-                <label className="flex items-start gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
                     checked={disableAutoMemory}
                     onChange={(e) => setDisableAutoMemory(e.target.checked)}
                     className="mt-0.5"
@@ -317,20 +301,6 @@ export default function GuidedConfigView({ onConfirm, onSkip }: Props) {
                     <div className="text-xs text-overlay0">Prevents Claude from writing to ~/.claude/memory/</div>
                   </div>
                 </label>
-                {isWindows && (
-                  <label className="flex items-start gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={powershellTool}
-                      onChange={(e) => setPowershellTool(e.target.checked)}
-                      className="mt-0.5"
-                    />
-                    <div>
-                      <div className="text-sm text-text">PowerShell tool <span className="text-overlay0">(preview)</span></div>
-                      <div className="text-xs text-overlay0">Enables native PowerShell commands in Claude</div>
-                    </div>
-                  </label>
-                )}
               </div>
             </section>
           </div>

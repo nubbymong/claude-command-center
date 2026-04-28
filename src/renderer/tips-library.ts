@@ -250,7 +250,7 @@ export const TIPS_LIBRARY: Tip[] = [
       postUse: {
         shortText: '🐳 Run Claude inside a Docker container via SSH',
         title: 'Docker-in-SSH (post-connect command)',
-        body: 'Edit your SSH config and set a **Post-connect command** like `sudo docker exec -it claude-dev bash`. After SSH login the overlay shows **Run post-connect command / Skip**; click it, and once the inner shell is ready a second overlay offers **Launch Claude / Skip**.\n\nSet the **Docker Container** field too — pasted screenshots get copied in via `docker cp` to that container. Great for reproducible builds and isolating Claude\'s file access from the host.',
+        body: 'Edit your SSH config and set a **Post-connect command** like `sudo docker exec -it claude-dev bash`. After SSH login the overlay shows **Run post-connect command / Skip**; click it, and once the inner shell is ready a second overlay offers **Launch Claude / Skip**.\n\nGreat for reproducible builds and isolating Claude\'s file access from the host.',
       },
     },
   },
@@ -451,22 +451,6 @@ export const TIPS_LIBRARY: Tip[] = [
         body: '**Insights** runs a Claude-powered analysis of your session history to find big wins, friction points, and regressions over time.\n\nClick the **pulse icon** in the sidebar. You\'ll get KPI trends (sessions/day, avg cost, lines changed) plus qualitative analysis of what\'s working and what\'s not in your Claude usage patterns.\n\nReports are saved to `resources/insights/` so you can look back at past runs.',
         actionLabel: 'Open Insights',
         actionTarget: 'insights',
-      },
-    },
-  },
-
-  {
-    id: 'tip.flicker-free',
-    category: 'sessions',
-    complexity: 'intermediate',
-    priority: 25,
-    requires: ['sessions.create-config'],
-    excludes: ['sessions.flicker-free'],
-    variants: {
-      primary: {
-        shortText: '✨ Smoother terminal rendering',
-        title: 'Flicker-Free Rendering',
-        body: 'Enable **flicker-free rendering** on a config to reduce terminal flicker during long streaming outputs. The app sets `CLAUDE_CODE_NO_FLICKER=1` and Claude uses the terminal\'s alternate screen buffer, which updates smoothly.\n\nTradeoff: you lose Ctrl+F search and scrollback **while Claude is running**. Exit Claude and scrollback comes back.\n\nMost useful for long outputs with lots of updates — e.g., running tests with a watcher.',
       },
     },
   },

@@ -41,7 +41,6 @@ export interface ElectronAPI {
         username: string
         remotePath: string
         postCommand?: string
-        dockerContainer?: string
       }
       configId?: string
       configLabel?: string
@@ -50,8 +49,6 @@ export interface ElectronAPI {
         name: string; description: string; prompt: string
         model?: string; tools?: string[]
       }>
-      flickerFree?: boolean
-      powershellTool?: boolean
       effortLevel?: 'low' | 'medium' | 'high'
       disableAutoMemory?: boolean
     }) => Promise<void>
