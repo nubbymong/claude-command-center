@@ -15,12 +15,13 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
-    version: '1.4.1',
+    version: '1.4.2',
     date: '2026-04-28',
     highlights: "Safety-net daily backups of your CONFIG directory — never lose a session list to a corrupted write again",
     changes: [
       { type: 'feature', description: "Daily auto-backup of CONFIG/*.json under CONFIG/_backups/YYYY-MM-DD/ on every app launch. Last 7 days kept, prunes older. Recovery is a manual copy back into CONFIG/ — but the data is always there if anything goes sideways" },
       { type: 'fix', description: "Capture-training script no longer destroys real config data on cleanup. PID lock prevents concurrent captures; cleanup only restores files it explicitly backed up; never blind-deletes by filename match" },
+      { type: 'fix', description: "Memory frontmatter writer now produces valid YAML for values containing backslashes, newlines, and other control chars. Previously only escaped quotes — anything else round-tripped as malformed YAML. Switched to JSON-stringify which is a strict subset of YAML 1.2's double-quoted scalar grammar" },
     ]
   },
   {

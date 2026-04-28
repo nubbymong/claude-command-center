@@ -395,13 +395,17 @@ export async function writeMemoryFrontmatter(
   if (frontmatter.description !== undefined) merged.description = frontmatter.description
   if (frontmatter.type !== undefined) merged.type = frontmatter.type
 
-  // Build YAML block
+  // Build YAML block. For values that need quoting (colons, special YAML
+  // chars, embedded newlines/quotes/backslashes), emit via JSON.stringify —
+  // YAML 1.2 double-quoted flow scalars accept JSON's full escape vocabulary
+  // (\\, \", \n, \t, \uXXXX, …), so this round-trips cleanly. The previous
+  // hand-rolled `value.replace(/"/g, '\\"')` only escaped quotes, leaving
+  // backslashes and newlines as malformed YAML on read-back.
   const yamlLines: string[] = []
   for (const [key, value] of Object.entries(merged)) {
     if (value) {
-      // Quote values that contain colons or special YAML characters
-      const needsQuotes = /[:#\[\]{}&*!|>'"%@`]/.test(value) || value.includes('\n')
-      yamlLines.push(needsQuotes ? `${key}: "${value.replace(/"/g, '\\"')}"` : `${key}: ${value}`)
+      const needsQuotes = /[:#\[\]{}&*!|>'"%@`\\]/.test(value) || /[\r\n\t]/.test(value)
+      yamlLines.push(needsQuotes ? `${key}: ${JSON.stringify(value)}` : `${key}: ${value}`)
     }
   }
 
