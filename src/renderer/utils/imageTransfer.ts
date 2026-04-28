@@ -1,21 +1,21 @@
 /**
- * Image transfer helper — sends a host-saved image to a Claude session via the
- * Conductor MCP server's fetch_host_screenshot tool.
+ * Image transfer helper — gets a host-saved image into a Claude session.
  *
- * Why MCP for ALL sessions (not just SSH)?
- *  - One unified code path for local + SSH (no platform branching at call sites)
- *  - SSH sessions have no other reliable transport since Claude is the foreground
- *    process on the PTY (we can't shell out to scp/base64 mid-session)
- *  - The MCP server runs at app launch independent of vision/browser config, so
- *    fetch_host_screenshot is always available on both local and SSH sessions
- *    (SSH reaches it via the existing reverse tunnel)
- *  - One round-trip: Claude sees the prompt, calls the MCP tool, gets the image
- *    inline. No path-vs-base64 confusion, no file mounts, no SCP credentials.
+ * Local sessions: write the absolute path into the prompt. Claude's
+ * built-in Read tool ingests the file directly — no extra MCP round-
+ * trip, fastest path, and matches what Claude Code does when you drag
+ * an image onto its CLI.
  *
- * Trade-off vs. directly writing a local path:
- *  - Local sessions used to write a file path and Claude would read it directly
- *    via its Read tool. The MCP path adds one MCP round-trip to view the image,
- *    but in exchange the same code path works everywhere.
+ * SSH sessions: write the bare filename and ask Claude to call
+ * `mcp__conductor-vision__fetch_host_screenshot`. The remote machine
+ * has no access to the host filesystem, so the MCP fetch (running over
+ * the auto-injected reverse tunnel) is the only way the image lands on
+ * Claude's input. Vision MCP is started at app launch, so this path is
+ * always available on SSH sessions even when no browser is configured.
+ *
+ * Both paths cap the image to 1920px / JPG q85 server-side
+ * (screenshot-capture.ts) so neither saturates Claude's image-size
+ * budget.
  */
 
 /**
@@ -43,20 +43,36 @@ export function composeFetchHostScreenshotPrompt(
 }
 
 /**
- * Send a host-saved image file to a Claude session by writing a fetch prompt.
- * The image must already exist in the Conductor host's screenshots directory.
+ * Compose a local-path prompt — writes the absolute path so Claude's
+ * Read tool can ingest it directly.
+ */
+export function composeLocalPathPrompt(
+  filePath: string,
+  userContext?: string
+): string {
+  const ctx = userContext?.trim() || 'Please view this image.'
+  return `${ctx} ${filePath}`
+}
+
+/**
+ * Send a host-saved image file to a Claude session.
  *
  * @param sessionId - target Claude PTY session id
  * @param hostFilePath - absolute local path of the image file
- * @param userContext - optional context message prepended to the fetch prompt
+ * @param userContext - optional context message prepended to the prompt
+ * @param sessionType - 'local' uses direct path; 'ssh' uses MCP fetch.
+ *                     Defaults to MCP fetch for back-compat with any caller
+ *                     that doesn't yet thread the type through.
  */
 export function sendImageToSession(
   sessionId: string,
   hostFilePath: string,
-  userContext?: string
+  userContext?: string,
+  sessionType?: 'local' | 'ssh'
 ): void {
-  const filename = basename(hostFilePath)
-  const prompt = composeFetchHostScreenshotPrompt(filename, userContext)
+  const prompt = sessionType === 'local'
+    ? composeLocalPathPrompt(hostFilePath, userContext)
+    : composeFetchHostScreenshotPrompt(basename(hostFilePath), userContext)
   // Trailing \r submits the prompt to Claude
   window.electronAPI.pty.write(sessionId, prompt + '\r')
 }
