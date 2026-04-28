@@ -6,6 +6,7 @@ import { useSettingsStore, DEFAULT_STATUS_LINE, DEFAULT_TERMINAL_SETTINGS, Updat
 import type { StatusLineSettings, TerminalSettings, CursorStyle } from '../stores/settingsStore'
 import { eventToShortcutString, DEFAULT_SHORTCUTS, SHORTCUT_LABELS } from '../utils/shortcuts'
 import GitHubConfigTab from './github/config/GitHubConfigTab'
+import PageFrame from './PageFrame'
 declare const __BUILD_TIME__: string
 
 type SettingsTab = 'general' | 'statusline' | 'shortcuts' | 'github' | 'about'
@@ -86,41 +87,43 @@ export default function SettingsPage({ initialTab }: SettingsPageProps = {}) {
     save({ statusLine: { ...sl, [key]: value } })
   }
 
-  return (
-    <div className="flex-1 flex flex-col bg-base overflow-hidden">
-      {/* Page header */}
-      <div className="px-5 pt-4 pb-3 border-b border-surface0/80 bg-mantle/30 shrink-0">
-        <div className="flex items-center gap-3 mb-3">
-          <div className="w-8 h-8 rounded-lg bg-blue/10 flex items-center justify-center shrink-0">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="text-blue">
-              <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.3" />
-              <path d="M8 5v3.5M8 10v.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-            </svg>
-          </div>
-          <div>
-            <h1 className="text-base font-semibold text-text">Settings</h1>
-            <p className="text-[11px] text-overlay0 mt-0.5">Application preferences and configuration</p>
-          </div>
-        </div>
-        {/* Tab bar */}
-        <div className="flex items-center bg-crust rounded-md p-0.5">
-          {TABS.map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`flex-1 px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-                activeTab === tab.id ? 'bg-blue text-crust' : 'text-overlay1 hover:text-text'
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-      </div>
+  const settingsIcon = (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+      <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.3" />
+      <path d="M8 5v3.5M8 10v.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+    </svg>
+  )
 
-      {/* Content */}
-      <div className="flex-1 overflow-y-auto">
-        <div className="max-w-2xl mx-auto p-5 space-y-4">
+  const tabsRail = (
+    <nav className="py-1.5">
+      {TABS.map(tab => (
+        <button
+          key={tab.id}
+          onClick={() => setActiveTab(tab.id)}
+          className={`w-full text-left px-3 py-1.5 text-xs transition-colors ${
+            activeTab === tab.id
+              ? 'bg-blue/15 text-blue border-l-2 border-blue'
+              : 'text-overlay1 hover:text-text hover:bg-surface0/40 border-l-2 border-transparent'
+          }`}
+        >
+          {tab.label}
+        </button>
+      ))}
+    </nav>
+  )
+
+  const activeTabLabel = TABS.find(t => t.id === activeTab)?.label
+
+  return (
+    <>
+      <PageFrame
+        icon={settingsIcon}
+        iconAccent="blue"
+        title="Settings"
+        context={activeTabLabel}
+        leftRail={tabsRail}
+      >
+        <div className="max-w-3xl mx-auto p-5 space-y-4">
 
           {activeTab === 'general' && (
             <>
@@ -354,7 +357,7 @@ export default function SettingsPage({ initialTab }: SettingsPageProps = {}) {
             </Section>
           )}
         </div>
-      </div>
+      </PageFrame>
 
       {showWhatsNew && (
         <WhatsNewModal
@@ -371,7 +374,7 @@ export default function SettingsPage({ initialTab }: SettingsPageProps = {}) {
           showAll
         />
       )}
-    </div>
+    </>
   )
 }
 

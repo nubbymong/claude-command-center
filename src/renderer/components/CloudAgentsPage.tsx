@@ -4,6 +4,7 @@ import type { CloudAgent, CloudAgentStatus } from '../types/electron'
 import NewAgentDialog from './NewAgentDialog'
 import AgentLibrary from './AgentLibrary'
 import TeamsPanel from './TeamsPanel'
+import PageFrame from './PageFrame'
 
 const STATUS_COLORS: Record<CloudAgentStatus, string> = {
   running: '#89B4FA',
@@ -536,113 +537,82 @@ export default function CloudAgentsPage() {
 
   const contextMenuAgent = contextMenu ? allAgents.find(a => a.id === contextMenu.agentId) : null
 
-  if (hubTab === 'library' || hubTab === 'teams') {
-    return (
-      <div className="flex-1 flex flex-col bg-base overflow-hidden">
-        {/* Hub tab bar */}
-        <div className="px-5 pt-3 bg-mantle/30 shrink-0">
-          <div className="flex gap-0.5 bg-crust/50 rounded-lg p-0.5 self-start w-fit">
-            <button
-              onClick={() => setHubTab('tasks')}
-              className={`px-4 py-1.5 rounded-md text-xs font-medium transition-all ${
-                hubTab === 'tasks' ? 'bg-surface0 text-text shadow-sm' : 'text-overlay1 hover:text-text'
-              }`}
-            >
-              Tasks
-            </button>
-            <button
-              onClick={() => setHubTab('teams')}
-              className={`px-4 py-1.5 rounded-md text-xs font-medium transition-all ${
-                hubTab === 'teams' ? 'bg-surface0 text-text shadow-sm' : 'text-overlay1 hover:text-text'
-              }`}
-            >
-              Teams
-            </button>
-            <button
-              onClick={() => setHubTab('library')}
-              className={`px-4 py-1.5 rounded-md text-xs font-medium transition-all ${
-                hubTab === 'library' ? 'bg-surface0 text-text shadow-sm' : 'text-overlay1 hover:text-text'
-              }`}
-            >
-              Library
-            </button>
-          </div>
-        </div>
-        {hubTab === 'teams' ? <TeamsPanel /> : <AgentLibrary />}
-      </div>
-    )
-  }
+  const cloudIcon = (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9z" />
+    </svg>
+  )
+
+  const HUB_TABS: { id: HubTab; label: string }[] = [
+    { id: 'tasks', label: 'Tasks' },
+    { id: 'teams', label: 'Teams' },
+    { id: 'library', label: 'Library' },
+  ]
+
+  const cloudRail = (
+    <nav className="py-1.5">
+      {HUB_TABS.map(t => (
+        <button
+          key={t.id}
+          onClick={() => setHubTab(t.id)}
+          className={`w-full text-left px-3 py-1.5 text-xs transition-colors ${
+            hubTab === t.id
+              ? 'bg-sapphire/15 text-sapphire border-l-2 border-sapphire'
+              : 'text-overlay1 hover:text-text hover:bg-surface0/40 border-l-2 border-transparent'
+          }`}
+        >
+          {t.label}
+        </button>
+      ))}
+    </nav>
+  )
+
+  const cloudContext = hubTab === 'tasks' && counts.running > 0 ? (
+    <span className="inline-flex items-center gap-1.5">
+      <span className="w-1.5 h-1.5 rounded-full bg-blue animate-pulse" />
+      {counts.running} running
+    </span>
+  ) : undefined
+
+  const cloudActions = hubTab === 'tasks' ? (
+    <>
+      {counts.completed + counts.failed > 0 && (
+        <button
+          onClick={() => clearCompleted()}
+          className="px-2.5 py-0.5 text-xs rounded border border-surface1 bg-surface0 text-overlay1 hover:bg-surface1 hover:text-text transition-colors"
+        >
+          Clear done
+        </button>
+      )}
+      <button
+        onClick={() => setShowNewDialog(true)}
+        className="px-2.5 py-0.5 rounded text-xs font-medium bg-sapphire hover:bg-sapphire/85 text-crust transition-colors flex items-center gap-1"
+      >
+        <svg width="10" height="10" viewBox="0 0 12 12"><line x1="6" y1="1" x2="6" y2="11" stroke="currentColor" strokeWidth="1.5"/><line x1="1" y1="6" x2="11" y2="6" stroke="currentColor" strokeWidth="1.5"/></svg>
+        New agent
+      </button>
+    </>
+  ) : undefined
 
   return (
-    <div className="flex-1 flex flex-col bg-base overflow-hidden">
-      {/* Page header */}
-      <div className="px-5 pt-4 pb-3 border-b border-surface0/80 bg-mantle/30 shrink-0">
-        {/* Hub tab bar */}
-        <div className="flex gap-0.5 bg-crust/50 rounded-lg p-0.5 self-start w-fit mb-3">
-          <button
-            onClick={() => setHubTab('tasks')}
-            className={`px-4 py-1.5 rounded-md text-xs font-medium transition-all ${
-              hubTab === 'tasks' ? 'bg-surface0 text-text shadow-sm' : 'text-overlay1 hover:text-text'
-            }`}
-          >
-            Tasks
-          </button>
-          <button
-            onClick={() => setHubTab('teams')}
-            className={`px-4 py-1.5 rounded-md text-xs font-medium transition-all ${
-              hubTab === 'teams' ? 'bg-surface0 text-text shadow-sm' : 'text-overlay1 hover:text-text'
-            }`}
-          >
-            Teams
-          </button>
-          <button
-            onClick={() => setHubTab('library')}
-            className={`px-4 py-1.5 rounded-md text-xs font-medium transition-all ${
-              hubTab === 'library' ? 'bg-surface0 text-text shadow-sm' : 'text-overlay1 hover:text-text'
-            }`}
-          >
-            Library
-          </button>
-        </div>
-        <div className="flex items-center gap-3 mb-3">
-          <div className="w-8 h-8 rounded-lg bg-sapphire/10 flex items-center justify-center shrink-0">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className="text-sapphire">
-              <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2.5">
-              <h1 className="text-base font-semibold text-text">Agent Hub</h1>
-              {counts.running > 0 && (
-                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium text-crust" style={{ backgroundColor: '#89B4FA' }}>
-                  <span className="w-1.5 h-1.5 rounded-full bg-crust animate-pulse" />
-                  {counts.running} running
-                </span>
-              )}
-            </div>
-            <p className="text-[11px] text-overlay0 mt-0.5">Headless Claude CLI background tasks</p>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            {counts.completed + counts.failed > 0 && (
-              <button
-                onClick={() => clearCompleted()}
-                className="text-[11px] text-overlay1 hover:text-text px-2.5 py-1 rounded-lg hover:bg-surface0/50 transition-colors"
-              >
-                Clear done
-              </button>
-            )}
-            <button
-              onClick={() => setShowNewDialog(true)}
-              className="px-3 py-1.5 rounded-lg text-xs font-medium bg-sapphire hover:bg-sapphire/85 text-crust transition-colors flex items-center gap-1.5 shadow-sm"
-            >
-              <svg width="12" height="12" viewBox="0 0 12 12"><line x1="6" y1="1" x2="6" y2="11" stroke="currentColor" strokeWidth="1.5"/><line x1="1" y1="6" x2="11" y2="6" stroke="currentColor" strokeWidth="1.5"/></svg>
-              New Agent
-            </button>
-          </div>
-        </div>
-
+    <>
+      <PageFrame
+        icon={cloudIcon}
+        iconAccent="sapphire"
+        title="Agent Hub"
+        context={cloudContext}
+        actions={cloudActions}
+        leftRail={cloudRail}
+        scrollable={false}
+      >
+      {hubTab === 'teams' ? (
+        <TeamsPanel />
+      ) : hubTab === 'library' ? (
+        <AgentLibrary />
+      ) : (
+        <div className="flex flex-col flex-1 min-h-0">
         {/* Filter chips + search */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 px-4 py-2 border-b border-surface0/40 shrink-0">
           <div className="flex gap-1">
             <FilterChip label="All" count={counts.all} color="#b8c5d6" active={filter === 'all'} onClick={() => setFilter('all')} />
             <FilterChip label="Running" count={counts.running} color="#89B4FA" active={filter === 'running'} onClick={() => setFilter('running')} />
@@ -667,10 +637,9 @@ export default function CloudAgentsPage() {
             )}
           </div>
         </div>
-      </div>
 
-      {/* Split panel */}
-      <div className="flex-1 flex overflow-hidden border-t border-surface0/40">
+        {/* Split panel */}
+        <div className="flex-1 flex overflow-hidden">
         {/* Left: Agent list */}
         <div className="w-[40%] border-r border-surface0/40 overflow-y-auto p-3 space-y-1.5">
           {agents.length === 0 ? (
@@ -735,7 +704,10 @@ export default function CloudAgentsPage() {
             </div>
           )}
         </div>
-      </div>
+        </div>
+        </div>
+      )}
+      </PageFrame>
 
       {/* Context menu */}
       {contextMenu && contextMenuAgent && (
@@ -748,6 +720,6 @@ export default function CloudAgentsPage() {
       )}
 
       {showNewDialog && <NewAgentDialog onClose={() => setShowNewDialog(false)} />}
-    </div>
+    </>
   )
 }

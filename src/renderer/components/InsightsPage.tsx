@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef } from 'react'
 import { useInsightsStore } from '../stores/insightsStore'
 import KpiSidebar from './KpiSidebar'
 import type { InsightsData } from '../types/electron'
+import PageFrame from './PageFrame'
 
 // Comprehensive dark theme CSS for platform v9 aesthetic
 const DARK_THEME_CSS = `
@@ -318,62 +319,63 @@ export default function InsightsPage() {
     )
   }
 
-  return (
-    <div className="flex-1 flex flex-col bg-base overflow-hidden">
-      {/* Page header */}
-      <div className="px-5 pt-4 pb-3 border-b border-surface0/80 bg-mantle/30 shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-teal/10 flex items-center justify-center shrink-0">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="text-teal">
-              <circle cx="8" cy="3" r="2" stroke="currentColor" strokeWidth="1.2" />
-              <path d="M4 8h8M6 6v4M10 6v4M3 12h10" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+  const insightsIcon = (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round">
+      <circle cx="8" cy="3" r="2" stroke="currentColor" />
+      <path d="M4 8h8M6 6v4M10 6v4M3 12h10" />
+    </svg>
+  )
+
+  const insightsActions = (
+    <>
+      <select
+        value={selectedRunId || ''}
+        onChange={(e) => selectRun(e.target.value)}
+        className="bg-surface0 text-text text-xs rounded border border-surface1 px-2 py-0.5 focus:outline-none focus:border-blue/40 transition-colors"
+      >
+        {completedRuns.slice().reverse().map((run) => {
+          const date = new Date(run.timestamp)
+          const label = date.toLocaleDateString('en-US', {
+            month: 'short', day: 'numeric', year: 'numeric',
+            hour: '2-digit', minute: '2-digit'
+          })
+          return <option key={run.id} value={run.id}>{label}</option>
+        })}
+      </select>
+      <button
+        onClick={startInsights}
+        disabled={isRunning}
+        className={`text-xs px-2.5 py-0.5 rounded border font-medium transition-all flex items-center gap-1.5 ${
+          isRunning
+            ? 'bg-surface0 border-surface1 text-teal cursor-wait'
+            : 'bg-teal/10 border-teal/30 text-teal hover:bg-teal/20'
+        }`}
+      >
+        {isRunning ? (
+          <>
+            <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" strokeDasharray="32" strokeLinecap="round" />
             </svg>
-          </div>
-          <div className="flex-1 min-w-0">
-            <h1 className="text-base font-semibold text-text">Insights Report</h1>
-            <p className="text-[11px] text-overlay0 mt-0.5">{completedRuns.length} report{completedRuns.length !== 1 ? 's' : ''} generated</p>
-          </div>
+            {statusMessage || 'Running…'}
+          </>
+        ) : 'New run'}
+      </button>
+    </>
+  )
 
-          {/* Run selector */}
-          <select
-            value={selectedRunId || ''}
-            onChange={(e) => selectRun(e.target.value)}
-            className="bg-surface0/40 text-text text-xs rounded-lg px-3 py-1.5 border border-surface0/80 focus:outline-none focus:border-blue/40 transition-colors"
-          >
-            {completedRuns.slice().reverse().map((run) => {
-              const date = new Date(run.timestamp)
-              const label = date.toLocaleDateString('en-US', {
-                month: 'short', day: 'numeric', year: 'numeric',
-                hour: '2-digit', minute: '2-digit'
-              })
-              return (
-                <option key={run.id} value={run.id}>{label}</option>
-              )
-            })}
-          </select>
+  const insightsContext = (
+    <>{completedRuns.length} report{completedRuns.length !== 1 ? 's' : ''} generated</>
+  )
 
-          <button
-            onClick={startInsights}
-            disabled={isRunning}
-            className={`text-xs px-3 py-1.5 rounded-lg border font-medium transition-all ${
-              isRunning
-                ? 'bg-surface0/40 border-surface0 text-teal cursor-wait flex items-center gap-1.5'
-                : 'bg-teal/10 border-teal/25 text-teal hover:bg-teal/20'
-            }`}
-          >
-            {isRunning ? (
-              <>
-                <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none">
-                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" strokeDasharray="32" strokeLinecap="round" />
-                </svg>
-                {statusMessage || 'Running...'}
-              </>
-            ) : 'New Run'}
-          </button>
-        </div>
-      </div>
-
-      {/* Main content */}
+  return (
+    <PageFrame
+      icon={insightsIcon}
+      iconAccent="teal"
+      title="Insights"
+      context={insightsContext}
+      actions={insightsActions}
+      scrollable={false}
+    >
       <div className="flex-1 flex overflow-hidden">
         {/* Report iframe */}
         <div className="flex-1 overflow-hidden">
@@ -406,6 +408,6 @@ export default function InsightsPage() {
           <KpiSidebar current={currentKpis} previous={previousKpis} />
         )}
       </div>
-    </div>
+    </PageFrame>
   )
 }

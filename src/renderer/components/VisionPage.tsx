@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { useVisionStore } from '../stores/visionStore'
 import type { GlobalVisionConfig } from '../../shared/types'
+import PageFrame from './PageFrame'
 
 export default function VisionPage() {
   const { config, running, connected, mcpPort, error, loadConfig, saveConfig, start, stop, launchBrowser, fetchStatus } = useVisionStore()
@@ -43,28 +44,40 @@ export default function VisionPage() {
     }
   }
 
+  const visionIcon = (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  )
+
+  const statusLabel =
+    running && connected ? 'Connected' :
+    running ? 'Running · browser not connected' :
+    'Stopped'
+
+  const visionActions = (
+    <button
+      onClick={handleToggle}
+      className={`px-2.5 py-0.5 text-xs rounded border transition-colors ${
+        running
+          ? 'border-red/40 bg-red/10 text-red hover:bg-red/20'
+          : 'border-green/40 bg-green/10 text-green hover:bg-green/20'
+      }`}
+    >
+      {running ? 'Stop' : 'Start'}
+    </button>
+  )
+
   return (
-    <div className="flex-1 overflow-auto bg-base p-6">
-      <div className="max-w-2xl mx-auto space-y-4">
-
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-bold text-text">Vision</h1>
-            <p className="text-sm text-overlay0 mt-1">Browser automation via MCP server</p>
-          </div>
-          <button
-            onClick={handleToggle}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              running
-                ? 'bg-red/20 text-red hover:bg-red/30'
-                : 'bg-green/20 text-green hover:bg-green/30'
-            }`}
-          >
-            {running ? 'Stop' : 'Start'}
-          </button>
-        </div>
-
+    <PageFrame
+      icon={visionIcon}
+      iconAccent="sky"
+      title="Vision"
+      context={statusLabel}
+      actions={visionActions}
+    >
+      <div className="max-w-3xl mx-auto p-6 space-y-4">
         {/* Status Card */}
         <div className="bg-surface0 rounded-xl p-4">
           <div className="flex items-center gap-3">
@@ -180,8 +193,7 @@ export default function VisionPage() {
             <p>For SSH sessions, a reverse tunnel (<span className="font-mono text-text">-R {localConfig.mcpPort}:localhost:{localConfig.mcpPort}</span>) is added automatically so remote sessions can reach the MCP server.</p>
           </div>
         </div>
-
       </div>
-    </div>
+    </PageFrame>
   )
 }
