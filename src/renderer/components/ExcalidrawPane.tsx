@@ -3,6 +3,7 @@ import { Excalidraw, exportToBlob } from '@excalidraw/excalidraw'
 import '@excalidraw/excalidraw/index.css'
 import type { ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types'
 import { useExcalidrawStore, ExcalidrawDrawing } from '../stores/excalidrawStore'
+import { useSessionStore } from '../stores/sessionStore'
 import { useResolvedTheme } from '../hooks/useThemeController'
 
 interface Props {
@@ -23,6 +24,7 @@ interface Props {
  */
 export default function ExcalidrawPane({ sessionId }: Props) {
   const state = useExcalidrawStore((s) => s.bySessionId[sessionId])
+  const sessionLabel = useSessionStore((s) => s.sessions.find((x) => x.id === sessionId)?.label) || 'this session'
   const togglePane = useExcalidrawStore((s) => s.togglePane)
   const newDrawing = useExcalidrawStore((s) => s.newDrawing)
   const selectDrawing = useExcalidrawStore((s) => s.selectDrawing)
@@ -159,15 +161,18 @@ export default function ExcalidrawPane({ sessionId }: Props) {
     <div className="flex-1 flex flex-row min-h-0 bg-mantle">
       {/* Drawing library — collapsible left rail. */}
       <div className="w-44 shrink-0 flex flex-col border-r border-surface0 bg-crust">
-        <div className="flex items-center gap-1 px-2 py-1 border-b border-surface0 shrink-0">
-          <span className="text-[11px] text-overlay0 flex-1">Drawings</span>
-          <button
-            onClick={handleNewDrawing}
-            className="px-1.5 py-0.5 text-[11px] rounded text-overlay1 hover:text-text hover:bg-surface0"
-            title="New drawing"
-          >
-            +
-          </button>
+        <div className="px-2 py-1 border-b border-surface0 shrink-0" title={`Drawings scoped to ${sessionLabel}. Each session keeps its own list.`}>
+          <div className="flex items-center gap-1">
+            <span className="text-[11px] text-overlay0 flex-1 font-medium">Drawings</span>
+            <button
+              onClick={handleNewDrawing}
+              className="px-1.5 py-0.5 text-[11px] rounded text-overlay1 hover:text-text hover:bg-surface0"
+              title="New drawing"
+            >
+              +
+            </button>
+          </div>
+          <div className="text-[10px] text-overlay0 truncate mt-0.5">in {sessionLabel}</div>
         </div>
         <div className="flex-1 overflow-y-auto py-1">
           {state.drawings.length === 0 ? (

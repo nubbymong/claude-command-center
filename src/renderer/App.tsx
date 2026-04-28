@@ -118,6 +118,16 @@ export default function App() {
     window.electronAPI.github.notifyFocusChanged(activeSessionId ?? null)
   }, [activeSessionId])
 
+  // Sweep orphan Excalidraw entries when the live session list changes
+  // (session removed, app restart with fewer restored sessions, etc).
+  // Without this, drawings persist forever under session IDs that no
+  // longer exist — the JSON grows unbounded and any future global
+  // drawings library would surface zombie sessions.
+  useEffect(() => {
+    if (sessions.length === 0) return
+    useExcalidrawStore.getState().reconcile(sessions.map((s) => s.id))
+  }, [sessions])
+
   // Global keyboard shortcuts
   useKeyboardShortcuts(activeSessionId, setSidebarOpen, setView)
   // Stamp data-theme on <html> from the persisted setting + listen for
@@ -756,9 +766,7 @@ export default function App() {
             }
           }} />
           <main className="flex-1 flex flex-col overflow-hidden titlebar-no-drag">
-            {showTraining ? (
-              <TrainingWalkthrough onClose={handleTrainingClose} showAll={showTrainingAll} />
-            ) : showGuidedConfig ? (
+            {showGuidedConfig ? (
               <GuidedConfigView
                 onSkip={() => setShowGuidedConfig(false)}
                 onConfirm={async (configDraft, sshPassword) => {
@@ -814,6 +822,13 @@ export default function App() {
           </main>
         </div>
         <StatusBar />
+        {showTraining && (
+          <TrainingWalkthrough
+            onClose={handleTrainingClose}
+            showAll={showTrainingAll}
+            mode={showTrainingAll ? 'help' : 'first-run'}
+          />
+        )}
       </div>
     </ErrorBoundary>
   )
