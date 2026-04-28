@@ -1,4 +1,4 @@
-import { BrowserWindow, desktopCapturer, nativeImage, ipcMain, screen } from 'electron'
+import { BrowserWindow, desktopCapturer, nativeImage, ipcMain, screen, globalShortcut } from 'electron'
 import { join } from 'path'
 import { mkdirSync, existsSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'fs'
 import { randomBytes } from 'crypto'
@@ -75,11 +75,16 @@ async function _captureRectangleImpl(mainWindow: BrowserWindow): Promise<string 
   const { width: screenW, height: screenH } = primaryDisplay.size
   const scaleFactor = primaryDisplay.scaleFactor
 
-  // Minimize main window
+  // Minimize main window. Bound the wait — on some Windows configs
+  // (multi-monitor + alwaysOnTop apps stealing focus) `isMinimized()`
+  // can stay false even after `minimize()` resolves the OS-level call.
+  // Without a timeout we'd block here forever and the user would be
+  // stuck with no way to dismiss Snap.
   mainWindow.minimize()
   await new Promise<void>((resolve) => {
+    const start = Date.now()
     const check = () => {
-      if (mainWindow.isMinimized()) resolve()
+      if (mainWindow.isMinimized() || Date.now() - start > 1500) resolve()
       else setTimeout(check, 50)
     }
     setTimeout(check, 100)
@@ -120,17 +125,44 @@ async function _captureRectangleImpl(mainWindow: BrowserWindow): Promise<string 
 
     let resolved = false
     // Safety net: if for any reason the overlay still fails to capture
-    // input (OS compositor edge case, focus-stealer race), auto-cancel
-    // after 2 minutes so the user can never get stuck needing task
-    // manager to dismiss a ghost crosshair window.
+    // input (OS compositor edge case, focus-stealer race), auto-cancel.
+    // 120s was way too long — a user who hits a focus-trap is locked out
+    // of the app for two minutes. 15s is enough for a deliberate drag
+    // and short enough that "I'm stuck" is a brief annoyance, not a
+    // crash.
     const safetyTimer = setTimeout(() => {
       if (resolved) return
       console.warn('[screenshot] overlay safety timeout — auto-cancelling')
       handleCancel()
-    }, 120_000)
+    }, 15_000)
+
+    // Belt-and-suspenders escape: register Esc as a global shortcut for
+    // the lifetime of this overlay. Even if the overlay loses focus to
+    // an alwaysOnTop app or the OS compositor doesn't route input, the
+    // user can still hit Esc to kill the capture. Always unregister on
+    // cleanup — leaving it bound would swallow Esc app-wide.
+    let escRegistered = false
+    try {
+      escRegistered = globalShortcut.register('Escape', () => {
+        if (!resolved) handleCancel()
+      })
+    } catch {
+      // ignore — globalShortcut.register can fail when an unrelated
+      // accelerator already owns Escape; the in-overlay Esc handler
+      // is still our primary path.
+    }
 
     const cleanup = () => {
       clearTimeout(safetyTimer)
+      if (escRegistered) {
+        try { globalShortcut.unregister('Escape') } catch { /* noop */ }
+      }
+      // Defensive: ipcMain.handle re-registration throws if a prior
+      // run leaked handlers. Always remove on cleanup so the next
+      // capture call lands on a clean slate even if we got here via
+      // an unexpected path.
+      try { ipcMain.removeHandler('screenshot:regionSelected') } catch { /* noop */ }
+      try { ipcMain.removeHandler('screenshot:cancelled') } catch { /* noop */ }
       if (!overlay.isDestroyed()) overlay.destroy()
       mainWindow.restore()
       mainWindow.focus()
@@ -185,6 +217,12 @@ async function _captureRectangleImpl(mainWindow: BrowserWindow): Promise<string 
       resolve(null)
     }
 
+    // Defensive registration: if a prior capture run leaked handlers
+    // (renderer crash mid-overlay, hot-reload, etc.) ipcMain.handle
+    // would throw "second handler registered". Drop any stale handler
+    // first so registration always succeeds.
+    try { ipcMain.removeHandler('screenshot:regionSelected') } catch { /* noop */ }
+    try { ipcMain.removeHandler('screenshot:cancelled') } catch { /* noop */ }
     ipcMain.handle('screenshot:regionSelected', handleRegion)
     ipcMain.handle('screenshot:cancelled', handleCancel)
 
