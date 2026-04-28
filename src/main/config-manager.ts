@@ -5,7 +5,7 @@
  */
 
 import { join } from 'path'
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, unlinkSync, readdirSync, copyFileSync } from 'fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, unlinkSync, readdirSync, copyFileSync, rmSync, statSync } from 'fs'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import { logInfo, logError } from './debug-logger'
 
@@ -48,6 +48,83 @@ export function ensureConfigDir(): void {
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true })
     logInfo(`[config-manager] Created CONFIG directory: ${dir}`)
+  }
+}
+
+// ── Daily safety-net backups ──
+//
+// CONFIG/_backups/YYYY-MM-DD/ keeps a copy of every top-level *.json in CONFIG.
+// Idempotent per day, prunes to BACKUP_RETENTION_DAYS most recent. Run once at
+// app startup BEFORE anything writes to CONFIG, so a destructive write on day N
+// still leaves day N-1 intact.
+//
+// Recovery is manual (user copies files back into CONFIG/) but the data is
+// always there. Designed to defend against any accidental loss — corrupted
+// writes, errant tooling (incl. our own capture script), or manual mishaps.
+
+const BACKUP_DIR_NAME = '_backups'
+const BACKUP_RETENTION_DAYS = 7
+
+export function snapshotConfig(): void {
+  try {
+    const configDir = getConfigDir()
+    if (!existsSync(configDir)) return
+
+    const today = new Date().toISOString().slice(0, 10)
+    const backupRoot = join(configDir, BACKUP_DIR_NAME)
+    const todayDir = join(backupRoot, today)
+
+    // Once-per-day: if today's folder already exists, just prune and return.
+    // Skipping the copy keeps startup fast and avoids snapshot-of-snapshot.
+    if (existsSync(todayDir)) {
+      pruneOldBackups(backupRoot)
+      return
+    }
+
+    mkdirSync(todayDir, { recursive: true })
+
+    let copied = 0
+    for (const name of readdirSync(configDir)) {
+      // Only top-level *.json. Skip the backup dir itself, .tmp/.bak/etc.
+      if (name === BACKUP_DIR_NAME) continue
+      if (!name.endsWith('.json')) continue
+      const src = join(configDir, name)
+      try {
+        if (!statSync(src).isFile()) continue
+        copyFileSync(src, join(todayDir, name))
+        copied++
+      } catch (err) {
+        logError(`[config-manager] Failed to back up ${name}: ${err}`)
+      }
+    }
+
+    logInfo(`[config-manager] Daily backup created: ${todayDir} (${copied} files)`)
+    pruneOldBackups(backupRoot)
+  } catch (err) {
+    // Never let a backup failure block app startup
+    logError(`[config-manager] snapshotConfig failed (non-fatal): ${err}`)
+  }
+}
+
+function pruneOldBackups(backupRoot: string): void {
+  try {
+    if (!existsSync(backupRoot)) return
+    const dailies = readdirSync(backupRoot)
+      .filter(n => /^\d{4}-\d{2}-\d{2}$/.test(n))
+      .sort()
+    const toRemove = dailies.length - BACKUP_RETENTION_DAYS
+    if (toRemove <= 0) return
+    for (let i = 0; i < toRemove; i++) {
+      const dir = join(backupRoot, dailies[i])
+      try {
+        rmSync(dir, { recursive: true, force: true })
+        logInfo(`[config-manager] Pruned old backup: ${dir}`)
+      } catch (err) {
+        logError(`[config-manager] Failed to prune ${dir}: ${err}`)
+      }
+    }
+  } catch (err) {
+    logError(`[config-manager] pruneOldBackups failed: ${err}`)
   }
 }
 

@@ -166,12 +166,70 @@ const SAMPLE_MEMORY_PROJECTS = [
 // ── Seed and cleanup ──
 
 const BACKUP_SUFFIX = '.capture-bak'
+const LOCK_FILENAME = '.capture.lock'
 
 interface BackupInfo {
   configDir: string
-  backedUpFiles: string[]
+  backedUpFiles: string[]      // orig existed; backed up to .capture-bak; needs restore
+  createdDemoFiles: string[]   // orig didn't exist; we wrote demo data; safe to delete
   createdMemoryDirs: string[]
   projectsRenamed: boolean
+  lockPath: string
+}
+
+// Module-level state so the top-level error handler can clean up partial work
+// even if seedSampleData throws mid-flight. Assigned at the START of seed,
+// then mutated in place as each backup/write succeeds.
+let activeBackupInfo: BackupInfo | null = null
+
+// Demo content fingerprints — IDs and markers we know are unique to demo data.
+// cleanupSampleData uses these to verify a file is demo content BEFORE deleting,
+// so a misclassified file can never be unlinked.
+const DEMO_FINGERPRINTS: Record<string, string[]> = {
+  'configs.json': ['demo-webapp', 'demo-api', 'demo-mobile'],
+  'commands.json': ['demo-cmd-review', 'demo-cmd-test'],
+  'command-sections.json': ['demo-section-dev'],
+  'cloud-agents.json': ['demo-agent-1', 'demo-agent-2'],
+  'tokenomics.json': ['demo-s1', 'demo-s2'],
+  'github-config.json': ['demo-github-profile'],
+  'settings.json': ['Dev Workstation', 'Mac Mini'],
+  'app-meta.json': ['"setupVersion": "99.99.99"'],
+}
+
+function isDemoContent(filePath: string, content: string): boolean {
+  const filename = path.basename(filePath)
+  const markers = DEMO_FINGERPRINTS[filename] ?? []
+  if (markers.length === 0) return false
+  return markers.some(m => content.includes(m))
+}
+
+function acquireCaptureLock(configDir: string): string {
+  const lockPath = path.join(configDir, LOCK_FILENAME)
+  try {
+    fs.writeFileSync(lockPath, String(process.pid), { flag: 'wx' })
+    return lockPath
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
+      let holder = '?'
+      try { holder = fs.readFileSync(lockPath, 'utf-8') } catch {}
+      throw new Error(
+        `[capture] Lock held by PID ${holder} at ${lockPath}. ` +
+        `Another capture is already running. If you are CERTAIN it is not, ` +
+        `delete the lock file manually and retry.`
+      )
+    }
+    throw err
+  }
+}
+
+function releaseCaptureLock(lockPath: string): void {
+  try {
+    if (fs.existsSync(lockPath)) {
+      const holder = fs.readFileSync(lockPath, 'utf-8')
+      // Only release if WE hold it — never delete another process's lock
+      if (holder === String(process.pid)) fs.unlinkSync(lockPath)
+    }
+  } catch {}
 }
 
 function seedSampleData(): BackupInfo {
@@ -179,7 +237,24 @@ function seedSampleData(): BackupInfo {
   fs.mkdirSync(configDir, { recursive: true })
   console.log(`[capture] Config dir: ${configDir}`)
 
-  const backedUpFiles: string[] = []
+  // Acquire the exclusive capture lock. If another capture is already running
+  // (e.g. accidental concurrent invocation) this throws BEFORE any backup or
+  // write. Without this guard, two captures would race in cleanup and could
+  // delete each other's restored originals.
+  const lockPath = acquireCaptureLock(configDir)
+  console.log(`[capture] Acquired lock: ${lockPath}`)
+
+  // Initialize state immediately so the top-level error handler can clean up
+  // whatever partial work is done by the time anything below throws.
+  activeBackupInfo = {
+    configDir,
+    backedUpFiles: [],
+    createdDemoFiles: [],
+    createdMemoryDirs: [],
+    projectsRenamed: false,
+    lockPath,
+  }
+
   // Generate realistic tokenomics data with sanitized project names
   const now = Date.now()
   const day = 24 * 60 * 60 * 1000
@@ -214,8 +289,12 @@ function seedSampleData(): BackupInfo {
     const filePath = path.join(configDir, filename)
     if (fs.existsSync(filePath)) {
       fs.copyFileSync(filePath, filePath + BACKUP_SUFFIX)
-      backedUpFiles.push(filePath)
+      activeBackupInfo.backedUpFiles.push(filePath)
       console.log(`[capture] Backed up: ${filename}`)
+    } else {
+      // No prior file — we're creating fresh demo content. Track so cleanup
+      // can safely delete it (and ONLY it, after fingerprint verification).
+      activeBackupInfo.createdDemoFiles.push(filePath)
     }
     fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8')
   }
@@ -224,51 +303,78 @@ function seedSampleData(): BackupInfo {
   // Rename ~/.claude/projects/ → ~/.claude/projects-real-bak/ during capture.
   const projectsDir = path.join(os.homedir(), '.claude', 'projects')
   const projectsBackup = projectsDir + '-real-bak'
-  let projectsRenamed = false
   if (fs.existsSync(projectsDir)) {
     fs.renameSync(projectsDir, projectsBackup)
-    projectsRenamed = true
+    activeBackupInfo.projectsRenamed = true
     console.log('[capture] Hid real projects directory')
   }
   fs.mkdirSync(projectsDir, { recursive: true })
 
-  const createdMemoryDirs: string[] = []
   for (const project of SAMPLE_MEMORY_PROJECTS) {
     const memoryDir = path.join(projectsDir, project.projectDir, 'memory')
     fs.mkdirSync(memoryDir, { recursive: true })
-    createdMemoryDirs.push(path.join(projectsDir, project.projectDir))
+    activeBackupInfo.createdMemoryDirs.push(path.join(projectsDir, project.projectDir))
     const indexLines = project.files.map(f => `- [${f.filename.replace('.md', '')}](${f.filename})`).join('\n')
     fs.writeFileSync(path.join(memoryDir, 'MEMORY.md'), `# Memory Index\n\n${indexLines}\n`, 'utf-8')
     for (const file of project.files) fs.writeFileSync(path.join(memoryDir, file.filename), file.content, 'utf-8')
     console.log(`[capture] Seeded memory: ${project.projectDir}`)
   }
 
-  return { configDir, backedUpFiles, createdMemoryDirs, projectsRenamed }
+  return activeBackupInfo
 }
 
-function cleanupSampleData(info: BackupInfo): void {
+function cleanupSampleData(info: BackupInfo | null): void {
+  if (info === null) {
+    console.log('[capture] No active backup state — nothing to clean up')
+    return
+  }
   console.log('[capture] Cleaning up...')
-  const files = ['configs.json', 'commands.json', 'command-sections.json', 'settings.json', 'app-meta.json', 'cloud-agents.json', 'tokenomics.json', 'github-config.json']
-  for (const filename of files) {
-    const filePath = path.join(info.configDir, filename)
+
+  // Restore each file we explicitly backed up. info.backedUpFiles is the
+  // single source of truth — never iterate over a hardcoded filename list.
+  for (const filePath of info.backedUpFiles) {
     const backupPath = filePath + BACKUP_SUFFIX
     try {
-      if (fs.existsSync(backupPath)) { fs.copyFileSync(backupPath, filePath); fs.unlinkSync(backupPath) }
-      else if (fs.existsSync(filePath)) fs.unlinkSync(filePath)
-    } catch {}
+      if (fs.existsSync(backupPath)) {
+        fs.copyFileSync(backupPath, filePath)
+        fs.unlinkSync(backupPath)
+      } else {
+        // Backup is missing for whatever reason. NEVER delete the orig as a
+        // fallback — the user's real data may still be there. Just log and
+        // leave it alone; the worst case is demo data sticks around.
+        console.warn(`[capture] Backup missing for ${filePath} — leaving file untouched (real data may still be present)`)
+      }
+    } catch (err) {
+      console.error(`[capture] Failed to restore ${filePath}:`, err)
+    }
   }
+
+  // Delete files we created where there was no prior orig. We tracked these
+  // in createdDemoFiles, so deletion is bounded — but verify content matches
+  // a known demo fingerprint before unlinking. Defensive: if the file has
+  // somehow been replaced with non-demo content (e.g. user wrote to it during
+  // the capture window), leave it.
+  for (const filePath of info.createdDemoFiles) {
+    try {
+      if (!fs.existsSync(filePath)) continue
+      const content = fs.readFileSync(filePath, 'utf-8')
+      if (isDemoContent(filePath, content)) {
+        fs.unlinkSync(filePath)
+      } else {
+        console.warn(`[capture] Refusing to delete ${filePath} — content does not match demo fingerprint`)
+      }
+    } catch (err) {
+      console.error(`[capture] Failed to delete demo file ${filePath}:`, err)
+    }
+  }
+
   // Restore real projects directory
   const projectsDir = path.join(os.homedir(), '.claude', 'projects')
   const projectsBackup = projectsDir + '-real-bak'
   if (info.projectsRenamed) {
     try {
-      // CRITICAL: verify the backup exists BEFORE removing projectsDir.
-      // The error-path caller in main() passes a fabricated
-      // `projectsRenamed: true`, so a failure before seedSampleData
-      // actually ran the rename would otherwise destroy the user's real
-      // projects and then fail to restore them.
       if (!fs.existsSync(projectsBackup)) {
-        console.warn('[capture] Backup directory missing; skipping restore to protect real data')
+        console.warn('[capture] projects-real-bak directory missing; skipping restore to protect real data')
       } else {
         fs.rmSync(projectsDir, { recursive: true, force: true })
         fs.renameSync(projectsBackup, projectsDir)
@@ -280,11 +386,17 @@ function cleanupSampleData(info: BackupInfo): void {
       console.error('[capture] Manually rename it back to: ' + projectsDir)
     }
   } else {
-    // Just clean up demo projects
+    // We only created demo projects (no real ones to restore) — clean those up
     for (const dir of info.createdMemoryDirs) {
       try { fs.rmSync(dir, { recursive: true, force: true }) } catch {}
     }
   }
+
+  // Release lock LAST so a crashed / aborted cleanup can't free the lock for
+  // a parallel capture that would then race against half-restored files.
+  releaseCaptureLock(info.lockPath)
+  activeBackupInfo = null
+
   console.log('[capture] Done.')
 }
 
@@ -572,6 +684,11 @@ async function main() {
 
 main().catch((err) => {
   console.error('[capture] Error:', err)
-  try { cleanupSampleData({ configDir: getConfigDir(), backedUpFiles: [], createdMemoryDirs: [], projectsRenamed: true }) } catch {}
+  // Use the real activeBackupInfo populated incrementally by seedSampleData.
+  // Never fabricate one here — a fabricated info with no backedUpFiles would
+  // have caused the old cleanup to iterate a hardcoded filename list and
+  // destructively unlink files we never owned. With activeBackupInfo, cleanup
+  // only touches what seedSampleData actually backed up or created.
+  try { cleanupSampleData(activeBackupInfo) } catch {}
   process.exit(1)
 })
