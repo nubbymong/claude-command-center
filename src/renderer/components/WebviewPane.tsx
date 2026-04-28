@@ -168,10 +168,15 @@ export default function WebviewPane({ sessionId, isActive }: Props) {
   // WebContentsView from an inactive session keeps drawing over the
   // active session's content (display:none on the React parent doesn't
   // reach the native view layer).
+  // While the freeze-annotate modal is up we ALSO force the live view
+  // hidden — native WebContentsView always paints above HTML, so an
+  // attached view would punch through the Excalidraw modal and the
+  // user would see the live page bleeding through their snapshot.
   useEffect(() => {
     if (!state?.isOpen) return
-    window.electronAPI.webview.setVisible(sessionId, isActive).catch(() => { /* noop */ })
-  }, [sessionId, isActive, state?.isOpen])
+    const visible = isActive && !frozenImage
+    window.electronAPI.webview.setVisible(sessionId, visible).catch(() => { /* noop */ })
+  }, [sessionId, isActive, state?.isOpen, frozenImage])
 
   if (!state || !state.isOpen) return null
 
