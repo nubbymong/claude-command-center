@@ -68,13 +68,19 @@ export default function PageFrame({
         {icon && (
           <span className={`${ACCENT_CLASS[iconAccent]} shrink-0 flex items-center`}>{icon}</span>
         )}
-        <span className="text-xs font-medium text-text shrink-0">{title}</span>
-        {context && (
-          <span className="text-[11px] text-overlay0 truncate min-w-0">
-            <span className="text-surface2 mx-1">·</span>
-            {context}
-          </span>
-        )}
+        {/* Title + context share an items-baseline flex so mixed font
+            sizes line up on the text baseline instead of the visual
+            centre — without this the smaller context text appears to
+            float above the title baseline (Memory header bug). */}
+        <div className="flex items-baseline gap-1.5 min-w-0">
+          <span className="text-xs font-medium text-text shrink-0">{title}</span>
+          {context && (
+            <>
+              <span className="text-[11px] text-surface2 shrink-0">·</span>
+              <span className="text-[11px] text-overlay0 truncate min-w-0">{context}</span>
+            </>
+          )}
+        </div>
         <div className="flex-1" />
         {actions && <div className="flex items-center gap-1 shrink-0">{actions}</div>}
         <div className="w-px h-4 bg-surface0 mx-1 shrink-0" />

@@ -77,6 +77,10 @@ export default function TrainingWalkthrough({ onClose, showAll = false, mode = '
   const [displayIndex, setDisplayIndex] = useState(0)
   const [phase, setPhase] = useState<'in' | 'out'>('in')
   const transitionTimer = useRef<number | null>(null)
+  // Help-mode only: user can expand the floating card to a centred
+  // larger panel (still unmasked, app remains interactive). first-run
+  // is always full-screen so the toggle is hidden in that mode.
+  const [expanded, setExpanded] = useState(false)
 
   const step = steps[displayIndex]
   const isFirst = currentIndex === 0
@@ -163,14 +167,36 @@ export default function TrainingWalkthrough({ onClose, showAll = false, mode = '
           </div>
           <h2 className="text-base font-semibold text-text truncate">{step?.title}</h2>
         </div>
-        <button
-          onClick={handleClose}
-          className="text-overlay0 hover:text-text transition-colors text-lg leading-none px-2 py-1 shrink-0"
-          title="Close"
-          aria-label="Close walkthrough"
-        >
-          &times;
-        </button>
+        <div className="flex items-center gap-1 shrink-0">
+          {mode === 'help' && (
+            <button
+              onClick={() => setExpanded((v) => !v)}
+              className="text-overlay0 hover:text-text transition-colors p-1 rounded"
+              title={expanded ? 'Collapse to corner panel' : 'Expand to full panel'}
+              aria-label={expanded ? 'Collapse walkthrough' : 'Expand walkthrough'}
+            >
+              {expanded ? (
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  {/* Collapse arrows pointing inward */}
+                  <path d="M9 3v4h4M3 9v-4h4M7 3L3 7M9 9l4 4M3 13l4-4" />
+                </svg>
+              ) : (
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  {/* Expand arrows pointing outward */}
+                  <path d="M9 3h4v4M3 9v4h4M9 7l4-4M7 9l-4 4" />
+                </svg>
+              )}
+            </button>
+          )}
+          <button
+            onClick={handleClose}
+            className="text-overlay0 hover:text-text transition-colors text-lg leading-none px-2 py-1"
+            title="Close"
+            aria-label="Close walkthrough"
+          >
+            &times;
+          </button>
+        </div>
       </div>
 
       {/* Content (cross-faded) */}
@@ -270,12 +296,34 @@ export default function TrainingWalkthrough({ onClose, showAll = false, mode = '
   )
 
   if (mode === 'help') {
-    // Unmasked floating card. The user keeps full pointer access to
-    // the rest of the app — they can read step N and click the matching
-    // UI at the same time. Pinned bottom-right so it stays out of the
-    // primary work area but is always reachable.
+    // Unmasked floating card in both states — user keeps full pointer
+    // access to the rest of the app. Two layouts:
+    //   collapsed: 420×600 pinned bottom-right. Fixed height so the
+    //              panel doesn't jump as steps change content length.
+    //   expanded:  centred 820×720 (clamped to 92vw / 86vh) — bigger
+    //              hero for detail-heavy steps. Still NO backdrop mask
+    //              so the rest of the app remains interactive.
+    if (expanded) {
+      return (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none"
+          role="dialog"
+          aria-modal="false"
+          aria-label="Help walkthrough"
+        >
+          <div className="w-[min(820px,92vw)] h-[min(720px,86vh)] flex pointer-events-auto">
+            {card}
+          </div>
+        </div>
+      )
+    }
     return (
-      <div className="fixed bottom-4 right-4 z-50 w-[420px] max-h-[min(78vh,640px)] flex pointer-events-auto" role="dialog" aria-modal="false" aria-label="Help walkthrough">
+      <div
+        className="fixed bottom-4 right-4 z-50 w-[420px] h-[min(600px,80vh)] flex pointer-events-auto"
+        role="dialog"
+        aria-modal="false"
+        aria-label="Help walkthrough"
+      >
         {card}
       </div>
     )

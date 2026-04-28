@@ -391,7 +391,7 @@ function getResumePickerPath(): string | null {
 export function spawnPty(
   win: BrowserWindow,
   sessionId: string,
-  options?: { cwd?: string; cols?: number; rows?: number; ssh?: SSHOptions; shellOnly?: boolean; elevated?: boolean; configLabel?: string; useResumePicker?: boolean; legacyVersion?: { enabled: boolean; version: string }; agentsConfig?: Array<{ name: string; description: string; prompt: string; model?: string; tools?: string[] }>; flickerFree?: boolean; powershellTool?: boolean; effortLevel?: 'low' | 'medium' | 'high'; disableAutoMemory?: boolean }
+  options?: { cwd?: string; cols?: number; rows?: number; ssh?: SSHOptions; shellOnly?: boolean; elevated?: boolean; configLabel?: string; useResumePicker?: boolean; legacyVersion?: { enabled: boolean; version: string }; agentsConfig?: Array<{ name: string; description: string; prompt: string; model?: string; tools?: string[] }>; flickerFree?: boolean; powershellTool?: boolean; effortLevel?: 'low' | 'medium' | 'high'; disableAutoMemory?: boolean; model?: string }
 ): void {
   logInfo(`[pty] Spawning PTY for session ${sessionId} (ssh=${!!options?.ssh}, shellOnly=${!!options?.shellOnly}, cwd=${options?.cwd || 'default'})`)
   killPty(sessionId)
@@ -599,6 +599,10 @@ export function spawnPty(
       // host don't clobber each other's statusline sessionId binding.
       `--settings ${remoteSessionSettingsPath(sessionId)}`,
       options?.effortLevel ? `--effort ${options.effortLevel}` : '',
+      // --model pins the Claude model for this session. Empty string in
+      // the config form means "no override" — the CLI picks whatever
+      // the user's plan exposes by default.
+      options?.model ? `--model ${options.model}` : '',
     ].filter(Boolean).join(' ')
     const claudeCmd = [claudeEnvPrefix, 'claude', claudeFlags].filter(Boolean).join(' ')
     const password = ssh.password
@@ -1010,6 +1014,9 @@ export function spawnPty(
       let extraFlags = ''
       if (options?.effortLevel) {
         extraFlags += ` --effort ${options.effortLevel}`
+      }
+      if (options?.model) {
+        extraFlags += ` --model ${options.model}`
       }
 
       // HOOKS INJECTION DISABLED — see the SSH branch above for the same

@@ -118,8 +118,8 @@
         "to": "config-template.json"
       },
       {
-        "from": "splash.webp",
-        "to": "splash.webp"
+        "from": "splash.png",
+        "to": "splash.png"
       }
     ]
   }
