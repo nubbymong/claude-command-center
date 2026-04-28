@@ -249,6 +249,19 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       // can attach the MutationObserver — refs alone don't trigger
       // effects, this state flip does.
       setTerminalReady(true)
+      // Initial focus — when the terminal mounts as the active session
+      // (typical case: user just clicked a config to launch a session,
+      // or a fresh app with one session restored), nothing else routes
+      // keyboard focus into xterm. Without this, the very first prompt
+      // (Claude's "trust this folder?" in SSH, shell PS1) silently
+      // eats keystrokes that hit the body element instead of the
+      // terminal. Skipped while a modal is up so the tour / config
+      // dialogs keep their focus trap.
+      if (isActive && !document.querySelector('[role="dialog"][aria-modal="true"]')) {
+        requestAnimationFrame(() => {
+          try { term.focus() } catch { /* ignore */ }
+        })
+      }
 
       // Wait for custom fonts to load BEFORE computing cols/rows.
       // xterm.js measures character width using the currently-loaded font.
