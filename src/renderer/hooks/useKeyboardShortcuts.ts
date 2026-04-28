@@ -55,15 +55,24 @@ export function useKeyboardShortcuts(
         e.preventDefault()
         setSidebarOpen(prev => !prev)
       }
-      // Paste clipboard image — saves to host screenshots dir, then asks Claude
-      // to fetch it via the conductor-vision MCP server (works for local + SSH).
+      // Paste clipboard image — saves to host screenshots dir, then routes to
+      // Claude. Local sessions get the absolute path written into the prompt
+      // (Claude's Read tool ingests it directly). SSH sessions can't reach
+      // the host filesystem so they go through the conductor-vision MCP
+      // fetch over the reverse tunnel.
       if (matchesShortcut(e, shortcuts.pasteImage)) {
         e.preventDefault()
         const state = useSessionStore.getState()
         if (state.activeSessionId) {
           const filePath = await window.electronAPI.clipboard.saveImage()
           if (filePath) {
-            sendImageToSession(state.activeSessionId, filePath, 'I just pasted an image — please view it.')
+            const session = state.sessions.find((s) => s.id === state.activeSessionId)
+            sendImageToSession(
+              state.activeSessionId,
+              filePath,
+              'I just pasted an image — please view it.',
+              session?.sessionType,
+            )
           }
         }
       }

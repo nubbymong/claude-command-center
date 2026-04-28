@@ -63,8 +63,6 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
   const [postCommand, setPostCommand] = useState(initial?.sshConfig?.postCommand ?? '')
   const [sudoPassword, setSudoPassword] = useState('')
   const [saveSudoPassword, setSaveSudoPassword] = useState(initial?.sshConfig?.hasSudoPassword ?? false)
-  const [startClaudeAfter, setStartClaudeAfter] = useState(initial?.sshConfig?.startClaudeAfter ?? false)
-  const [dockerContainer, setDockerContainer] = useState(initial?.sshConfig?.dockerContainer ?? '')
 
   // Legacy version fields
   const [legacyEnabled, setLegacyEnabled] = useState(initial?.legacyVersion?.enabled ?? false)
@@ -79,8 +77,6 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
   const agentUserTemplates = useAgentLibraryStore(s => s.templates)
   const allAgentTemplates = [...agentUserTemplates, ...BUILTIN_TEMPLATES]
   const [selectedAgentIds, setSelectedAgentIds] = useState<Set<string>>(new Set(initial?.agentIds ?? []))
-  const [flickerFree, setFlickerFree] = useState(initial?.flickerFree ?? false)
-  const [powershellTool, setPowershellTool] = useState(initial?.powershellTool ?? false)
   const [effortLevel, setEffortLevel] = useState<string>(initial?.effortLevel ?? '')
   const [disableAutoMemory, setDisableAutoMemory] = useState(initial?.disableAutoMemory ?? false)
   const [machineName, setMachineName] = useState(initial?.machineName ?? '')
@@ -227,16 +223,12 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
         hasPassword: savePassword && sshPassword.length > 0,
         postCommand: postCommand.trim() || undefined,
         hasSudoPassword: saveSudoPassword && sudoPassword.length > 0,
-        startClaudeAfter: postCommand.trim() ? startClaudeAfter : undefined,
-        dockerContainer: dockerContainer.trim() || undefined
       } : undefined,
       legacyVersion: legacyEnabled && legacyVersion ? {
         enabled: true,
         version: legacyVersion
       } : undefined,
       agentIds: !shellOnly && selectedAgentIds.size > 0 ? Array.from(selectedAgentIds) : undefined,
-      flickerFree: flickerFree || undefined,
-      powershellTool: powershellTool || undefined,
       effortLevel: (!shellOnly && effortLevel ? effortLevel : undefined) as any,
       disableAutoMemory: !shellOnly && disableAutoMemory ? true : undefined,
       machineName: machineName.trim() || undefined,
@@ -461,31 +453,12 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                   </div>
                 )}
                 {postCommand && (
-                  <label className="flex items-center gap-2 text-xs text-subtext0 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={startClaudeAfter}
-                      onChange={(e) => setStartClaudeAfter(e.target.checked)}
-                      className="rounded border-surface1"
-                    />
-                    Start Claude after post-command completes
-                  </label>
-                )}
-                <div>
-                  <label className="block text-xs text-subtext0 mb-1">
-                    Docker Container
-                    <span className="text-overlay0 ml-1">(for screenshot paste support)</span>
-                  </label>
-                  <input
-                    value={dockerContainer}
-                    onChange={(e) => setDockerContainer(e.target.value)}
-                    placeholder="my-container"
-                    className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue font-mono"
-                  />
-                  <p className="text-[10px] text-overlay0 mt-1">
-                    If set, pasted images will be copied into this container via docker cp
+                  <p className="text-[10px] text-overlay0 leading-snug">
+                    After connect you'll get an in-pane button to run this
+                    command. Once the inner shell appears, a second button
+                    launches Claude (or Skip drops you to the shell).
                   </p>
-                </div>
+                )}
               </>
             )}
           </div>
@@ -607,34 +580,6 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
               </label>
             )}
 
-            {/* Flicker-free rendering toggle */}
-            {!shellOnly && (
-              <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={flickerFree}
-                  onChange={(e) => setFlickerFree(e.target.checked)}
-                  className="rounded border-surface1"
-                />
-                Flicker-free rendering
-                <span className="text-[10px] text-overlay0">(alternate screen buffer)</span>
-              </label>
-            )}
-
-            {/* PowerShell tool toggle (local Windows sessions only) */}
-            {!shellOnly && sessionType === 'local' && window.electronPlatform === 'win32' && (
-              <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={powershellTool}
-                  onChange={(e) => setPowershellTool(e.target.checked)}
-                  className="rounded border-surface1"
-                />
-                PowerShell tool
-                <span className="text-[10px] text-overlay0">(native PS commands, preview)</span>
-              </label>
-            )}
-
             {/* -- EXTENSIONS section -- */}
             <div className="border-t border-surface1 pt-3 mt-3">
               <span className="text-[10px] uppercase tracking-wider text-overlay1 font-medium">Extensions</span>
@@ -737,6 +682,9 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                     </label>
                   ))}
                 </div>
+                <p className="text-[10px] text-overlay0 mt-1.5 leading-snug">
+                  Author your own templates in <span className="text-subtext0 font-medium">Agent Hub → Library</span>. Anything you create there appears here automatically.
+                </p>
               </>
             )}
 

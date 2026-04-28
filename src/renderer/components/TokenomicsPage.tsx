@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useMemo, useCallback } from 'react'
 import { useTokenomicsStore } from '../stores/tokenomicsStore'
 import type { TokenomicsSessionRecord, TokenomicsDailyAggregate } from '../../shared/types'
+import PageFrame from './PageFrame'
 
 const MODEL_COLORS: Record<string, string> = {
   'claude-sonnet-4-6': '#89B4FA',
@@ -756,69 +757,86 @@ export default function TokenomicsPage() {
     )
   }
 
+  const dollarIcon = (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="12" y1="1" x2="12" y2="23" />
+      <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
+    </svg>
+  )
+
+  const tokenomicsActions = (
+    <>
+      <button
+        onClick={() => startSeed()}
+        disabled={seeding}
+        className="px-2.5 py-0.5 text-xs rounded border border-surface1 bg-surface0 text-overlay1 hover:bg-surface1 hover:text-text disabled:opacity-50 transition-colors"
+      >
+        {seeding ? 'Seeding…' : 'Reseed'}
+      </button>
+      <button
+        onClick={() => startSync()}
+        disabled={syncing || seeding}
+        className="px-2.5 py-0.5 text-xs rounded border border-surface1 bg-surface0 text-overlay1 hover:bg-surface1 hover:text-text disabled:opacity-50 transition-colors"
+      >
+        {syncing ? 'Syncing…' : 'Sync now'}
+      </button>
+    </>
+  )
+
+  const tokenomicsContext = (
+    <>All-time {formatCost(allTimeCost)} · 5h {formatCost(fiveHourCost)}</>
+  )
+
   return (
-    <div className="flex-1 flex flex-col overflow-y-auto p-6">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-xl font-semibold text-text">Tokenomics</h1>
-        <div className="flex gap-2">
-          <button
-            onClick={() => startSeed()}
-            disabled={seeding}
-            className="px-3 py-1.5 text-xs rounded-lg bg-surface0 text-overlay1 hover:text-text hover:bg-surface1 disabled:opacity-50 transition-colors"
-          >
-            {seeding ? 'Seeding...' : 'Reseed'}
-          </button>
-          <button
-            onClick={() => startSync()}
-            disabled={syncing || seeding}
-            className="px-3 py-1.5 text-xs rounded-lg bg-surface0 text-overlay1 hover:text-text hover:bg-surface1 disabled:opacity-50 transition-colors"
-          >
-            {syncing ? 'Syncing...' : 'Sync Now'}
-          </button>
+    <PageFrame
+      icon={dollarIcon}
+      iconAccent="teal"
+      title="Tokenomics"
+      context={tokenomicsContext}
+      actions={tokenomicsActions}
+    >
+      <div className="p-6">
+        <SeedProgressBar />
+
+        <UsageAlert sessions={allSessions} data={data} />
+
+        <SummaryCards
+          today={todayCost}
+          week={weekCost}
+          fiveHour={fiveHourCost}
+          allTime={allTimeCost}
+          extraSpend={data?.extraSpend}
+          rateLimitCurrent={rateLimits.current}
+          rateLimitWeekly={rateLimits.weekly}
+          burnRate={burnRate}
+        />
+
+        {/* Charts row */}
+        <div className="grid grid-cols-3 gap-4 mb-6">
+          <div className="col-span-2">
+            <DailyChart selectedDate={selectedDate} onSelectDate={handleDateSelect} />
+          </div>
+          <ModelBreakdown sessions={filteredSessions} />
         </div>
+
+        {/* Filter bar */}
+        <FilterBar
+          dateFilter={dateFilter}
+          spendFilter={spendFilter}
+          onDateFilter={(f) => { setDateFilter(f); setSelectedDate(null) }}
+          onSpendFilter={setSpendFilter}
+          selectedDate={selectedDate}
+          projects={projects}
+          projectFilter={projectFilter}
+          onProjectFilter={setProjectFilter}
+        />
+
+        {/* Sessions table */}
+        <SessionsTable
+          sessions={filteredSessions}
+          title={selectedDate ? `Sessions on ${formatDateFull(selectedDate)}` : undefined}
+        />
       </div>
-
-      <SeedProgressBar />
-
-      <UsageAlert sessions={allSessions} data={data} />
-
-      <SummaryCards
-        today={todayCost}
-        week={weekCost}
-        fiveHour={fiveHourCost}
-        allTime={allTimeCost}
-        extraSpend={data?.extraSpend}
-        rateLimitCurrent={rateLimits.current}
-        rateLimitWeekly={rateLimits.weekly}
-        burnRate={burnRate}
-      />
-
-      {/* Charts row */}
-      <div className="grid grid-cols-3 gap-4 mb-6">
-        <div className="col-span-2">
-          <DailyChart selectedDate={selectedDate} onSelectDate={handleDateSelect} />
-        </div>
-        <ModelBreakdown sessions={filteredSessions} />
-      </div>
-
-      {/* Filter bar */}
-      <FilterBar
-        dateFilter={dateFilter}
-        spendFilter={spendFilter}
-        onDateFilter={(f) => { setDateFilter(f); setSelectedDate(null) }}
-        onSpendFilter={setSpendFilter}
-        selectedDate={selectedDate}
-        projects={projects}
-        projectFilter={projectFilter}
-        onProjectFilter={setProjectFilter}
-      />
-
-      {/* Sessions table */}
-      <SessionsTable
-        sessions={filteredSessions}
-        title={selectedDate ? `Sessions on ${formatDateFull(selectedDate)}` : undefined}
-      />
-    </div>
+    </PageFrame>
   )
 }

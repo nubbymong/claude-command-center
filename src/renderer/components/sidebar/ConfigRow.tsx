@@ -18,20 +18,25 @@ interface ConfigRowProps {
 }
 
 export default function ConfigRow({ config, onLaunch, onEdit, onDelete, onPin, onContextMenu, draggable, onDragStart, onDragOver, onDrop, onDragEnd, isDragOver }: ConfigRowProps) {
+  // Identity now lives in a small color dot — no row fill at rest, no
+  // heavy left border. Hover just lifts to a neutral surface tint;
+  // colour is held in the dot and badges only.
   return (
     <div
-      className={`flex items-center gap-2 rounded-md py-1.5 px-2 group transition-colors ${isDragOver ? 'border-t-2 border-blue' : ''}`}
-      style={{ borderLeft: `3px solid ${config.color}`, opacity: undefined }}
+      className={`flex items-center gap-1.5 rounded py-1 px-2 group transition-colors hover:bg-surface0/50 ${isDragOver ? 'border-t-2 border-blue' : ''}`}
       onContextMenu={onContextMenu}
-      onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = config.color + '12'}
-      onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.backgroundColor = ''}
       draggable={draggable}
       onDragStart={onDragStart}
       onDragOver={onDragOver}
       onDrop={onDrop}
       onDragEnd={onDragEnd}
     >
-      <span className="text-sm text-text truncate flex-1">{config.label}</span>
+      <span
+        className="w-1.5 h-1.5 rounded-full shrink-0"
+        style={{ backgroundColor: config.color }}
+        aria-hidden
+      />
+      <span className="text-xs text-text truncate flex-1">{config.label}</span>
       {config.sessionType === 'ssh' && <SshBadge />}
       {config.shellOnly ? <ShellBadge /> : <ClaudeBadge needsAttention={false} />}
       <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">

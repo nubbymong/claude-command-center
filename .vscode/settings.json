@@ -1,0 +1,5 @@
+{
+    "files.readonlyInclude": {
+        "**/rosetta/**/*.rosetta": true
+    }
+}

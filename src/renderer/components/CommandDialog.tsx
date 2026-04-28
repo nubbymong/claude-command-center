@@ -21,6 +21,9 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId }
   const [sectionId, setSectionId] = useState<string | undefined>(initial?.sectionId)
   const [newSectionName, setNewSectionName] = useState('')
   const [showNewSection, setShowNewSection] = useState(false)
+  const [webViewEnabled, setWebViewEnabled] = useState<boolean>(!!initial?.webView?.enabled)
+  const [webViewUrl, setWebViewUrl] = useState(initial?.webView?.url || '')
+  const [webViewUrlError, setWebViewUrlError] = useState<string | null>(null)
 
   const { sections, addSection } = useCommandStore()
   const visibleSections = sections.filter(
@@ -61,9 +64,31 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId }
     setShowNewSection(false)
   }
 
+  // Mirror the main-process webview IPC's allowlist (see webview-handlers.ts
+  // urlSchema). Validating here means a typo / file:// / missing scheme
+  // surfaces inline instead of being saved-then-failed at runtime.
+  const validateWebviewUrl = (raw: string): string | null => {
+    const trimmed = raw.trim()
+    if (!trimmed) return 'URL is required when webview is enabled'
+    let parsed: URL
+    try { parsed = new URL(trimmed) } catch { return 'Invalid URL — must include http:// or https://' }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return `Unsupported scheme "${parsed.protocol}" — only http and https are allowed`
+    }
+    return null
+  }
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (!label.trim() || !prompt.trim()) return
+    if (webViewEnabled) {
+      const urlError = validateWebviewUrl(webViewUrl)
+      if (urlError) {
+        setWebViewUrlError(urlError)
+        return
+      }
+    }
+    setWebViewUrlError(null)
     onConfirm({
       label: label.trim(),
       prompt: prompt.trim(),
@@ -73,6 +98,9 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId }
       target: target === 'any' ? undefined : target,
       defaultArgs: defaultArgs.length > 0 ? defaultArgs : undefined,
       sectionId,
+      webView: webViewEnabled
+        ? { enabled: true, url: webViewUrl.trim() }
+        : undefined,
     })
   }
 
@@ -139,21 +167,60 @@ export default function CommandDialog({ onConfirm, onCancel, initial, configId }
           <div>
             <label className="block text-xs text-subtext0 mb-1">Target Terminal</label>
             <div className="flex gap-2">
-              {([['any', 'Any'], ['claude', 'Claude'], ['partner', 'Partner']] as const).map(([val, lbl]) => (
-                <button
-                  key={val}
-                  type="button"
-                  onClick={() => setTarget(val)}
-                  className={`flex-1 py-1.5 text-xs rounded border ${
-                    target === val
-                      ? 'bg-blue/20 border-blue text-blue'
-                      : 'bg-surface0 border-surface1 text-overlay1'
-                  }`}
-                >
-                  {lbl}
-                </button>
-              ))}
+              {([['any', 'Any'], ['claude', 'Claude'], ['partner', 'Partner']] as const).map(([val, lbl]) => {
+                const isActive = target === val
+                return (
+                  <button
+                    key={val}
+                    type="button"
+                    onClick={() => setTarget(val)}
+                    className={`flex-1 py-1.5 text-xs rounded border transition-colors ${
+                      isActive
+                        ? 'bg-blue/20 border-blue text-blue'
+                        : 'bg-surface0 border-surface1 text-overlay1'
+                    }`}
+                  >
+                    {lbl}
+                  </button>
+                )
+              })}
             </div>
+          </div>
+          <div>
+            <label className="flex items-center gap-2 text-xs text-subtext0 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={webViewEnabled}
+                onChange={(e) => setWebViewEnabled(e.target.checked)}
+                className="accent-blue"
+              />
+              Launch webview on completion
+            </label>
+            {webViewEnabled && (
+              <div className="mt-1.5">
+                <input
+                  type="url"
+                  value={webViewUrl}
+                  onChange={(e) => {
+                    setWebViewUrl(e.target.value)
+                    if (webViewUrlError) setWebViewUrlError(null)
+                  }}
+                  className={`w-full px-3 py-1.5 bg-surface0 text-text text-sm rounded border outline-none font-mono ${
+                    webViewUrlError ? 'border-red focus:border-red' : 'border-surface1 focus:border-blue'
+                  }`}
+                  placeholder="http://localhost:3000"
+                  aria-invalid={!!webViewUrlError}
+                  aria-describedby={webViewUrlError ? 'webview-url-error' : undefined}
+                />
+                {webViewUrlError ? (
+                  <p id="webview-url-error" className="mt-1 text-[10px] text-red">{webViewUrlError}</p>
+                ) : (
+                  <p className="mt-1 text-[10px] text-overlay0">
+                    After the command is sent, the app polls this URL every second for up to 30 s. The webview button pulses green once content is reachable, red on timeout. The button also auto-detects if the server is already up when the app launches.
+                  </p>
+                )}
+              </div>
+            )}
           </div>
           <div>
             <label className="block text-xs text-subtext0 mb-1">Arguments (for script commands)</label>

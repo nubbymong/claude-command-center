@@ -59,3 +59,38 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      # Beta-testing artifact pipeline.
+      # When a PR's source branch starts with `release/` we also produce
+      # platform installers and upload them as workflow artifacts so the
+      # PR's Actions run page becomes the download point for each iteration
+      # of a release candidate. Signing/notarisation are skipped here —
+      # CI lacks the Apple Developer ID secrets the formal release workflow
+      # uses, so the macOS DMG is unsigned and Gatekeeper will warn on
+      # first launch (right-click → Open). The Windows installer is also
+      # unsigned, same SmartScreen warning as the release pipeline.
+      - name: Package Windows installer (release/* branches only)
+        if: matrix.os == 'windows-latest' && startsWith(github.head_ref, 'release/')
+        run: npx electron-builder --win
+
+      - name: Package macOS DMG (release/* branches only)
+        if: matrix.os == 'macos-latest' && startsWith(github.head_ref, 'release/')
+        run: npx electron-builder --mac
+
+      - name: Upload Windows installer
+        if: matrix.os == 'windows-latest' && startsWith(github.head_ref, 'release/')
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer-${{ github.sha }}
+          path: dist/*.exe
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload macOS DMG
+        if: matrix.os == 'macos-latest' && startsWith(github.head_ref, 'release/')
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg-${{ github.sha }}
+          path: dist/*.dmg
+          if-no-files-found: error
+          retention-days: 14

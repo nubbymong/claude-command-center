@@ -48,7 +48,7 @@ export default function ScreenshotButton({ sessionId, sessionType }: Props) {
     try {
       const path = await window.electronAPI.screenshot.captureRectangle()
       if (path) {
-        sendImageToSession(sessionId, path, 'I just snapped a region of my screen — please view it.')
+        sendImageToSession(sessionId, path, 'I just snapped a region of my screen — please view it.', sessionType)
       }
     } finally {
       setCapturing(false)
@@ -61,7 +61,7 @@ export default function ScreenshotButton({ sessionId, sessionType }: Props) {
     try {
       const path = await window.electronAPI.screenshot.captureWindow(sourceId)
       if (path) {
-        sendImageToSession(sessionId, path, 'I just captured a window from my screen — please view it.')
+        sendImageToSession(sessionId, path, 'I just captured a window from my screen — please view it.', sessionType)
       }
     } finally {
       setCapturing(false)

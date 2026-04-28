@@ -29,8 +29,6 @@ export function buildSessionState(): SessionState {
           hasPassword: s.sshConfig.hasPassword,
           postCommand: s.sshConfig.postCommand,
           hasSudoPassword: s.sshConfig.hasSudoPassword,
-          startClaudeAfter: s.sshConfig.startClaudeAfter,
-          dockerContainer: s.sshConfig.dockerContainer,
         }
       : undefined,
     legacyVersion: s.legacyVersion,

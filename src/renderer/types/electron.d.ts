@@ -94,7 +94,6 @@ export interface ElectronAPI {
         username: string
         remotePath: string
         postCommand?: string
-        startClaudeAfter?: boolean
         dockerContainer?: string
       }
       shellOnly?: boolean
@@ -120,6 +119,13 @@ export interface ElectronAPI {
     kill: (sessionId: string) => void
     onData: (sessionId: string, callback: (data: string) => void) => () => void
     onExit: (sessionId: string, callback: (exitCode: number) => void) => () => void
+  }
+  ssh: {
+    runPostCommand: (sessionId: string) => Promise<void>
+    launchClaude: (sessionId: string) => Promise<void>
+    skip: (sessionId: string) => Promise<void>
+    getState: (sessionId: string) => Promise<{ state: string; info?: string }>
+    onFlowState: (sessionId: string, callback: (msg: { state: string; info?: string }) => void) => () => void
   }
   statusline: {
     onUpdate: (callback: (data: {
@@ -209,11 +215,19 @@ export interface ElectronAPI {
     listRecent: () => Promise<Array<{ filename: string; path: string; timestamp: number; thumbnail: string }>>
     cleanup: (maxAgeDays: number) => Promise<number>
   }
-  storyboard: {
-    start: () => Promise<{ x: number; y: number; width: number; height: number } | null>
-    captureFrame: () => Promise<string | null>
-    stop: () => Promise<string[]>
-    isActive: () => Promise<boolean>
+  webview: {
+    check: (url: string) => Promise<{ reachable: boolean; status?: number }>
+    open: (sessionId: string, url: string, bounds: { x: number; y: number; width: number; height: number }) => Promise<boolean>
+    close: (sessionId: string) => Promise<boolean>
+    setBounds: (sessionId: string, bounds: { x: number; y: number; width: number; height: number }) => Promise<void>
+    setVisible: (sessionId: string, visible: boolean) => Promise<void>
+    reload: (sessionId: string) => Promise<void>
+    capture: (sessionId: string) => Promise<string | null>
+    navBack: (sessionId: string) => Promise<void>
+    navForward: (sessionId: string) => Promise<void>
+    goHome: (sessionId: string) => Promise<void>
+    closeAll: () => Promise<boolean>
+    onEscapePressed: (handler: (sessionId: string) => void) => () => void
   }
   session: {
     save: (state: SessionState) => Promise<boolean>

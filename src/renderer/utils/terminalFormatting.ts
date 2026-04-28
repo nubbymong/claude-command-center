@@ -1,39 +1,19 @@
 /**
- * Strip cursor-related escape sequences from terminal data.
- * This removes the yellow block cursor that Claude's TUI renders.
+ * Strip the narrow set of escape sequences that fight our xterm
+ * preferences: cursor blink mode and cursor-style (DECSCUSR). Claude's
+ * TUI sometimes asks for a blinking block cursor that overrides the
+ * user's `cursorBlink: false` / `cursorStyle: 'bar'` settings.
  *
- * Two layers of defense:
- * 1. Remove cursor control sequences (show/hide/blink/style)
- * 2. Replace yellow background colors with default background.
- *    Claude's TUI paints a yellow block cursor using yellow bg (SGR 43/103)
- *    or 256-color/truecolor yellow bg sequences. We replace them with
- *    default bg (SGR 49) so the cursor block becomes invisible.
+ * Reverse-video, backgrounds, and spinner glyphs are NO LONGER
+ * stripped here. With ConPTY + alternate-screen rendering
+ * (CLAUDE_CODE_NO_FLICKER=1), Claude's TUI repaints faithfully and
+ * the historical "yellow flashing block" symptom goes away at the
+ * PTY-fidelity layer rather than via downstream byte rewrites.
  */
 export function stripCursorSequences(data: string): string {
   return data
-    .replace(/\x1b\[\?25h/g, '')        // strip cursor SHOW only (keep hide sequences)
     .replace(/\x1b\[\?12[hl]/g, '')     // blink on/off
     .replace(/\x1b\[\d+ q/g, '')        // cursor style
-    // Strip reverse video (SGR 7) from ANY SGR sequence — Claude's TUI uses it for block cursor.
-    // Handles standalone \x1b[7m and combined like \x1b[7;33m, \x1b[1;7m, \x1b[7;38;2;...m
-    .replace(/\x1b\[([0-9;]*)m/g, (_match, params: string) => {
-      if (!params) return _match
-      const parts = params.split(';')
-      const filtered = parts.filter(p => p !== '7' && p !== '27')
-      if (filtered.length === parts.length) return _match  // no reverse video, keep as-is
-      if (filtered.length === 0) return ''  // was only reverse video
-      return '\x1b[' + filtered.join(';') + 'm'
-    })
-    // Yellow/bright-yellow background → default background
-    .replace(/\x1b\[(?:43|103)m/g, '\x1b[49m')
-    // 256-color yellow/orange backgrounds
-    .replace(/\x1b\[48;5;(?:3|11|178|179|180|184|185|186|187|190|191|192|208|214|220|221|226|227|228|229)m/g, '\x1b[49m')
-    // Truecolor yellow/orange/amber backgrounds (R>150, G>100, B<100)
-    .replace(/\x1b\[48;2;(\d+);(\d+);(\d+)m/g, (_match, r, g, b) => {
-      const ri = parseInt(r), gi = parseInt(g), bi = parseInt(b)
-      if (ri > 150 && gi > 100 && bi < 100) return '\x1b[49m'
-      return _match
-    })
 }
 
 export function formatTokens(n: number): string {

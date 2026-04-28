@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useMemo } from 'react'
 import { useMemoryStore } from '../stores/memoryStore'
 import type { MemoryFile, MemoryProject } from '../../shared/types'
+import PageFrame from './PageFrame'
 
 const TYPE_COLORS: Record<string, { bg: string; fg: string; label: string }> = {
   user:          { bg: 'rgba(137,180,250,0.12)', fg: '#89b4fa', label: 'User' },
@@ -361,36 +362,53 @@ export default function MemoryPage() {
     ? [{ label: 'All Projects', action: () => selectProject(null) }, { label: selectedProject }]
     : [{ label: 'All Projects' }]
 
+  const memoryIcon = (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 2a7 7 0 0 1 7 7c0 2.38-1.19 4.47-3 5.74V17a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1v-2.26C6.19 13.47 5 11.38 5 9a7 7 0 0 1 7-7z" />
+      <line x1="9" y1="21" x2="15" y2="21" />
+      <line x1="10" y1="24" x2="14" y2="24" />
+    </svg>
+  )
+
+  const memoryContext = (
+    <span className="flex items-center gap-1.5">
+      {breadcrumb.map((b, i) => (
+        <React.Fragment key={i}>
+          {i > 0 && <span className="text-surface2">/</span>}
+          {b.action ? (
+            <span onClick={b.action} className="text-blue cursor-pointer hover:opacity-80">{b.label}</span>
+          ) : (
+            <span className="text-subtext1">{b.label}</span>
+          )}
+        </React.Fragment>
+      ))}
+    </span>
+  )
+
+  const memoryActions = (
+    <div className="relative w-56">
+      <svg className="absolute left-2 top-1/2 -translate-y-1/2 text-overlay0" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+      </svg>
+      <input
+        type="text"
+        value={searchInput}
+        onChange={e => setSearchInput(e.target.value)}
+        placeholder="Search all memories…"
+        className="w-full bg-surface0 border border-surface1 text-text pl-7 pr-2 py-0.5 rounded text-xs focus:outline-none focus:border-blue placeholder:text-overlay0"
+      />
+    </div>
+  )
+
   return (
-    <div className="flex flex-col h-full">
-      {/* Top Bar */}
-      <div className="flex items-center gap-4 px-5 py-3 border-b border-surface0 bg-mantle shrink-0">
-        <span className="font-mono text-[13px] font-semibold text-text tracking-wide">Memory</span>
-        <div className="flex items-center gap-1.5 font-mono text-[11px] text-overlay0 flex-1">
-          {breadcrumb.map((b, i) => (
-            <React.Fragment key={i}>
-              {i > 0 && <span className="text-surface2">/</span>}
-              {b.action ? (
-                <span onClick={b.action} className="text-blue cursor-pointer hover:opacity-80">{b.label}</span>
-              ) : (
-                <span className="text-subtext1">{b.label}</span>
-              )}
-            </React.Fragment>
-          ))}
-        </div>
-        <div className="relative w-60">
-          <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 text-overlay0" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-          </svg>
-          <input
-            type="text"
-            value={searchInput}
-            onChange={e => setSearchInput(e.target.value)}
-            placeholder="Search all memories..."
-            className="w-full bg-surface0 border border-surface1 text-text pl-8 pr-3 py-1.5 rounded text-xs focus:outline-none focus:border-blue placeholder:text-overlay0"
-          />
-        </div>
-      </div>
+    <PageFrame
+      icon={memoryIcon}
+      iconAccent="lavender"
+      title="Memory"
+      context={memoryContext}
+      actions={memoryActions}
+      scrollable={false}
+    >
 
       {/* Warning Banner */}
       {warnings.length > 0 && (
@@ -508,6 +526,6 @@ export default function MemoryPage() {
           />
         )}
       </div>
-    </div>
+    </PageFrame>
   )
 }

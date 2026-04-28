@@ -1,9 +1,12 @@
-import React, { useState, useCallback } from 'react'
+import React, { useState, useCallback, useEffect } from 'react'
 import { useCommandStore, CustomCommand, CommandSection } from '../stores/commandStore'
 import { useSessionStore } from '../stores/sessionStore'
+import { useCommandBarStore } from '../stores/commandBarStore'
 import CommandDialog from './CommandDialog'
 import ScreenshotButton from './ScreenshotButton'
-import StoryboardButton from './StoryboardButton'
+import ExcalidrawButton from './ExcalidrawButton'
+import WebviewButton from './WebviewButton'
+import { useWebviewStore, pollUrlForContent, probeWebviewUrls } from '../stores/webviewStore'
 import ToolbarPopup from './ToolbarPopup'
 import { generateId } from '../utils/id'
 import { trackUsage } from '../stores/tipsStore'
@@ -23,9 +26,20 @@ interface Props {
   isPartnerActive?: boolean
   onTogglePartner?: () => void
   partnerSessionId?: string
+  /**
+   * The owning *session*'s id (not the PTY id). Used to key webview
+   * store state so the Claude and Partner CommandBars within the same
+   * session share one set of pulse/open state — without it, clicking
+   * Web from the partner pane would write `bySessionId[partnerPtyId]`
+   * while App.tsx renders `WebviewPane` keyed by `session.id`,
+   * resulting in the banner triggering but the pane never appearing.
+   * Defaults to `sessionId` so single-pane TerminalViews keep working.
+   */
+  parentSessionId?: string
 }
 
-export default function CommandBar({ sessionId, configId, sessionType = 'local', partnerEnabled, isPartnerActive, onTogglePartner, partnerSessionId }: Props) {
+export default function CommandBar({ sessionId, configId, sessionType = 'local', partnerEnabled, isPartnerActive, onTogglePartner, partnerSessionId, parentSessionId }: Props) {
+  const webviewKey = parentSessionId ?? sessionId
   const { commands, sections, addCommand, updateCommand, removeCommand, reorderCommands, updateSection, removeSection, reorderSections } = useCommandStore()
   const [showDialog, setShowDialog] = useState(false)
   const [editingCommand, setEditingCommand] = useState<CustomCommand | null>(null)
@@ -36,7 +50,12 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
   const [dragSectionId, setDragSectionId] = useState<string | null>(null)
   const [dragOverSectionTargetId, setDragOverSectionTargetId] = useState<string | null>(null)
   const [argsPopover, setArgsPopover] = useState<{ cmd: CustomCommand; rect: DOMRect } | null>(null)
-  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set())
+  // Section collapse state lives in a shared store so the Claude and Partner
+  // CommandBar instances within the same config see the same set. Local
+  // useState would diverge across the two terminal views and only "feel"
+  // persistent when bouncing back to the original side.
+  const collapsedSectionIds = useCommandBarStore((s) => s.state.collapsedSectionIds)
+  const toggleSectionCollapse = useCommandBarStore((s) => s.toggleSection)
   const [sectionInput, setSectionInput] = useState<{ x: number; y: number; editSection?: CommandSection; rowTarget?: 'claude' | 'partner' } | null>(null)
 
   // --- Model/Effort/Mode pickers ---
@@ -93,25 +112,83 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
     return cmd.prompt
   }
 
+  const startActivation = useWebviewStore((s) => s.startActivation)
+  const markAvailable = useWebviewStore((s) => s.markAvailable)
+  const markFailed = useWebviewStore((s) => s.markFailed)
+
+  /**
+   * Kick off polling for a webview-enabled command. Called after the
+   * pty write completes (or after a partner-toggle delay) so the button
+   * starts pulsing in lock-step with the command actually being sent.
+   * Always keyed by the parent session id (not PTY id) so Claude and
+   * Partner CommandBars share the same status.
+   *
+   * `startActivation` returns a monotonic token. We pass it to mark*()
+   * so a slow earlier poll can't clobber a newer activation's result —
+   * matters when the user double-taps the command, or runs two
+   * different webview-enabled commands with different URLs back-to-back.
+   */
+  const startWebviewPolling = (url: string) => {
+    const token = startActivation(webviewKey, url)
+    pollUrlForContent(url).then((reachable) => {
+      if (reachable) markAvailable(webviewKey, url, token)
+      else markFailed(webviewKey, token)
+    })
+  }
+
   /** Send a command to the appropriate PTY */
   const sendCommand = (cmd: CustomCommand, fullCommand: string) => {
     const target = cmd.target || 'any'
+    const webViewUrl = cmd.webView?.enabled ? cmd.webView.url : null
+
+    const writeTo = (ptyId: string) => {
+      window.electronAPI.pty.write(ptyId, fullCommand + '\r')
+      if (webViewUrl) {
+        // Webview-enabled command — full 30s pending → available/failed
+        // poll, owned by startWebviewPolling.
+        startWebviewPolling(webViewUrl)
+      } else if (webviewUrls.length > 0) {
+        // Any other command-button press is a natural moment to re-verify
+        // the webview URLs for this session — catches "user stopped the
+        // dev server" without burning a background interval. Skipped
+        // when a startWebviewPolling cycle is in flight (pending).
+        void probeWebviewUrls(webviewKey, webviewUrls)
+      }
+    }
+
     if (target === 'partner' && !isPartnerActive && onTogglePartner && partnerSessionId) {
       onTogglePartner()
-      setTimeout(() => window.electronAPI.pty.write(partnerSessionId, fullCommand + '\r'), 100)
+      setTimeout(() => writeTo(partnerSessionId), 100)
       return
     }
     if (target === 'claude' && isPartnerActive && onTogglePartner) {
       onTogglePartner()
-      setTimeout(() => window.electronAPI.pty.write(sessionId, fullCommand + '\r'), 100)
+      setTimeout(() => writeTo(sessionId), 100)
       return
     }
     // 'any' or already on the right terminal
     const targetId = target === 'partner' && partnerSessionId ? partnerSessionId
       : target === 'claude' ? sessionId
       : (isPartnerActive && partnerSessionId ? partnerSessionId : sessionId)
-    window.electronAPI.pty.write(targetId, fullCommand + '\r')
+    writeTo(targetId)
   }
+
+  // One-shot auto-detect on mount — catches a dev server that was
+  // already running before the app launched. No background interval:
+  // re-verification happens when the user clicks any command button
+  // for this session (see writeTo above). Constant polling was the
+  // previous approach; user vetoed it as wasteful.
+  const webviewUrls = visibleCommands
+    .filter((c) => c.webView?.enabled && c.webView.url)
+    .map((c) => c.webView!.url)
+  const webviewUrlsKey = webviewUrls.join('|')
+  useEffect(() => {
+    if (webviewUrls.length === 0) return
+    void probeWebviewUrls(webviewKey, webviewUrls)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [webviewKey, webviewUrlsKey])
+
+  const hasWebviewCommand = webviewUrls.length > 0
 
   const handleClick = (cmd: CustomCommand, e: React.MouseEvent) => {
     // Ctrl+click: show args popover if command has args
@@ -248,14 +325,9 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
     e.dataTransfer.setData('application/x-section', section.id)
   }
 
-  /** Toggle section collapse */
+  /** Toggle section collapse via shared store (synced across Claude/Partner). */
   const toggleSection = (sectionId: string) => {
-    setCollapsedSections((prev) => {
-      const next = new Set(prev)
-      if (next.has(sectionId)) next.delete(sectionId)
-      else next.add(sectionId)
-      return next
-    })
+    toggleSectionCollapse(sectionId)
   }
 
   // Render a single command button with full-color styling
@@ -267,6 +339,12 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
     const argsTitle = cmd.defaultArgs?.length
       ? `${cmd.prompt}\nArgs: ${cmd.defaultArgs.join(' ')}\nCtrl+click to customize args`
       : cmd.prompt
+    // Sophistication pass 2026-04-25: command-button colour now reads as a
+     // small dot in front of the label rather than tinting the whole button.
+     // The previous saturated chip-per-button row dominated the bottom strip
+     // visually and clashed with the active-tab marker. Buttons now inherit
+     // a neutral surface chip; the dot carries identity. Drag-over still
+     // uses the blue ring for clarity since that's a transient affordance.
     return (
       <button
         key={cmd.id}
@@ -277,36 +355,24 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
         onDragEnd={handleDragEnd}
         onClick={(e) => handleClick(cmd, e)}
         onContextMenu={(e) => { e.stopPropagation(); handleContextMenu(e, cmd.id) }}
-        className="flex items-center gap-1 px-2.5 py-0.5 text-xs rounded border text-subtext0 hover:text-text transition-colors whitespace-nowrap shrink-0"
+        className={`flex items-center gap-1.5 px-2.5 py-0.5 text-xs rounded border whitespace-nowrap shrink-0 transition-colors ${
+          isDragOver
+            ? 'border-blue/50 bg-surface0/70 text-text'
+            : 'border-surface1/60 bg-surface0/40 text-subtext0 hover:bg-surface0 hover:text-text hover:border-surface1'
+        }`}
         style={{
-          backgroundColor: color + '20',
-          borderColor: isDragOver ? '#89B4FA' : color + '40',
           opacity: isDragging ? 0.4 : 1,
           cursor: isDragging ? 'grabbing' : 'grab',
           borderLeftWidth: isDragOver ? '2px' : undefined,
           borderLeftColor: isDragOver ? '#89B4FA' : undefined,
         }}
-        onMouseEnter={(e) => {
-          if (!isDragging) {
-            (e.currentTarget as HTMLElement).style.backgroundColor = color + '35'
-            if (!isDragOver) (e.currentTarget as HTMLElement).style.borderColor = color + '60'
-          }
-        }}
-        onMouseLeave={(e) => {
-          if (!isDragging) {
-            (e.currentTarget as HTMLElement).style.backgroundColor = color + '20'
-            if (!isDragOver) (e.currentTarget as HTMLElement).style.borderColor = color + '40'
-          }
-        }}
         title={argsTitle}
       >
-        {cmd.scope === 'global' && (
-          <svg width="8" height="8" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-overlay0 shrink-0 opacity-60">
-            <circle cx="8" cy="8" r="6.5" />
-            <ellipse cx="8" cy="8" rx="3" ry="6.5" />
-            <path d="M1.5 8h13" />
-          </svg>
-        )}
+        <span
+          className="inline-block w-1.5 h-1.5 rounded-full shrink-0"
+          style={{ backgroundColor: color }}
+          aria-hidden
+        />
         {cmd.label}
         {hasArgs && (
           <svg width="7" height="7" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.3" className="text-overlay0 shrink-0 opacity-50">
@@ -357,7 +423,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
         {/* All sections — always shown, even when empty */}
         {visibleSections.map((section, idx) => {
           const sectionCmds = bySectionId.get(section.id) || []
-          const isCollapsed = collapsedSections.has(section.id)
+          const isCollapsed = collapsedSectionIds.includes(section.id)
           const isDropTarget = dragOverSectionId === section.id
           const isSectionDragging = dragSectionId === section.id
           const isSectionDropTarget = dragOverSectionTargetId === section.id
@@ -418,42 +484,30 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
         </div>
         <div className="w-px h-4 bg-surface1 mx-0.5" />
         <ScreenshotButton sessionId={sessionId} sessionType={sessionType} />
-        <StoryboardButton sessionId={sessionId} sessionType={sessionType} />
-        {/* Back to Claude / Partner toggle - on magic row */}
+        <ExcalidrawButton sessionId={sessionId} />
+        <WebviewButton sessionId={webviewKey} hasWebviewCommand={hasWebviewCommand} />
+        {/* Back to Claude / Partner toggle - same monochrome tool-button shape as Snap */}
         {partnerEnabled && onTogglePartner && (
           <>
             <div className="w-px h-4 bg-surface1 mx-0.5" />
-            {isPartnerActive ? (
-              <button
-                onClick={onTogglePartner}
-                className="w-[118px] flex items-center justify-center gap-1.5 py-0.5 text-xs rounded font-medium transition-colors shrink-0"
-                style={{ backgroundColor: 'rgba(227, 148, 85, 0.18)', borderColor: 'rgba(227, 148, 85, 0.4)', color: '#E39455', border: '1px solid rgba(227, 148, 85, 0.4)' }}
-                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'rgba(227, 148, 85, 0.28)' }}
-                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'rgba(227, 148, 85, 0.18)' }}
-                title="Switch back to Claude terminal"
-              >
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+            <button
+              onClick={onTogglePartner}
+              className="flex items-center gap-1.5 px-2 py-0.5 text-xs rounded bg-surface0/60 border border-surface1/80 hover:bg-surface1 text-overlay1 hover:text-text transition-colors whitespace-nowrap shrink-0"
+              title={isPartnerActive ? 'Switch back to Claude terminal' : 'Switch to partner terminal'}
+            >
+              {isPartnerActive ? (
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
                   <path d="M12 2v8.5M12 13.5V22M2 12h8.5M13.5 12H22M4.93 4.93l6.01 6.01M13.06 13.06l6.01 6.01M19.07 4.93l-6.01 6.01M10.94 13.06l-6.01 6.01" />
                 </svg>
-                Claude
-              </button>
-            ) : (
-              <button
-                onClick={onTogglePartner}
-                className="w-[118px] flex items-center justify-center gap-1.5 py-0.5 text-xs rounded font-medium transition-colors shrink-0"
-                style={{ backgroundColor: 'rgba(100, 160, 240, 0.14)', borderColor: 'rgba(100, 160, 240, 0.35)', color: '#64A0F0', border: '1px solid rgba(100, 160, 240, 0.35)' }}
-                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'rgba(100, 160, 240, 0.24)' }}
-                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'rgba(100, 160, 240, 0.14)' }}
-                title="Switch to partner terminal"
-              >
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              ) : (
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <polyline points="7 8 3 12 7 16" />
                   <polyline points="17 8 21 12 17 16" />
                   <line x1="14" y1="4" x2="10" y2="20" />
                 </svg>
-                Partner
-              </button>
-            )}
+              )}
+              {isPartnerActive ? 'Claude' : 'Partner'}
+            </button>
           </>
         )}
         {/* Spacer */}
@@ -535,7 +589,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
 
       {/* Row 2: Claude commands */}
       {claudeCommands.length > 0 && (
-        <div className="flex items-center gap-1 px-2 py-0.5 bg-crust border-t border-surface0/50 overflow-x-auto" onContextMenu={(e) => { e.stopPropagation(); handleContextMenu(e, undefined, 'claude') }}>
+        <div className="flex items-center gap-1 px-2 py-0.5 bg-crust border-t border-surface0 overflow-x-auto" onContextMenu={(e) => { e.stopPropagation(); handleContextMenu(e, undefined, 'claude') }}>
           {/* Section icon: Claude asterisk */}
           <div className="shrink-0 text-peach/60" title="Claude Commands">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
@@ -549,7 +603,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
 
       {/* Row 3: Partner commands */}
       {partnerEnabled && partnerCommands.length > 0 && (
-        <div className="flex items-center gap-1 px-2 py-0.5 bg-crust border-t border-surface0/50 overflow-x-auto" onContextMenu={(e) => { e.stopPropagation(); handleContextMenu(e, undefined, 'partner') }}>
+        <div className="flex items-center gap-1 px-2 py-0.5 bg-crust border-t border-surface0 overflow-x-auto" onContextMenu={(e) => { e.stopPropagation(); handleContextMenu(e, undefined, 'partner') }}>
           {/* Section icon: </> code */}
           <div className="shrink-0 text-green/60" title="Partner Terminal Commands">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">

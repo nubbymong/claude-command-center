@@ -2,6 +2,8 @@ import { create } from 'zustand'
 import { saveConfigNow } from '../utils/config-saver'
 import { DEFAULT_SHORTCUTS } from '../utils/shortcuts'
 
+export type StatusLineFont = 'sans' | 'mono'
+
 export interface StatusLineSettings {
   showModel: boolean
   showTokens: boolean
@@ -11,6 +13,8 @@ export interface StatusLineSettings {
   showDuration: boolean
   showRateLimits: boolean
   showResetTime: boolean
+  font: StatusLineFont
+  fontSize: number
 }
 
 export const DEFAULT_STATUS_LINE: StatusLineSettings = {
@@ -21,10 +25,17 @@ export const DEFAULT_STATUS_LINE: StatusLineSettings = {
   showLinesChanged: true,
   showDuration: true,
   showRateLimits: true,
-  showResetTime: true
+  showResetTime: true,
+  font: 'sans',
+  fontSize: 12
 }
 
 export type UpdateChannel = 'stable' | 'beta'
+
+// 'system' follows the OS prefers-color-scheme; explicit 'dark' / 'light'
+// overrides regardless of OS. Default is 'dark' so existing users see no
+// visual change unless they opt in.
+export type ThemeMode = 'dark' | 'light' | 'system'
 
 export type CursorStyle = 'bar' | 'block' | 'underline'
 
@@ -60,6 +71,7 @@ export interface AppSettings {
   showTips: boolean
   hooksEnabled: boolean
   hooksPort: number
+  theme: ThemeMode
 }
 
 interface SettingsState {
@@ -85,13 +97,24 @@ export const DEFAULT_SETTINGS: AppSettings = {
   showTips: true,
   hooksEnabled: true,
   hooksPort: 19334,
+  theme: 'dark',
 }
 
 export const useSettingsStore = create<SettingsState>((set) => ({
   settings: { ...DEFAULT_SETTINGS },
   isLoaded: false,
 
-  hydrate: (settings) => set({ settings: { ...DEFAULT_SETTINGS, ...settings }, isLoaded: true }),
+  hydrate: (settings) => set({
+    settings: {
+      ...DEFAULT_SETTINGS,
+      ...settings,
+      // Deep-merge nested objects so users with older saved configs still pick up
+      // newly added fields (e.g. statusLine.font/fontSize) instead of getting undefined.
+      statusLine: { ...DEFAULT_STATUS_LINE, ...(settings.statusLine || {}) },
+      terminal: { ...DEFAULT_TERMINAL_SETTINGS, ...(settings.terminal || {}) },
+    },
+    isLoaded: true,
+  }),
 
   updateSettings: (updates) => {
     let savePromise: Promise<unknown> = Promise.resolve()

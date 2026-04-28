@@ -33,7 +33,6 @@ export interface SshConfig {
   hasPassword?: boolean
   postCommand?: string
   hasSudoPassword?: boolean
-  startClaudeAfter?: boolean
   dockerContainer?: string
 }
 

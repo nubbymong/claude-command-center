@@ -3,12 +3,14 @@ import '@xterm/xterm/css/xterm.css'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
+import { WebglAddon } from '@xterm/addon-webgl'
 import { useSessionStore } from '../stores/sessionStore'
 import { hasSpawned, markSpawned, killSessionPty } from '../ptyTracker'
 import CommandBar from './CommandBar'
+import SshFlowOverlay from './SshFlowOverlay'
 import { shouldUseResumePicker } from '../utils/resumePicker'
 import { stripCursorSequences } from '../utils/terminalFormatting'
-import { THEME } from './terminal/terminalTheme'
+import { getTerminalTheme } from './terminal/terminalTheme'
 import { useSettingsStore, DEFAULT_TERMINAL_SETTINGS } from '../stores/settingsStore'
 import { ContextBar, ScrollToBottomButton } from './terminal'
 import { useStatuslineSubscription } from '../hooks/useStatuslineSubscription'
@@ -31,26 +33,32 @@ interface Props {
     username: string
     remotePath: string
     postCommand?: string
-    startClaudeAfter?: boolean
-    dockerContainer?: string
   }
   isActive?: boolean
   partnerEnabled?: boolean
   isPartnerActive?: boolean
   onTogglePartner?: () => void
   partnerSessionId?: string
+  /**
+   * Owning session id (not PTY id). Threaded down to CommandBar so the
+   * webview store keys off the session, not the partner-PTY suffix.
+   * Defaults to `sessionId` for the main pane TerminalView.
+   */
+  parentSessionId?: string
   legacyVersion?: {
     enabled: boolean
     version: string
   }
   agentIds?: string[]
-  flickerFree?: boolean
-  powershellTool?: boolean
   effortLevel?: 'low' | 'medium' | 'high'
   disableAutoMemory?: boolean
+  /** Per-session model override (sonnet | opus | haiku | ''). Empty
+   * string means "use whatever the CLI picks". Forwarded to claude as
+   * `--model <name>` when set. */
+  model?: string
 }
 
-export default function TerminalView({ sessionId, configId, cwd, shellOnly, elevated, ssh, isActive = true, partnerEnabled, isPartnerActive, onTogglePartner, partnerSessionId, legacyVersion, agentIds, flickerFree, powershellTool, effortLevel, disableAutoMemory }: Props) {
+export default function TerminalView({ sessionId, configId, cwd, shellOnly, elevated, ssh, isActive = true, partnerEnabled, isPartnerActive, onTogglePartner, partnerSessionId, parentSessionId, legacyVersion, agentIds, effortLevel, disableAutoMemory, model }: Props) {
   const xtermContainerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
@@ -65,6 +73,87 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
   useStatuslineSubscription(sessionId)
   useActiveTabEffect(sessionId, isActive, terminalRef, attentionTimerRef, attentionAckedRef)
   useCursorLayerVisibility(xtermContainerRef, isActive, shellOnly)
+
+  // SSH-specific: when the SshFlowOverlay's Launch Claude button is the
+  // last thing the user clicked, focus stays on it. The overlay unmounts
+  // on `claude-running` → focus falls back to <body> → the trust-this-
+  // folder prompt's Enter goes to nothing. Subscribe to the flow state
+  // here and pull focus into xterm the moment Claude is up. Skipped
+  // when a modal is open so the walkthrough's focus trap wins.
+  useEffect(() => {
+    if (!ssh) return
+    return window.electronAPI.ssh.onFlowState(sessionId, (msg) => {
+      if (msg.state !== 'claude-running') return
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return
+      // requestAnimationFrame so React has time to unmount the overlay
+      // and yield the focus stack before we grab it.
+      requestAnimationFrame(() => {
+        try { terminalRef.current?.focus() } catch { /* ignore */ }
+      })
+    })
+  }, [sessionId, ssh])
+
+  // Repaint the terminal whenever the resolved theme changes.
+  // Watching data-theme on <html> via MutationObserver covers BOTH:
+  //   - explicit user flips through ThemeToggle (settings.theme changes)
+  //   - OS prefers-color-scheme changes while in 'system' mode (the
+  //     useThemeController hook mutates data-theme directly in that case
+  //     without touching settings.theme)
+  // term.options.theme = X only colours new writes, so we also call
+  // term.refresh(0, rows-1) to repaint existing scrollback. requestAnimationFrame
+  // gives the browser a tick to recompute CSS variables before we read them.
+  // Re-run on `terminalReady` flips — the init effect below sets this
+  // to true after `terminalRef.current = term`, so the MutationObserver
+  // attaches on first paint instead of returning early when the ref
+  // was still null. Without this gate, theme flips never repainted.
+  const [terminalReady, setTerminalReady] = useState(false)
+  useEffect(() => {
+    if (!terminalReady) return
+    const term = terminalRef.current
+    if (!term) return
+
+    const apply = () => {
+      const raf = requestAnimationFrame(() => {
+        const live = terminalRef.current
+        if (!live) return
+        const palette = getTerminalTheme()
+        live.options.theme = shellOnly
+          ? palette
+          : { ...palette, cursor: palette.background, cursorAccent: palette.background }
+        try {
+          live.refresh(0, live.rows - 1)
+        } catch {
+          /* terminal may have been disposed mid-flip */
+        }
+        // Theme flip can recreate the cursor canvas; re-stamp the
+        // inline hide for Claude sessions. Cheap & idempotent.
+        if (!shellOnly && live.element) {
+          live.element.querySelectorAll('.xterm-cursor-layer').forEach((el) => {
+            const node = el as HTMLElement
+            node.style.setProperty('display', 'none', 'important')
+            node.style.setProperty('visibility', 'hidden', 'important')
+            node.style.setProperty('opacity', '0', 'important')
+          })
+        }
+      })
+      return raf
+    }
+
+    let pendingRaf = apply()
+    const observer = new MutationObserver(() => {
+      if (pendingRaf !== undefined) cancelAnimationFrame(pendingRaf)
+      pendingRaf = apply()
+    })
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme'],
+    })
+
+    return () => {
+      observer.disconnect()
+      if (pendingRaf !== undefined) cancelAnimationFrame(pendingRaf)
+    }
+  }, [shellOnly, terminalReady])
 
   // Core terminal initialization + PTY wiring
   useEffect(() => {
@@ -93,15 +182,21 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         return
       }
 
-      // For Claude Code sessions we hide the cursor (Claude renders its own
-      // input bar), so paint the cursor layer in the same background colour.
-      // Deriving from THEME.background keeps this in lockstep if the palette
-      // ever changes again — the old literal (#0f1218) went stale when the
-      // theme moved to #1a1a1a and made the cursor effectively invisible
-      // against the old tone.
+      // Claude's TUI draws its own input cursor as a coloured cell at
+      // the prompt position, and leaves xterm's real cursor wherever
+      // its last write landed — usually somewhere off-screen for the
+      // user. So in Claude sessions we hide xterm's cursor entirely
+      // (theme paints it in the background colour, plus a CSS class
+      // hides any focused-row cursor span). The user still sees
+      // Claude's own input cursor; only the redundant xterm one is
+      // suppressed. Shell sessions keep the normal visible cursor.
+      const liveTheme = getTerminalTheme()
       const termTheme = shellOnly
-        ? THEME
-        : { ...THEME, cursor: THEME.background, cursorAccent: THEME.background }
+        ? liveTheme
+        : { ...liveTheme, cursor: liveTheme.background, cursorAccent: liveTheme.background }
+      if (!shellOnly) {
+        container.classList.add('claude-session')
+      }
 
       const ts = useSettingsStore.getState().settings.terminal || DEFAULT_TERMINAL_SETTINGS
       const fontFallbacks = "'Cascadia Code', 'Fira Code', 'JetBrains Mono', Consolas, monospace"
@@ -126,12 +221,63 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
 
       term.open(container)
 
-      if (!shellOnly) {
-        term.write('\x1b[?25l')
+      // Load WebGL renderer (Codex recommendation #2). This swaps
+      // xterm's default 2D-canvas glyph rendering for GPU-textured
+      // glyphs — different cursor draw path, different glyph
+      // fallback, and uniform across platforms. Fails gracefully if
+      // WebGL is unavailable in the Electron renderer.
+      try {
+        const webglAddon = new WebglAddon()
+        webglAddon.onContextLoss(() => webglAddon.dispose())
+        term.loadAddon(webglAddon)
+      } catch (e) {
+        // Stay on default renderer — WebGL not available in this env.
       }
+
+      // Belt-and-braces hide for xterm's caret in Claude sessions.
+      // The .claude-session class + global CSS rule should already
+      // hide it, but xterm sets inline styles on the cursor canvas
+      // each time it (re)creates the layer — on open, theme flip,
+      // resize — and inline styles can race the CSS class. So we
+      // also walk the DOM and stamp display:none directly with
+      // !important. Idempotent and cheap.
+      const hideClaudeCursorLayer = () => {
+        if (shellOnly) return
+        container.querySelectorAll('.xterm-cursor-layer').forEach((el) => {
+          const node = el as HTMLElement
+          node.style.setProperty('display', 'none', 'important')
+          node.style.setProperty('visibility', 'hidden', 'important')
+          node.style.setProperty('opacity', '0', 'important')
+        })
+        container.querySelectorAll('.xterm-screen [class*="cursor"]').forEach((el) => {
+          const node = el as HTMLElement
+          node.style.setProperty('background', 'transparent', 'important')
+          node.style.setProperty('color', 'inherit', 'important')
+          node.style.setProperty('border', '0', 'important')
+          node.style.setProperty('outline', '0', 'important')
+        })
+      }
+      hideClaudeCursorLayer()
 
       terminalRef.current = term
       fitAddonRef.current = fitAddon
+      // Tell the theme-observer effect the terminal is live now so it
+      // can attach the MutationObserver — refs alone don't trigger
+      // effects, this state flip does.
+      setTerminalReady(true)
+      // Initial focus — when the terminal mounts as the active session
+      // (typical case: user just clicked a config to launch a session,
+      // or a fresh app with one session restored), nothing else routes
+      // keyboard focus into xterm. Without this, the very first prompt
+      // (Claude's "trust this folder?" in SSH, shell PS1) silently
+      // eats keystrokes that hit the body element instead of the
+      // terminal. Skipped while a modal is up so the tour / config
+      // dialogs keep their focus trap.
+      if (isActive && !document.querySelector('[role="dialog"][aria-modal="true"]')) {
+        requestAnimationFrame(() => {
+          try { term.focus() } catch { /* ignore */ }
+        })
+      }
 
       // Wait for custom fonts to load BEFORE computing cols/rows.
       // xterm.js measures character width using the currently-loaded font.
@@ -165,7 +311,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
               }))
             if (agentsConfig.length === 0) agentsConfig = undefined
           }
-          window.electronAPI.pty.spawn(sessionId, { cwd, cols, rows, ssh, shellOnly, elevated, configId, configLabel, useResumePicker, legacyVersion, agentsConfig, flickerFree, powershellTool, effortLevel, disableAutoMemory })
+          window.electronAPI.pty.spawn(sessionId, { cwd, cols, rows, ssh, shellOnly, elevated, configId, configLabel, useResumePicker, legacyVersion, agentsConfig, effortLevel, disableAutoMemory, model })
         }
       }
 
@@ -300,9 +446,15 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         } catch { /* terminal may be disposed */ }
       })
 
-      // Receive PTY output
+      // Receive PTY output. Pass through with minimal mutation —
+      // Claude Code's TUI in alternate-screen mode (CLAUDE_CODE_NO_FLICKER=1)
+      // handles its own cursor visibility / repaint; xterm renders
+      // faithfully on top of ConPTY. The narrow stripCursorSequences
+      // call still fights cursor blink and DECSCUSR styles that would
+      // override our settings, but no longer touches reverse video,
+      // backgrounds, or spinner glyphs.
       unsubData = window.electronAPI.pty.onData(sessionId, (data) => {
-        const filtered = shellOnly ? data : stripCursorSequences(data) + '\x1b[?25l'
+        const filtered = shellOnly ? data : stripCursorSequences(data)
         term?.write(filtered)
 
         // Only auto-scroll if user hasn't scrolled up
@@ -324,6 +476,9 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         try {
           fitAddon.fit()
           window.electronAPI.pty.resize(sessionId, term.cols, term.rows)
+          // xterm recreates / resizes the cursor canvas after fit;
+          // re-stamp the inline hide so the caret stays gone.
+          hideClaudeCursorLayer()
         } catch { /* ignore */ }
       })
       resizeObserver.observe(container)
@@ -386,6 +541,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       term?.dispose()
       terminalRef.current = null
       fitAddonRef.current = null
+      setTerminalReady(false)
     }
   }, [sessionId])
 
@@ -398,6 +554,14 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         className="flex-1 bg-base p-1 overflow-hidden"
         style={{ minHeight: 0 }}
       />
+      {ssh && (
+        <SshFlowOverlay
+          sessionId={sessionId}
+          hasPostCommand={!!ssh.postCommand}
+          shellOnly={!!shellOnly}
+          enabled
+        />
+      )}
       {isScrolledUp && (
         <ScrollToBottomButton
           onClick={() => {
@@ -433,6 +597,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         isPartnerActive={isPartnerActive}
         onTogglePartner={onTogglePartner}
         partnerSessionId={partnerSessionId}
+        parentSessionId={parentSessionId ?? sessionId}
       />
     </div>
   )

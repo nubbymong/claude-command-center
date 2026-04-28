@@ -1,10 +1,11 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { z } from 'zod'
-import { spawnPty, writePty, resizePty, killPty, SSHOptions } from '../pty-manager'
+import { spawnPty, writePty, resizePty, killPty, getSshFlow, SSHOptions } from '../pty-manager'
 import { logUserInput, isDebugModeEnabled } from '../debug-capture'
 import { logInfo } from '../debug-logger'
 import { isVersionInstalled, installVersion } from '../legacy-version-manager'
 import { loadCredential } from '../credential-store'
+import { IPC } from '../../shared/ipc-channels'
 
 /** SSH options as received from the renderer (no passwords — only configId) */
 interface RendererSSHOptions {
@@ -13,8 +14,6 @@ interface RendererSSHOptions {
   username: string
   remotePath: string
   postCommand?: string
-  startClaudeAfter?: boolean
-  dockerContainer?: string
 }
 
 const sshSchema = z.object({
@@ -23,8 +22,6 @@ const sshSchema = z.object({
   username: z.string().min(1),
   remotePath: z.string().min(1),
   postCommand: z.string().optional(),
-  startClaudeAfter: z.boolean().optional(),
-  dockerContainer: z.string().optional(),
 }).optional()
 
 const spawnOptionsSchema = z.object({
@@ -47,8 +44,6 @@ const spawnOptionsSchema = z.object({
     model: z.string().optional(),
     tools: z.array(z.string()).optional(),
   })).optional(),
-  flickerFree: z.boolean().optional(),
-  powershellTool: z.boolean().optional(),
   effortLevel: z.enum(['low', 'medium', 'high']).optional(),
   disableAutoMemory: z.boolean().optional(),
 }).optional()
@@ -67,8 +62,6 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     useResumePicker?: boolean
     legacyVersion?: { enabled: boolean; version: string }
     agentsConfig?: Array<{ name: string; description: string; prompt: string; model?: string; tools?: string[] }>
-    flickerFree?: boolean
-    powershellTool?: boolean
     effortLevel?: 'low' | 'medium' | 'high'
     disableAutoMemory?: boolean
   }) => {
@@ -122,5 +115,26 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
 
   ipcMain.on('pty:kill', (_event, sessionId: string) => {
     killPty(sessionId)
+  })
+
+  // SSH manual-flow controller — renderer drives stage transitions.
+  ipcMain.handle(IPC.SSH_FLOW_RUN_POSTCOMMAND, async (_event, sessionId: string) => {
+    sessionIdSchema.parse(sessionId)
+    getSshFlow(sessionId)?.runPostCommand()
+  })
+
+  ipcMain.handle(IPC.SSH_FLOW_LAUNCH_CLAUDE, async (_event, sessionId: string) => {
+    sessionIdSchema.parse(sessionId)
+    getSshFlow(sessionId)?.launchClaude()
+  })
+
+  ipcMain.handle(IPC.SSH_FLOW_SKIP, async (_event, sessionId: string) => {
+    sessionIdSchema.parse(sessionId)
+    getSshFlow(sessionId)?.skip()
+  })
+
+  ipcMain.handle(IPC.SSH_FLOW_GET_STATE, async (_event, sessionId: string) => {
+    sessionIdSchema.parse(sessionId)
+    return getSshFlow(sessionId)?.getState() ?? { state: 'connecting' }
   })
 }

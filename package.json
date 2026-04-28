@@ -20,9 +20,11 @@
     "postinstall": "npx @electron/rebuild --only node-pty --only better-sqlite3",
     "rebuild": "npx @electron/rebuild",
     "capture-training": "npx tsx scripts/capture-training-screenshots.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:minimal": "electron test/minimal/main.js"
   },
   "dependencies": {
+    "@excalidraw/excalidraw": "^0.18.1",
     "@modelcontextprotocol/sdk": "^1.28.0",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/addon-web-links": "^0.11.0",
@@ -31,6 +33,7 @@
     "better-sqlite3": "^11.7.0",
     "chrome-remote-interface": "^0.34.0",
     "dompurify": "^3.4.0",
+    "electron-screenshots": "^0.6.1",
     "marked": "^15.0.0",
     "node-pty": "^1.2.0-beta.10",
     "react": "^18.3.1",
@@ -116,8 +119,8 @@
         "to": "config-template.json"
       },
       {
-        "from": "splash.webp",
-        "to": "splash.webp"
+        "from": "splash.png",
+        "to": "splash.png"
       }
     ]
   }

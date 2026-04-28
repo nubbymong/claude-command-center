@@ -11,7 +11,6 @@ export interface SSHConfig {
   hasPassword?: boolean
   postCommand?: string
   hasSudoPassword?: boolean
-  startClaudeAfter?: boolean
   dockerContainer?: string  // Docker container name (enables docker cp for screenshots)
 }
 

@@ -1,7 +1,8 @@
-import { BrowserWindow, desktopCapturer, nativeImage, ipcMain, screen } from 'electron'
+import { BrowserWindow, desktopCapturer, nativeImage } from 'electron'
 import { join } from 'path'
 import { mkdirSync, existsSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'fs'
 import { randomBytes } from 'crypto'
+import Screenshots from 'electron-screenshots'
 
 import { getResourcesDirectory } from './ipc/setup-handlers'
 
@@ -50,213 +51,108 @@ function constrainToMaxDim(img: ReturnType<typeof nativeImage.createFromBuffer>,
 
 const SCREENSHOT_MAX_DIM = 1920
 const SCREENSHOT_JPEG_QUALITY = 85
-const STORYBOARD_JPEG_QUALITY = 78
 
 /**
  * Capture a rectangle region of the screen.
- * Minimizes the main window, shows a fullscreen overlay for selection,
- * captures the screen, crops to selection, saves to SCREENSHOTS_DIR.
+ *
+ * Backed by `electron-screenshots` — a maintained library that handles
+ * the platform-specific stuff (multi-monitor, taskbar coverage, focus
+ * routing, CSP-friendly preload) that our custom overlay kept tripping
+ * on. We just hand it `startCapture()` and listen for the `ok` /
+ * `cancel` / `save` events, then resize + JPG-encode the buffer it
+ * gives us using the same constraints the rest of the app applies.
+ *
+ * The mainWindow arg is kept for API compatibility with the IPC
+ * handler — the library ignores it and creates its own overlay.
  */
 let captureInProgress = false
+let screenshotsInstance: Screenshots | null = null
 
-export async function captureRectangle(mainWindow: BrowserWindow): Promise<string | null> {
-  if (captureInProgress) return null // Prevent conflicting rapid calls
-  captureInProgress = true
-  try {
-    return await _captureRectangleImpl(mainWindow)
-  } finally {
-    captureInProgress = false
+function getScreenshotsInstance(): Screenshots {
+  if (!screenshotsInstance) {
+    screenshotsInstance = new Screenshots({
+      // singleWindow=false (default) gives a separate overlay per
+      // display, so a 3-monitor setup doesn't end up with the live
+      // taskbars of monitors 2/3 showing under the overlay on
+      // monitor 1.
+      // English labels — the library is authored in Chinese and
+      // defaults to 坐标 (Coordinates), 确定 (OK), etc., which leak
+      // into the magnifier + toolbar. These are the user-visible
+      // strings; the library's internal logs stay Chinese (fine).
+      lang: {
+        magnifier_position_label: 'Position',
+        operation_ok_title: 'OK',
+        operation_cancel_title: 'Cancel',
+        operation_save_title: 'Save',
+        operation_redo_title: 'Redo',
+        operation_undo_title: 'Undo',
+        operation_mosaic_title: 'Mosaic',
+        operation_text_title: 'Text',
+        operation_brush_title: 'Brush',
+        operation_arrow_title: 'Arrow',
+        operation_ellipse_title: 'Ellipse',
+        operation_rectangle_title: 'Rectangle',
+      },
+    })
   }
+  return screenshotsInstance
 }
 
-async function _captureRectangleImpl(mainWindow: BrowserWindow): Promise<string | null> {
-  ensureDir()
-
-  const primaryDisplay = screen.getPrimaryDisplay()
-  const { width: screenW, height: screenH } = primaryDisplay.size
-  const scaleFactor = primaryDisplay.scaleFactor
-
-  // Minimize main window
-  mainWindow.minimize()
-  await new Promise<void>((resolve) => {
-    const check = () => {
-      if (mainWindow.isMinimized()) resolve()
-      else setTimeout(check, 50)
-    }
-    setTimeout(check, 100)
-  })
-
-  // Let minimize animation complete
-  await new Promise(r => setTimeout(r, 300))
+export async function captureRectangle(_mainWindow: BrowserWindow): Promise<string | null> {
+  if (captureInProgress) return null
+  captureInProgress = true
 
   return new Promise<string | null>((resolve) => {
-    const overlay = new BrowserWindow({
-      x: 0,
-      y: 0,
-      width: screenW,
-      height: screenH,
-      frame: false,
-      transparent: true,
-      alwaysOnTop: true,
-      skipTaskbar: true,
-      resizable: false,
-      // NO `fullscreen: true` on Windows: combining fullscreen + transparent
-      // drops this window into the exclusive-compositor path that doesn't
-      // route mouse/keyboard input reliably after another window was just
-      // minimized. The explicit x/y/width/height already fills the display.
-      // `show: false` delays the first paint until we can `focus()` the
-      // window ourselves — on Windows, minimize() of the prior window can
-      // leave focus on the desktop, and a same-tick construction doesn't
-      // grab it back, which is why the crosshair rendered but drag / escape
-      // were dead until you Ctrl+Alt+Del'd out of it.
-      show: false,
-      focusable: true,
-      webPreferences: {
-        preload: join(__dirname, '../preload/screenshot-overlay.js'),
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: true
-      }
-    })
+    const screenshots = getScreenshotsInstance()
+    let settled = false
 
-    let resolved = false
-    // Safety net: if for any reason the overlay still fails to capture
-    // input (OS compositor edge case, focus-stealer race), auto-cancel
-    // after 2 minutes so the user can never get stuck needing task
-    // manager to dismiss a ghost crosshair window.
-    const safetyTimer = setTimeout(() => {
-      if (resolved) return
-      console.warn('[screenshot] overlay safety timeout — auto-cancelling')
-      handleCancel()
-    }, 120_000)
-
-    const cleanup = () => {
-      clearTimeout(safetyTimer)
-      if (!overlay.isDestroyed()) overlay.destroy()
-      mainWindow.restore()
-      mainWindow.focus()
+    const finish = (result: string | null) => {
+      if (settled) return
+      settled = true
+      screenshots.removeAllListeners('ok')
+      screenshots.removeAllListeners('cancel')
+      screenshots.removeAllListeners('save')
+      captureInProgress = false
+      resolve(result)
     }
 
-    const handleRegion = async (_event: unknown, region: { x: number; y: number; width: number; height: number }) => {
-      if (resolved) return
-      resolved = true
-      ipcMain.removeHandler('screenshot:regionSelected')
-      ipcMain.removeHandler('screenshot:cancelled')
-
+    const handleBuffer = (buffer: Buffer) => {
       try {
-        cleanup()
-        await new Promise(r => setTimeout(r, 200))
-
-        const sources = await desktopCapturer.getSources({
-          types: ['screen'],
-          thumbnailSize: { width: screenW * scaleFactor, height: screenH * scaleFactor }
-        })
-
-        if (sources.length === 0) {
-          resolve(null)
-          return
-        }
-
-        const img = sources[0].thumbnail
-        const cropped = img.crop({
-          x: Math.round(region.x * scaleFactor),
-          y: Math.round(region.y * scaleFactor),
-          width: Math.round(region.width * scaleFactor),
-          height: Math.round(region.height * scaleFactor)
-        })
-
+        ensureDir()
         const filename = generateFilename()
         const filePath = uniquePath(filename)
-        // Cap longest edge to SCREENSHOT_MAX_DIM, preserving aspect ratio
-        const constrained = constrainToMaxDim(cropped, SCREENSHOT_MAX_DIM)
+        const img = nativeImage.createFromBuffer(buffer)
+        if (img.isEmpty()) {
+          console.error('[screenshot] empty image from electron-screenshots')
+          finish(null)
+          return
+        }
+        // Same downscale + JPG encode the rest of the app uses, so
+        // captures land under Claude's image-size budget every time.
+        const constrained = constrainToMaxDim(img, SCREENSHOT_MAX_DIM)
         writeFileSync(filePath, constrained.toJPEG(SCREENSHOT_JPEG_QUALITY))
-        resolve(filePath)
+        finish(filePath)
       } catch (err) {
-        console.error('[screenshot] captureRectangle error:', err)
-        resolve(null)
+        console.error('[screenshot] save failed:', err)
+        finish(null)
       }
     }
 
-    const handleCancel = () => {
-      if (resolved) return
-      resolved = true
-      ipcMain.removeHandler('screenshot:regionSelected')
-      ipcMain.removeHandler('screenshot:cancelled')
-      cleanup()
-      resolve(null)
-    }
+    // 'ok' fires when the user clicks the library's confirm button on
+    // the overlay; 'save' fires when they pick "save" instead — same
+    // buffer either way, so we treat both the same and drop our copy
+    // into the screenshots dir.
+    screenshots.on('ok', (_e, buffer, _data) => handleBuffer(buffer))
+    screenshots.on('save', (_e, buffer, _data) => handleBuffer(buffer))
+    screenshots.on('cancel', () => finish(null))
 
-    ipcMain.handle('screenshot:regionSelected', handleRegion)
-    ipcMain.handle('screenshot:cancelled', handleCancel)
-
-    overlay.on('closed', () => {
-      if (!resolved) {
-        resolved = true
-        ipcMain.removeHandler('screenshot:regionSelected')
-        ipcMain.removeHandler('screenshot:cancelled')
-        mainWindow.restore()
-        mainWindow.focus()
-        resolve(null)
-      }
+    screenshots.startCapture().catch((err: Error) => {
+      console.error('[screenshot] startCapture failed:', err)
+      finish(null)
     })
-
-    // Show + focus only after the page is ready. Showing before load can
-    // leave the window in the Windows "created but unfocused" state where
-    // input events never reach the renderer; waiting for did-finish-load
-    // gives Chromium time to register input handlers before we ask the
-    // OS to focus it. Also force-elevate to 'screen-saver' so the overlay
-    // sits above taskbar popups and always-on-top apps on Windows.
-    overlay.once('ready-to-show', () => {
-      if (overlay.isDestroyed()) return
-      overlay.setAlwaysOnTop(true, 'screen-saver')
-      overlay.show()
-      overlay.focus()
-      overlay.moveTop()
-    })
-
-    const html = getOverlayHtml()
-    overlay.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
   })
 }
 
-function getOverlayHtml(): string {
-  return `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-html,body{width:100vw;height:100vh;overflow:hidden;background:transparent;cursor:crosshair;user-select:none}
-#overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.3)}
-#selection{position:fixed;border:2px dashed #00FFFF;background:rgba(0,255,255,0.08);display:none;pointer-events:none;z-index:10}
-#hint{position:fixed;bottom:40px;left:50%;transform:translateX(-50%);color:#fff;font-family:'Segoe UI',system-ui,sans-serif;font-size:14px;background:rgba(0,0,0,0.7);padding:8px 16px;border-radius:6px;z-index:20}
-#dimensions{position:fixed;color:#00FFFF;font-family:'Cascadia Code',monospace;font-size:12px;background:rgba(0,0,0,0.7);padding:2px 6px;border-radius:3px;display:none;pointer-events:none;z-index:20}
-#cancel-btn{position:fixed;top:20px;right:20px;background:rgba(0,0,0,0.8);color:#fff;border:1px solid #666;font-family:'Segoe UI',system-ui,sans-serif;font-size:13px;padding:8px 18px;border-radius:6px;cursor:pointer;z-index:30}
-#cancel-btn:hover{background:rgba(255,80,80,0.85);border-color:#ff5050}
-</style>
-</head>
-<body>
-<div id="overlay"></div>
-<div id="selection"></div>
-<div id="hint">Click and drag to select region &bull; Esc or click Cancel to exit</div>
-<div id="dimensions"></div>
-<button id="cancel-btn" type="button">Cancel</button>
-<script>
-const sel=document.getElementById('selection'),hint=document.getElementById('hint'),dims=document.getElementById('dimensions'),cancelBtn=document.getElementById('cancel-btn');
-let sx=0,sy=0,dragging=false;
-document.addEventListener('mousedown',e=>{if(e.target===cancelBtn)return;sx=e.clientX;sy=e.clientY;dragging=true;sel.style.display='block';sel.style.left=sx+'px';sel.style.top=sy+'px';sel.style.width='0px';sel.style.height='0px';hint.style.display='none'});
-document.addEventListener('mousemove',e=>{if(!dragging)return;const x=Math.min(e.clientX,sx),y=Math.min(e.clientY,sy),w=Math.abs(e.clientX-sx),h=Math.abs(e.clientY-sy);sel.style.left=x+'px';sel.style.top=y+'px';sel.style.width=w+'px';sel.style.height=h+'px';dims.style.display='block';dims.style.left=(x+w+8)+'px';dims.style.top=(y+h+8)+'px';dims.textContent=w+' × '+h});
-document.addEventListener('mouseup',e=>{if(!dragging)return;dragging=false;const x=Math.min(e.clientX,sx),y=Math.min(e.clientY,sy),w=Math.abs(e.clientX-sx),h=Math.abs(e.clientY-sy);if(w<10||h<10){sel.style.display='none';dims.style.display='none';hint.style.display='block';return}window.screenshotAPI.selectRegion({x,y,width:w,height:h})});
-document.addEventListener('keydown',e=>{if(e.key==='Escape')window.screenshotAPI.cancel()});
-cancelBtn.addEventListener('click',()=>window.screenshotAPI.cancel());
-// Keep keyboard focus on the overlay body so Esc always reaches our handler
-// even if Windows steals focus after the prior window minimise.
-document.body.tabIndex=0;document.body.focus();
-window.addEventListener('blur',()=>{setTimeout(()=>{try{document.body.focus()}catch(e){}},100)});
-</script>
-</body>
-</html>`
-}
 
 /**
  * Capture a specific window by its desktopCapturer source ID.
@@ -346,185 +242,6 @@ export async function listRecentScreenshots(): Promise<Array<{
     console.error('[screenshot] listRecentScreenshots error:', err)
     return []
   }
-}
-
-// ── Storyboard: repeated region capture ──────────────────────────────────
-
-let storyboardRegion: { x: number; y: number; width: number; height: number } | null = null
-let storyboardFrames: string[] = []
-let storyboardCounter = 0
-
-/**
- * Show the region-selection overlay (reuses captureRectangle's overlay) and
- * return the selected region without capturing a screenshot.
- * The region is saved internally for subsequent `captureStoryboardFrame()` calls.
- */
-export async function startStoryboard(mainWindow: BrowserWindow): Promise<{ x: number; y: number; width: number; height: number } | null> {
-  ensureDir()
-  storyboardFrames = []
-  storyboardCounter = 0
-
-  const primaryDisplay = screen.getPrimaryDisplay()
-  const { width: screenW, height: screenH } = primaryDisplay.size
-
-  // Minimize main window so user can see the screen
-  mainWindow.minimize()
-  await new Promise<void>((resolve) => {
-    const check = () => {
-      if (mainWindow.isMinimized()) resolve()
-      else setTimeout(check, 50)
-    }
-    setTimeout(check, 100)
-  })
-  await new Promise(r => setTimeout(r, 300))
-
-  return new Promise<{ x: number; y: number; width: number; height: number } | null>((resolve) => {
-    const overlay = new BrowserWindow({
-      x: 0,
-      y: 0,
-      width: screenW,
-      height: screenH,
-      frame: false,
-      transparent: true,
-      alwaysOnTop: true,
-      skipTaskbar: true,
-      resizable: false,
-      // See matching comment in captureRectangle: fullscreen + transparent
-      // on Windows breaks input capture when opened right after a
-      // minimize(). Explicit sizing fills the display; show/focus happen
-      // after ready-to-show so the OS has a chance to route input here.
-      show: false,
-      focusable: true,
-      webPreferences: {
-        preload: join(__dirname, '../preload/screenshot-overlay.js'),
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: true
-      }
-    })
-
-    let resolved = false
-    // Same safety net as captureRectangle: auto-cancel after 2 min so
-    // the overlay can never get stuck as a ghost window.
-    const safetyTimer = setTimeout(() => {
-      if (resolved) return
-      console.warn('[storyboard] overlay safety timeout — auto-cancelling')
-      handleCancel()
-    }, 120_000)
-
-    const cleanup = () => {
-      clearTimeout(safetyTimer)
-      if (!overlay.isDestroyed()) overlay.destroy()
-      mainWindow.restore()
-      mainWindow.focus()
-    }
-
-    const handleRegion = async (_event: unknown, region: { x: number; y: number; width: number; height: number }) => {
-      if (resolved) return
-      resolved = true
-      ipcMain.removeHandler('screenshot:regionSelected')
-      ipcMain.removeHandler('screenshot:cancelled')
-      cleanup()
-      storyboardRegion = region
-      resolve(region)
-    }
-
-    const handleCancel = () => {
-      if (resolved) return
-      resolved = true
-      ipcMain.removeHandler('screenshot:regionSelected')
-      ipcMain.removeHandler('screenshot:cancelled')
-      cleanup()
-      storyboardRegion = null
-      resolve(null)
-    }
-
-    ipcMain.handle('screenshot:regionSelected', handleRegion)
-    ipcMain.handle('screenshot:cancelled', handleCancel)
-
-    overlay.on('closed', () => {
-      if (!resolved) {
-        resolved = true
-        ipcMain.removeHandler('screenshot:regionSelected')
-        ipcMain.removeHandler('screenshot:cancelled')
-        mainWindow.restore()
-        mainWindow.focus()
-        resolve(null)
-      }
-    })
-
-    overlay.once('ready-to-show', () => {
-      if (overlay.isDestroyed()) return
-      overlay.setAlwaysOnTop(true, 'screen-saver')
-      overlay.show()
-      overlay.focus()
-      overlay.moveTop()
-    })
-
-    const html = getOverlayHtml()
-    overlay.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
-  })
-}
-
-/**
- * Capture a single frame of the saved storyboard region (no overlay).
- * Returns the file path of the saved JPEG, or null on error.
- */
-export async function captureStoryboardFrame(): Promise<string | null> {
-  if (!storyboardRegion) return null
-  ensureDir()
-
-  try {
-    const primaryDisplay = screen.getPrimaryDisplay()
-    const { width: screenW, height: screenH } = primaryDisplay.size
-    const scaleFactor = primaryDisplay.scaleFactor
-
-    const sources = await desktopCapturer.getSources({
-      types: ['screen'],
-      thumbnailSize: { width: screenW * scaleFactor, height: screenH * scaleFactor }
-    })
-    if (sources.length === 0) return null
-
-    const img = sources[0].thumbnail
-    const cropped = img.crop({
-      x: Math.round(storyboardRegion.x * scaleFactor),
-      y: Math.round(storyboardRegion.y * scaleFactor),
-      width: Math.round(storyboardRegion.width * scaleFactor),
-      height: Math.round(storyboardRegion.height * scaleFactor)
-    })
-
-    storyboardCounter++
-    const padded = String(storyboardCounter).padStart(3, '0')
-    const dir = getScreenshotsDir()
-    const filePath = join(dir, `storyboard-${padded}.jpg`)
-    // Cap longest edge, preserving aspect ratio (storyboard frames also benefit
-    // from compression since they're often captured every 1-3 seconds).
-    const constrained = constrainToMaxDim(cropped, SCREENSHOT_MAX_DIM)
-    writeFileSync(filePath, constrained.toJPEG(STORYBOARD_JPEG_QUALITY))
-    storyboardFrames.push(filePath)
-    return filePath
-  } catch (err) {
-    console.error('[screenshot] captureStoryboardFrame error:', err)
-    return null
-  }
-}
-
-/**
- * Stop the storyboard session and return all captured frame paths.
- */
-export function stopStoryboard(): string[] {
-  const frames = [...storyboardFrames]
-  storyboardFrames = []
-  storyboardRegion = null
-  storyboardCounter = 0
-  return frames
-}
-
-/**
- * Check whether a storyboard region is currently set (recording could be in progress).
- */
-export function isStoryboardActive(): boolean {
-  return storyboardRegion !== null
 }
 
 /**
