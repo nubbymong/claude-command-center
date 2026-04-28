@@ -93,6 +93,47 @@ async function _captureRectangleImpl(mainWindow: BrowserWindow): Promise<string 
   // Let minimize animation complete
   await new Promise(r => setTimeout(r, 300))
 
+  // Capture the desktop NOW — before the overlay exists. Two reasons:
+  //   1. The previous design used `transparent: true` on the overlay so
+  //      the user could see through to the live desktop. On Windows the
+  //      transparent compositor silently drops sub-pixel paint for the
+  //      selection rectangle — the user sees the dimming overlay but
+  //      not the rectangle they're dragging. Snipping Tool / ShareX
+  //      avoid this by freezing the desktop into an opaque image and
+  //      letting the user draw on top of THAT. Same trick here.
+  //   2. We previously captured AGAIN after the user clicked-up, which
+  //      meant a second IPC round-trip and a tiny window where another
+  //      app could move/animate between freeze and selection. One
+  //      capture, used for both preview and crop, is correct.
+  let desktopImage: ReturnType<typeof nativeImage.createFromBuffer> | null = null
+  let desktopDataUrl = ''
+  try {
+    const sources = await desktopCapturer.getSources({
+      types: ['screen'],
+      thumbnailSize: { width: screenW * scaleFactor, height: screenH * scaleFactor },
+    })
+    if (sources.length > 0 && !sources[0].thumbnail.isEmpty()) {
+      desktopImage = sources[0].thumbnail
+      // Encode as JPG (much smaller than PNG for photographic content)
+      // for embedding in the overlay HTML. q90 keeps the preview crisp
+      // without blowing the data-URL up — at 1920×1080 this lands around
+      // 300-500 KB; at 4K around 1-2 MB. Both load instantly on a local
+      // data: URL.
+      const previewBytes = desktopImage.toJPEG(90)
+      desktopDataUrl = `data:image/jpeg;base64,${previewBytes.toString('base64')}`
+    }
+  } catch (err) {
+    console.warn('[screenshot] pre-capture failed, falling back to live capture:', err)
+  }
+  if (!desktopImage || !desktopDataUrl) {
+    // Pre-capture is required for the visible-rectangle pattern. If it
+    // failed (no permission, no display source), bail rather than
+    // showing a broken overlay.
+    mainWindow.restore()
+    mainWindow.focus()
+    return null
+  }
+
   return new Promise<string | null>((resolve) => {
     const overlay = new BrowserWindow({
       x: 0,
@@ -100,19 +141,13 @@ async function _captureRectangleImpl(mainWindow: BrowserWindow): Promise<string 
       width: screenW,
       height: screenH,
       frame: false,
-      transparent: true,
+      // NOT transparent — we paint the captured desktop as the bg.
+      // Opaque windows route input + paint reliably on Windows.
+      transparent: false,
+      backgroundColor: '#000000',
       alwaysOnTop: true,
       skipTaskbar: true,
       resizable: false,
-      // NO `fullscreen: true` on Windows: combining fullscreen + transparent
-      // drops this window into the exclusive-compositor path that doesn't
-      // route mouse/keyboard input reliably after another window was just
-      // minimized. The explicit x/y/width/height already fills the display.
-      // `show: false` delays the first paint until we can `focus()` the
-      // window ourselves — on Windows, minimize() of the prior window can
-      // leave focus on the desktop, and a same-tick construction doesn't
-      // grab it back, which is why the crosshair rendered but drag / escape
-      // were dead until you Ctrl+Alt+Del'd out of it.
       show: false,
       focusable: true,
       webPreferences: {
@@ -176,20 +211,16 @@ async function _captureRectangleImpl(mainWindow: BrowserWindow): Promise<string 
 
       try {
         cleanup()
-        await new Promise(r => setTimeout(r, 200))
 
-        const sources = await desktopCapturer.getSources({
-          types: ['screen'],
-          thumbnailSize: { width: screenW * scaleFactor, height: screenH * scaleFactor }
-        })
-
-        if (sources.length === 0) {
+        // Crop the desktop image we already captured before showing
+        // the overlay. No second IPC round-trip, no race with on-screen
+        // animations, and it's guaranteed to match exactly what the
+        // user saw and dragged over.
+        if (!desktopImage) {
           resolve(null)
           return
         }
-
-        const img = sources[0].thumbnail
-        const cropped = img.crop({
+        const cropped = desktopImage.crop({
           x: Math.round(region.x * scaleFactor),
           y: Math.round(region.y * scaleFactor),
           width: Math.round(region.width * scaleFactor),
@@ -251,48 +282,53 @@ async function _captureRectangleImpl(mainWindow: BrowserWindow): Promise<string 
       overlay.moveTop()
     })
 
-    const html = getOverlayHtml()
+    const html = getOverlayHtml(desktopDataUrl)
     overlay.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
   })
 }
 
-function getOverlayHtml(): string {
+function getOverlayHtml(desktopDataUrl: string): string {
+  // Opaque overlay: the captured desktop is the bg, a 35%-black wash
+  // sits over it for the dimming effect, the selection rectangle
+  // shows the underlying desktop crisply (border + transparent fill).
+  // Because the window is no longer `transparent: true`, every paint
+  // lands reliably on Windows.
   return `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-html,body{width:100vw;height:100vh;overflow:hidden;background:transparent;cursor:crosshair;user-select:none}
-#overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.35)}
-/* Selection rectangle. On Windows transparent BrowserWindow + 8% alpha
- * fill + dashed border was effectively invisible — the compositor
- * dropped sub-pixel dashes during drag. Switched to a solid 3px cyan
- * border with a 1px black outer outline (so it pops against any wall-
- * paper) and a 15% fill for clear feedback while dragging. */
-#selection{position:fixed;border:3px solid #00FFFF;outline:1px solid rgba(0,0,0,0.6);background:rgba(0,255,255,0.15);display:none;pointer-events:none;z-index:10;box-sizing:border-box}
-#hint{position:fixed;bottom:40px;left:50%;transform:translateX(-50%);color:#fff;font-family:'Segoe UI',system-ui,sans-serif;font-size:14px;background:rgba(0,0,0,0.7);padding:8px 16px;border-radius:6px;z-index:20}
-#dimensions{position:fixed;color:#00FFFF;font-family:'Cascadia Code',monospace;font-size:13px;font-weight:600;background:rgba(0,0,0,0.85);padding:3px 8px;border-radius:3px;display:none;pointer-events:none;z-index:20}
-#cancel-btn{position:fixed;top:20px;right:20px;background:rgba(0,0,0,0.8);color:#fff;border:1px solid #666;font-family:'Segoe UI',system-ui,sans-serif;font-size:13px;padding:8px 18px;border-radius:6px;cursor:pointer;z-index:30}
-#cancel-btn:hover{background:rgba(255,80,80,0.85);border-color:#ff5050}
+html,body{width:100vw;height:100vh;overflow:hidden;background:#000;cursor:crosshair;user-select:none}
+#desktop{position:fixed;top:0;left:0;width:100%;height:100%;background-image:url('${desktopDataUrl}');background-size:100% 100%;background-repeat:no-repeat;z-index:0}
+#dim{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.45);z-index:1;pointer-events:none}
+/* Selection: 3px solid cyan + 1px black outline so it reads on any
+ * wallpaper, with the dim wash NOT applied inside (we punch a "clear"
+ * hole via inverse-alpha shadow). */
+#selection{position:fixed;border:3px solid #00FFFF;outline:1px solid rgba(0,0,0,0.7);box-shadow:0 0 0 9999px rgba(0,0,0,0.45);display:none;pointer-events:none;z-index:5;box-sizing:border-box}
+#hint{position:fixed;bottom:40px;left:50%;transform:translateX(-50%);color:#fff;font-family:'Segoe UI',system-ui,sans-serif;font-size:14px;background:rgba(0,0,0,0.75);padding:8px 16px;border-radius:6px;z-index:20}
+#dimensions{position:fixed;color:#00FFFF;font-family:'Cascadia Code',monospace;font-size:13px;font-weight:600;background:rgba(0,0,0,0.9);padding:3px 8px;border-radius:3px;display:none;pointer-events:none;z-index:20}
+#cancel-btn{position:fixed;top:20px;right:20px;background:rgba(0,0,0,0.85);color:#fff;border:1px solid #666;font-family:'Segoe UI',system-ui,sans-serif;font-size:13px;padding:8px 18px;border-radius:6px;cursor:pointer;z-index:30}
+#cancel-btn:hover{background:rgba(255,80,80,0.9);border-color:#ff5050}
 </style>
 </head>
 <body>
-<div id="overlay"></div>
+<div id="desktop"></div>
+<div id="dim"></div>
 <div id="selection"></div>
 <div id="hint">Click and drag to select region &bull; Esc or click Cancel to exit</div>
 <div id="dimensions"></div>
 <button id="cancel-btn" type="button">Cancel</button>
 <script>
-const sel=document.getElementById('selection'),hint=document.getElementById('hint'),dims=document.getElementById('dimensions'),cancelBtn=document.getElementById('cancel-btn');
+const sel=document.getElementById('selection'),dim=document.getElementById('dim'),hint=document.getElementById('hint'),dims=document.getElementById('dimensions'),cancelBtn=document.getElementById('cancel-btn');
 let sx=0,sy=0,dragging=false;
-document.addEventListener('mousedown',e=>{if(e.target===cancelBtn)return;sx=e.clientX;sy=e.clientY;dragging=true;sel.style.display='block';sel.style.left=sx+'px';sel.style.top=sy+'px';sel.style.width='0px';sel.style.height='0px';hint.style.display='none'});
+function showSelection(){sel.style.display='block';dim.style.display='none'}
+function hideSelection(){sel.style.display='none';dim.style.display='block';dims.style.display='none';hint.style.display='block'}
+document.addEventListener('mousedown',e=>{if(e.target===cancelBtn)return;sx=e.clientX;sy=e.clientY;dragging=true;sel.style.left=sx+'px';sel.style.top=sy+'px';sel.style.width='0px';sel.style.height='0px';showSelection();hint.style.display='none'});
 document.addEventListener('mousemove',e=>{if(!dragging)return;const x=Math.min(e.clientX,sx),y=Math.min(e.clientY,sy),w=Math.abs(e.clientX-sx),h=Math.abs(e.clientY-sy);sel.style.left=x+'px';sel.style.top=y+'px';sel.style.width=w+'px';sel.style.height=h+'px';dims.style.display='block';dims.style.left=(x+w+8)+'px';dims.style.top=(y+h+8)+'px';dims.textContent=w+' × '+h});
-document.addEventListener('mouseup',e=>{if(!dragging)return;dragging=false;const x=Math.min(e.clientX,sx),y=Math.min(e.clientY,sy),w=Math.abs(e.clientX-sx),h=Math.abs(e.clientY-sy);if(w<10||h<10){sel.style.display='none';dims.style.display='none';hint.style.display='block';return}window.screenshotAPI.selectRegion({x,y,width:w,height:h})});
+document.addEventListener('mouseup',e=>{if(!dragging)return;dragging=false;const x=Math.min(e.clientX,sx),y=Math.min(e.clientY,sy),w=Math.abs(e.clientX-sx),h=Math.abs(e.clientY-sy);if(w<10||h<10){hideSelection();return}window.screenshotAPI.selectRegion({x,y,width:w,height:h})});
 document.addEventListener('keydown',e=>{if(e.key==='Escape')window.screenshotAPI.cancel()});
 cancelBtn.addEventListener('click',()=>window.screenshotAPI.cancel());
-// Keep keyboard focus on the overlay body so Esc always reaches our handler
-// even if Windows steals focus after the prior window minimise.
 document.body.tabIndex=0;document.body.focus();
 window.addEventListener('blur',()=>{setTimeout(()=>{try{document.body.focus()}catch(e){}},100)});
 </script>
