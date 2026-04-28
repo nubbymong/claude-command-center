@@ -1,7 +1,8 @@
-import { BrowserWindow, desktopCapturer, nativeImage, ipcMain, screen, globalShortcut } from 'electron'
+import { BrowserWindow, desktopCapturer, nativeImage } from 'electron'
 import { join } from 'path'
 import { mkdirSync, existsSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'fs'
 import { randomBytes } from 'crypto'
+import Screenshots from 'electron-screenshots'
 
 import { getResourcesDirectory } from './ipc/setup-handlers'
 
@@ -53,276 +54,87 @@ const SCREENSHOT_JPEG_QUALITY = 85
 
 /**
  * Capture a rectangle region of the screen.
- * Minimizes the main window, shows a fullscreen overlay for selection,
- * captures the screen, crops to selection, saves to SCREENSHOTS_DIR.
+ *
+ * Backed by `electron-screenshots` — a maintained library that handles
+ * the platform-specific stuff (multi-monitor, taskbar coverage, focus
+ * routing, CSP-friendly preload) that our custom overlay kept tripping
+ * on. We just hand it `startCapture()` and listen for the `ok` /
+ * `cancel` / `save` events, then resize + JPG-encode the buffer it
+ * gives us using the same constraints the rest of the app applies.
+ *
+ * The mainWindow arg is kept for API compatibility with the IPC
+ * handler — the library ignores it and creates its own overlay.
  */
 let captureInProgress = false
+let screenshotsInstance: Screenshots | null = null
 
-export async function captureRectangle(mainWindow: BrowserWindow): Promise<string | null> {
-  if (captureInProgress) return null // Prevent conflicting rapid calls
-  captureInProgress = true
-  try {
-    return await _captureRectangleImpl(mainWindow)
-  } finally {
-    captureInProgress = false
+function getScreenshotsInstance(): Screenshots {
+  if (!screenshotsInstance) {
+    screenshotsInstance = new Screenshots({
+      // singleWindow=false (default) gives a separate overlay per
+      // display, so a 3-monitor setup doesn't end up with the live
+      // taskbars of monitors 2/3 showing under the overlay on
+      // monitor 1.
+    })
   }
+  return screenshotsInstance
 }
 
-async function _captureRectangleImpl(mainWindow: BrowserWindow): Promise<string | null> {
-  ensureDir()
-
-  const primaryDisplay = screen.getPrimaryDisplay()
-  const { width: screenW, height: screenH } = primaryDisplay.size
-  const scaleFactor = primaryDisplay.scaleFactor
-
-  console.log(`[screenshot] starting capture flow, display ${screenW}×${screenH} @ ${scaleFactor}x`)
-
-  // Capture the desktop while the conductor is still visible — the
-  // user explicitly wants to be able to snap parts of the conductor
-  // itself, so minimising would defeat the purpose. The overlay then
-  // shows this frozen capture as its background while the user drags
-  // a rectangle. They see exactly what was on screen at capture time
-  // (including the conductor), and can crop any region of it.
-  let desktopImage: ReturnType<typeof nativeImage.createFromBuffer> | null = null
-  let desktopDataUrl = ''
-  try {
-    const sources = await desktopCapturer.getSources({
-      types: ['screen'],
-      thumbnailSize: { width: screenW * scaleFactor, height: screenH * scaleFactor },
-    })
-    console.log(`[screenshot] desktopCapturer returned ${sources.length} source(s)`)
-    if (sources.length === 0) {
-      mainWindow.webContents.send('screenshot:error', 'No screen source available — Windows may have denied screen-recording permission to Electron.')
-      return null
-    }
-    if (sources[0].thumbnail.isEmpty()) {
-      console.warn('[screenshot] thumbnail was empty')
-      return null
-    }
-    desktopImage = sources[0].thumbnail
-    // q90 keeps the preview crisp without blowing the data URL up.
-    // 1920×1080 → ~400 KB; 4K → ~1.5 MB. Both load instantly.
-    const previewBytes = desktopImage.toJPEG(90)
-    desktopDataUrl = `data:image/jpeg;base64,${previewBytes.toString('base64')}`
-    console.log(`[screenshot] preview encoded, ${(previewBytes.length / 1024).toFixed(0)} KB`)
-  } catch (err) {
-    console.error('[screenshot] desktopCapturer.getSources threw:', err)
-    return null
-  }
-  if (!desktopImage || !desktopDataUrl) {
-    console.warn('[screenshot] no desktop image after capture; bailing')
-    return null
-  }
+export async function captureRectangle(_mainWindow: BrowserWindow): Promise<string | null> {
+  if (captureInProgress) return null
+  captureInProgress = true
 
   return new Promise<string | null>((resolve) => {
-    const overlay = new BrowserWindow({
-      x: 0,
-      y: 0,
-      width: screenW,
-      height: screenH,
-      frame: false,
-      // NOT transparent — we paint the captured desktop as the bg.
-      // Opaque windows route input + paint reliably on Windows.
-      transparent: false,
-      backgroundColor: '#000000',
-      alwaysOnTop: true,
-      skipTaskbar: true,
-      resizable: false,
-      show: false,
-      focusable: true,
-      webPreferences: {
-        preload: join(__dirname, '../preload/screenshot-overlay.js'),
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: true
-      }
-    })
+    const screenshots = getScreenshotsInstance()
+    let settled = false
 
-    let resolved = false
-    // Safety net: if for any reason the overlay still fails to capture
-    // input (OS compositor edge case, focus-stealer race), auto-cancel.
-    // 120s was way too long — a user who hits a focus-trap is locked out
-    // of the app for two minutes. 15s is enough for a deliberate drag
-    // and short enough that "I'm stuck" is a brief annoyance, not a
-    // crash.
-    const safetyTimer = setTimeout(() => {
-      if (resolved) return
-      console.warn('[screenshot] overlay safety timeout — auto-cancelling')
-      handleCancel()
-    }, 15_000)
-
-    // Belt-and-suspenders escape: register Esc as a global shortcut for
-    // the lifetime of this overlay. Even if the overlay loses focus to
-    // an alwaysOnTop app or the OS compositor doesn't route input, the
-    // user can still hit Esc to kill the capture. Always unregister on
-    // cleanup — leaving it bound would swallow Esc app-wide.
-    let escRegistered = false
-    try {
-      escRegistered = globalShortcut.register('Escape', () => {
-        if (!resolved) handleCancel()
-      })
-    } catch {
-      // ignore — globalShortcut.register can fail when an unrelated
-      // accelerator already owns Escape; the in-overlay Esc handler
-      // is still our primary path.
+    const finish = (result: string | null) => {
+      if (settled) return
+      settled = true
+      screenshots.removeAllListeners('ok')
+      screenshots.removeAllListeners('cancel')
+      screenshots.removeAllListeners('save')
+      captureInProgress = false
+      resolve(result)
     }
 
-    const cleanup = () => {
-      clearTimeout(safetyTimer)
-      if (escRegistered) {
-        try { globalShortcut.unregister('Escape') } catch { /* noop */ }
-      }
-      // Defensive: ipcMain.handle re-registration throws if a prior
-      // run leaked handlers. Always remove on cleanup so the next
-      // capture call lands on a clean slate even if we got here via
-      // an unexpected path.
-      try { ipcMain.removeHandler('screenshot:regionSelected') } catch { /* noop */ }
-      try { ipcMain.removeHandler('screenshot:cancelled') } catch { /* noop */ }
-      if (!overlay.isDestroyed()) overlay.destroy()
-      // No minimize → no restore. Just refocus the conductor so the
-      // user lands back on whatever session was active.
-      mainWindow.focus()
-    }
-
-    const handleRegion = async (_event: unknown, region: { x: number; y: number; width: number; height: number }) => {
-      if (resolved) return
-      resolved = true
-      ipcMain.removeHandler('screenshot:regionSelected')
-      ipcMain.removeHandler('screenshot:cancelled')
-
+    const handleBuffer = (buffer: Buffer) => {
       try {
-        cleanup()
-
-        // Crop the desktop image we already captured before showing
-        // the overlay. No second IPC round-trip, no race with on-screen
-        // animations, and it's guaranteed to match exactly what the
-        // user saw and dragged over.
-        if (!desktopImage) {
-          resolve(null)
-          return
-        }
-        const cropped = desktopImage.crop({
-          x: Math.round(region.x * scaleFactor),
-          y: Math.round(region.y * scaleFactor),
-          width: Math.round(region.width * scaleFactor),
-          height: Math.round(region.height * scaleFactor)
-        })
-
+        ensureDir()
         const filename = generateFilename()
         const filePath = uniquePath(filename)
-        // Cap longest edge to SCREENSHOT_MAX_DIM, preserving aspect ratio
-        const constrained = constrainToMaxDim(cropped, SCREENSHOT_MAX_DIM)
+        const img = nativeImage.createFromBuffer(buffer)
+        if (img.isEmpty()) {
+          console.error('[screenshot] empty image from electron-screenshots')
+          finish(null)
+          return
+        }
+        // Same downscale + JPG encode the rest of the app uses, so
+        // captures land under Claude's image-size budget every time.
+        const constrained = constrainToMaxDim(img, SCREENSHOT_MAX_DIM)
         writeFileSync(filePath, constrained.toJPEG(SCREENSHOT_JPEG_QUALITY))
-        resolve(filePath)
+        finish(filePath)
       } catch (err) {
-        console.error('[screenshot] captureRectangle error:', err)
-        resolve(null)
+        console.error('[screenshot] save failed:', err)
+        finish(null)
       }
     }
 
-    const handleCancel = () => {
-      if (resolved) return
-      resolved = true
-      ipcMain.removeHandler('screenshot:regionSelected')
-      ipcMain.removeHandler('screenshot:cancelled')
-      cleanup()
-      resolve(null)
-    }
+    // 'ok' fires when the user clicks the library's confirm button on
+    // the overlay; 'save' fires when they pick "save" instead — same
+    // buffer either way, so we treat both the same and drop our copy
+    // into the screenshots dir.
+    screenshots.on('ok', (_e, buffer, _data) => handleBuffer(buffer))
+    screenshots.on('save', (_e, buffer, _data) => handleBuffer(buffer))
+    screenshots.on('cancel', () => finish(null))
 
-    // Defensive registration: if a prior capture run leaked handlers
-    // (renderer crash mid-overlay, hot-reload, etc.) ipcMain.handle
-    // would throw "second handler registered". Drop any stale handler
-    // first so registration always succeeds.
-    try { ipcMain.removeHandler('screenshot:regionSelected') } catch { /* noop */ }
-    try { ipcMain.removeHandler('screenshot:cancelled') } catch { /* noop */ }
-    ipcMain.handle('screenshot:regionSelected', handleRegion)
-    ipcMain.handle('screenshot:cancelled', handleCancel)
-
-    overlay.on('closed', () => {
-      if (!resolved) {
-        resolved = true
-        ipcMain.removeHandler('screenshot:regionSelected')
-        ipcMain.removeHandler('screenshot:cancelled')
-        mainWindow.focus()
-        resolve(null)
-      }
+    screenshots.startCapture().catch((err: Error) => {
+      console.error('[screenshot] startCapture failed:', err)
+      finish(null)
     })
-
-    // Show + focus only after the page is ready. Showing before load can
-    // leave the window in the Windows "created but unfocused" state where
-    // input events never reach the renderer; waiting for did-finish-load
-    // gives Chromium time to register input handlers before we ask the
-    // OS to focus it. Also force-elevate to 'screen-saver' so the overlay
-    // sits above taskbar popups and always-on-top apps on Windows.
-    overlay.once('ready-to-show', () => {
-      if (overlay.isDestroyed()) return
-      console.log('[screenshot] overlay ready-to-show; calling show + focus')
-      overlay.setAlwaysOnTop(true, 'screen-saver')
-      overlay.show()
-      overlay.focus()
-      overlay.moveTop()
-    })
-
-    overlay.webContents.once('did-finish-load', () => {
-      console.log('[screenshot] overlay HTML loaded')
-    })
-    overlay.webContents.on('console-message', (_event, level, message) => {
-      console.log(`[screenshot:overlay-console] level=${level} ${message}`)
-    })
-
-    const html = getOverlayHtml(desktopDataUrl)
-    overlay.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
   })
 }
 
-function getOverlayHtml(desktopDataUrl: string): string {
-  // Opaque overlay: the captured desktop is the bg, a 35%-black wash
-  // sits over it for the dimming effect, the selection rectangle
-  // shows the underlying desktop crisply (border + transparent fill).
-  // Because the window is no longer `transparent: true`, every paint
-  // lands reliably on Windows.
-  return `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-html,body{width:100vw;height:100vh;overflow:hidden;background:#000;cursor:crosshair;user-select:none}
-#desktop{position:fixed;top:0;left:0;width:100%;height:100%;background-image:url('${desktopDataUrl}');background-size:100% 100%;background-repeat:no-repeat;z-index:0}
-#dim{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.45);z-index:1;pointer-events:none}
-/* Selection: 3px solid cyan + 1px black outline so it reads on any
- * wallpaper, with the dim wash NOT applied inside (we punch a "clear"
- * hole via inverse-alpha shadow). */
-#selection{position:fixed;border:3px solid #00FFFF;outline:1px solid rgba(0,0,0,0.7);box-shadow:0 0 0 9999px rgba(0,0,0,0.45);display:none;pointer-events:none;z-index:5;box-sizing:border-box}
-#hint{position:fixed;bottom:40px;left:50%;transform:translateX(-50%);color:#fff;font-family:'Segoe UI',system-ui,sans-serif;font-size:14px;background:rgba(0,0,0,0.75);padding:8px 16px;border-radius:6px;z-index:20}
-#dimensions{position:fixed;color:#00FFFF;font-family:'Cascadia Code',monospace;font-size:13px;font-weight:600;background:rgba(0,0,0,0.9);padding:3px 8px;border-radius:3px;display:none;pointer-events:none;z-index:20}
-#cancel-btn{position:fixed;top:20px;right:20px;background:rgba(0,0,0,0.85);color:#fff;border:1px solid #666;font-family:'Segoe UI',system-ui,sans-serif;font-size:13px;padding:8px 18px;border-radius:6px;cursor:pointer;z-index:30}
-#cancel-btn:hover{background:rgba(255,80,80,0.9);border-color:#ff5050}
-</style>
-</head>
-<body>
-<div id="desktop"></div>
-<div id="dim"></div>
-<div id="selection"></div>
-<div id="hint">Click and drag to select region &bull; Esc or click Cancel to exit</div>
-<div id="dimensions"></div>
-<button id="cancel-btn" type="button">Cancel</button>
-<script>
-const sel=document.getElementById('selection'),dim=document.getElementById('dim'),hint=document.getElementById('hint'),dims=document.getElementById('dimensions'),cancelBtn=document.getElementById('cancel-btn');
-let sx=0,sy=0,dragging=false;
-function showSelection(){sel.style.display='block';dim.style.display='none'}
-function hideSelection(){sel.style.display='none';dim.style.display='block';dims.style.display='none';hint.style.display='block'}
-document.addEventListener('mousedown',e=>{if(e.target===cancelBtn)return;sx=e.clientX;sy=e.clientY;dragging=true;sel.style.left=sx+'px';sel.style.top=sy+'px';sel.style.width='0px';sel.style.height='0px';showSelection();hint.style.display='none'});
-document.addEventListener('mousemove',e=>{if(!dragging)return;const x=Math.min(e.clientX,sx),y=Math.min(e.clientY,sy),w=Math.abs(e.clientX-sx),h=Math.abs(e.clientY-sy);sel.style.left=x+'px';sel.style.top=y+'px';sel.style.width=w+'px';sel.style.height=h+'px';dims.style.display='block';dims.style.left=(x+w+8)+'px';dims.style.top=(y+h+8)+'px';dims.textContent=w+' × '+h});
-document.addEventListener('mouseup',e=>{if(!dragging)return;dragging=false;const x=Math.min(e.clientX,sx),y=Math.min(e.clientY,sy),w=Math.abs(e.clientX-sx),h=Math.abs(e.clientY-sy);if(w<10||h<10){hideSelection();return}window.screenshotAPI.selectRegion({x,y,width:w,height:h})});
-document.addEventListener('keydown',e=>{if(e.key==='Escape')window.screenshotAPI.cancel()});
-cancelBtn.addEventListener('click',()=>window.screenshotAPI.cancel());
-document.body.tabIndex=0;document.body.focus();
-window.addEventListener('blur',()=>{setTimeout(()=>{try{document.body.focus()}catch(e){}},100)});
-</script>
-</body>
-</html>`
-}
 
 /**
  * Capture a specific window by its desktopCapturer source ID.

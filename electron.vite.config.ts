@@ -24,7 +24,6 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: resolve(__dirname, 'src/preload/index.ts'),
-          'screenshot-overlay': resolve(__dirname, 'src/main/screenshot-overlay-preload.ts')
         }
       }
     }
