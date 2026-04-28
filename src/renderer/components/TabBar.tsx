@@ -1,7 +1,7 @@
 import React from 'react'
 import { useSessionStore } from '../stores/sessionStore'
 import { killSessionPty } from './TerminalView'
-import ThemeToggle from './ThemeToggle'
+import HeaderCluster from './HeaderCluster'
 
 // Inject keyframes for attention pulse animation
 const ATTENTION_STYLES_ID = 'attention-pulse-styles'
@@ -76,11 +76,11 @@ export default function TabBar() {
         )
       })}
       </div>
-      {/* Right slot — theme toggle. Tab header was empty here before; keep
-          it minimal so the chrome doesn't compete with the active tab
-          underline / status pills. */}
+      {/* Right slot — global toggles (theme + future help-inspect). Same
+          cluster lives in <PageFrame> so switching from a session to an
+          admin view keeps these controls in the same place. */}
       <div className="flex items-center px-2 shrink-0 border-l border-surface0">
-        <ThemeToggle />
+        <HeaderCluster />
       </div>
     </div>
   )

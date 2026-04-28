@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
+import PageFrame from './PageFrame'
 
 interface LogSession {
   configLabel: string
@@ -306,33 +307,38 @@ export default function LogViewer() {
   const totalEntries = allEntries.length
   const matchCount = filteredEntries.length
 
-  return (
-    <div className="flex-1 flex flex-col bg-base overflow-hidden">
-      {/* Page header */}
-      <div className="px-5 pt-4 pb-3 border-b border-surface0/80 bg-mantle/30 shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-mauve/10 flex items-center justify-center shrink-0">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="text-mauve">
-              <path d="M2 3h12M2 6h10M2 9h12M2 12h8" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-            </svg>
-          </div>
-          <div className="flex-1 min-w-0">
-            <h1 className="text-base font-semibold text-text">Session Logs</h1>
-            <p className="text-[11px] text-overlay0 mt-0.5">
-              {sessions.length} session{sessions.length !== 1 ? 's' : ''} recorded
-              {selectedSession && <span> {String.fromCodePoint(0x00B7)} viewing <span className="text-overlay1">{selectedSession.configLabel}</span></span>}
-            </p>
-          </div>
-          <button
-            onClick={handleCleanup}
-            className="text-[11px] text-overlay1 hover:text-text px-2.5 py-1 rounded-lg hover:bg-surface0/50 transition-colors shrink-0"
-            title="Remove logs older than 30 days"
-          >
-            Cleanup
-          </button>
-        </div>
-      </div>
+  const logsIcon = (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round">
+      <path d="M2 3h12M2 6h10M2 9h12M2 12h8" />
+    </svg>
+  )
 
+  const logsContext = (
+    <>
+      {sessions.length} session{sessions.length !== 1 ? 's' : ''} recorded
+      {selectedSession && <> · viewing <span className="text-overlay1">{selectedSession.configLabel}</span></>}
+    </>
+  )
+
+  const logsActions = (
+    <button
+      onClick={handleCleanup}
+      className="px-2.5 py-0.5 text-xs rounded border border-surface1 bg-surface0 text-overlay1 hover:bg-surface1 hover:text-text transition-colors"
+      title="Remove logs older than 30 days"
+    >
+      Cleanup
+    </button>
+  )
+
+  return (
+    <PageFrame
+      icon={logsIcon}
+      iconAccent="mauve"
+      title="Logs"
+      context={logsContext}
+      actions={logsActions}
+      scrollable={false}
+    >
       {/* Search & filter bar */}
       <div className="px-4 py-2 bg-crust/40 border-b border-surface0/60 shrink-0">
         <div className="flex items-center gap-2">
@@ -566,6 +572,6 @@ export default function LogViewer() {
           )}
         </div>
       </div>
-    </div>
+    </PageFrame>
   )
 }
