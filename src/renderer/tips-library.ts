@@ -245,12 +245,12 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: '🌐 Run Claude on a remote machine over SSH',
         title: 'SSH Sessions',
-        body: 'Create a config with **SSH** as the session type, enter host/port/user/remote path, and Claude runs on the remote with full file access. Your terminal stays local.\n\nThe Vision system even sets up automatic reverse SSH tunnels so Claude on the remote can control browsers running on your local machine — useful for testing staging apps.\n\nPasswords (if you don\'t use key auth) are encrypted with your OS credential store and only decrypted in the main process, never in the renderer.',
+        body: 'Create a config with **SSH** as the session type, enter host/port/user/remote path, and Claude runs on the remote with full file access. Your terminal stays local.\n\nWhen the session connects, an in-pane overlay shows **Launch Claude / Skip** — your click triggers the statusline injection and runs Claude. No prompt-detection magic, no setup blobs accidentally pasted into a running Claude.\n\nPasswords (if you don\'t use key auth) are encrypted with your OS credential store and only decrypted in the main process, never in the renderer.',
       },
       postUse: {
         shortText: '🐳 Run Claude inside a Docker container via SSH',
-        title: 'Docker-in-SSH',
-        body: 'You\'re already using SSH sessions. Next level: target a **Docker container** on the remote. Edit your SSH config and set a Docker Container name.\n\nThe app will wrap commands with `docker exec -it <container>` so Claude runs inside the container. Screenshots also go through `docker cp`. Great for reproducible builds.',
+        title: 'Docker-in-SSH (post-connect command)',
+        body: 'Edit your SSH config and set a **Post-connect command** like `sudo docker exec -it claude-dev bash`. After SSH login the overlay shows **Run post-connect command / Skip**; click it, and once the inner shell is ready a second overlay offers **Launch Claude / Skip**.\n\nGreat for reproducible builds and isolating Claude\'s file access from the host.',
       },
     },
   },
@@ -343,6 +343,49 @@ export const TIPS_LIBRARY: Tip[] = [
   },
 
   {
+    id: 'tip.excalidraw-scratchpad',
+    category: 'productivity',
+    complexity: 'simple',
+    priority: 50,
+    variants: {
+      primary: {
+        shortText: '✏️ Sketch ideas in the Draw scratchpad',
+        title: 'Excalidraw Scratchpad',
+        body: 'The **Draw** button next to Snap opens a full Excalidraw canvas. Sketch architecture, annotate flowcharts, draw selectors over a screenshot — anything you\'d normally reach for a tablet for.\n\n• **Copy to clipboard** exports the canvas as PNG.\n• Hit **Alt+V** in any terminal to paste it directly into Claude.\n• Available in every session — no per-config setup.\n• Closes with **Esc**.',
+      },
+    },
+  },
+
+  {
+    id: 'tip.command-webview',
+    category: 'commands',
+    complexity: 'intermediate',
+    priority: 55,
+    variants: {
+      primary: {
+        shortText: '🌐 Open a webview when a command finishes',
+        title: 'Webview on Command Completion',
+        body: 'Building a dev server, generating a docs site, or anything that ends with "now look at this URL"? Tick **Launch webview on completion** when editing a command and enter the URL.\n\nWhat happens:\n• Command runs in whichever target you pick — Claude, Partner, or Any (works with SSH `shellOnly` sessions too).\n• The app polls the URL every second for up to 30s after the command write. The button pulses **blue** while polling, goes **green** the moment the URL responds, **red** on timeout.\n• A **Web** button sits in the toolbar whenever a webview command exists for this session. Greyed when idle.\n• If a server is already running when the app launches, the mount-time auto-probe picks it up.\n• Stop your server later? The next time you press any command button in the session the URL gets re-checked, downgrading to red — no constant background polling.\n• Click the button to swap the active pane to a real Chrome view of the page.\n\nThe pane has back/forward/hard-refresh/home, plus a **Freeze** button that snapshots the page and opens it in Excalidraw for annotation.',
+      },
+    },
+  },
+
+  {
+    id: 'tip.webview-freeze',
+    category: 'productivity',
+    complexity: 'intermediate',
+    priority: 40,
+    requires: ['webview.opened'],
+    variants: {
+      primary: {
+        shortText: '❄️ Freeze + annotate webviews for screenshots',
+        title: 'Freeze Webview + Annotate',
+        body: 'Inside a webview pane, the **Freeze** button captures the current page as an image and opens it in Excalidraw. Draw arrows, circle bugs, redact PII — then **Copy to clipboard** and paste into Claude with **Alt+V**.\n\nFaster than a separate screenshot tool because the snapshot bypasses the OS clipboard until you\'re ready.',
+      },
+    },
+  },
+
+  {
     id: 'tip.statusline-customize',
     category: 'productivity',
     complexity: 'intermediate',
@@ -397,21 +440,6 @@ export const TIPS_LIBRARY: Tip[] = [
   // ── Advanced ────────────────────────────────────────────────────────────
 
   {
-    id: 'tip.storyboard',
-    category: 'advanced',
-    complexity: 'intermediate',
-    priority: 35,
-    excludes: ['advanced.storyboard'],
-    variants: {
-      primary: {
-        shortText: '🎬 Record a sequence of screenshots',
-        title: 'Storyboard Capture',
-        body: '**Storyboard** records timed screenshots of a screen region — perfect for showing Claude a UI flow you want to replicate or a bug you\'re trying to reproduce.\n\nClick the Storyboard button in the command bar, pick an interval (1-5s), select a region, and let it roll. Review the captured frames, annotate each, deselect noise frames, and send a structured prompt with numbered frames to Claude.',
-      },
-    },
-  },
-
-  {
     id: 'tip.insights',
     category: 'advanced',
     complexity: 'advanced',
@@ -423,22 +451,6 @@ export const TIPS_LIBRARY: Tip[] = [
         body: '**Insights** runs a Claude-powered analysis of your session history to find big wins, friction points, and regressions over time.\n\nClick the **pulse icon** in the sidebar. You\'ll get KPI trends (sessions/day, avg cost, lines changed) plus qualitative analysis of what\'s working and what\'s not in your Claude usage patterns.\n\nReports are saved to `resources/insights/` so you can look back at past runs.',
         actionLabel: 'Open Insights',
         actionTarget: 'insights',
-      },
-    },
-  },
-
-  {
-    id: 'tip.flicker-free',
-    category: 'sessions',
-    complexity: 'intermediate',
-    priority: 25,
-    requires: ['sessions.create-config'],
-    excludes: ['sessions.flicker-free'],
-    variants: {
-      primary: {
-        shortText: '✨ Smoother terminal rendering',
-        title: 'Flicker-Free Rendering',
-        body: 'Enable **flicker-free rendering** on a config to reduce terminal flicker during long streaming outputs. The app sets `CLAUDE_CODE_NO_FLICKER=1` and Claude uses the terminal\'s alternate screen buffer, which updates smoothly.\n\nTradeoff: you lose Ctrl+F search and scrollback **while Claude is running**. Exit Claude and scrollback comes back.\n\nMost useful for long outputs with lots of updates — e.g., running tests with a watcher.',
       },
     },
   },
@@ -515,9 +527,9 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'ℹ Where the app stores everything',
         title: 'Resources Folder',
-        body: 'The app uses a **Resources Directory** for all user data. Configurable at first-run setup.\n\nContents:\n• `CONFIG/` — JSON files for your configs, commands, settings, encrypted credentials, tokenomics, usage tracking\n• `logs/` — per-session JSONL activity logs\n• `screenshots/` — any screenshots captured by the Snap / Storyboard features\n• `insights/` — AI-generated usage reports\n• `status/` — real-time session metrics (written by the statusline script)\n• `scripts/` — deployed helper scripts like the statusline\n• `claude-versions/` — installed legacy Claude CLI versions\n\nBack up the whole `resources/` folder to move to a new machine (note: encrypted credentials won\'t transfer — see the credential tip).',
-        bodyMac: 'The app stores everything under `~/Library/Application Support/Claude Conductor/resources/`:\n\n• `CONFIG/` — JSON files for configs, commands, settings, encrypted credentials, tokenomics, usage tracking\n• `logs/` — per-session JSONL activity logs\n• `screenshots/` — captured by Snap / Storyboard features\n• `insights/` — AI usage reports\n• `status/` — real-time session metrics (from statusline script)\n• `scripts/` — deployed helper scripts\n• `claude-versions/` — installed legacy Claude CLI versions\n\nBack up the whole `resources/` folder to move to a new machine (encrypted credentials won\'t transfer since they\'re tied to Keychain).',
-        bodyWin: 'The app stores everything under `%LOCALAPPDATA%\\Claude Conductor\\resources\\`:\n\n• `CONFIG\\` — JSON files for configs, commands, settings, encrypted credentials, tokenomics, usage tracking\n• `logs\\` — per-session JSONL activity logs\n• `screenshots\\` — captured by Snap / Storyboard features\n• `insights\\` — AI usage reports\n• `status\\` — real-time session metrics (from statusline script)\n• `scripts\\` — deployed helper scripts\n• `claude-versions\\` — installed legacy Claude CLI versions\n\nBack up the whole `resources\\` folder to move to a new machine (encrypted credentials won\'t transfer since they\'re tied to DPAPI).',
+        body: 'The app uses a **Resources Directory** for all user data. Configurable at first-run setup.\n\nContents:\n• `CONFIG/` — JSON files for your configs, commands, settings, encrypted credentials, tokenomics, usage tracking\n• `logs/` — per-session JSONL activity logs\n• `screenshots/` — any screenshots captured by the Snap features\n• `insights/` — AI-generated usage reports\n• `status/` — real-time session metrics (written by the statusline script)\n• `scripts/` — deployed helper scripts like the statusline\n• `claude-versions/` — installed legacy Claude CLI versions\n\nBack up the whole `resources/` folder to move to a new machine (note: encrypted credentials won\'t transfer — see the credential tip).',
+        bodyMac: 'The app stores everything under `~/Library/Application Support/Claude Conductor/resources/`:\n\n• `CONFIG/` — JSON files for configs, commands, settings, encrypted credentials, tokenomics, usage tracking\n• `logs/` — per-session JSONL activity logs\n• `screenshots/` — captured by Snap features\n• `insights/` — AI usage reports\n• `status/` — real-time session metrics (from statusline script)\n• `scripts/` — deployed helper scripts\n• `claude-versions/` — installed legacy Claude CLI versions\n\nBack up the whole `resources/` folder to move to a new machine (encrypted credentials won\'t transfer since they\'re tied to Keychain).',
+        bodyWin: 'The app stores everything under `%LOCALAPPDATA%\\Claude Conductor\\resources\\`:\n\n• `CONFIG\\` — JSON files for configs, commands, settings, encrypted credentials, tokenomics, usage tracking\n• `logs\\` — per-session JSONL activity logs\n• `screenshots\\` — captured by Snap features\n• `insights\\` — AI usage reports\n• `status\\` — real-time session metrics (from statusline script)\n• `scripts\\` — deployed helper scripts\n• `claude-versions\\` — installed legacy Claude CLI versions\n\nBack up the whole `resources\\` folder to move to a new machine (encrypted credentials won\'t transfer since they\'re tied to DPAPI).',
       },
     },
   },

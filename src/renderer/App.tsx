@@ -4,6 +4,10 @@ import Sidebar from './components/Sidebar'
 import TabBar from './components/TabBar'
 import SessionHeader from './components/SessionHeader'
 import TerminalView, { killSessionPty } from './components/TerminalView'
+import WebviewPane from './components/WebviewPane'
+import ExcalidrawPane from './components/ExcalidrawPane'
+import { useWebviewStore } from './stores/webviewStore'
+import { useExcalidrawStore } from './stores/excalidrawStore'
 import StatusBar from './components/StatusBar'
 import UsageDashboard from './components/UsageDashboard'
 import ProjectBrowser from './components/ProjectBrowser'
@@ -29,6 +33,7 @@ import { useMagicButtonStore } from './stores/magicButtonStore'
 import { useAppMetaStore } from './stores/appMetaStore'
 import { useSettingsStore } from './stores/settingsStore'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
+import { useThemeController } from './hooks/useThemeController'
 import { markSessionForResumePicker } from './utils/resumePicker'
 import { gatherLocalStorageData, hydrateStores } from './utils/configHydration'
 import { setupCloudAgentListener } from './stores/cloudAgentStore'
@@ -101,6 +106,8 @@ export default function App() {
   const [machineNameInput, setMachineNameInput] = useState('')
   const activeSessionId = useSessionStore((s) => s.activeSessionId)
   const sessions = useSessionStore((s) => s.sessions)
+  const webviewBySession = useWebviewStore((s) => s.bySessionId)
+  const excalidrawBySession = useExcalidrawStore((s) => s.bySessionId)
   const activeSession = sessions.find((s) => s.id === activeSessionId)
   const hasRestoredRef = useRef(false)
 
@@ -111,8 +118,63 @@ export default function App() {
     window.electronAPI.github.notifyFocusChanged(activeSessionId ?? null)
   }, [activeSessionId])
 
+  // Sweep orphan Excalidraw entries when the live session list changes
+  // (session removed, app restart with fewer restored sessions, etc).
+  // Without this, drawings persist forever under session IDs that no
+  // longer exist — the JSON grows unbounded and any future global
+  // drawings library would surface zombie sessions.
+  useEffect(() => {
+    if (sessions.length === 0) return
+    useExcalidrawStore.getState().reconcile(sessions.map((s) => s.id))
+  }, [sessions])
+
   // Global keyboard shortcuts
   useKeyboardShortcuts(activeSessionId, setSidebarOpen, setView)
+  // Stamp data-theme on <html> from the persisted setting + listen for
+  // OS prefers-color-scheme changes when in 'system' mode.
+  useThemeController()
+
+  // Emergency escape hatch for the WebContentsView pane — Esc closes
+  // the *active* session's webview. Native Electron views render above
+  // all HTML, so a stuck/oversized view can bury the toolbar Close
+  // button and leave the user with no in-pane way out. This handler
+  // runs at document level so it fires regardless of where focus is in
+  // the renderer (the inner page only consumes Esc when *it* has focus).
+  const activeSessionHasWebview = !!activeSessionId && !!webviewBySession[activeSessionId]?.isOpen
+  const closeActiveWebview = useCallback(() => {
+    if (!activeSessionId) return
+    useWebviewStore.getState().setOpen(activeSessionId, false)
+  }, [activeSessionId])
+  useEffect(() => {
+    if (!activeSessionHasWebview) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      // Defer to any open modal — pressing Esc inside the Excalidraw
+      // freeze-annotate overlay should dismiss the modal first, not
+      // close the underlying webview pane out from under it. Without
+      // this check the global handler (capture phase) fired first and
+      // collapsed both at once. Switched to bubble phase so the
+      // detection runs after focus settles.
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return
+      e.preventDefault()
+      closeActiveWebview()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [activeSessionHasWebview, closeActiveWebview])
+
+  // Forward Esc presses that happen INSIDE a WebContentsView (where
+  // keyboard focus belongs to the embedded page, not this renderer
+  // document). The main process's `before-input-event` hook on each
+  // view emits sessionId here; we close that specific session's pane.
+  useEffect(() => {
+    return window.electronAPI.webview.onEscapePressed((sessionId) => {
+      // Skip when an in-renderer modal is showing — the modal's own
+      // focus-trap will own the Esc instead.
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return
+      useWebviewStore.getState().setOpen(sessionId, false)
+    })
+  }, [])
 
   const togglePartner = (sessionId: string) => {
     setPartnerActive(prev => {
@@ -480,6 +542,11 @@ export default function App() {
               const isShowingPartner = partnerActive.has(session.id)
               const hasPartner = !!session.partnerTerminalPath
               const partnerPtyId = session.id + '-partner'
+              const isShowingWebview = !!webviewBySession[session.id]?.isOpen
+              const isShowingExcalidraw = !!excalidrawBySession[session.id]?.isOpen
+              // Priority: webview > excalidraw > partner > claude. Each
+              // alternative pane replaces the underlying terminal panes.
+              const altPaneShowing = isShowingWebview || isShowingExcalidraw
               return (
                 <div
                   key={session.id + '-' + session.createdAt}
@@ -492,46 +559,47 @@ export default function App() {
                   <div
                     className="flex-1 flex flex-col"
                     style={{
-                      display: isShowingPartner ? 'none' : 'flex',
+                      display: isShowingPartner || altPaneShowing ? 'none' : 'flex',
                       minHeight: 0,
                     }}
                   >
                     <TerminalView
                       key={session.id + '-main-' + session.createdAt}
                       sessionId={session.id}
+                      parentSessionId={session.id}
                       configId={session.configId}
                       cwd={session.sessionType === 'local' ? session.workingDirectory : undefined}
                       shellOnly={session.shellOnly}
                       ssh={session.sshConfig}
-                      isActive={session.id === activeSessionId && view === 'sessions' && !isShowingPartner}
+                      isActive={session.id === activeSessionId && view === 'sessions' && !isShowingPartner && !altPaneShowing}
                       partnerEnabled={hasPartner}
                       isPartnerActive={isShowingPartner}
                       onTogglePartner={() => togglePartner(session.id)}
                       partnerSessionId={hasPartner ? partnerPtyId : undefined}
                       legacyVersion={session.legacyVersion}
                       agentIds={session.agentIds}
-                      flickerFree={session.flickerFree}
-                      powershellTool={session.powershellTool}
                       effortLevel={session.effortLevel}
                       disableAutoMemory={session.disableAutoMemory}
+                      model={session.model}
                     />
                   </div>
                   {hasPartner && (
                     <div
                       className="flex-1 flex flex-col"
                       style={{
-                        display: isShowingPartner ? 'flex' : 'none',
+                        display: isShowingPartner && !altPaneShowing ? 'flex' : 'none',
                         minHeight: 0,
                       }}
                     >
                       <TerminalView
                         key={partnerPtyId + '-' + session.createdAt}
                         sessionId={partnerPtyId}
+                        parentSessionId={session.id}
                         configId={session.configId}
                         cwd={session.partnerTerminalPath}
                         shellOnly={true}
                         elevated={session.partnerElevated}
-                        isActive={session.id === activeSessionId && view === 'sessions' && isShowingPartner}
+                        isActive={session.id === activeSessionId && view === 'sessions' && isShowingPartner && !altPaneShowing}
                         partnerEnabled={true}
                         isPartnerActive={isShowingPartner}
                         onTogglePartner={() => togglePartner(session.id)}
@@ -539,6 +607,14 @@ export default function App() {
                       />
                     </div>
                   )}
+                  {/* Webview takes precedence over Excalidraw if both are
+                      somehow open (the toggle buttons are independent so
+                      the user CAN have both flags true). Render only one. */}
+                  {isShowingWebview ? (
+                    <WebviewPane sessionId={session.id} isActive={session.id === activeSessionId} />
+                  ) : isShowingExcalidraw ? (
+                    <ExcalidrawPane sessionId={session.id} />
+                  ) : null}
                 </div>
               )
             })}
@@ -678,7 +754,7 @@ export default function App() {
         )}
         <TitleBar sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
         <div className="flex flex-1 overflow-hidden">
-          <Sidebar currentView={view} onViewChange={setView} collapsed={!sidebarOpen} onShowFirstRun={() => setShowGuidedConfig(true)} onShowHelp={() => { setShowTrainingAll(true); setShowTraining(true) }} onUpdateRequested={() => {
+          <Sidebar currentView={view} onViewChange={setView} collapsed={!sidebarOpen} tourActive={showTraining || showTrainingAll} onShowFirstRun={() => setShowGuidedConfig(true)} onShowHelp={() => { setShowTrainingAll(true); setShowTraining(true) }} onUpdateRequested={() => {
             const state = useSessionStore.getState()
             if (state.sessions.length === 0) {
               setIsClosing(true)
@@ -689,9 +765,7 @@ export default function App() {
             }
           }} />
           <main className="flex-1 flex flex-col overflow-hidden titlebar-no-drag">
-            {showTraining ? (
-              <TrainingWalkthrough onClose={handleTrainingClose} showAll={showTrainingAll} />
-            ) : showGuidedConfig ? (
+            {showGuidedConfig ? (
               <GuidedConfigView
                 onSkip={() => setShowGuidedConfig(false)}
                 onConfirm={async (configDraft, sshPassword) => {
@@ -707,10 +781,8 @@ export default function App() {
                   // Track feature usage based on config fields set
                   trackUsage('sessions.create-config')
                   if (newConfig.sessionType === 'ssh') trackUsage('sessions.session-type')
-                  if (newConfig.flickerFree) trackUsage('sessions.flicker-free')
                   if (newConfig.effortLevel) trackUsage('sessions.effort-level')
                   if (newConfig.disableAutoMemory) trackUsage('sessions.disable-auto-memory')
-                  if (newConfig.powershellTool) trackUsage('sessions.powershell-tool')
                   if (newConfig.partnerTerminalPath) trackUsage('sessions.partner-terminal')
 
                   const session: Session = {
@@ -725,8 +797,6 @@ export default function App() {
                     sessionType: newConfig.sessionType,
                     shellOnly: newConfig.shellOnly,
                     sshConfig: newConfig.sshConfig,
-                    flickerFree: newConfig.flickerFree,
-                    powershellTool: newConfig.powershellTool,
                     effortLevel: newConfig.effortLevel,
                     disableAutoMemory: newConfig.disableAutoMemory,
                   }
@@ -747,6 +817,13 @@ export default function App() {
           </main>
         </div>
         <StatusBar />
+        {showTraining && (
+          <TrainingWalkthrough
+            onClose={handleTrainingClose}
+            showAll={showTrainingAll}
+            mode={showTrainingAll ? 'help' : 'first-run'}
+          />
+        )}
       </div>
     </ErrorBoundary>
   )

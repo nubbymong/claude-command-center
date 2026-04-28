@@ -6,10 +6,6 @@ import {
   listWindows,
   listRecentScreenshots,
   cleanupOldScreenshots,
-  startStoryboard,
-  captureStoryboardFrame,
-  stopStoryboard,
-  isStoryboardActive
 } from '../screenshot-capture'
 
 const sourceIdSchema = z.string().min(1).max(500)
@@ -46,24 +42,5 @@ export function registerScreenshotHandlers(getWindow: () => BrowserWindow | null
       throw new Error(`Invalid parameters: ${err instanceof Error ? err.message : String(err)}`)
     }
     return cleanupOldScreenshots(maxAgeDays)
-  })
-
-  // Storyboard handlers
-  ipcMain.handle('storyboard:start', async () => {
-    const win = getWindow()
-    if (!win) return null
-    return startStoryboard(win)
-  })
-
-  ipcMain.handle('storyboard:captureFrame', async () => {
-    return captureStoryboardFrame()
-  })
-
-  ipcMain.handle('storyboard:stop', async () => {
-    return stopStoryboard()
-  })
-
-  ipcMain.handle('storyboard:isActive', async () => {
-    return isStoryboardActive()
   })
 }

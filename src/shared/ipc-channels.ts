@@ -40,6 +40,14 @@ export const IPC = {
   PTY_DATA: 'pty:data',   // Suffixed with :sessionId at runtime
   PTY_EXIT: 'pty:exit',   // Suffixed with :sessionId at runtime
 
+  // SSH connection-flow controller (manual mode user-gated stages).
+  // Main->renderer notification is suffixed with :<sessionId> at runtime.
+  SSH_FLOW_STATE: 'ssh:flowState',           // suffix :<sessionId>
+  SSH_FLOW_GET_STATE: 'ssh:flow:getState',
+  SSH_FLOW_RUN_POSTCOMMAND: 'ssh:flow:runPostCommand',
+  SSH_FLOW_LAUNCH_CLAUDE: 'ssh:flow:launchClaude',
+  SSH_FLOW_SKIP: 'ssh:flow:skip',
+
   // Statusline
   STATUSLINE_UPDATE: 'statusline:update',
 
@@ -98,12 +106,6 @@ export const IPC = {
   SCREENSHOT_CLEANUP: 'screenshot:cleanup',
   SCREENSHOT_REGION_SELECTED: 'screenshot:regionSelected',
   SCREENSHOT_CANCELLED: 'screenshot:cancelled',
-
-  // Storyboard
-  STORYBOARD_START: 'storyboard:start',
-  STORYBOARD_CAPTURE_FRAME: 'storyboard:captureFrame',
-  STORYBOARD_STOP: 'storyboard:stop',
-  STORYBOARD_IS_ACTIVE: 'storyboard:isActive',
 
   // Session persistence
   SESSION_SAVE: 'session:save',
@@ -221,6 +223,20 @@ export const IPC = {
   GITHUB_REVIEW_REPLY: 'github:review:reply',
   GITHUB_NOTIF_MARK_READ: 'github:notif:markRead',
   GITHUB_NOTIFICATIONS_UPDATE: 'github:notifications:update',
+
+  // Webview pane (per-session WebContentsView)
+  WEBVIEW_CHECK: 'webview:check',                 // HEAD probe (CORS-bypass)
+  WEBVIEW_OPEN: 'webview:open',                   // create+attach view at bounds
+  WEBVIEW_CLOSE: 'webview:close',                 // detach+destroy view
+  WEBVIEW_SET_BOUNDS: 'webview:setBounds',        // re-position on resize/scroll
+  WEBVIEW_SET_VISIBLE: 'webview:setVisible',      // attach/detach without destroying
+  WEBVIEW_RELOAD: 'webview:reload',               // force-reload bypassing cache
+  WEBVIEW_CAPTURE: 'webview:capture',             // capturePage() PNG dataURL for freeze
+  WEBVIEW_NAV_BACK: 'webview:navBack',
+  WEBVIEW_NAV_FORWARD: 'webview:navForward',
+  WEBVIEW_GO_HOME: 'webview:goHome',              // re-load original URL
+  WEBVIEW_CLOSE_ALL: 'webview:closeAll',          // emergency: destroy every view (escape hatch)
+  WEBVIEW_ESCAPE_PRESSED: 'webview:escapePressed', // main → renderer: user pressed Esc inside a WebContentsView
 
   // Hooks gateway
   HOOKS_TOGGLE: 'hooks:toggle',

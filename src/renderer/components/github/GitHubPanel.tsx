@@ -181,10 +181,22 @@ export default function GitHubPanel({
     )
   }
 
+  // Drive the per-session accent through a CSS variable so descendant
+  // sections can opt in (chevrons, focus rings) without prop-drilling.
+  // Same color the active tab underline + SessionHeader top border use,
+  // so the eye traces a single continuous identity for the active session.
+  const sessionAccent = session?.color || '#737373'
   return (
     <aside
       className="bg-base border-l border-surface0 flex flex-col relative"
-      style={{ width, minWidth: 280 }}
+      style={{
+        width,
+        minWidth: 280,
+        borderTopWidth: '3px',
+        borderTopStyle: 'solid',
+        borderTopColor: sessionAccent,
+        '--session-color': sessionAccent,
+      } as React.CSSProperties}
       aria-label="GitHub panel"
     >
       <div

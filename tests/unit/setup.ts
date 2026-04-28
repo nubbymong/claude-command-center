@@ -125,6 +125,20 @@ const mockElectronAPI = {
     delete: vi.fn(() => Promise.resolve()),
     writeFrontmatter: vi.fn(() => Promise.resolve()),
   },
+  webview: {
+    check: vi.fn(() => Promise.resolve({ reachable: false })),
+    open: vi.fn(() => Promise.resolve(true)),
+    close: vi.fn(() => Promise.resolve(true)),
+    setBounds: vi.fn(() => Promise.resolve()),
+    setVisible: vi.fn(() => Promise.resolve()),
+    reload: vi.fn(() => Promise.resolve()),
+    capture: vi.fn(() => Promise.resolve(null)),
+    navBack: vi.fn(() => Promise.resolve()),
+    navForward: vi.fn(() => Promise.resolve()),
+    goHome: vi.fn(() => Promise.resolve()),
+    closeAll: vi.fn(() => Promise.resolve(true)),
+    onEscapePressed: vi.fn(() => () => {}),
+  },
 }
 
 // Install on globalThis so store imports can find it. Augment an existing

@@ -24,7 +24,7 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
     <button
       onClick={onClick}
       onContextMenu={onContextMenu}
-      className={`w-full text-left rounded-md py-2 px-3 transition-all duration-150 group flex relative overflow-hidden ${
+      className={`w-full text-left rounded py-1.5 px-2.5 transition-all duration-150 group flex relative overflow-hidden ${
         isActive
           ? 'text-text'
           : 'text-subtext0 hover:text-text'
@@ -43,6 +43,17 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
       )}
       <div className="flex-1 min-w-0 relative z-10">
         <div className="flex items-center gap-2">
+          {/* Always-on identity dot — same vocabulary as the
+              ConfigRow so a session reads as "the X config running"
+              even when inactive (background tint only fires when
+              active). Hidden during rename to keep the input flush. */}
+          {!isRenaming && (
+            <span
+              className="w-1.5 h-1.5 rounded-full shrink-0"
+              style={{ backgroundColor: tintColor }}
+              aria-hidden
+            />
+          )}
           {isRenaming ? (
             <input
               ref={renameRef}
@@ -58,12 +69,12 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
               className="flex-1 bg-base border border-blue rounded px-1.5 py-0.5 text-xs text-text outline-none min-w-0"
             />
           ) : (
-            <span className="text-sm font-medium truncate flex-1">{session.label}</span>
+            <span className="text-xs font-medium truncate flex-1">{session.label}</span>
           )}
           {session.sessionType === 'ssh' && <SshBadge />}
           {session.shellOnly ? <ShellBadge /> : <ClaudeBadge needsAttention={needsAttention} />}
         </div>
-        <div className="mt-1 pl-4 pr-1">
+        <div className="mt-0.5 pl-3 pr-1">
           <div className="flex items-center gap-1.5">
             <div className="flex-1 h-1.5 bg-surface1 rounded-full overflow-hidden">
               <div

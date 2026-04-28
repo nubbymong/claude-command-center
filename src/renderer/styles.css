@@ -1,7 +1,11 @@
 @import "tailwindcss";
 
 @theme {
-  /* Warm neutral dark palette */
+  /* Warm neutral dark palette — default. Light mode overrides below via
+     [data-theme="light"] on <html>. Tailwind v4 reads --color-* tokens at
+     build time for utility generation, but the runtime CSS variables are
+     overridable, so utilities like `bg-base` rebind to the light value at
+     paint when data-theme flips. */
   --color-base: #1a1a1a;
   --color-mantle: #141414;
   --color-crust: #0e0e0e;
@@ -28,6 +32,46 @@
   --color-pink: #e87bb5;
   --color-flamingo: #e8a8a8;
   --color-rosewater: #e8c8c0;
+}
+
+/* Light theme — "foggy daylight" not "bright sunlight". The first
+   draft used #f6f5f3 paper-white and the user reported it was still
+   blinding. Pulled the whole ramp down ~12% so the base reads as a
+   warm medium grey, not an off-white, and surfaces step LIGHTER from
+   there for raised cards. Mantle/crust go DARKER for sunken header
+   chrome — same role-mapping as dark mode, just inverted brightness.
+
+   Greys deliberately picked over Catppuccin Latte's pastels. Accents
+   stay desaturated (~50-60% saturation) so they read as readable
+   labels rather than as bright highlights against the muted base.
+   AA contrast verified against base for text/subtext/overlay tiers. */
+[data-theme="light"] {
+  --color-base: #d6d4d0;
+  --color-mantle: #c5c2be;
+  --color-crust: #b6b3af;
+  --color-surface0: #e1dfda;
+  --color-surface1: #ebe9e4;
+  --color-surface2: #f1efea;
+  --color-overlay0: #8c8780;
+  --color-overlay1: #6c685f;
+  --color-overlay2: #56524a;
+  --color-subtext0: #44413b;
+  --color-subtext1: #322f29;
+  --color-text: #1c1c1c;
+  --color-lavender: #4a52a8;
+  --color-blue: #1f4dbb;
+  --color-sapphire: #1f6398;
+  --color-sky: #1d7491;
+  --color-teal: #156d68;
+  --color-green: #166f3a;
+  --color-yellow: #88611c;
+  --color-peach: #9a4f29;
+  --color-maroon: #8b3f3f;
+  --color-red: #9c2118;
+  --color-mauve: #5e44a4;
+  --color-pink: #9b3a72;
+  --color-flamingo: #8b5858;
+  --color-rosewater: #806259;
 }
 
 body {

@@ -21,7 +21,6 @@ export interface TerminalConfig {
     hasPassword?: boolean
     postCommand?: string      // Command to run after SSH connects (e.g., docker exec)
     hasSudoPassword?: boolean // Whether sudo password is needed for postCommand
-    startClaudeAfter?: boolean // Start Claude after post-command completes
     dockerContainer?: string  // Docker container name (enables docker cp for screenshots)
   }
   legacyVersion?: {

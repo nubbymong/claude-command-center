@@ -41,8 +41,6 @@ export interface ElectronAPI {
         username: string
         remotePath: string
         postCommand?: string
-        startClaudeAfter?: boolean
-        dockerContainer?: string
       }
       configId?: string
       configLabel?: string
@@ -51,8 +49,6 @@ export interface ElectronAPI {
         name: string; description: string; prompt: string
         model?: string; tools?: string[]
       }>
-      flickerFree?: boolean
-      powershellTool?: boolean
       effortLevel?: 'low' | 'medium' | 'high'
       disableAutoMemory?: boolean
     }) => Promise<void>
@@ -61,6 +57,20 @@ export interface ElectronAPI {
     kill: (sessionId: string) => void
     onData: (sessionId: string, callback: (data: string) => void) => () => void
     onExit: (sessionId: string, callback: (exitCode: number) => void) => () => void
+  }
+  ssh: {
+    /** Manually trigger the post-connect command stage. */
+    runPostCommand: (sessionId: string) => Promise<void>
+    /** Manually trigger the Claude launch stage. */
+    launchClaude: (sessionId: string) => Promise<void>
+    /** User opts out of any further auto-writes; PTY is theirs to drive. */
+    skip: (sessionId: string) => Promise<void>
+    /** One-shot query of the current flow state, used to recover from
+     * a missed initial push (renderer subscribes after main has already
+     * emitted). */
+    getState: (sessionId: string) => Promise<{ state: string; info?: string }>
+    /** Subscribe to flow-state changes for a session. */
+    onFlowState: (sessionId: string, callback: (msg: { state: string; info?: string }) => void) => () => void
   }
   statusline: {
     onUpdate: (callback: (data: {
@@ -109,11 +119,33 @@ export interface ElectronAPI {
     listRecent: () => Promise<Array<{ filename: string; path: string; timestamp: number; thumbnail: string }>>
     cleanup: (maxAgeDays: number) => Promise<number>
   }
-  storyboard: {
-    start: () => Promise<{ x: number; y: number; width: number; height: number } | null>
-    captureFrame: () => Promise<string | null>
-    stop: () => Promise<string[]>
-    isActive: () => Promise<boolean>
+  webview: {
+    /** HEAD probe (CORS-bypass) — used by the activation poller. */
+    check: (url: string) => Promise<{ reachable: boolean; status?: number }>
+    /** Create a per-session WebContentsView and attach it at the given bounds. */
+    open: (sessionId: string, url: string, bounds: { x: number; y: number; width: number; height: number }) => Promise<boolean>
+    /** Detach + destroy the session's view. */
+    close: (sessionId: string) => Promise<boolean>
+    /** Re-position on resize/scroll. */
+    setBounds: (sessionId: string, bounds: { x: number; y: number; width: number; height: number }) => Promise<void>
+    /** Attach/detach without destroying — used to hide on session switch. */
+    setVisible: (sessionId: string, visible: boolean) => Promise<void>
+    /** Force-reload bypassing cache. */
+    reload: (sessionId: string) => Promise<void>
+    /** Capture as PNG dataURL — used by the freeze flow. */
+    capture: (sessionId: string) => Promise<string | null>
+    navBack: (sessionId: string) => Promise<void>
+    navForward: (sessionId: string) => Promise<void>
+    goHome: (sessionId: string) => Promise<void>
+    /** Emergency: destroy every WebContentsView. Used by the global Esc / "Close webview" pill. */
+    closeAll: () => Promise<boolean>
+    /**
+     * Subscribe to "user pressed Esc inside a WebContentsView". Without
+     * this, key events go to the embedded webContents and never reach
+     * the App-level Esc handler — so a stuck/oversized view couldn't
+     * be dismissed by keyboard. Returns an unsubscribe fn.
+     */
+    onEscapePressed: (handler: (sessionId: string) => void) => () => void
   }
   session: {
     save: (state: unknown) => Promise<boolean>
@@ -278,6 +310,22 @@ const electronAPI: ElectronAPI = {
       return () => ipcRenderer.removeListener(channel, handler)
     }
   },
+  ssh: {
+    runPostCommand: (sessionId: string) =>
+      ipcRenderer.invoke(IPC.SSH_FLOW_RUN_POSTCOMMAND, sessionId),
+    launchClaude: (sessionId: string) =>
+      ipcRenderer.invoke(IPC.SSH_FLOW_LAUNCH_CLAUDE, sessionId),
+    skip: (sessionId: string) =>
+      ipcRenderer.invoke(IPC.SSH_FLOW_SKIP, sessionId),
+    getState: (sessionId: string) =>
+      ipcRenderer.invoke(IPC.SSH_FLOW_GET_STATE, sessionId),
+    onFlowState: (sessionId: string, callback: (msg: { state: string; info?: string }) => void) => {
+      const channel = `${IPC.SSH_FLOW_STATE}:${sessionId}`
+      const handler = (_: unknown, msg: { state: string; info?: string }) => callback(msg)
+      ipcRenderer.on(channel, handler)
+      return () => ipcRenderer.removeListener(channel, handler)
+    },
+  },
   statusline: {
     onUpdate: (callback) => {
       const handler = (_: unknown, data: unknown) => callback(data as any)
@@ -357,11 +405,23 @@ const electronAPI: ElectronAPI = {
     listRecent: () => ipcRenderer.invoke(IPC.SCREENSHOT_LIST_RECENT),
     cleanup: (maxAgeDays: number) => ipcRenderer.invoke(IPC.SCREENSHOT_CLEANUP, maxAgeDays)
   },
-  storyboard: {
-    start: () => ipcRenderer.invoke(IPC.STORYBOARD_START),
-    captureFrame: () => ipcRenderer.invoke(IPC.STORYBOARD_CAPTURE_FRAME),
-    stop: () => ipcRenderer.invoke(IPC.STORYBOARD_STOP),
-    isActive: () => ipcRenderer.invoke(IPC.STORYBOARD_IS_ACTIVE),
+  webview: {
+    check: (url: string) => ipcRenderer.invoke(IPC.WEBVIEW_CHECK, url),
+    open: (sessionId: string, url: string, bounds: { x: number; y: number; width: number; height: number }) => ipcRenderer.invoke(IPC.WEBVIEW_OPEN, sessionId, url, bounds),
+    close: (sessionId: string) => ipcRenderer.invoke(IPC.WEBVIEW_CLOSE, sessionId),
+    setBounds: (sessionId: string, bounds: { x: number; y: number; width: number; height: number }) => ipcRenderer.invoke(IPC.WEBVIEW_SET_BOUNDS, sessionId, bounds),
+    setVisible: (sessionId: string, visible: boolean) => ipcRenderer.invoke(IPC.WEBVIEW_SET_VISIBLE, sessionId, visible),
+    reload: (sessionId: string) => ipcRenderer.invoke(IPC.WEBVIEW_RELOAD, sessionId),
+    capture: (sessionId: string) => ipcRenderer.invoke(IPC.WEBVIEW_CAPTURE, sessionId),
+    navBack: (sessionId: string) => ipcRenderer.invoke(IPC.WEBVIEW_NAV_BACK, sessionId),
+    navForward: (sessionId: string) => ipcRenderer.invoke(IPC.WEBVIEW_NAV_FORWARD, sessionId),
+    goHome: (sessionId: string) => ipcRenderer.invoke(IPC.WEBVIEW_GO_HOME, sessionId),
+    closeAll: () => ipcRenderer.invoke(IPC.WEBVIEW_CLOSE_ALL),
+    onEscapePressed: (handler: (sessionId: string) => void) => {
+      const fn = (_e: unknown, sessionId: string) => handler(sessionId)
+      ipcRenderer.on(IPC.WEBVIEW_ESCAPE_PRESSED, fn)
+      return () => ipcRenderer.removeListener(IPC.WEBVIEW_ESCAPE_PRESSED, fn)
+    },
   },
   session: {
     save: (state: unknown) => ipcRenderer.invoke(IPC.SESSION_SAVE, state),

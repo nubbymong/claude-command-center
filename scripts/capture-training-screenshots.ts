@@ -61,12 +61,17 @@ const homePath = process.platform === 'win32'
   ? 'C:\\Users\\developer\\Projects'
   : '/Users/developer/Projects'
 
+// All demo configs use shellOnly so capture works on hosts without claude.exe
+// installed. Demo-mobile has a partnerTerminalPath set so the combined-mode
+// screenshot can render both panes side-by-side.
+const PARTNER_SHELL = process.platform === 'win32' ? 'powershell.exe' : '/bin/bash'
+
 const SAMPLE_CONFIGS = [
-  { id: 'demo-webapp', label: 'Web App', workingDirectory: path.join(homePath, 'web-app'), model: '', color: '#89B4FA', sessionType: 'local' },
-  { id: 'demo-api', label: 'API Server', workingDirectory: path.join(homePath, 'api-server'), model: '', color: '#A6E3A1', sessionType: 'local' },
-  { id: 'demo-mobile', label: 'Mobile App', workingDirectory: path.join(homePath, 'mobile'), model: '', color: '#F9E2AF', sessionType: 'local' },
-  { id: 'demo-infra', label: 'Infrastructure', workingDirectory: path.join(homePath, 'infra'), model: '', color: '#CBA6F7', sessionType: 'local' },
-  { id: 'demo-gpu', label: 'GPU Server', workingDirectory: '/home/developer/ml-pipeline', model: '', color: '#F38BA8', sessionType: 'ssh', sshConfig: { host: '10.0.1.50', port: 22, username: 'developer', remotePath: '/home/developer/ml-pipeline' } },
+  { id: 'demo-webapp', label: 'Web App', workingDirectory: path.join(homePath, 'web-app'), model: '', color: '#89B4FA', sessionType: 'local', shellOnly: true },
+  { id: 'demo-api', label: 'API Server', workingDirectory: path.join(homePath, 'api-server'), model: '', color: '#A6E3A1', sessionType: 'local', shellOnly: true },
+  { id: 'demo-mobile', label: 'Mobile App', workingDirectory: path.join(homePath, 'mobile'), model: '', color: '#F9E2AF', sessionType: 'local', shellOnly: true, partnerTerminalPath: PARTNER_SHELL },
+  { id: 'demo-infra', label: 'Infrastructure', workingDirectory: path.join(homePath, 'infra'), model: '', color: '#CBA6F7', sessionType: 'local', shellOnly: true },
+  { id: 'demo-gpu', label: 'GPU Server', workingDirectory: '/home/developer/ml-pipeline', model: '', color: '#F38BA8', sessionType: 'ssh', shellOnly: true, sshConfig: { host: '10.0.1.50', port: 22, username: 'developer', remotePath: '/home/developer/ml-pipeline' } },
 ]
 
 const SAMPLE_COMMANDS = [
@@ -318,6 +323,57 @@ async function dismissModals(window: any): Promise<void> {
   for (let i = 0; i < 4; i++) { await window.keyboard.press('Escape'); await window.waitForTimeout(400) }
 }
 
+/** Launch a session by clicking the Launch button on the matching config
+ *  row. Each ConfigRow has hover-revealed Launch / Pin / Edit / Delete
+ *  buttons, all titled identically — we find the right one by walking
+ *  from the label span up to the row container, then querying within. */
+async function launchSessionFromSidebar(window: any, label: string): Promise<void> {
+  const launched = await window.evaluate((l: string) => {
+    const spans = Array.from(document.querySelectorAll('span'))
+    for (const s of spans) {
+      if (s.textContent?.trim() !== l) continue
+      // Walk up to the config row container (the hoverable parent)
+      let row: HTMLElement | null = s as HTMLElement
+      for (let i = 0; i < 8 && row; i++) {
+        if (row.querySelector('button[title="Launch"]')) break
+        row = row.parentElement
+      }
+      if (!row) continue
+      const launchBtn = row.querySelector('button[title="Launch"]') as HTMLElement | null
+      if (launchBtn) { launchBtn.click(); return true }
+    }
+    return false
+  }, label)
+  if (!launched) console.log(`[capture] WARNING: config "${label}" not found in sidebar`)
+  else console.log(`[capture] Launched session: ${label}`)
+  // Wait for terminal to mount + xterm to render the prompt
+  await window.waitForTimeout(2500)
+}
+
+/** Click a button in the active session's toolbar by its title attribute. */
+async function clickToolbarButton(window: any, titleStartsWith: string): Promise<boolean> {
+  return await window.evaluate((tp: string) => {
+    const buttons = Array.from(document.querySelectorAll('button'))
+    for (const btn of buttons) {
+      if (btn.title?.startsWith(tp) && btn.offsetParent !== null) {
+        btn.click()
+        return true
+      }
+    }
+    return false
+  }, titleStartsWith)
+}
+
+/** Close all open sessions to reset state between captures. */
+async function closeAllSessions(window: any): Promise<void> {
+  await window.evaluate(() => {
+    // Hover each session tab and click the × close button
+    const closeButtons = Array.from(document.querySelectorAll('button[title="Close session"], button[title^="Close"]'))
+    for (const btn of closeButtons) (btn as HTMLElement).click()
+  })
+  await window.waitForTimeout(500)
+}
+
 const DOCS_SCREENSHOT_DIR = path.join(__dirname, '..', 'docs', 'screenshots')
 
 // Map from training filenames to docs filenames (for README screenshots)
@@ -418,22 +474,33 @@ async function main() {
     await clickNav(window, 'Tokenomics')
     await capture(window, 'step-tokenomics.jpg', 'Tokenomics page')
 
-    // Step 5: Memory
+    // Step 5: Insights (sidebar nav, distinct from Tokenomics)
+    await clickNav(window, 'Insights')
+    await window.waitForTimeout(800)
+    await capture(window, 'step-insights.jpg', 'Insights page')
+
+    // Step 6: Memory
     await clickNav(window, 'Memory')
     await window.waitForTimeout(3000) // async scan
     await capture(window, 'step-memory.jpg', 'Memory Visualiser')
 
-    // Step 6: Settings (Security)
+    // Step 7: Logs (no historical sessions seeded — empty state still shows
+    // the chrome which is what we want for the tour shot)
+    await clickNav(window, 'Logs')
+    await window.waitForTimeout(800)
+    await capture(window, 'step-logs.jpg', 'Logs page')
+
+    // Step 8: Settings (Security)
     await clickNav(window, 'Settings')
     await window.waitForTimeout(500)
     await capture(window, 'step-security.jpg', 'Settings page')
 
-    // Step 7: Tips (Shortcuts tab)
+    // Step 9: Tips (Shortcuts tab)
     await clickTab(window, 'Shortcuts')
     await window.waitForTimeout(500)
     await capture(window, 'step-tips.jpg', 'Shortcuts tab')
 
-    // Step 8: GitHub sidebar (Settings > GitHub tab)
+    // Step 10: GitHub sidebar (Settings > GitHub tab)
     // Captured here because the full panel needs a running sync and cached
     // PR/CI data that we can't reliably seed without network access. The
     // Settings page is the user's entry point per the onboarding modal and
@@ -441,6 +508,58 @@ async function main() {
     await clickTab(window, 'GitHub')
     await window.waitForTimeout(600)
     await capture(window, 'github-panel.jpg', 'Settings > GitHub tab (onboarding entry point)')
+
+    // ── Session-required captures (Excalidraw / Snap / Combined) ──
+    // Launch the simpler "Web App" config first so its toolbar is the
+    // active one. Excalidraw + Snap buttons live in CommandBar inside
+    // TerminalView and only render for the active session.
+    await launchSessionFromSidebar(window, 'Web App')
+    await window.waitForTimeout(1500)
+
+    // Debug: list visible button titles so we can see what actually rendered
+    const visibleButtons = await window.evaluate(() => {
+      return Array.from(document.querySelectorAll('button'))
+        .filter((b) => (b as HTMLElement).offsetParent !== null)
+        .map((b) => b.title)
+        .filter((t) => t)
+        .slice(0, 60)
+    })
+    console.log('[capture] Visible buttons:', visibleButtons.join(' | '))
+
+    // Snap — click Snap button to surface the dropdown menu (Rectangle /
+    // Window). Capture the dropdown, NOT the rectangle overlay (which is
+    // a separate Electron window).
+    const snapClicked = await clickToolbarButton(window, 'Take Screenshot')
+    if (snapClicked) {
+      await window.waitForTimeout(500)
+      await capture(window, 'step-snap.jpg', 'Snap dropdown menu')
+      await window.keyboard.press('Escape')
+      await window.waitForTimeout(300)
+    } else {
+      console.log('[capture] WARNING: Snap button not found, skipping')
+    }
+
+    // Excalidraw — click Draw button to swap terminal for the canvas
+    const drawClicked = await clickToolbarButton(window, 'Open Excalidraw')
+    if (drawClicked) {
+      await window.waitForTimeout(1500) // canvas mount + welcome state
+      await capture(window, 'step-excalidraw.jpg', 'Excalidraw scratchpad')
+      // Toggle off
+      await clickToolbarButton(window, 'Hide Excalidraw')
+      await window.waitForTimeout(400)
+    } else {
+      console.log('[capture] WARNING: Excalidraw button not found, skipping')
+    }
+
+    // Combined mode: launch the partner-enabled "Mobile App" config.
+    // The split-view renders both Claude pane + partner shell side-by-side.
+    await launchSessionFromSidebar(window, 'Mobile App')
+    await window.waitForTimeout(2500)
+    await capture(window, 'step-combined.jpg', 'Combined mode (Claude + partner)')
+
+    // Webview is intentionally skipped — requires a real URL that loads,
+    // and the WebContentsView overlay does not surface in Playwright
+    // screenshots reliably. Tour falls back to the legacy bullet view.
 
     console.log('[capture] Closing app...')
     await app.close()

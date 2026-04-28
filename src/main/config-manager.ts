@@ -29,6 +29,7 @@ const CONFIG_FILES = {
   visionGlobal: 'vision-global.json',
   commandSections: 'command-sections.json',
   usageTracking: 'usage-tracking.json',
+  commandBarUi: 'command-bar-ui.json',
 } as const
 
 export type ConfigKey = keyof typeof CONFIG_FILES
@@ -120,8 +121,55 @@ export function loadAllConfig(): { data: Record<string, unknown>; needsMigration
     data[key] = readConfig(key)
   }
 
+  // v1.4: strip removed legacy SSH fields. shellOnly stays (it's a
+  // user-meaningful "no claude" toggle for both local + ssh); the
+  // others were redundant once manual flow + idle fallback became the
+  // only flow.
+  stripLegacySshFields(data)
+
   logInfo(`[config-manager] Loaded all config from ${getConfigDir()}, needsMigration=${!hasData}`)
   return { data, needsMigration: !hasData }
+}
+
+/**
+ * Silent migration: strips `startClaudeAfter` and `connectionFlow` from
+ * any persisted SSH config. Rewrites the file only if a strip happened
+ * so unchanged installs stay byte-identical. Idempotent.
+ */
+function stripLegacySshFields(data: Record<string, unknown>): void {
+  const cleaned: ConfigKey[] = []
+
+  const cleanSshConfig = (sshConfig: Record<string, unknown> | null | undefined): boolean => {
+    if (!sshConfig || typeof sshConfig !== 'object') return false
+    let dirty = false
+    if ('startClaudeAfter' in sshConfig) { delete sshConfig.startClaudeAfter; dirty = true }
+    if ('connectionFlow' in sshConfig) { delete sshConfig.connectionFlow; dirty = true }
+    return dirty
+  }
+
+  // configs.json: TerminalConfig[] with optional sshConfig per entry
+  const configs = data.configs as Array<Record<string, unknown>> | null
+  if (Array.isArray(configs)) {
+    let dirty = false
+    for (const c of configs) {
+      if (cleanSshConfig(c.sshConfig as Record<string, unknown> | undefined)) dirty = true
+    }
+    if (dirty) { writeConfig('configs', configs); cleaned.push('configs') }
+  }
+
+  // session-state.json: { sessions: SavedSession[], ... }
+  const sessionState = data.sessionState as { sessions?: Array<Record<string, unknown>> } | null
+  if (sessionState && Array.isArray(sessionState.sessions)) {
+    let dirty = false
+    for (const s of sessionState.sessions) {
+      if (cleanSshConfig(s.sshConfig as Record<string, unknown> | undefined)) dirty = true
+    }
+    if (dirty) { writeConfig('sessionState', sessionState); cleaned.push('sessionState') }
+  }
+
+  if (cleaned.length > 0) {
+    logInfo(`[config-manager] Stripped legacy SSH fields (startClaudeAfter, connectionFlow) from: ${cleaned.join(', ')}`)
+  }
 }
 
 /**
