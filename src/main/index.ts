@@ -11,7 +11,8 @@ import { registerLogHandlers } from './ipc/log-handlers'
 import { closeAllLogs } from './session-logger'
 
 import { startStatuslineWatcher } from './statusline-watcher'
-import { getProvider } from './providers'
+import { registerProvider, getProvider } from './providers'
+import { ClaudeProvider } from './providers/claude'
 import { registerDebugHandlers } from './ipc/debug-handlers'
 import { disableDebugMode } from './debug-capture'
 import { registerUpdateHandlers } from './ipc/update-handlers'
@@ -529,6 +530,10 @@ if (!gotTheLock) {
 
     const menu = Menu.buildFromTemplate(menuTemplate)
     Menu.setApplicationMenu(menu)
+
+    // Register built-in providers first — must happen before any code calls
+    // getProvider('claude'), including deployStatuslineScript below.
+    registerProvider(new ClaudeProvider())
 
     // Take a daily safety snapshot of the CONFIG directory BEFORE anything
     // writes to it (deploy/config below, window/handlers later, IPC saves
