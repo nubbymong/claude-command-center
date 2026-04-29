@@ -1,4 +1,5 @@
 import type { SessionProvider } from './types'
+import { ClaudeProvider } from './claude'
 
 const registry = new Map<'claude' | 'codex', SessionProvider>()
 
@@ -15,3 +16,6 @@ export function getProvider(id: 'claude' | 'codex'): SessionProvider {
 export function tryGetProvider(id: 'claude' | 'codex'): SessionProvider | null {
   return registry.get(id) ?? null
 }
+
+// Auto-register built-in providers on module load
+registerProvider(new ClaudeProvider())

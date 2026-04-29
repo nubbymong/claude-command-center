@@ -8,6 +8,8 @@ import { logInfo, logDebug, logError } from './debug-logger'
 import { writeCliSetupPty, getResourcesDirectory } from './ipc/setup-handlers'
 import { isGlobalVisionRunning, getGlobalVisionConfig, getConductorMcpPort } from './vision-manager'
 import { resolveClaudeBinary } from './providers/claude/spawn'
+import { getProvider } from './providers'
+import { resolveCwd } from './path-utils'
 import { dispatchSSHStatuslineUpdate } from './statusline-watcher'
 import { getGateway } from './hooks'
 import { injectHooks, buildHooksBlock } from './hooks/session-hooks-writer'
@@ -30,20 +32,6 @@ interface PtySession {
 
 // Buffer writes for PTYs that haven't spawned yet (e.g., partner terminal initially hidden)
 const pendingWrites = new Map<string, string[]>()
-
-/**
- * Resolve ~ to the user's home directory.
- * On Windows, ~ is not resolved by the OS — only by shells.
- */
-function resolveCwd(cwd: string | undefined): string {
-  if (!cwd || cwd === '.') return os.homedir()
-  if (cwd === '~') return os.homedir()
-  if (cwd.startsWith('~/') || cwd.startsWith('~\\')) {
-    return path.join(os.homedir(), cwd.slice(2))
-  }
-  // Resolve any relative paths to absolute (prevents using Electron's process.cwd())
-  return path.resolve(cwd)
-}
 
 export interface SSHOptions {
   host: string
@@ -892,41 +880,36 @@ export function spawnPty(
       }
     })
   } else {
-    // Local session
+    // Local session — delegate binary + env construction to the provider.
+    // The post-spawn shell-write (cd + claude command) stays here; only the
+    // bare shell + env comes from the provider.
     const shellOnly = options?.shellOnly
+    const provider = getProvider('claude')
+    const { cmd: spawnCmd, args: spawnArgs, env: spawnEnv } = provider.buildSpawnCommand({
+      sessionId,
+      cwd: options?.cwd,
+      cols,
+      rows,
+      shellOnly: options?.shellOnly,
+      elevated: options?.elevated,
+      legacyVersion: options?.legacyVersion,
+      effortLevel: options?.effortLevel,
+      disableAutoMemory: options?.disableAutoMemory,
+      model: options?.model,
+      useResumePicker: options?.useResumePicker,
+      agentsConfig: options?.agentsConfig,
+    })
+    const resolvedCwd = resolveCwd(options?.cwd)
 
     if (shellOnly) {
-      // Shell only: spawn a shell without Claude
-      const shell = os.platform() === 'win32' ? 'powershell.exe' : process.env.SHELL || '/bin/bash'
-      const elevated = options?.elevated
-
-      let spawnCmd: string
-      let spawnArgs: string[]
-
-      if (elevated) {
-        if (os.platform() === 'win32') {
-          spawnCmd = 'gsudo'
-          spawnArgs = [shell]
-        } else {
-          spawnCmd = 'sudo'
-          spawnArgs = [shell]
-        }
-      } else {
-        spawnCmd = shell
-        spawnArgs = []
-      }
-
-      const resolvedCwd = resolveCwd(options?.cwd)
-      logInfo(`[pty-manager] Launching shell-only PTY: ${spawnCmd} ${spawnArgs.join(' ')} cwd=${resolvedCwd}${elevated ? ' (elevated)' : ''}`)
-
-      const shellEnv: Record<string, string> = { ...process.env, CLAUDE_MULTI_SESSION_ID: sessionId } as Record<string, string>
+      logInfo(`[pty-manager] Launching shell-only PTY: ${spawnCmd} ${spawnArgs.join(' ')} cwd=${resolvedCwd}${options?.elevated ? ' (elevated)' : ''}`)
 
       ptyProcess = pty.spawn(spawnCmd, spawnArgs, {
         name: 'xterm-256color',
         cols,
         rows,
         cwd: resolvedCwd,
-        env: shellEnv,
+        env: spawnEnv,
         useConpty: true
       })
 
@@ -949,19 +932,14 @@ export function spawnPty(
       // Without the explicit cd, conversations get stored under the wrong project hash
       // and won't appear when the user tries to /resume.
       const { cmd } = resolveClaudeForPty(options?.legacyVersion)
-      const resolvedCwd = resolveCwd(options?.cwd)
-      const shell = os.platform() === 'win32' ? 'powershell.exe' : process.env.SHELL || '/bin/bash'
-      logInfo(`[pty-manager] Launching Claude via shell in PTY: ${shell} -> ${cmd} cwd=${resolvedCwd} (resumePicker=${!!options?.useResumePicker})`)
+      logInfo(`[pty-manager] Launching Claude via shell in PTY: ${spawnCmd} -> ${cmd} cwd=${resolvedCwd} (resumePicker=${!!options?.useResumePicker})`)
 
-      const claudeEnv: Record<string, string> = { ...process.env, CLAUDE_MULTI_SESSION_ID: sessionId } as Record<string, string>
-      if (options?.disableAutoMemory) claudeEnv.CLAUDE_CODE_DISABLE_AUTO_MEMORY = '1'
-
-      ptyProcess = pty.spawn(shell, [], {
+      ptyProcess = pty.spawn(spawnCmd, spawnArgs, {
         name: 'xterm-256color',
         cols,
         rows,
         cwd: resolvedCwd,
-        env: claudeEnv,
+        env: spawnEnv,
         useConpty: true
       })
 

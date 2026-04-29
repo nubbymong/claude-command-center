@@ -3,6 +3,7 @@ import { execSync } from 'child_process'
 import { resolveVersionBinary } from '../../legacy-version-manager'
 import { logInfo } from '../../debug-logger'
 import type { LegacyVersion } from '../../../shared/types'
+import type { SpawnOptions } from '../types'
 
 export function resolveClaudeBinary(legacyVersion?: LegacyVersion): { cmd: string; args: string[] } {
   if (legacyVersion?.enabled && legacyVersion.version) {
@@ -24,4 +25,31 @@ export function resolveClaudeBinary(legacyVersion?: LegacyVersion): { cmd: strin
     } catch { /* try next */ }
   }
   return { cmd: 'claude', args: [] }
+}
+
+/**
+ * Build the bare shell + env for a local Claude (or shell-only) PTY spawn.
+ *
+ * Returns ONLY the shell binary, args, and env. The post-spawn shell-write
+ * (cd + claude command + flags) is constructed and dispatched by pty-manager
+ * because it depends on additional state (resume picker path, agents flag,
+ * extra CLI flags) that is pty-manager's responsibility.
+ */
+export function buildClaudeLocalSpawn(opts: SpawnOptions): { cmd: string; args: string[]; env: Record<string, string> } {
+  const env: Record<string, string> = { ...process.env, CLAUDE_MULTI_SESSION_ID: opts.sessionId } as Record<string, string>
+  if (opts.disableAutoMemory) env.CLAUDE_CODE_DISABLE_AUTO_MEMORY = '1'
+
+  const shell = os.platform() === 'win32' ? 'powershell.exe' : (process.env.SHELL || '/bin/bash')
+
+  if (opts.shellOnly && opts.elevated) {
+    const cmd = os.platform() === 'win32' ? 'gsudo' : 'sudo'
+    return { cmd, args: [shell], env }
+  }
+
+  if (opts.shellOnly) {
+    return { cmd: shell, args: [], env }
+  }
+
+  // Claude session: spawn shell only; pty-manager writes the cd+claude command into the shell post-spawn.
+  return { cmd: shell, args: [], env }
 }
