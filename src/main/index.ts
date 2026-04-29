@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain, dialog, clipboard, Menu, session, shell } from 'electron'
 import { join } from 'path'
+import { tmpdir } from 'os'
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
 import { randomBytes } from 'crypto'
 import { registerPtyHandlers } from './ipc/pty-handlers'
@@ -124,9 +125,19 @@ function createSplashWindow(): void {
     return
   }
 
+  // Write the wrapper HTML (with the image inlined as base64) to a temp file
+  // and load it via loadFile. The previous approach passed the entire
+  // base64-encoded HTML as a `data:text/html` URL into loadURL — fine for
+  // the 89 KB legacy splash.webp, but the new 1.5 MB branded splash.png
+  // produces a >2 MB URL that exceeds Electron's practical loadURL size
+  // limit; loadURL silently never reaches ready-to-show and the window is
+  // created but never shown. Writing to disk + loadFile has no size limit,
+  // and keeping the img as `data:` (not `file://`) sidesteps Chromium's
+  // file://-to-file:// cross-origin block without having to disable
+  // webSecurity.
   const imgData = readFileSync(splash.path).toString('base64')
   const html = `<!DOCTYPE html>
-<html><head><style>
+<html><head><meta charset="utf-8"><style>
   * { margin: 0; padding: 0; }
   body {
     background: transparent;
@@ -144,6 +155,14 @@ function createSplashWindow(): void {
   <img src="data:${splash.mime};base64,${imgData}" />
 </body></html>`
 
+  const tmpHtml = join(tmpdir(), 'claude-command-center-splash.html')
+  try {
+    writeFileSync(tmpHtml, html, 'utf-8')
+  } catch (err) {
+    logInfo(`[splash] Failed to write splash HTML to ${tmpHtml}: ${err}`)
+    return
+  }
+
   splashWindow = new BrowserWindow({
     width: 420,
     height: 420,
@@ -157,11 +176,11 @@ function createSplashWindow(): void {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true
-    }
+      sandbox: true,
+    },
   })
 
-  splashWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
+  splashWindow.loadFile(tmpHtml)
   splashWindow.once('ready-to-show', () => {
     splashWindow?.show()
   })
