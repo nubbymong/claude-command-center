@@ -3,6 +3,8 @@ import type { LegacyVersion, StatuslineData } from '../../../shared/types'
 import { resolveClaudeBinary, buildClaudeLocalSpawn } from './spawn'
 import { getRemoteSetupCommand, remoteSessionSettingsPath } from './ssh-shim'
 import { detectClaudeUi } from './ui-detection'
+import { deployClaudeStatuslineScript } from './statusline'
+import { watchClaudeStatuslineFile } from './telemetry'
 
 export class ClaudeProvider implements SshCapableProvider {
   readonly id = 'claude' as const
@@ -20,8 +22,8 @@ export class ClaudeProvider implements SshCapableProvider {
   detectUiRunning(data: string): boolean {
     return detectClaudeUi(data, true)  // post-spawn convenience: assume claudeSent
   }
-  ingestSessionTelemetry(_sid: string, _cb: (d: StatuslineData) => void): TelemetrySource {
-    throw new Error('not yet lifted -- see P0.8')
+  ingestSessionTelemetry(sessionId: string, onUpdate: (data: StatuslineData) => void): TelemetrySource {
+    return watchClaudeStatuslineFile(sessionId, onUpdate)
   }
   async listHistorySessions(): Promise<HistorySession[]> { throw new Error('not yet lifted -- see P0.9') }
   resumeCommand(_sid: string): { cmd: string; args: string[] } { throw new Error('not yet lifted -- see P0.9') }
@@ -34,7 +36,7 @@ export class ClaudeProvider implements SshCapableProvider {
   configureRemoteSettings(sessionId: string, remotePath: string, hooksConfig: { port: number; secret: string } | null): string {
     return getRemoteSetupCommand(sessionId, remotePath, hooksConfig)
   }
-  async deployStatuslineScript(_dir: string): Promise<void> {
-    throw new Error('not yet lifted -- see P0.8')
+  async deployStatuslineScript(resourcesDir: string): Promise<void> {
+    return deployClaudeStatuslineScript(resourcesDir)
   }
 }

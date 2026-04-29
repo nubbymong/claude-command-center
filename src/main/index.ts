@@ -10,7 +10,8 @@ import { killAllPty, gracefulExitAllPty } from './pty-manager'
 import { registerLogHandlers } from './ipc/log-handlers'
 import { closeAllLogs } from './session-logger'
 
-import { deployStatuslineScript, configureClaudeSettings, startStatuslineWatcher } from './statusline-watcher'
+import { startStatuslineWatcher } from './statusline-watcher'
+import { getProvider } from './providers'
 import { registerDebugHandlers } from './ipc/debug-handlers'
 import { disableDebugMode } from './debug-capture'
 import { registerUpdateHandlers } from './ipc/update-handlers'
@@ -535,13 +536,13 @@ if (!gotTheLock) {
     // under CONFIG/_backups/YYYY-MM-DD/. Non-fatal if it fails.
     try { snapshotConfig() } catch (err) { console.warn('[main] snapshotConfig failed:', err) }
 
-    // Deploy statusline script and configure Claude settings
-    try {
-      deployStatuslineScript()
-      configureClaudeSettings()
-    } catch (err) {
-      console.warn('[main] Failed to deploy statusline:', err)
-    }
+    // Deploy statusline script (Claude provider) — also configures
+    // ~/.claude/settings.json statusLine stanza internally. Fire-and-forget;
+    // the original sync calls (deployStatuslineScript + configureClaudeSettings)
+    // had no downstream consumers in this boot sequence, so awaiting isn't needed.
+    Promise.resolve()
+      .then(() => getProvider('claude').deployStatuslineScript?.(getResourcesDirectory()))
+      .catch((err) => console.warn('[main] Failed to deploy statusline:', err))
 
     // Content Security Policy
     session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
