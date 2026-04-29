@@ -15,6 +15,15 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '1.4.3',
+    date: '2026-04-29',
+    highlights: "New branded splash now actually shows on launch, plus a refreshed README with v1.4 feature highlights",
+    changes: [
+      { type: 'fix', description: "Splash window now displays the new branded artwork. The 1.5 MB PNG was being inlined into a data: URL that exceeded Electron's loadURL size limit, so the window was created but never reached ready-to-show. Switched to writing the wrapper HTML to a temp file and loading via loadFile — works for any image size" },
+      { type: 'improvement', description: "README overhaul. Branded splash at the top, six new feature highlight cards (Excalidraw, Combined Mode, Insights, Logs, GitHub sidebar, Vision), accurate v1.4 feature audit, dedicated 'What's New' section, corrected installer naming, and a 'Defence in Depth' security subsection covering daily CONFIG backups" },
+    ]
+  },
+  {
     version: '1.4.2',
     date: '2026-04-28',
     highlights: "Safety-net daily backups of your CONFIG directory — never lose a session list to a corrupted write again",
