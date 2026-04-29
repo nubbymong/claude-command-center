@@ -7,7 +7,7 @@ import { logPtyOutput, isDebugModeEnabled } from './debug-capture'
 import { logInfo, logDebug, logError } from './debug-logger'
 import { writeCliSetupPty, getResourcesDirectory } from './ipc/setup-handlers'
 import { isGlobalVisionRunning, getGlobalVisionConfig, getConductorMcpPort } from './vision-manager'
-import { resolveVersionBinary } from './legacy-version-manager'
+import { resolveClaudeBinary } from './providers/claude/spawn'
 import { dispatchSSHStatuslineUpdate } from './statusline-watcher'
 import { getGateway } from './hooks'
 import { injectHooks, buildHooksBlock } from './hooks/session-hooks-writer'
@@ -351,29 +351,7 @@ function getRemoteSetupCommand(
  * Otherwise checks for native CLI (claude.exe) first, then npm wrapper (claude.cmd).
  */
 export function resolveClaudeForPty(legacyVersion?: { enabled: boolean; version: string }): { cmd: string; args: string[] } {
-  // Try legacy version binary first
-  if (legacyVersion?.enabled && legacyVersion.version) {
-    const legacyBin = resolveVersionBinary(legacyVersion.version)
-    if (legacyBin) {
-      logInfo(`[pty] Using legacy Claude CLI v${legacyVersion.version}: ${legacyBin}`)
-      return { cmd: legacyBin, args: [] }
-    }
-    logInfo(`[pty] Legacy v${legacyVersion.version} binary not found, falling back to system claude`)
-  }
-
-  if (os.platform() !== 'win32') {
-    return { cmd: 'claude', args: [] }
-  }
-
-  // Try native CLI first (.exe), then npm wrapper (.cmd)
-  for (const bin of ['claude.exe', 'claude.cmd']) {
-    try {
-      const cmdPath = execSync(`where ${bin}`, { encoding: 'utf-8', timeout: 5000 })
-        .trim().split('\n')[0].trim()
-      return { cmd: cmdPath, args: [] }
-    } catch { /* try next */ }
-  }
-  return { cmd: 'claude', args: [] }
+  return resolveClaudeBinary(legacyVersion)
 }
 
 /**
