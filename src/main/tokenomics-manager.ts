@@ -6,12 +6,15 @@
 import { BrowserWindow } from 'electron'
 import * as fs from 'fs'
 import * as path from 'path'
-import * as os from 'os'
-import * as readline from 'readline'
 import { getConfigDir, ensureConfigDir } from './config-manager'
 import { logInfo, logError } from './debug-logger'
 import type { TokenomicsData, TokenomicsSessionRecord, TokenomicsDailyAggregate, TokenomicsSyncProgress } from '../shared/types'
 import { IPC } from '../shared/ipc-channels'
+import {
+  findClaudeHistoryFiles,
+  parseClaudeTranscriptFile,
+  type ClaudeParsedMessage,
+} from './providers/claude/telemetry'
 
 // ── Model Pricing (per 1M tokens) ──
 
@@ -179,51 +182,10 @@ function saveDataDebounced(data: TokenomicsData): void {
 }
 
 // ── JSONL Parsing ──
-
-interface ParsedMessage {
-  model: string
-  inputTokens: number
-  outputTokens: number
-  cacheReadTokens: number
-  cacheWriteTokens: number
-  timestamp: string
-  sessionId: string
-}
-
-async function parseTranscriptFile(filePath: string): Promise<ParsedMessage[]> {
-  const messages: ParsedMessage[] = []
-  try {
-    const stream = fs.createReadStream(filePath, { encoding: 'utf-8' })
-    const rl = readline.createInterface({ input: stream, crlfDelay: Infinity })
-
-    for await (const line of rl) {
-      // Quick string check before JSON.parse
-      if (!line.includes('"type":"assistant"') && !line.includes('"type": "assistant"')) continue
-
-      try {
-        const entry = JSON.parse(line)
-        if (entry.type !== 'assistant') continue
-
-        const usage = entry.message?.usage
-        if (!usage) continue
-
-        const model = entry.message?.model || 'unknown'
-        messages.push({
-          model,
-          inputTokens: usage.input_tokens || 0,
-          outputTokens: usage.output_tokens || 0,
-          cacheReadTokens: usage.cache_read_input_tokens || 0,
-          cacheWriteTokens: usage.cache_creation_input_tokens || 0,
-          timestamp: entry.timestamp || '',
-          sessionId: entry.sessionId || '',
-        })
-      } catch { /* skip malformed lines */ }
-    }
-  } catch (err) {
-    // File read error — skip silently
-  }
-  return messages
-}
+// NOTE (P0.8): findJsonlFiles + parseTranscriptFile lifted into
+// providers/claude/telemetry.ts as findClaudeHistoryFiles +
+// parseClaudeTranscriptFile (verbatim). This module imports them above and
+// continues to drive ingestion/aggregation.
 
 // ── Aggregation Helpers ──
 
@@ -231,7 +193,7 @@ function updateSessionRecord(
   data: TokenomicsData,
   sessionId: string,
   projectDir: string,
-  messages: ParsedMessage[]
+  messages: ClaudeParsedMessage[]
 ): void {
   if (messages.length === 0) return
 
@@ -345,44 +307,6 @@ function rebuildAggregates(data: TokenomicsData): void {
   }
 }
 
-// ── JSONL File Discovery ──
-
-function findJsonlFiles(): Array<{ path: string; mtime: number; projectDir: string }> {
-  const claudeDir = path.join(os.homedir(), '.claude', 'projects')
-  const files: Array<{ path: string; mtime: number; projectDir: string }> = []
-
-  try {
-    if (!fs.existsSync(claudeDir)) return files
-
-    const projects = fs.readdirSync(claudeDir)
-    for (const project of projects) {
-      const projectPath = path.join(claudeDir, project)
-      try {
-        const stat = fs.statSync(projectPath)
-        if (!stat.isDirectory()) continue
-
-        const entries = fs.readdirSync(projectPath)
-        for (const entry of entries) {
-          if (!entry.endsWith('.jsonl')) continue
-          const filePath = path.join(projectPath, entry)
-          try {
-            const fstat = fs.statSync(filePath)
-            files.push({
-              path: filePath,
-              mtime: fstat.mtimeMs,
-              projectDir: project,
-            })
-          } catch { /* skip */ }
-        }
-      } catch { /* skip */ }
-    }
-  } catch (err) {
-    logError(`[tokenomics] Failed to enumerate JSONL files: ${err}`)
-  }
-
-  return files
-}
-
 // ── Seeding ──
 
 let isSeeding = false
@@ -397,7 +321,7 @@ export async function seedTokenomics(
   const data = loadData()
 
   try {
-    const files = findJsonlFiles()
+    const files = findClaudeHistoryFiles()
     // Sort by mtime descending (newest first)
     files.sort((a, b) => b.mtime - a.mtime)
 
@@ -426,7 +350,7 @@ export async function seedTokenomics(
 
       for (const file of batch) {
         const sessionId = path.basename(file.path, '.jsonl')
-        const messages = await parseTranscriptFile(file.path)
+        const messages = await parseClaudeTranscriptFile(file.path)
         if (messages.length > 0) {
           updateSessionRecord(data, sessionId, file.projectDir, messages)
         }
@@ -471,7 +395,7 @@ export async function syncTokenomics(
   const data = loadData()
   if (!data.seedComplete) return data
 
-  const files = findJsonlFiles()
+  const files = findClaudeHistoryFiles()
   // Only files modified since last sync
   const newFiles = files.filter(f => f.mtime > data.lastSyncTimestamp)
   if (newFiles.length === 0) return data
@@ -480,7 +404,7 @@ export async function syncTokenomics(
 
   for (const file of newFiles) {
     const sessionId = path.basename(file.path, '.jsonl')
-    const messages = await parseTranscriptFile(file.path)
+    const messages = await parseClaudeTranscriptFile(file.path)
     if (messages.length > 0) {
       updateSessionRecord(data, sessionId, file.projectDir, messages)
     }

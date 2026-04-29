@@ -4,7 +4,7 @@ import { resolveClaudeBinary, buildClaudeLocalSpawn } from './spawn'
 import { getRemoteSetupCommand, remoteSessionSettingsPath } from './ssh-shim'
 import { detectClaudeUi } from './ui-detection'
 import { deployClaudeStatuslineScript } from './statusline'
-import { watchClaudeStatuslineFile } from './telemetry'
+import { watchClaudeStatuslineFile, listClaudeResumableSessions } from './telemetry'
 
 export class ClaudeProvider implements SshCapableProvider {
   readonly id = 'claude' as const
@@ -25,8 +25,13 @@ export class ClaudeProvider implements SshCapableProvider {
   ingestSessionTelemetry(sessionId: string, onUpdate: (data: StatuslineData) => void): TelemetrySource {
     return watchClaudeStatuslineFile(sessionId, onUpdate)
   }
-  async listHistorySessions(): Promise<HistorySession[]> { throw new Error('not yet lifted -- see P0.9') }
-  resumeCommand(_sid: string): { cmd: string; args: string[] } { throw new Error('not yet lifted -- see P0.9') }
+  async listHistorySessions(): Promise<HistorySession[]> {
+    return listClaudeResumableSessions()
+  }
+  resumeCommand(sessionId: string): { cmd: string; args: string[] } {
+    const { cmd } = resolveClaudeBinary()
+    return { cmd, args: ['--resume', sessionId] }
+  }
   async configureMcpServer(_cfg: { name: string; url: string }): Promise<void> {
     throw new Error('not yet lifted -- see P0.9')
   }
