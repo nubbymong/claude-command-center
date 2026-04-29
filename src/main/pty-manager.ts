@@ -8,6 +8,7 @@ import { logInfo, logDebug, logError } from './debug-logger'
 import { writeCliSetupPty, getResourcesDirectory } from './ipc/setup-handlers'
 import { isGlobalVisionRunning, getGlobalVisionConfig, getConductorMcpPort } from './vision-manager'
 import { resolveClaudeBinary } from './providers/claude/spawn'
+import { detectClaudeUi, lastPromptLineForClaude } from './providers/claude/ui-detection'
 import { getProvider } from './providers'
 import { isSshCapable } from './providers/types'
 import { resolveCwd } from './path-utils'
@@ -391,17 +392,9 @@ export function spawnPty(
     // Shell prompt match for the cd/setup gate. Real bash PS1s usually end
     // `$`/`#`/`>`/`~` with no whitespace before the sigil (e.g. `user@h:~$ `),
     // so we can't require pre-whitespace — but we DO exclude lines containing
-    // Claude Code's `❯` glyph via lastPromptLine below. setupDone is the
+    // Claude Code's `❯` glyph via lastPromptLineForClaude below. setupDone is the
     // hard latch that prevents any retrigger regardless.
     const SHELL_PROMPT_RE = /[$#>~]\s*$/
-    const lastPromptLine = (data: string) => {
-      const line = data.split('\n').pop()?.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').trim() || ''
-      if (line.length >= 200) return ''
-      // Claude Code's prompt uses `❯` (U+276F). Exclude any line containing it
-      // so its cursor/prompt never counts as a shell prompt.
-      if (line.includes('❯')) return ''
-      return line
-    }
 
     /**
      * Writers for the four discrete SSH stages. The manual
@@ -555,9 +548,7 @@ export function spawnPty(
       //   prompt (which would have already triggered state advance
       //   earlier).
       if (!claudeRunning) {
-        if (/╭─{5,}|╰─{5,}/.test(data)
-          || (claudeSent && /[╭╰┃│]|❯/.test(data))
-        ) {
+        if (detectClaudeUi(data, claudeSent)) {
           claudeRunning = true
           if (setupTimeoutHandle) {
             clearTimeout(setupTimeoutHandle)
@@ -595,7 +586,7 @@ export function spawnPty(
 
       // Auto-type SSH password only on a real password prompt, not any MOTD
       // line containing the word.
-      if (!passwordSent && password && PASSWORD_PROMPT_RE.test(lastPromptLine(data))) {
+      if (!passwordSent && password && PASSWORD_PROMPT_RE.test(lastPromptLineForClaude(data))) {
         passwordSent = true
         setTimeout(() => {
           ptyProcess.write(password + '\r')
@@ -608,7 +599,7 @@ export function spawnPty(
       // End-of-line match avoids false-triggering on a log message that
       // happens to mention `[sudo]` or `password for`.
       if (!sudoPasswordSent && sudoPassword && postCommandSent && !claudeSent) {
-        const promptLine = lastPromptLine(data)
+        const promptLine = lastPromptLineForClaude(data)
         if (promptLine && /(\[sudo\].*password.*:|password for .+:|^password:)\s*$/i.test(promptLine)) {
           sudoPasswordSent = true
           setTimeout(() => {
@@ -624,7 +615,7 @@ export function spawnPty(
         return
       }
 
-      const lastLine = lastPromptLine(data)
+      const lastLine = lastPromptLineForClaude(data)
       const sawShellPrompt = !!lastLine && SHELL_PROMPT_RE.test(lastLine)
 
       // ---- STAGE TRANSITION DETECTION ----

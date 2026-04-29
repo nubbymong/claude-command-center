@@ -2,6 +2,7 @@ import type { SshCapableProvider, SpawnOptions, TelemetrySource, HistorySession 
 import type { LegacyVersion, StatuslineData } from '../../../shared/types'
 import { resolveClaudeBinary, buildClaudeLocalSpawn } from './spawn'
 import { getRemoteSetupCommand, remoteSessionSettingsPath } from './ssh-shim'
+import { detectClaudeUi } from './ui-detection'
 
 export class ClaudeProvider implements SshCapableProvider {
   readonly id = 'claude' as const
@@ -16,7 +17,9 @@ export class ClaudeProvider implements SshCapableProvider {
     if (opts.ssh) throw new Error('SSH spawn handled by configureRemoteSettings -- see P0.5')
     return buildClaudeLocalSpawn(opts)
   }
-  detectUiRunning(_data: string): boolean { throw new Error('not yet lifted -- see P0.7') }
+  detectUiRunning(data: string): boolean {
+    return detectClaudeUi(data, true)  // post-spawn convenience: assume claudeSent
+  }
   ingestSessionTelemetry(_sid: string, _cb: (d: StatuslineData) => void): TelemetrySource {
     throw new Error('not yet lifted -- see P0.8')
   }
