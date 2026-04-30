@@ -1,11 +1,14 @@
 import { create } from 'zustand'
 import { saveConfigNow, saveConfigDebounced } from '../utils/config-saver'
+import type { ProviderId, ClaudeOptions, CodexOptions } from '../../shared/types'
+
+// Re-export provider types so callers can import from a single place
+export type { ProviderId, ClaudeOptions, CodexOptions }
 
 export interface TerminalConfig {
   id: string
   label: string
   workingDirectory: string
-  model: string
   color: string
   sessionType: 'local' | 'ssh'
   shellOnly?: boolean  // Don't run Claude, just open a shell
@@ -23,17 +26,30 @@ export interface TerminalConfig {
     hasSudoPassword?: boolean // Whether sudo password is needed for postCommand
     dockerContainer?: string  // Docker container name (enables docker cp for screenshots)
   }
+  pinned?: boolean
+  machineName?: string // Identifies which machine this session runs on
+  // Provider discriminator + sub-options
+  provider: ProviderId
+  claudeOptions?: ClaudeOptions
+  codexOptions?: CodexOptions
+  // Legacy top-level fields -- kept for backward compat during migration; read from claudeOptions after P1.2
+  /** @deprecated read from claudeOptions; removed in P1.2+ */
+  model?: string
+  /** @deprecated read from claudeOptions; removed in P1.2+ */
   legacyVersion?: {
     enabled: boolean
     version: string
   }
-  pinned?: boolean
+  /** @deprecated read from claudeOptions; removed in P1.2+ */
   agentIds?: string[]  // Selected agent template IDs
+  /** @deprecated read from claudeOptions; removed in P1.2+ */
   flickerFree?: boolean // Enable CLAUDE_CODE_NO_FLICKER=1 (alternate screen buffer rendering)
+  /** @deprecated read from claudeOptions; removed in P1.2+ */
   powershellTool?: boolean // Enable CLAUDE_CODE_USE_POWERSHELL_TOOL=1 (native PowerShell tool)
+  /** @deprecated read from claudeOptions; removed in P1.2+ */
   effortLevel?: 'low' | 'medium' | 'high' // Claude Code --effort flag
+  /** @deprecated read from claudeOptions; removed in P1.2+ */
   disableAutoMemory?: boolean // Disable CLAUDE.md auto-memory writes
-  machineName?: string // Identifies which machine this session runs on
 }
 
 export interface ConfigGroup {
