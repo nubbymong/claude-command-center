@@ -208,6 +208,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
     const dir = sessionType === 'ssh' ? sshRemotePath.trim() || '~' : (workingDir.trim() || '.')
 
     const config: Omit<TerminalConfig, 'id'> = {
+      provider: 'claude',
       label: label.trim(),
       workingDirectory: dir,
       model,

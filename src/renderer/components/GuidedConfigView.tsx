@@ -61,6 +61,7 @@ export default function GuidedConfigView({ onConfirm, onSkip }: Props) {
 
     const dir = sessionType === 'ssh' ? sshRemotePath.trim() || '~' : (workingDir.trim() || '.')
     const config: Omit<TerminalConfig, 'id'> = {
+      provider: 'claude',
       label: label.trim(),
       workingDirectory: dir,
       model,
