@@ -66,4 +66,24 @@ test.describe('SessionDialog ProviderSegmentedControl', () => {
     await expect(codexBtn).toBeDisabled()
     await expect(page.locator('text=SSH Codex coming in v1.5.x')).toBeVisible()
   })
+
+  test('Codex form fields render when Codex provider is picked', async () => {
+    const newConfigBtn = page.locator('button:has-text("New Terminal Config")').first()
+    const visible = await newConfigBtn.isVisible({ timeout: 2000 }).catch(() => false)
+    test.skip(!visible, 'New Terminal Config entry not reachable in this E2E bootstrap; covered by unit tests.')
+
+    await newConfigBtn.click()
+
+    // Pick Codex
+    await page.getByRole('radio', { name: 'Codex' }).click()
+
+    // Form fields should be present
+    await expect(page.locator('text=Reasoning effort').first()).toBeVisible({ timeout: 2000 })
+    await expect(page.locator('text=Permissions').first()).toBeVisible({ timeout: 2000 })
+
+    // Agents multi-select hidden in Codex mode (existing block already gates on provider === 'claude')
+    // 'Agents' is the actual section heading rendered at line 690 of SessionDialog.tsx inside the
+    // provider === 'claude' block; it is absent when Codex is selected.
+    await expect(page.locator('text=Agents')).not.toBeVisible({ timeout: 1000 })
+  })
 })

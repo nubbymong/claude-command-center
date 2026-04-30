@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react'
-import { TerminalConfig, ConfigGroup, ConfigSection, ProviderId, useConfigStore } from '../stores/configStore'
+import { TerminalConfig, ConfigGroup, ConfigSection, ProviderId, CodexOptions, useConfigStore } from '../stores/configStore'
 import { useAgentLibraryStore, BUILTIN_TEMPLATES } from '../stores/agentLibraryStore'
 import { ProviderSegmentedControl } from './SessionDialog/ProviderSegmentedControl'
+import { CodexFormFields } from './SessionDialog/CodexFormFields'
 
 export type SessionType = 'local' | 'ssh'
 
@@ -42,6 +43,9 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
   // Read legacy + claudeOptions fields with claudeOptions taking precedence (P1.4 migration)
   const initialClaude = initial?.claudeOptions
   const [provider, setProvider] = useState<ProviderId>(initial?.provider ?? 'claude')
+  const [codexModel, setCodexModel] = useState(initial?.codexOptions?.model ?? 'gpt-5.5')
+  const [codexEffort, setCodexEffort] = useState<NonNullable<CodexOptions['reasoningEffort']>>(initial?.codexOptions?.reasoningEffort ?? 'medium')
+  const [codexPreset, setCodexPreset] = useState<CodexOptions['permissionsPreset']>(initial?.codexOptions?.permissionsPreset ?? 'standard')
   const [label, setLabel] = useState(initial?.label ?? '')
   const [workingDir, setWorkingDir] = useState(initial?.workingDirectory ?? '')
   const [model, setModel] = useState(initialClaude?.model ?? initial?.model ?? '')
@@ -207,7 +211,6 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    if (provider === 'codex') return  // P1 dead-end; P2 wires Codex spawn
     if (!label.trim()) return
     if (sessionType === 'ssh' && !sshHost.trim()) return
 
@@ -228,6 +231,12 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
       disableAutoMemory: !shellOnly && disableAutoMemory ? true : undefined,
     } : undefined
 
+    const codexOptions: CodexOptions | undefined = provider === 'codex' ? {
+      model: codexModel,
+      reasoningEffort: codexEffort,
+      permissionsPreset: codexPreset,
+    } : undefined
+
     const config: Omit<TerminalConfig, 'id'> = {
       provider,
       label: label.trim(),
@@ -246,6 +255,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
         hasSudoPassword: saveSudoPassword && sudoPassword.length > 0,
       } : undefined,
       claudeOptions,
+      codexOptions,
       machineName: machineName.trim() || undefined,
     }
 
@@ -715,10 +725,22 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
             )}
 
             {provider === 'codex' && (
-              <div className="rounded-md border border-dashed border-overlay0 bg-mantle p-6 text-center text-sm text-subtext0 my-2">
-                <p className="font-medium text-text mb-1">Codex configuration</p>
-                <p>Coming in the next release. For now, choose Claude.</p>
-              </div>
+              <CodexFormFields
+                value={{ model: codexModel, reasoningEffort: codexEffort, permissionsPreset: codexPreset }}
+                // Spread-then-set: dropdowns + radios always emit defined values, so we can safely
+                // guard each setter on `!== undefined`. Add explicit-clear logic if future nullable fields land.
+                onChange={(next) => {
+                  if (next.model !== undefined) setCodexModel(next.model)
+                  if (next.reasoningEffort !== undefined) setCodexEffort(next.reasoningEffort)
+                  if (next.permissionsPreset !== undefined) setCodexPreset(next.permissionsPreset)
+                }}
+                onOpenSettings={() => {
+                  // Best-effort: ask the host to navigate Settings to the Codex tab.
+                  // For v1.5.0 we simply open Settings; the user can click the Codex tab.
+                  // P3+ may add a deep-link channel.
+                  window.dispatchEvent(new CustomEvent('app:openSettings', { detail: { tab: 'codex' } }))
+                }}
+              />
             )}
 
             {/* -- ORGANIZATION section -- */}
@@ -812,8 +834,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
           </button>
           <button
             type="submit"
-            disabled={provider === 'codex'}
-            className="px-4 py-1.5 rounded text-sm bg-blue text-crust font-medium hover:bg-blue/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="px-4 py-1.5 rounded text-sm bg-blue text-crust font-medium hover:bg-blue/90 transition-colors"
           >
             {initial ? 'Save' : 'Create'}
           </button>
