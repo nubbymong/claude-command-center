@@ -1,3 +1,4 @@
+import type { KeyboardEvent } from 'react'
 import type { ProviderId } from '../../stores/configStore'
 
 interface Props {
@@ -9,7 +10,7 @@ interface Props {
 export function ProviderSegmentedControl({ value, onChange, sessionType }: Props) {
   const codexDisabled = sessionType === 'ssh'
 
-  const onKeyDown = (e: React.KeyboardEvent, current: ProviderId) => {
+  const onKeyDown = (e: KeyboardEvent, current: ProviderId) => {
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
     e.preventDefault()
     const next: ProviderId = current === 'claude' ? 'codex' : 'claude'

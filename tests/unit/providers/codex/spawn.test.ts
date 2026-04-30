@@ -1,12 +1,37 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+
+// Mock os and child_process so resolveCodexBinary is fully deterministic on CI.
+vi.mock('os', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('os')>()
+  return { ...actual, platform: vi.fn(() => 'linux') }
+})
+vi.mock('child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('child_process')>()
+  return {
+    ...actual,
+    execSync: vi.fn(() => '/mock/path/codex\n'),
+  }
+})
+
+import * as osMod from 'os'
+import { execSync } from 'child_process'
 import { CodexProvider } from '../../../../src/main/providers/codex'
+import { resolveCodexBinary } from '../../../../src/main/providers/codex/spawn'
 
 describe('CodexProvider', () => {
   let originalCodexHome: string | undefined
-  beforeEach(() => { originalCodexHome = process.env.CODEX_HOME })
+
+  beforeEach(() => {
+    originalCodexHome = process.env.CODEX_HOME
+    // Default: linux, codex found at /mock/path/codex
+    vi.mocked(osMod.platform).mockReturnValue('linux' as NodeJS.Platform)
+    vi.mocked(execSync).mockReturnValue('/mock/path/codex\n' as any)
+  })
+
   afterEach(() => {
     if (originalCodexHome === undefined) delete process.env.CODEX_HOME
     else process.env.CODEX_HOME = originalCodexHome
+    vi.clearAllMocks()
   })
 
   it('id and displayName are static', () => {
@@ -15,26 +40,28 @@ describe('CodexProvider', () => {
     expect(p.displayName).toBe('Codex')
   })
 
-  it('resolveBinary returns null when codex not on PATH (or a real path on dev box)', () => {
+  it('resolveBinary returns a cmd path when codex is found', () => {
     const r = new CodexProvider().resolveBinary()
-    if (r) expect(r.cmd).toMatch(/codex/i)
-    // else null is fine (CI box without codex installed)
+    expect(r).not.toBeNull()
+    expect(r?.cmd).toMatch(/codex/i)
   })
 
-  it('buildSpawnCommand throws when resolveBinary returns null and codex not installed', () => {
-    // skip on dev boxes where codex is installed -- the throw path can't be exercised reliably
-    const p = new CodexProvider()
-    if (p.resolveBinary() != null) return  // codex installed, skip
-    expect(() => p.buildSpawnCommand({
+  it('resolveBinary returns null when codex is not on PATH', () => {
+    vi.mocked(execSync).mockImplementation(() => { throw new Error('not found') })
+    const r = resolveCodexBinary()
+    expect(r).toBeNull()
+  })
+
+  it('buildSpawnCommand throws when codex not found', () => {
+    vi.mocked(execSync).mockImplementation(() => { throw new Error('not found') })
+    expect(() => new CodexProvider().buildSpawnCommand({
       sessionId: 'sid',
       codexOptions: { model: 'gpt-5.5', reasoningEffort: 'medium', permissionsPreset: 'standard' },
     })).toThrow(/Codex CLI not found/)
   })
 
   it('buildSpawnCommand maps standard preset to workspace-write + on-request', () => {
-    const p = new CodexProvider()
-    if (p.resolveBinary() == null) return  // codex not installed, skip
-    const out = p.buildSpawnCommand({
+    const out = new CodexProvider().buildSpawnCommand({
       sessionId: 'sid',
       codexOptions: { model: 'gpt-5.5', reasoningEffort: 'medium', permissionsPreset: 'standard' },
     })
@@ -47,9 +74,7 @@ describe('CodexProvider', () => {
   })
 
   it('reasoningEffort=none suppresses the -c flag', () => {
-    const p = new CodexProvider()
-    if (p.resolveBinary() == null) return
-    const out = p.buildSpawnCommand({
+    const out = new CodexProvider().buildSpawnCommand({
       sessionId: 'sid',
       codexOptions: { model: 'gpt-5.5', reasoningEffort: 'none', permissionsPreset: 'standard' },
     })
@@ -57,10 +82,8 @@ describe('CodexProvider', () => {
   })
 
   it('passes CODEX_HOME through env when set externally', () => {
-    const p = new CodexProvider()
-    if (p.resolveBinary() == null) return
     process.env.CODEX_HOME = '/tmp/codex-test'
-    const out = p.buildSpawnCommand({
+    const out = new CodexProvider().buildSpawnCommand({
       sessionId: 'sid',
       codexOptions: { model: 'gpt-5.5', permissionsPreset: 'standard' },
     })
@@ -68,12 +91,49 @@ describe('CodexProvider', () => {
   })
 
   it('CLAUDE_MULTI_SESSION_ID is set in env for telemetry hooks', () => {
-    const p = new CodexProvider()
-    if (p.resolveBinary() == null) return
-    const out = p.buildSpawnCommand({
+    const out = new CodexProvider().buildSpawnCommand({
       sessionId: 'session-xyz',
       codexOptions: { model: 'gpt-5.5', permissionsPreset: 'standard' },
     })
     expect(out.env.CLAUDE_MULTI_SESSION_ID).toBe('session-xyz')
+  })
+
+  it('wraps .cmd binary in cmd.exe /c on win32 for node-pty', () => {
+    // Simulate win32: where finds codex.cmd
+    vi.mocked(osMod.platform).mockReturnValue('win32' as NodeJS.Platform)
+    vi.mocked(execSync).mockReturnValue('C:\\npm\\codex.cmd\n' as any)
+    // process.platform check in buildCodexSpawn; stub it for this test
+    const origPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+    try {
+      const out = new CodexProvider().buildSpawnCommand({
+        sessionId: 'sid',
+        codexOptions: { model: 'gpt-5.5', permissionsPreset: 'standard' },
+      })
+      expect(out.cmd).toBe('cmd.exe')
+      expect(out.args[0]).toBe('/c')
+      expect(out.args[1]).toBe('C:\\npm\\codex.cmd')
+    } finally {
+      if (origPlatform) Object.defineProperty(process, 'platform', origPlatform)
+      else delete (process as any).platform
+    }
+  })
+
+  it('does not wrap .exe binary in cmd.exe on win32', () => {
+    vi.mocked(osMod.platform).mockReturnValue('win32' as NodeJS.Platform)
+    vi.mocked(execSync).mockReturnValue('C:\\path\\codex.exe\n' as any)
+    const origPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+    try {
+      const out = new CodexProvider().buildSpawnCommand({
+        sessionId: 'sid',
+        codexOptions: { model: 'gpt-5.5', permissionsPreset: 'standard' },
+      })
+      expect(out.cmd).toBe('C:\\path\\codex.exe')
+      expect(out.args[0]).not.toBe('/c')
+    } finally {
+      if (origPlatform) Object.defineProperty(process, 'platform', origPlatform)
+      else delete (process as any).platform
+    }
   })
 })

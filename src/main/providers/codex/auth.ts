@@ -67,10 +67,12 @@ export function runCodexProcess(
   stdin?: string,
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
-    // resolveCodexBinary returns full .cmd path on Windows; spawn() with shell:false then works
+    // On win32, .cmd/.bat shims require shell:true (cmd.exe) to be invoked.
+    // On other platforms, spawn without a shell to avoid injection risk.
     const resolved = resolveCodexBinary()
     const cmd = resolved?.cmd ?? 'codex'
-    const proc = spawn(cmd, args, { shell: false })
+    const useShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(cmd)
+    const proc = spawn(cmd, args, { shell: useShell })
     let stdout = ''
     let stderr = ''
     proc.stdout.on('data', (d) => { stdout += d.toString() })

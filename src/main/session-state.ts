@@ -7,7 +7,7 @@
 import { join } from 'path'
 import { readFileSync, writeFileSync, existsSync, unlinkSync } from 'fs'
 import { getConfigDir, ensureConfigDir, migrateConfigToProviderShape } from './config-manager'
-import { logInfo } from './debug-logger'
+import { logInfo, logError } from './debug-logger'
 import type { SavedSession, SessionState } from '../shared/types'
 
 export type { SavedSession, SessionState }
@@ -65,8 +65,12 @@ export function loadSessionState(): SessionState | null {
     })
     if (dirty) {
       state.sessions = migratedSessions
-      writeFileSync(getSessionStateFile(), JSON.stringify(state, null, 2))
-      logInfo('[session-state] Migrated sessions to provider shape')
+      try {
+        writeFileSync(getSessionStateFile(), JSON.stringify(state, null, 2))
+        logInfo('[session-state] Migrated sessions to provider shape')
+      } catch (writeErr) {
+        logError(`[session-state] migration write failed; in-memory state preserved: ${(writeErr as Error)?.message ?? writeErr}`)
+      }
     }
 
     logInfo(`[session-state] Loaded ${state.sessions.length} sessions from ${new Date(state.savedAt).toLocaleString()}`)

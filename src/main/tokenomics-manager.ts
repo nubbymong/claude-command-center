@@ -140,10 +140,9 @@ function getTokenomicsPath(): string {
 }
 
 /**
- * Back-fill `provider: 'claude'` on any TokenomicsSessionRecord that's missing it.
- * Returns true if at least one record was mutated.
+ * Mutates `data.sessions` in place, setting `provider: 'claude'` on any
+ * record missing it. Returns true if any record was modified.
  *
- * Pure function over the records map -- caller decides whether to persist.
  * v1.5 migration: pre-Codex tokenomics.json contains only Claude sessions; this
  * tags them so future Codex ingestion can co-exist without ambiguity.
  */

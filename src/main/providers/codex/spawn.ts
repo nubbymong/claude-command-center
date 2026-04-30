@@ -46,5 +46,9 @@ export function buildCodexSpawn(opts: SpawnOptions): { cmd: string; args: string
     CLAUDE_MULTI_SESSION_ID: opts.sessionId,
   } as Record<string, string>
 
+  if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(resolved.cmd)) {
+    // node-pty / ConPTY cannot directly invoke .cmd shims; route through cmd.exe.
+    return { cmd: 'cmd.exe', args: ['/c', resolved.cmd, ...args], env }
+  }
   return { cmd: resolved.cmd, args, env }
 }

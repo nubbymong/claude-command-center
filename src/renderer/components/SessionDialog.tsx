@@ -85,7 +85,9 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
   const agentUserTemplates = useAgentLibraryStore(s => s.templates)
   const allAgentTemplates = [...agentUserTemplates, ...BUILTIN_TEMPLATES]
   const [selectedAgentIds, setSelectedAgentIds] = useState<Set<string>>(new Set(initialClaude?.agentIds ?? initial?.agentIds ?? []))
-  const [effortLevel, setEffortLevel] = useState<string>(initialClaude?.effortLevel ?? initial?.effortLevel ?? '')
+  const [effortLevel, setEffortLevel] = useState<'low' | 'medium' | 'high' | ''>(
+    (initialClaude?.effortLevel ?? initial?.effortLevel ?? '') as 'low' | 'medium' | 'high' | ''
+  )
   const [disableAutoMemory, setDisableAutoMemory] = useState(initialClaude?.disableAutoMemory ?? initial?.disableAutoMemory ?? false)
   const [machineName, setMachineName] = useState(initial?.machineName ?? '')
 
@@ -227,7 +229,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
       model: model || undefined,
       legacyVersion: legacyEnabled && legacyVersion ? { enabled: true, version: legacyVersion } : undefined,
       agentIds: !shellOnly && selectedAgentIds.size > 0 ? Array.from(selectedAgentIds) : undefined,
-      effortLevel: (!shellOnly && effortLevel ? effortLevel : undefined) as any,
+      effortLevel: !shellOnly && effortLevel ? effortLevel : undefined,
       disableAutoMemory: !shellOnly && disableAutoMemory ? true : undefined,
     } : undefined
 
@@ -589,7 +591,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                 </label>
                 <select
                   value={effortLevel}
-                  onChange={(e) => setEffortLevel(e.target.value)}
+                  onChange={(e) => setEffortLevel(e.target.value as 'low' | 'medium' | 'high' | '')}
                   className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-blue"
                 >
                   <option value="">Auto (default)</option>
