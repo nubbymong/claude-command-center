@@ -1,0 +1,22 @@
+[?9001h[?1004h[?25l[2J[m[H]0;C:\WINDOWS\system32\cmd.exe [?25h[?2004h[?2026h[?2026l[?25l>[1m[1CYou are in [22mC:\Users\nicho[K[2;2H[K[3;3HDo[1Cyou[1Ctrust[1Cthe[1Ccontents[1Cof[1Cthis[1Cdirectory?[1CWorking[1Cwith[1Cuntrusted[1Ccontents[1Ccomes[1Cwith[1Chigher[1Crisk[1Cof[1Cprompt[K[4;3Hinjection.[1CTrusting[1Cthe[1Cdirectory[1Callows[1Cproject-local[1Cconfig,[1Chooks,[1Cand[1Cexec[1Cpolicies[1Cto[1Cload.[K[5;2H[K[38;5;6m
+› 1. Yes, continue[K[m[7;3H2.[1CNo,[1Cquit[K[8;2H[K[2m[9;3HPress enter to continue[22m[K[10;2H[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K[119C
