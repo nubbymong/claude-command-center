@@ -173,6 +173,14 @@ export interface ElectronAPI {
       accountId?: string
       hasOpenAiApiKeyEnv: boolean
     }>
+    login: (payload: { mode: 'chatgpt' | 'api-key' | 'device'; apiKey?: string }) => Promise<{
+      ok: boolean
+      browserUrl?: string
+      deviceCode?: string
+      error?: string
+    }>
+    logout: () => Promise<{ ok: boolean }>
+    testConnection: () => Promise<{ ok: boolean; message: string }>
   }
   github: GitHubBridge
   hooks: HooksBridge
@@ -560,6 +568,9 @@ const electronAPI: ElectronAPI = {
   },
   codex: {
     status: () => ipcRenderer.invoke(IPC.CODEX_STATUS),
+    login: (payload) => ipcRenderer.invoke(IPC.CODEX_LOGIN, payload),
+    logout: () => ipcRenderer.invoke(IPC.CODEX_LOGOUT),
+    testConnection: () => ipcRenderer.invoke(IPC.CODEX_TEST_CONNECTION),
   },
   github: {
     getConfig: () => ipcRenderer.invoke(IPC.GITHUB_CONFIG_GET),

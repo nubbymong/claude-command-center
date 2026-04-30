@@ -189,6 +189,9 @@ export const IPC = {
 
   // Codex (OpenAI)
   CODEX_STATUS: 'codex:status',
+  CODEX_LOGIN: 'codex:login',
+  CODEX_LOGOUT: 'codex:logout',
+  CODEX_TEST_CONNECTION: 'codex:testConnection',
 
   // Memory
   MEMORY_SCAN: 'memory:scan',

@@ -83,3 +83,49 @@ export function runCodexProcess(
     proc.on('error', () => { clearTimeout(timer); resolve({ code: -1, stdout, stderr }) })
   })
 }
+
+export async function codexLoginWithApiKey(apiKey: string): Promise<{ ok: boolean; error?: string }> {
+  const result = await runCodexProcess(['login', '--with-api-key'], 30_000, apiKey + '\n')
+  if (result.code === 0) return { ok: true }
+  return { ok: false, error: redactApiKey(result.stderr || result.stdout || 'Login failed', apiKey) }
+}
+
+function redactApiKey(text: string, key: string): string {
+  if (!key) return text
+  return text.split(key).join('***REDACTED***')
+}
+
+export async function codexLoginChatgpt(): Promise<{ ok: boolean; browserUrl?: string; error?: string }> {
+  // codex login (no flags) prints a URL to stdout, opens the browser, and waits for OAuth to land.
+  // We capture the URL early then wait up to 5 minutes for the process to exit (browser auth completes).
+  const result = await runCodexProcess(['login'], 5 * 60 * 1000)
+  if (result.code === 0) {
+    const m = /(https?:\/\/[^\s]+)/.exec(result.stdout)
+    return { ok: true, browserUrl: m ? m[1] : undefined }
+  }
+  return { ok: false, error: result.stderr.trim() || result.stdout.trim() || 'Login failed' }
+}
+
+export async function codexLoginDeviceAuth(): Promise<{ ok: boolean; deviceCode?: string; error?: string }> {
+  // codex login --device-auth prints a device code to stdout for the user to enter on a separate device.
+  const result = await runCodexProcess(['login', '--device-auth'], 5 * 60 * 1000)
+  if (result.code === 0) {
+    // Heuristic: pull out something that looks like a code (alphanumeric, 6-12 chars)
+    const m = /\b([A-Z0-9]{6,12})\b/.exec(result.stdout)
+    return { ok: true, deviceCode: m ? m[1] : undefined }
+  }
+  return { ok: false, error: result.stderr.trim() || result.stdout.trim() || 'Device login failed' }
+}
+
+export async function codexLogout(): Promise<{ ok: boolean }> {
+  const result = await runCodexProcess(['logout'], 10_000)
+  return { ok: result.code === 0 }
+}
+
+export async function codexTestConnection(): Promise<{ ok: boolean; message: string }> {
+  const result = await runCodexProcess(['login', 'status'], 10_000)
+  return {
+    ok: result.code === 0,
+    message: (result.stdout.trim() || result.stderr.trim() || 'No output'),
+  }
+}
