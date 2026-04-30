@@ -207,6 +207,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
+    if (provider === 'codex') return  // P1 dead-end; P2 wires Codex spawn
     if (!label.trim()) return
     if (sessionType === 'ssh' && !sshHost.trim()) return
 
@@ -811,7 +812,8 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
           </button>
           <button
             type="submit"
-            className="px-4 py-1.5 rounded text-sm bg-blue text-crust font-medium hover:bg-blue/90 transition-colors"
+            disabled={provider === 'codex'}
+            className="px-4 py-1.5 rounded text-sm bg-blue text-crust font-medium hover:bg-blue/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {initial ? 'Save' : 'Create'}
           </button>

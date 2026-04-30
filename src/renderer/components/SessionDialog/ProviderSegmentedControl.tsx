@@ -11,9 +11,11 @@ export function ProviderSegmentedControl({ value, onChange, sessionType }: Props
   return (
     <div className="flex flex-col gap-1 mb-4">
       <label className="text-[10px] uppercase tracking-wider text-overlay1 font-medium">Provider</label>
-      <div className="flex bg-crust rounded-md p-0.5">
+      <div className="flex bg-crust rounded-md p-0.5" role="radiogroup" aria-label="Provider">
         <button
           type="button"
+          role="radio"
+          aria-checked={value === 'claude'}
           onClick={() => onChange('claude')}
           className={
             'flex-1 px-3 py-1.5 rounded text-xs font-medium transition-colors ' +
@@ -24,6 +26,9 @@ export function ProviderSegmentedControl({ value, onChange, sessionType }: Props
         </button>
         <button
           type="button"
+          role="radio"
+          aria-checked={value === 'codex'}
+          aria-disabled={codexDisabled}
           onClick={() => !codexDisabled && onChange('codex')}
           disabled={codexDisabled}
           className={

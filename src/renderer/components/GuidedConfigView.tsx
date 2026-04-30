@@ -64,7 +64,6 @@ export default function GuidedConfigView({ onConfirm, onSkip }: Props) {
       provider: 'claude',
       label: label.trim(),
       workingDirectory: dir,
-      model,
       color,
       sessionType,
       sshConfig: sessionType === 'ssh' ? {
@@ -74,8 +73,11 @@ export default function GuidedConfigView({ onConfirm, onSkip }: Props) {
         remotePath: sshRemotePath.trim() || '~',
         hasPassword: sshPassword.length > 0,
       } : undefined,
-      effortLevel: effortLevel || undefined,
-      disableAutoMemory: disableAutoMemory || undefined,
+      claudeOptions: {
+        model: model || undefined,
+        effortLevel: effortLevel || undefined,
+        disableAutoMemory: disableAutoMemory || undefined,
+      },
     }
     onConfirm(config, sshPassword.length > 0 ? sshPassword : undefined)
   }

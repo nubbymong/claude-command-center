@@ -149,10 +149,9 @@ function getTokenomicsPath(): string {
  */
 export function backfillTokenomicsProvider(data: TokenomicsData): boolean {
   let mutated = false
-  for (const sid of Object.keys(data.sessions)) {
-    const s: any = data.sessions[sid]
-    if (!s.provider) {
-      s.provider = 'claude'
+  for (const session of Object.values(data.sessions)) {
+    if (session.provider === undefined) {
+      session.provider = 'claude'
       mutated = true
     }
   }
