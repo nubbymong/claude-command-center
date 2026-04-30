@@ -56,9 +56,17 @@ interface Props {
    * string means "use whatever the CLI picks". Forwarded to claude as
    * `--model <name>` when set. */
   model?: string
+  /** Provider discriminator. Defaults to 'claude' if unspecified. */
+  provider?: 'claude' | 'codex'
+  /** Codex sub-options (only meaningful when provider === 'codex'). */
+  codexOptions?: {
+    model?: string
+    reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+    permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted'
+  }
 }
 
-export default function TerminalView({ sessionId, configId, cwd, shellOnly, elevated, ssh, isActive = true, partnerEnabled, isPartnerActive, onTogglePartner, partnerSessionId, parentSessionId, legacyVersion, agentIds, effortLevel, disableAutoMemory, model }: Props) {
+export default function TerminalView({ sessionId, configId, cwd, shellOnly, elevated, ssh, isActive = true, partnerEnabled, isPartnerActive, onTogglePartner, partnerSessionId, parentSessionId, legacyVersion, agentIds, effortLevel, disableAutoMemory, model, provider, codexOptions }: Props) {
   const xtermContainerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
@@ -311,7 +319,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
               }))
             if (agentsConfig.length === 0) agentsConfig = undefined
           }
-          window.electronAPI.pty.spawn(sessionId, { cwd, cols, rows, ssh, shellOnly, elevated, configId, configLabel, useResumePicker, legacyVersion, agentsConfig, effortLevel, disableAutoMemory, model })
+          window.electronAPI.pty.spawn(sessionId, { cwd, cols, rows, ssh, shellOnly, elevated, configId, configLabel, useResumePicker, legacyVersion, agentsConfig, effortLevel, disableAutoMemory, model, provider, codexOptions })
         }
       }
 

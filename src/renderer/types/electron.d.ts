@@ -113,6 +113,13 @@ export interface ElectronAPI {
       powershellTool?: boolean
       effortLevel?: 'low' | 'medium' | 'high'
       disableAutoMemory?: boolean
+      model?: string
+      provider?: 'claude' | 'codex'
+      codexOptions?: {
+        model?: string
+        reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+        permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted'
+      }
     }) => Promise<void>
     write: (sessionId: string, data: string) => void
     resize: (sessionId: string, cols: number, rows: number) => void

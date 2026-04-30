@@ -165,7 +165,27 @@ function getResumePickerPath(): string | null {
 export function spawnPty(
   win: BrowserWindow,
   sessionId: string,
-  options?: { cwd?: string; cols?: number; rows?: number; ssh?: SSHOptions; shellOnly?: boolean; elevated?: boolean; configLabel?: string; useResumePicker?: boolean; legacyVersion?: { enabled: boolean; version: string }; agentsConfig?: Array<{ name: string; description: string; prompt: string; model?: string; tools?: string[] }>; effortLevel?: 'low' | 'medium' | 'high'; disableAutoMemory?: boolean; model?: string }
+  options?: {
+    cwd?: string
+    cols?: number
+    rows?: number
+    ssh?: SSHOptions
+    shellOnly?: boolean
+    elevated?: boolean
+    configLabel?: string
+    useResumePicker?: boolean
+    legacyVersion?: { enabled: boolean; version: string }
+    agentsConfig?: Array<{ name: string; description: string; prompt: string; model?: string; tools?: string[] }>
+    effortLevel?: 'low' | 'medium' | 'high'
+    disableAutoMemory?: boolean
+    model?: string
+    provider?: 'claude' | 'codex'
+    codexOptions?: {
+      model?: string
+      reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+      permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted'
+    }
+  }
 ): void {
   logInfo(`[pty] Spawning PTY for session ${sessionId} (ssh=${!!options?.ssh}, shellOnly=${!!options?.shellOnly}, cwd=${options?.cwd || 'default'})`)
   killPty(sessionId)
@@ -680,6 +700,36 @@ export function spawnPty(
         containerSetupShellReady = true
         writeClaudeCmd()
       }
+    })
+  } else if ((options?.provider ?? 'claude') === 'codex' && !options?.shellOnly) {
+    // Codex local session — spawn `codex` directly. Codex itself owns the
+    // REPL, so there is no shell-wrap-then-cd-then-launch dance like Claude
+    // requires. cwd is propagated through pty.spawn options.
+    // shellOnly falls through to the Claude branch below so the user gets a
+    // plain shell, regardless of provider selection.
+    const provider = getProvider('codex')
+    const { cmd: spawnCmd, args: spawnArgs, env: spawnEnv } = provider.buildSpawnCommand({
+      sessionId,
+      provider: 'codex',
+      cwd: options?.cwd,
+      cols,
+      rows,
+      useResumePicker: options?.useResumePicker,
+      codexOptions: options?.codexOptions,
+    })
+    const resolvedCwd = resolveCwd(options?.cwd)
+    logInfo(`[pty-manager] Launching Codex PTY: ${spawnCmd} ${spawnArgs.join(' ')} cwd=${resolvedCwd}`)
+    ptyProcess = pty.spawn(spawnCmd, spawnArgs, {
+      name: 'xterm-256color',
+      cols,
+      rows,
+      cwd: resolvedCwd,
+      env: spawnEnv,
+      useConpty: true,
+    })
+    ptyProcess.onData((data) => {
+      if (win.isDestroyed()) return
+      win.webContents.send(`pty:data:${sessionId}`, data)
     })
   } else {
     // Local session — delegate binary + env construction to the provider.

@@ -389,11 +389,14 @@ export default function App() {
           githubIntegration: saved.githubIntegration,
           status: 'idle' as const,
           createdAt: Date.now(),
+          provider: saved.provider,
+          codexOptions: saved.codexOptions,
         }
       })
 
       for (const session of restoredSessions) {
-        if (!session.shellOnly && session.sessionType === 'local') {
+        // Resume picker is Claude-only. Codex resume lands in P4.
+        if (!session.shellOnly && session.sessionType === 'local' && (session.provider ?? 'claude') === 'claude') {
           markSessionForResumePicker(session.id)
         }
       }
@@ -606,6 +609,8 @@ export default function App() {
                       effortLevel={session.effortLevel}
                       disableAutoMemory={session.disableAutoMemory}
                       model={session.model}
+                      provider={session.provider}
+                      codexOptions={session.codexOptions}
                     />
                   </div>
                   {hasPartner && (

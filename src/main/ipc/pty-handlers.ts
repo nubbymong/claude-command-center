@@ -46,6 +46,13 @@ const spawnOptionsSchema = z.object({
   })).optional(),
   effortLevel: z.enum(['low', 'medium', 'high']).optional(),
   disableAutoMemory: z.boolean().optional(),
+  model: z.string().optional(),
+  provider: z.enum(['claude', 'codex']).optional(),
+  codexOptions: z.object({
+    model: z.string().optional(),
+    reasoningEffort: z.enum(['none', 'minimal', 'low', 'medium', 'high', 'xhigh']).optional(),
+    permissionsPreset: z.enum(['read-only', 'standard', 'auto', 'unrestricted']),
+  }).optional(),
 }).optional()
 
 const sessionIdSchema = z.string().min(1).max(200)
@@ -64,6 +71,13 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     agentsConfig?: Array<{ name: string; description: string; prompt: string; model?: string; tools?: string[] }>
     effortLevel?: 'low' | 'medium' | 'high'
     disableAutoMemory?: boolean
+    model?: string
+    provider?: 'claude' | 'codex'
+    codexOptions?: {
+      model?: string
+      reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+      permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted'
+    }
   }) => {
     try {
       sessionIdSchema.parse(sessionId)

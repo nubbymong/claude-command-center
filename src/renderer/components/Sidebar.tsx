@@ -238,8 +238,12 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
       machineName: config.machineName,
       effortLevel: config.claudeOptions?.effortLevel,
       disableAutoMemory: config.claudeOptions?.disableAutoMemory,
+      provider: config.provider,
+      codexOptions: config.codexOptions,
     }
-    if (!session.shellOnly && session.sessionType === 'local') {
+    // Resume picker is Claude-specific (uses Claude's ~/.claude/projects/ history).
+    // Codex resume is implemented in P4; for now Codex sessions skip the picker.
+    if (!session.shellOnly && session.sessionType === 'local' && (config.provider ?? 'claude') === 'claude') {
       markSessionForResumePicker(session.id)
     }
     addSession(session)

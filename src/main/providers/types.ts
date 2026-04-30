@@ -2,6 +2,8 @@ import type { LegacyVersion, SshConfig, StatuslineData } from '../../shared/type
 
 export interface SpawnOptions {
   sessionId: string
+  /** Provider discriminator. Defaults to 'claude' if unspecified. */
+  provider?: 'claude' | 'codex'
   cwd?: string
   cols?: number
   rows?: number
