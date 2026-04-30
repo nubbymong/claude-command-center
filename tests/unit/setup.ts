@@ -7,6 +7,7 @@ import { vi } from 'vitest'
 vi.mock('electron', () => ({
   app: {
     getPath: vi.fn(() => '/mock/userData'),
+    getAppPath: vi.fn(() => process.cwd()),
     requestSingleInstanceLock: vi.fn(() => true),
     whenReady: vi.fn(() => Promise.resolve()),
     on: vi.fn(),

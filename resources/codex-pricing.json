@@ -1,0 +1,9 @@
+{
+  "_source": "https://openai.com/api/pricing/ + https://developers.openai.com/codex/pricing -- captured 2026-04-29",
+  "_caveat": "gpt-5.5 cachedInputPer1M is uncertain ($0.50 vs $1.25); defaulting to $1.25 -- verify experimentally during P3.",
+  "models": {
+    "gpt-5.5":       { "inputPer1M": 5.00,  "cachedInputPer1M": 1.25,  "outputPer1M": 30.00 },
+    "gpt-5.5-pro":   { "inputPer1M": 30.00, "cachedInputPer1M": null,  "outputPer1M": 180.00 },
+    "gpt-5.3-codex": { "inputPer1M": 1.75,  "cachedInputPer1M": 0.175, "outputPer1M": 14.00 }
+  }
+}
