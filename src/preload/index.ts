@@ -164,6 +164,16 @@ export interface ElectronAPI {
   shell: {
     openExternal: (url: string) => Promise<void>
   }
+  codex: {
+    status: () => Promise<{
+      installed: boolean
+      version: string | null
+      authMode: 'chatgpt' | 'api-key' | 'none'
+      planType?: string
+      accountId?: string
+      hasOpenAiApiKeyEnv: boolean
+    }>
+  }
   github: GitHubBridge
   hooks: HooksBridge
 }
@@ -547,6 +557,9 @@ const electronAPI: ElectronAPI = {
   },
   shell: {
     openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
+  },
+  codex: {
+    status: () => ipcRenderer.invoke(IPC.CODEX_STATUS),
   },
   github: {
     getConfig: () => ipcRenderer.invoke(IPC.GITHUB_CONFIG_GET),

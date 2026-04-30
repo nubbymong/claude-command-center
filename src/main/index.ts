@@ -32,6 +32,7 @@ import { registerMemoryHandlers } from './ipc/memory-handlers'
 import { registerTokenomicsHandlers } from './ipc/tokenomics-handlers'
 import { registerGitHubHandlers } from './ipc/github-handlers'
 import { registerHooksHandlers } from './ipc/hooks-handlers'
+import { registerCodexHandlers } from './ipc/codex-handlers'
 import { HooksGateway } from './hooks/hooks-gateway'
 import { setGateway, getGateway } from './hooks'
 import { cleanupStaleHookEntries } from './hooks/boot-cleanup'
@@ -578,6 +579,7 @@ if (!gotTheLock) {
     registerInsightsHandlers(getWindow)
     registerNotesHandlers()
     registerVisionHandlers(getWindow)
+    registerCodexHandlers()
     registerCloudAgentHandlers(getWindow)
     registerTeamHandlers(getWindow)
     registerLegacyVersionHandlers(getWindow)
