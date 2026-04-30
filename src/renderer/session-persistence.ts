@@ -14,7 +14,6 @@ export function buildSessionState(): SessionState {
     configId: s.configId,
     label: s.label,
     workingDirectory: s.workingDirectory,
-    model: s.model,
     color: s.color,
     sessionType: s.sessionType,
     shellOnly: s.shellOnly,
@@ -31,9 +30,20 @@ export function buildSessionState(): SessionState {
           hasSudoPassword: s.sshConfig.hasSudoPassword,
         }
       : undefined,
-    legacyVersion: s.legacyVersion,
-    agentIds: s.agentIds,
+    machineName: s.machineName,
     githubIntegration: s.githubIntegration,
+    // v1.5: provider-shape persistence. All renderer Sessions are Claude today;
+    // Codex sessions (P2+) will set provider='codex' and codexOptions instead.
+    provider: 'claude',
+    claudeOptions: {
+      model: s.model || undefined,
+      legacyVersion: s.legacyVersion,
+      agentIds: s.agentIds,
+      effortLevel: s.effortLevel,
+      disableAutoMemory: s.disableAutoMemory,
+      flickerFree: s.flickerFree,
+      powershellTool: s.powershellTool,
+    },
   }))
   return {
     sessions,

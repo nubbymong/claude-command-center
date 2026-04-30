@@ -293,6 +293,9 @@ export interface TokenomicsSessionRecord {
   durationMs?: number
   costPerHour?: number
   tokensPerMinute?: number
+  // v1.5: provider discriminator. Optional on read for back-compat -- the
+  // tokenomics-manager back-fills 'claude' on legacy records during load.
+  provider?: ProviderId
 }
 
 export interface TokenomicsDailyAggregate {

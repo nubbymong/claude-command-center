@@ -139,11 +139,41 @@ function getTokenomicsPath(): string {
   return path.join(getConfigDir(), TOKENOMICS_FILE)
 }
 
+/**
+ * Back-fill `provider: 'claude'` on any TokenomicsSessionRecord that's missing it.
+ * Returns true if at least one record was mutated.
+ *
+ * Pure function over the records map -- caller decides whether to persist.
+ * v1.5 migration: pre-Codex tokenomics.json contains only Claude sessions; this
+ * tags them so future Codex ingestion can co-exist without ambiguity.
+ */
+export function backfillTokenomicsProvider(data: TokenomicsData): boolean {
+  let mutated = false
+  for (const sid of Object.keys(data.sessions)) {
+    const s: any = data.sessions[sid]
+    if (!s.provider) {
+      s.provider = 'claude'
+      mutated = true
+    }
+  }
+  return mutated
+}
+
 function loadData(): TokenomicsData {
   try {
     const filePath = getTokenomicsPath()
     if (fs.existsSync(filePath)) {
-      return JSON.parse(fs.readFileSync(filePath, 'utf-8'))
+      const data = JSON.parse(fs.readFileSync(filePath, 'utf-8')) as TokenomicsData
+      // v1.5: back-fill provider on legacy records. Persist back only if mutated.
+      if (backfillTokenomicsProvider(data)) {
+        try {
+          saveData(data)
+          logInfo('[tokenomics] Back-filled provider=claude on legacy session records')
+        } catch (err) {
+          logError(`[tokenomics] Failed to persist provider back-fill: ${err}`)
+        }
+      }
+      return data
     }
   } catch (err) {
     logError(`[tokenomics] Failed to load data: ${err}`)

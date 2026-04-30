@@ -6,41 +6,15 @@
 
 import { join } from 'path'
 import { readFileSync, writeFileSync, existsSync, unlinkSync } from 'fs'
-import { getConfigDir, ensureConfigDir } from './config-manager'
+import { getConfigDir, ensureConfigDir, migrateConfigToProviderShape } from './config-manager'
 import { logInfo } from './debug-logger'
+import type { SavedSession, SessionState } from '../shared/types'
 
-export interface SavedSession {
-  id: string
-  configId?: string
-  label: string
-  workingDirectory: string
-  model: string
-  color: string
-  sessionType: 'local' | 'ssh'
-  shellOnly?: boolean
-  partnerTerminalPath?: string
-  partnerElevated?: boolean
-  sshConfig?: {
-    host: string
-    port: number
-    username: string
-    remotePath: string
-    hasPassword?: boolean
-    postCommand?: string
-    hasSudoPassword?: boolean
-    dockerContainer?: string
-  }
-  // Optional per-session GitHub integration state. See src/shared/github-types.ts
-  // for the SessionGitHubIntegration shape. Undefined means the session has
-  // never opted in to the GitHub panel.
-  githubIntegration?: import('../shared/github-types').SessionGitHubIntegration
-}
+export type { SavedSession, SessionState }
 
-export interface SessionState {
-  sessions: SavedSession[]
-  activeSessionId: string | null
-  savedAt: number
-}
+// Legacy top-level Claude fields that get migrated into claudeOptions.
+// Mirrors CLAUDE_FIELDS in config-manager.ts for the SavedSession case.
+const LEGACY_CLAUDE_FIELDS = ['model', 'effortLevel', 'legacyVersion', 'disableAutoMemory', 'flickerFree', 'powershellTool', 'agentIds'] as const
 
 // Lazy getter — can't call getConfigDir() at module load time
 function getSessionStateFile(): string {
@@ -73,6 +47,28 @@ export function loadSessionState(): SessionState | null {
     }
     const data = readFileSync(file, 'utf-8')
     const state = JSON.parse(data) as SessionState
+
+    if (!Array.isArray(state.sessions)) {
+      logInfo('[session-state] No sessions array in state; skipping migration')
+      return state
+    }
+
+    // v1.5: back-fill provider field + claudeOptions on each SavedSession.
+    // Strips legacy top-level Claude fields; persists back only if something changed.
+    let dirty = false
+    const migratedSessions = state.sessions.map((s: any) => {
+      const out = migrateConfigToProviderShape(s)
+      if (!s.provider || LEGACY_CLAUDE_FIELDS.some(f => f in s)) {
+        dirty = true
+      }
+      return out
+    })
+    if (dirty) {
+      state.sessions = migratedSessions
+      writeFileSync(getSessionStateFile(), JSON.stringify(state, null, 2))
+      logInfo('[session-state] Migrated sessions to provider shape')
+    }
+
     logInfo(`[session-state] Loaded ${state.sessions.length} sessions from ${new Date(state.savedAt).toLocaleString()}`)
     return state
   } catch (err) {

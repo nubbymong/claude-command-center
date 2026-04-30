@@ -361,11 +361,34 @@ export default function App() {
 
       console.log(`[App] Restoring ${savedState.sessions.length} sessions...`)
 
-      const restoredSessions: Session[] = savedState.sessions.map((saved: SavedSession) => ({
-        ...saved,
-        status: 'idle' as const,
-        createdAt: Date.now(),
-      }))
+      const restoredSessions: Session[] = savedState.sessions.map((saved: SavedSession) => {
+        // v1.5 provider-shape: read Claude fields from claudeOptions, fall back to
+        // legacy top-level fields for un-migrated files (belt-and-braces).
+        const claude = saved.claudeOptions
+        return {
+          id: saved.id,
+          configId: saved.configId,
+          label: saved.label,
+          workingDirectory: saved.workingDirectory,
+          model: claude?.model ?? saved.model ?? '',
+          color: saved.color,
+          sessionType: saved.sessionType,
+          shellOnly: saved.shellOnly,
+          partnerTerminalPath: saved.partnerTerminalPath,
+          partnerElevated: saved.partnerElevated,
+          sshConfig: saved.sshConfig,
+          legacyVersion: claude?.legacyVersion ?? saved.legacyVersion,
+          agentIds: claude?.agentIds ?? saved.agentIds,
+          flickerFree: claude?.flickerFree ?? saved.flickerFree,
+          powershellTool: claude?.powershellTool ?? saved.powershellTool,
+          effortLevel: claude?.effortLevel ?? saved.effortLevel,
+          disableAutoMemory: claude?.disableAutoMemory ?? saved.disableAutoMemory,
+          machineName: saved.machineName,
+          githubIntegration: saved.githubIntegration,
+          status: 'idle' as const,
+          createdAt: Date.now(),
+        }
+      })
 
       for (const session of restoredSessions) {
         if (!session.shellOnly && session.sessionType === 'local') {
@@ -781,8 +804,8 @@ export default function App() {
                   // Track feature usage based on config fields set
                   trackUsage('sessions.create-config')
                   if (newConfig.sessionType === 'ssh') trackUsage('sessions.session-type')
-                  if (newConfig.effortLevel) trackUsage('sessions.effort-level')
-                  if (newConfig.disableAutoMemory) trackUsage('sessions.disable-auto-memory')
+                  if (newConfig.claudeOptions?.effortLevel) trackUsage('sessions.effort-level')
+                  if (newConfig.claudeOptions?.disableAutoMemory) trackUsage('sessions.disable-auto-memory')
                   if (newConfig.partnerTerminalPath) trackUsage('sessions.partner-terminal')
 
                   const session: Session = {
@@ -790,15 +813,15 @@ export default function App() {
                     configId: newConfig.id,
                     label: newConfig.label,
                     workingDirectory: newConfig.workingDirectory,
-                    model: newConfig.model,
+                    model: newConfig.claudeOptions?.model ?? '',
                     color: newConfig.color,
                     status: 'idle',
                     createdAt: Date.now(),
                     sessionType: newConfig.sessionType,
                     shellOnly: newConfig.shellOnly,
                     sshConfig: newConfig.sshConfig,
-                    effortLevel: newConfig.effortLevel,
-                    disableAutoMemory: newConfig.disableAutoMemory,
+                    effortLevel: newConfig.claudeOptions?.effortLevel,
+                    disableAutoMemory: newConfig.claudeOptions?.disableAutoMemory,
                   }
                   if (!session.shellOnly && session.sessionType === 'local') {
                     markSessionForResumePicker(session.id)
