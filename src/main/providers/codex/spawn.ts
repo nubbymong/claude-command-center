@@ -30,7 +30,8 @@ export function buildCodexSpawn(opts: SpawnOptions): { cmd: string; args: string
   }
 
   const args: string[] = []
-  if (opts.useResumePicker) args.push('resume')
+  // Codex resume picker is a P4 feature -- requires a session UUID, not a bare 'resume' subcommand.
+  // Until P4 wires the cross-provider history list, useResumePicker is a no-op for Codex.
   if (co.model) args.push('-m', co.model)
   if (co.reasoningEffort && co.reasoningEffort !== 'none') {
     args.push('-c', `model_reasoning_effort=${co.reasoningEffort}`)
