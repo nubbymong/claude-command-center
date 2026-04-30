@@ -53,6 +53,14 @@ const spawnOptionsSchema = z.object({
     reasoningEffort: z.enum(['none', 'minimal', 'low', 'medium', 'high', 'xhigh']).optional(),
     permissionsPreset: z.enum(['read-only', 'standard', 'auto', 'unrestricted']),
   }).optional(),
+}).superRefine((opts, ctx) => {
+  if (opts?.provider === 'codex' && !opts.codexOptions) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'codexOptions required when provider is "codex"',
+      path: ['codexOptions'],
+    })
+  }
 }).optional()
 
 const sessionIdSchema = z.string().min(1).max(200)

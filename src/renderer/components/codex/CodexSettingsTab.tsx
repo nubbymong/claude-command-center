@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { useCodexAccountStore } from '../../stores/codexAccountStore'
+import { useFocusTrap } from '../../hooks/useFocusTrap'
 
 export function CodexSettingsTab() {
   const installed = useCodexAccountStore((s) => s.installed)
@@ -14,6 +16,7 @@ export function CodexSettingsTab() {
 
   const [showApiKey, setShowApiKey] = useState(false)
   const [deviceCode, setDeviceCode] = useState<string | null>(null)
+  const [loginError, setLoginError] = useState<string | null>(null)
   const [testResult, setTestResult] = useState<string | null>(null)
   const testResultTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -24,12 +27,17 @@ export function CodexSettingsTab() {
   }, [])
 
   const handleLoginChatgpt = async () => {
-    await loginChatgpt()
+    setLoginError(null)
+    const result = await loginChatgpt()
+    if (!result.ok) setLoginError(result.error ?? 'ChatGPT login failed')
   }
 
   const handleLoginDevice = async () => {
+    setLoginError(null)
     const result = await loginDevice()
-    if (result.deviceCode) {
+    if (!result.ok) {
+      setLoginError(result.error ?? 'Device login failed')
+    } else if (result.deviceCode) {
       setDeviceCode(result.deviceCode)
     }
   }
@@ -149,6 +157,9 @@ export function CodexSettingsTab() {
                     Use device code
                   </button>
                 </div>
+                {loginError && (
+                  <p className="text-xs text-red mt-2">{loginError}</p>
+                )}
               </div>
             )}
 
@@ -208,6 +219,13 @@ function ApiKeyModal({ onClose }: { onClose: () => void }) {
   const [apiKey, setApiKey] = useState('')
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useFocusTrap(dialogRef, true, onClose)
+
+  // Explicitly focus the password input rather than the first focusable (Cancel button).
+  useEffect(() => { inputRef.current?.focus() }, [])
 
   const handleSubmit = async () => {
     if (!apiKey.trim() || pending) return
@@ -222,41 +240,50 @@ function ApiKeyModal({ onClose }: { onClose: () => void }) {
     }
   }
 
-  return (
-    <div className="rounded-xl bg-surface0/30 border border-blue/30 overflow-hidden" role="dialog" aria-modal="true" aria-labelledby="codex-apikey-modal-title">
-      <div className="px-4 py-2.5 border-b border-surface0/40 flex items-center justify-between">
-        <h3 id="codex-apikey-modal-title" className="text-xs font-semibold text-subtext0 uppercase tracking-wider">Enter API Key</h3>
-        <button
-          onClick={onClose}
-          className="text-overlay0 hover:text-text transition-colors text-xs"
-        >
-          Cancel
-        </button>
-      </div>
-      <div className="p-4 space-y-3">
-        <input
-          type="password"
-          value={apiKey}
-          onChange={(e) => { setApiKey(e.target.value); if (error) setError(null) }}
-          onKeyDown={(e) => { if (e.key === 'Enter') handleSubmit() }}
-          placeholder="sk-..."
-          autoFocus
-          className="w-full bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text font-mono focus:outline-none focus:border-blue/50 placeholder:text-overlay0 transition-colors"
-        />
-        {error && (
-          <p className="text-xs text-red">{error}</p>
-        )}
-        <div className="flex gap-2">
+  return createPortal(
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="codex-apikey-modal-title"
+        className="bg-mantle rounded-xl shadow-2xl border border-blue/30 w-full max-w-sm"
+      >
+        <div className="px-4 py-2.5 border-b border-surface0/40 flex items-center justify-between">
+          <h3 id="codex-apikey-modal-title" className="text-xs font-semibold text-subtext0 uppercase tracking-wider">Enter API Key</h3>
           <button
-            onClick={handleSubmit}
-            disabled={!apiKey.trim() || pending}
-            className="px-4 py-2 rounded-lg bg-blue/15 border border-blue/30 text-sm text-blue hover:bg-blue/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            onClick={onClose}
+            className="text-overlay0 hover:text-text transition-colors text-xs"
           >
-            {pending ? 'Verifying...' : 'Save key'}
+            Cancel
           </button>
         </div>
+        <div className="p-4 space-y-3">
+          <input
+            ref={inputRef}
+            type="password"
+            value={apiKey}
+            onChange={(e) => { setApiKey(e.target.value); if (error) setError(null) }}
+            onKeyDown={(e) => { if (e.key === 'Enter') handleSubmit() }}
+            placeholder="sk-..."
+            className="w-full bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text font-mono focus:outline-none focus:border-blue/50 placeholder:text-overlay0 transition-colors"
+          />
+          {error && (
+            <p className="text-xs text-red">{error}</p>
+          )}
+          <div className="flex gap-2">
+            <button
+              onClick={handleSubmit}
+              disabled={!apiKey.trim() || pending}
+              className="px-4 py-2 rounded-lg bg-blue/15 border border-blue/30 text-sm text-blue hover:bg-blue/25 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {pending ? 'Verifying...' : 'Save key'}
+            </button>
+          </div>
+        </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 

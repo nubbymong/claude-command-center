@@ -196,6 +196,12 @@ export function spawnPty(
   let ptyProcess: pty.IPty
 
   if (options?.ssh) {
+    // Defensive guard: Codex over SSH is not yet supported. The renderer-side
+    // dialog prevents this combination, but guard here in case of direct IPC calls.
+    if ((options?.provider ?? 'claude') === 'codex') {
+      throw new Error('Codex over SSH is not supported in v1.5.0 (planned for v1.5.x). Switch the session to local or pick the Claude provider.')
+    }
+
     // SSH session: spawn ssh command, then chain claude after cd
     const ssh = options.ssh
     // Lift: SSH setup script + per-session settings path live on the

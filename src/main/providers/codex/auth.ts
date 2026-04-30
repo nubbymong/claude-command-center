@@ -2,6 +2,7 @@ import { readFileSync, existsSync } from 'fs'
 import { join } from 'path'
 import { homedir } from 'os'
 import { spawn } from 'child_process'
+import { resolveCodexBinary } from './spawn'
 
 export interface CodexAuthStatus {
   installed: boolean
@@ -66,10 +67,10 @@ export function runCodexProcess(
   stdin?: string,
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
-    // TODO P2.8: Windows resolves codex.cmd via PATHEXT but spawn() with shell:false won't run .cmd shims.
-    //            P2.8's resolveCodexBinary uses `where codex.{exe,cmd}` to find the absolute path.
-    //            For now, runCodexProcess relies on a real `codex.exe` or POSIX `codex` on PATH.
-    const proc = spawn('codex', args, { shell: false })
+    // resolveCodexBinary returns full .cmd path on Windows; spawn() with shell:false then works
+    const resolved = resolveCodexBinary()
+    const cmd = resolved?.cmd ?? 'codex'
+    const proc = spawn(cmd, args, { shell: false })
     let stdout = ''
     let stderr = ''
     proc.stdout.on('data', (d) => { stdout += d.toString() })
@@ -96,8 +97,11 @@ function redactApiKey(text: string, key: string): string {
 }
 
 export async function codexLoginChatgpt(): Promise<{ ok: boolean; browserUrl?: string; error?: string }> {
-  // codex login (no flags) prints a URL to stdout, opens the browser, and waits for OAuth to land.
-  // We capture the URL early then wait up to 5 minutes for the process to exit (browser auth completes).
+  // codex login (no flags) prints a URL to stdout, opens the browser, and waits
+  // for OAuth to land. The current implementation reads stdout only after the
+  // subprocess exits, which means browserUrl is returned synchronously with the
+  // final auth.json write -- not at the moment Codex prints the URL. Streaming
+  // stdout to surface the URL early is a v1.5.x polish item.
   const result = await runCodexProcess(['login'], 5 * 60 * 1000)
   if (result.code === 0) {
     const m = /(https?:\/\/[^\s]+)/.exec(result.stdout)

@@ -8,6 +8,15 @@ interface Props {
 
 export function ProviderSegmentedControl({ value, onChange, sessionType }: Props) {
   const codexDisabled = sessionType === 'ssh'
+
+  const onKeyDown = (e: React.KeyboardEvent, current: ProviderId) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+    e.preventDefault()
+    const next: ProviderId = current === 'claude' ? 'codex' : 'claude'
+    if (next === 'codex' && codexDisabled) return
+    onChange(next)
+  }
+
   return (
     <div className="flex flex-col gap-1 mb-4">
       <label className="text-[10px] uppercase tracking-wider text-overlay1 font-medium">Provider</label>
@@ -16,7 +25,9 @@ export function ProviderSegmentedControl({ value, onChange, sessionType }: Props
           type="button"
           role="radio"
           aria-checked={value === 'claude'}
+          tabIndex={value === 'claude' ? 0 : -1}
           onClick={() => onChange('claude')}
+          onKeyDown={(e) => onKeyDown(e, 'claude')}
           className={
             'flex-1 px-3 py-1.5 rounded text-xs font-medium transition-colors ' +
             (value === 'claude' ? 'bg-blue text-crust' : 'text-overlay1 hover:text-text')
@@ -29,7 +40,9 @@ export function ProviderSegmentedControl({ value, onChange, sessionType }: Props
           role="radio"
           aria-checked={value === 'codex'}
           aria-disabled={codexDisabled}
+          tabIndex={value === 'codex' ? 0 : -1}
           onClick={() => !codexDisabled && onChange('codex')}
+          onKeyDown={(e) => onKeyDown(e, 'codex')}
           disabled={codexDisabled}
           className={
             'flex-1 px-3 py-1.5 rounded text-xs font-medium transition-colors ' +

@@ -88,7 +88,7 @@ export default function App() {
   // Set by the onboarding "Set up now" button and the auto-detect banner
   // Accept/Edit actions; consumed once by SettingsPage's initialTab prop.
   const [pendingSettingsTab, setPendingSettingsTab] = useState<
-    'general' | 'statusline' | 'shortcuts' | 'github' | 'about' | null
+    'general' | 'statusline' | 'shortcuts' | 'github' | 'codex' | 'about' | null
   >(null)
 
   // Clear the pending tab once SettingsPage has consumed it (i.e. we've
@@ -100,6 +100,20 @@ export default function App() {
       setPendingSettingsTab(null)
     }
   }, [view, pendingSettingsTab])
+
+  // Listen for app:openSettings dispatched by CodexFormFields "Open Settings" links.
+  // Switches the active view to Settings and deep-links to the requested tab.
+  useEffect(() => {
+    const onOpenSettings = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { tab?: string } | undefined
+      const tab = detail?.tab as 'general' | 'statusline' | 'shortcuts' | 'github' | 'codex' | 'about' | undefined
+      if (tab) setPendingSettingsTab(tab)
+      setView('settings')
+    }
+    window.addEventListener('app:openSettings', onOpenSettings)
+    return () => window.removeEventListener('app:openSettings', onOpenSettings)
+  }, [])
+
   const [showGuidedConfig, setShowGuidedConfig] = useState(false)
   const [showTipModal, setShowTipModal] = useState(false)
   const [partnerActive, setPartnerActive] = useState<Set<string>>(new Set())

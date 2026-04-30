@@ -1,6 +1,4 @@
-import { readFileSync } from 'fs'
-import { join } from 'path'
-import { app } from 'electron'
+import pricingData from '../../../../resources/codex-pricing.json'
 
 interface ModelPricing {
   inputPer1M: number
@@ -8,20 +6,11 @@ interface ModelPricing {
   outputPer1M: number
 }
 
-let cache: Record<string, ModelPricing> | null = null
+const pricing = (pricingData as { models: Record<string, ModelPricing> }).models
 const warnedModels = new Set<string>()
 
-function loadPricing(): Record<string, ModelPricing> {
-  if (cache) return cache
-  const path = join(app.getAppPath(), 'resources', 'codex-pricing.json')
-  const raw = JSON.parse(readFileSync(path, 'utf-8')) as { models: Record<string, ModelPricing> }
-  cache = raw.models
-  return cache
-}
-
 export function priceForModel(model: string): ModelPricing | null {
-  const p = loadPricing()
-  return p[model] ?? null
+  return pricing[model] ?? null
 }
 
 export function computeCodexCostUsd(

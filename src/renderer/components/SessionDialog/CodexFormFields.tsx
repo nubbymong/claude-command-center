@@ -24,7 +24,7 @@ export function CodexFormFields({ value, onChange, onOpenSettings }: Props) {
   return (
     <div className="space-y-4 my-2">
       {!installed && (
-        <div className="rounded-md bg-yellow-700/20 p-3 text-sm text-yellow-300">
+        <div className="rounded-md bg-yellow/10 border border-yellow/30 p-3 text-sm text-yellow">
           Codex CLI is not installed.{' '}
           <button type="button" onClick={onOpenSettings} className="underline">
             Open Settings for install instructions
@@ -32,7 +32,7 @@ export function CodexFormFields({ value, onChange, onOpenSettings }: Props) {
         </div>
       )}
       {unauthed && (
-        <div className="rounded-md bg-yellow-700/20 p-3 text-sm text-yellow-300">
+        <div className="rounded-md bg-yellow/10 border border-yellow/30 p-3 text-sm text-yellow">
           Sign in to Codex first.{' '}
           <button type="button" onClick={onOpenSettings} className="underline">
             Sign in to Codex
