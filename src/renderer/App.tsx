@@ -40,6 +40,7 @@ import { setupCloudAgentListener } from './stores/cloudAgentStore'
 import { setupTokenomicsListener } from './stores/tokenomicsStore'
 import { setupVisionListener, useVisionStore } from './stores/visionStore'
 import { setupGitHubListener, useGitHubStore } from './stores/githubStore'
+import { useCodexAccountStore } from './stores/codexAccountStore'
 import GitHubPanel from './components/github/GitHubPanel'
 import OnboardingModal from './components/github/onboarding/OnboardingModal'
 import AutoDetectBanner from './components/github/AutoDetectBanner'
@@ -256,6 +257,7 @@ export default function App() {
       useGitHubStore.getState().loadConfig()
       useVisionStore.getState().loadConfig()
       useVisionStore.getState().fetchStatus()
+      useCodexAccountStore.getState().refresh()
 
       const magicSettings = useMagicButtonStore.getState().settings
       if (magicSettings.autoDeleteDays != null && magicSettings.autoDeleteDays > 0) {

@@ -424,6 +424,24 @@ export interface ElectronAPI {
     onDropped: (cb: (p: { sessionId: string }) => void) => () => void
     onStatus: (cb: (s: HooksGatewayStatus) => void) => () => void
   }
+  codex: {
+    status: () => Promise<{
+      installed: boolean
+      version: string | null
+      authMode: 'chatgpt' | 'api-key' | 'none'
+      planType?: string
+      accountId?: string
+      hasOpenAiApiKeyEnv: boolean
+    }>
+    login: (payload: { mode: 'chatgpt' | 'api-key' | 'device'; apiKey?: string }) => Promise<{
+      ok: boolean
+      browserUrl?: string
+      deviceCode?: string
+      error?: string
+    }>
+    logout: () => Promise<{ ok: boolean }>
+    testConnection: () => Promise<{ ok: boolean; message: string }>
+  }
 }
 
 declare global {
