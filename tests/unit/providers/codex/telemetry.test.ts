@@ -12,6 +12,7 @@ vi.mock('../../../../src/main/providers/codex/auth', () => ({
 let _mockCodexHome = ''
 
 import { parseCodexRollout, mapTokenCountToStatusline, watchAndClaimRollout } from '../../../../src/main/providers/codex/telemetry'
+import type { TokenCountEvent } from '../../../../src/main/providers/codex/telemetry'
 import { getCodexHome } from '../../../../src/main/providers/codex/auth'
 
 const FIXTURE = readFileSync(join(__dirname, '../../../fixtures/codex/rollout-sample.jsonl'), 'utf-8')
@@ -140,7 +141,7 @@ describe('watchAndClaimRollout', () => {
     src.stop()
     // The rollout was claimable -- no assertion on updates since no token_count lines were written
     // The test verifies stop() doesn't throw and the interval stops
-    expect(true).toBe(true)
+    expect(typeof src.stop).toBe('function')
   })
 
   it('does NOT claim a rollout whose timestamp is older than spawnTimestamp - 5s', async () => {
@@ -224,10 +225,167 @@ describe('watchAndClaimRollout', () => {
     // After stop(), the path is removed from claimed -- a second watcher can claim it
     const updates: unknown[] = []
     const src2 = watchAndClaimRollout('sess-claim-2', '/reclaim/cwd', Date.now(), (d) => updates.push(d))
-    await new Promise((r) => setTimeout(r, 600))
+
+    // Wait for src2 to claim the file (polling interval is 250ms; 500ms is safe)
+    await new Promise((r) => setTimeout(r, 500))
+
+    // Now append a token_count line so the watcher fires an update
+    const tokenCountLine = JSON.stringify({
+      timestamp: new Date().toISOString(),
+      type: 'event_msg',
+      payload: {
+        type: 'token_count',
+        info: {
+          total_token_usage: { input_tokens: 100, cached_input_tokens: 0, output_tokens: 10, reasoning_output_tokens: 0, total_tokens: 110 },
+          last_token_usage: null,
+          model_context_window: 128000,
+        },
+        rate_limits: null,
+      },
+    })
+    writeFileSync(rolloutPath, sessionMeta + '\n' + tokenCountLine + '\n', 'utf-8')
+
+    // Wait for the fs.watch callback to fire and emit the update
+    await new Promise((r) => setTimeout(r, 400))
     src2.stop()
 
-    // src2 should have been able to claim (no assertion on updates, just no throw)
-    expect(true).toBe(true)
+    // The update should have fired at least once for the token_count line
+    expect(updates.length).toBeGreaterThan(0)
+  })
+})
+
+describe('parseAndEmit truncation guard', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+    _mockCodexHome = ''
+  })
+
+  it('re-parses from offset 0 when the rollout file is replaced with smaller content', async () => {
+    const tmpBase = mkdtempSync(join(tmpdir(), 'ccc-test-codex-trunc-'))
+    _mockCodexHome = tmpBase
+    vi.mocked(getCodexHome).mockReturnValue(tmpBase)
+
+    const today = new Date()
+    const dateDir = join(
+      tmpBase, 'sessions',
+      String(today.getUTCFullYear()),
+      String(today.getUTCMonth() + 1).padStart(2, '0'),
+      String(today.getUTCDate()).padStart(2, '0'),
+    )
+    mkdirSync(dateDir, { recursive: true })
+
+    const spawnTs = Date.now()
+    const rolloutTs = new Date(spawnTs + 50).toISOString()
+
+    // Build a long initial file (session_meta + large padding to push lastSize high)
+    const sessionMeta = JSON.stringify({
+      timestamp: rolloutTs,
+      type: 'session_meta',
+      payload: {
+        id: 'trunc-session-1',
+        timestamp: rolloutTs,
+        cwd: '/trunc/cwd',
+        model: 'gpt-5.5',
+        cli_version: '0.125.0',
+      },
+    })
+    const tokenCountLine = JSON.stringify({
+      timestamp: new Date().toISOString(),
+      type: 'event_msg',
+      payload: {
+        type: 'token_count',
+        info: {
+          total_token_usage: { input_tokens: 500, cached_input_tokens: 0, output_tokens: 20, reasoning_output_tokens: 0, total_tokens: 520 },
+          last_token_usage: null,
+          model_context_window: 128000,
+        },
+        rate_limits: null,
+      },
+    })
+    const rolloutPath = join(dateDir, `rollout-trunc-test.jsonl`)
+    // Write initial large file so lastSize gets set high
+    writeFileSync(rolloutPath, sessionMeta + '\n' + tokenCountLine + '\n', 'utf-8')
+
+    const updates: import('../../../../src/shared/types').StatuslineData[] = []
+    const src = watchAndClaimRollout('sess-trunc', '/trunc/cwd', spawnTs, (d) => updates.push(d))
+
+    // Wait for claim + initial parse
+    await new Promise((r) => setTimeout(r, 400))
+    const countAfterFirst = updates.length
+    expect(countAfterFirst).toBeGreaterThan(0)
+
+    // Now simulate a file rotation: overwrite with shorter content (new session, fresh start)
+    const newRolloutTs = new Date(Date.now() + 100).toISOString()
+    const newSessionMeta = JSON.stringify({
+      timestamp: newRolloutTs,
+      type: 'session_meta',
+      payload: {
+        id: 'trunc-session-2',
+        timestamp: newRolloutTs,
+        cwd: '/trunc/cwd',
+        model: 'gpt-5.5',
+        cli_version: '0.125.0',
+      },
+    })
+    const newTokenCountLine = JSON.stringify({
+      timestamp: new Date().toISOString(),
+      type: 'event_msg',
+      payload: {
+        type: 'token_count',
+        info: {
+          total_token_usage: { input_tokens: 10, cached_input_tokens: 0, output_tokens: 2, reasoning_output_tokens: 0, total_tokens: 12 },
+          last_token_usage: null,
+          model_context_window: 128000,
+        },
+        rate_limits: null,
+      },
+    })
+    // Write shorter content -- this simulates rotation (length < lastSize)
+    writeFileSync(rolloutPath, newSessionMeta + '\n' + newTokenCountLine + '\n', 'utf-8')
+
+    // Wait for the watcher to fire
+    await new Promise((r) => setTimeout(r, 400))
+    src.stop()
+
+    // Without the truncation guard, updates.length would still be countAfterFirst.
+    // With the guard, the re-parse fires and updates.length increases.
+    expect(updates.length).toBeGreaterThan(countAfterFirst)
+    // The latest update should reflect the new (smaller) token counts from the replacement file
+    const latest = updates[updates.length - 1]
+    expect(latest.inputTokens).toBe(10)
+  })
+})
+
+describe('mapTokenCountToStatusline NaN guards', () => {
+  const baseMeta = { id: 's', cwd: '/x', model: 'm', cli_version: '1', timestamp: '2026-05-04T00:00:00Z' }
+
+  it('omits rateLimitCurrentResets when primary.resets_at is NaN', () => {
+    const tc: TokenCountEvent = {
+      total_token_usage: { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0, total_tokens: 0 },
+      rate_limits: { primary: { used_percent: 50, window_minutes: 300, resets_at: NaN } },
+    }
+    const sl = mapTokenCountToStatusline(tc, baseMeta, 'sid')
+    expect(sl.rateLimitCurrent).toBe(50)
+    expect(sl.rateLimitCurrentResets).toBeUndefined()
+  })
+
+  it('omits rateLimitWeeklyResets when secondary.resets_at is NaN', () => {
+    const tc: TokenCountEvent = {
+      total_token_usage: { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0, total_tokens: 0 },
+      rate_limits: { secondary: { used_percent: 30, window_minutes: 10080, resets_at: NaN } },
+    }
+    const sl = mapTokenCountToStatusline(tc, baseMeta, 'sid')
+    expect(sl.rateLimitWeekly).toBe(30)
+    expect(sl.rateLimitWeeklyResets).toBeUndefined()
+  })
+
+  it('sets rateLimitCurrentResets when primary.resets_at is a valid finite number', () => {
+    const tc: TokenCountEvent = {
+      total_token_usage: { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0, total_tokens: 0 },
+      rate_limits: { primary: { used_percent: 75, window_minutes: 300, resets_at: 1777544035 } },
+    }
+    const sl = mapTokenCountToStatusline(tc, baseMeta, 'sid')
+    expect(sl.rateLimitCurrent).toBe(75)
+    expect(sl.rateLimitCurrentResets).toBe(new Date(1777544035 * 1000).toISOString())
   })
 })

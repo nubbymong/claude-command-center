@@ -201,12 +201,18 @@ export function mapTokenCountToStatusline(
 
   if (tc.rate_limits?.primary) {
     sl.rateLimitCurrent = Math.round(tc.rate_limits.primary.used_percent)
-    sl.rateLimitCurrentResets = new Date(tc.rate_limits.primary.resets_at * 1000).toISOString()
+    const ra = tc.rate_limits.primary.resets_at
+    if (Number.isFinite(ra)) {
+      sl.rateLimitCurrentResets = new Date(ra * 1000).toISOString()
+    }
   }
 
   if (tc.rate_limits?.secondary) {
     sl.rateLimitWeekly = Math.round(tc.rate_limits.secondary.used_percent)
-    sl.rateLimitWeeklyResets = new Date(tc.rate_limits.secondary.resets_at * 1000).toISOString()
+    const ra = tc.rate_limits.secondary.resets_at
+    if (Number.isFinite(ra)) {
+      sl.rateLimitWeeklyResets = new Date(ra * 1000).toISOString()
+    }
   }
 
   return sl
@@ -246,6 +252,9 @@ export function watchAndClaimRollout(
   onUpdate: (sl: StatuslineData) => void,
 ): TelemetrySource {
   const home = getCodexHome()
+  // NOTE: dateDir is bound to today's UTC date at call time; it will not follow
+  // midnight UTC rollover (sessions started before midnight won't be found after).
+  // Known limitation -- fix by re-computing dateDir on each poll tick.
   const today = new Date()
   const dateDir = join(
     home,
@@ -323,6 +332,10 @@ export function watchAndClaimRollout(
   function parseAndEmit(filePath: string): void {
     try {
       const text = readFileSync(filePath, 'utf-8')
+      // JSONL rollouts are append-only. A size shrink means the file was replaced
+      // (rotation, restart, or external delete-and-recreate); reset lastSize to
+      // force a fresh parse from offset 0.
+      if (text.length < lastSize) { lastSize = 0 }
       if (text.length === lastSize) return
       lastSize = text.length
 
