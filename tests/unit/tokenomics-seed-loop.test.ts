@@ -110,7 +110,7 @@ describe('findCodexRolloutFiles', () => {
     expect(paths).toContain(file2)
   })
 
-  it('returns results sorted by mtime ascending (oldest first)', async () => {
+  it('returns results sorted by mtime descending (newest first)', async () => {
     const { findCodexRolloutFiles } = await import('../../src/main/tokenomics-manager')
 
     const sessionsDir = path.join(codexHome, 'sessions', 'dated')
@@ -128,9 +128,10 @@ describe('findCodexRolloutFiles', () => {
 
     const result = findCodexRolloutFiles()
     expect(result).toHaveLength(2)
-    expect(result[0].path).toBe(older)
-    expect(result[1].path).toBe(newer)
-    expect(result[0].mtime).toBeLessThan(result[1].mtime)
+    // Newest first
+    expect(result[0].path).toBe(newer)
+    expect(result[1].path).toBe(older)
+    expect(result[0].mtime).toBeGreaterThan(result[1].mtime)
   })
 })
 
@@ -163,7 +164,14 @@ describe('seedTokenomics + findCodexRolloutFiles integration', () => {
   })
 
   it('ingests both a Claude transcript and a Codex rollout into cachedData.sessions', async () => {
-    // -- Set up fake config dir (so getConfigDir() points to our tmp)
+    // -- Set up fake config dir. Mock getConfigDir directly (bypasses _configDir lazy
+    // cache ordering dependency) and getResourcesDirectory for belt-and-suspenders.
+    const configDir = path.join(resourcesDir, 'CONFIG')
+    fs.mkdirSync(configDir, { recursive: true })
+    vi.spyOn(
+      await import('../../src/main/config-manager'),
+      'getConfigDir'
+    ).mockReturnValue(configDir)
     vi.spyOn(
       await import('../../src/main/ipc/setup-handlers'),
       'getResourcesDirectory'

@@ -224,9 +224,8 @@ function saveDataDebounced(data: TokenomicsData): void {
 
 /**
  * Recursively walk a directory and collect matching files with their mtimes.
- * Returns entries sorted by mtime ascending (oldest first, newest last --
- * matches Claude path ordering expectation in seedTokenomics/syncTokenomics).
  * Errors on any individual entry are silently skipped.
+ * Symlinks are skipped to prevent infinite recursion on symlink loops.
  */
 function walkRolloutDir(dir: string): Array<{ path: string; mtime: number }> {
   const results: Array<{ path: string; mtime: number }> = []
@@ -238,9 +237,9 @@ function walkRolloutDir(dir: string): Array<{ path: string; mtime: number }> {
   }
   for (const entry of entries) {
     const full = path.join(dir, entry.name)
-    if (entry.isDirectory()) {
+    if (entry.isDirectory() && !entry.isSymbolicLink()) {
       results.push(...walkRolloutDir(full))
-    } else if (entry.isFile() && /^rollout-.*\.jsonl$/.test(entry.name)) {
+    } else if (entry.isFile() && !entry.isSymbolicLink() && /^rollout-.*\.jsonl$/.test(entry.name)) {
       try {
         const stat = fs.statSync(full)
         if (stat.size > 0) {
@@ -259,7 +258,7 @@ function walkRolloutDir(dir: string): Array<{ path: string; mtime: number }> {
  * (incomplete rollouts). Respects the CODEX_HOME env var via getCodexHome().
  *
  * Returns [] quietly if the codex home directory does not exist (Codex not set
- * up or never logged in). Results are sorted by mtime ascending (oldest first).
+ * up or never logged in). Results are sorted by mtime descending (newest first).
  */
 export function findCodexRolloutFiles(): Array<{ path: string; mtime: number }> {
   const codexHome = getCodexHome()
@@ -268,7 +267,7 @@ export function findCodexRolloutFiles(): Array<{ path: string; mtime: number }> 
   if (!fs.existsSync(sessionsDir)) return []
 
   const files = walkRolloutDir(sessionsDir)
-  files.sort((a, b) => a.mtime - b.mtime)
+  files.sort((a, b) => b.mtime - a.mtime)
   return files
 }
 
@@ -292,13 +291,18 @@ export function findCodexRolloutFiles(): Array<{ path: string; mtime: number }> 
 export async function ingestCodexRolloutFile(
   filePath: string,
   data: TokenomicsData,
+  preloadedText?: string,
 ): Promise<void> {
   let text: string
-  try {
-    text = fs.readFileSync(filePath, 'utf-8')
-  } catch (err) {
-    logError(`[tokenomics] Failed to read Codex rollout ${filePath}: ${err}`)
-    return
+  if (preloadedText !== undefined) {
+    text = preloadedText
+  } else {
+    try {
+      text = fs.readFileSync(filePath, 'utf-8')
+    } catch (err) {
+      logError(`[tokenomics] Failed to read Codex rollout ${filePath}: ${err}`)
+      return
+    }
   }
 
   // Quick shape check: Codex rollouts start with {type:"session_meta"}
@@ -320,6 +324,10 @@ export async function ingestCodexRolloutFile(
   }
 
   const { meta, tokenCounts } = parsed
+  if (!meta.model) {
+    logInfo(`[tokenomics] Codex rollout ${filePath} has no model yet (no turn_context); skipping`)
+    return
+  }
   if (tokenCounts.length === 0) return
 
   // Use the last token_count event -- it carries the cumulative session total.
@@ -411,19 +419,20 @@ export async function detectAndIngestFile(
   data: TokenomicsData,
   projectDir?: string,
 ): Promise<void> {
-  let firstLine: string | undefined
+  let text: string
   try {
-    const text = fs.readFileSync(filePath, 'utf-8')
-    firstLine = text.split('\n').find(l => l.trim())
+    text = fs.readFileSync(filePath, 'utf-8')
   } catch {
     return
   }
 
+  const firstLine = text.split('\n').find(l => l.trim())
   if (firstLine) {
     try {
       const first = JSON.parse(firstLine) as Record<string, unknown>
       if (first.type === 'session_meta') {
-        await ingestCodexRolloutFile(filePath, data)
+        // Pass preloadedText to avoid reading the file a second time
+        await ingestCodexRolloutFile(filePath, data, text)
         return
       }
     } catch { /* fall through to Claude path */ }
@@ -579,9 +588,8 @@ export async function seedTokenomics(
     // Sort Claude files by mtime descending (newest first)
     claudeFiles.sort((a, b) => b.mtime - a.mtime)
 
-    // findCodexRolloutFiles returns mtime ascending; reverse for consistent newest-first batching
+    // findCodexRolloutFiles already returns newest-first (descending mtime)
     const codexFiles = findCodexRolloutFiles()
-    codexFiles.sort((a, b) => b.mtime - a.mtime)
 
     const totalFiles = claudeFiles.length + codexFiles.length
     let processedFiles = 0

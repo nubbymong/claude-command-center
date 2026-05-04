@@ -28,7 +28,6 @@ function getModelColor(model: string): string {
 
 function getModelShort(model: string): string {
   if (/sonnet|opus|haiku/i.test(model)) return model.replace(/[^a-z]/gi, '').slice(0, 6)
-  if (model.startsWith('gpt-5')) return model.slice(4)
   if (model.startsWith('gpt-')) return model.slice(4)
   return model
 }
