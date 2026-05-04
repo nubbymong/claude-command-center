@@ -15,6 +15,10 @@ import {
   parseClaudeTranscriptFile,
   type ClaudeParsedMessage,
 } from './providers/claude/telemetry'
+import {
+  parseCodexRollout,
+} from './providers/codex/telemetry'
+import { computeCodexCostUsd } from './providers/codex/pricing'
 
 // ── Model Pricing (per 1M tokens) ──
 
@@ -214,6 +218,175 @@ function saveDataDebounced(data: TokenomicsData): void {
 // providers/claude/telemetry.ts as findClaudeHistoryFiles +
 // parseClaudeTranscriptFile (verbatim). This module imports them above and
 // continues to drive ingestion/aggregation.
+
+// ── Codex rollout ingestion (P3.2) ──
+
+/**
+ * Parse a single Codex rollout JSONL and upsert a session record into data.
+ *
+ * Token totals match mapTokenCountToStatusline math so live ContextBar and
+ * persistent tokenomics agree:
+ *   totalInputTokens  = input_tokens + cached_input_tokens
+ *   totalOutputTokens = output_tokens + reasoning_output_tokens
+ *   totalCacheReadTokens  = cached_input_tokens
+ *   totalCacheWriteTokens = 0 (no equivalent in Codex rollout)
+ *
+ * Uses the LAST token_count event (cumulative totals -- matches P3.1 live
+ * path which always emits the latest total).
+ *
+ * Skips the file silently if it lacks a session_meta line or on any read error.
+ */
+export async function ingestCodexRolloutFile(
+  filePath: string,
+  data: TokenomicsData,
+): Promise<void> {
+  let text: string
+  try {
+    text = fs.readFileSync(filePath, 'utf-8')
+  } catch (err) {
+    logError(`[tokenomics] Failed to read Codex rollout ${filePath}: ${err}`)
+    return
+  }
+
+  // Quick shape check: Codex rollouts start with {type:"session_meta"}
+  const firstLine = text.split('\n').find(l => l.trim())
+  if (!firstLine) return
+  try {
+    const first = JSON.parse(firstLine) as Record<string, unknown>
+    if (first.type !== 'session_meta') return
+  } catch {
+    return
+  }
+
+  let parsed: ReturnType<typeof parseCodexRollout>
+  try {
+    parsed = parseCodexRollout(text)
+  } catch (err) {
+    logError(`[tokenomics] Failed to parse Codex rollout ${filePath}: ${err}`)
+    return
+  }
+
+  const { meta, tokenCounts } = parsed
+  if (tokenCounts.length === 0) return
+
+  // Use the last token_count event -- it carries the cumulative session total.
+  const last = tokenCounts[tokenCounts.length - 1]
+  const u = last.total_token_usage
+
+  const totalInputTokens = u.input_tokens + u.cached_input_tokens
+  const totalOutputTokens = u.output_tokens + u.reasoning_output_tokens
+  const totalCacheReadTokens = u.cached_input_tokens
+  const totalCacheWriteTokens = 0
+
+  const costResult = computeCodexCostUsd(meta.model, {
+    inputTokens: u.input_tokens,
+    cachedInputTokens: u.cached_input_tokens,
+    outputTokens: u.output_tokens,
+    reasoningOutputTokens: u.reasoning_output_tokens,
+  })
+  const totalCostUsd = costResult ?? 0
+
+  // Derive timestamps from event timestamps in the raw JSONL
+  const lines = text.split('\n').filter(Boolean)
+  const timestamps: string[] = []
+  for (const line of lines) {
+    try {
+      const evt = JSON.parse(line) as Record<string, unknown>
+      if (typeof evt.timestamp === 'string' && evt.timestamp) {
+        timestamps.push(evt.timestamp)
+      }
+    } catch { /* skip */ }
+  }
+  const firstTimestamp = timestamps[0] ?? meta.timestamp ?? new Date().toISOString()
+  const lastTimestamp = timestamps[timestamps.length - 1] ?? firstTimestamp
+
+  const sessionId = meta.id
+  let record = data.sessions[sessionId]
+  if (!record) {
+    record = {
+      sessionId,
+      projectDir: meta.cwd,
+      model: meta.model,
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
+      totalCacheReadTokens: 0,
+      totalCacheWriteTokens: 0,
+      totalCostUsd: 0,
+      messageCount: 0,
+      firstTimestamp,
+      lastTimestamp,
+      provider: 'codex',
+    }
+    data.sessions[sessionId] = record
+  }
+
+  // Reset for idempotent re-parse
+  record.totalInputTokens = totalInputTokens
+  record.totalOutputTokens = totalOutputTokens
+  record.totalCacheReadTokens = totalCacheReadTokens
+  record.totalCacheWriteTokens = totalCacheWriteTokens
+  record.totalCostUsd = totalCostUsd
+  record.messageCount = tokenCounts.length
+  record.firstTimestamp = firstTimestamp
+  record.lastTimestamp = lastTimestamp
+  record.model = meta.model
+  record.projectDir = meta.cwd
+  record.provider = 'codex'
+
+  // Duration
+  const startMs = new Date(firstTimestamp).getTime()
+  const endMs = new Date(lastTimestamp).getTime()
+  record.durationMs = Math.max(endMs - startMs, 0)
+  if (record.durationMs > 60000) {
+    const totalTokens = totalInputTokens + totalOutputTokens + totalCacheReadTokens
+    record.costPerHour = (totalCostUsd / record.durationMs) * 3_600_000
+    record.tokensPerMinute = (totalTokens / record.durationMs) * 60_000
+  }
+}
+
+/**
+ * Detect file shape from the first line and route to the correct ingestion path.
+ *
+ * - Codex rollout (first line type === 'session_meta'): calls ingestCodexRolloutFile.
+ * - Claude JSONL (anything else): calls parseClaudeTranscriptFile + updateSessionRecord.
+ *
+ * The sessionId for the Claude path is derived from the filename (basename sans .jsonl),
+ * matching the existing seedTokenomics/syncTokenomics call sites.
+ */
+export async function detectAndIngestFile(
+  filePath: string,
+  data: TokenomicsData,
+  projectDir?: string,
+): Promise<void> {
+  let firstLine: string | undefined
+  try {
+    const text = fs.readFileSync(filePath, 'utf-8')
+    firstLine = text.split('\n').find(l => l.trim())
+  } catch {
+    return
+  }
+
+  if (firstLine) {
+    try {
+      const first = JSON.parse(firstLine) as Record<string, unknown>
+      if (first.type === 'session_meta') {
+        await ingestCodexRolloutFile(filePath, data)
+        return
+      }
+    } catch { /* fall through to Claude path */ }
+  }
+
+  // Claude path
+  const sessionId = path.basename(filePath, '.jsonl')
+  const messages = await parseClaudeTranscriptFile(filePath)
+  if (messages.length > 0) {
+    updateSessionRecord(data, sessionId, projectDir ?? '', messages)
+    // Ensure provider is set on newly-created Claude records
+    if (data.sessions[sessionId] && !data.sessions[sessionId].provider) {
+      data.sessions[sessionId].provider = 'claude'
+    }
+  }
+}
 
 // ── Aggregation Helpers ──
 
