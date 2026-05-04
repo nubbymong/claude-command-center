@@ -4,14 +4,11 @@ import type { TokenomicsSessionRecord, TokenomicsDailyAggregate } from '../../sh
 import PageFrame from './PageFrame'
 
 const MODEL_COLORS: Record<string, string> = {
-  // Claude models (existing)
+  // Claude models -- full versioned strings as emitted by the API
   'claude-sonnet-4-6': '#89B4FA',
   'claude-opus-4-6': '#CBA6F7',
   'claude-haiku-4-5': '#A6E3A1',
-  // Codex / GPT models (P3.2)
-  'sonnet':           '#cba6f7',  // catppuccin mauve
-  'opus':             '#f38ba8',  // red
-  'haiku':            '#94e2d5',  // teal
+  // Codex / GPT models (P3.2) -- real model strings emitted by Codex rollouts
   'gpt-5.5':          '#a6e3a1',  // green
   'gpt-5.4':          '#89dceb',  // sky
   'gpt-5.4-mini':     '#74c7ec',  // sapphire

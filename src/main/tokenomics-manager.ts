@@ -19,6 +19,7 @@ import {
   parseCodexRollout,
 } from './providers/codex/telemetry'
 import { computeCodexCostUsd } from './providers/codex/pricing'
+import { getCodexHome } from './providers/codex/auth'
 
 // ── Model Pricing (per 1M tokens) ──
 
@@ -218,6 +219,58 @@ function saveDataDebounced(data: TokenomicsData): void {
 // providers/claude/telemetry.ts as findClaudeHistoryFiles +
 // parseClaudeTranscriptFile (verbatim). This module imports them above and
 // continues to drive ingestion/aggregation.
+
+// ── Codex rollout discovery ──
+
+/**
+ * Recursively walk a directory and collect matching files with their mtimes.
+ * Returns entries sorted by mtime ascending (oldest first, newest last --
+ * matches Claude path ordering expectation in seedTokenomics/syncTokenomics).
+ * Errors on any individual entry are silently skipped.
+ */
+function walkRolloutDir(dir: string): Array<{ path: string; mtime: number }> {
+  const results: Array<{ path: string; mtime: number }> = []
+  let entries: fs.Dirent[]
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true })
+  } catch {
+    return results
+  }
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name)
+    if (entry.isDirectory()) {
+      results.push(...walkRolloutDir(full))
+    } else if (entry.isFile() && /^rollout-.*\.jsonl$/.test(entry.name)) {
+      try {
+        const stat = fs.statSync(full)
+        if (stat.size > 0) {
+          results.push({ path: full, mtime: stat.mtimeMs })
+        }
+      } catch { /* skip */ }
+    }
+  }
+  return results
+}
+
+/**
+ * Discover Codex rollout JSONL files under <CODEX_HOME>/sessions/ .
+ *
+ * Globs <codexHome>/sessions/** /rollout-*.jsonl, skipping files with size 0
+ * (incomplete rollouts). Respects the CODEX_HOME env var via getCodexHome().
+ *
+ * Returns [] quietly if the codex home directory does not exist (Codex not set
+ * up or never logged in). Results are sorted by mtime ascending (oldest first).
+ */
+export function findCodexRolloutFiles(): Array<{ path: string; mtime: number }> {
+  const codexHome = getCodexHome()
+  const sessionsDir = path.join(codexHome, 'sessions')
+
+  if (!fs.existsSync(sessionsDir)) return []
+
+  const files = walkRolloutDir(sessionsDir)
+  files.sort((a, b) => a.mtime - b.mtime)
+  return files
+}
 
 // ── Codex rollout ingestion (P3.2) ──
 
@@ -522,11 +575,15 @@ export async function seedTokenomics(
   const data = loadData()
 
   try {
-    const files = findClaudeHistoryFiles()
-    // Sort by mtime descending (newest first)
-    files.sort((a, b) => b.mtime - a.mtime)
+    const claudeFiles = findClaudeHistoryFiles()
+    // Sort Claude files by mtime descending (newest first)
+    claudeFiles.sort((a, b) => b.mtime - a.mtime)
 
-    const totalFiles = files.length
+    // findCodexRolloutFiles returns mtime ascending; reverse for consistent newest-first batching
+    const codexFiles = findCodexRolloutFiles()
+    codexFiles.sort((a, b) => b.mtime - a.mtime)
+
+    const totalFiles = claudeFiles.length + codexFiles.length
     let processedFiles = 0
 
     const sendProgress = (phase: TokenomicsSyncProgress['phase']) => {
@@ -542,19 +599,43 @@ export async function seedTokenomics(
 
     sendProgress('scanning')
 
-    // Process in batches of 50
+    // Process Claude files in batches of 50
     const BATCH_SIZE = 50
     const CHECKPOINT_INTERVAL = 200
 
-    for (let i = 0; i < files.length; i += BATCH_SIZE) {
-      const batch = files.slice(i, i + BATCH_SIZE)
+    for (let i = 0; i < claudeFiles.length; i += BATCH_SIZE) {
+      const batch = claudeFiles.slice(i, i + BATCH_SIZE)
 
       for (const file of batch) {
         const sessionId = path.basename(file.path, '.jsonl')
         const messages = await parseClaudeTranscriptFile(file.path)
         if (messages.length > 0) {
           updateSessionRecord(data, sessionId, file.projectDir, messages)
+          if (data.sessions[sessionId] && !data.sessions[sessionId].provider) {
+            data.sessions[sessionId].provider = 'claude'
+          }
         }
+        processedFiles++
+      }
+
+      sendProgress('processing')
+
+      // Checkpoint save
+      if (processedFiles % CHECKPOINT_INTERVAL < BATCH_SIZE) {
+        rebuildAggregates(data)
+        saveData(data)
+      }
+
+      // Yield to event loop
+      await new Promise(resolve => setImmediate(resolve))
+    }
+
+    // Process Codex rollout files
+    for (let i = 0; i < codexFiles.length; i += BATCH_SIZE) {
+      const batch = codexFiles.slice(i, i + BATCH_SIZE)
+
+      for (const file of batch) {
+        await ingestCodexRolloutFile(file.path, data)
         processedFiles++
       }
 
@@ -576,7 +657,7 @@ export async function seedTokenomics(
     saveData(data)
 
     sendProgress('complete')
-    logInfo(`[tokenomics] Seed complete: ${processedFiles} files, $${data.totalCostUsd.toFixed(2)} total`)
+    logInfo(`[tokenomics] Seed complete: ${claudeFiles.length} Claude + ${codexFiles.length} Codex files, $${data.totalCostUsd.toFixed(2)} total`)
   } catch (err) {
     logError(`[tokenomics] Seed failed: ${err}`)
   } finally {
@@ -596,26 +677,38 @@ export async function syncTokenomics(
   const data = loadData()
   if (!data.seedComplete) return data
 
-  const files = findClaudeHistoryFiles()
-  // Only files modified since last sync
-  const newFiles = files.filter(f => f.mtime > data.lastSyncTimestamp)
-  if (newFiles.length === 0) return data
+  const claudeFiles = findClaudeHistoryFiles()
+  // Only Claude files modified since last sync
+  const newClaudeFiles = claudeFiles.filter(f => f.mtime > data.lastSyncTimestamp)
 
-  logInfo(`[tokenomics] Syncing ${newFiles.length} new/modified files...`)
+  // Only Codex files modified since last sync
+  const codexFiles = findCodexRolloutFiles()
+  const newCodexFiles = codexFiles.filter(f => f.mtime > data.lastSyncTimestamp)
 
-  for (const file of newFiles) {
+  if (newClaudeFiles.length === 0 && newCodexFiles.length === 0) return data
+
+  logInfo(`[tokenomics] Syncing ${newClaudeFiles.length} Claude + ${newCodexFiles.length} Codex new/modified files...`)
+
+  for (const file of newClaudeFiles) {
     const sessionId = path.basename(file.path, '.jsonl')
     const messages = await parseClaudeTranscriptFile(file.path)
     if (messages.length > 0) {
       updateSessionRecord(data, sessionId, file.projectDir, messages)
+      if (data.sessions[sessionId] && !data.sessions[sessionId].provider) {
+        data.sessions[sessionId].provider = 'claude'
+      }
     }
+  }
+
+  for (const file of newCodexFiles) {
+    await ingestCodexRolloutFile(file.path, data)
   }
 
   data.lastSyncTimestamp = Date.now()
   rebuildAggregates(data)
   saveData(data)
 
-  logInfo(`[tokenomics] Sync complete: ${newFiles.length} files processed`)
+  logInfo(`[tokenomics] Sync complete: ${newClaudeFiles.length} Claude + ${newCodexFiles.length} Codex files processed`)
   return data
 }
 
