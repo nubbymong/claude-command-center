@@ -49,7 +49,20 @@ export interface SessionProvider {
 
   /** Optional — Claude only; Codex has no statusline shim. */
   deployStatuslineScript?(resourcesDir: string): Promise<void>
-  ingestSessionTelemetry(sessionId: string, onUpdate: (data: StatuslineData) => void): TelemetrySource
+  /**
+   * Subscribe to live telemetry for a spawned session.
+   *
+   * opts.cwd            -- resolved working directory passed to the PTY spawn.
+   *                        Used by the Codex provider to claim the correct rollout file.
+   * opts.spawnTimestamp -- Date.now() captured immediately before pty.spawn().
+   *                        Used as the lower-bound for the rollout claim window (ts >= spawn - 5s).
+   * Claude provider ignores opts (its telemetry comes from the statusline file watcher).
+   */
+  ingestSessionTelemetry(
+    sessionId: string,
+    opts: { cwd: string; spawnTimestamp: number },
+    onUpdate: (data: StatuslineData) => void,
+  ): TelemetrySource
   listHistorySessions(): Promise<HistorySession[]>
   resumeCommand(sessionId: string): { cmd: string; args: string[] }
   configureMcpServer(serverConfig: { name: string; url: string }): Promise<void>

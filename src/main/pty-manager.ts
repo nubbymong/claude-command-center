@@ -11,8 +11,10 @@ import { resolveClaudeBinary } from './providers/claude/spawn'
 import { detectClaudeUi, lastPromptLineForClaude } from './providers/claude/ui-detection'
 import { getProvider } from './providers'
 import { isSshCapable } from './providers/types'
+import type { TelemetrySource } from './providers/types'
 import { resolveCwd } from './path-utils'
 import { dispatchSSHStatuslineUpdate } from './statusline-watcher'
+import { handleStatuslineUpdate } from './tokenomics-manager'
 import { getGateway } from './hooks'
 import { injectHooks } from './hooks/session-hooks-writer'
 import {
@@ -86,6 +88,9 @@ function emitSshFlowState(win: BrowserWindow, sessionId: string, state: SshFlowS
 }
 
 const ptySessions = new Map<string, PtySession>()
+
+// Codex-provider telemetry sources: keyed by sessionId, stopped on PTY exit / kill.
+const codexTelemetrySources = new Map<string, TelemetrySource>()
 
 // === SSH OSC sentinel parser ===
 //
@@ -725,6 +730,8 @@ export function spawnPty(
     })
     const resolvedCwd = resolveCwd(options?.cwd)
     logInfo(`[pty-manager] Launching Codex PTY: ${spawnCmd} ${spawnArgs.join(' ')} cwd=${resolvedCwd}`)
+    // Capture timestamp before spawn so the watch-and-claim window starts no later than PTY launch.
+    const codexSpawnTimestamp = Date.now()
     ptyProcess = pty.spawn(spawnCmd, spawnArgs, {
       name: 'xterm-256color',
       cols,
@@ -737,6 +744,18 @@ export function spawnPty(
       if (win.isDestroyed()) return
       win.webContents.send(`pty:data:${sessionId}`, data)
     })
+    // Start rollout watch-and-claim telemetry. Updates are dispatched to the
+    // renderer (statusline:update) and tokenomics-manager identically to how
+    // Claude statusline updates flow through statusline-watcher.ts.
+    const codexTelSrc = provider.ingestSessionTelemetry(
+      sessionId,
+      { cwd: resolvedCwd, spawnTimestamp: codexSpawnTimestamp },
+      (data) => {
+        if (!win.isDestroyed()) win.webContents.send('statusline:update', data)
+        handleStatuslineUpdate(data)
+      },
+    )
+    codexTelemetrySources.set(sessionId, codexTelSrc)
   } else {
     // Local session — delegate binary + env construction to the provider.
     // The post-spawn shell-write (cd + claude command) stays here; only the
@@ -1061,7 +1080,13 @@ export function killPty(sessionId: string): void {
   pendingWrites.delete(sessionId)
   recentWrites.delete(sessionId)
   sshOscBuffers.delete(sessionId)
-  // Clear the SSH flow controller too — otherwise a stale entry keeps
+  // Stop Codex telemetry source if one was registered for this session.
+  const codexTel = codexTelemetrySources.get(sessionId)
+  if (codexTel) {
+    try { codexTel.stop() } catch { /* noop */ }
+    codexTelemetrySources.delete(sessionId)
+  }
+  // Clear the SSH flow controller too -- otherwise a stale entry keeps
   // a closure over the old ptyProcess and a renderer click after
   // session restart would write to a dead pty.
   const flow = sshFlows.get(sessionId)

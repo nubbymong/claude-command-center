@@ -6,7 +6,7 @@ import type { StatuslineData } from '../../../../src/shared/types'
 describe('ClaudeProvider.ingestSessionTelemetry', () => {
   it('returns a TelemetrySource with stop()', () => {
     const p = new ClaudeProvider()
-    const src = p.ingestSessionTelemetry('sid-tel-1', () => { /* noop */ })
+    const src = p.ingestSessionTelemetry('sid-tel-1', { cwd: '/test', spawnTimestamp: Date.now() }, () => { /* noop */ })
     expect(src).toBeTruthy()
     expect(typeof src.stop).toBe('function')
     src.stop()  // should not throw
@@ -15,7 +15,7 @@ describe('ClaudeProvider.ingestSessionTelemetry', () => {
   it('routes notifications by session id and respects unsubscribe', () => {
     const p = new ClaudeProvider()
     const cb = vi.fn()
-    const src = p.ingestSessionTelemetry('sid-tel-2', cb)
+    const src = p.ingestSessionTelemetry('sid-tel-2', { cwd: '/test', spawnTimestamp: Date.now() }, cb)
 
     const data: StatuslineData = { sessionId: 'sid-tel-2', timestamp: Date.now() } as StatuslineData
     notifyClaudeTelemetry(data)

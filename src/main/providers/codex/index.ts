@@ -2,6 +2,7 @@ import type { SessionProvider, SpawnOptions, TelemetrySource, HistorySession } f
 import type { LegacyVersion, StatuslineData } from '../../../shared/types'
 import { resolveCodexBinary, buildCodexSpawn } from './spawn'
 import { detectCodexUi } from './ui-detection'
+import { watchAndClaimRollout } from './telemetry'
 
 export class CodexProvider implements SessionProvider {
   readonly id = 'codex' as const
@@ -19,9 +20,12 @@ export class CodexProvider implements SessionProvider {
     return detectCodexUi(data)
   }
 
-  ingestSessionTelemetry(_sid: string, _cb: (d: StatuslineData) => void): TelemetrySource {
-    // P3 wires real telemetry; P2 ships a no-op so callers can register without crashing
-    return { stop: () => {} }
+  ingestSessionTelemetry(
+    sessionId: string,
+    opts: { cwd: string; spawnTimestamp: number },
+    onUpdate: (data: StatuslineData) => void,
+  ): TelemetrySource {
+    return watchAndClaimRollout(sessionId, opts.cwd, opts.spawnTimestamp, onUpdate)
   }
 
   async listHistorySessions(): Promise<HistorySession[]> {

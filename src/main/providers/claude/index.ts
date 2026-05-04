@@ -22,7 +22,12 @@ export class ClaudeProvider implements SshCapableProvider {
   detectUiRunning(data: string): boolean {
     return detectClaudeUi(data, true)  // post-spawn convenience: assume claudeSent
   }
-  ingestSessionTelemetry(sessionId: string, onUpdate: (data: StatuslineData) => void): TelemetrySource {
+  ingestSessionTelemetry(
+    sessionId: string,
+    _opts: { cwd: string; spawnTimestamp: number },
+    onUpdate: (data: StatuslineData) => void,
+  ): TelemetrySource {
+    // Claude telemetry arrives via the statusline file watcher (opts unused).
     return watchClaudeStatuslineFile(sessionId, onUpdate)
   }
   async listHistorySessions(): Promise<HistorySession[]> {
