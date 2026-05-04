@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { readFileSync, writeFileSync, mkdtempSync } from 'fs'
+import { readFileSync, writeFileSync, appendFileSync, mkdtempSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { mkdirSync } from 'fs'
@@ -186,7 +186,9 @@ describe('watchAndClaimRollout', () => {
     expect(updates.length).toBe(0)
   })
 
-  it('stop() cleans up the watcher and removes from claimed Set', async () => {
+  it('stop() clears the tail interval and removes from claimed Set', async () => {
+    // Verifies that stop() tears down cleanly: tail polling stops (no further
+    // onUpdate calls) and the claimed path is released for re-claim.
     const tmpBase = mkdtempSync(join(tmpdir(), 'ccc-test-codex-claimed-'))
     _mockCodexHome = tmpBase
     vi.mocked(getCodexHome).mockReturnValue(tmpBase)
@@ -216,20 +218,20 @@ describe('watchAndClaimRollout', () => {
     const rolloutPath = join(dateDir, `rollout-claimed-test.jsonl`)
     writeFileSync(rolloutPath, sessionMeta + '\n', 'utf-8')
 
-    // First watcher claims it
+    // First source claims it
     const src1 = watchAndClaimRollout('sess-claim-1', '/reclaim/cwd', spawnTs, () => {})
     // Wait for claim poll
     await new Promise((r) => setTimeout(r, 600))
     src1.stop()
 
-    // After stop(), the path is removed from claimed -- a second watcher can claim it
+    // After stop(), the path is removed from claimed -- a second source can claim it
     const updates: unknown[] = []
     const src2 = watchAndClaimRollout('sess-claim-2', '/reclaim/cwd', Date.now(), (d) => updates.push(d))
 
     // Wait for src2 to claim the file (polling interval is 250ms; 500ms is safe)
     await new Promise((r) => setTimeout(r, 500))
 
-    // Now append a token_count line so the watcher fires an update
+    // Now append a token_count line -- tail poll (500ms) will pick it up
     const tokenCountLine = JSON.stringify({
       timestamp: new Date().toISOString(),
       type: 'event_msg',
@@ -245,12 +247,91 @@ describe('watchAndClaimRollout', () => {
     })
     writeFileSync(rolloutPath, sessionMeta + '\n' + tokenCountLine + '\n', 'utf-8')
 
-    // Wait for the fs.watch callback to fire and emit the update
-    await new Promise((r) => setTimeout(r, 400))
+    // Wait past one tail-poll cycle (500ms + buffer)
+    await new Promise((r) => setTimeout(r, 700))
     src2.stop()
 
     // The update should have fired at least once for the token_count line
     expect(updates.length).toBeGreaterThan(0)
+  })
+
+  it('polls and emits new token_count events appended after claim', async () => {
+    // Spec: simulates Codex appending a token_count event AFTER the watcher claimed
+    // the file. Without polling, fs.watch on Windows may miss this. Polling guarantees
+    // the new event reaches onUpdate within ~500ms.
+    vi.useFakeTimers()
+
+    const tmpBase = mkdtempSync(join(tmpdir(), 'ccc-test-codex-polltail-'))
+    _mockCodexHome = tmpBase
+    vi.mocked(getCodexHome).mockReturnValue(tmpBase)
+
+    const today = new Date()
+    const dateDir = join(
+      tmpBase, 'sessions',
+      String(today.getUTCFullYear()),
+      String(today.getUTCMonth() + 1).padStart(2, '0'),
+      String(today.getUTCDate()).padStart(2, '0'),
+    )
+    mkdirSync(dateDir, { recursive: true })
+
+    // Write initial rollout with only session_meta + task_started (no token_count yet)
+    const spawnTs = Date.now()
+    const rolloutTs = new Date(spawnTs + 100).toISOString()
+    const sessionMeta = JSON.stringify({
+      timestamp: rolloutTs,
+      type: 'session_meta',
+      payload: {
+        id: 'poll-session-1',
+        timestamp: rolloutTs,
+        cwd: '/poll/cwd',
+        model: 'gpt-5.5',
+        cli_version: '0.125.0',
+      },
+    })
+    const taskStarted = JSON.stringify({
+      timestamp: rolloutTs,
+      type: 'event_msg',
+      payload: { type: 'task_started', model_context_window: 200000 },
+    })
+    const rolloutPath = join(dateDir, `rollout-polltail-test.jsonl`)
+    writeFileSync(rolloutPath, sessionMeta + '\n' + taskStarted + '\n', 'utf-8')
+
+    const updates: import('../../../../src/shared/types').StatuslineData[] = []
+    const src = watchAndClaimRollout('sess-poll', '/poll/cwd', spawnTs, (d) => updates.push(d))
+
+    // Advance past claim-poll (250ms) to trigger claim + initial parseAndEmit.
+    // Initial parse finds no token_count -- no update yet.
+    await vi.advanceTimersByTimeAsync(300)
+    expect(updates.length).toBe(0)
+
+    // Simulate Codex appending a token_count event to the file
+    const tokenCountLine = JSON.stringify({
+      timestamp: new Date().toISOString(),
+      type: 'event_msg',
+      payload: {
+        type: 'token_count',
+        info: {
+          total_token_usage: { input_tokens: 1500, cached_input_tokens: 300, output_tokens: 200, reasoning_output_tokens: 0, total_tokens: 2000 },
+          last_token_usage: null,
+          model_context_window: 200000,
+        },
+        rate_limits: null,
+      },
+    })
+    appendFileSync(rolloutPath, tokenCountLine + '\n', 'utf-8')
+
+    // Advance past the tail-poll interval (500ms) -- polling picks up the new line
+    await vi.advanceTimersByTimeAsync(600)
+
+    src.stop()
+    vi.useRealTimers()
+
+    expect(updates.length).toBeGreaterThan(0)
+    const latest = updates[updates.length - 1]
+    expect(latest.inputTokens).toBe(1500 + 300) // input_tokens + cached_input_tokens
+    expect(latest.outputTokens).toBe(200)
+    expect(latest.contextWindowSize).toBe(200000)
+    expect(latest.contextUsedPercent).toBeCloseTo((2000 / 200000) * 100, 4)
   })
 })
 

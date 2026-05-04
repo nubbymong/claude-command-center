@@ -8,10 +8,10 @@
  * Exports:
  *   parseCodexRollout       -- parse raw JSONL text into typed events
  *   mapTokenCountToStatusline -- convert a TokenCountEvent to StatuslineData
- *   watchAndClaimRollout    -- 250ms-poll claim + fs.watch tail pipeline
+ *   watchAndClaimRollout    -- 250ms-poll claim + 500ms-poll tail pipeline
  */
 
-import { readFileSync, watch, readdirSync, existsSync } from 'fs'
+import { readFileSync, readdirSync, existsSync } from 'fs'
 import { join } from 'path'
 import { getCodexHome } from './auth'
 import { computeCodexCostUsd } from './pricing'
@@ -234,12 +234,14 @@ const claimed = new Set<string>()
  * 1. Poll every 250ms, looking for a rollout file in the UTC date directory
  *    whose session_meta.cwd matches sessionCwd AND whose timestamp is within
  *    [spawnTimestamp - 5000ms, +inf).
- * 2. Once claimed, tail the file with fs.watch. On each change, re-read from
- *    lastSize bytes -- avoids re-emitting already-processed content.
+ * 2. Once claimed, poll parseAndEmit every 500ms. fs.watch is NOT used because
+ *    on Windows it misses append events when the Codex CLI writer holds the
+ *    file open -- same failure mode that hit the Claude statusline in v1.2.134
+ *    (SMB writes). The lastSize dedupe in parseAndEmit keeps the polling cheap.
  * 3. If no claim happens within 10s, log a warning (--ephemeral path) and
  *    stop polling.
- * 4. stop() clears the interval, closes the watcher, and removes the path
- *    from the claimed set.
+ * 4. stop() clears both the claim-poll interval and the tail-poll interval,
+ *    and removes the path from the claimed set.
  *
  * Windows path note: Codex records cwd exactly as provided by the OS at spawn
  * time. Pass the same resolvedCwd string from pty-manager (backslashes on
@@ -266,7 +268,7 @@ export function watchAndClaimRollout(
 
   let claimedPath: string | null = null
   let intervalHandle: ReturnType<typeof setInterval> | null = null
-  let watcherHandle: ReturnType<typeof watch> | null = null
+  let tailIntervalHandle: ReturnType<typeof setInterval> | null = null
   let stopped = false
   let lastSize = 0
   let contextWindow: number | null = null
@@ -312,9 +314,18 @@ export function watchAndClaimRollout(
             timestamp: String(evt.timestamp ?? ''),
           }
 
-          // Initial parse + switch to fs.watch tail
+          // Initial parse covers the case where session_meta + task_started +
+          // token_count are all already present at claim time.
           parseAndEmit(fullPath)
-          watcherHandle = watch(fullPath, () => parseAndEmit(fullPath))
+
+          // Replaced fs.watch with a polling interval -- fs.watch on Windows
+          // misses append events when the Codex CLI writer holds the file open
+          // and appends progressively. lastSize dedupe in parseAndEmit keeps
+          // the polling cheap when the file has not grown.
+          tailIntervalHandle = setInterval(() => {
+            if (stopped || !claimedPath) return
+            parseAndEmit(claimedPath)
+          }, 500)
 
           // Claimed -- the interval can stop polling
           if (intervalHandle) {
@@ -394,9 +405,9 @@ export function watchAndClaimRollout(
         clearInterval(intervalHandle)
         intervalHandle = null
       }
-      if (watcherHandle) {
-        try { watcherHandle.close() } catch { /* ignore */ }
-        watcherHandle = null
+      if (tailIntervalHandle) {
+        clearInterval(tailIntervalHandle)
+        tailIntervalHandle = null
       }
       if (claimedPath) {
         claimed.delete(claimedPath)
