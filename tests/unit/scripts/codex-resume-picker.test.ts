@@ -9,7 +9,7 @@ const lib = require('../../../scripts/lib/codex-resume-picker-lib.js') as {
   parseRollout: (text: string) => null | { id: string; cwd: string; model: string; effort?: string; label: string }
   walkRollouts: (home: string, maxDays: number, cwd: string) => Array<{ id: string; cwd: string; model: string; effort?: string; label: string; mtime: number }>
   buildResumeArgs: (uuid: string | null, flags: string[]) => string[]
-  shouldFallback: (resumeUuid: string | null, exitStatus: number) => boolean
+  shouldFallback: (resumeUuid: string | null, exitStatus: number | null | undefined) => boolean
   shouldUseShell: (cmd: string, platform: string) => boolean
 }
 
@@ -134,6 +134,14 @@ describe('codex-resume-picker shouldFallback', () => {
   it('returns false when resume was not attempted (uuid null), regardless of exitStatus', () => {
     expect(lib.shouldFallback(null, 1)).toBe(false)
     expect(lib.shouldFallback(null, 0)).toBe(false)
+  })
+
+  it('returns false when exitStatus is null (spawn failure -- fresh fallback would also fail)', () => {
+    expect(lib.shouldFallback('uuid-abc', null)).toBe(false)
+  })
+
+  it('returns false when exitStatus is undefined (defensive, same reasoning as null)', () => {
+    expect(lib.shouldFallback('uuid-abc', undefined)).toBe(false)
   })
 })
 

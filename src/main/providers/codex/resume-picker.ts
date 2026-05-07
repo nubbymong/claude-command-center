@@ -9,7 +9,14 @@
 import * as fs from 'fs'
 import * as path from 'path'
 
-export async function deployCodexResumePickerScript(resourcesDir: string): Promise<void> {
+/**
+ * @param resourcesDir Destination resources directory.
+ * @param sourceRoot   Optional override for the source-script lookup root. The
+ *   default joins `__dirname` against `'../../scripts/...'`, which under vitest
+ *   resolves to `<repo>/src/main/scripts/`. Tests inject a per-test temp dir to
+ *   avoid races on that shared on-disk path under vitest's parallel file runner.
+ */
+export async function deployCodexResumePickerScript(resourcesDir: string, sourceRoot?: string): Promise<void> {
   const resourcesScriptsDir = path.join(resourcesDir, 'scripts')
   if (!fs.existsSync(resourcesScriptsDir)) {
     fs.mkdirSync(resourcesScriptsDir, { recursive: true })
@@ -19,8 +26,12 @@ export async function deployCodexResumePickerScript(resourcesDir: string): Promi
     fs.mkdirSync(resourcesLibDir, { recursive: true })
   }
 
-  const pickerSrc = path.join(__dirname, '../../scripts/codex-resume-picker.js')
-  const libSrc = path.join(__dirname, '../../scripts/lib/codex-resume-picker-lib.js')
+  const pickerSrc = sourceRoot
+    ? path.join(sourceRoot, 'scripts/codex-resume-picker.js')
+    : path.join(__dirname, '../../scripts/codex-resume-picker.js')
+  const libSrc = sourceRoot
+    ? path.join(sourceRoot, 'scripts/lib/codex-resume-picker-lib.js')
+    : path.join(__dirname, '../../scripts/lib/codex-resume-picker-lib.js')
 
   if (fs.existsSync(pickerSrc)) {
     fs.copyFileSync(pickerSrc, path.join(resourcesScriptsDir, 'codex-resume-picker.js'))

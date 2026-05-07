@@ -17,6 +17,7 @@ import { useStatuslineSubscription } from '../hooks/useStatuslineSubscription'
 import { useActiveTabEffect } from '../hooks/useActiveTabEffect'
 import { useCursorLayerVisibility } from '../hooks/useCursorLayerVisibility'
 import { useAgentLibraryStore, BUILTIN_TEMPLATES } from '../stores/agentLibraryStore'
+import type { ProviderId, CodexOptions } from '../../shared/types'
 
 // Re-export for consumers
 export { killSessionPty } from '../ptyTracker'
@@ -57,13 +58,9 @@ interface Props {
    * `--model <name>` when set. */
   model?: string
   /** Provider discriminator. Defaults to 'claude' if unspecified. */
-  provider?: 'claude' | 'codex'
+  provider?: ProviderId
   /** Codex sub-options (only meaningful when provider === 'codex'). */
-  codexOptions?: {
-    model?: string
-    reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
-    permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted'
-  }
+  codexOptions?: CodexOptions
 }
 
 export default function TerminalView({ sessionId, configId, cwd, shellOnly, elevated, ssh, isActive = true, partnerEnabled, isPartnerActive, onTogglePartner, partnerSessionId, parentSessionId, legacyVersion, agentIds, effortLevel, disableAutoMemory, model, provider, codexOptions }: Props) {

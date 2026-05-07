@@ -1,9 +1,9 @@
-import type { LegacyVersion, SshConfig, StatuslineData } from '../../shared/types'
+import type { CodexOptions, LegacyVersion, ProviderId, SshConfig, StatuslineData } from '../../shared/types'
 
 export interface SpawnOptions {
   sessionId: string
   /** Provider discriminator. Defaults to 'claude' if unspecified. */
-  provider?: 'claude' | 'codex'
+  provider?: ProviderId
   cwd?: string
   cols?: number
   rows?: number
@@ -18,11 +18,7 @@ export interface SpawnOptions {
   disableAutoMemory?: boolean
   model?: string
   // Codex-specific (only present when provider === 'codex')
-  codexOptions?: {
-    model?: string
-    reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
-    permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted'
-  }
+  codexOptions?: CodexOptions
 }
 
 export interface TelemetrySource {
@@ -31,7 +27,7 @@ export interface TelemetrySource {
 }
 
 export interface HistorySession {
-  provider: 'claude' | 'codex'
+  provider: ProviderId
   sessionId: string
   cwd: string
   label: string
@@ -40,7 +36,7 @@ export interface HistorySession {
 }
 
 export interface SessionProvider {
-  readonly id: 'claude' | 'codex'
+  readonly id: ProviderId
   readonly displayName: string
 
   resolveBinary(legacyVersion?: LegacyVersion): { cmd: string; args: string[] } | null

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync, readdirSync } from 'fs'
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync } from 'fs'
 import { join } from 'path'
-import { tmpdir, homedir } from 'os'
+import { tmpdir } from 'os'
 
 // Mock getResourcesDirectory so configureClaudeSettings does not touch the real path
 vi.mock('../../../../src/main/ipc/setup-handlers', () => ({
@@ -53,36 +53,18 @@ describe('Claude script deployment', () => {
   })
 
   it('deployClaudeResumePickerScript copies the source resume-picker.js to resourcesDir/scripts', async () => {
-    // The deploy module uses path.join(__dirname, '../../scripts/resume-picker.js') which,
-    // under vitest, resolves to <repo>/src/main/scripts/resume-picker.js (because the
-    // module's __dirname is src/main/providers/claude/). In production, electron-vite
-    // bundles to out/main/index.js so the same join lands at <repo>/scripts/. We seed
-    // the dev-time path for the test.
-    //
-    // SAFETY: Only delete files / dirs the test created. Track pre-existing state
-    // so a real <repo>/src/main/scripts/ (currently does not exist, but might
-    // someday) is never wiped by a test cleanup.
-    const stubDir = join(__dirname, '..', '..', '..', '..', 'src', 'main', 'scripts')
-    const stubPath = join(stubDir, 'resume-picker.js')
-    const dirPreExisted = existsSync(stubDir)
-    const filePreExisted = existsSync(stubPath)
-    mkdirSync(stubDir, { recursive: true })
-    writeFileSync(stubPath, '// test stub')
+    // Per-test temp source root avoids races on the shared <repo>/src/main/scripts/
+    // path that the deploy default resolves to under vitest. P4.11 added the
+    // sourceRoot override exactly for this reason -- vitest runs files in parallel
+    // and the Codex resume-picker test seeds the same default location.
+    const tempSrcRoot = mkdtempSync(join(tmpdir(), 'ccc-claude-src-'))
     try {
-      await deployClaudeResumePickerScript(resDir)
+      mkdirSync(join(tempSrcRoot, 'scripts'), { recursive: true })
+      writeFileSync(join(tempSrcRoot, 'scripts', 'resume-picker.js'), '// test stub')
+      await deployClaudeResumePickerScript(resDir, tempSrcRoot)
       expect(existsSync(join(resDir, 'scripts', 'resume-picker.js'))).toBe(true)
     } finally {
-      // Only remove the stub file if we created it.
-      if (!filePreExisted) {
-        try { rmSync(stubPath, { force: true }) } catch {}
-      }
-      // Only remove the stub dir if we created it AND it's empty.
-      if (!dirPreExisted) {
-        try {
-          const entries = existsSync(stubDir) ? readdirSync(stubDir) : []
-          if (entries.length === 0) rmSync(stubDir, { recursive: false, force: true })
-        } catch {}
-      }
+      try { rmSync(tempSrcRoot, { recursive: true, force: true }) } catch {}
     }
   })
 

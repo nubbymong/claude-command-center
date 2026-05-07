@@ -143,7 +143,15 @@ function launchCodex(resumeUuid) {
     windowsHide: false,
   })
 
-  // If resume failed, fall back to fresh codex with same flags.
+  // spawnSync failed to launch (ENOENT, EACCES, etc.). status is null when
+  // this happens; result.error carries the cause. Surface and exit non-zero
+  // -- a fallback retry would just hit the same missing binary.
+  if (result.error) {
+    console.error(`\n  Failed to launch codex: ${result.error.message}\n`)
+    process.exit(1)
+  }
+
+  // If resume exited non-zero with a real status, fall back to fresh codex.
   if (lib.shouldFallback(resumeUuid, result.status)) {
     console.log('\n  Conversation no longer available -- starting fresh session...\n')
     const fresh = spawnSync(cmd, forwarded, {
@@ -151,10 +159,15 @@ function launchCodex(resumeUuid) {
       shell: lib.shouldUseShell(cmd, os.platform()),
       windowsHide: false,
     })
-    process.exit(fresh.status || 0)
+    if (fresh.error) {
+      console.error(`\n  Failed to launch codex: ${fresh.error.message}\n`)
+      process.exit(1)
+    }
+    // Use ?? not || so a real exit 0 is preserved; null (signal-killed) -> 1.
+    process.exit(fresh.status ?? 1)
   }
 
-  process.exit(result.status || 0)
+  process.exit(result.status ?? 1)
 }
 
 main().catch(() => {

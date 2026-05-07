@@ -137,9 +137,13 @@ function buildResumeArgs(uuid, flags) {
 // -- shouldFallback -------------------------------------------------
 // Decides whether `launchCodex` should retry as a fresh `codex` session.
 // Only retries when (a) we tried a `codex resume <uuid>` (resumeUuid is set)
-// AND (b) the resume exited non-zero. Pure function for unit testing.
+// AND (b) the resume exited non-zero with a real status code. A null status
+// means spawnSync failed to launch the process at all (e.g. ENOENT) -- no
+// point retrying with a fresh session because the same binary is missing;
+// caller should surface the error instead.
 function shouldFallback(resumeUuid, exitStatus) {
   if (!resumeUuid) return false
+  if (exitStatus === null || exitStatus === undefined) return false
   return exitStatus !== 0
 }
 

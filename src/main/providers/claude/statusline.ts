@@ -270,13 +270,21 @@ export function configureClaudeSettings(): void {
  * electron-vite bundles all src/main/**\/*.ts into a single out/main/index.js,
  * so `__dirname` is always out/main/ regardless of original source location.
  * The script lives one directory up at out/scripts/.
+ *
+ * @param resourcesDir Destination resources directory.
+ * @param sourceRoot   Optional override for the source-script lookup root. The
+ *   default joins `__dirname` against `'../../scripts/...'`, which under vitest
+ *   resolves to `<repo>/src/main/scripts/`. Tests inject a per-test temp dir to
+ *   avoid races on that shared on-disk path under vitest's parallel file runner.
  */
-export async function deployClaudeResumePickerScript(resourcesDir: string): Promise<void> {
+export async function deployClaudeResumePickerScript(resourcesDir: string, sourceRoot?: string): Promise<void> {
   const resourcesScriptsDir = path.join(resourcesDir, 'scripts')
   if (!fs.existsSync(resourcesScriptsDir)) {
     fs.mkdirSync(resourcesScriptsDir, { recursive: true })
   }
-  const resumePickerSrc = path.join(__dirname, '../../scripts/resume-picker.js')
+  const resumePickerSrc = sourceRoot
+    ? path.join(sourceRoot, 'scripts/resume-picker.js')
+    : path.join(__dirname, '../../scripts/resume-picker.js')
   if (fs.existsSync(resumePickerSrc)) {
     fs.copyFileSync(resumePickerSrc, path.join(resourcesScriptsDir, 'resume-picker.js'))
   }
