@@ -462,8 +462,18 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
   ipcMain.handle(
     IPC.GITHUB_SESSION_CONFIG_UPDATE,
     async (_e, sessionId: string, patch: Partial<SessionGitHubIntegration>) => {
+      // Diagnostic for issue #280: log the inputs + the on-disk shape we
+      // read so we can verify the handler sees what the renderer flushed.
+      // Remove once root cause is found.
       const sessions = await deps.loadSessions()
       const idx = sessions.findIndex((s) => s.id === sessionId)
+      console.log('[gh-integration #280] SESSION_CONFIG_UPDATE', {
+        sessionId,
+        patch,
+        diskSessionCount: sessions.length,
+        diskSessionFound: idx >= 0,
+        diskGhBefore: idx >= 0 ? sessions[idx].githubIntegration : null,
+      })
       if (idx < 0) return { ok: false, error: 'not-found' }
       const current: SessionGitHubIntegration = sessions[idx].githubIntegration ?? {
         enabled: false,
@@ -472,6 +482,7 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
       const merged: SessionGitHubIntegration = { ...current, ...patch }
       sessions[idx] = { ...sessions[idx], githubIntegration: merged }
       await deps.saveSessions(sessions)
+      console.log('[gh-integration #280] SESSION_CONFIG_UPDATE wrote to disk', { sessionId, merged })
       // Register or refresh the orchestrator's view of this session. On
       // disable/slug-clear, unregister so its timer doesn't keep firing.
       // registerSession already clears any prior timer for this id, so no

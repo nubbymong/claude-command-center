@@ -70,6 +70,11 @@ export default function SessionGitHubConfig({ sessionId, cwd, initial }: Props) 
       authProfileId: profileId || undefined,
       autoDetected: false,
     }
+    // Diagnostic instrumentation for issue #280 (activation state lost
+    // across restarts). Tagged so the user can filter DevTools console by
+    // "gh-integration" to pull just the relevant trail. Remove once the
+    // root cause is found.
+    console.log('[gh-integration #280] save() called', { sessionId, patch })
     try {
       // Flush current sessions to session-state.json before invoking the
       // main-side handler. session.save is otherwise only called on graceful
@@ -77,24 +82,33 @@ export default function SessionGitHubConfig({ sessionId, cwd, initial }: Props) 
       // looks them up there and returns "not-found". Bail if the flush
       // fails; without it the next call would hit the same not-found path
       // and surface a confusing error.
-      const saved = await window.electronAPI.session.save(buildSessionState())
+      const stateToFlush = buildSessionState()
+      const flushedSession = stateToFlush.sessions.find((s) => s.id === sessionId)
+      console.log('[gh-integration #280] flushing buildSessionState', {
+        sessionCount: stateToFlush.sessions.length,
+        sessionPresent: !!flushedSession,
+        flushedGithubIntegration: flushedSession?.githubIntegration,
+      })
+      const saved = await window.electronAPI.session.save(stateToFlush)
+      console.log('[gh-integration #280] session.save returned', saved)
       if (!saved) {
         setTestResult('Error: Failed to persist session state before save')
         setTimeout(() => setTestResult(null), 3000)
         return
       }
       const r = await window.electronAPI.github.updateSessionConfig(sessionId, patch)
+      console.log('[gh-integration #280] updateSessionConfig returned', r)
       if (r.ok) {
         // Mirror the patch into the renderer session store so the GitHub
         // panel's enable-gate reacts immediately — otherwise the change only
         // shows up on the next app restart when SavedSession rehydrates.
         const prior = useSessionStore.getState().getSession(sessionId)
-        updateSession(sessionId, {
-          githubIntegration: {
-            ...(prior?.githubIntegration ?? { enabled: false, autoDetected: false }),
-            ...patch,
-          },
-        })
+        const merged = {
+          ...(prior?.githubIntegration ?? { enabled: false, autoDetected: false }),
+          ...patch,
+        }
+        updateSession(sessionId, { githubIntegration: merged })
+        console.log('[gh-integration #280] mirrored into renderer store', merged)
         if (enabled) trackUsage('github.session-enabled')
       }
       setTestResult(r.ok ? 'Saved' : `Error: ${r.error ?? 'unknown'}`)

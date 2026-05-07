@@ -410,14 +410,24 @@ function createWindow(): void {
 
   // Session state persistence IPC handlers
   ipcMain.handle('session:save', async (_event, state: SessionState) => {
+    // Diagnostic for issue #280: log GitHub integration shape on every
+    // session-state save. Remove once root cause is found.
+    const ghSnapshot = state.sessions?.map((s: any) => ({ id: s.id, gh: s.githubIntegration })) ?? []
+    console.log('[gh-integration #280] main: session:save received', { ghSnapshot })
     return saveSessionState(state)
   })
 
   ipcMain.handle('session:load', async () => {
-    return loadSessionState()
+    const loaded = loadSessionState()
+    // Diagnostic for issue #280: log what came off disk on app start.
+    // Remove once root cause is found.
+    const ghSnapshot = loaded?.sessions?.map((s: any) => ({ id: s.id, gh: s.githubIntegration })) ?? null
+    console.log('[gh-integration #280] main: session:load returning', { ghSnapshot })
+    return loaded
   })
 
   ipcMain.handle('session:clear', async () => {
+    console.log('[gh-integration #280] main: session:clear called -- session-state.json is being deleted')
     return clearSessionState()
   })
 

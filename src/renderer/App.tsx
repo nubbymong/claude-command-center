@@ -377,6 +377,13 @@ export default function App() {
       const savedState = await window.electronAPI.session.load() as SessionState | null
       if (!savedState || savedState.sessions.length === 0) return
 
+      // Diagnostic for issue #280: log the GitHub integration shape as
+      // restored from disk so we can compare with the close-time flush.
+      // Remove once root cause is found.
+      console.log('[gh-integration #280] restoreSavedSessions loaded from disk', {
+        ghSnapshot: savedState.sessions.map((s) => ({ id: s.id, gh: s.githubIntegration })),
+      })
+
       console.log(`[App] Restoring ${savedState.sessions.length} sessions...`)
 
       const restoredSessions: Session[] = savedState.sessions.map((saved: SavedSession) => {
@@ -434,7 +441,13 @@ export default function App() {
     setIsClosing(true)
     if (isUpdate) setIsUpdating(true)
     try {
-      await window.electronAPI.session.save(buildSessionState())
+      // Diagnostic for issue #280: capture the renderer's githubIntegration
+      // snapshot at close time so we can verify the flush carries enabled=true
+      // through to disk. Remove once root cause is found.
+      const stateToSave = buildSessionState()
+      const ghSnapshot = stateToSave.sessions.map((s) => ({ id: s.id, gh: s.githubIntegration }))
+      console.log('[gh-integration #280] handleSaveAndClose flushing', { ghSnapshot })
+      await window.electronAPI.session.save(stateToSave)
       console.log('[App] Session state saved')
       if (isUpdate) {
         await window.electronAPI.update.installAndRestart()
