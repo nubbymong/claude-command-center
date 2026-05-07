@@ -177,8 +177,7 @@ describe('seedTokenomics + findCodexRolloutFiles integration', () => {
       'getResourcesDirectory'
     ).mockReturnValue(resourcesDir)
 
-    // -- Set up Claude history: .claude/projects/<proj>/session.jsonl
-    const claudeDir = path.join(os.homedir(), '.claude', 'projects')
+    // -- Set up Claude history under resourcesDir (not real ~/.claude/projects)
     const fakeProjectDir = path.join(resourcesDir, 'fake-claude-project')
     fs.mkdirSync(fakeProjectDir, { recursive: true })
     const claudeSessionId = 'claude-seed-test-session'

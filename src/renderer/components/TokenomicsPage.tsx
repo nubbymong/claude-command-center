@@ -21,9 +21,9 @@ function getModelColor(model: string): string {
     if (model.startsWith(key.replace(/-\d+-\d+$/, ''))) return MODEL_COLORS[key]
   }
   // GPT/Codex models not explicitly listed -- use sky
-  if (model.startsWith('gpt-') || model.startsWith('o')) return '#89dceb'
+  if (model.startsWith('gpt-') || model.startsWith('o')) return '#89DCEB'
   // Unknown model fallback -- catppuccin subtext0
-  return '#a6adc8'
+  return '#A6ADC8'
 }
 
 /**
