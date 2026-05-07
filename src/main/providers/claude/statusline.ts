@@ -17,7 +17,13 @@ import * as os from 'os'
 
 import { getResourcesDirectory } from '../../ipc/setup-handlers'
 
-const STATUSLINE_SCRIPT = path.join(os.homedir(), '.claude', 'claude-multi-statusline.js')
+// Lazy because os.homedir() is sensitive to USERPROFILE / HOME, which tests
+// sandbox in beforeEach. A module-level constant freezes the path at import
+// time and bypasses sandboxing -- prior bug surfaced by P4.2's deploy test on
+// CI runners where the runner's real ~/.claude does not pre-exist.
+function statuslineScriptPath(): string {
+  return path.join(os.homedir(), '.claude', 'claude-multi-statusline.js')
+}
 
 /**
  * Deploy the statusline script that Claude Code will invoke.
@@ -197,7 +203,7 @@ process.stdin.on('end', async () => {
 });
 `
 
-  fs.writeFileSync(STATUSLINE_SCRIPT, scriptContent, { mode: 0o755 })
+  fs.writeFileSync(statuslineScriptPath(), scriptContent, { mode: 0o755 })
 
   // Also deploy to resources/scripts/ for SSH-mounted access
   try {

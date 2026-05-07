@@ -13,6 +13,7 @@ import { deployClaudeStatuslineScript, deployClaudeResumePickerScript } from '..
 
 describe('Claude script deployment', () => {
   let resDir: string
+  let sandboxHome: string
   let homeBackup: string | undefined
 
   beforeEach(() => {
@@ -20,13 +21,14 @@ describe('Claude script deployment', () => {
     _mockResources = resDir
     // Sandbox HOME so settings.json writes do not touch the real ~/.claude
     homeBackup = process.env.USERPROFILE ?? process.env.HOME
-    const sandboxHome = mkdtempSync(join(tmpdir(), 'ccc-home-'))
+    sandboxHome = mkdtempSync(join(tmpdir(), 'ccc-home-'))
     if (process.platform === 'win32') process.env.USERPROFILE = sandboxHome
     else process.env.HOME = sandboxHome
   })
 
   afterEach(() => {
     try { rmSync(resDir, { recursive: true, force: true }) } catch {}
+    try { rmSync(sandboxHome, { recursive: true, force: true }) } catch {}
     if (process.platform === 'win32') {
       if (homeBackup) process.env.USERPROFILE = homeBackup
       else delete process.env.USERPROFILE
@@ -40,6 +42,14 @@ describe('Claude script deployment', () => {
   it('deployClaudeStatuslineScript writes the statusline bridge to resourcesDir/scripts', async () => {
     await deployClaudeStatuslineScript(resDir)
     expect(existsSync(join(resDir, 'scripts', 'claude-multi-statusline.js'))).toBe(true)
+  })
+
+  it('deployClaudeStatuslineScript writes the statusline bridge to the sandbox HOME, NOT the real ~/.claude', async () => {
+    // Regression test: prior bug captured os.homedir() in a module-level constant
+    // at import time, bypassing the sandbox HOME override. P4.10 made the path
+    // lazy. This test asserts the home write lands in the sandbox.
+    await deployClaudeStatuslineScript(resDir)
+    expect(existsSync(join(sandboxHome, '.claude', 'claude-multi-statusline.js'))).toBe(true)
   })
 
   it('deployClaudeResumePickerScript copies the source resume-picker.js to resourcesDir/scripts', async () => {
