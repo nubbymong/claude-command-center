@@ -8,10 +8,11 @@ import { useSessionStore } from '../stores/sessionStore'
 import { eventToShortcutString, DEFAULT_SHORTCUTS, SHORTCUT_LABELS } from '../utils/shortcuts'
 import GitHubConfigTab from './github/config/GitHubConfigTab'
 import { CodexSettingsTab } from './codex/CodexSettingsTab'
+import HooksGatewaySection from './github/config/HooksGatewaySection'
 import PageFrame from './PageFrame'
 declare const __BUILD_TIME__: string
 
-export const SETTINGS_TAB_IDS = ['general', 'statusline', 'shortcuts', 'github', 'codex', 'about'] as const
+export const SETTINGS_TAB_IDS = ['general', 'statusline', 'shortcuts', 'github', 'codex', 'hooks', 'about'] as const
 export type SettingsTab = typeof SETTINGS_TAB_IDS[number]
 
 const TABS: { id: SettingsTab; label: string }[] = [
@@ -20,6 +21,7 @@ const TABS: { id: SettingsTab; label: string }[] = [
   { id: 'shortcuts', label: 'Shortcuts' },
   { id: 'github', label: 'GitHub' },
   { id: 'codex', label: 'Codex' },
+  { id: 'hooks', label: 'Hooks' },
   { id: 'about', label: 'About' }
 ]
 
@@ -346,6 +348,8 @@ export default function SettingsPage({ initialTab }: SettingsPageProps = {}) {
           {activeTab === 'github' && <GitHubConfigTab />}
 
           {activeTab === 'codex' && <CodexSettingsTab />}
+
+          {activeTab === 'hooks' && <HooksGatewaySection />}
 
           {activeTab === 'about' && (
             <Section title="About" icon={<><circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.2" fill="none" /><path d="M8 7v4M8 5.5v.01" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" /></>}>

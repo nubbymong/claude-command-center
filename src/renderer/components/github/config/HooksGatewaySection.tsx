@@ -75,7 +75,7 @@ export default function HooksGatewaySection() {
   }
 
   return (
-    <section className="space-y-3 pt-6 border-t border-surface0">
+    <section className="space-y-3">
       <div className="flex items-center justify-between gap-4">
         <div>
           <h3 className="text-sm font-semibold text-text">HTTP Hooks Gateway</h3>
