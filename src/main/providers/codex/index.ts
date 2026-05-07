@@ -3,6 +3,7 @@ import type { LegacyVersion, StatuslineData } from '../../../shared/types'
 import { resolveCodexBinary, buildCodexSpawn } from './spawn'
 import { detectCodexUi } from './ui-detection'
 import { watchAndClaimRollout } from './telemetry'
+import { deployCodexResumePickerScript } from './resume-picker'
 
 export class CodexProvider implements SessionProvider {
   readonly id = 'codex' as const
@@ -41,5 +42,9 @@ export class CodexProvider implements SessionProvider {
 
   async configureMcpServer(_cfg: { name: string; url: string }): Promise<void> {
     // P3 wires conductor-vision MCP injection into ~/.codex/config.toml
+  }
+
+  async deployResumePickerScript(resourcesDir: string): Promise<void> {
+    return deployCodexResumePickerScript(resourcesDir)
   }
 }
