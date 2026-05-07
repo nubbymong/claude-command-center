@@ -14,13 +14,14 @@
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS-blue" alt="Platform" />
   <img src="https://img.shields.io/badge/electron-33-47848F?logo=electron" alt="Electron" />
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License" />
-  <a href="../../actions"><img src="https://img.shields.io/badge/tests-566%20passing-success" alt="Tests" /></a>
+  <a href="../../actions"><img src="https://img.shields.io/badge/tests-740%20passing-success" alt="Tests" /></a>
 </p>
 
 <p align="center">
   <a href="#installation">Installation</a> &bull;
   <a href="#highlights">Highlights</a> &bull;
   <a href="#features">Features</a> &bull;
+  <a href="#whats-new-in-v15">What's New in v1.5</a> &bull;
   <a href="#whats-new-in-v14">What's New in v1.4</a> &bull;
   <a href="#build-from-source">Build from Source</a> &bull;
   <a href="#security">Security</a>
@@ -240,6 +241,19 @@ Full JSONL session logging with full-text and regex search across history, plus 
 
 ---
 
+## What's New in v1.5
+
+- **Codex provider support** -- pick OpenAI's Codex CLI or Claude per session from the New Session dialog. The full session lifecycle works the same way: spawn, save / restore, resume picker, statusline, tokenomics
+- **Six gpt-5 models** -- `gpt-5.5`, `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.3-codex`, `gpt-5.3-codex-spark`, `gpt-5.2`. Pricing verified experimentally and applied to tokenomics
+- **Permissions presets in the toolbar** -- swap a running session between `read-only`, `standard`, `auto`, `unrestricted` from the same place you change models
+- **Codex resume picker** -- mirrors the Claude flow. Recent rollouts surface before spawn so you can resume in one click
+- **Tokenomics provider segmenting** -- Codex spend lands alongside Claude in the same chart, table, and rate-limit views, tagged by provider
+- **Provider-aware UI gating** -- Insights, Agent Library, ContextBar, sidebar mini-icon, terminal toolbar, and the Statusline tab all surface helpful copy for Codex sessions instead of Claude-only chrome
+
+See [`src/renderer/changelog.ts`](src/renderer/changelog.ts) for the full revision history.
+
+---
+
 ## What's New in v1.4
 
 - **GitHub sidebar** &mdash; collapsible right panel with PR snapshot, CI runs, reviews, unresolved threads, linked issues, and session-context inference
@@ -289,7 +303,7 @@ Don't trust the installer? Build it yourself &mdash; the source is identical to 
 git clone https://github.com/nubbymong/claude-command-center.git
 cd claude-command-center
 npm install
-npx vitest run       # 566 unit tests should pass
+npx vitest run       # 740 unit tests should pass
 npm run dev          # Development with hot reload
 npm run build        # Production build
 ```
@@ -319,7 +333,7 @@ Every release also includes `CHECKSUMS.txt` (SHA256) and is scanned by [VirusTot
 | Build | electron-vite |
 | MCP | `@modelcontextprotocol/sdk` |
 | Diagramming | Excalidraw |
-| Tests | Vitest (566 unit + Playwright E2E) |
+| Tests | Vitest (740 unit + Playwright E2E) |
 
 The app runs a frameless Electron window with a React renderer. Each Claude session spawns a PTY process via `node-pty`. The Vision system runs a local MCP server that Claude Code discovers via `~/.claude/settings.json`. SSH sessions get a reverse tunnel to the MCP server automatically.
 
