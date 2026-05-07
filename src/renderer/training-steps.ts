@@ -70,6 +70,35 @@ export const trainingSteps: TrainingStep[] = [
     screenshotFilename: 'step-session-options.jpg',
   },
   {
+    id: 'codex-provider',
+    title: 'Codex Provider',
+    sinceVersion: '1.5.0',
+    section: 'integrations',
+    summary:
+      "OpenAI's Codex CLI sits alongside Claude in the New Session dialog -- pick the provider per session. gpt-5 series models, runtime permissions presets, the resume picker, and tokenomics segmenting all wired in.",
+    highlights: [
+      'Provider toggle in **New Session** -- Claude or Codex, chosen per spawn',
+      'Six gpt-5 models in the dropdown: gpt-5.5, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex, gpt-5.3-codex-spark, gpt-5.2',
+      'Permissions presets in the session toolbar: read-only, standard, auto, unrestricted',
+      'Resume picker mirrors the Claude flow -- recent rollouts surfaced before spawn',
+      '**Tokenomics** segments Codex spend automatically alongside Claude, per-day and per-model',
+    ],
+    howToTrigger: [
+      { label: 'Spawn', value: 'New Session -> Provider -> Codex' },
+      { label: 'Auth', value: 'Settings -> Codex -> Login' },
+      { label: 'Model swap', value: 'Session toolbar -> model dropdown' },
+    ],
+    proTip:
+      'Login once via Settings -> Codex; subsequent Codex sessions reuse the same auth. Spend lands in tokenomics under the Codex provider tag, side by side with Claude.',
+    bullets: [
+      '**Provider per session** -- Claude OR Codex, picked at New Session time',
+      '**gpt-5 series** model dropdown plus **permissions presets** in the toolbar',
+      '**Resume picker** for recent Codex rollouts, same flow as Claude',
+      '**Tokenomics** segments Codex spend automatically alongside Claude',
+    ],
+    screenshotFilename: 'step-codex.jpg',
+  },
+  {
     id: 'agent-hub',
     title: 'Agent Hub',
     sinceVersion: '1.0.0',
