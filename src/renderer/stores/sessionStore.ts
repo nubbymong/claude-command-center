@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import type { ProviderId, CodexOptions } from '../../shared/types'
 
 export type SessionStatus = 'idle' | 'working' | 'complete' | 'error' | 'disconnected'
 export type SessionType = 'local' | 'ssh'
@@ -32,6 +33,8 @@ export interface Session {
   needsAttention?: boolean
   costUsd?: number
   modelName?: string
+  // Codex: reasoning effort label (e.g. "xhigh"). Always undefined for Claude sessions.
+  reasoningEffort?: string
   linesAdded?: number
   linesRemoved?: number
   contextWindowSize?: number
@@ -59,6 +62,10 @@ export interface Session {
   effortLevel?: 'low' | 'medium' | 'high'
   disableAutoMemory?: boolean
   machineName?: string
+  // Provider discriminator + Codex sub-options (Claude options live in the
+  // top-level legacy fields above for now; Codex spawns need this struct).
+  provider?: ProviderId
+  codexOptions?: CodexOptions
   // Optional per-session GitHub integration state. Hydrated from SavedSession
   // on restore so the panel can gate on the per-session `enabled` flag instead
   // of the global `enabledByDefault`. Shape lives in shared/github-types.ts.

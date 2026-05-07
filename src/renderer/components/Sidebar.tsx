@@ -216,7 +216,7 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
       configId: config.id,
       label: config.label,
       workingDirectory: config.workingDirectory,
-      model: config.model,
+      model: config.claudeOptions?.model ?? '',
       color: config.color,
       status: 'idle',
       createdAt: Date.now(),
@@ -233,13 +233,17 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
         postCommand: config.sshConfig.postCommand,
         hasSudoPassword: config.sshConfig.hasSudoPassword,
       } : undefined,
-      legacyVersion: config.legacyVersion,
-      agentIds: config.agentIds,
+      legacyVersion: config.claudeOptions?.legacyVersion,
+      agentIds: config.claudeOptions?.agentIds,
       machineName: config.machineName,
-      effortLevel: config.effortLevel,
-      disableAutoMemory: config.disableAutoMemory,
+      effortLevel: config.claudeOptions?.effortLevel,
+      disableAutoMemory: config.claudeOptions?.disableAutoMemory,
+      provider: config.provider,
+      codexOptions: config.codexOptions,
     }
-    if (!session.shellOnly && session.sessionType === 'local') {
+    // Resume picker is Claude-specific (uses Claude's ~/.claude/projects/ history).
+    // Codex resume is implemented in P4; for now Codex sessions skip the picker.
+    if (!session.shellOnly && session.sessionType === 'local' && (config.provider ?? 'claude') === 'claude') {
       markSessionForResumePicker(session.id)
     }
     addSession(session)

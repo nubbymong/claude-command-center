@@ -43,6 +43,27 @@ export interface LegacyVersion {
   version: string
 }
 
+// ── Provider types ──
+
+export type ProviderId = 'claude' | 'codex'
+
+export interface ClaudeOptions {
+  model?: string
+  effortLevel?: 'low' | 'medium' | 'high'
+  legacyVersion?: LegacyVersion
+  disableAutoMemory?: boolean
+  flickerFree?: boolean
+  powershellTool?: boolean
+  agentIds?: string[]
+}
+
+export interface CodexOptions {
+  /** gpt-5.5 / gpt-5.4 / gpt-5.4-mini / gpt-5.3-codex / gpt-5.3-codex-spark / gpt-5.2 */
+  model?: string
+  reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+  permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted'
+}
+
 // ── Session Persistence ──
 
 export interface SavedSession {
@@ -50,21 +71,33 @@ export interface SavedSession {
   configId?: string
   label: string
   workingDirectory: string
-  model: string
   color: string
   sessionType: 'local' | 'ssh'
   shellOnly?: boolean
   partnerTerminalPath?: string
   partnerElevated?: boolean
   sshConfig?: SshConfig
-  legacyVersion?: LegacyVersion
-  agentIds?: string[]
-  flickerFree?: boolean
-  powershellTool?: boolean
-  effortLevel?: 'low' | 'medium' | 'high'
-  disableAutoMemory?: boolean
   machineName?: string
   githubIntegration?: import('./github-types').SessionGitHubIntegration
+  // Provider discriminator + sub-options
+  provider: ProviderId
+  claudeOptions?: ClaudeOptions
+  codexOptions?: CodexOptions
+  // Legacy top-level fields -- kept for backward compat during migration; read from claudeOptions after P1.2
+  /** @deprecated read from claudeOptions; removed in P1.2+ */
+  model?: string
+  /** @deprecated read from claudeOptions; removed in P1.2+ */
+  legacyVersion?: LegacyVersion
+  /** @deprecated read from claudeOptions; removed in P1.2+ */
+  agentIds?: string[]
+  /** @deprecated read from claudeOptions; removed in P1.2+ */
+  flickerFree?: boolean
+  /** @deprecated read from claudeOptions; removed in P1.2+ */
+  powershellTool?: boolean
+  /** @deprecated read from claudeOptions; removed in P1.2+ */
+  effortLevel?: 'low' | 'medium' | 'high'
+  /** @deprecated read from claudeOptions; removed in P1.2+ */
+  disableAutoMemory?: boolean
 }
 
 export interface SessionState {
@@ -85,6 +118,9 @@ export interface RateLimitExtra {
 export interface StatuslineData {
   sessionId: string
   model?: string
+  // Codex: reasoning effort label (e.g. "xhigh"), surfaced alongside model in the
+  // ContextBar. Always undefined for Claude sessions.
+  reasoningEffort?: string
   contextUsedPercent?: number
   contextRemainingPercent?: number
   contextWindowSize?: number
@@ -260,6 +296,9 @@ export interface TokenomicsSessionRecord {
   durationMs?: number
   costPerHour?: number
   tokensPerMinute?: number
+  // v1.5: provider discriminator. Optional on read for back-compat -- the
+  // tokenomics-manager back-fills 'claude' on legacy records during load.
+  provider?: ProviderId
 }
 
 export interface TokenomicsDailyAggregate {

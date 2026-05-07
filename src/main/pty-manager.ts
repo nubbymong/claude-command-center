@@ -7,10 +7,16 @@ import { logPtyOutput, isDebugModeEnabled } from './debug-capture'
 import { logInfo, logDebug, logError } from './debug-logger'
 import { writeCliSetupPty, getResourcesDirectory } from './ipc/setup-handlers'
 import { isGlobalVisionRunning, getGlobalVisionConfig, getConductorMcpPort } from './vision-manager'
-import { resolveVersionBinary } from './legacy-version-manager'
+import { resolveClaudeBinary } from './providers/claude/spawn'
+import { detectClaudeUi, lastPromptLineForClaude } from './providers/claude/ui-detection'
+import { getProvider } from './providers'
+import { isSshCapable } from './providers/types'
+import type { TelemetrySource } from './providers/types'
+import { resolveCwd } from './path-utils'
 import { dispatchSSHStatuslineUpdate } from './statusline-watcher'
+import { handleStatuslineUpdate } from './tokenomics-manager'
 import { getGateway } from './hooks'
-import { injectHooks, buildHooksBlock } from './hooks/session-hooks-writer'
+import { injectHooks } from './hooks/session-hooks-writer'
 import {
   writeLocalSessionSettings,
   removeLocalSessionSettings,
@@ -30,20 +36,6 @@ interface PtySession {
 
 // Buffer writes for PTYs that haven't spawned yet (e.g., partner terminal initially hidden)
 const pendingWrites = new Map<string, string[]>()
-
-/**
- * Resolve ~ to the user's home directory.
- * On Windows, ~ is not resolved by the OS — only by shells.
- */
-function resolveCwd(cwd: string | undefined): string {
-  if (!cwd || cwd === '.') return os.homedir()
-  if (cwd === '~') return os.homedir()
-  if (cwd.startsWith('~/') || cwd.startsWith('~\\')) {
-    return path.join(os.homedir(), cwd.slice(2))
-  }
-  // Resolve any relative paths to absolute (prevents using Electron's process.cwd())
-  return path.resolve(cwd)
-}
 
 export interface SSHOptions {
   host: string
@@ -97,12 +89,16 @@ function emitSshFlowState(win: BrowserWindow, sessionId: string, state: SshFlowS
 
 const ptySessions = new Map<string, PtySession>()
 
+// Codex-provider telemetry sources: keyed by sessionId, stopped on PTY exit / kill.
+const codexTelemetrySources = new Map<string, TelemetrySource>()
+
 // === SSH OSC sentinel parser ===
 //
 // Remote SSH sessions can't write status files to the local host, so the
-// SSH_STATUSLINE_SHIM (deployed during remote setup) emits an OSC sentinel
-// to /dev/tty containing the status JSON. The sentinel travels back through
-// the SSH PTY stream to this process.
+// SSH statusline shim (deployed during remote setup; lives in
+// providers/claude/ssh-shim.ts) emits an OSC sentinel to /dev/tty containing
+// the status JSON. The sentinel travels back through the SSH PTY stream to
+// this process.
 //
 // We extract sentinels from each chunk before forwarding the cleaned data to
 // xterm, then dispatch the parsed JSON via statusline-watcher's existing pipeline.
@@ -151,229 +147,12 @@ function extractSshOscSentinels(sessionId: string, chunk: string): string {
 }
 
 /**
- * SSH statusline shim — Node.js script written to the REMOTE host at
- * ~/.claude/conductor-ssh-statusline.js during SSH setup.
- *
- * Claude Code on the remote runs this as its statusLine command. The shim
- * receives JSON status data on stdin (from Claude's statusline hook), then
- * emits an OSC sentinel directly to the controlling TTY (/dev/tty).
- *
- * The OSC sentinel travels back through the SSH PTY to the local Conductor,
- * where pty-manager's OSC parser extracts and dispatches it to the renderer.
- *
- * /dev/tty is used (not stdout) because Claude captures the script's stdout
- * for its own statusline display — writing the sentinel there would either
- * be re-rendered visibly or stripped. /dev/tty bypasses Claude entirely.
- */
-// Claude Code now ships `rate_limits.five_hour` and `rate_limits.seven_day`
-// on the statusline stdin JSON (see https://code.claude.com/docs/en/statusline).
-// The shim used to read `~/.claude/.credentials.json` and call
-// api.anthropic.com/api/oauth/usage itself — that pulled in `https`, needed a
-// /tmp cache, and coupled us to the OAuth token format. Reading from stdin is
-// smaller, zero-network, and survives token-format changes. Trade-off: stdin
-// doesn't expose `extra_usage`, so SSH statuslines no longer show the extra
-// top-up bar (local sessions still do). Re-add via API later if needed.
-// Fallback order for the OSC sentinel:
-//   1. /dev/tty — correct path. Bypasses Claude entirely; flows through the
-//      ssh PTY back to pty-manager.
-//   2. stderr — Claude captures stdout as the statusline text, so stdout is
-//      a dead-end (the sentinel gets displayed or stripped). stderr is NOT
-//      captured by Claude Code's statusline handler and, in a PTY context,
-//      travels back through the ssh PTY just like stdout would.
-//   3. Append a trace line to ~/.claude/conductor-shim.log on any failure
-//      path so we can diagnose "no statusline ever appeared" issues without
-//      guesswork. The log is capped via append-and-forget; grows slowly.
-const SSH_STATUSLINE_SHIM = `#!/usr/bin/env node
-const fs=require('fs'),os=require('os'),path=require('path');
-const logPath=path.join(os.homedir(),'.claude','conductor-shim.log');
-const trace=(m)=>{try{fs.appendFileSync(logPath,new Date().toISOString()+' '+m+'\\n');}catch{}};
-let input='';
-process.stdin.setEncoding('utf8');
-process.stdin.on('data',c=>input+=c);
-process.stdin.on('end',()=>{
-try{
-const data=JSON.parse(input);
-const sid=process.env.CLAUDE_MULTI_SESSION_ID||'unknown';
-const cw=data.context_window||{};
-const u=cw.current_usage||{};
-const it=(u.input_tokens||0)+(u.cache_creation_input_tokens||0)+(u.cache_read_input_tokens||0);
-const cost=data.cost||{};
-const m=data.model||{};
-const rl=data.rate_limits||{};
-const s={sessionId:sid,model:m.display_name||m.id,contextUsedPercent:cw.used_percentage,contextRemainingPercent:cw.remaining_percentage,contextWindowSize:cw.context_window_size,inputTokens:it||undefined,outputTokens:u.output_tokens,costUsd:cost.total_cost_usd,totalDurationMs:cost.total_duration_ms,linesAdded:cost.total_lines_added,linesRemoved:cost.total_lines_removed,timestamp:Date.now()};
-const iso=(t)=>typeof t==='number'?new Date(t*1000).toISOString():(t||'');
-if(rl.five_hour){s.rateLimitCurrent=Math.round(Number(rl.five_hour.used_percentage)||0);s.rateLimitCurrentResets=iso(rl.five_hour.resets_at);}
-if(rl.seven_day){s.rateLimitWeekly=Math.round(Number(rl.seven_day.used_percentage)||0);s.rateLimitWeeklyResets=iso(rl.seven_day.resets_at);}
-const now=new Date();const yr=now.getUTCFullYear();const m2=new Date(Date.UTC(yr,2,8));m2.setUTCDate(8+(7-m2.getUTCDay())%7);const n1=new Date(Date.UTC(yr,10,1));n1.setUTCDate(1+(7-n1.getUTCDay())%7);const ptOff=(now>=m2&&now<n1)?-7:-8;const ptH=(now.getUTCHours()+ptOff+24)%24;const ptD=new Date(now.getTime()+ptOff*3600000).getUTCDay();s.isPeak=(ptD>=1&&ptD<=5&&ptH>=5&&ptH<11);
-const sentinel='\\x1b]9999;CMSTATUS='+JSON.stringify(s)+'\\x07';
-let tty_ok=false;
-try{fs.writeFileSync('/dev/tty',sentinel);tty_ok=true;}catch(e){trace('tty-fail sid='+sid+' err='+(e&&e.code||e.message||'unknown'));}
-if(!tty_ok){try{process.stderr.write(sentinel);trace('stderr-fallback sid='+sid);}catch(e2){trace('stderr-fail sid='+sid+' err='+(e2&&e2.message||'unknown'));}}
-process.stdout.write(' ');
-}catch(e){trace('parse-fail err='+(e&&e.message||'unknown'));process.stdout.write(' ');}
-});
-`
-
-/**
- * Generate a single node script that handles ALL remote setup:
- * - Writes the SSH statusline shim to ~/.claude/conductor-ssh-statusline.js
- * - Configures statusline in settings.json to invoke the shim
- * - Configures MCP vision server (if running) in settings.json
- * - Cleans up legacy CLAUDE.md vision markers
- *
- * Returns the script content. The PTY base64-encodes and pipes it to node.
- */
-function generateRemoteSetupScript(
-  sessionId: string,
-  hooksConfig: { port: number; secret: string } | null,
-): string {
-  // Conductor MCP server is always running (independent of browser/vision config),
-  // so SSH sessions always get the conductor-vision MCP entry pointing at the
-  // reverse-tunneled MCP port. The fetch_host_screenshot tool is always available;
-  // browser tools fall back to "vision not connected" if no browser is attached.
-  const mcpPort = getConductorMcpPort() || 19333
-  const hasVision = mcpPort > 0
-  // Embed the shim as a JSON string literal — Node parses it back to source
-  const shimLiteral = JSON.stringify(SSH_STATUSLINE_SHIM)
-  // Sanitise for path use — sessionId comes from session.id (generateId), but
-  // belt-and-braces because it's embedded in a filename we write.
-  const safeSid = sessionId.replace(/[^a-zA-Z0-9_-]/g, '_')
-
-  // Per-session settings file (~/.claude/settings-<sid>.json) passed via
-  // `claude --settings`. Previously we rewrote the shared ~/.claude/settings.json
-  // and baked CLAUDE_MULTI_SESSION_ID into its statusLine command — but multiple
-  // concurrent sessions to the same host would clobber each other, so Claude
-  // Code caching the latest write meant statusline updates landed under the
-  // wrong local sessionId after the second session connected. Per-session
-  // files let each Claude keep its own sid in its own settings view.
-  //
-  // We also still touch shared settings.json for the MCP server entry (vision),
-  // and we clean up the legacy statusLine stanza so old installs don't keep
-  // overriding via the shared file.
-  //
-  // Hooks: when the HTTP Hooks Gateway is running, the per-session file also
-  // carries a `hooks` block pointing at `http://localhost:<hooksPort>/hook/<sid>`
-  // — the SSH connection's `-R <hooksPort>:localhost:<hooksPort>` tunnel makes
-  // that loopback URL resolve to the host's gateway.
-  const hooksLiteral = hooksConfig
-    ? JSON.stringify(buildHooksBlock(sessionId, hooksConfig.port, hooksConfig.secret))
-    : null
-  // MCP vision: prior builds relied on Claude Code's `--settings` MERGING
-  // the per-session file onto the user settings (which held mcpServers in
-  // the shared settings.json write below). That assumption is undocumented.
-  // Include the conductor-vision entry in the per-session file too, so even
-  // if a future Claude Code build flips `--settings` to REPLACE semantics,
-  // SSH sessions keep seeing the reverse-tunnelled MCP server.
-  const mcpServersLiteral = hasVision
-    ? JSON.stringify({ 'conductor-vision': { url: `http://localhost:${mcpPort}/sse` } })
-    : null
-  const sesCfgParts: string[] = [
-    `statusLine:{type:'command',command:'CLAUDE_MULTI_SESSION_ID=${sessionId} node '+shimPath}`,
-  ]
-  if (mcpServersLiteral) sesCfgParts.push(`mcpServers:${mcpServersLiteral}`)
-  if (hooksLiteral) sesCfgParts.push(`hooks:${hooksLiteral}`)
-
-  // Build as semicolon-separated statements — NO comments (they break single-lining)
-  const lines = [
-    `const fs=require('fs'),path=require('path'),os=require('os')`,
-    `const home=os.homedir(),claudeDir=path.join(home,'.claude')`,
-    `try{fs.mkdirSync(claudeDir,{recursive:true})}catch{}`,
-    `const shimPath=path.join(claudeDir,'conductor-ssh-statusline.js')`,
-    `try{fs.writeFileSync(shimPath,${shimLiteral},{mode:0o755})}catch{}`,
-    // Read the user's shared settings FIRST so the per-session file can
-    // inherit every top-level key (outputStyle, permissions, future
-    // additions). The three CCC-owned keys (statusLine, mcpServers, hooks)
-    // then override whatever the shared file had. This makes the local
-    // and SSH behaviour identical under `--settings` regardless of
-    // whether Claude Code treats that flag as MERGE or REPLACE.
-    `const sp=path.join(claudeDir,'settings.json')`,
-    `let s={};try{s=JSON.parse(fs.readFileSync(sp,'utf-8'))}catch{}`,
-    // Per-session settings — clone of shared with CCC keys overridden.
-    `const sesPath=path.join(claudeDir,'settings-${safeSid}.json')`,
-    `const sesCfg=Object.assign({},s,{${sesCfgParts.join(',')}})`,
-    `try{fs.writeFileSync(sesPath,JSON.stringify(sesCfg,null,2))}catch{}`,
-    // Shared settings — owns MCP vision only. Strip any legacy statusLine
-    // stanza a prior install wrote; it would override the per-session file.
-    `if(s.statusLine&&typeof s.statusLine.command==='string'&&s.statusLine.command.includes('conductor-ssh-statusline'))delete s.statusLine`,
-    hasVision
-      ? `if(!s.mcpServers)s.mcpServers={};s.mcpServers['conductor-vision']={url:'http://localhost:${mcpPort}/sse'}`
-      : `if(s.mcpServers&&s.mcpServers['conductor-vision'])delete s.mcpServers['conductor-vision']`,
-    `try{fs.writeFileSync(sp,JSON.stringify(s,null,2))}catch{}`,
-    `try{const cj=path.join(home,'.claude.json');if(fs.existsSync(cj)){let c=JSON.parse(fs.readFileSync(cj,'utf-8'));if(c.mcpServers&&c.mcpServers['conductor-vision']){delete c.mcpServers['conductor-vision'];fs.writeFileSync(cj,JSON.stringify(c,null,2))}}}catch{}`,
-    `try{const md=path.join(claudeDir,'CLAUDE.md');let c=fs.readFileSync(md,'utf-8');const rx=/\\n?\\n?<!-- VISION-INSTRUCTIONS-START -->[\\s\\S]*?<!-- VISION-INSTRUCTIONS-END -->\\n?/g;if(rx.test(c)){c=c.replace(rx,'').trim();c?fs.writeFileSync(md,c+'\\n'):fs.unlinkSync(md)}}catch{}`,
-    `process.stdout.write('setup ok\\n')`,
-  ]
-  return lines.join(';')
-}
-
-// Path to the per-session settings file on the remote. Kept in sync with the
-// filename written by generateRemoteSetupScript so the claude launch can point
-// at it via --settings.
-function remoteSessionSettingsPath(sessionId: string): string {
-  const safeSid = sessionId.replace(/[^a-zA-Z0-9_-]/g, '_')
-  return `~/.claude/settings-${safeSid}.json`
-}
-
-/**
- * Write the setup script to the remote, execute it, then clean up.
- * Uses a short write-and-run pattern to avoid PTY echo of the long script.
- */
-/**
- * Build the shell command that runs the setup script on the remote host.
- *
- * Why base64? The setup script is a multi-line Node.js program that configures
- * the statusline shim and MCP vision in ~/.claude/settings.json. Sending it
- * directly through the PTY would be unreliable (quoting, line breaks, echo).
- * Instead we base64-encode it and pipe through `base64 -d | node`:
- *
- *   stty -echo          ← suppress terminal echo so the blob isn't visible
- *   echo '<base64>' | base64 -d | node   ← decode and execute
- *   stty echo           ← restore echo
- *   cd <path> && clear  ← navigate to project and clean the screen
- *
- * The script itself is generated by generateRemoteSetupScript() above.
- * All errors are suppressed (2>/dev/null) so a failed setup doesn't break
- * the SSH session — the user can still use Claude, just without statusline.
- */
-function getRemoteSetupCommand(
-  sessionId: string,
-  remotePath: string,
-  hooksConfig: { port: number; secret: string } | null,
-): string {
-  const script = generateRemoteSetupScript(sessionId, hooksConfig)
-  const b64 = Buffer.from(script).toString('base64')
-  return `stty -echo 2>/dev/null; echo '${b64}' | base64 -d | node 2>/dev/null; stty echo 2>/dev/null; cd ${remotePath} && clear`
-}
-
-/**
  * Resolve the claude command for PTY usage.
  * If legacyVersion is provided and enabled, uses the managed install binary.
  * Otherwise checks for native CLI (claude.exe) first, then npm wrapper (claude.cmd).
  */
 export function resolveClaudeForPty(legacyVersion?: { enabled: boolean; version: string }): { cmd: string; args: string[] } {
-  // Try legacy version binary first
-  if (legacyVersion?.enabled && legacyVersion.version) {
-    const legacyBin = resolveVersionBinary(legacyVersion.version)
-    if (legacyBin) {
-      logInfo(`[pty] Using legacy Claude CLI v${legacyVersion.version}: ${legacyBin}`)
-      return { cmd: legacyBin, args: [] }
-    }
-    logInfo(`[pty] Legacy v${legacyVersion.version} binary not found, falling back to system claude`)
-  }
-
-  if (os.platform() !== 'win32') {
-    return { cmd: 'claude', args: [] }
-  }
-
-  // Try native CLI first (.exe), then npm wrapper (.cmd)
-  for (const bin of ['claude.exe', 'claude.cmd']) {
-    try {
-      const cmdPath = execSync(`where ${bin}`, { encoding: 'utf-8', timeout: 5000 })
-        .trim().split('\n')[0].trim()
-      return { cmd: cmdPath, args: [] }
-    } catch { /* try next */ }
-  }
-  return { cmd: 'claude', args: [] }
+  return resolveClaudeBinary(legacyVersion)
 }
 
 /**
@@ -391,7 +170,27 @@ function getResumePickerPath(): string | null {
 export function spawnPty(
   win: BrowserWindow,
   sessionId: string,
-  options?: { cwd?: string; cols?: number; rows?: number; ssh?: SSHOptions; shellOnly?: boolean; elevated?: boolean; configLabel?: string; useResumePicker?: boolean; legacyVersion?: { enabled: boolean; version: string }; agentsConfig?: Array<{ name: string; description: string; prompt: string; model?: string; tools?: string[] }>; effortLevel?: 'low' | 'medium' | 'high'; disableAutoMemory?: boolean; model?: string }
+  options?: {
+    cwd?: string
+    cols?: number
+    rows?: number
+    ssh?: SSHOptions
+    shellOnly?: boolean
+    elevated?: boolean
+    configLabel?: string
+    useResumePicker?: boolean
+    legacyVersion?: { enabled: boolean; version: string }
+    agentsConfig?: Array<{ name: string; description: string; prompt: string; model?: string; tools?: string[] }>
+    effortLevel?: 'low' | 'medium' | 'high'
+    disableAutoMemory?: boolean
+    model?: string
+    provider?: 'claude' | 'codex'
+    codexOptions?: {
+      model?: string
+      reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+      permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted'
+    }
+  }
 ): void {
   logInfo(`[pty] Spawning PTY for session ${sessionId} (ssh=${!!options?.ssh}, shellOnly=${!!options?.shellOnly}, cwd=${options?.cwd || 'default'})`)
   killPty(sessionId)
@@ -402,8 +201,18 @@ export function spawnPty(
   let ptyProcess: pty.IPty
 
   if (options?.ssh) {
+    // Defensive guard: Codex over SSH is not yet supported. The renderer-side
+    // dialog prevents this combination, but guard here in case of direct IPC calls.
+    if ((options?.provider ?? 'claude') === 'codex') {
+      throw new Error('Codex over SSH is not supported in v1.5.0 (planned for v1.5.x). Switch the session to local or pick the Claude provider.')
+    }
+
     // SSH session: spawn ssh command, then chain claude after cd
     const ssh = options.ssh
+    // Lift: SSH setup script + per-session settings path live on the
+    // ClaudeProvider's SSH-capable surface (see providers/claude/ssh-shim.ts).
+    const claudeProvider = getProvider('claude')
+    if (!isSshCapable(claudeProvider)) throw new Error('Claude provider must be SSH-capable')
     const sshArgs = [
       `${ssh.username}@${ssh.host}`,
       '-p', String(ssh.port),
@@ -593,7 +402,7 @@ export function spawnPty(
     const claudeFlags = [
       // --settings loads per-session config so concurrent sessions to the same
       // host don't clobber each other's statusline sessionId binding.
-      `--settings ${remoteSessionSettingsPath(sessionId)}`,
+      `--settings ${claudeProvider.getSshSettingsPath(sessionId)}`,
       options?.effortLevel ? `--effort ${options.effortLevel}` : '',
       // --model pins the Claude model for this session. Empty string in
       // the config form means "no override" — the CLI picks whatever
@@ -614,17 +423,9 @@ export function spawnPty(
     // Shell prompt match for the cd/setup gate. Real bash PS1s usually end
     // `$`/`#`/`>`/`~` with no whitespace before the sigil (e.g. `user@h:~$ `),
     // so we can't require pre-whitespace — but we DO exclude lines containing
-    // Claude Code's `❯` glyph via lastPromptLine below. setupDone is the
+    // Claude Code's `❯` glyph via lastPromptLineForClaude below. setupDone is the
     // hard latch that prevents any retrigger regardless.
     const SHELL_PROMPT_RE = /[$#>~]\s*$/
-    const lastPromptLine = (data: string) => {
-      const line = data.split('\n').pop()?.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').trim() || ''
-      if (line.length >= 200) return ''
-      // Claude Code's prompt uses `❯` (U+276F). Exclude any line containing it
-      // so its cursor/prompt never counts as a shell prompt.
-      if (line.includes('❯')) return ''
-      return line
-    }
 
     /**
      * Writers for the four discrete SSH stages. The manual
@@ -647,7 +448,7 @@ export function spawnPty(
         }
       }, SETUP_TIMEOUT_MS)
       setTimeout(() => {
-        const setupCmd = getRemoteSetupCommand(sessionId, remotePath, hooksConfig)
+        const setupCmd = claudeProvider.configureRemoteSettings(sessionId, remotePath, hooksConfig)
         ptyProcess.write(setupCmd + '\r')
       }, 200)
     }
@@ -673,7 +474,7 @@ export function spawnPty(
         }
       }, SETUP_TIMEOUT_MS)
       setTimeout(() => {
-        const setupCmd = getRemoteSetupCommand(sessionId, remotePath, hooksConfig)
+        const setupCmd = claudeProvider.configureRemoteSettings(sessionId, remotePath, hooksConfig)
         ptyProcess.write(setupCmd + '\r')
       }, 300)
     }
@@ -778,9 +579,7 @@ export function spawnPty(
       //   prompt (which would have already triggered state advance
       //   earlier).
       if (!claudeRunning) {
-        if (/╭─{5,}|╰─{5,}/.test(data)
-          || (claudeSent && /[╭╰┃│]|❯/.test(data))
-        ) {
+        if (detectClaudeUi(data, claudeSent)) {
           claudeRunning = true
           if (setupTimeoutHandle) {
             clearTimeout(setupTimeoutHandle)
@@ -818,7 +617,7 @@ export function spawnPty(
 
       // Auto-type SSH password only on a real password prompt, not any MOTD
       // line containing the word.
-      if (!passwordSent && password && PASSWORD_PROMPT_RE.test(lastPromptLine(data))) {
+      if (!passwordSent && password && PASSWORD_PROMPT_RE.test(lastPromptLineForClaude(data))) {
         passwordSent = true
         setTimeout(() => {
           ptyProcess.write(password + '\r')
@@ -831,7 +630,7 @@ export function spawnPty(
       // End-of-line match avoids false-triggering on a log message that
       // happens to mention `[sudo]` or `password for`.
       if (!sudoPasswordSent && sudoPassword && postCommandSent && !claudeSent) {
-        const promptLine = lastPromptLine(data)
+        const promptLine = lastPromptLineForClaude(data)
         if (promptLine && /(\[sudo\].*password.*:|password for .+:|^password:)\s*$/i.test(promptLine)) {
           sudoPasswordSent = true
           setTimeout(() => {
@@ -847,7 +646,7 @@ export function spawnPty(
         return
       }
 
-      const lastLine = lastPromptLine(data)
+      const lastLine = lastPromptLineForClaude(data)
       const sawShellPrompt = !!lastLine && SHELL_PROMPT_RE.test(lastLine)
 
       // ---- STAGE TRANSITION DETECTION ----
@@ -913,42 +712,81 @@ export function spawnPty(
         writeClaudeCmd()
       }
     })
+  } else if ((options?.provider ?? 'claude') === 'codex' && !options?.shellOnly) {
+    // Codex local session — spawn `codex` directly. Codex itself owns the
+    // REPL, so there is no shell-wrap-then-cd-then-launch dance like Claude
+    // requires. cwd is propagated through pty.spawn options.
+    // shellOnly falls through to the Claude branch below so the user gets a
+    // plain shell, regardless of provider selection.
+    const provider = getProvider('codex')
+    const { cmd: spawnCmd, args: spawnArgs, env: spawnEnv } = provider.buildSpawnCommand({
+      sessionId,
+      provider: 'codex',
+      cwd: options?.cwd,
+      cols,
+      rows,
+      useResumePicker: options?.useResumePicker,
+      codexOptions: options?.codexOptions,
+    })
+    const resolvedCwd = resolveCwd(options?.cwd)
+    logInfo(`[pty-manager] Launching Codex PTY: ${spawnCmd} ${spawnArgs.join(' ')} cwd=${resolvedCwd}`)
+    // Capture timestamp before spawn so the watch-and-claim window starts no later than PTY launch.
+    const codexSpawnTimestamp = Date.now()
+    ptyProcess = pty.spawn(spawnCmd, spawnArgs, {
+      name: 'xterm-256color',
+      cols,
+      rows,
+      cwd: resolvedCwd,
+      env: spawnEnv,
+      useConpty: true,
+    })
+    ptyProcess.onData((data) => {
+      if (win.isDestroyed()) return
+      win.webContents.send(`pty:data:${sessionId}`, data)
+    })
+    // Start rollout watch-and-claim telemetry. Updates are dispatched to the
+    // renderer (statusline:update) and tokenomics-manager identically to how
+    // Claude statusline updates flow through statusline-watcher.ts.
+    const codexTelSrc = provider.ingestSessionTelemetry(
+      sessionId,
+      { cwd: resolvedCwd, spawnTimestamp: codexSpawnTimestamp },
+      (data) => {
+        if (!win.isDestroyed()) win.webContents.send('statusline:update', data)
+        handleStatuslineUpdate(data)
+      },
+    )
+    codexTelemetrySources.set(sessionId, codexTelSrc)
   } else {
-    // Local session
+    // Local session — delegate binary + env construction to the provider.
+    // The post-spawn shell-write (cd + claude command) stays here; only the
+    // bare shell + env comes from the provider.
     const shellOnly = options?.shellOnly
+    const provider = getProvider('claude')
+    const { cmd: spawnCmd, args: spawnArgs, env: spawnEnv } = provider.buildSpawnCommand({
+      sessionId,
+      cwd: options?.cwd,
+      cols,
+      rows,
+      shellOnly: options?.shellOnly,
+      elevated: options?.elevated,
+      legacyVersion: options?.legacyVersion,
+      effortLevel: options?.effortLevel,
+      disableAutoMemory: options?.disableAutoMemory,
+      model: options?.model,
+      useResumePicker: options?.useResumePicker,
+      agentsConfig: options?.agentsConfig,
+    })
+    const resolvedCwd = resolveCwd(options?.cwd)
 
     if (shellOnly) {
-      // Shell only: spawn a shell without Claude
-      const shell = os.platform() === 'win32' ? 'powershell.exe' : process.env.SHELL || '/bin/bash'
-      const elevated = options?.elevated
-
-      let spawnCmd: string
-      let spawnArgs: string[]
-
-      if (elevated) {
-        if (os.platform() === 'win32') {
-          spawnCmd = 'gsudo'
-          spawnArgs = [shell]
-        } else {
-          spawnCmd = 'sudo'
-          spawnArgs = [shell]
-        }
-      } else {
-        spawnCmd = shell
-        spawnArgs = []
-      }
-
-      const resolvedCwd = resolveCwd(options?.cwd)
-      logInfo(`[pty-manager] Launching shell-only PTY: ${spawnCmd} ${spawnArgs.join(' ')} cwd=${resolvedCwd}${elevated ? ' (elevated)' : ''}`)
-
-      const shellEnv: Record<string, string> = { ...process.env, CLAUDE_MULTI_SESSION_ID: sessionId } as Record<string, string>
+      logInfo(`[pty-manager] Launching shell-only PTY: ${spawnCmd} ${spawnArgs.join(' ')} cwd=${resolvedCwd}${options?.elevated ? ' (elevated)' : ''}`)
 
       ptyProcess = pty.spawn(spawnCmd, spawnArgs, {
         name: 'xterm-256color',
         cols,
         rows,
         cwd: resolvedCwd,
-        env: shellEnv,
+        env: spawnEnv,
         useConpty: true
       })
 
@@ -971,19 +809,14 @@ export function spawnPty(
       // Without the explicit cd, conversations get stored under the wrong project hash
       // and won't appear when the user tries to /resume.
       const { cmd } = resolveClaudeForPty(options?.legacyVersion)
-      const resolvedCwd = resolveCwd(options?.cwd)
-      const shell = os.platform() === 'win32' ? 'powershell.exe' : process.env.SHELL || '/bin/bash'
-      logInfo(`[pty-manager] Launching Claude via shell in PTY: ${shell} -> ${cmd} cwd=${resolvedCwd} (resumePicker=${!!options?.useResumePicker})`)
+      logInfo(`[pty-manager] Launching Claude via shell in PTY: ${spawnCmd} -> ${cmd} cwd=${resolvedCwd} (resumePicker=${!!options?.useResumePicker})`)
 
-      const claudeEnv: Record<string, string> = { ...process.env, CLAUDE_MULTI_SESSION_ID: sessionId } as Record<string, string>
-      if (options?.disableAutoMemory) claudeEnv.CLAUDE_CODE_DISABLE_AUTO_MEMORY = '1'
-
-      ptyProcess = pty.spawn(shell, [], {
+      ptyProcess = pty.spawn(spawnCmd, spawnArgs, {
         name: 'xterm-256color',
         cols,
         rows,
         cwd: resolvedCwd,
-        env: claudeEnv,
+        env: spawnEnv,
         useConpty: true
       })
 
@@ -1247,7 +1080,13 @@ export function killPty(sessionId: string): void {
   pendingWrites.delete(sessionId)
   recentWrites.delete(sessionId)
   sshOscBuffers.delete(sessionId)
-  // Clear the SSH flow controller too — otherwise a stale entry keeps
+  // Stop Codex telemetry source if one was registered for this session.
+  const codexTel = codexTelemetrySources.get(sessionId)
+  if (codexTel) {
+    try { codexTel.stop() } catch { /* noop */ }
+    codexTelemetrySources.delete(sessionId)
+  }
+  // Clear the SSH flow controller too -- otherwise a stale entry keeps
   // a closure over the old ptyProcess and a renderer click after
   // session restart would write to a dead pty.
   const flow = sshFlows.get(sessionId)

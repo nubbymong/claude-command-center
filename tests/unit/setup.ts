@@ -7,6 +7,7 @@ import { vi } from 'vitest'
 vi.mock('electron', () => ({
   app: {
     getPath: vi.fn(() => '/mock/userData'),
+    getAppPath: vi.fn(() => process.cwd()),
     requestSingleInstanceLock: vi.fn(() => true),
     whenReady: vi.fn(() => Promise.resolve()),
     on: vi.fn(),
@@ -111,6 +112,17 @@ const mockElectronAPI = {
     cancelRun: vi.fn(() => Promise.resolve(true)),
     listRuns: vi.fn(() => Promise.resolve([])),
     onRunStatusChanged: vi.fn(() => () => {}),
+  },
+  codex: {
+    status: vi.fn(() => Promise.resolve({
+      installed: false,
+      version: null,
+      authMode: 'none' as const,
+      hasOpenAiApiKeyEnv: false,
+    })),
+    login: vi.fn(() => Promise.resolve({ ok: true })),
+    logout: vi.fn(() => Promise.resolve({ ok: true })),
+    testConnection: vi.fn(() => Promise.resolve({ ok: true, message: 'connected' })),
   },
   dialog: { openFolder: vi.fn(() => Promise.resolve(null)) },
   memory: {

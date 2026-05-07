@@ -1,7 +1,7 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { IPC } from '../../shared/ipc-channels'
 import type { GitHubConfig, RepoCache, SessionGitHubIntegration } from '../../shared/github-types'
-import type { SavedSession } from '../session-state'
+import type { SavedSession } from '../../shared/types'
 import { GitHubConfigStore } from '../github/github-config-store'
 import { AuthProfileStore } from '../github/auth/auth-profile-store'
 import { ghAuthStatus, ghAuthToken, defaultGhRun } from '../github/auth/gh-cli-delegate'

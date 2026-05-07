@@ -4,9 +4,15 @@ import type { TokenomicsSessionRecord, TokenomicsDailyAggregate } from '../../sh
 import PageFrame from './PageFrame'
 
 const MODEL_COLORS: Record<string, string> = {
+  // Claude models -- full versioned strings as emitted by the API
   'claude-sonnet-4-6': '#89B4FA',
   'claude-opus-4-6': '#CBA6F7',
   'claude-haiku-4-5': '#A6E3A1',
+  // Codex / GPT models (P3.2) -- real model strings emitted by Codex rollouts
+  'gpt-5.5':          '#a6e3a1',  // green
+  'gpt-5.4':          '#89dceb',  // sky
+  'gpt-5.4-mini':     '#74c7ec',  // sapphire
+  'gpt-5.3-codex':    '#fab387',  // peach
 }
 
 function getModelColor(model: string): string {
@@ -14,13 +20,29 @@ function getModelColor(model: string): string {
   for (const key of Object.keys(MODEL_COLORS)) {
     if (model.startsWith(key.replace(/-\d+-\d+$/, ''))) return MODEL_COLORS[key]
   }
-  return '#F9E2AF'
+  // GPT/Codex models not explicitly listed -- use sky
+  if (model.startsWith('gpt-') || model.startsWith('o')) return '#89dceb'
+  // Unknown model fallback -- catppuccin subtext0
+  return '#a6adc8'
 }
 
-function getModelShort(model: string): string {
-  if (model.includes('opus')) return 'Opus'
-  if (model.includes('sonnet')) return 'Sonnet'
-  if (model.includes('haiku')) return 'Haiku'
+/**
+ * Short label for a model, used in compact UI surfaces (chart legend, table cells).
+ * Exported for unit testing.
+ *
+ * Claude variants collapse to their family name (sonnet / opus / haiku) so the
+ * model-breakdown chart can group all Claude versions visually. Codex / GPT
+ * models drop the "gpt-" prefix to show just the version (e.g. "5.5"). Anything
+ * else is returned verbatim.
+ *
+ * Bug fix on 2026-05-07 (Copilot review on PR #30): the prior implementation
+ * stripped non-alpha characters then sliced the first 6 chars, which collapsed
+ * every Claude variant to "claude" and lost Sonnet/Opus/Haiku categorization.
+ */
+export function getModelShort(model: string): string {
+  const family = model.match(/sonnet|opus|haiku/i)
+  if (family) return family[0].toLowerCase()
+  if (model.startsWith('gpt-')) return model.slice(4)
   return model
 }
 
@@ -65,6 +87,7 @@ function getRateLimitPeriod(): { fiveHourStart: string; sevenDayStart: string } 
 
 type DateFilter = 'all' | 'today' | 'week' | '5h' | '7d' | string // string = specific date YYYY-MM-DD
 type SpendFilter = 'all' | 'plan' | 'extra'
+type ProviderFilter = 'all' | 'claude' | 'codex'
 
 // ── Summary Cards ──
 
@@ -323,11 +346,17 @@ function ModelBreakdown({ sessions }: { sessions: TokenomicsSessionRecord[] }) {
 
 // ── Filter Bar ──
 
-function FilterBar({ dateFilter, spendFilter, onDateFilter, onSpendFilter, selectedDate, projects, projectFilter, onProjectFilter }: {
+function FilterBar({
+  dateFilter, spendFilter, providerFilter,
+  onDateFilter, onSpendFilter, onProviderFilter,
+  selectedDate, projects, projectFilter, onProjectFilter,
+}: {
   dateFilter: DateFilter
   spendFilter: SpendFilter
+  providerFilter: ProviderFilter
   onDateFilter: (f: DateFilter) => void
   onSpendFilter: (f: SpendFilter) => void
+  onProviderFilter: (f: ProviderFilter) => void
   selectedDate: string | null
   projects: string[]
   projectFilter: string
@@ -342,7 +371,7 @@ function FilterBar({ dateFilter, spendFilter, onDateFilter, onSpendFilter, selec
   ]
 
   return (
-    <div className="flex items-center gap-4 mb-4">
+    <div className="flex items-center gap-4 mb-4 flex-wrap">
       <div className="flex items-center gap-1">
         <span className="text-xs text-overlay0 mr-1">Time:</span>
         {dateButtons.map(b => (
@@ -374,6 +403,22 @@ function FilterBar({ dateFilter, spendFilter, onDateFilter, onSpendFilter, selec
             className={`px-2 py-0.5 text-xs rounded capitalize ${
               spendFilter === f
                 ? f === 'extra' ? 'bg-red/20 text-red' : 'bg-blue/20 text-blue'
+                : 'bg-surface1 text-overlay1 hover:text-text'
+            }`}
+          >
+            {f}
+          </button>
+        ))}
+      </div>
+      <div className="flex items-center gap-1">
+        <span className="text-xs text-overlay0 mr-1">Provider:</span>
+        {(['all', 'claude', 'codex'] as ProviderFilter[]).map(f => (
+          <button
+            key={f}
+            onClick={() => onProviderFilter(f)}
+            className={`px-2 py-0.5 text-xs rounded capitalize ${
+              providerFilter === f
+                ? f === 'codex' ? 'bg-green/20 text-green' : f === 'claude' ? 'bg-mauve/20 text-mauve' : 'bg-blue/20 text-blue'
                 : 'bg-surface1 text-overlay1 hover:text-text'
             }`}
           >
@@ -631,6 +676,7 @@ export default function TokenomicsPage() {
   const { data, loading, seeding, syncing, loadData, startSeed, startSync } = useTokenomicsStore()
   const [dateFilter, setDateFilter] = useState<DateFilter>('all')
   const [spendFilter, setSpendFilter] = useState<SpendFilter>('all')
+  const [providerFilter, setProviderFilter] = useState<ProviderFilter>('all')
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
   const [projectFilter, setProjectFilter] = useState<string>('all')
 
@@ -679,9 +725,17 @@ export default function TokenomicsPage() {
     }
   }, [allSessions, periods])
 
-  // Filtered sessions based on date + spend + project filters
+  // Filtered sessions based on date + spend + provider + project filters
   const filteredSessions = useMemo(() => {
     let list = allSessions
+
+    // Provider filter (P3.2) -- applies to both session list and model breakdown
+    // back-filled provider='claude' on legacy records, so this is always safe
+    if (providerFilter === 'claude') {
+      list = list.filter(s => (s.provider ?? 'claude') === 'claude')
+    } else if (providerFilter === 'codex') {
+      list = list.filter(s => s.provider === 'codex')
+    }
 
     // Project filter
     if (projectFilter !== 'all') {
@@ -716,7 +770,7 @@ export default function TokenomicsPage() {
     }
 
     return list
-  }, [allSessions, dateFilter, spendFilter, selectedDate, periods])
+  }, [allSessions, dateFilter, spendFilter, providerFilter, selectedDate, periods])
 
   // Summary costs
   const { todayCost, weekCost, fiveHourCost, allTimeCost } = useMemo(() => {
@@ -823,8 +877,10 @@ export default function TokenomicsPage() {
         <FilterBar
           dateFilter={dateFilter}
           spendFilter={spendFilter}
+          providerFilter={providerFilter}
           onDateFilter={(f) => { setDateFilter(f); setSelectedDate(null) }}
           onSpendFilter={setSpendFilter}
+          onProviderFilter={setProviderFilter}
           selectedDate={selectedDate}
           projects={projects}
           projectFilter={projectFilter}

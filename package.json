@@ -63,7 +63,10 @@
     "productName": "Claude Command Center",
     "files": [
       "out/**/*",
+      "resources/**/*",
       "scripts/resume-picker.js",
+      "scripts/codex-resume-picker.js",
+      "scripts/lib/codex-resume-picker-lib.js",
       "scripts/vision-cli.js",
       "scripts/vision-prompt.txt"
     ],

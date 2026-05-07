@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react'
-import { TerminalConfig, ConfigGroup, ConfigSection, useConfigStore } from '../stores/configStore'
+import { TerminalConfig, ConfigGroup, ConfigSection, ProviderId, CodexOptions, useConfigStore } from '../stores/configStore'
 import { useAgentLibraryStore, BUILTIN_TEMPLATES } from '../stores/agentLibraryStore'
+import { ProviderSegmentedControl } from './SessionDialog/ProviderSegmentedControl'
+import { CodexFormFields } from './SessionDialog/CodexFormFields'
 
 export type SessionType = 'local' | 'ssh'
 
@@ -38,9 +40,15 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
   const addGroup = useConfigStore((s) => s.addGroup)
   const sections = useConfigStore((s) => s.sections)
   const addSection = useConfigStore((s) => s.addSection)
+  // Read legacy + claudeOptions fields with claudeOptions taking precedence (P1.4 migration)
+  const initialClaude = initial?.claudeOptions
+  const [provider, setProvider] = useState<ProviderId>(initial?.provider ?? 'claude')
+  const [codexModel, setCodexModel] = useState(initial?.codexOptions?.model ?? 'gpt-5.5')
+  const [codexEffort, setCodexEffort] = useState<NonNullable<CodexOptions['reasoningEffort']>>(initial?.codexOptions?.reasoningEffort ?? 'medium')
+  const [codexPreset, setCodexPreset] = useState<CodexOptions['permissionsPreset']>(initial?.codexOptions?.permissionsPreset ?? 'standard')
   const [label, setLabel] = useState(initial?.label ?? '')
   const [workingDir, setWorkingDir] = useState(initial?.workingDirectory ?? '')
-  const [model, setModel] = useState(initial?.model ?? '')
+  const [model, setModel] = useState(initialClaude?.model ?? initial?.model ?? '')
   const [color, setColor] = useState(initial?.color ?? COLOR_SWATCHES[0])
   const [sessionType, setSessionType] = useState<SessionType>(initial?.sessionType ?? 'local')
   const [shellOnly, setShellOnly] = useState(initial?.shellOnly ?? false)
@@ -65,8 +73,8 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
   const [saveSudoPassword, setSaveSudoPassword] = useState(initial?.sshConfig?.hasSudoPassword ?? false)
 
   // Legacy version fields
-  const [legacyEnabled, setLegacyEnabled] = useState(initial?.legacyVersion?.enabled ?? false)
-  const [legacyVersion, setLegacyVersion] = useState(initial?.legacyVersion?.version ?? '')
+  const [legacyEnabled, setLegacyEnabled] = useState((initialClaude?.legacyVersion ?? initial?.legacyVersion)?.enabled ?? false)
+  const [legacyVersion, setLegacyVersion] = useState((initialClaude?.legacyVersion ?? initial?.legacyVersion)?.version ?? '')
   const [availableVersions, setAvailableVersions] = useState<string[]>([])
   const [loadingVersions, setLoadingVersions] = useState(false)
   const [versionInstalled, setVersionInstalled] = useState(false)
@@ -76,9 +84,11 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
   // Agent fields
   const agentUserTemplates = useAgentLibraryStore(s => s.templates)
   const allAgentTemplates = [...agentUserTemplates, ...BUILTIN_TEMPLATES]
-  const [selectedAgentIds, setSelectedAgentIds] = useState<Set<string>>(new Set(initial?.agentIds ?? []))
-  const [effortLevel, setEffortLevel] = useState<string>(initial?.effortLevel ?? '')
-  const [disableAutoMemory, setDisableAutoMemory] = useState(initial?.disableAutoMemory ?? false)
+  const [selectedAgentIds, setSelectedAgentIds] = useState<Set<string>>(new Set(initialClaude?.agentIds ?? initial?.agentIds ?? []))
+  const [effortLevel, setEffortLevel] = useState<'low' | 'medium' | 'high' | ''>(
+    (initialClaude?.effortLevel ?? initial?.effortLevel ?? '') as 'low' | 'medium' | 'high' | ''
+  )
+  const [disableAutoMemory, setDisableAutoMemory] = useState(initialClaude?.disableAutoMemory ?? initial?.disableAutoMemory ?? false)
   const [machineName, setMachineName] = useState(initial?.machineName ?? '')
 
   // Fetch available versions when legacy checkbox enabled
@@ -122,6 +132,14 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
     })
     return unsub
   }, [installing])
+
+  // Codex is not yet available over SSH -- if user flips sessionType to ssh while
+  // codex is selected, fall back to claude so the form remains usable.
+  useEffect(() => {
+    if (sessionType === 'ssh' && provider === 'codex') {
+      setProvider('claude')
+    }
+  }, [sessionType, provider])
 
   const handleInstallVersion = async () => {
     if (!legacyVersion) return
@@ -207,10 +225,24 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
 
     const dir = sessionType === 'ssh' ? sshRemotePath.trim() || '~' : (workingDir.trim() || '.')
 
+    const claudeOptions = provider === 'claude' ? {
+      model: model || undefined,
+      legacyVersion: legacyEnabled && legacyVersion ? { enabled: true, version: legacyVersion } : undefined,
+      agentIds: !shellOnly && selectedAgentIds.size > 0 ? Array.from(selectedAgentIds) : undefined,
+      effortLevel: !shellOnly && effortLevel ? effortLevel : undefined,
+      disableAutoMemory: !shellOnly && disableAutoMemory ? true : undefined,
+    } : undefined
+
+    const codexOptions: CodexOptions | undefined = provider === 'codex' ? {
+      model: codexModel,
+      reasoningEffort: codexEffort,
+      permissionsPreset: codexPreset,
+    } : undefined
+
     const config: Omit<TerminalConfig, 'id'> = {
+      provider,
       label: label.trim(),
       workingDirectory: dir,
-      model,
       color,
       sessionType,
       shellOnly,
@@ -224,13 +256,8 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
         postCommand: postCommand.trim() || undefined,
         hasSudoPassword: saveSudoPassword && sudoPassword.length > 0,
       } : undefined,
-      legacyVersion: legacyEnabled && legacyVersion ? {
-        enabled: true,
-        version: legacyVersion
-      } : undefined,
-      agentIds: !shellOnly && selectedAgentIds.size > 0 ? Array.from(selectedAgentIds) : undefined,
-      effortLevel: (!shellOnly && effortLevel ? effortLevel : undefined) as any,
-      disableAutoMemory: !shellOnly && disableAutoMemory ? true : undefined,
+      claudeOptions,
+      codexOptions,
       machineName: machineName.trim() || undefined,
     }
 
@@ -272,6 +299,13 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
             SSH
           </button>
         </div>
+
+        {/* Provider segmented control */}
+        <ProviderSegmentedControl
+          value={provider}
+          onChange={setProvider}
+          sessionType={sessionType}
+        />
 
         {/* Two-column grid */}
         <div className="grid grid-cols-2 gap-6">
@@ -528,6 +562,8 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
               </div>
             )}
 
+            {provider === 'claude' && (
+            <>
             {/* Model override */}
             <div>
               <label className="block text-xs text-subtext0 mb-1">
@@ -555,7 +591,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                 </label>
                 <select
                   value={effortLevel}
-                  onChange={(e) => setEffortLevel(e.target.value)}
+                  onChange={(e) => setEffortLevel(e.target.value as 'low' | 'medium' | 'high' | '')}
                   className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-blue"
                 >
                   <option value="">Auto (default)</option>
@@ -686,6 +722,27 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                   Author your own templates in <span className="text-subtext0 font-medium">Agent Hub → Library</span>. Anything you create there appears here automatically.
                 </p>
               </>
+            )}
+            </>
+            )}
+
+            {provider === 'codex' && (
+              <CodexFormFields
+                value={{ model: codexModel, reasoningEffort: codexEffort, permissionsPreset: codexPreset }}
+                // Spread-then-set: dropdowns + radios always emit defined values, so we can safely
+                // guard each setter on `!== undefined`. Add explicit-clear logic if future nullable fields land.
+                onChange={(next) => {
+                  if (next.model !== undefined) setCodexModel(next.model)
+                  if (next.reasoningEffort !== undefined) setCodexEffort(next.reasoningEffort)
+                  if (next.permissionsPreset !== undefined) setCodexPreset(next.permissionsPreset)
+                }}
+                onOpenSettings={() => {
+                  // Best-effort: ask the host to navigate Settings to the Codex tab.
+                  // For v1.5.0 we simply open Settings; the user can click the Codex tab.
+                  // P3+ may add a deep-link channel.
+                  window.dispatchEvent(new CustomEvent('app:openSettings', { detail: { tab: 'codex' } }))
+                }}
+              />
             )}
 
             {/* -- ORGANIZATION section -- */}

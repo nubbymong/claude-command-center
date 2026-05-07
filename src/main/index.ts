@@ -10,7 +10,10 @@ import { killAllPty, gracefulExitAllPty } from './pty-manager'
 import { registerLogHandlers } from './ipc/log-handlers'
 import { closeAllLogs } from './session-logger'
 
-import { deployStatuslineScript, configureClaudeSettings, startStatuslineWatcher } from './statusline-watcher'
+import { startStatuslineWatcher } from './statusline-watcher'
+import { registerProvider, getProvider } from './providers'
+import { ClaudeProvider } from './providers/claude'
+import { CodexProvider } from './providers/codex'
 import { registerDebugHandlers } from './ipc/debug-handlers'
 import { disableDebugMode } from './debug-capture'
 import { registerUpdateHandlers } from './ipc/update-handlers'
@@ -30,6 +33,7 @@ import { registerMemoryHandlers } from './ipc/memory-handlers'
 import { registerTokenomicsHandlers } from './ipc/tokenomics-handlers'
 import { registerGitHubHandlers } from './ipc/github-handlers'
 import { registerHooksHandlers } from './ipc/hooks-handlers'
+import { registerCodexHandlers } from './ipc/codex-handlers'
 import { HooksGateway } from './hooks/hooks-gateway'
 import { setGateway, getGateway } from './hooks'
 import { cleanupStaleHookEntries } from './hooks/boot-cleanup'
@@ -529,19 +533,26 @@ if (!gotTheLock) {
     const menu = Menu.buildFromTemplate(menuTemplate)
     Menu.setApplicationMenu(menu)
 
+    // Register built-in providers first — must happen before any code calls
+    // getProvider('claude'), including deployStatuslineScript below.
+    registerProvider(new ClaudeProvider())
+    registerProvider(new CodexProvider())
+
     // Take a daily safety snapshot of the CONFIG directory BEFORE anything
     // writes to it (deploy/config below, window/handlers later, IPC saves
     // throughout the session). One snapshot per UTC day, last 7 retained
     // under CONFIG/_backups/YYYY-MM-DD/. Non-fatal if it fails.
     try { snapshotConfig() } catch (err) { console.warn('[main] snapshotConfig failed:', err) }
 
-    // Deploy statusline script and configure Claude settings
-    try {
-      deployStatuslineScript()
-      configureClaudeSettings()
-    } catch (err) {
-      console.warn('[main] Failed to deploy statusline:', err)
-    }
+    // Deploy statusline script (Claude provider) — also configures
+    // ~/.claude/settings.json statusLine stanza internally. Fire-and-forget;
+    // the original sync calls (deployStatuslineScript + configureClaudeSettings)
+    // had no downstream consumers in this boot sequence, so awaiting isn't needed.
+    Promise.resolve()
+      .then(() => getProvider('claude').deployStatuslineScript?.(getResourcesDirectory()))
+      .then(() => getProvider('claude').deployResumePickerScript?.(getResourcesDirectory()))
+      .then(() => getProvider('codex').deployResumePickerScript?.(getResourcesDirectory()))
+      .catch((err) => console.warn('[main] Failed to deploy provider scripts:', err))
 
     // Content Security Policy
     session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
@@ -572,6 +583,7 @@ if (!gotTheLock) {
     registerInsightsHandlers(getWindow)
     registerNotesHandlers()
     registerVisionHandlers(getWindow)
+    registerCodexHandlers()
     registerCloudAgentHandlers(getWindow)
     registerTeamHandlers(getWindow)
     registerLegacyVersionHandlers(getWindow)

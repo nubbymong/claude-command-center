@@ -15,6 +15,7 @@ export function useStatuslineSubscription(sessionId: string) {
       if (data.contextUsedPercent != null) updates.contextPercent = data.contextUsedPercent
       if (data.costUsd != null) updates.costUsd = data.costUsd
       if (data.model) updates.modelName = data.model
+      if (data.reasoningEffort) updates.reasoningEffort = data.reasoningEffort
       if (data.linesAdded != null) updates.linesAdded = data.linesAdded
       if (data.linesRemoved != null) updates.linesRemoved = data.linesRemoved
       if (data.contextWindowSize != null) updates.contextWindowSize = data.contextWindowSize

@@ -113,6 +113,13 @@ export interface ElectronAPI {
       powershellTool?: boolean
       effortLevel?: 'low' | 'medium' | 'high'
       disableAutoMemory?: boolean
+      model?: string
+      provider?: 'claude' | 'codex'
+      codexOptions?: {
+        model?: string
+        reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+        permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted'
+      }
     }) => Promise<void>
     write: (sessionId: string, data: string) => void
     resize: (sessionId: string, cols: number, rows: number) => void
@@ -128,29 +135,7 @@ export interface ElectronAPI {
     onFlowState: (sessionId: string, callback: (msg: { state: string; info?: string }) => void) => () => void
   }
   statusline: {
-    onUpdate: (callback: (data: {
-      sessionId: string
-      model?: string
-      contextUsedPercent?: number
-      contextRemainingPercent?: number
-      contextWindowSize?: number
-      inputTokens?: number
-      outputTokens?: number
-      costUsd?: number
-      totalDurationMs?: number
-      linesAdded?: number
-      linesRemoved?: number
-      rateLimitCurrent?: number
-      rateLimitCurrentResets?: string
-      rateLimitWeekly?: number
-      rateLimitWeeklyResets?: string
-      rateLimitExtra?: {
-        enabled: boolean
-        utilization: number
-        usedUsd: number
-        limitUsd: number
-      }
-    }) => void) => () => void
+    onUpdate: (callback: (data: StatuslineData) => void) => () => void
   }
   debug: {
     onDebug: (callback: (data: any) => void) => () => void
@@ -423,6 +408,24 @@ export interface ElectronAPI {
     onSessionEnded: (cb: (sid: string) => void) => () => void
     onDropped: (cb: (p: { sessionId: string }) => void) => () => void
     onStatus: (cb: (s: HooksGatewayStatus) => void) => () => void
+  }
+  codex: {
+    status: () => Promise<{
+      installed: boolean
+      version: string | null
+      authMode: 'chatgpt' | 'api-key' | 'none'
+      planType?: string
+      accountId?: string
+      hasOpenAiApiKeyEnv: boolean
+    }>
+    login: (payload: { mode: 'chatgpt' | 'api-key' | 'device'; apiKey?: string }) => Promise<{
+      ok: boolean
+      browserUrl?: string
+      deviceCode?: string
+      error?: string
+    }>
+    logout: () => Promise<{ ok: boolean }>
+    testConnection: () => Promise<{ ok: boolean; message: string }>
   }
 }
 

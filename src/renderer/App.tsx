@@ -40,6 +40,7 @@ import { setupCloudAgentListener } from './stores/cloudAgentStore'
 import { setupTokenomicsListener } from './stores/tokenomicsStore'
 import { setupVisionListener, useVisionStore } from './stores/visionStore'
 import { setupGitHubListener, useGitHubStore } from './stores/githubStore'
+import { useCodexAccountStore } from './stores/codexAccountStore'
 import GitHubPanel from './components/github/GitHubPanel'
 import OnboardingModal from './components/github/onboarding/OnboardingModal'
 import AutoDetectBanner from './components/github/AutoDetectBanner'
@@ -87,7 +88,7 @@ export default function App() {
   // Set by the onboarding "Set up now" button and the auto-detect banner
   // Accept/Edit actions; consumed once by SettingsPage's initialTab prop.
   const [pendingSettingsTab, setPendingSettingsTab] = useState<
-    'general' | 'statusline' | 'shortcuts' | 'github' | 'about' | null
+    'general' | 'statusline' | 'shortcuts' | 'github' | 'codex' | 'about' | null
   >(null)
 
   // Clear the pending tab once SettingsPage has consumed it (i.e. we've
@@ -99,6 +100,20 @@ export default function App() {
       setPendingSettingsTab(null)
     }
   }, [view, pendingSettingsTab])
+
+  // Listen for app:openSettings dispatched by CodexFormFields "Open Settings" links.
+  // Switches the active view to Settings and deep-links to the requested tab.
+  useEffect(() => {
+    const onOpenSettings = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { tab?: string } | undefined
+      const tab = detail?.tab as 'general' | 'statusline' | 'shortcuts' | 'github' | 'codex' | 'about' | undefined
+      if (tab) setPendingSettingsTab(tab)
+      setView('settings')
+    }
+    window.addEventListener('app:openSettings', onOpenSettings)
+    return () => window.removeEventListener('app:openSettings', onOpenSettings)
+  }, [])
+
   const [showGuidedConfig, setShowGuidedConfig] = useState(false)
   const [showTipModal, setShowTipModal] = useState(false)
   const [partnerActive, setPartnerActive] = useState<Set<string>>(new Set())
@@ -256,6 +271,7 @@ export default function App() {
       useGitHubStore.getState().loadConfig()
       useVisionStore.getState().loadConfig()
       useVisionStore.getState().fetchStatus()
+      useCodexAccountStore.getState().refresh()
 
       const magicSettings = useMagicButtonStore.getState().settings
       if (magicSettings.autoDeleteDays != null && magicSettings.autoDeleteDays > 0) {
@@ -361,13 +377,41 @@ export default function App() {
 
       console.log(`[App] Restoring ${savedState.sessions.length} sessions...`)
 
-      const restoredSessions: Session[] = savedState.sessions.map((saved: SavedSession) => ({
-        ...saved,
-        status: 'idle' as const,
-        createdAt: Date.now(),
-      }))
+      const restoredSessions: Session[] = savedState.sessions.map((saved: SavedSession) => {
+        // v1.5 provider-shape: read Claude fields from claudeOptions, fall back to
+        // legacy top-level fields for un-migrated files (belt-and-braces).
+        const claude = saved.claudeOptions
+        return {
+          id: saved.id,
+          configId: saved.configId,
+          label: saved.label,
+          workingDirectory: saved.workingDirectory,
+          model: claude?.model ?? saved.model ?? '',
+          color: saved.color,
+          sessionType: saved.sessionType,
+          shellOnly: saved.shellOnly,
+          partnerTerminalPath: saved.partnerTerminalPath,
+          partnerElevated: saved.partnerElevated,
+          sshConfig: saved.sshConfig,
+          legacyVersion: claude?.legacyVersion ?? saved.legacyVersion,
+          agentIds: claude?.agentIds ?? saved.agentIds,
+          flickerFree: claude?.flickerFree ?? saved.flickerFree,
+          powershellTool: claude?.powershellTool ?? saved.powershellTool,
+          effortLevel: claude?.effortLevel ?? saved.effortLevel,
+          disableAutoMemory: claude?.disableAutoMemory ?? saved.disableAutoMemory,
+          machineName: saved.machineName,
+          githubIntegration: saved.githubIntegration,
+          status: 'idle' as const,
+          createdAt: Date.now(),
+          provider: saved.provider,
+          codexOptions: saved.codexOptions,
+        }
+      })
 
       for (const session of restoredSessions) {
+        // Both providers support a resume picker. For Codex, the picker script
+        // may not be deployed yet on first boot -- buildCodexSpawn falls back
+        // to direct codex spawn in that case (see src/main/providers/codex/spawn.ts).
         if (!session.shellOnly && session.sessionType === 'local') {
           markSessionForResumePicker(session.id)
         }
@@ -581,6 +625,8 @@ export default function App() {
                       effortLevel={session.effortLevel}
                       disableAutoMemory={session.disableAutoMemory}
                       model={session.model}
+                      provider={session.provider}
+                      codexOptions={session.codexOptions}
                     />
                   </div>
                   {hasPartner && (
@@ -781,8 +827,8 @@ export default function App() {
                   // Track feature usage based on config fields set
                   trackUsage('sessions.create-config')
                   if (newConfig.sessionType === 'ssh') trackUsage('sessions.session-type')
-                  if (newConfig.effortLevel) trackUsage('sessions.effort-level')
-                  if (newConfig.disableAutoMemory) trackUsage('sessions.disable-auto-memory')
+                  if (newConfig.claudeOptions?.effortLevel) trackUsage('sessions.effort-level')
+                  if (newConfig.claudeOptions?.disableAutoMemory) trackUsage('sessions.disable-auto-memory')
                   if (newConfig.partnerTerminalPath) trackUsage('sessions.partner-terminal')
 
                   const session: Session = {
@@ -790,17 +836,25 @@ export default function App() {
                     configId: newConfig.id,
                     label: newConfig.label,
                     workingDirectory: newConfig.workingDirectory,
-                    model: newConfig.model,
+                    model: newConfig.claudeOptions?.model ?? '',
                     color: newConfig.color,
                     status: 'idle',
                     createdAt: Date.now(),
                     sessionType: newConfig.sessionType,
                     shellOnly: newConfig.shellOnly,
                     sshConfig: newConfig.sshConfig,
-                    effortLevel: newConfig.effortLevel,
-                    disableAutoMemory: newConfig.disableAutoMemory,
+                    effortLevel: newConfig.claudeOptions?.effortLevel,
+                    disableAutoMemory: newConfig.claudeOptions?.disableAutoMemory,
+                    provider: newConfig.provider,
+                    codexOptions: newConfig.codexOptions,
                   }
-                  if (!session.shellOnly && session.sessionType === 'local') {
+                  // Both providers support a resume picker. For Codex, the picker
+                  // script may not be deployed yet on first boot -- buildCodexSpawn
+                  // falls back to direct codex spawn (see src/main/providers/codex/spawn.ts).
+                  if (
+                    !session.shellOnly &&
+                    session.sessionType === 'local'
+                  ) {
                     markSessionForResumePicker(session.id)
                   }
                   useSessionStore.getState().addSession(session)

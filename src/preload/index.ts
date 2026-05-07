@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC, ptyDataChannel, ptyExitChannel } from '../shared/ipc-channels'
 import type { HookEvent, HooksGatewayStatus } from '../shared/hook-types'
+import type { StatuslineData } from '../shared/types'
 
 export interface ElectronAPI {
   config: {
@@ -51,6 +52,13 @@ export interface ElectronAPI {
       }>
       effortLevel?: 'low' | 'medium' | 'high'
       disableAutoMemory?: boolean
+      model?: string
+      provider?: 'claude' | 'codex'
+      codexOptions?: {
+        model?: string
+        reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+        permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted'
+      }
     }) => Promise<void>
     write: (sessionId: string, data: string) => void
     resize: (sessionId: string, cols: number, rows: number) => void
@@ -73,16 +81,7 @@ export interface ElectronAPI {
     onFlowState: (sessionId: string, callback: (msg: { state: string; info?: string }) => void) => () => void
   }
   statusline: {
-    onUpdate: (callback: (data: {
-      sessionId: string
-      model?: string
-      contextUsedPercent?: number
-      contextRemainingPercent?: number
-      costUsd?: number
-      totalDurationMs?: number
-      linesAdded?: number
-      linesRemoved?: number
-    }) => void) => () => void
+    onUpdate: (callback: (data: StatuslineData) => void) => () => void
   }
   debug: {
     onDebug: (callback: (data: unknown) => void) => () => void
@@ -163,6 +162,24 @@ export interface ElectronAPI {
   }
   shell: {
     openExternal: (url: string) => Promise<void>
+  }
+  codex: {
+    status: () => Promise<{
+      installed: boolean
+      version: string | null
+      authMode: 'chatgpt' | 'api-key' | 'none'
+      planType?: string
+      accountId?: string
+      hasOpenAiApiKeyEnv: boolean
+    }>
+    login: (payload: { mode: 'chatgpt' | 'api-key' | 'device'; apiKey?: string }) => Promise<{
+      ok: boolean
+      browserUrl?: string
+      deviceCode?: string
+      error?: string
+    }>
+    logout: () => Promise<{ ok: boolean }>
+    testConnection: () => Promise<{ ok: boolean; message: string }>
   }
   github: GitHubBridge
   hooks: HooksBridge
@@ -547,6 +564,12 @@ const electronAPI: ElectronAPI = {
   },
   shell: {
     openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
+  },
+  codex: {
+    status: () => ipcRenderer.invoke(IPC.CODEX_STATUS),
+    login: (payload) => ipcRenderer.invoke(IPC.CODEX_LOGIN, payload),
+    logout: () => ipcRenderer.invoke(IPC.CODEX_LOGOUT),
+    testConnection: () => ipcRenderer.invoke(IPC.CODEX_TEST_CONNECTION),
   },
   github: {
     getConfig: () => ipcRenderer.invoke(IPC.GITHUB_CONFIG_GET),

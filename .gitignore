@@ -12,6 +12,7 @@ dist/
 .claude/
 .copilot-review-notes.md
 .superpowers/
+docs/superpowers/
 USER/
 memory/
 

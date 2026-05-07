@@ -204,8 +204,62 @@ export function loadAllConfig(): { data: Record<string, unknown>; needsMigration
   // only flow.
   stripLegacySshFields(data)
 
+  // v1.5: back-fill provider field + claudeOptions on TerminalConfig[].
+  // Strips top-level Claude fields; persists back to disk only if something actually changed.
+  migrateConfigsToProviderShape(data)
+
   logInfo(`[config-manager] Loaded all config from ${getConfigDir()}, needsMigration=${!hasData}`)
   return { data, needsMigration: !hasData }
+}
+
+// v1.5: provider-shape migration constants
+const CLAUDE_FIELDS = ['model', 'effortLevel', 'legacyVersion', 'disableAutoMemory', 'flickerFree', 'powershellTool', 'agentIds'] as const
+
+/**
+ * Migrate a single TerminalConfig from the legacy flat shape to the
+ * provider-namespaced shape. Pure function -- no side effects.
+ *
+ * - Sets provider='claude' if missing.
+ * - Copies the seven Claude-specific fields into claudeOptions (if not already there).
+ * - Strips those fields from the top level.
+ * - Idempotent: running on a new-shape entry returns an equal-by-value object.
+ */
+export function migrateConfigToProviderShape(cfg: any): any {
+  const out = { ...cfg }
+  if (!out.provider) out.provider = 'claude'
+  if (out.provider === 'claude') {
+    const claudeOptions = { ...(out.claudeOptions ?? {}) }
+    for (const field of CLAUDE_FIELDS) {
+      if (field in out && out[field] !== undefined && claudeOptions[field] === undefined) {
+        claudeOptions[field] = out[field]
+      }
+      delete out[field]
+    }
+    out.claudeOptions = claudeOptions
+  }
+  return out
+}
+
+/**
+ * Run migrateConfigToProviderShape over every entry in data.configs[].
+ * Persists back to disk only when something actually changed. Idempotent.
+ */
+function migrateConfigsToProviderShape(data: Record<string, unknown>): void {
+  const configs = data.configs as Array<Record<string, unknown>> | null
+  if (!Array.isArray(configs)) return
+  let dirty = false
+  const migrated: any[] = []
+  for (const c of configs) {
+    const out = migrateConfigToProviderShape(c)
+    // Dirty if provider was absent OR any legacy top-level field was present
+    if (!c.provider || CLAUDE_FIELDS.some(f => f in c)) dirty = true
+    migrated.push(out)
+  }
+  if (dirty) {
+    data.configs = migrated
+    writeConfig('configs', migrated)
+    logInfo('[config-manager] Migrated configs.json to provider shape')
+  }
 }
 
 /**
