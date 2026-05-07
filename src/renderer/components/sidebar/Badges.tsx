@@ -42,3 +42,25 @@ export function SshBadge() {
     </div>
   )
 }
+
+export function CodexBadge({ needsAttention }: { needsAttention: boolean }) {
+  const isWorking = !needsAttention
+  return (
+    <div
+      className={`flex items-center justify-center w-4 h-4 rounded shrink-0 transition-colors ${
+        isWorking ? 'bg-green/20 text-green' : 'bg-blue/20 text-blue'
+      }`}
+      title={isWorking ? 'Codex is working' : 'Waiting for input'}
+    >
+      {/*
+        OpenAI-style knot mark. Six interlocking arcs around a central
+        point, scaled to the same 10x10 viewBox the ClaudeBadge uses
+        so layout stays identical.
+      */}
+      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+        <path d="M12 2C9 2 6.5 4 6 7c-2.5 1-4 3.5-4 6.5C2 17 5 20 8.5 20c1.5 0 3-.5 4-1.5 1 1 2.5 1.5 4 1.5 3.5 0 6.5-3 6.5-6.5 0-3-1.5-5.5-4-6.5C18.5 4 15.5 2 12 2z" />
+        <path d="M12 8v8M8 12h8" />
+      </svg>
+    </div>
+  )
+}

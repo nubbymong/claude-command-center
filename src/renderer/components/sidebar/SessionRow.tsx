@@ -1,6 +1,6 @@
 import React from 'react'
 import { Session } from '../../stores/sessionStore'
-import { ClaudeBadge, ShellBadge, SshBadge } from './Badges'
+import { ClaudeBadge, CodexBadge, ShellBadge, SshBadge } from './Badges'
 
 interface SessionRowProps {
   session: Session
@@ -72,7 +72,13 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
             <span className="text-xs font-medium truncate flex-1">{session.label}</span>
           )}
           {session.sessionType === 'ssh' && <SshBadge />}
-          {session.shellOnly ? <ShellBadge /> : <ClaudeBadge needsAttention={needsAttention} />}
+          {session.shellOnly ? (
+            <ShellBadge />
+          ) : (session.provider ?? 'claude') === 'codex' ? (
+            <CodexBadge needsAttention={needsAttention} />
+          ) : (
+            <ClaudeBadge needsAttention={needsAttention} />
+          )}
         </div>
         <div className="mt-0.5 pl-3 pr-1">
           <div className="flex items-center gap-1.5">
