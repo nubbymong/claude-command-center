@@ -1,5 +1,6 @@
 import type { CodexOptions } from '../../stores/configStore'
 import { useCodexAccountStore } from '../../stores/codexAccountStore'
+import { CODEX_MODELS } from '../../codex-models'
 
 interface Props {
   value: CodexOptions
@@ -7,7 +8,7 @@ interface Props {
   onOpenSettings: () => void
 }
 
-const MODELS = ['gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex', 'gpt-5.3-codex-spark', 'gpt-5.2'] as const
+const MODELS = CODEX_MODELS
 const EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const
 const PRESETS = [
   { id: 'read-only' as const,    label: 'Read-only',    desc: 'Safe browsing -- no file writes' },
