@@ -1,5 +1,6 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { IPC } from '../../shared/ipc-channels'
+import { logInfo } from '../debug-logger'
 import type { GitHubConfig, RepoCache, SessionGitHubIntegration } from '../../shared/github-types'
 import type { SavedSession } from '../../shared/types'
 import { GitHubConfigStore } from '../github/github-config-store'
@@ -467,13 +468,13 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
       // Remove once root cause is found.
       const sessions = await deps.loadSessions()
       const idx = sessions.findIndex((s) => s.id === sessionId)
-      console.log('[gh-integration #280] SESSION_CONFIG_UPDATE', {
+      logInfo(`[gh-integration #280] SESSION_CONFIG_UPDATE ${JSON.stringify({
         sessionId,
         patch,
         diskSessionCount: sessions.length,
         diskSessionFound: idx >= 0,
         diskGhBefore: idx >= 0 ? sessions[idx].githubIntegration : null,
-      })
+      })}`)
       if (idx < 0) return { ok: false, error: 'not-found' }
       const current: SessionGitHubIntegration = sessions[idx].githubIntegration ?? {
         enabled: false,
@@ -482,7 +483,7 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
       const merged: SessionGitHubIntegration = { ...current, ...patch }
       sessions[idx] = { ...sessions[idx], githubIntegration: merged }
       await deps.saveSessions(sessions)
-      console.log('[gh-integration #280] SESSION_CONFIG_UPDATE wrote to disk', { sessionId, merged })
+      logInfo(`[gh-integration #280] SESSION_CONFIG_UPDATE wrote to disk ${JSON.stringify({ sessionId, merged })}`)
       // Register or refresh the orchestrator's view of this session. On
       // disable/slug-clear, unregister so its timer doesn't keep firing.
       // registerSession already clears any prior timer for this id, so no
