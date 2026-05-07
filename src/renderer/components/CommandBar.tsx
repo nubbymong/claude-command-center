@@ -17,6 +17,54 @@ import {
   shortModelName as resolveModelName,
   isModelActive,
 } from '../lib/claude-cli-options'
+import { CODEX_MODELS } from '../codex-models'
+
+// -- Codex toolbar sub-components --
+
+const CODEX_PRESETS = ['read-only', 'standard', 'auto', 'unrestricted'] as const
+type CodexPreset = typeof CODEX_PRESETS[number]
+
+function CodexModelDropdown({ value, onChange }: {
+  value: string
+  onChange: (next: string) => void
+}) {
+  const [dirty, setDirty] = React.useState(false)
+  return (
+    <div className="flex items-center gap-1">
+      <select
+        value={value}
+        onChange={(e) => { setDirty(true); onChange(e.target.value) }}
+        className="bg-base border border-surface1 rounded px-1.5 py-0.5 text-xs text-text"
+      >
+        {CODEX_MODELS.map((m) => (
+          <option key={m} value={m}>{m}</option>
+        ))}
+      </select>
+      {dirty && <span className="text-[10px] text-overlay1">Restart session to apply</span>}
+    </div>
+  )
+}
+
+function PermissionsPresetDropdown({ value, onChange }: {
+  value: CodexPreset
+  onChange: (next: CodexPreset) => void
+}) {
+  const [dirty, setDirty] = React.useState(false)
+  return (
+    <div className="flex items-center gap-1">
+      <select
+        value={value}
+        onChange={(e) => { setDirty(true); onChange(e.target.value as CodexPreset) }}
+        className="bg-base border border-surface1 rounded px-1.5 py-0.5 text-xs text-text"
+      >
+        {CODEX_PRESETS.map((p) => (
+          <option key={p} value={p}>{p}</option>
+        ))}
+      </select>
+      {dirty && <span className="text-[10px] text-overlay1">Restart session to apply</span>}
+    </div>
+  )
+}
 
 interface Props {
   sessionId: string
@@ -68,6 +116,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
   const [lastEffort, setLastEffort] = useState<string | null>(null)
   const [lastMode, setLastMode] = useState<string | null>(null)
   const activeSession = useSessionStore((s) => s.sessions.find((sess) => sess.id === sessionId))
+  const updateSession = useSessionStore((s) => s.updateSession)
 
   const shortModelName = (fullName?: string): string =>
     resolveModelName(fullName || activeSession?.model)
@@ -513,69 +562,97 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
         {/* Spacer */}
         <div className="flex-1" />
 
-        {/* Permission mode picker */}
-        <div className="relative shrink-0">
-          <button
-            onClick={() => setOpenPicker(openPicker === 'mode' ? null : 'mode')}
-            className="flex items-center gap-1 px-2 py-0.5 text-xs text-subtext0 hover:text-text rounded bg-surface0/50 hover:bg-surface0 border border-surface1/40 hover:border-surface1 transition-colors shrink-0 cursor-pointer"
-          >
-            Mode
-            <svg width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.4" className="opacity-50">
-              <path d="M2.5 4l2.5 2.5L7.5 4" />
-            </svg>
-          </button>
-          {openPicker === 'mode' && (
-            <ToolbarPopup
-              sections={[{
-                title: 'Mode',
-                shortcut: 'Shift+Ctrl+M',
-                items: PERMISSION_MODES.map((m) => ({ ...m, active: m.value === lastMode })),
-              }]}
-              onSelect={handleModeSelect}
-              onClose={() => setOpenPicker(null)}
-            />
-          )}
-        </div>
+        {/* Permission mode picker -- Claude only */}
+        {(activeSession?.provider ?? 'claude') === 'claude' && (
+          <div className="relative shrink-0">
+            <button
+              onClick={() => setOpenPicker(openPicker === 'mode' ? null : 'mode')}
+              className="flex items-center gap-1 px-2 py-0.5 text-xs text-subtext0 hover:text-text rounded bg-surface0/50 hover:bg-surface0 border border-surface1/40 hover:border-surface1 transition-colors shrink-0 cursor-pointer"
+            >
+              Mode
+              <svg width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.4" className="opacity-50">
+                <path d="M2.5 4l2.5 2.5L7.5 4" />
+              </svg>
+            </button>
+            {openPicker === 'mode' && (
+              <ToolbarPopup
+                sections={[{
+                  title: 'Mode',
+                  shortcut: 'Shift+Ctrl+M',
+                  items: PERMISSION_MODES.map((m) => ({ ...m, active: m.value === lastMode })),
+                }]}
+                onSelect={handleModeSelect}
+                onClose={() => setOpenPicker(null)}
+              />
+            )}
+          </div>
+        )}
+
+        {/* Codex: permissions preset inline dropdown */}
+        {(activeSession?.provider ?? 'claude') === 'codex' && activeSession?.codexOptions && (
+          <PermissionsPresetDropdown
+            value={activeSession.codexOptions.permissionsPreset ?? 'standard'}
+            onChange={(next) =>
+              updateSession(activeSession.id, {
+                codexOptions: { ...activeSession.codexOptions!, permissionsPreset: next },
+              })
+            }
+          />
+        )}
 
         <div className="w-px h-4 bg-surface1 mx-0.5" />
 
-        {/* Model + Effort picker */}
-        <div className="relative shrink-0">
-          <button
-            onClick={() => setOpenPicker(openPicker === 'model' ? null : 'model')}
-            className="flex items-center gap-1 px-2 py-0.5 text-xs text-subtext0 hover:text-text rounded bg-surface0/50 hover:bg-surface0 border border-surface1/40 hover:border-surface1 transition-colors shrink-0 cursor-pointer"
-          >
-            <span className="text-blue">{shortModelName(activeSession?.modelName)}</span>
-            <svg width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.4" className="opacity-50">
-              <path d="M2.5 4l2.5 2.5L7.5 4" />
-            </svg>
-          </button>
-          {openPicker === 'model' && (
-            <ToolbarPopup
-              alignRight
-              sections={[
-                {
-                  title: 'Models',
-                  shortcut: 'Shift+Ctrl+I',
-                  items: MODELS.map((m) => ({
-                    ...m,
-                    active: isModelActive(
-                      m.value,
-                      activeSession?.modelName || activeSession?.model || '',
-                    ),
-                  })),
-                },
-                {
-                  title: 'Effort',
-                  shortcut: 'Shift+Ctrl+E',
-                  items: EFFORTS.map((e) => ({ ...e, active: e.value === lastEffort })),
-                },
-              ]}
-              onSelect={handleModelSelect}
-              onClose={() => setOpenPicker(null)}
-            />
-          )}
-        </div>
+        {/* Model + Effort picker -- Claude only */}
+        {(activeSession?.provider ?? 'claude') === 'claude' && (
+          <div className="relative shrink-0">
+            <button
+              onClick={() => setOpenPicker(openPicker === 'model' ? null : 'model')}
+              className="flex items-center gap-1 px-2 py-0.5 text-xs text-subtext0 hover:text-text rounded bg-surface0/50 hover:bg-surface0 border border-surface1/40 hover:border-surface1 transition-colors shrink-0 cursor-pointer"
+            >
+              <span className="text-blue">{shortModelName(activeSession?.modelName)}</span>
+              <svg width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.4" className="opacity-50">
+                <path d="M2.5 4l2.5 2.5L7.5 4" />
+              </svg>
+            </button>
+            {openPicker === 'model' && (
+              <ToolbarPopup
+                alignRight
+                sections={[
+                  {
+                    title: 'Models',
+                    shortcut: 'Shift+Ctrl+I',
+                    items: MODELS.map((m) => ({
+                      ...m,
+                      active: isModelActive(
+                        m.value,
+                        activeSession?.modelName || activeSession?.model || '',
+                      ),
+                    })),
+                  },
+                  {
+                    title: 'Effort',
+                    shortcut: 'Shift+Ctrl+E',
+                    items: EFFORTS.map((e) => ({ ...e, active: e.value === lastEffort })),
+                  },
+                ]}
+                onSelect={handleModelSelect}
+                onClose={() => setOpenPicker(null)}
+              />
+            )}
+          </div>
+        )}
+
+        {/* Codex: GPT model inline dropdown */}
+        {(activeSession?.provider ?? 'claude') === 'codex' && activeSession?.codexOptions && (
+          <CodexModelDropdown
+            value={activeSession.codexOptions.model ?? 'gpt-5.5'}
+            onChange={(next) =>
+              updateSession(activeSession.id, {
+                codexOptions: { ...activeSession.codexOptions!, model: next },
+              })
+            }
+          />
+        )}
 
         <div className="w-px h-4 bg-surface1 mx-0.5" />
         <button
