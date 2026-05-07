@@ -241,9 +241,11 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
       provider: config.provider,
       codexOptions: config.codexOptions,
     }
-    // Resume picker is Claude-specific (uses Claude's ~/.claude/projects/ history).
-    // Codex resume is implemented in P4; for now Codex sessions skip the picker.
-    if (!session.shellOnly && session.sessionType === 'local' && (config.provider ?? 'claude') === 'claude') {
+    // Both Claude and Codex sessions trigger the resume picker. The Codex picker
+    // script is deployed at boot via deployResumePickerScript; if missing on first
+    // boot, buildCodexSpawn falls back to direct codex spawn (see
+    // src/main/providers/codex/spawn.ts) so this gate cannot brick a session.
+    if (!session.shellOnly && session.sessionType === 'local') {
       markSessionForResumePicker(session.id)
     }
     addSession(session)

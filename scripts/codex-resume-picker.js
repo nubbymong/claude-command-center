@@ -139,7 +139,7 @@ function launchCodex(resumeUuid) {
   const cmd = resolveCodexCmd()
   const result = spawnSync(cmd, args, {
     stdio: 'inherit',
-    shell: os.platform() === 'win32',
+    shell: lib.shouldUseShell(cmd, os.platform()),
     windowsHide: false,
   })
 
@@ -148,7 +148,7 @@ function launchCodex(resumeUuid) {
     console.log('\n  Conversation no longer available -- starting fresh session...\n')
     const fresh = spawnSync(cmd, forwarded, {
       stdio: 'inherit',
-      shell: os.platform() === 'win32',
+      shell: lib.shouldUseShell(cmd, os.platform()),
       windowsHide: false,
     })
     process.exit(fresh.status || 0)

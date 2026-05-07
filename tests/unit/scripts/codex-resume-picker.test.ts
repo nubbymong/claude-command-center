@@ -10,6 +10,7 @@ const lib = require('../../../scripts/lib/codex-resume-picker-lib.js') as {
   walkRollouts: (home: string, maxDays: number, cwd: string) => Array<{ id: string; cwd: string; model: string; effort?: string; label: string; mtime: number }>
   buildResumeArgs: (uuid: string | null, flags: string[]) => string[]
   shouldFallback: (resumeUuid: string | null, exitStatus: number) => boolean
+  shouldUseShell: (cmd: string, platform: string) => boolean
 }
 
 const FIXTURES = join(__dirname, '..', '..', 'fixtures', 'codex-rollouts')
@@ -133,5 +134,31 @@ describe('codex-resume-picker shouldFallback', () => {
   it('returns false when resume was not attempted (uuid null), regardless of exitStatus', () => {
     expect(lib.shouldFallback(null, 1)).toBe(false)
     expect(lib.shouldFallback(null, 0)).toBe(false)
+  })
+})
+
+describe('codex-resume-picker shouldUseShell', () => {
+  it('returns false on linux for any cmd (including .exe paths)', () => {
+    expect(lib.shouldUseShell('/usr/local/bin/codex.exe', 'linux')).toBe(false)
+  })
+
+  it('returns false on darwin for a bare command name', () => {
+    expect(lib.shouldUseShell('codex', 'darwin')).toBe(false)
+  })
+
+  it('returns false on win32 when cmd ends with .exe', () => {
+    expect(lib.shouldUseShell('C:\\path\\codex.exe', 'win32')).toBe(false)
+  })
+
+  it('returns true on win32 when cmd ends with .cmd', () => {
+    expect(lib.shouldUseShell('C:\\path\\codex.cmd', 'win32')).toBe(true)
+  })
+
+  it('returns true on win32 with uppercase .CMD (case insensitive)', () => {
+    expect(lib.shouldUseShell('C:\\path\\codex.CMD', 'win32')).toBe(true)
+  })
+
+  it('returns true on win32 when cmd ends with .bat', () => {
+    expect(lib.shouldUseShell('C:\\path\\codex.bat', 'win32')).toBe(true)
   })
 })

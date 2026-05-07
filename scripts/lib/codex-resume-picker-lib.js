@@ -100,14 +100,19 @@ function walkRollouts(home, maxDays, cwd) {
     for (const { fp, mtime } of dayEntries) {
       if (matches.length >= 15) break
       let buf
+      let fd = null
       try {
-        const fd = fs.openSync(fp, 'r')
+        fd = fs.openSync(fp, 'r')
         const st = fs.fstatSync(fd)
         const size = Math.min(32768, st.size)
         buf = Buffer.alloc(size)
         fs.readSync(fd, buf, 0, size, 0)
-        fs.closeSync(fd)
       } catch { continue }
+      finally {
+        if (fd !== null) {
+          try { fs.closeSync(fd) } catch {}
+        }
+      }
       const parsed = parseRollout(buf.toString('utf-8'))
       if (!parsed) continue
       if (parsed.cwd !== cwd) continue
@@ -138,4 +143,13 @@ function shouldFallback(resumeUuid, exitStatus) {
   return exitStatus !== 0
 }
 
-module.exports = { parseRollout, walkRollouts, buildResumeArgs, shouldFallback }
+// -- shouldUseShell -------------------------------------------------
+// Decides whether spawnSync should wrap the command in cmd.exe. Mirrors
+// src/main/providers/codex/spawn.ts:50-53: only wrap on win32 when the
+// resolved command is a .cmd or .bat shim. A real codex.exe path needs
+// no shell -- wrapping it adds quoting/injection edge cases.
+function shouldUseShell(cmd, platform) {
+  return platform === 'win32' && /\.(cmd|bat)$/i.test(cmd)
+}
+
+module.exports = { parseRollout, walkRollouts, buildResumeArgs, shouldFallback, shouldUseShell }
