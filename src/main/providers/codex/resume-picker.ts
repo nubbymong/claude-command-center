@@ -3,8 +3,16 @@
  * `<resourcesDir>/scripts/`. Mirrors `deployClaudeResumePickerScript`.
  *
  * electron-vite bundles all `src/main/**\/*.ts` into a single `out/main/index.js`,
- * so `__dirname` is always `out/main/` regardless of original source location.
- * The scripts live one directory up at `out/scripts/`.
+ * so `__dirname` at runtime is always `out/main/` regardless of original source
+ * location. The default `path.join(__dirname, '../../scripts/...')` hops two
+ * directories up from `out/main/` to the build root (sibling of `out/`), then
+ * into `scripts/` -- where electron-builder copies the picker scripts via
+ * `package.json` `build.files`. In dev (vitest) `__dirname` resolves to the
+ * source file's directory, so the same join lands at
+ * `<repo>/src/main/scripts/` -- which is empty in the source tree (the
+ * pickers actually live at `<repo>/scripts/`), so an unredirected dev call
+ * silently no-ops via the `existsSync` guard. Tests inject `sourceRoot` to
+ * point at a per-test temp dir instead.
  */
 import * as fs from 'fs'
 import * as path from 'path'
@@ -12,9 +20,9 @@ import * as path from 'path'
 /**
  * @param resourcesDir Destination resources directory.
  * @param sourceRoot   Optional override for the source-script lookup root. The
- *   default joins `__dirname` against `'../../scripts/...'`, which under vitest
- *   resolves to `<repo>/src/main/scripts/`. Tests inject a per-test temp dir to
- *   avoid races on that shared on-disk path under vitest's parallel file runner.
+ *   default uses the `__dirname`-relative path described in the file header.
+ *   Tests inject a per-test temp dir to avoid races on the shared
+ *   `<repo>/src/main/scripts/` path under vitest's parallel file runner.
  */
 export async function deployCodexResumePickerScript(resourcesDir: string, sourceRoot?: string): Promise<void> {
   const resourcesScriptsDir = path.join(resourcesDir, 'scripts')

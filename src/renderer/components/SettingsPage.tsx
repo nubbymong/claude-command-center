@@ -10,7 +10,8 @@ import { CodexSettingsTab } from './codex/CodexSettingsTab'
 import PageFrame from './PageFrame'
 declare const __BUILD_TIME__: string
 
-type SettingsTab = 'general' | 'statusline' | 'shortcuts' | 'github' | 'codex' | 'about'
+export const SETTINGS_TAB_IDS = ['general', 'statusline', 'shortcuts', 'github', 'codex', 'about'] as const
+export type SettingsTab = typeof SETTINGS_TAB_IDS[number]
 
 const TABS: { id: SettingsTab; label: string }[] = [
   { id: 'general', label: 'General' },

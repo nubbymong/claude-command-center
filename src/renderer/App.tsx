@@ -11,7 +11,7 @@ import { useExcalidrawStore } from './stores/excalidrawStore'
 import StatusBar from './components/StatusBar'
 import UsageDashboard from './components/UsageDashboard'
 import ProjectBrowser from './components/ProjectBrowser'
-import SettingsPage from './components/SettingsPage'
+import SettingsPage, { SETTINGS_TAB_IDS, type SettingsTab } from './components/SettingsPage'
 import LogViewer from './components/LogViewer'
 import InsightsPage from './components/InsightsPage'
 import CloudAgentsPage from './components/CloudAgentsPage'
@@ -87,9 +87,7 @@ export default function App() {
   // Deep-link the Settings page to a specific tab the next time it opens.
   // Set by the onboarding "Set up now" button and the auto-detect banner
   // Accept/Edit actions; consumed once by SettingsPage's initialTab prop.
-  const [pendingSettingsTab, setPendingSettingsTab] = useState<
-    'general' | 'statusline' | 'shortcuts' | 'github' | 'codex' | 'about' | null
-  >(null)
+  const [pendingSettingsTab, setPendingSettingsTab] = useState<SettingsTab | null>(null)
 
   // Clear the pending tab once SettingsPage has consumed it (i.e. we've
   // navigated away from the settings view). A return visit then defaults to
@@ -103,11 +101,15 @@ export default function App() {
 
   // Listen for app:openSettings dispatched by CodexFormFields "Open Settings" links.
   // Switches the active view to Settings and deep-links to the requested tab.
+  // Validates the tab against the allow-list -- a malformed CustomEvent
+  // detail otherwise leaves SettingsPage with no matching tab content.
   useEffect(() => {
     const onOpenSettings = (e: Event) => {
       const detail = (e as CustomEvent).detail as { tab?: string } | undefined
-      const tab = detail?.tab as 'general' | 'statusline' | 'shortcuts' | 'github' | 'codex' | 'about' | undefined
-      if (tab) setPendingSettingsTab(tab)
+      const tab = detail?.tab
+      if (tab && (SETTINGS_TAB_IDS as readonly string[]).includes(tab)) {
+        setPendingSettingsTab(tab as SettingsTab)
+      }
       setView('settings')
     }
     window.addEventListener('app:openSettings', onOpenSettings)
