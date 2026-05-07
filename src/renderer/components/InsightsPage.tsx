@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { useInsightsStore } from '../stores/insightsStore'
+import { useTokenomicsStore } from '../stores/tokenomicsStore'
 import KpiSidebar from './KpiSidebar'
 import type { InsightsData } from '../types/electron'
 import PageFrame from './PageFrame'
@@ -186,6 +187,8 @@ const DARK_THEME_CSS = `
 `
 
 export default function InsightsPage() {
+  // All hooks called unconditionally -- early returns appear after all hook calls.
+  const tokenomicsSessions = useTokenomicsStore((s) => s.data?.sessions ?? {})
   const catalogue = useInsightsStore((s) => s.catalogue)
   const selectedRunId = useInsightsStore((s) => s.selectedRunId)
   const selectRun = useInsightsStore((s) => s.selectRun)
@@ -262,6 +265,31 @@ export default function InsightsPage() {
 
   const completedRuns = catalogue?.runs.filter((r) => r.status === 'complete') || []
   const isRunning = status === 'running' || status === 'extracting_kpis'
+
+  // Codex-only empty state: user has Codex sessions but no Claude sessions.
+  // Insights are Claude-only -- show an explanatory message rather than the
+  // generic first-run UI, which would be confusing for Codex-only users.
+  const sessionValues = Object.values(tokenomicsSessions)
+  const hasAnyClaude = sessionValues.some(
+    (rec: any) => (rec?.provider ?? 'claude') === 'claude',
+  )
+  const hasAnyCodex = sessionValues.some(
+    (rec: any) => rec?.provider === 'codex',
+  )
+  if (!hasAnyClaude && hasAnyCodex) {
+    return (
+      <PageFrame title="Insights">
+        <div className="flex flex-col items-center justify-center py-16 text-center">
+          <p className="text-base text-text mb-2">
+            Insights aggregate from your Claude sessions.
+          </p>
+          <p className="text-sm text-overlay1">
+            Start a Claude session to see your patterns.
+          </p>
+        </div>
+      </PageFrame>
+    )
+  }
 
   // Empty state
   if (!catalogue || completedRuns.length === 0) {
