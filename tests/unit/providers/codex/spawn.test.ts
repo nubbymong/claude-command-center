@@ -13,6 +13,14 @@ vi.mock('child_process', async (importOriginal) => {
   }
 })
 
+// Mock setup-handlers so getResourcesDirectory returns a per-test value via the
+// _mockResourcesDir state declared inside the useResumePicker describe below.
+// Hoisted vi.mock requires the factory to access state via a getter pattern --
+// we expose a global ref the test reads/writes from inside its describe.
+vi.mock('../../../../src/main/ipc/setup-handlers', () => ({
+  getResourcesDirectory: () => (globalThis as any).__mockResourcesDir ?? '',
+}))
+
 import * as osMod from 'os'
 import { execSync } from 'child_process'
 import { CodexProvider } from '../../../../src/main/providers/codex'
@@ -135,5 +143,81 @@ describe('CodexProvider', () => {
       if (origPlatform) Object.defineProperty(process, 'platform', origPlatform)
       else delete (process as any).platform
     }
+  })
+
+  describe('useResumePicker', () => {
+    // The vi.mock at the top of this file points getResourcesDirectory at
+    // globalThis.__mockResourcesDir. Toggle it per test via the helper below.
+    function setMockResourcesDir(dir: string | null): void {
+      ;(globalThis as any).__mockResourcesDir = dir ?? ''
+    }
+
+    beforeEach(() => {
+      setMockResourcesDir(null)
+    })
+
+    afterEach(() => {
+      delete (globalThis as any).__mockResourcesDir
+    })
+
+    it('swaps cmd to node + picker when useResumePicker=true and script is deployed', () => {
+      const { mkdtempSync, mkdirSync, writeFileSync } = require('fs') as typeof import('fs')
+      const { tmpdir } = require('os') as typeof import('os')
+      const { join } = require('path') as typeof import('path')
+      const dir = mkdtempSync(join(tmpdir(), 'ccc-spawn-test-'))
+      mkdirSync(join(dir, 'scripts'), { recursive: true })
+      writeFileSync(join(dir, 'scripts', 'codex-resume-picker.js'), '// stub')
+      setMockResourcesDir(dir)
+
+      const out = new CodexProvider().buildSpawnCommand({
+        sessionId: 'sid-resume',
+        useResumePicker: true,
+        codexOptions: { model: 'gpt-5.5', reasoningEffort: 'xhigh', permissionsPreset: 'standard' },
+      })
+
+      expect(out.cmd).toBe('node')
+      expect(out.args[0]).toBe(join(dir, 'scripts', 'codex-resume-picker.js'))
+      expect(out.args).toContain('-m')
+      expect(out.args).toContain('gpt-5.5')
+      expect(out.args).toContain('--sandbox')
+      expect(out.args).toContain('workspace-write')
+      expect(out.args).toContain('--ask-for-approval')
+      expect(out.args).toContain('on-request')
+    })
+
+    it('falls back to direct codex spawn when useResumePicker=true but picker script is missing', () => {
+      const { mkdtempSync } = require('fs') as typeof import('fs')
+      const { tmpdir } = require('os') as typeof import('os')
+      const { join } = require('path') as typeof import('path')
+      const dir = mkdtempSync(join(tmpdir(), 'ccc-spawn-fallback-'))
+      // Intentionally do NOT create scripts/codex-resume-picker.js in `dir`
+      setMockResourcesDir(dir)
+
+      const out = new CodexProvider().buildSpawnCommand({
+        sessionId: 'sid-fallback',
+        useResumePicker: true,
+        codexOptions: { model: 'gpt-5.5', reasoningEffort: 'xhigh', permissionsPreset: 'standard' },
+      })
+
+      // cmd is the codex binary path (not 'node'), and the first arg is NOT the picker script
+      expect(out.cmd).not.toBe('node')
+      expect(out.cmd).toMatch(/codex/i)
+      expect(out.args).toContain('-m')
+      expect(out.args).toContain('gpt-5.5')
+      // CLAUDE_MULTI_SESSION_ID env must survive the fallback path so downstream
+      // hook / telemetry correlation stays correct (per spec Architecture step 1).
+      expect(out.env.CLAUDE_MULTI_SESSION_ID).toBe('sid-fallback')
+    })
+
+    it('useResumePicker=false leaves cmd as direct codex spawn', () => {
+      setMockResourcesDir('')
+      const out = new CodexProvider().buildSpawnCommand({
+        sessionId: 'sid-no-picker',
+        useResumePicker: false,
+        codexOptions: { model: 'gpt-5.5', reasoningEffort: 'medium', permissionsPreset: 'standard' },
+      })
+      expect(out.cmd).not.toBe('node')
+      expect(out.cmd).toMatch(/codex/i)
+    })
   })
 })
