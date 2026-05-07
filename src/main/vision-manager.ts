@@ -14,6 +14,7 @@ import { BrowserWindow, nativeImage } from 'electron'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import { logInfo, logError } from './debug-logger'
 import { startMcpServer, stopMcpServer } from './vision-mcp-server'
+import { injectConductorVisionInCodexConfig, removeConductorVisionFromCodexConfig } from './providers/codex/mcp-config'
 import type { GlobalVisionConfig } from '../shared/types'
 
 // chrome-remote-interface types
@@ -525,6 +526,10 @@ export async function startConductorMcpServer(
   await startMcpServer(port, () => globalManager)
   conductorMcpPort = port
   injectMcpSettings(port)
+  // Codex sessions read MCP config from ~/.codex/config.toml; mirror the
+  // entry there so they reach the same vision MCP endpoint Claude does.
+  // Gated on ~/.codex existing -- skips silently for users without Codex.
+  injectConductorVisionInCodexConfig(port)
   logInfo(`[mcp] Conductor MCP server started on port ${port} (vision: ${globalManager ? 'connected' : 'idle'})`)
 }
 
@@ -578,6 +583,7 @@ export function stopConductorMcpServer(): void {
   if (conductorMcpPort !== 0) {
     stopMcpServer()
     removeMcpSettings()
+    removeConductorVisionFromCodexConfig()
     conductorMcpPort = 0
     logInfo('[mcp] Conductor MCP server stopped')
   }
