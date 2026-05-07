@@ -409,8 +409,10 @@ export default function App() {
       })
 
       for (const session of restoredSessions) {
-        // Resume picker is Claude-only. Codex resume lands in P4.
-        if (!session.shellOnly && session.sessionType === 'local' && (session.provider ?? 'claude') === 'claude') {
+        // Both providers support a resume picker. For Codex, the picker script
+        // may not be deployed yet on first boot -- buildCodexSpawn falls back
+        // to direct codex spawn in that case (see src/main/providers/codex/spawn.ts).
+        if (!session.shellOnly && session.sessionType === 'local') {
           markSessionForResumePicker(session.id)
         }
       }
@@ -846,11 +848,12 @@ export default function App() {
                     provider: newConfig.provider,
                     codexOptions: newConfig.codexOptions,
                   }
-                  // Resume picker is Claude-only. Codex resume lands in P4.
+                  // Both providers support a resume picker. For Codex, the picker
+                  // script may not be deployed yet on first boot -- buildCodexSpawn
+                  // falls back to direct codex spawn (see src/main/providers/codex/spawn.ts).
                   if (
                     !session.shellOnly &&
-                    session.sessionType === 'local' &&
-                    (session.provider ?? 'claude') === 'claude'
+                    session.sessionType === 'local'
                   ) {
                     markSessionForResumePicker(session.id)
                   }
