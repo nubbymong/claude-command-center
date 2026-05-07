@@ -4,6 +4,7 @@ import TrainingWalkthrough from './TrainingWalkthrough'
 import { getLatestVersion } from '../changelog'
 import { useSettingsStore, DEFAULT_STATUS_LINE, DEFAULT_TERMINAL_SETTINGS, UpdateChannel } from '../stores/settingsStore'
 import type { StatusLineSettings, TerminalSettings, CursorStyle } from '../stores/settingsStore'
+import { useSessionStore } from '../stores/sessionStore'
 import { eventToShortcutString, DEFAULT_SHORTCUTS, SHORTCUT_LABELS } from '../utils/shortcuts'
 import GitHubConfigTab from './github/config/GitHubConfigTab'
 import { CodexSettingsTab } from './codex/CodexSettingsTab'
@@ -21,6 +22,17 @@ const TABS: { id: SettingsTab; label: string }[] = [
   { id: 'codex', label: 'Codex' },
   { id: 'about', label: 'About' }
 ]
+
+function StatuslineCodexBanner() {
+  const activeSession = useSessionStore((s) => s.sessions.find((sess) => sess.id === s.activeSessionId))
+  const isCodex = (activeSession?.provider ?? 'claude') === 'codex'
+  if (!isCodex) return null
+  return (
+    <div className="rounded-md bg-yellow/10 border border-yellow/30 p-3 mb-3 text-sm text-yellow">
+      Statusline customisation is Claude-only. Switch to a Claude session to configure.
+    </div>
+  )
+}
 
 function formatBuildTime(iso: string): string {
   try {
@@ -293,7 +305,10 @@ export default function SettingsPage({ initialTab }: SettingsPageProps = {}) {
           )}
 
           {activeTab === 'statusline' && (
-            <StatusLineTab sl={sl} onToggle={toggleStatusLine} onSet={setStatusLineField} />
+            <>
+              <StatuslineCodexBanner />
+              <StatusLineTab sl={sl} onToggle={toggleStatusLine} onSet={setStatusLineField} />
+            </>
           )}
 
           {activeTab === 'shortcuts' && (
