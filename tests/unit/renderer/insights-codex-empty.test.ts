@@ -23,7 +23,7 @@ vi.mock('../../../src/renderer/stores/insightsStore', () => ({
 // tokenomicsStore exposes sessions via s.data?.sessions.
 // The selector in InsightsPage is: useTokenomicsStore((s) => s.data?.sessions ?? {})
 // We mock the store by passing a state object with shape { data: { sessions: mockSessions } }.
-let mockSessions: Record<string, { provider: 'claude' | 'codex' }> = {}
+let mockSessions: Record<string, { provider?: 'claude' | 'codex' }> = {}
 vi.mock('../../../src/renderer/stores/tokenomicsStore', () => ({
   useTokenomicsStore: (sel: any) => sel({ data: { sessions: mockSessions } }),
 }))
