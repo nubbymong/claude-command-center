@@ -3,7 +3,7 @@ import type { LegacyVersion, StatuslineData } from '../../../shared/types'
 import { resolveClaudeBinary, buildClaudeLocalSpawn } from './spawn'
 import { getRemoteSetupCommand, remoteSessionSettingsPath } from './ssh-shim'
 import { detectClaudeUi } from './ui-detection'
-import { deployClaudeStatuslineScript } from './statusline'
+import { deployClaudeStatuslineScript, deployClaudeResumePickerScript } from './statusline'
 import { watchClaudeStatuslineFile, listClaudeResumableSessions } from './telemetry'
 
 export class ClaudeProvider implements SshCapableProvider {
@@ -50,5 +50,8 @@ export class ClaudeProvider implements SshCapableProvider {
   }
   async deployStatuslineScript(resourcesDir: string): Promise<void> {
     return deployClaudeStatuslineScript(resourcesDir)
+  }
+  async deployResumePickerScript(resourcesDir: string): Promise<void> {
+    return deployClaudeResumePickerScript(resourcesDir)
   }
 }

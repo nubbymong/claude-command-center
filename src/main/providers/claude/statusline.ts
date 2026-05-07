@@ -211,13 +211,8 @@ process.stdin.on('end', async () => {
       { mode: 0o755 }
     )
 
-    // Deploy resume-picker.js from bundled scripts.
-    // electron-vite bundles all src/main/**/*.ts into a single out/main/index.js,
-    // so __dirname is always out/main/ regardless of original source location.
-    const resumePickerSrc = path.join(__dirname, '../../scripts/resume-picker.js')
-    if (fs.existsSync(resumePickerSrc)) {
-      fs.copyFileSync(resumePickerSrc, path.join(resourcesScriptsDir, 'resume-picker.js'))
-    }
+    // Resume-picker deploy is factored out into deployClaudeResumePickerScript
+    // and called from index.ts boot chain alongside deployStatuslineScript.
 
     // Clean up legacy vision scripts (replaced by MCP server)
     for (const legacy of ['vision-cli.js', 'vision-prompt.txt']) {
@@ -261,4 +256,22 @@ export function configureClaudeSettings(): void {
     fs.mkdirSync(claudeDir, { recursive: true })
   }
   fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2))
+}
+
+/**
+ * Copy `scripts/resume-picker.js` into `<resourcesDir>/scripts/`.
+ *
+ * electron-vite bundles all src/main/**\/*.ts into a single out/main/index.js,
+ * so `__dirname` is always out/main/ regardless of original source location.
+ * The script lives one directory up at out/scripts/.
+ */
+export async function deployClaudeResumePickerScript(resourcesDir: string): Promise<void> {
+  const resourcesScriptsDir = path.join(resourcesDir, 'scripts')
+  if (!fs.existsSync(resourcesScriptsDir)) {
+    fs.mkdirSync(resourcesScriptsDir, { recursive: true })
+  }
+  const resumePickerSrc = path.join(__dirname, '../../scripts/resume-picker.js')
+  if (fs.existsSync(resumePickerSrc)) {
+    fs.copyFileSync(resumePickerSrc, path.join(resourcesScriptsDir, 'resume-picker.js'))
+  }
 }

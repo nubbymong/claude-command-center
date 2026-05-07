@@ -47,8 +47,15 @@ export interface SessionProvider {
   buildSpawnCommand(opts: SpawnOptions): { cmd: string; args: string[]; env: Record<string, string> }
   detectUiRunning(data: string): boolean
 
-  /** Optional — Claude only; Codex has no statusline shim. */
+  /** Optional -- Claude only; Codex has no statusline shim. */
   deployStatuslineScript?(resourcesDir: string): Promise<void>
+  /**
+   * Optional -- copy the provider's resume-picker script into
+   * `<resourcesDir>/scripts/`. Both providers implement this in P4. The
+   * Claude version copies `scripts/resume-picker.js`; the Codex version
+   * copies `scripts/codex-resume-picker.js`.
+   */
+  deployResumePickerScript?(resourcesDir: string): Promise<void>
   /**
    * Subscribe to live telemetry for a spawned session.
    *
