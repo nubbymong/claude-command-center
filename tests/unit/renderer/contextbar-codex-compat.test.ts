@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import React from 'react'
-import { createRoot } from 'react-dom/client'
+import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react'
 
 // Required for React 18 act() in jsdom -- suppresses "not configured" warning
@@ -58,20 +58,25 @@ const claudeProps = {
   isPeak: true,
 }
 
+// One root per test, unmounted in afterEach. Avoids the React 18 multi-root
+// leak pattern flagged by Copilot review on PR #30 (2026-05-07).
 let container: HTMLDivElement
+let root: Root
 
 beforeEach(() => {
   container = document.createElement('div')
   document.body.appendChild(container)
+  root = createRoot(container)
 })
 
 afterEach(() => {
+  act(() => { root.unmount() })
   container.remove()
 })
 
 function render(element: React.ReactElement): void {
   act(() => {
-    createRoot(container).render(element)
+    root.render(element)
   })
 }
 

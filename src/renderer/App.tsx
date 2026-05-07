@@ -843,8 +843,15 @@ export default function App() {
                     sshConfig: newConfig.sshConfig,
                     effortLevel: newConfig.claudeOptions?.effortLevel,
                     disableAutoMemory: newConfig.claudeOptions?.disableAutoMemory,
+                    provider: newConfig.provider,
+                    codexOptions: newConfig.codexOptions,
                   }
-                  if (!session.shellOnly && session.sessionType === 'local') {
+                  // Resume picker is Claude-only. Codex resume lands in P4.
+                  if (
+                    !session.shellOnly &&
+                    session.sessionType === 'local' &&
+                    (session.provider ?? 'claude') === 'claude'
+                  ) {
                     markSessionForResumePicker(session.id)
                   }
                   useSessionStore.getState().addSession(session)

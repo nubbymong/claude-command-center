@@ -26,8 +26,22 @@ function getModelColor(model: string): string {
   return '#a6adc8'
 }
 
-function getModelShort(model: string): string {
-  if (/sonnet|opus|haiku/i.test(model)) return model.replace(/[^a-z]/gi, '').slice(0, 6)
+/**
+ * Short label for a model, used in compact UI surfaces (chart legend, table cells).
+ * Exported for unit testing.
+ *
+ * Claude variants collapse to their family name (sonnet / opus / haiku) so the
+ * model-breakdown chart can group all Claude versions visually. Codex / GPT
+ * models drop the "gpt-" prefix to show just the version (e.g. "5.5"). Anything
+ * else is returned verbatim.
+ *
+ * Bug fix on 2026-05-07 (Copilot review on PR #30): the prior implementation
+ * stripped non-alpha characters then sliced the first 6 chars, which collapsed
+ * every Claude variant to "claude" and lost Sonnet/Opus/Haiku categorization.
+ */
+export function getModelShort(model: string): string {
+  const family = model.match(/sonnet|opus|haiku/i)
+  if (family) return family[0].toLowerCase()
   if (model.startsWith('gpt-')) return model.slice(4)
   return model
 }
