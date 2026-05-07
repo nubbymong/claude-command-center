@@ -9,10 +9,10 @@ const MODEL_COLORS: Record<string, string> = {
   'claude-opus-4-6': '#CBA6F7',
   'claude-haiku-4-5': '#A6E3A1',
   // Codex / GPT models (P3.2) -- real model strings emitted by Codex rollouts
-  'gpt-5.5':          '#a6e3a1',  // green
-  'gpt-5.4':          '#89dceb',  // sky
-  'gpt-5.4-mini':     '#74c7ec',  // sapphire
-  'gpt-5.3-codex':    '#fab387',  // peach
+  'gpt-5.5':          '#A6E3A1',  // green
+  'gpt-5.4':          '#89DCEB',  // sky
+  'gpt-5.4-mini':     '#74C7EC',  // sapphire
+  'gpt-5.3-codex':    '#FAB387',  // peach
 }
 
 function getModelColor(model: string): string {
