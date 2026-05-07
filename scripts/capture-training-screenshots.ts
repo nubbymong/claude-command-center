@@ -72,6 +72,10 @@ const SAMPLE_CONFIGS = [
   { id: 'demo-mobile', label: 'Mobile App', workingDirectory: path.join(homePath, 'mobile'), model: '', color: '#F9E2AF', sessionType: 'local', shellOnly: true, partnerTerminalPath: PARTNER_SHELL },
   { id: 'demo-infra', label: 'Infrastructure', workingDirectory: path.join(homePath, 'infra'), model: '', color: '#CBA6F7', sessionType: 'local', shellOnly: true },
   { id: 'demo-gpu', label: 'GPU Server', workingDirectory: '/home/developer/ml-pipeline', model: '', color: '#F38BA8', sessionType: 'ssh', shellOnly: true, sshConfig: { host: '10.0.1.50', port: 22, username: 'developer', remotePath: '/home/developer/ml-pipeline' } },
+  // Codex provider demo. shellOnly so capture works on hosts without codex
+  // installed; the Edit dialog renders CodexFormFields based purely on the
+  // saved provider/codexOptions, no live spawn required for the screenshot.
+  { id: 'demo-codex', label: 'Codex Provider', workingDirectory: path.join(homePath, 'codex-demo'), color: '#F9E2AF', sessionType: 'local', shellOnly: true, provider: 'codex', codexOptions: { model: 'gpt-5.5', reasoningEffort: 'medium', permissionsPreset: 'standard' } },
 ]
 
 const SAMPLE_COMMANDS = [
@@ -558,6 +562,38 @@ async function main() {
     await window.keyboard.press('Escape')
     await window.waitForTimeout(300)
     // Also click any close/cancel button
+    await window.evaluate(() => {
+      const overlays = document.querySelectorAll('.fixed')
+      overlays.forEach(el => el.remove())
+    })
+    await window.waitForTimeout(500)
+
+    // Step 1b: Codex Provider -- open Edit on the Codex demo config so the
+    // SessionDialog surfaces ProviderSegmentedControl + CodexFormFields
+    // (model dropdown, permissions preset, reasoning effort). Right-click
+    // the config label to get the context menu, then click Edit. Mirrors
+    // the fallback path used above for Web App / API Server.
+    await window.evaluate(() => {
+      const spans = document.querySelectorAll('span')
+      for (const s of spans) {
+        if (s.textContent === 'Codex Provider') {
+          s.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 100, clientY: 200 }))
+          return
+        }
+      }
+    })
+    await window.waitForTimeout(800)
+    await window.evaluate(() => {
+      const items = document.querySelectorAll('[role="menuitem"], button')
+      for (const el of items) { if (el.textContent?.trim() === 'Edit') { (el as HTMLElement).click(); return } }
+    })
+    await window.waitForTimeout(800)
+    await capture(window, 'step-codex.jpg', 'Codex provider edit dialog (CodexFormFields visible)')
+    // Close dialog
+    await window.keyboard.press('Escape')
+    await window.waitForTimeout(300)
+    await window.keyboard.press('Escape')
+    await window.waitForTimeout(300)
     await window.evaluate(() => {
       const overlays = document.querySelectorAll('.fixed')
       overlays.forEach(el => el.remove())
