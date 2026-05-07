@@ -20,13 +20,16 @@ interface ContextBarProps {
   rateLimitWeeklyResets?: string
   rateLimitExtra?: { enabled: boolean; utilization: number; usedUsd: number; limitUsd: number }
   isPeak?: boolean
+  /** Provider discriminator ('claude' | 'codex'). Defaults to 'claude'. */
+  provider?: 'claude' | 'codex'
 }
 
 export default function ContextBar({
   modelName, reasoningEffort, inputTokens, contextWindowSize, contextPercent,
   costUsd, linesAdded, linesRemoved, totalDurationMs,
   rateLimitCurrent, rateLimitCurrentResets,
-  rateLimitWeekly, rateLimitWeeklyResets, rateLimitExtra, isPeak
+  rateLimitWeekly, rateLimitWeeklyResets, rateLimitExtra, isPeak,
+  provider = 'claude'
 }: ContextBarProps) {
   const sl = useSettingsStore((s) => s.settings.statusLine) || DEFAULT_STATUS_LINE
 
@@ -127,6 +130,14 @@ export default function ContextBar({
           {sl.showResetTime && rateLimitCurrentResets && (
             <span className="text-overlay1 tabular-nums" title="5h window resets">resets {formatResetTime(rateLimitCurrentResets)}</span>
           )}
+        </div>
+      )}
+      {/* Row 2 alt: Codex first-turn caption (no rate-limit data yet) */}
+      {sl.showRateLimits && rateLimitCurrent == null && provider === 'codex' && (
+        <div className="px-2 py-0.5 border-t border-surface0/60">
+          <span className="text-[11px] text-overlay1">
+            Codex rate limits populate after first response
+          </span>
         </div>
       )}
     </div>

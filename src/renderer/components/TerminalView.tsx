@@ -593,6 +593,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
           rateLimitWeeklyResets={session.rateLimitWeeklyResets}
           rateLimitExtra={session.rateLimitExtra}
           isPeak={session.isPeak}
+          provider={session.provider ?? 'claude'}
         />
       )}
       <CommandBar
