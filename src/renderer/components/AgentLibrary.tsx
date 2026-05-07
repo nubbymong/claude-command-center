@@ -129,6 +129,11 @@ export default function AgentLibrary() {
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-4 space-y-5">
+        {/* Informational banner */}
+        <div className="rounded-md bg-blue/10 border border-blue/30 p-3 text-sm text-blue">
+          Templates spawn with Claude sessions only. Codex sessions ignore agent flags.
+        </div>
+
         {/* Your Agents */}
         <div>
           <h2 className="text-[10px] text-subtext0 uppercase tracking-wider font-semibold mb-2 px-1">Your Agents</h2>
