@@ -17,7 +17,7 @@
     "release": "node scripts/release.js",
     "promote": "node scripts/promote.js",
     "update-server": "node scripts/update-server.js",
-    "postinstall": "npx @electron/rebuild --only node-pty --only better-sqlite3",
+    "postinstall": "npx @electron/rebuild --only=node-pty,better-sqlite3",
     "rebuild": "npx @electron/rebuild",
     "capture-training": "npx tsx scripts/capture-training-screenshots.ts",
     "typecheck": "tsc --noEmit",
