@@ -2,15 +2,26 @@ name: CI
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
     branches: [main, beta]
   push:
-    branches: [main, beta]
+    branches: [main]
 
 permissions:
   contents: read
 
 jobs:
   test:
+    # Gate the test matrix on a `ci-run` label for PRs.
+    # Rationale: this repo accumulates many WIP commits per PR (multi-phase v1.x
+    # branches sit open for weeks while P0..PN land). Running the full Win/macOS
+    # matrix on every push wastes minutes and creates red-X noise on intermediate
+    # commits. Apply the `ci-run` label when the PR is ready for a real CI gate
+    # (e.g. before requesting human review, before merge, or after a fix-loop).
+    # Direct pushes to `main` always run CI as the final pre-merge guard.
+    if: |
+      github.event_name == 'push' ||
+      contains(github.event.pull_request.labels.*.name, 'ci-run')
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
