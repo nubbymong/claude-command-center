@@ -550,7 +550,9 @@ if (!gotTheLock) {
     // had no downstream consumers in this boot sequence, so awaiting isn't needed.
     Promise.resolve()
       .then(() => getProvider('claude').deployStatuslineScript?.(getResourcesDirectory()))
-      .catch((err) => console.warn('[main] Failed to deploy statusline:', err))
+      .then(() => getProvider('claude').deployResumePickerScript?.(getResourcesDirectory()))
+      .then(() => getProvider('codex').deployResumePickerScript?.(getResourcesDirectory()))
+      .catch((err) => console.warn('[main] Failed to deploy provider scripts:', err))
 
     // Content Security Policy
     session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
