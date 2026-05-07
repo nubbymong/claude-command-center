@@ -5,6 +5,8 @@ import { useSettingsStore, DEFAULT_STATUS_LINE } from '../../stores/settingsStor
 
 interface ContextBarProps {
   modelName?: string
+  /** Codex reasoning effort label (e.g. "xhigh"); rendered as a small suffix after model name. */
+  reasoningEffort?: string
   inputTokens?: number
   contextWindowSize?: number
   contextPercent: number
@@ -21,7 +23,7 @@ interface ContextBarProps {
 }
 
 export default function ContextBar({
-  modelName, inputTokens, contextWindowSize, contextPercent,
+  modelName, reasoningEffort, inputTokens, contextWindowSize, contextPercent,
   costUsd, linesAdded, linesRemoved, totalDurationMs,
   rateLimitCurrent, rateLimitCurrentResets,
   rateLimitWeekly, rateLimitWeeklyResets, rateLimitExtra, isPeak
@@ -47,7 +49,12 @@ export default function ContextBar({
       {/* Row 1: Context + model + cost + lines */}
       <div className="flex items-center gap-3 px-2 py-1">
         {sl.showModel && modelName && (
-          <span className="text-text font-medium">{modelName}</span>
+          <span className="text-text font-medium">
+            {modelName}
+            {reasoningEffort && (
+              <span className="text-overlay1 font-normal ml-1">{reasoningEffort}</span>
+            )}
+          </span>
         )}
         {sl.showTokens && inputTokens != null && contextWindowSize ? (
           <span className="tabular-nums">{formatTokens(inputTokens)} / {formatTokens(contextWindowSize)}</span>

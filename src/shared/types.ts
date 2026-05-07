@@ -118,6 +118,9 @@ export interface RateLimitExtra {
 export interface StatuslineData {
   sessionId: string
   model?: string
+  // Codex: reasoning effort label (e.g. "xhigh"), surfaced alongside model in the
+  // ContextBar. Always undefined for Claude sessions.
+  reasoningEffort?: string
   contextUsedPercent?: number
   contextRemainingPercent?: number
   contextWindowSize?: number

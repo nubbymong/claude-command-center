@@ -33,6 +33,8 @@ export interface Session {
   needsAttention?: boolean
   costUsd?: number
   modelName?: string
+  // Codex: reasoning effort label (e.g. "xhigh"). Always undefined for Claude sessions.
+  reasoningEffort?: string
   linesAdded?: number
   linesRemoved?: number
   contextWindowSize?: number

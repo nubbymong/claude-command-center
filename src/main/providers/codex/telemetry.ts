@@ -24,6 +24,14 @@ export interface RolloutMeta {
   id: string
   cwd: string
   model: string
+  /**
+   * Codex turn_context.payload.effort -- reasoning effort label like "xhigh".
+   * Surfaced alongside the model name in the ContextBar so the user can see
+   * which effort level the session is actually running at. Optional because
+   * older rollouts (pre-0.128.0) and the very earliest events of a session
+   * before the first turn_context may not carry it.
+   */
+  reasoningEffort?: string
   cli_version: string
   timestamp: string
 }
@@ -105,11 +113,15 @@ export function parseCodexRollout(text: string): {
       continue
     }
 
-    // turn_context carries the resolved model name (e.g. "gpt-5.5")
+    // turn_context carries the resolved model name (e.g. "gpt-5.5") and the
+    // reasoning effort (e.g. "xhigh"). The effort is on payload.effort directly.
     if (evt.type === 'turn_context' && meta) {
       const p = evt.payload as Record<string, unknown>
       if (typeof p.model === 'string' && p.model) {
         meta.model = p.model
+      }
+      if (typeof p.effort === 'string' && p.effort) {
+        meta.reasoningEffort = p.effort
       }
       continue
     }
@@ -192,6 +204,7 @@ export function mapTokenCountToStatusline(
   const sl: StatuslineData = {
     sessionId,
     model: meta.model,
+    reasoningEffort: meta.reasoningEffort,
     inputTokens: u.input_tokens + u.cached_input_tokens,
     outputTokens: u.output_tokens + u.reasoning_output_tokens,
     costUsd: cost ?? undefined,
@@ -238,10 +251,13 @@ const claimed = new Set<string>()
  *    on Windows it misses append events when the Codex CLI writer holds the
  *    file open -- same failure mode that hit the Claude statusline in v1.2.134
  *    (SMB writes). The lastSize dedupe in parseAndEmit keeps the polling cheap.
- * 3. If no claim happens within 10s, log a warning (--ephemeral path) and
- *    stop polling.
- * 4. stop() clears both the claim-poll interval and the tail-poll interval,
- *    and removes the path from the claimed set.
+ * 3. If no claim happens within 10s, log a "still polling" warning. If still
+ *    no claim at 30s, give up (--ephemeral path) and stop polling. The 30s
+ *    cap accounts for cold-start delay -- on Windows, Codex 0.128.0 typically
+ *    writes the first rollout event ~8s after spawn but a cold launch through
+ *    the cmd.exe wrapper can run noticeably longer.
+ * 4. stop() clears both timeouts, the claim-poll interval, and the tail-poll
+ *    interval, and removes the path from the claimed set.
  *
  * Windows path note: Codex records cwd exactly as provided by the OS at spawn
  * time. Pass the same resolvedCwd string from pty-manager (backslashes on
@@ -384,22 +400,35 @@ export function watchAndClaimRollout(
   // Initial attempt -- avoids waiting 250ms before the first probe.
   tryClaim()
 
-  // 10s no-claim timeout -- assumes --ephemeral mode (no rollout file written)
+  // No-claim deadline. P3.5 dev smoke showed Codex 0.128.0 takes ~8s to write the
+  // first rollout event on Windows after the cmd.exe wrapper warms up; cold starts
+  // can run longer. We warn at 10s (so the user sees something is slow) but keep
+  // polling until 30s before giving up. Hitting 30s genuinely indicates --ephemeral
+  // or a launch failure.
+  const warnHandle = setTimeout(() => {
+    if (!claimedPath && !stopped) {
+      console.warn(
+        `[codex/telemetry] no rollout claimed for session ${sessionId} after 10s -- still polling, will give up at 30s`,
+      )
+    }
+  }, 10_000)
+
   const timeoutHandle = setTimeout(() => {
     if (!claimedPath && !stopped) {
       console.warn(
-        `[codex/telemetry] no rollout claimed for session ${sessionId} after 10s -- assuming --ephemeral`,
+        `[codex/telemetry] no rollout claimed for session ${sessionId} after 30s -- assuming --ephemeral`,
       )
       if (intervalHandle) {
         clearInterval(intervalHandle)
         intervalHandle = null
       }
     }
-  }, 10_000)
+  }, 30_000)
 
   return {
     stop(): void {
       stopped = true
+      clearTimeout(warnHandle)
       clearTimeout(timeoutHandle)
       if (intervalHandle) {
         clearInterval(intervalHandle)

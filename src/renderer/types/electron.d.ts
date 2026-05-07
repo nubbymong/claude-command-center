@@ -135,29 +135,7 @@ export interface ElectronAPI {
     onFlowState: (sessionId: string, callback: (msg: { state: string; info?: string }) => void) => () => void
   }
   statusline: {
-    onUpdate: (callback: (data: {
-      sessionId: string
-      model?: string
-      contextUsedPercent?: number
-      contextRemainingPercent?: number
-      contextWindowSize?: number
-      inputTokens?: number
-      outputTokens?: number
-      costUsd?: number
-      totalDurationMs?: number
-      linesAdded?: number
-      linesRemoved?: number
-      rateLimitCurrent?: number
-      rateLimitCurrentResets?: string
-      rateLimitWeekly?: number
-      rateLimitWeeklyResets?: string
-      rateLimitExtra?: {
-        enabled: boolean
-        utilization: number
-        usedUsd: number
-        limitUsd: number
-      }
-    }) => void) => () => void
+    onUpdate: (callback: (data: StatuslineData) => void) => () => void
   }
   debug: {
     onDebug: (callback: (data: any) => void) => () => void

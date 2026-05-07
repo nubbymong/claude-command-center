@@ -582,6 +582,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       {session && session.contextPercent != null && (
         <ContextBar
           modelName={session.modelName}
+          reasoningEffort={session.reasoningEffort}
           inputTokens={session.inputTokens}
           contextWindowSize={session.contextWindowSize}
           contextPercent={session.contextPercent}

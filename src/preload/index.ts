@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC, ptyDataChannel, ptyExitChannel } from '../shared/ipc-channels'
 import type { HookEvent, HooksGatewayStatus } from '../shared/hook-types'
+import type { StatuslineData } from '../shared/types'
 
 export interface ElectronAPI {
   config: {
@@ -80,16 +81,7 @@ export interface ElectronAPI {
     onFlowState: (sessionId: string, callback: (msg: { state: string; info?: string }) => void) => () => void
   }
   statusline: {
-    onUpdate: (callback: (data: {
-      sessionId: string
-      model?: string
-      contextUsedPercent?: number
-      contextRemainingPercent?: number
-      costUsd?: number
-      totalDurationMs?: number
-      linesAdded?: number
-      linesRemoved?: number
-    }) => void) => () => void
+    onUpdate: (callback: (data: StatuslineData) => void) => () => void
   }
   debug: {
     onDebug: (callback: (data: unknown) => void) => () => void

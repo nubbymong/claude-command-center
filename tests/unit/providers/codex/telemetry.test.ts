@@ -81,6 +81,48 @@ describe('codex rollout parsing', () => {
     const sl = mapTokenCountToStatusline(tc, unknownMeta, 'sid-unknown')
     expect(sl.costUsd).toBeUndefined()
   })
+
+  it('extracts reasoningEffort from turn_context.payload.effort', () => {
+    // Codex 0.128.0 places the active reasoning effort on turn_context.payload.effort.
+    // parseCodexRollout must capture it onto meta.reasoningEffort.
+    const lines = [
+      JSON.stringify({
+        timestamp: '2026-05-07T05:14:52.758Z',
+        type: 'session_meta',
+        payload: { id: 'effort-session-1', timestamp: '2026-05-07T05:14:46.875Z', cwd: 'F:\\Codex', cli_version: '0.128.0' },
+      }),
+      JSON.stringify({
+        timestamp: '2026-05-07T05:14:52.759Z',
+        type: 'turn_context',
+        payload: { model: 'gpt-5.5', effort: 'xhigh' },
+      }),
+    ].join('\n') + '\n'
+    const { meta } = parseCodexRollout(lines)
+    expect(meta.model).toBe('gpt-5.5')
+    expect(meta.reasoningEffort).toBe('xhigh')
+  })
+
+  it('forwards reasoningEffort onto StatuslineData via mapTokenCountToStatusline', () => {
+    const tc: TokenCountEvent = {
+      total_token_usage: { input_tokens: 100, cached_input_tokens: 0, output_tokens: 10, reasoning_output_tokens: 0, total_tokens: 110 },
+    }
+    const meta = { id: 'm', cwd: '/x', model: 'gpt-5.5', reasoningEffort: 'xhigh', cli_version: '0.128.0', timestamp: '2026-05-07T05:14:52.758Z' }
+    const sl = mapTokenCountToStatusline(tc, meta, 'sid-effort')
+    expect(sl.model).toBe('gpt-5.5')
+    expect(sl.reasoningEffort).toBe('xhigh')
+  })
+
+  it('leaves reasoningEffort undefined when turn_context omits effort', () => {
+    // Older rollouts (pre-0.128.0) and the very first events of a session before
+    // any turn_context fires must not surface a stale effort label.
+    const lines = JSON.stringify({
+      timestamp: '2026-05-07T05:14:52.758Z',
+      type: 'session_meta',
+      payload: { id: 'no-effort', timestamp: '2026-05-07T05:14:46.875Z', cwd: 'F:\\Codex', cli_version: '0.125.0' },
+    }) + '\n'
+    const { meta } = parseCodexRollout(lines)
+    expect(meta.reasoningEffort).toBeUndefined()
+  })
 })
 
 describe('watchAndClaimRollout', () => {
@@ -253,6 +295,117 @@ describe('watchAndClaimRollout', () => {
 
     // The update should have fired at least once for the token_count line
     expect(updates.length).toBeGreaterThan(0)
+  })
+
+  it('still claims a rollout that appears 12s after spawn (slow cold start, before 30s deadline)', async () => {
+    // Codex 0.128.0 cold starts on Windows can run noticeably longer than 10s.
+    // The watcher must keep polling until 30s before giving up. This regression
+    // test simulates a 12s file-write delay and asserts the claim still happens.
+    vi.useFakeTimers()
+
+    const tmpBase = mkdtempSync(join(tmpdir(), 'ccc-test-codex-slowcold-'))
+    _mockCodexHome = tmpBase
+    vi.mocked(getCodexHome).mockReturnValue(tmpBase)
+
+    const today = new Date()
+    const dateDir = join(
+      tmpBase, 'sessions',
+      String(today.getUTCFullYear()),
+      String(today.getUTCMonth() + 1).padStart(2, '0'),
+      String(today.getUTCDate()).padStart(2, '0'),
+    )
+    mkdirSync(dateDir, { recursive: true })
+
+    const spawnTs = Date.now()
+    // Start the watcher BEFORE the rollout file exists. dateDir exists but is empty.
+    const updates: import('../../../../src/shared/types').StatuslineData[] = []
+    const src = watchAndClaimRollout('sess-slowcold', '/slowcold/cwd', spawnTs, (d) => updates.push(d))
+
+    // Advance 12 seconds. The 10s warn fires (silently in test); no claim yet.
+    await vi.advanceTimersByTimeAsync(12_000)
+    expect(updates.length).toBe(0)
+
+    // Now Codex finally writes the rollout. Outer event timestamp matches when it
+    // was written, ~12s after spawn.
+    const rolloutTs = new Date(spawnTs + 12_100).toISOString()
+    const sessionMeta = JSON.stringify({
+      timestamp: rolloutTs,
+      type: 'session_meta',
+      payload: {
+        id: 'slowcold-session-1',
+        timestamp: rolloutTs,
+        cwd: '/slowcold/cwd',
+        model: 'gpt-5.5',
+        cli_version: '0.128.0',
+      },
+    })
+    const tokenCountLine = JSON.stringify({
+      timestamp: new Date(spawnTs + 12_200).toISOString(),
+      type: 'event_msg',
+      payload: {
+        type: 'token_count',
+        info: {
+          total_token_usage: { input_tokens: 50, cached_input_tokens: 0, output_tokens: 5, reasoning_output_tokens: 0, total_tokens: 55 },
+          last_token_usage: null,
+          model_context_window: 128000,
+        },
+        rate_limits: null,
+      },
+    })
+    const rolloutPath = join(dateDir, `rollout-slowcold-test.jsonl`)
+    writeFileSync(rolloutPath, sessionMeta + '\n' + tokenCountLine + '\n', 'utf-8')
+
+    // Advance past the next claim poll tick (250ms) -- must claim and emit.
+    await vi.advanceTimersByTimeAsync(400)
+
+    src.stop()
+    vi.useRealTimers()
+
+    expect(updates.length).toBeGreaterThan(0)
+    expect(updates[updates.length - 1].inputTokens).toBe(50)
+  })
+
+  it('gives up at 30s when no rollout ever appears', async () => {
+    // The opposite of the slow-cold-start case: nothing is ever written. The
+    // watcher must give up at 30s exactly, not earlier and not later.
+    vi.useFakeTimers()
+
+    const tmpBase = mkdtempSync(join(tmpdir(), 'ccc-test-codex-eph-'))
+    _mockCodexHome = tmpBase
+    vi.mocked(getCodexHome).mockReturnValue(tmpBase)
+
+    const today = new Date()
+    const dateDir = join(
+      tmpBase, 'sessions',
+      String(today.getUTCFullYear()),
+      String(today.getUTCMonth() + 1).padStart(2, '0'),
+      String(today.getUTCDate()).padStart(2, '0'),
+    )
+    mkdirSync(dateDir, { recursive: true })
+
+    // Suppress console.warn during this test (the 10s warn + 30s timeout both log).
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    const spawnTs = Date.now()
+    const updates: unknown[] = []
+    const src = watchAndClaimRollout('sess-eph', '/eph/cwd', spawnTs, (d) => updates.push(d))
+
+    // The give-up message text -- distinct from the 10s "still polling" warning.
+    const isGiveUpCall = (c: unknown[]) =>
+      typeof c[0] === 'string' && c[0].includes('assuming --ephemeral')
+
+    // At 25s, watcher is still polling -- no claim yet, no give-up message either.
+    await vi.advanceTimersByTimeAsync(25_000)
+    expect(updates.length).toBe(0)
+    expect(warnSpy.mock.calls.filter(isGiveUpCall).length).toBe(0)
+
+    // At 31s, the give-up warning has fired.
+    await vi.advanceTimersByTimeAsync(6_000)
+    expect(warnSpy.mock.calls.filter(isGiveUpCall).length).toBeGreaterThanOrEqual(1)
+
+    src.stop()
+    vi.useRealTimers()
+    warnSpy.mockRestore()
   })
 
   it('polls and emits new token_count events appended after claim', async () => {
