@@ -2,6 +2,7 @@ import React from 'react'
 import { formatTokens, formatDuration, formatResetTime } from '../../utils/terminalFormatting'
 import RateLimitBar from './RateLimitBar'
 import { useSettingsStore, DEFAULT_STATUS_LINE } from '../../stores/settingsStore'
+import { useCodexReviewUsage } from '../../hooks/useCodexReviewUsage'
 
 interface ContextBarProps {
   modelName?: string
@@ -21,6 +22,10 @@ interface ContextBarProps {
   rateLimitExtra?: { enabled: boolean; utilization: number; usedUsd: number; limitUsd: number }
   /** Provider discriminator ('claude' | 'codex'). Defaults to 'claude'. */
   provider?: 'claude' | 'codex'
+  /** P6: optional session id for fetching codex_review usage. */
+  sessionId?: string
+  /** P6: when true, the codex review row is shown if there's at least one recorded review. */
+  enableCodexReview?: boolean
 }
 
 export default function ContextBar({
@@ -28,9 +33,13 @@ export default function ContextBar({
   costUsd, linesAdded, linesRemoved, totalDurationMs,
   rateLimitCurrent, rateLimitCurrentResets,
   rateLimitWeekly, rateLimitWeeklyResets, rateLimitExtra,
-  provider = 'claude'
+  provider = 'claude',
+  sessionId,
+  enableCodexReview,
 }: ContextBarProps) {
   const sl = useSettingsStore((s) => s.settings.statusLine) || DEFAULT_STATUS_LINE
+  const codexReviewUsage = useCodexReviewUsage(enableCodexReview ? sessionId ?? null : null)
+  const showCodexReviewRow = enableCodexReview && codexReviewUsage && codexReviewUsage.reviewCount > 0
 
   // Sophistication pass: most numeric values were rendered in saturated
   // colours (blue model, peach tokens, yellow cost, green/red lines) which
@@ -124,6 +133,24 @@ export default function ContextBar({
           <span className="text-[11px] text-overlay1">
             Codex rate limits populate after first response
           </span>
+        </div>
+      )}
+      {/* Row 3: Codex review usage (only shown when feature enabled and reviews exist) */}
+      {showCodexReviewRow && codexReviewUsage && (
+        <div className="flex items-center gap-3 px-2 py-1 border-t border-surface0 text-xs">
+          <span className="text-subtext0">Codex review</span>
+          <span className="tabular-nums text-text">{codexReviewUsage.reviewCount} calls</span>
+          {codexReviewUsage.lastRateLimitWindow && (
+            <>
+              <span className="text-subtext0">--</span>
+              <span className="tabular-nums">
+                {Math.round(codexReviewUsage.lastRateLimitWindow.usedPercent * 100)}% in 5h window
+              </span>
+              <span className="text-subtext0">
+                (resets {new Date(codexReviewUsage.lastRateLimitWindow.resetsAt * 1000).toISOString().slice(11, 16)} UTC)
+              </span>
+            </>
+          )}
         </div>
       )}
     </div>
