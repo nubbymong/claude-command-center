@@ -873,6 +873,20 @@ export default function TokenomicsPage() {
           <ModelBreakdown sessions={filteredSessions} />
         </div>
 
+        {selectedDate && data?.codexReviewByDay?.[selectedDate] && data.codexReviewByDay[selectedDate].reviewCount > 0 && (
+          <div className="bg-surface0 rounded-xl p-3 mb-6 text-xs text-subtext0">
+            <span className="text-overlay1 uppercase tracking-wider">Codex review (Claude-driven)</span>
+            <span className="ml-3 text-text">
+              {data.codexReviewByDay[selectedDate].reviewCount} {data.codexReviewByDay[selectedDate].reviewCount === 1 ? 'call' : 'calls'}
+            </span>
+            <span className="ml-3">
+              {formatTokens(data.codexReviewByDay[selectedDate].totalInputTokens)} in
+              {' / '}
+              {formatTokens(data.codexReviewByDay[selectedDate].totalOutputTokens)} out
+            </span>
+          </div>
+        )}
+
         {/* Filter bar */}
         <FilterBar
           dateFilter={dateFilter}

@@ -7,6 +7,7 @@ import { BrowserWindow } from 'electron'
 import * as fs from 'fs'
 import * as path from 'path'
 import { getConfigDir, ensureConfigDir } from './config-manager'
+import { getResourcesDirectory } from './ipc/setup-handlers'
 import { logInfo, logError } from './debug-logger'
 import type { TokenomicsData, TokenomicsSessionRecord, TokenomicsDailyAggregate, TokenomicsSyncProgress } from '../shared/types'
 import { IPC } from '../shared/ipc-channels'
@@ -175,6 +176,19 @@ function loadData(): TokenomicsData {
         } catch (err) {
           logError(`[tokenomics] Failed to persist provider back-fill: ${err}`)
         }
+      }
+      // P6: attach codex-review aggregates from the separate shard file.
+      // Best-effort: shard absence or malformed JSON -> field stays undefined.
+      try {
+        const shardPath = path.join(getResourcesDirectory(), 'tokenomics', 'codex-review-by-day.json')
+        if (fs.existsSync(shardPath)) {
+          const shard = JSON.parse(fs.readFileSync(shardPath, 'utf-8'))
+          if (shard && typeof shard.byDay === 'object') {
+            data.codexReviewByDay = shard.byDay
+          }
+        }
+      } catch (err) {
+        logError(`[tokenomics] Failed to load codex-review shard: ${err}`)
       }
       return data
     }

@@ -334,6 +334,14 @@ export interface TokenomicsData {
     sevenDay?: number    // utilization percentage
     lastUpdated: number
   }
+  // P6: Codex review (Claude-driven) -- per-day aggregates from
+  // <resourcesDir>/tokenomics/codex-review-by-day.json. Distinct from
+  // interactive Codex usage already in dailyAggregates.
+  codexReviewByDay?: Record<string, {
+    reviewCount: number
+    totalInputTokens: number
+    totalOutputTokens: number
+  }>
 }
 
 export interface TokenomicsSyncProgress {
