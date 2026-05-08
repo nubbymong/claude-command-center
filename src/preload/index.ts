@@ -52,6 +52,7 @@ export interface ElectronAPI {
       }>
       effortLevel?: 'low' | 'medium' | 'high'
       disableAutoMemory?: boolean
+      enableCodexReview?: boolean
       model?: string
       provider?: 'claude' | 'codex'
       codexOptions?: {

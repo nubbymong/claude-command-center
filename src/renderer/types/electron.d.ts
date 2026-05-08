@@ -113,6 +113,7 @@ export interface ElectronAPI {
       powershellTool?: boolean
       effortLevel?: 'low' | 'medium' | 'high'
       disableAutoMemory?: boolean
+      enableCodexReview?: boolean
       model?: string
       provider?: 'claude' | 'codex'
       codexOptions?: {

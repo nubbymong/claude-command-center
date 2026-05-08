@@ -42,6 +42,7 @@ export function buildSessionState(): SessionState {
       agentIds: s.agentIds,
       effortLevel: s.effortLevel,
       disableAutoMemory: s.disableAutoMemory,
+      enableCodexReview: s.enableCodexReview ? true : undefined,
       flickerFree: s.flickerFree,
       powershellTool: s.powershellTool,
     } : undefined,

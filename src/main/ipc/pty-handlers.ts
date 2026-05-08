@@ -24,7 +24,7 @@ const sshSchema = z.object({
   postCommand: z.string().optional(),
 }).optional()
 
-const spawnOptionsSchema = z.object({
+export const spawnOptionsSchema = z.object({
   cwd: z.string().optional(),
   cols: z.number().int().positive().optional(),
   rows: z.number().int().positive().optional(),
@@ -46,6 +46,7 @@ const spawnOptionsSchema = z.object({
   })).optional(),
   effortLevel: z.enum(['low', 'medium', 'high']).optional(),
   disableAutoMemory: z.boolean().optional(),
+  enableCodexReview: z.boolean().optional(),
   model: z.string().optional(),
   provider: z.enum(['claude', 'codex']).optional(),
   codexOptions: z.object({
@@ -79,6 +80,7 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     agentsConfig?: Array<{ name: string; description: string; prompt: string; model?: string; tools?: string[] }>
     effortLevel?: 'low' | 'medium' | 'high'
     disableAutoMemory?: boolean
+    enableCodexReview?: boolean
     model?: string
     provider?: 'claude' | 'codex'
     codexOptions?: {

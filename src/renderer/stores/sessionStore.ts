@@ -60,6 +60,9 @@ export interface Session {
   powershellTool?: boolean               // Enable native PowerShell tool
   effortLevel?: 'low' | 'medium' | 'high'
   disableAutoMemory?: boolean
+  /** P6: Claude opts in to the codex_review MCP tool for this session.
+   *  Mirrors disableAutoMemory in shape (sparse boolean) and lifecycle. */
+  enableCodexReview?: boolean
   machineName?: string
   // Provider discriminator + Codex sub-options (Claude options live in the
   // top-level legacy fields above for now; Codex spawns need this struct).

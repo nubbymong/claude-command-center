@@ -238,6 +238,7 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
       machineName: config.machineName,
       effortLevel: config.claudeOptions?.effortLevel,
       disableAutoMemory: config.claudeOptions?.disableAutoMemory,
+      enableCodexReview: config.claudeOptions?.enableCodexReview,
       provider: config.provider,
       codexOptions: config.codexOptions,
     }

@@ -139,7 +139,7 @@ export default function ContextBar({
       {showCodexReviewRow && codexReviewUsage && (
         <div className="flex items-center gap-3 px-2 py-1 border-t border-surface0 text-xs">
           <span className="text-subtext0">Codex review</span>
-          <span className="tabular-nums text-text">{codexReviewUsage.reviewCount} calls</span>
+          <span className="tabular-nums text-text">{codexReviewUsage.reviewCount} {codexReviewUsage.reviewCount === 1 ? 'call' : 'calls'}</span>
           {codexReviewUsage.lastRateLimitWindow && (
             <>
               <span className="text-subtext0">--</span>

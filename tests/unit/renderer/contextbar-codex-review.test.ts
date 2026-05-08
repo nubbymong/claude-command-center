@@ -106,7 +106,9 @@ describe('ContextBar codex_review row (P6.7)', () => {
     act(() => { root.render(React.createElement(ContextBar, { ...baseProps, enableCodexReview: true })) })
     const text = container.textContent ?? ''
     expect(text).toContain('Codex review')
-    expect(text).toContain('1 calls')
+    // P6.10.1 pluralization: single call uses 'call' not 'calls'.
+    expect(text).toContain('1 call')
+    expect(text).not.toMatch(/\b1 calls\b/)
     // No "X% in 5h window" tail when rate-limit data is null
     expect(text).not.toMatch(/\d+% in 5h window/)
   })

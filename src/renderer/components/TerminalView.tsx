@@ -53,6 +53,10 @@ interface Props {
   agentIds?: string[]
   effortLevel?: 'low' | 'medium' | 'high'
   disableAutoMemory?: boolean
+  /** P6: when true, the spawned Claude PTY is registered into the
+   *  codex_review opt-in set in vision-mcp-server. Mirrors
+   *  disableAutoMemory's lifecycle (claudeOptions sparse boolean). */
+  enableCodexReview?: boolean
   /** Per-session model override (sonnet | opus | haiku | ''). Empty
    * string means "use whatever the CLI picks". Forwarded to claude as
    * `--model <name>` when set. */
@@ -63,7 +67,7 @@ interface Props {
   codexOptions?: CodexOptions
 }
 
-export default function TerminalView({ sessionId, configId, cwd, shellOnly, elevated, ssh, isActive = true, partnerEnabled, isPartnerActive, onTogglePartner, partnerSessionId, parentSessionId, legacyVersion, agentIds, effortLevel, disableAutoMemory, model, provider, codexOptions }: Props) {
+export default function TerminalView({ sessionId, configId, cwd, shellOnly, elevated, ssh, isActive = true, partnerEnabled, isPartnerActive, onTogglePartner, partnerSessionId, parentSessionId, legacyVersion, agentIds, effortLevel, disableAutoMemory, enableCodexReview, model, provider, codexOptions }: Props) {
   const xtermContainerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
@@ -316,7 +320,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
               }))
             if (agentsConfig.length === 0) agentsConfig = undefined
           }
-          window.electronAPI.pty.spawn(sessionId, { cwd, cols, rows, ssh, shellOnly, elevated, configId, configLabel, useResumePicker, legacyVersion, agentsConfig, effortLevel, disableAutoMemory, model, provider, codexOptions })
+          window.electronAPI.pty.spawn(sessionId, { cwd, cols, rows, ssh, shellOnly, elevated, configId, configLabel, useResumePicker, legacyVersion, agentsConfig, effortLevel, disableAutoMemory, enableCodexReview, model, provider, codexOptions })
         }
       }
 
@@ -593,6 +597,8 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
           rateLimitWeeklyResets={session.rateLimitWeeklyResets}
           rateLimitExtra={session.rateLimitExtra}
           provider={session.provider ?? 'claude'}
+          sessionId={sessionId}
+          enableCodexReview={enableCodexReview}
         />
       )}
       <CommandBar

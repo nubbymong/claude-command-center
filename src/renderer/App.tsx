@@ -408,6 +408,7 @@ export default function App() {
           powershellTool: claude?.powershellTool ?? saved.powershellTool,
           effortLevel: claude?.effortLevel ?? saved.effortLevel,
           disableAutoMemory: claude?.disableAutoMemory ?? saved.disableAutoMemory,
+          enableCodexReview: claude?.enableCodexReview,
           machineName: saved.machineName,
           githubIntegration: saved.githubIntegration,
           status: 'idle' as const,
@@ -639,6 +640,7 @@ export default function App() {
                       agentIds={session.agentIds}
                       effortLevel={session.effortLevel}
                       disableAutoMemory={session.disableAutoMemory}
+                      enableCodexReview={session.enableCodexReview}
                       model={session.model}
                       provider={session.provider}
                       codexOptions={session.codexOptions}
@@ -844,6 +846,7 @@ export default function App() {
                   if (newConfig.sessionType === 'ssh') trackUsage('sessions.session-type')
                   if (newConfig.claudeOptions?.effortLevel) trackUsage('sessions.effort-level')
                   if (newConfig.claudeOptions?.disableAutoMemory) trackUsage('sessions.disable-auto-memory')
+                  if (newConfig.claudeOptions?.enableCodexReview) trackUsage('sessions.enable-codex-review')
                   if (newConfig.partnerTerminalPath) trackUsage('sessions.partner-terminal')
 
                   const session: Session = {
@@ -860,6 +863,7 @@ export default function App() {
                     sshConfig: newConfig.sshConfig,
                     effortLevel: newConfig.claudeOptions?.effortLevel,
                     disableAutoMemory: newConfig.claudeOptions?.disableAutoMemory,
+                    enableCodexReview: newConfig.claudeOptions?.enableCodexReview,
                     provider: newConfig.provider,
                     codexOptions: newConfig.codexOptions,
                   }
