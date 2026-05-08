@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /**
- * P3.3 regression: ContextBar renders correctly when Claude-only fields
- * (rateLimitExtra, isPeak) are undefined -- as P3.1's Codex ingester pushes.
+ * P3.3 regression: ContextBar renders correctly when the Claude-only
+ * `rateLimitExtra` field is undefined -- as P3.1's Codex ingester pushes.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import React from 'react'
@@ -35,7 +35,7 @@ vi.mock('../../../src/renderer/stores/settingsStore', () => {
 // Import after mock is registered
 const { default: ContextBar } = await import('../../../src/renderer/components/terminal/ContextBar')
 
-// Codex-shape props: rateLimitExtra and isPeak are explicitly undefined
+// Codex-shape props: rateLimitExtra is explicitly undefined
 const codexProps = {
   modelName: 'gpt-5.5',
   inputTokens: 41133,
@@ -47,15 +47,13 @@ const codexProps = {
   rateLimitWeekly: 13,
   rateLimitWeeklyResets: '2026-05-11T00:00:00.000Z',
   rateLimitExtra: undefined,
-  isPeak: undefined,
 }
 
-// Claude-shape props: rateLimitExtra and isPeak are set
+// Claude-shape props: rateLimitExtra is set
 const claudeProps = {
   ...codexProps,
   modelName: 'claude-opus-4-5',
   rateLimitExtra: { enabled: true, utilization: 55, usedUsd: 8.23, limitUsd: 100 },
-  isPeak: true,
 }
 
 // One root per test, unmounted in afterEach. Avoids the React 18 multi-root
@@ -81,7 +79,7 @@ function render(element: React.ReactElement): void {
 }
 
 describe('ContextBar -- Codex compatibility (P3.3)', () => {
-  it('renders without crashing for Codex shape (rateLimitExtra/isPeak undefined)', () => {
+  it('renders without crashing for Codex shape (rateLimitExtra undefined)', () => {
     expect(() => render(React.createElement(ContextBar, codexProps))).not.toThrow()
     // Component rendered -- container should have content
     expect(container.innerHTML.length).toBeGreaterThan(0)
@@ -91,13 +89,6 @@ describe('ContextBar -- Codex compatibility (P3.3)', () => {
     render(React.createElement(ContextBar, codexProps))
     // The extra-spend label includes "extra:" text
     expect(container.textContent).not.toContain('extra:')
-  })
-
-  it('does not render isPeak / Off-peak badge when isPeak is undefined', () => {
-    render(React.createElement(ContextBar, codexProps))
-    // The badge renders either "Peak" or "Off-peak" text
-    expect(container.textContent).not.toContain('Peak')
-    expect(container.textContent).not.toContain('Off-peak')
   })
 
   it('renders model name and context bar with Codex shape', () => {
@@ -112,11 +103,5 @@ describe('ContextBar -- Codex compatibility (P3.3)', () => {
     render(React.createElement(ContextBar, claudeProps))
     // extra: label IS present for Claude shape
     expect(container.textContent).toContain('extra:')
-  })
-
-  it('renders isPeak badge when isPeak is true (Claude shape)', () => {
-    render(React.createElement(ContextBar, claudeProps))
-    // Peak badge IS present for Claude shape
-    expect(container.textContent).toContain('Peak')
   })
 })

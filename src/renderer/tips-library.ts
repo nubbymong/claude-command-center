@@ -395,7 +395,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: '📊 Customize which metrics show in the status line',
         title: 'Status Line Customization',
-        body: 'The status line at the bottom of the screen shows session metrics — model, context %, tokens, cost, lines changed, duration, rate limits, peak hours indicator. You can toggle each one individually.\n\nGo to **Settings > Status Line** and enable just the metrics you care about. Minimalists can hide everything but model + cost. Power users can show all eight fields.',
+        body: 'The status line at the bottom of the screen shows session metrics — model, context %, tokens, cost, lines changed, duration, and rate limits. You can toggle each one individually.\n\nGo to **Settings > Status Line** and enable just the metrics you care about. Minimalists can hide everything but model + cost. Power users can show all seven fields.',
         actionLabel: 'Open Settings',
         actionTarget: 'settings',
       },

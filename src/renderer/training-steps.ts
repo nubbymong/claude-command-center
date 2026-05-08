@@ -282,7 +282,7 @@ export const trainingSteps: TrainingStep[] = [
     highlights: [
       'Daily cost chart — click any bar to filter the table to that day',
       'Per-model breakdown for Sonnet, Opus, Haiku',
-      '5-hour and 7-day rate-limit progress bars with peak / off-peak label',
+      '5-hour and 7-day rate-limit progress bars',
       'Burn rate (tokens/min) and anomaly alerts for unusual spend',
       'Extra-spend card when you have an Anthropic API key configured',
     ],
@@ -429,7 +429,7 @@ export const trainingSteps: TrainingStep[] = [
       'Ctrl+1–9 — jump directly to session N',
       'Alt+V — paste image-from-clipboard as a file path into Claude\'s prompt',
       'Esc — close webview pane / dismiss tour / cancel context menu',
-      'Status bar — live tokens, cost, rate limits, peak/off-peak indicator',
+      'Status bar — live tokens, cost, rate limits',
     ],
     howToTrigger: [
       { label: 'Rebind', value: 'Settings → Shortcuts' },
@@ -441,7 +441,7 @@ export const trainingSteps: TrainingStep[] = [
       '**Ctrl+Tab** / **Ctrl+Shift+Tab** to cycle between sessions',
       '**Ctrl+1-9** to jump directly to a session by number',
       'Create **quick command buttons** with customizable arguments',
-      'Live **statusline** shows tokens, cost, rate limits, and peak hours',
+      'Live **statusline** shows tokens, cost, and rate limits',
     ],
     screenshotFilename: 'step-tips.jpg',
   },

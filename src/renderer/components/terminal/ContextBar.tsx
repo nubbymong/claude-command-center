@@ -19,7 +19,6 @@ interface ContextBarProps {
   rateLimitWeekly?: number
   rateLimitWeeklyResets?: string
   rateLimitExtra?: { enabled: boolean; utilization: number; usedUsd: number; limitUsd: number }
-  isPeak?: boolean
   /** Provider discriminator ('claude' | 'codex'). Defaults to 'claude'. */
   provider?: 'claude' | 'codex'
 }
@@ -28,7 +27,7 @@ export default function ContextBar({
   modelName, reasoningEffort, inputTokens, contextWindowSize, contextPercent,
   costUsd, linesAdded, linesRemoved, totalDurationMs,
   rateLimitCurrent, rateLimitCurrentResets,
-  rateLimitWeekly, rateLimitWeeklyResets, rateLimitExtra, isPeak,
+  rateLimitWeekly, rateLimitWeeklyResets, rateLimitExtra,
   provider = 'claude'
 }: ContextBarProps) {
   const sl = useSettingsStore((s) => s.settings.statusLine) || DEFAULT_STATUS_LINE
@@ -38,8 +37,8 @@ export default function ContextBar({
   // made the status row read like a christmas tree. Default everything to
   // subtext0 (neutral) and reserve colour for STATE thresholds that the
   // user actually needs in peripheral vision: context bar fill at warning
-  // / danger, peak/off-peak label, rate-limit extra at >80%. Numbers use
-  // tabular-nums so they stop dancing as values change.
+  // / danger and rate-limit extra at >80%. Numbers use tabular-nums so
+  // they stop dancing as values change.
   const ctxThreshold = contextPercent > 80 ? 'danger' : contextPercent > 50 ? 'warn' : 'ok'
   const ctxColor = ctxThreshold === 'danger' ? 'var(--color-red)'
     : ctxThreshold === 'warn' ? 'var(--color-yellow)'
@@ -111,19 +110,6 @@ export default function ContextBar({
             <span className="text-overlay1 tabular-nums">
               extra: <span className={rateLimitExtra.utilization > 80 ? 'text-red' : ''}>${rateLimitExtra.usedUsd.toFixed(2)}</span>
               /${rateLimitExtra.limitUsd.toFixed(0)}
-            </span>
-          )}
-          {isPeak != null && (
-            <span
-              className="px-1.5 py-px rounded text-[10px] font-medium tracking-wide uppercase border"
-              style={{
-                color: isPeak ? 'var(--color-red)' : 'var(--color-overlay2)',
-                borderColor: isPeak ? 'color-mix(in srgb, var(--color-red) 35%, transparent)' : 'var(--color-surface1)',
-                backgroundColor: isPeak ? 'color-mix(in srgb, var(--color-red) 10%, transparent)' : 'transparent',
-              }}
-              title={isPeak ? 'Peak hours: 5-11 AM PT weekdays — 5h limit consumed faster' : 'Off-peak: normal rate limit consumption'}
-            >
-              {isPeak ? 'Peak' : 'Off-peak'}
             </span>
           )}
           <div className="flex-1" />

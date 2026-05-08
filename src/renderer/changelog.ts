@@ -15,6 +15,14 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '1.5.0',
+    date: '2026-05-08',
+    highlights: "Codex provider, mega release",
+    changes: [
+      { type: 'fix', description: "Removed the peak/off-peak indicator -- Anthropic no longer differentiates peak hours in their rate-limit policy, so the badge was reporting outdated information" },
+    ]
+  },
+  {
     version: '1.4.3',
     date: '2026-04-29',
     highlights: "New branded splash now actually shows on launch, plus a refreshed README with v1.4 feature highlights",

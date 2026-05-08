@@ -38,7 +38,7 @@ vi.mock('../../../src/renderer/stores/settingsStore', () => {
 // Import after mock is registered
 const { default: ContextBar } = await import('../../../src/renderer/components/terminal/ContextBar')
 
-// Codex-shape props: rateLimitExtra and isPeak are explicitly undefined
+// Codex-shape props: rateLimitExtra is explicitly undefined
 const codexPropsBase = {
   modelName: 'gpt-5.5',
   inputTokens: 41133,
@@ -50,22 +50,6 @@ const codexPropsBase = {
   rateLimitWeekly: undefined,
   rateLimitWeeklyResets: undefined,
   rateLimitExtra: undefined,
-  isPeak: undefined,
-}
-
-// Claude-shape props (with data)
-const claudePropsBase = {
-  modelName: 'claude-opus-4-5',
-  inputTokens: 41133,
-  contextWindowSize: 1_000_000,
-  contextPercent: 4.1,
-  costUsd: 0.215,
-  rateLimitCurrent: 42,
-  rateLimitCurrentResets: '2026-05-04T13:30:00.000Z',
-  rateLimitWeekly: 13,
-  rateLimitWeeklyResets: '2026-05-11T00:00:00.000Z',
-  rateLimitExtra: { enabled: true, utilization: 55, usedUsd: 8.23, limitUsd: 100 },
-  isPeak: true,
 }
 
 // One root per test, unmounted in afterEach.

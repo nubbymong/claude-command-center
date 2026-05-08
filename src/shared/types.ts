@@ -135,7 +135,6 @@ export interface StatuslineData {
   rateLimitWeekly?: number
   rateLimitWeeklyResets?: string
   rateLimitExtra?: RateLimitExtra
-  isPeak?: boolean
 }
 
 // ── Agent Templates ──

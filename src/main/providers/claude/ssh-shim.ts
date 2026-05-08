@@ -55,7 +55,6 @@ const s={sessionId:sid,model:m.display_name||m.id,contextUsedPercent:cw.used_per
 const iso=(t)=>typeof t==='number'?new Date(t*1000).toISOString():(t||'');
 if(rl.five_hour){s.rateLimitCurrent=Math.round(Number(rl.five_hour.used_percentage)||0);s.rateLimitCurrentResets=iso(rl.five_hour.resets_at);}
 if(rl.seven_day){s.rateLimitWeekly=Math.round(Number(rl.seven_day.used_percentage)||0);s.rateLimitWeeklyResets=iso(rl.seven_day.resets_at);}
-const now=new Date();const yr=now.getUTCFullYear();const m2=new Date(Date.UTC(yr,2,8));m2.setUTCDate(8+(7-m2.getUTCDay())%7);const n1=new Date(Date.UTC(yr,10,1));n1.setUTCDate(1+(7-n1.getUTCDay())%7);const ptOff=(now>=m2&&now<n1)?-7:-8;const ptH=(now.getUTCHours()+ptOff+24)%24;const ptD=new Date(now.getTime()+ptOff*3600000).getUTCDay();s.isPeak=(ptD>=1&&ptD<=5&&ptH>=5&&ptH<11);
 const sentinel='\\x1b]9999;CMSTATUS='+JSON.stringify(s)+'\\x07';
 let tty_ok=false;
 try{fs.writeFileSync('/dev/tty',sentinel);tty_ok=true;}catch(e){trace('tty-fail sid='+sid+' err='+(e&&e.code||e.message||'unknown'));}

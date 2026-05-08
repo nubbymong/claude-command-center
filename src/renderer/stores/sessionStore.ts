@@ -51,7 +51,6 @@ export interface Session {
     usedUsd: number
     limitUsd: number
   }
-  isPeak?: boolean
   legacyVersion?: {                      // Pinned Claude CLI version
     enabled: boolean
     version: string

@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 /**
  * P3.3 regression: RateLimitBar renders correctly with and without optional
- * resets string. The component has no rateLimitExtra/isPeak fields; this
- * suite confirms it handles the Codex data shape it receives.
+ * resets string. The component has no rateLimitExtra field; this suite
+ * confirms it handles the Codex data shape it receives.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import React from 'react'
@@ -49,12 +49,6 @@ describe('RateLimitBar -- Codex compatibility (P3.3)', () => {
     render(React.createElement(RateLimitBar, { label: '5h', pct: 41 }))
     // The component only renders label + bar + percentage
     expect(container.textContent).not.toContain('extra:')
-  })
-
-  it('does not render isPeak label (component has no such field)', () => {
-    render(React.createElement(RateLimitBar, { label: '5h', pct: 41 }))
-    expect(container.textContent).not.toContain('Peak')
-    expect(container.textContent).not.toContain('Off-peak')
   })
 
   it('renders label and clamped percentage', () => {

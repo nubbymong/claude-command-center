@@ -166,22 +166,6 @@ process.stdin.on('end', async () => {
       }
     }
 
-    // Peak/off-peak — peak hours are 05:00-11:00 PT (UTC-7/-8) on weekdays
-    const now = new Date();
-    const ptOffset = (() => {
-      const year = now.getUTCFullYear();
-      const marchSecondSun = new Date(Date.UTC(year, 2, 8));
-      marchSecondSun.setUTCDate(8 + (7 - marchSecondSun.getUTCDay()) % 7);
-      const novFirstSun = new Date(Date.UTC(year, 10, 1));
-      novFirstSun.setUTCDate(1 + (7 - novFirstSun.getUTCDay()) % 7);
-      return (now >= marchSecondSun && now < novFirstSun) ? -7 : -8;
-    })();
-    const ptHour = (now.getUTCHours() + ptOffset + 24) % 24;
-    const ptDay = new Date(now.getTime() + ptOffset * 3600000).getUTCDay();
-    const isWeekday = ptDay >= 1 && ptDay <= 5;
-    const isPeak = isWeekday && ptHour >= 5 && ptHour < 11;
-    status.isPeak = isPeak;
-
     // Suppress statusline display in the terminal — the Conductor's own ContextBar
     // shows all this data via the file watcher below. Output a single space
     // so Claude's statusline area stays minimal.

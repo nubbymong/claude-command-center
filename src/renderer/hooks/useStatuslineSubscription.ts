@@ -27,7 +27,6 @@ export function useStatuslineSubscription(sessionId: string) {
       if (data.rateLimitWeekly != null) updates.rateLimitWeekly = data.rateLimitWeekly
       if (data.rateLimitWeeklyResets) updates.rateLimitWeeklyResets = data.rateLimitWeeklyResets
       if (data.rateLimitExtra) updates.rateLimitExtra = data.rateLimitExtra
-      if (data.isPeak != null) updates.isPeak = data.isPeak
       if (Object.keys(updates).length > 0) {
         updateSession(sessionId, updates)
       }
