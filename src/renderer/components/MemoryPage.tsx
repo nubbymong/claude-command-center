@@ -410,6 +410,11 @@ export default function MemoryPage() {
       scrollable={false}
     >
 
+      {/* Codex coverage note (P5.9): clarify that this page is Claude-only */}
+      <div className="rounded-md bg-blue/10 border border-blue/30 p-3 text-sm text-blue mx-5 mt-3">
+        This page surfaces Claude Code memories from <code className="font-mono text-[12px]">~/.claude/projects/*/memory/</code>. Codex stores its project context in <code className="font-mono text-[12px]">AGENTS.md</code> files (project root) and user rules in <code className="font-mono text-[12px]">~/.codex/rules/</code> -- not tracked here.
+      </div>
+
       {/* Warning Banner */}
       {warnings.length > 0 && (
         <div className="flex flex-col bg-yellow/[0.06] border-b border-yellow/10 shrink-0">
