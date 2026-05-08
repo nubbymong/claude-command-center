@@ -87,6 +87,62 @@ export function runCodexProcess(
   })
 }
 
+/** Streaming variant of runCodexProcess: emits each stdout LINE as it arrives,
+ *  and resolves when the process exits. Does NOT buffer stdout in memory --
+ *  callers (codex-review-mcp-tool) consume lines incrementally to extract
+ *  token_count events without holding the full --json stream in RAM. */
+export function runCodexStreaming(
+  args: string[],
+  opts: {
+    timeoutMs: number
+    onStdoutLine?: (line: string) => void
+    cwd?: string
+  },
+): Promise<{ code: number; stderr: string; timedOut: boolean }> {
+  return new Promise((resolve) => {
+    const resolved = resolveCodexBinary()
+    const cmd = resolved?.cmd ?? 'codex'
+    const useShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(cmd)
+    const proc = spawn(cmd, args, { shell: useShell, cwd: opts.cwd })
+
+    let stderr = ''
+    let stdoutBuffer = ''
+    let timedOut = false
+
+    proc.stdout.on('data', (chunk: Buffer) => {
+      stdoutBuffer += chunk.toString()
+      let nl = stdoutBuffer.indexOf('\n')
+      while (nl !== -1) {
+        const line = stdoutBuffer.slice(0, nl)
+        stdoutBuffer = stdoutBuffer.slice(nl + 1)
+        if (line.length > 0 && opts.onStdoutLine) {
+          try { opts.onStdoutLine(line) } catch { /* never let consumer errors kill the spawn */ }
+        }
+        nl = stdoutBuffer.indexOf('\n')
+      }
+    })
+    proc.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
+
+    const timer = setTimeout(() => {
+      timedOut = true
+      proc.kill()
+    }, opts.timeoutMs)
+
+    proc.on('close', (code) => {
+      clearTimeout(timer)
+      // Flush any unterminated final line.
+      if (stdoutBuffer.length > 0 && opts.onStdoutLine) {
+        try { opts.onStdoutLine(stdoutBuffer) } catch { /* ignore */ }
+      }
+      resolve({ code: code ?? -1, stderr, timedOut })
+    })
+    proc.on('error', () => {
+      clearTimeout(timer)
+      resolve({ code: -1, stderr, timedOut })
+    })
+  })
+}
+
 export async function codexLoginWithApiKey(apiKey: string): Promise<{ ok: boolean; error?: string }> {
   const result = await runCodexProcess(['login', '--with-api-key'], 30_000, apiKey + '\n')
   if (result.code === 0) return { ok: true }
