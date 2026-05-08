@@ -252,6 +252,10 @@ export const IPC = {
   HOOKS_SESSION_ENDED: 'hooks:sessionEnded',
   HOOKS_DROPPED: 'hooks:dropped',
   HOOKS_STATUS: 'hooks:status',
+
+  // Codex review MCP (P6)
+  CODEX_REVIEW_USAGE_GET: 'codex-review:usage:get',
+  CODEX_REVIEW_USAGE_UPDATED: 'codex-review:usage:updated',
 } as const
 
 /** Helper to build per-session PTY data channels */

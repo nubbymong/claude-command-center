@@ -55,6 +55,10 @@ export interface ClaudeOptions {
   flickerFree?: boolean
   powershellTool?: boolean
   agentIds?: string[]
+  /** v1.5 P6: when true, the Claude PTY is registered into the codex_review opt-in set
+   *  and the SessionDialog toggle is persisted. Tool description still appears to all
+   *  Claude sessions (soft ACL); this flag controls authorisation server-side. */
+  enableCodexReview?: boolean
 }
 
 export interface CodexOptions {
@@ -337,6 +341,45 @@ export interface TokenomicsSyncProgress {
   totalFiles: number
   processedFiles: number
   currentFile?: string
+}
+
+// -- Codex Review (P6) --
+
+export interface CodexReviewRateLimitWindow {
+  /** 0 to 1 (e.g. 0.59 == 59% used). */
+  usedPercent: number
+  /** Unix seconds when the 5h window resets. */
+  resetsAt: number
+  /** Plan tier from the most recent token_count event (e.g. "plus", "pro"). */
+  planType: string
+}
+
+export interface CodexReviewUsageRecord {
+  /** CCC session id (the Claude session that called the tool). */
+  sessionId: string
+  /** Number of successful codex_review calls so far in this session. */
+  reviewCount: number
+  /** Sum of input tokens across all reviews in this session. */
+  totalInputTokens: number
+  /** Sum of output tokens across all reviews in this session. */
+  totalOutputTokens: number
+  /** State of the user's 5h gpt-5.5 window after the most recent review.
+   *  Null if no review has produced a token_count event yet. */
+  lastRateLimitWindow: CodexReviewRateLimitWindow | null
+  /** Unix ms of the last review's completion time. */
+  lastReviewAt: number
+}
+
+/** Disk-persisted aggregate keyed by ISO date (YYYY-MM-DD).
+ *  Lives at <resourcesDir>/tokenomics/codex-review-by-day.json. */
+export interface CodexReviewDailyShard {
+  /** ISO date string (YYYY-MM-DD, local time) -> aggregate for that day. */
+  byDay: Record<string, {
+    reviewCount: number
+    totalInputTokens: number
+    totalOutputTokens: number
+  }>
+  lastUpdated: number  // unix ms
 }
 
 // ── Notes ──
