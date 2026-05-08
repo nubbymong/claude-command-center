@@ -89,6 +89,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
     (initialClaude?.effortLevel ?? initial?.effortLevel ?? '') as 'low' | 'medium' | 'high' | ''
   )
   const [disableAutoMemory, setDisableAutoMemory] = useState(initialClaude?.disableAutoMemory ?? initial?.disableAutoMemory ?? false)
+  const [enableCodexReview, setEnableCodexReview] = useState(initialClaude?.enableCodexReview ?? false)
   const [machineName, setMachineName] = useState(initial?.machineName ?? '')
 
   // Fetch available versions when legacy checkbox enabled
@@ -231,6 +232,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
       agentIds: !shellOnly && selectedAgentIds.size > 0 ? Array.from(selectedAgentIds) : undefined,
       effortLevel: !shellOnly && effortLevel ? effortLevel : undefined,
       disableAutoMemory: !shellOnly && disableAutoMemory ? true : undefined,
+      enableCodexReview: !shellOnly && enableCodexReview ? true : undefined,
     } : undefined
 
     const codexOptions: CodexOptions | undefined = provider === 'codex' ? {
@@ -613,6 +615,22 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                 />
                 Disable auto-memory
                 <span className="text-[10px] text-overlay0">(no CLAUDE.md memory writes)</span>
+              </label>
+            )}
+
+            {/* P6: Codex code review toggle */}
+            {!shellOnly && (
+              <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={enableCodexReview}
+                  onChange={(e) => setEnableCodexReview(e.target.checked)}
+                  className="mt-0.5 rounded border-surface1"
+                />
+                <span>
+                  Enable Codex code review
+                  <span className="block text-[10px] text-overlay0">Lets Claude call the codex_review MCP tool. Each call counts against your gpt-5.5 5h budget.</span>
+                </span>
               </label>
             )}
 
