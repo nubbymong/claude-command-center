@@ -26,6 +26,23 @@ import { logInfo, logError } from './debug-logger'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import type { VisionCommand, VisionResult } from './vision-manager'
 
+/** P6.9: Parse the `source` query string from the SSE request URL.
+ *  The Codex TOML writer appends `?source=codex` so the server can skip
+ *  registering the codex_review tool for Codex sessions (avoids
+ *  Codex-self-review confusion). Unknown / missing source defaults to
+ *  'unknown' which behaves like 'claude' (codex_review IS advertised). */
+export function parseSourceFromUrl(reqUrl: string): 'claude' | 'codex' | 'unknown' {
+  try {
+    const url = new URL(reqUrl, 'http://localhost')
+    const param = url.searchParams.get('source')
+    if (param === 'codex') return 'codex'
+    if (param === 'claude') return 'claude'
+    return 'unknown'
+  } catch {
+    return 'unknown'
+  }
+}
+
 // Lazy-load MCP SDK to avoid import issues in test environments
 let McpServer: any = null
 let SSEServerTransport: any = null
@@ -150,7 +167,7 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
     return resultToMcpContent(await vm.executeCommand(cmd))
   }
 
-  const createServer = () => {
+  const createServer = (source: 'claude' | 'codex' | 'unknown' = 'unknown') => {
     const server = new McpServer(
       { name: 'conductor-vision', version: '1.1.0' },
       { capabilities: {} }
@@ -280,9 +297,10 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
       return withVision({ command: 'scroll', args })
     })
 
-    // -- Codex review (P6) -- gated by per-session opt-in --
-    // Tool description always advertises; ACL happens server-side at call time.
-    {
+    // P6.9: codex_review is intentionally NOT advertised to Codex sessions.
+    // Codex calling itself would be confusing UX in v1.5; v1.5.x can
+    // reconsider if reciprocal review demand surfaces.
+    if (source !== 'codex') {
       const { registerCodexReviewTool } = require('./codex-review-mcp-tool')
       registerCodexReviewTool(
         server,
@@ -308,9 +326,10 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
         return
       }
 
-      if (req.method === 'GET' && req.url === '/sse') {
-        logInfo('[vision-mcp] New SSE connection')
-        const server = createServer()
+      if (req.method === 'GET' && req.url && req.url.startsWith('/sse')) {
+        const source = parseSourceFromUrl(req.url)
+        logInfo(`[vision-mcp] New SSE connection (source=${source})`)
+        const server = createServer(source)
         const transport = new SSEServerTransport('/messages', res)
         transports.set(transport.sessionId, transport)
 

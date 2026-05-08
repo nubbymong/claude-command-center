@@ -100,7 +100,7 @@ export function injectConductorVisionInCodexConfig(port: number): void {
 
   // Leading newline ensures we start on a fresh line even if the file lacks
   // a trailing newline. Trailing newline keeps the file POSIX-clean.
-  const block = `\n${MARKER_COMMENT}\n${MARKER_SECTION}\nurl = "http://localhost:${port}/sse"\nenabled = true\n`
+  const block = `\n${MARKER_COMMENT}\n${MARKER_SECTION}\nurl = "http://localhost:${port}/sse?source=codex"\nenabled = true\n`
 
   try {
     writeFileSync(tomlPath, existing + block, 'utf-8')

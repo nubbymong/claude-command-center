@@ -41,7 +41,7 @@ describe('Codex MCP TOML injection (P5 sub-item #8)', () => {
       expect(existsSync(tomlPath)).toBe(true)
       const written = readFileSync(tomlPath, 'utf-8')
       expect(written).toContain('[mcp_servers.conductor-vision]')
-      expect(written).toContain('url = "http://localhost:19333/sse"')
+      expect(written).toContain('url = "http://localhost:19333/sse?source=codex"')
       expect(written).toContain('enabled = true')
       expect(written).toContain('# Managed by Claude Command Center')
     })
@@ -98,7 +98,7 @@ describe('Codex MCP TOML injection (P5 sub-item #8)', () => {
       mod.injectConductorVisionInCodexConfig(20999)
 
       const written = readFileSync(join(codexHome, 'config.toml'), 'utf-8')
-      expect(written).toContain('url = "http://localhost:20999/sse"')
+      expect(written).toContain('url = "http://localhost:20999/sse?source=codex"')
     })
 
     it('refreshes the URL when the port changes between calls (mirrors Claude JSON overwrite semantics)', async () => {
@@ -111,8 +111,8 @@ describe('Codex MCP TOML injection (P5 sub-item #8)', () => {
       mod.injectConductorVisionInCodexConfig(20999)
 
       const written = readFileSync(join(codexHome, 'config.toml'), 'utf-8')
-      expect(written).toContain('url = "http://localhost:20999/sse"')
-      expect(written).not.toContain('url = "http://localhost:19333/sse"')
+      expect(written).toContain('url = "http://localhost:20999/sse?source=codex"')
+      expect(written).not.toContain('url = "http://localhost:19333/sse?source=codex"')
       const occurrences = (written.match(/\[mcp_servers\.conductor-vision\]/g) ?? []).length
       expect(occurrences).toBe(1)
     })
