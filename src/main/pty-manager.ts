@@ -21,6 +21,8 @@ import {
   writeLocalSessionSettings,
   removeLocalSessionSettings,
 } from './hooks/per-session-settings'
+import { registerCodexReviewSession, unregisterCodexReviewSession } from './vision-mcp-server'
+import { disposeSession as disposeCodexReviewUsage } from './codex-review-usage'
 
 import * as path from 'path'
 import * as fs from 'fs'
@@ -184,6 +186,8 @@ export function spawnPty(
     effortLevel?: 'low' | 'medium' | 'high'
     disableAutoMemory?: boolean
     model?: string
+    /** v1.5 P6: when true, register session into MCP server's codex_review opt-in set. */
+    enableCodexReview?: boolean
     provider?: 'claude' | 'codex'
     codexOptions?: {
       model?: string
@@ -820,6 +824,13 @@ export function spawnPty(
         useConpty: true
       })
 
+      // P6: register for codex_review opt-in if the session config requested it.
+      // Only Claude sessions can opt in; Codex sessions never reach this branch
+      // (they go through the codex provider branch above).
+      if (options?.enableCodexReview) {
+        registerCodexReviewSession(sessionId, resolvedCwd)
+      }
+
       // Explicitly cd to the project directory, then launch Claude.
       // The cd is critical — it ensures Claude sees the correct project directory
       // regardless of PowerShell profile scripts or PTY cwd propagation issues.
@@ -958,6 +969,9 @@ export function spawnPty(
         if (gwExit) gwExit.unregisterSession(sessionId)
       } catch { /* gateway may have already stopped during shutdown */ }
       removeLocalSessionSettings(sessionId)
+      // P6: clear opt-in registration and per-session usage record.
+      unregisterCodexReviewSession(sessionId)
+      disposeCodexReviewUsage(sessionId)
     } else {
       logInfo(`[pty] Stale exit for ${sessionId} — newer PTY has taken over, skipping cleanup`)
     }

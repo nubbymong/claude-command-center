@@ -1,15 +1,22 @@
 /**
- * Conductor MCP SSE Server — exposes Conductor tools to Claude Code via MCP protocol.
+ * Conductor MCP SSE Server -- exposes Conductor tools to Claude Code (and
+ * Codex sessions in P5+) via MCP protocol.
  *
- * Two tool categories:
- *   1. Vision (browser automation via CDP) — requires a connected VisionManager.
+ * Tool categories:
+ *   1. Vision (browser automation via CDP) -- requires a connected VisionManager.
  *      Tools return "vision not connected" if the manager is unavailable.
- *   2. Host file access (screenshots, storyboards) — does not need vision.
+ *   2. Host file access (screenshots, storyboards) -- always available.
  *      Used for cross-session image transfer (works for local AND SSH sessions).
+ *   3. Codex review (P6) -- always advertised; ACL'd per-CCC-session via the
+ *      codexReviewOptedIn set, populated by pty-manager on Claude spawn when
+ *      the user has toggled "Enable Codex code review" in the session config.
  *
- * The server is started at app launch independent of vision config and stays
- * running for the app lifetime. Claude Code discovers it via mcpServers in
- * ~/.claude/settings.json. SSH sessions reach it via reverse tunnel.
+ * The server is started at app launch and stays running for the app lifetime.
+ * Claude Code discovers it via mcpServers in ~/.claude/settings.json. SSH
+ * sessions reach it via reverse tunnel.
+ *
+ * Naming: still called "vision-mcp" for back-compat with existing settings.json
+ * entries. Rename to "conductor-tools" is a separate v1.5.x cleanup.
  */
 
 import * as http from 'http'
@@ -45,6 +52,22 @@ type GetVisionManager = () => VisionManagerInterface | null
 let httpServer: http.Server | null = null
 let mcpPort: number = 0
 const transports = new Map<string, any>()
+
+// P6: per-session opt-in for codex_review tool. Populated by pty-manager on
+// Claude spawn; cleared on dispose. Soft ACL (the LLM passes its own session
+// id; not a hard authorisation boundary -- see spec section 8 for rationale).
+const codexReviewOptedIn = new Set<string>()
+const sessionCwds = new Map<string, string>()
+
+export function registerCodexReviewSession(sessionId: string, cwd: string): void {
+  codexReviewOptedIn.add(sessionId)
+  sessionCwds.set(sessionId, cwd)
+}
+
+export function unregisterCodexReviewSession(sessionId: string): void {
+  codexReviewOptedIn.delete(sessionId)
+  sessionCwds.delete(sessionId)
+}
 
 function resultToMcpContent(result: VisionResult) {
   return {
@@ -256,6 +279,18 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
       if (pixels) args.push(String(pixels))
       return withVision({ command: 'scroll', args })
     })
+
+    // -- Codex review (P6) -- gated by per-session opt-in --
+    // Tool description always advertises; ACL happens server-side at call time.
+    {
+      const { registerCodexReviewTool } = require('./codex-review-mcp-tool')
+      registerCodexReviewTool(
+        server,
+        z,
+        () => codexReviewOptedIn,
+        (sessionId: string) => sessionCwds.get(sessionId) ?? null,
+      )
+    }
 
     return server
   }
