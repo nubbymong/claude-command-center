@@ -183,6 +183,10 @@ export interface ElectronAPI {
   }
   github: GitHubBridge
   hooks: HooksBridge
+  codexReview: {
+    getUsage: (sessionId: string) => Promise<import('../shared/types').CodexReviewUsageRecord | null>
+    onUsageUpdated: (callback: (payload: { sessionId: string; record: import('../shared/types').CodexReviewUsageRecord }) => void) => () => void
+  }
 }
 
 interface HooksBridge {
@@ -647,6 +651,15 @@ const electronAPI: ElectronAPI = {
       const handler = (_: unknown, s: HooksGatewayStatus) => cb(s)
       ipcRenderer.on(IPC.HOOKS_STATUS, handler)
       return () => ipcRenderer.removeListener(IPC.HOOKS_STATUS, handler)
+    },
+  },
+  codexReview: {
+    getUsage: (sessionId: string) =>
+      ipcRenderer.invoke(IPC.CODEX_REVIEW_USAGE_GET, sessionId),
+    onUsageUpdated: (callback) => {
+      const wrapped = (_e: Electron.IpcRendererEvent, payload: { sessionId: string; record: import('../shared/types').CodexReviewUsageRecord }) => callback(payload)
+      ipcRenderer.on(IPC.CODEX_REVIEW_USAGE_UPDATED, wrapped)
+      return () => ipcRenderer.removeListener(IPC.CODEX_REVIEW_USAGE_UPDATED, wrapped)
     },
   },
 }

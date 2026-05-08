@@ -8,6 +8,14 @@ import type {
   CodexReviewDailyShard,
 } from '../shared/types'
 
+type Listener = (sessionId: string, record: CodexReviewUsageRecord) => void
+const listeners = new Set<Listener>()
+
+export function onUsageRecorded(listener: Listener): () => void {
+  listeners.add(listener)
+  return () => listeners.delete(listener)
+}
+
 interface RecordPayload {
   inputTokens: number
   outputTokens: number
@@ -77,6 +85,10 @@ export function recordReview(sessionId: string, payload: RecordPayload): void {
   cell.totalOutputTokens += payload.outputTokens
   s.byDay[day] = cell
   saveShard()
+
+  for (const l of listeners) {
+    try { l(sessionId, record) } catch { /* never let listener errors crash recording */ }
+  }
 }
 
 export function getUsage(sessionId: string): CodexReviewUsageRecord | null {

@@ -409,6 +409,10 @@ export interface ElectronAPI {
     onDropped: (cb: (p: { sessionId: string }) => void) => () => void
     onStatus: (cb: (s: HooksGatewayStatus) => void) => () => void
   }
+  codexReview: {
+    getUsage: (sessionId: string) => Promise<import('../../shared/types').CodexReviewUsageRecord | null>
+    onUsageUpdated: (callback: (payload: { sessionId: string; record: import('../../shared/types').CodexReviewUsageRecord }) => void) => () => void
+  }
   codex: {
     status: () => Promise<{
       installed: boolean

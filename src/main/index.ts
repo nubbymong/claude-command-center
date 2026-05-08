@@ -34,6 +34,7 @@ import { registerTokenomicsHandlers } from './ipc/tokenomics-handlers'
 import { registerGitHubHandlers } from './ipc/github-handlers'
 import { registerHooksHandlers } from './ipc/hooks-handlers'
 import { registerCodexHandlers } from './ipc/codex-handlers'
+import { registerCodexReviewHandlers } from './ipc/codex-review-handlers'
 import { HooksGateway } from './hooks/hooks-gateway'
 import { setGateway, getGateway } from './hooks'
 import { cleanupStaleHookEntries } from './hooks/boot-cleanup'
@@ -594,6 +595,7 @@ if (!gotTheLock) {
     registerNotesHandlers()
     registerVisionHandlers(getWindow)
     registerCodexHandlers()
+    registerCodexReviewHandlers()
     registerCloudAgentHandlers(getWindow)
     registerTeamHandlers(getWindow)
     registerLegacyVersionHandlers(getWindow)
