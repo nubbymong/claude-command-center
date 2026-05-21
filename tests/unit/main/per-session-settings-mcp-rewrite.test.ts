@@ -66,19 +66,34 @@ describe('per-session-settings mcpServers URL rewrite (P7.2)', () => {
     })
   })
 
-  it('tolerates settings without an mcpServers block', () => {
+  // P7.7.2: per-session settings are now self-contained -- create the
+  // conductor-vision entry from scratch if global lacks it. Prevents
+  // the dev-exit / prod-still-running stale-removeMcpSettings race.
+  it('creates conductor-vision entry when global has no mcpServers block (P7.7.2)', () => {
     fs.writeFileSync(path.join(claudeDir, 'settings.json'), JSON.stringify({
       permissions: { allow: [] },
     }))
     const sesPath = writeLocalSessionSettings('sid-3')
     const written = JSON.parse(fs.readFileSync(sesPath, 'utf-8'))
     expect(written.permissions).toEqual({ allow: [] })
-    expect(written.mcpServers).toBeUndefined()
+    expect(written.mcpServers['conductor-vision'].url).toBe('http://localhost:19433/sse')
   })
 
-  it('tolerates settings.json missing entirely', () => {
+  it('creates conductor-vision entry when settings.json is missing entirely (P7.7.2)', () => {
     const sesPath = writeLocalSessionSettings('sid-4')
     const written = JSON.parse(fs.readFileSync(sesPath, 'utf-8'))
-    expect(written).toEqual({})
+    expect(written.mcpServers['conductor-vision'].url).toBe('http://localhost:19433/sse')
+  })
+
+  it('creates conductor-vision entry when mcpServers exists but lacks conductor-vision (P7.7.2)', () => {
+    fs.writeFileSync(path.join(claudeDir, 'settings.json'), JSON.stringify({
+      mcpServers: {
+        'other-server': { url: 'http://example.com/sse' },
+      },
+    }))
+    const sesPath = writeLocalSessionSettings('sid-5')
+    const written = JSON.parse(fs.readFileSync(sesPath, 'utf-8'))
+    expect(written.mcpServers['conductor-vision'].url).toBe('http://localhost:19433/sse')
+    expect(written.mcpServers['other-server']).toEqual({ url: 'http://example.com/sse' })
   })
 })

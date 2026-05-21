@@ -850,25 +850,30 @@ export function spawnPty(
         extraFlags += ` --model ${options.model}`
       }
 
-      // HOOKS INJECTION DISABLED — see the SSH branch above for the same
-      // gate. With no consumer feature attached, every Pre/PostToolUse
-      // call was firing at a localhost URL nobody listens to, logging
-      // ECONNREFUSED on every Bash/Read/Edit. Re-enable when a hook
-      // consumer (live activity v2, analytics, etc.) ships.
-      void getGateway, writeLocalSessionSettings, injectHooks
-      if (false as boolean) {
-        try {
-          const sesPath = writeLocalSessionSettings(sessionId)
-          if (os.platform() === 'win32') {
-            const escapedSesPath = sesPath.replace(/'/g, "''")
-            extraFlags += ` --settings '${escapedSesPath}'`
-          } else {
-            const escapedSesPath = sesPath.replace(/'/g, "'\\''")
-            extraFlags += ` --settings '${escapedSesPath}'`
-          }
-        } catch (err) {
-          logError(`[hooks] Failed to seed per-session settings for ${sessionId}: ${(err as Error)?.message ?? err}`)
+      // P7.7.2: ALWAYS seed a per-session settings file and pass --settings.
+      // This is required for the P7.2 mcpServers URL rewrite to take effect
+      // -- without it, dev and prod CCC instances race to overwrite the
+      // single global ~/.claude/settings.json conductor-vision URL, and
+      // sessions spawned by the loser see the wrong port.
+      //
+      // injectHooks remains DISABLED here -- the Live Activity feed UI was
+      // cut in c957e5d, so the gateway has no consumer and Pre/PostToolUse
+      // would log ECONNREFUSED on every Bash/Read/Edit. writeLocalSessionSettings
+      // does NOT inject hooks; it only clones the user's global settings and
+      // overlays the conductor-vision URL. Re-enable injectHooks when a
+      // consumer feature ships (live activity v2, hook-driven analytics).
+      void getGateway, injectHooks
+      try {
+        const sesPath = writeLocalSessionSettings(sessionId)
+        if (os.platform() === 'win32') {
+          const escapedSesPath = sesPath.replace(/'/g, "''")
+          extraFlags += ` --settings '${escapedSesPath}'`
+        } else {
+          const escapedSesPath = sesPath.replace(/'/g, "'\\''")
+          extraFlags += ` --settings '${escapedSesPath}'`
         }
+      } catch (err) {
+        logError(`[pty] Failed to seed per-session settings for ${sessionId}: ${(err as Error)?.message ?? err}`)
       }
 
       // Build --agents flag if agent templates are configured

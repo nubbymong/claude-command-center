@@ -54,15 +54,22 @@ export function writeLocalSessionSettings(sessionId: string): string {
   // reference the production default (19333), but a dev-mode CCC instance
   // binds 19433 and writes per-session settings pointing there. Other
   // mcpServers entries are preserved verbatim.
+  //
+  // P7.7.2: Create the conductor-vision entry from scratch if it's missing
+  // from the cloned global -- prevents a stale-removeMcpSettings race where
+  // one CCC's exit cleanup strips the entry while another CCC is still
+  // spawning sessions. Per-session settings are now self-contained.
   const instancePort = getConductorMcpPort()
-  if (instancePort > 0 && sesCfg.mcpServers && typeof sesCfg.mcpServers === 'object') {
+  if (instancePort > 0) {
+    if (!sesCfg.mcpServers || typeof sesCfg.mcpServers !== 'object') {
+      sesCfg.mcpServers = {}
+    }
     const servers = sesCfg.mcpServers as Record<string, unknown>
     const cv = servers['conductor-vision']
-    if (cv && typeof cv === 'object') {
-      servers['conductor-vision'] = {
-        ...(cv as Record<string, unknown>),
-        url: `http://localhost:${instancePort}/sse`,
-      }
+    const existing = (cv && typeof cv === 'object') ? (cv as Record<string, unknown>) : {}
+    servers['conductor-vision'] = {
+      ...existing,
+      url: `http://localhost:${instancePort}/sse`,
     }
   }
 
