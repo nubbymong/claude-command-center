@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { mkdtempSync, writeFileSync, rmSync } from 'fs'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
@@ -22,13 +22,22 @@ vi.mock('../../../src/main/codex-review-usage', () => ({
   recordReview: (sessionId: string, payload: any) => recordReview(sessionId, payload),
 }))
 
+// debug-logger is already mocked globally in tests/unit/setup.ts; no per-file
+// mock needed here. (Source under test calls logInfo through that module.)
+
 import { runCodexReview } from '../../../src/main/codex-review-mcp-tool'
 
 const optedIn = new Set<string>(['sess-allowed'])
 
 describe('codex_review tool', () => {
+  // gitCwd: real on-disk dir with a `.git` marker so the P7.7.9 git-repo
+  // guard passes for tests that exercise mode 'working' or 'range'.
+  let gitCwd: string
+
   beforeEach(() => {
     testResourcesDir = mkdtempSync(join(tmpdir(), 'ccc-codex-review-tool-'))
+    gitCwd = mkdtempSync(join(tmpdir(), 'ccc-codex-review-git-'))
+    mkdirSync(join(gitCwd, '.git'))
     runCodexStreaming.mockReset()
     readCodexAuthStatus.mockReset()
     recordReview.mockReset()
@@ -40,6 +49,7 @@ describe('codex_review tool', () => {
 
   afterEach(() => {
     rmSync(testResourcesDir, { recursive: true, force: true })
+    rmSync(gitCwd, { recursive: true, force: true })
   })
 
   it('rejects when sessionId is not in opted-in set', async () => {
@@ -149,7 +159,7 @@ describe('codex_review tool', () => {
 
     const result = await runCodexReview(
       { cccSessionId: 'sess-allowed', mode: 'working', focus: 'race conditions' },
-      optedIn, '/some/repo/cwd',
+      optedIn, gitCwd,
     )
 
     expect(result.isError).toBe(false)
@@ -187,7 +197,7 @@ describe('codex_review tool', () => {
     })
     await runCodexReview(
       { cccSessionId: 'sess-allowed', mode: 'range', range: 'HEAD~1..HEAD' },
-      optedIn, '/some/repo',
+      optedIn, gitCwd,
     )
     const flat = capturedArgs.join(' ')
     expect(flat).toContain('HEAD~1..HEAD')
@@ -199,7 +209,7 @@ describe('codex_review tool', () => {
     }))
     const result = await runCodexReview(
       { cccSessionId: 'sess-allowed', mode: 'working' },
-      optedIn, '/fake/cwd',
+      optedIn, gitCwd,
     )
     expect(result.isError).toBe(true)
     expect(result.text).toContain('timed out')
@@ -211,10 +221,87 @@ describe('codex_review tool', () => {
     }))
     const result = await runCodexReview(
       { cccSessionId: 'sess-allowed', mode: 'working' },
-      optedIn, '/fake/cwd',
+      optedIn, gitCwd,
     )
     expect(result.isError).toBe(true)
     expect(result.text).toContain('Codex review failed (exit 2)')
     expect(result.text).toContain('rate-limit window exhausted')
+  })
+
+  // P7.7.9 -- git-repo guard. Modes 'working' and 'range' rely on git
+  // history; fail early with a clean message when the cwd isn't a repo
+  // rather than paying for a spawn + quota hit before codex catches it.
+  it('rejects mode "working" when cwd lacks a .git directory', async () => {
+    const nonGitCwd = mkdtempSync(join(tmpdir(), 'ccc-codex-review-nogit-'))
+    try {
+      const result = await runCodexReview(
+        { cccSessionId: 'sess-allowed', mode: 'working' },
+        optedIn, nonGitCwd,
+      )
+      expect(result.isError).toBe(true)
+      expect(result.text).toContain('requires a git repository')
+      expect(result.text).toContain(nonGitCwd)
+      expect(result.text).toContain("mode='paths'")
+      expect(runCodexStreaming).not.toHaveBeenCalled()
+    } finally {
+      rmSync(nonGitCwd, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects mode "range" when cwd lacks a .git directory', async () => {
+    const nonGitCwd = mkdtempSync(join(tmpdir(), 'ccc-codex-review-nogit-'))
+    try {
+      const result = await runCodexReview(
+        { cccSessionId: 'sess-allowed', mode: 'range', range: 'HEAD~1..HEAD' },
+        optedIn, nonGitCwd,
+      )
+      expect(result.isError).toBe(true)
+      expect(result.text).toContain('requires a git repository')
+      expect(runCodexStreaming).not.toHaveBeenCalled()
+    } finally {
+      rmSync(nonGitCwd, { recursive: true, force: true })
+    }
+  })
+
+  it('accepts mode "working" when .git is a FILE (git worktree)', async () => {
+    // In a linked worktree, `.git` is a file containing `gitdir: <path>` --
+    // not a directory. existsSync returns true for both, so the guard must
+    // accept this shape without an extra stat check.
+    const worktreeCwd = mkdtempSync(join(tmpdir(), 'ccc-codex-review-worktree-'))
+    writeFileSync(join(worktreeCwd, '.git'), 'gitdir: /tmp/main-repo/.git/worktrees/feature\n', 'utf-8')
+    runCodexStreaming.mockImplementation(async (args: string[], _opts: any) => {
+      const i = args.indexOf('--output-last-message')
+      writeFileSync(args[i + 1], 'fine', 'utf-8')
+      return { code: 0, stderr: '', timedOut: false }
+    })
+    try {
+      const result = await runCodexReview(
+        { cccSessionId: 'sess-allowed', mode: 'working' },
+        optedIn, worktreeCwd,
+      )
+      expect(result.isError).toBe(false)
+      expect(runCodexStreaming).toHaveBeenCalled()
+    } finally {
+      rmSync(worktreeCwd, { recursive: true, force: true })
+    }
+  })
+
+  it('does NOT apply the git-repo guard to mode "paths" (works outside a repo)', async () => {
+    const nonGitCwd = mkdtempSync(join(tmpdir(), 'ccc-codex-review-nogit-'))
+    runCodexStreaming.mockImplementation(async (args: string[], _opts: any) => {
+      const i = args.indexOf('--output-last-message')
+      writeFileSync(args[i + 1], 'fine', 'utf-8')
+      return { code: 0, stderr: '', timedOut: false }
+    })
+    try {
+      const result = await runCodexReview(
+        { cccSessionId: 'sess-allowed', mode: 'paths', paths: ['file.ts'] },
+        optedIn, nonGitCwd,
+      )
+      expect(result.isError).toBe(false)
+      expect(runCodexStreaming).toHaveBeenCalled()
+    } finally {
+      rmSync(nonGitCwd, { recursive: true, force: true })
+    }
   })
 })

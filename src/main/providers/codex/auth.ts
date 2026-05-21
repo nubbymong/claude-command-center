@@ -3,6 +3,7 @@ import { join } from 'path'
 import { homedir } from 'os'
 import { spawn } from 'child_process'
 import { resolveCodexBinary } from './spawn'
+import { logInfo } from '../../debug-logger'
 
 /**
  * P7.7.7: Quote a single argument for cmd.exe consumption.
@@ -160,7 +161,17 @@ export function runCodexStreaming(
         nl = stdoutBuffer.indexOf('\n')
       }
     })
-    proc.stderr.on('data', (d: Buffer) => { stderr += d.toString() })
+    // P7.7.9: Mirror stderr to debug-logger AS IT ARRIVES. The full buffer is
+    // still retained for the resolve() return so error-mapping behaviour is
+    // unchanged; this only adds live visibility. Without it, a hung codex
+    // process (P7.7.8 symptom) silently swallows its progress chatter --
+    // line-streaming the stderr makes those hangs diagnosable in real time.
+    proc.stderr.on('data', (d: Buffer) => {
+      const text = d.toString()
+      stderr += text
+      const trimmed = text.trimEnd()
+      if (trimmed.length > 0) logInfo('[codex] stderr:', trimmed)
+    })
 
     const timer = setTimeout(() => {
       timedOut = true

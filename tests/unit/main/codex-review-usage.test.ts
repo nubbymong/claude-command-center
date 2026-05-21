@@ -16,6 +16,15 @@ import {
   __resetForTests,
 } from '../../../src/main/codex-review-usage'
 
+// Matches the source's todayLocalIso() so the test passes regardless of
+// the developer's UTC offset. Using `new Date().toISOString().slice(0, 10)`
+// breaks for ~1 hour/day in timezones east of UTC near midnight (the test
+// was flaky in UK BST when run between 00:00 and 01:00 local time).
+function todayLocalIso(): string {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 describe('codex-review-usage', () => {
   beforeEach(() => {
     testResourcesDir = mkdtempSync(join(tmpdir(), 'ccc-codex-review-'))
@@ -70,7 +79,7 @@ describe('codex-review-usage', () => {
     const shardPath = join(testResourcesDir, 'tokenomics', 'codex-review-by-day.json')
     expect(existsSync(shardPath)).toBe(true)
     const shard = JSON.parse(readFileSync(shardPath, 'utf-8'))
-    const today = new Date().toISOString().slice(0, 10)
+    const today = todayLocalIso()
     expect(shard.byDay[today]?.reviewCount).toBe(1)
     expect(shard.byDay[today]?.totalInputTokens).toBe(100)
   })
@@ -78,7 +87,7 @@ describe('codex-review-usage', () => {
   it('persists across module re-init via the disk shard', async () => {
     recordReview('sess-1', { inputTokens: 250, outputTokens: 100, rateLimit: null })
     __resetForTests()  // simulate restart -- in-memory map cleared, shard remains
-    const today = new Date().toISOString().slice(0, 10)
+    const today = todayLocalIso()
     // Re-record into a fresh session; daily aggregate must accumulate, not reset.
     recordReview('sess-2', { inputTokens: 50, outputTokens: 25, rateLimit: null })
     const shardPath = join(testResourcesDir, 'tokenomics', 'codex-review-by-day.json')

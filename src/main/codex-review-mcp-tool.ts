@@ -5,6 +5,7 @@ import { tmpdir } from 'os'
 import { z } from 'zod'
 import { runCodexStreaming, readCodexAuthStatus } from './providers/codex/auth'
 import { recordReview } from './codex-review-usage'
+import { logInfo } from './debug-logger'
 
 const REVIEW_TIMEOUT_MS = 5 * 60 * 1000  // 5 minutes
 const MAX_DIFF_BYTES = 50 * 1024  // 50 KB
@@ -145,12 +146,31 @@ export async function runCodexReview(
     }
   }
 
+  // 3.6. Git-repo guard for modes that require diff history.
+  //      Codex itself surfaces "not a git repo" but the UX is muddy: we pay
+  //      latency + a quota hit before the failure shows up. Fast-fail with a
+  //      clear redirect to mode='paths'. mode='paths' is intentionally exempt
+  //      since it operates on explicit file paths and works outside a repo.
+  if (args.mode === 'working' || args.mode === 'range') {
+    if (!existsSync(path.join(resolvedCwd, '.git'))) {
+      return {
+        isError: true,
+        text: `Mode '${args.mode}' requires a git repository, but ${resolvedCwd} is not one. Use mode='paths' with explicit file paths instead.`,
+      }
+    }
+  }
+
   // 4. Tmpfile for last-message capture
   const tmpDir = mkdtempSync(join(tmpdir(), 'ccc-codex-review-'))
   const tmpfile = join(tmpDir, 'review.md')
 
   // 5. Build argv
   const argv = buildArgv(args, resolvedCwd, tmpfile)
+
+  // P7.7.9: log spawn args so the debug log shows exactly what flags were
+  // passed to codex on each invocation. Useful when diagnosing future CLI
+  // drift or argv-construction regressions.
+  logInfo('[codex-review] spawning: codex ' + argv.join(' '))
 
   // 6. Spawn streaming
   let observed: TokenCountObserved | null = null
