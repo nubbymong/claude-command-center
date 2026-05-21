@@ -4,6 +4,27 @@ import { homedir } from 'os'
 import { spawn } from 'child_process'
 import { resolveCodexBinary } from './spawn'
 
+/**
+ * P7.7.7: Quote a single argument for cmd.exe consumption.
+ *
+ * Node's `child_process.spawn(cmd, args, { shell: true })` on Windows joins
+ * args with single spaces and runs them through `cmd.exe /d /s /c`. cmd.exe
+ * then re-tokenises that string, so any arg containing whitespace or shell
+ * metacharacters gets split mid-arg. Codex CLI takes the first whitespace-
+ * separated token after `exec` as a subcommand, which crashes the prompt arg
+ * with "unrecognized subcommand 'the'" (and similar) for any multi-word
+ * prompt.
+ *
+ * Wrap the arg in double quotes when it contains anything cmd.exe would
+ * tokenise on, and escape embedded double quotes by doubling them per the
+ * Windows shell convention.
+ */
+function quoteForCmdShell(s: string): string {
+  if (s.length === 0) return '""'
+  if (!/[\s"&|<>^()%!]/.test(s)) return s
+  return `"${s.replace(/"/g, '""')}"`
+}
+
 export interface CodexAuthStatus {
   installed: boolean
   version: string | null
@@ -72,7 +93,12 @@ export function runCodexProcess(
     const resolved = resolveCodexBinary()
     const cmd = resolved?.cmd ?? 'codex'
     const useShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(cmd)
-    const proc = spawn(cmd, args, { shell: useShell })
+    // P7.7.7: pre-quote args + the cmd path under shell mode because Node
+    // joins them with raw spaces; cmd.exe would otherwise re-tokenise on
+    // every whitespace inside a multi-word prompt arg.
+    const spawnCmd = useShell ? quoteForCmdShell(cmd) : cmd
+    const spawnArgs = useShell ? args.map(quoteForCmdShell) : args
+    const proc = spawn(spawnCmd, spawnArgs, { shell: useShell })
     let stdout = ''
     let stderr = ''
     proc.stdout.on('data', (d) => { stdout += d.toString() })
@@ -103,7 +129,11 @@ export function runCodexStreaming(
     const resolved = resolveCodexBinary()
     const cmd = resolved?.cmd ?? 'codex'
     const useShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(cmd)
-    const proc = spawn(cmd, args, { shell: useShell, cwd: opts.cwd })
+    // P7.7.7: pre-quote args + the cmd path under shell mode -- see
+    // quoteForCmdShell docstring. macOS path is unaffected (useShell=false).
+    const spawnCmd = useShell ? quoteForCmdShell(cmd) : cmd
+    const spawnArgs = useShell ? args.map(quoteForCmdShell) : args
+    const proc = spawn(spawnCmd, spawnArgs, { shell: useShell, cwd: opts.cwd })
 
     let stderr = ''
     let stdoutBuffer = ''
