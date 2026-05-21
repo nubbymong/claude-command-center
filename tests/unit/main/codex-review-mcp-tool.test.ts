@@ -25,7 +25,7 @@ vi.mock('../../../src/main/codex-review-usage', () => ({
 // debug-logger is already mocked globally in tests/unit/setup.ts; no per-file
 // mock needed here. (Source under test calls logInfo through that module.)
 
-import { runCodexReview } from '../../../src/main/codex-review-mcp-tool'
+import { runCodexReview, registerCodexReviewTool } from '../../../src/main/codex-review-mcp-tool'
 
 const optedIn = new Set<string>(['sess-allowed'])
 
@@ -303,5 +303,123 @@ describe('codex_review tool', () => {
     } finally {
       rmSync(nonGitCwd, { recursive: true, force: true })
     }
+  })
+
+  // P7.7.10 -- cccSessionId is now optional in the zod schema (resolved
+  // server-side from the MCP transport URL). runCodexReview itself still
+  // requires it -- the tool wrapper is responsible for merging in the
+  // bound sid before calling the function. A direct call without sid
+  // surfaces a wiring bug rather than silently falling through.
+  it('rejects when cccSessionId is missing (no transport binding, no arg)', async () => {
+    const result = await runCodexReview(
+      { mode: 'working' },
+      optedIn, gitCwd,
+    )
+    expect(result.isError).toBe(true)
+    expect(result.text).toContain('no CCC session id bound')
+    expect(runCodexStreaming).not.toHaveBeenCalled()
+  })
+})
+
+describe('registerCodexReviewTool resolver (P7.7.10 transport binding)', () => {
+  // Capture the tool resolver lambda from a mock McpServer.
+  let resolver: ((rawArgs: any) => Promise<any>) | null = null
+  const mockServer = {
+    tool: vi.fn((_name: string, _desc: string, _schema: any, lambda: any) => {
+      resolver = lambda
+    }),
+  }
+  const mockZ = {
+    string: () => ({ describe: () => ({}), optional: () => ({ describe: () => ({}) }), max: () => ({ optional: () => ({ describe: () => ({}) }) }) }),
+    enum: () => ({ describe: () => ({}) }),
+    array: () => ({ optional: () => ({ describe: () => ({}) }) }),
+  }
+  let optedInSet: Set<string>
+  let sessionCwds: Map<string, string>
+
+  beforeEach(() => {
+    resolver = null
+    mockServer.tool.mockClear()
+    runCodexStreaming.mockReset()
+    readCodexAuthStatus.mockReset()
+    readCodexAuthStatus.mockResolvedValue({
+      installed: true, version: '0.125.0', authMode: 'chatgpt',
+      planType: 'plus', hasOpenAiApiKeyEnv: false,
+    })
+    optedInSet = new Set<string>(['bound-sid', 'arg-sid'])
+    sessionCwds = new Map<string, string>()
+  })
+
+  it('prefers the transport-bound sessionId over the LLM-supplied arg', async () => {
+    registerCodexReviewTool(
+      mockServer,
+      mockZ,
+      () => optedInSet,
+      (sid: string) => sessionCwds.get(sid) ?? null,
+      () => 'bound-sid',
+    )
+    expect(resolver).not.toBeNull()
+    runCodexStreaming.mockImplementation(async () => ({
+      code: -1, stderr: '', timedOut: true,  // bail early; we only care about which sid ran the ACL.
+    }))
+    // LLM passes a DIFFERENT sid -- bound should win, ACL passes against bound.
+    const out = await resolver!({ cccSessionId: 'arg-sid', mode: 'paths', paths: ['x'] })
+    // ACL passed (bound-sid in set) so we got past it; failure is the
+    // mocked timeout from runCodexStreaming, NOT "not enabled for arg-sid".
+    expect(out.isError).toBe(true)
+    expect(out.content[0].text).toContain('timed out')
+    expect(out.content[0].text).not.toContain('not enabled')
+  })
+
+  it('falls back to the LLM-supplied arg when no sessionId is bound', async () => {
+    registerCodexReviewTool(
+      mockServer,
+      mockZ,
+      () => optedInSet,
+      (sid: string) => sessionCwds.get(sid) ?? null,
+      () => null,  // no transport binding -- legacy/in-flight connection
+    )
+    expect(resolver).not.toBeNull()
+    runCodexStreaming.mockImplementation(async () => ({
+      code: -1, stderr: '', timedOut: true,
+    }))
+    const out = await resolver!({ cccSessionId: 'arg-sid', mode: 'paths', paths: ['x'] })
+    // Arg sid is in the opted-in set so ACL passes; failure is the mocked
+    // timeout (proves we got past ACL with the arg-supplied sid).
+    expect(out.isError).toBe(true)
+    expect(out.content[0].text).toContain('timed out')
+    expect(out.content[0].text).not.toContain('not enabled')
+  })
+
+  it('returns "no CCC session id bound" when neither bound nor arg sid is present', async () => {
+    registerCodexReviewTool(
+      mockServer,
+      mockZ,
+      () => optedInSet,
+      (sid: string) => sessionCwds.get(sid) ?? null,
+      () => null,
+    )
+    expect(resolver).not.toBeNull()
+    const out = await resolver!({ mode: 'paths', paths: ['x'] })
+    expect(out.isError).toBe(true)
+    expect(out.content[0].text).toContain('no CCC session id bound')
+    expect(runCodexStreaming).not.toHaveBeenCalled()
+  })
+
+  it('uses default null-returning getBoundSessionId when caller omits it (back-compat)', async () => {
+    registerCodexReviewTool(
+      mockServer,
+      mockZ,
+      () => optedInSet,
+      (sid: string) => sessionCwds.get(sid) ?? null,
+      // getBoundSessionId omitted -- default returns null
+    )
+    expect(resolver).not.toBeNull()
+    runCodexStreaming.mockImplementation(async () => ({
+      code: -1, stderr: '', timedOut: true,
+    }))
+    const out = await resolver!({ cccSessionId: 'arg-sid', mode: 'paths', paths: ['x'] })
+    expect(out.isError).toBe(true)
+    expect(out.content[0].text).toContain('timed out')
   })
 })

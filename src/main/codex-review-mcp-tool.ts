@@ -11,7 +11,12 @@ const REVIEW_TIMEOUT_MS = 5 * 60 * 1000  // 5 minutes
 const MAX_DIFF_BYTES = 50 * 1024  // 50 KB
 
 export const codexReviewArgsSchema = z.object({
-  cccSessionId: z.string().min(1),
+  // P7.7.10: cccSessionId is resolved server-side from the MCP SSE
+  // transport URL (baked in by writeLocalSessionMcpConfig). Kept optional
+  // for back-compat with in-flight sessions that pre-date the URL change
+  // -- if the connection didn't bind a session id, runCodexReview falls
+  // back to this arg before refusing the call.
+  cccSessionId: z.string().min(1).optional(),
   mode: z.enum(['working', 'range', 'paths']),
   range: z.string().optional(),
   paths: z.array(z.string().min(1)).optional(),
@@ -114,11 +119,28 @@ export async function runCodexReview(
   }
   const args = parsed.data
 
-  // 2. ACL
-  if (!optedInSessions.has(args.cccSessionId)) {
+  // 1.5. P7.7.10: cccSessionId is now optional in the schema (resolved
+  // server-side from the MCP transport URL). At this layer it MUST be
+  // present -- the MCP tool wrapper is responsible for merging in the
+  // bound sid before calling runCodexReview. A direct call without sid
+  // is a wiring bug worth surfacing.
+  if (!args.cccSessionId) {
     return {
       isError: true,
-      text: `Codex review is not enabled for session ${args.cccSessionId}. Toggle "Enable Codex code review" in the session config.`,
+      text: 'Codex review unavailable: no CCC session id bound to this MCP connection. Spawn the Claude session from inside the Conductor app.',
+    }
+  }
+  // Narrow once and reuse so a future refactor adding an `await` between
+  // the guard and downstream usage can't silently widen the type back to
+  // `string | undefined`. Aliasing also keeps the rest of the function
+  // independent of zod schema cardinality.
+  const cccSessionId: string = args.cccSessionId
+
+  // 2. ACL
+  if (!optedInSessions.has(cccSessionId)) {
+    return {
+      isError: true,
+      text: `Codex review is not enabled for session ${cccSessionId}. Toggle "Enable Codex code review" in the session config.`,
     }
   }
 
@@ -204,7 +226,7 @@ export async function runCodexReview(
   // 9. Record usage
   if (observed) {
     const obsInner = observed as TokenCountObserved
-    recordReview(args.cccSessionId, {
+    recordReview(cccSessionId, {
       inputTokens: obsInner.inputTokens,
       outputTokens: obsInner.outputTokens,
       rateLimit: obsInner.rateLimit,
@@ -214,26 +236,44 @@ export async function runCodexReview(
   return { isError: false, text: review + formatFooter(observed) }
 }
 
-/** Register the codex_review tool on a conductor-mcp-server McpServer instance. */
+/** Register the codex_review tool on a conductor-mcp-server McpServer instance.
+ *
+ * P7.7.10: the `getBoundSessionId` callback returns the CCC session id parsed
+ * from the SSE transport URL (`?cccSessionId=<sid>` query, baked in by the
+ * per-session --mcp-config writer). When present it takes precedence over
+ * any `cccSessionId` the LLM passes as a tool arg -- prevents Claude from
+ * dispatching against a stale id cached from a prior conversation. The arg
+ * remains a fallback for in-flight sessions written by older CCC builds.
+ */
 export function registerCodexReviewTool(
   server: any,  // McpServer (lazy-typed in conductor-mcp-server.ts)
   zMod: any,    // zod module (lazy-loaded)
   getOptedIn: () => Set<string>,
   getCwdForSession: (sessionId: string) => string | null,
+  getBoundSessionId: () => string | null = () => null,
 ): void {
   server.tool(
     'codex_review',
-    'Get a Codex (gpt-5.5) code review on a change. Use when the user asks for a "Codex review" or "second opinion". Required arg cccSessionId: read with the Bash tool via `echo $CLAUDE_MULTI_SESSION_ID`. The mode arg picks scope: "working" for uncommitted changes (no extra arg), "range" for a git revision range (provide range, e.g. "HEAD~1..HEAD"), "paths" for specific files (provide paths). Optional focus directs Codex\'s attention. Returns the review markdown plus a residual rate-limit footer so you can self-govern usage.',
+    'Get a Codex (gpt-5.5) code review on a change. Use when the user asks for a "Codex review" or "second opinion". The mode arg picks scope: "working" for uncommitted changes (no extra arg), "range" for a git revision range (provide range, e.g. "HEAD~1..HEAD"), "paths" for specific files (provide paths). Optional focus directs Codex\'s attention. Returns the review markdown plus a residual rate-limit footer so you can self-govern usage. The CCC session id is resolved automatically from the MCP connection -- no need to pass it.',
     {
-      cccSessionId: zMod.string().describe('CCC session id, read from $CLAUDE_MULTI_SESSION_ID env var'),
+      cccSessionId: zMod.string().optional().describe('Internal: normally resolved automatically from the MCP connection. Set this only as a back-compat fallback for legacy / in-flight sessions where the server has not bound a session id; new code should leave it unset.'),
       mode: zMod.enum(['working', 'range', 'paths']).describe('Scope: working diff, git range, or explicit paths'),
       range: zMod.string().optional().describe('Git range (e.g. "HEAD~1..HEAD") -- required when mode === "range"'),
       paths: zMod.array(zMod.string()).optional().describe('File paths -- required when mode === "paths"'),
       focus: zMod.string().max(500).optional().describe('Optional focus directive (e.g. "race conditions")'),
     },
     async (rawArgs: any) => {
-      const cwd = getCwdForSession(rawArgs?.cccSessionId) ?? process.cwd()
-      const result = await runCodexReview(rawArgs, getOptedIn(), cwd)
+      // Prefer the transport-bound session id; fall back to the LLM-supplied
+      // arg only when the connection didn't bind one (e.g. in-flight sessions
+      // from a CCC build that pre-dates P7.7.10's URL bake).
+      const sid = getBoundSessionId() ?? rawArgs?.cccSessionId ?? null
+      const cwd = (sid && getCwdForSession(sid)) ?? process.cwd()
+      // Pass cccSessionId only when resolved; null would fail zod validation
+      // (the schema is `z.string().optional()` -- undefined ok, null is not).
+      const mergedArgs: Record<string, unknown> = { ...rawArgs }
+      if (sid != null) mergedArgs.cccSessionId = sid
+      else delete mergedArgs.cccSessionId
+      const result = await runCodexReview(mergedArgs, getOptedIn(), cwd)
       return {
         content: [{ type: 'text' as const, text: result.text }],
         isError: result.isError,

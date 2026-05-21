@@ -47,13 +47,24 @@ describe('per-session MCP config writer (P7.7.3)', () => {
     fs.rmSync(tmpHome, { recursive: true, force: true })
   })
 
-  it('writes conductor with canonical schema (type: "sse", url)', () => {
+  it('writes conductor with canonical schema (type: "sse", url) including cccSessionId query', () => {
+    // P7.7.10: URL bakes ?cccSessionId=<sid> so the server can resolve the
+    // CCC session from the SSE transport instead of trusting an LLM arg.
     const cfgPath = writeLocalSessionMcpConfig('sid-1')
     const written = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'))
     expect(written.mcpServers['conductor']).toEqual({
       type: 'sse',
-      url: 'http://localhost:19433/sse',
+      url: 'http://localhost:19433/sse?cccSessionId=sid-1',
     })
+  })
+
+  it('URL-encodes special characters in the sessionId (P7.7.10)', () => {
+    const cfgPath = writeLocalSessionMcpConfig('sess+one space')
+    const written = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'))
+    // encodeURIComponent maps "+" -> "%2B" and " " -> "%20"
+    expect(written.mcpServers['conductor'].url).toBe(
+      'http://localhost:19433/sse?cccSessionId=sess%2Bone%20space',
+    )
   })
 
   it('writes to ~/.claude/mcp-<sid>.json (distinct from settings file)', () => {

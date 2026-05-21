@@ -51,6 +51,31 @@ export function parseSourceFromUrl(reqUrl: string): 'claude' | 'codex' | 'unknow
   }
 }
 
+/** P7.7.10: Parse the `cccSessionId` query string from the SSE request URL.
+ *  The per-session --mcp-config writer bakes the CCC session id into the
+ *  URL so the server can resolve it from the transport rather than trusting
+ *  an LLM-provided tool arg (which Claude has been observed to cache stale
+ *  from prior conversations). Returns null for global / external connections
+ *  that didn't include the param; callers fall back to the tool arg in that
+ *  case (back-compat for in-flight sessions written by older CCC builds).
+ *
+ *  Length-capped at 256 chars so a malformed / oversized value can't bloat
+ *  log lines or downstream error messages. CCC session ids are nanoid-style
+ *  ~12-char identifiers in practice; 256 is generous and defensive. */
+const MAX_SESSION_ID_LENGTH = 256
+
+export function parseCccSessionIdFromUrl(reqUrl: string): string | null {
+  try {
+    const url = new URL(reqUrl, 'http://localhost')
+    const param = url.searchParams.get('cccSessionId')
+    if (!param || param.length === 0) return null
+    if (param.length > MAX_SESSION_ID_LENGTH) return null
+    return param
+  } catch {
+    return null
+  }
+}
+
 // Lazy-load MCP SDK to avoid import issues in test environments
 let McpServer: any = null
 let SSEServerTransport: any = null
@@ -175,7 +200,10 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
     return resultToMcpContent(await vm.executeCommand(cmd))
   }
 
-  const createServer = (source: 'claude' | 'codex' | 'unknown' = 'unknown') => {
+  const createServer = (
+    source: 'claude' | 'codex' | 'unknown' = 'unknown',
+    boundSessionId: string | null = null,
+  ) => {
     const server = new McpServer(
       { name: 'conductor', version: '1.1.0' },
       { capabilities: {} }
@@ -314,6 +342,7 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
         z,
         () => codexReviewOptedIn,
         (sessionId: string) => sessionCwds.get(sessionId) ?? null,
+        () => boundSessionId,
       )
     }
 
@@ -335,8 +364,9 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
 
       if (req.method === 'GET' && req.url && req.url.startsWith('/sse')) {
         const source = parseSourceFromUrl(req.url)
-        logInfo(`[vision-mcp] New SSE connection (source=${source})`)
-        const server = createServer(source)
+        const boundSessionId = parseCccSessionIdFromUrl(req.url)
+        logInfo(`[vision-mcp] New SSE connection (source=${source}, sid=${boundSessionId ?? 'none'})`)
+        const server = createServer(source, boundSessionId)
         const transport = new SSEServerTransport('/messages', res)
         transports.set(transport.sessionId, transport)
 

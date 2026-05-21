@@ -71,6 +71,15 @@ export function writeLocalSessionSettings(sessionId: string): string {
  * Schema mirrors `claude mcp add --transport sse` output:
  *   { mcpServers: { 'conductor': { type: 'sse', url: '...' } } }
  *
+ * P7.7.10: bake `cccSessionId=<sid>` into the URL query string so the
+ * server can resolve the CCC session from the MCP transport itself
+ * (rather than trusting an LLM-supplied tool arg, which Claude has been
+ * observed to cache stale from prior conversations). Global
+ * ~/.claude.json entries do NOT include the query (so external `claude`
+ * invocations outside CCC fail closed -- codex_review returns a clean
+ * "no session bound" error rather than dispatching against a stranger's
+ * session id).
+ *
  * Returns the path even if mcpPort is 0 (MCP server not yet bound) so the
  * caller can still pass --mcp-config; the file simply has an empty
  * mcpServers object in that case.
@@ -84,9 +93,10 @@ export function writeLocalSessionMcpConfig(sessionId: string): string {
   const mcpPort = getConductorMcpPort()
   const mcpServers: Record<string, unknown> = {}
   if (mcpPort > 0) {
+    const encodedSid = encodeURIComponent(sessionId)
     mcpServers['conductor'] = {
       type: 'sse',
-      url: `http://localhost:${mcpPort}/sse`,
+      url: `http://localhost:${mcpPort}/sse?cccSessionId=${encodedSid}`,
     }
   }
   const cfg = { mcpServers }
