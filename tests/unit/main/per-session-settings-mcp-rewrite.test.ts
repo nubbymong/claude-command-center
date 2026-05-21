@@ -15,9 +15,11 @@ import path from 'node:path'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
 // Mock getConductorMcpPort BEFORE importing the module under test so the
-// writer picks up the mocked port.
+// writer picks up the mocked port. Mutable via the exported setter below
+// so individual tests can exercise the port=0 edge case.
+let mockedPort = 19433
 vi.mock('../../../src/main/conductor-mcp-server', () => ({
-  getConductorMcpPort: () => 19433,
+  getConductorMcpPort: () => mockedPort,
 }))
 
 const {
@@ -37,6 +39,7 @@ describe('per-session MCP config writer (P7.7.3)', () => {
     fs.mkdirSync(claudeDir, { recursive: true })
     realHomedir = os.homedir
     ;(os as any).homedir = () => tmpHome
+    mockedPort = 19433
   })
 
   afterEach(() => {
@@ -89,6 +92,13 @@ describe('per-session MCP config writer (P7.7.3)', () => {
       'conductor-vision': { url: 'http://localhost:19333/sse' },
       'other-server': { url: 'http://example.com/sse' },
     })
+  })
+
+  it('writes empty mcpServers when port is 0 (MCP server not yet bound)', () => {
+    mockedPort = 0
+    const cfgPath = writeLocalSessionMcpConfig('sid-port-zero')
+    const written = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'))
+    expect(written.mcpServers).toEqual({})
   })
 
   it('settings file preserves the user global verbatim', () => {

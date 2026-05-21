@@ -445,14 +445,23 @@ export function getMcpPort(): number {
 // --mcp-config (written by pty-manager) overrides this for in-CCC
 // sessions, which handles the dev/prod port-resolution race.
 
-function atomicWriteJson(filePath: string, data: unknown): void {
+/**
+ * Strict atomic write for ~/.claude.json: tmp + rename only. On rename
+ * failure, we ABORT (delete tmp, log) rather than fall back to a
+ * non-atomic direct write that could truncate the user's global config
+ * mid-write. A stale-but-intact entry is safer than a corrupted file
+ * full of unrelated state (projects map, OAuth tokens, growthbook cache).
+ */
+function strictAtomicWriteJson(filePath: string, data: unknown): boolean {
   const tmp = `${filePath}.tmp.${process.pid}`
   fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf-8')
   try {
     fs.renameSync(tmp, filePath)
-  } catch {
+    return true
+  } catch (err: any) {
     try { fs.unlinkSync(tmp) } catch { /* ignore */ }
-    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8')
+    logError(`[vision] Atomic rename failed for ${filePath} (${err?.code ?? err?.message}); leaving the existing file untouched.`)
+    return false
   }
 }
 
@@ -464,22 +473,44 @@ function injectMcpSettings(mcpPort: number): void {
 
   // Defensive merge into ~/.claude.json: preserve every other top-level key
   // and every other mcpServers entry. Only touch mcpServers['conductor-vision'].
+  //
+  // Safety: distinguish ENOENT (fresh install, start from {}) from any other
+  // read/parse failure (corrupted file, EACCES, etc.) -- in the latter case
+  // ABORT rather than overwrite the user's global with our partial config.
+  // ~/.claude.json holds the user's projects map, OAuth account, settings
+  // cache, etc.; overwriting it with {} would be catastrophic.
   try {
     const claudeJsonPath = path.join(os.homedir(), '.claude.json')
     let cj: Record<string, unknown> = {}
+    let exists = true
     try {
       const raw = fs.readFileSync(claudeJsonPath, 'utf-8')
       const parsed = JSON.parse(raw) as unknown
-      if (parsed && typeof parsed === 'object') {
-        cj = parsed as Record<string, unknown>
+      if (!parsed || typeof parsed !== 'object') {
+        logError(`[vision] ~/.claude.json parsed to non-object (type=${typeof parsed}); aborting MCP injection to avoid clobbering.`)
+        return
       }
-    } catch { /* file may not exist on fresh install */ }
+      cj = parsed as Record<string, unknown>
+    } catch (err: any) {
+      if (err?.code === 'ENOENT') {
+        exists = false
+      } else {
+        logError(`[vision] Cannot read ~/.claude.json (${err?.code ?? err?.message}); aborting MCP injection to avoid clobbering.`)
+        return
+      }
+    }
+    void exists
     const servers = (cj.mcpServers && typeof cj.mcpServers === 'object')
       ? cj.mcpServers as Record<string, unknown>
       : {}
-    servers['conductor-vision'] = entry
+    // Preserve extra fields on conductor-vision (headers, oauth, env) if a
+    // user (or future code) added them. We only own type + url.
+    const existing = (servers['conductor-vision'] && typeof servers['conductor-vision'] === 'object')
+      ? servers['conductor-vision'] as Record<string, unknown>
+      : {}
+    servers['conductor-vision'] = { ...existing, ...entry }
     cj.mcpServers = servers
-    atomicWriteJson(claudeJsonPath, cj)
+    strictAtomicWriteJson(claudeJsonPath, cj)
   } catch (err: any) {
     logError('[vision] Failed to inject ~/.claude.json MCP:', err?.message)
   }
@@ -490,11 +521,30 @@ function injectMcpSettings(mcpPort: number): void {
 function removeMcpSettings(): void {
   // Defensive remove from ~/.claude.json: only delete the conductor-vision
   // key; preserve every other mcpServers entry and every other top-level key.
+  // Same safety stance as injectMcpSettings -- abort on parse failure rather
+  // than risk clobbering the user's global config.
   try {
     const claudeJsonPath = path.join(os.homedir(), '.claude.json')
-    if (!fs.existsSync(claudeJsonPath)) return
-    const raw = fs.readFileSync(claudeJsonPath, 'utf-8')
-    const cj = JSON.parse(raw) as Record<string, unknown>
+    let raw: string
+    try {
+      raw = fs.readFileSync(claudeJsonPath, 'utf-8')
+    } catch (err: any) {
+      if (err?.code === 'ENOENT') return
+      logError(`[vision] Cannot read ~/.claude.json (${err?.code ?? err?.message}); aborting MCP cleanup.`)
+      return
+    }
+    let cj: Record<string, unknown>
+    try {
+      const parsed = JSON.parse(raw) as unknown
+      if (!parsed || typeof parsed !== 'object') {
+        logError('[vision] ~/.claude.json parsed to non-object; aborting MCP cleanup.')
+        return
+      }
+      cj = parsed as Record<string, unknown>
+    } catch (err: any) {
+      logError(`[vision] ~/.claude.json parse failed (${err?.message}); aborting MCP cleanup.`)
+      return
+    }
     const servers = (cj.mcpServers && typeof cj.mcpServers === 'object')
       ? cj.mcpServers as Record<string, unknown>
       : null
@@ -505,7 +555,7 @@ function removeMcpSettings(): void {
     } else {
       cj.mcpServers = servers
     }
-    atomicWriteJson(claudeJsonPath, cj)
+    strictAtomicWriteJson(claudeJsonPath, cj)
   } catch (err: any) {
     logError('[vision] Failed to remove ~/.claude.json MCP:', err?.message)
   }
