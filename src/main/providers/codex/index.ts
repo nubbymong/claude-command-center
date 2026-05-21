@@ -41,7 +41,7 @@ export class CodexProvider implements SessionProvider {
   }
 
   async configureMcpServer(_cfg: { name: string; url: string }): Promise<void> {
-    // P3 wires conductor-vision MCP injection into ~/.codex/config.toml
+    // P3 + P7.7.5 wire the conductor MCP entry into ~/.codex/config.toml
   }
 
   async deployResumePickerScript(resourcesDir: string): Promise<void> {

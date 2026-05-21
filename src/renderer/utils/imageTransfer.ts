@@ -93,8 +93,8 @@ export function sendStoryboardToSession(
   const filenames = frames.map(basename)
   const ctx = userContext?.trim() || 'Please review these storyboard frames in order.'
   const list = filenames.map((f, i) => `${i + 1}. ${f}`).join('\n')
-  // Multi-line prompt — Claude reads context, then calls fetch_host_screenshot
-  // for each filename via the conductor-vision MCP server.
+  // Multi-line prompt: Claude reads context, then calls fetch_host_screenshot
+  // for each filename via the Conductor MCP server.
   const prompt = [
     ctx,
     '',

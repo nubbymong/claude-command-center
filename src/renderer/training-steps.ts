@@ -249,7 +249,7 @@ export const trainingSteps: TrainingStep[] = [
     sinceVersion: '1.4.0',
     section: 'productivity',
     summary:
-      'Capture a region of any screen and hand it straight to Claude. Local sessions get the file path written into the prompt; SSH sessions fetch the image over the conductor-vision MCP tunnel.',
+      'Capture a region of any screen and hand it straight to Claude. Local sessions get the file path written into the prompt; SSH sessions fetch the image over the Conductor MCP tunnel.',
     highlights: [
       'Region capture with magnifier, mosaic, brush, redo / undo built in',
       'Window capture mode — pick from a thumbnail list of any open window',

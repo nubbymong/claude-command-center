@@ -35,9 +35,11 @@ export default function ConductorMcpPage() {
     >
       <div className="max-w-3xl mx-auto p-6 space-y-4">
         <p className="text-sm text-subtext0">
-          Local HTTP MCP server hosting all CCC-provided tools. Sessions auto-discover it via
-          <code className="font-mono mx-1 text-xs">~/.claude/settings.json</code>
-          and per-session overrides. Sub-tools below own their own state -- the server stays
+          Local HTTP MCP server hosting all CCC-provided tools. Claude CLI auto-discovers it via
+          <code className="font-mono mx-1 text-xs">~/.claude.json</code>
+          (the canonical <code className="font-mono mx-1 text-xs">mcpServers</code> registry); CCC-spawned sessions also get per-session
+          <code className="font-mono mx-1 text-xs">--mcp-config</code>
+          overrides with the current port. Sub-tools below own their own state -- the server stays
           running independent of any of them.
         </p>
         <VisionSubTool />

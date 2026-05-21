@@ -12,11 +12,15 @@
  *      the user has toggled "Enable Codex code review" in the session config.
  *
  * The server is started at app launch and stays running for the app lifetime.
- * Claude Code discovers it via mcpServers in ~/.claude/settings.json. SSH
- * sessions reach it via reverse tunnel.
+ * Claude CLI discovers it via mcpServers in ~/.claude.json (the canonical
+ * registry; --settings mcpServers is ignored). CCC-spawned sessions also get
+ * per-session `--mcp-config` overrides written to ~/.claude/mcp-<sid>.json by
+ * writeLocalSessionMcpConfig. SSH sessions reach it via reverse tunnel.
  *
- * Naming: still called "vision-mcp" for back-compat with existing settings.json
- * entries. Rename to "conductor-tools" is a separate v1.5.x cleanup.
+ * Naming: the server identifier is `conductor` as of P7.7.5 (was
+ * `conductor-vision` through v1.4). Both injectMcpSettings and the Codex TOML
+ * writer strip legacy `conductor-vision` entries during migration so users
+ * upgrading from <=v1.4 don't end up with a dead entry alongside.
  */
 
 import * as http from 'http'

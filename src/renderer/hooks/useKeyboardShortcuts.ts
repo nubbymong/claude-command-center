@@ -55,10 +55,10 @@ export function useKeyboardShortcuts(
         e.preventDefault()
         setSidebarOpen(prev => !prev)
       }
-      // Paste clipboard image — saves to host screenshots dir, then routes to
+      // Paste clipboard image: saves to host screenshots dir, then routes to
       // Claude. Local sessions get the absolute path written into the prompt
       // (Claude's Read tool ingests it directly). SSH sessions can't reach
-      // the host filesystem so they go through the conductor-vision MCP
+      // the host filesystem so they go through the Conductor MCP
       // fetch over the reverse tunnel.
       if (matchesShortcut(e, shortcuts.pasteImage)) {
         e.preventDefault()

@@ -283,7 +283,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: '👁 Give Claude a browser to drive',
         title: 'Vision System',
-        body: '**Vision** gives Claude a real browser it can control — screenshot, navigate, click, type, scroll, evaluate JS. Perfect for testing web apps, scraping docs, or just showing Claude what\'s on screen.\n\nClick the **eye icon** in the sidebar and press Start. It runs a local MCP server on `127.0.0.1:19333` (localhost only) and 17 tools become available to every Claude session automatically.\n\nThe MCP server is registered in `~/.claude/settings.json` under `mcpServers.conductor-vision`. When you stop Vision, the entry is cleanly removed.',
+        body: '**Vision** gives Claude a real browser it can control: screenshot, navigate, click, type, scroll, evaluate JS. Perfect for testing web apps, scraping docs, or just showing Claude what\'s on screen.\n\nClick the **eye icon** in the sidebar and press Start. It runs a local MCP server on `127.0.0.1:19333` (localhost only) and 17 tools become available to every Claude session automatically.\n\nThe MCP server is registered in `~/.claude.json` under `mcpServers.conductor`. CCC-spawned sessions also get a per-session override written to `~/.claude/mcp-<sid>.json` and passed via `--mcp-config`. When you stop Vision, the global entry is cleanly removed.',
         actionLabel: 'Open Vision',
         actionTarget: 'vision',
         focusHint: 'Sidebar — eye icon',
@@ -481,7 +481,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: 'ℹ How the Conductor MCP server injects into Claude settings',
         title: 'Conductor MCP Registration',
-        body: 'The Conductor MCP server hosts three sub-tools (Vision, Codex review, Host transfer) on a single local endpoint:\n\n1. Server is bound to `127.0.0.1` (**localhost only** -- not exposed to the network) and auto-starts at CCC boot\n2. An `mcpServers.conductor-vision` entry is added to `~/.claude/settings.json` pointing to the SSE endpoint\n3. Claude Code picks up the tool list automatically (17 browser-vision tools plus `codex_review` and `fetch_host_screenshot`)\n\nFor SSH sessions, the app sets up a reverse tunnel automatically so remote Claude can reach the local Conductor MCP server.',
+        body: 'The Conductor MCP server hosts three sub-tools (Vision, Codex review, Host transfer) on a single local endpoint:\n\n1. Server is bound to `127.0.0.1` (**localhost only** -- not exposed to the network) and auto-starts at CCC boot\n2. An `mcpServers.conductor` entry is added to `~/.claude.json` pointing to the SSE endpoint, and CCC-spawned sessions get a per-session override written to `~/.claude/mcp-<sid>.json` and passed via `--mcp-config`\n3. Claude Code picks up the tool list automatically (17 browser-vision tools plus `codex_review` and `fetch_host_screenshot`)\n\nFor SSH sessions, the app sets up a reverse tunnel automatically so remote Claude can reach the local Conductor MCP server.',
       },
     },
   },

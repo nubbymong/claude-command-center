@@ -6,8 +6,8 @@ import { sendImageToSession } from '../utils/imageTransfer'
 
 interface Props {
   sessionId: string
-  // sessionType is no longer needed for image transport — both local and SSH
-  // sessions use the conductor-vision MCP server's fetch_host_screenshot tool.
+  // sessionType is no longer needed for image transport: both local and SSH
+  // sessions use the Conductor MCP server's fetch_host_screenshot tool.
   sessionType: 'local' | 'ssh'
 }
 
