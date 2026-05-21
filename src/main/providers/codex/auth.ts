@@ -133,7 +133,16 @@ export function runCodexStreaming(
     // quoteForCmdShell docstring. macOS path is unaffected (useShell=false).
     const spawnCmd = useShell ? quoteForCmdShell(cmd) : cmd
     const spawnArgs = useShell ? args.map(quoteForCmdShell) : args
-    const proc = spawn(spawnCmd, spawnArgs, { shell: useShell, cwd: opts.cwd })
+    // P7.7.8: `codex exec` reads stdin if it's piped and appends the content
+    // as a `<stdin>` block to the prompt. Node's default stdio gives the
+    // child a piped (open) stdin, so codex hangs forever waiting for EOF.
+    // 'ignore' attaches stdin to /dev/null (or NUL on Windows), guaranteeing
+    // immediate EOF -- codex falls back to argv prompt and proceeds.
+    const proc = spawn(spawnCmd, spawnArgs, {
+      shell: useShell,
+      cwd: opts.cwd,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
 
     let stderr = ''
     let stdoutBuffer = ''
