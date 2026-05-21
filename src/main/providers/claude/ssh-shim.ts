@@ -78,78 +78,102 @@ export function generateRemoteSetupScript(
   hooksConfig: { port: number; secret: string } | null,
 ): string {
   // Conductor MCP server is always running (independent of browser/vision config),
-  // so SSH sessions always get the conductor-vision MCP entry pointing at the
+  // so SSH sessions always get the conductor MCP entry pointing at the
   // reverse-tunneled MCP port. The fetch_host_screenshot tool is always available;
   // browser tools fall back to "vision not connected" if no browser is attached.
-  const mcpPort = getConductorMcpPort() || 19333
+  //
+  // Mirror writeLocalSessionMcpConfig exactly: read the runtime port without a
+  // hardcoded fallback. If the server failed to bind (mcpPort === 0) we write
+  // an empty mcpServers object so the SSH session sees no tools rather than
+  // pointing at a phantom 19333 endpoint that may or may not match where the
+  // server actually came up.
+  const mcpPort = getConductorMcpPort()
   const hasVision = mcpPort > 0
-  // Embed the shim as a JSON string literal — Node parses it back to source
+  // Embed the shim as a JSON string literal -- Node parses it back to source
   const shimLiteral = JSON.stringify(SSH_STATUSLINE_SHIM)
-  // Sanitise for path use — sessionId comes from session.id (generateId), but
+  // Sanitise for path use -- sessionId comes from session.id (generateId), but
   // belt-and-braces because it's embedded in a filename we write.
   const safeSid = sessionId.replace(/[^a-zA-Z0-9_-]/g, '_')
 
   // Per-session settings file (~/.claude/settings-<sid>.json) passed via
   // `claude --settings`. Previously we rewrote the shared ~/.claude/settings.json
-  // and baked CLAUDE_MULTI_SESSION_ID into its statusLine command — but multiple
+  // and baked CLAUDE_MULTI_SESSION_ID into its statusLine command, but multiple
   // concurrent sessions to the same host would clobber each other, so Claude
   // Code caching the latest write meant statusline updates landed under the
   // wrong local sessionId after the second session connected. Per-session
   // files let each Claude keep its own sid in its own settings view.
   //
-  // We also still touch shared settings.json for the MCP server entry (vision),
-  // and we clean up the legacy statusLine stanza so old installs don't keep
-  // overriding via the shared file.
+  // P7.8: settings file no longer carries mcpServers. Claude CLI reads
+  // mcpServers ONLY from ~/.claude.json or --mcp-config (the --settings
+  // mcpServers block is silently ignored). We now write a separate
+  // ~/.claude/mcp-<sid>.json and pass it via `--mcp-config <path>`.
+  // Settings file still owns statusLine + hooks.
   //
-  // Hooks: when the HTTP Hooks Gateway is running, the per-session file also
-  // carries a `hooks` block pointing at `http://localhost:<hooksPort>/hook/<sid>`
-  // — the SSH connection's `-R <hooksPort>:localhost:<hooksPort>` tunnel makes
+  // Hooks: when the HTTP Hooks Gateway is running, the per-session settings
+  // file also carries a `hooks` block pointing at `http://localhost:<hooksPort>/hook/<sid>`.
+  // The SSH connection's `-R <hooksPort>:localhost:<hooksPort>` tunnel makes
   // that loopback URL resolve to the host's gateway.
   const hooksLiteral = hooksConfig
     ? JSON.stringify(buildHooksBlock(sessionId, hooksConfig.port, hooksConfig.secret))
     : null
-  // MCP vision: prior builds relied on Claude Code's `--settings` MERGING
-  // the per-session file onto the user settings (which held mcpServers in
-  // the shared settings.json write below). That assumption is undocumented.
-  // Include the conductor-vision entry in the per-session file too, so even
-  // if a future Claude Code build flips `--settings` to REPLACE semantics,
-  // SSH sessions keep seeing the reverse-tunnelled MCP server.
-  const mcpServersLiteral = hasVision
-    ? JSON.stringify({ 'conductor-vision': { url: `http://localhost:${mcpPort}/sse` } })
-    : null
+  // P7.7.10 parity: bake `?cccSessionId=<sid>` into the MCP URL so the
+  // server resolves the CCC session from the SSE transport rather than
+  // trusting an LLM-supplied tool arg. parseCccSessionIdFromUrl on the
+  // host side picks this up and gates codex_review by it.
+  const mcpConfigLiteral = hasVision
+    ? JSON.stringify({
+        mcpServers: {
+          'conductor': {
+            type: 'sse',
+            url: `http://localhost:${mcpPort}/sse?cccSessionId=${encodeURIComponent(sessionId)}`,
+          },
+        },
+      })
+    : JSON.stringify({ mcpServers: {} })
   const sesCfgParts: string[] = [
     `statusLine:{type:'command',command:'CLAUDE_MULTI_SESSION_ID=${sessionId} node '+shimPath}`,
   ]
-  if (mcpServersLiteral) sesCfgParts.push(`mcpServers:${mcpServersLiteral}`)
   if (hooksLiteral) sesCfgParts.push(`hooks:${hooksLiteral}`)
 
-  // Build as semicolon-separated statements — NO comments (they break single-lining)
+  // Build as semicolon-separated statements -- NO comments (they break single-lining)
   const lines = [
     `const fs=require('fs'),path=require('path'),os=require('os')`,
     `const home=os.homedir(),claudeDir=path.join(home,'.claude')`,
     `try{fs.mkdirSync(claudeDir,{recursive:true})}catch{}`,
     `const shimPath=path.join(claudeDir,'conductor-ssh-statusline.js')`,
     `try{fs.writeFileSync(shimPath,${shimLiteral},{mode:0o755})}catch{}`,
-    // Read the user's shared settings FIRST so the per-session file can
-    // inherit every top-level key (outputStyle, permissions, future
-    // additions). The three CCC-owned keys (statusLine, mcpServers, hooks)
-    // then override whatever the shared file had. This makes the local
-    // and SSH behaviour identical under `--settings` regardless of
-    // whether Claude Code treats that flag as MERGE or REPLACE.
+    // Read the user's shared settings FIRST so the per-session settings file
+    // can inherit every top-level key (outputStyle, permissions, future
+    // additions). The two CCC-owned keys (statusLine, hooks) then override
+    // whatever the shared file had. mcpServers is NOT inherited or written
+    // here -- it lives in the separate --mcp-config file (see below).
     `const sp=path.join(claudeDir,'settings.json')`,
     `let s={};try{s=JSON.parse(fs.readFileSync(sp,'utf-8'))}catch{}`,
-    // Per-session settings — clone of shared with CCC keys overridden.
+    // Strip mcpServers from the inherited clone -- the per-session settings
+    // file should not carry any mcpServers state. Claude CLI ignores it
+    // there anyway; stripping prevents stale entries from leaking through.
+    `const sBase=Object.assign({},s);delete sBase.mcpServers`,
+    // Per-session settings -- clone of shared (without mcpServers) with CCC
+    // keys overridden.
     `const sesPath=path.join(claudeDir,'settings-${safeSid}.json')`,
-    `const sesCfg=Object.assign({},s,{${sesCfgParts.join(',')}})`,
+    `const sesCfg=Object.assign({},sBase,{${sesCfgParts.join(',')}})`,
     `try{fs.writeFileSync(sesPath,JSON.stringify(sesCfg,null,2))}catch{}`,
-    // Shared settings — owns MCP vision only. Strip any legacy statusLine
-    // stanza a prior install wrote; it would override the per-session file.
+    // Per-session MCP config -- passed via `--mcp-config <path>` on the
+    // claude launch. This is the canonical place for mcpServers entries
+    // (P7.7.3); writing to --settings has no effect.
+    `const mcpPath=path.join(claudeDir,'mcp-${safeSid}.json')`,
+    `try{fs.writeFileSync(mcpPath,${JSON.stringify(mcpConfigLiteral)})}catch{}`,
+    // Strip any legacy statusLine stanza a prior install wrote into the
+    // shared settings file; it would override the per-session file.
     `if(s.statusLine&&typeof s.statusLine.command==='string'&&s.statusLine.command.includes('conductor-ssh-statusline'))delete s.statusLine`,
-    hasVision
-      ? `if(!s.mcpServers)s.mcpServers={};s.mcpServers['conductor-vision']={url:'http://localhost:${mcpPort}/sse'}`
-      : `if(s.mcpServers&&s.mcpServers['conductor-vision'])delete s.mcpServers['conductor-vision']`,
+    // Strip mcpServers entries we own (legacy 'conductor-vision' AND the
+    // current 'conductor' key) from BOTH the shared settings file and
+    // ~/.claude.json so users who upgraded from a build that wrote them
+    // there don't end up with stale entries. We no longer add the entry
+    // back to either file -- --mcp-config supersedes both.
+    `if(s.mcpServers){if(s.mcpServers['conductor-vision'])delete s.mcpServers['conductor-vision'];if(s.mcpServers['conductor'])delete s.mcpServers['conductor']}`,
     `try{fs.writeFileSync(sp,JSON.stringify(s,null,2))}catch{}`,
-    `try{const cj=path.join(home,'.claude.json');if(fs.existsSync(cj)){let c=JSON.parse(fs.readFileSync(cj,'utf-8'));if(c.mcpServers&&c.mcpServers['conductor-vision']){delete c.mcpServers['conductor-vision'];fs.writeFileSync(cj,JSON.stringify(c,null,2))}}}catch{}`,
+    `try{const cj=path.join(home,'.claude.json');if(fs.existsSync(cj)){let c=JSON.parse(fs.readFileSync(cj,'utf-8'));let mut=false;if(c.mcpServers){if(c.mcpServers['conductor-vision']){delete c.mcpServers['conductor-vision'];mut=true}if(c.mcpServers['conductor']){delete c.mcpServers['conductor'];mut=true}}if(mut)fs.writeFileSync(cj,JSON.stringify(c,null,2))}}catch{}`,
     `try{const md=path.join(claudeDir,'CLAUDE.md');let c=fs.readFileSync(md,'utf-8');const rx=/\\n?\\n?<!-- VISION-INSTRUCTIONS-START -->[\\s\\S]*?<!-- VISION-INSTRUCTIONS-END -->\\n?/g;if(rx.test(c)){c=c.replace(rx,'').trim();c?fs.writeFileSync(md,c+'\\n'):fs.unlinkSync(md)}}catch{}`,
     `process.stdout.write('setup ok\\n')`,
   ]
@@ -162,6 +186,17 @@ export function generateRemoteSetupScript(
 export function remoteSessionSettingsPath(sessionId: string): string {
   const safeSid = sessionId.replace(/[^a-zA-Z0-9_-]/g, '_')
   return `~/.claude/settings-${safeSid}.json`
+}
+
+/**
+ * Path to the per-session MCP config file on the remote (P7.8). Mirrors
+ * remoteSessionSettingsPath; the claude launch passes it via `--mcp-config`.
+ * Claude CLI reads mcpServers from this file but NOT from --settings, so
+ * this is the canonical location for the conductor MCP entry on SSH.
+ */
+export function remoteSessionMcpConfigPath(sessionId: string): string {
+  const safeSid = sessionId.replace(/[^a-zA-Z0-9_-]/g, '_')
+  return `~/.claude/mcp-${safeSid}.json`
 }
 
 /**

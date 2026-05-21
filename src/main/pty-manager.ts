@@ -410,6 +410,12 @@ export function spawnPty(
       // --settings loads per-session config so concurrent sessions to the same
       // host don't clobber each other's statusline sessionId binding.
       `--settings ${claudeProvider.getSshSettingsPath(sessionId)}`,
+      // P7.8: --mcp-config carries the conductor MCP entry. Claude CLI ignores
+      // mcpServers in --settings files (P7.7.3) so this is the canonical site
+      // for the conductor registration on SSH. The URL bakes ?cccSessionId
+      // (P7.7.10) so the host's MCP server can resolve the CCC session from
+      // the SSE transport without trusting an LLM-supplied arg.
+      `--mcp-config ${claudeProvider.getSshMcpConfigPath(sessionId)}`,
       options?.effortLevel ? `--effort ${options.effortLevel}` : '',
       // --model pins the Claude model for this session. Empty string in
       // the config form means "no override" — the CLI picks whatever

@@ -73,11 +73,18 @@ export interface SessionProvider {
 
 export interface SshCapableProvider extends SessionProvider {
   getSshSettingsPath(sessionId: string): string
+  /**
+   * Path to the per-session MCP config file on the remote, passed via
+   * `claude --mcp-config <path>`. Mirrors getSshSettingsPath but for the
+   * canonical mcpServers registry (since Claude CLI ignores mcpServers in
+   * --settings files).
+   */
+  getSshMcpConfigPath(sessionId: string): string
   /** Returns shell command to write settings + statusline shim on remote. */
   configureRemoteSettings(sessionId: string, remotePath: string, hooksConfig: { port: number; secret: string } | null): string
 }
 
 /** Type guard. */
 export function isSshCapable(p: SessionProvider): p is SshCapableProvider {
-  return 'getSshSettingsPath' in p && 'configureRemoteSettings' in p
+  return 'getSshSettingsPath' in p && 'getSshMcpConfigPath' in p && 'configureRemoteSettings' in p
 }

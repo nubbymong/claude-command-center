@@ -1,7 +1,7 @@
 import type { SshCapableProvider, SpawnOptions, TelemetrySource, HistorySession } from '../types'
 import type { LegacyVersion, StatuslineData } from '../../../shared/types'
 import { resolveClaudeBinary, buildClaudeLocalSpawn } from './spawn'
-import { getRemoteSetupCommand, remoteSessionSettingsPath } from './ssh-shim'
+import { getRemoteSetupCommand, remoteSessionSettingsPath, remoteSessionMcpConfigPath } from './ssh-shim'
 import { detectClaudeUi } from './ui-detection'
 import { deployClaudeStatuslineScript, deployClaudeResumePickerScript } from './statusline'
 import { watchClaudeStatuslineFile, listClaudeResumableSessions } from './telemetry'
@@ -44,6 +44,9 @@ export class ClaudeProvider implements SshCapableProvider {
   }
   getSshSettingsPath(sessionId: string): string {
     return remoteSessionSettingsPath(sessionId)
+  }
+  getSshMcpConfigPath(sessionId: string): string {
+    return remoteSessionMcpConfigPath(sessionId)
   }
   configureRemoteSettings(sessionId: string, remotePath: string, hooksConfig: { port: number; secret: string } | null): string {
     return getRemoteSetupCommand(sessionId, remotePath, hooksConfig)
