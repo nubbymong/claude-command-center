@@ -47,11 +47,10 @@ import { initUpdateWatcher, stopUpdateWatcher, getProjectRootPath, isPackagedApp
 import { startUpdateServer, stopUpdateServer } from './update-server'
 import { saveSessionState, loadSessionState, clearSessionState, hasSavedSessionState, SessionState } from './session-state'
 import { getConfigDir, ensureConfigDir, snapshotConfig } from './config-manager'
-import { stopGlobalVision, startGlobalVision, cleanupLegacyVisionMarkers } from './vision-manager'
-import { startConductorMcpServer, stopConductorMcpServer } from './conductor-mcp-server'
+import { stopGlobalVision, cleanupLegacyVisionMarkers } from './vision-manager'
+import { startConductorMcpServer, stopConductorMcpServer, startBrowserAtBoot } from './conductor-mcp-server'
 import { readConfig } from './config-manager'
 import { loadCredential, saveCredential, deleteCredential } from './credential-store'
-import type { GlobalVisionConfig } from '../shared/types'
 import { resolveConductorMcpPort } from '../shared/mcp-ports'
 
 import { migrateRegistryKeys } from './registry'
@@ -664,10 +663,9 @@ if (!gotTheLock) {
     // Start the Conductor MCP server unconditionally so the fetch_host_screenshot
     // tool is available for image transfer (snap, storyboard, clipboard paste)
     // in BOTH local and SSH sessions, regardless of whether browser vision is enabled.
-    const visionConfig = readConfig<GlobalVisionConfig>('visionGlobal')
     // P7.2: resolve port from build mode (dev binds 19433, prod 19333) so dev
     // + prod can coexist on the same machine without EADDRINUSE. The
-    // visionConfig.mcpPort field is now deprecated and ignored -- per-session
+    // GlobalVisionConfig.mcpPort field is now deprecated and ignored -- per-session
     // settings rewrite the mcpServers URL to this instance's actual port
     // (see per-session-settings.ts).
     const mcpPort = resolveConductorMcpPort(isPackagedApp())
@@ -675,13 +673,14 @@ if (!gotTheLock) {
       logError(`[main] Conductor MCP server startup failed: ${err?.message}`)
     })
 
-    // Auto-start global vision (browser CDP) if configured. The MCP server is
-    // already running — startGlobalVision just attaches the browser manager.
-    if (visionConfig?.enabled) {
-      startGlobalVision(visionConfig, getWindow).catch(err => {
-        logError(`[main] Vision auto-start failed: ${err?.message}`)
-      })
-    }
+    // P7.3: Browser-vision sub-tool auto-starts unconditionally at boot.
+    // The MCP server has always been unconditional; this drops the
+    // visionConfig.enabled gate that caused intermittent "Vision not
+    // connected" errors when sessions spawned before the user clicked
+    // Launch Chrome.
+    startBrowserAtBoot(getWindow).catch(err => {
+      logError(`[main] Vision auto-start failed: ${err?.message}`)
+    })
 
     // Start update system
     // Dev mode: run the local update server + source watcher for live-reload workflow

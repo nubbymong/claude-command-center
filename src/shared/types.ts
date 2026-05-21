@@ -15,7 +15,10 @@ export interface VisionConfig {
 }
 
 export interface GlobalVisionConfig {
-  enabled: boolean
+  /** @deprecated P7.3: browser auto-starts at CCC boot unconditionally.
+   *  Field is ignored on load and treated as true. Retained for back-compat
+   *  with existing user configs; remove in v1.6. */
+  enabled?: boolean
   browser: 'chrome' | 'edge'
   debugPort: number     // CDP port, default 9222
   /** @deprecated P7.2: port is now resolved from build mode via

@@ -557,3 +557,32 @@ export function stopConductorMcpServer(): void {
 export function resetConductorMcpPort(): void {
   conductorMcpPort = 0
 }
+
+/**
+ * P7.3: Launch the browser-vision sub-tool at CCC boot.
+ *
+ * Previously gated on visionConfig.enabled; now unconditional. The
+ * MCP server itself has always been unconditional. Eliminates the
+ * spawn-vs-launch race where Claude Code cached "vision tools
+ * advertised but unavailable" at session start because the user
+ * hadn't clicked Launch Chrome yet.
+ *
+ * Users who want vision off can click Stop in the Vision sub-tool
+ * card; restart of CCC re-enables it.
+ */
+export async function startBrowserAtBoot(
+  getWindow: () => import('electron').BrowserWindow | null,
+): Promise<void> {
+  const { readConfig } = await import('./config-manager')
+  const { startGlobalVision } = await import('./vision-manager')
+  const visionConfig = readConfig<import('../shared/types').GlobalVisionConfig>('visionGlobal') ?? {
+    enabled: true,
+    browser: 'chrome',
+    debugPort: 9222,
+    headless: true,
+  }
+  // P7.3: enabled flag is no longer a gate. We pass the rest of the
+  // config (browser type, debugPort, headless, optional url) to
+  // startGlobalVision; the enabled field is ignored.
+  await startGlobalVision({ ...visionConfig, enabled: true }, getWindow)
+}
