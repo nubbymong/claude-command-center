@@ -63,9 +63,13 @@ function parseTokenCountLine(line: string): TokenCountObserved | null {
 }
 
 function buildArgv(args: CodexReviewArgs, cwd: string, tmpfile: string): string[] {
+  // P7.7.6: Codex CLI 0.128.0 removed --ask-for-approval from `codex exec`.
+  // --sandbox read-only already prevents shell mutations and approval
+  // escalation, so dropping the flag is safe. The interactive top-level
+  // `codex` command still accepts --ask-for-approval; that path lives in
+  // providers/codex/spawn.ts and is unchanged.
   const argv = ['exec', '--json', '--output-last-message', tmpfile,
     '--ephemeral', '--skip-git-repo-check',
-    '--ask-for-approval', 'never',
     '--sandbox', 'read-only',
     '--cd', cwd,
     '-m', 'gpt-5.5']

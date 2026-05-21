@@ -162,10 +162,11 @@ describe('codex_review tool', () => {
     expect(capturedArgs).toContain('exec')
     expect(capturedArgs).toContain('--json')
     expect(capturedArgs).toContain('--ephemeral')
-    expect(capturedArgs).toContain('--ask-for-approval')
-    expect(capturedArgs).toContain('never')
     expect(capturedArgs).toContain('--sandbox')
     expect(capturedArgs).toContain('read-only')
+    // P7.7.6: Codex CLI 0.128.0 removed --ask-for-approval from `codex exec`.
+    // The flag is no longer passed; pin its absence so a future revert is caught.
+    expect(capturedArgs).not.toContain('--ask-for-approval')
     expect(capturedArgs).toContain('-m')
     expect(capturedArgs).toContain('gpt-5.5')
 
