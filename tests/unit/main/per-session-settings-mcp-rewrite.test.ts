@@ -47,10 +47,10 @@ describe('per-session MCP config writer (P7.7.3)', () => {
     fs.rmSync(tmpHome, { recursive: true, force: true })
   })
 
-  it('writes conductor-vision with canonical schema (type: "sse", url)', () => {
+  it('writes conductor with canonical schema (type: "sse", url)', () => {
     const cfgPath = writeLocalSessionMcpConfig('sid-1')
     const written = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'))
-    expect(written.mcpServers['conductor-vision']).toEqual({
+    expect(written.mcpServers['conductor']).toEqual({
       type: 'sse',
       url: 'http://localhost:19433/sse',
     })
@@ -79,7 +79,7 @@ describe('per-session MCP config writer (P7.7.3)', () => {
   it('settings file no longer carries mcpServers (was dead code under --settings)', () => {
     fs.writeFileSync(path.join(claudeDir, 'settings.json'), JSON.stringify({
       mcpServers: {
-        'conductor-vision': { url: 'http://localhost:19333/sse' },
+        'conductor': { url: 'http://localhost:19333/sse' },
         'other-server': { url: 'http://example.com/sse' },
       },
     }))
@@ -89,7 +89,7 @@ describe('per-session MCP config writer (P7.7.3)', () => {
     // we just no longer mutate it. This is intentional -- claude.exe will
     // ignore it anyway since --settings doesn't load mcpServers.
     expect(written.mcpServers).toEqual({
-      'conductor-vision': { url: 'http://localhost:19333/sse' },
+      'conductor': { url: 'http://localhost:19333/sse' },
       'other-server': { url: 'http://example.com/sse' },
     })
   })

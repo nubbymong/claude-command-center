@@ -177,7 +177,7 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
 
   const createServer = (source: 'claude' | 'codex' | 'unknown' = 'unknown') => {
     const server = new McpServer(
-      { name: 'conductor-vision', version: '1.1.0' },
+      { name: 'conductor', version: '1.1.0' },
       { capabilities: {} }
     )
 
@@ -440,10 +440,16 @@ export function getMcpPort(): number {
 //
 // P7.7.3: Claude CLI reads mcpServers ONLY from ~/.claude.json or
 // --mcp-config <path>; the ~/.claude/settings.json mcpServers block is
-// ignored. We register conductor-vision in ~/.claude.json so anyone
+// ignored. We register the 'conductor' server in ~/.claude.json so anyone
 // invoking `claude` outside CCC also sees the tools. Per-session
 // --mcp-config (written by pty-manager) overrides this for in-CCC
 // sessions, which handles the dev/prod port-resolution race.
+//
+// P7.7.5: server identifier renamed from 'conductor-vision' (the v1.4
+// name, kept for back-compat through P7.7.4) to 'conductor' (the umbrella
+// brand introduced by the P7 UI rebrand). Legacy 'conductor-vision'
+// entries are stripped from ~/.claude.json during the same write so
+// users upgrading from an earlier CCC don't carry a dead entry.
 
 /**
  * Strict atomic write for ~/.claude.json: tmp + rename only. On rename
@@ -472,7 +478,8 @@ function injectMcpSettings(mcpPort: number): void {
   }
 
   // Defensive merge into ~/.claude.json: preserve every other top-level key
-  // and every other mcpServers entry. Only touch mcpServers['conductor-vision'].
+  // and every other mcpServers entry. Only touch mcpServers['conductor']
+  // (and strip any legacy 'conductor-vision' entry for migration).
   //
   // Safety: distinguish ENOENT (fresh install, start from {}) from any other
   // read/parse failure (corrupted file, EACCES, etc.) -- in the latter case
@@ -503,26 +510,32 @@ function injectMcpSettings(mcpPort: number): void {
     const servers = (cj.mcpServers && typeof cj.mcpServers === 'object')
       ? cj.mcpServers as Record<string, unknown>
       : {}
-    // Preserve extra fields on conductor-vision (headers, oauth, env) if a
-    // user (or future code) added them. We only own type + url.
-    const existing = (servers['conductor-vision'] && typeof servers['conductor-vision'] === 'object')
-      ? servers['conductor-vision'] as Record<string, unknown>
+    // Preserve extra fields (headers, oauth, env) on the existing entry
+    // if any. We only own type + url.
+    const existing = (servers['conductor'] && typeof servers['conductor'] === 'object')
+      ? servers['conductor'] as Record<string, unknown>
       : {}
-    servers['conductor-vision'] = { ...existing, ...entry }
+    servers['conductor'] = { ...existing, ...entry }
+    // P7.7.5 migration: strip legacy 'conductor-vision' name so users
+    // upgrading from <=v1.4 don't end up with a dead entry alongside.
+    if ('conductor-vision' in servers) {
+      delete servers['conductor-vision']
+    }
     cj.mcpServers = servers
     strictAtomicWriteJson(claudeJsonPath, cj)
   } catch (err: any) {
     logError('[vision] Failed to inject ~/.claude.json MCP:', err?.message)
   }
 
-  logInfo(`[vision] Registered conductor-vision in ~/.claude.json (port ${mcpPort})`)
+  logInfo(`[vision] Registered conductor in ~/.claude.json (port ${mcpPort})`)
 }
 
 function removeMcpSettings(): void {
-  // Defensive remove from ~/.claude.json: only delete the conductor-vision
-  // key; preserve every other mcpServers entry and every other top-level key.
-  // Same safety stance as injectMcpSettings -- abort on parse failure rather
-  // than risk clobbering the user's global config.
+  // Defensive remove from ~/.claude.json: only delete the conductor (and
+  // legacy conductor-vision) keys; preserve every other mcpServers entry
+  // and every other top-level key. Same safety stance as injectMcpSettings
+  // -- abort on parse failure rather than risk clobbering the user's
+  // global config.
   try {
     const claudeJsonPath = path.join(os.homedir(), '.claude.json')
     let raw: string
@@ -548,8 +561,12 @@ function removeMcpSettings(): void {
     const servers = (cj.mcpServers && typeof cj.mcpServers === 'object')
       ? cj.mcpServers as Record<string, unknown>
       : null
-    if (!servers || !('conductor-vision' in servers)) return
-    delete servers['conductor-vision']
+    if (!servers) return
+    const hadConductor = 'conductor' in servers
+    const hadLegacy = 'conductor-vision' in servers
+    if (!hadConductor && !hadLegacy) return
+    if (hadConductor) delete servers['conductor']
+    if (hadLegacy) delete servers['conductor-vision']
     if (Object.keys(servers).length === 0) {
       delete cj.mcpServers
     } else {

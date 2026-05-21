@@ -33,14 +33,14 @@ describe('Codex MCP TOML injection (P5 sub-item #8)', () => {
   })
 
   describe('injectConductorVisionInCodexConfig', () => {
-    it('appends a managed conductor-vision block when config.toml does not exist', async () => {
+    it('appends a managed conductor block when config.toml does not exist', async () => {
       const mod = await importFresh()
       mod.injectConductorVisionInCodexConfig(19333)
 
       const tomlPath = join(codexHome, 'config.toml')
       expect(existsSync(tomlPath)).toBe(true)
       const written = readFileSync(tomlPath, 'utf-8')
-      expect(written).toContain('[mcp_servers.conductor-vision]')
+      expect(written).toContain('[mcp_servers.conductor]')
       expect(written).toContain('url = "http://localhost:19333/sse?source=codex"')
       expect(written).toContain('enabled = true')
       expect(written).toContain('# Managed by Claude Command Center')
@@ -59,7 +59,7 @@ describe('Codex MCP TOML injection (P5 sub-item #8)', () => {
       expect(written).toContain('[mcp_servers.my-tool]')
       expect(written).toContain('command = "node"')
       // Our entry appended
-      expect(written).toContain('[mcp_servers.conductor-vision]')
+      expect(written).toContain('[mcp_servers.conductor]')
     })
 
     it('is idempotent -- a second call does not duplicate the entry', async () => {
@@ -68,7 +68,7 @@ describe('Codex MCP TOML injection (P5 sub-item #8)', () => {
       mod.injectConductorVisionInCodexConfig(19333)
 
       const written = readFileSync(join(codexHome, 'config.toml'), 'utf-8')
-      const occurrences = (written.match(/\[mcp_servers\.conductor-vision\]/g) ?? []).length
+      const occurrences = (written.match(/\[mcp_servers\.conductor\]/g) ?? []).length
       expect(occurrences).toBe(1)
     })
 
@@ -113,8 +113,30 @@ describe('Codex MCP TOML injection (P5 sub-item #8)', () => {
       const written = readFileSync(join(codexHome, 'config.toml'), 'utf-8')
       expect(written).toContain('url = "http://localhost:20999/sse?source=codex"')
       expect(written).not.toContain('url = "http://localhost:19333/sse?source=codex"')
-      const occurrences = (written.match(/\[mcp_servers\.conductor-vision\]/g) ?? []).length
+      const occurrences = (written.match(/\[mcp_servers\.conductor\]/g) ?? []).length
       expect(occurrences).toBe(1)
+    })
+
+    // P7.7.5 migration regression: re-injection must strip any legacy
+    // [mcp_servers.conductor-vision] block left behind by a pre-rename CCC.
+    it('strips a legacy conductor-vision block when injecting (P7.7.5 migration)', async () => {
+      const tomlPath = join(codexHome, 'config.toml')
+      const before = [
+        '# Managed by Claude Command Center -- do not edit directly.',
+        '[mcp_servers.conductor-vision]',
+        'url = "http://localhost:19333/sse"',
+        'enabled = true',
+        '',
+      ].join('\n')
+      writeFileSync(tomlPath, before, 'utf-8')
+
+      const mod = await importFresh()
+      mod.injectConductorVisionInCodexConfig(19433)
+
+      const after = readFileSync(tomlPath, 'utf-8')
+      expect(after).not.toContain('[mcp_servers.conductor-vision]')
+      expect(after).toContain('[mcp_servers.conductor]')
+      expect(after).toContain('url = "http://localhost:19433/sse?source=codex"')
     })
   })
 

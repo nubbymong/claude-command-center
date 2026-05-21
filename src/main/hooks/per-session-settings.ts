@@ -63,13 +63,13 @@ export function writeLocalSessionSettings(sessionId: string): string {
 }
 
 /**
- * Write a per-session MCP config file containing the conductor-vision entry
+ * Write a per-session MCP config file containing the conductor entry
  * pointed at THIS CCC instance's MCP server port. Passed to claude.exe via
  * `--mcp-config <path>` so it overrides the global ~/.claude.json entry
  * (which may be stale due to dev/prod CCC instance race).
  *
  * Schema mirrors `claude mcp add --transport sse` output:
- *   { mcpServers: { 'conductor-vision': { type: 'sse', url: '...' } } }
+ *   { mcpServers: { 'conductor': { type: 'sse', url: '...' } } }
  *
  * Returns the path even if mcpPort is 0 (MCP server not yet bound) so the
  * caller can still pass --mcp-config; the file simply has an empty
@@ -84,7 +84,7 @@ export function writeLocalSessionMcpConfig(sessionId: string): string {
   const mcpPort = getConductorMcpPort()
   const mcpServers: Record<string, unknown> = {}
   if (mcpPort > 0) {
-    mcpServers['conductor-vision'] = {
+    mcpServers['conductor'] = {
       type: 'sse',
       url: `http://localhost:${mcpPort}/sse`,
     }
