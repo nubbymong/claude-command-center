@@ -13,7 +13,7 @@ import { spawn } from 'child_process'
 import { BrowserWindow, nativeImage } from 'electron'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import { logInfo, logError } from './debug-logger'
-import { stopMcpServer, startConductorMcpServer, getConductorMcpPort, resetConductorMcpPort } from './conductor-mcp-server'
+import { getConductorMcpPort } from './conductor-mcp-server'
 import type { GlobalVisionConfig } from '../shared/types'
 
 // chrome-remote-interface types
@@ -457,18 +457,16 @@ export async function startGlobalVision(
   await manager.start(getWindow)
   globalManager = manager
 
-  // Ensure the MCP server is running on the configured port. If the conductor
-  // MCP was already started on a different port, restart it on the new port.
-  if (getConductorMcpPort() !== config.mcpPort) {
-    stopMcpServer()
-    resetConductorMcpPort()
-    await startConductorMcpServer(config.mcpPort)
-  }
+  // P7.6: NOT reconciling the MCP server port here. The port is owned by
+  // the boot path (index.ts -> resolveConductorMcpPort -> startMcpServer).
+  // The vision sub-tool's lifecycle is independent of the MCP server's. Re-
+  // binding the port from the deprecated saved port field defeated the P7.2
+  // dev/prod split and could collide with a running production CCC instance.
 
   // Clean up any legacy CLAUDE.md markers
   cleanupLegacyVisionMarkers()
 
-  logInfo(`[vision] Global vision started: CDP port ${config.debugPort}, MCP port ${config.mcpPort}`)
+  logInfo(`[vision] Global vision started: CDP port ${config.debugPort}, MCP port ${getConductorMcpPort()}`)
 }
 
 export async function stopGlobalVision(): Promise<void> {
