@@ -6,7 +6,8 @@ import { startSessionLog, logSessionData, endSessionLog } from './session-logger
 import { logPtyOutput, isDebugModeEnabled } from './debug-capture'
 import { logInfo, logDebug, logError } from './debug-logger'
 import { writeCliSetupPty, getResourcesDirectory } from './ipc/setup-handlers'
-import { isGlobalVisionRunning, getGlobalVisionConfig, getConductorMcpPort } from './vision-manager'
+import { isGlobalVisionRunning, getGlobalVisionConfig } from './vision-manager'
+import { getConductorMcpPort } from './conductor-mcp-server'
 import { resolveClaudeBinary } from './providers/claude/spawn'
 import { detectClaudeUi, lastPromptLineForClaude } from './providers/claude/ui-detection'
 import { getProvider } from './providers'
@@ -21,7 +22,7 @@ import {
   writeLocalSessionSettings,
   removeLocalSessionSettings,
 } from './hooks/per-session-settings'
-import { registerCodexReviewSession, unregisterCodexReviewSession } from './vision-mcp-server'
+import { registerCodexReviewSession, unregisterCodexReviewSession } from './conductor-mcp-server'
 import { disposeSession as disposeCodexReviewUsage } from './codex-review-usage'
 
 import * as path from 'path'

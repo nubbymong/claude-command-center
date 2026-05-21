@@ -5,7 +5,7 @@
  * (Codex sessions don't see the tool to avoid self-review confusion).
  */
 import { describe, it, expect } from 'vitest'
-import { parseSourceFromUrl } from '../../../src/main/vision-mcp-server'
+import { parseSourceFromUrl } from '../../../src/main/conductor-mcp-server'
 
 describe('parseSourceFromUrl (P6.9)', () => {
   it('returns "codex" for ?source=codex', () => {

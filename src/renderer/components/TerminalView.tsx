@@ -54,7 +54,7 @@ interface Props {
   effortLevel?: 'low' | 'medium' | 'high'
   disableAutoMemory?: boolean
   /** P6: when true, the spawned Claude PTY is registered into the
-   *  codex_review opt-in set in vision-mcp-server. Mirrors
+   *  codex_review opt-in set in conductor-mcp-server. Mirrors
    *  disableAutoMemory's lifecycle (claudeOptions sparse boolean). */
   enableCodexReview?: boolean
   /** Per-session model override (sonnet | opus | haiku | ''). Empty

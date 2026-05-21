@@ -1,4 +1,4 @@
-import { getConductorMcpPort } from '../../vision-manager'
+import { getConductorMcpPort } from '../../conductor-mcp-server'
 import { buildHooksBlock } from '../../hooks/session-hooks-writer'
 
 /**

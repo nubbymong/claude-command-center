@@ -1,7 +1,7 @@
 /**
- * Vision Manager — global CDP browser automation for Claude Code via MCP.
+ * Vision Manager -- global CDP browser automation for Claude Code via MCP.
  * Manages a single VisionManager instance (singleton) with CDP connection,
- * heartbeat, and browser launching. The MCP SSE server (vision-mcp-server.ts)
+ * heartbeat, and browser launching. The MCP SSE server (conductor-mcp-server.ts)
  * wraps this to expose tools to Claude Code sessions.
  */
 
@@ -13,8 +13,7 @@ import { spawn } from 'child_process'
 import { BrowserWindow, nativeImage } from 'electron'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import { logInfo, logError } from './debug-logger'
-import { startMcpServer, stopMcpServer } from './vision-mcp-server'
-import { injectConductorVisionInCodexConfig, removeConductorVisionFromCodexConfig } from './providers/codex/mcp-config'
+import { stopMcpServer, startConductorMcpServer, getConductorMcpPort, resetConductorMcpPort } from './conductor-mcp-server'
 import type { GlobalVisionConfig } from '../shared/types'
 
 // chrome-remote-interface types
@@ -412,70 +411,6 @@ class VisionManager {
   }
 }
 
-// === Settings.json MCP config management ===
-
-function injectMcpSettings(mcpPort: number): void {
-  const entry = { url: `http://localhost:${mcpPort}/sse` }
-
-  // Write to ~/.claude/settings.json
-  try {
-    const settingsPath = path.join(os.homedir(), '.claude', 'settings.json')
-    let settings: any = {}
-    try { settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')) } catch { /* file may not exist */ }
-    if (!settings.mcpServers) settings.mcpServers = {}
-    settings.mcpServers['conductor-vision'] = entry
-    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2))
-  } catch (err: any) {
-    logError('[vision] Failed to inject settings.json MCP:', err?.message)
-  }
-
-  // Clean any stale entry from ~/.claude.json (different schema, url format not valid there)
-  try {
-    const claudeJsonPath = path.join(os.homedir(), '.claude.json')
-    if (fs.existsSync(claudeJsonPath)) {
-      const cj = JSON.parse(fs.readFileSync(claudeJsonPath, 'utf-8'))
-      if (cj.mcpServers?.['conductor-vision']) {
-        delete cj.mcpServers['conductor-vision']
-        fs.writeFileSync(claudeJsonPath, JSON.stringify(cj, null, 2))
-      }
-    }
-  } catch { /* ignore */ }
-
-  logInfo(`[vision] Injected MCP server config (port ${mcpPort})`)
-}
-
-function removeMcpSettings(): void {
-  // Remove from ~/.claude/settings.json
-  try {
-    const settingsPath = path.join(os.homedir(), '.claude', 'settings.json')
-    if (fs.existsSync(settingsPath)) {
-      const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'))
-      if (settings.mcpServers?.['conductor-vision']) {
-        delete settings.mcpServers['conductor-vision']
-        if (Object.keys(settings.mcpServers).length === 0) delete settings.mcpServers
-        fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2))
-      }
-    }
-  } catch (err: any) {
-    logError('[vision] Failed to remove settings.json MCP:', err?.message)
-  }
-
-  // Also clean from ~/.claude.json if present
-  try {
-    const claudeJsonPath = path.join(os.homedir(), '.claude.json')
-    if (fs.existsSync(claudeJsonPath)) {
-      const cj = JSON.parse(fs.readFileSync(claudeJsonPath, 'utf-8'))
-      if (cj.mcpServers?.['conductor-vision']) {
-        delete cj.mcpServers['conductor-vision']
-        if (Object.keys(cj.mcpServers).length === 0) delete cj.mcpServers
-        fs.writeFileSync(claudeJsonPath, JSON.stringify(cj, null, 2))
-      }
-    }
-  } catch { /* ignore */ }
-
-  logInfo('[vision] Removed MCP server config')
-}
-
 /** One-time cleanup: remove old CLAUDE.md vision markers from the legacy per-session system. */
 export function cleanupLegacyVisionMarkers(): void {
   try {
@@ -501,40 +436,11 @@ export function cleanupLegacyVisionMarkers(): void {
 
 // === Public API (global singleton) ===
 
-/** Default MCP port used when no visionGlobal config exists. */
-export const DEFAULT_MCP_PORT = 19333
-
-let conductorMcpPort: number = 0
-
-/**
- * Start the Conductor MCP server independently of vision/browser config.
- * This runs at app launch so the fetch_host_screenshot tool is always available
- * for image transfer between the Conductor and Claude Code (local + SSH sessions).
- *
- * Vision/browser tools become available later when startGlobalVision is called.
- * The MCP server uses a getter for the vision manager so tools can check at
- * call time whether browser automation is available.
- */
-export async function startConductorMcpServer(
-  preferredPort?: number
-): Promise<void> {
-  const port = preferredPort || DEFAULT_MCP_PORT
-  if (conductorMcpPort === port) {
-    logInfo(`[mcp] Conductor MCP server already running on port ${port}`)
-    return
-  }
-  await startMcpServer(port, () => globalManager)
-  conductorMcpPort = port
-  injectMcpSettings(port)
-  // Codex sessions read MCP config from ~/.codex/config.toml; mirror the
-  // entry there so they reach the same vision MCP endpoint Claude does.
-  // Gated on ~/.codex existing -- skips silently for users without Codex.
-  injectConductorVisionInCodexConfig(port)
-  logInfo(`[mcp] Conductor MCP server started on port ${port} (vision: ${globalManager ? 'connected' : 'idle'})`)
-}
-
-export function getConductorMcpPort(): number {
-  return conductorMcpPort
+/** Accessor exposed for conductor-mcp-server.ts to read the current vision
+ * manager singleton at MCP tool invocation time. The MCP server wraps this
+ * getter so vision-dependent tools can check connectivity at call time. */
+export function getGlobalManager(): VisionManager | null {
+  return globalManager
 }
 
 export async function startGlobalVision(
@@ -553,9 +459,9 @@ export async function startGlobalVision(
 
   // Ensure the MCP server is running on the configured port. If the conductor
   // MCP was already started on a different port, restart it on the new port.
-  if (conductorMcpPort !== config.mcpPort) {
+  if (getConductorMcpPort() !== config.mcpPort) {
     stopMcpServer()
-    conductorMcpPort = 0
+    resetConductorMcpPort()
     await startConductorMcpServer(config.mcpPort)
   }
 
@@ -576,23 +482,10 @@ export async function stopGlobalVision(): Promise<void> {
   globalConfig = null
 }
 
-/**
- * Fully shut down the Conductor MCP server. Called only at app quit.
- */
-export function stopConductorMcpServer(): void {
-  if (conductorMcpPort !== 0) {
-    stopMcpServer()
-    removeMcpSettings()
-    removeConductorVisionFromCodexConfig()
-    conductorMcpPort = 0
-    logInfo('[mcp] Conductor MCP server stopped')
-  }
-}
-
 export function getGlobalVisionStatus(): { running: boolean; connected: boolean; browser: string; mcpPort: number } {
   if (!globalManager || !globalConfig) {
     // Even with no browser connected, the MCP server may still be running
-    return { running: false, connected: false, browser: 'chrome', mcpPort: conductorMcpPort }
+    return { running: false, connected: false, browser: 'chrome', mcpPort: getConductorMcpPort() }
   }
   return {
     running: true,

@@ -190,9 +190,9 @@ export async function runCodexReview(
   return { isError: false, text: review + formatFooter(observed) }
 }
 
-/** Register the codex_review tool on a vision-mcp-server McpServer instance. */
+/** Register the codex_review tool on a conductor-mcp-server McpServer instance. */
 export function registerCodexReviewTool(
-  server: any,  // McpServer (lazy-typed in vision-mcp-server.ts)
+  server: any,  // McpServer (lazy-typed in conductor-mcp-server.ts)
   zMod: any,    // zod module (lazy-loaded)
   getOptedIn: () => Set<string>,
   getCwdForSession: (sessionId: string) => string | null,
