@@ -479,9 +479,9 @@ export const TIPS_LIBRARY: Tip[] = [
     requires: ['vision.toggle-vision'],
     variants: {
       primary: {
-        shortText: 'ℹ How Vision injects into Claude settings',
-        title: 'Vision MCP Registration',
-        body: 'When you start Vision, the app:\n\n1. Launches a local MCP server bound to `127.0.0.1:19333` (**localhost only** — not exposed to the network)\n2. Adds an `mcpServers.conductor-vision` entry to `~/.claude/settings.json` pointing to the SSE endpoint\n3. Claude Code picks up 17 vision tools automatically (screenshot, navigate, click, type, etc.)\n\nWhen you stop Vision, the entry is removed cleanly. For SSH sessions, the app sets up a reverse tunnel (`-R 19333:localhost:19333`) automatically so remote Claude can reach the local MCP server.',
+        shortText: 'ℹ How the Conductor MCP server injects into Claude settings',
+        title: 'Conductor MCP Registration',
+        body: 'The Conductor MCP server hosts three sub-tools (Vision, Codex review, Host transfer) on a single local endpoint:\n\n1. Server is bound to `127.0.0.1` (**localhost only** -- not exposed to the network) and auto-starts at CCC boot\n2. An `mcpServers.conductor-vision` entry is added to `~/.claude/settings.json` pointing to the SSE endpoint\n3. Claude Code picks up the tool list automatically (17 browser-vision tools plus `codex_review` and `fetch_host_screenshot`)\n\nFor SSH sessions, the app sets up a reverse tunnel automatically so remote Claude can reach the local Conductor MCP server.',
       },
     },
   },

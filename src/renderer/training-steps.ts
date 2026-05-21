@@ -135,9 +135,9 @@ export const trainingSteps: TrainingStep[] = [
     summary:
       'Browser automation via a global MCP server — every Claude session shares one Chrome instance. Take screenshots, navigate, click, type, and inspect pages without leaving the terminal. Works over SSH too via automatic reverse tunnels.',
     highlights: [
-      '17 vision tools exposed to Claude: screenshot, navigate, click, type, eval, and more',
-      'One global Chrome — all sessions share state, so cookies + login persist',
-      'Reverse tunnel auto-injected on SSH connect (-R 19333) — remote sessions reach the local browser',
+      '17 browser-vision tools (one of three sub-tools on the Conductor MCP server) exposed to Claude',
+      'One global Chrome -- all sessions share state, so cookies + login persist',
+      'Reverse tunnel auto-injected on SSH connect (-R <port>) -- remote sessions reach the local Conductor MCP server',
       'Status pill in the sidebar shows running / connected state at a glance',
       'Headless or visible browser — toggled per-config in Settings',
     ],

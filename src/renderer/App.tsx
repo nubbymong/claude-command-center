@@ -16,7 +16,7 @@ import LogViewer from './components/LogViewer'
 import InsightsPage from './components/InsightsPage'
 import CloudAgentsPage from './components/CloudAgentsPage'
 import TokenomicsPage from './components/TokenomicsPage'
-import VisionPage from './components/VisionPage'
+import ConductorMcpPage from './components/ConductorMcpPage'
 import MemoryPage from './components/MemoryPage'
 import SetupDialog from './components/SetupDialog'
 import WhatsNewModal, { shouldShowWhatsNew, markWhatsNewSeen } from './components/WhatsNewModal'
@@ -38,7 +38,7 @@ import { markSessionForResumePicker } from './utils/resumePicker'
 import { gatherLocalStorageData, hydrateStores } from './utils/configHydration'
 import { setupCloudAgentListener } from './stores/cloudAgentStore'
 import { setupTokenomicsListener } from './stores/tokenomicsStore'
-import { setupVisionListener, useVisionStore } from './stores/visionStore'
+import { setupConductorMcpListener, useConductorMcpStore } from './stores/conductorMcpStore'
 import { setupGitHubListener, useGitHubStore } from './stores/githubStore'
 import { useCodexAccountStore } from './stores/codexAccountStore'
 import GitHubPanel from './components/github/GitHubPanel'
@@ -268,11 +268,11 @@ export default function App() {
       // never missed (previously only started when CloudAgentsPage mounted)
       setupCloudAgentListener()
       setupTokenomicsListener()
-      setupVisionListener()
+      setupConductorMcpListener()
       setupGitHubListener()
       useGitHubStore.getState().loadConfig()
-      useVisionStore.getState().loadConfig()
-      useVisionStore.getState().fetchStatus()
+      useConductorMcpStore.getState().loadConfig()
+      useConductorMcpStore.getState().fetchStatus()
       useCodexAccountStore.getState().refresh()
 
       const magicSettings = useMagicButtonStore.getState().settings
@@ -507,7 +507,7 @@ export default function App() {
     if (view === 'insights') return <InsightsPage />
     if (view === 'cloud-agents') return <CloudAgentsPage />
     if (view === 'tokenomics') return <TokenomicsPage />
-    if (view === 'vision') return <VisionPage />
+    if (view === 'vision') return <ConductorMcpPage />
     if (view === 'memory') return <MemoryPage />
     return null
   }

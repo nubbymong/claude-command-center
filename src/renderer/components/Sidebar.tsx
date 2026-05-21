@@ -4,7 +4,7 @@ import { useConfigStore, TerminalConfig, ConfigGroup, ConfigSection } from '../s
 import { useInsightsStore } from '../stores/insightsStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useCloudAgentStore } from '../stores/cloudAgentStore'
-import { useVisionStore } from '../stores/visionStore'
+import { useConductorMcpStore } from '../stores/conductorMcpStore'
 import SessionDialog from './SessionDialog'
 import { killSessionPty } from '../ptyTracker'
 import { ViewType } from '../types/views'
@@ -75,8 +75,8 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
   const insightsStatus = useInsightsStore((s) => s.status)
   const insightsMessage = useInsightsStore((s) => s.statusMessage)
   const cloudAgentRunning = useCloudAgentStore((s) => s.agents.filter(a => a.status === 'running' || a.status === 'pending').length)
-  const visionRunning = useVisionStore((s) => s.running)
-  const visionConnected = useVisionStore((s) => s.connected)
+  const visionRunning = useConductorMcpStore((s) => s.browserRunning)
+  const visionConnected = useConductorMcpStore((s) => s.browserConnected)
   const [showNewDialog, setShowNewDialog] = useState(false)
   const [editingConfig, setEditingConfig] = useState<TerminalConfig | null>(null)
   const [updateAvailable, setUpdateAvailable] = useState(false)
