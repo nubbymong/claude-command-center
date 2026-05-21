@@ -436,66 +436,79 @@ export function getMcpPort(): number {
   return mcpPort
 }
 
-// === Settings.json MCP config management ===
+// === Global MCP server registration in ~/.claude.json ===
+//
+// P7.7.3: Claude CLI reads mcpServers ONLY from ~/.claude.json or
+// --mcp-config <path>; the ~/.claude/settings.json mcpServers block is
+// ignored. We register conductor-vision in ~/.claude.json so anyone
+// invoking `claude` outside CCC also sees the tools. Per-session
+// --mcp-config (written by pty-manager) overrides this for in-CCC
+// sessions, which handles the dev/prod port-resolution race.
+
+function atomicWriteJson(filePath: string, data: unknown): void {
+  const tmp = `${filePath}.tmp.${process.pid}`
+  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf-8')
+  try {
+    fs.renameSync(tmp, filePath)
+  } catch {
+    try { fs.unlinkSync(tmp) } catch { /* ignore */ }
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8')
+  }
+}
 
 function injectMcpSettings(mcpPort: number): void {
-  const entry = { url: `http://localhost:${mcpPort}/sse` }
-
-  // Write to ~/.claude/settings.json
-  try {
-    const settingsPath = path.join(os.homedir(), '.claude', 'settings.json')
-    let settings: any = {}
-    try { settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')) } catch { /* file may not exist */ }
-    if (!settings.mcpServers) settings.mcpServers = {}
-    settings.mcpServers['conductor-vision'] = entry
-    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2))
-  } catch (err: any) {
-    logError('[vision] Failed to inject settings.json MCP:', err?.message)
+  const entry = {
+    type: 'sse',
+    url: `http://localhost:${mcpPort}/sse`,
   }
 
-  // Clean any stale entry from ~/.claude.json (different schema, url format not valid there)
+  // Defensive merge into ~/.claude.json: preserve every other top-level key
+  // and every other mcpServers entry. Only touch mcpServers['conductor-vision'].
   try {
     const claudeJsonPath = path.join(os.homedir(), '.claude.json')
-    if (fs.existsSync(claudeJsonPath)) {
-      const cj = JSON.parse(fs.readFileSync(claudeJsonPath, 'utf-8'))
-      if (cj.mcpServers?.['conductor-vision']) {
-        delete cj.mcpServers['conductor-vision']
-        fs.writeFileSync(claudeJsonPath, JSON.stringify(cj, null, 2))
+    let cj: Record<string, unknown> = {}
+    try {
+      const raw = fs.readFileSync(claudeJsonPath, 'utf-8')
+      const parsed = JSON.parse(raw) as unknown
+      if (parsed && typeof parsed === 'object') {
+        cj = parsed as Record<string, unknown>
       }
-    }
-  } catch { /* ignore */ }
+    } catch { /* file may not exist on fresh install */ }
+    const servers = (cj.mcpServers && typeof cj.mcpServers === 'object')
+      ? cj.mcpServers as Record<string, unknown>
+      : {}
+    servers['conductor-vision'] = entry
+    cj.mcpServers = servers
+    atomicWriteJson(claudeJsonPath, cj)
+  } catch (err: any) {
+    logError('[vision] Failed to inject ~/.claude.json MCP:', err?.message)
+  }
 
-  logInfo(`[vision] Injected MCP server config (port ${mcpPort})`)
+  logInfo(`[vision] Registered conductor-vision in ~/.claude.json (port ${mcpPort})`)
 }
 
 function removeMcpSettings(): void {
-  // Remove from ~/.claude/settings.json
-  try {
-    const settingsPath = path.join(os.homedir(), '.claude', 'settings.json')
-    if (fs.existsSync(settingsPath)) {
-      const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'))
-      if (settings.mcpServers?.['conductor-vision']) {
-        delete settings.mcpServers['conductor-vision']
-        if (Object.keys(settings.mcpServers).length === 0) delete settings.mcpServers
-        fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2))
-      }
-    }
-  } catch (err: any) {
-    logError('[vision] Failed to remove settings.json MCP:', err?.message)
-  }
-
-  // Also clean from ~/.claude.json if present
+  // Defensive remove from ~/.claude.json: only delete the conductor-vision
+  // key; preserve every other mcpServers entry and every other top-level key.
   try {
     const claudeJsonPath = path.join(os.homedir(), '.claude.json')
-    if (fs.existsSync(claudeJsonPath)) {
-      const cj = JSON.parse(fs.readFileSync(claudeJsonPath, 'utf-8'))
-      if (cj.mcpServers?.['conductor-vision']) {
-        delete cj.mcpServers['conductor-vision']
-        if (Object.keys(cj.mcpServers).length === 0) delete cj.mcpServers
-        fs.writeFileSync(claudeJsonPath, JSON.stringify(cj, null, 2))
-      }
+    if (!fs.existsSync(claudeJsonPath)) return
+    const raw = fs.readFileSync(claudeJsonPath, 'utf-8')
+    const cj = JSON.parse(raw) as Record<string, unknown>
+    const servers = (cj.mcpServers && typeof cj.mcpServers === 'object')
+      ? cj.mcpServers as Record<string, unknown>
+      : null
+    if (!servers || !('conductor-vision' in servers)) return
+    delete servers['conductor-vision']
+    if (Object.keys(servers).length === 0) {
+      delete cj.mcpServers
+    } else {
+      cj.mcpServers = servers
     }
-  } catch { /* ignore */ }
+    atomicWriteJson(claudeJsonPath, cj)
+  } catch (err: any) {
+    logError('[vision] Failed to remove ~/.claude.json MCP:', err?.message)
+  }
 
   logInfo('[vision] Removed MCP server config')
 }

@@ -14,15 +14,24 @@ export function getLocalSessionSettingsPath(sessionId: string): string {
 }
 
 /**
+ * Path to the local-session MCP config file. Distinct from the settings
+ * file because claude.exe reads MCP server config from `--mcp-config` only,
+ * NOT from `--settings`.
+ */
+export function getLocalSessionMcpConfigPath(sessionId: string): string {
+  const safeSid = sessionId.replace(/[^a-zA-Z0-9_-]/g, '_')
+  return path.join(os.homedir(), '.claude', `mcp-${safeSid}.json`)
+}
+
+/**
  * Seed a local-session settings file as a full clone of the user's
- * ~/.claude/settings.json. Claude Code's `--settings` flag may either
- * REPLACE user settings entirely or MERGE onto them — both assumptions
- * live in the tree's comments and Claude Code docs are ambiguous. Copying
- * every top-level key (not just the three CCC cares about) is safe under
- * both semantics: user-owned fields like `outputStyle`, `permissions`, or
- * future additions survive. The caller (pty-manager) overlays the fields
- * CCC must own (hooks via injectHooks, plus statusLine/mcpServers which
- * are already correct in the clone).
+ * ~/.claude/settings.json. Used for hooks/statusLine overrides only --
+ * NOT for mcpServers (claude.exe ignores mcpServers in --settings files).
+ *
+ * Claude Code's `--settings` flag may either REPLACE user settings entirely
+ * or MERGE onto them; both assumptions live in the codebase comments and
+ * the docs are ambiguous. Copying every top-level key (not just the keys
+ * CCC cares about) is safe under both semantics.
  */
 export function writeLocalSessionSettings(sessionId: string): string {
   const claudeDir = path.join(os.homedir(), '.claude')
@@ -41,57 +50,74 @@ export function writeLocalSessionSettings(sessionId: string): string {
       shared = parsed as Record<string, unknown>
     }
   } catch {
-    /* shared settings may not exist yet (fresh install) — start empty */
+    /* shared settings may not exist yet (fresh install) -- start empty */
   }
 
-  // Clone every top-level key from shared. injectHooks will overlay the
-  // `hooks` key afterwards. `statusLine` and `mcpServers` are already
-  // copied verbatim, so the user's existing config is preserved exactly.
+  // Clone every top-level key from shared so injectHooks (when re-enabled)
+  // can overlay the `hooks` key without dropping the user's outputStyle,
+  // permissions, etc.
   const sesCfg: Record<string, unknown> = { ...shared }
 
-  // P7.2: Overwrite the conductor-vision MCP URL to this CCC instance's
-  // actual port. The user's global ~/.claude/settings.json may still
-  // reference the production default (19333), but a dev-mode CCC instance
-  // binds 19433 and writes per-session settings pointing there. Other
-  // mcpServers entries are preserved verbatim.
-  //
-  // P7.7.2: Create the conductor-vision entry from scratch if it's missing
-  // from the cloned global -- prevents a stale-removeMcpSettings race where
-  // one CCC's exit cleanup strips the entry while another CCC is still
-  // spawning sessions. Per-session settings are now self-contained.
-  const instancePort = getConductorMcpPort()
-  if (instancePort > 0) {
-    if (!sesCfg.mcpServers || typeof sesCfg.mcpServers !== 'object') {
-      sesCfg.mcpServers = {}
-    }
-    const servers = sesCfg.mcpServers as Record<string, unknown>
-    const cv = servers['conductor-vision']
-    const existing = (cv && typeof cv === 'object') ? (cv as Record<string, unknown>) : {}
-    servers['conductor-vision'] = {
-      ...existing,
-      url: `http://localhost:${instancePort}/sse`,
-    }
-  }
-
   const sesPath = getLocalSessionSettingsPath(sessionId)
-  // Atomic write — tmp + rename so a crash mid-write can't leave the
-  // per-session file truncated. Claude Code re-reads settings on /reload,
-  // so rename-over-just-released-handle is fine in practice.
-  const tmp = `${sesPath}.tmp.${process.pid}`
-  fs.writeFileSync(tmp, JSON.stringify(sesCfg, null, 2), 'utf-8')
+  return atomicJsonWrite(sesPath, sesCfg)
+}
+
+/**
+ * Write a per-session MCP config file containing the conductor-vision entry
+ * pointed at THIS CCC instance's MCP server port. Passed to claude.exe via
+ * `--mcp-config <path>` so it overrides the global ~/.claude.json entry
+ * (which may be stale due to dev/prod CCC instance race).
+ *
+ * Schema mirrors `claude mcp add --transport sse` output:
+ *   { mcpServers: { 'conductor-vision': { type: 'sse', url: '...' } } }
+ *
+ * Returns the path even if mcpPort is 0 (MCP server not yet bound) so the
+ * caller can still pass --mcp-config; the file simply has an empty
+ * mcpServers object in that case.
+ */
+export function writeLocalSessionMcpConfig(sessionId: string): string {
+  const claudeDir = path.join(os.homedir(), '.claude')
   try {
-    fs.renameSync(tmp, sesPath)
-  } catch {
-    try { fs.unlinkSync(tmp) } catch { /* ignore */ }
-    fs.writeFileSync(sesPath, JSON.stringify(sesCfg, null, 2), 'utf-8')
+    fs.mkdirSync(claudeDir, { recursive: true })
+  } catch { /* may exist */ }
+
+  const mcpPort = getConductorMcpPort()
+  const mcpServers: Record<string, unknown> = {}
+  if (mcpPort > 0) {
+    mcpServers['conductor-vision'] = {
+      type: 'sse',
+      url: `http://localhost:${mcpPort}/sse`,
+    }
   }
-  return sesPath
+  const cfg = { mcpServers }
+  const cfgPath = getLocalSessionMcpConfigPath(sessionId)
+  return atomicJsonWrite(cfgPath, cfg)
 }
 
 export function removeLocalSessionSettings(sessionId: string): void {
   try {
     fs.unlinkSync(getLocalSessionSettingsPath(sessionId))
   } catch {
-    /* file may already be gone or never written (hooks off) */
+    /* file may already be gone or never written */
   }
+}
+
+export function removeLocalSessionMcpConfig(sessionId: string): void {
+  try {
+    fs.unlinkSync(getLocalSessionMcpConfigPath(sessionId))
+  } catch {
+    /* file may already be gone or never written */
+  }
+}
+
+function atomicJsonWrite(filePath: string, data: unknown): string {
+  const tmp = `${filePath}.tmp.${process.pid}`
+  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf-8')
+  try {
+    fs.renameSync(tmp, filePath)
+  } catch {
+    try { fs.unlinkSync(tmp) } catch { /* ignore */ }
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8')
+  }
+  return filePath
 }

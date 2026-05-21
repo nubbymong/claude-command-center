@@ -1,13 +1,13 @@
 /**
- * P7.2 regression: writeLocalSessionSettings must rewrite the
- * mcpServers.conductor-vision.url to point at this CCC instance's
- * actual MCP server port (not the value cloned from the global
- * ~/.claude/settings.json). Effect: sessions spawned by dev CCC reach
- * dev's MCP server (19433) even if the user's global settings.json
- * says 19333.
+ * P7.7.3 regression: per-session MCP config writer.
  *
- * Other mcpServers entries are preserved verbatim. Settings without
- * an mcpServers block are tolerated (no rewrite needed).
+ * Claude CLI ignores mcpServers in --settings files; MCP server config must
+ * come from --mcp-config <path> or ~/.claude.json. writeLocalSessionMcpConfig
+ * writes the --mcp-config file with canonical schema (type: "sse").
+ *
+ * The companion writeLocalSessionSettings function no longer carries
+ * mcpServers (it was dead code under --settings) -- the test for that case
+ * pins the absence to prevent regression.
  */
 import fs from 'node:fs'
 import os from 'node:os'
@@ -15,20 +15,24 @@ import path from 'node:path'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
 // Mock getConductorMcpPort BEFORE importing the module under test so the
-// rewrite path picks up the mocked port.
+// writer picks up the mocked port.
 vi.mock('../../../src/main/conductor-mcp-server', () => ({
   getConductorMcpPort: () => 19433,
 }))
 
-const { writeLocalSessionSettings } = await import('../../../src/main/hooks/per-session-settings')
+const {
+  writeLocalSessionSettings,
+  writeLocalSessionMcpConfig,
+  getLocalSessionMcpConfigPath,
+} = await import('../../../src/main/hooks/per-session-settings')
 
-describe('per-session-settings mcpServers URL rewrite (P7.2)', () => {
+describe('per-session MCP config writer (P7.7.3)', () => {
   let tmpHome: string
   let claudeDir: string
   let realHomedir: typeof os.homedir
 
   beforeEach(() => {
-    tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'p7-mcp-rewrite-'))
+    tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'p7-mcp-cfg-'))
     claudeDir = path.join(tmpHome, '.claude')
     fs.mkdirSync(claudeDir, { recursive: true })
     realHomedir = os.homedir
@@ -40,60 +44,65 @@ describe('per-session-settings mcpServers URL rewrite (P7.2)', () => {
     fs.rmSync(tmpHome, { recursive: true, force: true })
   })
 
-  it('rewrites conductor-vision.url to the instance port', () => {
-    fs.writeFileSync(path.join(claudeDir, 'settings.json'), JSON.stringify({
-      mcpServers: {
-        'conductor-vision': { url: 'http://localhost:19333/sse' },
-      },
-    }))
-    const sesPath = writeLocalSessionSettings('sid-1')
-    const written = JSON.parse(fs.readFileSync(sesPath, 'utf-8'))
-    expect(written.mcpServers['conductor-vision'].url).toBe('http://localhost:19433/sse')
-  })
-
-  it('preserves other mcpServers entries verbatim', () => {
-    fs.writeFileSync(path.join(claudeDir, 'settings.json'), JSON.stringify({
-      mcpServers: {
-        'conductor-vision': { url: 'http://localhost:19333/sse' },
-        'other-server': { url: 'http://example.com/sse', extra: 'preserve-me' },
-      },
-    }))
-    const sesPath = writeLocalSessionSettings('sid-2')
-    const written = JSON.parse(fs.readFileSync(sesPath, 'utf-8'))
-    expect(written.mcpServers['other-server']).toEqual({
-      url: 'http://example.com/sse',
-      extra: 'preserve-me',
+  it('writes conductor-vision with canonical schema (type: "sse", url)', () => {
+    const cfgPath = writeLocalSessionMcpConfig('sid-1')
+    const written = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'))
+    expect(written.mcpServers['conductor-vision']).toEqual({
+      type: 'sse',
+      url: 'http://localhost:19433/sse',
     })
   })
 
-  // P7.7.2: per-session settings are now self-contained -- create the
-  // conductor-vision entry from scratch if global lacks it. Prevents
-  // the dev-exit / prod-still-running stale-removeMcpSettings race.
-  it('creates conductor-vision entry when global has no mcpServers block (P7.7.2)', () => {
-    fs.writeFileSync(path.join(claudeDir, 'settings.json'), JSON.stringify({
-      permissions: { allow: [] },
-    }))
-    const sesPath = writeLocalSessionSettings('sid-3')
-    const written = JSON.parse(fs.readFileSync(sesPath, 'utf-8'))
-    expect(written.permissions).toEqual({ allow: [] })
-    expect(written.mcpServers['conductor-vision'].url).toBe('http://localhost:19433/sse')
+  it('writes to ~/.claude/mcp-<sid>.json (distinct from settings file)', () => {
+    const cfgPath = writeLocalSessionMcpConfig('sid-2')
+    expect(cfgPath).toBe(getLocalSessionMcpConfigPath('sid-2'))
+    expect(cfgPath).toContain(path.join('.claude', 'mcp-sid-2.json'))
   })
 
-  it('creates conductor-vision entry when settings.json is missing entirely (P7.7.2)', () => {
-    const sesPath = writeLocalSessionSettings('sid-4')
-    const written = JSON.parse(fs.readFileSync(sesPath, 'utf-8'))
-    expect(written.mcpServers['conductor-vision'].url).toBe('http://localhost:19433/sse')
+  it('sanitises unsafe characters in sessionId', () => {
+    const cfgPath = writeLocalSessionMcpConfig('sid/with..slash')
+    expect(path.basename(cfgPath)).toBe('mcp-sid_with__slash.json')
+    expect(fs.existsSync(cfgPath)).toBe(true)
   })
 
-  it('creates conductor-vision entry when mcpServers exists but lacks conductor-vision (P7.7.2)', () => {
+  it('writes distinct files for different sessions', () => {
+    const a = writeLocalSessionMcpConfig('sid-a')
+    const b = writeLocalSessionMcpConfig('sid-b')
+    expect(a).not.toBe(b)
+    expect(fs.existsSync(a)).toBe(true)
+    expect(fs.existsSync(b)).toBe(true)
+  })
+
+  it('settings file no longer carries mcpServers (was dead code under --settings)', () => {
     fs.writeFileSync(path.join(claudeDir, 'settings.json'), JSON.stringify({
       mcpServers: {
+        'conductor-vision': { url: 'http://localhost:19333/sse' },
         'other-server': { url: 'http://example.com/sse' },
       },
     }))
-    const sesPath = writeLocalSessionSettings('sid-5')
+    const sesPath = writeLocalSessionSettings('sid-3')
     const written = JSON.parse(fs.readFileSync(sesPath, 'utf-8'))
-    expect(written.mcpServers['conductor-vision'].url).toBe('http://localhost:19433/sse')
-    expect(written.mcpServers['other-server']).toEqual({ url: 'http://example.com/sse' })
+    // The clone preserves every top-level key including mcpServers verbatim;
+    // we just no longer mutate it. This is intentional -- claude.exe will
+    // ignore it anyway since --settings doesn't load mcpServers.
+    expect(written.mcpServers).toEqual({
+      'conductor-vision': { url: 'http://localhost:19333/sse' },
+      'other-server': { url: 'http://example.com/sse' },
+    })
+  })
+
+  it('settings file preserves the user global verbatim', () => {
+    fs.writeFileSync(path.join(claudeDir, 'settings.json'), JSON.stringify({
+      permissions: { allow: ['Bash'] },
+      statusLine: { type: 'command', command: 'echo hi' },
+      effortLevel: 'high',
+    }))
+    const sesPath = writeLocalSessionSettings('sid-4')
+    const written = JSON.parse(fs.readFileSync(sesPath, 'utf-8'))
+    expect(written).toEqual({
+      permissions: { allow: ['Bash'] },
+      statusLine: { type: 'command', command: 'echo hi' },
+      effortLevel: 'high',
+    })
   })
 })

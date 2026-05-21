@@ -21,6 +21,8 @@ import { injectHooks } from './hooks/session-hooks-writer'
 import {
   writeLocalSessionSettings,
   removeLocalSessionSettings,
+  writeLocalSessionMcpConfig,
+  removeLocalSessionMcpConfig,
 } from './hooks/per-session-settings'
 import { registerCodexReviewSession, unregisterCodexReviewSession } from './conductor-mcp-server'
 import { disposeSession as disposeCodexReviewUsage } from './codex-review-usage'
@@ -850,30 +852,31 @@ export function spawnPty(
         extraFlags += ` --model ${options.model}`
       }
 
-      // P7.7.2: ALWAYS seed a per-session settings file and pass --settings.
-      // This is required for the P7.2 mcpServers URL rewrite to take effect
-      // -- without it, dev and prod CCC instances race to overwrite the
-      // single global ~/.claude/settings.json conductor-vision URL, and
-      // sessions spawned by the loser see the wrong port.
+      // P7.7.2: seed a per-session settings file for hooks/statusLine
+      // overrides. P7.7.3: also seed a per-session MCP config file
+      // (--mcp-config), because claude.exe ignores mcpServers in --settings
+      // and reads it ONLY from --mcp-config or ~/.claude.json. Per-session
+      // override ensures dev/prod CCC instances bind their sessions to the
+      // correct MCP port regardless of whichever instance last wrote the
+      // global ~/.claude.json.
       //
-      // injectHooks remains DISABLED here -- the Live Activity feed UI was
-      // cut in c957e5d, so the gateway has no consumer and Pre/PostToolUse
-      // would log ECONNREFUSED on every Bash/Read/Edit. writeLocalSessionSettings
-      // does NOT inject hooks; it only clones the user's global settings and
-      // overlays the conductor-vision URL. Re-enable injectHooks when a
-      // consumer feature ships (live activity v2, hook-driven analytics).
+      // injectHooks remains DISABLED -- the Live Activity feed UI was cut
+      // in c957e5d so there's no hook consumer; Pre/PostToolUse would log
+      // ECONNREFUSED on every tool call. Re-enable when a consumer ships.
       void getGateway, injectHooks
+      const quoteForShell = (p: string): string =>
+        os.platform() === 'win32' ? p.replace(/'/g, "''") : p.replace(/'/g, "'\\''")
       try {
         const sesPath = writeLocalSessionSettings(sessionId)
-        if (os.platform() === 'win32') {
-          const escapedSesPath = sesPath.replace(/'/g, "''")
-          extraFlags += ` --settings '${escapedSesPath}'`
-        } else {
-          const escapedSesPath = sesPath.replace(/'/g, "'\\''")
-          extraFlags += ` --settings '${escapedSesPath}'`
-        }
+        extraFlags += ` --settings '${quoteForShell(sesPath)}'`
       } catch (err) {
         logError(`[pty] Failed to seed per-session settings for ${sessionId}: ${(err as Error)?.message ?? err}`)
+      }
+      try {
+        const mcpCfgPath = writeLocalSessionMcpConfig(sessionId)
+        extraFlags += ` --mcp-config '${quoteForShell(mcpCfgPath)}'`
+      } catch (err) {
+        logError(`[pty] Failed to seed per-session MCP config for ${sessionId}: ${(err as Error)?.message ?? err}`)
       }
 
       // Build --agents flag if agent templates are configured
@@ -975,6 +978,7 @@ export function spawnPty(
         if (gwExit) gwExit.unregisterSession(sessionId)
       } catch { /* gateway may have already stopped during shutdown */ }
       removeLocalSessionSettings(sessionId)
+      removeLocalSessionMcpConfig(sessionId)
       // P6: clear opt-in registration and per-session usage record.
       unregisterCodexReviewSession(sessionId)
       disposeCodexReviewUsage(sessionId)
