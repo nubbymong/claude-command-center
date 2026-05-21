@@ -593,7 +593,9 @@ export async function startBrowserAtBoot(
   // mode binds 9322 instead of colliding with production's 9222. The
   // legacy debugPort field on saved configs is ignored.
   const debugPort = resolveCdpPort(isPackagedApp())
-  const browser = visionConfig.browser ?? 'chrome'
+  // Narrow defensively -- readConfig returns parsed JSON, so a corrupted
+  // saved value (e.g. browser: "firefox") could slip past TS without this.
+  const browser: 'chrome' | 'edge' = visionConfig.browser === 'edge' ? 'edge' : 'chrome'
   const headless = visionConfig.headless !== false
   try {
     launchBrowser(browser, debugPort, visionConfig.url, headless)
