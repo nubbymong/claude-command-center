@@ -32,6 +32,7 @@ import { readConfig } from './config-manager'
 import { isPackagedApp } from './update-watcher'
 import { resolveCdpPort, CDP_PORT_PROD } from '../shared/cdp-ports'
 import type { GlobalVisionConfig } from '../shared/types'
+import { registerCodexReviewTool } from './codex-review-mcp-tool'
 
 /** P6.9: Parse the `source` query string from the SSE request URL.
  *  The Codex TOML writer appends `?source=codex` so the server can skip
@@ -308,7 +309,6 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
     // Codex calling itself would be confusing UX in v1.5; v1.5.x can
     // reconsider if reciprocal review demand surfaces.
     if (source !== 'codex') {
-      const { registerCodexReviewTool } = require('./codex-review-mcp-tool')
       registerCodexReviewTool(
         server,
         z,
