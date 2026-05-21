@@ -29,10 +29,19 @@ vi.mock('../../../src/main/config-manager', () => ({
   // can't auto-merge with the real module -- list any missing exports here.
 }))
 
+// P7.7: mock isPackagedApp to return false (dev mode) so we can assert
+// startBrowserAtBoot uses the dev CDP port (9322).
+vi.mock('../../../src/main/update-watcher', () => ({
+  isPackagedApp: () => false,
+  getProjectRootPath: vi.fn(() => ''),
+  hasSourcePath: vi.fn(() => false),
+}))
+
 // Import the REAL startBrowserAtBoot. We do NOT mock conductor-mcp-server
 // because we want to exercise its actual implementation against the mocked
-// vision-manager and config-manager. startBrowserAtBoot uses dynamic imports
-// internally so the mocks above intercept at call time.
+// vision-manager and config-manager. vi.mock hoisting ensures the mocks
+// above intercept the static imports in conductor-mcp-server.ts (P7.7
+// swapped dynamic imports for static).
 const { startBrowserAtBoot } = await import('../../../src/main/conductor-mcp-server')
 
 describe('conductor-mcp-server browser auto-start (P7.3)', () => {
@@ -57,5 +66,14 @@ describe('conductor-mcp-server browser auto-start (P7.3)', () => {
     readConfigMock.mockReturnValue({ enabled: true, browser: 'chrome', debugPort: 9222 })
     await startBrowserAtBoot(() => null)
     expect(startGlobalVisionMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('overrides debugPort with resolveCdpPort in dev mode (P7.7)', async () => {
+    // saved config has stale 9222 but dev mode must override to 9322
+    readConfigMock.mockReturnValue({ enabled: false, browser: 'chrome', debugPort: 9222 })
+    await startBrowserAtBoot(() => null)
+    expect(startGlobalVisionMock).toHaveBeenCalledTimes(1)
+    const callArg = startGlobalVisionMock.mock.calls[0][0]
+    expect(callArg.debugPort).toBe(9322)
   })
 })

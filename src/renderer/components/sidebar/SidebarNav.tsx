@@ -8,7 +8,11 @@ interface SidebarNavProps {
   insightsMessage: string | null
   cloudAgentRunning: number
   visionRunning?: boolean
-  visionConnected?: boolean
+  // P7.7: serverRunning replaces visionConnected for the Conductor MCP dot.
+  // The dot now reflects MCP HTTP listener health, not Chrome CDP attach,
+  // matching the P7.4 spec ("Red only if the MCP HTTP listener actually
+  // died"). visionConnected was removed because it was the only consumer.
+  serverRunning?: boolean
   collapsed?: boolean
   onShowHelp?: () => void
 }
@@ -90,7 +94,7 @@ const navItems: { view: ViewType; icon: React.ReactNode; label: string }[] = [
   },
 ]
 
-function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMessage, cloudAgentRunning, visionRunning, visionConnected, isCollapsed }: {
+function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMessage, cloudAgentRunning, visionRunning, serverRunning, isCollapsed }: {
   item: typeof navItems[0]
   currentView: ViewType
   onViewChange: (view: ViewType) => void
@@ -98,7 +102,7 @@ function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMe
   insightsMessage: string | null
   cloudAgentRunning: number
   visionRunning?: boolean
-  visionConnected?: boolean
+  serverRunning?: boolean
   isCollapsed: boolean
 }) {
   const isInsightsActive = item.view === 'insights' && !!insightsStatus
@@ -109,7 +113,17 @@ function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMe
     : null
   const isInsightsAnimating = insightsStatus === 'running' || insightsStatus === 'extracting_kpis'
   const isCloudAgentsRunning = item.view === 'cloud-agents' && cloudAgentRunning > 0
-  const isVisionActive = item.view === 'vision' && visionRunning
+  // P7.7: dot reflects MCP server health, not browser CDP attach. Show
+  // the dot whenever serverRunning has been reported (defined) so users
+  // see red immediately if the listener dies, not just when the browser
+  // is also up. Sidebar key stayed 'vision' for back-compat with saved
+  // view state.
+  const isConductorMcpIcon = item.view === 'vision'
+  const showServerDot = isConductorMcpIcon && serverRunning !== undefined
+  // visionRunning is still consumed by callers but no longer gates the
+  // dot rendering -- kept in the signature for future per-tool status
+  // indicators on the Conductor MCP page.
+  void visionRunning
 
   const title = isCollapsed
     ? item.label
@@ -165,12 +179,12 @@ function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMe
           }}
         />
       )}
-      {isVisionActive && (
+      {showServerDot && (
         <span
           className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full"
           style={{
-            backgroundColor: visionConnected ? '#A6E3A1' : '#F38BA8',
-            boxShadow: `0 0 6px 2px ${visionConnected ? '#A6E3A160' : '#F38BA860'}`,
+            backgroundColor: serverRunning ? '#A6E3A1' : '#F38BA8',
+            boxShadow: `0 0 6px 2px ${serverRunning ? '#A6E3A160' : '#F38BA860'}`,
           }}
         />
       )}
@@ -178,7 +192,7 @@ function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMe
   )
 }
 
-export default function SidebarNav({ currentView, onViewChange, insightsStatus, insightsMessage, cloudAgentRunning, visionRunning, visionConnected, collapsed, onShowHelp }: SidebarNavProps) {
+export default function SidebarNav({ currentView, onViewChange, insightsStatus, insightsMessage, cloudAgentRunning, visionRunning, serverRunning, collapsed, onShowHelp }: SidebarNavProps) {
   const helpButton = onShowHelp ? (
     <button
       onClick={onShowHelp}
@@ -215,7 +229,7 @@ export default function SidebarNav({ currentView, onViewChange, insightsStatus, 
             insightsMessage={insightsMessage}
             cloudAgentRunning={cloudAgentRunning}
             visionRunning={visionRunning}
-            visionConnected={visionConnected}
+            serverRunning={serverRunning}
             isCollapsed
           />
         ))}
@@ -236,7 +250,7 @@ export default function SidebarNav({ currentView, onViewChange, insightsStatus, 
           insightsMessage={insightsMessage}
           cloudAgentRunning={cloudAgentRunning}
           visionRunning={visionRunning}
-          visionConnected={visionConnected}
+          serverRunning={serverRunning}
           isCollapsed={false}
         />
       ))}

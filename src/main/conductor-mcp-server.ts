@@ -26,8 +26,12 @@ import * as os from 'os'
 import { logInfo, logError } from './debug-logger'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import { injectConductorVisionInCodexConfig, removeConductorVisionFromCodexConfig } from './providers/codex/mcp-config'
-import { getGlobalManager } from './vision-manager'
+import { getGlobalManager, startGlobalVision } from './vision-manager'
 import type { VisionCommand, VisionResult } from './vision-manager'
+import { readConfig } from './config-manager'
+import { isPackagedApp } from './update-watcher'
+import { resolveCdpPort, CDP_PORT_PROD } from '../shared/cdp-ports'
+import type { GlobalVisionConfig } from '../shared/types'
 
 /** P6.9: Parse the `source` query string from the SSE request URL.
  *  The Codex TOML writer appends `?source=codex` so the server can skip
@@ -573,16 +577,23 @@ export function resetConductorMcpPort(): void {
 export async function startBrowserAtBoot(
   getWindow: () => import('electron').BrowserWindow | null,
 ): Promise<void> {
-  const { readConfig } = await import('./config-manager')
-  const { startGlobalVision } = await import('./vision-manager')
-  const visionConfig = readConfig<import('../shared/types').GlobalVisionConfig>('visionGlobal') ?? {
+  const visionConfig = readConfig<GlobalVisionConfig>('visionGlobal') ?? {
     enabled: true,
     browser: 'chrome',
-    debugPort: 9222,
+    debugPort: CDP_PORT_PROD,
     headless: true,
   }
   // P7.3: enabled flag is no longer a gate. We pass the rest of the
   // config (browser type, debugPort, headless, optional url) to
   // startGlobalVision; the enabled field is ignored.
-  await startGlobalVision({ ...visionConfig, enabled: true }, getWindow)
+  // P7.7: override config.debugPort with the resolved CDP port so dev
+  // mode binds 9322 instead of colliding with production's 9222. The
+  // legacy debugPort field on saved configs is ignored. Removed dynamic
+  // imports because both modules are statically imported elsewhere,
+  // causing a vite "dynamic + static" warning. vi.mock hoists either way.
+  await startGlobalVision({
+    ...visionConfig,
+    enabled: true,
+    debugPort: resolveCdpPort(isPackagedApp()),
+  }, getWindow)
 }

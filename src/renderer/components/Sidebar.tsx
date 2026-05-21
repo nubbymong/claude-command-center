@@ -76,7 +76,11 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
   const insightsMessage = useInsightsStore((s) => s.statusMessage)
   const cloudAgentRunning = useCloudAgentStore((s) => s.agents.filter(a => a.status === 'running' || a.status === 'pending').length)
   const visionRunning = useConductorMcpStore((s) => s.browserRunning)
-  const visionConnected = useConductorMcpStore((s) => s.browserConnected)
+  // P7.7: sidebar dot now reflects MCP server health (the per-task reviewer
+  // missed that visionConnected gated the dot on browser CDP attach instead
+  // of server liveness, leaving the dot red until Chrome handshake completed
+  // even though the MCP HTTP listener was up).
+  const serverRunning = useConductorMcpStore((s) => s.serverRunning)
   const [showNewDialog, setShowNewDialog] = useState(false)
   const [editingConfig, setEditingConfig] = useState<TerminalConfig | null>(null)
   const [updateAvailable, setUpdateAvailable] = useState(false)
@@ -533,7 +537,7 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
           insightsMessage={insightsMessage}
           cloudAgentRunning={cloudAgentRunning}
           visionRunning={visionRunning}
-          visionConnected={visionConnected}
+          serverRunning={serverRunning}
           collapsed
           onShowHelp={onShowHelp}
         />
@@ -593,7 +597,7 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
         insightsMessage={insightsMessage}
         cloudAgentRunning={cloudAgentRunning}
         visionRunning={visionRunning}
-        visionConnected={visionConnected}
+        serverRunning={serverRunning}
         onShowHelp={onShowHelp}
       />
 
