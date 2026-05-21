@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
+import { getConductorMcpPort } from '../conductor-mcp-server'
 
 /**
  * Path to the local-session settings file. Mirrors the SSH remote layout
@@ -47,6 +48,23 @@ export function writeLocalSessionSettings(sessionId: string): string {
   // `hooks` key afterwards. `statusLine` and `mcpServers` are already
   // copied verbatim, so the user's existing config is preserved exactly.
   const sesCfg: Record<string, unknown> = { ...shared }
+
+  // P7.2: Overwrite the conductor-vision MCP URL to this CCC instance's
+  // actual port. The user's global ~/.claude/settings.json may still
+  // reference the production default (19333), but a dev-mode CCC instance
+  // binds 19433 and writes per-session settings pointing there. Other
+  // mcpServers entries are preserved verbatim.
+  const instancePort = getConductorMcpPort()
+  if (instancePort > 0 && sesCfg.mcpServers && typeof sesCfg.mcpServers === 'object') {
+    const servers = sesCfg.mcpServers as Record<string, unknown>
+    const cv = servers['conductor-vision']
+    if (cv && typeof cv === 'object') {
+      servers['conductor-vision'] = {
+        ...(cv as Record<string, unknown>),
+        url: `http://localhost:${instancePort}/sse`,
+      }
+    }
+  }
 
   const sesPath = getLocalSessionSettingsPath(sessionId)
   // Atomic write — tmp + rename so a crash mid-write can't leave the

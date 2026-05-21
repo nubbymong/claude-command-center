@@ -18,7 +18,11 @@ export interface GlobalVisionConfig {
   enabled: boolean
   browser: 'chrome' | 'edge'
   debugPort: number     // CDP port, default 9222
-  mcpPort: number       // MCP SSE server port, default 19333
+  /** @deprecated P7.2: port is now resolved from build mode via
+   *  resolveConductorMcpPort(isPackagedApp()). Field is ignored on load
+   *  and not written on save. Retained on the type for back-compat with
+   *  existing user configs that have it set. Remove in v1.6. */
+  mcpPort?: number
   url?: string
   headless?: boolean    // default true
 }

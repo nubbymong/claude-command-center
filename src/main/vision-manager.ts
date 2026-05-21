@@ -491,7 +491,9 @@ export function getGlobalVisionStatus(): { running: boolean; connected: boolean;
     running: true,
     connected: globalManager.isConnected(),
     browser: globalManager.getBrowser(),
-    mcpPort: globalConfig.mcpPort
+    // P7.2: mcpPort is now resolved per build mode -- read from the
+    // conductor-mcp-server runtime, not the deprecated config field.
+    mcpPort: getConductorMcpPort()
   }
 }
 

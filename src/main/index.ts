@@ -52,6 +52,7 @@ import { startConductorMcpServer, stopConductorMcpServer } from './conductor-mcp
 import { readConfig } from './config-manager'
 import { loadCredential, saveCredential, deleteCredential } from './credential-store'
 import type { GlobalVisionConfig } from '../shared/types'
+import { resolveConductorMcpPort } from '../shared/mcp-ports'
 
 import { migrateRegistryKeys } from './registry'
 import { installGlobalErrorHandlers, logInfo, logError, closeDebugLogger } from './debug-logger'
@@ -664,7 +665,12 @@ if (!gotTheLock) {
     // tool is available for image transfer (snap, storyboard, clipboard paste)
     // in BOTH local and SSH sessions, regardless of whether browser vision is enabled.
     const visionConfig = readConfig<GlobalVisionConfig>('visionGlobal')
-    const mcpPort = visionConfig?.mcpPort || 19333
+    // P7.2: resolve port from build mode (dev binds 19433, prod 19333) so dev
+    // + prod can coexist on the same machine without EADDRINUSE. The
+    // visionConfig.mcpPort field is now deprecated and ignored -- per-session
+    // settings rewrite the mcpServers URL to this instance's actual port
+    // (see per-session-settings.ts).
+    const mcpPort = resolveConductorMcpPort(isPackagedApp())
     startConductorMcpServer(mcpPort).catch(err => {
       logError(`[main] Conductor MCP server startup failed: ${err?.message}`)
     })

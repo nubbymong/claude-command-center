@@ -244,8 +244,8 @@ export interface ElectronAPI {
     stop: () => Promise<{ ok: boolean }>
     status: () => Promise<{ running: boolean; connected: boolean; browser: string; mcpPort: number }>
     launch: (browser: string, debugPort: number, url?: string, headless?: boolean) => Promise<{ ok: boolean; pid?: number; command?: string; error?: string }>
-    saveConfig: (config: { enabled: boolean; browser: 'chrome' | 'edge'; debugPort: number; mcpPort: number; url?: string; headless?: boolean }) => Promise<{ ok: boolean }>
-    getConfig: () => Promise<{ enabled: boolean; browser: 'chrome' | 'edge'; debugPort: number; mcpPort: number; url?: string; headless?: boolean } | null>
+    saveConfig: (config: { enabled: boolean; browser: 'chrome' | 'edge'; debugPort: number; mcpPort?: number; url?: string; headless?: boolean }) => Promise<{ ok: boolean }>
+    getConfig: () => Promise<{ enabled: boolean; browser: 'chrome' | 'edge'; debugPort: number; mcpPort?: number; url?: string; headless?: boolean } | null>
     onStatusChanged: (callback: (data: { connected: boolean; browser: string; mcpPort: number }) => void) => () => void
   }
   legacyVersion: {
