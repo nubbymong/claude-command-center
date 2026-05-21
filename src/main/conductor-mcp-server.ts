@@ -26,7 +26,7 @@ import * as os from 'os'
 import { logInfo, logError } from './debug-logger'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import { injectConductorVisionInCodexConfig, removeConductorVisionFromCodexConfig } from './providers/codex/mcp-config'
-import { getGlobalManager, startGlobalVision } from './vision-manager'
+import { getGlobalManager, startGlobalVision, launchBrowser } from './vision-manager'
 import type { VisionCommand, VisionResult } from './vision-manager'
 import { readConfig } from './config-manager'
 import { isPackagedApp } from './update-watcher'
@@ -571,6 +571,12 @@ export function resetConductorMcpPort(): void {
  * advertised but unavailable" at session start because the user
  * hadn't clicked Launch Chrome yet.
  *
+ * P7.7.1: Actually spawn Chrome (headless). Previously this only
+ * initialized the CDP heartbeat without launching the browser, so
+ * the UI sat at "Browser launching..." indefinitely. We now spawn
+ * Chrome via launchBrowser BEFORE startGlobalVision so the
+ * VisionManager's heartbeat attaches to a real debug server.
+ *
  * Users who want vision off can click Stop in the Vision sub-tool
  * card; restart of CCC re-enables it.
  */
@@ -583,17 +589,20 @@ export async function startBrowserAtBoot(
     debugPort: CDP_PORT_PROD,
     headless: true,
   }
-  // P7.3: enabled flag is no longer a gate. We pass the rest of the
-  // config (browser type, debugPort, headless, optional url) to
-  // startGlobalVision; the enabled field is ignored.
   // P7.7: override config.debugPort with the resolved CDP port so dev
   // mode binds 9322 instead of colliding with production's 9222. The
-  // legacy debugPort field on saved configs is ignored. Removed dynamic
-  // imports because both modules are statically imported elsewhere,
-  // causing a vite "dynamic + static" warning. vi.mock hoists either way.
+  // legacy debugPort field on saved configs is ignored.
+  const debugPort = resolveCdpPort(isPackagedApp())
+  const browser = visionConfig.browser ?? 'chrome'
+  const headless = visionConfig.headless !== false
+  try {
+    launchBrowser(browser, debugPort, visionConfig.url, headless)
+  } catch (err) {
+    logError(`[vision] Browser spawn at boot failed: ${(err as Error)?.message}. Heartbeat will retry if browser becomes reachable.`)
+  }
   await startGlobalVision({
     ...visionConfig,
     enabled: true,
-    debugPort: resolveCdpPort(isPackagedApp()),
+    debugPort,
   }, getWindow)
 }
