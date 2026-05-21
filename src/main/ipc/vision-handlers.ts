@@ -1,6 +1,8 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { startGlobalVision, stopGlobalVision, getGlobalVisionStatus, launchBrowser, tryReconnectGlobalVision } from '../vision-manager'
 import { readConfig, writeConfig } from '../config-manager'
+import { isPackagedApp } from '../update-watcher'
+import { resolveCdpPort } from '../../shared/cdp-ports'
 import type { GlobalVisionConfig } from '../../shared/types'
 
 export function registerVisionHandlers(getWindow: () => BrowserWindow | null): void {
@@ -24,8 +26,15 @@ export function registerVisionHandlers(getWindow: () => BrowserWindow | null): v
     return getGlobalVisionStatus()
   })
 
-  ipcMain.handle('vision:launch', async (_event, browser: 'chrome' | 'edge', debugPort: number, url?: string, headless: boolean = true) => {
+  ipcMain.handle('vision:launch', async (_event, browser: 'chrome' | 'edge', _debugPort: number, url?: string, headless: boolean = true) => {
     try {
+      // P7.7.12: ignore the renderer-provided debugPort and resolve it main-
+      // side. A stale saved config (e.g. debugPort=9222 from before the P7.7
+      // CDP split) would otherwise defeat the dev/prod separation -- dev mode
+      // would launch Chrome on 9222 and either collide with a running prod
+      // CCC or attach back to its browser. The resolver is the single source
+      // of truth for the CDP port; the renderer's value is now advisory only.
+      const debugPort = resolveCdpPort(isPackagedApp())
       const result = launchBrowser(browser, debugPort, url, headless)
       tryReconnectGlobalVision()
       return { ok: true, ...result }

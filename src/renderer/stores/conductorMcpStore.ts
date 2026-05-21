@@ -50,6 +50,11 @@ export const useConductorMcpStore = create<ConductorMcpState>((set, get) => ({
   launchBrowser: async () => {
     set({ error: null })
     const { visionConfig } = get()
+    // P7.7.12: debugPort is value-ignored main-side -- the IPC handler resolves
+    // it via resolveCdpPort(isPackagedApp()) so a stale saved config can't
+    // defeat the dev/prod CDP-port split. The argument stays in the call to
+    // preserve the IPC signature; do not add UI controls for visionConfig.debugPort
+    // without re-enabling the handler-side use too.
     const result = await window.electronAPI.vision.launch(
       visionConfig.browser,
       visionConfig.debugPort,

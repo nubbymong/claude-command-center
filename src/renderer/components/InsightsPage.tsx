@@ -3,6 +3,7 @@ import { useInsightsStore } from '../stores/insightsStore'
 import { useTokenomicsStore } from '../stores/tokenomicsStore'
 import KpiSidebar from './KpiSidebar'
 import type { InsightsData } from '../types/electron'
+import type { TokenomicsSessionRecord } from '../../shared/types'
 import PageFrame from './PageFrame'
 
 // Comprehensive dark theme CSS for platform v9 aesthetic
@@ -269,12 +270,12 @@ export default function InsightsPage() {
   // Codex-only empty state: user has Codex sessions but no Claude sessions.
   // Insights are Claude-only -- show an explanatory message rather than the
   // generic first-run UI, which would be confusing for Codex-only users.
-  const sessionValues = Object.values(tokenomicsSessions)
+  const sessionValues = Object.values(tokenomicsSessions) as TokenomicsSessionRecord[]
   const hasAnyClaude = sessionValues.some(
-    (rec: any) => (rec?.provider ?? 'claude') === 'claude',
+    (rec) => (rec?.provider ?? 'claude') === 'claude',
   )
   const hasAnyCodex = sessionValues.some(
-    (rec: any) => rec?.provider === 'codex',
+    (rec) => rec?.provider === 'codex',
   )
   if (!hasAnyClaude && hasAnyCodex) {
     return (

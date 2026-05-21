@@ -128,10 +128,15 @@ class VisionManager {
   private notifyStatusChange(): void {
     const win = this.getWindow?.()
     if (!win || win.isDestroyed()) return
+    // P7.7.12: emit the RUNTIME conductor MCP port rather than the deprecated
+    // globalConfig.mcpPort field (which is often unset, causing the renderer
+    // store to reset mcpPort to 0 on every status change and the page to
+    // flicker back to "discovering"). getConductorMcpPort() reflects the
+    // actually-bound port (dev=19433 / prod=19333 / 0 if not yet bound).
     win.webContents.send('vision:statusChanged', {
       connected: this.connected,
       browser: this.browser,
-      mcpPort: globalConfig?.mcpPort || 0
+      mcpPort: getConductorMcpPort(),
     })
   }
 
