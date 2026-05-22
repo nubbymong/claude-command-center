@@ -7,7 +7,7 @@
 import { join } from 'path'
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, unlinkSync, readdirSync, copyFileSync, rmSync, statSync } from 'fs'
 import { getResourcesDirectory } from './ipc/setup-handlers'
-import { logInfo, logError } from './debug-logger'
+import { logInfo, logError, logWarn } from './debug-logger'
 
 // All config file names
 const CONFIG_FILES = {
@@ -256,9 +256,17 @@ function migrateConfigsToProviderShape(data: Record<string, unknown>): void {
     migrated.push(out)
   }
   if (dirty) {
-    data.configs = migrated
-    writeConfig('configs', migrated)
-    logInfo('[config-manager] Migrated configs.json to provider shape')
+    // P7.7.18: check writeConfig return before mutating in-memory data and
+    // before logging success. If the disk write fails, leave data.configs
+    // untouched so the next save attempt has a clean retry surface (and the
+    // in-memory state stays consistent with what callers see on disk).
+    const wrote = writeConfig('configs', migrated)
+    if (wrote) {
+      data.configs = migrated
+      logInfo('[config-manager] Migrated configs.json to provider shape')
+    } else {
+      logWarn('[config-manager] Provider-shape migration computed but disk write failed; leaving in-memory data unchanged for retry on next save')
+    }
   }
 }
 

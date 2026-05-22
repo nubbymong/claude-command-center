@@ -412,24 +412,14 @@ function createWindow(): void {
 
   // Session state persistence IPC handlers
   ipcMain.handle('session:save', async (_event, state: SessionState) => {
-    // Diagnostic for issue #280: log GitHub integration shape on every
-    // session-state save. Goes through logInfo so production users get the
-    // trail in app.log too (console.log alone is dev-only). Remove once
-    // root cause is found.
-    const ghSnapshot = state.sessions?.map((s: any) => ({ id: s.id, gh: s.githubIntegration })) ?? []
-    logInfo(`[gh-integration #280] main: session:save received ${JSON.stringify({ ghSnapshot })}`)
     return saveSessionState(state)
   })
 
   ipcMain.handle('session:load', async () => {
-    const loaded = loadSessionState()
-    const ghSnapshot = loaded?.sessions?.map((s: any) => ({ id: s.id, gh: s.githubIntegration })) ?? null
-    logInfo(`[gh-integration #280] main: session:load returning ${JSON.stringify({ ghSnapshot })}`)
-    return loaded
+    return loadSessionState()
   })
 
   ipcMain.handle('session:clear', async () => {
-    logInfo('[gh-integration #280] main: session:clear called -- session-state.json being deleted')
     return clearSessionState()
   })
 
