@@ -7,8 +7,20 @@ import { runCodexStreaming, readCodexAuthStatus } from './providers/codex/auth'
 import { recordReview } from './codex-review-usage'
 import { logInfo } from './debug-logger'
 
-const REVIEW_TIMEOUT_MS = 5 * 60 * 1000  // 5 minutes
+const REVIEW_TIMEOUT_MS = 5 * 60 * 1000  // 5 minutes (default)
 const MAX_DIFF_BYTES = 50 * 1024  // 50 KB
+// P7.7.15: timeoutSeconds bounds. Floor at 30s so a misconfigured request
+// can't render the tool unusable (cold-start spawn alone takes >5s on
+// Windows); ceiling at 900s = 15 minutes to bound rate-limit + quota damage
+// from a runaway review on a huge diff.
+const TIMEOUT_SECONDS_MIN = 30
+const TIMEOUT_SECONDS_MAX = 900
+
+function formatTimeoutForMessage(ms: number): string {
+  if (ms < 60000) return `${Math.round(ms / 1000)} seconds`
+  const min = Math.round(ms / 60000)
+  return `${min} minute${min === 1 ? '' : 's'}`
+}
 
 export const codexReviewArgsSchema = z.object({
   // P7.7.10: cccSessionId is resolved server-side from the MCP SSE
@@ -21,6 +33,10 @@ export const codexReviewArgsSchema = z.object({
   range: z.string().optional(),
   paths: z.array(z.string().min(1)).optional(),
   focus: z.string().max(500).optional(),
+  // P7.7.15: optional caller override of the default 5-minute timeout.
+  // Useful for large diffs that overshoot the cold-start budget on
+  // mode='paths' with many files or mode='range' on multi-commit windows.
+  timeoutSeconds: z.number().int().min(TIMEOUT_SECONDS_MIN).max(TIMEOUT_SECONDS_MAX).optional(),
 }).superRefine((data, ctx) => {
   if (data.mode === 'range' && !data.range) {
     ctx.addIssue({ code: 'custom', message: 'range required when mode === "range"', path: ['range'] })
@@ -194,10 +210,12 @@ export async function runCodexReview(
   // drift or argv-construction regressions.
   logInfo('[codex-review] spawning: codex ' + argv.join(' '))
 
-  // 6. Spawn streaming
+  // 6. Spawn streaming. P7.7.15: honour caller-supplied timeoutSeconds when
+  // provided; zod already clamped it to [TIMEOUT_SECONDS_MIN, TIMEOUT_SECONDS_MAX].
+  const timeoutMs = args.timeoutSeconds != null ? args.timeoutSeconds * 1000 : REVIEW_TIMEOUT_MS
   let observed: TokenCountObserved | null = null
   const result = await runCodexStreaming(argv, {
-    timeoutMs: REVIEW_TIMEOUT_MS,
+    timeoutMs,
     cwd: resolvedCwd,
     onStdoutLine: (line: string) => {
       const parsedLine = parseTokenCountLine(line)
@@ -207,7 +225,7 @@ export async function runCodexReview(
 
   // 7. Error mapping
   if (result.timedOut) {
-    return { isError: true, text: 'Codex review timed out after 5 minutes. Try a smaller scope (e.g. mode: "paths").' }
+    return { isError: true, text: `Codex review timed out after ${formatTimeoutForMessage(timeoutMs)}. Try a smaller scope (e.g. mode: "paths") or raise timeoutSeconds (max ${TIMEOUT_SECONDS_MAX}).` }
   }
   if (result.code !== 0) {
     const excerpt = (result.stderr || '').slice(0, 500)
@@ -261,6 +279,7 @@ export function registerCodexReviewTool(
       range: zMod.string().optional().describe('Git range (e.g. "HEAD~1..HEAD") -- required when mode === "range"'),
       paths: zMod.array(zMod.string()).optional().describe('File paths -- required when mode === "paths"'),
       focus: zMod.string().max(500).optional().describe('Optional focus directive (e.g. "race conditions")'),
+      timeoutSeconds: zMod.number().int().min(30).max(900).optional().describe('Optional override of the default 5-minute timeout. Allowed range 30-900 seconds. Raise for large diffs that overshoot the default; lower for fast-fail experiments.'),
     },
     async (rawArgs: any) => {
       // Prefer the transport-bound session id; fall back to the LLM-supplied

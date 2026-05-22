@@ -215,6 +215,50 @@ describe('codex_review tool', () => {
     expect(result.text).toContain('timed out')
   })
 
+  // P7.7.15 -- timeoutSeconds caller override.
+  it('honours caller-supplied timeoutSeconds (passes timeoutMs = seconds * 1000)', async () => {
+    let capturedOpts: any = null
+    runCodexStreaming.mockImplementation(async (_args: string[], opts: any) => {
+      capturedOpts = opts
+      const i = _args.indexOf('--output-last-message')
+      writeFileSync(_args[i + 1], 'ok', 'utf-8')
+      return { code: 0, stderr: '', timedOut: false }
+    })
+    await runCodexReview(
+      { cccSessionId: 'sess-allowed', mode: 'working', timeoutSeconds: 120 },
+      optedIn, gitCwd,
+    )
+    expect(capturedOpts?.timeoutMs).toBe(120000)
+  })
+
+  it('defaults to 5-minute timeoutMs when timeoutSeconds is unset', async () => {
+    let capturedOpts: any = null
+    runCodexStreaming.mockImplementation(async (_args: string[], opts: any) => {
+      capturedOpts = opts
+      const i = _args.indexOf('--output-last-message')
+      writeFileSync(_args[i + 1], 'ok', 'utf-8')
+      return { code: 0, stderr: '', timedOut: false }
+    })
+    await runCodexReview(
+      { cccSessionId: 'sess-allowed', mode: 'working' },
+      optedIn, gitCwd,
+    )
+    expect(capturedOpts?.timeoutMs).toBe(5 * 60 * 1000)
+  })
+
+  it('timeout error message reflects the actual configured timeout', async () => {
+    runCodexStreaming.mockImplementation(async () => ({
+      code: -1, stderr: '', timedOut: true,
+    }))
+    const result = await runCodexReview(
+      { cccSessionId: 'sess-allowed', mode: 'working', timeoutSeconds: 45 },
+      optedIn, gitCwd,
+    )
+    expect(result.isError).toBe(true)
+    expect(result.text).toContain('45 seconds')
+    expect(result.text).toContain('timeoutSeconds')
+  })
+
   it('returns non-zero exit error with stderr excerpt', async () => {
     runCodexStreaming.mockImplementation(async () => ({
       code: 2, stderr: 'codex: rate-limit window exhausted; resets in 47 minutes\n', timedOut: false,
@@ -333,6 +377,8 @@ describe('registerCodexReviewTool resolver (P7.7.10 transport binding)', () => {
     string: () => ({ describe: () => ({}), optional: () => ({ describe: () => ({}) }), max: () => ({ optional: () => ({ describe: () => ({}) }) }) }),
     enum: () => ({ describe: () => ({}) }),
     array: () => ({ optional: () => ({ describe: () => ({}) }) }),
+    // P7.7.15: timeoutSeconds schema -- number().int().min().max().optional().describe()
+    number: () => ({ int: () => ({ min: () => ({ max: () => ({ optional: () => ({ describe: () => ({}) }) }) }) }) }),
   }
   let optedInSet: Set<string>
   let sessionCwds: Map<string, string>
