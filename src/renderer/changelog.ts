@@ -15,7 +15,7 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
-    version: '1.5.0',
+    version: '1.5.1',
     date: '2026-05-08',
     highlights: "Codex provider, mega release",
     changes: [
