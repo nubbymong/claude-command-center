@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS-blue" alt="Platform" />
   <img src="https://img.shields.io/badge/electron-33-47848F?logo=electron" alt="Electron" />
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License" />
-  <a href="../../actions"><img src="https://img.shields.io/badge/tests-740%20passing-success" alt="Tests" /></a>
+  <a href="../../actions"><img src="https://img.shields.io/badge/tests-passing-success" alt="Tests" /></a>
 </p>
 
 <p align="center">
@@ -303,7 +303,7 @@ Don't trust the installer? Build it yourself &mdash; the source is identical to 
 git clone https://github.com/nubbymong/claude-command-center.git
 cd claude-command-center
 npm install
-npx vitest run       # 740 unit tests should pass
+npx vitest run       # unit suite
 npm run dev          # Development with hot reload
 npm run build        # Production build
 ```
@@ -333,7 +333,7 @@ Every release also includes `CHECKSUMS.txt` (SHA256) and is scanned by [VirusTot
 | Build | electron-vite |
 | MCP | `@modelcontextprotocol/sdk` |
 | Diagramming | Excalidraw |
-| Tests | Vitest (855 unit + Playwright E2E) |
+| Tests | Vitest unit + Playwright E2E |
 
 The app runs a frameless Electron window with a React renderer. Each Claude session spawns a PTY process via `node-pty`. The Conductor MCP server (vision, codex_review, host transfer) runs locally and Claude Code discovers it via `~/.claude.json`; CCC-spawned sessions also get a per-session `--mcp-config` override at `~/.claude/mcp-<sid>.json`. SSH sessions get a reverse tunnel to the MCP server automatically.
 

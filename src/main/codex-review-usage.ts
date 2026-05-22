@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync, existsSync, renameSync, unlinkSync, copyFileSync } from 'fs'
+import { mkdirSync, readFileSync, writeFileSync, existsSync, renameSync, unlinkSync } from 'fs'
 import { join } from 'path'
 import { logError } from './debug-logger'
 import { getResourcesDirectory } from './ipc/setup-handlers'
@@ -50,19 +50,19 @@ function saveShard(): void {
     const dir = join(getResourcesDirectory(), 'tokenomics')
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
     shard.lastUpdated = Date.now()
-    // Atomic write: tmp file + copyFileSync/renameSync. Mirrors the
-    // tokenomics-manager saveData pattern -- a crash mid-write must not leave
-    // the shard truncated and break Tokenomics' best-effort load path.
+    // Atomic-replace: tmp file + renameSync. fs.renameSync is atomic on
+    // POSIX (rename(2)) and on Windows via MoveFileExW with REPLACE_EXISTING,
+    // regardless of whether the destination exists. A crash mid-write leaves
+    // the previous shard intact, never a partially-written one.
+    //
+    // P7.7.16: the earlier existsSync/copyFileSync branch was NOT atomic --
+    // copyFileSync truncates the destination in-place. Copilot caught this
+    // on the P7.7.14 review.
     const filePath = shardPath()
     const tmpPath = `${filePath}.tmp.${process.pid}`
     writeFileSync(tmpPath, JSON.stringify(shard, null, 2), 'utf-8')
     try {
-      if (existsSync(filePath)) {
-        copyFileSync(tmpPath, filePath)
-        try { unlinkSync(tmpPath) } catch { /* ignore */ }
-      } else {
-        renameSync(tmpPath, filePath)
-      }
+      renameSync(tmpPath, filePath)
     } catch (renameErr: any) {
       try { unlinkSync(tmpPath) } catch { /* ignore */ }
       logError('[codex-review-usage] shard rename failed:', renameErr?.message)

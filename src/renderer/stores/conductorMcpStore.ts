@@ -30,7 +30,12 @@ const DEFAULT_CONFIG: GlobalVisionConfig = {
 }
 
 export const useConductorMcpStore = create<ConductorMcpState>((set, get) => ({
-  serverRunning: true, // P7.3: MCP server is always running
+  // P7.7.16: serverRunning is derived from mcpPort > 0 rather than hardcoded
+  // true. The MCP listener is *intended* to be always running after boot
+  // (P7.3), but EADDRINUSE or a startMcpServer error can leave it un-bound;
+  // SidebarNav's dot should not lie in those cases. Initial false until the
+  // first fetchStatus / handleStatusChanged confirms a real port.
+  serverRunning: false,
   mcpPort: 0,
   visionConfig: { ...DEFAULT_CONFIG },
   browserRunning: false,
@@ -76,16 +81,22 @@ export const useConductorMcpStore = create<ConductorMcpState>((set, get) => ({
   fetchStatus: async () => {
     const status = await window.electronAPI.vision.status()
     if (status) {
+      const port = status.mcpPort || 0
       set({
         browserRunning: status.running,
         browserConnected: status.connected,
-        mcpPort: status.mcpPort || 0,
+        mcpPort: port,
+        serverRunning: port > 0,
       })
     }
   },
 
   handleStatusChanged: (data) => {
-    set({ browserConnected: data.connected, mcpPort: data.mcpPort })
+    set({
+      browserConnected: data.connected,
+      mcpPort: data.mcpPort,
+      serverRunning: data.mcpPort > 0,
+    })
   },
 }))
 
