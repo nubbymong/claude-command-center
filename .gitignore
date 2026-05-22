@@ -15,6 +15,8 @@ dist/
 docs/superpowers/
 USER/
 memory/
+.pr30-body.md
+.pr*-body.md
 
 # Build cache
 *.tsbuildinfo
