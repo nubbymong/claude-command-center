@@ -418,11 +418,12 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
 
       // Health check endpoint
       if (req.method === 'GET' && req.url === '/health') {
+        const vm = getVisionManager()
         res.writeHead(200, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({
           ok: true,
-          connected: visionManager.isConnected(),
-          browser: visionManager.getBrowser(),
+          connected: vm?.isConnected() ?? false,
+          browser: vm?.getBrowser() ?? null,
           sessions: transports.size
         }))
         return
