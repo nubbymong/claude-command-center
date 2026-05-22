@@ -22,8 +22,13 @@ export default function ConductorMcpPage() {
     </svg>
   )
 
+  // P7.7.19: serverRunning is derived from `mcpPort > 0` (see
+  // conductorMcpStore P7.7.16 fix), so the `|| 'discovering'` fallback in
+  // the running branch is unreachable; dropped. Pre-fetch indeterminate
+  // state falls into 'Stopped' because the renderer can't observe a bound
+  // server until the first status push arrives.
   const statusLabel = serverRunning
-    ? `Running -- port ${mcpPort || 'discovering'}`
+    ? `Running -- port ${mcpPort}`
     : 'Stopped'
 
   return (

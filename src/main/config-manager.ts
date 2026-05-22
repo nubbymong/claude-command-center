@@ -233,9 +233,19 @@ export function migrateConfigToProviderShape(cfg: any): any {
       if (field in out && out[field] !== undefined && claudeOptions[field] === undefined) {
         claudeOptions[field] = out[field]
       }
-      delete out[field]
     }
     out.claudeOptions = claudeOptions
+  }
+  // P7.7.19: strip legacy Claude fields regardless of provider so codex
+  // configs with stale Claude keys converge. On Claude configs they've
+  // been copied to claudeOptions above; on Codex configs they're orphan
+  // cruft (Codex reads codexOptions only). Either way, removing them now
+  // ensures migrateConfigsToProviderShape's dirty flag stops firing on
+  // subsequent boots; otherwise configs.json would be rewritten with the
+  // same shape every boot (CLAUDE_FIELDS.some(f => f in c) stays true
+  // even though no work needed doing).
+  for (const field of CLAUDE_FIELDS) {
+    delete out[field]
   }
   return out
 }
