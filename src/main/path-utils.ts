@@ -11,6 +11,9 @@ export function resolveCwd(cwd: string | undefined): string {
   if (cwd.startsWith('~/') || cwd.startsWith('~\\')) {
     return path.join(os.homedir(), cwd.slice(2))
   }
-  // Resolve any relative paths to absolute (prevents using Electron's process.cwd())
+  // Pass absolute paths through; resolve relative paths against process.cwd().
+  // The empty / '.' / '~' cases above are intentionally redirected to homedir()
+  // so callers passing those values don't accidentally land in Electron's
+  // main-process cwd (the resources directory in packaged builds).
   return path.resolve(cwd)
 }

@@ -283,10 +283,10 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: '👁 Give Claude a browser to drive',
         title: 'Vision System',
-        body: '**Vision** gives Claude a real browser it can control: screenshot, navigate, click, type, scroll, evaluate JS. Perfect for testing web apps, scraping docs, or just showing Claude what\'s on screen.\n\nClick the **eye icon** in the sidebar and press Start. It runs a local MCP server on `127.0.0.1:19333` (localhost only) and 17 tools become available to every Claude session automatically.\n\nThe MCP server is registered in `~/.claude.json` under `mcpServers.conductor`. CCC-spawned sessions also get a per-session override written to `~/.claude/mcp-<sid>.json` and passed via `--mcp-config`. When you stop Vision, the global entry is cleanly removed.',
-        actionLabel: 'Open Vision',
+        body: '**Vision** gives Claude a real browser it can control: screenshot, navigate, click, type, scroll, evaluate JS. Perfect for testing web apps, scraping docs, or just showing Claude what\'s on screen.\n\nOpen the **Conductor MCP** entry in the sidebar and click **Start Browser** under the Vision sub-tool card. The Conductor MCP server itself is always running, so the button just launches a headless Chrome/Edge that Claude can drive via CDP.\n\nThe MCP server is registered in `~/.claude.json` under `mcpServers.conductor`. CCC-spawned sessions also get a per-session override written to `~/.claude/mcp-<sid>.json` and passed via `--mcp-config`. When you stop the browser, the MCP server stays up so the other sub-tools (codex_review, host transfer) remain available.',
+        actionLabel: 'Open Conductor MCP',
         actionTarget: 'vision',
-        focusHint: 'Sidebar — eye icon',
+        focusHint: 'Sidebar -- Conductor MCP',
       },
     },
   },

@@ -23,6 +23,7 @@ describe('provider types', () => {
   it('SshCapableProvider extends SessionProvider with SSH methods', () => {
     expectTypeOf<SshCapableProvider>().toMatchTypeOf<SessionProvider>()
     expectTypeOf<SshCapableProvider>().toHaveProperty('getSshSettingsPath')
+    expectTypeOf<SshCapableProvider>().toHaveProperty('getSshMcpConfigPath')
     expectTypeOf<SshCapableProvider>().toHaveProperty('configureRemoteSettings')
   })
 })

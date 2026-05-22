@@ -5,7 +5,7 @@
  */
 
 import { join } from 'path'
-import { readFileSync, writeFileSync, existsSync, unlinkSync } from 'fs'
+import { readFileSync, writeFileSync, existsSync, unlinkSync, renameSync, copyFileSync } from 'fs'
 import { getConfigDir, ensureConfigDir, migrateConfigToProviderShape } from './config-manager'
 import { logInfo, logError } from './debug-logger'
 import type { SavedSession, SessionState } from '../shared/types'
@@ -16,9 +16,31 @@ export type { SavedSession, SessionState }
 // Mirrors CLAUDE_FIELDS in config-manager.ts for the SavedSession case.
 const LEGACY_CLAUDE_FIELDS = ['model', 'effortLevel', 'legacyVersion', 'disableAutoMemory', 'flickerFree', 'powershellTool', 'agentIds'] as const
 
-// Lazy getter — can't call getConfigDir() at module load time
+// Lazy getter -- can't call getConfigDir() at module load time
 function getSessionStateFile(): string {
   return join(getConfigDir(), 'session-state.json')
+}
+
+/**
+ * Atomic write helper for session-state.json. Mirrors tokenomics-manager's
+ * saveData pattern: write to a per-pid tmp file, then copyFileSync/renameSync
+ * onto the final path so a crash mid-write cannot corrupt the file (which
+ * holds every restored-on-restart session record).
+ */
+function atomicWriteSessionState(filePath: string, state: SessionState): void {
+  const tmpPath = `${filePath}.tmp.${process.pid}`
+  writeFileSync(tmpPath, JSON.stringify(state, null, 2))
+  try {
+    if (existsSync(filePath)) {
+      copyFileSync(tmpPath, filePath)
+      try { unlinkSync(tmpPath) } catch { /* ignore */ }
+    } else {
+      renameSync(tmpPath, filePath)
+    }
+  } catch (renameErr) {
+    try { unlinkSync(tmpPath) } catch { /* ignore */ }
+    throw renameErr
+  }
 }
 
 /**
@@ -27,7 +49,7 @@ function getSessionStateFile(): string {
 export function saveSessionState(state: SessionState): boolean {
   try {
     ensureConfigDir()
-    writeFileSync(getSessionStateFile(), JSON.stringify(state, null, 2))
+    atomicWriteSessionState(getSessionStateFile(), state)
     logInfo(`[session-state] Saved ${state.sessions.length} sessions`)
     return true
   } catch (err) {
@@ -66,7 +88,7 @@ export function loadSessionState(): SessionState | null {
     if (dirty) {
       state.sessions = migratedSessions
       try {
-        writeFileSync(getSessionStateFile(), JSON.stringify(state, null, 2))
+        atomicWriteSessionState(getSessionStateFile(), state)
         logInfo('[session-state] Migrated sessions to provider shape')
       } catch (writeErr) {
         logError(`[session-state] migration write failed; in-memory state preserved: ${(writeErr as Error)?.message ?? writeErr}`)

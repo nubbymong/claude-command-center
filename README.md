@@ -333,9 +333,9 @@ Every release also includes `CHECKSUMS.txt` (SHA256) and is scanned by [VirusTot
 | Build | electron-vite |
 | MCP | `@modelcontextprotocol/sdk` |
 | Diagramming | Excalidraw |
-| Tests | Vitest (740 unit + Playwright E2E) |
+| Tests | Vitest (855 unit + Playwright E2E) |
 
-The app runs a frameless Electron window with a React renderer. Each Claude session spawns a PTY process via `node-pty`. The Vision system runs a local MCP server that Claude Code discovers via `~/.claude/settings.json`. SSH sessions get a reverse tunnel to the MCP server automatically.
+The app runs a frameless Electron window with a React renderer. Each Claude session spawns a PTY process via `node-pty`. The Conductor MCP server (vision, codex_review, host transfer) runs locally and Claude Code discovers it via `~/.claude.json`; CCC-spawned sessions also get a per-session `--mcp-config` override at `~/.claude/mcp-<sid>.json`. SSH sessions get a reverse tunnel to the MCP server automatically.
 
 ---
 

@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'fs'
+import { mkdirSync, readFileSync, writeFileSync, existsSync, renameSync, unlinkSync, copyFileSync } from 'fs'
 import { join } from 'path'
 import { logError } from './debug-logger'
 import { getResourcesDirectory } from './ipc/setup-handlers'
@@ -50,7 +50,23 @@ function saveShard(): void {
     const dir = join(getResourcesDirectory(), 'tokenomics')
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
     shard.lastUpdated = Date.now()
-    writeFileSync(shardPath(), JSON.stringify(shard, null, 2), 'utf-8')
+    // Atomic write: tmp file + copyFileSync/renameSync. Mirrors the
+    // tokenomics-manager saveData pattern -- a crash mid-write must not leave
+    // the shard truncated and break Tokenomics' best-effort load path.
+    const filePath = shardPath()
+    const tmpPath = `${filePath}.tmp.${process.pid}`
+    writeFileSync(tmpPath, JSON.stringify(shard, null, 2), 'utf-8')
+    try {
+      if (existsSync(filePath)) {
+        copyFileSync(tmpPath, filePath)
+        try { unlinkSync(tmpPath) } catch { /* ignore */ }
+      } else {
+        renameSync(tmpPath, filePath)
+      }
+    } catch (renameErr: any) {
+      try { unlinkSync(tmpPath) } catch { /* ignore */ }
+      logError('[codex-review-usage] shard rename failed:', renameErr?.message)
+    }
   } catch (err: any) {
     logError('[codex-review-usage] shard write failed:', err?.message)
   }

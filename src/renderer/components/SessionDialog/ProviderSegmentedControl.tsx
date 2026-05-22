@@ -1,4 +1,4 @@
-import type { KeyboardEvent } from 'react'
+import { useRef, type KeyboardEvent } from 'react'
 import type { ProviderId } from '../../stores/configStore'
 
 interface Props {
@@ -9,6 +9,8 @@ interface Props {
 
 export function ProviderSegmentedControl({ value, onChange, sessionType }: Props) {
   const codexDisabled = sessionType === 'ssh'
+  const claudeBtnRef = useRef<HTMLButtonElement>(null)
+  const codexBtnRef = useRef<HTMLButtonElement>(null)
 
   const onKeyDown = (e: KeyboardEvent, current: ProviderId) => {
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
@@ -16,6 +18,10 @@ export function ProviderSegmentedControl({ value, onChange, sessionType }: Props
     const next: ProviderId = current === 'claude' ? 'codex' : 'claude'
     if (next === 'codex' && codexDisabled) return
     onChange(next)
+    // Roving tabIndex pattern: also move focus to the newly-selected radio,
+    // otherwise focus is stranded on the now-tabIndex=-1 button.
+    const target = next === 'claude' ? claudeBtnRef.current : codexBtnRef.current
+    target?.focus()
   }
 
   return (
@@ -23,6 +29,7 @@ export function ProviderSegmentedControl({ value, onChange, sessionType }: Props
       <label className="text-[10px] uppercase tracking-wider text-overlay1 font-medium">Provider</label>
       <div className="flex bg-crust rounded-md p-0.5" role="radiogroup" aria-label="Provider">
         <button
+          ref={claudeBtnRef}
           type="button"
           role="radio"
           aria-checked={value === 'claude'}
@@ -37,6 +44,7 @@ export function ProviderSegmentedControl({ value, onChange, sessionType }: Props
           Claude
         </button>
         <button
+          ref={codexBtnRef}
           type="button"
           role="radio"
           aria-checked={value === 'codex'}
