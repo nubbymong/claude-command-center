@@ -208,13 +208,30 @@ function saveData(data: TokenomicsData): void {
   try {
     ensureConfigDir()
     const filePath = getTokenomicsPath()
-    const tmpPath = filePath + '.tmp'
+    // Atomic-replace: tmp + renameSync. fs.renameSync is atomic on POSIX
+    // (rename(2)) and on Windows via MoveFileExW with REPLACE_EXISTING,
+    // regardless of whether the destination exists. A crash mid-write leaves
+    // the previous tokenomics file intact, never a partially-written one.
+    //
+    // P7.7.17: the earlier existsSync/copyFileSync branch was NOT atomic --
+    // copyFileSync truncates the destination in-place and then writes, so a
+    // crash mid-copy would leave tokenomics-data.json corrupted (and this
+    // file holds the cumulative spend history; corruption is hard to recover
+    // from). The Copilot review on the P7.7.14 series caught the same bug
+    // in session-state.ts + codex-review-usage.ts; this commit aligns the
+    // last remaining writer with the strictAtomicWriteJson contract used in
+    // conductor-mcp-server.ts.
+    //
+    // Tmp name carries the pid so two CCC instances against the same
+    // resourcesDir (rare, but possible if a user points dev + prod at the
+    // same directory) don't race each other's intermediate write.
+    const tmpPath = `${filePath}.tmp.${process.pid}`
     fs.writeFileSync(tmpPath, JSON.stringify(data), 'utf-8')
-    if (fs.existsSync(filePath)) {
-      fs.copyFileSync(tmpPath, filePath)
-      try { fs.unlinkSync(tmpPath) } catch { /* ignore */ }
-    } else {
+    try {
       fs.renameSync(tmpPath, filePath)
+    } catch (renameErr) {
+      try { fs.unlinkSync(tmpPath) } catch { /* ignore */ }
+      throw renameErr
     }
   } catch (err) {
     logError(`[tokenomics] Failed to save data: ${err}`)
