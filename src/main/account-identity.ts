@@ -29,3 +29,36 @@ export function readClaudeAccountEmail(): AccountIdentity | null {
     return null
   }
 }
+
+/**
+ * Read the active Codex (OpenAI) account identity by decoding the JWT
+ * id_token in ~/.codex/auth.json. Returns null on missing file,
+ * malformed JWT, missing email claim, or expired exp. Never throws.
+ * Codex CLI owns refresh -- we never try to renew the token here.
+ */
+export function readCodexAccountEmail(): AccountIdentity | null {
+  try {
+    const path = join(homedir(), '.codex', 'auth.json')
+    const j = JSON.parse(readFileSync(path, 'utf-8'))
+    const idToken = j?.tokens?.id_token
+    if (typeof idToken !== 'string') return null
+    const parts = idToken.split('.')
+    if (parts.length !== 3) return null
+    let payload: any
+    try {
+      payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf-8'))
+    } catch {
+      return null
+    }
+    if (typeof payload?.email !== 'string') return null
+    if (typeof payload?.exp === 'number' && payload.exp * 1000 < Date.now()) return null
+    return {
+      email: payload.email,
+      name: typeof payload.name === 'string' ? payload.name : undefined,
+      accountUuid: typeof j?.tokens?.account_id === 'string' ? j.tokens.account_id : undefined,
+      provider: 'codex',
+    }
+  } catch {
+    return null
+  }
+}
