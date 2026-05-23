@@ -552,6 +552,9 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.on(IPC.TOKENOMICS_PROGRESS, handler)
       return () => ipcRenderer.removeListener(IPC.TOKENOMICS_PROGRESS, handler)
     },
+    listUnattributed: () => ipcRenderer.invoke('tokenomics:listUnattributed'),
+    attributeSessions: (payload: import('../shared/types').AttributionPayload) =>
+      ipcRenderer.invoke('tokenomics:attributeSessions', payload),
   },
   account: {
     list: () => ipcRenderer.invoke(IPC.ACCOUNT_LIST),

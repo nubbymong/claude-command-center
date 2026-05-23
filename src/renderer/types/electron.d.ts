@@ -287,6 +287,8 @@ export interface ElectronAPI {
     seed: () => Promise<TokenomicsData>
     sync: () => Promise<TokenomicsData>
     onProgress: (callback: (data: TokenomicsSyncProgress) => void) => () => void
+    listUnattributed: () => Promise<import('../../shared/types').UnattributedSessionGroup[]>
+    attributeSessions: (payload: import('../../shared/types').AttributionPayload) => Promise<{ ok: boolean; error?: string }>
   }
   account: {
     list: () => Promise<AccountProfile[]>

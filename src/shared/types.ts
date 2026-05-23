@@ -379,6 +379,24 @@ export interface TokenomicsSyncProgress {
   currentFile?: string
 }
 
+// -- P8: Attribution wizard --
+
+export type AttributionPayload = {
+  sessionIds: string[]
+  assignment:
+    | { type: 'email'; email: string }
+    | { type: 'mixed' }
+    | { type: 'clear' }
+}
+
+export interface UnattributedSessionGroup {
+  groupId: string                     // configId or '__no-config__'
+  groupLabel: string                  // e.g. "This App Dev" or "(no config)"
+  sessionIds: string[]
+  totalCostUsd: number
+  suggestedEmail: string | null       // null when before earliest backup
+}
+
 // -- Codex Review (P6) --
 
 export interface CodexReviewRateLimitWindow {

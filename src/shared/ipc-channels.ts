@@ -179,6 +179,8 @@ export const IPC = {
   TOKENOMICS_SEED: 'tokenomics:seed',
   TOKENOMICS_SYNC: 'tokenomics:sync',
   TOKENOMICS_PROGRESS: 'tokenomics:progress',
+  TOKENOMICS_LIST_UNATTRIBUTED: 'tokenomics:listUnattributed',
+  TOKENOMICS_ATTRIBUTE_SESSIONS: 'tokenomics:attributeSessions',
 
   // Account switching
   ACCOUNT_LIST: 'account:list',
