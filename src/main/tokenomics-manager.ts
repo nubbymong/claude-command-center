@@ -9,8 +9,9 @@ import * as path from 'path'
 import { getConfigDir, ensureConfigDir } from './config-manager'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import { logInfo, logError } from './debug-logger'
-import type { TokenomicsData, TokenomicsSessionRecord, TokenomicsDailyAggregate, TokenomicsSyncProgress, AccountIdentity } from '../shared/types'
+import type { TokenomicsData, TokenomicsSessionRecord, TokenomicsDailyAggregate, TokenomicsSyncProgress, AccountIdentity, StatuslineData, CatppuccinAccent } from '../shared/types'
 import { IPC } from '../shared/ipc-channels'
+import { colourForEmail } from './account-color'
 import {
   findClaudeHistoryFiles,
   parseClaudeTranscriptFile,
@@ -825,16 +826,24 @@ export async function syncTokenomics(
 
 let cachedData: TokenomicsData | null = null
 
-export function handleStatuslineUpdate(statuslineData: {
-  sessionId: string
-  model?: string
-  costUsd?: number
-  inputTokens?: number
-  outputTokens?: number
-  rateLimitCurrent?: number
-  rateLimitWeekly?: number
-  rateLimitExtra?: { enabled: boolean; utilization: number; usedUsd: number; limitUsd: number }
-}): void {
+/**
+ * P8.10: enrich a StatuslineData payload with accountColour computed
+ * from accountEmail. Called by handleStatuslineUpdate before the
+ * payload fans out to the renderer.
+ */
+export function decorateStatuslineWithColour<T extends { accountEmail?: string }>(
+  sl: T,
+): T & { accountColour?: CatppuccinAccent } {
+  if (typeof sl.accountEmail === 'string' && sl.accountEmail.trim().length > 0) {
+    return { ...sl, accountColour: colourForEmail(sl.accountEmail) }
+  }
+  return sl
+}
+
+export function handleStatuslineUpdate(rawStatuslineData: StatuslineData): void {
+  // P8.10: decorate with accountColour so any downstream consumer that
+  // forwards this payload sees a fully-enriched object.
+  const statuslineData = decorateStatuslineWithColour(rawStatuslineData)
   if (!statuslineData.costUsd && !statuslineData.inputTokens && !statuslineData.rateLimitExtra && !statuslineData.rateLimitCurrent) return
 
   if (!cachedData) {
