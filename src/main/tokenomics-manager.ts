@@ -9,7 +9,7 @@ import * as path from 'path'
 import { getConfigDir, ensureConfigDir } from './config-manager'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import { logInfo, logError } from './debug-logger'
-import type { TokenomicsData, TokenomicsSessionRecord, TokenomicsDailyAggregate, TokenomicsSyncProgress, AccountIdentity, StatuslineData, CatppuccinAccent } from '../shared/types'
+import type { TokenomicsData, TokenomicsSessionRecord, TokenomicsDailyAggregate, TokenomicsSyncProgress, AccountIdentity, StatuslineData, CatppuccinAccent, AttributionPayload, UnattributedSessionGroup } from '../shared/types'
 import { IPC } from '../shared/ipc-channels'
 import { colourForEmail } from './account-color'
 import {
@@ -911,3 +911,92 @@ export function handleStatuslineUpdate(rawStatuslineData: StatuslineData): void 
 export function getTokenomicsData(): TokenomicsData {
   return loadData()
 }
+
+// ── P8.14: Attribution wizard helpers ──
+
+// Internal: lets the test harness skip the saveData side-effect without
+// relying on vi.mock intercepting same-module references (which doesn't
+// work in ES modules -- vi.mock only replaces what external importers see).
+let _skipSaveForTests = false
+
+/**
+ * P8.14: apply a wizard / per-record attribution payload to the
+ * in-memory tokenomics data. Canonicalises emails, atomically saves.
+ */
+export function applyAttributionPayload(payload: AttributionPayload): void {
+  const data = cachedData
+  if (!data) return
+  for (const sid of payload.sessionIds) {
+    const record = data.sessions[sid]
+    if (!record) continue
+    switch (payload.assignment.type) {
+      case 'email': {
+        const e = canonicalEmail(payload.assignment.email)
+        if (e) {
+          record.accountEmail = e
+          record.attributionMixed = undefined
+        }
+        break
+      }
+      case 'mixed':
+        record.attributionMixed = true
+        break
+      case 'clear':
+        record.accountEmail = undefined
+        record.attributionMixed = undefined
+        record.accountUuid = undefined
+        break
+    }
+  }
+  if (!_skipSaveForTests) saveData(data)
+}
+
+/**
+ * P8.14: group all unattributed sessions by configId and compute
+ * suggested emails via the backup-file timeline.
+ */
+export function listUnattributedGroups(
+  timeline: ReturnType<typeof import('./account-attribution').buildAccountTimeline>,
+): UnattributedSessionGroup[] {
+  const data = cachedData
+  if (!data) return []
+  const groups = new Map<string, UnattributedSessionGroup>()
+  for (const [sid, r] of Object.entries(data.sessions)) {
+    if (r.accountEmail || r.attributionMixed) continue
+    const groupId = r.configId ?? '__no-config__'
+    const groupLabel = r.configLabel ?? '(no config)'
+    if (!groups.has(groupId)) {
+      groups.set(groupId, { groupId, groupLabel, sessionIds: [], totalCostUsd: 0, suggestedEmail: null })
+    }
+    const g = groups.get(groupId)!
+    g.sessionIds.push(sid)
+    g.totalCostUsd += r.totalCostUsd ?? 0
+    const lastTs = new Date(r.lastTimestamp).getTime()
+    for (const iv of timeline) {
+      if (lastTs >= iv.start && lastTs < iv.end) {
+        g.suggestedEmail = iv.email
+        break
+      }
+    }
+  }
+  return Array.from(groups.values()).sort((a, b) => b.totalCostUsd - a.totalCostUsd)
+}
+
+// ── Test-only hooks ──
+
+export function __resetTokenomicsForTests(): void {
+  cachedData = {
+    sessions: {},
+    dailyAggregates: {},
+    lastSyncTimestamp: 0,
+    totalCostUsd: 0,
+    seedComplete: true,
+  } as TokenomicsData
+  _skipSaveForTests = true
+}
+
+export function __seedTokenomicsForTests(records: TokenomicsSessionRecord[]): void {
+  if (!cachedData) __resetTokenomicsForTests()
+  for (const r of records) (cachedData as TokenomicsData).sessions[r.sessionId] = r
+}
+__seedTokenomicsForTests.read = (): TokenomicsData => cachedData as TokenomicsData

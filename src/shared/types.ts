@@ -330,6 +330,10 @@ export interface TokenomicsSessionRecord {
   accountUuid?: string
   /** User-flagged via wizard: session spanned accounts. Excludes the record from per-account filter totals but keeps it in "All accounts". */
   attributionMixed?: boolean
+  /** P8.14: config that owned the session at run time. Used by the back-fill wizard to group unattributed sessions. Optional -- legacy records may lack it. */
+  configId?: string
+  /** P8.14: human-readable label for `configId` (e.g. "This App Dev"). Mirrored at write time so the wizard doesn't have to cross-reference the configs store. */
+  configLabel?: string
 }
 
 export interface TokenomicsDailyAggregate {

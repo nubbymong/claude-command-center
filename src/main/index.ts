@@ -31,6 +31,7 @@ import { registerLegacyVersionHandlers } from './ipc/legacy-version-handlers'
 import { registerAccountHandlers } from './ipc/account-handlers'
 import { registerMemoryHandlers } from './ipc/memory-handlers'
 import { registerTokenomicsHandlers } from './ipc/tokenomics-handlers'
+import { registerAccountAttributionHandlers } from './ipc/account-attribution-handlers'
 import { registerGitHubHandlers } from './ipc/github-handlers'
 import { registerHooksHandlers } from './ipc/hooks-handlers'
 import { registerCodexHandlers } from './ipc/codex-handlers'
@@ -592,6 +593,7 @@ if (!gotTheLock) {
     registerLegacyVersionHandlers(getWindow)
     registerAccountHandlers()
     registerTokenomicsHandlers(getWindow)
+    registerAccountAttributionHandlers()
     registerMemoryHandlers()
     // GitHub sidebar — reads/writes github-config.json + encrypted auth profiles
     // under the CONFIG dir alongside other app config. Session-level integration
