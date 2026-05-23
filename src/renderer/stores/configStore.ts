@@ -28,6 +28,16 @@ export interface TerminalConfig {
   }
   pinned?: boolean
   machineName?: string // Identifies which machine this session runs on
+  /**
+   * P9.3 (#280): persisted GitHub integration on the CONFIG template so any
+   * session spawned from it inherits the activation + repo + auth profile.
+   * Previously the integration only lived on the live SavedSession (in
+   * session-state.json) and was lost the moment that session ended; spawning
+   * a fresh session from the same config required re-enabling every time.
+   * SessionGitHubConfig.save() now writes the patch back here too whenever
+   * the session has a configId, so the template stays in sync.
+   */
+  githubIntegration?: import('../../shared/github-types').SessionGitHubIntegration
   // Provider discriminator + sub-options
   provider: ProviderId
   claudeOptions?: ClaudeOptions
