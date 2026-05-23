@@ -9,10 +9,12 @@
  */
 
 import { ipcMain } from 'electron'
+import { join } from 'path'
 import { z } from 'zod'
 import { IPC } from '../../shared/ipc-channels'
 import { applyAttributionPayload, listUnattributedGroups } from '../tokenomics-manager'
 import { buildAccountTimeline, listKnownEmails } from '../account-attribution'
+import { getConfigDir } from '../config-manager'
 import type { AttributionPayload } from '../../shared/types'
 
 // Copilot review on PR #31 (p9.9): validate the incoming payload from the
@@ -39,8 +41,13 @@ export function registerAccountAttributionHandlers(): void {
   // stuck when the timeline could not suggest anything (no backups,
   // unreadable ~/.claude.json). This handler exposes every email we have
   // evidence for so the wizard's <select> always has options.
+  //
+  // Copilot review on PR #31 (p9.16): the legacy accounts.json lived at
+  // `<resources>/CONFIG/accounts.json` (per config-manager's mapping),
+  // NOT `~/.claude/accounts.json`. Compute the path here and pass it
+  // in so account-attribution.ts stays free of config-manager imports.
   ipcMain.handle(IPC.TOKENOMICS_LIST_KNOWN_EMAILS, async () => {
-    return listKnownEmails()
+    return listKnownEmails(join(getConfigDir(), 'accounts.json'))
   })
 
   ipcMain.handle(IPC.TOKENOMICS_ATTRIBUTE_SESSIONS, async (_event, payload: unknown) => {

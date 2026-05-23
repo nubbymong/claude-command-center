@@ -735,11 +735,16 @@ export default function TokenomicsPage() {
     return [...dirs].sort()
   }, [allSessions])
 
-  // Observed account emails (for AccountFilter dropdown)
+  // Observed account emails (for AccountFilter dropdown).
+  // Copilot review on PR #31 (p9.16): exclude emails that appear ONLY on
+  // mixed sessions -- the per-email filter is
+  // `s.accountEmail === accountFilter && !s.attributionMixed`, so offering
+  // such an email would yield zero results and confuse the user. Mixed
+  // sessions are reached via the '(Mixed)' sentinel instead.
   const observedEmails = useMemo(() => {
     const set = new Set<string>()
     for (const s of allSessions) {
-      if (s.accountEmail) set.add(s.accountEmail)
+      if (s.accountEmail && !s.attributionMixed) set.add(s.accountEmail)
     }
     return Array.from(set).sort()
   }, [allSessions])

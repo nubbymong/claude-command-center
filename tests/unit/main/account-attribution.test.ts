@@ -152,14 +152,28 @@ describe('listKnownEmails', () => {
       join(sandbox, '.claude.json'),
       JSON.stringify({ oauthAccount: { emailAddress: 'c@x.com' } }),
     )
+    // Copilot review on PR #31 (p9.16): accountsJsonPath is caller-
+    // supplied -- the legacy account-manager wrote to the resources
+    // CONFIG dir, NOT ~/.claude. Pass a sandbox path explicitly.
+    const accountsPath = join(sandbox, 'fake-resources', 'CONFIG', 'accounts.json')
+    mkdirSync(join(sandbox, 'fake-resources', 'CONFIG'), { recursive: true })
     writeFileSync(
-      join(sandbox, '.claude', 'accounts.json'),
+      accountsPath,
       JSON.stringify({ accounts: [{ credentials: { oauthAccount: { emailAddress: 'a@x.com' } } }] }),
     )
-    expect(listKnownEmails()).toEqual(['a@x.com', 'b@x.com', 'c@x.com'])
+    expect(listKnownEmails(accountsPath)).toEqual(['a@x.com', 'b@x.com', 'c@x.com'])
   })
 
   it('returns [] when no evidence is present', () => {
+    expect(listKnownEmails()).toEqual([])
+  })
+
+  it('ignores accounts.json if no path is passed (so we never read from ~/.claude/accounts.json)', () => {
+    // Old (incorrect) location -- writing here should have NO effect.
+    writeFileSync(
+      join(sandbox, '.claude', 'accounts.json'),
+      JSON.stringify({ accounts: [{ credentials: { oauthAccount: { emailAddress: 'wrong@x.com' } } }] }),
+    )
     expect(listKnownEmails()).toEqual([])
   })
 })

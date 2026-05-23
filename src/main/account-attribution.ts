@@ -92,14 +92,23 @@ export function buildAccountTimeline(): TimelineInterval[] {
 
 /**
  * Collect every email we have evidence for: backup events, the live
- * ~/.claude.json, and legacy accounts.json. Wizard uses this so the user
- * can still pick a real email even when the timeline cannot suggest one
- * (e.g. no backups at all, or the active account is different from every
- * backed-up one).
+ * ~/.claude.json, and (optionally) a legacy accounts.json file written
+ * by the deleted account-manager. Wizard uses this so the user can
+ * still pick a real email even when the timeline cannot suggest one
+ * (e.g. no backups at all, or the active account is different from
+ * every backed-up one).
+ *
+ * Copilot review on PR #31 (p9.16): accountsJsonPath is now an explicit
+ * caller-supplied parameter. The deleted account-manager wrote to
+ * `getConfigDir()/accounts.json` -- inside the user-configured
+ * resources directory, NOT `~/.claude/accounts.json`. The IPC handler
+ * in account-attribution-handlers.ts builds the right path via
+ * config-manager. account-attribution.ts itself stays free of any
+ * config-manager import so it remains test-friendly.
  *
  * Synchronous, defensive -- never throws.
  */
-export function listKnownEmails(): string[] {
+export function listKnownEmails(accountsJsonPath?: string): string[] {
   const out = new Set<string>()
   // Backup events
   try {
@@ -123,13 +132,16 @@ export function listKnownEmails(): string[] {
       if (email) out.add(email)
     }
   } catch { /* no live identity */ }
-  // Legacy accounts.json (best-effort)
-  try {
-    const accountsPath = join(homedir(), '.claude', 'accounts.json')
-    for (const email of extractEmailsFromAccountsJson(accountsPath)) {
-      out.add(email)
-    }
-  } catch { /* fine */ }
+  // Legacy accounts.json (best-effort) -- only consulted if the caller
+  // passes a real path so account-attribution.ts has no main-process
+  // config-manager dependency.
+  if (accountsJsonPath) {
+    try {
+      for (const email of extractEmailsFromAccountsJson(accountsJsonPath)) {
+        out.add(email)
+      }
+    } catch { /* fine */ }
+  }
   return Array.from(out).sort()
 }
 
