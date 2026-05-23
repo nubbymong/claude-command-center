@@ -754,44 +754,54 @@ export function spawnPty(
     // requires. cwd is propagated through pty.spawn options.
     // shellOnly falls through to the Claude branch below so the user gets a
     // plain shell, regardless of provider selection.
-    const provider = getProvider('codex')
-    const { cmd: spawnCmd, args: spawnArgs, env: spawnEnv } = provider.buildSpawnCommand({
-      sessionId,
-      provider: 'codex',
-      cwd: options?.cwd,
-      cols,
-      rows,
-      useResumePicker: options?.useResumePicker,
-      codexOptions: options?.codexOptions,
-    })
-    const resolvedCwd = resolveCwd(options?.cwd)
-    logInfo(`[pty-manager] Launching Codex PTY: ${spawnCmd} ${spawnArgs.join(' ')} cwd=${resolvedCwd}`)
-    // Capture timestamp before spawn so the watch-and-claim window starts no later than PTY launch.
-    const codexSpawnTimestamp = Date.now()
-    ptyProcess = pty.spawn(spawnCmd, spawnArgs, {
-      name: 'xterm-256color',
-      cols,
-      rows,
-      cwd: resolvedCwd,
-      env: spawnEnv,
-      useConpty: true,
-    })
-    ptyProcess.onData((data) => {
-      if (win.isDestroyed()) return
-      win.webContents.send(`pty:data:${sessionId}`, data)
-    })
-    // Start rollout watch-and-claim telemetry. Updates are dispatched to the
-    // renderer (statusline:update) and tokenomics-manager identically to how
-    // Claude statusline updates flow through statusline-watcher.ts.
-    const codexTelSrc = provider.ingestSessionTelemetry(
-      sessionId,
-      { cwd: resolvedCwd, spawnTimestamp: codexSpawnTimestamp },
-      (data) => {
-        if (!win.isDestroyed()) win.webContents.send('statusline:update', data)
-        handleStatuslineUpdate(data)
-      },
-    )
-    codexTelemetrySources.set(sessionId, codexTelSrc)
+    //
+    // Copilot review on PR #31 (p9.15): buildSpawnCommand or pty.spawn can
+    // throw before onExit is wired up (binary missing, ConPTY init failure,
+    // node-pty resolver miss). Clean up the spawn-identity map entry on
+    // failure so it doesn't leak.
+    try {
+      const provider = getProvider('codex')
+      const { cmd: spawnCmd, args: spawnArgs, env: spawnEnv } = provider.buildSpawnCommand({
+        sessionId,
+        provider: 'codex',
+        cwd: options?.cwd,
+        cols,
+        rows,
+        useResumePicker: options?.useResumePicker,
+        codexOptions: options?.codexOptions,
+      })
+      const resolvedCwd = resolveCwd(options?.cwd)
+      logInfo(`[pty-manager] Launching Codex PTY: ${spawnCmd} ${spawnArgs.join(' ')} cwd=${resolvedCwd}`)
+      // Capture timestamp before spawn so the watch-and-claim window starts no later than PTY launch.
+      const codexSpawnTimestamp = Date.now()
+      ptyProcess = pty.spawn(spawnCmd, spawnArgs, {
+        name: 'xterm-256color',
+        cols,
+        rows,
+        cwd: resolvedCwd,
+        env: spawnEnv,
+        useConpty: true,
+      })
+      ptyProcess.onData((data) => {
+        if (win.isDestroyed()) return
+        win.webContents.send(`pty:data:${sessionId}`, data)
+      })
+      // Start rollout watch-and-claim telemetry. Updates are dispatched to the
+      // renderer (statusline:update) and tokenomics-manager identically to how
+      // Claude statusline updates flow through statusline-watcher.ts.
+      const codexTelSrc = provider.ingestSessionTelemetry(
+        sessionId,
+        { cwd: resolvedCwd, spawnTimestamp: codexSpawnTimestamp },
+        (data) => {
+          if (!win.isDestroyed()) win.webContents.send('statusline:update', data)
+          handleStatuslineUpdate(data)
+        },
+      )
+      codexTelemetrySources.set(sessionId, codexTelSrc)
+    } catch (err) {
+      clearCodexSpawnIdentity(sessionId)
+      throw err
+    }
   } else {
     // Local session — delegate binary + env construction to the provider.
     // The post-spawn shell-write (cd + claude command) stays here; only the

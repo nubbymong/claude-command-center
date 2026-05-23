@@ -123,8 +123,19 @@ export function AccountAttributionWizard({ onClose }: Props) {
                   // Copilot review on PR #31 (p9.14): functional setState so
                   // overlapping updates compose deterministically instead of
                   // racing on stale closure state.
+                  // Copilot review on PR #31 (p9.15): selecting the placeholder
+                  // option (value="") means "fall back to suggestedEmail" --
+                  // delete the override key rather than storing '' so the
+                  // Confirm enable-check (`overrides[gid] ?? g.suggestedEmail`)
+                  // doesn't see an empty-string override and disable itself.
                   const value = e.target.value
-                  setOverrides((prev) => ({ ...prev, [g.groupId]: value }))
+                  setOverrides((prev) => {
+                    if (value === '') {
+                      const { [g.groupId]: _drop, ...rest } = prev
+                      return rest
+                    }
+                    return { ...prev, [g.groupId]: value }
+                  })
                 }}
               >
                 <option value="">{g.suggestedEmail ? `Suggested: ${g.suggestedEmail}` : 'Unknown -- pick one'}</option>

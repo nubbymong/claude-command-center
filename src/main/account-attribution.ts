@@ -24,7 +24,13 @@ interface TimelineInterval {
 /**
  * Build a sorted timeline of [t_i, t_{i+1}) intervals from the backup
  * snapshots in ~/.claude/backups/. The trailing interval [t_last, +Inf)
- * uses the LIVE ~/.claude.json's email.
+ * uses the LAST BACKUP's email regardless of what ~/.claude.json says
+ * today -- the precise account-change time between the final backup
+ * and "now" is unknown, so we attribute to the most recent documented
+ * email and let the wizard surface the live email as an override
+ * option via listKnownEmails. The live ~/.claude.json is only used to
+ * build a single open interval when there are zero backups (e.g. a
+ * fresh install whose first session has not yet triggered a backup).
  *
  * Defensive parse: backup files with non-numeric timestamps or missing
  * oauthAccount are silently skipped.

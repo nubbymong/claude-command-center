@@ -708,7 +708,6 @@ export default function TokenomicsPage() {
   // Account attribution wizard banner -- dismissible via appMeta
   const wizardDismissed = useAppMetaStore((s) => s.meta.accountWizardDismissed ?? false)
   const updateAppMeta = useAppMetaStore((s) => s.update)
-  const accountFilter = tokenomicsAccountFilter as AccountFilterValue
   const setAccountFilter = (next: AccountFilterValue) => updateSettings({ tokenomicsAccountFilter: next })
 
   // When chart bar is clicked, set date filter to that specific date
@@ -744,6 +743,18 @@ export default function TokenomicsPage() {
     }
     return Array.from(set).sort()
   }, [allSessions])
+
+  // Copilot review on PR #31 (p9.15): the persisted accountFilter can
+  // become stale when its email is no longer present in observedEmails
+  // (user cleared attribution, deleted records, etc.). Clamp to 'all'
+  // in that case so the <select> never renders without a matching
+  // <option> (which silently strands the user on a blank filter).
+  const accountFilter = useMemo<AccountFilterValue>(() => {
+    const persisted = tokenomicsAccountFilter as AccountFilterValue
+    if (persisted === 'all' || persisted === '__mixed__' || persisted === '__unknown__') return persisted
+    if (observedEmails.includes(persisted)) return persisted
+    return 'all'
+  }, [tokenomicsAccountFilter, observedEmails])
 
   // Burn rate from recent activity (last 5h window)
   const burnRate = useMemo(() => {

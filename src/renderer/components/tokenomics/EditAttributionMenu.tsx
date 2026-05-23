@@ -20,13 +20,23 @@ export function EditAttributionMenu({ sessionId, detectedEmails, onChange }: Pro
       value === '__mixed__' ? { sessionIds: [sessionId], assignment: { type: 'mixed' } } :
       value === '__clear__' ? { sessionIds: [sessionId], assignment: { type: 'clear' } } :
       { sessionIds: [sessionId], assignment: { type: 'email', email: value } }
-    const r = await window.electronAPI.tokenomics.attributeSessions(payload)
-    if (r.ok) {
-      onChange()
-    } else {
-      const msg = r.error ?? 'attribution failed'
+    // Copilot review on PR #31 (p9.15): the await can reject (handler
+    // throws, channel missing, preload not ready). Catch so the failure
+    // surfaces as an inline error indicator instead of an unhandled
+    // promise rejection that leaves the menu in a stale state.
+    try {
+      const r = await window.electronAPI.tokenomics.attributeSessions(payload)
+      if (r.ok) {
+        onChange()
+      } else {
+        const msg = r.error ?? 'attribution failed'
+        setError(msg)
+        console.error(`[EditAttributionMenu] attributeSessions failed for ${sessionId}: ${msg}`)
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'IPC rejected'
       setError(msg)
-      console.error(`[EditAttributionMenu] attributeSessions failed for ${sessionId}: ${msg}`)
+      console.error(`[EditAttributionMenu] attributeSessions threw for ${sessionId}:`, err)
     }
   }
   return (
