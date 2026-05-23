@@ -4,6 +4,8 @@ import { useSettingsStore } from '../stores/settingsStore'
 import type { TokenomicsSessionRecord, TokenomicsDailyAggregate } from '../../shared/types'
 import PageFrame from './PageFrame'
 import { AccountFilter, type AccountFilterValue } from './tokenomics/AccountFilter'
+import { WizardTrigger } from './tokenomics/WizardTrigger'
+import { useAppMetaStore } from '../stores/appMetaStore'
 
 const MODEL_COLORS: Record<string, string> = {
   // Claude models -- full versioned strings as emitted by the API
@@ -693,6 +695,10 @@ export default function TokenomicsPage() {
   // Account filter -- persisted via settings store (no local useState)
   const tokenomicsAccountFilter = useSettingsStore((s) => s.settings.tokenomicsAccountFilter ?? 'all')
   const updateSettings = useSettingsStore((s) => s.updateSettings)
+
+  // Account attribution wizard banner -- dismissible via appMeta
+  const wizardDismissed = useAppMetaStore((s) => s.meta.accountWizardDismissed ?? false)
+  const updateAppMeta = useAppMetaStore((s) => s.update)
   const accountFilter = tokenomicsAccountFilter as AccountFilterValue
   const setAccountFilter = (next: AccountFilterValue) => updateSettings({ tokenomicsAccountFilter: next })
 
@@ -885,6 +891,11 @@ export default function TokenomicsPage() {
     >
       <div className="p-6">
         <SeedProgressBar />
+
+        <WizardTrigger
+          dismissed={wizardDismissed}
+          onDismiss={() => updateAppMeta({ accountWizardDismissed: true })}
+        />
 
         <UsageAlert sessions={allSessions} data={data} />
 
