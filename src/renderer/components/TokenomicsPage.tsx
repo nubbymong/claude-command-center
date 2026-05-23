@@ -1,7 +1,9 @@
 import React, { useEffect, useState, useMemo, useCallback } from 'react'
 import { useTokenomicsStore } from '../stores/tokenomicsStore'
+import { useSettingsStore } from '../stores/settingsStore'
 import type { TokenomicsSessionRecord, TokenomicsDailyAggregate } from '../../shared/types'
 import PageFrame from './PageFrame'
+import { AccountFilter, type AccountFilterValue } from './tokenomics/AccountFilter'
 
 const MODEL_COLORS: Record<string, string> = {
   // Claude models -- full versioned strings as emitted by the API
@@ -350,6 +352,7 @@ function FilterBar({
   dateFilter, spendFilter, providerFilter,
   onDateFilter, onSpendFilter, onProviderFilter,
   selectedDate, projects, projectFilter, onProjectFilter,
+  accountEmails, accountFilter, onAccountFilter,
 }: {
   dateFilter: DateFilter
   spendFilter: SpendFilter
@@ -361,6 +364,9 @@ function FilterBar({
   projects: string[]
   projectFilter: string
   onProjectFilter: (p: string) => void
+  accountEmails: string[]
+  accountFilter: AccountFilterValue
+  onAccountFilter: (next: AccountFilterValue) => void
 }) {
   const dateButtons: Array<{ label: string; value: DateFilter }> = [
     { label: 'All', value: 'all' },
@@ -441,6 +447,10 @@ function FilterBar({
           </select>
         </div>
       )}
+      <div className="flex items-center gap-1">
+        <span className="text-xs text-overlay0 mr-1">Account:</span>
+        <AccountFilter emails={accountEmails} value={accountFilter} onChange={onAccountFilter} />
+      </div>
     </div>
   )
 }
@@ -680,6 +690,12 @@ export default function TokenomicsPage() {
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
   const [projectFilter, setProjectFilter] = useState<string>('all')
 
+  // Account filter -- persisted via settings store (no local useState)
+  const tokenomicsAccountFilter = useSettingsStore((s) => s.settings.tokenomicsAccountFilter ?? 'all')
+  const updateSettings = useSettingsStore((s) => s.updateSettings)
+  const accountFilter = tokenomicsAccountFilter as AccountFilterValue
+  const setAccountFilter = (next: AccountFilterValue) => updateSettings({ tokenomicsAccountFilter: next })
+
   // When chart bar is clicked, set date filter to that specific date
   const handleDateSelect = useCallback((date: string | null) => {
     setSelectedDate(date)
@@ -705,6 +721,15 @@ export default function TokenomicsPage() {
     return [...dirs].sort()
   }, [allSessions])
 
+  // Observed account emails (for AccountFilter dropdown)
+  const observedEmails = useMemo(() => {
+    const set = new Set<string>()
+    for (const s of allSessions) {
+      if (s.accountEmail) set.add(s.accountEmail)
+    }
+    return Array.from(set).sort()
+  }, [allSessions])
+
   // Burn rate from recent activity (last 5h window)
   const burnRate = useMemo(() => {
     const recent = allSessions.filter(s => s.firstTimestamp >= periods.fiveHourStart && s.costPerHour)
@@ -725,9 +750,18 @@ export default function TokenomicsPage() {
     }
   }, [allSessions, periods])
 
-  // Filtered sessions based on date + spend + provider + project filters
+  // Filtered sessions based on date + spend + provider + project + account filters
   const filteredSessions = useMemo(() => {
     let list = allSessions
+
+    // Account filter (P8.12) -- mixed sessions are excluded from per-email views
+    if (accountFilter === '__mixed__') {
+      list = list.filter(s => s.attributionMixed === true)
+    } else if (accountFilter === '__unknown__') {
+      list = list.filter(s => !s.accountEmail && !s.attributionMixed)
+    } else if (accountFilter !== 'all') {
+      list = list.filter(s => s.accountEmail === accountFilter && !s.attributionMixed)
+    }
 
     // Provider filter (P3.2) -- applies to both session list and model breakdown
     // back-filled provider='claude' on legacy records, so this is always safe
@@ -770,7 +804,7 @@ export default function TokenomicsPage() {
     }
 
     return list
-  }, [allSessions, dateFilter, spendFilter, providerFilter, selectedDate, periods])
+  }, [allSessions, dateFilter, spendFilter, providerFilter, projectFilter, accountFilter, selectedDate, periods])
 
   // Summary costs
   const { todayCost, weekCost, fiveHourCost, allTimeCost } = useMemo(() => {
@@ -899,6 +933,9 @@ export default function TokenomicsPage() {
           projects={projects}
           projectFilter={projectFilter}
           onProjectFilter={setProjectFilter}
+          accountEmails={observedEmails}
+          accountFilter={accountFilter}
+          onAccountFilter={setAccountFilter}
         />
 
         {/* Sessions table */}
