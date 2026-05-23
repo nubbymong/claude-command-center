@@ -9,7 +9,7 @@ import * as path from 'path'
 import { getConfigDir, ensureConfigDir } from './config-manager'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import { logInfo, logError } from './debug-logger'
-import type { TokenomicsData, TokenomicsSessionRecord, TokenomicsDailyAggregate, TokenomicsSyncProgress } from '../shared/types'
+import type { TokenomicsData, TokenomicsSessionRecord, TokenomicsDailyAggregate, TokenomicsSyncProgress, AccountIdentity } from '../shared/types'
 import { IPC } from '../shared/ipc-channels'
 import {
   findClaudeHistoryFiles,
@@ -21,6 +21,13 @@ import {
 } from './providers/codex/telemetry'
 import { computeCodexCostUsd } from './providers/codex/pricing'
 import { getCodexHome } from './providers/codex/auth'
+import { canonicalEmail } from './account-attribution'
+import { readClaudeAccountEmail } from './account-identity'
+
+// TEMPORARY (Task 7 -> Task 8 hand-off): stub until pty-manager exports the
+// real getCodexSpawnIdentityMap. Task 8 step 4 DELETES this stub and replaces
+// it with `import { getCodexSpawnIdentityMap } from './pty-manager'`.
+function getCodexSpawnIdentityMap(): Map<string, AccountIdentity> { return new Map() }
 
 // ── Model Pricing (per 1M tokens) ──
 
@@ -206,6 +213,13 @@ function loadData(): TokenomicsData {
 
 function saveData(data: TokenomicsData): void {
   try {
+    // P8.7: stamp accountEmail on records that don't have one yet, using
+    // current Claude identity + the per-session Codex spawn-time map.
+    try {
+      const claudeId = readClaudeAccountEmail()
+      applyIdentityAtFlush(data, claudeId, getCodexSpawnIdentityMap())
+    } catch { /* identity is best-effort -- never block the save */ }
+
     ensureConfigDir()
     const filePath = getTokenomicsPath()
     // Atomic-replace: tmp + renameSync. fs.renameSync is atomic on POSIX
@@ -500,6 +514,46 @@ export function mergeSessionRecordAttribution<T extends TokenomicsSessionRecord>
     accountEmail: existing.accountEmail ?? newFields.accountEmail,
     accountUuid: existing.accountUuid ?? newFields.accountUuid,
     attributionMixed: existing.attributionMixed ?? newFields.attributionMixed,
+  }
+}
+
+/**
+ * P8.7: Walk the in-memory session records at saveData() entry and
+ * stamp accountEmail / accountUuid where missing. Read at write time
+ * for Claude (so mid-session /login attributes correctly); read from
+ * the per-session map for Codex (so claim-time drift doesn't matter).
+ *
+ * Never overwrites an existing accountEmail -- only fills in undefined.
+ * Canonicalises emails (lowercase + trim) to prevent filter-dropdown
+ * duplicates.
+ */
+export function applyIdentityAtFlush(
+  data: TokenomicsData,
+  claudeIdentity: AccountIdentity | null,
+  codexSpawnIdentity: Map<string, AccountIdentity>,
+): void {
+  const claudeEmail = claudeIdentity ? canonicalEmail(claudeIdentity.email) : null
+  for (const [sessionId, record] of Object.entries(data.sessions)) {
+    if (record.accountEmail) continue  // never overwrite
+    if (record.provider === 'codex') {
+      const codexId = codexSpawnIdentity.get(sessionId)
+      if (codexId) {
+        const e = canonicalEmail(codexId.email)
+        if (e) {
+          record.accountEmail = e
+          record.accountUuid = record.accountUuid ?? codexId.accountUuid
+        }
+      }
+      // No fallback to live ~/.codex/auth.json -- spec section 4 says
+      // Codex uses spawn-time only to avoid claim-time drift.
+    } else {
+      // Default to Claude attribution for records without a provider field
+      // (legacy v1.4 records back-fill as Claude).
+      if (claudeEmail) {
+        record.accountEmail = claudeEmail
+        record.accountUuid = record.accountUuid ?? claudeIdentity?.accountUuid
+      }
+    }
   }
 }
 
