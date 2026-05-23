@@ -125,6 +125,21 @@ process.stdin.on('data', (chunk) => { input += chunk; });
 process.stdin.on('end', async () => {
   try {
     const data = JSON.parse(input);
+
+    // P8.9: read active Claude account email for statusline display.
+    // Defensive cap protects against runaway ~/.claude.json growth.
+    let accountEmail = undefined;
+    try {
+      const claudeJsonPath = path.join(os.homedir(), '.claude.json');
+      const stat = fs.statSync(claudeJsonPath);
+      if (stat.size < 5 * 1024 * 1024) {
+        const j = JSON.parse(fs.readFileSync(claudeJsonPath, 'utf-8'));
+        if (j && j.oauthAccount && typeof j.oauthAccount.emailAddress === 'string') {
+          accountEmail = j.oauthAccount.emailAddress;
+        }
+      }
+    } catch { /* swallow -- statusline must not block on identity */ }
+
     const sessionId = process.env.CLAUDE_MULTI_SESSION_ID || data.session_id || 'unknown';
 
     const usage = data.context_window?.current_usage;
@@ -142,6 +157,7 @@ process.stdin.on('end', async () => {
       totalDurationMs: data.cost?.total_duration_ms,
       linesAdded: data.cost?.total_lines_added,
       linesRemoved: data.cost?.total_lines_removed,
+      accountEmail,
       timestamp: Date.now()
     };
 
