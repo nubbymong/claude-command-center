@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync, statSync } from 'fs'
+import { readFileSync, readdirSync, statSync, existsSync } from 'fs'
 import { join } from 'path'
 import { homedir } from 'os'
 import type { TokenomicsSessionRecord } from '../shared/types'
@@ -82,6 +82,29 @@ export function buildAccountTimeline(): TimelineInterval[] {
     out[out.length - 1].end = Infinity
   }
   return out
+}
+
+/**
+ * P8.21: read an existing accounts.json (legacy account-manager store)
+ * and extract any stored oauthAccount.emailAddress values. The file
+ * is NOT modified or deleted -- per spec section 5.5 it stays dormant
+ * after the wizard's one-time read.
+ *
+ * Synchronous (one-shot ~few-KB file).
+ */
+export function extractEmailsFromAccountsJson(path: string): string[] {
+  try {
+    if (!existsSync(path)) return []
+    const j = JSON.parse(readFileSync(path, 'utf-8'))
+    const out = new Set<string>()
+    for (const a of (j?.accounts as Array<any> | undefined) ?? []) {
+      const email = canonicalEmail(a?.credentials?.oauthAccount?.emailAddress)
+      if (email) out.add(email)
+    }
+    return Array.from(out)
+  } catch {
+    return []
+  }
 }
 
 /**

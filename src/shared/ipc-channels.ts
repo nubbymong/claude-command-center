@@ -182,13 +182,6 @@ export const IPC = {
   TOKENOMICS_LIST_UNATTRIBUTED: 'tokenomics:listUnattributed',
   TOKENOMICS_ATTRIBUTE_SESSIONS: 'tokenomics:attributeSessions',
 
-  // Account switching
-  ACCOUNT_LIST: 'account:list',
-  ACCOUNT_SWITCH: 'account:switch',
-  ACCOUNT_GET_ACTIVE: 'account:getActive',
-  ACCOUNT_SAVE_CURRENT_AS: 'account:saveCurrentAs',
-  ACCOUNT_RENAME: 'account:rename',
-
   // Codex (OpenAI)
   CODEX_STATUS: 'codex:status',
   CODEX_LOGIN: 'codex:login',

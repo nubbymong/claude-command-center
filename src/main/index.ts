@@ -28,7 +28,6 @@ import { registerConfigHandlers } from './ipc/config-handlers'
 import { registerCloudAgentHandlers } from './ipc/cloud-agent-handlers'
 import { registerTeamHandlers } from './ipc/team-handlers'
 import { registerLegacyVersionHandlers } from './ipc/legacy-version-handlers'
-import { registerAccountHandlers } from './ipc/account-handlers'
 import { registerMemoryHandlers } from './ipc/memory-handlers'
 import { registerTokenomicsHandlers } from './ipc/tokenomics-handlers'
 import { registerAccountAttributionHandlers } from './ipc/account-attribution-handlers'
@@ -41,7 +40,6 @@ import { setGateway, getGateway } from './hooks'
 import { cleanupStaleHookEntries } from './hooks/boot-cleanup'
 import { DEFAULT_HOOKS_PORT } from './hooks/hooks-types'
 import { fetchModelPricing } from './tokenomics-manager'
-import { initAccounts } from './account-manager'
 import { killAllAgents } from './cloud-agent-manager'
 import { startServiceStatusPoller, stopServiceStatusPoller } from './service-status'
 import { initUpdateWatcher, stopUpdateWatcher, getProjectRootPath, isPackagedApp } from './update-watcher'
@@ -591,7 +589,6 @@ if (!gotTheLock) {
     registerCloudAgentHandlers(getWindow)
     registerTeamHandlers(getWindow)
     registerLegacyVersionHandlers(getWindow)
-    registerAccountHandlers()
     registerTokenomicsHandlers(getWindow)
     registerAccountAttributionHandlers()
     registerMemoryHandlers()
@@ -642,9 +639,6 @@ if (!gotTheLock) {
         await shell.openExternal(url)
       }
     })
-
-    // Auto-detect current account from credentials (fire-and-forget)
-    initAccounts().catch(() => {})
 
     // Fetch model pricing in background (non-blocking)
     fetchModelPricing().catch(() => {})
