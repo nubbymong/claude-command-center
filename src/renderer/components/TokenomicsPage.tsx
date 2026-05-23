@@ -5,6 +5,7 @@ import type { TokenomicsSessionRecord, TokenomicsDailyAggregate } from '../../sh
 import PageFrame from './PageFrame'
 import { AccountFilter, type AccountFilterValue } from './tokenomics/AccountFilter'
 import { WizardTrigger } from './tokenomics/WizardTrigger'
+import { EditAttributionMenu } from './tokenomics/EditAttributionMenu'
 import { useAppMetaStore } from '../stores/appMetaStore'
 
 const MODEL_COLORS: Record<string, string> = {
@@ -461,7 +462,7 @@ function FilterBar({
 
 type SortKey = 'project' | 'model' | 'cost' | 'inputTokens' | 'outputTokens' | 'date' | 'messages' | 'cacheTokens' | 'duration' | 'costPerHour'
 
-function SessionsTable({ sessions, title }: { sessions: TokenomicsSessionRecord[]; title?: string }) {
+function SessionsTable({ sessions, title, observedEmails, onRefresh }: { sessions: TokenomicsSessionRecord[]; title?: string; observedEmails: string[]; onRefresh: () => void }) {
   const [sortBy, setSortBy] = useState<SortKey>('cost')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [page, setPage] = useState(0)
@@ -569,6 +570,7 @@ function SessionsTable({ sessions, title }: { sessions: TokenomicsSessionRecord[
               <SortHeader label="Duration" sortKey="duration" />
               <SortHeader label="$/hr" sortKey="costPerHour" />
               <SortHeader label="Date" sortKey="date" />
+              <th className="px-3 py-1.5 text-left text-xs text-overlay0 font-normal">Attribution</th>
             </tr>
           </thead>
           <tbody>
@@ -595,11 +597,18 @@ function SessionsTable({ sessions, title }: { sessions: TokenomicsSessionRecord[
                   (s.costPerHour || 0) > 20 ? 'text-red' : (s.costPerHour || 0) > 5 ? 'text-yellow' : 'text-overlay0'
                 }`}>{s.costPerHour ? formatCost(s.costPerHour) : '-'}</td>
                 <td className="px-3 py-1.5 text-overlay0">{formatDate(s.firstTimestamp)}</td>
+                <td className="px-3 py-1.5">
+                  <EditAttributionMenu
+                    sessionId={s.sessionId}
+                    detectedEmails={observedEmails}
+                    onChange={onRefresh}
+                  />
+                </td>
               </tr>
             ))}
             {paginated.length === 0 && (
               <tr>
-                <td colSpan={10} className="px-3 py-6 text-center text-overlay0">
+                <td colSpan={11} className="px-3 py-6 text-center text-overlay0">
                   No sessions match the current filter
                 </td>
               </tr>
@@ -953,6 +962,8 @@ export default function TokenomicsPage() {
         <SessionsTable
           sessions={filteredSessions}
           title={selectedDate ? `Sessions on ${formatDateFull(selectedDate)}` : undefined}
+          observedEmails={observedEmails}
+          onRefresh={loadData}
         />
       </div>
     </PageFrame>
