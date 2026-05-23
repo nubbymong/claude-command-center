@@ -922,10 +922,15 @@ let _skipSaveForTests = false
 /**
  * P8.14: apply a wizard / per-record attribution payload to the
  * in-memory tokenomics data. Canonicalises emails, atomically saves.
+ *
+ * Copilot review on PR #31 (p9.9): cachedData is null on cold start
+ * until the first statusline tick populates it. Opening the Tokenomics
+ * page + running the wizard before that would silently no-op. Load
+ * from disk if we haven't cached yet so wizard writes always land.
  */
 export function applyAttributionPayload(payload: AttributionPayload): void {
+  if (!cachedData) cachedData = loadData()
   const data = cachedData
-  if (!data) return
   for (const sid of payload.sessionIds) {
     const record = data.sessions[sid]
     if (!record) continue
@@ -958,8 +963,12 @@ export function applyAttributionPayload(payload: AttributionPayload): void {
 export function listUnattributedGroups(
   timeline: ReturnType<typeof import('./account-attribution').buildAccountTimeline>,
 ): UnattributedSessionGroup[] {
+  // Copilot review on PR #31 (p9.9): same cold-start issue as
+  // applyAttributionPayload -- without a statusline tick first, the
+  // back-fill banner/wizard would never appear because cachedData stays
+  // null. Pull from disk so the on-disk tokenomics.json drives the UI.
+  if (!cachedData) cachedData = loadData()
   const data = cachedData
-  if (!data) return []
   const groups = new Map<string, UnattributedSessionGroup>()
   for (const [sid, r] of Object.entries(data.sessions)) {
     if (r.accountEmail || r.attributionMixed) continue

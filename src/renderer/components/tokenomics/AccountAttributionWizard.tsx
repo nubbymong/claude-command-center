@@ -42,7 +42,7 @@ export function AccountAttributionWizard({ onClose }: Props) {
   if (groups.length === 0) {
     return (
       <div className="p-6 text-text">
-        <h2 className="text-lg font-semibold mb-2">Account attribution</h2>
+        <h2 id="account-attribution-wizard-title" className="text-lg font-semibold mb-2">Account attribution</h2>
         <p>All sessions are attributed. Nothing to do.</p>
         <button className="mt-4 px-3 py-1.5 bg-blue text-base rounded" onClick={onClose}>Close</button>
       </div>
@@ -51,7 +51,7 @@ export function AccountAttributionWizard({ onClose }: Props) {
 
   return (
     <div className="p-6 text-text">
-      <h2 className="text-lg font-semibold mb-2">Sessions needing account attribution ({groups.length} groups)</h2>
+      <h2 id="account-attribution-wizard-title" className="text-lg font-semibold mb-2">Sessions needing account attribution ({groups.length} groups)</h2>
       <p className="text-overlay1 text-sm mb-4">
         Suggested emails are inferred from your Claude backup-file timeline. Confirm,
         override, or mark mixed if a config spanned multiple accounts.

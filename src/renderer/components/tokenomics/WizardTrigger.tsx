@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import type { UnattributedSessionGroup } from '../../../shared/types'
+import { useFocusTrap } from '../../hooks/useFocusTrap'
 import { AccountAttributionWizard } from './AccountAttributionWizard'
 
 interface Props {
@@ -10,10 +11,21 @@ interface Props {
 export function WizardTrigger({ dismissed, onDismiss }: Props) {
   const [groups, setGroups] = useState<UnattributedSessionGroup[]>([])
   const [openModal, setOpenModal] = useState(false)
+  const dialogRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     window.electronAPI.tokenomics.listUnattributed().then(setGroups)
   }, [])
+
+  // Copilot review on PR #31 (p9.9): close-on-escape + focus-trap via
+  // the shared hook used by OnboardingModal and the SessionGitHubConfig
+  // dialog. Keyboard users can't tab back into the underlying page
+  // while the wizard is open.
+  const closeAndRefresh = useCallback(() => {
+    setOpenModal(false)
+    window.electronAPI.tokenomics.listUnattributed().then(setGroups)
+  }, [])
+  useFocusTrap(dialogRef, openModal, closeAndRefresh)
 
   if (dismissed || groups.length === 0) return null
 
@@ -37,18 +49,21 @@ export function WizardTrigger({ dismissed, onDismiss }: Props) {
       {openModal && (
         <div
           className="fixed inset-0 z-50 bg-base/80 flex items-center justify-center"
-          onClick={() => setOpenModal(false)}
         >
+          {/*
+            Copilot review on PR #31 (p9.9): no backdrop click-to-close --
+            Ctrl+C generates a click in some terminals which would dismiss
+            the wizard mid-edit. Use Escape (wired via useFocusTrap above)
+            or the explicit Close button inside the wizard.
+          */}
           <div
+            ref={dialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="account-attribution-wizard-title"
             className="bg-base border border-surface1 rounded max-w-2xl w-full max-h-[80vh] overflow-y-auto"
-            onClick={(e) => e.stopPropagation()}
           >
-            <AccountAttributionWizard
-              onClose={() => {
-                setOpenModal(false)
-                window.electronAPI.tokenomics.listUnattributed().then(setGroups)
-              }}
-            />
+            <AccountAttributionWizard onClose={closeAndRefresh} />
           </div>
         </div>
       )}

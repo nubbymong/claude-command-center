@@ -45,4 +45,26 @@ describe('EditAttributionMenu', () => {
       assignment: { type: 'email', email: 'a@x.com' },
     })
   })
+
+  // Copilot review on PR #31 (p9.9): the IPC call may fail; the previous
+  // implementation fired onChange unconditionally so the UI refreshed as
+  // if the edit landed. Pin the corrected behaviour.
+  it('does NOT call onChange when attributeSessions returns ok=false', async () => {
+    ;(window as any).electronAPI.tokenomics.attributeSessions = vi.fn().mockResolvedValue({
+      ok: false,
+      error: 'main-side rejected',
+    })
+    const onChange = vi.fn()
+    act(() => { root.render(createElement(EditAttributionMenu, { sessionId: 's1', detectedEmails: ['a@x.com'], onChange })) })
+    const select = container.querySelector('select')!
+    act(() => { select.value = 'a@x.com'; select.dispatchEvent(new Event('change', { bubbles: true })) })
+    await new Promise(r => setTimeout(r, 0))
+    // Wait one more microtask flush for setState to apply.
+    await act(async () => { await new Promise(r => setTimeout(r, 0)) })
+    expect(onChange).not.toHaveBeenCalled()
+    // Error indicator surfaces inline so the user knows the edit failed.
+    const alert = container.querySelector('[role="alert"]')
+    expect(alert).not.toBeNull()
+    expect(alert?.getAttribute('title')).toContain('main-side rejected')
+  })
 })

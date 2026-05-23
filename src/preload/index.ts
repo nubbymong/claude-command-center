@@ -552,9 +552,11 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.on(IPC.TOKENOMICS_PROGRESS, handler)
       return () => ipcRenderer.removeListener(IPC.TOKENOMICS_PROGRESS, handler)
     },
-    listUnattributed: () => ipcRenderer.invoke('tokenomics:listUnattributed'),
+    // Copilot review on PR #31 (p9.9): route through IPC.* constants so
+    // shared/preload/main can't drift on a string-literal rename.
+    listUnattributed: () => ipcRenderer.invoke(IPC.TOKENOMICS_LIST_UNATTRIBUTED),
     attributeSessions: (payload: import('../shared/types').AttributionPayload) =>
-      ipcRenderer.invoke('tokenomics:attributeSessions', payload),
+      ipcRenderer.invoke(IPC.TOKENOMICS_ATTRIBUTE_SESSIONS, payload),
   },
   memory: {
     scan: () => ipcRenderer.invoke('memory:scan'),

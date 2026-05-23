@@ -1,4 +1,5 @@
-import React from 'react'
+import React, { useState } from 'react'
+import type { AttributionPayload } from '../../../shared/types'
 
 interface Props {
   sessionId: string
@@ -7,26 +8,43 @@ interface Props {
 }
 
 export function EditAttributionMenu({ sessionId, detectedEmails, onChange }: Props) {
+  // Copilot review on PR #31 (p9.9): surface IPC failures instead of
+  // assuming success. r.ok=false now skips onChange (no stale refetch)
+  // and exposes the error inline so the user knows the edit didn't land.
+  const [error, setError] = useState<string | null>(null)
+
   const handleChange = async (value: string) => {
     if (value === '') return
-    let payload: any
-    if (value === '__mixed__') payload = { sessionIds: [sessionId], assignment: { type: 'mixed' } }
-    else if (value === '__clear__') payload = { sessionIds: [sessionId], assignment: { type: 'clear' } }
-    else payload = { sessionIds: [sessionId], assignment: { type: 'email', email: value } }
-    await window.electronAPI.tokenomics.attributeSessions(payload)
-    onChange()
+    setError(null)
+    const payload: AttributionPayload =
+      value === '__mixed__' ? { sessionIds: [sessionId], assignment: { type: 'mixed' } } :
+      value === '__clear__' ? { sessionIds: [sessionId], assignment: { type: 'clear' } } :
+      { sessionIds: [sessionId], assignment: { type: 'email', email: value } }
+    const r = await window.electronAPI.tokenomics.attributeSessions(payload)
+    if (r.ok) {
+      onChange()
+    } else {
+      const msg = r.error ?? 'attribution failed'
+      setError(msg)
+      console.error(`[EditAttributionMenu] attributeSessions failed for ${sessionId}: ${msg}`)
+    }
   }
   return (
-    <select
-      className="bg-surface0 text-text text-xs rounded px-1 py-0.5 border border-surface1"
-      value=""
-      onChange={(e) => handleChange(e.target.value)}
-      aria-label={`Edit attribution for session ${sessionId}`}
-    >
-      <option value="">Edit...</option>
-      {detectedEmails.map(e => <option key={e} value={e}>{e}</option>)}
-      <option value="__mixed__">Mark mixed</option>
-      <option value="__clear__">Clear</option>
-    </select>
+    <span className="inline-flex items-center gap-1">
+      <select
+        className="bg-surface0 text-text text-xs rounded px-1 py-0.5 border border-surface1"
+        value=""
+        onChange={(e) => handleChange(e.target.value)}
+        aria-label={`Edit attribution for session ${sessionId}`}
+      >
+        <option value="">Edit...</option>
+        {detectedEmails.map(e => <option key={e} value={e}>{e}</option>)}
+        <option value="__mixed__">Mark mixed</option>
+        <option value="__clear__">Clear</option>
+      </select>
+      {error && (
+        <span className="text-red text-xs" title={error} role="alert">!</span>
+      )}
+    </span>
   )
 }
