@@ -83,12 +83,19 @@ export function parseCccSessionIdFromUrl(reqUrl: string): string | null {
 // Lazy-load MCP SDK to avoid import issues in test environments
 let McpServer: any = null
 let SSEServerTransport: any = null
+let StreamableHTTPServerTransport: any = null
 let z: any = null
 
 function loadMcpDeps(): void {
   if (!McpServer) {
     McpServer = require('@modelcontextprotocol/sdk/server/mcp.js').McpServer
     SSEServerTransport = require('@modelcontextprotocol/sdk/server/sse.js').SSEServerTransport
+    // P9.6: streamable HTTP transport for Codex 0.128+. The rmcp client used
+    // by recent Codex CLI versions wraps everything in StreamableHttpClientAdapter
+    // and POSTs `initialize` to the configured URL expecting JSON back. The
+    // legacy SSE transport returns 202 + pushes the response down the event
+    // stream, which the new client mis-reads as "missing-content-type".
+    StreamableHTTPServerTransport = require('@modelcontextprotocol/sdk/server/streamableHttp.js').StreamableHTTPServerTransport
     z = require('zod')
   }
 }
@@ -411,6 +418,41 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
           if (!res.headersSent) {
             res.writeHead(500)
             res.end('Internal error')
+          }
+        }
+        return
+      }
+
+      // P9.6: Streamable HTTP transport endpoint for Codex 0.128+ (rmcp client).
+      // Stateless mode -- each request creates a fresh server + transport pair
+      // and tears them down after the response is sent. Conductor's tools are
+      // either stateless (vision, fetch_host_screenshot) or read state from
+      // closures (codexReviewOptedIn, sessionCwds) so no per-MCP-session
+      // continuity is needed across requests.
+      //
+      // The legacy /sse route is unchanged -- Claude clients continue to use
+      // SSEServerTransport which is the only route their MCP client supports.
+      if (req.url?.startsWith('/mcp') && (req.method === 'POST' || req.method === 'GET' || req.method === 'DELETE')) {
+        try {
+          const source = parseSourceFromUrl(req.url)
+          const boundSessionId = parseCccSessionIdFromUrl(req.url)
+          const server = createServer(source, boundSessionId)
+          const transport = new StreamableHTTPServerTransport({
+            sessionIdGenerator: undefined,  // stateless
+            enableJsonResponse: true,       // prefer JSON for unary responses (what rmcp expects)
+          })
+          // handleRequest reads the body itself when not provided.
+          await server.connect(transport)
+          await transport.handleRequest(req, res)
+          res.on('close', () => {
+            try { transport.close() } catch { /* already closed */ }
+            try { server.close() } catch { /* already closed */ }
+          })
+        } catch (err: any) {
+          logError(`[vision-mcp] /mcp handler error: ${err?.message ?? err}`)
+          if (!res.headersSent) {
+            res.writeHead(500, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32000, message: err?.message ?? 'Internal error' } }))
           }
         }
         return

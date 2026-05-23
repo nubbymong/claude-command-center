@@ -28,6 +28,18 @@ describe('parseSourceFromUrl (P6.9)', () => {
     expect(parseSourceFromUrl('/sse?source=other')).toBe('unknown')
   })
 
+  // P9.6: the /mcp streamable-HTTP route reuses parseSourceFromUrl so the
+  // same source-based codex_review gate (`if source !== 'codex'`) applies.
+  // Without this Codex sessions reaching the server via /mcp would see
+  // codex_review and could recursively review themselves.
+  it('returns "codex" for /mcp?source=codex (streamable HTTP route)', () => {
+    expect(parseSourceFromUrl('/mcp?source=codex')).toBe('codex')
+  })
+
+  it('returns "claude" for /mcp?source=claude', () => {
+    expect(parseSourceFromUrl('/mcp?source=claude')).toBe('claude')
+  })
+
   it('returns "unknown" for a malformed URL', () => {
     // The function uses URL constructor which throws on invalid input;
     // the catch block returns 'unknown'.
