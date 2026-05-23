@@ -483,6 +483,26 @@ export async function detectAndIngestFile(
 
 // ── Aggregation Helpers ──
 
+/**
+ * P8.6: Merge two TokenomicsSessionRecord objects preserving existing
+ * attribution fields. A seed/sync rebuild calls this so the merge
+ * never lowers attribution fidelity -- existing accountEmail /
+ * accountUuid / attributionMixed values survive even when the new
+ * fields don't carry them.
+ */
+export function mergeSessionRecordAttribution<T extends TokenomicsSessionRecord>(
+  existing: T,
+  newFields: Partial<T>,
+): T {
+  return {
+    ...existing,
+    ...newFields,
+    accountEmail: existing.accountEmail ?? newFields.accountEmail,
+    accountUuid: existing.accountUuid ?? newFields.accountUuid,
+    attributionMixed: existing.attributionMixed ?? newFields.attributionMixed,
+  }
+}
+
 function updateSessionRecord(
   data: TokenomicsData,
   sessionId: string,
