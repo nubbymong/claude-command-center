@@ -98,9 +98,19 @@ function parseRollout(text) {
 
 // -- walkRollouts ---------------------------------------------------
 // Walks <home>/sessions/YYYY/MM/DD/ newest-first, up to maxDays back.
-// For each rollout-*.jsonl, reads first 32KB and parseRollout()s it.
-// Filters to entries whose meta.cwd === cwd. Sorts by mtime desc.
-// Bails after collecting 15 matches to avoid full 30-day walk.
+// For each rollout-*.jsonl, reads first ROLLOUT_HEAD_BYTES and
+// parseRollout()s it. Filters to entries whose meta.cwd === cwd.
+// Sorts by mtime desc. Bails after collecting 15 matches to avoid
+// full 30-day walk.
+//
+// P9.8: bumped from 32KB to 256KB. Codex 0.133's session_meta line is
+// 22KB (system prompt) + the first developer wrapper line is another
+// 10KB, so a 32KB head consistently truncated before the first user
+// message and every entry rendered as "(continued session)" in the
+// picker. 256KB is the empirical 99th-percentile size needed to see
+// at least one real user turn, and capped low enough that 15 files
+// stays under 4MB peak read.
+const ROLLOUT_HEAD_BYTES = 256 * 1024
 function walkRollouts(home, maxDays, cwd) {
   const sessionsDir = path.join(home, 'sessions')
   if (!fs.existsSync(sessionsDir)) return []
@@ -138,7 +148,7 @@ function walkRollouts(home, maxDays, cwd) {
       try {
         fd = fs.openSync(fp, 'r')
         const st = fs.fstatSync(fd)
-        const size = Math.min(32768, st.size)
+        const size = Math.min(ROLLOUT_HEAD_BYTES, st.size)
         buf = Buffer.alloc(size)
         fs.readSync(fd, buf, 0, size, 0)
       } catch { continue }
