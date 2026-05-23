@@ -26,9 +26,31 @@ import {
 } from './hooks/per-session-settings'
 import { registerCodexReviewSession, unregisterCodexReviewSession } from './conductor-mcp-server'
 import { disposeSession as disposeCodexReviewUsage } from './codex-review-usage'
+import { readCodexAccountEmail } from './account-identity'
+import type { AccountIdentity } from '../shared/types'
 
 import * as path from 'path'
 import * as fs from 'fs'
+
+/**
+ * P8.8: per-session Codex spawn-time identity. Captured at PTY spawn,
+ * read by tokenomics applyIdentityAtFlush() so claim-time drift on
+ * ~/.codex/auth.json doesn't misattribute tokens.
+ */
+const codexSpawnIdentity = new Map<string, AccountIdentity>()
+
+export function captureCodexSpawnIdentity(sessionId: string): void {
+  const id = readCodexAccountEmail()
+  if (id) codexSpawnIdentity.set(sessionId, id)
+}
+
+export function clearCodexSpawnIdentity(sessionId: string): void {
+  codexSpawnIdentity.delete(sessionId)
+}
+
+export function getCodexSpawnIdentityMap(): Map<string, AccountIdentity> {
+  return codexSpawnIdentity
+}
 
 function escapeShellArg(str: string): string {
   return str.replace(/[\\"$`]/g, '\\$&')
@@ -726,6 +748,7 @@ export function spawnPty(
       }
     })
   } else if ((options?.provider ?? 'claude') === 'codex' && !options?.shellOnly) {
+    captureCodexSpawnIdentity(sessionId)
     // Codex local session — spawn `codex` directly. Codex itself owns the
     // REPL, so there is no shell-wrap-then-cd-then-launch dance like Claude
     // requires. cwd is propagated through pty.spawn options.
@@ -988,6 +1011,8 @@ export function spawnPty(
       // P6: clear opt-in registration and per-session usage record.
       unregisterCodexReviewSession(sessionId)
       disposeCodexReviewUsage(sessionId)
+      // P8.8: clear spawn-time identity capture. Safe no-op for non-codex sessions.
+      clearCodexSpawnIdentity(sessionId)
     } else {
       logInfo(`[pty] Stale exit for ${sessionId} — newer PTY has taken over, skipping cleanup`)
     }

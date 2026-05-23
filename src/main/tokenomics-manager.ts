@@ -23,11 +23,7 @@ import { computeCodexCostUsd } from './providers/codex/pricing'
 import { getCodexHome } from './providers/codex/auth'
 import { canonicalEmail } from './account-attribution'
 import { readClaudeAccountEmail } from './account-identity'
-
-// TEMPORARY (Task 7 -> Task 8 hand-off): stub until pty-manager exports the
-// real getCodexSpawnIdentityMap. Task 8 step 4 DELETES this stub and replaces
-// it with `import { getCodexSpawnIdentityMap } from './pty-manager'`.
-function getCodexSpawnIdentityMap(): Map<string, AccountIdentity> { return new Map() }
+import { getCodexSpawnIdentityMap } from './pty-manager'
 
 // ── Model Pricing (per 1M tokens) ──
 
