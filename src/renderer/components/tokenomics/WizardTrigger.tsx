@@ -13,8 +13,17 @@ export function WizardTrigger({ dismissed, onDismiss }: Props) {
   const [openModal, setOpenModal] = useState(false)
   const dialogRef = useRef<HTMLDivElement | null>(null)
 
+  // Copilot review on PR #31 (p9.14): IPC calls can reject -- listen for
+  // failures so an exception in the main-side handler does not become an
+  // unhandled promise rejection that leaves the banner state unsettled.
   useEffect(() => {
-    window.electronAPI.tokenomics.listUnattributed().then(setGroups)
+    window.electronAPI.tokenomics
+      .listUnattributed()
+      .then(setGroups)
+      .catch((err) => {
+        console.error('[WizardTrigger] listUnattributed failed:', err)
+        setGroups([])
+      })
   }, [])
 
   // Copilot review on PR #31 (p9.9): close-on-escape + focus-trap via
@@ -23,7 +32,13 @@ export function WizardTrigger({ dismissed, onDismiss }: Props) {
   // while the wizard is open.
   const closeAndRefresh = useCallback(() => {
     setOpenModal(false)
-    window.electronAPI.tokenomics.listUnattributed().then(setGroups)
+    window.electronAPI.tokenomics
+      .listUnattributed()
+      .then(setGroups)
+      .catch((err) => {
+        console.error('[WizardTrigger] listUnattributed failed:', err)
+        setGroups([])
+      })
   }, [])
   useFocusTrap(dialogRef, openModal, closeAndRefresh)
 

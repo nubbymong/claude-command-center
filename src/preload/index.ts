@@ -555,6 +555,7 @@ const electronAPI: ElectronAPI = {
     // Copilot review on PR #31 (p9.9): route through IPC.* constants so
     // shared/preload/main can't drift on a string-literal rename.
     listUnattributed: () => ipcRenderer.invoke(IPC.TOKENOMICS_LIST_UNATTRIBUTED),
+    listKnownEmails: (): Promise<string[]> => ipcRenderer.invoke(IPC.TOKENOMICS_LIST_KNOWN_EMAILS),
     attributeSessions: (payload: import('../shared/types').AttributionPayload) =>
       ipcRenderer.invoke(IPC.TOKENOMICS_ATTRIBUTE_SESSIONS, payload),
   },

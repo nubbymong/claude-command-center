@@ -18,6 +18,10 @@ beforeEach(() => {
   ;(globalThis as any).window.electronAPI = {
     tokenomics: {
       listUnattributed: vi.fn().mockResolvedValue(sampleGroups),
+      // Copilot review on PR #31 (p9.14): wizard now also pulls the
+      // full known-email list on mount so the <select> can offer options
+      // when timeline suggestions are empty.
+      listKnownEmails: vi.fn().mockResolvedValue(['a@x.com', 'b@x.com']),
       attributeSessions: vi.fn().mockResolvedValue({ ok: true }),
     },
   }

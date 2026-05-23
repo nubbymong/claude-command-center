@@ -180,6 +180,7 @@ export const IPC = {
   TOKENOMICS_SYNC: 'tokenomics:sync',
   TOKENOMICS_PROGRESS: 'tokenomics:progress',
   TOKENOMICS_LIST_UNATTRIBUTED: 'tokenomics:listUnattributed',
+  TOKENOMICS_LIST_KNOWN_EMAILS: 'tokenomics:listKnownEmails',
   TOKENOMICS_ATTRIBUTE_SESSIONS: 'tokenomics:attributeSessions',
 
   // Codex (OpenAI)

@@ -12,7 +12,7 @@ import { ipcMain } from 'electron'
 import { z } from 'zod'
 import { IPC } from '../../shared/ipc-channels'
 import { applyAttributionPayload, listUnattributedGroups } from '../tokenomics-manager'
-import { buildAccountTimeline } from '../account-attribution'
+import { buildAccountTimeline, listKnownEmails } from '../account-attribution'
 import type { AttributionPayload } from '../../shared/types'
 
 // Copilot review on PR #31 (p9.9): validate the incoming payload from the
@@ -32,6 +32,15 @@ export function registerAccountAttributionHandlers(): void {
   ipcMain.handle(IPC.TOKENOMICS_LIST_UNATTRIBUTED, async () => {
     const timeline = buildAccountTimeline()
     return listUnattributedGroups(timeline)
+  })
+
+  // Copilot review on PR #31 (p9.14): the wizard previously sourced
+  // selectable emails only from groups[].suggestedEmail, leaving the user
+  // stuck when the timeline could not suggest anything (no backups,
+  // unreadable ~/.claude.json). This handler exposes every email we have
+  // evidence for so the wizard's <select> always has options.
+  ipcMain.handle(IPC.TOKENOMICS_LIST_KNOWN_EMAILS, async () => {
+    return listKnownEmails()
   })
 
   ipcMain.handle(IPC.TOKENOMICS_ATTRIBUTE_SESSIONS, async (_event, payload: unknown) => {

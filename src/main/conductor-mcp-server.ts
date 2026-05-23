@@ -364,7 +364,7 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
     httpServer = http.createServer(async (req, res) => {
       // CORS headers for cross-origin MCP clients
       res.setHeader('Access-Control-Allow-Origin', `http://localhost:${port}`)
-      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS')
       res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
 
       if (req.method === 'OPTIONS') {

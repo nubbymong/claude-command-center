@@ -66,22 +66,65 @@ export function buildAccountTimeline(): TimelineInterval[] {
     const next = events[i + 1]
     out.push({
       start: events[i].ts,
-      end: next ? next.ts : (liveEmail ? Infinity : events[i].ts + 1),
+      end: next ? next.ts : Infinity,
       email: events[i].email,
     })
   }
-  // Trailing live interval if the live email differs from the last event's email
-  if (liveEmail && events.length > 0 && events[events.length - 1].email !== liveEmail) {
-    out[out.length - 1].end = events[events.length - 1].ts + 1
-    out.push({ start: events[events.length - 1].ts + 1, end: Infinity, email: liveEmail })
-  } else if (liveEmail && events.length === 0) {
-    // No backups but live identity exists -- single open interval
+  // No backups but a live identity exists -- attribute everything to it.
+  if (events.length === 0 && liveEmail) {
     out.push({ start: 0, end: Infinity, email: liveEmail })
-  } else if (liveEmail && events.length > 0) {
-    // Extend the last interval to +Infinity since live email matches
-    out[out.length - 1].end = Infinity
   }
+  // Copilot review on PR #31 (p9.14): when liveEmail differs from the last
+  // backup we DELIBERATELY do not synthesize a transition at
+  // `lastBackup.ts + 1`. The precise change time is unknown -- forcing the
+  // boundary either makes the last backup's interval 1ms long (orphaning
+  // every post-backup session) or misattributes the gap to the new account.
+  // The last backup's interval stays open-ended; the wizard surfaces
+  // liveEmail as a manual override option (via listKnownEmails below).
   return out
+}
+
+/**
+ * Collect every email we have evidence for: backup events, the live
+ * ~/.claude.json, and legacy accounts.json. Wizard uses this so the user
+ * can still pick a real email even when the timeline cannot suggest one
+ * (e.g. no backups at all, or the active account is different from every
+ * backed-up one).
+ *
+ * Synchronous, defensive -- never throws.
+ */
+export function listKnownEmails(): string[] {
+  const out = new Set<string>()
+  // Backup events
+  try {
+    const backupsDir = join(homedir(), '.claude', 'backups')
+    for (const f of readdirSync(backupsDir)) {
+      if (!f.startsWith('.claude.json.backup.')) continue
+      try {
+        const j = JSON.parse(readFileSync(join(backupsDir, f), 'utf-8'))
+        const email = canonicalEmail(j?.oauthAccount?.emailAddress)
+        if (email) out.add(email)
+      } catch { /* skip unreadable */ }
+    }
+  } catch { /* no backups dir */ }
+  // Live ~/.claude.json
+  try {
+    const livePath = join(homedir(), '.claude.json')
+    const stat = statSync(livePath)
+    if (stat.size <= CLAUDE_JSON_MAX_BYTES) {
+      const j = JSON.parse(readFileSync(livePath, 'utf-8'))
+      const email = canonicalEmail(j?.oauthAccount?.emailAddress)
+      if (email) out.add(email)
+    }
+  } catch { /* no live identity */ }
+  // Legacy accounts.json (best-effort)
+  try {
+    const accountsPath = join(homedir(), '.claude', 'accounts.json')
+    for (const email of extractEmailsFromAccountsJson(accountsPath)) {
+      out.add(email)
+    }
+  } catch { /* fine */ }
+  return Array.from(out).sort()
 }
 
 /**

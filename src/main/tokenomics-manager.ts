@@ -970,6 +970,12 @@ export function listUnattributedGroups(
   if (!cachedData) cachedData = loadData()
   const data = cachedData
   const groups = new Map<string, UnattributedSessionGroup>()
+  // Copilot review on PR #31 (p9.14): tally votes per (group, email) so the
+  // suggested email is deterministic regardless of iteration order. Previous
+  // code overwrote g.suggestedEmail per session, making the final suggestion
+  // depend on Object.entries order for configs whose sessions spanned
+  // multiple timeline intervals.
+  const groupVotes = new Map<string, Map<string, number>>()
   for (const [sid, r] of Object.entries(data.sessions)) {
     if (r.accountEmail || r.attributionMixed) continue
     const groupId = r.configId ?? '__no-config__'
@@ -981,12 +987,27 @@ export function listUnattributedGroups(
     g.sessionIds.push(sid)
     g.totalCostUsd += r.totalCostUsd ?? 0
     const lastTs = new Date(r.lastTimestamp).getTime()
+    if (!Number.isFinite(lastTs)) continue
     for (const iv of timeline) {
       if (lastTs >= iv.start && lastTs < iv.end) {
-        g.suggestedEmail = iv.email
+        const votes = groupVotes.get(groupId) ?? new Map<string, number>()
+        votes.set(iv.email, (votes.get(iv.email) ?? 0) + 1)
+        groupVotes.set(groupId, votes)
         break
       }
     }
+  }
+  // Resolve each group's suggestion to the email with the most votes;
+  // ties break alphabetically so the result is fully deterministic.
+  for (const g of groups.values()) {
+    const votes = groupVotes.get(g.groupId)
+    if (!votes) continue
+    let bestEmail: string | null = null
+    let bestCount = 0
+    for (const [email, count] of Array.from(votes.entries()).sort(([a], [b]) => a.localeCompare(b))) {
+      if (count > bestCount) { bestEmail = email; bestCount = count }
+    }
+    g.suggestedEmail = bestEmail
   }
   return Array.from(groups.values()).sort((a, b) => b.totalCostUsd - a.totalCostUsd)
 }
