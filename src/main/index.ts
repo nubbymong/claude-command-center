@@ -439,11 +439,21 @@ function createWindow(): void {
     try {
       const { execSync } = require('child_process')
       if (process.platform === 'win32') {
+        // stdio pipe on stderr suppresses the "INFO: Could not find files..."
+        // line that `where` writes to stderr on a miss; default execSync
+        // inherits stderr, leaking noise into the parent's terminal between
+        // the .exe and .cmd probes.
+        const opts = {
+          encoding: 'utf-8',
+          timeout: 5000,
+          windowsHide: true,
+          stdio: ['ignore', 'pipe', 'pipe'] as const,
+        }
         try {
-          execSync('where claude.exe', { encoding: 'utf-8', timeout: 5000, windowsHide: true })
+          execSync('where claude.exe', opts as any)
           return true
         } catch { /* try .cmd */ }
-        execSync('where claude.cmd', { encoding: 'utf-8', timeout: 5000, windowsHide: true })
+        execSync('where claude.cmd', opts as any)
         return true
       } else {
         // Use login shell to pick up Homebrew/nvm PATH entries

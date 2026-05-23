@@ -15,8 +15,15 @@ export function resolveCodexBinary(): { cmd: string; args: string[] } | null {
   }
   for (const bin of ['codex.exe', 'codex.cmd']) {
     try {
-      const cmdPath = execSync(`where ${bin}`, { encoding: 'utf-8', timeout: 5000 })
-        .trim().split(/\r?\n/)[0].trim()
+      // stdio pipe on stderr suppresses the "INFO: Could not find files for
+      // the given pattern(s)." that `where` writes to stderr on a miss --
+      // default execSync inherits stderr, so a normal "try next binary" probe
+      // ends up polluting the parent process's stderr / terminal.
+      const cmdPath = execSync(`where ${bin}`, {
+        encoding: 'utf-8',
+        timeout: 5000,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }).trim().split(/\r?\n/)[0].trim()
       if (cmdPath) return { cmd: cmdPath, args: [] }
     } catch { /* try next */ }
   }
@@ -42,8 +49,11 @@ export function resolveNodeExe(): string {
   if (os.platform() !== 'win32') return 'node'
   if (cachedNodeExe) return cachedNodeExe
   try {
-    const resolved = execSync('where node', { encoding: 'utf-8', timeout: 5000 })
-      .trim().split(/\r?\n/)[0].trim()
+    const resolved = execSync('where node', {
+      encoding: 'utf-8',
+      timeout: 5000,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim().split(/\r?\n/)[0].trim()
     if (resolved) {
       cachedNodeExe = resolved
       return resolved
