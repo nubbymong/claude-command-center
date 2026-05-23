@@ -1,5 +1,4 @@
-import React, { useEffect, useState, useRef, useCallback } from 'react'
-import type { AccountProfile } from '../../shared/types'
+import React, { useEffect, useState } from 'react'
 import { useSettingsStore } from '../stores/settingsStore'
 
 interface Props {
@@ -111,15 +110,6 @@ export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
   const [maximized, setMaximized] = useState(false)
   const [serviceStatus, setServiceStatus] = useState<ServiceStatusPayload | null>(null)
 
-  // Account switcher state
-  const [accountOpen, setAccountOpen] = useState(false)
-  const [accounts, setAccounts] = useState<AccountProfile[]>([])
-  const [activeAccount, setActiveAccount] = useState<AccountProfile | null>(null)
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [editValue, setEditValue] = useState('')
-  const accountRef = useRef<HTMLDivElement>(null)
-  const editInputRef = useRef<HTMLInputElement>(null)
-
   useEffect(() => {
     window.electronAPI.window.isMaximized().then(setMaximized)
     const unsub = window.electronAPI.window.onMaximizedChanged(setMaximized)
@@ -132,73 +122,6 @@ export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
     })
     return unsub
   }, [])
-
-  const refreshAccounts = useCallback(async () => {
-    const [list, active] = await Promise.all([
-      window.electronAPI.account.list(),
-      window.electronAPI.account.getActive(),
-    ])
-    setAccounts(list)
-    setActiveAccount(active)
-  }, [])
-
-  // Load accounts on mount and on dropdown open
-  useEffect(() => { refreshAccounts() }, [refreshAccounts])
-  useEffect(() => {
-    if (accountOpen) refreshAccounts()
-  }, [accountOpen, refreshAccounts])
-
-  // Close dropdown on click outside or Escape
-  useEffect(() => {
-    if (!accountOpen) return
-    const handleClick = (e: MouseEvent) => {
-      if (accountRef.current && !accountRef.current.contains(e.target as Node)) {
-        setAccountOpen(false)
-      }
-    }
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setAccountOpen(false)
-    }
-    document.addEventListener('mousedown', handleClick)
-    document.addEventListener('keydown', handleKey)
-    return () => {
-      document.removeEventListener('mousedown', handleClick)
-      document.removeEventListener('keydown', handleKey)
-    }
-  }, [accountOpen])
-
-  const handleSwitch = async (id: string) => {
-    const result = await window.electronAPI.account.switch(id)
-    if (result.ok) {
-      await refreshAccounts()
-      setAccountOpen(false)
-    }
-  }
-
-  const handleSaveAs = async (id: 'primary' | 'secondary', label: string) => {
-    const result = await window.electronAPI.account.saveCurrentAs(id, label)
-    if (result.ok) {
-      await refreshAccounts()
-    }
-  }
-
-  const startRename = (id: string, currentLabel: string) => {
-    setEditingId(id)
-    setEditValue(currentLabel)
-    setTimeout(() => editInputRef.current?.select(), 0)
-  }
-
-  const commitRename = async () => {
-    if (editingId && editValue.trim()) {
-      const result = await window.electronAPI.account.rename(editingId, editValue.trim())
-      if (result.ok) await refreshAccounts()
-    }
-    setEditingId(null)
-  }
-
-  const accountTooltip = activeAccount
-    ? `Account: ${activeAccount.label}`
-    : 'Account Switcher'
 
   const worst = serviceStatus?.worst || 'operational'
   const isHealthy = !serviceStatus || worst === 'operational'
@@ -231,95 +154,6 @@ export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
             <line x1="5.5" y1="2" x2="5.5" y2="14" stroke="currentColor" strokeWidth="1.2" />
           </svg>
         </button>
-
-        {/* Account switcher */}
-        <div ref={accountRef} className="relative">
-          <button
-            onClick={() => setAccountOpen(prev => !prev)}
-            className="p-1.5 rounded hover:bg-surface0 text-overlay1 hover:text-text transition-colors"
-            title={accountTooltip}
-          >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-              <circle cx="8" cy="5.5" r="2.5" stroke="currentColor" strokeWidth="1.2" />
-              <path d="M3 14c0-2.76 2.24-5 5-5s5 2.24 5 5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-            </svg>
-          </button>
-
-          {accountOpen && (
-            <div className="absolute left-0 top-full mt-1 w-72 bg-surface0 border border-surface1 rounded-lg shadow-lg z-50 py-1 text-sm">
-              {accounts.length === 0 && (
-                <div className="px-3 py-2 text-overlay0 italic">Detecting account...</div>
-              )}
-              {accounts.map((acct) => {
-                const isActive = activeAccount?.id === acct.id
-                const isEditing = editingId === acct.id
-                return (
-                  <div
-                    key={acct.id}
-                    className={`flex items-center hover:bg-surface1 ${isActive ? 'bg-surface1/50' : ''}`}
-                  >
-                    {isEditing ? (
-                      <div className="flex-1 px-3 py-1.5 flex items-center gap-2">
-                        <span className="w-4 shrink-0" />
-                        <input
-                          ref={editInputRef}
-                          value={editValue}
-                          onChange={(e) => setEditValue(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') commitRename()
-                            if (e.key === 'Escape') setEditingId(null)
-                          }}
-                          onBlur={commitRename}
-                          className="flex-1 bg-base border border-surface2 rounded px-2 py-1 text-text text-sm outline-none focus:border-blue"
-                          autoFocus
-                        />
-                      </div>
-                    ) : (
-                      <>
-                        <button
-                          onClick={() => !isActive && handleSwitch(acct.id)}
-                          className="flex-1 px-3 py-2 text-left flex items-center gap-2 text-text"
-                        >
-                          <span className="w-4 text-center text-green shrink-0">
-                            {isActive ? '\u2713' : ''}
-                          </span>
-                          <div className="flex flex-col min-w-0">
-                            <span className="truncate">{acct.label}</span>
-                            <span className="text-xs text-overlay0 capitalize">{acct.id}</span>
-                          </div>
-                        </button>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); startRename(acct.id, acct.label) }}
-                          className="px-2 py-1 mr-1 text-overlay0 hover:text-text rounded hover:bg-surface0"
-                          title="Rename"
-                        >
-                          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                            <path d="M8.5 1.5l2 2L4 10H2v-2l6.5-6.5z" stroke="currentColor" strokeWidth="1" strokeLinejoin="round"/>
-                          </svg>
-                        </button>
-                      </>
-                    )}
-                  </div>
-                )
-              })}
-
-              {accounts.length < 2 && (
-                <>
-                  <div className="border-t border-surface1 my-1" />
-                  <button
-                    onClick={() => {
-                      const nextSlot = accounts.find(a => a.id === 'primary') ? 'secondary' : 'primary'
-                      handleSaveAs(nextSlot as 'primary' | 'secondary', nextSlot === 'primary' ? 'Primary' : 'Secondary')
-                    }}
-                    className="w-full px-3 py-1.5 text-left hover:bg-surface1 text-overlay1 hover:text-text"
-                  >
-                    <span className="ml-6">Save current as {accounts.find(a => a.id === 'primary') ? 'Secondary' : 'Primary'}</span>
-                  </button>
-                </>
-              )}
-            </div>
-          )}
-        </div>
       </div>
 
       <div className="flex-1 text-center text-xs text-overlay1 font-medium">
