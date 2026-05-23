@@ -54,6 +54,17 @@ export interface LegacyVersion {
 
 export type ProviderId = 'claude' | 'codex'
 
+export type CatppuccinAccent =
+  | 'red' | 'peach' | 'yellow' | 'green' | 'teal' | 'sky'
+  | 'blue' | 'lavender' | 'mauve' | 'pink' | 'flamingo' | 'rosewater'
+
+export interface AccountIdentity {
+  email: string
+  name?: string
+  accountUuid?: string
+  provider: 'claude' | 'codex'
+}
+
 export interface ClaudeOptions {
   model?: string
   effortLevel?: 'low' | 'medium' | 'high'
@@ -146,6 +157,10 @@ export interface StatuslineData {
   rateLimitWeekly?: number
   rateLimitWeeklyResets?: string
   rateLimitExtra?: RateLimitExtra
+  /** Active-account email surfaced by the bridge script. Renderer displays it left of the model name. */
+  accountEmail?: string
+  /** Pre-computed by main process via `colourForEmail()`; renderer consumes directly. */
+  accountColour?: CatppuccinAccent
 }
 
 // ── Agent Templates ──
@@ -309,6 +324,12 @@ export interface TokenomicsSessionRecord {
   // v1.5: provider discriminator. Optional on read for back-compat -- the
   // tokenomics-manager back-fills 'claude' on legacy records during load.
   provider?: ProviderId
+  /** Canonicalised account email at write time. Lowercased + trimmed. Undefined for unattributed records. */
+  accountEmail?: string
+  /** Stability hint (account uuid from oauthAccount or Codex JWT). Never the primary key. */
+  accountUuid?: string
+  /** User-flagged via wizard: session spanned accounts. Excludes the record from per-account filter totals but keeps it in "All accounts". */
+  attributionMixed?: boolean
 }
 
 export interface TokenomicsDailyAggregate {
