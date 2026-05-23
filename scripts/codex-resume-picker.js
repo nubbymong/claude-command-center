@@ -63,8 +63,16 @@ function resolveCodexCmd() {
   if (os.platform() !== 'win32') return 'codex'
   for (const bin of ['codex.exe', 'codex.cmd']) {
     try {
-      return execSync(`where ${bin}`, { encoding: 'utf-8', timeout: 5000 })
-        .trim().split('\n')[0].trim()
+      // stdio pipe on stderr suppresses the "INFO: Could not find files
+      // for the given pattern(s)." that Windows `where` writes to stderr
+      // on a miss. Default execSync inherits stderr -- the message would
+      // surface inside the PTY where the picker is hosted, confusing
+      // the user after they pick a session.
+      return execSync(`where ${bin}`, {
+        encoding: 'utf-8',
+        timeout: 5000,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }).trim().split('\n')[0].trim()
     } catch { /* try next */ }
   }
   return 'codex'

@@ -46,6 +46,45 @@ describe('codex-resume-picker parseRollout', () => {
     expect(lib.parseRollout('')).toBeNull()
   })
 
+  it('extracts label from response_item / role=user / input_text (codex 0.133 format)', () => {
+    // P9.7 regression: codex CLI's rollout format changed from
+    // event_msg/user_message to response_item/message/role=user/input_text
+    // between 0.128 and 0.133. Without this support every session showed
+    // "(continued session)" in the picker.
+    const text = readFileSync(join(FIXTURES, 'response-item-format.jsonl'), 'utf-8')
+    const r = lib.parseRollout(text)
+    expect(r).not.toBeNull()
+    expect(r!.cwd).toBe('F:\\test\\fixture-cwd')
+    expect(r!.model).toBe('gpt-5.5')
+    expect(r!.effort).toBe('medium')
+    // Skips the Codex-injected <environment_context> wrapper user-message and
+    // picks the first real user input as the label.
+    expect(r!.label).toBe('add a new auth endpoint with rate limiting')
+  })
+
+  it('skips XML-wrapped user content (environment_context, collaboration_mode, etc.)', () => {
+    const lines = [
+      '{"type":"session_meta","payload":{"id":"u-3","cwd":"/x","cli_version":"0.133"}}',
+      '{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>foo</environment_context>"}]}}',
+      '{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<collaboration_mode>bar</collaboration_mode>"}]}}',
+    ].join('\n')
+    const r = lib.parseRollout(lines)
+    expect(r).not.toBeNull()
+    // Both user inputs are wrapper tags -- label stays the default.
+    expect(r!.label).toBe('(continued session)')
+  })
+
+  it('caps very long user inputs at 200 chars', () => {
+    const longText = 'a'.repeat(500)
+    const lines = [
+      '{"type":"session_meta","payload":{"id":"u-4","cwd":"/x","cli_version":"0.133"}}',
+      `{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"${longText}"}]}}`,
+    ].join('\n')
+    const r = lib.parseRollout(lines)
+    expect(r).not.toBeNull()
+    expect(r!.label.length).toBe(200)
+  })
+
   it('finds turn_context even when not on line 2', () => {
     // session_meta on line 1, then noise, then turn_context on line 4
     const lines = [

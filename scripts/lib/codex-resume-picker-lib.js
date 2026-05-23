@@ -34,6 +34,19 @@ function parseRollout(text) {
   if (!meta) return null
 
   // Walk subsequent lines for turn_context (any position) and first user_message.
+  //
+  // Two rollout formats supported (codex CLI changed the shape between
+  // 0.128 and 0.133):
+  //   - Legacy:  { type: 'event_msg',     payload: { type: 'user_message', message: '...' } }
+  //   - Current: { type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '...' }] } }
+  //
+  // In the current format Codex injects synthetic wrapper messages at the
+  // top of every session (<environment_context>, <collaboration_mode>,
+  // <permissions instructions>, etc.). These start with an XML-style
+  // opening tag and should NOT be displayed as the conversation label.
+  // The heuristic: skip any input_text that begins with `<` followed by
+  // a letter (i.e. looks like a wrapper tag). The first real user input
+  // wins.
   let model = meta.model
   let effort
   let label = '(continued session)'
@@ -50,11 +63,32 @@ function parseRollout(text) {
       continue
     }
 
-    if (!foundLabel && evt.type === 'event_msg' && evt.payload && evt.payload.type === 'user_message') {
+    if (foundLabel) continue
+
+    // Legacy format
+    if (evt.type === 'event_msg' && evt.payload && evt.payload.type === 'user_message') {
       const m = evt.payload.message
       if (typeof m === 'string' && m.trim()) {
         label = m.replace(/[\r\n]+/g, ' ').trim()
         foundLabel = true
+        continue
+      }
+    }
+
+    // Current format -- response_item / message / role=user / content[].input_text
+    if (evt.type === 'response_item' && evt.payload && evt.payload.type === 'message' && evt.payload.role === 'user' && Array.isArray(evt.payload.content)) {
+      for (const part of evt.payload.content) {
+        if (!part || typeof part !== 'object') continue
+        if (part.type !== 'input_text') continue
+        const text = part.text
+        if (typeof text !== 'string') continue
+        const trimmed = text.trim()
+        if (!trimmed) continue
+        // Skip Codex-injected wrappers like <environment_context>, <collaboration_mode>, etc.
+        if (/^<[A-Za-z]/.test(trimmed)) continue
+        label = trimmed.replace(/[\r\n]+/g, ' ').slice(0, 200)
+        foundLabel = true
+        break
       }
     }
   }
