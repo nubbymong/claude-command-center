@@ -24,7 +24,7 @@ vi.mock('../../../../src/main/ipc/setup-handlers', () => ({
 import * as osMod from 'os'
 import { execSync } from 'child_process'
 import { CodexProvider } from '../../../../src/main/providers/codex'
-import { resolveCodexBinary } from '../../../../src/main/providers/codex/spawn'
+import { resolveCodexBinary, resolveNodeExe, __resetNodeExeCache } from '../../../../src/main/providers/codex/spawn'
 
 describe('CodexProvider', () => {
   let originalCodexHome: string | undefined
@@ -160,6 +160,10 @@ describe('CodexProvider', () => {
       delete (globalThis as any).__mockResourcesDir
     })
 
+    beforeEach(() => {
+      __resetNodeExeCache()
+    })
+
     it('swaps cmd to node + picker when useResumePicker=true and script is deployed', () => {
       const { mkdtempSync, mkdirSync, writeFileSync } = require('fs') as typeof import('fs')
       const { tmpdir } = require('os') as typeof import('os')
@@ -175,6 +179,8 @@ describe('CodexProvider', () => {
         codexOptions: { model: 'gpt-5.5', reasoningEffort: 'xhigh', permissionsPreset: 'standard' },
       })
 
+      // On linux/macOS bare 'node' works (PTY uses execvp -> PATH lookup).
+      // On win32 we resolve the full path via `where node` (see resolveNodeExe).
       expect(out.cmd).toBe('node')
       expect(out.args[0]).toBe(join(dir, 'scripts', 'codex-resume-picker.js'))
       expect(out.args).toContain('-m')
@@ -218,6 +224,56 @@ describe('CodexProvider', () => {
       })
       expect(out.cmd).not.toBe('node')
       expect(out.cmd).toMatch(/codex/i)
+    })
+
+    // Regression for #347: node-pty/ConPTY on Windows does NOT consult PATH
+    // for bare names -- pty.spawn('node', ...) throws "File not found:"
+    // synchronously before any onExit/onData fires, so the renderer attaches
+    // xterm to a dead PTY (blank-terminal symptom). Fix is to resolve node
+    // via `where node` and pass the full path. Non-win32 stays bare 'node'
+    // because execvp does PATH lookup.
+    it('win32 picker spawn resolves node to a full .exe path (not bare "node")', () => {
+      const { mkdtempSync, mkdirSync, writeFileSync } = require('fs') as typeof import('fs')
+      const { tmpdir } = require('os') as typeof import('os')
+      const { join } = require('path') as typeof import('path')
+      const dir = mkdtempSync(join(tmpdir(), 'ccc-spawn-win32-picker-'))
+      mkdirSync(join(dir, 'scripts'), { recursive: true })
+      writeFileSync(join(dir, 'scripts', 'codex-resume-picker.js'), '// noop')
+      setMockResourcesDir(dir)
+
+      // Simulate win32 + where finding codex.cmd + node.exe at specific paths.
+      // execSync is consulted twice (once for codex, once for node); return
+      // different paths per call.
+      vi.mocked(osMod.platform).mockReturnValue('win32' as NodeJS.Platform)
+      vi.mocked(execSync).mockImplementation((cmd: any) => {
+        const s = String(cmd)
+        if (s.includes('where node')) return 'C:\\Program Files\\nodejs\\node.exe\n' as any
+        if (s.includes('where codex')) return 'C:\\npm\\codex.cmd\n' as any
+        throw new Error(`unexpected: ${s}`)
+      })
+
+      const out = new CodexProvider().buildSpawnCommand({
+        sessionId: 'sid-win32-picker',
+        useResumePicker: true,
+        codexOptions: { model: 'gpt-5.5', reasoningEffort: 'medium', permissionsPreset: 'standard' },
+      })
+
+      expect(out.cmd).toBe('C:\\Program Files\\nodejs\\node.exe')
+      expect(out.cmd).not.toBe('node')
+      expect(out.args[0]).toBe(join(dir, 'scripts', 'codex-resume-picker.js'))
+    })
+
+    it('resolveNodeExe falls back to bare "node" on win32 if `where node` fails', () => {
+      vi.mocked(osMod.platform).mockReturnValue('win32' as NodeJS.Platform)
+      vi.mocked(execSync).mockImplementation(() => { throw new Error('not found') })
+      expect(resolveNodeExe()).toBe('node')
+    })
+
+    it('resolveNodeExe returns bare "node" on non-win32 without invoking where', () => {
+      vi.mocked(osMod.platform).mockReturnValue('linux' as NodeJS.Platform)
+      const before = vi.mocked(execSync).mock.calls.length
+      expect(resolveNodeExe()).toBe('node')
+      expect(vi.mocked(execSync).mock.calls.length).toBe(before)
     })
   })
 })
