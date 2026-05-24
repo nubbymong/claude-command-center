@@ -31,7 +31,7 @@ export function getTerminalTheme(userBackgroundOverride?: string) {
     background: userBackgroundOverride || readVar('--surface-stage', FALLBACK_DARK.background),
     foreground: readVar('--terminal-foreground', FALLBACK_DARK.foreground),
     cursor: readVar('--terminal-foreground', FALLBACK_DARK.foreground),
-    cursorAccent: readVar('--surface-stage', FALLBACK_DARK.background),
+    cursorAccent: userBackgroundOverride || readVar('--surface-stage', FALLBACK_DARK.background),
     selectionBackground: readVar('--surface-raised', FALLBACK_DARK.surface2),
     selectionForeground: readVar('--terminal-foreground', FALLBACK_DARK.foreground),
     black: readVar('--surface-raised', FALLBACK_DARK.surface2),

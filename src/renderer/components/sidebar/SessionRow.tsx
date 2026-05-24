@@ -48,9 +48,10 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
   const tintColor = session.color
   const st = toSessionState(session.status, needsAttention)
 
-  // Priority: error/blocked > awaiting > active (spec §10)
+  // Priority: error > awaiting > active (spec §10). toSessionState never
+  // emits 'blocked' (no store signal yet); wire it here + there together if added.
   const rowStateClass =
-    st === 'error' || st === 'blocked' ? 'row-error'
+    st === 'error' ? 'row-error'
     : st === 'awaiting' ? 'row-awaiting'
     : isActive ? 'row-active' : ''
 

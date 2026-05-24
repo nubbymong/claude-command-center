@@ -7,6 +7,13 @@ const COLOR: Record<SessionState,string> = {
 export function StatusDot({ state, title }: { state: SessionState; title?: string }) {
   // Decorative by default (status is also conveyed by adjacent text/row state);
   // pass `title` at a call site where the dot alone carries meaning.
-  const a11y = title ? { role: 'img', 'aria-label': title, title } : { 'aria-hidden': true }
-  return <span {...a11y} style={{ width:7, height:7, borderRadius:'50%', background:COLOR[state], flex:'none', display:'inline-block' }} />
+  return (
+    <span
+      role={title ? 'img' : undefined}
+      aria-label={title}
+      aria-hidden={title ? undefined : true}
+      title={title}
+      style={{ width:7, height:7, borderRadius:'50%', background:COLOR[state], flex:'none', display:'inline-block' }}
+    />
+  )
 }
