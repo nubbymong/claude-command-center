@@ -250,9 +250,8 @@ function DailyChart({ selectedDate, onSelectDate }: {
                   width={barWidth}
                   height={Math.max(barHeight, 1)}
                   rx={3}
-                  fill={isSelected ? '#89B4FA' : '#FAB387'}
+                  style={{ fill: isSelected ? 'var(--accent)' : 'var(--chart-other)', stroke: isSelected ? 'var(--accent)' : 'none' }}
                   opacity={agg.totalCostUsd > 0 ? (isSelected ? 1 : 0.85) : 0.15}
-                  stroke={isSelected ? '#89B4FA' : 'none'}
                   strokeWidth={isSelected ? 2 : 0}
                 />
                 <title>{`${agg.date}: ${formatCost(agg.totalCostUsd)} (${agg.sessionCount} sessions, ${agg.messageCount} msgs)`}</title>
@@ -261,7 +260,7 @@ function DailyChart({ selectedDate, onSelectDate }: {
                     x={x + barWidth / 2}
                     y={chartHeight + 14}
                     textAnchor="middle"
-                    fill={isSelected ? '#89B4FA' : '#6C7086'}
+                    style={{ fill: isSelected ? 'var(--accent)' : 'var(--text-muted)' }}
                     fontSize="8"
                     fontWeight={isSelected ? 'bold' : 'normal'}
                   >
