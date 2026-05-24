@@ -496,10 +496,10 @@ export async function detectAndIngestFile(
 
 /**
  * P8.6: Merge two TokenomicsSessionRecord objects preserving existing
- * attribution fields. A seed/sync rebuild calls this so the merge
- * never lowers attribution fidelity -- existing accountEmail /
- * accountUuid / attributionMixed values survive even when the new
- * fields don't carry them.
+ * attribution fields. updateSessionRecord() calls this on every seed/sync
+ * re-parse so the rebuild never lowers attribution fidelity -- existing
+ * accountEmail / accountUuid / attributionMixed values survive even when
+ * the freshly parsed record doesn't carry them.
  */
 export function mergeSessionRecordAttribution<T extends TokenomicsSessionRecord>(
   existing: T,
@@ -555,63 +555,60 @@ function updateSessionRecord(
 ): void {
   if (messages.length === 0) return
 
-  let record = data.sessions[sessionId]
-  if (!record) {
-    record = {
-      sessionId,
-      projectDir,
-      model: messages[0].model,
-      totalInputTokens: 0,
-      totalOutputTokens: 0,
-      totalCacheReadTokens: 0,
-      totalCacheWriteTokens: 0,
-      totalCostUsd: 0,
-      messageCount: 0,
-      firstTimestamp: messages[0].timestamp,
-      lastTimestamp: messages[0].timestamp,
-    }
-    data.sessions[sessionId] = record
-  }
+  const existing = data.sessions[sessionId]
 
-  // Reset counts for re-parse (idempotent)
-  record.totalInputTokens = 0
-  record.totalOutputTokens = 0
-  record.totalCacheReadTokens = 0
-  record.totalCacheWriteTokens = 0
-  record.totalCostUsd = 0
-  record.messageCount = 0
-  record.firstTimestamp = messages[0].timestamp
-  record.lastTimestamp = messages[messages.length - 1].timestamp
-  record.model = messages[0].model
+  // Re-parse is idempotent: build the metric fields fresh from the parsed
+  // messages rather than mutating in place. The fresh record carries NO
+  // attribution fields, so mergeSessionRecordAttribution() (below) folds
+  // the existing accountEmail / accountUuid / attributionMixed back in.
+  const rebuilt: TokenomicsSessionRecord = {
+    sessionId,
+    projectDir: existing?.projectDir || projectDir,
+    model: messages[0].model,
+    totalInputTokens: 0,
+    totalOutputTokens: 0,
+    totalCacheReadTokens: 0,
+    totalCacheWriteTokens: 0,
+    totalCostUsd: 0,
+    messageCount: 0,
+    firstTimestamp: messages[0].timestamp,
+    lastTimestamp: messages[messages.length - 1].timestamp,
+  }
 
   for (const msg of messages) {
-    record.totalInputTokens += msg.inputTokens
-    record.totalOutputTokens += msg.outputTokens
-    record.totalCacheReadTokens += msg.cacheReadTokens
-    record.totalCacheWriteTokens += msg.cacheWriteTokens
-    record.messageCount++
+    rebuilt.totalInputTokens += msg.inputTokens
+    rebuilt.totalOutputTokens += msg.outputTokens
+    rebuilt.totalCacheReadTokens += msg.cacheReadTokens
+    rebuilt.totalCacheWriteTokens += msg.cacheWriteTokens
+    rebuilt.messageCount++
   }
 
-  record.totalCostUsd = calculateCost(
-    record.totalInputTokens,
-    record.totalOutputTokens,
-    record.totalCacheReadTokens,
-    record.totalCacheWriteTokens,
-    record.model
+  rebuilt.totalCostUsd = calculateCost(
+    rebuilt.totalInputTokens,
+    rebuilt.totalOutputTokens,
+    rebuilt.totalCacheReadTokens,
+    rebuilt.totalCacheWriteTokens,
+    rebuilt.model
   )
 
   // Calculate burn rate
-  if (record.firstTimestamp && record.lastTimestamp) {
-    const start = new Date(record.firstTimestamp).getTime()
-    const end = new Date(record.lastTimestamp).getTime()
-    record.durationMs = Math.max(end - start, 0)
-    if (record.durationMs > 60000) { // Only calculate if session lasted > 1 minute
-      const totalTokens = record.totalInputTokens + record.totalOutputTokens +
-        record.totalCacheReadTokens + record.totalCacheWriteTokens
-      record.costPerHour = (record.totalCostUsd / record.durationMs) * 3_600_000
-      record.tokensPerMinute = (totalTokens / record.durationMs) * 60_000
+  if (rebuilt.firstTimestamp && rebuilt.lastTimestamp) {
+    const start = new Date(rebuilt.firstTimestamp).getTime()
+    const end = new Date(rebuilt.lastTimestamp).getTime()
+    rebuilt.durationMs = Math.max(end - start, 0)
+    if (rebuilt.durationMs > 60000) { // Only calculate if session lasted > 1 minute
+      const totalTokens = rebuilt.totalInputTokens + rebuilt.totalOutputTokens +
+        rebuilt.totalCacheReadTokens + rebuilt.totalCacheWriteTokens
+      rebuilt.costPerHour = (rebuilt.totalCostUsd / rebuilt.durationMs) * 3_600_000
+      rebuilt.tokensPerMinute = (totalTokens / rebuilt.durationMs) * 60_000
     }
   }
+
+  // P8.6 / p9.17.1: preserve attribution (+ provider + any other
+  // existing-only fields) across the re-parse.
+  data.sessions[sessionId] = existing
+    ? mergeSessionRecordAttribution(existing, rebuilt)
+    : rebuilt
 }
 
 function rebuildAggregates(data: TokenomicsData): void {
@@ -837,7 +834,19 @@ export function handleStatuslineUpdate(rawStatuslineData: StatuslineData): void 
   // P8.10: decorate with accountColour so any downstream consumer that
   // forwards this payload sees a fully-enriched object.
   const statuslineData = decorateStatuslineWithColour(rawStatuslineData)
-  if (!statuslineData.costUsd && !statuslineData.inputTokens && !statuslineData.rateLimitExtra && !statuslineData.rateLimitCurrent) return
+  // Copilot review on PR #31 (p9.17.1): use nullish (not falsy) checks so
+  // a legitimate `0` cost / token tick is not dropped, and treat an
+  // identity-bearing tick as a reason to proceed so a session that has
+  // emitted no cost yet still gets attributed in the block below.
+  const hasMetrics =
+    statuslineData.costUsd != null ||
+    statuslineData.inputTokens != null ||
+    statuslineData.rateLimitExtra != null ||
+    statuslineData.rateLimitCurrent != null ||
+    statuslineData.rateLimitWeekly != null
+  const hasIdentity =
+    typeof statuslineData.accountEmail === 'string' && statuslineData.accountEmail.trim().length > 0
+  if (!hasMetrics && !hasIdentity) return
 
   if (!cachedData) {
     cachedData = loadData()

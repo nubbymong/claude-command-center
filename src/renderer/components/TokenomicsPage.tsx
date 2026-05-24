@@ -761,6 +761,20 @@ export default function TokenomicsPage() {
     return 'all'
   }, [tokenomicsAccountFilter, observedEmails])
 
+  // Copilot review on PR #31 (p9.17.1): persist the clamp back to settings
+  // so a stale email filter is cleared permanently (otherwise it silently
+  // re-activates if that email ever reappears, and can never be cleared).
+  // Guard on `data` so we never overwrite the user's real choice during the
+  // initial load window when observedEmails is still empty.
+  useEffect(() => {
+    if (!data) return
+    const persisted = tokenomicsAccountFilter as AccountFilterValue
+    if (persisted === 'all' || persisted === '__mixed__' || persisted === '__unknown__') return
+    if (!observedEmails.includes(persisted)) {
+      updateSettings({ tokenomicsAccountFilter: 'all' })
+    }
+  }, [data, tokenomicsAccountFilter, observedEmails, updateSettings])
+
   // Burn rate from recent activity (last 5h window)
   const burnRate = useMemo(() => {
     const recent = allSessions.filter(s => s.firstTimestamp >= periods.fiveHourStart && s.costPerHour)

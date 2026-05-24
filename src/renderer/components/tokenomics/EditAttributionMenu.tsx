@@ -53,7 +53,14 @@ export function EditAttributionMenu({ sessionId, detectedEmails, onChange }: Pro
         <option value="__clear__">Clear</option>
       </select>
       {error && (
-        <span className="text-red text-xs" title={error} role="alert">!</span>
+        // Copilot review on PR #31 (p9.17.1): the message must be in the
+        // accessible name, not just the title attribute (screen readers
+        // often skip title). Keep the compact "!" glyph visually but expose
+        // the full error via aria-label + a visually-hidden text node.
+        <span className="text-red text-xs" role="alert" aria-label={`Attribution failed: ${error}`} title={error}>
+          <span aria-hidden="true">!</span>
+          <span className="sr-only">Attribution failed: {error}</span>
+        </span>
       )}
     </span>
   )

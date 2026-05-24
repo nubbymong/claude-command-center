@@ -45,4 +45,17 @@ describe('handleStatuslineUpdate -- live Claude attribution', () => {
     handleStatuslineUpdate(tick({}))
     expect(__seedTokenomicsForTests.read().sessions.s1.accountEmail).toBeUndefined()
   })
+
+  // Copilot review on PR #31 (p9.17.1): nullish (not falsy) guard.
+  it('stamps an identity-only tick that carries no cost metrics', () => {
+    handleStatuslineUpdate({ sessionId: 's1', accountEmail: 'idonly@example.com' } as StatuslineData)
+    expect(__seedTokenomicsForTests.read().sessions.s1.accountEmail).toBe('idonly@example.com')
+  })
+
+  it('does not drop a legitimate zero-cost tick', () => {
+    handleStatuslineUpdate({ sessionId: 's1', costUsd: 0, accountEmail: 'zero@example.com' } as StatuslineData)
+    const r = __seedTokenomicsForTests.read().sessions.s1
+    expect(r).toBeDefined()
+    expect(r.accountEmail).toBe('zero@example.com')
+  })
 })
