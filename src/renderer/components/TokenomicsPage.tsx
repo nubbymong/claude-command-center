@@ -8,27 +8,14 @@ import { WizardTrigger } from './tokenomics/WizardTrigger'
 import { EditAttributionMenu } from './tokenomics/EditAttributionMenu'
 import { useAppMetaStore } from '../stores/appMetaStore'
 
-const MODEL_COLORS: Record<string, string> = {
-  // Claude models -- full versioned strings as emitted by the API
-  'claude-sonnet-4-6': '#89B4FA',
-  'claude-opus-4-6': '#CBA6F7',
-  'claude-haiku-4-5': '#A6E3A1',
-  // Codex / GPT models (P3.2) -- real model strings emitted by Codex rollouts
-  'gpt-5.5':          '#A6E3A1',  // green
-  'gpt-5.4':          '#89DCEB',  // sky
-  'gpt-5.4-mini':     '#74C7EC',  // sapphire
-  'gpt-5.3-codex':    '#FAB387',  // peach
-}
-
-function getModelColor(model: string): string {
-  if (MODEL_COLORS[model]) return MODEL_COLORS[model]
-  for (const key of Object.keys(MODEL_COLORS)) {
-    if (model.startsWith(key.replace(/-\d+-\d+$/, ''))) return MODEL_COLORS[key]
-  }
-  // GPT/Codex models not explicitly listed -- use sky
-  if (model.startsWith('gpt-') || model.startsWith('o')) return '#89DCEB'
-  // Unknown model fallback -- catppuccin subtext0
-  return '#A6ADC8'
+// Chart series bound to semantic tokens (theme-aware). Spec section 5: copper = Opus
+// ONLY, desaturated via --chart-opus so it does not dominate; never a status.
+export function getModelColor(model: string): string {
+  const m = model.toLowerCase()
+  if (m.includes('opus')) return 'var(--chart-opus)'
+  if (m.includes('sonnet')) return 'var(--chart-sonnet)'
+  if (m.startsWith('gpt-') || m.includes('codex') || m.startsWith('o')) return 'var(--chart-codex)'
+  return 'var(--chart-other)'   // haiku + unknown
 }
 
 /**
@@ -582,7 +569,7 @@ function SessionsTable({ sessions, title, observedEmails, onRefresh }: { session
                 <td className="px-3 py-1.5">
                   <span
                     className="text-xs px-1.5 py-0.5 rounded"
-                    style={{ backgroundColor: getModelColor(s.model) + '20', color: getModelColor(s.model) }}
+                    style={{ backgroundColor: `color-mix(in srgb, ${getModelColor(s.model)} 13%, transparent)`, color: getModelColor(s.model) }}
                   >
                     {getModelShort(s.model)}
                   </span>
