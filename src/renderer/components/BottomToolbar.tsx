@@ -12,8 +12,15 @@ import { MetricChip } from './ui/MetricChip'
 import { StatusDot } from './ui/StatusDot'
 
 export interface TelemetryData {
-  model?: string; effort?: string; contextPct?: number; costUsd?: number;
-  linesAdded?: number; linesRemoved?: number; branch?: string; mode?: string; notifications?: number;
+  model?: string
+  effort?: string
+  contextPct?: number
+  costUsd?: number
+  linesAdded?: number
+  linesRemoved?: number
+  branch?: string
+  mode?: string
+  notifications?: number
 }
 export function TelemetryChips({ data }: { data: TelemetryData }) {
   const modeIsBypass = data.mode === 'bypassPermissions'

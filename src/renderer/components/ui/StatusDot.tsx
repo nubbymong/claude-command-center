@@ -2,7 +2,7 @@ import React from 'react'
 export type SessionState = 'running'|'idle'|'awaiting'|'compacting'|'error'|'background'|'blocked'
 const COLOR: Record<SessionState,string> = {
   running:'var(--status-success)', idle:'var(--text-muted)', awaiting:'var(--status-warning)',
-  compacting:'var(--status-info)', error:'var(--status-danger)', background:'var(--chart-other)', blocked:'var(--status-danger)',
+  compacting:'var(--status-info)', error:'var(--status-danger)', background:'var(--text-muted)', blocked:'var(--status-danger)',
 }
 export function StatusDot({ state, title }: { state: SessionState; title?: string }) {
   // Decorative by default (status is also conveyed by adjacent text/row state);

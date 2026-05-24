@@ -117,7 +117,7 @@ export default function GitHubPanel({
       <>
         <aside
           className="w-7 border-l border-surface0 flex flex-col items-center py-3"
-          style={{ background: 'var(--surface-raised)', boxShadow: 'var(--shadow-raised), inset 1px 1px 0 rgba(255,255,255,.035)' }}
+          style={{ background: 'var(--surface-raised)', boxShadow: 'var(--shadow-raised), var(--highlight-inset)' }}
           aria-label="GitHub panel (integration not configured)"
         >
           <button
@@ -164,7 +164,7 @@ export default function GitHubPanel({
     return (
       <aside
         className="w-7 border-l border-surface0 flex flex-col items-center py-3"
-        style={{ background: 'var(--surface-raised)', boxShadow: 'var(--shadow-raised), inset 1px 1px 0 rgba(255,255,255,.035)' }}
+        style={{ background: 'var(--surface-raised)', boxShadow: 'var(--shadow-raised), var(--highlight-inset)' }}
         aria-label="GitHub panel (collapsed)"
       >
         <button
@@ -194,8 +194,8 @@ export default function GitHubPanel({
       style={{
         background: 'var(--surface-raised)',
         boxShadow: sessionAccent
-          ? `var(--shadow-raised), inset 1px 1px 0 rgba(255,255,255,.035), inset 3px 0 0 ${sessionAccent}`
-          : 'var(--shadow-raised), inset 1px 1px 0 rgba(255,255,255,.035)',
+          ? `var(--shadow-raised), var(--highlight-inset), inset 3px 0 0 ${sessionAccent}`
+          : 'var(--shadow-raised), var(--highlight-inset)',
         width,
         minWidth: 280,
         '--session-color': sessionAccent,
