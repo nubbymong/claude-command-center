@@ -193,12 +193,11 @@ export default function GitHubPanel({
       className="border-l border-surface0 flex flex-col relative"
       style={{
         background: 'var(--surface-raised)',
-        boxShadow: 'var(--shadow-raised), inset 1px 1px 0 rgba(255,255,255,.035)',
+        boxShadow: sessionAccent
+          ? `var(--shadow-raised), inset 1px 1px 0 rgba(255,255,255,.035), inset 3px 0 0 ${sessionAccent}`
+          : 'var(--shadow-raised), inset 1px 1px 0 rgba(255,255,255,.035)',
         width,
         minWidth: 280,
-        borderTopWidth: '3px',
-        borderTopStyle: 'solid',
-        borderTopColor: sessionAccent,
         '--session-color': sessionAccent,
       } as React.CSSProperties}
       aria-label="GitHub panel"

@@ -150,7 +150,7 @@ export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
       <div className="titlebar-no-drag flex items-center gap-1 mr-3">
         <button
           onClick={onToggleSidebar}
-          className="p-1.5 rounded hover:bg-surface0 text-overlay1 hover:text-text transition-colors"
+          className="p-1.5 rounded hover:bg-surface0 text-overlay1 hover:text-text transition-colors focus-ring"
           title={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
         >
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
