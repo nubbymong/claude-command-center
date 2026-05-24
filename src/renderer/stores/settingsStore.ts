@@ -42,14 +42,17 @@ export type CursorStyle = 'bar' | 'block' | 'underline'
 export interface TerminalSettings {
   fontFamily: string
   fontSize: number
+  fontWeight: number
   lineHeight: number
   cursorStyle: CursorStyle
   cursorBlink: boolean
+  background?: string   // optional user terminal-background override; undefined => --surface-stage token
 }
 
 export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
-  fontFamily: 'Cascadia Code',
-  fontSize: 14,
+  fontFamily: 'JetBrains Mono',
+  fontSize: 13,
+  fontWeight: 450,
   lineHeight: 1.2,
   cursorStyle: 'bar',
   cursorBlink: false,
@@ -85,7 +88,7 @@ interface SettingsState {
 export const DEFAULT_SETTINGS: AppSettings = {
   defaultModel: 'sonnet',
   defaultWorkingDirectory: '',
-  terminalFontSize: 14,
+  terminalFontSize: 13,
   terminal: { ...DEFAULT_TERMINAL_SETTINGS },
   debugMode: false,
   keyboardShortcuts: { ...DEFAULT_SHORTCUTS },

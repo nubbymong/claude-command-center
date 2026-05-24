@@ -208,13 +208,17 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       }
 
       const ts = useSettingsStore.getState().settings.terminal || DEFAULT_TERMINAL_SETTINGS
-      const fontFallbacks = "'Cascadia Code', 'Fira Code', 'JetBrains Mono', Consolas, monospace"
+      const fontFallbacks = "'JetBrains Mono', 'Cascadia Code', 'Cascadia Mono', Consolas, monospace"
       const fontFamily = ts.fontFamily ? `'${ts.fontFamily}', ${fontFallbacks}` : fontFallbacks
 
       term = new Terminal({
         theme: termTheme,
         fontFamily,
-        fontSize: ts.fontSize || 14,
+        fontSize: ts.fontSize || 13,
+        // 450 is a variable-font instance; if it renders unreliably in packaged
+        // Electron, fall back to 400 after visual testing (spec section 2).
+        fontWeight: (ts.fontWeight || 450) as import('@xterm/xterm').FontWeight,
+        fontWeightBold: 700,
         lineHeight: ts.lineHeight || 1.2,
         cursorBlink: ts.cursorBlink ?? false,
         cursorStyle: ts.cursorStyle || 'bar',
@@ -290,8 +294,8 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
 
       // Wait for custom fonts to load BEFORE computing cols/rows.
       // xterm.js measures character width using the currently-loaded font.
-      // If we fit() before Cascadia Code loads, cols is computed against
-      // a fallback font with different metrics — result: Claude Code's TUI
+      // If we fit() before JetBrains Mono loads, cols is computed against
+      // a fallback font with different metrics -- result: Claude Code's TUI
       // thinks it has N cols but xterm displays fewer, causing line wrap
       // artifacts and text fragments on the right edge.
       const fitAndSpawn = () => {
