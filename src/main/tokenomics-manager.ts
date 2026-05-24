@@ -23,7 +23,6 @@ import {
 import { computeCodexCostUsd } from './providers/codex/pricing'
 import { getCodexHome } from './providers/codex/auth'
 import { canonicalEmail } from './account-attribution'
-import { readClaudeAccountEmail } from './account-identity'
 import { getCodexSpawnIdentityMap } from './pty-manager'
 
 // ── Model Pricing (per 1M tokens) ──
@@ -210,11 +209,12 @@ function loadData(): TokenomicsData {
 
 function saveData(data: TokenomicsData): void {
   try {
-    // P8.7: stamp accountEmail on records that don't have one yet, using
-    // current Claude identity + the per-session Codex spawn-time map.
+    // P8.7 / p9.17: stamp accountEmail on Codex records that don't have
+    // one yet, from the per-session spawn-time map. Claude live sessions
+    // are attributed in handleStatuslineUpdate; historic records are the
+    // wizard's job.
     try {
-      const claudeId = readClaudeAccountEmail()
-      applyIdentityAtFlush(data, claudeId, getCodexSpawnIdentityMap())
+      applyIdentityAtFlush(data, getCodexSpawnIdentityMap())
     } catch { /* identity is best-effort -- never block the save */ }
 
     ensureConfigDir()
@@ -515,41 +515,34 @@ export function mergeSessionRecordAttribution<T extends TokenomicsSessionRecord>
 }
 
 /**
- * P8.7: Walk the in-memory session records at saveData() entry and
- * stamp accountEmail / accountUuid where missing. Read at write time
- * for Claude (so mid-session /login attributes correctly); read from
- * the per-session map for Codex (so claim-time drift doesn't matter).
+ * P8.7 / p9.17: stamp accountEmail on CODEX session records at
+ * saveData() entry, using the per-session spawn-time identity map (so
+ * claim-time drift on ~/.codex/auth.json doesn't misattribute tokens).
  *
- * Never overwrites an existing accountEmail -- only fills in undefined.
- * Canonicalises emails (lowercase + trim) to prevent filter-dropdown
- * duplicates.
+ * Claude attribution is NOT handled here. Copilot review on PR #31
+ * (p9.17) showed that walking every unattributed record and stamping the
+ * *current* Claude identity misattributes historic/other-account
+ * sessions whenever seed/sync (or the loadData back-fill) triggers a
+ * save. Live Claude sessions are now attributed per-session in
+ * handleStatuslineUpdate from the authoritative statusline payload;
+ * historic records are left for the timeline back-fill wizard.
+ *
+ * Iterates the spawn map (not every session), so a historic Codex record
+ * from a prior process run is never touched. Only stamps records with no
+ * accountEmail yet -- never overwrites. Canonicalises emails.
  */
 export function applyIdentityAtFlush(
   data: TokenomicsData,
-  claudeIdentity: AccountIdentity | null,
   codexSpawnIdentity: Map<string, AccountIdentity>,
 ): void {
-  const claudeEmail = claudeIdentity ? canonicalEmail(claudeIdentity.email) : null
-  for (const [sessionId, record] of Object.entries(data.sessions)) {
-    if (record.accountEmail) continue  // never overwrite
-    if (record.provider === 'codex') {
-      const codexId = codexSpawnIdentity.get(sessionId)
-      if (codexId) {
-        const e = canonicalEmail(codexId.email)
-        if (e) {
-          record.accountEmail = e
-          record.accountUuid = record.accountUuid ?? codexId.accountUuid
-        }
-      }
-      // No fallback to live ~/.codex/auth.json -- spec section 4 says
-      // Codex uses spawn-time only to avoid claim-time drift.
-    } else {
-      // Default to Claude attribution for records without a provider field
-      // (legacy v1.4 records back-fill as Claude).
-      if (claudeEmail) {
-        record.accountEmail = claudeEmail
-        record.accountUuid = record.accountUuid ?? claudeIdentity?.accountUuid
-      }
+  for (const [sessionId, codexId] of codexSpawnIdentity) {
+    const record = data.sessions[sessionId]
+    if (!record || record.accountEmail) continue  // never overwrite
+    if (record.provider !== 'codex') continue      // map is Codex-only by construction
+    const e = canonicalEmail(codexId.email)
+    if (e) {
+      record.accountEmail = e
+      record.accountUuid = record.accountUuid ?? codexId.accountUuid
     }
   }
 }
@@ -901,6 +894,22 @@ export function handleStatuslineUpdate(rawStatuslineData: StatuslineData): void 
   }
   if (model) record.model = model
   record.lastTimestamp = new Date().toISOString()
+
+  // Copilot review on PR #31 (p9.17): attribute the LIVE Claude session
+  // here, from the per-session statusline payload (the bridge reads
+  // ~/.claude.json:oauthAccount.emailAddress for THIS session's tick, so
+  // it is the authoritative ground truth for the account this session is
+  // running under right now). This replaces the old blanket stamping in
+  // applyIdentityAtFlush, which walked EVERY unattributed record on every
+  // save and so misattributed historic sessions (from other accounts) to
+  // whoever happened to be logged in during a seed/sync. Historic records
+  // are now left untouched for the timeline-based back-fill wizard.
+  // Never overwrite -- first identity seen for the session wins, matching
+  // the wizard / Codex "never overwrite" rule.
+  if (!record.accountEmail) {
+    const liveEmail = canonicalEmail(statuslineData.accountEmail)
+    if (liveEmail) record.accountEmail = liveEmail
+  }
 
   rebuildAggregates(cachedData)
   saveDataDebounced(cachedData)

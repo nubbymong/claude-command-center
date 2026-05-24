@@ -15,7 +15,7 @@ import { isSshCapable } from './providers/types'
 import type { TelemetrySource } from './providers/types'
 import { resolveCwd } from './path-utils'
 import { dispatchSSHStatuslineUpdate } from './statusline-watcher'
-import { handleStatuslineUpdate } from './tokenomics-manager'
+import { handleStatuslineUpdate, decorateStatuslineWithColour } from './tokenomics-manager'
 import { getGateway } from './hooks'
 import { injectHooks } from './hooks/session-hooks-writer'
 import {
@@ -793,8 +793,13 @@ export function spawnPty(
         sessionId,
         { cwd: resolvedCwd, spawnTimestamp: codexSpawnTimestamp },
         (data) => {
-          if (!win.isDestroyed()) win.webContents.send('statusline:update', data)
-          handleStatuslineUpdate(data)
+          // Copilot review on PR #31 (p9.17): decorate at the send site so
+          // the renderer receives accountColour. decorateStatuslineWithColour
+          // is a no-op when the payload carries no accountEmail (Codex
+          // telemetry currently does not), so this is safe + future-proof.
+          const decorated = decorateStatuslineWithColour(data)
+          if (!win.isDestroyed()) win.webContents.send('statusline:update', decorated)
+          handleStatuslineUpdate(decorated)
         },
       )
       codexTelemetrySources.set(sessionId, codexTelSrc)
