@@ -17,18 +17,23 @@ export interface TelemetryData {
 }
 export function TelemetryChips({ data }: { data: TelemetryData }) {
   const modeIsBypass = data.mode === 'bypassPermissions'
+  const hasModel = !!data.model
+  const hasMetrics = data.contextPct != null || data.costUsd != null
+  // left separator only when a previous group already rendered (avoids a leading divider)
+  const sep = (prev: boolean) =>
+    prev ? { borderLeft: '1px solid color-mix(in srgb, var(--text-muted) 30%, transparent)', paddingLeft: 11 } : {}
   return (
     <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-      {data.model && <span style={{ display:'inline-flex', gap:6 }}>
+      {hasModel && <span style={{ display:'inline-flex', gap:6 }}>
         <MetricChip value={<><StatusDot state="running" /> {data.model}</>} />
         {data.effort && <MetricChip label="effort" value={data.effort} />}
       </span>}
-      {(data.contextPct != null || data.costUsd != null) && <span style={{ display:'inline-flex', gap:6, borderLeft:'1px solid color-mix(in srgb, var(--text-muted) 30%, transparent)', paddingLeft:11 }}>
+      {hasMetrics && <span style={{ display:'inline-flex', gap:6, ...sep(hasModel) }}>
         {data.contextPct != null && <MetricChip label="ctx" value={`${Math.round(data.contextPct)}%`} tone={data.contextPct >= 80 ? 'var(--status-warning)' : undefined} />}
         {data.costUsd != null && <MetricChip label="$" value={data.costUsd.toFixed(2)} />}
         {(data.linesAdded != null || data.linesRemoved != null) && <MetricChip value={<><span style={{color:'var(--status-success)'}}>+{data.linesAdded ?? 0}</span> <span style={{color:'var(--status-danger)'}}>-{data.linesRemoved ?? 0}</span></>} />}
       </span>}
-      {(data.branch || data.mode) && <span style={{ display:'inline-flex', gap:6, borderLeft:'1px solid color-mix(in srgb, var(--text-muted) 30%, transparent)', paddingLeft:11 }}>
+      {(data.branch || data.mode) && <span style={{ display:'inline-flex', gap:6, ...sep(hasModel || hasMetrics) }}>
         {data.branch && <MetricChip label="branch" value={data.branch} />}
         {data.mode && <MetricChip value={data.mode} tone={modeIsBypass ? 'var(--status-danger)' : undefined} />}
       </span>}

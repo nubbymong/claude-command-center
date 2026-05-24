@@ -70,7 +70,7 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
       onMouseEnter={(e) => { if (!isActive && !isSelected && !rowStateClass) (e.currentTarget as HTMLElement).style.backgroundColor = tintColor + '12' }}
       onMouseLeave={(e) => { if (!isActive && !isSelected && !rowStateClass) (e.currentTarget as HTMLElement).style.backgroundColor = '' }}
     >
-      {needsAttention && (
+      {st === 'awaiting' && (
         <div
           className="absolute inset-0 rounded-md attention-pulse-bg"
           style={{ backgroundColor: tintColor }}
