@@ -8,6 +8,34 @@ import {
   shortModelName,
   isModelActive,
 } from '../lib/claude-cli-options'
+import { MetricChip } from './ui/MetricChip'
+import { StatusDot } from './ui/StatusDot'
+
+export interface TelemetryData {
+  model?: string; effort?: string; contextPct?: number; costUsd?: number;
+  linesAdded?: number; linesRemoved?: number; branch?: string; mode?: string; notifications?: number;
+}
+export function TelemetryChips({ data }: { data: TelemetryData }) {
+  const modeIsBypass = data.mode === 'bypassPermissions'
+  return (
+    <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+      {data.model && <span style={{ display:'inline-flex', gap:6 }}>
+        <MetricChip value={<><StatusDot state="running" /> {data.model}</>} />
+        {data.effort && <MetricChip label="effort" value={data.effort} />}
+      </span>}
+      {(data.contextPct != null || data.costUsd != null) && <span style={{ display:'inline-flex', gap:6, borderLeft:'1px solid rgba(255,255,255,.07)', paddingLeft:11 }}>
+        {data.contextPct != null && <MetricChip label="ctx" value={`${data.contextPct}%`} tone={data.contextPct >= 80 ? 'var(--status-warning)' : undefined} />}
+        {data.costUsd != null && <MetricChip label="$" value={data.costUsd.toFixed(2)} />}
+        {(data.linesAdded != null || data.linesRemoved != null) && <MetricChip value={<><span style={{color:'var(--status-success)'}}>+{data.linesAdded ?? 0}</span> <span style={{color:'var(--status-danger)'}}>-{data.linesRemoved ?? 0}</span></>} />}
+      </span>}
+      {(data.branch || data.mode) && <span style={{ display:'inline-flex', gap:6, borderLeft:'1px solid rgba(255,255,255,.07)', paddingLeft:11 }}>
+        {data.branch && <MetricChip label="branch" value={data.branch} />}
+        {data.mode && <MetricChip value={data.mode} tone={modeIsBypass ? 'var(--status-danger)' : undefined} />}
+      </span>}
+      {data.notifications ? <span style={{ marginLeft:'auto' }}><MetricChip value={`notify ${data.notifications}`} /></span> : null}
+    </div>
+  )
+}
 
 type PopupType = 'model' | 'mode' | null
 
@@ -138,6 +166,15 @@ export default function BottomToolbar() {
       </button>
 
       <div className="flex-1" />
+
+      {/* Telemetry metric chips (cost, context, lines changed) */}
+      <TelemetryChips data={{
+        costUsd: activeSession.costUsd,
+        contextPct: activeSession.contextPercent,
+        linesAdded: activeSession.linesAdded,
+        linesRemoved: activeSession.linesRemoved,
+        mode: lastMode ?? undefined,
+      }} />
 
       {/* Model + Effort chip */}
       <div className="relative">
