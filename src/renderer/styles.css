@@ -225,4 +225,11 @@ body {
 .rail-active {
   box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 43%, transparent);
 }
+/* Session row: 3-col grid [dot | name | meta]. */
+.session-row {
+  display: grid; grid-template-columns: 9px 1fr auto; align-items: center; gap: 9px;
+  padding: 7px 10px; border-radius: 9px;
+}
+.session-row .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-row .meta { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--text-muted); justify-self: end; }
 
