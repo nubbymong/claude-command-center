@@ -32,12 +32,13 @@ interface SessionRowProps {
  *    status 'disconnected'              -> 'background'
  */
 function toSessionState(status: Session['status'], needsAttention: boolean): SessionState {
+  // error wins over needsAttention (spec §10 priority: error > awaiting)
+  if (status === 'error') return 'error'
   if (needsAttention) return 'awaiting'
   switch (status) {
     case 'working':      return 'running'
     case 'idle':         return 'idle'
     case 'complete':     return 'idle'
-    case 'error':        return 'error'
     case 'disconnected': return 'background'
     default:             return 'idle'
   }
