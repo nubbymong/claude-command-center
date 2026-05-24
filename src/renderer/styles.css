@@ -1,5 +1,16 @@
 @import "tailwindcss";
 
+@font-face {
+  font-family: 'JetBrains Mono'; font-style: normal;
+  font-weight: 100 800; font-display: swap;
+  src: url('./assets/fonts/JetBrainsMono[wght].woff2') format('woff2-variations');
+}
+@font-face {
+  font-family: 'Inter'; font-style: normal;
+  font-weight: 100 900; font-display: swap;
+  src: url('./assets/fonts/Inter[wght].woff2') format('woff2-variations');
+}
+
 @theme {
   /* Warm neutral dark palette — default. Light mode overrides below via
      [data-theme="light"] on <html>. Tailwind v4 reads --color-* tokens at
