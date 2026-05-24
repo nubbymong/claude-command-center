@@ -189,7 +189,12 @@ const DARK_THEME_CSS = `
 
 export default function InsightsPage() {
   // All hooks called unconditionally -- early returns appear after all hook calls.
-  const tokenomicsSessions = useTokenomicsStore((s) => s.data?.sessions ?? {})
+  // Select the stable store slice, then default in render. Returning `?? {}`
+  // directly from the selector yields a NEW object every call, which Zustand v5
+  // (useSyncExternalStore + Object.is) treats as a perpetual change -> infinite
+  // re-render loop ("Maximum update depth") when sessions is empty/unloaded.
+  const tokenomicsData = useTokenomicsStore((s) => s.data)
+  const tokenomicsSessions = tokenomicsData?.sessions ?? {}
   const catalogue = useInsightsStore((s) => s.catalogue)
   const selectedRunId = useInsightsStore((s) => s.selectedRunId)
   const selectRun = useInsightsStore((s) => s.selectRun)
