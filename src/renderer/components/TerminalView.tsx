@@ -564,8 +564,12 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
     <div className="flex-1 flex flex-col titlebar-no-drag overflow-hidden relative" style={{ minHeight: 0 }}>
       <div
         ref={xtermContainerRef}
-        className="flex-1 bg-base p-1 overflow-hidden"
-        style={{ minHeight: 0 }}
+        className="flex-1 p-1 overflow-hidden"
+        style={{
+          minHeight: 0,
+          background: 'linear-gradient(90deg, var(--surface-stage-gutter) 0, var(--surface-stage-gutter) 12px, var(--surface-stage) 12px)',
+          boxShadow: 'inset 16px 0 20px -16px rgba(0,0,0,.5)',
+        }}
       />
       {ssh && (
         <SshFlowOverlay

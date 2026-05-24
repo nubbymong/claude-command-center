@@ -218,7 +218,10 @@ export default function SidebarNav({ currentView, onViewChange, insightsStatus, 
 
   if (collapsed) {
     return (
-      <div className="flex flex-col items-center gap-1 py-2 border-b border-surface0">
+      <div
+        className="flex flex-col items-center gap-1 py-2 border-b border-surface0"
+        style={{ background: 'var(--surface-chrome)', color: 'var(--text-on-chrome)' }}
+      >
         {navItems.map(item => (
           <NavButton
             key={item.view}
@@ -239,7 +242,10 @@ export default function SidebarNav({ currentView, onViewChange, insightsStatus, 
   }
 
   return (
-    <div className="px-2 pt-2 flex gap-1 border-b border-surface0 pb-2">
+    <div
+      className="px-2 pt-2 flex gap-1 border-b border-surface0 pb-2"
+      style={{ background: 'var(--surface-chrome)', color: 'var(--text-on-chrome)' }}
+    >
       {navItems.map(item => (
         <NavButton
           key={item.view}

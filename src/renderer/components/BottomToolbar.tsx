@@ -77,7 +77,8 @@ export default function BottomToolbar() {
     <div
       className="flex items-center gap-1 px-2 shrink-0 text-xs"
       style={{
-        background: 'var(--color-crust)',
+        background: 'var(--surface-chrome)',
+        color: 'var(--text-on-chrome)',
         borderTop: '1px solid var(--color-surface0)',
         height: 28,
         whiteSpace: 'nowrap',
