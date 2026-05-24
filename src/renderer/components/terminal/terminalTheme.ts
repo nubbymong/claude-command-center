@@ -4,18 +4,17 @@
 // where computed styles aren't available (e.g. unit tests under jsdom
 // without our `:root` block applied).
 const FALLBACK_DARK = {
-  background: '#1a1a1a',
-  foreground: '#e8e8e8',
-  surface1: '#2a2a2a',
-  surface2: '#333333',
-  red: '#e55c5c',
-  green: '#5cb85c',
-  yellow: '#e8a84e',
-  blue: '#6ea8fe',
-  magenta: '#a78bfa',
-  cyan: '#5bbfb5',
-  white: '#cccccc',
-  brightBlack: '#555555',
+  background: '#171e27',
+  foreground: '#eef2f7',
+  surface2: '#1c2430',
+  red: '#f08a8a',
+  green: '#7bd88f',
+  yellow: '#ecc14e',
+  blue: '#5b9df0',
+  magenta: '#c47b4a',
+  cyan: '#3fbecb',
+  white: '#a8b2c0',
+  brightBlack: '#6a7480',
 }
 
 function readVar(name: string, fallback: string): string {
@@ -27,30 +26,30 @@ function readVar(name: string, fallback: string): string {
   }
 }
 
-export function getTerminalTheme() {
+export function getTerminalTheme(userBackgroundOverride?: string) {
   return {
-    background: readVar('--color-base', FALLBACK_DARK.background),
-    foreground: readVar('--color-text', FALLBACK_DARK.foreground),
-    cursor: readVar('--color-text', FALLBACK_DARK.foreground),
-    cursorAccent: readVar('--color-base', FALLBACK_DARK.background),
-    selectionBackground: readVar('--color-surface2', FALLBACK_DARK.surface2),
-    selectionForeground: readVar('--color-text', FALLBACK_DARK.foreground),
-    black: readVar('--color-surface0', FALLBACK_DARK.surface1),
-    red: readVar('--color-red', FALLBACK_DARK.red),
-    green: readVar('--color-green', FALLBACK_DARK.green),
-    yellow: readVar('--color-yellow', FALLBACK_DARK.yellow),
-    blue: readVar('--color-blue', FALLBACK_DARK.blue),
-    magenta: readVar('--color-mauve', FALLBACK_DARK.magenta),
-    cyan: readVar('--color-teal', FALLBACK_DARK.cyan),
-    white: readVar('--color-subtext1', FALLBACK_DARK.white),
-    brightBlack: readVar('--color-overlay0', FALLBACK_DARK.brightBlack),
-    brightRed: readVar('--color-red', FALLBACK_DARK.red),
-    brightGreen: readVar('--color-green', FALLBACK_DARK.green),
-    brightYellow: readVar('--color-yellow', FALLBACK_DARK.yellow),
-    brightBlue: readVar('--color-blue', FALLBACK_DARK.blue),
-    brightMagenta: readVar('--color-mauve', FALLBACK_DARK.magenta),
-    brightCyan: readVar('--color-teal', FALLBACK_DARK.cyan),
-    brightWhite: readVar('--color-text', FALLBACK_DARK.foreground),
+    background: userBackgroundOverride || readVar('--surface-stage', FALLBACK_DARK.background),
+    foreground: readVar('--terminal-foreground', FALLBACK_DARK.foreground),
+    cursor: readVar('--terminal-foreground', FALLBACK_DARK.foreground),
+    cursorAccent: readVar('--surface-stage', FALLBACK_DARK.background),
+    selectionBackground: readVar('--surface-raised', FALLBACK_DARK.surface2),
+    selectionForeground: readVar('--terminal-foreground', FALLBACK_DARK.foreground),
+    black: readVar('--surface-raised', FALLBACK_DARK.surface2),
+    red: readVar('--status-danger', FALLBACK_DARK.red),
+    green: readVar('--status-success', FALLBACK_DARK.green),
+    yellow: readVar('--status-warning', FALLBACK_DARK.yellow),
+    blue: readVar('--status-info', FALLBACK_DARK.blue),
+    magenta: readVar('--brand', FALLBACK_DARK.magenta),
+    cyan: readVar('--accent', FALLBACK_DARK.cyan),
+    white: readVar('--text-secondary', FALLBACK_DARK.white),
+    brightBlack: readVar('--text-muted', FALLBACK_DARK.brightBlack),
+    brightRed: readVar('--status-danger', FALLBACK_DARK.red),
+    brightGreen: readVar('--status-success', FALLBACK_DARK.green),
+    brightYellow: readVar('--status-warning', FALLBACK_DARK.yellow),
+    brightBlue: readVar('--status-info', FALLBACK_DARK.blue),
+    brightMagenta: readVar('--brand', FALLBACK_DARK.magenta),
+    brightCyan: readVar('--accent', FALLBACK_DARK.cyan),
+    brightWhite: readVar('--text-primary', FALLBACK_DARK.foreground),
   }
 }
 

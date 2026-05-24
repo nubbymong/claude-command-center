@@ -125,7 +125,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       const raf = requestAnimationFrame(() => {
         const live = terminalRef.current
         if (!live) return
-        const palette = getTerminalTheme()
+        const palette = getTerminalTheme(useSettingsStore.getState().settings.terminal?.background)
         live.options.theme = shellOnly
           ? palette
           : { ...palette, cursor: palette.background, cursorAccent: palette.background }
@@ -191,25 +191,25 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         return
       }
 
+      const ts = useSettingsStore.getState().settings.terminal || DEFAULT_TERMINAL_SETTINGS
+      const fontFallbacks = "'JetBrains Mono', 'Cascadia Code', 'Cascadia Mono', Consolas, monospace"
+      const fontFamily = ts.fontFamily ? `'${ts.fontFamily}', ${fontFallbacks}` : fontFallbacks
+
       // Claude's TUI draws its own input cursor as a coloured cell at
       // the prompt position, and leaves xterm's real cursor wherever
-      // its last write landed — usually somewhere off-screen for the
+      // its last write landed -- usually somewhere off-screen for the
       // user. So in Claude sessions we hide xterm's cursor entirely
       // (theme paints it in the background colour, plus a CSS class
       // hides any focused-row cursor span). The user still sees
       // Claude's own input cursor; only the redundant xterm one is
       // suppressed. Shell sessions keep the normal visible cursor.
-      const liveTheme = getTerminalTheme()
+      const liveTheme = getTerminalTheme(ts.background)
       const termTheme = shellOnly
         ? liveTheme
         : { ...liveTheme, cursor: liveTheme.background, cursorAccent: liveTheme.background }
       if (!shellOnly) {
         container.classList.add('claude-session')
       }
-
-      const ts = useSettingsStore.getState().settings.terminal || DEFAULT_TERMINAL_SETTINGS
-      const fontFallbacks = "'JetBrains Mono', 'Cascadia Code', 'Cascadia Mono', Consolas, monospace"
-      const fontFamily = ts.fontFamily ? `'${ts.fontFamily}', ${fontFallbacks}` : fontFallbacks
 
       term = new Terminal({
         theme: termTheme,
