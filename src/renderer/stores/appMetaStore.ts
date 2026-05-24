@@ -9,6 +9,7 @@ export interface AppMeta {
   colorMigrated?: boolean
   hasCreatedFirstConfig?: boolean
   firstRunCardDismissed?: boolean
+  accountWizardDismissed?: boolean
 }
 
 interface AppMetaState {

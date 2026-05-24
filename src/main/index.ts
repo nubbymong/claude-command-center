@@ -28,9 +28,9 @@ import { registerConfigHandlers } from './ipc/config-handlers'
 import { registerCloudAgentHandlers } from './ipc/cloud-agent-handlers'
 import { registerTeamHandlers } from './ipc/team-handlers'
 import { registerLegacyVersionHandlers } from './ipc/legacy-version-handlers'
-import { registerAccountHandlers } from './ipc/account-handlers'
 import { registerMemoryHandlers } from './ipc/memory-handlers'
 import { registerTokenomicsHandlers } from './ipc/tokenomics-handlers'
+import { registerAccountAttributionHandlers } from './ipc/account-attribution-handlers'
 import { registerGitHubHandlers } from './ipc/github-handlers'
 import { registerHooksHandlers } from './ipc/hooks-handlers'
 import { registerCodexHandlers } from './ipc/codex-handlers'
@@ -40,7 +40,6 @@ import { setGateway, getGateway } from './hooks'
 import { cleanupStaleHookEntries } from './hooks/boot-cleanup'
 import { DEFAULT_HOOKS_PORT } from './hooks/hooks-types'
 import { fetchModelPricing } from './tokenomics-manager'
-import { initAccounts } from './account-manager'
 import { killAllAgents } from './cloud-agent-manager'
 import { startServiceStatusPoller, stopServiceStatusPoller } from './service-status'
 import { initUpdateWatcher, stopUpdateWatcher, getProjectRootPath, isPackagedApp } from './update-watcher'
@@ -440,11 +439,21 @@ function createWindow(): void {
     try {
       const { execSync } = require('child_process')
       if (process.platform === 'win32') {
+        // stdio pipe on stderr suppresses the "INFO: Could not find files..."
+        // line that `where` writes to stderr on a miss; default execSync
+        // inherits stderr, leaking noise into the parent's terminal between
+        // the .exe and .cmd probes.
+        const opts = {
+          encoding: 'utf-8',
+          timeout: 5000,
+          windowsHide: true,
+          stdio: ['ignore', 'pipe', 'pipe'] as const,
+        }
         try {
-          execSync('where claude.exe', { encoding: 'utf-8', timeout: 5000, windowsHide: true })
+          execSync('where claude.exe', opts as any)
           return true
         } catch { /* try .cmd */ }
-        execSync('where claude.cmd', { encoding: 'utf-8', timeout: 5000, windowsHide: true })
+        execSync('where claude.cmd', opts as any)
         return true
       } else {
         // Use login shell to pick up Homebrew/nvm PATH entries
@@ -590,8 +599,8 @@ if (!gotTheLock) {
     registerCloudAgentHandlers(getWindow)
     registerTeamHandlers(getWindow)
     registerLegacyVersionHandlers(getWindow)
-    registerAccountHandlers()
     registerTokenomicsHandlers(getWindow)
+    registerAccountAttributionHandlers()
     registerMemoryHandlers()
     // GitHub sidebar — reads/writes github-config.json + encrypted auth profiles
     // under the CONFIG dir alongside other app config. Session-level integration
@@ -640,9 +649,6 @@ if (!gotTheLock) {
         await shell.openExternal(url)
       }
     })
-
-    // Auto-detect current account from credentials (fire-and-forget)
-    initAccounts().catch(() => {})
 
     // Fetch model pricing in background (non-blocking)
     fetchModelPricing().catch(() => {})

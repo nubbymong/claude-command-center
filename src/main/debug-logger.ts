@@ -142,3 +142,13 @@ export function installGlobalErrorHandlers(): void {
     logError('Unhandled rejection:', reason)
   })
 }
+
+/**
+ * P8.18: redact accountEmail from a statusline payload before logging.
+ * The email survives in tokenomics.json (its purpose) but doesn't need
+ * to appear in app.log where it would be harder to scrub.
+ */
+export function redactStatuslinePayload<T extends { accountEmail?: string }>(payload: T): T {
+  if (typeof payload?.accountEmail !== 'string') return payload
+  return { ...payload, accountEmail: '<redacted>' }
+}

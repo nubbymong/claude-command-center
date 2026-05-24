@@ -15,7 +15,7 @@ import { isSshCapable } from './providers/types'
 import type { TelemetrySource } from './providers/types'
 import { resolveCwd } from './path-utils'
 import { dispatchSSHStatuslineUpdate } from './statusline-watcher'
-import { handleStatuslineUpdate } from './tokenomics-manager'
+import { handleStatuslineUpdate, decorateStatuslineWithColour } from './tokenomics-manager'
 import { getGateway } from './hooks'
 import { injectHooks } from './hooks/session-hooks-writer'
 import {
@@ -26,9 +26,31 @@ import {
 } from './hooks/per-session-settings'
 import { registerCodexReviewSession, unregisterCodexReviewSession } from './conductor-mcp-server'
 import { disposeSession as disposeCodexReviewUsage } from './codex-review-usage'
+import { readCodexAccountEmail } from './account-identity'
+import type { AccountIdentity } from '../shared/types'
 
 import * as path from 'path'
 import * as fs from 'fs'
+
+/**
+ * P8.8: per-session Codex spawn-time identity. Captured at PTY spawn,
+ * read by tokenomics applyIdentityAtFlush() so claim-time drift on
+ * ~/.codex/auth.json doesn't misattribute tokens.
+ */
+const codexSpawnIdentity = new Map<string, AccountIdentity>()
+
+export function captureCodexSpawnIdentity(sessionId: string): void {
+  const id = readCodexAccountEmail()
+  if (id) codexSpawnIdentity.set(sessionId, id)
+}
+
+export function clearCodexSpawnIdentity(sessionId: string): void {
+  codexSpawnIdentity.delete(sessionId)
+}
+
+export function getCodexSpawnIdentityMap(): Map<string, AccountIdentity> {
+  return codexSpawnIdentity
+}
 
 function escapeShellArg(str: string): string {
   return str.replace(/[\\"$`]/g, '\\$&')
@@ -726,49 +748,65 @@ export function spawnPty(
       }
     })
   } else if ((options?.provider ?? 'claude') === 'codex' && !options?.shellOnly) {
+    captureCodexSpawnIdentity(sessionId)
     // Codex local session — spawn `codex` directly. Codex itself owns the
     // REPL, so there is no shell-wrap-then-cd-then-launch dance like Claude
     // requires. cwd is propagated through pty.spawn options.
     // shellOnly falls through to the Claude branch below so the user gets a
     // plain shell, regardless of provider selection.
-    const provider = getProvider('codex')
-    const { cmd: spawnCmd, args: spawnArgs, env: spawnEnv } = provider.buildSpawnCommand({
-      sessionId,
-      provider: 'codex',
-      cwd: options?.cwd,
-      cols,
-      rows,
-      useResumePicker: options?.useResumePicker,
-      codexOptions: options?.codexOptions,
-    })
-    const resolvedCwd = resolveCwd(options?.cwd)
-    logInfo(`[pty-manager] Launching Codex PTY: ${spawnCmd} ${spawnArgs.join(' ')} cwd=${resolvedCwd}`)
-    // Capture timestamp before spawn so the watch-and-claim window starts no later than PTY launch.
-    const codexSpawnTimestamp = Date.now()
-    ptyProcess = pty.spawn(spawnCmd, spawnArgs, {
-      name: 'xterm-256color',
-      cols,
-      rows,
-      cwd: resolvedCwd,
-      env: spawnEnv,
-      useConpty: true,
-    })
-    ptyProcess.onData((data) => {
-      if (win.isDestroyed()) return
-      win.webContents.send(`pty:data:${sessionId}`, data)
-    })
-    // Start rollout watch-and-claim telemetry. Updates are dispatched to the
-    // renderer (statusline:update) and tokenomics-manager identically to how
-    // Claude statusline updates flow through statusline-watcher.ts.
-    const codexTelSrc = provider.ingestSessionTelemetry(
-      sessionId,
-      { cwd: resolvedCwd, spawnTimestamp: codexSpawnTimestamp },
-      (data) => {
-        if (!win.isDestroyed()) win.webContents.send('statusline:update', data)
-        handleStatuslineUpdate(data)
-      },
-    )
-    codexTelemetrySources.set(sessionId, codexTelSrc)
+    //
+    // Copilot review on PR #31 (p9.15): buildSpawnCommand or pty.spawn can
+    // throw before onExit is wired up (binary missing, ConPTY init failure,
+    // node-pty resolver miss). Clean up the spawn-identity map entry on
+    // failure so it doesn't leak.
+    try {
+      const provider = getProvider('codex')
+      const { cmd: spawnCmd, args: spawnArgs, env: spawnEnv } = provider.buildSpawnCommand({
+        sessionId,
+        provider: 'codex',
+        cwd: options?.cwd,
+        cols,
+        rows,
+        useResumePicker: options?.useResumePicker,
+        codexOptions: options?.codexOptions,
+      })
+      const resolvedCwd = resolveCwd(options?.cwd)
+      logInfo(`[pty-manager] Launching Codex PTY: ${spawnCmd} ${spawnArgs.join(' ')} cwd=${resolvedCwd}`)
+      // Capture timestamp before spawn so the watch-and-claim window starts no later than PTY launch.
+      const codexSpawnTimestamp = Date.now()
+      ptyProcess = pty.spawn(spawnCmd, spawnArgs, {
+        name: 'xterm-256color',
+        cols,
+        rows,
+        cwd: resolvedCwd,
+        env: spawnEnv,
+        useConpty: true,
+      })
+      ptyProcess.onData((data) => {
+        if (win.isDestroyed()) return
+        win.webContents.send(`pty:data:${sessionId}`, data)
+      })
+      // Start rollout watch-and-claim telemetry. Updates are dispatched to the
+      // renderer (statusline:update) and tokenomics-manager identically to how
+      // Claude statusline updates flow through statusline-watcher.ts.
+      const codexTelSrc = provider.ingestSessionTelemetry(
+        sessionId,
+        { cwd: resolvedCwd, spawnTimestamp: codexSpawnTimestamp },
+        (data) => {
+          // Copilot review on PR #31 (p9.17): decorate at the send site so
+          // the renderer receives accountColour. decorateStatuslineWithColour
+          // is a no-op when the payload carries no accountEmail (Codex
+          // telemetry currently does not), so this is safe + future-proof.
+          const decorated = decorateStatuslineWithColour(data)
+          if (!win.isDestroyed()) win.webContents.send('statusline:update', decorated)
+          handleStatuslineUpdate(decorated)
+        },
+      )
+      codexTelemetrySources.set(sessionId, codexTelSrc)
+    } catch (err) {
+      clearCodexSpawnIdentity(sessionId)
+      throw err
+    }
   } else {
     // Local session — delegate binary + env construction to the provider.
     // The post-spawn shell-write (cd + claude command) stays here; only the
@@ -988,6 +1026,8 @@ export function spawnPty(
       // P6: clear opt-in registration and per-session usage record.
       unregisterCodexReviewSession(sessionId)
       disposeCodexReviewUsage(sessionId)
+      // P8.8: clear spawn-time identity capture. Safe no-op for non-codex sessions.
+      clearCodexSpawnIdentity(sessionId)
     } else {
       logInfo(`[pty] Stale exit for ${sessionId} — newer PTY has taken over, skipping cleanup`)
     }

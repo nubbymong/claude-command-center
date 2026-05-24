@@ -54,6 +54,17 @@ export interface LegacyVersion {
 
 export type ProviderId = 'claude' | 'codex'
 
+export type CatppuccinAccent =
+  | 'red' | 'peach' | 'yellow' | 'green' | 'teal' | 'sky'
+  | 'blue' | 'lavender' | 'mauve' | 'pink' | 'flamingo' | 'rosewater'
+
+export interface AccountIdentity {
+  email: string
+  name?: string
+  accountUuid?: string
+  provider: 'claude' | 'codex'
+}
+
 export interface ClaudeOptions {
   model?: string
   effortLevel?: 'low' | 'medium' | 'high'
@@ -146,6 +157,10 @@ export interface StatuslineData {
   rateLimitWeekly?: number
   rateLimitWeeklyResets?: string
   rateLimitExtra?: RateLimitExtra
+  /** Active-account email surfaced by the bridge script. Renderer displays it left of the model name. */
+  accountEmail?: string
+  /** Pre-computed by main process via `colourForEmail()`; renderer consumes directly. */
+  accountColour?: CatppuccinAccent
 }
 
 // ── Agent Templates ──
@@ -281,14 +296,6 @@ export interface TeamRun {
   error?: string
 }
 
-// ── Account Profiles ──
-
-export interface AccountProfile {
-  id: 'primary' | 'secondary'
-  label: string
-  savedAt: number
-}
-
 // ── Tokenomics ──
 
 export interface TokenomicsSessionRecord {
@@ -309,6 +316,16 @@ export interface TokenomicsSessionRecord {
   // v1.5: provider discriminator. Optional on read for back-compat -- the
   // tokenomics-manager back-fills 'claude' on legacy records during load.
   provider?: ProviderId
+  /** Canonicalised account email at write time. Lowercased + trimmed. Undefined for unattributed records. */
+  accountEmail?: string
+  /** Stability hint (account uuid from oauthAccount or Codex JWT). Never the primary key. */
+  accountUuid?: string
+  /** User-flagged via wizard: session spanned accounts. Excludes the record from per-account filter totals but keeps it in "All accounts". */
+  attributionMixed?: boolean
+  /** P8.14: config that owned the session at run time. Used by the back-fill wizard to group unattributed sessions. Optional -- legacy records may lack it. */
+  configId?: string
+  /** P8.14: human-readable label for `configId` (e.g. "This App Dev"). Mirrored at write time so the wizard doesn't have to cross-reference the configs store. */
+  configLabel?: string
 }
 
 export interface TokenomicsDailyAggregate {
@@ -356,6 +373,24 @@ export interface TokenomicsSyncProgress {
   totalFiles: number
   processedFiles: number
   currentFile?: string
+}
+
+// -- P8: Attribution wizard --
+
+export type AttributionPayload = {
+  sessionIds: string[]
+  assignment:
+    | { type: 'email'; email: string }
+    | { type: 'mixed' }
+    | { type: 'clear' }
+}
+
+export interface UnattributedSessionGroup {
+  groupId: string                     // configId or '__no-config__'
+  groupLabel: string                  // e.g. "This App Dev" or "(no config)"
+  sessionIds: string[]
+  totalCostUsd: number
+  suggestedEmail: string | null       // null when before earliest backup
 }
 
 // -- Codex Review (P6) --

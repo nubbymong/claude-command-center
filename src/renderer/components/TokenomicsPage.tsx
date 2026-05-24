@@ -1,7 +1,12 @@
 import React, { useEffect, useState, useMemo, useCallback } from 'react'
 import { useTokenomicsStore } from '../stores/tokenomicsStore'
+import { useSettingsStore } from '../stores/settingsStore'
 import type { TokenomicsSessionRecord, TokenomicsDailyAggregate } from '../../shared/types'
 import PageFrame from './PageFrame'
+import { AccountFilter, type AccountFilterValue } from './tokenomics/AccountFilter'
+import { WizardTrigger } from './tokenomics/WizardTrigger'
+import { EditAttributionMenu } from './tokenomics/EditAttributionMenu'
+import { useAppMetaStore } from '../stores/appMetaStore'
 
 const MODEL_COLORS: Record<string, string> = {
   // Claude models -- full versioned strings as emitted by the API
@@ -350,6 +355,7 @@ function FilterBar({
   dateFilter, spendFilter, providerFilter,
   onDateFilter, onSpendFilter, onProviderFilter,
   selectedDate, projects, projectFilter, onProjectFilter,
+  accountEmails, accountFilter, onAccountFilter,
 }: {
   dateFilter: DateFilter
   spendFilter: SpendFilter
@@ -361,6 +367,9 @@ function FilterBar({
   projects: string[]
   projectFilter: string
   onProjectFilter: (p: string) => void
+  accountEmails: string[]
+  accountFilter: AccountFilterValue
+  onAccountFilter: (next: AccountFilterValue) => void
 }) {
   const dateButtons: Array<{ label: string; value: DateFilter }> = [
     { label: 'All', value: 'all' },
@@ -441,6 +450,10 @@ function FilterBar({
           </select>
         </div>
       )}
+      <div className="flex items-center gap-1">
+        <span className="text-xs text-overlay0 mr-1">Account:</span>
+        <AccountFilter emails={accountEmails} value={accountFilter} onChange={onAccountFilter} />
+      </div>
     </div>
   )
 }
@@ -449,7 +462,7 @@ function FilterBar({
 
 type SortKey = 'project' | 'model' | 'cost' | 'inputTokens' | 'outputTokens' | 'date' | 'messages' | 'cacheTokens' | 'duration' | 'costPerHour'
 
-function SessionsTable({ sessions, title }: { sessions: TokenomicsSessionRecord[]; title?: string }) {
+function SessionsTable({ sessions, title, observedEmails, onRefresh }: { sessions: TokenomicsSessionRecord[]; title?: string; observedEmails: string[]; onRefresh: () => void }) {
   const [sortBy, setSortBy] = useState<SortKey>('cost')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [page, setPage] = useState(0)
@@ -557,6 +570,7 @@ function SessionsTable({ sessions, title }: { sessions: TokenomicsSessionRecord[
               <SortHeader label="Duration" sortKey="duration" />
               <SortHeader label="$/hr" sortKey="costPerHour" />
               <SortHeader label="Date" sortKey="date" />
+              <th className="px-3 py-1.5 text-left text-xs text-overlay0 font-normal">Attribution</th>
             </tr>
           </thead>
           <tbody>
@@ -583,11 +597,18 @@ function SessionsTable({ sessions, title }: { sessions: TokenomicsSessionRecord[
                   (s.costPerHour || 0) > 20 ? 'text-red' : (s.costPerHour || 0) > 5 ? 'text-yellow' : 'text-overlay0'
                 }`}>{s.costPerHour ? formatCost(s.costPerHour) : '-'}</td>
                 <td className="px-3 py-1.5 text-overlay0">{formatDate(s.firstTimestamp)}</td>
+                <td className="px-3 py-1.5">
+                  <EditAttributionMenu
+                    sessionId={s.sessionId}
+                    detectedEmails={observedEmails}
+                    onChange={onRefresh}
+                  />
+                </td>
               </tr>
             ))}
             {paginated.length === 0 && (
               <tr>
-                <td colSpan={10} className="px-3 py-6 text-center text-overlay0">
+                <td colSpan={11} className="px-3 py-6 text-center text-overlay0">
                   No sessions match the current filter
                 </td>
               </tr>
@@ -680,6 +701,15 @@ export default function TokenomicsPage() {
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
   const [projectFilter, setProjectFilter] = useState<string>('all')
 
+  // Account filter -- persisted via settings store (no local useState)
+  const tokenomicsAccountFilter = useSettingsStore((s) => s.settings.tokenomicsAccountFilter ?? 'all')
+  const updateSettings = useSettingsStore((s) => s.updateSettings)
+
+  // Account attribution wizard banner -- dismissible via appMeta
+  const wizardDismissed = useAppMetaStore((s) => s.meta.accountWizardDismissed ?? false)
+  const updateAppMeta = useAppMetaStore((s) => s.update)
+  const setAccountFilter = (next: AccountFilterValue) => updateSettings({ tokenomicsAccountFilter: next })
+
   // When chart bar is clicked, set date filter to that specific date
   const handleDateSelect = useCallback((date: string | null) => {
     setSelectedDate(date)
@@ -705,6 +735,46 @@ export default function TokenomicsPage() {
     return [...dirs].sort()
   }, [allSessions])
 
+  // Observed account emails (for AccountFilter dropdown).
+  // Copilot review on PR #31 (p9.16): exclude emails that appear ONLY on
+  // mixed sessions -- the per-email filter is
+  // `s.accountEmail === accountFilter && !s.attributionMixed`, so offering
+  // such an email would yield zero results and confuse the user. Mixed
+  // sessions are reached via the '(Mixed)' sentinel instead.
+  const observedEmails = useMemo(() => {
+    const set = new Set<string>()
+    for (const s of allSessions) {
+      if (s.accountEmail && !s.attributionMixed) set.add(s.accountEmail)
+    }
+    return Array.from(set).sort()
+  }, [allSessions])
+
+  // Copilot review on PR #31 (p9.15): the persisted accountFilter can
+  // become stale when its email is no longer present in observedEmails
+  // (user cleared attribution, deleted records, etc.). Clamp to 'all'
+  // in that case so the <select> never renders without a matching
+  // <option> (which silently strands the user on a blank filter).
+  const accountFilter = useMemo<AccountFilterValue>(() => {
+    const persisted = tokenomicsAccountFilter as AccountFilterValue
+    if (persisted === 'all' || persisted === '__mixed__' || persisted === '__unknown__') return persisted
+    if (observedEmails.includes(persisted)) return persisted
+    return 'all'
+  }, [tokenomicsAccountFilter, observedEmails])
+
+  // Copilot review on PR #31 (p9.17.1): persist the clamp back to settings
+  // so a stale email filter is cleared permanently (otherwise it silently
+  // re-activates if that email ever reappears, and can never be cleared).
+  // Guard on `data` so we never overwrite the user's real choice during the
+  // initial load window when observedEmails is still empty.
+  useEffect(() => {
+    if (!data) return
+    const persisted = tokenomicsAccountFilter as AccountFilterValue
+    if (persisted === 'all' || persisted === '__mixed__' || persisted === '__unknown__') return
+    if (!observedEmails.includes(persisted)) {
+      updateSettings({ tokenomicsAccountFilter: 'all' })
+    }
+  }, [data, tokenomicsAccountFilter, observedEmails, updateSettings])
+
   // Burn rate from recent activity (last 5h window)
   const burnRate = useMemo(() => {
     const recent = allSessions.filter(s => s.firstTimestamp >= periods.fiveHourStart && s.costPerHour)
@@ -725,9 +795,18 @@ export default function TokenomicsPage() {
     }
   }, [allSessions, periods])
 
-  // Filtered sessions based on date + spend + provider + project filters
+  // Filtered sessions based on date + spend + provider + project + account filters
   const filteredSessions = useMemo(() => {
     let list = allSessions
+
+    // Account filter (P8.12) -- mixed sessions are excluded from per-email views
+    if (accountFilter === '__mixed__') {
+      list = list.filter(s => s.attributionMixed === true)
+    } else if (accountFilter === '__unknown__') {
+      list = list.filter(s => !s.accountEmail && !s.attributionMixed)
+    } else if (accountFilter !== 'all') {
+      list = list.filter(s => s.accountEmail === accountFilter && !s.attributionMixed)
+    }
 
     // Provider filter (P3.2) -- applies to both session list and model breakdown
     // back-filled provider='claude' on legacy records, so this is always safe
@@ -770,7 +849,7 @@ export default function TokenomicsPage() {
     }
 
     return list
-  }, [allSessions, dateFilter, spendFilter, providerFilter, selectedDate, periods])
+  }, [allSessions, dateFilter, spendFilter, providerFilter, projectFilter, accountFilter, selectedDate, periods])
 
   // Summary costs
   const { todayCost, weekCost, fiveHourCost, allTimeCost } = useMemo(() => {
@@ -852,6 +931,11 @@ export default function TokenomicsPage() {
       <div className="p-6">
         <SeedProgressBar />
 
+        <WizardTrigger
+          dismissed={wizardDismissed}
+          onDismiss={() => updateAppMeta({ accountWizardDismissed: true })}
+        />
+
         <UsageAlert sessions={allSessions} data={data} />
 
         <SummaryCards
@@ -899,12 +983,17 @@ export default function TokenomicsPage() {
           projects={projects}
           projectFilter={projectFilter}
           onProjectFilter={setProjectFilter}
+          accountEmails={observedEmails}
+          accountFilter={accountFilter}
+          onAccountFilter={setAccountFilter}
         />
 
         {/* Sessions table */}
         <SessionsTable
           sessions={filteredSessions}
           title={selectedDate ? `Sessions on ${formatDateFull(selectedDate)}` : undefined}
+          observedEmails={observedEmails}
+          onRefresh={loadData}
         />
       </div>
     </PageFrame>

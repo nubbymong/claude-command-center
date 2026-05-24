@@ -179,13 +179,9 @@ export const IPC = {
   TOKENOMICS_SEED: 'tokenomics:seed',
   TOKENOMICS_SYNC: 'tokenomics:sync',
   TOKENOMICS_PROGRESS: 'tokenomics:progress',
-
-  // Account switching
-  ACCOUNT_LIST: 'account:list',
-  ACCOUNT_SWITCH: 'account:switch',
-  ACCOUNT_GET_ACTIVE: 'account:getActive',
-  ACCOUNT_SAVE_CURRENT_AS: 'account:saveCurrentAs',
-  ACCOUNT_RENAME: 'account:rename',
+  TOKENOMICS_LIST_UNATTRIBUTED: 'tokenomics:listUnattributed',
+  TOKENOMICS_LIST_KNOWN_EMAILS: 'tokenomics:listKnownEmails',
+  TOKENOMICS_ATTRIBUTE_SESSIONS: 'tokenomics:attributeSessions',
 
   // Codex (OpenAI)
   CODEX_STATUS: 'codex:status',

@@ -72,6 +72,7 @@ export interface AppSettings {
   hooksEnabled: boolean
   hooksPort: number
   theme: ThemeMode
+  tokenomicsAccountFilter?: string  // 'all' | '__mixed__' | '__unknown__' | <email>
 }
 
 interface SettingsState {

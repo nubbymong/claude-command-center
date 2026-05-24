@@ -213,6 +213,10 @@ export default function GitHubPanel({
         syncedAt={sync?.at}
         nextResetAt={sync?.nextResetAt}
         onRefresh={() => void window.electronAPI.github.syncNow(sessionId)}
+        onCollapse={() => {
+          togglePanel()
+          trackUsage('github.panel-toggled')
+        }}
         // branch / ahead / behind / dirty still come from props; PR 3b wires
         // them to a local-git poller so the header reflects live state.
       />

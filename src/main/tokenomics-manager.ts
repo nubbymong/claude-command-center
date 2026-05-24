@@ -9,8 +9,9 @@ import * as path from 'path'
 import { getConfigDir, ensureConfigDir } from './config-manager'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import { logInfo, logError } from './debug-logger'
-import type { TokenomicsData, TokenomicsSessionRecord, TokenomicsDailyAggregate, TokenomicsSyncProgress } from '../shared/types'
+import type { TokenomicsData, TokenomicsSessionRecord, TokenomicsDailyAggregate, TokenomicsSyncProgress, AccountIdentity, StatuslineData, CatppuccinAccent, AttributionPayload, UnattributedSessionGroup } from '../shared/types'
 import { IPC } from '../shared/ipc-channels'
+import { colourForEmail } from './account-color'
 import {
   findClaudeHistoryFiles,
   parseClaudeTranscriptFile,
@@ -21,6 +22,8 @@ import {
 } from './providers/codex/telemetry'
 import { computeCodexCostUsd } from './providers/codex/pricing'
 import { getCodexHome } from './providers/codex/auth'
+import { canonicalEmail } from './account-attribution'
+import { getCodexSpawnIdentityMap } from './pty-manager'
 
 // ── Model Pricing (per 1M tokens) ──
 
@@ -206,6 +209,14 @@ function loadData(): TokenomicsData {
 
 function saveData(data: TokenomicsData): void {
   try {
+    // P8.7 / p9.17: stamp accountEmail on Codex records that don't have
+    // one yet, from the per-session spawn-time map. Claude live sessions
+    // are attributed in handleStatuslineUpdate; historic records are the
+    // wizard's job.
+    try {
+      applyIdentityAtFlush(data, getCodexSpawnIdentityMap())
+    } catch { /* identity is best-effort -- never block the save */ }
+
     ensureConfigDir()
     const filePath = getTokenomicsPath()
     // Atomic-replace: tmp + renameSync. fs.renameSync is atomic on POSIX
@@ -483,6 +494,59 @@ export async function detectAndIngestFile(
 
 // ── Aggregation Helpers ──
 
+/**
+ * P8.6: Merge two TokenomicsSessionRecord objects preserving existing
+ * attribution fields. updateSessionRecord() calls this on every seed/sync
+ * re-parse so the rebuild never lowers attribution fidelity -- existing
+ * accountEmail / accountUuid / attributionMixed values survive even when
+ * the freshly parsed record doesn't carry them.
+ */
+export function mergeSessionRecordAttribution<T extends TokenomicsSessionRecord>(
+  existing: T,
+  newFields: Partial<T>,
+): T {
+  return {
+    ...existing,
+    ...newFields,
+    accountEmail: existing.accountEmail ?? newFields.accountEmail,
+    accountUuid: existing.accountUuid ?? newFields.accountUuid,
+    attributionMixed: existing.attributionMixed ?? newFields.attributionMixed,
+  }
+}
+
+/**
+ * P8.7 / p9.17: stamp accountEmail on CODEX session records at
+ * saveData() entry, using the per-session spawn-time identity map (so
+ * claim-time drift on ~/.codex/auth.json doesn't misattribute tokens).
+ *
+ * Claude attribution is NOT handled here. Copilot review on PR #31
+ * (p9.17) showed that walking every unattributed record and stamping the
+ * *current* Claude identity misattributes historic/other-account
+ * sessions whenever seed/sync (or the loadData back-fill) triggers a
+ * save. Live Claude sessions are now attributed per-session in
+ * handleStatuslineUpdate from the authoritative statusline payload;
+ * historic records are left for the timeline back-fill wizard.
+ *
+ * Iterates the spawn map (not every session), so a historic Codex record
+ * from a prior process run is never touched. Only stamps records with no
+ * accountEmail yet -- never overwrites. Canonicalises emails.
+ */
+export function applyIdentityAtFlush(
+  data: TokenomicsData,
+  codexSpawnIdentity: Map<string, AccountIdentity>,
+): void {
+  for (const [sessionId, codexId] of codexSpawnIdentity) {
+    const record = data.sessions[sessionId]
+    if (!record || record.accountEmail) continue  // never overwrite
+    if (record.provider !== 'codex') continue      // map is Codex-only by construction
+    const e = canonicalEmail(codexId.email)
+    if (e) {
+      record.accountEmail = e
+      record.accountUuid = record.accountUuid ?? codexId.accountUuid
+    }
+  }
+}
+
 function updateSessionRecord(
   data: TokenomicsData,
   sessionId: string,
@@ -491,63 +555,60 @@ function updateSessionRecord(
 ): void {
   if (messages.length === 0) return
 
-  let record = data.sessions[sessionId]
-  if (!record) {
-    record = {
-      sessionId,
-      projectDir,
-      model: messages[0].model,
-      totalInputTokens: 0,
-      totalOutputTokens: 0,
-      totalCacheReadTokens: 0,
-      totalCacheWriteTokens: 0,
-      totalCostUsd: 0,
-      messageCount: 0,
-      firstTimestamp: messages[0].timestamp,
-      lastTimestamp: messages[0].timestamp,
-    }
-    data.sessions[sessionId] = record
-  }
+  const existing = data.sessions[sessionId]
 
-  // Reset counts for re-parse (idempotent)
-  record.totalInputTokens = 0
-  record.totalOutputTokens = 0
-  record.totalCacheReadTokens = 0
-  record.totalCacheWriteTokens = 0
-  record.totalCostUsd = 0
-  record.messageCount = 0
-  record.firstTimestamp = messages[0].timestamp
-  record.lastTimestamp = messages[messages.length - 1].timestamp
-  record.model = messages[0].model
+  // Re-parse is idempotent: build the metric fields fresh from the parsed
+  // messages rather than mutating in place. The fresh record carries NO
+  // attribution fields, so mergeSessionRecordAttribution() (below) folds
+  // the existing accountEmail / accountUuid / attributionMixed back in.
+  const rebuilt: TokenomicsSessionRecord = {
+    sessionId,
+    projectDir: existing?.projectDir || projectDir,
+    model: messages[0].model,
+    totalInputTokens: 0,
+    totalOutputTokens: 0,
+    totalCacheReadTokens: 0,
+    totalCacheWriteTokens: 0,
+    totalCostUsd: 0,
+    messageCount: 0,
+    firstTimestamp: messages[0].timestamp,
+    lastTimestamp: messages[messages.length - 1].timestamp,
+  }
 
   for (const msg of messages) {
-    record.totalInputTokens += msg.inputTokens
-    record.totalOutputTokens += msg.outputTokens
-    record.totalCacheReadTokens += msg.cacheReadTokens
-    record.totalCacheWriteTokens += msg.cacheWriteTokens
-    record.messageCount++
+    rebuilt.totalInputTokens += msg.inputTokens
+    rebuilt.totalOutputTokens += msg.outputTokens
+    rebuilt.totalCacheReadTokens += msg.cacheReadTokens
+    rebuilt.totalCacheWriteTokens += msg.cacheWriteTokens
+    rebuilt.messageCount++
   }
 
-  record.totalCostUsd = calculateCost(
-    record.totalInputTokens,
-    record.totalOutputTokens,
-    record.totalCacheReadTokens,
-    record.totalCacheWriteTokens,
-    record.model
+  rebuilt.totalCostUsd = calculateCost(
+    rebuilt.totalInputTokens,
+    rebuilt.totalOutputTokens,
+    rebuilt.totalCacheReadTokens,
+    rebuilt.totalCacheWriteTokens,
+    rebuilt.model
   )
 
   // Calculate burn rate
-  if (record.firstTimestamp && record.lastTimestamp) {
-    const start = new Date(record.firstTimestamp).getTime()
-    const end = new Date(record.lastTimestamp).getTime()
-    record.durationMs = Math.max(end - start, 0)
-    if (record.durationMs > 60000) { // Only calculate if session lasted > 1 minute
-      const totalTokens = record.totalInputTokens + record.totalOutputTokens +
-        record.totalCacheReadTokens + record.totalCacheWriteTokens
-      record.costPerHour = (record.totalCostUsd / record.durationMs) * 3_600_000
-      record.tokensPerMinute = (totalTokens / record.durationMs) * 60_000
+  if (rebuilt.firstTimestamp && rebuilt.lastTimestamp) {
+    const start = new Date(rebuilt.firstTimestamp).getTime()
+    const end = new Date(rebuilt.lastTimestamp).getTime()
+    rebuilt.durationMs = Math.max(end - start, 0)
+    if (rebuilt.durationMs > 60000) { // Only calculate if session lasted > 1 minute
+      const totalTokens = rebuilt.totalInputTokens + rebuilt.totalOutputTokens +
+        rebuilt.totalCacheReadTokens + rebuilt.totalCacheWriteTokens
+      rebuilt.costPerHour = (rebuilt.totalCostUsd / rebuilt.durationMs) * 3_600_000
+      rebuilt.tokensPerMinute = (totalTokens / rebuilt.durationMs) * 60_000
     }
   }
+
+  // P8.6 / p9.17.1: preserve attribution (+ provider + any other
+  // existing-only fields) across the re-parse.
+  data.sessions[sessionId] = existing
+    ? mergeSessionRecordAttribution(existing, rebuilt)
+    : rebuilt
 }
 
 function rebuildAggregates(data: TokenomicsData): void {
@@ -755,17 +816,37 @@ export async function syncTokenomics(
 
 let cachedData: TokenomicsData | null = null
 
-export function handleStatuslineUpdate(statuslineData: {
-  sessionId: string
-  model?: string
-  costUsd?: number
-  inputTokens?: number
-  outputTokens?: number
-  rateLimitCurrent?: number
-  rateLimitWeekly?: number
-  rateLimitExtra?: { enabled: boolean; utilization: number; usedUsd: number; limitUsd: number }
-}): void {
-  if (!statuslineData.costUsd && !statuslineData.inputTokens && !statuslineData.rateLimitExtra && !statuslineData.rateLimitCurrent) return
+/**
+ * P8.10: enrich a StatuslineData payload with accountColour computed
+ * from accountEmail. Called by handleStatuslineUpdate before the
+ * payload fans out to the renderer.
+ */
+export function decorateStatuslineWithColour<T extends { accountEmail?: string }>(
+  sl: T,
+): T & { accountColour?: CatppuccinAccent } {
+  if (typeof sl.accountEmail === 'string' && sl.accountEmail.trim().length > 0) {
+    return { ...sl, accountColour: colourForEmail(sl.accountEmail) }
+  }
+  return sl
+}
+
+export function handleStatuslineUpdate(rawStatuslineData: StatuslineData): void {
+  // P8.10: decorate with accountColour so any downstream consumer that
+  // forwards this payload sees a fully-enriched object.
+  const statuslineData = decorateStatuslineWithColour(rawStatuslineData)
+  // Copilot review on PR #31 (p9.17.1): use nullish (not falsy) checks so
+  // a legitimate `0` cost / token tick is not dropped, and treat an
+  // identity-bearing tick as a reason to proceed so a session that has
+  // emitted no cost yet still gets attributed in the block below.
+  const hasMetrics =
+    statuslineData.costUsd != null ||
+    statuslineData.inputTokens != null ||
+    statuslineData.rateLimitExtra != null ||
+    statuslineData.rateLimitCurrent != null ||
+    statuslineData.rateLimitWeekly != null
+  const hasIdentity =
+    typeof statuslineData.accountEmail === 'string' && statuslineData.accountEmail.trim().length > 0
+  if (!hasMetrics && !hasIdentity) return
 
   if (!cachedData) {
     cachedData = loadData()
@@ -823,6 +904,22 @@ export function handleStatuslineUpdate(statuslineData: {
   if (model) record.model = model
   record.lastTimestamp = new Date().toISOString()
 
+  // Copilot review on PR #31 (p9.17): attribute the LIVE Claude session
+  // here, from the per-session statusline payload (the bridge reads
+  // ~/.claude.json:oauthAccount.emailAddress for THIS session's tick, so
+  // it is the authoritative ground truth for the account this session is
+  // running under right now). This replaces the old blanket stamping in
+  // applyIdentityAtFlush, which walked EVERY unattributed record on every
+  // save and so misattributed historic sessions (from other accounts) to
+  // whoever happened to be logged in during a seed/sync. Historic records
+  // are now left untouched for the timeline-based back-fill wizard.
+  // Never overwrite -- first identity seen for the session wins, matching
+  // the wizard / Codex "never overwrite" rule.
+  if (!record.accountEmail) {
+    const liveEmail = canonicalEmail(statuslineData.accountEmail)
+    if (liveEmail) record.accountEmail = liveEmail
+  }
+
   rebuildAggregates(cachedData)
   saveDataDebounced(cachedData)
 }
@@ -832,3 +929,122 @@ export function handleStatuslineUpdate(statuslineData: {
 export function getTokenomicsData(): TokenomicsData {
   return loadData()
 }
+
+// ── P8.14: Attribution wizard helpers ──
+
+// Internal: lets the test harness skip the saveData side-effect without
+// relying on vi.mock intercepting same-module references (which doesn't
+// work in ES modules -- vi.mock only replaces what external importers see).
+let _skipSaveForTests = false
+
+/**
+ * P8.14: apply a wizard / per-record attribution payload to the
+ * in-memory tokenomics data. Canonicalises emails, atomically saves.
+ *
+ * Copilot review on PR #31 (p9.9): cachedData is null on cold start
+ * until the first statusline tick populates it. Opening the Tokenomics
+ * page + running the wizard before that would silently no-op. Load
+ * from disk if we haven't cached yet so wizard writes always land.
+ */
+export function applyAttributionPayload(payload: AttributionPayload): void {
+  if (!cachedData) cachedData = loadData()
+  const data = cachedData
+  for (const sid of payload.sessionIds) {
+    const record = data.sessions[sid]
+    if (!record) continue
+    switch (payload.assignment.type) {
+      case 'email': {
+        const e = canonicalEmail(payload.assignment.email)
+        if (e) {
+          record.accountEmail = e
+          record.attributionMixed = undefined
+        }
+        break
+      }
+      case 'mixed':
+        record.attributionMixed = true
+        break
+      case 'clear':
+        record.accountEmail = undefined
+        record.attributionMixed = undefined
+        record.accountUuid = undefined
+        break
+    }
+  }
+  if (!_skipSaveForTests) saveData(data)
+}
+
+/**
+ * P8.14: group all unattributed sessions by configId and compute
+ * suggested emails via the backup-file timeline.
+ */
+export function listUnattributedGroups(
+  timeline: ReturnType<typeof import('./account-attribution').buildAccountTimeline>,
+): UnattributedSessionGroup[] {
+  // Copilot review on PR #31 (p9.9): same cold-start issue as
+  // applyAttributionPayload -- without a statusline tick first, the
+  // back-fill banner/wizard would never appear because cachedData stays
+  // null. Pull from disk so the on-disk tokenomics.json drives the UI.
+  if (!cachedData) cachedData = loadData()
+  const data = cachedData
+  const groups = new Map<string, UnattributedSessionGroup>()
+  // Copilot review on PR #31 (p9.14): tally votes per (group, email) so the
+  // suggested email is deterministic regardless of iteration order. Previous
+  // code overwrote g.suggestedEmail per session, making the final suggestion
+  // depend on Object.entries order for configs whose sessions spanned
+  // multiple timeline intervals.
+  const groupVotes = new Map<string, Map<string, number>>()
+  for (const [sid, r] of Object.entries(data.sessions)) {
+    if (r.accountEmail || r.attributionMixed) continue
+    const groupId = r.configId ?? '__no-config__'
+    const groupLabel = r.configLabel ?? '(no config)'
+    if (!groups.has(groupId)) {
+      groups.set(groupId, { groupId, groupLabel, sessionIds: [], totalCostUsd: 0, suggestedEmail: null })
+    }
+    const g = groups.get(groupId)!
+    g.sessionIds.push(sid)
+    g.totalCostUsd += r.totalCostUsd ?? 0
+    const lastTs = new Date(r.lastTimestamp).getTime()
+    if (!Number.isFinite(lastTs)) continue
+    for (const iv of timeline) {
+      if (lastTs >= iv.start && lastTs < iv.end) {
+        const votes = groupVotes.get(groupId) ?? new Map<string, number>()
+        votes.set(iv.email, (votes.get(iv.email) ?? 0) + 1)
+        groupVotes.set(groupId, votes)
+        break
+      }
+    }
+  }
+  // Resolve each group's suggestion to the email with the most votes;
+  // ties break alphabetically so the result is fully deterministic.
+  for (const g of groups.values()) {
+    const votes = groupVotes.get(g.groupId)
+    if (!votes) continue
+    let bestEmail: string | null = null
+    let bestCount = 0
+    for (const [email, count] of Array.from(votes.entries()).sort(([a], [b]) => a.localeCompare(b))) {
+      if (count > bestCount) { bestEmail = email; bestCount = count }
+    }
+    g.suggestedEmail = bestEmail
+  }
+  return Array.from(groups.values()).sort((a, b) => b.totalCostUsd - a.totalCostUsd)
+}
+
+// ── Test-only hooks ──
+
+export function __resetTokenomicsForTests(): void {
+  cachedData = {
+    sessions: {},
+    dailyAggregates: {},
+    lastSyncTimestamp: 0,
+    totalCostUsd: 0,
+    seedComplete: true,
+  } as TokenomicsData
+  _skipSaveForTests = true
+}
+
+export function __seedTokenomicsForTests(records: TokenomicsSessionRecord[]): void {
+  if (!cachedData) __resetTokenomicsForTests()
+  for (const r of records) (cachedData as TokenomicsData).sessions[r.sessionId] = r
+}
+__seedTokenomicsForTests.read = (): TokenomicsData => cachedData as TokenomicsData

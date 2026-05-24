@@ -110,9 +110,19 @@ export function injectConductorVisionInCodexConfig(port: number): void {
   // port. No-op when the block is absent.
   existing = stripManagedBlock(existing)
 
-  // Leading newline ensures we start on a fresh line even if the file lacks
-  // a trailing newline. Trailing newline keeps the file POSIX-clean.
-  const block = `\n${MARKER_COMMENT}\n${MARKER_SECTION}\nurl = "http://localhost:${port}/sse?source=codex"\nenabled = true\n`
+  // P9.6: point Codex at the new /mcp streamable-HTTP endpoint. The rmcp
+  // client used by Codex 0.128+ wraps URL-based MCP servers in
+  // StreamableHttpClientAdapter and POSTs `initialize` expecting a JSON
+  // response back; the legacy /sse route uses SSEServerTransport which
+  // returns 202 + pushes the response over the event stream, which the
+  // new client mis-reads as "missing-content-type". /sse stays in place
+  // for Claude clients. The source query param is preserved so the P6.9
+  // codex_review gate (`if source !== 'codex'`) still hides that tool
+  // from Codex sessions (no recursive Codex-self-review).
+  //
+  // Leading newline ensures we start on a fresh line even if the file
+  // lacks a trailing newline. Trailing newline keeps the file POSIX-clean.
+  const block = `\n${MARKER_COMMENT}\n${MARKER_SECTION}\nurl = "http://localhost:${port}/mcp?source=codex"\nenabled = true\n`
 
   try {
     writeFileSync(tomlPath, existing + block, 'utf-8')

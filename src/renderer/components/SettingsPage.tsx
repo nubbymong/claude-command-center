@@ -5,6 +5,7 @@ import { getLatestVersion } from '../changelog'
 import { useSettingsStore, DEFAULT_STATUS_LINE, DEFAULT_TERMINAL_SETTINGS, UpdateChannel } from '../stores/settingsStore'
 import type { StatusLineSettings, TerminalSettings, CursorStyle } from '../stores/settingsStore'
 import { useSessionStore } from '../stores/sessionStore'
+import { useAppMetaStore } from '../stores/appMetaStore'
 import { eventToShortcutString, DEFAULT_SHORTCUTS, SHORTCUT_LABELS } from '../utils/shortcuts'
 import GitHubConfigTab from './github/config/GitHubConfigTab'
 import { CodexSettingsTab } from './codex/CodexSettingsTab'
@@ -56,6 +57,7 @@ interface SettingsPageProps {
 export default function SettingsPage({ initialTab }: SettingsPageProps = {}) {
   const settings = useSettingsStore((s) => s.settings)
   const updateSettings = useSettingsStore((s) => s.updateSettings)
+  const updateAppMeta = useAppMetaStore((s) => s.update)
   const [showWhatsNew, setShowWhatsNew] = useState(false)
   const [showTraining, setShowTraining] = useState(false)
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab ?? 'general')
@@ -301,6 +303,18 @@ export default function SettingsPage({ initialTab }: SettingsPageProps = {}) {
                   className="mt-2 text-[11px] text-blue hover:text-blue/80 transition-colors"
                 >
                   Open log folder
+                </button>
+              </Section>
+
+              <Section title="Advanced" icon={<path d="M8 2v3M8 11v3M2 8h3M11 8h3M4 4l2 2M10 10l2 2M4 12l2-2M10 6l2-2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />}>
+                <p className="text-[11px] text-overlay0 mb-2 leading-relaxed">
+                  Re-display the account attribution banner on the Tokenomics page if you previously dismissed it.
+                </p>
+                <button
+                  onClick={() => updateAppMeta({ accountWizardDismissed: false })}
+                  className="px-3 py-1.5 text-sm bg-surface1 hover:bg-surface2 rounded transition-colors"
+                >
+                  Re-run account attribution wizard
                 </button>
               </Section>
             </>

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useGitHubStore } from '../../stores/githubStore'
 import { useSessionStore } from '../../stores/sessionStore'
+import { useConfigStore } from '../../stores/configStore'
 import { trackUsage } from '../../stores/tipsStore'
 import { parseRepoUrlClient } from './parseRepoUrlClient'
 import { buildSessionState } from '../../session-persistence'
@@ -16,6 +17,7 @@ export default function SessionGitHubConfig({ sessionId, cwd, initial }: Props) 
   const config = useGitHubStore((s) => s.config)
   const profiles = useGitHubStore((s) => s.profiles)
   const updateSession = useSessionStore((s) => s.updateSession)
+  const updateConfig = useConfigStore((s) => s.updateConfig)
   const [enabled, setEnabled] = useState(initial?.enabled ?? config?.enabledByDefault ?? false)
   const [userTouchedEnabled, setUserTouchedEnabled] = useState(false)
   const [repoUrl, setRepoUrl] = useState(initial?.repoUrl ?? '')
@@ -95,6 +97,18 @@ export default function SessionGitHubConfig({ sessionId, cwd, initial }: Props) 
           ...patch,
         }
         updateSession(sessionId, { githubIntegration: merged })
+
+        // P9.3 (#280): persist the integration on the parent CONFIG too so
+        // any future session spawned from this template inherits the setup.
+        // Without this the enable/repo/auth-profile selection only survives
+        // the lifetime of the current SavedSession; closing the app and
+        // re-spawning from the same config (which is the user's actual
+        // workflow) lost the GH setup every time.
+        const sessionCfgId = prior?.configId
+        if (sessionCfgId) {
+          updateConfig(sessionCfgId, { githubIntegration: merged })
+        }
+
         if (enabled) trackUsage('github.session-enabled')
       }
       setTestResult(r.ok ? 'Saved' : `Error: ${r.error ?? 'unknown'}`)

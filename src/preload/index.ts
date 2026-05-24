@@ -552,13 +552,12 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.on(IPC.TOKENOMICS_PROGRESS, handler)
       return () => ipcRenderer.removeListener(IPC.TOKENOMICS_PROGRESS, handler)
     },
-  },
-  account: {
-    list: () => ipcRenderer.invoke(IPC.ACCOUNT_LIST),
-    switch: (id: string) => ipcRenderer.invoke(IPC.ACCOUNT_SWITCH, id),
-    getActive: () => ipcRenderer.invoke(IPC.ACCOUNT_GET_ACTIVE),
-    saveCurrentAs: (id: string, label: string) => ipcRenderer.invoke(IPC.ACCOUNT_SAVE_CURRENT_AS, id, label),
-    rename: (id: string, newLabel: string) => ipcRenderer.invoke(IPC.ACCOUNT_RENAME, id, newLabel),
+    // Copilot review on PR #31 (p9.9): route through IPC.* constants so
+    // shared/preload/main can't drift on a string-literal rename.
+    listUnattributed: () => ipcRenderer.invoke(IPC.TOKENOMICS_LIST_UNATTRIBUTED),
+    listKnownEmails: (): Promise<string[]> => ipcRenderer.invoke(IPC.TOKENOMICS_LIST_KNOWN_EMAILS),
+    attributeSessions: (payload: import('../shared/types').AttributionPayload) =>
+      ipcRenderer.invoke(IPC.TOKENOMICS_ATTRIBUTE_SESSIONS, payload),
   },
   memory: {
     scan: () => ipcRenderer.invoke('memory:scan'),

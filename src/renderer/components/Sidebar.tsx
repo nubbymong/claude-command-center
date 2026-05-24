@@ -245,6 +245,9 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
       enableCodexReview: config.claudeOptions?.enableCodexReview,
       provider: config.provider,
       codexOptions: config.codexOptions,
+      // P9.3 (#280): inherit the persisted GH integration so spawning a fresh
+      // session from this config doesn't lose the user's earlier setup.
+      githubIntegration: config.githubIntegration,
     }
     // Both Claude and Codex sessions trigger the resume picker. The Codex picker
     // script is deployed at boot via deployResumePickerScript; if missing on first

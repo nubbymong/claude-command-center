@@ -3,6 +3,7 @@ import { formatTokens, formatDuration, formatResetTime } from '../../utils/termi
 import RateLimitBar from './RateLimitBar'
 import { useSettingsStore, DEFAULT_STATUS_LINE } from '../../stores/settingsStore'
 import { useCodexReviewUsage } from '../../hooks/useCodexReviewUsage'
+import type { CatppuccinAccent } from '../../../shared/types'
 
 interface ContextBarProps {
   modelName?: string
@@ -26,6 +27,10 @@ interface ContextBarProps {
   sessionId?: string
   /** P6: when true, the codex review row is shown if there's at least one recorded review. */
   enableCodexReview?: boolean
+  /** P8.11: active-account email rendered as the leftmost Row 1 slot. Omit to hide. */
+  accountEmail?: string
+  /** P8.11: Catppuccin accent used to colour the account email. Computed main-side. */
+  accountColour?: CatppuccinAccent
 }
 
 export default function ContextBar({
@@ -36,6 +41,8 @@ export default function ContextBar({
   provider = 'claude',
   sessionId,
   enableCodexReview,
+  accountEmail,
+  accountColour,
 }: ContextBarProps) {
   const sl = useSettingsStore((s) => s.settings.statusLine) || DEFAULT_STATUS_LINE
   const codexReviewUsage = useCodexReviewUsage(enableCodexReview ? sessionId ?? null : null)
@@ -59,6 +66,15 @@ export default function ContextBar({
     >
       {/* Row 1: Context + model + cost + lines */}
       <div className="flex items-center gap-3 px-2 py-1">
+        {accountEmail && (
+          <span
+            className="text-xs font-medium tabular-nums"
+            style={{ color: `var(--color-${accountColour ?? 'subtext0'})` }}
+            title={accountEmail}
+          >
+            {accountEmail}
+          </span>
+        )}
         {sl.showModel && modelName && (
           <span className="text-text font-medium">
             {modelName}

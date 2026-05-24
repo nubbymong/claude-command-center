@@ -17,7 +17,6 @@ export type {
   LogSession,
   LogEntry,
   NoteMetadata,
-  AccountProfile,
   AgentTemplate,
   AgentModelOverride,
   TeamTemplate,
@@ -47,7 +46,6 @@ import type {
   CloudAgent,
   TeamTemplate,
   TeamRun,
-  AccountProfile,
   TokenomicsData,
   TokenomicsSyncProgress,
 } from '../../shared/types'
@@ -287,13 +285,9 @@ export interface ElectronAPI {
     seed: () => Promise<TokenomicsData>
     sync: () => Promise<TokenomicsData>
     onProgress: (callback: (data: TokenomicsSyncProgress) => void) => () => void
-  }
-  account: {
-    list: () => Promise<AccountProfile[]>
-    switch: (id: string) => Promise<{ ok: boolean; error?: string }>
-    getActive: () => Promise<AccountProfile | null>
-    saveCurrentAs: (id: string, label: string) => Promise<{ ok: boolean; error?: string }>
-    rename: (id: string, newLabel: string) => Promise<{ ok: boolean; error?: string }>
+    listUnattributed: () => Promise<import('../../shared/types').UnattributedSessionGroup[]>
+    listKnownEmails: () => Promise<string[]>
+    attributeSessions: (payload: import('../../shared/types').AttributionPayload) => Promise<{ ok: boolean; error?: string }>
   }
   memory: {
     scan: () => Promise<import('../../shared/types').MemoryScanResult>

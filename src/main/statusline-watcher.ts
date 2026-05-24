@@ -28,7 +28,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 
 import { getResourcesDirectory } from './ipc/setup-handlers'
-import { handleStatuslineUpdate } from './tokenomics-manager'
+import { handleStatuslineUpdate, decorateStatuslineWithColour } from './tokenomics-manager'
 import { notifyClaudeTelemetry } from './providers/claude/telemetry'
 
 // Re-export from shared types for backward compatibility
@@ -58,14 +58,20 @@ let sshDispatchWindow: (() => BrowserWindow | null) | null = null
  * tokenomics, and per-session telemetry subscribers.
  */
 function fanOutStatusline(data: StatuslineData, getWindow: (() => BrowserWindow | null) | null): void {
+  // Copilot review on PR #31 (p9.17): decorate with accountColour HERE,
+  // at the renderer-send site. The previous code decorated only inside
+  // handleStatuslineUpdate (on a local copy), so the renderer received
+  // the raw payload and the ContextBar never saw accountColour. Decorate
+  // once and forward the enriched object to every consumer.
+  const decorated = decorateStatuslineWithColour(data)
   if (getWindow) {
     const win = getWindow()
     if (win && !win.isDestroyed()) {
-      win.webContents.send('statusline:update', data)
+      win.webContents.send('statusline:update', decorated)
     }
   }
-  handleStatuslineUpdate(data)
-  notifyClaudeTelemetry(data)
+  handleStatuslineUpdate(decorated)
+  notifyClaudeTelemetry(decorated)
 }
 
 /**

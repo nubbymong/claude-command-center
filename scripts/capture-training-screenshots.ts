@@ -29,6 +29,16 @@ const WIDTH = 1280
 const HEIGHT = 800
 const JPEG_QUALITY = 85
 
+// P8.18: redact account identity during capture so generated screenshots
+// don't leak the user's email. Forces a stable placeholder colour for
+// visual consistency across captured environments.
+function redactAccountInStatusline(sl: any) {
+  if (sl) {
+    sl.accountEmail = 'you@example.com'
+    sl.accountColour = 'blue'
+  }
+}
+
 // ── Config directory resolution ──
 
 function getConfigDir(): string {
@@ -276,6 +286,13 @@ function seedSampleData(): BackupInfo {
       return [d, { date: d, totalCostUsd: costs[i], totalTokens: tokens[i], messageCount: sessions[i] * 15, sessionCount: sessions[i], totalDurationMs: 0, avgCostPerHour: 0, byModel: {} }]
     })),
     lastSeeded: now,
+  }
+
+  // P8.18: scrub any account identity baked into the seeded sessions before
+  // they hit disk. The helper is idempotent and sets the field if absent so
+  // it's safe to call on every record.
+  for (const session of sampleTokenomics.sessions) {
+    redactAccountInStatusline(session)
   }
 
   const fileMap: Record<string, unknown> = {

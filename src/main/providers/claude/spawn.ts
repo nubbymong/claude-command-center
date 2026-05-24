@@ -19,8 +19,14 @@ export function resolveClaudeBinary(legacyVersion?: LegacyVersion): { cmd: strin
 
   for (const bin of ['claude.exe', 'claude.cmd']) {
     try {
-      const cmdPath = execSync(`where ${bin}`, { encoding: 'utf-8', timeout: 5000 })
-        .trim().split('\n')[0].trim()
+      // stdio pipe on stderr suppresses the "INFO: Could not find files..."
+      // noise that `where` writes to stderr on a miss; default execSync
+      // inherits stderr so probe-fallthrough leaks into the parent's terminal.
+      const cmdPath = execSync(`where ${bin}`, {
+        encoding: 'utf-8',
+        timeout: 5000,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }).trim().split('\n')[0].trim()
       return { cmd: cmdPath, args: [] }
     } catch { /* try next */ }
   }
