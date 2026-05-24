@@ -9,7 +9,7 @@ describe('settingsStore', () => {
   describe('DEFAULT_SETTINGS', () => {
     it('has expected defaults', () => {
       expect(DEFAULT_SETTINGS.defaultModel).toBe('sonnet')
-      expect(DEFAULT_SETTINGS.terminalFontSize).toBe(14)
+      expect(DEFAULT_SETTINGS.terminalFontSize).toBe(13)
       expect(DEFAULT_SETTINGS.debugMode).toBe(false)
     })
 
@@ -29,7 +29,7 @@ describe('settingsStore', () => {
       expect(state.isLoaded).toBe(true)
       expect(state.settings.defaultModel).toBe('opus')
       // Defaults preserved
-      expect(state.settings.terminalFontSize).toBe(14)
+      expect(state.settings.terminalFontSize).toBe(13)
     })
 
     it('fully overrides when all keys provided', () => {
