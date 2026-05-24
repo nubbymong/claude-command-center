@@ -25,7 +25,7 @@ export interface TelemetryData {
 export function TelemetryChips({ data }: { data: TelemetryData }) {
   const modeIsBypass = data.mode === 'bypassPermissions'
   const hasModel = !!data.model
-  const hasMetrics = data.contextPct != null || data.costUsd != null
+  const hasMetrics = data.contextPct != null || data.costUsd != null || data.linesAdded != null || data.linesRemoved != null
   // left separator only when a previous group already rendered (avoids a leading divider)
   const sep = (prev: boolean) =>
     prev ? { borderLeft: '1px solid color-mix(in srgb, var(--text-muted) 30%, transparent)', paddingLeft: 11 } : {}
