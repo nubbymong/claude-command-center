@@ -76,6 +76,7 @@ export interface AppSettings {
   hooksPort: number
   theme: ThemeMode
   tokenomicsAccountFilter?: string  // 'all' | '__mixed__' | '__unknown__' | <email>
+  fontMigratedV2?: boolean  // one-time guard: existing installs moved off the old Cascadia Code/14 default
 }
 
 interface SettingsState {
@@ -104,21 +105,48 @@ export const DEFAULT_SETTINGS: AppSettings = {
   theme: 'dark',
 }
 
+// V2 changed the bundled terminal default from Cascadia Code @14 to JetBrains
+// Mono @13. Move installs still sitting on the OLD default to the new one
+// exactly ONCE, guarded by fontMigratedV2. A user who picked a different font is
+// left alone; a user who re-picks Cascadia Code after the migration is respected
+// (the guard has already fired). `changed` is true whenever the guard is newly
+// set, so the caller persists it and the migration never runs again.
+export function migrateV2Font(settings: AppSettings): { settings: AppSettings; changed: boolean } {
+  if (settings.fontMigratedV2) return { settings, changed: false }
+  const terminal = { ...settings.terminal }
+  if (terminal.fontFamily === 'Cascadia Code') terminal.fontFamily = 'JetBrains Mono'
+  if (terminal.fontSize === 14) terminal.fontSize = 13
+  return {
+    settings: {
+      ...settings,
+      terminal,
+      terminalFontSize: settings.terminalFontSize === 14 ? 13 : settings.terminalFontSize,
+      fontMigratedV2: true,
+    },
+    changed: true,
+  }
+}
+
 export const useSettingsStore = create<SettingsState>((set) => ({
   settings: { ...DEFAULT_SETTINGS },
   isLoaded: false,
 
-  hydrate: (settings) => set({
-    settings: {
+  hydrate: (settings) => {
+    const merged: AppSettings = {
       ...DEFAULT_SETTINGS,
       ...settings,
       // Deep-merge nested objects so users with older saved configs still pick up
       // newly added fields (e.g. statusLine.font/fontSize) instead of getting undefined.
       statusLine: { ...DEFAULT_STATUS_LINE, ...(settings.statusLine || {}) },
       terminal: { ...DEFAULT_TERMINAL_SETTINGS, ...(settings.terminal || {}) },
-    },
-    isLoaded: true,
-  }),
+    }
+    const { settings: migrated, changed } = migrateV2Font(merged)
+    if (changed) {
+      // Persist the one-time migration (including the guard flag) so it runs once.
+      saveConfigNow('settings', migrated).catch(() => {})
+    }
+    set({ settings: migrated, isLoaded: true })
+  },
 
   updateSettings: (updates) => {
     let savePromise: Promise<unknown> = Promise.resolve()
