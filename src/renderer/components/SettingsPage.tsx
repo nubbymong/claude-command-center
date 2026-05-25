@@ -169,10 +169,11 @@ export default function SettingsPage({ initialTab }: SettingsPageProps = {}) {
                     onChange={(e) => save({ updateChannel: e.target.value as UpdateChannel })}
                     className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-full focus:outline-none focus:border-blue/50 transition-colors"
                   >
-                    <option value="stable">Stable — production releases only</option>
-                    <option value="beta">Beta — stable + pre-release builds</option>
+                    <option value="stable">Stable -- production releases only</option>
+                    <option value="beta">Beta -- stable + pre-release builds</option>
                   </select>
                 </Field>
+                <CheckForUpdatesField />
                 <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer mt-3">
                   <input
                     type="checkbox"
@@ -612,6 +613,63 @@ function MockRateDots({ label, pct }: { label: string; pct: number }) {
       </span>
       <span className="text-subtext0">{pct}%</span>
     </span>
+  )
+}
+
+/* ── Check for Updates field ─────────────────────────── */
+
+type UpdateCheckStatus = 'idle' | 'checking' | 'up-to-date' | 'available'
+
+function CheckForUpdatesField() {
+  const [status, setStatus] = useState<UpdateCheckStatus>('idle')
+  const [foundVersion, setFoundVersion] = useState<string | null>(null)
+
+  const handleCheck = async () => {
+    if (status === 'checking') return
+    setStatus('checking')
+    setFoundVersion(null)
+    try {
+      const available = await window.electronAPI.update.check()
+      if (available) {
+        setStatus('available')
+        try {
+          const ver = await window.electronAPI.update.getVersion()
+          if (ver) setFoundVersion(ver)
+        } catch { /* version label is optional */ }
+      } else {
+        setStatus('up-to-date')
+      }
+    } catch {
+      setStatus('idle')
+    }
+  }
+
+  const statusText =
+    status === 'checking' ? 'Checking...' :
+    status === 'up-to-date' ? 'Up to date' :
+    status === 'available' ? (foundVersion ? `Update available -- v${foundVersion}` : 'Update available') :
+    null
+
+  const statusColor =
+    status === 'up-to-date' ? 'text-green' :
+    status === 'available' ? 'text-yellow' :
+    'text-overlay0'
+
+  return (
+    <Field label="Check for Updates">
+      <div className="flex items-center gap-3">
+        <button
+          onClick={handleCheck}
+          disabled={status === 'checking'}
+          className="px-3 py-1.5 text-sm bg-surface1 hover:bg-surface2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-wait border border-surface0/80"
+        >
+          {status === 'checking' ? 'Checking...' : 'Check now'}
+        </button>
+        {statusText && status !== 'checking' && (
+          <span className={`text-xs ${statusColor}`}>{statusText}</span>
+        )}
+      </div>
+    </Field>
   )
 }
 

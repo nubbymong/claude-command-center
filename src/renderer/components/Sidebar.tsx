@@ -88,7 +88,6 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
   const [updateAvailable, setUpdateAvailable] = useState(false)
   const [updateVersion, setUpdateVersion] = useState<string | null>(null)
   const [updating, setUpdating] = useState(false)
-  const [checking, setChecking] = useState(false)
   const [contextMenuConfig, setContextMenuConfig] = useState<{ configId: string; x: number; y: number } | null>(null)
   const [renamingGroupId, setRenamingGroupId] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
@@ -127,33 +126,15 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
 
   // Check for updates on startup and subscribe to push notifications
   useEffect(() => {
-    setChecking(true)
     window.electronAPI.update.check().then((available) => {
       setUpdateAvailable(available)
-      setChecking(false)
-    }).catch(() => setChecking(false))
+    }).catch(() => { /* ignore startup check failure */ })
     const unsubAvailable = window.electronAPI.update.onAvailable((available, version) => {
       setUpdateAvailable(available)
       if (version) setUpdateVersion(version)
-      setChecking(false)
     })
     return () => { unsubAvailable() }
   }, [])
-
-  const handleCheckForUpdates = () => {
-    if (checking) return
-    setChecking(true)
-    window.electronAPI.update.check().then(async (available) => {
-      setUpdateAvailable(available)
-      if (available) {
-        try {
-          const ver = await window.electronAPI.update.getVersion()
-          if (ver) setUpdateVersion(ver)
-        } catch { /* ignore */ }
-      }
-      setChecking(false)
-    }).catch(() => setChecking(false))
-  }
 
   const handleInstallUpdate = () => {
     if (updating) return
@@ -1007,13 +988,11 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
         />
       )}
 
-      {/* Update panel */}
+      {/* Update panel -- install CTA only; channel + check live in Settings */}
       <UpdatePanel
         updateAvailable={updateAvailable}
         updateVersion={updateVersion}
         updating={updating}
-        checking={checking}
-        onCheckForUpdates={handleCheckForUpdates}
         onInstallUpdate={handleInstallUpdate}
       />
     </aside>
