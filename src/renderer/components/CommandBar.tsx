@@ -363,7 +363,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
   // dot carries identity. Drag-over still uses the blue ring -- a transient
   // affordance, not the command colour.
   const renderCommandButton = (cmd: CustomCommand) => {
-    const color = cmd.color || '#89B4FA'
+    const color = cmd.color || 'var(--accent)'
     const isDragging = dragId === cmd.id
     const isDragOver = dragOverId === cmd.id
     const hasArgs = (cmd.defaultArgs && cmd.defaultArgs.length > 0) || (cmd.lastCustomArgs && cmd.lastCustomArgs.length > 0)
@@ -389,7 +389,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
           opacity: isDragging ? 0.4 : 1,
           cursor: isDragging ? 'grabbing' : 'grab',
           borderLeftWidth: isDragOver ? '2px' : undefined,
-          borderLeftColor: isDragOver ? '#89B4FA' : undefined,
+          borderLeftColor: isDragOver ? 'var(--status-info)' : undefined,
         }}
         title={argsTitle}
       >

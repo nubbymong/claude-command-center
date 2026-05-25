@@ -593,7 +593,7 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
                   return !prev
                 })
               }}
-              className={`w-6 h-6 flex items-center justify-center rounded transition-colors ${configPanelPinned ? 'bg-blue/20 text-blue' : 'hover:bg-surface0 text-overlay1 hover:text-text'}`}
+              className={`w-6 h-6 flex items-center justify-center rounded transition-colors focus-ring ${configPanelPinned ? 'bg-blue/20 text-blue' : 'hover:bg-surface0 text-overlay1 hover:text-text'}`}
               title={configPanelPinned ? 'Unpin config panel' : 'Pin config panel open'}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -602,7 +602,7 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
             </button>
             <button
               onClick={(e) => { e.stopPropagation(); setShowNewSectionInput(true); setConfigPanelOpen(true); setTimeout(() => newSectionInputRef.current?.focus(), 0) }}
-              className="w-6 h-6 flex items-center justify-center rounded hover:bg-surface0 text-overlay1 hover:text-text transition-colors"
+              className="w-6 h-6 flex items-center justify-center rounded hover:bg-surface0 text-overlay1 hover:text-text transition-colors focus-ring"
               title="New section"
             >
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2">
@@ -614,7 +614,7 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
             </button>
             <button
               onClick={(e) => { e.stopPropagation(); setShowNewDialog(true) }}
-              className="w-6 h-6 flex items-center justify-center rounded hover:bg-surface0 text-overlay1 hover:text-text transition-colors"
+              className="w-6 h-6 flex items-center justify-center rounded hover:bg-surface0 text-overlay1 hover:text-text transition-colors focus-ring"
               title="New config (Ctrl+T)"
             >
               <svg width="14" height="14" viewBox="0 0 14 14"><line x1="7" y1="2" x2="7" y2="12" stroke="currentColor" strokeWidth="1.5"/><line x1="2" y1="7" x2="12" y2="7" stroke="currentColor" strokeWidth="1.5"/></svg>
@@ -825,13 +825,13 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
             <span className="text-[10px] text-overlay0">{selectedSessionIds.size} selected</span>
             <button
               onClick={handleBulkClose}
-              className="px-1.5 py-0.5 rounded text-[10px] bg-red/20 text-red hover:bg-red/30 transition-colors"
+              className="px-1.5 py-0.5 rounded text-[10px] bg-red/20 text-red hover:bg-red/30 transition-colors focus-ring"
             >
               Close All
             </button>
             <button
               onClick={() => setSelectedSessionIds(new Set())}
-              className="px-1.5 py-0.5 rounded text-[10px] bg-surface1 text-overlay1 hover:bg-surface1/80 transition-colors"
+              className="px-1.5 py-0.5 rounded text-[10px] bg-surface1 text-overlay1 hover:bg-surface1/80 transition-colors focus-ring"
             >
               Clear
             </button>

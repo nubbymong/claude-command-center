@@ -11,7 +11,8 @@ interface Props {
 export default function SessionHeader({ session, onShowTip }: Props) {
   return (
     <div
-      className="flex items-center gap-3 px-4 py-2 border-b border-surface0 bg-mantle shrink-0 relative"
+      className="flex items-center gap-3 px-4 py-2 border-b shrink-0 relative"
+      style={{ background: 'var(--surface-panel)', borderColor: 'var(--border-subtle)' }}
     >
       {/* Session-color accent line that fades out toward the right --
           the gradient stops before fully transparent at ~70% so the

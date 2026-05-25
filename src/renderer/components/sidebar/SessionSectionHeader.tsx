@@ -13,6 +13,7 @@ export default function SessionSectionHeader({ section, collapsed, onToggleColla
     <div className="flex items-center gap-1 py-1.5 px-1 rounded hover:bg-surface0/20 transition-colors group/ssection">
       <button
         onClick={onToggleCollapse}
+        aria-label={collapsed ? 'Expand section' : 'Collapse section'}
         className="p-0.5 text-overlay0 hover:text-text transition-colors focus-ring"
       >
         <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"

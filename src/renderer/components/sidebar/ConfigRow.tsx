@@ -43,10 +43,10 @@ export default function ConfigRow({ config, onLaunch, onEdit, onDelete, onPin, o
       <span className="text-xs text-text truncate flex-1">{config.label}</span>
       {config.sessionType === 'ssh' && <SshBadge />}
       {config.shellOnly && <ShellBadge />}
-      <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+      <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
         <button
           onClick={onLaunch}
-          className="p-1 rounded hover:bg-surface1 text-overlay1 hover:text-text"
+          className="p-1 rounded hover:bg-surface1 text-overlay1 hover:text-text focus-ring"
           title="Launch"
         >
           <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><polygon points="3,1 10,6 3,11" /></svg>
@@ -54,7 +54,7 @@ export default function ConfigRow({ config, onLaunch, onEdit, onDelete, onPin, o
         {onPin && (
           <button
             onClick={onPin}
-            className={`p-1 rounded hover:bg-surface1 transition-colors ${config.pinned ? 'text-blue' : 'text-overlay1 hover:text-text'}`}
+            className={`p-1 rounded hover:bg-surface1 transition-colors focus-ring ${config.pinned ? 'text-blue' : 'text-overlay1 hover:text-text'}`}
             title={config.pinned ? 'Unpin' : 'Pin to top'}
           >
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -64,14 +64,14 @@ export default function ConfigRow({ config, onLaunch, onEdit, onDelete, onPin, o
         )}
         <button
           onClick={onEdit}
-          className="p-1 rounded hover:bg-surface1 text-overlay1 hover:text-text"
+          className="p-1 rounded hover:bg-surface1 text-overlay1 hover:text-text focus-ring"
           title="Edit"
         >
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2"><path d="M8.5 1.5l2 2-7 7H1.5v-2z"/></svg>
         </button>
         <button
           onClick={onDelete}
-          className="p-1 rounded hover:bg-surface1 text-overlay1 hover:text-red"
+          className="p-1 rounded hover:bg-surface1 text-overlay1 hover:text-red focus-ring"
           title="Delete"
         >
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2"><line x1="2" y1="2" x2="10" y2="10"/><line x1="10" y1="2" x2="2" y2="10"/></svg>
