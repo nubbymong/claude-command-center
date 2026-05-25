@@ -3,6 +3,8 @@
  * This is the canonical source — other files should import from here.
  */
 
+import type { IdentityColorKey } from './identity-colors'
+
 // ── Vision ──
 
 /** @deprecated Use GlobalVisionConfig instead — vision is now global, not per-session */
@@ -53,10 +55,6 @@ export interface LegacyVersion {
 // ── Provider types ──
 
 export type ProviderId = 'claude' | 'codex'
-
-export type CatppuccinAccent =
-  | 'red' | 'peach' | 'yellow' | 'green' | 'teal' | 'sky'
-  | 'blue' | 'lavender' | 'mauve' | 'pink' | 'flamingo' | 'rosewater'
 
 export interface AccountIdentity {
   email: string
@@ -159,8 +157,9 @@ export interface StatuslineData {
   rateLimitExtra?: RateLimitExtra
   /** Active-account email surfaced by the bridge script. Renderer displays it left of the model name. */
   accountEmail?: string
-  /** Pre-computed by main process via `colourForEmail()`; renderer consumes directly. */
-  accountColour?: CatppuccinAccent
+  /** Pre-computed by main process via `colourForEmail()` as an identity-palette KEY;
+   *  the renderer resolves it to a theme hex via resolveIdentityColor(). */
+  accountColour?: IdentityColorKey
 }
 
 // ── Agent Templates ──

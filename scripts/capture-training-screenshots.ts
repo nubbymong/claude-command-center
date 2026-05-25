@@ -35,7 +35,7 @@ const JPEG_QUALITY = 85
 function redactAccountInStatusline(sl: any) {
   if (sl) {
     sl.accountEmail = 'you@example.com'
-    sl.accountColour = 'blue'
+    sl.accountColour = 'periwinkle'
   }
 }
 

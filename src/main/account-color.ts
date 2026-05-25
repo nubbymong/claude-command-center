@@ -1,18 +1,17 @@
 import { createHash } from 'crypto'
-import type { CatppuccinAccent } from '../shared/types'
-
-const PALETTE: readonly CatppuccinAccent[] = [
-  'red', 'peach', 'yellow', 'green', 'teal', 'sky',
-  'blue', 'lavender', 'mauve', 'pink', 'flamingo', 'rosewater',
-]
+import { IDENTITY_COLOR_KEYS, type IdentityColorKey } from '../shared/identity-colors'
 
 /**
- * Map an email to a stable Catppuccin palette accent. Lowercased + trimmed
- * so casing variations don't produce different colours. Deterministic
- * across machines (same email -> same colour everywhere).
+ * Map an email to a stable identity-palette KEY (V2 Shell UX spec section 5).
+ * Lowercased + trimmed so casing variations don't produce different colours.
+ * Deterministic across machines (same email -> same key everywhere). The key
+ * is resolved to a theme-specific hex at render time via resolveIdentityColor,
+ * so an account colour can never collide with reserved status / brand / link
+ * hues. This is an algorithm update, not a stored-data migration -- account
+ * colour is recomputed on every statusline update and never persisted.
  */
-export function colourForEmail(email: string): CatppuccinAccent {
+export function colourForEmail(email: string): IdentityColorKey {
   const normalised = email.toLowerCase().trim()
   const hash = createHash('sha256').update(normalised).digest()
-  return PALETTE[hash[0] % PALETTE.length]
+  return IDENTITY_COLOR_KEYS[hash[0] % IDENTITY_COLOR_KEYS.length]
 }

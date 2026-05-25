@@ -3,7 +3,9 @@ import { formatTokens, formatDuration, formatResetTime } from '../../utils/termi
 import RateLimitBar from './RateLimitBar'
 import { useSettingsStore, DEFAULT_STATUS_LINE } from '../../stores/settingsStore'
 import { useCodexReviewUsage } from '../../hooks/useCodexReviewUsage'
-import type { CatppuccinAccent } from '../../../shared/types'
+import { resolveIdentityColor } from '../../../shared/identity-colors'
+import type { IdentityColorKey } from '../../../shared/identity-colors'
+import { useResolvedTheme } from '../../hooks/useThemeController'
 
 interface ContextBarProps {
   modelName?: string
@@ -29,8 +31,9 @@ interface ContextBarProps {
   enableCodexReview?: boolean
   /** P8.11: active-account email rendered as the leftmost Row 1 slot. Omit to hide. */
   accountEmail?: string
-  /** P8.11: Catppuccin accent used to colour the account email. Computed main-side. */
-  accountColour?: CatppuccinAccent
+  /** P8.11 / v2 shell: identity-palette KEY for the account email, computed main-side.
+   *  Resolved to a theme hex here via resolveIdentityColor(). */
+  accountColour?: IdentityColorKey
 }
 
 export default function ContextBar({
@@ -45,6 +48,7 @@ export default function ContextBar({
   accountColour,
 }: ContextBarProps) {
   const sl = useSettingsStore((s) => s.settings.statusLine) || DEFAULT_STATUS_LINE
+  const theme = useResolvedTheme()
   const codexReviewUsage = useCodexReviewUsage(enableCodexReview ? sessionId ?? null : null)
   const showCodexReviewRow = enableCodexReview && codexReviewUsage && codexReviewUsage.reviewCount > 0
 
@@ -69,7 +73,7 @@ export default function ContextBar({
         {accountEmail && (
           <span
             className="text-xs font-medium tabular-nums"
-            style={{ color: `var(--color-${accountColour ?? 'subtext0'})` }}
+            style={{ color: accountColour ? resolveIdentityColor(accountColour, theme) : 'var(--color-subtext0)' }}
             title={accountEmail}
           >
             {accountEmail}
