@@ -1,13 +1,14 @@
 import { describe, it, expect } from 'vitest'
 import { decorateStatuslineWithColour } from '../../../src/main/tokenomics-manager'
+import { IDENTITY_COLOR_KEYS } from '../../../src/shared/identity-colors'
 import type { StatuslineData } from '../../../src/shared/types'
 
 describe('decorateStatuslineWithColour', () => {
-  it('computes accountColour from accountEmail', () => {
+  it('computes accountColour as an identity key from accountEmail', () => {
     const sl: StatuslineData = { sessionId: 's', accountEmail: 'alice@example.com' } as any
     const out = decorateStatuslineWithColour(sl)
     expect(out.accountColour).toBeDefined()
-    expect(['red','peach','yellow','green','teal','sky','blue','lavender','mauve','pink','flamingo','rosewater']).toContain(out.accountColour)
+    expect(IDENTITY_COLOR_KEYS).toContain(out.accountColour)
   })
 
   it('returns same colour for same email (deterministic)', () => {

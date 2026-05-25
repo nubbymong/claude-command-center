@@ -9,7 +9,8 @@ import * as path from 'path'
 import { getConfigDir, ensureConfigDir } from './config-manager'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import { logInfo, logError } from './debug-logger'
-import type { TokenomicsData, TokenomicsSessionRecord, TokenomicsDailyAggregate, TokenomicsSyncProgress, AccountIdentity, StatuslineData, CatppuccinAccent, AttributionPayload, UnattributedSessionGroup } from '../shared/types'
+import type { TokenomicsData, TokenomicsSessionRecord, TokenomicsDailyAggregate, TokenomicsSyncProgress, AccountIdentity, StatuslineData, AttributionPayload, UnattributedSessionGroup } from '../shared/types'
+import type { IdentityColorKey } from '../shared/identity-colors'
 import { IPC } from '../shared/ipc-channels'
 import { colourForEmail } from './account-color'
 import {
@@ -823,7 +824,7 @@ let cachedData: TokenomicsData | null = null
  */
 export function decorateStatuslineWithColour<T extends { accountEmail?: string }>(
   sl: T,
-): T & { accountColour?: CatppuccinAccent } {
+): T & { accountColour?: IdentityColorKey } {
   if (typeof sl.accountEmail === 'string' && sl.accountEmail.trim().length > 0) {
     return { ...sl, accountColour: colourForEmail(sl.accountEmail) }
   }
