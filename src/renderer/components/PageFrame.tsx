@@ -1,5 +1,4 @@
 import React from 'react'
-import HeaderCluster from './HeaderCluster'
 
 type Accent =
   | 'blue' | 'teal' | 'mauve' | 'peach' | 'green' | 'yellow' | 'red'
@@ -26,7 +25,7 @@ interface Props {
   title: string
   /** Optional secondary line: active sub-section, key metric, breadcrumb, etc. */
   context?: React.ReactNode
-  /** Right-aligned page-specific buttons / selectors (rendered before the global HeaderCluster). */
+  /** Right-aligned page-specific buttons / selectors. */
   actions?: React.ReactNode
   /** Optional left rail (sub-nav). When present, body sits to its right. */
   leftRail?: React.ReactNode
@@ -47,7 +46,7 @@ interface Props {
  * page chrome around.
  *
  * Layout: one thin top strip (icon + title + context | actions +
- * HeaderCluster), then either a single body or a [left rail | body]
+ * actions slot), then either a single body or a [left rail | body]
  * split. Body always uses full width — pages that want narrower
  * forms should self-impose `max-w-3xl mx-auto` *inside* their own
  * content, never on this frame.
@@ -83,8 +82,6 @@ export default function PageFrame({
         </div>
         <div className="flex-1" />
         {actions && <div className="flex items-center gap-1 shrink-0">{actions}</div>}
-        <div className="w-px h-4 bg-surface0 mx-1 shrink-0" />
-        <HeaderCluster />
       </div>
       {leftRail ? (
         <div className="flex-1 flex flex-row min-h-0">

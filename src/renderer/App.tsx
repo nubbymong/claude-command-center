@@ -47,6 +47,7 @@ import { useCodexAccountStore } from './stores/codexAccountStore'
 import GitHubPanel from './components/github/GitHubPanel'
 import OnboardingModal from './components/github/onboarding/OnboardingModal'
 import AutoDetectBanner from './components/github/AutoDetectBanner'
+import RepoBreadcrumb from './components/RepoBreadcrumb'
 import type { SessionState, SavedSession } from './types/electron'
 import { buildSessionState } from './session-persistence'
 
@@ -544,7 +545,8 @@ export default function App() {
     return (
       <div className="flex-1 flex flex-col" style={{ display: view === 'sessions' ? 'flex' : 'none', minHeight: 0 }}>
         <TabBar />
-        <SessionHeader session={activeSession} isShowingPartner={partnerActive.has(activeSession.id)} sidebarCollapsed={!sidebarOpen} onShowTip={() => setShowTipModal(true)} />
+        <RepoBreadcrumb session={activeSession} />
+        <SessionHeader session={activeSession} onShowTip={() => setShowTipModal(true)} />
         {(() => {
           const gi = activeSession.githubIntegration
           const shouldShow =
