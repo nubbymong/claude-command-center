@@ -35,7 +35,7 @@ import { useSettingsStore } from './stores/settingsStore'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 import { useThemeController } from './hooks/useThemeController'
 import { markSessionForResumePicker } from './utils/resumePicker'
-import { gatherLocalStorageData, hydrateStores } from './utils/configHydration'
+import { gatherLocalStorageData, hydrateStores, applyConfigColourMigration } from './utils/configHydration'
 import { setupCloudAgentListener } from './stores/cloudAgentStore'
 import { setupTokenomicsListener } from './stores/tokenomicsStore'
 import { setupConductorMcpListener, useConductorMcpStore } from './stores/conductorMcpStore'
@@ -224,12 +224,12 @@ export default function App() {
           await window.electronAPI.config.migrateFromLocalStorage(lsData)
           console.log('[App] Migration complete, reloading...')
           const reloaded = await window.electronAPI.config.loadAll()
-          hydrateStores(reloaded.data)
+          hydrateStores(await applyConfigColourMigration(reloaded.data))
         } else {
-          hydrateStores(result.data)
+          hydrateStores(await applyConfigColourMigration(result.data))
         }
       } else {
-        hydrateStores(result.data)
+        hydrateStores(await applyConfigColourMigration(result.data))
       }
 
       setConfigLoaded(true)
