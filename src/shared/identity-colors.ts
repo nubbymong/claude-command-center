@@ -38,10 +38,15 @@ const LEGACY_HEX_TO_KEY: Record<string, IdentityColorKey> = {
   '#00FF7F': 'indigo', '#32CD32': 'indigo', '#7FFF00': 'indigo', '#00FA9A': 'indigo',
   '#00FFFF': 'slate-blue', '#33FFCC': 'slate-blue', '#20B2AA': 'slate-blue', '#00CED1': 'slate-blue',
   '#00BFFF': 'periwinkle', '#4169E1': 'periwinkle',
+  // Non-colliding legacy hues kept as their identity equivalent; FF6EC7 / FF6B9D /
+  // 7B68EE are themselves palette dark hexes, so they round-trip exactly.
   '#FF00FF': 'orchid', '#FF6EC7': 'pink', '#FF6B9D': 'rose',
   '#7B68EE': 'slate-blue', '#BA55D3': 'orchid', '#FF1493': 'pink',
 }
 
+// Colour names from older configs + the prior account palette. Includes names
+// beyond the spec's explicit list (maroon / sapphire / gold / cyan) because they
+// appear in real saved configs and must bucket deterministically too.
 const LEGACY_NAME_TO_KEY: Record<string, IdentityColorKey> = {
   red: 'rose', maroon: 'rose', peach: 'violet', yellow: 'violet', gold: 'violet',
   green: 'indigo', teal: 'slate-blue', cyan: 'slate-blue', sky: 'periwinkle', blue: 'periwinkle', sapphire: 'periwinkle',
