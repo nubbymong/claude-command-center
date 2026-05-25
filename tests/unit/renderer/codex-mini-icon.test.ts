@@ -53,9 +53,10 @@ describe('SessionRow provider mini-icon', () => {
     })
   }
 
-  it('Claude session renders the Claude badge', () => {
+  it('Claude session renders no provider badge (quiet launcher)', () => {
     mountWith('claude')
-    expect(container.querySelector('[title^="Claude"]')).not.toBeNull()
+    // Claude is the default provider -- no badge rendered (quiet launcher design)
+    expect(container.querySelector('[title^="Claude"]')).toBeNull()
     expect(container.querySelector('[title^="Codex"]')).toBeNull()
   })
 

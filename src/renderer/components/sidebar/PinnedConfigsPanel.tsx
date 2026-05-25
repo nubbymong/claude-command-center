@@ -23,11 +23,11 @@ export default function PinnedConfigsPanel({ configs, onLaunch }: PinnedConfigsP
           key={config.id}
           className="flex items-center gap-2 rounded-md py-1 px-2 group transition-colors hover:bg-surface0/40"
         >
-          <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: dotColour }} />
+          <div className="w-2 h-2 rounded-[2px] shrink-0" style={{ backgroundColor: dotColour }} />
           <span className="text-xs text-text truncate flex-1">{config.label}</span>
           <button
             onClick={() => onLaunch(config)}
-            className="p-0.5 rounded hover:bg-surface1 text-green opacity-0 group-hover:opacity-100 transition-opacity"
+            className="p-0.5 rounded hover:bg-surface1 text-overlay1 hover:text-text opacity-0 group-hover:opacity-100 transition-opacity"
             title="Launch"
           >
             <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><polygon points="2,1 8,5 2,9" /></svg>

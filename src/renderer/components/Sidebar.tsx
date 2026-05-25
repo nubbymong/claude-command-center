@@ -626,8 +626,14 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
           }
         }}
       >
-        <div className="p-3 flex items-center justify-between cursor-pointer hover:bg-surface0/30 transition-colors">
-          <div className="flex items-center gap-1.5">
+        <div className="p-3 flex items-center justify-between hover:bg-surface0/30 transition-colors">
+          <button
+            type="button"
+            onClick={() => { if (!configPanelPinned) setConfigPanelOpen((o) => !o) }}
+            aria-expanded={configPanelOpen || configPanelPinned}
+            className="flex items-center gap-1.5 rounded focus-ring"
+            title="Show all saved configs"
+          >
             <svg
               width="10" height="10" viewBox="0 0 10 10" fill="currentColor"
               className="text-overlay0 transition-transform"
@@ -637,7 +643,7 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
             </svg>
             <span className="text-xs font-semibold text-subtext0 uppercase tracking-wider">Saved Configs</span>
             <span className="text-[10px] text-overlay0">{configs.length}</span>
-          </div>
+          </button>
           <div className="flex gap-0.5">
             <button
               onClick={(e) => {
@@ -870,7 +876,10 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
 
       {/* Active Sessions */}
       <div className="p-3 flex items-center justify-between border-t border-surface0 mt-2">
-        <span className="text-xs font-semibold text-subtext0 uppercase tracking-wider">Active Sessions</span>
+        <span className="flex items-center gap-1.5">
+          <span className="text-xs font-semibold text-subtext0 uppercase tracking-wider">Active Sessions</span>
+          <span className="text-[10px] text-overlay0">{sessions.length}</span>
+        </span>
         {selectedSessionIds.size > 1 && (
           <div className="flex items-center gap-1.5">
             <span className="text-[10px] text-overlay0">{selectedSessionIds.size} selected</span>
@@ -956,7 +965,7 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
               }}
             />
             {!sessionSectionCollapsed[section.id] && (
-              <div className="ml-2 space-y-0.5">
+              <div className="space-y-0.5">
                 {sectionGroups.map(({ group, sessions: groupSessions }) => (
                   <div key={group.id} className="mb-1">
                     <SessionGroupHeader
@@ -966,7 +975,7 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
                       onCloseAll={() => { groupSessions.forEach((s) => { killSessionPty(s.id); removeSession(s.id) }) }}
                     />
                     {!sessionGroupCollapsed[group.id] && (
-                      <div className="ml-3 space-y-0.5">
+                      <div className="space-y-0.5">
                         {groupSessions.map(renderSessionRow)}
                       </div>
                     )}
@@ -988,7 +997,7 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
               onCloseAll={() => { groupSessions.forEach((s) => { killSessionPty(s.id); removeSession(s.id) }) }}
             />
             {!sessionGroupCollapsed[group.id] && (
-              <div className="ml-3 space-y-0.5">
+              <div className="space-y-0.5">
                 {groupSessions.map(renderSessionRow)}
               </div>
             )}
