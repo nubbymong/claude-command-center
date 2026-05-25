@@ -27,14 +27,14 @@ export default function PinnedConfigsPanel({ configs, onLaunch }: PinnedConfigsP
           <span className="text-xs text-text truncate flex-1">{config.label}</span>
           <button
             onClick={() => onLaunch(config)}
-            className="p-0.5 rounded hover:bg-surface1 text-overlay1 hover:text-text opacity-0 group-hover:opacity-100 transition-opacity"
+            className="p-0.5 rounded hover:bg-surface1 text-overlay1 hover:text-text opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity focus-ring"
             title="Launch"
           >
             <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><polygon points="2,1 8,5 2,9" /></svg>
           </button>
           <button
             onClick={() => togglePinned(config.id)}
-            className="p-0.5 rounded hover:bg-surface1 text-overlay0 hover:text-text opacity-0 group-hover:opacity-100 transition-opacity"
+            className="p-0.5 rounded hover:bg-surface1 text-overlay0 hover:text-text opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity focus-ring"
             title="Unpin"
           >
             <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2"><line x1="2" y1="2" x2="8" y2="8"/><line x1="8" y1="2" x2="2" y2="8"/></svg>

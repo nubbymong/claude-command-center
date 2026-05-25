@@ -193,13 +193,13 @@ export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
         <ThemeToggle />
         <button
           onClick={() => window.electronAPI.window.minimize()}
-          className="p-2 hover:bg-surface0 rounded transition-colors text-overlay1 hover:text-text"
+          className="p-2 hover:bg-surface0 rounded transition-colors text-overlay1 hover:text-text focus-ring"
         >
           <svg width="12" height="12" viewBox="0 0 12 12"><line x1="1" y1="6" x2="11" y2="6" stroke="currentColor" strokeWidth="1.2"/></svg>
         </button>
         <button
           onClick={() => window.electronAPI.window.maximize()}
-          className="p-2 hover:bg-surface0 rounded transition-colors text-overlay1 hover:text-text"
+          className="p-2 hover:bg-surface0 rounded transition-colors text-overlay1 hover:text-text focus-ring"
         >
           {maximized ? (
             <svg width="12" height="12" viewBox="0 0 12 12"><rect x="2" y="3.5" width="7" height="7" rx="0.5" stroke="currentColor" strokeWidth="1.2" fill="none"/><path d="M3.5 3.5V2.5C3.5 2.22 3.72 2 4 2H9.5C9.78 2 10 2.22 10 2.5V8C10 8.28 9.78 8.5 9.5 8.5H9" stroke="currentColor" strokeWidth="1.2" fill="none"/></svg>
@@ -209,7 +209,7 @@ export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
         </button>
         <button
           onClick={() => window.electronAPI.window.close()}
-          className="p-2 hover:bg-red rounded transition-colors text-overlay1 hover:text-white"
+          className="p-2 hover:bg-red rounded transition-colors text-overlay1 hover:text-text focus-ring"
         >
           <svg width="12" height="12" viewBox="0 0 12 12"><line x1="2" y1="2" x2="10" y2="10" stroke="currentColor" strokeWidth="1.2"/><line x1="10" y1="2" x2="2" y2="10" stroke="currentColor" strokeWidth="1.2"/></svg>
         </button>

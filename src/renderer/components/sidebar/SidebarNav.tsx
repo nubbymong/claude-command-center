@@ -106,10 +106,10 @@ function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMe
   isCollapsed: boolean
 }) {
   const isInsightsActive = item.view === 'insights' && !!insightsStatus
-  const insightsDotColor = insightsStatus === 'running' ? '#89B4FA'
-    : insightsStatus === 'extracting_kpis' ? '#F9E2AF'
-    : insightsStatus === 'complete' ? '#A6E3A1'
-    : insightsStatus === 'failed' ? '#F38BA8'
+  const insightsDotColor = insightsStatus === 'running' ? 'var(--status-info)'
+    : insightsStatus === 'extracting_kpis' ? 'var(--status-warning)'
+    : insightsStatus === 'complete' ? 'var(--status-success)'
+    : insightsStatus === 'failed' ? 'var(--status-danger)'
     : null
   const isInsightsAnimating = insightsStatus === 'running' || insightsStatus === 'extracting_kpis'
   const isCloudAgentsRunning = item.view === 'cloud-agents' && cloudAgentRunning > 0
@@ -166,7 +166,7 @@ function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMe
           className={`absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ${isInsightsAnimating ? 'insights-pulse-dot' : ''}`}
           style={{
             backgroundColor: insightsDotColor,
-            boxShadow: `0 0 6px 2px ${insightsDotColor}60`,
+            boxShadow: `0 0 6px 2px color-mix(in srgb, ${insightsDotColor} 38%, transparent)`,
           }}
         />
       )}
@@ -174,8 +174,8 @@ function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMe
         <span
           className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full insights-pulse-dot"
           style={{
-            backgroundColor: '#89B4FA',
-            boxShadow: '0 0 6px 2px #89B4FA60',
+            backgroundColor: 'var(--status-info)',
+            boxShadow: '0 0 6px 2px color-mix(in srgb, var(--status-info) 38%, transparent)',
           }}
         />
       )}
@@ -187,8 +187,8 @@ function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMe
           title={serverRunning ? 'Conductor MCP server running' : 'Conductor MCP server stopped'}
           className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full"
           style={{
-            backgroundColor: serverRunning ? '#A6E3A1' : '#F38BA8',
-            boxShadow: `0 0 6px 2px ${serverRunning ? '#A6E3A160' : '#F38BA860'}`,
+            backgroundColor: serverRunning ? 'var(--status-success)' : 'var(--status-danger)',
+            boxShadow: `0 0 6px 2px color-mix(in srgb, ${serverRunning ? 'var(--status-success)' : 'var(--status-danger)'} 38%, transparent)`,
           }}
         />
       )}
