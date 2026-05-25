@@ -10,6 +10,7 @@ import CommandBar from './CommandBar'
 import SshFlowOverlay from './SshFlowOverlay'
 import { shouldUseResumePicker } from '../utils/resumePicker'
 import { stripCursorSequences } from '../utils/terminalFormatting'
+import { isControlReportOnly } from '../utils/terminalInput'
 import { getTerminalTheme } from './terminal/terminalTheme'
 import { useSettingsStore, DEFAULT_TERMINAL_SETTINGS } from '../stores/settingsStore'
 import { ScrollToBottomButton } from './terminal'
@@ -340,7 +341,10 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       // new work", so when Claude next hits a prompt we should re-surface
       // it if they've tabbed away by then.
       term.onData((data) => {
-        attentionAckedRef.current = false
+        // #406: focus in/out + cursor/mouse reports arrive via onData too. Only a real
+        // keystroke/paste should un-ack the attention pulse, else leaving a session
+        // re-arms the pulse without the user typing anything.
+        if (!isControlReportOnly(data)) attentionAckedRef.current = false
         window.electronAPI.pty.write(sessionId, data)
       })
 
@@ -564,9 +568,10 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
     <div className="flex-1 flex flex-col titlebar-no-drag overflow-hidden relative" style={{ minHeight: 0 }}>
       <div
         ref={xtermContainerRef}
-        className="flex-1 p-1 overflow-hidden"
+        className="flex-1 overflow-hidden"
         style={{
           minHeight: 0,
+          padding: '8px 10px 8px 18px',
           background: 'linear-gradient(90deg, var(--surface-stage-gutter) 0, var(--surface-stage-gutter) 12px, var(--surface-stage) 12px)',
           boxShadow: 'inset 16px 0 20px -16px rgba(0,0,0,.5)',
         }}
