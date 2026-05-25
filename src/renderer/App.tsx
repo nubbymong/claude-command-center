@@ -380,6 +380,11 @@ export default function App() {
 
       console.log(`[App] Restoring ${savedState.sessions.length} sessions...`)
 
+      // Idempotent session colour migration (no guard). session.clear() below wipes
+      // the on-disk copy right after restore, and migrated keys only reach disk on a
+      // graceful close (buildSessionState). So this recomputes each launch until then
+      // -- harmless: it is a no-op once keyed, raw `color` is always preserved, and the
+      // notice guard below prevents re-notifying.
       const { records: migratedSaved, summary: sessionSummary } = migrateColorRecords(savedState.sessions || [])
       console.log('[colourMigration] sessions', sessionSummary)
 
