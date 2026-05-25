@@ -150,18 +150,17 @@ function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMe
       style={currentView === item.view ? { color: 'var(--accent)' } : undefined}
     >
       {item.icon}
-      {/* Fast inline tooltip — appears immediately on hover instead of waiting
+      {/* Fast inline tooltip -- appears immediately on hover instead of waiting
           for the OS native `title` delay. Pointer-events:none so it doesn't
-          block clicks. Only rendered for the collapsed/icon-strip layout
-          where the label isn't already visible. */}
-      {isCollapsed && (
-        <span
-          className="pointer-events-none absolute left-full ml-2 z-40 px-2 py-0.5 text-[11px] rounded bg-surface1 text-text border border-surface2 shadow-md whitespace-nowrap opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 transition-opacity duration-100"
-          aria-hidden="true"
-        >
-          {title}
-        </span>
-      )}
+          block clicks. Position adapts: collapsed = right of icon; expanded = below. */}
+      <span
+        className={`pointer-events-none absolute z-40 px-2 py-0.5 text-[11px] rounded bg-surface1 text-text border border-surface2 shadow-md whitespace-nowrap opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 transition-opacity duration-100 ${
+          isCollapsed ? 'left-full ml-2 top-1/2 -translate-y-1/2' : 'top-full mt-1 left-1/2 -translate-x-1/2'
+        }`}
+        aria-hidden="true"
+      >
+        {title}
+      </span>
       {isInsightsActive && insightsDotColor && (
         <span
           className={`absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ${isInsightsAnimating ? 'insights-pulse-dot' : ''}`}
@@ -182,6 +181,10 @@ function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMe
       )}
       {showServerDot && (
         <span
+          data-testid="conductor-mcp-dot"
+          role="img"
+          aria-label={serverRunning ? 'Conductor MCP server running' : 'Conductor MCP server stopped'}
+          title={serverRunning ? 'Conductor MCP server running' : 'Conductor MCP server stopped'}
           className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full"
           style={{
             backgroundColor: serverRunning ? '#A6E3A1' : '#F38BA8',
@@ -206,16 +209,24 @@ export default function SidebarNav({ currentView, onViewChange, insightsStatus, 
         <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
         <line x1="12" y1="17" x2="12.01" y2="17" />
       </svg>
-      {collapsed && (
-        <span
-          className="pointer-events-none absolute left-full ml-2 z-40 px-2 py-0.5 text-[11px] rounded bg-surface1 text-text border border-surface2 shadow-md whitespace-nowrap opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 transition-opacity duration-100"
-          aria-hidden="true"
-        >
-          Feature Guide
-        </span>
-      )}
+      <span
+        className={`pointer-events-none absolute z-40 px-2 py-0.5 text-[11px] rounded bg-surface1 text-text border border-surface2 shadow-md whitespace-nowrap opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 transition-opacity duration-100 ${
+          collapsed ? 'left-full ml-2 top-1/2 -translate-y-1/2' : 'top-full mt-1 left-1/2 -translate-x-1/2'
+        }`}
+        aria-hidden="true"
+      >
+        Feature Guide
+      </span>
     </button>
   ) : null
+
+  const primary = navItems.filter(i => ['cloud-agents', 'insights', 'tokenomics'].includes(i.view))
+  const system = navItems.filter(i => !['cloud-agents', 'insights', 'tokenomics'].includes(i.view))
+  const renderItem = (item: typeof navItems[0]) => (
+    <NavButton key={item.view} item={item} currentView={currentView} onViewChange={onViewChange}
+      insightsStatus={insightsStatus} insightsMessage={insightsMessage} cloudAgentRunning={cloudAgentRunning}
+      visionRunning={visionRunning} serverRunning={serverRunning} isCollapsed={false} />
+  )
 
   if (collapsed) {
     return (
@@ -223,19 +234,16 @@ export default function SidebarNav({ currentView, onViewChange, insightsStatus, 
         className="flex flex-col items-center gap-1 py-2 border-b border-surface0"
         style={{ background: 'var(--surface-chrome)', color: 'var(--text-on-chrome)' }}
       >
-        {navItems.map(item => (
-          <NavButton
-            key={item.view}
-            item={item}
-            currentView={currentView}
-            onViewChange={onViewChange}
-            insightsStatus={insightsStatus}
-            insightsMessage={insightsMessage}
-            cloudAgentRunning={cloudAgentRunning}
-            visionRunning={visionRunning}
-            serverRunning={serverRunning}
-            isCollapsed
-          />
+        {navItems.filter(i => ['cloud-agents', 'insights', 'tokenomics'].includes(i.view)).map(item => (
+          <NavButton key={item.view} item={item} currentView={currentView} onViewChange={onViewChange}
+            insightsStatus={insightsStatus} insightsMessage={insightsMessage} cloudAgentRunning={cloudAgentRunning}
+            visionRunning={visionRunning} serverRunning={serverRunning} isCollapsed />
+        ))}
+        <span className="h-px w-6 my-1 bg-surface1" aria-hidden />
+        {navItems.filter(i => !['cloud-agents', 'insights', 'tokenomics'].includes(i.view)).map(item => (
+          <NavButton key={item.view} item={item} currentView={currentView} onViewChange={onViewChange}
+            insightsStatus={insightsStatus} insightsMessage={insightsMessage} cloudAgentRunning={cloudAgentRunning}
+            visionRunning={visionRunning} serverRunning={serverRunning} isCollapsed />
         ))}
         {helpButton}
       </div>
@@ -244,23 +252,12 @@ export default function SidebarNav({ currentView, onViewChange, insightsStatus, 
 
   return (
     <div
-      className="px-2 pt-2 flex gap-1 border-b border-surface0 pb-2"
+      className="px-2 pt-2 flex gap-1 items-center border-b border-surface0 pb-2"
       style={{ background: 'var(--surface-chrome)', color: 'var(--text-on-chrome)' }}
     >
-      {navItems.map(item => (
-        <NavButton
-          key={item.view}
-          item={item}
-          currentView={currentView}
-          onViewChange={onViewChange}
-          insightsStatus={insightsStatus}
-          insightsMessage={insightsMessage}
-          cloudAgentRunning={cloudAgentRunning}
-          visionRunning={visionRunning}
-          serverRunning={serverRunning}
-          isCollapsed={false}
-        />
-      ))}
+      {primary.map(renderItem)}
+      <span className="w-px self-stretch my-1 bg-surface1 shrink-0" aria-hidden />
+      {system.map(renderItem)}
       {helpButton}
     </div>
   )

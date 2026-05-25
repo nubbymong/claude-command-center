@@ -1,0 +1,56 @@
+import { useCallback } from 'react'
+import { Session, useSessionStore } from '../stores/sessionStore'
+import { TerminalConfig } from '../stores/configStore'
+import { generateId } from '../utils/id'
+import { markSessionForResumePicker } from '../utils/resumePicker'
+
+/**
+ * Shared "launch a saved config into a new active session" action. Extracted
+ * verbatim from Sidebar.launchFromConfig so the centre empty state reuses the
+ * EXACT same launch path (no behaviour drift). Returns the new session id.
+ * Credentials are resolved in the main process at PTY spawn time, never here.
+ * addSession() sets the new session active (sessionStore), so callers only need
+ * to ensure the 'sessions' view is shown.
+ */
+export function useLaunchConfig(): (config: TerminalConfig) => string {
+  const addSession = useSessionStore((s) => s.addSession)
+  return useCallback((config: TerminalConfig) => {
+    const session: Session = {
+      id: generateId(),
+      configId: config.id,
+      label: config.label,
+      workingDirectory: config.workingDirectory,
+      model: config.claudeOptions?.model ?? '',
+      color: config.color,
+      status: 'idle',
+      createdAt: Date.now(),
+      sessionType: config.sessionType,
+      shellOnly: config.shellOnly,
+      partnerTerminalPath: config.partnerTerminalPath,
+      partnerElevated: config.partnerElevated,
+      sshConfig: config.sshConfig ? {
+        host: config.sshConfig.host,
+        port: config.sshConfig.port,
+        username: config.sshConfig.username,
+        remotePath: config.sshConfig.remotePath,
+        hasPassword: config.sshConfig.hasPassword,
+        postCommand: config.sshConfig.postCommand,
+        hasSudoPassword: config.sshConfig.hasSudoPassword,
+      } : undefined,
+      legacyVersion: config.claudeOptions?.legacyVersion,
+      agentIds: config.claudeOptions?.agentIds,
+      machineName: config.machineName,
+      effortLevel: config.claudeOptions?.effortLevel,
+      disableAutoMemory: config.claudeOptions?.disableAutoMemory,
+      enableCodexReview: config.claudeOptions?.enableCodexReview,
+      provider: config.provider,
+      codexOptions: config.codexOptions,
+      githubIntegration: config.githubIntegration,
+    }
+    if (!session.shellOnly && session.sessionType === 'local') {
+      markSessionForResumePicker(session.id)
+    }
+    addSession(session)
+    return session.id
+  }, [addSession])
+}
