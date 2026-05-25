@@ -92,6 +92,10 @@ export interface SavedSession {
   label: string
   workingDirectory: string
   color: string
+  /** V2 identity colour: stable palette key. Authoritative over `color` at render time. */
+  identityColorKey?: IdentityColorKey
+  /** Pre-migration raw `color`, retained only when this record was migrated. */
+  legacyColor?: string
   sessionType: 'local' | 'ssh'
   shellOnly?: boolean
   partnerTerminalPath?: string

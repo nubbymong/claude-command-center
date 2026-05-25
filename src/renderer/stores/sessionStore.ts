@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { ProviderId, CodexOptions } from '../../shared/types'
+import type { IdentityColorKey } from '../../shared/identity-colors'
 
 export type SessionStatus = 'idle' | 'working' | 'complete' | 'error' | 'disconnected'
 export type SessionType = 'local' | 'ssh'
@@ -22,6 +23,10 @@ export interface Session {
   workingDirectory: string
   model: string
   color: string
+  /** V2 identity colour: stable palette key. Authoritative over `color` at render time. */
+  identityColorKey?: IdentityColorKey
+  /** Pre-migration raw `color`, retained only when this record was migrated. */
+  legacyColor?: string
   status: SessionStatus
   createdAt: number
   sessionType: SessionType

@@ -390,6 +390,8 @@ export default function App() {
           workingDirectory: saved.workingDirectory,
           model: claude?.model ?? saved.model ?? '',
           color: saved.color,
+          identityColorKey: saved.identityColorKey,
+          legacyColor: saved.legacyColor,
           sessionType: saved.sessionType,
           shellOnly: saved.shellOnly,
           partnerTerminalPath: saved.partnerTerminalPath,
