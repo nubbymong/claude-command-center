@@ -3,6 +3,8 @@ import { TerminalConfig, ConfigGroup, ConfigSection, ProviderId, CodexOptions, u
 import { useAgentLibraryStore, BUILTIN_TEMPLATES } from '../stores/agentLibraryStore'
 import { ProviderSegmentedControl } from './SessionDialog/ProviderSegmentedControl'
 import { CodexFormFields } from './SessionDialog/CodexFormFields'
+import { IDENTITY_COLOR_KEYS, resolveIdentityColor, bucketLegacyColorToKey, type IdentityColorKey } from '../../shared/identity-colors'
+import { useResolvedTheme } from '../hooks/useThemeController'
 
 export type SessionType = 'local' | 'ssh'
 
@@ -13,7 +15,13 @@ export interface SSHConfig {
   remotePath: string
 }
 
-// Neon / Claude UX style color palette
+// Identity-colour swatches: stable palette keys (resolved to a theme hex at render).
+// Reserved status/brand/link hues are intentionally absent -- identity can never collide with state.
+export const IDENTITY_SWATCHES: readonly IdentityColorKey[] = IDENTITY_COLOR_KEYS
+
+// Legacy 24-hex palette retained for non-identity pickers (screenshot button,
+// custom commands, notes, project-browser auto-assign) that still store a raw
+// hex string. Identity pickers use IDENTITY_SWATCHES above.
 export const COLOR_SWATCHES = [
   // Neon electric
   '#00FFFF', '#FF00FF', '#00FF7F', '#FF6EC7',
@@ -49,7 +57,10 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
   const [label, setLabel] = useState(initial?.label ?? '')
   const [workingDir, setWorkingDir] = useState(initial?.workingDirectory ?? '')
   const [model, setModel] = useState(initialClaude?.model ?? initial?.model ?? '')
-  const [color, setColor] = useState(initial?.color ?? COLOR_SWATCHES[0])
+  const [colorKey, setColorKey] = useState<IdentityColorKey>(
+    (initial?.identityColorKey as IdentityColorKey) ?? bucketLegacyColorToKey(initial?.color ?? '')
+  )
+  const theme = useResolvedTheme()
   const [sessionType, setSessionType] = useState<SessionType>(initial?.sessionType ?? 'local')
   const [shellOnly, setShellOnly] = useState(initial?.shellOnly ?? false)
   const [groupId, setGroupId] = useState<string | undefined>(initial?.groupId)
@@ -245,7 +256,8 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
       provider,
       label: label.trim(),
       workingDirectory: dir,
-      color,
+      identityColorKey: colorKey,
+      color: resolveIdentityColor(colorKey, 'dark'),  // back-compat shadow; render prefers the key
       sessionType,
       shellOnly,
       groupId,
@@ -347,16 +359,16 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
             <div>
               <label className="block text-xs text-subtext0 mb-1">Color</label>
               <div className="flex flex-wrap gap-1.5">
-                {COLOR_SWATCHES.map((c) => (
+                {IDENTITY_SWATCHES.map((k) => (
                   <button
-                    key={c}
+                    key={k}
                     type="button"
-                    onClick={() => setColor(c)}
+                    onClick={() => setColorKey(k)}
                     className={`w-6 h-6 rounded-md border-2 transition-all ${
-                      color === c ? 'border-text scale-110' : 'border-transparent hover:border-overlay0'
+                      colorKey === k ? 'border-text scale-110' : 'border-transparent hover:border-overlay0'
                     }`}
-                    style={{ backgroundColor: c }}
-                    title={c}
+                    style={{ backgroundColor: resolveIdentityColor(k, theme) }}
+                    title={k}
                   />
                 ))}
               </div>
