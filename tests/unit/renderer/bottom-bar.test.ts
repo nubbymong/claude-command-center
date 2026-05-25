@@ -220,7 +220,41 @@ describe('BottomBar -- middle telemetry + right controls (Claude)', () => {
       lastReviewAt: Date.now(),
     })
     await render('sessions')
-    expect(container.textContent).toContain('4')
+    // Pin to the "review N" slot, not just any occurrence of the digit
+    expect(container.textContent).toContain('review 4')
+  })
+
+  it('selecting a mode in the picker writes /permission-mode <value>', async () => {
+    await render('sessions')
+    act(() => { buttonByTitle('Permission mode')!.click() })
+    // "Ask permissions" is the first PERMISSION_MODES entry (value: 'default')
+    const opt = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (b) => (b.textContent ?? '').includes('Ask permissions'),
+    )
+    expect(opt).toBeTruthy()
+    act(() => { opt!.click() })
+    expect(ptyWrite).toHaveBeenCalledWith(claudeSession.id, expect.stringMatching(/^\/permission-mode .+\n$/))
+  })
+
+  it('renders formatted token counts when showTokens is true and session has token data', async () => {
+    sessionState = {
+      activeSessionId: claudeSession.id,
+      sessions: [{ ...claudeSession, inputTokens: 5000, contextWindowSize: 200000 }],
+    }
+    await render('sessions')
+    // formatTokens(5000) -> "5k", formatTokens(200000) -> "200k"
+    expect(container.textContent).toContain('5k')
+    expect(container.textContent).toContain('200k')
+  })
+
+  it('renders formatted duration when showDuration is true and session has totalDurationMs', async () => {
+    sessionState = {
+      activeSessionId: claudeSession.id,
+      sessions: [{ ...claudeSession, totalDurationMs: 90000 }],
+    }
+    await render('sessions')
+    // formatDuration(90000) -> "1m 30s" or "90s" -- either way contains digits + time unit
+    expect(container.textContent).toMatch(/\d+[ms]/)
   })
 })
 

@@ -3,7 +3,7 @@ import { useSessionStore } from '../stores/sessionStore'
 import { useSettingsStore, DEFAULT_STATUS_LINE } from '../stores/settingsStore'
 import { ViewType } from '../types/views'
 import RateLimitBar from './terminal/RateLimitBar'
-import { formatResetTime } from '../utils/terminalFormatting'
+import { formatResetTime, formatTokens, formatDuration } from '../utils/terminalFormatting'
 import { useCodexReviewUsage } from '../hooks/useCodexReviewUsage'
 import { useRestartSession } from '../hooks/useRestartSession'
 import ToolbarPopup from './ToolbarPopup'
@@ -86,11 +86,13 @@ export default function BottomBar({ currentView, onViewChange }: BottomBarProps)
 
   const showCockpit = currentView === 'sessions' && !!session
   const pct = session?.contextPercent ?? 0
+  // v2 context-meter thresholds: >85 danger, >=70 warning -- intentionally different
+  // from the old ContextBar (>80 danger, >50 warn) to reduce false-urgency at low fill.
   const ctxColor = pct > 85 ? 'var(--status-danger)' : pct >= 70 ? 'var(--status-warning)' : 'var(--text-muted)'
 
   return (
     <div
-      className="h-7 shrink-0 flex items-center gap-3 px-3 text-xs border-t"
+      className="min-h-7 shrink-0 flex items-center gap-3 px-3 text-xs border-t"
       style={{ background: 'var(--surface-chrome)', color: 'var(--text-on-chrome)', borderColor: 'var(--border-subtle)' }}
     >
       {/* LEFT -- runtime */}
@@ -131,8 +133,11 @@ export default function BottomBar({ currentView, onViewChange }: BottomBarProps)
 
       <span className="w-px self-stretch my-1.5" style={{ background: 'var(--border-subtle)' }} aria-hidden />
 
-      {/* MIDDLE -- telemetry */}
-      <div className="flex items-center gap-3 flex-1 min-w-0 overflow-hidden">
+      {/* MIDDLE -- telemetry: inherits statusLine font + fontSize so Settings controls are honest */}
+      <div
+        className="flex items-center gap-3 flex-1 min-w-0 overflow-hidden"
+        style={{ fontSize: `${sl.fontSize}px`, fontFamily: sl.font === 'mono' ? "'JetBrains Mono', monospace" : undefined }}
+      >
         {showCockpit && (
           <>
             {sl.showModel && session!.modelName && (
@@ -142,6 +147,9 @@ export default function BottomBar({ currentView, onViewChange }: BottomBarProps)
                   <span className="ml-1 font-normal" style={{ color: 'var(--text-muted)' }}>{session!.reasoningEffort}</span>
                 )}
               </span>
+            )}
+            {sl.showTokens && session!.inputTokens != null && session!.contextWindowSize && (
+              <span className="tabular-nums shrink-0">{formatTokens(session!.inputTokens)} / {formatTokens(session!.contextWindowSize)}</span>
             )}
             {sl.showContextBar && session!.contextPercent != null && (
               <span className="flex items-center gap-1.5 shrink-0">
@@ -160,11 +168,17 @@ export default function BottomBar({ currentView, onViewChange }: BottomBarProps)
             {sl.showLinesChanged && session!.linesRemoved ? (
               <span className="tabular-nums shrink-0" style={{ color: 'color-mix(in srgb, var(--status-danger) 70%, var(--text-secondary))' }}>-{session!.linesRemoved}</span>
             ) : null}
+            {sl.showDuration && session!.totalDurationMs != null && (
+              <span className="tabular-nums shrink-0" style={{ color: 'var(--text-muted)' }}>{formatDuration(session!.totalDurationMs)}</span>
+            )}
             {sl.showRateLimits && session!.rateLimitCurrent != null && (
               <span className="flex items-center gap-3 shrink-0">
                 <RateLimitBar label="5h" pct={session!.rateLimitCurrent} resets={session!.rateLimitCurrentResets} />
                 {session!.rateLimitWeekly != null && (
                   <RateLimitBar label="7d" pct={session!.rateLimitWeekly} resets={session!.rateLimitWeeklyResets} />
+                )}
+                {session!.rateLimitExtra?.enabled && (
+                  <span className="tabular-nums" style={{ color: 'var(--text-muted)' }}>extra: <span className={session!.rateLimitExtra.utilization > 80 ? 'text-red' : ''}>${session!.rateLimitExtra.usedUsd.toFixed(2)}</span>/${session!.rateLimitExtra.limitUsd.toFixed(0)}</span>
                 )}
               </span>
             )}
