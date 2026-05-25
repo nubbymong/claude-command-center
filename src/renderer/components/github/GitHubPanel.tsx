@@ -116,7 +116,8 @@ export default function GitHubPanel({
     return (
       <>
         <aside
-          className="w-7 bg-mantle border-l border-surface0 flex flex-col items-center py-3"
+          className="w-7 border-l border-surface0 flex flex-col items-center py-3"
+          style={{ background: 'var(--surface-raised)', boxShadow: 'var(--shadow-raised), var(--highlight-inset)' }}
           aria-label="GitHub panel (integration not configured)"
         >
           <button
@@ -162,7 +163,8 @@ export default function GitHubPanel({
   if (!visible) {
     return (
       <aside
-        className="w-7 bg-mantle border-l border-surface0 flex flex-col items-center py-3"
+        className="w-7 border-l border-surface0 flex flex-col items-center py-3"
+        style={{ background: 'var(--surface-raised)', boxShadow: 'var(--shadow-raised), var(--highlight-inset)' }}
         aria-label="GitHub panel (collapsed)"
       >
         <button
@@ -188,13 +190,14 @@ export default function GitHubPanel({
   const sessionAccent = session?.color || '#737373'
   return (
     <aside
-      className="bg-base border-l border-surface0 flex flex-col relative"
+      className="border-l border-surface0 flex flex-col relative"
       style={{
+        background: 'var(--surface-raised)',
+        boxShadow: sessionAccent
+          ? `var(--shadow-raised), var(--highlight-inset), inset 3px 0 0 ${sessionAccent}`
+          : 'var(--shadow-raised), var(--highlight-inset)',
         width,
         minWidth: 280,
-        borderTopWidth: '3px',
-        borderTopStyle: 'solid',
-        borderTopColor: sessionAccent,
         '--session-color': sessionAccent,
       } as React.CSSProperties}
       aria-label="GitHub panel"

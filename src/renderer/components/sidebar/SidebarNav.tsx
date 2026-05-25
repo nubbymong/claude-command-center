@@ -140,13 +140,14 @@ function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMe
       aria-label={title}
       className={`group ${isCollapsed ? 'w-10 h-10' : 'flex-1 py-2'} flex items-center justify-center rounded-lg transition-colors relative ${
         currentView === item.view
-          ? 'bg-surface0 text-text'
+          ? 'bg-surface0 rail-active focus-ring'
           : isInsightsAnimating
           ? 'text-blue'
           : isCloudAgentsRunning
           ? 'text-blue'
-          : 'text-overlay0 hover:text-text hover:bg-surface0/50'
+          : 'text-overlay0 hover:text-text hover:bg-surface0/50 focus-ring'
       }`}
+      style={currentView === item.view ? { color: 'var(--accent)' } : undefined}
     >
       {item.icon}
       {/* Fast inline tooltip — appears immediately on hover instead of waiting
@@ -198,7 +199,7 @@ export default function SidebarNav({ currentView, onViewChange, insightsStatus, 
       onClick={onShowHelp}
       title="Feature Guide"
       aria-label="Feature Guide"
-      className={`group ${collapsed ? 'w-10 h-10' : 'flex-1 py-2'} flex items-center justify-center rounded-lg transition-colors text-overlay0 hover:text-text hover:bg-surface0/50 relative`}
+      className={`group ${collapsed ? 'w-10 h-10' : 'flex-1 py-2'} flex items-center justify-center rounded-lg transition-colors text-overlay0 hover:text-text hover:bg-surface0/50 focus-ring relative`}
     >
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
         <circle cx="12" cy="12" r="10" />
@@ -218,7 +219,10 @@ export default function SidebarNav({ currentView, onViewChange, insightsStatus, 
 
   if (collapsed) {
     return (
-      <div className="flex flex-col items-center gap-1 py-2 border-b border-surface0">
+      <div
+        className="flex flex-col items-center gap-1 py-2 border-b border-surface0"
+        style={{ background: 'var(--surface-chrome)', color: 'var(--text-on-chrome)' }}
+      >
         {navItems.map(item => (
           <NavButton
             key={item.view}
@@ -239,7 +243,10 @@ export default function SidebarNav({ currentView, onViewChange, insightsStatus, 
   }
 
   return (
-    <div className="px-2 pt-2 flex gap-1 border-b border-surface0 pb-2">
+    <div
+      className="px-2 pt-2 flex gap-1 border-b border-surface0 pb-2"
+      style={{ background: 'var(--surface-chrome)', color: 'var(--text-on-chrome)' }}
+    >
       {navItems.map(item => (
         <NavButton
           key={item.view}

@@ -125,7 +125,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       const raf = requestAnimationFrame(() => {
         const live = terminalRef.current
         if (!live) return
-        const palette = getTerminalTheme()
+        const palette = getTerminalTheme(useSettingsStore.getState().settings.terminal?.background)
         live.options.theme = shellOnly
           ? palette
           : { ...palette, cursor: palette.background, cursorAccent: palette.background }
@@ -191,15 +191,19 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         return
       }
 
+      const ts = useSettingsStore.getState().settings.terminal || DEFAULT_TERMINAL_SETTINGS
+      const fontFallbacks = "'JetBrains Mono', 'Cascadia Code', 'Cascadia Mono', Consolas, monospace"
+      const fontFamily = ts.fontFamily ? `'${ts.fontFamily}', ${fontFallbacks}` : fontFallbacks
+
       // Claude's TUI draws its own input cursor as a coloured cell at
       // the prompt position, and leaves xterm's real cursor wherever
-      // its last write landed — usually somewhere off-screen for the
+      // its last write landed -- usually somewhere off-screen for the
       // user. So in Claude sessions we hide xterm's cursor entirely
       // (theme paints it in the background colour, plus a CSS class
       // hides any focused-row cursor span). The user still sees
       // Claude's own input cursor; only the redundant xterm one is
       // suppressed. Shell sessions keep the normal visible cursor.
-      const liveTheme = getTerminalTheme()
+      const liveTheme = getTerminalTheme(ts.background)
       const termTheme = shellOnly
         ? liveTheme
         : { ...liveTheme, cursor: liveTheme.background, cursorAccent: liveTheme.background }
@@ -207,14 +211,14 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         container.classList.add('claude-session')
       }
 
-      const ts = useSettingsStore.getState().settings.terminal || DEFAULT_TERMINAL_SETTINGS
-      const fontFallbacks = "'Cascadia Code', 'Fira Code', 'JetBrains Mono', Consolas, monospace"
-      const fontFamily = ts.fontFamily ? `'${ts.fontFamily}', ${fontFallbacks}` : fontFallbacks
-
       term = new Terminal({
         theme: termTheme,
         fontFamily,
-        fontSize: ts.fontSize || 14,
+        fontSize: ts.fontSize || 13,
+        // 450 is a variable-font instance; if it renders unreliably in packaged
+        // Electron, fall back to 400 after visual testing (spec section 2).
+        fontWeight: (ts.fontWeight || 450) as import('@xterm/xterm').FontWeight,
+        fontWeightBold: 700,
         lineHeight: ts.lineHeight || 1.2,
         cursorBlink: ts.cursorBlink ?? false,
         cursorStyle: ts.cursorStyle || 'bar',
@@ -290,8 +294,8 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
 
       // Wait for custom fonts to load BEFORE computing cols/rows.
       // xterm.js measures character width using the currently-loaded font.
-      // If we fit() before Cascadia Code loads, cols is computed against
-      // a fallback font with different metrics — result: Claude Code's TUI
+      // If we fit() before JetBrains Mono loads, cols is computed against
+      // a fallback font with different metrics -- result: Claude Code's TUI
       // thinks it has N cols but xterm displays fewer, causing line wrap
       // artifacts and text fragments on the right edge.
       const fitAndSpawn = () => {
@@ -560,8 +564,12 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
     <div className="flex-1 flex flex-col titlebar-no-drag overflow-hidden relative" style={{ minHeight: 0 }}>
       <div
         ref={xtermContainerRef}
-        className="flex-1 bg-base p-1 overflow-hidden"
-        style={{ minHeight: 0 }}
+        className="flex-1 p-1 overflow-hidden"
+        style={{
+          minHeight: 0,
+          background: 'linear-gradient(90deg, var(--surface-stage-gutter) 0, var(--surface-stage-gutter) 12px, var(--surface-stage) 12px)',
+          boxShadow: 'inset 16px 0 20px -16px rgba(0,0,0,.5)',
+        }}
       />
       {ssh && (
         <SshFlowOverlay

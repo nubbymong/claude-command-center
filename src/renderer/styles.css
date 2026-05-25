@@ -1,5 +1,16 @@
 @import "tailwindcss";
 
+@font-face {
+  font-family: 'JetBrains Mono'; font-style: normal;
+  font-weight: 100 800; font-display: swap;
+  src: url('./assets/fonts/JetBrainsMono[wght].woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Inter'; font-style: normal;
+  font-weight: 100 900; font-display: swap;
+  src: url('./assets/fonts/Inter[wght].woff2') format('woff2');
+}
+
 @theme {
   /* Warm neutral dark palette — default. Light mode overrides below via
      [data-theme="light"] on <html>. Tailwind v4 reads --color-* tokens at
@@ -32,6 +43,43 @@
   --color-pink: #e87bb5;
   --color-flamingo: #e8a8a8;
   --color-rosewater: #e8c8c0;
+}
+
+/* -- Semantic design tokens -- V2 "Command Workbench" (spec §12) --
+   Explicit per-theme values (NOT palette aliases). Touched chrome consumes
+   these; raw --color-* stays for migration compatibility only.
+   Surface ladder darkest -> brightest stage -> raised:
+   chrome < panel < stage < raised. Default = E5 Dark. */
+:root {
+  --surface-chrome: #0a0e13;
+  --surface-panel: #111720;
+  --surface-stage: #171e27;
+  --surface-stage-gutter: #141b24;
+  --surface-raised: #1c2430;
+
+  --text-primary: #eef2f7;
+  --text-secondary: #a8b2c0;
+  --text-muted: #6a7480;
+  --text-on-chrome: #e6ebf2;
+
+  --terminal-foreground: #eef2f7;
+
+  --accent: #3fbecb;
+  --brand: #c47b4a;
+
+  --status-success: #7bd88f;
+  --status-warning: #ecc14e;
+  --status-danger: #f08a8a;
+  --status-info: #5b9df0;
+
+  --chart-opus: #b8714a;
+  --chart-sonnet: #3fbecb;
+  --chart-codex: #5b9df0;
+  --chart-other: #9a8cf0;
+
+  --shadow-panel: 7px 0 18px -6px rgba(0,0,0,.55);
+  --shadow-raised: -10px 0 24px rgba(0,0,0,.5);
+  --highlight-inset: inset 0 1px 0 rgba(255,255,255,.04);
 }
 
 /* Light theme — "foggy daylight" not "bright sunlight". The first
@@ -72,6 +120,37 @@
   --color-pink: #9b3a72;
   --color-flamingo: #8b5858;
   --color-rosewater: #806259;
+
+  /* V2 semantic tokens -- TL2.1 True Light (spec §12). No pure white. */
+  --surface-chrome: #ccd4dd;
+  --surface-panel: #d1d8e2;
+  --surface-stage: #e8ecf3;
+  --surface-stage-gutter: #dee3eb;
+  --surface-raised: #eff2f7;
+
+  --text-primary: #11161f;
+  --text-secondary: #404c5b;
+  --text-muted: #6f7b89;
+  --text-on-chrome: #11161f;
+
+  --terminal-foreground: #11161f;
+
+  --accent: #15808d;
+  --brand: #b3612e;
+
+  --status-success: #2d8349;
+  --status-warning: #946a12;
+  --status-danger: #bd3a2c;
+  --status-info: #2360c2;
+
+  --chart-opus: #a85a2c;
+  --chart-sonnet: #15808d;
+  --chart-codex: #2360c2;
+  --chart-other: #6d5cc0;
+
+  --shadow-panel: 7px 0 18px -6px rgba(0,0,0,.16);
+  --shadow-raised: -11px 0 26px rgba(0,0,0,.20);
+  --highlight-inset: inset 0 1px 0 rgba(255,255,255,.5); /* inverted: light substrate needs a bright top highlight */
 }
 
 body {
@@ -122,4 +201,35 @@ body {
   -webkit-user-select: text !important;
   pointer-events: auto !important;
 }
+
+/* Keyboard focus = the ONLY non-active use of accent. */
+.focus-ring:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 60%, transparent);
+}
+/* Active session row: soft fill + 2px accent left edge, no border. */
+.row-active {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  box-shadow: inset 2px 0 0 var(--accent), 0 1px 5px rgba(0,0,0,.28);
+}
+/* Attention treatments -- louder than identity (spec §10). */
+.row-awaiting {
+  background: color-mix(in srgb, var(--status-warning) 12%, transparent);
+  box-shadow: inset 3px 0 0 var(--status-warning);
+}
+.row-error {
+  background: color-mix(in srgb, var(--status-danger) 13%, transparent);
+  box-shadow: inset 3px 0 0 var(--status-danger);
+}
+/* Active rail icon glow (eased). */
+.rail-active {
+  box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 43%, transparent);
+}
+/* Session row: 3-col grid [dot | name | meta]. */
+.session-row {
+  display: grid; grid-template-columns: 9px 1fr auto; align-items: center; gap: 9px;
+  padding: 7px 10px; border-radius: 9px;
+}
+.session-row .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-row .meta { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--text-muted); justify-self: end; }
 

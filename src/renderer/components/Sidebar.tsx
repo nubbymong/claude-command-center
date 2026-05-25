@@ -532,7 +532,10 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
   // Collapsed mode: just show the icon rail
   if (collapsed) {
     return (
-      <aside className="w-12 bg-mantle flex flex-col border-r border-surface0 shrink-0 select-none titlebar-no-drag transition-[width] duration-200">
+      <aside
+        className="w-12 flex flex-col border-r border-surface0 shrink-0 select-none titlebar-no-drag transition-[width] duration-200"
+        style={{ background: 'var(--surface-panel)', boxShadow: 'var(--shadow-panel), var(--highlight-inset)' }}
+      >
         <SidebarNav
           currentView={currentView}
           onViewChange={onViewChange}
@@ -591,7 +594,10 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
   }
 
   return (
-    <aside className="w-64 bg-mantle flex flex-col border-r border-surface0 shrink-0 select-none titlebar-no-drag relative transition-[width] duration-200">
+    <aside
+      className="w-64 flex flex-col border-r border-surface0 shrink-0 select-none titlebar-no-drag relative transition-[width] duration-200"
+      style={{ background: 'var(--surface-panel)', boxShadow: 'var(--shadow-panel), var(--highlight-inset)' }}
+    >
       {/* Navigation */}
       <SidebarNav
         currentView={currentView}
