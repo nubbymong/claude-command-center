@@ -1,7 +1,6 @@
 import React from 'react'
 import { useSessionStore } from '../stores/sessionStore'
 import { killSessionPty } from './TerminalView'
-import HeaderCluster from './HeaderCluster'
 import { resolveIdentityColor, bucketLegacyColorToKey } from '../../shared/identity-colors'
 import { useResolvedTheme } from '../hooks/useThemeController'
 
@@ -46,7 +45,8 @@ export default function TabBar() {
           <button
             key={session.id}
             onClick={() => setActiveSession(session.id)}
-            className={`group relative flex items-center gap-2 px-4 py-1.5 mt-1 mx-0.5 text-xs rounded-t-lg transition-all duration-150 shrink-0 overflow-hidden ${
+            aria-label={session.label}
+            className={`group relative flex items-center gap-2 px-4 py-1.5 mt-1 mx-0.5 text-xs rounded-t-lg transition-all duration-150 shrink-0 overflow-hidden focus-ring ${
               isActive
                 ? 'text-text'
                 : 'text-overlay1 hover:text-text'
@@ -64,26 +64,29 @@ export default function TabBar() {
                 style={{ backgroundColor: color }}
               />
             )}
-            <span className="truncate max-w-[120px] relative z-10">{session.label}</span>
+            {/* Identity dot -- resolves to the same tint as the active background */}
             <span
+              className="w-1.5 h-1.5 rounded-full shrink-0 relative z-10"
+              style={{ backgroundColor: color }}
+              aria-hidden
+            />
+            <span className="truncate max-w-[120px] relative z-10">{session.label}</span>
+            <button
+              type="button"
               onClick={(e) => {
                 e.stopPropagation()
                 killSessionPty(session.id)
                 removeSession(session.id)
               }}
-              className="ml-1 opacity-0 group-hover:opacity-100 hover:text-red transition-opacity cursor-pointer relative z-10"
+              aria-label={`Close ${session.label}`}
+              title={`Close ${session.label}`}
+              className="ml-1 opacity-0 group-hover:opacity-100 hover:text-red transition-opacity cursor-pointer relative z-10 focus-ring rounded"
             >
               &times;
-            </span>
+            </button>
           </button>
         )
       })}
-      </div>
-      {/* Right slot — global toggles (theme + future help-inspect). Same
-          cluster lives in <PageFrame> so switching from a session to an
-          admin view keeps these controls in the same place. */}
-      <div className="flex items-center px-2 shrink-0 border-l border-surface0">
-        <HeaderCluster />
       </div>
     </div>
   )

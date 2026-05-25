@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { useSettingsStore } from '../stores/settingsStore'
+import ThemeToggle from './ThemeToggle'
 
 interface Props {
   sidebarOpen: boolean
@@ -160,8 +161,11 @@ export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
         </button>
       </div>
 
-      <div className="flex-1 text-center text-xs text-overlay1 font-medium">
-        Claude Command Center{useSettingsStore((s) => s.settings.updateChannel) === 'beta' && <span className="text-yellow/70"> Beta</span>}
+      <div className="flex-1 text-center text-xs text-overlay1 font-medium flex items-center justify-center gap-0">
+        <span>Claude Command Center</span>
+        {useSettingsStore((s) => s.settings.updateChannel) === 'beta' && (
+          <span className="ml-2 px-1.5 py-px rounded-full text-[10px] font-semibold align-middle" style={{ color: 'var(--brand)', background: 'color-mix(in srgb, var(--brand) 16%, transparent)' }}>Beta</span>
+        )}
       </div>
 
       <div className="titlebar-no-drag flex items-center gap-1">
@@ -186,6 +190,7 @@ export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
             )}
           </div>
         )}
+        <ThemeToggle />
         <button
           onClick={() => window.electronAPI.window.minimize()}
           className="p-2 hover:bg-surface0 rounded transition-colors text-overlay1 hover:text-text"

@@ -3,7 +3,7 @@ import WhatsNewModal, { markWhatsNewSeen } from './WhatsNewModal'
 import TrainingWalkthrough from './TrainingWalkthrough'
 import { getLatestVersion } from '../changelog'
 import { useSettingsStore, DEFAULT_STATUS_LINE, DEFAULT_TERMINAL_SETTINGS, UpdateChannel } from '../stores/settingsStore'
-import type { StatusLineSettings, TerminalSettings, CursorStyle } from '../stores/settingsStore'
+import type { StatusLineSettings, TerminalSettings, CursorStyle, ThemeMode } from '../stores/settingsStore'
 import { useSessionStore } from '../stores/sessionStore'
 import { useAppMetaStore } from '../stores/appMetaStore'
 import { eventToShortcutString, DEFAULT_SHORTCUTS, SHORTCUT_LABELS } from '../utils/shortcuts'
@@ -171,6 +171,17 @@ export default function SettingsPage({ initialTab }: SettingsPageProps = {}) {
                   >
                     <option value="stable">Stable -- production releases only</option>
                     <option value="beta">Beta -- stable + pre-release builds</option>
+                  </select>
+                </Field>
+                <Field label="Theme">
+                  <select
+                    value={settings.theme}
+                    onChange={(e) => save({ theme: e.target.value as ThemeMode })}
+                    className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-full focus:outline-none focus:border-blue/50 transition-colors"
+                  >
+                    <option value="dark">Dark</option>
+                    <option value="light">Light</option>
+                    <option value="system">System -- follow OS preference</option>
                   </select>
                 </Field>
                 <CheckForUpdatesField />
