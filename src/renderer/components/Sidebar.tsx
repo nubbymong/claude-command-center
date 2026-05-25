@@ -11,7 +11,7 @@ import { ViewType } from '../types/views'
 import { trackUsage } from '../stores/tipsStore'
 import { generateId } from '../utils/id'
 import { matchesShortcut, DEFAULT_SHORTCUTS } from '../utils/shortcuts'
-import { markSessionForResumePicker } from '../utils/resumePicker'
+import { useLaunchConfig } from '../hooks/useLaunchConfig'
 import SidebarNav from './sidebar/SidebarNav'
 import ConfigRow from './sidebar/ConfigRow'
 import SessionRow from './sidebar/SessionRow'
@@ -68,7 +68,8 @@ interface Props {
 }
 
 export default function Sidebar({ currentView, onViewChange, onUpdateRequested, collapsed, onShowHelp, onShowFirstRun, tourActive }: Props) {
-  const { sessions, activeSessionId, setActiveSession, removeSession, addSession, updateSession } = useSessionStore()
+  const launchConfig = useLaunchConfig()
+  const { sessions, activeSessionId, setActiveSession, removeSession, updateSession } = useSessionStore()
   const { configs, groups, sections, addConfig, updateConfig, removeConfig, addGroup, renameGroup, removeGroup, toggleGroupCollapsed, moveConfigToGroup, addSection, renameSection, removeSection, toggleSectionCollapsed, moveGroupToSection, moveConfigToSection, togglePinned, duplicateConfig, reorderConfigs } = useConfigStore()
   const appMeta = useAppMetaStore((s) => s.meta)
   const updateAppMeta = useAppMetaStore((s) => s.update)
@@ -215,49 +216,7 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
   }
 
   const launchFromConfig = async (config: TerminalConfig) => {
-    // Credentials are resolved in the main process at PTY spawn time — never loaded in the renderer
-    const session: Session = {
-      id: generateId(),
-      configId: config.id,
-      label: config.label,
-      workingDirectory: config.workingDirectory,
-      model: config.claudeOptions?.model ?? '',
-      color: config.color,
-      status: 'idle',
-      createdAt: Date.now(),
-      sessionType: config.sessionType,
-      shellOnly: config.shellOnly,
-      partnerTerminalPath: config.partnerTerminalPath,
-      partnerElevated: config.partnerElevated,
-      sshConfig: config.sshConfig ? {
-        host: config.sshConfig.host,
-        port: config.sshConfig.port,
-        username: config.sshConfig.username,
-        remotePath: config.sshConfig.remotePath,
-        hasPassword: config.sshConfig.hasPassword,
-        postCommand: config.sshConfig.postCommand,
-        hasSudoPassword: config.sshConfig.hasSudoPassword,
-      } : undefined,
-      legacyVersion: config.claudeOptions?.legacyVersion,
-      agentIds: config.claudeOptions?.agentIds,
-      machineName: config.machineName,
-      effortLevel: config.claudeOptions?.effortLevel,
-      disableAutoMemory: config.claudeOptions?.disableAutoMemory,
-      enableCodexReview: config.claudeOptions?.enableCodexReview,
-      provider: config.provider,
-      codexOptions: config.codexOptions,
-      // P9.3 (#280): inherit the persisted GH integration so spawning a fresh
-      // session from this config doesn't lose the user's earlier setup.
-      githubIntegration: config.githubIntegration,
-    }
-    // Both Claude and Codex sessions trigger the resume picker. The Codex picker
-    // script is deployed at boot via deployResumePickerScript; if missing on first
-    // boot, buildCodexSpawn falls back to direct codex spawn (see
-    // src/main/providers/codex/spawn.ts) so this gate cannot brick a session.
-    if (!session.shellOnly && session.sessionType === 'local') {
-      markSessionForResumePicker(session.id)
-    }
-    addSession(session)
+    launchConfig(config)
     onViewChange('sessions')
   }
 
@@ -626,8 +585,14 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
           }
         }}
       >
-        <div className="p-3 flex items-center justify-between cursor-pointer hover:bg-surface0/30 transition-colors">
-          <div className="flex items-center gap-1.5">
+        <div className="p-3 flex items-center justify-between hover:bg-surface0/30 transition-colors">
+          <button
+            type="button"
+            onClick={() => { if (!configPanelPinned) setConfigPanelOpen((o) => !o) }}
+            aria-expanded={configPanelOpen || configPanelPinned}
+            className="flex items-center gap-1.5 rounded focus-ring"
+            title="Show all saved configs"
+          >
             <svg
               width="10" height="10" viewBox="0 0 10 10" fill="currentColor"
               className="text-overlay0 transition-transform"
@@ -637,7 +602,7 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
             </svg>
             <span className="text-xs font-semibold text-subtext0 uppercase tracking-wider">Saved Configs</span>
             <span className="text-[10px] text-overlay0">{configs.length}</span>
-          </div>
+          </button>
           <div className="flex gap-0.5">
             <button
               onClick={(e) => {
@@ -870,7 +835,10 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
 
       {/* Active Sessions */}
       <div className="p-3 flex items-center justify-between border-t border-surface0 mt-2">
-        <span className="text-xs font-semibold text-subtext0 uppercase tracking-wider">Active Sessions</span>
+        <span className="flex items-center gap-1.5">
+          <span className="text-xs font-semibold text-subtext0 uppercase tracking-wider">Active Sessions</span>
+          <span className="text-[10px] text-overlay0">{sessions.length}</span>
+        </span>
         {selectedSessionIds.size > 1 && (
           <div className="flex items-center gap-1.5">
             <span className="text-[10px] text-overlay0">{selectedSessionIds.size} selected</span>
@@ -956,7 +924,7 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
               }}
             />
             {!sessionSectionCollapsed[section.id] && (
-              <div className="ml-2 space-y-0.5">
+              <div className="space-y-0.5">
                 {sectionGroups.map(({ group, sessions: groupSessions }) => (
                   <div key={group.id} className="mb-1">
                     <SessionGroupHeader
@@ -966,7 +934,7 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
                       onCloseAll={() => { groupSessions.forEach((s) => { killSessionPty(s.id); removeSession(s.id) }) }}
                     />
                     {!sessionGroupCollapsed[group.id] && (
-                      <div className="ml-3 space-y-0.5">
+                      <div className="space-y-0.5">
                         {groupSessions.map(renderSessionRow)}
                       </div>
                     )}
@@ -988,7 +956,7 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
               onCloseAll={() => { groupSessions.forEach((s) => { killSessionPty(s.id); removeSession(s.id) }) }}
             />
             {!sessionGroupCollapsed[group.id] && (
-              <div className="ml-3 space-y-0.5">
+              <div className="space-y-0.5">
                 {groupSessions.map(renderSessionRow)}
               </div>
             )}

@@ -220,29 +220,39 @@ body {
   outline: none;
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 60%, transparent);
 }
-/* Active session row: soft fill + 2px accent left edge, no border. */
-.row-active {
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-  box-shadow: inset 2px 0 0 var(--accent), 0 1px 5px rgba(0,0,0,.28);
-}
-/* Attention treatments -- louder than identity (spec §10). */
-.row-awaiting {
-  background: color-mix(in srgb, var(--status-warning) 12%, transparent);
-  box-shadow: inset 3px 0 0 var(--status-warning);
-}
-.row-error {
-  background: color-mix(in srgb, var(--status-danger) 13%, transparent);
-  box-shadow: inset 3px 0 0 var(--status-danger);
-}
 /* Active rail icon glow (eased). */
 .rail-active {
   box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 43%, transparent);
 }
-/* Session row: 3-col grid [dot | name | meta]. */
-.session-row {
-  display: grid; grid-template-columns: 9px 1fr auto; align-items: center; gap: 9px;
-  padding: 7px 10px; border-radius: 9px;
+/* Session card (V2 Phase 3): two-line dense card. Selection, health, and focus
+   are three independent channels (spec section 3.2/6):
+     - selection (isActive)  -> identity rail + tint + identity border + elevation
+                                 + bold name + chip (driven by inline styles, since
+                                 the identity hue is per-session, not a token)
+     - health (dot/pill)     -> never recolours rail/tint/name
+     - keyboard focus        -> quiet teal DASHED ring, distinct from selection */
+.session-card {
+  display: grid;
+  grid-template-columns: 9px 1fr auto;
+  align-items: center;
+  column-gap: 9px;
+  row-gap: 2px;
+  padding: 7px 10px;
+  border-radius: 9px;
+  border: 1px solid transparent;
 }
-.session-row .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.session-row .meta { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--text-muted); justify-self: end; }
+.session-card .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-card .meta {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+.card-focus {
+  outline: 1px dashed color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: 3px;
+}
+.meter-fill { height: 100%; border-radius: 9999px; transition: width 500ms ease, background-color 200ms ease; }
+.meter-neutral { background: var(--text-muted); }
+.meter-warn    { background: var(--status-warning); }
+.meter-danger  { background: var(--status-danger); }
 

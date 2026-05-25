@@ -1,7 +1,9 @@
 import React from 'react'
 import { Session } from '../../stores/sessionStore'
-import { ClaudeBadge, CodexBadge, ShellBadge, SshBadge } from './Badges'
+import { CodexBadge, ShellBadge, SshBadge } from './Badges'
 import { StatusDot, type SessionState } from '../ui/StatusDot'
+import { StatusPill } from '../ui/StatusPill'
+import { IdentityChip } from '../ui/IdentityChip'
 import { resolveIdentityColor, bucketLegacyColorToKey } from '../../../shared/identity-colors'
 import { useResolvedTheme } from '../../hooks/useThemeController'
 
@@ -21,20 +23,9 @@ interface SessionRowProps {
   isFocused?: boolean
 }
 
-/** Map the store's SessionStatus (5 values) to the UI SessionState (7 values).
- *  Source field: session.status (type SessionStatus = 'idle'|'working'|'complete'|'error'|'disconnected')
- *  needsAttention boolean overrides to 'awaiting' when true (no 'awaiting'/'blocked' in store).
- *
- *  Mapping:
- *    needsAttention=true                -> 'awaiting'
- *    status 'working'                   -> 'running'
- *    status 'idle'                      -> 'idle'
- *    status 'complete'                  -> 'idle'   (done/ready = idle)
- *    status 'error'                     -> 'error'
- *    status 'disconnected'              -> 'background'
- */
+// Map store SessionStatus -> UI SessionState (see ui/StatusDot). error wins over
+// needsAttention (spec section 10 priority: error > awaiting > running).
 function toSessionState(status: Session['status'], needsAttention: boolean): SessionState {
-  // error wins over needsAttention (spec §10 priority: error > awaiting)
   if (status === 'error') return 'error'
   if (needsAttention) return 'awaiting'
   switch (status) {
@@ -46,103 +37,99 @@ function toSessionState(status: Session['status'], needsAttention: boolean): Ses
   }
 }
 
+function meterClass(pct: number): string {
+  if (pct > 85) return 'meter-danger'
+  if (pct >= 70) return 'meter-warn'
+  return 'meter-neutral'
+}
+
 export default function SessionRow({ session, isActive, needsAttention, isRenaming, renameValue, renameRef, onRenameChange, onRenameFinish, onRenameCancel, onClick, onContextMenu, isSelected, isFocused }: SessionRowProps) {
   const theme = useResolvedTheme()
-  const tintColor = resolveIdentityColor(session.identityColorKey ?? bucketLegacyColorToKey(session.color), theme)
+  const identity = resolveIdentityColor(session.identityColorKey ?? bucketLegacyColorToKey(session.color), theme)
   const st = toSessionState(session.status, needsAttention)
+  const pct = session.contextPercent ?? 0
+  const providerLabel = session.shellOnly ? 'shell' : (session.provider ?? 'claude')
+  const metaLine = `${session.modelName ?? session.model ?? ''}${providerLabel ? ` · ${providerLabel}` : ''}`.trim()
 
-  // Priority: error > awaiting > active (spec §10). toSessionState never
-  // emits 'blocked' (no store signal yet); wire it here + there together if added.
-  const rowStateClass =
-    st === 'error' ? 'row-error'
-    : st === 'awaiting' ? 'row-awaiting'
-    : isActive ? 'row-active' : ''
+  // #398: when renaming, render a plain <div> (NOT a <button>) so the text input
+  // is never nested inside interactive button content (invalid HTML / a11y).
+  if (isRenaming) {
+    return (
+      <div className="session-card" style={{ gridTemplateColumns: '1fr' }}>
+        <input
+          ref={renameRef}
+          value={renameValue}
+          onChange={(e) => onRenameChange(e.target.value)}
+          onBlur={onRenameFinish}
+          onKeyDown={(e) => {
+            e.stopPropagation()
+            if (e.key === 'Enter') onRenameFinish()
+            if (e.key === 'Escape') onRenameCancel()
+          }}
+          onClick={(e) => e.stopPropagation()}
+          className="w-full bg-base border border-blue rounded px-1.5 py-0.5 text-xs text-text outline-none min-w-0"
+        />
+      </div>
+    )
+  }
+
+  // Selection (isActive) = identity rail + tint + identity border + elevation + bold + chip.
+  // Health and focus are separate channels and never touch these.
+  const selectedStyle: React.CSSProperties = isActive
+    ? {
+        backgroundColor: identity + '20',
+        borderColor: `color-mix(in srgb, ${identity} 55%, transparent)`,
+        borderLeft: `4px solid ${identity}`,
+        paddingLeft: 7,
+        boxShadow: '0 2px 8px rgba(0,0,0,.22)',
+      }
+    : isSelected
+    ? { backgroundColor: identity + '12' }
+    : {}
 
   return (
     <button
       onClick={onClick}
       onContextMenu={onContextMenu}
-      className={`session-row w-full text-left transition-all duration-150 group relative overflow-hidden ${rowStateClass} ${
-        isActive
-          ? 'text-text'
-          : 'text-subtext0 hover:text-text'
-      } ${isSelected ? 'ring-1 ring-blue/50' : ''} ${isFocused ? 'ring-1 ring-blue/30' : ''}`}
-      style={{
-        backgroundColor: isActive && !rowStateClass ? tintColor + '20' : isSelected && !rowStateClass ? tintColor + '15' : undefined,
-      }}
-      onMouseEnter={(e) => { if (!isActive && !isSelected && !rowStateClass) (e.currentTarget as HTMLElement).style.backgroundColor = tintColor + '12' }}
-      onMouseLeave={(e) => { if (!isActive && !isSelected && !rowStateClass) (e.currentTarget as HTMLElement).style.backgroundColor = '' }}
+      className={`session-card w-full text-left transition-all duration-150 group relative overflow-hidden ${
+        isActive ? 'text-text' : 'text-subtext0 hover:text-text'
+      } ${isFocused ? 'card-focus' : ''}`}
+      style={selectedStyle}
+      onMouseEnter={(e) => { if (!isActive && !isSelected) (e.currentTarget as HTMLElement).style.backgroundColor = identity + '12' }}
+      onMouseLeave={(e) => { if (!isActive && !isSelected) (e.currentTarget as HTMLElement).style.backgroundColor = '' }}
     >
       {st === 'awaiting' && (
-        <div
-          className="absolute inset-0 rounded-md attention-pulse-bg"
-          style={{ backgroundColor: tintColor }}
-        />
+        <div className="absolute inset-0 rounded-md attention-pulse-bg" style={{ backgroundColor: identity }} />
       )}
 
-      {/* Col 1: status dot (hidden during rename to keep input flush) */}
-      <span className="relative z-10" style={{ display: isRenaming ? 'none' : undefined }}>
-        <StatusDot state={st} />
+      {/* Line 1, col 1: health dot */}
+      <span className="relative z-10 row-start-1"><StatusDot state={st} /></span>
+
+      {/* Line 1, col 2: name + (non-default) provider/ssh badges */}
+      <span className="nm relative z-10 row-start-1 flex items-center gap-1.5">
+        <span className="text-[13px] truncate" style={{ fontWeight: isActive ? 700 : 600 }}>{session.label}</span>
+        {session.sessionType === 'ssh' && <SshBadge />}
+        {session.shellOnly ? <ShellBadge /> : (session.provider ?? 'claude') === 'codex' ? <CodexBadge needsAttention={needsAttention} /> : null}
       </span>
 
-      {/* Col 2: name / rename input + badges */}
-      <span className="nm relative z-10 flex items-center gap-1.5" style={isRenaming ? { gridColumn: '1 / -1' } : undefined}>
-        {isRenaming ? (
-          <input
-            ref={renameRef}
-            value={renameValue}
-            onChange={(e) => onRenameChange(e.target.value)}
-            onBlur={onRenameFinish}
-            onKeyDown={(e) => {
-              e.stopPropagation()
-              if (e.key === 'Enter') onRenameFinish()
-              if (e.key === 'Escape') onRenameCancel()
-            }}
-            onClick={(e) => e.stopPropagation()}
-            className="flex-1 bg-base border border-blue rounded px-1.5 py-0.5 text-xs text-text outline-none min-w-0"
-          />
-        ) : (
-          <>
-            <span className="text-xs font-medium truncate">{session.label}</span>
-            {session.sessionType === 'ssh' && <SshBadge />}
-            {session.shellOnly ? (
-              <ShellBadge />
-            ) : (session.provider ?? 'claude') === 'codex' ? (
-              <CodexBadge needsAttention={needsAttention} />
-            ) : (
-              <ClaudeBadge needsAttention={needsAttention} />
-            )}
-          </>
-        )}
+      {/* Line 1, col 3: status pill + identity chip (chip selected-only) */}
+      <span className="relative z-10 row-start-1 flex items-center gap-1.5 justify-self-end">
+        <StatusPill state={st} />
+        {isActive && <span data-testid="identity-chip"><IdentityChip color={identity} title="Selected session" /></span>}
       </span>
 
-      {/* Col 3: model meta (right-aligned) -- hidden during rename */}
-      {!isRenaming && (
-        <span className="meta relative z-10">
-          {session.modelName ?? session.model ?? ''}
-        </span>
-      )}
-
-      {/* Context bar: spans all 3 columns */}
-      <div className="relative z-10" style={{ gridColumn: '1 / -1', marginTop: 2 }}>
-        <div className="flex items-center gap-1.5">
-          <div className="flex-1 h-1.5 bg-surface1 rounded-full overflow-hidden">
-            <div
-              className="h-full rounded-full transition-all duration-500"
-              style={{
-                width: `${session.contextPercent ?? 0}%`,
-                backgroundColor: (session.contextPercent ?? 0) > 80
-                  ? tintColor
-                  : (session.contextPercent ?? 0) > 50
-                  ? tintColor + 'CC'
-                  : tintColor + '99'
-              }}
-            />
-          </div>
-          <span className="text-[10px] text-overlay0 w-7 text-right">
-            {session.contextPercent != null ? `${Math.round(session.contextPercent)}%` : ''}
-          </span>
+      {/* Line 2: model meta + context meter + right-aligned %. One grid child
+          spanning the name+meta columns (2 / 4) so the meta does NOT auto-place
+          into the 9px dot column (col 1) and get clipped. The dot column stays
+          empty on line 2, so line 2 aligns under the name. */}
+      <div className="relative z-10 row-start-2 flex items-center gap-2" style={{ gridColumn: '2 / 4' }} data-testid="card-line2">
+        <span className="meta truncate">{metaLine}</span>
+        <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--surface-sunken)' }}>
+          <div className={`meter-fill ${meterClass(pct)}`} style={{ width: `${pct}%` }} />
         </div>
+        <span className="meta w-9 text-right tabular-nums shrink-0">
+          {session.contextPercent != null ? `${Math.round(pct)}%` : ''}
+        </span>
       </div>
     </button>
   )

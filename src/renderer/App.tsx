@@ -34,6 +34,8 @@ import { useAppMetaStore } from './stores/appMetaStore'
 import { useSettingsStore } from './stores/settingsStore'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 import { useThemeController } from './hooks/useThemeController'
+import { useLaunchConfig } from './hooks/useLaunchConfig'
+import StageEmptyState from './components/StageEmptyState'
 import { markSessionForResumePicker } from './utils/resumePicker'
 import { migrateColorRecords } from './utils/migrateIdentityColors'
 import { gatherLocalStorageData, hydrateStores, applyConfigColourMigration } from './utils/configHydration'
@@ -122,6 +124,12 @@ export default function App() {
   const [partnerActive, setPartnerActive] = useState<Set<string>>(new Set())
   const [showMachineNamePrompt, setShowMachineNamePrompt] = useState(false)
   const [machineNameInput, setMachineNameInput] = useState('')
+  const configs = useConfigStore((s) => s.configs)
+  const launchConfig = useLaunchConfig()
+  // onCreateConfigFromStage: App owns the GuidedConfigView toggle via showGuidedConfig.
+  // Sidebar receives onShowFirstRun={() => setShowGuidedConfig(true)}, so we use the
+  // same setter here to open the real create dialog from the stage empty state.
+  const onCreateConfigFromStage = () => setShowGuidedConfig(true)
   const activeSessionId = useSessionStore((s) => s.activeSessionId)
   const sessions = useSessionStore((s) => s.sessions)
   const webviewBySession = useWebviewStore((s) => s.bySessionId)
@@ -523,14 +531,12 @@ export default function App() {
     if (!activeSessionId || sessions.length === 0 || !activeSession) {
       return (
         <div className="flex-1 flex flex-col" style={{ display: view === 'sessions' ? 'flex' : 'none' }}>
-          <div className="flex-1 flex items-center justify-center">
-            <div className="text-center text-overlay1">
-              <div className="text-5xl mb-4 font-mono">&gt;_</div>
-              <h2 className="text-xl font-semibold mb-2">Claude Command Center <span className="text-yellow/70">Beta</span></h2>
-              <p className="text-sm">Create a terminal config to get started</p>
-              <p className="text-xs text-overlay0 mt-2">Ctrl+T to create, Ctrl+Tab to switch</p>
-            </div>
-          </div>
+          <StageEmptyState
+            configs={configs}
+            onLaunch={(c) => { launchConfig(c); setView('sessions') }}
+            onShowAllConfigs={() => setView('sessions')}
+            onCreateConfig={onCreateConfigFromStage}
+          />
         </div>
       )
     }

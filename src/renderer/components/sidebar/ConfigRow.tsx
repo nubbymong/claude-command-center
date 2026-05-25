@@ -1,6 +1,6 @@
 import React from 'react'
 import { TerminalConfig } from '../../stores/configStore'
-import { ClaudeBadge, ShellBadge, SshBadge } from './Badges'
+import { ShellBadge, SshBadge } from './Badges'
 import { resolveIdentityColor, bucketLegacyColorToKey } from '../../../shared/identity-colors'
 import { useResolvedTheme } from '../../hooks/useThemeController'
 
@@ -20,7 +20,7 @@ interface ConfigRowProps {
 }
 
 export default function ConfigRow({ config, onLaunch, onEdit, onDelete, onPin, onContextMenu, draggable, onDragStart, onDragOver, onDrop, onDragEnd, isDragOver }: ConfigRowProps) {
-  // Identity now lives in a small color dot — no row fill at rest, no
+  // Identity now lives in a small color square -- no row fill at rest, no
   // heavy left border. Hover just lifts to a neutral surface tint;
   // colour is held in the dot and badges only.
   const theme = useResolvedTheme()
@@ -36,17 +36,17 @@ export default function ConfigRow({ config, onLaunch, onEdit, onDelete, onPin, o
       onDragEnd={onDragEnd}
     >
       <span
-        className="w-1.5 h-1.5 rounded-full shrink-0"
+        className="w-1.5 h-1.5 rounded-[2px] shrink-0"
         style={{ backgroundColor: dotColour }}
         aria-hidden
       />
       <span className="text-xs text-text truncate flex-1">{config.label}</span>
       {config.sessionType === 'ssh' && <SshBadge />}
-      {config.shellOnly ? <ShellBadge /> : <ClaudeBadge needsAttention={false} />}
+      {config.shellOnly && <ShellBadge />}
       <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
         <button
           onClick={onLaunch}
-          className="p-1 rounded hover:bg-surface1 text-green"
+          className="p-1 rounded hover:bg-surface1 text-overlay1 hover:text-text"
           title="Launch"
         >
           <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><polygon points="3,1 10,6 3,11" /></svg>
