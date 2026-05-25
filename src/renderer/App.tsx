@@ -546,7 +546,7 @@ export default function App() {
       <div className="flex-1 flex flex-col" style={{ display: view === 'sessions' ? 'flex' : 'none', minHeight: 0 }}>
         <TabBar />
         <RepoBreadcrumb session={activeSession} />
-        <SessionHeader session={activeSession} isShowingPartner={partnerActive.has(activeSession.id)} onShowTip={() => setShowTipModal(true)} />
+        <SessionHeader session={activeSession} onShowTip={() => setShowTipModal(true)} />
         {(() => {
           const gi = activeSession.githubIntegration
           const shouldShow =

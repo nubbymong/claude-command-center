@@ -42,35 +42,45 @@ export default function TabBar() {
         const color = resolveIdentityColor(session.identityColorKey ?? bucketLegacyColorToKey(session.color), theme)
 
         return (
-          <button
+          // Wrapper div carries `group` so hover-reveal on close button works.
+          // The close button is a SIBLING of the tab button -- not a descendant --
+          // so there are no nested interactive elements (invalid HTML).
+          <div
             key={session.id}
-            onClick={() => setActiveSession(session.id)}
-            aria-label={session.label}
-            className={`group relative flex items-center gap-2 px-4 py-1.5 mt-1 mx-0.5 text-xs rounded-t-lg transition-all duration-150 shrink-0 overflow-hidden focus-ring ${
-              isActive
-                ? 'text-text'
-                : 'text-overlay1 hover:text-text'
-            }`}
-            style={{
-              backgroundColor: isActive ? color + '20' : undefined,
-            }}
-            onMouseEnter={(e) => { if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = color + '12' }}
-            onMouseLeave={(e) => { if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = '' }}
+            className="group relative inline-flex items-center mt-1 mx-0.5 shrink-0"
           >
-            {/* Attention pulse background */}
-            {needsAttention && (
-              <div
-                className="absolute inset-0 attention-pulse-bg"
+            <button
+              onClick={() => setActiveSession(session.id)}
+              aria-label={session.label}
+              className={`relative flex items-center gap-2 pl-4 pr-7 py-1.5 text-xs rounded-t-lg transition-all duration-150 overflow-hidden focus-ring ${
+                isActive
+                  ? 'text-text'
+                  : 'text-overlay1 hover:text-text'
+              }`}
+              style={{
+                backgroundColor: isActive ? color + '20' : undefined,
+              }}
+              onMouseEnter={(e) => { if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = color + '12' }}
+              onMouseLeave={(e) => { if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = '' }}
+            >
+              {/* Attention pulse background */}
+              {needsAttention && (
+                <div
+                  className="absolute inset-0 attention-pulse-bg"
+                  style={{ backgroundColor: color }}
+                />
+              )}
+              {/* Identity dot -- resolves to the same tint as the active background */}
+              <span
+                className="w-1.5 h-1.5 rounded-full shrink-0 relative z-10"
                 style={{ backgroundColor: color }}
+                aria-hidden
               />
-            )}
-            {/* Identity dot -- resolves to the same tint as the active background */}
-            <span
-              className="w-1.5 h-1.5 rounded-full shrink-0 relative z-10"
-              style={{ backgroundColor: color }}
-              aria-hidden
-            />
-            <span className="truncate max-w-[120px] relative z-10">{session.label}</span>
+              <span className="truncate max-w-[120px] relative z-10">{session.label}</span>
+            </button>
+            {/* Close button is a sibling of the tab button, absolutely positioned
+                at the right edge of the wrapper. stopPropagation prevents the
+                underlying tab button's click from firing. */}
             <button
               type="button"
               onClick={(e) => {
@@ -80,11 +90,11 @@ export default function TabBar() {
               }}
               aria-label={`Close ${session.label}`}
               title={`Close ${session.label}`}
-              className="ml-1 opacity-0 group-hover:opacity-100 hover:text-red transition-opacity cursor-pointer relative z-10 focus-ring rounded"
+              className="absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 hover:text-red transition-opacity cursor-pointer z-20 focus-ring rounded"
             >
               &times;
             </button>
-          </button>
+          </div>
         )
       })}
       </div>

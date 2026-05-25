@@ -63,7 +63,7 @@ export default function AutoDetectBanner({ cwd, onAccept, onEdit, onDismiss }: P
       <button
         onClick={handleDismiss}
         disabled={dismissing}
-        className="text-overlay0 hover:text-text ml-auto px-1 rounded focus-ring"
+        className="text-overlay0 hover:text-text ml-auto px-1 rounded focus-ring disabled:opacity-50 disabled:cursor-not-allowed"
         title="Dismiss"
         aria-label="Dismiss"
       >{String.fromCodePoint(0x00d7)}</button>

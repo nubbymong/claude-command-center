@@ -5,11 +5,10 @@ import TipPill from './TipPill'
 
 interface Props {
   session: Session
-  isShowingPartner?: boolean
   onShowTip?: () => void
 }
 
-export default function SessionHeader({ session, isShowingPartner: _isShowingPartner, onShowTip }: Props) {
+export default function SessionHeader({ session, onShowTip }: Props) {
   return (
     <div
       className="flex items-center gap-3 px-4 py-2 border-b border-surface0 bg-mantle shrink-0 relative"
