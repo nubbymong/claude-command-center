@@ -48,8 +48,9 @@
 /* -- Semantic design tokens -- V2 "Command Workbench" (spec §12) --
    Explicit per-theme values (NOT palette aliases). Touched chrome consumes
    these; raw --color-* stays for migration compatibility only.
-   Surface ladder darkest -> brightest stage -> raised:
-   chrome < panel < stage < raised. Default = E5 Dark. */
+   Surface ladder by absolute darkness:
+   chrome < sunken < base < panel < stage < raised. overlay sits above all
+   (popovers/menus, with shadow), not part of the depth ramp. Default = E5 Dark. */
 :root {
   --surface-chrome: #0a0e13;
   --surface-panel: #111720;
@@ -142,7 +143,7 @@
 
   --text-primary: #11161f;
   --text-secondary: #404c5b;
-  --text-muted: #545e6b;
+  --text-muted: #4e5865;
   --text-on-chrome: #11161f;
 
   --terminal-foreground: #11161f;

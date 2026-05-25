@@ -34,6 +34,8 @@ describe('V2 shell design tokens', () => {
   it.each(NEW_TOKENS)('defines %s in the light ([data-theme=light]) block', (t) => {
     expect(tokenNames(light).has(t)).toBe(true)
   })
+  // Covers --surface-*/--border-* only; --text-* drift is a separate concern,
+  // add a guard when text tokens are systematically managed.
   it('defines the same --surface-*/--border-* token set in both themes (no drift)', () => {
     const surfBorder = (s: Set<string>) =>
       [...s].filter((t) => t.startsWith('--surface-') || t.startsWith('--border-')).sort()
@@ -41,6 +43,8 @@ describe('V2 shell design tokens', () => {
   })
 })
 
+// Reads a token value from a single theme block. Assumes no duplicate token
+// names within a block (returns the first match).
 function tokenValue(block: string, name: string): string {
   const m = block.match(new RegExp(name + '\\s*:\\s*([^;]+);'))
   if (!m) throw new Error('token not found: ' + name)
@@ -63,9 +67,10 @@ function contrast(a: string, b: string): number {
   return (hi + 0.05) / (lo + 0.05)
 }
 
-describe('TL2.1 light theme text contrast (WCAG AA)', () => {
+describe('TL2.1 light theme text contrast (WCAG AA/AAA)', () => {
   const panel = tokenValue(light, '--surface-panel')
   const stage = tokenValue(light, '--surface-stage')
+  // AAA threshold (7:1) -- primary body text on the lightest surface.
   it('primary text on stage >= 7:1', () => {
     expect(contrast(tokenValue(light, '--text-primary'), stage)).toBeGreaterThanOrEqual(7)
   })
