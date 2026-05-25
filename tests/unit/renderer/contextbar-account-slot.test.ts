@@ -8,8 +8,7 @@
  * pattern (*.test.ts) -- matches sibling contextbar tests.
  */
 import React from 'react'
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react'
 
@@ -94,6 +93,17 @@ describe('ContextBar account slot', () => {
       root.render(React.createElement(ContextBar, baseProps as any))
     })
     expect(container.textContent).not.toContain('@')
+  })
+
+  it('falls back to the neutral token when accountColour is absent but email is present', () => {
+    act(() => {
+      root.render(React.createElement(ContextBar, {
+        ...(baseProps as any),
+        accountEmail: 'alice@example.com',
+      }))
+    })
+    const style = emailSpan(container)?.getAttribute('style') || ''
+    expect(style).toContain('var(--color-subtext0)')
   })
 
   it('resolves the identity key to a concrete colour (not a CSS var), keyed by the value', () => {
