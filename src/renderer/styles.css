@@ -256,3 +256,11 @@ body {
 .meter-warn    { background: var(--status-warning); }
 .meter-danger  { background: var(--status-danger); }
 
+/* CommandBar quick-actions strip: expand-in for the command rows when the
+   bar is un-collapsed. Kept inside the 150-300ms project window. The rows are
+   removed from the DOM when collapsed, so only the open direction animates. */
+@keyframes commandbar-expand {
+  from { max-height: 0; opacity: 0; }
+  to   { max-height: 240px; opacity: 1; }
+}
+

@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useCommandStore, CustomCommand, CommandSection } from '../stores/commandStore'
 import { useSessionStore } from '../stores/sessionStore'
 import { useCommandBarStore } from '../stores/commandBarStore'
@@ -7,16 +7,8 @@ import ScreenshotButton from './ScreenshotButton'
 import ExcalidrawButton from './ExcalidrawButton'
 import WebviewButton from './WebviewButton'
 import { useWebviewStore, pollUrlForContent, probeWebviewUrls } from '../stores/webviewStore'
-import ToolbarPopup from './ToolbarPopup'
 import { generateId } from '../utils/id'
 import { trackUsage } from '../stores/tipsStore'
-import {
-  MODELS,
-  EFFORTS,
-  PERMISSION_MODES,
-  shortModelName as resolveModelName,
-  isModelActive,
-} from '../lib/claude-cli-options'
 import { CODEX_MODELS } from '../codex-models'
 
 // -- Codex toolbar sub-components --
@@ -104,38 +96,17 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
   // persistent when bouncing back to the original side.
   const collapsedSectionIds = useCommandBarStore((s) => s.state.collapsedSectionIds)
   const toggleSectionCollapse = useCommandBarStore((s) => s.toggleSection)
+  // Whole-bar collapse -- shared + persisted, same store as section collapse.
+  // Defaults to expanded so existing users are not surprised on upgrade.
+  const barCollapsed = useCommandBarStore((s) => s.state.barCollapsed)
+  const toggleBar = useCommandBarStore((s) => s.toggleBar)
   const [sectionInput, setSectionInput] = useState<{ x: number; y: number; editSection?: CommandSection; rowTarget?: 'claude' | 'partner' } | null>(null)
 
-  // --- Model/Effort/Mode pickers ---
-  // Effort and permission mode are NOT present in Claude Code's statusline
-  // JSON schema (code.claude.com/docs/en/statusline), so there's no authoritative
-  // way to display the current value. We track the last-clicked value in memory
-  // only — used for the dropdown checkmark, never shown as an always-visible
-  // label. Reloading the app or changing via terminal clears the checkmark.
-  const [openPicker, setOpenPicker] = useState<'model' | 'mode' | null>(null)
-  const [lastEffort, setLastEffort] = useState<string | null>(null)
-  const [lastMode, setLastMode] = useState<string | null>(null)
+  // Claude Mode/Model/Effort pickers used to live here. They were removed in
+  // P4b -- the app-level BottomBar now owns those controls (Claude only).
+  // Codex sessions keep their inline option dropdowns below.
   const activeSession = useSessionStore((s) => s.sessions.find((sess) => sess.id === sessionId))
   const updateSession = useSessionStore((s) => s.updateSession)
-
-  const shortModelName = (fullName?: string): string =>
-    resolveModelName(fullName || activeSession?.model)
-
-  const handleModelSelect = useCallback((si: number, value: string) => {
-    if (si === 0) {
-      window.electronAPI.pty.write(sessionId, `/model ${value}\n`)
-    } else {
-      setLastEffort(value)
-      window.electronAPI.pty.write(sessionId, `/effort ${value}\n`)
-    }
-    setOpenPicker(null)
-  }, [sessionId])
-
-  const handleModeSelect = useCallback((_si: number, value: string) => {
-    setLastMode(value)
-    window.electronAPI.pty.write(sessionId, `/permission-mode ${value}\n`)
-    setOpenPicker(null)
-  }, [sessionId])
 
   const visibleCommands = commands
     .filter((c) => c.scope === 'global' || (c.scope === 'config' && c.configId === configId))
@@ -151,6 +122,11 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
   // Split commands by target — no 'any' concept, default is 'claude'
   const claudeCommands = visibleCommands.filter((c) => !c.target || c.target === 'claude' || c.target === 'any')
   const partnerCommands = visibleCommands.filter((c) => c.target === 'partner')
+
+  // Count of command chips actually shown in the strip -- drives the collapse
+  // toggle's badge. Partner commands only count when the partner row renders.
+  const showPartnerRow = !!partnerEnabled && partnerCommands.length > 0
+  const visibleCommandCount = claudeCommands.length + (showPartnerRow ? partnerCommands.length : 0)
 
   /** Build the full command string (prompt + default args) */
   const buildFullCommand = (cmd: CustomCommand, args?: string[]): string => {
@@ -379,7 +355,13 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
     toggleSectionCollapse(sectionId)
   }
 
-  // Render a single command button with full-color styling
+  // Render a single command button as a NEUTRAL chip.
+  // The command's colour reads as a small dot in front of the label rather
+  // than tinting the whole button (P4b + the 2026-04-25 pass). A saturated
+  // chip-per-button row dominated the strip and clashed with the active-tab
+  // marker; the neutral surface chip mirrors the tool-button style and the
+  // dot carries identity. Drag-over still uses the blue ring -- a transient
+  // affordance, not the command colour.
   const renderCommandButton = (cmd: CustomCommand) => {
     const color = cmd.color || '#89B4FA'
     const isDragging = dragId === cmd.id
@@ -387,13 +369,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
     const hasArgs = (cmd.defaultArgs && cmd.defaultArgs.length > 0) || (cmd.lastCustomArgs && cmd.lastCustomArgs.length > 0)
     const argsTitle = cmd.defaultArgs?.length
       ? `${cmd.prompt}\nArgs: ${cmd.defaultArgs.join(' ')}\nCtrl+click to customize args`
-      : cmd.prompt
-    // Sophistication pass 2026-04-25: command-button colour now reads as a
-     // small dot in front of the label rather than tinting the whole button.
-     // The previous saturated chip-per-button row dominated the bottom strip
-     // visually and clashed with the active-tab marker. Buttons now inherit
-     // a neutral surface chip; the dot carries identity. Drag-over still
-     // uses the blue ring for clarity since that's a transient affordance.
+      : (cmd.label || cmd.prompt)
     return (
       <button
         key={cmd.id}
@@ -404,10 +380,10 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
         onDragEnd={handleDragEnd}
         onClick={(e) => handleClick(cmd, e)}
         onContextMenu={(e) => { e.stopPropagation(); handleContextMenu(e, cmd.id) }}
-        className={`flex items-center gap-1.5 px-2.5 py-0.5 text-xs rounded border whitespace-nowrap shrink-0 transition-colors ${
+        className={`flex items-center gap-1.5 px-2.5 py-0.5 text-xs rounded border whitespace-nowrap shrink-0 transition-colors focus-ring ${
           isDragOver
             ? 'border-blue/50 bg-surface0/70 text-text'
-            : 'border-surface1/60 bg-surface0/40 text-subtext0 hover:bg-surface0 hover:text-text hover:border-surface1'
+            : 'bg-surface0/50 hover:bg-surface0 border-surface1/40 hover:border-surface1 text-subtext0 hover:text-text'
         }`}
         style={{
           opacity: isDragging ? 0.4 : 1,
@@ -524,13 +500,28 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
     <div className="flex flex-col shrink-0" onContextMenu={(e) => handleContextMenu(e, undefined, 'claude')}>
       {/* Row 1: Magic buttons */}
       <div className="flex items-center gap-1 px-2 py-0.5 bg-crust border-t border-surface0">
-        {/* Section icon: sparkle/wand */}
-        <div className="shrink-0 text-overlay0" title="Tools">
-          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M8 1v3M8 12v3M1 8h3M12 8h3" />
-            <path d="M3.5 3.5l2 2M10.5 10.5l2 2M12.5 3.5l-2 2M5.5 10.5l-2 2" />
+        {/* Collapse toggle -- chevron + "Commands" + visible-command count.
+            Collapsing hides the command rows (2/3) so the strip becomes a
+            single slim row. Replaces the old static Tools sparkle icon. */}
+        <button
+          onClick={toggleBar}
+          aria-expanded={!barCollapsed}
+          title={barCollapsed ? 'Show commands' : 'Hide commands'}
+          className="flex items-center gap-1 px-1.5 py-0.5 text-xs text-overlay0 hover:text-text rounded hover:bg-surface0/60 transition-colors shrink-0 focus-ring cursor-pointer"
+        >
+          <svg
+            width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.4"
+            className="shrink-0 transition-transform duration-200"
+            style={{ transform: barCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)' }}
+            aria-hidden
+          >
+            <path d="M2.5 4l2.5 2.5L7.5 4" />
           </svg>
-        </div>
+          <span className="font-medium">Commands</span>
+          {visibleCommandCount > 0 && (
+            <span className="text-[9px] text-overlay0 font-normal tabular-nums">{visibleCommandCount}</span>
+          )}
+        </button>
         <div className="w-px h-4 bg-surface1 mx-0.5" />
         <ScreenshotButton sessionId={sessionId} sessionType={sessionType} />
         <ExcalidrawButton sessionId={sessionId} />
@@ -541,7 +532,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
             <div className="w-px h-4 bg-surface1 mx-0.5" />
             <button
               onClick={onTogglePartner}
-              className="flex items-center gap-1.5 px-2 py-0.5 text-xs rounded bg-surface0/60 border border-surface1/80 hover:bg-surface1 text-overlay1 hover:text-text transition-colors whitespace-nowrap shrink-0"
+              className="flex items-center gap-1.5 px-2 py-0.5 text-xs rounded bg-surface0/60 border border-surface1/80 hover:bg-surface1 text-overlay1 hover:text-text transition-colors whitespace-nowrap shrink-0 focus-ring"
               title={isPartnerActive ? 'Switch back to Claude terminal' : 'Switch to partner terminal'}
             >
               {isPartnerActive ? (
@@ -562,135 +553,76 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
         {/* Spacer */}
         <div className="flex-1" />
 
-        {/* Permission mode picker -- Claude only */}
-        {(activeSession?.provider ?? 'claude') === 'claude' && (
-          <div className="relative shrink-0">
-            <button
-              onClick={() => setOpenPicker(openPicker === 'mode' ? null : 'mode')}
-              className="flex items-center gap-1 px-2 py-0.5 text-xs text-subtext0 hover:text-text rounded bg-surface0/50 hover:bg-surface0 border border-surface1/40 hover:border-surface1 transition-colors shrink-0 cursor-pointer"
-            >
-              Mode
-              <svg width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.4" className="opacity-50">
-                <path d="M2.5 4l2.5 2.5L7.5 4" />
-              </svg>
-            </button>
-            {openPicker === 'mode' && (
-              <ToolbarPopup
-                sections={[{
-                  title: 'Mode',
-                  shortcut: 'Shift+Ctrl+M',
-                  items: PERMISSION_MODES.map((m) => ({ ...m, active: m.value === lastMode })),
-                }]}
-                onSelect={handleModeSelect}
-                onClose={() => setOpenPicker(null)}
-              />
-            )}
-          </div>
-        )}
-
-        {/* Codex: permissions preset inline dropdown */}
+        {/* Codex inline option dropdowns -- BottomBar owns the Claude Mode/Model
+            controls now, so the Claude pickers that used to live here were
+            removed (P4b). Codex sessions keep these because BottomBar's
+            Mode/Model cockpit is Claude-only. */}
         {(activeSession?.provider ?? 'claude') === 'codex' && activeSession?.codexOptions && (
-          <PermissionsPresetDropdown
-            value={activeSession.codexOptions.permissionsPreset ?? 'standard'}
-            onChange={(next) =>
-              updateSession(activeSession.id, {
-                codexOptions: { ...activeSession.codexOptions!, permissionsPreset: next },
-              })
-            }
-          />
+          <>
+            <PermissionsPresetDropdown
+              value={activeSession.codexOptions.permissionsPreset ?? 'standard'}
+              onChange={(next) =>
+                updateSession(activeSession.id, {
+                  codexOptions: { ...activeSession.codexOptions!, permissionsPreset: next },
+                })
+              }
+            />
+            <CodexModelDropdown
+              value={activeSession.codexOptions.model ?? 'gpt-5.5'}
+              onChange={(next) =>
+                updateSession(activeSession.id, {
+                  codexOptions: { ...activeSession.codexOptions!, model: next },
+                })
+              }
+            />
+            <div className="w-px h-4 bg-surface1 mx-0.5" />
+          </>
         )}
 
-        <div className="w-px h-4 bg-surface1 mx-0.5" />
-
-        {/* Model + Effort picker -- Claude only */}
-        {(activeSession?.provider ?? 'claude') === 'claude' && (
-          <div className="relative shrink-0">
-            <button
-              onClick={() => setOpenPicker(openPicker === 'model' ? null : 'model')}
-              className="flex items-center gap-1 px-2 py-0.5 text-xs text-subtext0 hover:text-text rounded bg-surface0/50 hover:bg-surface0 border border-surface1/40 hover:border-surface1 transition-colors shrink-0 cursor-pointer"
-            >
-              <span className="text-blue">{shortModelName(activeSession?.modelName)}</span>
-              <svg width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.4" className="opacity-50">
-                <path d="M2.5 4l2.5 2.5L7.5 4" />
-              </svg>
-            </button>
-            {openPicker === 'model' && (
-              <ToolbarPopup
-                alignRight
-                sections={[
-                  {
-                    title: 'Models',
-                    shortcut: 'Shift+Ctrl+I',
-                    items: MODELS.map((m) => ({
-                      ...m,
-                      active: isModelActive(
-                        m.value,
-                        activeSession?.modelName || activeSession?.model || '',
-                      ),
-                    })),
-                  },
-                  {
-                    title: 'Effort',
-                    shortcut: 'Shift+Ctrl+E',
-                    items: EFFORTS.map((e) => ({ ...e, active: e.value === lastEffort })),
-                  },
-                ]}
-                onSelect={handleModelSelect}
-                onClose={() => setOpenPicker(null)}
-              />
-            )}
-          </div>
-        )}
-
-        {/* Codex: GPT model inline dropdown */}
-        {(activeSession?.provider ?? 'claude') === 'codex' && activeSession?.codexOptions && (
-          <CodexModelDropdown
-            value={activeSession.codexOptions.model ?? 'gpt-5.5'}
-            onChange={(next) =>
-              updateSession(activeSession.id, {
-                codexOptions: { ...activeSession.codexOptions!, model: next },
-              })
-            }
-          />
-        )}
-
-        <div className="w-px h-4 bg-surface1 mx-0.5" />
         <button
           onClick={() => setShowDialog(true)}
-          className="px-1.5 py-0.5 text-xs text-overlay0 hover:text-text rounded hover:bg-surface0 shrink-0"
+          className="px-1.5 py-0.5 text-xs text-overlay0 hover:text-text rounded hover:bg-surface0 shrink-0 focus-ring"
           title="Add command"
         >
           +
         </button>
       </div>
 
-      {/* Row 2: Claude commands */}
-      {claudeCommands.length > 0 && (
-        <div className="flex items-center gap-1 px-2 py-0.5 bg-crust border-t border-surface0 overflow-x-auto" onContextMenu={(e) => { e.stopPropagation(); handleContextMenu(e, undefined, 'claude') }}>
-          {/* Section icon: Claude asterisk */}
-          <div className="shrink-0 text-peach/60" title="Claude Commands">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-              <path d="M12 2v8.5M12 13.5V22M2 12h8.5M13.5 12H22M4.93 4.93l6.01 6.01M13.06 13.06l6.01 6.01M19.07 4.93l-6.01 6.01M10.94 13.06l-6.01 6.01" />
-            </svg>
-          </div>
-          <div className="w-px h-4 bg-surface1 mx-0.5" />
-          {renderGroupedCommands(claudeCommands, 'claude')}
-        </div>
-      )}
+      {/* Command rows (2/3) -- hidden when the bar is collapsed. The wrapper
+          animates open via a max-height + opacity transition (220ms); when
+          collapsed the rows are removed from the DOM entirely so collapsed
+          chips are not focusable/clickable behind a clipped container. */}
+      {!barCollapsed && (
+        <div className="flex flex-col overflow-hidden animate-[commandbar-expand_0.22s_ease-out]">
+          {/* Row 2: Claude commands */}
+          {claudeCommands.length > 0 && (
+            <div className="flex items-center gap-1 px-2 py-0.5 bg-crust border-t border-surface0 overflow-x-auto" onContextMenu={(e) => { e.stopPropagation(); handleContextMenu(e, undefined, 'claude') }}>
+              {/* Section icon: Claude asterisk */}
+              <div className="shrink-0 text-peach/60" title="Claude Commands">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                  <path d="M12 2v8.5M12 13.5V22M2 12h8.5M13.5 12H22M4.93 4.93l6.01 6.01M13.06 13.06l6.01 6.01M19.07 4.93l-6.01 6.01M10.94 13.06l-6.01 6.01" />
+                </svg>
+              </div>
+              <div className="w-px h-4 bg-surface1 mx-0.5" />
+              {renderGroupedCommands(claudeCommands, 'claude')}
+            </div>
+          )}
 
-      {/* Row 3: Partner commands */}
-      {partnerEnabled && partnerCommands.length > 0 && (
-        <div className="flex items-center gap-1 px-2 py-0.5 bg-crust border-t border-surface0 overflow-x-auto" onContextMenu={(e) => { e.stopPropagation(); handleContextMenu(e, undefined, 'partner') }}>
-          {/* Section icon: </> code */}
-          <div className="shrink-0 text-green/60" title="Partner Terminal Commands">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="7 8 3 12 7 16" />
-              <polyline points="17 8 21 12 17 16" />
-              <line x1="14" y1="4" x2="10" y2="20" />
-            </svg>
-          </div>
-          <div className="w-px h-4 bg-surface1 mx-0.5" />
-          {renderGroupedCommands(partnerCommands, 'partner')}
+          {/* Row 3: Partner commands */}
+          {showPartnerRow && (
+            <div className="flex items-center gap-1 px-2 py-0.5 bg-crust border-t border-surface0 overflow-x-auto" onContextMenu={(e) => { e.stopPropagation(); handleContextMenu(e, undefined, 'partner') }}>
+              {/* Section icon: </> code */}
+              <div className="shrink-0 text-green/60" title="Partner Terminal Commands">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="7 8 3 12 7 16" />
+                  <polyline points="17 8 21 12 17 16" />
+                  <line x1="14" y1="4" x2="10" y2="20" />
+                </svg>
+              </div>
+              <div className="w-px h-4 bg-surface1 mx-0.5" />
+              {renderGroupedCommands(partnerCommands, 'partner')}
+            </div>
+          )}
         </div>
       )}
 
