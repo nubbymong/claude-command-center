@@ -1,6 +1,8 @@
 import React from 'react'
 import { TerminalConfig } from '../../stores/configStore'
 import { ClaudeBadge, ShellBadge, SshBadge } from './Badges'
+import { resolveIdentityColor, bucketLegacyColorToKey } from '../../../shared/identity-colors'
+import { useResolvedTheme } from '../../hooks/useThemeController'
 
 interface ConfigRowProps {
   config: TerminalConfig
@@ -21,6 +23,8 @@ export default function ConfigRow({ config, onLaunch, onEdit, onDelete, onPin, o
   // Identity now lives in a small color dot — no row fill at rest, no
   // heavy left border. Hover just lifts to a neutral surface tint;
   // colour is held in the dot and badges only.
+  const theme = useResolvedTheme()
+  const dotColour = resolveIdentityColor(config.identityColorKey ?? bucketLegacyColorToKey(config.color), theme)
   return (
     <div
       className={`flex items-center gap-1.5 rounded py-1 px-2 group transition-colors hover:bg-surface0/50 ${isDragOver ? 'border-t-2 border-blue' : ''}`}
@@ -33,7 +37,7 @@ export default function ConfigRow({ config, onLaunch, onEdit, onDelete, onPin, o
     >
       <span
         className="w-1.5 h-1.5 rounded-full shrink-0"
-        style={{ backgroundColor: config.color }}
+        style={{ backgroundColor: dotColour }}
         aria-hidden
       />
       <span className="text-xs text-text truncate flex-1">{config.label}</span>

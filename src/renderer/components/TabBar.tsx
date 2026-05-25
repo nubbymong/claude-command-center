@@ -2,6 +2,8 @@ import React from 'react'
 import { useSessionStore } from '../stores/sessionStore'
 import { killSessionPty } from './TerminalView'
 import HeaderCluster from './HeaderCluster'
+import { resolveIdentityColor, bucketLegacyColorToKey } from '../../shared/identity-colors'
+import { useResolvedTheme } from '../hooks/useThemeController'
 
 // Inject keyframes for attention pulse animation
 const ATTENTION_STYLES_ID = 'attention-pulse-styles'
@@ -23,6 +25,7 @@ function injectAttentionStyles() {
 
 export default function TabBar() {
   const { sessions, activeSessionId, setActiveSession, removeSession } = useSessionStore()
+  const theme = useResolvedTheme()
 
   // Inject styles on first render
   React.useEffect(() => {
@@ -37,7 +40,7 @@ export default function TabBar() {
       {sessions.map((session) => {
         const needsAttention = session.needsAttention && activeSessionId !== session.id
         const isActive = activeSessionId === session.id
-        const color = session.color
+        const color = resolveIdentityColor(session.identityColorKey ?? bucketLegacyColorToKey(session.color), theme)
 
         return (
           <button
