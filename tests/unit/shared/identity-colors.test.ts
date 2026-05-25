@@ -5,6 +5,7 @@ import {
   resolveIdentityColor,
   type IdentityColorKey,
 } from '../../../src/shared/identity-colors'
+import { bucketLegacyColorToKey } from '../../../src/shared/identity-colors'
 
 describe('identity palette + resolver', () => {
   it('has 10 keys, all lowercase, no status/brand/link hues by name', () => {
@@ -32,5 +33,48 @@ describe('identity palette + resolver', () => {
   it('falls back to mauve for an unknown key (defensive)', () => {
     expect(resolveIdentityColor('not-a-key' as IdentityColorKey, 'dark'))
       .toBe(IDENTITY_PALETTE.mauve.dark)
+  })
+})
+
+describe('bucketLegacyColorToKey -- legacy 24-swatch picker hexes', () => {
+  const cases: Array<[string, IdentityColorKey]> = [
+    ['#FF3366', 'rose'], ['#FF7F50', 'rose'], ['#FFA07A', 'rose'], ['#FF4500', 'rose'],
+    ['#FFFF00', 'violet'], ['#FF9933', 'violet'], ['#FFB347', 'violet'], ['#FFD700', 'violet'],
+    ['#00FF7F', 'indigo'], ['#32CD32', 'indigo'], ['#7FFF00', 'indigo'], ['#00FA9A', 'indigo'],
+    ['#00FFFF', 'slate-blue'], ['#33FFCC', 'slate-blue'], ['#20B2AA', 'slate-blue'], ['#00CED1', 'slate-blue'],
+    ['#00BFFF', 'periwinkle'], ['#4169E1', 'periwinkle'],
+    ['#FF00FF', 'orchid'], ['#FF6EC7', 'pink'], ['#FF6B9D', 'rose'],
+    ['#7B68EE', 'slate-blue'], ['#BA55D3', 'orchid'], ['#FF1493', 'pink'],
+  ]
+  it.each(cases)('maps %s -> %s', (hex, key) => {
+    expect(bucketLegacyColorToKey(hex)).toBe(key)
+  })
+  it('is case-insensitive and tolerates missing #', () => {
+    expect(bucketLegacyColorToKey('ff3366')).toBe('rose')
+    expect(bucketLegacyColorToKey('#ff3366')).toBe('rose')
+  })
+})
+
+describe('bucketLegacyColorToKey -- names, passthrough, fallback', () => {
+  const names: Array<[string, IdentityColorKey]> = [
+    ['red', 'rose'], ['peach', 'violet'], ['yellow', 'violet'], ['green', 'indigo'],
+    ['teal', 'slate-blue'], ['sky', 'periwinkle'], ['blue', 'periwinkle'],
+    ['lavender', 'lavender'], ['mauve', 'mauve'], ['pink', 'pink'],
+    ['flamingo', 'rose'], ['rosewater', 'pink'],
+  ]
+  it.each(names)('maps catppuccin name %s -> %s', (name, key) => {
+    expect(bucketLegacyColorToKey(name)).toBe(key)
+  })
+  it('passes through an existing identity key', () => {
+    expect(bucketLegacyColorToKey('indigo')).toBe('indigo')
+    expect(bucketLegacyColorToKey('slate-blue')).toBe('slate-blue')
+  })
+  it('routes an unknown reserved-ish hex to the reserved bucket key', () => {
+    expect(bucketLegacyColorToKey('#ff0000')).toBe('rose')
+    expect(bucketLegacyColorToKey('#00ff00')).toBe('indigo')
+  })
+  it('routes an unknown non-status hex to the nearest identity key', () => {
+    const k = bucketLegacyColorToKey('#8000ff')
+    expect(IDENTITY_COLOR_KEYS).toContain(k)
   })
 })
