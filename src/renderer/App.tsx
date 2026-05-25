@@ -8,7 +8,7 @@ import WebviewPane from './components/WebviewPane'
 import ExcalidrawPane from './components/ExcalidrawPane'
 import { useWebviewStore } from './stores/webviewStore'
 import { useExcalidrawStore } from './stores/excalidrawStore'
-import StatusBar from './components/StatusBar'
+import BottomBar from './components/BottomBar'
 import UsageDashboard from './components/UsageDashboard'
 import ProjectBrowser from './components/ProjectBrowser'
 import SettingsPage, { SETTINGS_TAB_IDS, type SettingsTab } from './components/SettingsPage'
@@ -901,7 +901,7 @@ export default function App() {
             )}
           </main>
         </div>
-        <StatusBar />
+        <BottomBar currentView={view} onViewChange={setView} />
         {showTraining && (
           <TrainingWalkthrough
             onClose={handleTrainingClose}

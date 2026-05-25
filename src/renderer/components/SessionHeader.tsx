@@ -1,7 +1,6 @@
 import React, { useState } from 'react'
-import { Session, useSessionStore } from '../stores/sessionStore'
-import { killSessionPty, clearSpawned } from '../ptyTracker'
-import { markSessionForResumePicker } from '../utils/resumePicker'
+import { Session } from '../stores/sessionStore'
+import { useRestartSession } from '../hooks/useRestartSession'
 import NotesBar from './NotesBar'
 import TipPill from './TipPill'
 
@@ -13,74 +12,12 @@ interface Props {
 }
 
 export default function SessionHeader({ session, isShowingPartner, sidebarCollapsed, onShowTip }: Props) {
-  const updateSession = useSessionStore((s) => s.updateSession)
   const [recoverMenu, setRecoverMenu] = useState<{ x: number; y: number } | null>(null)
+  const { restart, recover: recoverSession } = useRestartSession(session, isShowingPartner)
 
-  const handleRestart = () => {
-    if (isShowingPartner) {
-      // Partner terminal: just kill partner PTY, leave main Claude untouched
-      const partnerPtyId = session.id + '-partner'
-      // Only kill the partner — don't use killSessionPty which also kills main+partner
-      window.electronAPI.pty.kill(partnerPtyId)
-      // Clear partner from spawn tracker so it respawns on remount
-      clearSpawned(partnerPtyId)
-      // Force re-mount by bumping createdAt
-      const store = useSessionStore.getState()
-      store.removeSession(session.id)
-      store.addSession({ ...session, id: session.id, status: session.status, createdAt: Date.now() })
-      return
-    }
-    // Kill the old PTY (also clears spawn tracker so new one will spawn)
-    killSessionPty(session.id)
-    // Show resume picker on restart so user can pick a conversation
-    if (session.sessionType === 'local' && !session.shellOnly) {
-      markSessionForResumePicker(session.id)
-    }
-    // Force re-mount with clean metadata
-    forceRemount('idle')
-  }
-
-  // Aggressive recovery: kill ALL PTYs (main + partner), clear ALL spawn trackers, force remount.
-  // Use when a PTY process has crashed (OOM, etc.) and normal restart can't recover.
   const handleRecover = () => {
     setRecoverMenu(null)
-    const partnerPtyId = session.id + '-partner'
-    // Kill both main and partner PTYs (ignore errors — process may already be dead)
-    window.electronAPI.pty.kill(session.id)
-    window.electronAPI.pty.kill(partnerPtyId)
-    clearSpawned(session.id)
-    clearSpawned(partnerPtyId)
-    // Show resume picker for Claude sessions
-    if (session.sessionType === 'local' && !session.shellOnly) {
-      markSessionForResumePicker(session.id)
-    }
-    forceRemount('idle')
-  }
-
-  const forceRemount = (status: 'idle' | 'working') => {
-    const store = useSessionStore.getState()
-    store.removeSession(session.id)
-    store.addSession({
-      ...session,
-      id: session.id,
-      status,
-      createdAt: Date.now(),
-      // Clear stale metadata from previous run
-      contextPercent: undefined,
-      costUsd: undefined,
-      needsAttention: false,
-      modelName: undefined,
-      linesAdded: undefined,
-      linesRemoved: undefined,
-      inputTokens: undefined,
-      outputTokens: undefined,
-      totalDurationMs: undefined,
-      rateLimitCurrent: undefined,
-      rateLimitCurrentResets: undefined,
-      rateLimitWeekly: undefined,
-      rateLimitWeeklyResets: undefined,
-      rateLimitExtra: undefined,
-    })
+    recoverSession()
   }
 
   return (
@@ -134,7 +71,7 @@ export default function SessionHeader({ session, isShowingPartner, sidebarCollap
       {onShowTip && <TipPill onClick={onShowTip} />}
 
       <button
-        onClick={handleRestart}
+        onClick={restart}
         onContextMenu={(e) => {
           e.preventDefault()
           e.stopPropagation()
