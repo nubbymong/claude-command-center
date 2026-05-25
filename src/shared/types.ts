@@ -56,10 +56,6 @@ export interface LegacyVersion {
 
 export type ProviderId = 'claude' | 'codex'
 
-export type CatppuccinAccent =
-  | 'red' | 'peach' | 'yellow' | 'green' | 'teal' | 'sky'
-  | 'blue' | 'lavender' | 'mauve' | 'pink' | 'flamingo' | 'rosewater'
-
 export interface AccountIdentity {
   email: string
   name?: string

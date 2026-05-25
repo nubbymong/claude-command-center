@@ -31,11 +31,12 @@ vi.mock('../../../src/renderer/stores/settingsStore', () => {
     font: 'sans',
     fontSize: 12,
   }
-  return {
-    DEFAULT_STATUS_LINE,
-    useSettingsStore: (selector: (s: { settings: { statusLine: typeof DEFAULT_STATUS_LINE } }) => unknown) =>
-      selector({ settings: { statusLine: DEFAULT_STATUS_LINE } }),
-  }
+  // STATE carries theme + getState so useResolvedTheme (called by ContextBar)
+  // resolves the identity key without touching window.matchMedia.
+  const STATE = { settings: { statusLine: DEFAULT_STATUS_LINE, theme: 'dark' as const } }
+  const useSettingsStore: any = (selector: (s: typeof STATE) => unknown) => selector(STATE)
+  useSettingsStore.getState = () => STATE
+  return { DEFAULT_STATUS_LINE, useSettingsStore }
 })
 
 const { default: ContextBar } = await import('../../../src/renderer/components/terminal/ContextBar')

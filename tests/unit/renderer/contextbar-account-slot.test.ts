@@ -1,19 +1,23 @@
 // @vitest-environment jsdom
 /**
- * P8.11: ContextBar exposes an optional leftmost slot for the active-account
- * email, coloured with the Catppuccin accent computed main-side.
+ * P8.11 + V2 shell 2b-1: ContextBar exposes an optional leftmost slot for the
+ * active-account email, coloured by resolving the identity-palette KEY computed
+ * main-side to a theme hex via resolveIdentityColor().
  *
- * Uses React.createElement (not JSX) so the file stays under the
- * vitest include pattern (*.test.ts) -- matches sibling contextbar tests.
+ * Uses React.createElement (not JSX) so the file stays under the vitest include
+ * pattern (*.test.ts) -- matches sibling contextbar tests.
  */
 import React from 'react'
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { vi } from 'vitest'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react'
 
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
 
 // --- mock useSettingsStore before component import ---
+// Must provide settings.statusLine (ContextBar) AND settings.theme + getState
+// (useResolvedTheme, used to resolve the identity key to a theme hex).
 vi.mock('../../../src/renderer/stores/settingsStore', () => {
   const DEFAULT_STATUS_LINE = {
     showModel: true,
@@ -27,15 +31,15 @@ vi.mock('../../../src/renderer/stores/settingsStore', () => {
     font: 'sans',
     fontSize: 12,
   }
-  return {
-    DEFAULT_STATUS_LINE,
-    useSettingsStore: (selector: (s: { settings: { statusLine: typeof DEFAULT_STATUS_LINE } }) => unknown) =>
-      selector({ settings: { statusLine: DEFAULT_STATUS_LINE } }),
-  }
+  const STATE = { settings: { statusLine: DEFAULT_STATUS_LINE, theme: 'dark' as const } }
+  const useSettingsStore: any = (selector: (s: typeof STATE) => unknown) => selector(STATE)
+  useSettingsStore.getState = () => STATE
+  return { DEFAULT_STATUS_LINE, useSettingsStore }
 })
 
 // Import after mock is registered
 const { default: ContextBar } = await import('../../../src/renderer/components/terminal/ContextBar')
+const { resolveIdentityColor } = await import('../../../src/shared/identity-colors')
 
 const baseProps = {
   modelName: 'sonnet',
@@ -51,6 +55,12 @@ const baseProps = {
   rateLimitWeekly: null,
   rateLimitWeeklyResets: null,
   rateLimitExtra: null,
+}
+
+function emailSpan(container: HTMLElement): HTMLElement | undefined {
+  return Array.from(container.querySelectorAll<HTMLElement>('span')).find(
+    (s) => s.textContent === 'alice@example.com',
+  )
 }
 
 describe('ContextBar account slot', () => {
@@ -73,7 +83,7 @@ describe('ContextBar account slot', () => {
       root.render(React.createElement(ContextBar, {
         ...(baseProps as any),
         accountEmail: 'alice@example.com',
-        accountColour: 'blue',
+        accountColour: 'mauve',
       }))
     })
     expect(container.textContent).toContain('alice@example.com')
@@ -86,20 +96,30 @@ describe('ContextBar account slot', () => {
     expect(container.textContent).not.toContain('@')
   })
 
-  it('applies a Catppuccin colour class derived from accountColour', () => {
+  it('resolves the identity key to a concrete colour (not a CSS var), keyed by the value', () => {
     act(() => {
       root.render(React.createElement(ContextBar, {
         ...(baseProps as any),
         accountEmail: 'alice@example.com',
-        accountColour: 'peach',
+        accountColour: 'mauve',
       }))
     })
-    const emailEl = Array.from(container.querySelectorAll<HTMLElement>('span')).find(
-      (s) => s.textContent === 'alice@example.com',
-    )
-    expect(emailEl).toBeDefined()
-    const cls = emailEl?.className || ''
-    const style = emailEl?.getAttribute('style') || ''
-    expect(cls.includes('text-peach') || style.includes('--color-peach')).toBe(true)
+    const colourMauve = emailSpan(container)?.style.color || ''
+    expect(colourMauve).toBeTruthy()
+    // No longer a Catppuccin CSS variable -- it is the resolved palette hex.
+    expect(colourMauve).not.toContain('var(')
+
+    act(() => {
+      root.render(React.createElement(ContextBar, {
+        ...(baseProps as any),
+        accountEmail: 'alice@example.com',
+        accountColour: 'rose',
+      }))
+    })
+    const colourRose = emailSpan(container)?.style.color || ''
+    // Different identity key resolves to a different colour (resolver is wired).
+    expect(colourRose).not.toBe(colourMauve)
+    // Sanity: resolveIdentityColor returns distinct hexes for these keys in dark theme.
+    expect(resolveIdentityColor('mauve', 'dark')).not.toBe(resolveIdentityColor('rose', 'dark'))
   })
 })
