@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 /**
  * P5.5: CommandBar Codex toolbar -- model + permissions preset.
- * Asserts that Codex sessions see model/preset dropdowns (not the Claude
- * Mode picker), and that Claude sessions still see the Mode picker.
+ * Asserts that Codex sessions see model/preset dropdowns. The Claude Mode
+ * picker was removed from the CommandBar in P4b (it lives in the app-level
+ * BottomBar now), so neither provider renders a "Mode" button here.
  */
 import React from 'react'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
@@ -169,13 +170,17 @@ describe('CommandBar Codex toolbar (P5.5)', () => {
     expect(hasPreset).toBe(true)
   })
 
-  it('Claude sessions: Mode dropdown still visible', () => {
+  it('Claude sessions: Mode dropdown is HIDDEN (moved to BottomBar in P4b)', () => {
     mockSessions = [mkClaude()]
     mockActiveSessionId = 's-1'
     act(() => {
       root.render(React.createElement(CommandBar, { sessionId: 's-1', parentSessionId: 's-1' }))
     })
-    // "Mode" is the literal button label rendered for Claude sessions
-    expect(container.textContent ?? '').toContain('Mode')
+    // P4b removed the transitional Claude Mode picker from the CommandBar --
+    // the app-level BottomBar owns Mode/Model now. No button labelled "Mode".
+    const modeBtn = Array.from(container.querySelectorAll('button')).find(
+      (b) => (b.textContent ?? '').trim() === 'Mode',
+    )
+    expect(modeBtn).toBeUndefined()
   })
 })
