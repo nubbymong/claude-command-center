@@ -2,6 +2,8 @@ import React from 'react'
 import { Session } from '../../stores/sessionStore'
 import { ClaudeBadge, CodexBadge, ShellBadge, SshBadge } from './Badges'
 import { StatusDot, type SessionState } from '../ui/StatusDot'
+import { resolveIdentityColor, bucketLegacyColorToKey } from '../../../shared/identity-colors'
+import { useResolvedTheme } from '../../hooks/useThemeController'
 
 interface SessionRowProps {
   session: Session
@@ -45,7 +47,8 @@ function toSessionState(status: Session['status'], needsAttention: boolean): Ses
 }
 
 export default function SessionRow({ session, isActive, needsAttention, isRenaming, renameValue, renameRef, onRenameChange, onRenameFinish, onRenameCancel, onClick, onContextMenu, isSelected, isFocused }: SessionRowProps) {
-  const tintColor = session.color
+  const theme = useResolvedTheme()
+  const tintColor = resolveIdentityColor(session.identityColorKey ?? bucketLegacyColorToKey(session.color), theme)
   const st = toSessionState(session.status, needsAttention)
 
   // Priority: error > awaiting > active (spec §10). toSessionState never

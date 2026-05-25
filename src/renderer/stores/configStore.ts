@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { saveConfigNow, saveConfigDebounced } from '../utils/config-saver'
 import type { ProviderId, ClaudeOptions, CodexOptions } from '../../shared/types'
+import type { IdentityColorKey } from '../../shared/identity-colors'
 
 // Re-export provider types so callers can import from a single place
 export type { ProviderId, ClaudeOptions, CodexOptions }
@@ -10,6 +11,10 @@ export interface TerminalConfig {
   label: string
   workingDirectory: string
   color: string
+  /** V2 identity colour: stable palette key. Authoritative over `color` at render time. */
+  identityColorKey?: IdentityColorKey
+  /** Pre-migration raw `color`, retained only when this record was migrated. */
+  legacyColor?: string
   sessionType: 'local' | 'ssh'
   shellOnly?: boolean  // Don't run Claude, just open a shell
   groupId?: string     // Group this config belongs to

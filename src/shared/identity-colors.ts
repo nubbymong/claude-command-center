@@ -71,23 +71,27 @@ function dist2(a: [number, number, number], b: [number, number, number]): number
   return (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2
 }
 
+/** How bucketLegacyColorToKeySource arrived at its key, for migration counting. */
+export type LegacyColorSource = 'key' | 'name' | 'hex' | 'nearest' | 'fallback'
+
 /**
  * Map a legacy stored colour (raw hex, colour name, or already-a-key) to a
- * curated IdentityColorKey. Priority: existing key -> known name -> exact legacy
- * hex -> nearest-colour fallback (which routes reserved-ish hues to their bucket
- * key, otherwise the nearest identity key). Deterministic.
+ * curated IdentityColorKey, also reporting how the match was made. Priority:
+ * existing key -> known name -> exact legacy hex -> nearest-colour fallback
+ * (which routes reserved-ish hues to their bucket key, otherwise the nearest
+ * identity key) -> neutral fallback for unparseable input. Deterministic.
  */
-export function bucketLegacyColorToKey(value: string): IdentityColorKey {
+export function bucketLegacyColorToKeySource(value: string): { key: IdentityColorKey; source: LegacyColorSource } {
   const raw = value.trim()
   const lower = raw.toLowerCase()
-  if ((IDENTITY_COLOR_KEYS as readonly string[]).includes(lower)) return lower as IdentityColorKey
-  if (LEGACY_NAME_TO_KEY[lower]) return LEGACY_NAME_TO_KEY[lower]
+  if ((IDENTITY_COLOR_KEYS as readonly string[]).includes(lower)) return { key: lower as IdentityColorKey, source: 'key' }
+  if (LEGACY_NAME_TO_KEY[lower]) return { key: LEGACY_NAME_TO_KEY[lower], source: 'name' }
 
   const norm = (raw.startsWith('#') ? raw : '#' + raw).toUpperCase()
-  if (LEGACY_HEX_TO_KEY[norm]) return LEGACY_HEX_TO_KEY[norm]
+  if (LEGACY_HEX_TO_KEY[norm]) return { key: LEGACY_HEX_TO_KEY[norm], source: 'hex' }
 
   const rgb = hexToRgb(norm)
-  if (!rgb) return 'mauve'
+  if (!rgb) return { key: 'mauve', source: 'fallback' }
 
   let best: { key: IdentityColorKey; d: number } | null = null
   for (const a of RESERVED_ANCHORS) {
@@ -98,5 +102,13 @@ export function bucketLegacyColorToKey(value: string): IdentityColorKey {
     const d = dist2(rgb, hexToRgb(IDENTITY_PALETTE[k].dark)!)
     if (!best || d < best.d) best = { key: k, d }
   }
-  return best!.key
+  return { key: best!.key, source: 'nearest' }
+}
+
+/**
+ * Map a legacy stored colour to a curated IdentityColorKey. Thin wrapper over
+ * bucketLegacyColorToKeySource that drops the match-source detail.
+ */
+export function bucketLegacyColorToKey(value: string): IdentityColorKey {
+  return bucketLegacyColorToKeySource(value).key
 }

@@ -1,6 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { TerminalConfig } from '../stores/configStore'
-import { COLOR_SWATCHES } from './SessionDialog'
+import { IDENTITY_SWATCHES } from './SessionDialog'
+import { resolveIdentityColor, bucketLegacyColorToKey, type IdentityColorKey } from '../../shared/identity-colors'
+import { useResolvedTheme } from '../hooks/useThemeController'
 
 type SessionType = 'local' | 'ssh'
 type SectionKey = 'identity' | 'directory' | 'connection' | 'claude' | 'advanced'
@@ -18,7 +20,8 @@ export default function GuidedConfigView({ onConfirm, onSkip }: Props) {
   // Form state
   const [label, setLabel] = useState('')
   const [workingDir, setWorkingDir] = useState('')
-  const [color, setColor] = useState(COLOR_SWATCHES[0])
+  const [colorKey, setColorKey] = useState<IdentityColorKey>(bucketLegacyColorToKey(''))
+  const theme = useResolvedTheme()
   const [sessionType, setSessionType] = useState<SessionType>('local')
   const [sshHost, setSshHost] = useState('')
   const [sshPort, setSshPort] = useState(22)
@@ -64,7 +67,8 @@ export default function GuidedConfigView({ onConfirm, onSkip }: Props) {
       provider: 'claude',
       label: label.trim(),
       workingDirectory: dir,
-      color,
+      identityColorKey: colorKey,
+      color: resolveIdentityColor(colorKey, 'dark'),  // back-compat shadow; render prefers the key
       sessionType,
       sshConfig: sessionType === 'ssh' ? {
         host: sshHost.trim(),
@@ -130,13 +134,14 @@ export default function GuidedConfigView({ onConfirm, onSkip }: Props) {
                     className="flex flex-wrap gap-1.5"
                     onMouseDown={focusSection('identity')}
                   >
-                    {COLOR_SWATCHES.slice(0, 16).map((c) => (
+                    {IDENTITY_SWATCHES.map((k) => (
                       <button
-                        key={c}
+                        key={k}
                         type="button"
-                        onClick={() => setColor(c)}
-                        className={`w-6 h-6 rounded transition-all ${color === c ? 'ring-2 ring-text scale-110' : 'hover:scale-105'}`}
-                        style={{ backgroundColor: c }}
+                        onClick={() => setColorKey(k)}
+                        className={`w-6 h-6 rounded transition-all ${colorKey === k ? 'ring-2 ring-text scale-110' : 'hover:scale-105'}`}
+                        style={{ backgroundColor: resolveIdentityColor(k, theme) }}
+                        title={k}
                       />
                     ))}
                   </div>

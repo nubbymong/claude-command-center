@@ -15,6 +15,8 @@ export function buildSessionState(): SessionState {
     label: s.label,
     workingDirectory: s.workingDirectory,
     color: s.color,
+    identityColorKey: s.identityColorKey,
+    legacyColor: s.legacyColor,
     sessionType: s.sessionType,
     shellOnly: s.shellOnly,
     partnerTerminalPath: s.partnerTerminalPath,

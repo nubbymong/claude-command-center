@@ -77,6 +77,9 @@ export interface AppSettings {
   theme: ThemeMode
   tokenomicsAccountFilter?: string  // 'all' | '__mixed__' | '__unknown__' | <email>
   fontMigratedV2?: boolean  // one-time guard: existing installs moved off the old Cascadia Code/14 default
+  identityColorMigratedV2?: boolean      // one-time guard: saved-config colours migrated to identity keys
+  colourMigrationNoticePending?: boolean // a colour migration changed records and the notice should show
+  colourMigrationNoticeDismissed?: boolean
 }
 
 interface SettingsState {

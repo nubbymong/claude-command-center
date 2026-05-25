@@ -35,7 +35,8 @@ import { useSettingsStore } from './stores/settingsStore'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 import { useThemeController } from './hooks/useThemeController'
 import { markSessionForResumePicker } from './utils/resumePicker'
-import { gatherLocalStorageData, hydrateStores } from './utils/configHydration'
+import { migrateColorRecords } from './utils/migrateIdentityColors'
+import { gatherLocalStorageData, hydrateStores, applyConfigColourMigration } from './utils/configHydration'
 import { setupCloudAgentListener } from './stores/cloudAgentStore'
 import { setupTokenomicsListener } from './stores/tokenomicsStore'
 import { setupConductorMcpListener, useConductorMcpStore } from './stores/conductorMcpStore'
@@ -224,12 +225,12 @@ export default function App() {
           await window.electronAPI.config.migrateFromLocalStorage(lsData)
           console.log('[App] Migration complete, reloading...')
           const reloaded = await window.electronAPI.config.loadAll()
-          hydrateStores(reloaded.data)
+          hydrateStores(await applyConfigColourMigration(reloaded.data))
         } else {
-          hydrateStores(result.data)
+          hydrateStores(await applyConfigColourMigration(result.data))
         }
       } else {
-        hydrateStores(result.data)
+        hydrateStores(await applyConfigColourMigration(result.data))
       }
 
       setConfigLoaded(true)
@@ -379,7 +380,15 @@ export default function App() {
 
       console.log(`[App] Restoring ${savedState.sessions.length} sessions...`)
 
-      const restoredSessions: Session[] = savedState.sessions.map((saved: SavedSession) => {
+      // Idempotent session colour migration (no guard). session.clear() below wipes
+      // the on-disk copy right after restore, and migrated keys only reach disk on a
+      // graceful close (buildSessionState). So this recomputes each launch until then
+      // -- harmless: it is a no-op once keyed, raw `color` is always preserved, and the
+      // notice guard below prevents re-notifying.
+      const { records: migratedSaved, summary: sessionSummary } = migrateColorRecords(savedState.sessions || [])
+      console.log('[colourMigration] sessions', sessionSummary)
+
+      const restoredSessions: Session[] = migratedSaved.map((saved: SavedSession) => {
         // v1.5 provider-shape: read Claude fields from claudeOptions, fall back to
         // legacy top-level fields for un-migrated files (belt-and-braces).
         const claude = saved.claudeOptions
@@ -390,6 +399,8 @@ export default function App() {
           workingDirectory: saved.workingDirectory,
           model: claude?.model ?? saved.model ?? '',
           color: saved.color,
+          identityColorKey: saved.identityColorKey,
+          legacyColor: saved.legacyColor,
           sessionType: saved.sessionType,
           shellOnly: saved.shellOnly,
           partnerTerminalPath: saved.partnerTerminalPath,
@@ -422,6 +433,13 @@ export default function App() {
 
       useSessionStore.getState().restoreSessions(restoredSessions, savedState.activeSessionId)
       await window.electronAPI.session.clear()
+
+      if (sessionSummary.changed > 0) {
+        const s = useSettingsStore.getState()
+        if (!s.settings.colourMigrationNoticeDismissed && !s.settings.colourMigrationNoticePending) {
+          s.updateSettings({ colourMigrationNoticePending: true })
+        }
+      }
 
       console.log('[App] Sessions restored')
     } catch (err) {

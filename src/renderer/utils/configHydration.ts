@@ -9,6 +9,7 @@ import { useAgentLibraryStore } from '../stores/agentLibraryStore'
 import { useTeamStore } from '../stores/teamStore'
 import { useCommandBarStore } from '../stores/commandBarStore'
 import { useExcalidrawStore } from '../stores/excalidrawStore'
+import { migrateColorRecords } from './migrateIdentityColors'
 
 /**
  * Gather all relevant localStorage keys for migration to CONFIG/.
@@ -188,4 +189,55 @@ export function hydrateStores(configData: Record<string, unknown>): void {
   useExcalidrawStore.getState().hydrate(excalidraw as never)
 
   console.log('[App] All stores hydrated from CONFIG/')
+}
+
+/**
+ * One-time, idempotent, partial-failure-safe migration of saved config colours
+ * to identity keys. Returns possibly-updated configData to hydrate from. Never
+ * sets the guard unless the relevant persist actually succeeded.
+ */
+export async function applyConfigColourMigration(
+  configData: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const rawSettings = { ...((configData.settings as any) || {}) }
+  if (rawSettings.identityColorMigratedV2) return configData            // guard set: fast path
+
+  const configs = (configData.configs as any[]) || []
+  const { records, summary } = migrateColorRecords(configs)
+  console.log('[colourMigration] configs', summary)
+
+  const changedNow = summary.changed > 0
+  // A prior run may have persisted migrated configs but failed to persist the
+  // guard. Detect by migrated records already carrying legacyColor.
+  const hasPriorMigrated = configs.some((c: any) => c?.identityColorKey && c?.legacyColor)
+
+  // Genuine no-op (clean install / natively keyed): set guard, never notify.
+  if (!changedNow && !hasPriorMigrated) {
+    try {
+      const newSettings = { ...rawSettings, identityColorMigratedV2: true }
+      await window.electronAPI.config.save('settings', newSettings)
+      return { ...configData, settings: newSettings }
+    } catch (e) {
+      console.error('[colourMigration] guard persist failed (no-op case); will retry', e)
+      return configData
+    }
+  }
+
+  // Something changed now, OR a prior partial success left migrated records.
+  try {
+    if (changedNow) {
+      await window.electronAPI.config.save('configs', records)          // 1) persist configs FIRST
+    }
+    const dismissed = rawSettings.colourMigrationNoticeDismissed === true
+    const newSettings = {
+      ...rawSettings,
+      identityColorMigratedV2: true,
+      colourMigrationNoticePending: dismissed ? rawSettings.colourMigrationNoticePending : true,
+    }
+    await window.electronAPI.config.save('settings', newSettings)       // 2) guard + pending SECOND
+    return { ...configData, configs: changedNow ? records : configs, settings: newSettings }
+  } catch (e) {
+    console.error('[colourMigration] persist failed; guard NOT set, hydrating original data', e)
+    return configData                                                   // safe original; retry next launch
+  }
 }

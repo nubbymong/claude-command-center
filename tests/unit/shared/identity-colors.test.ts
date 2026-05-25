@@ -4,6 +4,7 @@ import {
   IDENTITY_PALETTE,
   resolveIdentityColor,
   bucketLegacyColorToKey,
+  bucketLegacyColorToKeySource,
   type IdentityColorKey,
 } from '../../../src/shared/identity-colors'
 
@@ -81,5 +82,26 @@ describe('bucketLegacyColorToKey -- names, passthrough, fallback', () => {
     expect(bucketLegacyColorToKey('')).toBe('mauve')
     expect(bucketLegacyColorToKey('not-a-hex')).toBe('mauve')
     expect(bucketLegacyColorToKey('#fff')).toBe('mauve')
+  })
+})
+
+describe('bucketLegacyColorToKeySource', () => {
+  it('reports source=key for an existing key', () => {
+    expect(bucketLegacyColorToKeySource('indigo')).toEqual({ key: 'indigo', source: 'key' })
+  })
+  it('reports source=name for a known colour name', () => {
+    expect(bucketLegacyColorToKeySource('teal')).toEqual({ key: 'slate-blue', source: 'name' })
+  })
+  it('reports source=hex for a known legacy swatch hex', () => {
+    expect(bucketLegacyColorToKeySource('#00FFFF')).toEqual({ key: 'slate-blue', source: 'hex' })
+  })
+  it('reports source=nearest for an unknown but parseable hex', () => {
+    expect(bucketLegacyColorToKeySource('#8000ff')).toEqual({ key: 'slate-blue', source: 'nearest' })
+  })
+  it('reports source=fallback for unparseable input', () => {
+    expect(bucketLegacyColorToKeySource('not-a-hex')).toEqual({ key: 'mauve', source: 'fallback' })
+  })
+  it('bucketLegacyColorToKey still returns the same key', () => {
+    expect(bucketLegacyColorToKey('#00FFFF')).toBe('slate-blue')
   })
 })

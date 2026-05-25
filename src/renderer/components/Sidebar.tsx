@@ -25,6 +25,7 @@ import SessionGroupHeader from './sidebar/SessionGroupHeader'
 import UpdatePanel from './sidebar/UpdatePanel'
 import PinnedConfigsPanel from './sidebar/PinnedConfigsPanel'
 import FirstRunCard from './FirstRunCard'
+import ColourMigrationNotice from './ColourMigrationNotice'
 import { useAppMetaStore } from '../stores/appMetaStore'
 
 // Inject keyframes for attention pulse animation (shared with TabBar)
@@ -917,6 +918,15 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
           }
         }}
       >
+        {/* One-time colour-migration notice. Wires Review colours to the SAME
+            edit dialog ConfigRow.onEdit uses (setEditingConfig below). */}
+        <ColourMigrationNotice
+          onOpenConfigEditor={(configId) => {
+            const cfg = configs.find((c) => c.id === configId)
+            if (cfg) setEditingConfig(cfg)
+          }}
+        />
+
         {showFirstRunCard && onShowFirstRun && (
           <FirstRunCard
             onGetStarted={onShowFirstRun}
