@@ -182,7 +182,7 @@ export function hydrateStores(configData: Record<string, unknown>): void {
   const usageTracking = (configData.usageTracking as UsageTracking) || undefined
   useTipsStore.getState().hydrate(usageTracking as UsageTracking)
 
-  const commandBarUi = (configData.commandBarUi as { collapsedSectionIds?: string[] }) || {}
+  const commandBarUi = (configData.commandBarUi as { collapsedSectionIds?: string[]; barCollapsed?: boolean }) || {}
   useCommandBarStore.getState().hydrate(commandBarUi)
 
   const excalidraw = (configData.excalidraw as { bySessionId?: Record<string, unknown> }) || { bySessionId: {} }
