@@ -78,4 +78,16 @@ describe('SessionRow card', () => {
     expect(input).toBeTruthy()
     expect(input.closest('button')).toBeNull()
   })
+
+  it('line 2 spans out of the 9px dot column so the model meta is not clipped', () => {
+    // jsdom cannot compute CSS grid, so lock the structural intent: the line-2
+    // content lives in ONE child that spans grid columns 2 / 4 (never auto-placed
+    // into the dot column), and the model meta text lives inside that wrapper.
+    render(root, { model: 'sonnet', provider: 'claude' })
+    const line2 = container.querySelector('[data-testid="card-line2"]') as HTMLElement
+    expect(line2).toBeTruthy()
+    expect(line2.style.gridColumn).toBe('2 / 4')
+    expect(line2.textContent).toContain('sonnet')
+    expect(line2.textContent).toContain('claude')
+  })
 })

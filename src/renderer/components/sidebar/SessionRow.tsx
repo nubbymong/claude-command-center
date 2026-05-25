@@ -118,16 +118,19 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
         {isActive && <span data-testid="identity-chip"><IdentityChip color={identity} title="Selected session" /></span>}
       </span>
 
-      {/* Line 2: model meta + context meter + right-aligned % column */}
-      <span className="meta relative z-10 row-start-2 truncate">{metaLine}</span>
-      <div className="relative z-10 row-start-2 col-start-2 flex items-center gap-1.5">
+      {/* Line 2: model meta + context meter + right-aligned %. One grid child
+          spanning the name+meta columns (2 / 4) so the meta does NOT auto-place
+          into the 9px dot column (col 1) and get clipped. The dot column stays
+          empty on line 2, so line 2 aligns under the name. */}
+      <div className="relative z-10 row-start-2 flex items-center gap-2" style={{ gridColumn: '2 / 4' }} data-testid="card-line2">
+        <span className="meta truncate">{metaLine}</span>
         <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--surface-sunken)' }}>
           <div className={`meter-fill ${meterClass(pct)}`} style={{ width: `${pct}%` }} />
         </div>
+        <span className="meta w-9 text-right tabular-nums shrink-0">
+          {session.contextPercent != null ? `${Math.round(pct)}%` : ''}
+        </span>
       </div>
-      <span className="meta relative z-10 row-start-2 col-start-3 w-9 text-right tabular-nums">
-        {session.contextPercent != null ? `${Math.round(pct)}%` : ''}
-      </span>
     </button>
   )
 }

@@ -20,7 +20,7 @@ interface ConfigRowProps {
 }
 
 export default function ConfigRow({ config, onLaunch, onEdit, onDelete, onPin, onContextMenu, draggable, onDragStart, onDragOver, onDrop, onDragEnd, isDragOver }: ConfigRowProps) {
-  // Identity now lives in a small color dot — no row fill at rest, no
+  // Identity now lives in a small color square -- no row fill at rest, no
   // heavy left border. Hover just lifts to a neutral surface tint;
   // colour is held in the dot and badges only.
   const theme = useResolvedTheme()
