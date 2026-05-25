@@ -45,3 +45,24 @@ export function migrateColorRecords<T extends ColourRecord>(
   })
   return { records: out, summary: { scanned: records.length, changed, skipped, fallback } }
 }
+
+interface ReviewConfigRef { id: string; legacyColor?: string }
+interface ReviewSessionRef { configId?: string; legacyColor?: string }
+
+/**
+ * Choose the target for the notice's "Review colours" action (safety fallback
+ * chain): first migrated config -> a migrated session's still-existing config
+ * -> none. Never throws; returns 'none' when there is nothing safe to open
+ * (e.g. the migrated config was deleted, or only sessions changed with no
+ * resolvable config).
+ */
+export function pickColourReviewTarget(
+  configs: readonly ReviewConfigRef[],
+  sessions: readonly ReviewSessionRef[],
+): { kind: 'config'; configId: string } | { kind: 'none' } {
+  const cfg = configs.find((c) => c.legacyColor)
+  if (cfg) return { kind: 'config', configId: cfg.id }
+  const sess = sessions.find((s) => s.legacyColor && s.configId && configs.some((c) => c.id === s.configId))
+  if (sess && sess.configId) return { kind: 'config', configId: sess.configId }
+  return { kind: 'none' }
+}
