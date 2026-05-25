@@ -12,7 +12,7 @@ import { shouldUseResumePicker } from '../utils/resumePicker'
 import { stripCursorSequences } from '../utils/terminalFormatting'
 import { getTerminalTheme } from './terminal/terminalTheme'
 import { useSettingsStore, DEFAULT_TERMINAL_SETTINGS } from '../stores/settingsStore'
-import { ContextBar, ScrollToBottomButton } from './terminal'
+import { ScrollToBottomButton } from './terminal'
 import { useStatuslineSubscription } from '../hooks/useStatuslineSubscription'
 import { useActiveTabEffect } from '../hooks/useActiveTabEffect'
 import { useCursorLayerVisibility } from '../hooks/useCursorLayerVisibility'
@@ -586,27 +586,6 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
             isScrolledUpRef.current = false
             setIsScrolledUp(false)
           }}
-        />
-      )}
-      {session && session.contextPercent != null && (
-        <ContextBar
-          modelName={session.modelName}
-          reasoningEffort={session.reasoningEffort}
-          inputTokens={session.inputTokens}
-          contextWindowSize={session.contextWindowSize}
-          contextPercent={session.contextPercent}
-          costUsd={session.costUsd}
-          linesAdded={session.linesAdded}
-          linesRemoved={session.linesRemoved}
-          totalDurationMs={session.totalDurationMs}
-          rateLimitCurrent={session.rateLimitCurrent}
-          rateLimitCurrentResets={session.rateLimitCurrentResets}
-          rateLimitWeekly={session.rateLimitWeekly}
-          rateLimitWeeklyResets={session.rateLimitWeeklyResets}
-          rateLimitExtra={session.rateLimitExtra}
-          provider={session.provider ?? 'claude'}
-          sessionId={sessionId}
-          enableCodexReview={enableCodexReview}
         />
       )}
       <CommandBar
