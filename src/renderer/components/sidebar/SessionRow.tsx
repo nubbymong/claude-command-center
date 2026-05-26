@@ -73,19 +73,24 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
     )
   }
 
-  // Selection (isActive) = identity rail + tint + identity border + elevation + bold + chip.
-  // Health and focus are separate channels and never touch these.
+  // Selection channel: inset box-shadow rail -- no layout shift (no padding math).
+  // inactive: muted 3px rail only. multi-select: muted rail + light tint.
+  // active: full identity rail + tint + border + elevation.
+  const identityMuted = `color-mix(in srgb, ${identity} 55%, transparent)`
   const selectedStyle: React.CSSProperties = isActive
     ? {
         backgroundColor: identity + '20',
-        borderColor: `color-mix(in srgb, ${identity} 55%, transparent)`,
-        borderLeft: `4px solid ${identity}`,
-        paddingLeft: 7,
-        boxShadow: '0 2px 8px rgba(0,0,0,.22)',
+        borderColor: identityMuted,
+        boxShadow: `inset 4px 0 0 ${identity}, 0 2px 8px rgba(0,0,0,.22)`,
       }
     : isSelected
-    ? { backgroundColor: identity + '12' }
-    : {}
+    ? {
+        backgroundColor: identity + '12',
+        boxShadow: `inset 3px 0 0 ${identityMuted}`,
+      }
+    : {
+        boxShadow: `inset 3px 0 0 ${identityMuted}`,
+      }
 
   return (
     <button
