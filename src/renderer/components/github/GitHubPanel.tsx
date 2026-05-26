@@ -124,7 +124,7 @@ export default function GitHubPanel({
           onClick={() => setShowSetup(true)}
           aria-label="Configure GitHub for this session"
           title="Configure GitHub for this session"
-          className="gh-fab absolute top-2 right-2 z-20 p-1.5 rounded-lg transition-colors"
+          className="gh-fab gh-fab-in absolute top-2 right-2 z-20 p-1.5 rounded-lg transition-colors"
           style={{ background: 'var(--surface-raised)', boxShadow: 'var(--shadow-raised)' }}
         >
           <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
@@ -171,7 +171,7 @@ export default function GitHubPanel({
           window.electronPlatform === 'darwin' ? '\u2318+/' : 'Ctrl+/'
         })`}
         aria-label="Show GitHub panel"
-        className="gh-fab absolute top-2 right-2 z-20 p-1.5 rounded-lg transition-colors"
+        className="gh-fab gh-fab-in absolute top-2 right-2 z-20 p-1.5 rounded-lg transition-colors"
         style={{ background: 'var(--surface-raised)', boxShadow: 'var(--shadow-raised)' }}
       >
         <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
@@ -194,7 +194,7 @@ export default function GitHubPanel({
     : 'var(--text-muted)'
   return (
     <aside
-      className="border-l flex flex-col relative"
+      className="gh-panel-in border-l flex flex-col relative"
       style={{
         background: 'var(--surface-raised)',
         borderColor: 'var(--border-subtle)',
