@@ -15,6 +15,16 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '1.5.4',
+    date: '2026-05-26',
+    highlights: "V2 shell polish from first-look feedback: the bottom instrument bar now sits under the terminal only, inactive sessions keep their identity colour, and the global/custom command rows follow the theme.",
+    changes: [
+      { type: 'fix', description: "The bottom instrument bar is now scoped to the content area instead of spanning the full window width underneath the sidebar" },
+      { type: 'fix', description: "Inactive sessions keep a muted identity-colour rail, so you can still tell sessions apart at a glance; the selected session shows the full rail, tint, and border" },
+      { type: 'fix', description: "Global and custom command rows now use the theme's surface tokens instead of a fixed dark background, so they follow light and dark correctly" },
+    ]
+  },
+  {
     version: '1.5.3',
     date: '2026-05-26',
     highlights: "V2 command-center shell -- a ground-up visual redesign: dense session cards, a single bottom instrument bar, a cleaner header and terminal framing, light/dark theming, and per-session identity colours.",
