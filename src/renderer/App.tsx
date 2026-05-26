@@ -894,17 +894,23 @@ export default function App() {
                 </>
               )}
             </div>
-            <BottomBar currentView={view} onViewChange={setView} onUpdateRequested={() => {
-              const state = useSessionStore.getState()
-              if (state.sessions.length === 0) {
-                setIsClosing(true)
-                setIsUpdating(true)
-                window.electronAPI.update.installAndRestart().catch(() => { setIsClosing(false); setIsUpdating(false) })
-              } else {
-                setCloseDialog('update')
-              }
-            }} />
           </main>
+        </div>
+        {/* Runtime footer spans the FULL app width (under the sidebar too) so
+            CLI/version sits at the absolute bottom-left of the app -- a global
+            status bar, distinct from the per-session statusline strip which
+            lives above the command rows inside the terminal column. */}
+        <div className="titlebar-no-drag shrink-0">
+          <BottomBar currentView={view} onViewChange={setView} onUpdateRequested={() => {
+            const state = useSessionStore.getState()
+            if (state.sessions.length === 0) {
+              setIsClosing(true)
+              setIsUpdating(true)
+              window.electronAPI.update.installAndRestart().catch(() => { setIsClosing(false); setIsUpdating(false) })
+            } else {
+              setCloseDialog('update')
+            }
+          }} />
         </div>
         {showTraining && (
           <TrainingWalkthrough
