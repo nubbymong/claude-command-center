@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, clipboard, Menu, session, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, Menu, session, shell } from 'electron'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
@@ -35,6 +35,7 @@ import { registerGitHubHandlers } from './ipc/github-handlers'
 import { registerHooksHandlers } from './ipc/hooks-handlers'
 import { registerCodexHandlers } from './ipc/codex-handlers'
 import { registerCodexReviewHandlers } from './ipc/codex-review-handlers'
+import { readClipboardImageWithRetry } from './clipboard-image'
 import { HooksGateway } from './hooks/hooks-gateway'
 import { setGateway, getGateway } from './hooks'
 import { cleanupStaleHookEntries } from './hooks/boot-cleanup'
@@ -373,9 +374,11 @@ function createWindow(): void {
   }
 
   // Clipboard image reading (legacy — kept for compatibility, prefer saveImage)
+  // Uses readClipboardImageWithRetry so the first Alt+V after copying an image
+  // doesn't miss on Windows' delayed-render clipboard sync.
   ipcMain.handle('clipboard:readImage', async () => {
-    const img = clipboard.readImage()
-    if (img.isEmpty()) return null
+    const img = await readClipboardImageWithRetry()
+    if (!img) return null
     const resized = constrainToMaxDim(img, 1920)
     return resized.toJPEG(85).toString('base64')
   })
@@ -385,8 +388,11 @@ function createWindow(): void {
   // Returns { filename, path } so callers have both the bare name (for the MCP tool)
   // and the absolute path (for local-only flows that bypass MCP).
   ipcMain.handle('clipboard:saveImage', async () => {
-    const img = clipboard.readImage()
-    if (img.isEmpty()) return null
+    // Retry the read so the FIRST Alt+V after copying an image reliably detects
+    // it -- Windows' delayed-render clipboard can return empty on the first read
+    // after the window gains focus, which was the "no image detected" miss.
+    const img = await readClipboardImageWithRetry()
+    if (!img) return null
     const resized = constrainToMaxDim(img, 1920)
     const screenshotsDir = join(getResourcesDirectory(), 'screenshots')
     if (!existsSync(screenshotsDir)) mkdirSync(screenshotsDir, { recursive: true })
