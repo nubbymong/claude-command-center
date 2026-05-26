@@ -4,6 +4,8 @@ import Sidebar from './components/Sidebar'
 import TabBar from './components/TabBar'
 import SessionHeader from './components/SessionHeader'
 import TerminalView, { killSessionPty } from './components/TerminalView'
+import CommandBar from './components/CommandBar'
+import SessionStatusStrip from './components/SessionStatusStrip'
 import WebviewPane from './components/WebviewPane'
 import ExcalidrawPane from './components/ExcalidrawPane'
 import { useWebviewStore } from './stores/webviewStore'
@@ -640,16 +642,11 @@ export default function App() {
                     <TerminalView
                       key={session.id + '-main-' + session.createdAt}
                       sessionId={session.id}
-                      parentSessionId={session.id}
                       configId={session.configId}
                       cwd={session.sessionType === 'local' ? session.workingDirectory : undefined}
                       shellOnly={session.shellOnly}
                       ssh={session.sshConfig}
                       isActive={session.id === activeSessionId && view === 'sessions' && !isShowingPartner && !altPaneShowing}
-                      partnerEnabled={hasPartner}
-                      isPartnerActive={isShowingPartner}
-                      onTogglePartner={() => togglePartner(session.id)}
-                      partnerSessionId={hasPartner ? partnerPtyId : undefined}
                       legacyVersion={session.legacyVersion}
                       agentIds={session.agentIds}
                       effortLevel={session.effortLevel}
@@ -671,16 +668,11 @@ export default function App() {
                       <TerminalView
                         key={partnerPtyId + '-' + session.createdAt}
                         sessionId={partnerPtyId}
-                        parentSessionId={session.id}
                         configId={session.configId}
                         cwd={session.partnerTerminalPath}
                         shellOnly={true}
                         elevated={session.partnerElevated}
                         isActive={session.id === activeSessionId && view === 'sessions' && isShowingPartner && !altPaneShowing}
-                        partnerEnabled={true}
-                        isPartnerActive={isShowingPartner}
-                        onTogglePartner={() => togglePartner(session.id)}
-                        partnerSessionId={partnerPtyId}
                       />
                     </div>
                   )}
@@ -698,6 +690,28 @@ export default function App() {
           </div>
           {activeSession && <GitHubPanel sessionId={activeSession.id} />}
         </div>
+        {/* Per-session telemetry strip + command rows live BELOW the
+            terminal/GitHub-panel row so they span the full content-column
+            width and the GitHub panel ends above them. Rendered once for the
+            ACTIVE session only -- switching tabs re-resolves these against
+            `activeSession`. The telemetry strip is hidden for shell-only
+            sessions (matches the old per-TerminalView gate). */}
+        {activeSession && !activeSession.shellOnly && (
+          <SessionStatusStrip sessionId={activeSession.id} />
+        )}
+        {activeSession && (
+          <CommandBar
+            key={activeSession.id + '-commandbar'}
+            sessionId={activeSession.id}
+            configId={activeSession.configId}
+            sessionType={activeSession.sessionType === 'ssh' ? 'ssh' : 'local'}
+            partnerEnabled={!!activeSession.partnerTerminalPath}
+            isPartnerActive={partnerActive.has(activeSession.id)}
+            onTogglePartner={() => togglePartner(activeSession.id)}
+            partnerSessionId={activeSession.partnerTerminalPath ? activeSession.id + '-partner' : undefined}
+            parentSessionId={activeSession.id}
+          />
+        )}
       </div>
     )
   }
