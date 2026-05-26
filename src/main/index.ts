@@ -41,7 +41,7 @@ import { cleanupStaleHookEntries } from './hooks/boot-cleanup'
 import { DEFAULT_HOOKS_PORT } from './hooks/hooks-types'
 import { fetchModelPricing } from './tokenomics-manager'
 import { killAllAgents } from './cloud-agent-manager'
-import { startServiceStatusPoller, stopServiceStatusPoller } from './service-status'
+import { startServiceStatusPoller, stopServiceStatusPoller, getLastServiceStatus } from './service-status'
 import { initUpdateWatcher, stopUpdateWatcher, getProjectRootPath, isPackagedApp } from './update-watcher'
 import { startUpdateServer, stopUpdateServer } from './update-server'
 import { saveSessionState, loadSessionState, clearSessionState, hasSavedSessionState, SessionState } from './session-state'
@@ -698,6 +698,11 @@ if (!gotTheLock) {
 
     // Start polling Anthropic service status
     startServiceStatusPoller(getWindow)
+    // Let a freshly-mounted renderer pull the cached status immediately, rather
+    // than waiting up to a full poll interval for the next push (the title-bar
+    // status pills were blank until the next poll because the immediate poll
+    // fired before the renderer subscribed, behind the startup splash).
+    ipcMain.handle(IPC.SERVICE_STATUS_GET, () => getLastServiceStatus())
   })
 
   app.on('before-quit', () => {

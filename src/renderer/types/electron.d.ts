@@ -275,6 +275,7 @@ export interface ElectronAPI {
     onRunStatusChanged: (callback: (run: TeamRun) => void) => () => void
   }
   serviceStatus: {
+    get: () => Promise<any>
     onUpdate: (callback: (data: { status: string; description: string }) => void) => () => void
   }
   cli: {

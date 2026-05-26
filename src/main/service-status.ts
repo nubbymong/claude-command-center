@@ -105,6 +105,17 @@ function fetchAllComponents(): Promise<ServiceStatusPayload | null> {
 }
 
 let timer: ReturnType<typeof setInterval> | null = null
+// Last successful payload. Cached so a renderer that mounts AFTER the immediate
+// poll has already fired (e.g. behind the startup splash) can pull the current
+// status synchronously via getLastServiceStatus() instead of waiting up to a
+// full poll interval for the next push. Fixes the title-bar status pills not
+// appearing until ~5 min after launch.
+let lastPayload: ServiceStatusPayload | null = null
+
+/** The most recent successful status payload, or null if none fetched yet. */
+export function getLastServiceStatus(): ServiceStatusPayload | null {
+  return lastPayload
+}
 
 export function startServiceStatusPoller(
   getWindow: () => BrowserWindow | null
@@ -112,6 +123,7 @@ export function startServiceStatusPoller(
   async function poll(): Promise<void> {
     const result = await fetchAllComponents()
     if (result) {
+      lastPayload = result
       const win = getWindow()
       if (win && !win.isDestroyed()) {
         win.webContents.send(IPC.SERVICE_STATUS, result)

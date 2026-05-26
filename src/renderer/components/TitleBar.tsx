@@ -118,10 +118,17 @@ export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
   }, [])
 
   useEffect(() => {
+    let active = true
+    // Seed from the cached payload so the pills appear immediately on mount,
+    // rather than staying blank until the next 5-min poll push (the immediate
+    // startup poll fires before this subscribes, behind the splash).
+    window.electronAPI.serviceStatus.get().then((data: ServiceStatusPayload | null) => {
+      if (active && data) setServiceStatus(data)
+    })
     const unsub = window.electronAPI.serviceStatus.onUpdate((data: ServiceStatusPayload) => {
       setServiceStatus(data)
     })
-    return unsub
+    return () => { active = false; unsub() }
   }, [])
 
   const worst = serviceStatus?.worst || 'operational'
