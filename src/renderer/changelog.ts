@@ -15,6 +15,17 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '1.5.6',
+    date: '2026-05-26',
+    highlights: "Identity colours now span the full hue wheel so sessions are instantly distinguishable, the GitHub panel slides in when shown, and a few first-launch papercuts are fixed.",
+    changes: [
+      { type: 'improvement', description: "Identity colours are re-tuned across the whole colour wheel (blues, teals, greens, ambers, oranges, roses, purples) so saved configs and active sessions are instantly distinguishable in the left rail, tabs, and inactive dots -- not all variations of purple" },
+      { type: 'improvement', description: "The GitHub panel now slides in and fades when shown, and the collapsed floating logo button fades in (both respect reduced-motion)" },
+      { type: 'fix', description: "The Claude service-status pills (Code / Claude.ai) now appear immediately on launch instead of staying blank until the first background poll minutes later" },
+      { type: 'fix', description: "Pasting an image with Alt+V now works on the first try -- previously the first attempt after copying could report 'no image detected' until you typed something (a Windows clipboard timing quirk)" },
+    ]
+  },
+  {
     version: '1.5.5',
     date: '2026-05-26',
     highlights: "Bottom-region rework from UAT: the per-session status line now sits directly above the command rows, CLI/version is a slim status bar at the bottom-left, and the GitHub panel ends above the command rows with a floating logo button when collapsed.",

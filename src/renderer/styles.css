@@ -295,3 +295,28 @@ body {
   background-color: var(--surface-overlay) !important;
 }
 
+/* GitHub panel + FAB appear animations. The panel/FAB swap is otherwise an
+   instant mount; these soften the entrance so toggling Ctrl+/ or enabling a
+   session's integration reads as a deliberate slide rather than a flash.
+   React unmounts the outgoing element immediately, so this is an APPEAR-only
+   treatment (no exit animation). Respects prefers-reduced-motion -- no
+   animation when reduced, mirroring footer-update-pulse above. */
+@keyframes gh-panel-in {
+  from { opacity: 0; transform: translateX(12px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.gh-panel-in {
+  animation: gh-panel-in 200ms ease-out;
+}
+@keyframes gh-fab-in {
+  from { opacity: 0; transform: scale(0.85); }
+  to   { opacity: 1; transform: scale(1); }
+}
+.gh-fab-in {
+  animation: gh-fab-in 200ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .gh-panel-in,
+  .gh-fab-in { animation: none; }
+}
+

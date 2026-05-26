@@ -8,22 +8,32 @@ export type IdentityColorKey =
   | 'mauve' | 'violet' | 'lavender' | 'slate-blue' | 'orchid'
   | 'indigo' | 'periwinkle' | 'plum' | 'pink' | 'rose'
 
+// Ordered so consecutively-assigned colours (email hash % 10, or any sequential
+// pick) land far apart in hue -- two sessions created back to back read as
+// instantly distinct rather than two neighbouring violets.
 export const IDENTITY_COLOR_KEYS: readonly IdentityColorKey[] = [
-  'mauve', 'violet', 'lavender', 'slate-blue', 'orchid',
-  'indigo', 'periwinkle', 'plum', 'pink', 'rose',
+  'slate-blue', 'pink', 'indigo', 'violet', 'plum',
+  'lavender', 'rose', 'orchid', 'mauve', 'periwinkle',
 ]
 
+// The KEY names are now STABLE IDENTIFIERS, not literal hues -- they are stored
+// in config (identityColorKey) and renaming would need a migration, so the
+// names are frozen while the hexes were re-tuned to span the full hue wheel for
+// differentiation in the left rail / tab row / inactive dot. The hues now
+// spread across the wheel (jewel tones, not neon) and MAY sit near status hues
+// (green/amber/red/teal); that overlap is accepted in exchange for sessions
+// being instantly distinguishable. `mauve` is unchanged (a test pins it).
 export const IDENTITY_PALETTE: Record<IdentityColorKey, { dark: string; light: string }> = {
-  'mauve':      { dark: '#9a8cf0', light: '#6d5cc0' },
-  'violet':     { dark: '#b57edc', light: '#8a4fb0' },
-  'lavender':   { dark: '#a6b4ff', light: '#5566cc' },
-  'slate-blue': { dark: '#7b68ee', light: '#5346b8' },
-  'orchid':     { dark: '#ba55d3', light: '#9333a8' },
-  'indigo':     { dark: '#7b8cff', light: '#4858c8' },
-  'periwinkle': { dark: '#8aa0ff', light: '#4a63c2' },
-  'plum':       { dark: '#c98cff', light: '#8a44c0' },
-  'pink':       { dark: '#ff6ec7', light: '#c43d92' },
-  'rose':       { dark: '#ff6b9d', light: '#c23a68' },
+  'mauve':      { dark: '#9a8cf0', light: '#6d5cc0' }, // violet  ~268 (unchanged)
+  'violet':     { dark: '#c071e0', light: '#933fb0' }, // purple-magenta ~300
+  'lavender':   { dark: '#5d8bf0', light: '#2f5cc4' }, // blue ~225
+  'slate-blue': { dark: '#3ba8d4', light: '#176b94' }, // cyan-blue ~195
+  'orchid':     { dark: '#34b39a', light: '#117a68' }, // teal-green ~168
+  'indigo':     { dark: '#46b56e', light: '#1f8a48' }, // green ~140
+  'periwinkle': { dark: '#9bbf4e', light: '#5f8420' }, // lime-olive ~95
+  'plum':       { dark: '#d9a83f', light: '#9c6e18' }, // amber-gold ~50
+  'pink':       { dark: '#e8794a', light: '#b85020' }, // orange-coral ~25
+  'rose':       { dark: '#ef5f7e', light: '#c23a54' }, // rose-red ~352
 }
 
 export function resolveIdentityColor(key: IdentityColorKey, theme: 'dark' | 'light'): string {

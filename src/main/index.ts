@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, clipboard, Menu, session, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, Menu, session, shell } from 'electron'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
@@ -35,13 +35,14 @@ import { registerGitHubHandlers } from './ipc/github-handlers'
 import { registerHooksHandlers } from './ipc/hooks-handlers'
 import { registerCodexHandlers } from './ipc/codex-handlers'
 import { registerCodexReviewHandlers } from './ipc/codex-review-handlers'
+import { readClipboardImageWithRetry } from './clipboard-image'
 import { HooksGateway } from './hooks/hooks-gateway'
 import { setGateway, getGateway } from './hooks'
 import { cleanupStaleHookEntries } from './hooks/boot-cleanup'
 import { DEFAULT_HOOKS_PORT } from './hooks/hooks-types'
 import { fetchModelPricing } from './tokenomics-manager'
 import { killAllAgents } from './cloud-agent-manager'
-import { startServiceStatusPoller, stopServiceStatusPoller } from './service-status'
+import { startServiceStatusPoller, stopServiceStatusPoller, getLastServiceStatus } from './service-status'
 import { initUpdateWatcher, stopUpdateWatcher, getProjectRootPath, isPackagedApp } from './update-watcher'
 import { startUpdateServer, stopUpdateServer } from './update-server'
 import { saveSessionState, loadSessionState, clearSessionState, hasSavedSessionState, SessionState } from './session-state'
@@ -51,6 +52,7 @@ import { startConductorMcpServer, stopConductorMcpServer, startBrowserAtBoot } f
 import { readConfig } from './config-manager'
 import { loadCredential, saveCredential, deleteCredential } from './credential-store'
 import { resolveConductorMcpPort } from '../shared/mcp-ports'
+import { IPC } from '../shared/ipc-channels'
 
 import { migrateRegistryKeys } from './registry'
 import { installGlobalErrorHandlers, logInfo, logError, closeDebugLogger } from './debug-logger'
@@ -373,9 +375,11 @@ function createWindow(): void {
   }
 
   // Clipboard image reading (legacy — kept for compatibility, prefer saveImage)
+  // Uses readClipboardImageWithRetry so the first Alt+V after copying an image
+  // doesn't miss on Windows' delayed-render clipboard sync.
   ipcMain.handle('clipboard:readImage', async () => {
-    const img = clipboard.readImage()
-    if (img.isEmpty()) return null
+    const img = await readClipboardImageWithRetry()
+    if (!img) return null
     const resized = constrainToMaxDim(img, 1920)
     return resized.toJPEG(85).toString('base64')
   })
@@ -385,8 +389,11 @@ function createWindow(): void {
   // Returns { filename, path } so callers have both the bare name (for the MCP tool)
   // and the absolute path (for local-only flows that bypass MCP).
   ipcMain.handle('clipboard:saveImage', async () => {
-    const img = clipboard.readImage()
-    if (img.isEmpty()) return null
+    // Retry the read so the FIRST Alt+V after copying an image reliably detects
+    // it -- Windows' delayed-render clipboard can return empty on the first read
+    // after the window gains focus, which was the "no image detected" miss.
+    const img = await readClipboardImageWithRetry()
+    if (!img) return null
     const resized = constrainToMaxDim(img, 1920)
     const screenshotsDir = join(getResourcesDirectory(), 'screenshots')
     if (!existsSync(screenshotsDir)) mkdirSync(screenshotsDir, { recursive: true })
@@ -698,6 +705,11 @@ if (!gotTheLock) {
 
     // Start polling Anthropic service status
     startServiceStatusPoller(getWindow)
+    // Let a freshly-mounted renderer pull the cached status immediately, rather
+    // than waiting up to a full poll interval for the next push (the title-bar
+    // status pills were blank until the next poll because the immediate poll
+    // fired before the renderer subscribed, behind the startup splash).
+    ipcMain.handle(IPC.SERVICE_STATUS_GET, () => getLastServiceStatus())
   })
 
   app.on('before-quit', () => {
