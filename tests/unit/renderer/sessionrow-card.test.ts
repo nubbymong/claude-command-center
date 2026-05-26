@@ -58,11 +58,25 @@ describe('SessionRow card', () => {
     expect(container.querySelector('.card-focus')).toBeTruthy()
   })
 
-  it('selected card uses the identity colour for its 4px left rail (not teal var)', () => {
+  it('active card uses an inset box-shadow rail with the identity colour', () => {
     render(root, {}, { isActive: true })
     const card = container.querySelector('.session-card') as HTMLElement
-    expect(card.style.borderLeftWidth).toBe('4px')
-    expect(card.getAttribute('style') || '').toContain('rgb(')
+    const style = card.getAttribute('style') || ''
+    expect(style).toContain('inset 4px')
+  })
+
+  it('inactive row has a muted inset box-shadow rail (identity colour visible)', () => {
+    render(root, {}, { isActive: false, isSelected: false })
+    const card = container.querySelector('.session-card') as HTMLElement
+    const style = card.getAttribute('style') || ''
+    expect(style).toContain('inset')
+  })
+
+  it('active row box-shadow contains "inset 4px" (stronger rail than inactive)', () => {
+    render(root, {}, { isActive: true })
+    const card = container.querySelector('.session-card') as HTMLElement
+    const style = card.getAttribute('style') || ''
+    expect(style).toContain('inset 4px')
   })
 
   it('context meter turns danger above 85%', () => {

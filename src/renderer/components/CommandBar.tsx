@@ -499,7 +499,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
   return (
     <div className="flex flex-col shrink-0" onContextMenu={(e) => handleContextMenu(e, undefined, 'claude')}>
       {/* Row 1: Magic buttons */}
-      <div className="flex items-center gap-1 px-2 py-0.5 bg-crust border-t border-surface0">
+      <div className="flex items-center gap-1 px-2 py-0.5 border-t" style={{ background: 'var(--surface-chrome)', borderColor: 'var(--border-subtle)' }}>
         {/* Collapse toggle -- chevron + "Commands" + visible-command count.
             Collapsing hides the command rows (2/3) so the strip becomes a
             single slim row. Replaces the old static Tools sparkle icon. */}
@@ -596,7 +596,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
         <div className="flex flex-col overflow-hidden animate-[commandbar-expand_0.22s_ease-out]">
           {/* Row 2: Claude commands */}
           {claudeCommands.length > 0 && (
-            <div className="flex items-center gap-1 px-2 py-0.5 bg-crust border-t border-surface0 overflow-x-auto" onContextMenu={(e) => { e.stopPropagation(); handleContextMenu(e, undefined, 'claude') }}>
+            <div className="flex items-center gap-1 px-2 py-0.5 border-t overflow-x-auto" style={{ background: 'var(--surface-chrome)', borderColor: 'var(--border-subtle)' }} onContextMenu={(e) => { e.stopPropagation(); handleContextMenu(e, undefined, 'claude') }}>
               {/* Section icon: Claude asterisk */}
               <div className="shrink-0 text-peach/60" title="Claude Commands">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
@@ -610,7 +610,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
 
           {/* Row 3: Partner commands */}
           {showPartnerRow && (
-            <div className="flex items-center gap-1 px-2 py-0.5 bg-crust border-t border-surface0 overflow-x-auto" onContextMenu={(e) => { e.stopPropagation(); handleContextMenu(e, undefined, 'partner') }}>
+            <div className="flex items-center gap-1 px-2 py-0.5 border-t overflow-x-auto" style={{ background: 'var(--surface-chrome)', borderColor: 'var(--border-subtle)' }} onContextMenu={(e) => { e.stopPropagation(); handleContextMenu(e, undefined, 'partner') }}>
               {/* Section icon: </> code */}
               <div className="shrink-0 text-green/60" title="Partner Terminal Commands">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">

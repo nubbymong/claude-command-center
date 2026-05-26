@@ -842,68 +842,70 @@ export default function App() {
             }
           }} />
           <main className="flex-1 flex flex-col overflow-hidden titlebar-no-drag">
-            {showGuidedConfig ? (
-              <GuidedConfigView
-                onSkip={() => setShowGuidedConfig(false)}
-                onConfirm={async (configDraft, sshPassword) => {
-                  const { generateId } = await import('./utils/id')
-                  const configId = generateId()
-                  if (sshPassword) {
-                    await window.electronAPI.credentials.save(configId, sshPassword)
-                  }
-                  const newConfig = { ...configDraft, id: configId }
-                  useConfigStore.getState().addConfig(newConfig)
-                  useAppMetaStore.getState().update({ hasCreatedFirstConfig: true })
+            <div className="flex-1 flex flex-col overflow-hidden min-h-0 relative">
+              {showGuidedConfig ? (
+                <GuidedConfigView
+                  onSkip={() => setShowGuidedConfig(false)}
+                  onConfirm={async (configDraft, sshPassword) => {
+                    const { generateId } = await import('./utils/id')
+                    const configId = generateId()
+                    if (sshPassword) {
+                      await window.electronAPI.credentials.save(configId, sshPassword)
+                    }
+                    const newConfig = { ...configDraft, id: configId }
+                    useConfigStore.getState().addConfig(newConfig)
+                    useAppMetaStore.getState().update({ hasCreatedFirstConfig: true })
 
-                  // Track feature usage based on config fields set
-                  trackUsage('sessions.create-config')
-                  if (newConfig.sessionType === 'ssh') trackUsage('sessions.session-type')
-                  if (newConfig.claudeOptions?.effortLevel) trackUsage('sessions.effort-level')
-                  if (newConfig.claudeOptions?.disableAutoMemory) trackUsage('sessions.disable-auto-memory')
-                  if (newConfig.claudeOptions?.enableCodexReview) trackUsage('sessions.enable-codex-review')
-                  if (newConfig.partnerTerminalPath) trackUsage('sessions.partner-terminal')
+                    // Track feature usage based on config fields set
+                    trackUsage('sessions.create-config')
+                    if (newConfig.sessionType === 'ssh') trackUsage('sessions.session-type')
+                    if (newConfig.claudeOptions?.effortLevel) trackUsage('sessions.effort-level')
+                    if (newConfig.claudeOptions?.disableAutoMemory) trackUsage('sessions.disable-auto-memory')
+                    if (newConfig.claudeOptions?.enableCodexReview) trackUsage('sessions.enable-codex-review')
+                    if (newConfig.partnerTerminalPath) trackUsage('sessions.partner-terminal')
 
-                  const session: Session = {
-                    id: generateId(),
-                    configId: newConfig.id,
-                    label: newConfig.label,
-                    workingDirectory: newConfig.workingDirectory,
-                    model: newConfig.claudeOptions?.model ?? '',
-                    color: newConfig.color,
-                    status: 'idle',
-                    createdAt: Date.now(),
-                    sessionType: newConfig.sessionType,
-                    shellOnly: newConfig.shellOnly,
-                    sshConfig: newConfig.sshConfig,
-                    effortLevel: newConfig.claudeOptions?.effortLevel,
-                    disableAutoMemory: newConfig.claudeOptions?.disableAutoMemory,
-                    enableCodexReview: newConfig.claudeOptions?.enableCodexReview,
-                    provider: newConfig.provider,
-                    codexOptions: newConfig.codexOptions,
-                  }
-                  // Both providers support a resume picker. For Codex, the picker
-                  // script may not be deployed yet on first boot -- buildCodexSpawn
-                  // falls back to direct codex spawn (see src/main/providers/codex/spawn.ts).
-                  if (
-                    !session.shellOnly &&
-                    session.sessionType === 'local'
-                  ) {
-                    markSessionForResumePicker(session.id)
-                  }
-                  useSessionStore.getState().addSession(session)
-                  setShowGuidedConfig(false)
-                  setView('sessions')
-                }}
-              />
-            ) : (
-              <>
-                {renderSessions()}
-                {renderOverlayView()}
-              </>
-            )}
+                    const session: Session = {
+                      id: generateId(),
+                      configId: newConfig.id,
+                      label: newConfig.label,
+                      workingDirectory: newConfig.workingDirectory,
+                      model: newConfig.claudeOptions?.model ?? '',
+                      color: newConfig.color,
+                      status: 'idle',
+                      createdAt: Date.now(),
+                      sessionType: newConfig.sessionType,
+                      shellOnly: newConfig.shellOnly,
+                      sshConfig: newConfig.sshConfig,
+                      effortLevel: newConfig.claudeOptions?.effortLevel,
+                      disableAutoMemory: newConfig.claudeOptions?.disableAutoMemory,
+                      enableCodexReview: newConfig.claudeOptions?.enableCodexReview,
+                      provider: newConfig.provider,
+                      codexOptions: newConfig.codexOptions,
+                    }
+                    // Both providers support a resume picker. For Codex, the picker
+                    // script may not be deployed yet on first boot -- buildCodexSpawn
+                    // falls back to direct codex spawn (see src/main/providers/codex/spawn.ts).
+                    if (
+                      !session.shellOnly &&
+                      session.sessionType === 'local'
+                    ) {
+                      markSessionForResumePicker(session.id)
+                    }
+                    useSessionStore.getState().addSession(session)
+                    setShowGuidedConfig(false)
+                    setView('sessions')
+                  }}
+                />
+              ) : (
+                <>
+                  {renderSessions()}
+                  {renderOverlayView()}
+                </>
+              )}
+            </div>
+            <BottomBar currentView={view} onViewChange={setView} />
           </main>
         </div>
-        <BottomBar currentView={view} onViewChange={setView} />
         {showTraining && (
           <TrainingWalkthrough
             onClose={handleTrainingClose}
