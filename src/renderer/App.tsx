@@ -39,6 +39,7 @@ import StageEmptyState from './components/StageEmptyState'
 import { markSessionForResumePicker } from './utils/resumePicker'
 import { migrateColorRecords } from './utils/migrateIdentityColors'
 import { gatherLocalStorageData, hydrateStores, applyConfigColourMigration } from './utils/configHydration'
+import { isGitHubOnboardingDue as isGitHubOnboardingDuePredicate } from './utils/githubOnboarding'
 import { setupCloudAgentListener } from './stores/cloudAgentStore'
 import { setupTokenomicsListener } from './stores/tokenomicsStore'
 import { setupConductorMcpListener, useConductorMcpStore } from './stores/conductorMcpStore'
@@ -333,14 +334,13 @@ export default function App() {
   // — NOT a pure persistent-state read, but stable across React render
   // timing in a way that `showWhatsNew` / `showTraining` are not (those flip
   // after a 500ms postConfigInit timer).
-  const isGitHubOnboardingDue = (): boolean => {
-    if (!githubConfig) return false
-    if (onboardingDismissedThisSessionRef.current) return false
-    if (githubConfig.seenOnboardingVersion === 'permanent') return false
-    if (githubConfig.seenOnboardingVersion === __APP_VERSION__) return false
-    if (needsCliSetup) return false
-    return true
-  }
+  const isGitHubOnboardingDue = (): boolean =>
+    isGitHubOnboardingDuePredicate({
+      githubConfig,
+      dismissedThisSession: onboardingDismissedThisSessionRef.current,
+      appVersion: __APP_VERSION__,
+      needsCliSetup,
+    })
 
   // Single source of truth for when the GitHub onboarding modal opens. The
   // previous design also had handleWhatsNewClose / handleTrainingClose
