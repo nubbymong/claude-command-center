@@ -14,6 +14,8 @@ import LocalGitSection from './sections/LocalGitSection'
 import NotificationsSection from './sections/NotificationsSection'
 import SessionGitHubConfig from '../session/SessionGitHubConfig'
 import RateLimitBanner from './RateLimitBanner'
+import { resolveIdentityColor, bucketLegacyColorToKey } from '../../../shared/identity-colors'
+import { useResolvedTheme } from '../../hooks/useThemeController'
 
 interface Props {
   sessionId: string
@@ -48,6 +50,7 @@ export default function GitHubPanel({
   const setupDialogRef = useRef<HTMLDivElement | null>(null)
   const closeSetup = useCallback(() => setShowSetup(false), [])
   useFocusTrap(setupDialogRef, showSetup, closeSetup)
+  const theme = useResolvedTheme()
   const width = sessionState?.panelWidth ?? 340
 
   // Auto-close the setup modal once the user saves + integration flips on.
@@ -182,15 +185,20 @@ export default function GitHubPanel({
   // sections can opt in (chevrons, focus rings) without prop-drilling.
   // Same color the active tab underline + SessionHeader top border use,
   // so the eye traces a single continuous identity for the active session.
-  const sessionAccent = session?.color || '#737373'
+  // Resolve the session identity through the curated, theme-aware palette --
+  // NOT the raw `session.color` (which rendered as a glaring neon rail and
+  // ignored the active theme). The left accent rail is muted so it reads as a
+  // subtle identity cue, consistent with the session cards, not a hard line.
+  const sessionAccent = session
+    ? resolveIdentityColor(session.identityColorKey ?? bucketLegacyColorToKey(session.color ?? ''), theme)
+    : 'var(--text-muted)'
   return (
     <aside
-      className="border-l border-surface0 flex flex-col relative"
+      className="border-l flex flex-col relative"
       style={{
         background: 'var(--surface-raised)',
-        boxShadow: sessionAccent
-          ? `var(--shadow-raised), var(--highlight-inset), inset 3px 0 0 ${sessionAccent}`
-          : 'var(--shadow-raised), var(--highlight-inset)',
+        borderColor: 'var(--border-subtle)',
+        boxShadow: `var(--shadow-raised), var(--highlight-inset), inset 2px 0 0 color-mix(in srgb, ${sessionAccent} 45%, transparent)`,
         width,
         minWidth: 280,
         '--session-color': sessionAccent,
