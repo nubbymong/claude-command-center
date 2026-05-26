@@ -76,7 +76,9 @@ describe('bucketLegacyColorToKey -- names, passthrough, fallback', () => {
     expect(bucketLegacyColorToKey('#00ff00')).toBe('indigo')
   })
   it('routes an unknown non-status hex to the nearest identity key (pinned)', () => {
-    expect(bucketLegacyColorToKey('#8000ff')).toBe('slate-blue')
+    // Widened jewel-tone palette (UAT R3): #8000ff (a violet-purple) is now
+    // nearest to the `violet` swatch rather than the old slate-blue hex.
+    expect(bucketLegacyColorToKey('#8000ff')).toBe('violet')
   })
   it('falls back to mauve for unparseable input (empty / garbage / 3-digit)', () => {
     expect(bucketLegacyColorToKey('')).toBe('mauve')
@@ -96,7 +98,8 @@ describe('bucketLegacyColorToKeySource', () => {
     expect(bucketLegacyColorToKeySource('#00FFFF')).toEqual({ key: 'slate-blue', source: 'hex' })
   })
   it('reports source=nearest for an unknown but parseable hex', () => {
-    expect(bucketLegacyColorToKeySource('#8000ff')).toEqual({ key: 'slate-blue', source: 'nearest' })
+    // Widened jewel-tone palette (UAT R3): nearest is now `violet`.
+    expect(bucketLegacyColorToKeySource('#8000ff')).toEqual({ key: 'violet', source: 'nearest' })
   })
   it('reports source=fallback for unparseable input', () => {
     expect(bucketLegacyColorToKeySource('not-a-hex')).toEqual({ key: 'mauve', source: 'fallback' })
