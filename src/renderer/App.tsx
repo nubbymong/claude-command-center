@@ -831,16 +831,7 @@ export default function App() {
         )}
         <TitleBar sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
         <div className="flex flex-1 overflow-hidden">
-          <Sidebar currentView={view} onViewChange={setView} collapsed={!sidebarOpen} tourActive={showTraining || showTrainingAll} onShowFirstRun={() => setShowGuidedConfig(true)} onShowHelp={() => { setShowTrainingAll(true); setShowTraining(true) }} onUpdateRequested={() => {
-            const state = useSessionStore.getState()
-            if (state.sessions.length === 0) {
-              setIsClosing(true)
-              setIsUpdating(true)
-              window.electronAPI.update.installAndRestart().catch(() => { setIsClosing(false); setIsUpdating(false) })
-            } else {
-              setCloseDialog('update')
-            }
-          }} />
+          <Sidebar currentView={view} onViewChange={setView} collapsed={!sidebarOpen} tourActive={showTraining || showTrainingAll} onShowFirstRun={() => setShowGuidedConfig(true)} onShowHelp={() => { setShowTrainingAll(true); setShowTraining(true) }} />
           <main className="flex-1 flex flex-col overflow-hidden titlebar-no-drag">
             <div className="flex-1 flex flex-col overflow-hidden min-h-0 relative">
               {showGuidedConfig ? (
@@ -903,7 +894,16 @@ export default function App() {
                 </>
               )}
             </div>
-            <BottomBar currentView={view} onViewChange={setView} />
+            <BottomBar currentView={view} onViewChange={setView} onUpdateRequested={() => {
+              const state = useSessionStore.getState()
+              if (state.sessions.length === 0) {
+                setIsClosing(true)
+                setIsUpdating(true)
+                window.electronAPI.update.installAndRestart().catch(() => { setIsClosing(false); setIsUpdating(false) })
+              } else {
+                setCloseDialog('update')
+              }
+            }} />
           </main>
         </div>
         {showTraining && (

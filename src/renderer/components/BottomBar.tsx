@@ -1,19 +1,6 @@
 import React, { useEffect, useState } from 'react'
-import { useSessionStore } from '../stores/sessionStore'
-import { useSettingsStore, DEFAULT_STATUS_LINE } from '../stores/settingsStore'
+import { useSettingsStore } from '../stores/settingsStore'
 import { ViewType } from '../types/views'
-import RateLimitBar from './terminal/RateLimitBar'
-import { formatResetTime, formatTokens, formatDuration } from '../utils/terminalFormatting'
-import { useCodexReviewUsage } from '../hooks/useCodexReviewUsage'
-import { useRestartSession } from '../hooks/useRestartSession'
-import ToolbarPopup from './ToolbarPopup'
-import {
-  MODELS,
-  EFFORTS,
-  PERMISSION_MODES,
-  shortModelName,
-  isModelActive,
-} from '../lib/claude-cli-options'
 
 declare const __BUILD_TIME__: string
 declare const __APP_VERSION__: string
@@ -21,22 +8,23 @@ declare const __APP_VERSION__: string
 interface BottomBarProps {
   currentView: ViewType
   onViewChange: (v: ViewType) => void
+  /** Optional graceful update path. When provided, the Update pill defers to
+   *  it (App routes through a "save sessions, then restart" close dialog).
+   *  Falls back to a direct install + restart when omitted. */
+  onUpdateRequested?: () => void
 }
 
-// App-level bottom bar (v2 shell, P4 Task B). One row, three zones:
-//   LEFT   runtime: CLI status, version, beta chip, update indicator
-//   MIDDLE telemetry for the active session (respects statusLine show* flags)
-//   RIGHT  controls (Mode / Model / Compact / Restart) -- Claude only
-// Replaces the global StatusBar AND the per-session ContextBar. The CLI poll
-// and the "CLI not found" help modal are ported verbatim from StatusBar so no
-// CLI affordance is lost.
-export default function BottomBar({ currentView, onViewChange }: BottomBarProps) {
-  const activeSessionId = useSessionStore((s) => s.activeSessionId)
-  const session = useSessionStore((s) => s.sessions.find((x) => x.id === s.activeSessionId) || null)
-  const sl = useSettingsStore((s) => s.settings.statusLine) || DEFAULT_STATUS_LINE
+// Slim global runtime footer (v2 shell, UAT R2). Pinned full-width at the very
+// bottom of <main>. One left-aligned band:
+//   CLI status dot + "CLI" + version + Beta pill + Update pill
+// The per-session telemetry and the Mode/Model/Compact/Restart controls moved
+// up into SessionStatusStrip (above the command rows). The Update pill is now
+// the single update affordance -- the big green sidebar toast was removed -- so
+// it gently pulses while an update is available. The CLI poll and the
+// "CLI not found" help modal stay here verbatim so no CLI affordance is lost.
+export default function BottomBar({ currentView, onViewChange, onUpdateRequested }: BottomBarProps) {
+  void currentView
   const channel = useSettingsStore((s) => s.settings.updateChannel)
-  const codexReview = useCodexReviewUsage(session?.enableCodexReview ? activeSessionId : null)
-  const { restart } = useRestartSession(session, false)
 
   const [cliAvailable, setCliAvailable] = useState<boolean | null>(null)
   const [updateAvailable, setUpdateAvailable] = useState(false)
@@ -61,41 +49,12 @@ export default function BottomBar({ currentView, onViewChange }: BottomBarProps)
     return off
   }, [])
 
-  const [openPicker, setOpenPicker] = useState<'mode' | 'model' | null>(null)
-  const [lastMode, setLastMode] = useState<string | null>(null)
-  const [lastEffort, setLastEffort] = useState<string | null>(null)
-  const isClaude = (session?.provider ?? 'claude') === 'claude'
-
-  const write = (cmd: string) => {
-    if (activeSessionId) window.electronAPI.pty.write(activeSessionId, cmd)
-  }
-  const onMode = (_si: number, v: string) => {
-    setLastMode(v)
-    write(`/permission-mode ${v}\n`)
-    setOpenPicker(null)
-  }
-  const onModel = (si: number, v: string) => {
-    if (si === 0) {
-      write(`/model ${v}\n`)
-    } else {
-      setLastEffort(v)
-      write(`/effort ${v}\n`)
-    }
-    setOpenPicker(null)
-  }
-
-  const showCockpit = currentView === 'sessions' && !!session
-  const pct = session?.contextPercent ?? 0
-  // v2 context-meter thresholds: >85 danger, >=70 warning -- intentionally different
-  // from the old ContextBar (>80 danger, >50 warn) to reduce false-urgency at low fill.
-  const ctxColor = pct > 85 ? 'var(--status-danger)' : pct >= 70 ? 'var(--status-warning)' : 'var(--text-muted)'
-
   return (
     <div
       className="min-h-7 shrink-0 flex items-center gap-3 px-3 text-xs border-t"
       style={{ background: 'var(--surface-chrome)', color: 'var(--text-on-chrome)', borderColor: 'var(--border-subtle)' }}
     >
-      {/* LEFT -- runtime */}
+      {/* Runtime band */}
       <div className="flex items-center gap-3 shrink-0">
         <button
           className="flex items-center gap-1.5 focus-ring rounded"
@@ -121,8 +80,8 @@ export default function BottomBar({ currentView, onViewChange }: BottomBarProps)
         )}
         {updateAvailable && (
           <button
-            onClick={() => window.electronAPI.update.installAndRestart()}
-            className="px-1.5 py-px rounded-full text-[10px] font-medium focus-ring"
+            onClick={() => { if (onUpdateRequested) onUpdateRequested(); else window.electronAPI.update.installAndRestart() }}
+            className="footer-update-pulse px-1.5 py-px rounded-full text-[10px] font-medium focus-ring"
             style={{ color: 'var(--status-success)', background: 'color-mix(in srgb, var(--status-success) 15%, transparent)' }}
             title="Update available -- click to install and restart"
           >
@@ -130,132 +89,6 @@ export default function BottomBar({ currentView, onViewChange }: BottomBarProps)
           </button>
         )}
       </div>
-
-      <span className="w-px self-stretch my-1.5" style={{ background: 'var(--border-subtle)' }} aria-hidden />
-
-      {/* MIDDLE -- telemetry: inherits statusLine font + fontSize so Settings controls are honest */}
-      <div
-        className="flex items-center gap-3 flex-1 min-w-0 overflow-hidden"
-        style={{ fontSize: `${sl.fontSize}px`, fontFamily: sl.font === 'mono' ? "'JetBrains Mono', monospace" : undefined }}
-      >
-        {showCockpit && (
-          <>
-            {sl.showModel && session!.modelName && (
-              <span className="font-medium truncate shrink-0">
-                {session!.modelName}
-                {session!.reasoningEffort && (
-                  <span className="ml-1 font-normal" style={{ color: 'var(--text-muted)' }}>{session!.reasoningEffort}</span>
-                )}
-              </span>
-            )}
-            {sl.showTokens && session!.inputTokens != null && session!.contextWindowSize && (
-              <span className="tabular-nums shrink-0">{formatTokens(session!.inputTokens)} / {formatTokens(session!.contextWindowSize)}</span>
-            )}
-            {sl.showContextBar && session!.contextPercent != null && (
-              <span className="flex items-center gap-1.5 shrink-0">
-                <span className="w-16 h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--surface-sunken)' }}>
-                  <span className="block h-full rounded-full" style={{ width: `${pct}%`, background: ctxColor }} />
-                </span>
-                <span className="tabular-nums">{Math.round(pct)}%</span>
-              </span>
-            )}
-            {sl.showCost && session!.costUsd != null && (
-              <span className="tabular-nums shrink-0" title="API equivalent cost (not billed on Max plan)">API eq ${session!.costUsd.toFixed(4)}</span>
-            )}
-            {sl.showLinesChanged && session!.linesAdded != null && (
-              <span className="tabular-nums shrink-0" style={{ color: 'color-mix(in srgb, var(--status-success) 70%, var(--text-secondary))' }}>+{session!.linesAdded}</span>
-            )}
-            {sl.showLinesChanged && session!.linesRemoved ? (
-              <span className="tabular-nums shrink-0" style={{ color: 'color-mix(in srgb, var(--status-danger) 70%, var(--text-secondary))' }}>-{session!.linesRemoved}</span>
-            ) : null}
-            {sl.showDuration && session!.totalDurationMs != null && (
-              <span className="tabular-nums shrink-0" style={{ color: 'var(--text-muted)' }}>{formatDuration(session!.totalDurationMs)}</span>
-            )}
-            {sl.showRateLimits && session!.rateLimitCurrent != null && (
-              <span className="flex items-center gap-3 shrink-0">
-                <RateLimitBar label="5h" pct={session!.rateLimitCurrent} resets={session!.rateLimitCurrentResets} />
-                {session!.rateLimitWeekly != null && (
-                  <RateLimitBar label="7d" pct={session!.rateLimitWeekly} resets={session!.rateLimitWeeklyResets} />
-                )}
-                {session!.rateLimitExtra?.enabled && (
-                  <span className="tabular-nums" style={{ color: 'var(--text-muted)' }}>extra: <span className={session!.rateLimitExtra.utilization > 80 ? 'text-red' : ''}>${session!.rateLimitExtra.usedUsd.toFixed(2)}</span>/${session!.rateLimitExtra.limitUsd.toFixed(0)}</span>
-                )}
-              </span>
-            )}
-            {sl.showResetTime && session!.rateLimitCurrentResets && (
-              <span className="tabular-nums shrink-0" style={{ color: 'var(--text-muted)' }} title="5h window resets">resets {formatResetTime(session!.rateLimitCurrentResets)}</span>
-            )}
-            {codexReview && codexReview.reviewCount > 0 && (
-              <span className="tabular-nums shrink-0" style={{ color: 'var(--text-muted)' }}>review {codexReview.reviewCount}</span>
-            )}
-          </>
-        )}
-      </div>
-
-      {/* RIGHT -- controls (Claude only) */}
-      {showCockpit && isClaude && (
-        <>
-          <span className="w-px self-stretch my-1.5" style={{ background: 'var(--border-subtle)' }} aria-hidden />
-          <div className="flex items-center gap-1 shrink-0">
-            <div className="relative">
-              <button
-                onClick={() => setOpenPicker(openPicker === 'mode' ? null : 'mode')}
-                className="px-2 py-0.5 rounded bg-surface0/50 hover:bg-surface0 border border-surface1/40 focus-ring"
-                title="Permission mode"
-              >
-                Mode
-              </button>
-              {openPicker === 'mode' && (
-                <ToolbarPopup
-                  sections={[{ title: 'Mode', items: PERMISSION_MODES.map((m) => ({ ...m, active: m.value === lastMode })) }]}
-                  onSelect={onMode}
-                  onClose={() => setOpenPicker(null)}
-                />
-              )}
-            </div>
-            <div className="relative">
-              <button
-                onClick={() => setOpenPicker(openPicker === 'model' ? null : 'model')}
-                className="px-2 py-0.5 rounded bg-surface0/50 hover:bg-surface0 border border-surface1/40 focus-ring"
-                title="Model"
-              >
-                <span className="text-blue">{shortModelName(session!.modelName)}</span>
-              </button>
-              {openPicker === 'model' && (
-                <ToolbarPopup
-                  alignRight
-                  sections={[
-                    {
-                      title: 'Models',
-                      items: MODELS.map((m) => ({ ...m, active: isModelActive(m.value, session!.modelName || session!.model || '') })),
-                    },
-                    {
-                      title: 'Effort',
-                      items: EFFORTS.map((e) => ({ ...e, active: e.value === lastEffort })),
-                    },
-                  ]}
-                  onSelect={onModel}
-                  onClose={() => setOpenPicker(null)}
-                />
-              )}
-            </div>
-            <button
-              onClick={() => write('/compact\n')}
-              className="px-2 py-0.5 rounded bg-surface0/50 hover:bg-surface0 border border-surface1/40 focus-ring"
-              title="Compact the conversation"
-            >
-              Compact
-            </button>
-            <button
-              onClick={restart}
-              className="px-2 py-0.5 rounded text-overlay1 hover:text-text hover:bg-surface0 focus-ring"
-              title="Restart session"
-            >
-              Restart
-            </button>
-          </div>
-        </>
-      )}
 
       {/* CLI help modal -- ported verbatim from StatusBar so the
           "CLI not found -- click for help" path still works. */}

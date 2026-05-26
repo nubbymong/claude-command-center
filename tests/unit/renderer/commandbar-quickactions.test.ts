@@ -238,9 +238,12 @@ describe('CommandBar quick-actions strip (P4b)', () => {
     const chip = buttons(container).find((b) => (b.textContent ?? '').includes('Deploy'))
     expect(chip).toBeDefined()
 
-    // The chip itself must NOT paint its own background/border with the colour.
-    expect(chip!.style.backgroundColor).toBe('')
-    expect(chip!.style.borderColor).toBe('')
+    // UAT R2: the chip is a neutral token-driven pill. Its background/border
+    // must NOT be tinted with the command colour -- they use semantic surface
+    // and border tokens instead, so the colour reads only as a leading dot.
+    expect(chip!.style.background).toBe('var(--surface-raised)')
+    expect(chip!.style.borderColor).toBe('var(--border-subtle)')
+    expect(chip!.style.background).not.toContain('243')
 
     // A descendant dot carries the colour as inline backgroundColor.
     const dot = Array.from(chip!.querySelectorAll<HTMLElement>('span')).find(

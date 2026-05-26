@@ -7,6 +7,7 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import { useSessionStore } from '../stores/sessionStore'
 import { hasSpawned, markSpawned, killSessionPty } from '../ptyTracker'
 import CommandBar from './CommandBar'
+import SessionStatusStrip from './SessionStatusStrip'
 import SshFlowOverlay from './SshFlowOverlay'
 import { shouldUseResumePicker } from '../utils/resumePicker'
 import { stripCursorSequences } from '../utils/terminalFormatting'
@@ -593,6 +594,12 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
           }}
         />
       )}
+      {/* Per-session telemetry + Mode/Model/Compact/Restart controls. Sits
+          directly above the command rows (its old ContextBar position). Only
+          the primary Claude/Codex pane gets it -- the partner shell does not
+          (gate on !shellOnly). Keyed to THIS terminal's sessionId so the
+          telemetry and control writes are per-terminal accurate. */}
+      {!shellOnly && <SessionStatusStrip sessionId={sessionId} />}
       <CommandBar
         sessionId={sessionId}
         configId={configId}

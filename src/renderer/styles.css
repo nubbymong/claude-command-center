@@ -264,3 +264,18 @@ body {
   to   { max-height: 240px; opacity: 1; }
 }
 
+/* Footer Update pill: gentle attention pulse when an update is available.
+   The pill is now the single update affordance (the big green sidebar toast
+   was removed in UAT R2), so a subtle slow pulse draws the eye without
+   nagging. Respects prefers-reduced-motion -- no animation when reduced. */
+@keyframes footer-update-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.55; }
+}
+.footer-update-pulse {
+  animation: footer-update-pulse 1.8s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .footer-update-pulse { animation: none; }
+}
+
