@@ -15,6 +15,23 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '1.5.3',
+    date: '2026-05-26',
+    highlights: "V2 command-center shell -- a ground-up visual redesign: dense session cards, a single bottom instrument bar, a cleaner header and terminal framing, light/dark theming, and per-session identity colours.",
+    changes: [
+      { type: 'feature', description: "New 'Command Workbench' shell. The session list is rebuilt as dense two-line cards with an unmistakable selected state (identity rail, tint, elevation, bold name, chip); health reads only as a status dot and pill; keyboard focus is a quiet dashed ring distinct from selection" },
+      { type: 'feature', description: "Single bottom instrument bar replaces the old status bar, the per-terminal context bar, and the dead toolbar: runtime (CLI, version, channel, update) on the left, live session telemetry inline in the middle, and Mode / Model / Compact / Restart controls on the right" },
+      { type: 'feature', description: "Per-session identity colours, resolved per theme, shown consistently on cards, tabs, and the header accent -- a curated non-status palette that never collides with running/warning/error status or the teal focus ring. Legacy session colours are migrated once, with a dismissible notice" },
+      { type: 'feature', description: "Light and dark themes with a one-click Light/Dark flip in the title bar; the full Dark / Light / System choice lives in Settings" },
+      { type: 'feature', description: "A passive breadcrumb strip in the header (working directory + detected repo), a quieter info-style repo auto-detect suggestion, and a collapsible command bar with neutral command chips" },
+      { type: 'improvement', description: "Context-aware empty state: with saved configs you get launch cards plus 'Show all configs'; with none, a clear 'Create a terminal config' action. Saved configs are reachable by keyboard, not hover-only" },
+      { type: 'improvement', description: "Terminal container framing -- comfortable padding and a real left gutter so text no longer crowds the edge" },
+      { type: 'fix', description: "Theme toggle no longer shows duplicate icons or dead clicks -- every click reliably and visibly changes the theme" },
+      { type: 'fix', description: "Session attention pulse no longer re-fires when you simply switch away from a session; it only re-arms on genuine new keyboard input, not focus or mouse reports" },
+      { type: 'fix', description: "New branded startup splash" },
+    ]
+  },
+  {
     version: '1.5.2',
     date: '2026-05-24',
     highlights: "Per-session account attribution -- see which Claude/Codex account each session and dollar belongs to. Plus the Electron 38 engine upgrade.",
