@@ -22,7 +22,6 @@ import SectionHeader from './sidebar/SectionHeader'
 import GroupHeader from './sidebar/GroupHeader'
 import SessionSectionHeader from './sidebar/SessionSectionHeader'
 import SessionGroupHeader from './sidebar/SessionGroupHeader'
-import UpdatePanel from './sidebar/UpdatePanel'
 import PinnedConfigsPanel from './sidebar/PinnedConfigsPanel'
 import FirstRunCard from './FirstRunCard'
 import ColourMigrationNotice from './ColourMigrationNotice'
@@ -56,7 +55,6 @@ function injectAttentionStyles() {
 interface Props {
   currentView: ViewType
   onViewChange: (view: ViewType) => void
-  onUpdateRequested?: () => void
   collapsed?: boolean
   onShowHelp?: () => void
   onShowFirstRun?: () => void
@@ -67,7 +65,7 @@ interface Props {
   tourActive?: boolean
 }
 
-export default function Sidebar({ currentView, onViewChange, onUpdateRequested, collapsed, onShowHelp, onShowFirstRun, tourActive }: Props) {
+export default function Sidebar({ currentView, onViewChange, collapsed, onShowHelp, onShowFirstRun, tourActive }: Props) {
   const launchConfig = useLaunchConfig()
   const { sessions, activeSessionId, setActiveSession, removeSession, updateSession } = useSessionStore()
   const { configs, groups, sections, addConfig, updateConfig, removeConfig, addGroup, renameGroup, removeGroup, toggleGroupCollapsed, moveConfigToGroup, addSection, renameSection, removeSection, toggleSectionCollapsed, moveGroupToSection, moveConfigToSection, togglePinned, duplicateConfig, reorderConfigs } = useConfigStore()
@@ -85,9 +83,6 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
   const serverRunning = useConductorMcpStore((s) => s.serverRunning)
   const [showNewDialog, setShowNewDialog] = useState(false)
   const [editingConfig, setEditingConfig] = useState<TerminalConfig | null>(null)
-  const [updateAvailable, setUpdateAvailable] = useState(false)
-  const [updateVersion, setUpdateVersion] = useState<string | null>(null)
-  const [updating, setUpdating] = useState(false)
   const [contextMenuConfig, setContextMenuConfig] = useState<{ configId: string; x: number; y: number } | null>(null)
   const [renamingGroupId, setRenamingGroupId] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
@@ -124,27 +119,9 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
     injectAttentionStyles()
   }, [])
 
-  // Check for updates on startup and subscribe to push notifications
-  useEffect(() => {
-    window.electronAPI.update.check().then((available) => {
-      setUpdateAvailable(available)
-    }).catch(() => { /* ignore startup check failure */ })
-    const unsubAvailable = window.electronAPI.update.onAvailable((available, version) => {
-      setUpdateAvailable(available)
-      if (version) setUpdateVersion(version)
-    })
-    return () => { unsubAvailable() }
-  }, [])
-
-  const handleInstallUpdate = () => {
-    if (updating) return
-    if (onUpdateRequested) {
-      onUpdateRequested()
-    } else {
-      setUpdating(true)
-      window.electronAPI.update.installAndRestart().catch(() => setUpdating(false))
-    }
-  }
+  // Update availability + install moved to the global runtime footer
+  // (BottomBar) in UAT R2. The big green sidebar toast was removed; the
+  // footer Update pill is now the single update affordance.
 
   // New config shortcut (configurable)
   useEffect(() => {
@@ -988,13 +965,6 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
         />
       )}
 
-      {/* Update panel -- install CTA only; channel + check live in Settings */}
-      <UpdatePanel
-        updateAvailable={updateAvailable}
-        updateVersion={updateVersion}
-        updating={updating}
-        onInstallUpdate={handleInstallUpdate}
-      />
     </aside>
   )
 }

@@ -4,6 +4,8 @@ import Sidebar from './components/Sidebar'
 import TabBar from './components/TabBar'
 import SessionHeader from './components/SessionHeader'
 import TerminalView, { killSessionPty } from './components/TerminalView'
+import CommandBar from './components/CommandBar'
+import SessionStatusStrip from './components/SessionStatusStrip'
 import WebviewPane from './components/WebviewPane'
 import ExcalidrawPane from './components/ExcalidrawPane'
 import { useWebviewStore } from './stores/webviewStore'
@@ -39,6 +41,7 @@ import StageEmptyState from './components/StageEmptyState'
 import { markSessionForResumePicker } from './utils/resumePicker'
 import { migrateColorRecords } from './utils/migrateIdentityColors'
 import { gatherLocalStorageData, hydrateStores, applyConfigColourMigration } from './utils/configHydration'
+import { isGitHubOnboardingDue as isGitHubOnboardingDuePredicate } from './utils/githubOnboarding'
 import { setupCloudAgentListener } from './stores/cloudAgentStore'
 import { setupTokenomicsListener } from './stores/tokenomicsStore'
 import { setupConductorMcpListener, useConductorMcpStore } from './stores/conductorMcpStore'
@@ -333,14 +336,13 @@ export default function App() {
   // — NOT a pure persistent-state read, but stable across React render
   // timing in a way that `showWhatsNew` / `showTraining` are not (those flip
   // after a 500ms postConfigInit timer).
-  const isGitHubOnboardingDue = (): boolean => {
-    if (!githubConfig) return false
-    if (onboardingDismissedThisSessionRef.current) return false
-    if (githubConfig.seenOnboardingVersion === 'permanent') return false
-    if (githubConfig.seenOnboardingVersion === __APP_VERSION__) return false
-    if (needsCliSetup) return false
-    return true
-  }
+  const isGitHubOnboardingDue = (): boolean =>
+    isGitHubOnboardingDuePredicate({
+      githubConfig,
+      dismissedThisSession: onboardingDismissedThisSessionRef.current,
+      appVersion: __APP_VERSION__,
+      needsCliSetup,
+    })
 
   // Single source of truth for when the GitHub onboarding modal opens. The
   // previous design also had handleWhatsNewClose / handleTrainingClose
@@ -610,7 +612,7 @@ export default function App() {
             />
           )
         })()}
-        <div className="flex-1 flex flex-row" style={{ minHeight: 0 }}>
+        <div className="relative flex-1 flex flex-row" style={{ minHeight: 0 }}>
           <div className="flex-1 flex flex-col" style={{ minWidth: 0, minHeight: 0 }}>
             {sessions.map((session) => {
               const isShowingPartner = partnerActive.has(session.id)
@@ -640,16 +642,11 @@ export default function App() {
                     <TerminalView
                       key={session.id + '-main-' + session.createdAt}
                       sessionId={session.id}
-                      parentSessionId={session.id}
                       configId={session.configId}
                       cwd={session.sessionType === 'local' ? session.workingDirectory : undefined}
                       shellOnly={session.shellOnly}
                       ssh={session.sshConfig}
                       isActive={session.id === activeSessionId && view === 'sessions' && !isShowingPartner && !altPaneShowing}
-                      partnerEnabled={hasPartner}
-                      isPartnerActive={isShowingPartner}
-                      onTogglePartner={() => togglePartner(session.id)}
-                      partnerSessionId={hasPartner ? partnerPtyId : undefined}
                       legacyVersion={session.legacyVersion}
                       agentIds={session.agentIds}
                       effortLevel={session.effortLevel}
@@ -671,16 +668,11 @@ export default function App() {
                       <TerminalView
                         key={partnerPtyId + '-' + session.createdAt}
                         sessionId={partnerPtyId}
-                        parentSessionId={session.id}
                         configId={session.configId}
                         cwd={session.partnerTerminalPath}
                         shellOnly={true}
                         elevated={session.partnerElevated}
                         isActive={session.id === activeSessionId && view === 'sessions' && isShowingPartner && !altPaneShowing}
-                        partnerEnabled={true}
-                        isPartnerActive={isShowingPartner}
-                        onTogglePartner={() => togglePartner(session.id)}
-                        partnerSessionId={partnerPtyId}
                       />
                     </div>
                   )}
@@ -698,6 +690,28 @@ export default function App() {
           </div>
           {activeSession && <GitHubPanel sessionId={activeSession.id} />}
         </div>
+        {/* Per-session telemetry strip + command rows live BELOW the
+            terminal/GitHub-panel row so they span the full content-column
+            width and the GitHub panel ends above them. Rendered once for the
+            ACTIVE session only -- switching tabs re-resolves these against
+            `activeSession`. The telemetry strip is hidden for shell-only
+            sessions (matches the old per-TerminalView gate). */}
+        {activeSession && !activeSession.shellOnly && (
+          <SessionStatusStrip sessionId={activeSession.id} />
+        )}
+        {activeSession && (
+          <CommandBar
+            key={activeSession.id + '-commandbar'}
+            sessionId={activeSession.id}
+            configId={activeSession.configId}
+            sessionType={activeSession.sessionType === 'ssh' ? 'ssh' : 'local'}
+            partnerEnabled={!!activeSession.partnerTerminalPath}
+            isPartnerActive={partnerActive.has(activeSession.id)}
+            onTogglePartner={() => togglePartner(activeSession.id)}
+            partnerSessionId={activeSession.partnerTerminalPath ? activeSession.id + '-partner' : undefined}
+            parentSessionId={activeSession.id}
+          />
+        )}
       </div>
     )
   }
@@ -831,16 +845,7 @@ export default function App() {
         )}
         <TitleBar sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
         <div className="flex flex-1 overflow-hidden">
-          <Sidebar currentView={view} onViewChange={setView} collapsed={!sidebarOpen} tourActive={showTraining || showTrainingAll} onShowFirstRun={() => setShowGuidedConfig(true)} onShowHelp={() => { setShowTrainingAll(true); setShowTraining(true) }} onUpdateRequested={() => {
-            const state = useSessionStore.getState()
-            if (state.sessions.length === 0) {
-              setIsClosing(true)
-              setIsUpdating(true)
-              window.electronAPI.update.installAndRestart().catch(() => { setIsClosing(false); setIsUpdating(false) })
-            } else {
-              setCloseDialog('update')
-            }
-          }} />
+          <Sidebar currentView={view} onViewChange={setView} collapsed={!sidebarOpen} tourActive={showTraining || showTrainingAll} onShowFirstRun={() => setShowGuidedConfig(true)} onShowHelp={() => { setShowTrainingAll(true); setShowTraining(true) }} />
           <main className="flex-1 flex flex-col overflow-hidden titlebar-no-drag">
             <div className="flex-1 flex flex-col overflow-hidden min-h-0 relative">
               {showGuidedConfig ? (
@@ -903,8 +908,23 @@ export default function App() {
                 </>
               )}
             </div>
-            <BottomBar currentView={view} onViewChange={setView} />
           </main>
+        </div>
+        {/* Runtime footer spans the FULL app width (under the sidebar too) so
+            CLI/version sits at the absolute bottom-left of the app -- a global
+            status bar, distinct from the per-session statusline strip which
+            lives above the command rows inside the terminal column. */}
+        <div className="titlebar-no-drag shrink-0">
+          <BottomBar currentView={view} onViewChange={setView} onUpdateRequested={() => {
+            const state = useSessionStore.getState()
+            if (state.sessions.length === 0) {
+              setIsClosing(true)
+              setIsUpdating(true)
+              window.electronAPI.update.installAndRestart().catch(() => { setIsClosing(false); setIsUpdating(false) })
+            } else {
+              setCloseDialog('update')
+            }
+          }} />
         </div>
         {showTraining && (
           <TrainingWalkthrough

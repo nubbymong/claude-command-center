@@ -15,6 +15,20 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '1.5.5',
+    date: '2026-05-26',
+    highlights: "Bottom-region rework from UAT: the per-session status line now sits directly above the command rows, CLI/version is a slim status bar at the bottom-left, and the GitHub panel ends above the command rows with a floating logo button when collapsed.",
+    changes: [
+      { type: 'improvement', description: "The per-session status line (model, tokens, context, rate limits) and the Mode / Model / Compact / Restart controls now sit directly above the command rows, where the old context bar lived" },
+      { type: 'improvement', description: "CLI, version and channel are now a slim global status bar pinned to the bottom-left of the window, spanning the full width -- separate from the per-session status line" },
+      { type: 'fix', description: "The GitHub panel no longer stretches down past the status line and command rows. It ends above them, beside the terminal" },
+      { type: 'improvement', description: "When the GitHub panel is collapsed it is now a floating GitHub-logo button in the top-right corner instead of a thin vertical bar (with a coloured hover)" },
+      { type: 'fix', description: "The 'New: GitHub sidebar' onboarding popup no longer reappears on every launch once you have a GitHub account configured" },
+      { type: 'improvement', description: "The update notification is no longer duplicated. The large 'Update Available' card is gone; the status-bar Update pill gently pulses when an update is ready" },
+      { type: 'improvement', description: "Command chips and the Mode / Model / Compact / Restart controls restyled into one consistent set; the model name shows properly and Restart is set apart" },
+    ]
+  },
+  {
     version: '1.5.4',
     date: '2026-05-26',
     highlights: "V2 shell polish from first-look feedback: the bottom instrument bar now sits under the terminal only, inactive sessions keep their identity colour, and the global/custom command rows follow the theme.",

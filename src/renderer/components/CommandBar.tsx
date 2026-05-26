@@ -370,6 +370,12 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
     const argsTitle = cmd.defaultArgs?.length
       ? `${cmd.prompt}\nArgs: ${cmd.defaultArgs.join(' ')}\nCtrl+click to customize args`
       : (cmd.label || cmd.prompt)
+    // Token-driven neutral pill (UAT R2 Task 4). The command's colour reads
+    // as a small leading dot; the surface stays neutral so the strip is calm
+    // and consistent with the SessionStatusStrip control cluster. Drag-over
+    // keeps a transient accent ring -- an affordance, not the command colour.
+    // Hover is applied via inline style so it tracks semantic tokens (and
+    // both themes) rather than legacy Catppuccin utility classes.
     return (
       <button
         key={cmd.id}
@@ -380,17 +386,17 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
         onDragEnd={handleDragEnd}
         onClick={(e) => handleClick(cmd, e)}
         onContextMenu={(e) => { e.stopPropagation(); handleContextMenu(e, cmd.id) }}
-        className={`flex items-center gap-1.5 px-2.5 py-0.5 text-xs rounded border whitespace-nowrap shrink-0 transition-colors focus-ring ${
-          isDragOver
-            ? 'border-blue/50 bg-surface0/70 text-text'
-            : 'bg-surface0/50 hover:bg-surface0 border-surface1/40 hover:border-surface1 text-subtext0 hover:text-text'
-        }`}
+        className="flex items-center gap-1.5 px-2 py-0.5 text-xs rounded-md border whitespace-nowrap shrink-0 transition-colors duration-150 focus-ring"
         style={{
           opacity: isDragging ? 0.4 : 1,
           cursor: isDragging ? 'grabbing' : 'grab',
+          background: isDragOver ? 'var(--surface-overlay)' : 'var(--surface-raised)',
+          color: isDragOver ? 'var(--text-primary)' : 'var(--text-secondary)',
+          borderColor: isDragOver ? 'var(--brand)' : 'var(--border-subtle)',
           borderLeftWidth: isDragOver ? '2px' : undefined,
-          borderLeftColor: isDragOver ? 'var(--status-info)' : undefined,
         }}
+        onMouseEnter={(e) => { if (!isDragging) { e.currentTarget.style.background = 'var(--surface-overlay)'; e.currentTarget.style.color = 'var(--text-primary)' } }}
+        onMouseLeave={(e) => { if (!isDragOver) { e.currentTarget.style.background = 'var(--surface-raised)'; e.currentTarget.style.color = 'var(--text-secondary)' } }}
         title={argsTitle}
       >
         <span
@@ -398,9 +404,9 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
           style={{ backgroundColor: color }}
           aria-hidden
         />
-        {cmd.label}
+        <span className="truncate">{cmd.label}</span>
         {hasArgs && (
-          <svg width="7" height="7" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.3" className="text-overlay0 shrink-0 opacity-50">
+          <svg width="7" height="7" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.3" className="shrink-0 opacity-50" style={{ color: 'var(--text-muted)' }}>
             <path d="M2 3.5l3 3 3-3" />
           </svg>
         )}
@@ -472,10 +478,15 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
                   onDragEnd={handleDragEnd}
                   onClick={() => toggleSection(section.id)}
                   onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setContextMenu({ x: e.clientX, y: e.clientY, sectionId: section.id }) }}
-                  className={`flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium text-subtext0 hover:text-text transition-colors shrink-0 rounded hover:bg-surface0/50 border cursor-grab ${
-                    isDropTarget ? 'border-blue/50 bg-blue/10 text-text' : 'border-surface1/40'
-                  } ${isSectionDragging ? 'opacity-40' : ''}`}
-                  title={`${section.name} (${sectionCmds.length}) — click to ${isCollapsed ? 'expand' : 'collapse'}, drag to reorder, right-click for options`}
+                  className={`flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium transition-colors duration-150 shrink-0 rounded-md border cursor-grab focus-ring ${isSectionDragging ? 'opacity-40' : ''}`}
+                  style={{
+                    background: isDropTarget ? 'var(--surface-overlay)' : 'var(--surface-raised)',
+                    color: isDropTarget ? 'var(--text-primary)' : 'var(--text-secondary)',
+                    borderColor: isDropTarget ? 'var(--brand)' : 'var(--border-subtle)',
+                  }}
+                  onMouseEnter={(e) => { if (!isDropTarget) { e.currentTarget.style.background = 'var(--surface-overlay)'; e.currentTarget.style.color = 'var(--text-primary)' } }}
+                  onMouseLeave={(e) => { if (!isDropTarget) { e.currentTarget.style.background = 'var(--surface-raised)'; e.currentTarget.style.color = 'var(--text-secondary)' } }}
+                  title={`${section.name} (${sectionCmds.length}) -- click to ${isCollapsed ? 'expand' : 'collapse'}, drag to reorder, right-click for options`}
                 >
                   <svg
                     width="7" height="7" viewBox="0 0 8 8" fill="none" stroke="currentColor" strokeWidth="1.5"
@@ -597,13 +608,13 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
           {/* Row 2: Claude commands */}
           {claudeCommands.length > 0 && (
             <div className="flex items-center gap-1 px-2 py-0.5 border-t overflow-x-auto" style={{ background: 'var(--surface-chrome)', borderColor: 'var(--border-subtle)' }} onContextMenu={(e) => { e.stopPropagation(); handleContextMenu(e, undefined, 'claude') }}>
-              {/* Section icon: Claude asterisk */}
-              <div className="shrink-0 text-peach/60" title="Claude Commands">
+              {/* Section icon: Claude asterisk -- quiet leading label */}
+              <div className="shrink-0" title="Claude Commands" style={{ color: 'var(--text-muted)' }}>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
                   <path d="M12 2v8.5M12 13.5V22M2 12h8.5M13.5 12H22M4.93 4.93l6.01 6.01M13.06 13.06l6.01 6.01M19.07 4.93l-6.01 6.01M10.94 13.06l-6.01 6.01" />
                 </svg>
               </div>
-              <div className="w-px h-4 bg-surface1 mx-0.5" />
+              <div className="w-px h-4 mx-0.5" style={{ background: 'var(--border-subtle)' }} />
               {renderGroupedCommands(claudeCommands, 'claude')}
             </div>
           )}
@@ -611,15 +622,15 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
           {/* Row 3: Partner commands */}
           {showPartnerRow && (
             <div className="flex items-center gap-1 px-2 py-0.5 border-t overflow-x-auto" style={{ background: 'var(--surface-chrome)', borderColor: 'var(--border-subtle)' }} onContextMenu={(e) => { e.stopPropagation(); handleContextMenu(e, undefined, 'partner') }}>
-              {/* Section icon: </> code */}
-              <div className="shrink-0 text-green/60" title="Partner Terminal Commands">
+              {/* Section icon: </> code -- quiet leading label */}
+              <div className="shrink-0" title="Partner Terminal Commands" style={{ color: 'var(--text-muted)' }}>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                   <polyline points="7 8 3 12 7 16" />
                   <polyline points="17 8 21 12 17 16" />
                   <line x1="14" y1="4" x2="10" y2="20" />
                 </svg>
               </div>
-              <div className="w-px h-4 bg-surface1 mx-0.5" />
+              <div className="w-px h-4 mx-0.5" style={{ background: 'var(--border-subtle)' }} />
               {renderGroupedCommands(partnerCommands, 'partner')}
             </div>
           )}

@@ -264,3 +264,34 @@ body {
   to   { max-height: 240px; opacity: 1; }
 }
 
+/* Footer Update pill: gentle attention pulse when an update is available.
+   The pill is now the single update affordance (the big green sidebar toast
+   was removed in UAT R2), so a subtle slow pulse draws the eye without
+   nagging. Respects prefers-reduced-motion -- no animation when reduced. */
+@keyframes footer-update-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.55; }
+}
+.footer-update-pulse {
+  animation: footer-update-pulse 1.8s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .footer-update-pulse { animation: none; }
+}
+
+/* Collapsed GitHub panel: floating logo FAB (both the not-configured and
+   the user-collapsed states). It overlays the terminal's top-right corner
+   instead of a thin vertical rail. Muted at rest, warming to the mauve
+   accent on hover so the octocat reads as an interactive GitHub affordance
+   rather than a dead glyph. Mauve is defined in both light and dark themes
+   and stays legible against the raised-surface FAB in each. Smooth 180ms
+   colour + background fade keeps it from feeling abrupt. */
+.gh-fab {
+  color: var(--color-overlay0);
+  transition: color 180ms ease, background-color 180ms ease;
+}
+.gh-fab:hover {
+  color: var(--color-mauve);
+  background-color: var(--surface-overlay) !important;
+}
+
