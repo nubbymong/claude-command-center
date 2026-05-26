@@ -52,6 +52,7 @@ import { startConductorMcpServer, stopConductorMcpServer, startBrowserAtBoot } f
 import { readConfig } from './config-manager'
 import { loadCredential, saveCredential, deleteCredential } from './credential-store'
 import { resolveConductorMcpPort } from '../shared/mcp-ports'
+import { IPC } from '../shared/ipc-channels'
 
 import { migrateRegistryKeys } from './registry'
 import { installGlobalErrorHandlers, logInfo, logError, closeDebugLogger } from './debug-logger'
