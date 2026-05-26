@@ -612,7 +612,7 @@ export default function App() {
             />
           )
         })()}
-        <div className="flex-1 flex flex-row" style={{ minHeight: 0 }}>
+        <div className="relative flex-1 flex flex-row" style={{ minHeight: 0 }}>
           <div className="flex-1 flex flex-col" style={{ minWidth: 0, minHeight: 0 }}>
             {sessions.map((session) => {
               const isShowingPartner = partnerActive.has(session.id)

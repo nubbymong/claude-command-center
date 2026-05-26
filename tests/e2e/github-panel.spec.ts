@@ -2,7 +2,7 @@
  * E2E for the GitHub sidebar panel states.
  *
  * Covers renderer shell behavior that doesn't require network or OAuth:
- *   - Integration-disabled rail renders with a Configure / GH button
+ *   - Integration-disabled state renders a floating logo FAB (Configure)
  *   - Ctrl+/ (⌘+/ on Mac) toggles panelVisible
  *   - Empty-state copy for AuthProfilesList surfaces when no profiles
  *
@@ -43,7 +43,7 @@ test.afterAll(async () => {
 })
 
 test.describe('GitHub Panel states', () => {
-  test('rail renders when integration is disabled', async () => {
+  test('floating logo FAB renders when integration is disabled', async () => {
     // Dismiss first-launch modals.
     for (let i = 0; i < 4; i++) {
       await page.keyboard.press('Escape')
@@ -75,16 +75,14 @@ test.describe('GitHub Panel states', () => {
       return
     }
 
-    // When integration is disabled (default), the panel renders an aside
-    // with aria-label "GitHub panel (integration not configured)" containing
-    // a Configure button. This selector is stable across renders.
-    const railPresent = await page.evaluate(() => {
-      const aside = document.querySelector(
-        'aside[aria-label^="GitHub panel"]',
-      )
-      return !!aside
+    // When integration is disabled (default), the panel renders a floating
+    // logo FAB (no thin rail) with aria-label "Configure GitHub for this
+    // session". This selector is stable across renders.
+    const fabPresent = await page.evaluate(() => {
+      const fab = document.querySelector('button[data-testid="gh-fab"]')
+      return !!fab
     })
-    expect(railPresent).toBe(true)
+    expect(fabPresent).toBe(true)
   })
 
   test('Ctrl+/ toggles panel visibility in store', async () => {
@@ -94,18 +92,20 @@ test.describe('GitHub Panel states', () => {
     // here is "the keypress doesn't crash the app", not a strict
     // before/after visibility assertion (the rail also renders for the
     // integration-disabled case, so visibility may not flip).
-    const before = await page.evaluate(() => {
-      return document.querySelector('aside[aria-label^="GitHub panel"]') !== null
-    })
+    // Either the full panel aside or the collapsed/not-configured FAB is
+    // present; probe both so the assertion is state-agnostic.
+    const probe = () =>
+      page.evaluate(() =>
+        document.querySelector('aside[aria-label="GitHub panel"], button[data-testid="gh-fab"]') !== null,
+      )
+    const before = await probe()
     // Dispatch Ctrl+/ (or Cmd+/ on Mac) — the panel's own useEffect handles
     // the shortcut. We don't assert the exact visibility transition because
-    // the rail shows even in the integration-disabled case; we just assert
+    // the FAB shows even in the integration-disabled case; we just assert
     // that the keypress doesn't throw.
     await page.keyboard.press('Control+/')
     await page.waitForTimeout(150)
-    const after = await page.evaluate(() => {
-      return document.querySelector('aside[aria-label^="GitHub panel"]') !== null
-    })
+    const after = await probe()
     // Both before/after should be boolean — the shortcut should not crash
     // the renderer.
     expect(typeof before).toBe('boolean')

@@ -279,3 +279,19 @@ body {
   .footer-update-pulse { animation: none; }
 }
 
+/* Collapsed GitHub panel: floating logo FAB (both the not-configured and
+   the user-collapsed states). It overlays the terminal's top-right corner
+   instead of a thin vertical rail. Muted at rest, warming to the mauve
+   accent on hover so the octocat reads as an interactive GitHub affordance
+   rather than a dead glyph. Mauve is defined in both light and dark themes
+   and stays legible against the raised-surface FAB in each. Smooth 180ms
+   colour + background fade keeps it from feeling abrupt. */
+.gh-fab {
+  color: var(--color-overlay0);
+  transition: color 180ms ease, background-color 180ms ease;
+}
+.gh-fab:hover {
+  color: var(--color-mauve);
+  background-color: var(--surface-overlay) !important;
+}
+
