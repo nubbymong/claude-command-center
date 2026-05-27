@@ -50,6 +50,7 @@ import { useCodexAccountStore } from './stores/codexAccountStore'
 import GitHubPanel from './components/github/GitHubPanel'
 import OnboardingModal from './components/github/onboarding/OnboardingModal'
 import AutoDetectBanner from './components/github/AutoDetectBanner'
+import { handleAutoDetectAccept } from './utils/githubAutoDetectAccept'
 import RepoBreadcrumb from './components/RepoBreadcrumb'
 import type { SessionState, SavedSession } from './types/electron'
 import { buildSessionState } from './session-persistence'
@@ -561,33 +562,36 @@ export default function App() {
             <AutoDetectBanner
               cwd={activeSession.workingDirectory!}
               onAccept={async (slug) => {
-                // Persist the detected repo onto the session BEFORE
-                // navigating so the GitHub config tab reflects the
-                // auto-filled value. Without this write the slug was
-                // silently discarded and the user had to re-enter it.
-                try {
-                  const patch = {
-                    repoUrl: `https://github.com/${slug}`,
-                    repoSlug: slug,
-                    autoDetected: true,
-                  }
-                  await window.electronAPI.github.updateSessionConfig(
-                    activeSession.id,
-                    patch,
-                  )
-                  useSessionStore.getState().updateSession(activeSession.id, {
-                    githubIntegration: {
-                      ...(gi ?? { enabled: false, autoDetected: false }),
-                      ...patch,
+                // Logic lives in utils/githubAutoDetectAccept so it is unit-
+                // testable (App.tsx is enormous). It fixes two bugs the
+                // inline version had:
+                //   #436 -- now writes the patch to the parent CONFIG too,
+                //   so the GH repo selection persists across app restarts.
+                //   #437 -- if the user already has at least one auth
+                //   profile, the click auto-enables the integration, picks
+                //   a profile by slug owner, and stays on the session
+                //   view. The legacy "send to Settings" path only fires
+                //   for unauthed users.
+                await handleAutoDetectAccept(
+                  slug,
+                  {
+                    id: activeSession.id,
+                    configId: activeSession.configId,
+                    githubIntegration: gi,
+                  },
+                  {
+                    electronAPI: window.electronAPI,
+                    updateSession: (id, patch) =>
+                      useSessionStore.getState().updateSession(id, patch),
+                    updateConfig: (id, patch) =>
+                      useConfigStore.getState().updateConfig(id, patch),
+                    profiles: useGitHubStore.getState().profiles,
+                    navigateToGitHubSettings: () => {
+                      setPendingSettingsTab('github')
+                      setView('settings')
                     },
-                  })
-                } catch {
-                  // Fall through: we still send the user to the GitHub
-                  // tab so they can configure manually. Losing the write
-                  // is fine; losing the navigation would be worse.
-                }
-                setPendingSettingsTab('github')
-                setView('settings')
+                  },
+                )
               }}
               onEdit={() => {
                 setPendingSettingsTab('github')
