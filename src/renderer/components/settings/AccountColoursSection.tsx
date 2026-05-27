@@ -68,7 +68,7 @@ export default function AccountColoursSection() {
         {rows.map((email) => (
           <div key={email} className="flex items-center gap-2">
             <Swatch value={overrides?.[email]} dataTestId={`swatch-${email}`} theme={theme}
-              onChange={(v) => setOverride(email, v)} />
+              onChange={(v) => setOverride(email, v)} label={email} />
             <span className="text-sm text-text truncate min-w-0" title={email}>
               {middleTruncateEmail(email, 34)}
             </span>
@@ -98,7 +98,7 @@ export default function AccountColoursSection() {
           className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-1.5 text-sm text-text flex-1 focus:outline-none focus:border-blue/50 placeholder:text-overlay0 transition-colors"
         />
         <Swatch value={addKey} dataTestId="add-email-swatch" theme={theme}
-          onChange={(v) => setAddKey((v === AUTO ? IDENTITY_COLOR_KEYS[0] : v) as IdentityColorKey)} includeAuto={false} />
+          onChange={(v) => setAddKey((v === AUTO ? IDENTITY_COLOR_KEYS[0] : v) as IdentityColorKey)} includeAuto={false} label="new account" />
         <button
           data-testid="add-email-btn"
           onClick={onAdd}
@@ -112,12 +112,13 @@ export default function AccountColoursSection() {
   )
 }
 
-function Swatch({ value, onChange, theme, dataTestId, includeAuto = true }: {
+function Swatch({ value, onChange, theme, dataTestId, includeAuto = true, label }: {
   value?: IdentityColorKey
   onChange: (v: string) => void
   theme: 'dark' | 'light'
   dataTestId: string
   includeAuto?: boolean
+  label?: string
 }) {
   return (
     <span className="flex items-center gap-1.5 shrink-0">
@@ -127,6 +128,7 @@ function Swatch({ value, onChange, theme, dataTestId, includeAuto = true }: {
         data-testid={dataTestId}
         value={value ?? (includeAuto ? '__auto__' : IDENTITY_COLOR_KEYS[0])}
         onChange={(e) => onChange(e.target.value)}
+        aria-label={label ? `Colour for ${label}` : 'Account colour'}
         className="bg-crust/60 border border-surface0/80 rounded-md px-2 py-1 text-xs text-text focus:outline-none focus:border-blue/50 transition-colors"
       >
         {includeAuto && <option value="__auto__">Auto</option>}
