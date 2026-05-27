@@ -51,6 +51,21 @@ import type {
 } from '../../shared/types'
 import type { HookEvent, HooksGatewayStatus } from '../../shared/hook-types'
 export type { HookEvent, HookEventKind, HooksGatewayStatus } from '../../shared/hook-types'
+import type {
+  ChannelPayload,
+  ChannelEnvelopeMeta,
+  LedgerRecord,
+  PendingPermission,
+  ChannelRule,
+  StandingApproval,
+  FeatureState,
+  StandingApprovalTool,
+  StandingApprovalTtl,
+} from '../../shared/channel-types'
+export type {
+  ChannelPayload, ChannelEnvelopeMeta, LedgerRecord, PendingPermission,
+  ChannelRule, StandingApproval, FeatureState,
+} from '../../shared/channel-types'
 
 export interface ElectronAPI {
   config: {
@@ -408,6 +423,19 @@ export interface ElectronAPI {
   codexReview: {
     getUsage: (sessionId: string) => Promise<import('../../shared/types').CodexReviewUsageRecord | null>
     onUsageUpdated: (callback: (payload: { sessionId: string; record: import('../../shared/types').CodexReviewUsageRecord }) => void) => () => void
+  }
+  channels: {
+    send: (req: { targetSessionId: string; targetLabel?: string; payload: ChannelPayload; meta: ChannelEnvelopeMeta }) => Promise<{ ok: boolean; reason?: string; transport?: 'pty' | 'mcp'; ledgerId?: string }>
+    retract: (p: { targetSessionId: string; targetLabel?: string }) => Promise<{ ok: boolean; reason?: string; transport?: 'pty' | 'mcp'; ledgerId?: string }>
+    respondPermission: (p: { requestId: string; decision: 'allow' | 'deny' | 'allow-once' }) => Promise<{ ok: boolean }>
+    forceTier: (p: { sessionId: string; tier: 'auto' | 'tier-1' | 'tier-2' }) => Promise<{ ok: boolean }>
+    ruleCRUD: (p: { op: 'list' } | { op: 'save'; rule: ChannelRule } | { op: 'delete'; id: string }) => Promise<ChannelRule[] | { ok: boolean; rules: ChannelRule[] }>
+    standingApprovalCRUD: (p: { op: 'add'; tool: StandingApprovalTool; ttl: StandingApprovalTtl } | { op: 'remove'; id: string } | { op: 'list' }) => Promise<StandingApproval[]>
+    capabilityDiagnostics: () => Promise<{ descriptor: unknown; handshakes: unknown[]; sessions: unknown[]; protocolRange: string }>
+    introDismissed: () => Promise<FeatureState>
+    killSwitch: (p: { disabled: boolean }) => Promise<FeatureState>
+    onPendingPermissions: (cb: (list: PendingPermission[]) => void) => () => void
+    onLedgerEvent: (cb: (r: LedgerRecord) => void) => () => void
   }
   codex: {
     status: () => Promise<{
