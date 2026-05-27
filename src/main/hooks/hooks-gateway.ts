@@ -47,10 +47,25 @@ export class HooksGateway {
   private secrets = new Map<string, string>()
   private buffers = new Map<string, RingBufferEntry[]>()
   private overflowLatched = new Set<string>()
+  private subscribers = new Set<(e: HookEvent) => void>()
 
   constructor(opts: HooksGatewayOptions) {
     this.defaultPort = opts.defaultPort ?? DEFAULT_HOOKS_PORT
     this.emit = opts.emit
+  }
+
+  subscribe(cb: (e: HookEvent) => void): () => void {
+    this.subscribers.add(cb)
+    return () => { this.subscribers.delete(cb) }
+  }
+
+  // Test seam: runs the post-redaction dispatch path without HTTP.
+  dispatchForTest(event: HookEvent): void { this.fanOut(event) }
+
+  private fanOut(event: HookEvent): void {
+    for (const cb of [...this.subscribers]) {
+      try { cb(event) } catch { /* a bad subscriber must not break ingestion */ }
+    }
   }
 
   status(): HooksGatewayStatus {
@@ -289,6 +304,8 @@ export class HooksGateway {
       }
     }
     this.buffers.set(sid, buf)
+
+    this.fanOut(entry as HookEvent) // synchronous additive forward to channel subscribers
 
     try {
       this.emit(IPC.HOOKS_EVENT, entry as HookEvent)
