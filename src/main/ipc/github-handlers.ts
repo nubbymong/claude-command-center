@@ -36,6 +36,7 @@ import {
   OAUTH_SCOPES_PRIVATE,
   OAUTH_SCOPES_PUBLIC,
 } from '../../shared/github-constants'
+import { updateSessionMeta } from '../session-registry'
 
 type LoadSessions = () => Promise<SavedSession[]>
 type SaveSessions = (sessions: SavedSession[]) => Promise<void>
@@ -489,6 +490,7 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
           branch,
           integration: merged,
         })
+        updateSessionMeta({ id: sessionId, label: sessionId, repo: merged.repoSlug, branch })
         // If the user had this session focused before enabling integration,
         // setFocus was a no-op because the session wasn't registered yet.
         // Replay pending focus now so interval tiering (active vs bg) kicks
@@ -534,6 +536,7 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
         branch,
         integration,
       })
+      updateSessionMeta({ id: sessionId, label: sessionId, repo: integration.repoSlug, branch })
       if (focusedSessionResolver() === sessionId) {
         orchestrator.setFocus(sessionId, true)
       }
@@ -563,6 +566,7 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
       branch,
       integration,
     })
+    updateSessionMeta({ id, label: id, repo: integration.repoSlug, branch })
     orchestrator.setFocus(id, true)
     await orchestrator.syncNow(id)
     return { ok: true }
@@ -856,6 +860,7 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
             branch,
             integration: integ,
           })
+          updateSessionMeta({ id: s.id, label: s.id, repo: integ.repoSlug, branch })
           if (focusedSessionResolver() === s.id) {
             orchestrator.setFocus(s.id, true)
           }

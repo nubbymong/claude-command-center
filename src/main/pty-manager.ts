@@ -29,6 +29,7 @@ import { registerCodexReviewSession, unregisterCodexReviewSession } from './cond
 import { disposeSession as disposeCodexReviewUsage } from './codex-review-usage'
 import { readCodexAccountEmail } from './account-identity'
 import type { AccountIdentity } from '../shared/types'
+import { updateSessionMeta, clearSessionMeta } from './session-registry'
 
 import * as path from 'path'
 import * as fs from 'fs'
@@ -975,6 +976,7 @@ export function spawnPty(
   }
 
   ptySessions.set(sessionId, { ptyProcess, sessionId })
+  updateSessionMeta({ id: sessionId, label: options?.configLabel ?? sessionId, cwd: options?.cwd, provider: options?.provider ?? 'claude' })
 
   // Replay any buffered writes (from commands sent before PTY was ready)
   const pending = pendingWrites.get(sessionId)
@@ -1018,6 +1020,7 @@ export function spawnPty(
     const weAreCurrent = !current || current.ptyProcess === ptyProcess
     if (weAreCurrent) {
       ptySessions.delete(sessionId)
+      clearSessionMeta(sessionId)
       try {
         const gwExit = getGateway()
         if (gwExit) gwExit.unregisterSession(sessionId)
