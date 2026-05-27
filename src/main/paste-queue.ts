@@ -25,7 +25,7 @@ export class PasteQueue {
     const next = this.queue.shift()
     if (next === undefined) { this.idle.splice(0).forEach(r => r()); return }
     this.inFlight = true
-    try { await this.writer(next) } finally { this.inFlight = false; void this.pump() }
+    try { await this.writer(next) } catch { /* a failed write must not stall the queue */ } finally { this.inFlight = false; void this.pump() }
   }
   // Test/util: resolves once the queue has fully drained.
   drain(): Promise<void> {

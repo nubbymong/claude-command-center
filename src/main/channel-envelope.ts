@@ -3,6 +3,7 @@ import type { ChannelPayload, ChannelEnvelopeMeta } from '../shared/channel-type
 
 const PASTE_START = '\x1b[200~'
 const PASTE_END = '\x1b[201~'
+// Bounds the rendered BODY only; the bracketed-paste escapes + header + footer add a small fixed overhead, so the wire envelope is slightly larger.
 export const BODY_CAP = 8 * 1024
 
 // Renders the human-readable body for each payload kind.

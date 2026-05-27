@@ -10,6 +10,13 @@ describe('PasteQueue', () => {
     await q.drain()
     expect(written).toEqual(['A', 'B', 'C'])
   })
+  it('a rejecting writer does not stall the queue', async () => {
+    const written: string[] = []
+    const q = new PasteQueue((d) => d === 'bad' ? Promise.reject(new Error('x')) : (written.push(d), Promise.resolve()), 16)
+    q.enqueue('bad'); q.enqueue('good')
+    await q.drain()
+    expect(written).toEqual(['good'])
+  })
   it('drops the OLDEST when the queue exceeds the cap and reports overflow', async () => {
     let resolveFirst!: () => void
     const written: string[] = []

@@ -1066,13 +1066,13 @@ const pasteQueues = new Map<string, PasteQueue>()
 // Guard-free chunked write (channel envelopes carry a unique ts: and must not
 // be deduped). Mirrors writeChunked's 256-byte/12ms cadence.
 function writeEnvelopeChunked(sessionId: string, data: string): Promise<void> {
-  const session = ptySessions.get(sessionId)
-  if (!session) return Promise.resolve()
   return new Promise<void>((resolve) => {
     let i = 0
     const step = () => {
-      if (i >= data.length) return resolve()
-      session.ptyProcess.write(data.slice(i, i + WRITE_CHUNK_SIZE))
+      const session = ptySessions.get(sessionId)   // re-fetch: session may be killed mid-paste
+      if (!session || i >= data.length) return resolve()
+      try { session.ptyProcess.write(data.slice(i, i + WRITE_CHUNK_SIZE)) }
+      catch { return resolve() }                    // session died mid-write; stop, do not stall the queue
       i += WRITE_CHUNK_SIZE
       setTimeout(step, WRITE_CHUNK_DELAY)
     }
