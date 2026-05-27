@@ -8,6 +8,11 @@ import type {
 } from '../../../shared/github-types'
 import type { CacheStore } from '../cache/cache-store'
 import { scanPrBodyRefs } from './pr-body-scanner'
+import { emitCiFailed } from '../../channel-emitters'
+
+// Tracks last-seen conclusion per "sessionId:runId" to suppress repeat emits
+// on every poll cycle. Populated only when a failure conclusion is observed.
+const lastCiConclusion = new Map<string, string>()
 
 type FetchResult<T> =
   | { status: 'unchanged' }
@@ -279,6 +284,26 @@ export class SyncOrchestrator {
 
         if (runsR.status === 'ok') {
           existing.actions = mapRuns(runsR.data)
+          // Emit ci:failed on transition into failure (once per run, not every poll).
+          try {
+            for (const run of existing.actions) {
+              if (run.conclusion === 'failure') {
+                const key = `${s.sessionId}:${run.id}`
+                if (lastCiConclusion.get(key) !== 'failure') {
+                  lastCiConclusion.set(key, 'failure')
+                  emitCiFailed({
+                    sessionId: s.sessionId,
+                    prBranch: s.branch,
+                    logTail: `CI failed: ${run.workflowName}`,
+                  })
+                }
+              } else if (run.conclusion != null) {
+                // Clear the failure marker so a re-run that later fails emits again.
+                const key = `${s.sessionId}:${run.id}`
+                if (lastCiConclusion.has(key)) lastCiConclusion.delete(key)
+              }
+            }
+          } catch { /* best-effort -- never break sync */ }
         }
 
         if (revR && revR.status === 'ok') {
