@@ -12,5 +12,6 @@ describe('channel-emitters', () => {
     emitTokenomicsAnomaly({ sessionId: 's', sessionLabel: 'S', headroom: 5, spendDelta: 1, baseline: 0.5 })
     emitMemoryAdded({ project: 'p', projectPath: '/p', entryTitle: 't', entryBody: 'b' })
     expect(emitted.map(x => x.e)).toEqual(['pr:merged', 'ci:failed', 'codex-review:complete', 'tokenomics:anomaly', 'memory:added'])
+    expect(emitted[0].p).toEqual({ repo: 'a/b', number: 48, branch: 'main' })
   })
 })

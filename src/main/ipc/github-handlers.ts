@@ -745,15 +745,12 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
         })
         if (r.ok) {
           // Emit the pr:merged internal event so the rules engine (PR Cascade)
-          // can notify sessions on dependent branches. The base branch for the
-          // merge is not returned by the GitHub merge endpoint; we use the
-          // session's currently-registered branch as the best available proxy.
-          // Best-effort: a channels emit must never break the merge response.
+          // can notify sessions on dependent branches. Best-effort: a channels
+          // emit must never break the merge response.
           try {
-            const sessions = await deps.loadSessions()
-            const sess = sessions.find((s) => s.id === id)
-            const baseBranch = sess?.githubIntegration?.repoSlug ? 'main' : 'main'
-            emitPrMerged({ repo: slug, number: prNumber, branch: baseBranch })
+            // base branch not returned by the merge endpoint; defaults to main
+            // (custom non-main base targeting is a v1.5.11 follow-up)
+            emitPrMerged({ repo: slug, number: prNumber, branch: 'main' })
           } catch { /* channels emit is best-effort */ }
           return { ok: true }
         }

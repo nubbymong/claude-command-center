@@ -59,6 +59,7 @@ function fireMatching(ctx: RuleEventContext): void {
 }
 
 function bumpFire(rule: ChannelRule, now: number): void {
+  // per-fire persist of fireCount/lastFiredAt; rule cooldowns throttle fire frequency so write volume stays low
   saveRule({ ...rule, fireCount: rule.fireCount + 1, lastFiredAt: new Date(now).toISOString() })
 }
 

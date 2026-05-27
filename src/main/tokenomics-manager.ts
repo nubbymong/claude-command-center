@@ -821,6 +821,8 @@ let cachedData: TokenomicsData | null = null
 // Tracks whether a session was last seen in the "anomaly" state (headroom < 10%).
 // Prevents re-emitting tokenomics:anomaly on every statusline tick while
 // the session stays above the threshold. True = was in anomaly state last tick.
+// keyed by sessionId (bounded by live session count); recovery above the threshold
+// is intentionally silent (no recovery event in v1.5.10)
 const rateLimitAnomalyState = new Map<string, boolean>()
 
 /**
