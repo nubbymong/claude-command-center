@@ -253,6 +253,19 @@ export const IPC = {
   // Codex review MCP (P6)
   CODEX_REVIEW_USAGE_GET: 'codex-review:usage:get',
   CODEX_REVIEW_USAGE_UPDATED: 'codex-review:usage:updated',
+
+  // Conductor Channels (v1.5.10)
+  CHANNELS_SEND: 'channels:send',                                   // renderer -> main: dispatch a payload
+  CHANNELS_RETRACT: 'channels:retract',                             // renderer -> main: send retraction follow-up
+  CHANNELS_RESPOND_PERMISSION: 'channels:respondPermission',        // renderer -> main: allow/deny a pending prompt
+  CHANNELS_FORCE_TIER: 'channels:forceTier',                        // renderer -> main: per-session tier override
+  CHANNELS_PENDING_PERMISSIONS: 'channels:pendingPermissions',      // main -> renderer: pending tray updates
+  CHANNELS_LEDGER_EVENT: 'channels:ledgerEvent',                    // main -> renderer: live ledger row
+  CHANNELS_RULE_CRUD: 'channels:ruleCRUD',                          // renderer -> main: list/create/update/delete rules
+  CHANNELS_STANDING_APPROVAL_CRUD: 'channels:standingApprovalCRUD', // renderer -> main: standing-approval CRUD
+  CHANNELS_CAPABILITY_DIAGNOSTICS: 'channels:capabilityDiagnostics',// renderer -> main: capability + handshake history
+  CHANNELS_INTRO_DISMISSED: 'channels:introDismissed',              // renderer -> main: persist first-run dismissal
+  CHANNELS_KILL_SWITCH: 'channels:killSwitch',                      // renderer -> main: toggle disableConductorChannels
 } as const
 
 /** Helper to build per-session PTY data channels */
