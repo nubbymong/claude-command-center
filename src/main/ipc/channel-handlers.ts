@@ -18,8 +18,14 @@ export function pushLedgerEvent(record: LedgerRecord): void {
 }
 
 export function registerChannelHandlers(): void {
-  ipcMain.handle(IPC.CHANNELS_SEND, (_e, req) => send(req))
-  ipcMain.handle(IPC.CHANNELS_RETRACT, (_e, p) => retract(p.targetSessionId, p.targetLabel))
+  ipcMain.handle(IPC.CHANNELS_SEND, (_e, req) => {
+    if (!req?.targetSessionId || !req?.payload) return { ok: false, reason: 'bad request' }
+    return send(req)
+  })
+  ipcMain.handle(IPC.CHANNELS_RETRACT, (_e, p) => {
+    if (!p?.targetSessionId) return { ok: false, reason: 'bad request' }
+    return retract(p.targetSessionId, p.targetLabel)
+  })
   ipcMain.handle(IPC.CHANNELS_RESPOND_PERMISSION, (_e, p) => respondPermission(p))
   ipcMain.handle(IPC.CHANNELS_FORCE_TIER, (_e, p) => forceTier(p.sessionId, p.tier))
   ipcMain.handle(IPC.CHANNELS_RULE_CRUD, (_e, p) => {

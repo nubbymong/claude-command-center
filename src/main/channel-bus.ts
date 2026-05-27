@@ -33,15 +33,22 @@ export async function send(req: SendRequest): Promise<SendResult> {
   }
 
   // Image payloads: persist dataUrl to disk and reference by path instead.
+  // Build effectivePayload as a non-mutating copy so the caller's object is never modified.
   let attachmentPath: string | undefined
+  let effectivePayload = payload
   if (payload.kind === 'vision-screenshot' && payload.dataUrl && !payload.path) {
-    attachmentPath = persistAttachment(payload.dataUrl, 'png')
-    payload.path = attachmentPath
+    try {
+      attachmentPath = persistAttachment(payload.dataUrl, 'png')
+      effectivePayload = { ...payload, path: attachmentPath }
+    } catch (err) {
+      const ledgerId = appendLedger({ source: meta.source, target, transport: null, kind: 'failed', summary: 'attachment too large' })
+      return { ok: false, reason: 'attachment too large', ledgerId }
+    }
   }
 
   const transport = pickTransport(targetSessionId)
   if (transport === 'mcp') {
-    const tier2Result = await sendTier2(targetSessionId, formatTier2(payload, meta))
+    const tier2Result = await sendTier2(targetSessionId, formatTier2(effectivePayload, meta))
     if (tier2Result.ok) {
       const ledgerId = appendLedger({ source: meta.source, target, transport: 'mcp', kind: 'bus-fire', summary, firedBy: meta.firedBy ? 'system' : 'user', attachmentPath })
       return { ok: true, transport: 'mcp', ledgerId }
@@ -51,7 +58,7 @@ export async function send(req: SendRequest): Promise<SendResult> {
   }
 
   // Tier 1 PTY paste
-  const envelope = formatTier1(payload, meta, attachmentPath)
+  const envelope = formatTier1(effectivePayload, meta, attachmentPath)
   const dropped = pastePty(targetSessionId, envelope)
   if (dropped > 0) {
     const ledgerId = appendLedger({ source: meta.source, target, transport: 'pty', kind: 'bus-overflow', summary: `queue full, dropped ${dropped}: ${summary}` })
