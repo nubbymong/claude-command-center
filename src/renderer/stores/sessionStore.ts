@@ -56,6 +56,10 @@ export interface Session {
     usedUsd: number
     limitUsd: number
   }
+  /** Active-account email from the statusline bridge. Drives the coloured email chip. */
+  accountEmail?: string
+  /** Identity-palette KEY computed in main via colourForEmail(); resolved to a theme hex at render. */
+  accountColour?: IdentityColorKey
   legacyVersion?: {                      // Pinned Claude CLI version
     enabled: boolean
     version: string
