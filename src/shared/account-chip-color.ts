@@ -35,6 +35,7 @@ export function resolveAccountChipColorKey(
 export function middleTruncateEmail(email: string, max = 28): string {
   if (email.length <= max) return email
   const ell = '...'
+  if (max <= ell.length) return ell.slice(0, max)
   const keep = max - ell.length
   const head = Math.ceil(keep / 2)
   const tail = Math.floor(keep / 2)

@@ -43,4 +43,14 @@ describe('middleTruncateEmail', () => {
     expect(out.startsWith('nicholas')).toBe(true)
     expect(out.endsWith('.com')).toBe(true)
   })
+
+  it('returns the email unchanged when max equals its length', () => {
+    expect(middleTruncateEmail('abc@d.com', 'abc@d.com'.length)).toBe('abc@d.com')
+  })
+
+  it('never exceeds max for tiny max values', () => {
+    for (const m of [0, 1, 2, 3]) {
+      expect(middleTruncateEmail('someone@example.com', m).length).toBeLessThanOrEqual(m)
+    }
+  })
 })
