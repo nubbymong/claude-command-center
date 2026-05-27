@@ -81,8 +81,15 @@ export interface AppSettings {
   colourMigrationNoticePending?: boolean // a colour migration changed records and the notice should show
   colourMigrationNoticeDismissed?: boolean
   /** User-defined per-account email -> identity colour key overrides. Keyed by
-   *  canonicalised (lowercase+trim) email. Absent = use the deterministic colour. */
+   *  canonicalised (lowercase+trim) email. Absent = use the deterministic colour.
+   *  v1.5.9: no longer surfaced anywhere in the UI (AccountColoursSection removed).
+   *  Retained so older saved settings still hydrate without errors. */
   accountColourOverrides?: Record<string, import('../../shared/identity-colors').IdentityColorKey>
+  /** v1.5.9: user-managed list of {email, alias}. Order is preserved (a list,
+   *  not a map) so the Settings UI shows entries in user-defined order. Email
+   *  is canonicalised at write time and is the lookup key into SavedSession
+   *  /Session.accountAliasEmail. */
+  accountAliases?: import('../../shared/account-alias').AccountAlias[]
 }
 
 interface SettingsState {
