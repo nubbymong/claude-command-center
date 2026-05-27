@@ -118,10 +118,14 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
 
       {/* Line 1, col 2: name + (non-default) provider/ssh badges + optional
           v1.5.9 account alias. The project name keeps the higher visual weight;
-          the alias sits to the right in non-bold text-secondary. The parent
-          flex has implicit min-width:0 inherited from .session-card .nm, so on
-          narrow widths the project name's truncate takes priority over the
-          alias's. */}
+          the alias sits to the right in non-bold text-secondary. Truncation
+          priority comes from order, not from min-width inheritance: .nm has
+          overflow:hidden, so whichever child sits past .nm's right edge gets
+          clipped. The alias is the rightmost child, so it clips first; the
+          project-name span stays at its content width and never ellipses on
+          its own. If a future change inserts something to the right of the
+          alias, that new element will be the one to clip -- reorder
+          deliberately or add min-w-0 + flex-shrink rules at that point. */}
       <span className="nm relative z-10 row-start-1 flex items-center gap-1.5">
         <span className="text-[13px] truncate" style={{ fontWeight: isActive ? 700 : 600 }}>{session.label}</span>
         {session.sessionType === 'ssh' && <SshBadge />}
