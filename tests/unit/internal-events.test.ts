@@ -14,9 +14,11 @@ describe('internal-events', () => {
   })
   it('a throwing subscriber does not break other subscribers', () => {
     const good = vi.fn()
-    onInternal('ci:failed', () => { throw new Error('boom') })
-    onInternal('ci:failed', good)
+    const offThrower = onInternal('ci:failed', () => { throw new Error('boom') })
+    const offGood = onInternal('ci:failed', good)
     expect(() => emitInternal('ci:failed', { sessionId: 's', logTail: 'x' })).not.toThrow()
     expect(good).toHaveBeenCalled()
+    offThrower()
+    offGood()
   })
 })

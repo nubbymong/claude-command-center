@@ -11,13 +11,15 @@ export interface InternalEventMap {
 }
 type Handler<K extends keyof InternalEventMap> = (payload: InternalEventMap[K]) => void
 
-const subs = new Map<keyof InternalEventMap, Set<Handler<keyof InternalEventMap>>>()
+// Handlers are stored opaquely; emitInternal narrows the payload to InternalEventMap[K]
+// (K is known at the emit call site) before invoking each handler.
+const subs = new Map<keyof InternalEventMap, Set<(p: unknown) => void>>()
 
 export function onInternal<K extends keyof InternalEventMap>(event: K, cb: Handler<K>): () => void {
   let set = subs.get(event)
   if (!set) { set = new Set(); subs.set(event, set) }
-  set.add(cb as Handler<keyof InternalEventMap>)
-  return () => { set!.delete(cb as Handler<keyof InternalEventMap>) }
+  set.add(cb as (p: unknown) => void)
+  return () => { set!.delete(cb as (p: unknown) => void) }
 }
 
 export function emitInternal<K extends keyof InternalEventMap>(event: K, payload: InternalEventMap[K]): void {

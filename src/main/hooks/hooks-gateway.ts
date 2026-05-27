@@ -305,7 +305,7 @@ export class HooksGateway {
     }
     this.buffers.set(sid, buf)
 
-    this.fanOut(entry as HookEvent) // synchronous additive forward to channel subscribers
+    this.fanOut(entry as HookEvent) // forward to channel subscribers (synchronous -- subscribers must not block the ingest path)
 
     try {
       this.emit(IPC.HOOKS_EVENT, entry as HookEvent)
