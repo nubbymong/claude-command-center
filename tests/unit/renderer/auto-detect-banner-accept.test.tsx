@@ -216,6 +216,37 @@ describe('handleAutoDetectAccept -- #436 / #437', () => {
     expect(navigateToGitHubSettings).toHaveBeenCalledTimes(1)
   })
 
+  it('when IPC returns ok=false (authed), helper does NOT mirror to stores and does NOT navigate', async () => {
+    const { deps, updateSession, updateConfig, navigateToGitHubSettings } = buildDeps({
+      profiles: [{ id: 'p-owner', username: 'octocat' }],
+      ipcOk: false,
+    })
+
+    await handleAutoDetectAccept('octocat/hello', baseSession, deps)
+
+    // Main reported a write failure -- don't desync the stores from disk.
+    expect(updateSession).not.toHaveBeenCalled()
+    expect(updateConfig).not.toHaveBeenCalled()
+    // Authed user stays put; the next click of the banner will retry.
+    expect(navigateToGitHubSettings).not.toHaveBeenCalled()
+  })
+
+  it('when IPC returns ok=false (unauthed), helper does NOT mirror to stores AND DOES navigate to Settings', async () => {
+    const { deps, updateSession, updateConfig, navigateToGitHubSettings } = buildDeps({
+      profiles: [],
+      ipcOk: false,
+    })
+
+    await handleAutoDetectAccept('octocat/hello', baseSession, deps)
+
+    // Same desync-prevention as the authed case.
+    expect(updateSession).not.toHaveBeenCalled()
+    expect(updateConfig).not.toHaveBeenCalled()
+    // Unauthed user still gets routed so they can finish setup manually --
+    // losing the write is fine, losing the nav would be worse.
+    expect(navigateToGitHubSettings).toHaveBeenCalledTimes(1)
+  })
+
   it('merges over a pre-existing integration record without dropping prior fields', async () => {
     const session = {
       id: 'sess-1',

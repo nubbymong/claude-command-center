@@ -127,7 +127,16 @@ export async function handleAutoDetectAccept(
   const merged: SessionGitHubIntegration = { ...prior, ...patch }
 
   try {
-    await deps.electronAPI.github.updateSessionConfig(session.id, patch)
+    const res = await deps.electronAPI.github.updateSessionConfig(session.id, patch)
+    if (!res.ok) {
+      // Main-side write failed (missing session / persistence error). Do NOT
+      // mirror to the stores -- that would leave the in-memory view out of
+      // sync with disk. Unauthed users still get routed to Settings so they
+      // can finish setup manually; authed users get no mirror + no nav and
+      // the next click of the banner will retry naturally.
+      if (!hasAuth) deps.navigateToGitHubSettings()
+      return
+    }
     deps.updateSession(session.id, { githubIntegration: merged })
     if (session.configId) {
       deps.updateConfig(session.configId, { githubIntegration: merged })
