@@ -122,6 +122,14 @@ export interface SavedSession {
   effortLevel?: 'low' | 'medium' | 'high'
   /** @deprecated read from claudeOptions; removed in P1.2+ */
   disableAutoMemory?: boolean
+  /**
+   * v1.5.9: user-tagged account alias (display only, no auth impact).
+   * Stores the canonical email key; the alias string is resolved via
+   * AppSettings.accountAliases at render time so renaming an alias in
+   * Settings updates every session label automatically. Absent =>
+   * no alias shown in the sidebar.
+   */
+  accountAliasEmail?: string
 }
 
 export interface SessionState {

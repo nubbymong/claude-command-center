@@ -36,6 +36,8 @@ interface BuildDepsOpts {
   profiles?: AutoDetectAcceptProfile[]
   ipcOk?: boolean
   throwOnIpc?: boolean
+  /** v1.5.9 (#441): flush success-flag for the new pre-IPC session-state write. */
+  flushOk?: boolean
 }
 
 function buildDeps(opts: BuildDepsOpts = {}) {
@@ -47,14 +49,23 @@ function buildDeps(opts: BuildDepsOpts = {}) {
   const updateSession = vi.fn()
   const updateConfig = vi.fn()
   const navigateToGitHubSettings = vi.fn()
+  const flushSessionState = vi.fn(async () => opts.flushOk ?? true)
   const deps: AutoDetectAcceptDeps = {
     electronAPI: { github: { updateSessionConfig } },
     updateSession,
     updateConfig,
     profiles,
     navigateToGitHubSettings,
+    flushSessionState,
   }
-  return { deps, updateSessionConfig, updateSession, updateConfig, navigateToGitHubSettings }
+  return {
+    deps,
+    updateSessionConfig,
+    updateSession,
+    updateConfig,
+    navigateToGitHubSettings,
+    flushSessionState,
+  }
 }
 
 describe('pickProfileIdForSlug', () => {
@@ -205,15 +216,57 @@ describe('handleAutoDetectAccept -- #436 / #437', () => {
       profiles: [],
       throwOnIpc: true,
     })
+    // v1.5.9 follow-up: the throw branch now also emits a console.warn with
+    // the same format as the flush=false / ok=false branches so the silent
+    // no-op class is observable in devtools. Spy here so the warn doesn't
+    // pollute test output. NOTE: assert BEFORE mockRestore -- restore wipes
+    // the call history (same pattern as the flush=false test below).
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      await handleAutoDetectAccept('octocat/hello', baseSession, deps)
+      // Mirrors were skipped because the IPC threw, but the user still ends
+      // up on Settings so they can configure manually -- losing the write is
+      // fine, losing the navigation would be worse.
+      expect(updateSession).not.toHaveBeenCalled()
+      expect(updateConfig).not.toHaveBeenCalled()
+      expect(navigateToGitHubSettings).toHaveBeenCalledTimes(1)
+      // Assert the new diagnostic fires with the documented format.
+      expect(warnSpy).toHaveBeenCalledTimes(1)
+      const msg = String(warnSpy.mock.calls[0][0])
+      expect(msg).toContain('[github] auto-detect accept aborted')
+      expect(msg).toContain('flush=true')
+      expect(msg).toContain('ok=throw')
+      expect(msg).toContain('error=boom')
+    } finally {
+      warnSpy.mockRestore()
+    }
+  })
 
-    await handleAutoDetectAccept('octocat/hello', baseSession, deps)
-
-    // Mirrors were skipped because the IPC threw, but the user still ends up
-    // on Settings so they can configure manually -- losing the write is fine,
-    // losing the navigation would be worse.
-    expect(updateSession).not.toHaveBeenCalled()
-    expect(updateConfig).not.toHaveBeenCalled()
-    expect(navigateToGitHubSettings).toHaveBeenCalledTimes(1)
+  it('logs warn with throw-marker when IPC rejects (authed)', async () => {
+    // Authed path: helper does NOT navigate (per #437), does NOT mirror to
+    // stores (IPC threw so we don't know the disk state), but MUST still
+    // surface the failure via console.warn so a silent no-op is debuggable.
+    const { deps, updateSession, updateConfig, navigateToGitHubSettings } = buildDeps({
+      profiles: [{ id: 'p-owner', username: 'octocat' }],
+      throwOnIpc: true,
+    })
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      await handleAutoDetectAccept('octocat/hello', baseSession, deps)
+      // No store mirror, no nav (authed path stays put for retry).
+      expect(updateSession).not.toHaveBeenCalled()
+      expect(updateConfig).not.toHaveBeenCalled()
+      expect(navigateToGitHubSettings).not.toHaveBeenCalled()
+      // Exactly one warn, with the throw-branch marker format.
+      expect(warnSpy).toHaveBeenCalledTimes(1)
+      const msg = String(warnSpy.mock.calls[0][0])
+      expect(msg).toContain('[github] auto-detect accept aborted')
+      expect(msg).toContain('flush=true')
+      expect(msg).toContain('ok=throw')
+      expect(msg).toContain('error=boom')
+    } finally {
+      warnSpy.mockRestore()
+    }
   })
 
   it('when IPC returns ok=false (authed), helper does NOT mirror to stores and does NOT navigate', async () => {
@@ -221,8 +274,12 @@ describe('handleAutoDetectAccept -- #436 / #437', () => {
       profiles: [{ id: 'p-owner', username: 'octocat' }],
       ipcOk: false,
     })
-
-    await handleAutoDetectAccept('octocat/hello', baseSession, deps)
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      await handleAutoDetectAccept('octocat/hello', baseSession, deps)
+    } finally {
+      warnSpy.mockRestore()
+    }
 
     // Main reported a write failure -- don't desync the stores from disk.
     expect(updateSession).not.toHaveBeenCalled()
@@ -236,8 +293,12 @@ describe('handleAutoDetectAccept -- #436 / #437', () => {
       profiles: [],
       ipcOk: false,
     })
-
-    await handleAutoDetectAccept('octocat/hello', baseSession, deps)
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      await handleAutoDetectAccept('octocat/hello', baseSession, deps)
+    } finally {
+      warnSpy.mockRestore()
+    }
 
     // Same desync-prevention as the authed case.
     expect(updateSession).not.toHaveBeenCalled()
@@ -245,6 +306,124 @@ describe('handleAutoDetectAccept -- #436 / #437', () => {
     // Unauthed user still gets routed so they can finish setup manually --
     // losing the write is fine, losing the nav would be worse.
     expect(navigateToGitHubSettings).toHaveBeenCalledTimes(1)
+  })
+
+  // --- v1.5.9 (#441) regression coverage: flush session state before IPC ---
+  // The main-side updateSessionConfig handler looks the session up in the
+  // persisted sessions[] array. For freshly-spawned sessions that haven't been
+  // flushed to disk yet, it returns { ok: false, error: 'not-found' } and the
+  // existing ok:false bail then suppresses the mirror AND the unauthed nav.
+  // Visible symptom: "click does nothing, no persistence" on a new session.
+  // The fix is to call deps.flushSessionState() FIRST so the row exists on
+  // disk before the IPC reads it back. These tests pin the new behaviour.
+
+  it('aborts with no mirror/no nav when flushSessionState returns false (authed)', async () => {
+    const {
+      deps,
+      updateSessionConfig,
+      updateSession,
+      updateConfig,
+      navigateToGitHubSettings,
+      flushSessionState,
+    } = buildDeps({
+      profiles: [{ id: 'p-owner', username: 'octocat' }],
+      flushOk: false,
+    })
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      await handleAutoDetectAccept('octocat/hello', baseSession, deps)
+    } finally {
+      warnSpy.mockRestore()
+    }
+
+    expect(flushSessionState).toHaveBeenCalledTimes(1)
+    // Flush failed -- never make the IPC call (the bug is the IPC racing the
+    // not-yet-persisted session, so skipping it entirely is the safer path).
+    expect(updateSessionConfig).not.toHaveBeenCalled()
+    expect(updateSession).not.toHaveBeenCalled()
+    expect(updateConfig).not.toHaveBeenCalled()
+    // Authed user stays put -- next click of the banner retries the flush.
+    expect(navigateToGitHubSettings).not.toHaveBeenCalled()
+  })
+
+  it('aborts but DOES navigate to Settings when flushSessionState returns false (unauthed)', async () => {
+    const {
+      deps,
+      updateSessionConfig,
+      updateSession,
+      updateConfig,
+      navigateToGitHubSettings,
+      flushSessionState,
+    } = buildDeps({ profiles: [], flushOk: false })
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      await handleAutoDetectAccept('octocat/hello', baseSession, deps)
+    } finally {
+      warnSpy.mockRestore()
+    }
+
+    expect(flushSessionState).toHaveBeenCalledTimes(1)
+    expect(updateSessionConfig).not.toHaveBeenCalled()
+    expect(updateSession).not.toHaveBeenCalled()
+    expect(updateConfig).not.toHaveBeenCalled()
+    // Unauthed user still gets routed so they can finish setup manually --
+    // mirrors the existing unauthed fallback on IPC ok:false.
+    expect(navigateToGitHubSettings).toHaveBeenCalledTimes(1)
+  })
+
+  it('calls flushSessionState BEFORE updateSessionConfig (order check)', async () => {
+    const calls: string[] = []
+    const updateSessionConfig = vi.fn(async () => {
+      calls.push('ipc')
+      return { ok: true as const }
+    })
+    const flushSessionState = vi.fn(async () => {
+      calls.push('flush')
+      return true
+    })
+    const deps: AutoDetectAcceptDeps = {
+      electronAPI: { github: { updateSessionConfig } },
+      updateSession: vi.fn(),
+      updateConfig: vi.fn(),
+      profiles: [{ id: 'p-owner', username: 'octocat' }],
+      navigateToGitHubSettings: vi.fn(),
+      flushSessionState,
+    }
+
+    await handleAutoDetectAccept('octocat/hello', baseSession, deps)
+
+    // Sequence must be flush -> ipc; reversing this re-introduces #441.
+    expect(calls).toEqual(['flush', 'ipc'])
+  })
+
+  it('logs a console.warn diagnostic on flush failure (debuggability)', async () => {
+    const { deps } = buildDeps({ profiles: [], flushOk: false })
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      await handleAutoDetectAccept('octocat/hello', baseSession, deps)
+      // Exactly one warn, format documented in #441: flush={bool} ok={bool} error={string|undefined}
+      expect(warnSpy).toHaveBeenCalledTimes(1)
+      const msg = String(warnSpy.mock.calls[0][0])
+      expect(msg).toContain('[github] auto-detect accept aborted')
+      expect(msg).toContain('flush=false')
+    } finally {
+      warnSpy.mockRestore()
+    }
+  })
+
+  it('logs a console.warn diagnostic on IPC ok=false (debuggability)', async () => {
+    const { deps } = buildDeps({ profiles: [], ipcOk: false })
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      await handleAutoDetectAccept('octocat/hello', baseSession, deps)
+      expect(warnSpy).toHaveBeenCalledTimes(1)
+      const msg = String(warnSpy.mock.calls[0][0])
+      expect(msg).toContain('[github] auto-detect accept aborted')
+      expect(msg).toContain('flush=true')
+      expect(msg).toContain('ok=false')
+    } finally {
+      warnSpy.mockRestore()
+    }
   })
 
   it('merges over a pre-existing integration record without dropping prior fields', async () => {
@@ -318,6 +497,7 @@ describe('AutoDetectBanner + handleAutoDetectAccept end-to-end click', () => {
               updateConfig,
               profiles,
               navigateToGitHubSettings: navigate,
+              flushSessionState: async () => true,
             },
           )
         }}
@@ -364,6 +544,7 @@ describe('AutoDetectBanner + handleAutoDetectAccept end-to-end click', () => {
               updateConfig,
               profiles: [],
               navigateToGitHubSettings: navigate,
+              flushSessionState: async () => true,
             },
           )
         }}

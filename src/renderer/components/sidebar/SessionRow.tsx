@@ -6,6 +6,8 @@ import { StatusPill } from '../ui/StatusPill'
 import { IdentityChip } from '../ui/IdentityChip'
 import { resolveIdentityColor, bucketLegacyColorToKey } from '../../../shared/identity-colors'
 import { useResolvedTheme } from '../../hooks/useThemeController'
+import { useSettingsStore } from '../../stores/settingsStore'
+import { resolveAliasForSession } from '../../../shared/account-alias'
 
 interface SessionRowProps {
   session: Session
@@ -50,6 +52,10 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
   const pct = session.contextPercent ?? 0
   const providerLabel = session.shellOnly ? 'shell' : (session.provider ?? 'claude')
   const metaLine = `${session.modelName ?? session.model ?? ''}${providerLabel ? ` · ${providerLabel}` : ''}`.trim()
+  // v1.5.9: alias label is resolved from settings at render time so renaming
+  // an alias in Settings updates every tagged session row automatically.
+  const aliases = useSettingsStore((s) => s.settings.accountAliases)
+  const aliasLabel = resolveAliasForSession(session.accountAliasEmail, aliases)
 
   // #398: when renaming, render a plain <div> (NOT a <button>) so the text input
   // is never nested inside interactive button content (invalid HTML / a11y).
@@ -110,11 +116,29 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
       {/* Line 1, col 1: health dot */}
       <span className="relative z-10 row-start-1"><StatusDot state={st} /></span>
 
-      {/* Line 1, col 2: name + (non-default) provider/ssh badges */}
+      {/* Line 1, col 2: name + (non-default) provider/ssh badges + optional
+          v1.5.9 account alias. The project name keeps the higher visual weight;
+          the alias sits to the right in non-bold text-secondary. Truncation
+          priority comes from order, not from min-width inheritance: .nm has
+          overflow:hidden, so whichever child sits past .nm's right edge gets
+          clipped. The alias is the rightmost child, so it clips first; the
+          project-name span stays at its content width and never ellipses on
+          its own. If a future change inserts something to the right of the
+          alias, that new element will be the one to clip -- reorder
+          deliberately or add min-w-0 + flex-shrink rules at that point. */}
       <span className="nm relative z-10 row-start-1 flex items-center gap-1.5">
         <span className="text-[13px] truncate" style={{ fontWeight: isActive ? 700 : 600 }}>{session.label}</span>
         {session.sessionType === 'ssh' && <SshBadge />}
         {session.shellOnly ? <ShellBadge /> : (session.provider ?? 'claude') === 'codex' ? <CodexBadge needsAttention={needsAttention} /> : null}
+        {aliasLabel && (
+          <span
+            data-testid="session-row-account-alias"
+            className="text-[12px] truncate"
+            style={{ fontWeight: 400, color: 'var(--text-secondary)' }}
+          >
+            {aliasLabel}
+          </span>
+        )}
       </span>
 
       {/* Line 1, col 3: status pill + identity chip (chip selected-only) */}

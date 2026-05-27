@@ -590,6 +590,18 @@ export default function App() {
                       setPendingSettingsTab('github')
                       setView('settings')
                     },
+                    // #441: flush the session store to disk first so the
+                    // main-side updateSessionConfig handler can find the row
+                    // in sessions[] -- freshly-spawned sessions aren't on
+                    // disk until graceful close otherwise.
+                    flushSessionState: async () => {
+                      try {
+                        const state = buildSessionState()
+                        return await window.electronAPI.session.save(state)
+                      } catch {
+                        return false
+                      }
+                    },
                   },
                 )
               }}

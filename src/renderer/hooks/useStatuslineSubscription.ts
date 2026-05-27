@@ -27,8 +27,11 @@ export function useStatuslineSubscription(sessionId: string) {
       if (data.rateLimitWeekly != null) updates.rateLimitWeekly = data.rateLimitWeekly
       if (data.rateLimitWeeklyResets) updates.rateLimitWeeklyResets = data.rateLimitWeeklyResets
       if (data.rateLimitExtra) updates.rateLimitExtra = data.rateLimitExtra
-      if (data.accountEmail) updates.accountEmail = data.accountEmail
-      if (data.accountColour) updates.accountColour = data.accountColour
+      // v1.5.9: do NOT copy accountEmail / accountColour into the session
+      // store. The statusline bridge reads ~/.claude.json:oauthAccount which
+      // is a GLOBAL field -- every per-session tick was clobbering the chip
+      // with whichever account was logged in last. The chip is gone; the
+      // ledger-side capture in tokenomics-manager remains (different concern).
       if (Object.keys(updates).length > 0) {
         updateSession(sessionId, updates)
       }

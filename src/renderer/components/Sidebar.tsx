@@ -946,6 +946,13 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
               setSessionContextMenu(null)
             }}
             onDismiss={() => setSessionContextMenu(null)}
+            onNavigateToAliases={() => {
+              // Reuse the existing app:openSettings CustomEvent that App.tsx
+              // already listens to (deep-links to a Settings tab and switches
+              // the view). Account Aliases lives on the General tab.
+              window.dispatchEvent(new CustomEvent('app:openSettings', { detail: { tab: 'general' } }))
+              setSessionContextMenu(null)
+            }}
           />
         ) : null
       })()}

@@ -55,6 +55,17 @@ export interface AutoDetectAcceptDeps {
    * the user was already authed.
    */
   navigateToGitHubSettings: () => void
+  /**
+   * Flush the renderer session store to disk (session-state.json) so the
+   * main-side updateSessionConfig handler can look the session up. Bug #441:
+   * freshly-spawned sessions weren't on disk yet, so the IPC returned
+   * { ok: false, error: 'not-found' } and the c56f7da bail then suppressed
+   * both the store mirror and the unauthed-only nav fallback -- the click
+   * looked like a no-op. Mirrors the pattern already used by
+   * SessionGitHubConfig.tsx's save() (the same handler is also called there).
+   * Returns true on success, false on failure; failure aborts the IPC call.
+   */
+  flushSessionState: () => Promise<boolean>
 }
 
 /**
@@ -126,14 +137,41 @@ export async function handleAutoDetectAccept(
   const prior = session.githubIntegration ?? { enabled: false, autoDetected: false }
   const merged: SessionGitHubIntegration = { ...prior, ...patch }
 
+  // #441: Flush the renderer session store to disk BEFORE the IPC, so the
+  // main-side handler can find the row in sessions[]. Without this step the
+  // IPC returns ok:false for newly-spawned sessions and the ok:false bail
+  // (c56f7da) suppresses everything -- the classic "click does nothing"
+  // symptom. Same pattern as SessionGitHubConfig.tsx's save() flow.
+  let flushed = false
+  try {
+    flushed = await deps.flushSessionState()
+  } catch {
+    flushed = false
+  }
+  if (!flushed) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[github] auto-detect accept aborted: flush=false ok=false error=flush-failed`,
+    )
+    // Unauthed users still get routed to Settings so they can finish setup
+    // manually -- mirrors the pre-existing unauthed-fallback behaviour on
+    // IPC failure. Authed users stay put and the next click retries.
+    if (!hasAuth) deps.navigateToGitHubSettings()
+    return
+  }
+
   try {
     const res = await deps.electronAPI.github.updateSessionConfig(session.id, patch)
     if (!res.ok) {
-      // Main-side write failed (missing session / persistence error). Do NOT
-      // mirror to the stores -- that would leave the in-memory view out of
-      // sync with disk. Unauthed users still get routed to Settings so they
-      // can finish setup manually; authed users get no mirror + no nav and
-      // the next click of the banner will retry naturally.
+      // Flush succeeded but the main-side write still failed -- this is now
+      // a real persistence error (not the unflushed-session race that #441
+      // fixed). Do NOT mirror to the stores: that would desync in-memory
+      // state from disk. Unauthed users still get routed to Settings so
+      // they can finish setup manually; authed users stay put for retry.
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[github] auto-detect accept aborted: flush=true ok=false error=${res.error ?? 'unknown'}`,
+      )
       if (!hasAuth) deps.navigateToGitHubSettings()
       return
     }
@@ -141,11 +179,19 @@ export async function handleAutoDetectAccept(
     if (session.configId) {
       deps.updateConfig(session.configId, { githubIntegration: merged })
     }
-  } catch {
+  } catch (err) {
     // Swallow IPC errors. The unauthed user still gets routed to Settings
     // below so they can finish setup manually. For the authed path there is
     // nothing useful to do here -- the next save attempt will surface a real
-    // error to the user.
+    // error to the user. We DO still warn so the authed-path silent no-op
+    // (preload TypeError, IPC disconnect, etc.) is observable in devtools --
+    // closes the same silent-failure class as the flush=false / ok=false
+    // branches above.
+    const msg = err instanceof Error ? err.message : String(err)
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[github] auto-detect accept aborted: flush=true ok=throw error=${msg}`,
+    )
   }
 
   if (!hasAuth) {

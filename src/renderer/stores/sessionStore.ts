@@ -56,10 +56,18 @@ export interface Session {
     usedUsd: number
     limitUsd: number
   }
-  /** Active-account email from the statusline bridge. Drives the coloured email chip. */
+  /** Active-account email from the statusline bridge. Drives the coloured email chip.
+   *  v1.5.9: no longer read by the renderer (the chip was removed). Field is kept so
+   *  older saved state still hydrates without errors. */
   accountEmail?: string
-  /** Identity-palette KEY computed in main via colourForEmail(); resolved to a theme hex at render. */
+  /** Identity-palette KEY computed in main via colourForEmail(); resolved to a theme hex at render.
+   *  v1.5.9: also inert in the renderer for the same reason as `accountEmail`. */
   accountColour?: IdentityColorKey
+  /** v1.5.9: user-tagged account alias key (canonical email). The display alias
+   *  is resolved via AppSettings.accountAliases on render so renaming an alias
+   *  flows through without per-session migration. Set by the SessionRow
+   *  right-click "Account" submenu; cleared by "(none)". */
+  accountAliasEmail?: string
   legacyVersion?: {                      // Pinned Claude CLI version
     enabled: boolean
     version: string
