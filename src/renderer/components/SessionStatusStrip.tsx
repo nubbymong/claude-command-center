@@ -6,7 +6,6 @@ import { formatResetTime, formatTokens, formatDuration } from '../utils/terminal
 import { useCodexReviewUsage } from '../hooks/useCodexReviewUsage'
 import { useRestartSession } from '../hooks/useRestartSession'
 import ToolbarPopup from './ToolbarPopup'
-import AccountEmailChip from './AccountEmailChip'
 import {
   MODELS,
   EFFORTS,
@@ -88,7 +87,6 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
         className="flex items-center gap-3 flex-1 min-w-0 overflow-hidden"
         style={{ fontSize: `${sl.fontSize}px`, fontFamily: sl.font === 'mono' ? "'JetBrains Mono', monospace" : undefined }}
       >
-        <AccountEmailChip email={session.accountEmail} statuslineColour={session.accountColour} />
         {sl.showModel && session.modelName && (
           <span className="font-medium truncate shrink-0">
             {session.modelName}
