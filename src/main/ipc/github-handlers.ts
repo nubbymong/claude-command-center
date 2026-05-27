@@ -37,6 +37,7 @@ import {
   OAUTH_SCOPES_PUBLIC,
 } from '../../shared/github-constants'
 import { updateSessionMeta } from '../session-registry'
+import { emitPrMerged } from '../channel-emitters'
 
 // Binds repo + branch into the session registry without touching the label
 // that pty-manager set at spawn time. updateSessionMeta's patch type makes
@@ -742,9 +743,21 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
           method: 'PUT',
           body: { merge_method: method },
         })
-        return r.ok
-          ? { ok: true }
-          : { ok: false, error: `http-${r.status}` }
+        if (r.ok) {
+          // Emit the pr:merged internal event so the rules engine (PR Cascade)
+          // can notify sessions on dependent branches. The base branch for the
+          // merge is not returned by the GitHub merge endpoint; we use the
+          // session's currently-registered branch as the best available proxy.
+          // Best-effort: a channels emit must never break the merge response.
+          try {
+            const sessions = await deps.loadSessions()
+            const sess = sessions.find((s) => s.id === id)
+            const baseBranch = sess?.githubIntegration?.repoSlug ? 'main' : 'main'
+            emitPrMerged({ repo: slug, number: prNumber, branch: baseBranch })
+          } catch { /* channels emit is best-effort */ }
+          return { ok: true }
+        }
+        return { ok: false, error: `http-${r.status}` }
       } catch (err) {
         return { ok: false, error: err instanceof Error ? err.message : String(err) }
       }
