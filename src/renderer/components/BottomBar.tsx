@@ -40,13 +40,32 @@ export default function BottomBar({ currentView, onViewChange, onUpdateRequested
     return () => clearInterval(interval)
   }, [])
 
-  // Update availability: one-shot check + subscribe to pushed availability.
+  // Update availability: check on mount, then re-check on a 30-min interval and
+  // when the window regains focus (debounced to <=1/5min). Without this the
+  // pill only appeared after a manual restart, so a release cut while the app
+  // is open went unnoticed. Each check is a single cheap GitHub release call.
   useEffect(() => {
-    window.electronAPI.update.check().then(setUpdateAvailable)
+    const UPDATE_INTERVAL_MS = 30 * 60 * 1000
+    const FOCUS_DEBOUNCE_MS = 5 * 60 * 1000
+    let lastCheckedAt = 0
+    const runCheck = () => {
+      lastCheckedAt = Date.now()
+      window.electronAPI.update.check().then(setUpdateAvailable)
+    }
+    runCheck()
+    const interval = setInterval(runCheck, UPDATE_INTERVAL_MS)
+    const onFocus = () => {
+      if (Date.now() - lastCheckedAt >= FOCUS_DEBOUNCE_MS) runCheck()
+    }
+    window.addEventListener('focus', onFocus)
     const off = window.electronAPI.update.onAvailable((available: boolean) => {
       setUpdateAvailable(available)
     })
-    return off
+    return () => {
+      clearInterval(interval)
+      window.removeEventListener('focus', onFocus)
+      off()
+    }
   }, [])
 
   return (

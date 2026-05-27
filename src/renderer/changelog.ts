@@ -15,6 +15,16 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '1.5.7',
+    date: '2026-05-27',
+    highlights: "Your account email is back in the status line and session header -- coloured per account -- and you can now pin a fixed colour to any account in Settings. The Update pill also appears on its own now, without needing a restart.",
+    changes: [
+      { type: 'fix', description: "The active account email is shown again in the per-session status line and the session header, coloured per account -- it was dropped during the V2 shell refactor" },
+      { type: 'feature', description: "Assign a fixed colour to any account email in Settings > General > Account Colours. Detected accounts are listed automatically, or add one manually; the chosen colour tints that account's email everywhere it shows" },
+      { type: 'improvement', description: "The app now re-checks for updates periodically and when the window regains focus, so the Update pill appears on its own instead of only after a manual restart" },
+    ]
+  },
+  {
     version: '1.5.6',
     date: '2026-05-26',
     highlights: "Identity colours now span the full hue wheel so sessions are instantly distinguishable, the GitHub panel slides in when shown, and a few first-launch papercuts are fixed.",

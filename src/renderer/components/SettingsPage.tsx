@@ -11,6 +11,7 @@ import GitHubConfigTab from './github/config/GitHubConfigTab'
 import { CodexSettingsTab } from './codex/CodexSettingsTab'
 import HooksGatewaySection from './github/config/HooksGatewaySection'
 import PageFrame from './PageFrame'
+import AccountColoursSection from './settings/AccountColoursSection'
 declare const __BUILD_TIME__: string
 
 export const SETTINGS_TAB_IDS = ['general', 'statusline', 'shortcuts', 'github', 'codex', 'hooks', 'about'] as const
@@ -209,6 +210,8 @@ export default function SettingsPage({ initialTab }: SettingsPageProps = {}) {
                   <span className="text-[10px] text-overlay0">(--dangerously-skip-permissions)</span>
                 </label>
               </Section>
+
+              <AccountColoursSection />
 
               <Section title="Terminal" icon={<><rect x="2" y="3" width="12" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.2" fill="none" /><path d="M5 7l2 2-2 2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" /><line x1="9" y1="11" x2="11" y2="11" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" /></>}>
                 <Field label="Font Family">

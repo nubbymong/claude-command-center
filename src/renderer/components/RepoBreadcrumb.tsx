@@ -1,5 +1,6 @@
 import React from 'react'
 import { Session } from '../stores/sessionStore'
+import AccountEmailChip from './AccountEmailChip'
 
 // Passive orientation strip (spec section 8): working dir on the left, repo slug
 // + connection state on the right. NOT a toolbar -- no actions. Does not repeat
@@ -10,10 +11,11 @@ export default function RepoBreadcrumb({ session }: { session: Session }) {
   const gi = session.githubIntegration
   const slug = gi?.repoSlug
   const connected = !!gi?.enabled && !!slug
-  if (!cwd && !slug) return null
+  if (!cwd && !slug && !session.accountEmail) return null
   return (
     <div className="flex items-center gap-2 px-4 py-1 text-[11px] border-b shrink-0"
       style={{ background: 'var(--surface-panel)', borderColor: 'var(--border-subtle)', color: 'var(--text-muted)' }}>
+      <AccountEmailChip email={session.accountEmail} statuslineColour={session.accountColour} max={32} />
       <span className="font-mono truncate min-w-0" title={cwd}>{cwd}</span>
       <span className="flex-1" />
       {slug && (

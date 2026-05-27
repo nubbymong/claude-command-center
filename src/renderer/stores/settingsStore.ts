@@ -80,6 +80,9 @@ export interface AppSettings {
   identityColorMigratedV2?: boolean      // one-time guard: saved-config colours migrated to identity keys
   colourMigrationNoticePending?: boolean // a colour migration changed records and the notice should show
   colourMigrationNoticeDismissed?: boolean
+  /** User-defined per-account email -> identity colour key overrides. Keyed by
+   *  canonicalised (lowercase+trim) email. Absent = use the deterministic colour. */
+  accountColourOverrides?: Record<string, import('../../shared/identity-colors').IdentityColorKey>
 }
 
 interface SettingsState {
