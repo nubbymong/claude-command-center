@@ -1,5 +1,6 @@
 import { BrowserWindow } from 'electron'
 import * as pty from 'node-pty'
+import { PasteQueue } from './paste-queue'
 import * as os from 'os'
 import { execSync } from 'child_process'
 import { startSessionLog, logSessionData, endSessionLog } from './session-logger'
@@ -1059,6 +1060,34 @@ function writeChunked(ptyProcess: pty.IPty, data: string): void {
   writeNext()
 }
 
+// Per-session FIFO paste queues for channel envelopes (P3.1).
+const pasteQueues = new Map<string, PasteQueue>()
+
+// Guard-free chunked write (channel envelopes carry a unique ts: and must not
+// be deduped). Mirrors writeChunked's 256-byte/12ms cadence.
+function writeEnvelopeChunked(sessionId: string, data: string): Promise<void> {
+  const session = ptySessions.get(sessionId)
+  if (!session) return Promise.resolve()
+  return new Promise<void>((resolve) => {
+    let i = 0
+    const step = () => {
+      if (i >= data.length) return resolve()
+      session.ptyProcess.write(data.slice(i, i + WRITE_CHUNK_SIZE))
+      i += WRITE_CHUNK_SIZE
+      setTimeout(step, WRITE_CHUNK_DELAY)
+    }
+    step()
+  })
+}
+
+// Public API for the bus. Enqueues a fully-wrapped envelope for delivery.
+// Returns dropped-count (>0 means overflow occurred).
+export function pastePty(sessionId: string, envelope: string): number {
+  let q = pasteQueues.get(sessionId)
+  if (!q) { q = new PasteQueue((d) => writeEnvelopeChunked(sessionId, d), 16); pasteQueues.set(sessionId, q) }
+  return q.enqueue(envelope)
+}
+
 // Track recent SUBMITTED writes per session to detect + suppress accidental double-sends.
 // A prompt being submitted twice causes two Claude API calls and can trigger rate limits.
 //
@@ -1231,4 +1260,10 @@ export async function gracefulExitAllPty(timeoutMs = 5000): Promise<void> {
  */
 export function getActivePtySessionIds(): string[] {
   return Array.from(ptySessions.keys())
+}
+
+// A session is writable for channel delivery iff a live PTY handle exists for
+// it. The renderer status enum is UI-only; PTY presence is authoritative.
+export function isSessionWritable(sessionId: string): boolean {
+  return ptySessions.has(sessionId)
 }
