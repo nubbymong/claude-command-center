@@ -80,6 +80,78 @@ export function parseCccSessionIdFromUrl(reqUrl: string): string | null {
   }
 }
 
+/** #435: diagnostic payload for the /messages 404 branch.
+ *
+ *  When a POST /messages?sessionId=<sid> arrives but no transport is
+ *  registered under that id, the bare "Session not found" body that
+ *  used to be returned was unactionable -- the LLM consumer surfaced
+ *  it verbatim and the user had no recovery hint. This helper builds
+ *  both:
+ *
+ *    - logMessage: a single-line server-side WARN suitable for
+ *      logError(). Includes the truncated requested sid, the current
+ *      transport count, up to 3 sample sids (8-char prefixes only --
+ *      we deliberately do NOT log full sids to keep this grep-safe
+ *      against accidental sharing of logs), and the requesting
+ *      user-agent (capped at 64 chars to bound log-line size).
+ *
+ *    - body: the HTTP response body, plain ASCII (no em dashes, no
+ *      JSON wrapping), explaining the three common root causes and
+ *      the recovery path (restart the Claude session inside CCC, which
+ *      re-binds a fresh SSE connection via the per-session
+ *      --mcp-config writer).
+ *
+ *  The HTTP status stays 404 -- MCP clients (Claude CLI in particular)
+ *  rely on 404 to identify "session lost" and trigger their own
+ *  reconnect logic. Changing the code to e.g. 410 would mask real
+ *  wiring failures elsewhere in the stack.
+ *
+ *  Pure helper -- no I/O, no http types -- so it can be unit-tested
+ *  directly against a synthetic transports map. See
+ *  conductor-mcp-server-404.test.ts for the contract. */
+export interface NotFoundDiagnostic {
+  status: 404
+  body: string
+  logMessage: string
+}
+
+const SID_PREFIX_LEN = 8
+const SAMPLE_CAP = 3
+const UA_MAX_LEN = 64
+
+export function buildSessionNotFoundResponse(
+  requestedSessionId: string,
+  transports: ReadonlyMap<string, unknown>,
+  userAgent: string | undefined,
+): NotFoundDiagnostic {
+  const requestedPrefix = requestedSessionId.slice(0, SID_PREFIX_LEN)
+  const samples: string[] = []
+  for (const sid of transports.keys()) {
+    if (samples.length >= SAMPLE_CAP) break
+    samples.push(sid.slice(0, SID_PREFIX_LEN))
+  }
+  const samplesStr = samples.join(',')
+  const ua = userAgent && userAgent.length > 0
+    ? userAgent.slice(0, UA_MAX_LEN)
+    : 'unknown'
+
+  const logMessage =
+    `[vision-mcp] POST /messages 404: unknown transport sessionId=${requestedPrefix}… ` +
+    `(have ${transports.size} active transports, samples=[${samplesStr}]) ua="${ua}"`
+
+  const body =
+    `MCP transport session not found: ${requestedPrefix}…\n` +
+    `\n` +
+    `The SSE connection that owned this transport sessionId is no longer registered. This typically means:\n` +
+    `  1. Claude Code is reusing a stale sessionId from a previous SSE connection\n` +
+    `  2. The CCC MCP server restarted while Claude was idle\n` +
+    `  3. Network interruption dropped the SSE stream\n` +
+    `\n` +
+    `Recovery: restart the Claude session inside CCC (the per-session --mcp-config writer re-binds a fresh SSE connection on spawn).\n`
+
+  return { status: 404, body, logMessage }
+}
+
 // Lazy-load MCP SDK to avoid import issues in test environments
 let McpServer: any = null
 let SSEServerTransport: any = null
@@ -406,8 +478,19 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
 
         const transport = transports.get(sessionId)
         if (!transport) {
-          res.writeHead(404)
-          res.end('Session not found')
+          // #435: log a diagnostic line and return an actionable body
+          // instead of the bare "Session not found" that the LLM used
+          // to surface verbatim. The HTTP status stays 404 so MCP
+          // clients can keep their existing reconnect heuristics.
+          const ua = req.headers['user-agent']
+          const diagnostic = buildSessionNotFoundResponse(
+            sessionId,
+            transports,
+            typeof ua === 'string' ? ua : undefined,
+          )
+          logError(diagnostic.logMessage)
+          res.writeHead(diagnostic.status, { 'Content-Type': 'text/plain; charset=utf-8' })
+          res.end(diagnostic.body)
           return
         }
 
