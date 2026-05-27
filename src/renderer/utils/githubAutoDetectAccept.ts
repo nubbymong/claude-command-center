@@ -179,11 +179,19 @@ export async function handleAutoDetectAccept(
     if (session.configId) {
       deps.updateConfig(session.configId, { githubIntegration: merged })
     }
-  } catch {
+  } catch (err) {
     // Swallow IPC errors. The unauthed user still gets routed to Settings
     // below so they can finish setup manually. For the authed path there is
     // nothing useful to do here -- the next save attempt will surface a real
-    // error to the user.
+    // error to the user. We DO still warn so the authed-path silent no-op
+    // (preload TypeError, IPC disconnect, etc.) is observable in devtools --
+    // closes the same silent-failure class as the flush=false / ok=false
+    // branches above.
+    const msg = err instanceof Error ? err.message : String(err)
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[github] auto-detect accept aborted: flush=true ok=throw error=${msg}`,
+    )
   }
 
   if (!hasAuth) {

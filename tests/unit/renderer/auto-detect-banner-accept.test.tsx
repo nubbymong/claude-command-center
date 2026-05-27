@@ -216,15 +216,57 @@ describe('handleAutoDetectAccept -- #436 / #437', () => {
       profiles: [],
       throwOnIpc: true,
     })
+    // v1.5.9 follow-up: the throw branch now also emits a console.warn with
+    // the same format as the flush=false / ok=false branches so the silent
+    // no-op class is observable in devtools. Spy here so the warn doesn't
+    // pollute test output. NOTE: assert BEFORE mockRestore -- restore wipes
+    // the call history (same pattern as the flush=false test below).
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      await handleAutoDetectAccept('octocat/hello', baseSession, deps)
+      // Mirrors were skipped because the IPC threw, but the user still ends
+      // up on Settings so they can configure manually -- losing the write is
+      // fine, losing the navigation would be worse.
+      expect(updateSession).not.toHaveBeenCalled()
+      expect(updateConfig).not.toHaveBeenCalled()
+      expect(navigateToGitHubSettings).toHaveBeenCalledTimes(1)
+      // Assert the new diagnostic fires with the documented format.
+      expect(warnSpy).toHaveBeenCalledTimes(1)
+      const msg = String(warnSpy.mock.calls[0][0])
+      expect(msg).toContain('[github] auto-detect accept aborted')
+      expect(msg).toContain('flush=true')
+      expect(msg).toContain('ok=throw')
+      expect(msg).toContain('error=boom')
+    } finally {
+      warnSpy.mockRestore()
+    }
+  })
 
-    await handleAutoDetectAccept('octocat/hello', baseSession, deps)
-
-    // Mirrors were skipped because the IPC threw, but the user still ends up
-    // on Settings so they can configure manually -- losing the write is fine,
-    // losing the navigation would be worse.
-    expect(updateSession).not.toHaveBeenCalled()
-    expect(updateConfig).not.toHaveBeenCalled()
-    expect(navigateToGitHubSettings).toHaveBeenCalledTimes(1)
+  it('logs warn with throw-marker when IPC rejects (authed)', async () => {
+    // Authed path: helper does NOT navigate (per #437), does NOT mirror to
+    // stores (IPC threw so we don't know the disk state), but MUST still
+    // surface the failure via console.warn so a silent no-op is debuggable.
+    const { deps, updateSession, updateConfig, navigateToGitHubSettings } = buildDeps({
+      profiles: [{ id: 'p-owner', username: 'octocat' }],
+      throwOnIpc: true,
+    })
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      await handleAutoDetectAccept('octocat/hello', baseSession, deps)
+      // No store mirror, no nav (authed path stays put for retry).
+      expect(updateSession).not.toHaveBeenCalled()
+      expect(updateConfig).not.toHaveBeenCalled()
+      expect(navigateToGitHubSettings).not.toHaveBeenCalled()
+      // Exactly one warn, with the throw-branch marker format.
+      expect(warnSpy).toHaveBeenCalledTimes(1)
+      const msg = String(warnSpy.mock.calls[0][0])
+      expect(msg).toContain('[github] auto-detect accept aborted')
+      expect(msg).toContain('flush=true')
+      expect(msg).toContain('ok=throw')
+      expect(msg).toContain('error=boom')
+    } finally {
+      warnSpy.mockRestore()
+    }
   })
 
   it('when IPC returns ok=false (authed), helper does NOT mirror to stores and does NOT navigate', async () => {
