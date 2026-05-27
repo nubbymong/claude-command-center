@@ -33,6 +33,7 @@ describe('channel-storage', () => {
     expect(result).toEqual({ schemaVersion: 1, rules: ['SEED'] })
     const corrupt = [...files.keys()].find(k => k.includes('rules.json.corrupt-'))
     expect(corrupt).toBeTruthy()
+    expect(files.has('/res/conductor-channels/rules.json')).toBe(false)
   })
 
   it('on missing file: returns seeded defaults without writing', () => {

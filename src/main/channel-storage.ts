@@ -1,5 +1,5 @@
 // src/main/channel-storage.ts
-import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, copyFileSync, unlinkSync, readdirSync } from 'fs'
+import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, unlinkSync, readdirSync } from 'fs'
 import { join } from 'path'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import { logInfo, logError } from './debug-logger'
@@ -24,8 +24,8 @@ export function writeJsonFile(name: string, data: unknown): boolean {
   const tmp = fp + '.tmp'
   try {
     writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf-8')
-    if (existsSync(fp)) { copyFileSync(tmp, fp); try { unlinkSync(tmp) } catch { /* ignore */ } }
-    else { renameSync(tmp, fp) }
+    // rename atomically replaces on the same volume (Windows + POSIX)
+    renameSync(tmp, fp)
     return true
   } catch (err) {
     logError(`[channels] write ${name} failed: ${String(err)}`)
@@ -42,7 +42,7 @@ export function readJsonFile<T>(name: string, seedDefaults: () => T): T {
   try {
     return JSON.parse(readFileSync(fp, 'utf-8')) as T
   } catch (err) {
-    const corruptPath = `${fp}.corrupt-${Date.now()}`
+    const corruptPath = `${fp}.corrupt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
     try { renameSync(fp, corruptPath); logError(`[channels] ${name} unreadable, moved to ${corruptPath}`) }
     catch (e) { logError(`[channels] could not quarantine ${name}: ${String(e)}`) }
     return seedDefaults()
