@@ -621,6 +621,37 @@ export const TIPS_LIBRARY: Tip[] = [
   },
 
   {
+    id: 'tip.permission-tray',
+    category: 'security',
+    complexity: 'simple',
+    priority: 70,
+    variants: {
+      primary: {
+        shortText: 'High-risk Bash now stacks as a toast',
+        title: 'Permission Attention Tray',
+        body: 'When Claude tries to run a high-risk Bash command -- **rm -rf**, **sudo**, **dd if=**, **chmod 777**, **--force / --force-with-lease**, fork bombs -- it surfaces as a toast in the top-right corner so you can approve or reject without scrolling back through the terminal.\n\nEverything else (Read, Edit, Grep, ls, git status) **auto-allows** so the tray only fires when it matters. Catches commands from dynamic-workflow subagents too.\n\nTray caps at 50 entries; overflow auto-denies so a runaway agent cannot bury you in prompts.',
+        focusHint: 'Top-right corner of the window',
+      },
+    },
+  },
+
+  {
+    id: 'tip.dynamic-workflows',
+    category: 'productivity',
+    complexity: 'advanced',
+    priority: 55,
+    variants: {
+      primary: {
+        shortText: 'Opus 4.8 can orchestrate hundreds of subagents',
+        title: 'Dynamic Workflows',
+        body: 'Opus 4.8 ships **dynamic workflows** -- Claude writes a JavaScript orchestration script on the fly and fans out up to 1,000 parallel subagents in the background while your session stays free.\n\n**Three ways to invoke:**\n- Include the word **workflow** in your prompt\n- Set effort to **Ultracode** in Session Config (auto-orchestrates every task)\n- Run **/deep-research <question>** -- the bundled example\n\nWatch with **/workflows**. Save a run with **s** -- it becomes /<name> in future sessions.\n\nCCC: if you want it off globally, toggle **Disable Claude Code dynamic workflows** in Settings > Security.',
+        actionLabel: 'Open Settings',
+        actionTarget: 'settings',
+      },
+    },
+  },
+
+  {
     id: 'tip.transparency.network-activity',
     category: 'transparency',
     complexity: 'intermediate',

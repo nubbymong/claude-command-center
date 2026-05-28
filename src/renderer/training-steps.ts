@@ -446,6 +446,64 @@ export const trainingSteps: TrainingStep[] = [
     screenshotFilename: 'step-tips.jpg',
   },
   {
+    id: 'permission-tray',
+    title: 'Permission Attention Tray',
+    sinceVersion: '1.5.12',
+    section: 'admin',
+    summary:
+      'High-risk Bash commands -- rm -rf, sudo, force-push, dd, mkfs, chmod 777, fork bombs -- stack as toasts in the top-right corner. Approve or reject without scrolling back through the terminal. Everything else auto-allows so the tray only fires when it should.',
+    highlights: [
+      'Toast stack tops out at 50 entries; overflow auto-denies',
+      'Detection runs on Claude Code\'s PreToolUse hook -- the gateway intercepts before Claude executes',
+      'Auto-allow path handles non-Bash tools (Read, Edit, Grep, Write) silently',
+      'High-risk patterns: rm -rf / rm -fr, sudo, dd if=, chmod 777, --force / --force-with-lease, fork bombs',
+      'Toast survives session focus changes -- you can approve from any view',
+    ],
+    howToTrigger: [
+      { label: 'Spawn a Claude session', value: 'Saved Configs → +' },
+      { label: 'Trigger', value: 'Ask Claude to delete files, force-push, sudo, etc.' },
+      { label: 'Approve / reject', value: 'Top-right toast → click or keyboard' },
+    ],
+    proTip:
+      'The tray catches commands that come from dynamic-workflow subagents too -- if a 1000-agent run tries to rm -rf something, the high-risk detection still gates it.',
+    bullets: [
+      '**Toast stack** for high-risk Bash; everything else auto-allows',
+      'Hooks into **PreToolUse** so it fires before Claude actually runs the command',
+      'Patterns: **rm -rf, sudo, force-push, dd, mkfs, chmod 777, fork bombs**',
+      'Overflow (>50) auto-denies so a runaway agent can\'t bury you in prompts',
+    ],
+    screenshotFilename: 'step-security.jpg',
+  },
+  {
+    id: 'dynamic-workflows',
+    title: 'Dynamic Workflows',
+    sinceVersion: '1.5.12',
+    section: 'productivity',
+    summary:
+      'Opus 4.8\'s dynamic workflows orchestrate tens to hundreds of parallel subagents from a JavaScript script Claude writes for you. Run `workflow` in your prompt, set effort to `ultracode`, or use the bundled `/deep-research`. Watch progress via `/workflows`. Caps: 16 concurrent agents, 1000 total per run.',
+    highlights: [
+      'Ask in the prompt: include the word **workflow** and Claude writes one for the task',
+      'Auto-mode: **Ultracode** effort in Session Config + `/effort ultracode` enables auto-orchestration',
+      'Bundled: **`/deep-research <question>`** is the headline preview workflow',
+      'Watch with **`/workflows`** -- per-phase agent counts, token totals, drill-down per agent',
+      'Save with **`s`** in the `/workflows` view -- becomes `/<name>` in future sessions',
+    ],
+    howToTrigger: [
+      { label: 'One-off', value: "include 'workflow' in your prompt" },
+      { label: 'Auto every task', value: 'Session Config → Effort → Ultracode' },
+      { label: 'Disable globally', value: 'Settings → General → Security → Disable Claude Code dynamic workflows' },
+    ],
+    proTip:
+      'Workflows can burn 1000-agent tokens fast. CCC\'s tokenomics still tracks the spend per session and the permission tray still catches any high-risk Bash a subagent tries.',
+    bullets: [
+      '**Background orchestration** -- subagents run in parallel while your session stays free',
+      '**Ultracode** in the effort dropdown enables it automatically for every task',
+      '**/deep-research** is the bundled example; **/workflows** lists active runs',
+      'CCC: **Disable Claude Code dynamic workflows** in Settings -> Security if you want it off',
+    ],
+    screenshotFilename: 'step-agent-hub.jpg',
+  },
+  {
     id: 'github-sidebar',
     title: 'GitHub Sidebar',
     sinceVersion: '1.4.0',
