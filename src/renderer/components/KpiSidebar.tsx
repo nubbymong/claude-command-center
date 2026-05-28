@@ -1,6 +1,8 @@
 import React, { useState } from 'react'
 import type { InsightsData, KpiMetric } from '../types/electron'
 import { computeTrends, formatValue, MetricWithTrend } from '../utils/kpiTrends'
+import { MetricChip } from './ui/MetricChip'
+import type { MetricTone } from './ui/MetricChip'
 
 interface Props {
   current: InsightsData
@@ -99,6 +101,16 @@ function SummarySection({ summary }: { summary: NonNullable<InsightsData['summar
   )
 }
 
+function metricToneFromTrend(metric: MetricWithTrend): MetricTone {
+  if (metric.direction === 'same' || metric.previousValue == null) return 'neutral'
+  const good = metric.goodDirection || 'neutral'
+  if (good === 'neutral') return 'neutral'
+  const isGood =
+    (good === 'up' && metric.direction === 'up') ||
+    (good === 'down' && metric.direction === 'down')
+  return isGood ? 'success' : 'danger'
+}
+
 function KpiCategory({
   category,
   metrics,
@@ -114,7 +126,8 @@ function KpiCategory({
     <div className="mb-2">
       <button
         onClick={() => setCollapsed(!collapsed)}
-        className="w-full flex items-center gap-1.5 px-2 py-1 text-xs font-semibold text-subtext0 uppercase tracking-wider hover:text-text transition-colors"
+        className="w-full flex items-center gap-1.5 px-2 py-1 text-xs font-semibold uppercase tracking-wider hover:text-text transition-colors"
+        style={{ color: 'var(--text-muted)' }}
       >
         <svg
           width="10"
@@ -129,18 +142,28 @@ function KpiCategory({
       </button>
 
       {!collapsed && (
-        <div className="space-y-0.5 mt-0.5">
-          {entries.map(([key, metric]) => (
-            <div key={key} className="flex items-center justify-between px-2 py-1 rounded hover:bg-surface0/50">
-              <span className="text-xs text-overlay1 truncate mr-2">{metric.label}</span>
-              <div className="flex items-center gap-1.5 shrink-0">
-                <span className="text-xs text-text font-medium tabular-nums">
-                  {formatValue(metric.value, metric.format)}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '2px 4px 4px' }}>
+          {entries.map(([key, metric]) => {
+            const tone = metricToneFromTrend(metric)
+            const valueStr = formatValue(metric.value, metric.format)
+            const displayValue =
+              metric.previousValue != null && metric.direction !== 'same' ? (
+                <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  {valueStr}
+                  <TrendArrow metric={metric} />
                 </span>
-                {metric.previousValue != null && <TrendArrow metric={metric} />}
-              </div>
-            </div>
-          ))}
+              ) : (
+                valueStr
+              )
+            return (
+              <MetricChip
+                key={key}
+                label={metric.label}
+                value={displayValue}
+                tone={tone}
+              />
+            )
+          })}
         </div>
       )}
     </div>
@@ -163,6 +186,47 @@ function ListSection({ name, items }: { name: string; items: Array<{ name: strin
   )
 }
 
+/** Synthesise MetricChip rows from well-known flat fields (sessionsCount, totalCostUsd, daysCovered). */
+function FlatKpiChips({ current, previous }: { current: InsightsData; previous?: InsightsData | null }) {
+  type FlatField = { key: string; label: string; lowerIsBetter: boolean }
+  const FIELDS: FlatField[] = [
+    { key: 'sessionsCount', label: 'Sessions', lowerIsBetter: false },
+    { key: 'totalCostUsd', label: 'Cost', lowerIsBetter: true },
+    { key: 'daysCovered', label: 'Days', lowerIsBetter: false },
+  ]
+
+  const chips = FIELDS.filter((f) => current[f.key] != null)
+  if (chips.length === 0) return null
+
+  return (
+    <div style={{ padding: '12px 12px 8px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div
+        className="text-[10px] font-semibold uppercase tracking-wider"
+        style={{ color: 'var(--text-muted)', marginBottom: 2 }}
+      >
+        Key Metrics
+      </div>
+      {chips.map(({ key, label, lowerIsBetter }) => {
+        const val: number = current[key]
+        const prev: number | undefined = previous?.[key]
+        let tone: MetricTone = 'neutral'
+        if (prev != null && prev !== 0) {
+          const delta = val - prev
+          const improved = lowerIsBetter ? delta < 0 : delta > 0
+          tone = improved ? 'success' : delta === 0 ? 'neutral' : 'danger'
+        }
+        let displayVal: string
+        if (key === 'totalCostUsd') {
+          displayVal = val >= 10 ? `$${val.toFixed(1)}` : `$${val.toFixed(2)}`
+        } else {
+          displayVal = String(Math.round(val))
+        }
+        return <MetricChip key={key} label={label} value={displayVal} tone={tone} />
+      })}
+    </div>
+  )
+}
+
 export default function KpiSidebar({ current, previous }: Props) {
   const hasKpis = current.kpis && Object.keys(current.kpis).length > 0
   const hasSummary = current.summary && (
@@ -172,7 +236,10 @@ export default function KpiSidebar({ current, previous }: Props) {
   )
   const hasLists = current.lists && Object.keys(current.lists).length > 0
 
-  if (!hasKpis && !hasSummary && !hasLists) {
+  const FLAT_FIELDS = ['sessionsCount', 'totalCostUsd', 'daysCovered']
+  const hasFlatKpis = FLAT_FIELDS.some((k) => current[k] != null)
+
+  if (!hasKpis && !hasSummary && !hasLists && !hasFlatKpis) {
     return (
       <div className="w-72 bg-mantle border-l border-surface0 p-4 flex items-center justify-center">
         <span className="text-xs text-overlay0">No KPI data available</span>
@@ -217,6 +284,11 @@ export default function KpiSidebar({ current, previous }: Props) {
             <KpiCategory key={category} category={category} metrics={metrics} />
           ))}
         </div>
+      )}
+
+      {/* Flat KPI chips (sessionsCount / totalCostUsd / daysCovered) */}
+      {hasFlatKpis && !hasKpis && (
+        <FlatKpiChips current={current} previous={previous} />
       )}
 
       {/* Dynamic lists */}
