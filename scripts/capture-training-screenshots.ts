@@ -41,27 +41,55 @@ function redactAccountInStatusline(sl: any) {
 
 // ── Config directory resolution ──
 
-function getConfigDir(): string {
-  if (process.platform === 'win32') {
-    for (const key of ['Software\\Claude Command Center', 'Software\\Claude Conductor']) {
-      try {
-        const result = execSync(`reg query "HKCU\\${key}" /v ResourcesDirectory`, { encoding: 'utf-8', timeout: 5000, windowsHide: true })
-        const match = result.match(/ResourcesDirectory\s+REG_SZ\s+(.+)/)
-        if (match) return path.join(match[1].trim(), 'CONFIG')
-      } catch { /* try next */ }
-    }
-    return path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'Claude Conductor', 'CONFIG')
-  } else {
-    const fallbackFile = path.join(os.homedir(), '.claude-conductor', 'platform-config.json')
+function readRegistryValue(name: 'ResourcesDirectory' | 'DataDirectory'): string | null {
+  if (process.platform !== 'win32') return null
+  for (const key of ['Software\\Claude Command Center', 'Software\\Claude Conductor']) {
     try {
-      if (fs.existsSync(fallbackFile)) {
-        const config = JSON.parse(fs.readFileSync(fallbackFile, 'utf-8'))
-        if (config.ResourcesDirectory) return path.join(config.ResourcesDirectory, 'CONFIG')
-        if (config.DataDirectory) return path.join(config.DataDirectory, 'CONFIG')
-      }
-    } catch {}
-    return path.join(os.homedir(), 'Library', 'Application Support', 'Claude Conductor', 'CONFIG')
+      const result = execSync(`reg query "HKCU\\${key}" /v ${name}`, { encoding: 'utf-8', timeout: 5000, windowsHide: true })
+      const match = result.match(new RegExp(`${name}\\s+REG_SZ\\s+(.+)`))
+      if (match) return match[1].trim()
+    } catch { /* try next */ }
   }
+  return null
+}
+
+function getResourcesDir(): string {
+  const fromReg = readRegistryValue('ResourcesDirectory')
+  if (fromReg) return fromReg
+  if (process.platform === 'win32') {
+    return path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'Claude Conductor')
+  }
+  const fallbackFile = path.join(os.homedir(), '.claude-conductor', 'platform-config.json')
+  try {
+    if (fs.existsSync(fallbackFile)) {
+      const config = JSON.parse(fs.readFileSync(fallbackFile, 'utf-8'))
+      if (config.ResourcesDirectory) return config.ResourcesDirectory
+      if (config.DataDirectory) return config.DataDirectory
+    }
+  } catch {}
+  return path.join(os.homedir(), 'Library', 'Application Support', 'Claude Conductor')
+}
+
+function getDataDir(): string {
+  const fromReg = readRegistryValue('DataDirectory')
+  if (fromReg) return fromReg
+  // Defaults match getDefaultDataDir() in src/main/ipc/setup-handlers.ts
+  if (process.platform === 'win32') {
+    return path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'Claude Conductor')
+  }
+  const fallbackFile = path.join(os.homedir(), '.claude-conductor', 'platform-config.json')
+  try {
+    if (fs.existsSync(fallbackFile)) {
+      const config = JSON.parse(fs.readFileSync(fallbackFile, 'utf-8'))
+      if (config.DataDirectory) return config.DataDirectory
+      if (config.ResourcesDirectory) return config.ResourcesDirectory
+    }
+  } catch {}
+  return path.join(os.homedir(), 'Library', 'Application Support', 'Claude Conductor')
+}
+
+function getConfigDir(): string {
+  return path.join(getResourcesDir(), 'CONFIG')
 }
 
 // ── Sample data ──
@@ -188,6 +216,9 @@ interface BackupInfo {
   createdDemoFiles: string[]   // orig didn't exist; we wrote demo data; safe to delete
   createdMemoryDirs: string[]
   projectsRenamed: boolean
+  codexSessionsRenamed: boolean
+  insightsRenamed: boolean
+  logsRenamed: boolean
   lockPath: string
 }
 
@@ -266,6 +297,9 @@ function seedSampleData(): BackupInfo {
     createdDemoFiles: [],
     createdMemoryDirs: [],
     projectsRenamed: false,
+    codexSessionsRenamed: false,
+    insightsRenamed: false,
+    logsRenamed: false,
     lockPath,
   }
 
@@ -286,6 +320,12 @@ function seedSampleData(): BackupInfo {
       return [d, { date: d, totalCostUsd: costs[i], totalTokens: tokens[i], messageCount: sessions[i] * 15, sessionCount: sessions[i], totalDurationMs: 0, avgCostPerHour: 0, byModel: {} }]
     })),
     lastSeeded: now,
+    // Mark seed complete + recent lastSync so seedTokenomics/syncTokenomics
+    // skip the project-folder scan that would otherwise pull in real
+    // Claude/Codex history (and overwrite tokenomics.json with 15+MB of it).
+    seedComplete: true,
+    lastSyncTimestamp: now,
+    totalCostUsd: 4.46,
   }
 
   // P8.18: scrub any account identity baked into the seeded sessions before
@@ -299,7 +339,7 @@ function seedSampleData(): BackupInfo {
     'configs.json': SAMPLE_CONFIGS,
     'commands.json': SAMPLE_COMMANDS,
     'command-sections.json': SAMPLE_SECTIONS,
-    'settings.json': { localMachineName: process.platform === 'darwin' ? 'Mac Mini' : 'Dev Workstation', terminalFontSize: 14, updateChannel: 'stable' },
+    'settings.json': { localMachineName: process.platform === 'darwin' ? 'Mac Mini' : 'Dev Workstation', terminalFontSize: 14, updateChannel: 'stable', colourMigrationNoticeDismissed: true, colourMigrationNoticePending: false },
     'app-meta.json': { setupVersion: '99.99.99', lastTrainingVersion: '99.99.99', lastWhatsNewVersion: '99.99.99', lastSeenVersion: '99.99.99' },
     'cloud-agents.json': SAMPLE_CLOUD_AGENTS,
     'tokenomics.json': sampleTokenomics,
@@ -322,14 +362,83 @@ function seedSampleData(): BackupInfo {
 
   // Temporarily hide real projects so only demo ones appear in screenshots.
   // Rename ~/.claude/projects/ → ~/.claude/projects-real-bak/ during capture.
+  // Fail loudly if a leftover backup exists -- silently continuing would let
+  // real session data leak into screenshots (and confuse the cleanup step).
   const projectsDir = path.join(os.homedir(), '.claude', 'projects')
   const projectsBackup = projectsDir + '-real-bak'
+  if (fs.existsSync(projectsBackup)) {
+    throw new Error(
+      `[capture] Refusing to start: ${projectsBackup} already exists from a prior crashed capture. ` +
+      `Move its contents back into ${projectsDir} (or delete it if you don't need them) before re-running.`
+    )
+  }
   if (fs.existsSync(projectsDir)) {
     fs.renameSync(projectsDir, projectsBackup)
     activeBackupInfo.projectsRenamed = true
     console.log('[capture] Hid real projects directory')
   }
   fs.mkdirSync(projectsDir, { recursive: true })
+
+  // Same treatment for Codex history -- seedTokenomics scans ~/.codex/sessions/
+  // and would otherwise pull all real Codex transcripts into screenshots.
+  const codexSessionsDir = path.join(os.homedir(), '.codex', 'sessions')
+  const codexSessionsBackup = codexSessionsDir + '-real-bak'
+  if (fs.existsSync(codexSessionsBackup)) {
+    throw new Error(
+      `[capture] Refusing to start: ${codexSessionsBackup} already exists from a prior crashed capture. ` +
+      `Move its contents back into ${codexSessionsDir} (or delete it if you don't need them) before re-running.`
+    )
+  }
+  if (fs.existsSync(codexSessionsDir)) {
+    fs.renameSync(codexSessionsDir, codexSessionsBackup)
+    activeBackupInfo.codexSessionsRenamed = true
+    console.log('[capture] Hid real Codex sessions directory')
+  }
+
+  // Insights reports live at <RESOURCES>/insights/ as one dir per run -- the
+  // Insights page renders the latest report. Without hiding, real KPIs and
+  // project names from the user's history leak into screenshots.
+  const insightsDir = path.join(getResourcesDir(), 'insights')
+  const insightsBackup = insightsDir + '-real-bak'
+  if (fs.existsSync(insightsBackup)) {
+    throw new Error(
+      `[capture] Refusing to start: ${insightsBackup} already exists from a prior crashed capture. ` +
+      `Move its contents back into ${insightsDir} (or delete it if you don't need them) before re-running.`
+    )
+  }
+  if (fs.existsSync(insightsDir)) {
+    fs.renameSync(insightsDir, insightsBackup)
+    activeBackupInfo.insightsRenamed = true
+    console.log('[capture] Hid real Insights directory')
+  }
+
+  // Session logs live at <DATA>/logs/<configLabel>/<sessionId>/ -- the Logs
+  // page renders the configLabel folders, leaking real session names.
+  const logsDir = path.join(getDataDir(), 'logs')
+  const logsBackup = logsDir + '-real-bak'
+  if (fs.existsSync(logsBackup)) {
+    throw new Error(
+      `[capture] Refusing to start: ${logsBackup} already exists from a prior crashed capture. ` +
+      `Move its contents back into ${logsDir} (or delete it if you don't need them) before re-running.`
+    )
+  }
+  if (fs.existsSync(logsDir)) {
+    // Best-effort: if the live CCC instance has open handles in logs/ (it
+    // streams session logs continuously), the rename will EPERM on Windows.
+    // We don't want that to abort the whole capture -- accept the leak,
+    // record nothing renamed, and proceed.
+    try {
+      fs.renameSync(logsDir, logsBackup)
+      activeBackupInfo.logsRenamed = true
+      console.log('[capture] Hid real session logs directory')
+    } catch (err: any) {
+      if (err && err.code === 'EPERM') {
+        console.warn('[capture] Could not hide session logs directory (live CCC holding handles). Logs page screenshot may show real session names.')
+      } else {
+        throw err
+      }
+    }
+  }
 
   for (const project of SAMPLE_MEMORY_PROJECTS) {
     const memoryDir = path.join(projectsDir, project.projectDir, 'memory')
@@ -410,6 +519,60 @@ function cleanupSampleData(info: BackupInfo | null): void {
     // We only created demo projects (no real ones to restore) — clean those up
     for (const dir of info.createdMemoryDirs) {
       try { fs.rmSync(dir, { recursive: true, force: true }) } catch {}
+    }
+  }
+
+  // Restore real Codex sessions directory
+  if (info.codexSessionsRenamed) {
+    const codexSessionsDir = path.join(os.homedir(), '.codex', 'sessions')
+    const codexSessionsBackup = codexSessionsDir + '-real-bak'
+    try {
+      if (!fs.existsSync(codexSessionsBackup)) {
+        console.warn('[capture] codex sessions-real-bak missing; skipping restore to protect real data')
+      } else {
+        if (fs.existsSync(codexSessionsDir)) fs.rmSync(codexSessionsDir, { recursive: true, force: true })
+        fs.renameSync(codexSessionsBackup, codexSessionsDir)
+        console.log('[capture] Restored real Codex sessions directory')
+      }
+    } catch (err) {
+      console.error('[capture] WARNING: Failed to restore Codex sessions directory!', err)
+      console.error(`[capture] Your real Codex sessions are at: ${codexSessionsBackup}`)
+    }
+  }
+
+  // Restore real Insights directory
+  if (info.insightsRenamed) {
+    const insightsDir = path.join(getResourcesDir(), 'insights')
+    const insightsBackup = insightsDir + '-real-bak'
+    try {
+      if (!fs.existsSync(insightsBackup)) {
+        console.warn('[capture] insights-real-bak missing; skipping restore to protect real data')
+      } else {
+        if (fs.existsSync(insightsDir)) fs.rmSync(insightsDir, { recursive: true, force: true })
+        fs.renameSync(insightsBackup, insightsDir)
+        console.log('[capture] Restored real Insights directory')
+      }
+    } catch (err) {
+      console.error('[capture] WARNING: Failed to restore Insights directory!', err)
+      console.error(`[capture] Your real Insights are at: ${insightsBackup}`)
+    }
+  }
+
+  // Restore real session logs directory
+  if (info.logsRenamed) {
+    const logsDir = path.join(getDataDir(), 'logs')
+    const logsBackup = logsDir + '-real-bak'
+    try {
+      if (!fs.existsSync(logsBackup)) {
+        console.warn('[capture] logs-real-bak missing; skipping restore to protect real data')
+      } else {
+        if (fs.existsSync(logsDir)) fs.rmSync(logsDir, { recursive: true, force: true })
+        fs.renameSync(logsBackup, logsDir)
+        console.log('[capture] Restored real session logs directory')
+      }
+    } catch (err) {
+      console.error('[capture] WARNING: Failed to restore logs directory!', err)
+      console.error(`[capture] Your real logs are at: ${logsBackup}`)
     }
   }
 
