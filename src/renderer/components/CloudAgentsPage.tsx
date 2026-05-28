@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { useCloudAgentStore, setupCloudAgentListener } from '../stores/cloudAgentStore'
 import type { CloudAgent, CloudAgentStatus } from '../types/electron'
 import { StatusDot, type SessionState } from './ui/StatusDot'
+import { MetricChip } from './ui/MetricChip'
 import NewAgentDialog from './NewAgentDialog'
 import AgentLibrary from './AgentLibrary'
 import TeamsPanel from './TeamsPanel'
@@ -343,7 +344,7 @@ function OutputTab({ agent }: { agent: CloudAgent }) {
   )
 }
 
-function SummaryTab({ agent }: { agent: CloudAgent }) {
+export function SummaryTab({ agent }: { agent: CloudAgent }) {
   const isRunning = agent.status === 'running' || agent.status === 'pending'
 
   return (
@@ -382,17 +383,16 @@ function SummaryTab({ agent }: { agent: CloudAgent }) {
       {/* Cost & Tokens */}
       {(agent.cost != null || agent.tokenUsage) && (
         <div>
-          <div className="text-[10px] text-subtext0 uppercase tracking-wider font-semibold mb-1.5">Usage</div>
-          <div className="flex gap-2.5">
+          <div className="text-[10px] uppercase tracking-wider font-semibold mb-1.5" style={{ color: 'var(--text-muted)' }}>Usage</div>
+          <div className="flex gap-2.5 flex-wrap">
             {agent.cost != null && (
-              <div className="text-xs text-text bg-crust/60 rounded-lg px-3 py-2 border border-surface0/30">
-                Cost: <span className="text-green font-medium">{formatCost(agent.cost)}</span>
-              </div>
+              <MetricChip label="Cost" value={formatCost(agent.cost)} tone="success" />
             )}
             {agent.tokenUsage && (
-              <div className="text-xs text-text bg-crust/60 rounded-lg px-3 py-2 border border-surface0/30 tabular-nums">
-                {agent.tokenUsage.inputTokens.toLocaleString()} in / {agent.tokenUsage.outputTokens.toLocaleString()} out
-              </div>
+              <>
+                <MetricChip label="Input" value={agent.tokenUsage.inputTokens.toLocaleString()} />
+                <MetricChip label="Output" value={agent.tokenUsage.outputTokens.toLocaleString()} />
+              </>
             )}
           </div>
         </div>
