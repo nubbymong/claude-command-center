@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useMemo } from 'react'
+import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import PageFrame from './PageFrame'
@@ -18,29 +18,37 @@ interface LogEntry {
   data?: string
 }
 
-const THEME = {
-  background: '#0f1218',
-  foreground: '#b8c5d6',
-  cursor: '#F5E0DC',
-  cursorAccent: '#0f1218',
-  selectionBackground: '#2a3342',
-  selectionForeground: '#f0f4fc',
-  black: '#2a3342',
-  red: '#F38BA8',
-  green: '#A6E3A1',
-  yellow: '#F9E2AF',
-  blue: '#89B4FA',
-  magenta: '#CBA6F7',
-  cyan: '#94E2D5',
-  white: '#b8c5d6',
-  brightBlack: '#4a5568',
-  brightRed: '#F38BA8',
-  brightGreen: '#A6E3A1',
-  brightYellow: '#F9E2AF',
-  brightBlue: '#89B4FA',
-  brightMagenta: '#CBA6F7',
-  brightCyan: '#94E2D5',
-  brightWhite: '#f0f4fc',
+function readVar(name: string, fallback: string): string {
+  if (typeof window === 'undefined') return fallback
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+  return v || fallback
+}
+
+export function buildLogTheme() {
+  return {
+    background:          readVar('--surface-stage', '#0f1218'),
+    foreground:          readVar('--terminal-foreground', '#b8c5d6'),
+    cursor:              readVar('--text-primary', '#F5E0DC'),
+    cursorAccent:        readVar('--surface-stage', '#0f1218'),
+    selectionBackground: readVar('--surface-overlay', '#2a3342'),
+    selectionForeground: readVar('--text-primary', '#f0f4fc'),
+    black:        readVar('--surface-overlay', '#2a3342'),
+    red:          readVar('--status-danger', '#F38BA8'),
+    green:        readVar('--status-success', '#A6E3A1'),
+    yellow:       readVar('--status-warning', '#F9E2AF'),
+    blue:         readVar('--status-info', '#89B4FA'),
+    magenta:      readVar('--chart-other', '#CBA6F7'),
+    cyan:         readVar('--accent', '#94E2D5'),
+    white:        readVar('--text-secondary', '#b8c5d6'),
+    brightBlack:  readVar('--text-muted', '#4a5568'),
+    brightRed:    readVar('--status-danger', '#F38BA8'),
+    brightGreen:  readVar('--status-success', '#A6E3A1'),
+    brightYellow: readVar('--status-warning', '#F9E2AF'),
+    brightBlue:   readVar('--status-info', '#89B4FA'),
+    brightMagenta:readVar('--chart-other', '#CBA6F7'),
+    brightCyan:   readVar('--accent', '#94E2D5'),
+    brightWhite:  readVar('--text-primary', '#f0f4fc'),
+  }
 }
 
 function getDateGroup(ts?: number): string {
@@ -62,6 +70,27 @@ function formatSize(bytes: number): string {
   return (bytes / (1024 * 1024)).toFixed(1) + 'MB'
 }
 
+export function computeFilterDiff(before: number[], after: number[]): { added: number[]; removed: number[] } {
+  const beforeSet = new Set(before)
+  const afterSet = new Set(after)
+  return {
+    added: after.filter(i => !beforeSet.has(i)),
+    removed: before.filter(i => !afterSet.has(i)),
+  }
+}
+
+function writeEntry(term: { write: (s: string) => void }, entry: LogEntry) {
+  if (entry.type === 'start') {
+    const time = new Date(entry.ts).toLocaleString()
+    term.write(`\x1b[32m${String.fromCodePoint(0x25B6)}\x1b[90m Session started ${time}\x1b[0m\r\n`)
+  } else if (entry.type === 'end') {
+    const time = new Date(entry.ts).toLocaleString()
+    term.write(`\x1b[31m${String.fromCodePoint(0x25A0)}\x1b[90m Session ended ${time}\x1b[0m\r\n`)
+  } else if (entry.data) {
+    term.write(entry.data)
+  }
+}
+
 export default function LogViewer() {
   const [sessions, setSessions] = useState<LogSession[]>([])
   const [selectedSession, setSelectedSession] = useState<LogSession | null>(null)
@@ -77,12 +106,16 @@ export default function LogViewer() {
   // Entries
   const [allEntries, setAllEntries] = useState<LogEntry[]>([])
   const [loading, setLoading] = useState(false)
+  const PAGE_LIMIT = 500
+  const [loadedOffset, setLoadedOffset] = useState(0)
+  const [hasMore, setHasMore] = useState(false)
 
   // Terminal
   const termContainerRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
+  const prevFilterRef = useRef<number[]>([])
 
   // Load sessions on mount
   useEffect(() => {
@@ -131,7 +164,7 @@ export default function LogViewer() {
       }
 
       term = new Terminal({
-        theme: THEME,
+        theme: buildLogTheme(),
         fontFamily: "'Cascadia Code', 'Fira Code', 'JetBrains Mono', Consolas, monospace",
         fontSize: 13,
         lineHeight: 1.2,
@@ -169,26 +202,31 @@ export default function LogViewer() {
     }
   }, [selectedSession])
 
-  // Load entries when session selected
+  // Load entries when session selected (chunked: 500 per page)
   useEffect(() => {
-    if (!selectedSession) {
-      setAllEntries([])
-      return
-    }
-
+    if (!selectedSession) { setAllEntries([]); setLoadedOffset(0); setHasMore(false); return }
     setLoading(true)
-    const loadEntries = async () => {
-      const { entries } = await window.electronAPI.logs.read(selectedSession.logDir, 0, 5000)
+    let cancelled = false
+    const load = async () => {
+      const { entries, hasMore: more } = await window.electronAPI.logs.read(selectedSession.logDir, 0, PAGE_LIMIT)
+      if (cancelled) return
       setAllEntries(entries as LogEntry[])
+      setLoadedOffset((entries as LogEntry[]).length)
+      setHasMore(!!more)
       setLoading(false)
     }
-
-    const checkAndLoad = () => {
-      if (termRef.current) loadEntries()
-      else setTimeout(checkAndLoad, 100)
-    }
-    setTimeout(checkAndLoad, 150)
+    const waitForTerm = () => { if (termRef.current) load(); else setTimeout(waitForTerm, 100) }
+    setTimeout(waitForTerm, 150)
+    return () => { cancelled = true }
   }, [selectedSession])
+
+  const loadMore = useCallback(async () => {
+    if (!selectedSession || !hasMore) return
+    const { entries, hasMore: more } = await window.electronAPI.logs.read(selectedSession.logDir, loadedOffset, PAGE_LIMIT)
+    setAllEntries(prev => prev.concat(entries as LogEntry[]))
+    setLoadedOffset(prev => prev + (entries as LogEntry[]).length)
+    setHasMore(!!more)
+  }, [selectedSession, loadedOffset, hasMore])
 
   // Validate regex
   const regexError = useMemo(() => {
@@ -201,62 +239,50 @@ export default function LogViewer() {
     }
   }, [searchQuery, useRegex])
 
-  // Filter entries based on search + type
-  const filteredEntries = useMemo(() => {
-    let entries = allEntries
-
-    if (typeFilter === 'events') {
-      entries = entries.filter(e => e.type === 'start' || e.type === 'end')
-    } else if (typeFilter === 'output') {
-      entries = entries.filter(e => e.type !== 'start' && e.type !== 'end')
-    }
-
-    if (searchQuery.trim() && !regexError) {
-      entries = entries.filter(e => {
+  // Filter entries to indices (index-based, diff-aware)
+  const filteredIndices = useMemo(() => {
+    const out: number[] = []
+    for (let i = 0; i < allEntries.length; i++) {
+      const e = allEntries[i]
+      if (typeFilter === 'events' && !(e.type === 'start' || e.type === 'end')) continue
+      if (typeFilter === 'output' && (e.type === 'start' || e.type === 'end')) continue
+      if (searchQuery.trim() && !regexError) {
         const text = e.data || ''
-        if (useRegex) {
-          try {
-            return new RegExp(searchQuery, caseSensitive ? '' : 'i').test(text)
-          } catch { return false }
-        }
-        return caseSensitive
-          ? text.includes(searchQuery)
-          : text.toLowerCase().includes(searchQuery.toLowerCase())
-      })
+        const matched = useRegex
+          ? (() => { try { return new RegExp(searchQuery, caseSensitive ? '' : 'i').test(text) } catch { return false } })()
+          : (caseSensitive ? text.includes(searchQuery) : text.toLowerCase().includes(searchQuery.toLowerCase()))
+        if (!matched) continue
+      }
+      out.push(i)
     }
-
-    return entries
+    return out
   }, [allEntries, searchQuery, useRegex, caseSensitive, typeFilter, regexError])
 
-  // Render filtered entries to terminal
+  // Render filtered entries to terminal (diff-aware: append-only when possible)
   useEffect(() => {
     const term = termRef.current
     if (!term || loading) return
+    const diff = computeFilterDiff(prevFilterRef.current, filteredIndices)
+    const sizeBefore = prevFilterRef.current.length
+    const fullRepaint =
+      sizeBefore === 0 ||
+      diff.removed.length > 0 ||
+      Math.abs(filteredIndices.length - sizeBefore) > sizeBefore * 0.25
 
-    term.clear()
-
-    if (filteredEntries.length === 0 && allEntries.length > 0) {
-      term.write('\x1b[90m  No matching entries\x1b[0m\r\n')
-      return
-    }
-
-    const hasFilters = searchQuery.trim() || typeFilter !== 'all'
-    if (hasFilters && allEntries.length > 0) {
-      term.write(`\x1b[90m  Showing ${filteredEntries.length} of ${allEntries.length} entries\x1b[0m\r\n\r\n`)
-    }
-
-    for (const entry of filteredEntries) {
-      if (entry.type === 'start') {
-        const time = new Date(entry.ts).toLocaleString()
-        term.write(`\x1b[32m${String.fromCodePoint(0x25B6)}\x1b[90m Session started ${time}\x1b[0m\r\n`)
-      } else if (entry.type === 'end') {
-        const time = new Date(entry.ts).toLocaleString()
-        term.write(`\x1b[31m${String.fromCodePoint(0x25A0)}\x1b[90m Session ended ${time}\x1b[0m\r\n`)
-      } else if (entry.data) {
-        term.write(entry.data)
+    if (fullRepaint) {
+      term.clear()
+      const hasFilters = searchQuery.trim() || typeFilter !== 'all'
+      if (filteredIndices.length === 0 && allEntries.length > 0) {
+        term.write('\x1b[90m  No matching entries\x1b[0m\r\n')
+      } else if (hasFilters && allEntries.length > 0) {
+        term.write(`\x1b[90m  Showing ${filteredIndices.length} of ${allEntries.length} entries\x1b[0m\r\n\r\n`)
       }
+      for (const idx of filteredIndices) writeEntry(term, allEntries[idx])
+    } else {
+      for (const idx of diff.added) writeEntry(term, allEntries[idx])
     }
-  }, [filteredEntries, loading])
+    prevFilterRef.current = filteredIndices
+  }, [filteredIndices, loading, allEntries, searchQuery, typeFilter])
 
   // Group sessions for sidebar (date groups + filter)
   const groupedSessions = useMemo(() => {
@@ -305,7 +331,7 @@ export default function LogViewer() {
 
   const hasActiveFilters = searchQuery.trim() !== '' || typeFilter !== 'all'
   const totalEntries = allEntries.length
-  const matchCount = filteredEntries.length
+  const matchCount = filteredIndices.length
 
   const logsIcon = (
     <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round">
@@ -535,7 +561,7 @@ export default function LogViewer() {
                   </div>
                 </div>
               ) : (
-                <div ref={termContainerRef} className="flex-1 bg-base" style={{ minHeight: '200px' }} />
+                <div ref={termContainerRef} className="flex-1 bg-base log-list-enter" style={{ minHeight: '200px' }} />
               )}
 
               {/* Bottom info bar */}
@@ -555,6 +581,14 @@ export default function LogViewer() {
                   <span className="text-[10px] text-overlay0/50 shrink-0">{formatSize(selectedSession.size)}</span>
                   <span className="text-[10px] text-overlay0/50 font-mono shrink-0">{selectedSession.sessionId.slice(0, 8)}</span>
                 </div>
+              )}
+              {hasMore && !loading && (
+                <button
+                  onClick={loadMore}
+                  className="text-[10px] text-overlay1 hover:text-text px-3 py-1.5 border-t border-surface0/40 bg-crust/30"
+                >
+                  Load older entries...
+                </button>
               )}
             </>
           ) : (

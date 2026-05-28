@@ -8,6 +8,10 @@ import type {
 } from '../../../shared/github-types'
 import type { CacheStore } from '../cache/cache-store'
 import { scanPrBodyRefs } from './pr-body-scanner'
+import { emitCiFailed } from '../../channel-emitters'
+
+// keyed by sessionId (bounded by live session count); detects ok->failure transitions
+const lastCiConclusion = new Map<string, string>()
 
 type FetchResult<T> =
   | { status: 'unchanged' }
@@ -279,6 +283,27 @@ export class SyncOrchestrator {
 
         if (runsR.status === 'ok') {
           existing.actions = mapRuns(runsR.data)
+          // Emit ci:failed on transition into failure (once per run, not every poll).
+          try {
+            const anyFailure = existing.actions.some((run) => run.conclusion === 'failure')
+            const anyNonFailure = existing.actions.some(
+              (run) => run.conclusion != null && run.conclusion !== 'failure',
+            )
+            if (anyFailure) {
+              if (lastCiConclusion.get(s.sessionId) !== 'failure') {
+                lastCiConclusion.set(s.sessionId, 'failure')
+                const failedRun = existing.actions.find((run) => run.conclusion === 'failure')!
+                emitCiFailed({
+                  sessionId: s.sessionId,
+                  prBranch: s.branch,
+                  logTail: `CI failed: ${failedRun.workflowName}`,
+                })
+              }
+            } else if (anyNonFailure) {
+              // Clear the failure marker so a re-run that later fails emits again.
+              if (lastCiConclusion.has(s.sessionId)) lastCiConclusion.delete(s.sessionId)
+            }
+          } catch { /* best-effort -- never break sync */ }
         }
 
         if (revR && revR.status === 'ok') {

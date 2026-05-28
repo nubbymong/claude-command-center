@@ -81,6 +81,9 @@ type DateFilter = 'all' | 'today' | 'week' | '5h' | '7d' | string // string = sp
 type SpendFilter = 'all' | 'plan' | 'extra'
 type ProviderFilter = 'all' | 'claude' | 'codex'
 
+// V2 Phase 1: three lenses only. Channel/Member/Worktree are Phase 2.
+export type GroupByLens = 'project' | 'account' | 'model'
+
 // ── Summary Cards ──
 
 function formatDurationShort(ms: number): string {
@@ -91,7 +94,7 @@ function formatDurationShort(ms: number): string {
   return `${m}m`
 }
 
-function SummaryCards({ today, week, fiveHour, allTime, extraSpend, rateLimitCurrent, rateLimitWeekly, burnRate }: {
+export function SummaryCards({ today, week, fiveHour, allTime, extraSpend, rateLimitCurrent, rateLimitWeekly, burnRate }: {
   today: number; week: number; fiveHour: number; allTime: number
   extraSpend?: { enabled: boolean; usedUsd: number; limitUsd: number; lastUpdated: number }
   rateLimitCurrent?: number
@@ -100,56 +103,91 @@ function SummaryCards({ today, week, fiveHour, allTime, extraSpend, rateLimitCur
 }) {
   return (
     <div className="grid grid-cols-6 gap-3 mb-6">
-      <div className="bg-surface0 rounded-xl p-4">
+      <div
+        className="rounded-xl p-4"
+        style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
+      >
         <div className="text-xs text-overlay0 uppercase tracking-wider mb-1">5-Hour Window</div>
         <div className="text-2xl font-mono font-bold text-teal">{formatCost(fiveHour)}</div>
         {rateLimitCurrent != null && (
           <div className="mt-2">
             <div className="flex justify-between text-[10px] text-overlay0 mb-0.5">
               <span>Rate limit</span>
-              <span className={rateLimitCurrent > 80 ? 'text-red' : 'text-overlay1'}>{rateLimitCurrent}%</span>
+              <span style={rateLimitCurrent > 80 ? { color: 'var(--status-danger)' } : undefined} className={rateLimitCurrent > 80 ? '' : 'text-overlay1'}>{rateLimitCurrent}%</span>
             </div>
             <div className="h-1.5 bg-surface1 rounded-full overflow-hidden">
               <div
-                className={`h-full rounded-full ${rateLimitCurrent > 80 ? 'bg-red' : rateLimitCurrent > 50 ? 'bg-yellow' : 'bg-teal'}`}
-                style={{ width: `${Math.min(rateLimitCurrent, 100)}%` }}
+                className="h-full rounded-full"
+                style={{
+                  width: `${Math.min(rateLimitCurrent, 100)}%`,
+                  background: rateLimitCurrent > 80
+                    ? 'var(--status-danger)'
+                    : rateLimitCurrent > 50
+                    ? 'var(--status-warning)'
+                    : 'var(--accent)',
+                }}
               />
             </div>
           </div>
         )}
       </div>
-      <div className="bg-surface0 rounded-xl p-4">
+      <div
+        className="rounded-xl p-4"
+        style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
+      >
         <div className="text-xs text-overlay0 uppercase tracking-wider mb-1">Today</div>
         <div className="text-2xl font-mono font-bold text-green">{formatCost(today)}</div>
         <div className="text-[10px] text-overlay0 mt-1">Plan usage</div>
       </div>
-      <div className="bg-surface0 rounded-xl p-4">
+      <div
+        className="rounded-xl p-4"
+        style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
+      >
         <div className="text-xs text-overlay0 uppercase tracking-wider mb-1">7-Day Window</div>
         <div className="text-2xl font-mono font-bold text-blue">{formatCost(week)}</div>
         {rateLimitWeekly != null && (
           <div className="mt-2">
             <div className="flex justify-between text-[10px] text-overlay0 mb-0.5">
               <span>Rate limit</span>
-              <span className={rateLimitWeekly > 80 ? 'text-red' : 'text-overlay1'}>{rateLimitWeekly}%</span>
+              <span style={rateLimitWeekly > 80 ? { color: 'var(--status-danger)' } : undefined} className={rateLimitWeekly > 80 ? '' : 'text-overlay1'}>{rateLimitWeekly}%</span>
             </div>
             <div className="h-1.5 bg-surface1 rounded-full overflow-hidden">
               <div
-                className={`h-full rounded-full ${rateLimitWeekly > 80 ? 'bg-red' : rateLimitWeekly > 50 ? 'bg-yellow' : 'bg-blue'}`}
-                style={{ width: `${Math.min(rateLimitWeekly, 100)}%` }}
+                className="h-full rounded-full"
+                style={{
+                  width: `${Math.min(rateLimitWeekly, 100)}%`,
+                  background: rateLimitWeekly > 80
+                    ? 'var(--status-danger)'
+                    : rateLimitWeekly > 50
+                    ? 'var(--status-warning)'
+                    : 'var(--accent)',
+                }}
               />
             </div>
           </div>
         )}
       </div>
-      <div className="bg-surface0 rounded-xl p-4">
+      <div
+        className="rounded-xl p-4"
+        style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
+      >
         <div className="text-xs text-overlay0 uppercase tracking-wider mb-1">All Time</div>
         <div className="text-2xl font-mono font-bold text-peach">{formatCost(allTime)}</div>
         <div className="text-[10px] text-overlay0 mt-1">Estimated from tokens</div>
       </div>
       {extraSpend?.enabled ? (
-        <div className={`rounded-xl p-4 ${extraSpend.usedUsd > 0 ? 'bg-red/10 border border-red/30' : 'bg-surface0'}`}>
+        <div
+          className="rounded-xl p-4"
+          style={{
+            background: extraSpend.usedUsd > 0 ? 'color-mix(in srgb, var(--status-danger) 10%, transparent)' : 'var(--surface-raised)',
+            border: extraSpend.usedUsd > 0 ? '1px solid color-mix(in srgb, var(--status-danger) 30%, transparent)' : '1px solid var(--border-subtle)',
+          }}
+        >
           <div className="text-xs text-overlay0 uppercase tracking-wider mb-1">Extra Spend</div>
-          <div className={`text-2xl font-mono font-bold ${extraSpend.usedUsd > 0 ? 'text-red' : 'text-green'}`}>
+          <div
+            className="text-2xl font-mono font-bold"
+            style={{ color: extraSpend.usedUsd > 0 ? 'var(--status-danger)' : 'var(--status-success)' }}
+          >
             ${extraSpend.usedUsd.toFixed(2)}
           </div>
           <div className="text-[10px] text-overlay0 mt-1">
@@ -157,18 +195,27 @@ function SummaryCards({ today, week, fiveHour, allTime, extraSpend, rateLimitCur
           </div>
           <div className="h-1.5 bg-surface1 rounded-full mt-2 overflow-hidden">
             <div
-              className={`h-full rounded-full ${extraSpend.usedUsd > 0 ? 'bg-red' : 'bg-green'}`}
-              style={{ width: `${Math.min((extraSpend.usedUsd / Math.max(extraSpend.limitUsd, 1)) * 100, 100)}%` }}
+              className="h-full rounded-full"
+              style={{
+                width: `${Math.min((extraSpend.usedUsd / Math.max(extraSpend.limitUsd, 1)) * 100, 100)}%`,
+                background: extraSpend.usedUsd > 0 ? 'var(--status-danger)' : 'var(--status-success)',
+              }}
             />
           </div>
         </div>
       ) : (
-        <div className="bg-surface0 rounded-xl p-4">
+        <div
+          className="rounded-xl p-4"
+          style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
+        >
           <div className="text-xs text-overlay0 uppercase tracking-wider mb-1">Extra Spend</div>
           <div className="text-sm text-overlay0 mt-2">Not enabled</div>
         </div>
       )}
-      <div className="bg-surface0 rounded-xl p-4">
+      <div
+        className="rounded-xl p-4"
+        style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
+      >
         <div className="text-xs text-overlay0 uppercase tracking-wider mb-1">Burn Rate</div>
         {burnRate && burnRate.costPerHour > 0 ? (
           <>
@@ -191,7 +238,7 @@ function SummaryCards({ today, week, fiveHour, allTime, extraSpend, rateLimitCur
 
 // ── Daily Cost Chart (clickable) ──
 
-function DailyChart({ selectedDate, onSelectDate }: {
+export function DailyChart({ selectedDate, onSelectDate }: {
   selectedDate: string | null
   onSelectDate: (date: string | null) => void
 }) {
@@ -222,7 +269,10 @@ function DailyChart({ selectedDate, onSelectDate }: {
   const chartHeight = 120
 
   return (
-    <div className="bg-surface0 rounded-xl p-4">
+    <div
+      className="rounded-xl p-4"
+      style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
+    >
       <div className="flex items-center justify-between mb-3">
         <div className="text-xs text-overlay0 uppercase tracking-wider">
           Daily Cost (30 days)
@@ -276,45 +326,57 @@ function DailyChart({ selectedDate, onSelectDate }: {
   )
 }
 
-// ── Model Breakdown ──
+// ── Breakdown Panel ──
 
-function ModelBreakdown({ sessions }: { sessions: TokenomicsSessionRecord[] }) {
+export function BreakdownPanel({ sessions, groupBy }: { sessions: TokenomicsSessionRecord[]; groupBy: GroupByLens }) {
   const breakdown = useMemo(() => {
-    const models: Record<string, { costUsd: number; inputTokens: number; outputTokens: number; count: number }> = {}
+    const buckets: Record<string, { costUsd: number; inputTokens: number; outputTokens: number; count: number }> = {}
     for (const s of sessions) {
-      const key = s.model || 'unknown'
-      if (!models[key]) models[key] = { costUsd: 0, inputTokens: 0, outputTokens: 0, count: 0 }
-      models[key].costUsd += s.totalCostUsd
-      models[key].inputTokens += s.totalInputTokens + s.totalCacheReadTokens + s.totalCacheWriteTokens
-      models[key].outputTokens += s.totalOutputTokens
-      models[key].count++
+      let key: string
+      if (groupBy === 'project') key = s.projectDir || '(no project)'
+      else if (groupBy === 'account') key = (s as any).accountEmail || '(unattributed)'
+      else key = s.model || 'unknown'
+      if (!buckets[key]) buckets[key] = { costUsd: 0, inputTokens: 0, outputTokens: 0, count: 0 }
+      buckets[key].costUsd += s.totalCostUsd
+      buckets[key].inputTokens += s.totalInputTokens + s.totalCacheReadTokens + s.totalCacheWriteTokens
+      buckets[key].outputTokens += s.totalOutputTokens
+      buckets[key].count++
     }
-    return Object.entries(models)
-      .map(([model, stats]) => ({ model, ...stats }))
+    return Object.entries(buckets)
+      .map(([key, stats]) => ({ key, ...stats }))
       .sort((a, b) => b.costUsd - a.costUsd)
-  }, [sessions])
+  }, [sessions, groupBy])
   const maxCost = breakdown.length > 0 ? breakdown[0].costUsd : 1
+
+  const title = groupBy === 'project' ? 'Project Breakdown' : groupBy === 'account' ? 'Account Breakdown' : 'Model Breakdown'
 
   if (breakdown.length === 0) {
     return (
-      <div className="bg-surface0 rounded-xl p-4">
-        <div className="text-xs text-overlay0 uppercase tracking-wider mb-3">Model Breakdown</div>
+      <div
+        className="rounded-xl p-4"
+        style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
+      >
+        <div className="text-xs text-overlay0 uppercase tracking-wider mb-3">{title}</div>
         <div className="text-sm text-overlay0">No data yet</div>
       </div>
     )
   }
 
   return (
-    <div className="bg-surface0 rounded-xl p-4">
-      <div className="text-xs text-overlay0 uppercase tracking-wider mb-3">Model Breakdown</div>
+    <div
+      className="rounded-xl p-4"
+      style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
+    >
+      <div className="text-xs text-overlay0 uppercase tracking-wider mb-3">{title}</div>
       <div className="space-y-3">
         {breakdown.map(m => {
           const pct = maxCost > 0 ? (m.costUsd / maxCost) * 100 : 0
-          const color = getModelColor(m.model)
+          const color = groupBy === 'model' ? getModelColor(m.key) : 'var(--chart-other)'
+          const label = groupBy === 'model' ? getModelShort(m.key) : m.key
           return (
-            <div key={m.model}>
+            <div key={m.key}>
               <div className="flex justify-between text-xs mb-1">
-                <span className="text-text font-medium">{getModelShort(m.model)} <span className="text-overlay0 font-normal">({m.count})</span></span>
+                <span className="text-text font-medium">{label} <span className="text-overlay0 font-normal">({m.count})</span></span>
                 <span className="text-overlay1">{formatCost(m.costUsd)}</span>
               </div>
               <div className="h-3 bg-surface1 rounded-full overflow-hidden">
@@ -337,11 +399,12 @@ function ModelBreakdown({ sessions }: { sessions: TokenomicsSessionRecord[] }) {
 
 // ── Filter Bar ──
 
-function FilterBar({
+export function FilterBar({
   dateFilter, spendFilter, providerFilter,
   onDateFilter, onSpendFilter, onProviderFilter,
   selectedDate, projects, projectFilter, onProjectFilter,
   accountEmails, accountFilter, onAccountFilter,
+  groupBy, onGroupBy,
 }: {
   dateFilter: DateFilter
   spendFilter: SpendFilter
@@ -356,6 +419,8 @@ function FilterBar({
   accountEmails: string[]
   accountFilter: AccountFilterValue
   onAccountFilter: (next: AccountFilterValue) => void
+  groupBy: GroupByLens
+  onGroupBy: (g: GroupByLens) => void
 }) {
   const dateButtons: Array<{ label: string; value: DateFilter }> = [
     { label: 'All', value: 'all' },
@@ -367,6 +432,22 @@ function FilterBar({
 
   return (
     <div className="flex items-center gap-4 mb-4 flex-wrap">
+      <div className="flex items-center gap-1">
+        <span className="text-xs text-overlay0 mr-1">Group by:</span>
+        {(['project', 'account', 'model'] as GroupByLens[]).map(g => (
+          <button
+            key={g}
+            onClick={() => onGroupBy(g)}
+            className={`px-2 py-0.5 text-xs rounded capitalize ${
+              groupBy === g
+                ? 'bg-blue/20 text-blue'
+                : 'bg-surface1 text-overlay1 hover:text-text'
+            }`}
+          >
+            {g}
+          </button>
+        ))}
+      </div>
       <div className="flex items-center gap-1">
         <span className="text-xs text-overlay0 mr-1">Time:</span>
         {dateButtons.map(b => (
@@ -448,7 +529,7 @@ function FilterBar({
 
 type SortKey = 'project' | 'model' | 'cost' | 'inputTokens' | 'outputTokens' | 'date' | 'messages' | 'cacheTokens' | 'duration' | 'costPerHour'
 
-function SessionsTable({ sessions, title, observedEmails, onRefresh }: { sessions: TokenomicsSessionRecord[]; title?: string; observedEmails: string[]; onRefresh: () => void }) {
+export function SessionsTable({ sessions, title, observedEmails, onRefresh, groupBy }: { sessions: TokenomicsSessionRecord[]; title?: string; observedEmails: string[]; onRefresh: () => void; groupBy?: GroupByLens }) {
   const [sortBy, setSortBy] = useState<SortKey>('cost')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [page, setPage] = useState(0)
@@ -473,8 +554,23 @@ function SessionsTable({ sessions, title, observedEmails, onRefresh }: { session
     })
   }, [sessions, sortBy, sortDir])
 
-  const totalPages = Math.ceil(sorted.length / PAGE_SIZE)
-  const paginated = sorted.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
+  const groupedSorted = useMemo(() => {
+    if (!groupBy) return null
+    const buckets: Record<string, TokenomicsSessionRecord[]> = {}
+    for (const s of sorted) {
+      let key: string
+      if (groupBy === 'project') key = s.projectDir || '(no project)'
+      else if (groupBy === 'account') key = (s as any).accountEmail || '(unattributed)'
+      else key = s.model || 'unknown'
+      if (!buckets[key]) buckets[key] = []
+      buckets[key].push(s)
+    }
+    return Object.entries(buckets).sort(([a], [b]) => a.localeCompare(b))
+  }, [sorted, groupBy])
+
+  const flatPages = !groupBy
+  const totalPages = flatPages ? Math.ceil(sorted.length / PAGE_SIZE) : 1
+  const paginated = flatPages ? sorted.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE) : sorted
 
   // Compute totals for filtered sessions
   const totals = useMemo(() => {
@@ -502,6 +598,39 @@ function SessionsTable({ sessions, title, observedEmails, onRefresh }: { session
   // Reset page when sessions change
   useEffect(() => { setPage(0) }, [sessions])
 
+  const renderRow = (s: TokenomicsSessionRecord) => (
+    <tr key={s.sessionId} className="border-b border-surface1/50 hover:bg-surface1/30">
+      <td className="px-3 py-1.5 text-text truncate max-w-[180px]" title={s.projectDir}>
+        {s.projectDir || '-'}
+      </td>
+      <td className="px-3 py-1.5">
+        <span
+          className="text-xs px-1.5 py-0.5 rounded"
+          style={{ backgroundColor: `color-mix(in srgb, ${getModelColor(s.model)} 13%, transparent)`, color: getModelColor(s.model) }}
+        >
+          {getModelShort(s.model)}
+        </span>
+      </td>
+      <td className="px-3 py-1.5 font-mono text-peach">{formatCost(s.totalCostUsd)}</td>
+      <td className="px-3 py-1.5 font-mono text-overlay1">{formatTokens(s.totalInputTokens)}</td>
+      <td className="px-3 py-1.5 font-mono text-overlay1">{formatTokens(s.totalOutputTokens)}</td>
+      <td className="px-3 py-1.5 font-mono text-overlay0">{formatTokens(s.totalCacheReadTokens + s.totalCacheWriteTokens)}</td>
+      <td className="px-3 py-1.5 font-mono text-overlay0">{s.messageCount}</td>
+      <td className="px-3 py-1.5 font-mono text-overlay0">{formatDurationShort(s.durationMs || 0)}</td>
+      <td className={`px-3 py-1.5 font-mono ${
+        (s.costPerHour || 0) > 20 ? 'text-red' : (s.costPerHour || 0) > 5 ? 'text-yellow' : 'text-overlay0'
+      }`}>{s.costPerHour ? formatCost(s.costPerHour) : '-'}</td>
+      <td className="px-3 py-1.5 text-overlay0">{formatDate(s.firstTimestamp)}</td>
+      <td className="px-3 py-1.5">
+        <EditAttributionMenu
+          sessionId={s.sessionId}
+          detectedEmails={observedEmails}
+          onChange={onRefresh}
+        />
+      </td>
+    </tr>
+  )
+
   const SortHeader = ({ label, sortKey, className }: { label: string; sortKey: SortKey; className?: string }) => (
     <th
       className={`text-left text-xs text-overlay0 font-medium px-3 py-2 cursor-pointer hover:text-text select-none ${className || ''}`}
@@ -515,14 +644,17 @@ function SessionsTable({ sessions, title, observedEmails, onRefresh }: { session
   )
 
   return (
-    <div className="bg-surface0 rounded-xl p-4">
+    <div
+      className="rounded-xl p-4"
+      style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
+    >
       <div className="flex items-center justify-between mb-3">
         <div className="text-xs text-overlay0 uppercase tracking-wider">
           {title || 'Sessions'} ({sessions.length})
           <span className="ml-3 text-peach normal-case">Total: {formatCost(totals.cost)}</span>
           <span className="ml-2 text-overlay1 normal-case">{formatTokens(totals.input)} in / {formatTokens(totals.output)} out</span>
         </div>
-        {totalPages > 1 && (
+        {flatPages && totalPages > 1 && (
           <div className="flex items-center gap-2 text-xs">
             <button
               onClick={() => setPage(p => Math.max(0, p - 1))}
@@ -560,44 +692,28 @@ function SessionsTable({ sessions, title, observedEmails, onRefresh }: { session
             </tr>
           </thead>
           <tbody>
-            {paginated.map(s => (
-              <tr key={s.sessionId} className="border-b border-surface1/50 hover:bg-surface1/30">
-                <td className="px-3 py-1.5 text-text truncate max-w-[180px]" title={s.projectDir}>
-                  {s.projectDir || '-'}
-                </td>
-                <td className="px-3 py-1.5">
-                  <span
-                    className="text-xs px-1.5 py-0.5 rounded"
-                    style={{ backgroundColor: `color-mix(in srgb, ${getModelColor(s.model)} 13%, transparent)`, color: getModelColor(s.model) }}
-                  >
-                    {getModelShort(s.model)}
-                  </span>
-                </td>
-                <td className="px-3 py-1.5 font-mono text-peach">{formatCost(s.totalCostUsd)}</td>
-                <td className="px-3 py-1.5 font-mono text-overlay1">{formatTokens(s.totalInputTokens)}</td>
-                <td className="px-3 py-1.5 font-mono text-overlay1">{formatTokens(s.totalOutputTokens)}</td>
-                <td className="px-3 py-1.5 font-mono text-overlay0">{formatTokens(s.totalCacheReadTokens + s.totalCacheWriteTokens)}</td>
-                <td className="px-3 py-1.5 font-mono text-overlay0">{s.messageCount}</td>
-                <td className="px-3 py-1.5 font-mono text-overlay0">{formatDurationShort(s.durationMs || 0)}</td>
-                <td className={`px-3 py-1.5 font-mono ${
-                  (s.costPerHour || 0) > 20 ? 'text-red' : (s.costPerHour || 0) > 5 ? 'text-yellow' : 'text-overlay0'
-                }`}>{s.costPerHour ? formatCost(s.costPerHour) : '-'}</td>
-                <td className="px-3 py-1.5 text-overlay0">{formatDate(s.firstTimestamp)}</td>
-                <td className="px-3 py-1.5">
-                  <EditAttributionMenu
-                    sessionId={s.sessionId}
-                    detectedEmails={observedEmails}
-                    onChange={onRefresh}
-                  />
-                </td>
-              </tr>
-            ))}
-            {paginated.length === 0 && (
-              <tr>
-                <td colSpan={11} className="px-3 py-6 text-center text-overlay0">
-                  No sessions match the current filter
-                </td>
-              </tr>
+            {groupedSorted ? (
+              groupedSorted.map(([key, group]) => (
+                <React.Fragment key={key}>
+                  <tr data-testid="group-header" className="bg-surface1/40">
+                    <td colSpan={11} className="px-3 py-1.5 text-xs text-overlay1 font-semibold">
+                      {key} <span className="text-overlay0 font-normal ml-2">{group.length}</span>
+                    </td>
+                  </tr>
+                  {group.map(s => renderRow(s))}
+                </React.Fragment>
+              ))
+            ) : (
+              <>
+                {paginated.map(s => renderRow(s))}
+                {paginated.length === 0 && (
+                  <tr>
+                    <td colSpan={11} className="px-3 py-6 text-center text-overlay0">
+                      No sessions match the current filter
+                    </td>
+                  </tr>
+                )}
+              </>
             )}
           </tbody>
         </table>
@@ -686,6 +802,7 @@ export default function TokenomicsPage() {
   const [providerFilter, setProviderFilter] = useState<ProviderFilter>('all')
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
   const [projectFilter, setProjectFilter] = useState<string>('all')
+  const [groupBy, setGroupBy] = useState<GroupByLens>('project')
 
   // Account filter -- persisted via settings store (no local useState)
   const tokenomicsAccountFilter = useSettingsStore((s) => s.settings.tokenomicsAccountFilter ?? 'all')
@@ -940,7 +1057,7 @@ export default function TokenomicsPage() {
           <div className="col-span-2">
             <DailyChart selectedDate={selectedDate} onSelectDate={handleDateSelect} />
           </div>
-          <ModelBreakdown sessions={filteredSessions} />
+          <BreakdownPanel sessions={filteredSessions} groupBy={groupBy} />
         </div>
 
         {selectedDate && data?.codexReviewByDay?.[selectedDate] && data.codexReviewByDay[selectedDate].reviewCount > 0 && (
@@ -972,6 +1089,8 @@ export default function TokenomicsPage() {
           accountEmails={observedEmails}
           accountFilter={accountFilter}
           onAccountFilter={setAccountFilter}
+          groupBy={groupBy}
+          onGroupBy={setGroupBy}
         />
 
         {/* Sessions table */}
@@ -980,6 +1099,7 @@ export default function TokenomicsPage() {
           title={selectedDate ? `Sessions on ${formatDateFull(selectedDate)}` : undefined}
           observedEmails={observedEmails}
           onRefresh={loadData}
+          groupBy={groupBy}
         />
       </div>
     </PageFrame>

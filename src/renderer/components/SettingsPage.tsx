@@ -12,6 +12,8 @@ import { CodexSettingsTab } from './codex/CodexSettingsTab'
 import HooksGatewaySection from './github/config/HooksGatewaySection'
 import PageFrame from './PageFrame'
 import AccountAliasesSection from './settings/AccountAliasesSection'
+import { SectionLabel } from './ui/SectionLabel'
+import { Kbd } from './ui/Kbd'
 declare const __BUILD_TIME__: string
 
 export const SETTINGS_TAB_IDS = ['general', 'statusline', 'shortcuts', 'github', 'codex', 'hooks', 'about'] as const
@@ -114,23 +116,7 @@ export default function SettingsPage({ initialTab }: SettingsPageProps = {}) {
     </svg>
   )
 
-  const tabsRail = (
-    <nav className="py-1.5">
-      {TABS.map(tab => (
-        <button
-          key={tab.id}
-          onClick={() => setActiveTab(tab.id)}
-          className={`w-full text-left px-3 py-1.5 text-xs transition-colors ${
-            activeTab === tab.id
-              ? 'bg-blue/15 text-blue border-l-2 border-blue'
-              : 'text-overlay1 hover:text-text hover:bg-surface0/40 border-l-2 border-transparent'
-          }`}
-        >
-          {tab.label}
-        </button>
-      ))}
-    </nav>
-  )
+  const tabsRail = <TabsRail activeTab={activeTab} onChange={setActiveTab} />
 
   const activeTabLabel = TABS.find(t => t.id === activeTab)?.label
 
@@ -272,18 +258,11 @@ export default function SettingsPage({ initialTab }: SettingsPageProps = {}) {
                   </div>
                 </Field>
                 <Field label="Cursor Blink">
-                  <button
+                  <Toggle
+                    on={(settings.terminal || DEFAULT_TERMINAL_SETTINGS).cursorBlink}
                     onClick={() => save({ terminal: { ...(settings.terminal || DEFAULT_TERMINAL_SETTINGS), cursorBlink: !(settings.terminal || DEFAULT_TERMINAL_SETTINGS).cursorBlink } })}
-                    className={`relative w-11 h-6 rounded-full transition-colors duration-200 ${
-                      (settings.terminal || DEFAULT_TERMINAL_SETTINGS).cursorBlink ? 'bg-green' : 'bg-surface1'
-                    }`}
-                  >
-                    <div
-                      className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-200 ${
-                        (settings.terminal || DEFAULT_TERMINAL_SETTINGS).cursorBlink ? 'translate-x-6' : 'translate-x-1'
-                      }`}
-                    />
-                  </button>
+                    label="Cursor Blink"
+                  />
                 </Field>
                 <p className="text-[11px] text-overlay0 mt-2 leading-relaxed">
                   Terminal settings apply to new terminals. Restart sessions for changes to take effect.
@@ -293,18 +272,11 @@ export default function SettingsPage({ initialTab }: SettingsPageProps = {}) {
               <Section title="Debug Logging" icon={<path d="M4 4l8 8M4 12l8-8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />}>
                 <Field label="Verbose Logging">
                   <div className="flex items-center gap-3">
-                    <button
+                    <Toggle
+                      on={settings.debugMode}
                       onClick={() => save({ debugMode: !settings.debugMode })}
-                      className={`relative w-11 h-6 rounded-full transition-colors duration-200 ${
-                        settings.debugMode ? 'bg-green' : 'bg-surface1'
-                      }`}
-                    >
-                      <div
-                        className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-200 ${
-                          settings.debugMode ? 'translate-x-6' : 'translate-x-1'
-                        }`}
-                      />
-                    </button>
+                      label="Verbose Logging"
+                    />
                     <span className={`text-xs font-medium ${settings.debugMode ? 'text-green' : 'text-overlay0'}`}>
                       {settings.debugMode ? 'ON' : 'OFF'}
                     </span>
@@ -532,18 +504,11 @@ function StatusLineTab({
                 key={key}
                 className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-surface0/30 transition-colors"
               >
-                <button
+                <Toggle
+                  on={sl[key]}
                   onClick={() => onToggle(key)}
-                  className={`relative w-9 h-5 rounded-full transition-colors duration-200 shrink-0 ${
-                    sl[key] ? 'bg-green' : 'bg-surface1'
-                  }`}
-                >
-                  <div
-                    className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-200 ${
-                      sl[key] ? 'translate-x-[18px]' : 'translate-x-0.5'
-                    }`}
-                  />
-                </button>
+                  label={label}
+                />
                 <div className="min-w-0">
                   <div className="text-sm text-text leading-tight">{label}</div>
                   <div className="text-[11px] text-overlay0 leading-tight">{description}</div>
@@ -689,14 +654,19 @@ function CheckForUpdatesField() {
 
 /* ── Shared section/field helpers ─────────────────────── */
 
-function Section({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
+export function Section({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
   return (
-    <div className="rounded-xl bg-surface0/30 border border-surface0/60 overflow-hidden">
-      <div className="px-4 py-2.5 border-b border-surface0/40 flex items-center gap-2">
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="text-overlay1 shrink-0">
-          {icon}
-        </svg>
-        <h3 className="text-xs font-semibold text-subtext0 uppercase tracking-wider">{title}</h3>
+    <div
+      className="rounded-xl overflow-hidden"
+      style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
+    >
+      <div className="px-4 py-2.5 flex items-center gap-2" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+        {icon && (
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="shrink-0" style={{ color: 'var(--text-secondary)' }}>
+            {icon}
+          </svg>
+        )}
+        <SectionLabel>{title}</SectionLabel>
       </div>
       <div className="p-4 space-y-3">{children}</div>
     </div>
@@ -712,12 +682,53 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   )
 }
 
-function ShortcutRow({ keys, action }: { keys: string; action: string }) {
+export function ShortcutRow({ keys, action }: { keys: string; action: string }) {
   return (
     <div className="flex items-center justify-between py-1.5 px-1">
-      <span className="text-sm text-text">{action}</span>
-      <kbd className="px-2 py-0.5 bg-crust/80 rounded-md text-[11px] text-overlay1 font-mono border border-surface0/50">{keys}</kbd>
+      <span className="text-sm" style={{ color: 'var(--text-primary)' }}>{action}</span>
+      <Kbd>{keys}</Kbd>
     </div>
+  )
+}
+
+export function Toggle({ on, onClick, label }: { on: boolean; onClick: () => void; label?: string }) {
+  return (
+    <button
+      onClick={onClick}
+      aria-pressed={on}
+      aria-label={label}
+      className="relative w-11 h-6 rounded-full transition-colors duration-200"
+      style={{ background: on ? 'var(--status-success)' : 'var(--surface-overlay)' }}
+    >
+      <span
+        className="absolute top-1 w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-200"
+        style={{ transform: on ? 'translateX(24px)' : 'translateX(4px)' }}
+      />
+    </button>
+  )
+}
+
+export function TabsRail({ activeTab, onChange }: { activeTab: SettingsTab; onChange: (id: SettingsTab) => void }) {
+  return (
+    <nav className="py-1.5">
+      {TABS.map(tab => {
+        const active = activeTab === tab.id
+        return (
+          <button
+            key={tab.id}
+            onClick={() => onChange(tab.id)}
+            className="w-full text-left px-3 py-1.5 text-xs transition-colors focus-ring"
+            style={{
+              background: active ? 'color-mix(in srgb, var(--accent) 15%, transparent)' : 'transparent',
+              color: active ? 'var(--accent)' : 'var(--text-secondary)',
+              borderLeft: `2px solid ${active ? 'var(--accent)' : 'transparent'}`,
+            }}
+          >
+            {tab.label}
+          </button>
+        )
+      })}
+    </nav>
   )
 }
 
@@ -804,14 +815,12 @@ function ShortcutEditor({ action, label, shortcut, allShortcuts, onSave }: {
           <>
             <button
               onClick={() => setEditing(true)}
-              className={`px-2.5 py-1 rounded-md text-[11px] font-mono transition-colors border ${
-                conflict
-                  ? 'bg-red/10 text-red border-red/30'
-                  : 'bg-crust/80 text-overlay1 border-surface0/50 hover:bg-surface0 hover:text-text'
+              className={`px-1 py-1 rounded-md transition-colors border ${
+                conflict ? 'bg-red/10 border-red/30' : 'border-transparent hover:bg-surface0'
               }`}
               title={conflict ? `Conflicts with: ${conflict}` : 'Click to edit'}
             >
-              {shortcut}
+              <Kbd>{shortcut}</Kbd>
             </button>
             <button
               onClick={() => setTesting(true)}

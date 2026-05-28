@@ -1,17 +1,23 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { useCloudAgentStore, setupCloudAgentListener } from '../stores/cloudAgentStore'
 import type { CloudAgent, CloudAgentStatus } from '../types/electron'
+import { StatusDot, type SessionState } from './ui/StatusDot'
+import { MetricChip } from './ui/MetricChip'
 import NewAgentDialog from './NewAgentDialog'
 import AgentLibrary from './AgentLibrary'
 import TeamsPanel from './TeamsPanel'
 import PageFrame from './PageFrame'
 
 const STATUS_COLORS: Record<CloudAgentStatus, string> = {
-  running: '#89B4FA',
-  pending: '#F9E2AF',
-  completed: '#A6E3A1',
-  failed: '#F38BA8',
-  cancelled: '#F38BA8',
+  running:   'var(--status-info)',
+  pending:   'var(--status-warning)',
+  completed: 'var(--status-success)',
+  failed:    'var(--status-danger)',
+  cancelled: 'var(--status-danger)',
+}
+
+export function getAgentStatusColor(s: CloudAgentStatus): string {
+  return STATUS_COLORS[s]
 }
 
 const STATUS_LABELS: Record<CloudAgentStatus, string> = {
@@ -20,6 +26,15 @@ const STATUS_LABELS: Record<CloudAgentStatus, string> = {
   completed: 'Completed',
   failed: 'Failed',
   cancelled: 'Cancelled',
+}
+
+function toSessionState(s: CloudAgentStatus): SessionState {
+  if (s === 'running')   return 'compacting'  // blue/info -- in-progress
+  if (s === 'pending')   return 'awaiting'    // yellow/warning -- queued
+  if (s === 'completed') return 'success'     // green/success -- done
+  if (s === 'failed')    return 'error'       // red/danger
+  if (s === 'cancelled') return 'error'       // red/danger
+  return 'idle'
 }
 
 function formatDuration(ms: number): string {
@@ -166,16 +181,18 @@ function FilterChip({ label, count, color, active, onClick }: {
     <button
       onClick={onClick}
       className={`px-3 py-1 rounded-full text-[11px] font-medium transition-all ${
-        active ? 'text-crust shadow-sm' : 'text-overlay1 hover:text-text'
+        active ? 'shadow-sm' : 'text-overlay1 hover:text-text'
       }`}
-      style={active ? { backgroundColor: color } : { backgroundColor: 'transparent', border: `1px solid ${color}30` }}
+      style={active
+        ? { backgroundColor: color, color: 'var(--surface-chrome)' }
+        : { backgroundColor: 'transparent', border: `1px solid color-mix(in srgb, ${color} 30%, transparent)` }}
     >
       {label} {count}
     </button>
   )
 }
 
-function AgentCard({ agent, selected, onClick, onContextMenu }: {
+export function AgentCard({ agent, selected, onClick, onContextMenu }: {
   agent: CloudAgent; selected: boolean; onClick: () => void; onContextMenu: (e: React.MouseEvent) => void
 }) {
   const color = STATUS_COLORS[agent.status]
@@ -207,10 +224,7 @@ function AgentCard({ agent, selected, onClick, onContextMenu }: {
     >
       {/* Row 1: Status dot + name + elapsed */}
       <div className="flex items-center gap-2 mb-1">
-        <span
-          className={`w-2.5 h-2.5 rounded-full shrink-0 ${isRunning ? 'animate-pulse' : ''}`}
-          style={{ backgroundColor: color, boxShadow: isRunning ? `0 0 8px 2px ${color}60` : undefined }}
-        />
+        <StatusDot state={toSessionState(agent.status)} />
         <span className="text-sm font-medium text-text truncate flex-1">{agent.name}</span>
         {elapsed && (
           <span className="text-[10px] text-overlay0 shrink-0 tabular-nums">{elapsed}</span>
@@ -330,7 +344,7 @@ function OutputTab({ agent }: { agent: CloudAgent }) {
   )
 }
 
-function SummaryTab({ agent }: { agent: CloudAgent }) {
+export function SummaryTab({ agent }: { agent: CloudAgent }) {
   const isRunning = agent.status === 'running' || agent.status === 'pending'
 
   return (
@@ -369,17 +383,16 @@ function SummaryTab({ agent }: { agent: CloudAgent }) {
       {/* Cost & Tokens */}
       {(agent.cost != null || agent.tokenUsage) && (
         <div>
-          <div className="text-[10px] text-subtext0 uppercase tracking-wider font-semibold mb-1.5">Usage</div>
-          <div className="flex gap-2.5">
+          <div className="text-[10px] uppercase tracking-wider font-semibold mb-1.5" style={{ color: 'var(--text-muted)' }}>Usage</div>
+          <div className="flex gap-2.5 flex-wrap">
             {agent.cost != null && (
-              <div className="text-xs text-text bg-crust/60 rounded-lg px-3 py-2 border border-surface0/30">
-                Cost: <span className="text-green font-medium">{formatCost(agent.cost)}</span>
-              </div>
+              <MetricChip label="Cost" value={formatCost(agent.cost)} tone="success" />
             )}
             {agent.tokenUsage && (
-              <div className="text-xs text-text bg-crust/60 rounded-lg px-3 py-2 border border-surface0/30 tabular-nums">
-                {agent.tokenUsage.inputTokens.toLocaleString()} in / {agent.tokenUsage.outputTokens.toLocaleString()} out
-              </div>
+              <>
+                <MetricChip label="Input" value={agent.tokenUsage.inputTokens.toLocaleString()} />
+                <MetricChip label="Output" value={agent.tokenUsage.outputTokens.toLocaleString()} />
+              </>
             )}
           </div>
         </div>
@@ -493,6 +506,36 @@ function AgentDetail({ agent }: { agent: CloudAgent }) {
 
 type HubTab = 'tasks' | 'teams' | 'library'
 
+const HUB_TABS: { id: HubTab; label: string }[] = [
+  { id: 'tasks', label: 'Tasks' },
+  { id: 'teams', label: 'Teams' },
+  { id: 'library', label: 'Library' },
+]
+
+export function CloudRail({ hubTab, onChange }: { hubTab: HubTab; onChange: (id: HubTab) => void }) {
+  return (
+    <nav className="py-1.5">
+      {HUB_TABS.map(t => {
+        const active = hubTab === t.id
+        return (
+          <button
+            key={t.id}
+            onClick={() => onChange(t.id)}
+            className="w-full text-left px-3 py-1.5 text-xs transition-colors focus-ring"
+            style={{
+              background: active ? 'color-mix(in srgb, var(--accent) 15%, transparent)' : 'transparent',
+              color: active ? 'var(--accent)' : 'var(--text-secondary)',
+              borderLeft: `2px solid ${active ? 'var(--accent)' : 'transparent'}`,
+            }}
+          >
+            {t.label}
+          </button>
+        )
+      })}
+    </nav>
+  )
+}
+
 export default function CloudAgentsPage() {
   const [hubTab, setHubTab] = useState<HubTab>('tasks')
   const allAgents = useCloudAgentStore(s => s.agents)
@@ -543,29 +586,7 @@ export default function CloudAgentsPage() {
     </svg>
   )
 
-  const HUB_TABS: { id: HubTab; label: string }[] = [
-    { id: 'tasks', label: 'Tasks' },
-    { id: 'teams', label: 'Teams' },
-    { id: 'library', label: 'Library' },
-  ]
-
-  const cloudRail = (
-    <nav className="py-1.5">
-      {HUB_TABS.map(t => (
-        <button
-          key={t.id}
-          onClick={() => setHubTab(t.id)}
-          className={`w-full text-left px-3 py-1.5 text-xs transition-colors ${
-            hubTab === t.id
-              ? 'bg-sapphire/15 text-sapphire border-l-2 border-sapphire'
-              : 'text-overlay1 hover:text-text hover:bg-surface0/40 border-l-2 border-transparent'
-          }`}
-        >
-          {t.label}
-        </button>
-      ))}
-    </nav>
-  )
+  const cloudRail = <CloudRail hubTab={hubTab} onChange={setHubTab} />
 
   const cloudContext = hubTab === 'tasks' && counts.running > 0 ? (
     <span className="inline-flex items-center gap-1.5">
@@ -614,10 +635,10 @@ export default function CloudAgentsPage() {
         {/* Filter chips + search */}
         <div className="flex items-center gap-2 px-4 py-2 border-b border-surface0/40 shrink-0">
           <div className="flex gap-1">
-            <FilterChip label="All" count={counts.all} color="#b8c5d6" active={filter === 'all'} onClick={() => setFilter('all')} />
-            <FilterChip label="Running" count={counts.running} color="#89B4FA" active={filter === 'running'} onClick={() => setFilter('running')} />
-            <FilterChip label="Done" count={counts.completed} color="#A6E3A1" active={filter === 'completed'} onClick={() => setFilter('completed')} />
-            <FilterChip label="Failed" count={counts.failed} color="#F38BA8" active={filter === 'failed'} onClick={() => setFilter('failed')} />
+            <FilterChip label="All"     count={counts.all}       color="var(--text-secondary)"  active={filter === 'all'}       onClick={() => setFilter('all')} />
+            <FilterChip label="Running" count={counts.running}   color="var(--status-info)"     active={filter === 'running'}   onClick={() => setFilter('running')} />
+            <FilterChip label="Done"    count={counts.completed} color="var(--status-success)"  active={filter === 'completed'} onClick={() => setFilter('completed')} />
+            <FilterChip label="Failed"  count={counts.failed}    color="var(--status-danger)"   active={filter === 'failed'}    onClick={() => setFilter('failed')} />
           </div>
           <div className="flex-1" />
           <div className="relative">

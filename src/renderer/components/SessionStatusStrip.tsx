@@ -79,7 +79,7 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
   return (
     <div
       className="min-h-7 shrink-0 flex items-center gap-3 px-3 text-xs border-t border-b"
-      style={{ background: 'var(--surface-chrome)', color: 'var(--text-on-chrome)', borderColor: 'var(--border-subtle)' }}
+      style={{ background: 'var(--surface-raised)', color: 'var(--text-on-chrome)', borderColor: 'var(--border-subtle)' }}
     >
       {/* Telemetry -- inherits statusLine font + fontSize so Settings controls
           stay honest. Carried over verbatim from BottomBar's middle zone. */}

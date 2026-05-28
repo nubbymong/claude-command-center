@@ -6,6 +6,7 @@ import { z } from 'zod'
 import { runCodexStreaming, readCodexAuthStatus } from './providers/codex/auth'
 import { recordReview } from './codex-review-usage'
 import { logInfo } from './debug-logger'
+import { emitCodexReviewComplete } from './channel-emitters'
 
 const REVIEW_TIMEOUT_MS = 5 * 60 * 1000  // 5 minutes (default)
 const MAX_DIFF_BYTES = 50 * 1024  // 50 KB
@@ -250,6 +251,19 @@ export async function runCodexReview(
       rateLimit: obsInner.rateLimit,
     })
   }
+
+  // Emit internal event so channel rules (Codex Routing) can forward the
+  // review to the PR author session. Best-effort: never breaks the review result.
+  try {
+    // Count numbered list items or "issue:" lines as a rough finding count.
+    const findingCount = (review.match(/^\s*\d+\./gm) ?? []).length || 1
+    emitCodexReviewComplete({
+      prNumber: undefined,
+      authorSessionId: cccSessionId,
+      findingCount,
+      findings: review.slice(0, 500),
+    })
+  } catch { /* channels emit is best-effort */ }
 
   return { isError: false, text: review + formatFooter(observed) }
 }

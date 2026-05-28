@@ -1,191 +1,12 @@
-import React, { useEffect, useState, useRef } from 'react'
+import React, { useEffect, useState } from 'react'
 import { useInsightsStore } from '../stores/insightsStore'
 import { useTokenomicsStore } from '../stores/tokenomicsStore'
 import KpiSidebar from './KpiSidebar'
 import type { InsightsData } from '../types/electron'
 import type { TokenomicsSessionRecord } from '../../shared/types'
 import PageFrame from './PageFrame'
-
-// Comprehensive dark theme CSS for platform v9 aesthetic
-const DARK_THEME_CSS = `
-  <style>
-    /* Base */
-    html, body {
-      background-color: #0f1218 !important;
-      color: #b8c5d6 !important;
-    }
-    h1, h2 { color: #f0f4fc !important; }
-    a { color: #89b4fa !important; }
-    .subtitle { color: #8892a4 !important; }
-    .section-intro { color: #8892a4 !important; }
-
-    /* Navigation TOC */
-    .nav-toc {
-      background: #0b0e14 !important;
-      border-color: #161c26 !important;
-    }
-    .nav-toc a {
-      background: #161c26 !important;
-      color: #8892a4 !important;
-    }
-    .nav-toc a:hover {
-      background: #1e2530 !important;
-      color: #f0f4fc !important;
-    }
-
-    /* Stats row */
-    .stats-row {
-      border-color: #161c26 !important;
-    }
-    .stat-value { color: #f0f4fc !important; }
-    .stat-label { color: #64748b !important; }
-
-    /* At a glance - warm amber tones */
-    .at-a-glance {
-      background: linear-gradient(135deg, #2a2008 0%, #221a06 100%) !important;
-      border-color: #f9e2af !important;
-    }
-    .glance-title { color: #f9e2af !important; }
-    .glance-section { color: #f0f4fc !important; }
-    .glance-section strong { color: #f9e2af !important; }
-    .see-more { color: #f9e2af !important; }
-
-    /* Cards / white bg elements */
-    .narrative, .project-area, .chart-card, .feedback-card {
-      background: #0b0e14 !important;
-      border-color: #161c26 !important;
-    }
-    .narrative p { color: #94a3b8 !important; }
-    .area-name { color: #f0f4fc !important; }
-    .area-count {
-      color: #8892a4 !important;
-      background: #161c26 !important;
-    }
-    .area-desc { color: #94a3b8 !important; }
-
-    /* Key insight - green */
-    .key-insight {
-      background: rgba(166, 227, 161, 0.08) !important;
-      border-color: rgba(166, 227, 161, 0.25) !important;
-      color: #a6e3a1 !important;
-    }
-
-    /* Big wins - green tones */
-    .big-win {
-      background: rgba(166, 227, 161, 0.06) !important;
-      border-color: rgba(166, 227, 161, 0.2) !important;
-    }
-    .big-win-title { color: #a6e3a1 !important; }
-    .big-win-desc { color: #94e2d5 !important; }
-
-    /* Friction - red tones */
-    .friction-category {
-      background: rgba(243, 139, 168, 0.06) !important;
-      border-color: rgba(243, 139, 168, 0.2) !important;
-    }
-    .friction-title { color: #f38ba8 !important; }
-    .friction-desc { color: #f2a8bd !important; }
-    .friction-examples { color: #b8c5d6 !important; }
-    .friction-examples li { color: #94a3b8 !important; }
-
-    /* CLAUDE.md section - blue tones */
-    .claude-md-section {
-      background: rgba(137, 180, 250, 0.06) !important;
-      border-color: rgba(137, 180, 250, 0.2) !important;
-    }
-    .claude-md-section h3 { color: #89b4fa !important; }
-    .claude-md-actions { border-color: rgba(137, 180, 250, 0.15) !important; }
-    .copy-all-btn {
-      background: #89b4fa !important;
-      color: #080a10 !important;
-    }
-    .copy-all-btn:hover { background: #74c7ec !important; }
-    .copy-all-btn.copied { background: #a6e3a1 !important; }
-    .claude-md-item { border-color: rgba(137, 180, 250, 0.12) !important; }
-    .cmd-code {
-      background: #161c26 !important;
-      color: #89b4fa !important;
-      border-color: #1e2530 !important;
-    }
-    .cmd-why { color: #8892a4 !important; }
-
-    /* Feature cards - green tones */
-    .feature-card {
-      background: rgba(166, 227, 161, 0.06) !important;
-      border-color: rgba(166, 227, 161, 0.2) !important;
-    }
-    .feature-title, .pattern-title { color: #f0f4fc !important; }
-    .feature-oneliner, .pattern-summary { color: #94a3b8 !important; }
-    .feature-why, .pattern-detail { color: #b8c5d6 !important; }
-    .feature-example { border-color: rgba(166, 227, 161, 0.12) !important; }
-    .example-desc { color: #b8c5d6 !important; }
-
-    /* Pattern cards - blue tones */
-    .pattern-card {
-      background: rgba(137, 180, 250, 0.06) !important;
-      border-color: rgba(137, 180, 250, 0.2) !important;
-    }
-
-    /* Code blocks */
-    .example-code, .feature-code {
-      background: #161c26 !important;
-      border-color: #1e2530 !important;
-      color: #f0f4fc !important;
-    }
-    .feature-code code { color: #f0f4fc !important; }
-    pre, code {
-      background: #161c26 !important;
-      color: #f0f4fc !important;
-    }
-    .copyable-prompt {
-      background: #161c26 !important;
-      border-color: #1e2530 !important;
-      color: #f0f4fc !important;
-    }
-    .pattern-prompt {
-      background: #161c26 !important;
-      border-color: #1e2530 !important;
-    }
-    .pattern-prompt code { color: #f0f4fc !important; }
-    .prompt-label { color: #8892a4 !important; }
-
-    /* Copy buttons */
-    .copy-btn {
-      background: #1e2530 !important;
-      color: #b8c5d6 !important;
-    }
-    .copy-btn:hover { background: #2a3342 !important; }
-
-    /* Charts */
-    .chart-title { color: #8892a4 !important; }
-    .bar-label { color: #94a3b8 !important; }
-    .bar-track { background: #161c26 !important; }
-    .bar-value { color: #8892a4 !important; }
-
-    /* Horizon / suggestions - purple tones */
-    .horizon-card {
-      background: linear-gradient(135deg, rgba(203, 166, 247, 0.08) 0%, rgba(203, 166, 247, 0.04) 100%) !important;
-      border-color: rgba(203, 166, 247, 0.25) !important;
-    }
-    .horizon-title { color: #cba6f7 !important; }
-    .horizon-possible { color: #b8c5d6 !important; }
-    .horizon-tip {
-      color: #cba6f7 !important;
-      background: rgba(203, 166, 247, 0.08) !important;
-    }
-
-    /* Feedback */
-    .feedback-header { color: #8892a4 !important; }
-    .feedback-intro { color: #64748b !important; }
-    .feedback-section h3 { color: #94a3b8 !important; }
-
-    /* Empty state */
-    .empty { color: #64748b !important; }
-
-    /* Generic borders */
-    .charts-row * { border-color: #161c26 !important; }
-  </style>
-`
+import { parseInsightsReport, type ParsedInsights } from './insights/parseInsightsReport'
+import { InsightsSections } from './insights/InsightsSections'
 
 export default function InsightsPage() {
   // All hooks called unconditionally -- early returns appear after all hook calls.
@@ -203,11 +24,10 @@ export default function InsightsPage() {
   const startInsights = useInsightsStore((s) => s.startInsights)
   const loadCatalogue = useInsightsStore((s) => s.loadCatalogue)
 
-  const [reportHtml, setReportHtml] = useState<string | null>(null)
+  const [parsed, setParsed] = useState<ParsedInsights | null>(null)
   const [currentKpis, setCurrentKpis] = useState<InsightsData | null>(null)
   const [previousKpis, setPreviousKpis] = useState<InsightsData | null>(null)
   const [loading, setLoading] = useState(false)
-  const iframeRef = useRef<HTMLIFrameElement>(null)
 
   useEffect(() => {
     loadCatalogue()
@@ -215,7 +35,7 @@ export default function InsightsPage() {
 
   useEffect(() => {
     if (!selectedRunId) {
-      setReportHtml(null)
+      setParsed(null)
       setCurrentKpis(null)
       setPreviousKpis(null)
       return
@@ -227,12 +47,7 @@ export default function InsightsPage() {
       window.electronAPI.insights.getReport(selectedRunId),
       window.electronAPI.insights.getKpis(selectedRunId),
     ]).then(([html, kpis]) => {
-      if (html) {
-        const injected = html.replace('</head>', DARK_THEME_CSS + '</head>')
-        setReportHtml(injected)
-      } else {
-        setReportHtml(null)
-      }
+      setParsed(html ? parseInsightsReport(html) : null)
       setCurrentKpis(kpis)
       setLoading(false)
     })
@@ -247,27 +62,6 @@ export default function InsightsPage() {
       }
     }
   }, [selectedRunId, catalogue])
-
-  // Intercept link clicks inside the iframe and open in system browser
-  useEffect(() => {
-    const iframe = iframeRef.current
-    if (!iframe || !reportHtml) return
-
-    const onLoad = () => {
-      const doc = iframe.contentDocument
-      if (!doc) return
-      doc.addEventListener('click', (e: MouseEvent) => {
-        const anchor = (e.target as HTMLElement).closest('a')
-        if (anchor && anchor.href && !anchor.href.startsWith('about:')) {
-          e.preventDefault()
-          window.electronAPI.shell.openExternal(anchor.href)
-        }
-      })
-    }
-
-    iframe.addEventListener('load', onLoad)
-    return () => iframe.removeEventListener('load', onLoad)
-  }, [reportHtml])
 
   const completedRuns = catalogue?.runs.filter((r) => r.status === 'complete') || []
   const isRunning = status === 'running' || status === 'extracting_kpis'
@@ -411,7 +205,7 @@ export default function InsightsPage() {
       scrollable={false}
     >
       <div className="flex-1 flex overflow-hidden">
-        {/* Report iframe */}
+        {/* Report native sections */}
         <div className="flex-1 overflow-hidden">
           {loading ? (
             <div className="flex items-center justify-center h-full">
@@ -422,14 +216,16 @@ export default function InsightsPage() {
                 <span className="text-xs">Loading report...</span>
               </div>
             </div>
-          ) : reportHtml ? (
-            <iframe
-              ref={iframeRef}
-              srcDoc={reportHtml}
-              className="w-full h-full border-0"
-              sandbox="allow-same-origin"
-              title="Insights Report"
-            />
+          ) : parsed ? (
+            <div className="w-full h-full overflow-auto">
+              {parsed.title && (
+                <div style={{ padding: '16px 16px 0' }}>
+                  <h2 style={{ fontSize: 18, fontWeight: 600, color: 'var(--text-primary)' }}>{parsed.title}</h2>
+                  {parsed.subtitle && <p style={{ color: 'var(--text-muted)' }}>{parsed.subtitle}</p>}
+                </div>
+              )}
+              <InsightsSections sections={parsed.sections} />
+            </div>
           ) : (
             <div className="flex items-center justify-center h-full">
               <p className="text-overlay0 text-xs">No report available for this run</p>

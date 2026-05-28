@@ -36,6 +36,15 @@ import {
   OAUTH_SCOPES_PRIVATE,
   OAUTH_SCOPES_PUBLIC,
 } from '../../shared/github-constants'
+import { updateSessionMeta } from '../session-registry'
+import { emitPrMerged } from '../channel-emitters'
+
+// Binds repo + branch into the session registry without touching the label
+// that pty-manager set at spawn time. updateSessionMeta's patch type makes
+// label optional, so the spread-merge preserves the spawn-set human label.
+function bindGitHubMeta(id: string, repo: string, branch: string): void {
+  updateSessionMeta({ id, repo, branch })
+}
 
 type LoadSessions = () => Promise<SavedSession[]>
 type SaveSessions = (sessions: SavedSession[]) => Promise<void>
@@ -489,6 +498,7 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
           branch,
           integration: merged,
         })
+        bindGitHubMeta(sessionId, merged.repoSlug, branch)
         // If the user had this session focused before enabling integration,
         // setFocus was a no-op because the session wasn't registered yet.
         // Replay pending focus now so interval tiering (active vs bg) kicks
@@ -534,6 +544,7 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
         branch,
         integration,
       })
+      bindGitHubMeta(sessionId, integration.repoSlug, branch)
       if (focusedSessionResolver() === sessionId) {
         orchestrator.setFocus(sessionId, true)
       }
@@ -563,6 +574,7 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
       branch,
       integration,
     })
+    bindGitHubMeta(id, integration.repoSlug, branch)
     orchestrator.setFocus(id, true)
     await orchestrator.syncNow(id)
     return { ok: true }
@@ -731,9 +743,18 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
           method: 'PUT',
           body: { merge_method: method },
         })
-        return r.ok
-          ? { ok: true }
-          : { ok: false, error: `http-${r.status}` }
+        if (r.ok) {
+          // Emit the pr:merged internal event so the rules engine (PR Cascade)
+          // can notify sessions on dependent branches. Best-effort: a channels
+          // emit must never break the merge response.
+          try {
+            // base branch not returned by the merge endpoint; defaults to main
+            // (custom non-main base targeting is a v1.5.11 follow-up)
+            emitPrMerged({ repo: slug, number: prNumber, branch: 'main' })
+          } catch { /* channels emit is best-effort */ }
+          return { ok: true }
+        }
+        return { ok: false, error: `http-${r.status}` }
       } catch (err) {
         return { ok: false, error: err instanceof Error ? err.message : String(err) }
       }
@@ -856,6 +877,7 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
             branch,
             integration: integ,
           })
+          bindGitHubMeta(s.id, integ.repoSlug, branch)
           if (focusedSessionResolver() === s.id) {
             orchestrator.setFocus(s.id, true)
           }

@@ -13,6 +13,7 @@ import type { TokenomicsData, TokenomicsSessionRecord, TokenomicsDailyAggregate,
 import type { IdentityColorKey } from '../shared/identity-colors'
 import { IPC } from '../shared/ipc-channels'
 import { colourForEmail } from './account-color'
+import { emitTokenomicsAnomaly } from './channel-emitters'
 import {
   findClaudeHistoryFiles,
   parseClaudeTranscriptFile,
@@ -817,6 +818,13 @@ export async function syncTokenomics(
 
 let cachedData: TokenomicsData | null = null
 
+// Tracks whether a session was last seen in the "anomaly" state (headroom < 10%).
+// Prevents re-emitting tokenomics:anomaly on every statusline tick while
+// the session stays above the threshold. True = was in anomaly state last tick.
+// keyed by sessionId (bounded by live session count); recovery above the threshold
+// is intentionally silent (no recovery event in v1.5.10)
+const rateLimitAnomalyState = new Map<string, boolean>()
+
 /**
  * P8.10: enrich a StatuslineData payload with accountColour computed
  * from accountEmail. Called by handleStatuslineUpdate before the
@@ -872,6 +880,27 @@ export function handleStatuslineUpdate(rawStatuslineData: StatuslineData): void 
       lastUpdated: Date.now(),
     }
   }
+
+  // Emit tokenomics:anomaly when the five-hour rate limit headroom crosses below 10%
+  // for a session. Only emits on transition (was >=10 headroom, now <10) per session.
+  try {
+    if (statuslineData.rateLimitCurrent != null && statuslineData.sessionId) {
+      const utilization = statuslineData.rateLimitCurrent
+      const headroom = 100 - utilization
+      const anomalyNow = headroom < 10
+      const wasAnomaly = rateLimitAnomalyState.get(statuslineData.sessionId) ?? false
+      if (anomalyNow && !wasAnomaly) {
+        emitTokenomicsAnomaly({
+          sessionId: statuslineData.sessionId,
+          sessionLabel: statuslineData.sessionId,
+          headroom,
+          spendDelta: 0,
+          baseline: 0,
+        })
+      }
+      rateLimitAnomalyState.set(statuslineData.sessionId, anomalyNow)
+    }
+  } catch { /* best-effort -- never break statusline processing */ }
 
   const { sessionId, model, costUsd } = statuslineData
   if (!sessionId) {

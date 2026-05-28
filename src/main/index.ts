@@ -35,6 +35,9 @@ import { registerGitHubHandlers } from './ipc/github-handlers'
 import { registerHooksHandlers } from './ipc/hooks-handlers'
 import { registerCodexHandlers } from './ipc/codex-handlers'
 import { registerCodexReviewHandlers } from './ipc/codex-review-handlers'
+import { registerChannelHandlers } from './ipc/channel-handlers'
+import { startRulesEngine } from './channel-rules'
+import { startPermissionTray } from './channel-permissions'
 import { readClipboardImageWithRetry } from './clipboard-image'
 import { HooksGateway } from './hooks/hooks-gateway'
 import { setGateway, getGateway } from './hooks'
@@ -603,6 +606,8 @@ if (!gotTheLock) {
     registerVisionHandlers(getWindow)
     registerCodexHandlers()
     registerCodexReviewHandlers()
+    registerChannelHandlers()
+    startRulesEngine()
     registerCloudAgentHandlers(getWindow)
     registerTeamHandlers(getWindow)
     registerLegacyVersionHandlers(getWindow)
@@ -642,6 +647,7 @@ if (!gotTheLock) {
       },
     })
     setGateway(hooksGateway)
+    startPermissionTray()
     registerHooksHandlers(hooksGateway)
     if (hooksEnabled) {
       cleanupStaleHookEntries(new Set())
