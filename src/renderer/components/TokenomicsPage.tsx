@@ -94,7 +94,7 @@ function formatDurationShort(ms: number): string {
   return `${m}m`
 }
 
-function SummaryCards({ today, week, fiveHour, allTime, extraSpend, rateLimitCurrent, rateLimitWeekly, burnRate }: {
+export function SummaryCards({ today, week, fiveHour, allTime, extraSpend, rateLimitCurrent, rateLimitWeekly, burnRate }: {
   today: number; week: number; fiveHour: number; allTime: number
   extraSpend?: { enabled: boolean; usedUsd: number; limitUsd: number; lastUpdated: number }
   rateLimitCurrent?: number
@@ -103,56 +103,91 @@ function SummaryCards({ today, week, fiveHour, allTime, extraSpend, rateLimitCur
 }) {
   return (
     <div className="grid grid-cols-6 gap-3 mb-6">
-      <div className="bg-surface0 rounded-xl p-4">
+      <div
+        className="rounded-xl p-4"
+        style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
+      >
         <div className="text-xs text-overlay0 uppercase tracking-wider mb-1">5-Hour Window</div>
         <div className="text-2xl font-mono font-bold text-teal">{formatCost(fiveHour)}</div>
         {rateLimitCurrent != null && (
           <div className="mt-2">
             <div className="flex justify-between text-[10px] text-overlay0 mb-0.5">
               <span>Rate limit</span>
-              <span className={rateLimitCurrent > 80 ? 'text-red' : 'text-overlay1'}>{rateLimitCurrent}%</span>
+              <span style={rateLimitCurrent > 80 ? { color: 'var(--status-danger)' } : undefined} className={rateLimitCurrent > 80 ? '' : 'text-overlay1'}>{rateLimitCurrent}%</span>
             </div>
             <div className="h-1.5 bg-surface1 rounded-full overflow-hidden">
               <div
-                className={`h-full rounded-full ${rateLimitCurrent > 80 ? 'bg-red' : rateLimitCurrent > 50 ? 'bg-yellow' : 'bg-teal'}`}
-                style={{ width: `${Math.min(rateLimitCurrent, 100)}%` }}
+                className="h-full rounded-full"
+                style={{
+                  width: `${Math.min(rateLimitCurrent, 100)}%`,
+                  background: rateLimitCurrent > 80
+                    ? 'var(--status-danger)'
+                    : rateLimitCurrent > 50
+                    ? 'var(--status-warning)'
+                    : 'var(--accent)',
+                }}
               />
             </div>
           </div>
         )}
       </div>
-      <div className="bg-surface0 rounded-xl p-4">
+      <div
+        className="rounded-xl p-4"
+        style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
+      >
         <div className="text-xs text-overlay0 uppercase tracking-wider mb-1">Today</div>
         <div className="text-2xl font-mono font-bold text-green">{formatCost(today)}</div>
         <div className="text-[10px] text-overlay0 mt-1">Plan usage</div>
       </div>
-      <div className="bg-surface0 rounded-xl p-4">
+      <div
+        className="rounded-xl p-4"
+        style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
+      >
         <div className="text-xs text-overlay0 uppercase tracking-wider mb-1">7-Day Window</div>
         <div className="text-2xl font-mono font-bold text-blue">{formatCost(week)}</div>
         {rateLimitWeekly != null && (
           <div className="mt-2">
             <div className="flex justify-between text-[10px] text-overlay0 mb-0.5">
               <span>Rate limit</span>
-              <span className={rateLimitWeekly > 80 ? 'text-red' : 'text-overlay1'}>{rateLimitWeekly}%</span>
+              <span style={rateLimitWeekly > 80 ? { color: 'var(--status-danger)' } : undefined} className={rateLimitWeekly > 80 ? '' : 'text-overlay1'}>{rateLimitWeekly}%</span>
             </div>
             <div className="h-1.5 bg-surface1 rounded-full overflow-hidden">
               <div
-                className={`h-full rounded-full ${rateLimitWeekly > 80 ? 'bg-red' : rateLimitWeekly > 50 ? 'bg-yellow' : 'bg-blue'}`}
-                style={{ width: `${Math.min(rateLimitWeekly, 100)}%` }}
+                className="h-full rounded-full"
+                style={{
+                  width: `${Math.min(rateLimitWeekly, 100)}%`,
+                  background: rateLimitWeekly > 80
+                    ? 'var(--status-danger)'
+                    : rateLimitWeekly > 50
+                    ? 'var(--status-warning)'
+                    : 'var(--accent)',
+                }}
               />
             </div>
           </div>
         )}
       </div>
-      <div className="bg-surface0 rounded-xl p-4">
+      <div
+        className="rounded-xl p-4"
+        style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
+      >
         <div className="text-xs text-overlay0 uppercase tracking-wider mb-1">All Time</div>
         <div className="text-2xl font-mono font-bold text-peach">{formatCost(allTime)}</div>
         <div className="text-[10px] text-overlay0 mt-1">Estimated from tokens</div>
       </div>
       {extraSpend?.enabled ? (
-        <div className={`rounded-xl p-4 ${extraSpend.usedUsd > 0 ? 'bg-red/10 border border-red/30' : 'bg-surface0'}`}>
+        <div
+          className="rounded-xl p-4"
+          style={{
+            background: extraSpend.usedUsd > 0 ? 'color-mix(in srgb, var(--status-danger) 10%, transparent)' : 'var(--surface-raised)',
+            border: extraSpend.usedUsd > 0 ? '1px solid color-mix(in srgb, var(--status-danger) 30%, transparent)' : '1px solid var(--border-subtle)',
+          }}
+        >
           <div className="text-xs text-overlay0 uppercase tracking-wider mb-1">Extra Spend</div>
-          <div className={`text-2xl font-mono font-bold ${extraSpend.usedUsd > 0 ? 'text-red' : 'text-green'}`}>
+          <div
+            className="text-2xl font-mono font-bold"
+            style={{ color: extraSpend.usedUsd > 0 ? 'var(--status-danger)' : 'var(--status-success)' }}
+          >
             ${extraSpend.usedUsd.toFixed(2)}
           </div>
           <div className="text-[10px] text-overlay0 mt-1">
@@ -160,18 +195,27 @@ function SummaryCards({ today, week, fiveHour, allTime, extraSpend, rateLimitCur
           </div>
           <div className="h-1.5 bg-surface1 rounded-full mt-2 overflow-hidden">
             <div
-              className={`h-full rounded-full ${extraSpend.usedUsd > 0 ? 'bg-red' : 'bg-green'}`}
-              style={{ width: `${Math.min((extraSpend.usedUsd / Math.max(extraSpend.limitUsd, 1)) * 100, 100)}%` }}
+              className="h-full rounded-full"
+              style={{
+                width: `${Math.min((extraSpend.usedUsd / Math.max(extraSpend.limitUsd, 1)) * 100, 100)}%`,
+                background: extraSpend.usedUsd > 0 ? 'var(--status-danger)' : 'var(--status-success)',
+              }}
             />
           </div>
         </div>
       ) : (
-        <div className="bg-surface0 rounded-xl p-4">
+        <div
+          className="rounded-xl p-4"
+          style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
+        >
           <div className="text-xs text-overlay0 uppercase tracking-wider mb-1">Extra Spend</div>
           <div className="text-sm text-overlay0 mt-2">Not enabled</div>
         </div>
       )}
-      <div className="bg-surface0 rounded-xl p-4">
+      <div
+        className="rounded-xl p-4"
+        style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
+      >
         <div className="text-xs text-overlay0 uppercase tracking-wider mb-1">Burn Rate</div>
         {burnRate && burnRate.costPerHour > 0 ? (
           <>
