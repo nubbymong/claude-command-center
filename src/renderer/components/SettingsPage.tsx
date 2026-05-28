@@ -116,23 +116,7 @@ export default function SettingsPage({ initialTab }: SettingsPageProps = {}) {
     </svg>
   )
 
-  const tabsRail = (
-    <nav className="py-1.5">
-      {TABS.map(tab => (
-        <button
-          key={tab.id}
-          onClick={() => setActiveTab(tab.id)}
-          className={`w-full text-left px-3 py-1.5 text-xs transition-colors ${
-            activeTab === tab.id
-              ? 'bg-blue/15 text-blue border-l-2 border-blue'
-              : 'text-overlay1 hover:text-text hover:bg-surface0/40 border-l-2 border-transparent'
-          }`}
-        >
-          {tab.label}
-        </button>
-      ))}
-    </nav>
-  )
+  const tabsRail = <TabsRail activeTab={activeTab} onChange={setActiveTab} />
 
   const activeTabLabel = TABS.find(t => t.id === activeTab)?.label
 
@@ -721,6 +705,30 @@ export function Toggle({ on, onClick, label }: { on: boolean; onClick: () => voi
         style={{ transform: on ? 'translateX(24px)' : 'translateX(4px)' }}
       />
     </button>
+  )
+}
+
+export function TabsRail({ activeTab, onChange }: { activeTab: SettingsTab; onChange: (id: SettingsTab) => void }) {
+  return (
+    <nav className="py-1.5">
+      {TABS.map(tab => {
+        const active = activeTab === tab.id
+        return (
+          <button
+            key={tab.id}
+            onClick={() => onChange(tab.id)}
+            className="w-full text-left px-3 py-1.5 text-xs transition-colors focus-ring"
+            style={{
+              background: active ? 'color-mix(in srgb, var(--accent) 15%, transparent)' : 'transparent',
+              color: active ? 'var(--accent)' : 'var(--text-secondary)',
+              borderLeft: `2px solid ${active ? 'var(--accent)' : 'transparent'}`,
+            }}
+          >
+            {tab.label}
+          </button>
+        )
+      })}
+    </nav>
   )
 }
 
