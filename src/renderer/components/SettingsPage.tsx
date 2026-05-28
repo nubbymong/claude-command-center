@@ -13,6 +13,7 @@ import HooksGatewaySection from './github/config/HooksGatewaySection'
 import PageFrame from './PageFrame'
 import AccountAliasesSection from './settings/AccountAliasesSection'
 import { SectionLabel } from './ui/SectionLabel'
+import { Kbd } from './ui/Kbd'
 declare const __BUILD_TIME__: string
 
 export const SETTINGS_TAB_IDS = ['general', 'statusline', 'shortcuts', 'github', 'codex', 'hooks', 'about'] as const
@@ -718,11 +719,11 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   )
 }
 
-function ShortcutRow({ keys, action }: { keys: string; action: string }) {
+export function ShortcutRow({ keys, action }: { keys: string; action: string }) {
   return (
     <div className="flex items-center justify-between py-1.5 px-1">
-      <span className="text-sm text-text">{action}</span>
-      <kbd className="px-2 py-0.5 bg-crust/80 rounded-md text-[11px] text-overlay1 font-mono border border-surface0/50">{keys}</kbd>
+      <span className="text-sm" style={{ color: 'var(--text-primary)' }}>{action}</span>
+      <Kbd>{keys}</Kbd>
     </div>
   )
 }
@@ -810,14 +811,12 @@ function ShortcutEditor({ action, label, shortcut, allShortcuts, onSave }: {
           <>
             <button
               onClick={() => setEditing(true)}
-              className={`px-2.5 py-1 rounded-md text-[11px] font-mono transition-colors border ${
-                conflict
-                  ? 'bg-red/10 text-red border-red/30'
-                  : 'bg-crust/80 text-overlay1 border-surface0/50 hover:bg-surface0 hover:text-text'
+              className={`px-1 py-1 rounded-md transition-colors border ${
+                conflict ? 'bg-red/10 border-red/30' : 'border-transparent hover:bg-surface0'
               }`}
               title={conflict ? `Conflicts with: ${conflict}` : 'Click to edit'}
             >
-              {shortcut}
+              <Kbd>{shortcut}</Kbd>
             </button>
             <button
               onClick={() => setTesting(true)}
