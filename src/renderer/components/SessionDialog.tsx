@@ -56,7 +56,11 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
   const [codexPreset, setCodexPreset] = useState<CodexOptions['permissionsPreset']>(initial?.codexOptions?.permissionsPreset ?? 'standard')
   const [label, setLabel] = useState(initial?.label ?? '')
   const [workingDir, setWorkingDir] = useState(initial?.workingDirectory ?? '')
-  const [model, setModel] = useState(initialClaude?.model ?? initial?.model ?? '')
+  // v2.0.0: default to the `opus` alias so new sessions land on Opus 4.8
+  // (the latest Opus family member, as of 2026-05-28). The alias resolves
+  // to whichever Opus version Claude Code currently ships, so this
+  // doesn't go stale when Anthropic releases the next one.
+  const [model, setModel] = useState(initialClaude?.model ?? initial?.model ?? 'opus')
   const [colorKey, setColorKey] = useState<IdentityColorKey>(
     (initial?.identityColorKey as IdentityColorKey) ?? bucketLegacyColorToKey(initial?.color ?? '')
   )
@@ -96,11 +100,16 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
   const agentUserTemplates = useAgentLibraryStore(s => s.templates)
   const allAgentTemplates = [...agentUserTemplates, ...BUILTIN_TEMPLATES]
   const [selectedAgentIds, setSelectedAgentIds] = useState<Set<string>>(new Set(initialClaude?.agentIds ?? initial?.agentIds ?? []))
-  const [effortLevel, setEffortLevel] = useState<'low' | 'medium' | 'high' | ''>(
-    (initialClaude?.effortLevel ?? initial?.effortLevel ?? '') as 'low' | 'medium' | 'high' | ''
+  type EffortLevelOpt = 'low' | 'medium' | 'high' | 'xhigh' | 'max' | ''
+  const [effortLevel, setEffortLevel] = useState<EffortLevelOpt>(
+    (initialClaude?.effortLevel ?? initial?.effortLevel ?? '') as EffortLevelOpt
   )
   const [disableAutoMemory, setDisableAutoMemory] = useState(initialClaude?.disableAutoMemory ?? initial?.disableAutoMemory ?? false)
   const [enableCodexReview, setEnableCodexReview] = useState(initialClaude?.enableCodexReview ?? false)
+  // v2.0.0: Opus 4.8 fast mode -- 2.5x speed for 2x cost ($10/$50 per 1M
+  // tokens instead of $5/$25). Persisted on the config so tokenomics can
+  // route the session record to the `<model>-fast` pricing row.
+  const [fastMode, setFastMode] = useState(initialClaude?.fastMode ?? false)
   const [machineName, setMachineName] = useState(initial?.machineName ?? '')
 
   // Fetch available versions when legacy checkbox enabled
@@ -244,6 +253,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
       effortLevel: !shellOnly && effortLevel ? effortLevel : undefined,
       disableAutoMemory: !shellOnly && disableAutoMemory ? true : undefined,
       enableCodexReview: !shellOnly && enableCodexReview ? true : undefined,
+      fastMode: !shellOnly && fastMode ? true : undefined,
     } : undefined
 
     const codexOptions: CodexOptions | undefined = provider === 'codex' ? {
@@ -605,15 +615,33 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                 </label>
                 <select
                   value={effortLevel}
-                  onChange={(e) => setEffortLevel(e.target.value as 'low' | 'medium' | 'high' | '')}
+                  onChange={(e) => setEffortLevel(e.target.value as EffortLevelOpt)}
                   className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-blue"
                 >
                   <option value="">Auto (default)</option>
-                  <option value="low">Low — fast, minimal thinking</option>
-                  <option value="medium">Medium — balanced</option>
-                  <option value="high">High — deep reasoning</option>
+                  <option value="low">Low -- fast, minimal thinking</option>
+                  <option value="medium">Medium -- balanced</option>
+                  <option value="high">High -- deep reasoning</option>
+                  <option value="xhigh">Extra high -- Opus 4.8 hardest tasks</option>
+                  <option value="max">Max -- maximum reasoning budget</option>
                 </select>
               </div>
+            )}
+
+            {/* v2.0.0: Opus 4.8 fast mode toggle */}
+            {!shellOnly && (
+              <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={fastMode}
+                  onChange={(e) => setFastMode(e.target.checked)}
+                  className="mt-0.5 rounded border-surface1"
+                />
+                <span>
+                  Fast mode (Opus 4.8)
+                  <span className="block text-[10px] text-overlay0">2.5x speed at 2x cost ($10/$50 per 1M tokens). Tokenomics tracks Fast spend separately.</span>
+                </span>
+              </label>
             )}
 
             {/* Disable auto-memory toggle */}
