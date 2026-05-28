@@ -47,6 +47,7 @@ import { setupTokenomicsListener } from './stores/tokenomicsStore'
 import { setupConductorMcpListener, useConductorMcpStore } from './stores/conductorMcpStore'
 import { setupGitHubListener, useGitHubStore } from './stores/githubStore'
 import { setupChannelListeners } from './stores/channelStore'
+import PermissionToastStack from './components/channels/PermissionToastStack'
 import { useCodexAccountStore } from './stores/codexAccountStore'
 import GitHubPanel from './components/github/GitHubPanel'
 import OnboardingModal from './components/github/onboarding/OnboardingModal'
@@ -780,6 +781,7 @@ export default function App() {
   return (
     <ErrorBoundary>
       <div className="flex flex-col h-screen bg-base text-text">
+        <PermissionToastStack />
         {showWhatsNew && <WhatsNewModal onClose={handleWhatsNewClose} />}
         {showTipModal && <TipModal onClose={() => setShowTipModal(false)} onNavigate={(v) => setView(v)} />}
         {showGitHubOnboarding && (
