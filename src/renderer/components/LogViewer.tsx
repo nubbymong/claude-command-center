@@ -561,7 +561,7 @@ export default function LogViewer() {
                   </div>
                 </div>
               ) : (
-                <div ref={termContainerRef} className="flex-1 bg-base" style={{ minHeight: '200px' }} />
+                <div ref={termContainerRef} className="flex-1 bg-base log-list-enter" style={{ minHeight: '200px' }} />
               )}
 
               {/* Bottom info bar */}

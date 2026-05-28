@@ -320,3 +320,14 @@ body {
   .gh-fab-in { animation: none; }
 }
 
+/* LogViewer: smooth fade-in for newly appended entries when an incremental
+   filter diff appends rows. Respects prefers-reduced-motion. */
+@keyframes log-list-enter {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.log-list-enter { animation: log-list-enter 180ms ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .log-list-enter { animation: none; }
+}
+
