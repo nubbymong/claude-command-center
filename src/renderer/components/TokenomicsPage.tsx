@@ -529,7 +529,7 @@ export function FilterBar({
 
 type SortKey = 'project' | 'model' | 'cost' | 'inputTokens' | 'outputTokens' | 'date' | 'messages' | 'cacheTokens' | 'duration' | 'costPerHour'
 
-function SessionsTable({ sessions, title, observedEmails, onRefresh }: { sessions: TokenomicsSessionRecord[]; title?: string; observedEmails: string[]; onRefresh: () => void }) {
+export function SessionsTable({ sessions, title, observedEmails, onRefresh, groupBy }: { sessions: TokenomicsSessionRecord[]; title?: string; observedEmails: string[]; onRefresh: () => void; groupBy?: GroupByLens }) {
   const [sortBy, setSortBy] = useState<SortKey>('cost')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [page, setPage] = useState(0)
@@ -554,8 +554,23 @@ function SessionsTable({ sessions, title, observedEmails, onRefresh }: { session
     })
   }, [sessions, sortBy, sortDir])
 
-  const totalPages = Math.ceil(sorted.length / PAGE_SIZE)
-  const paginated = sorted.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
+  const groupedSorted = useMemo(() => {
+    if (!groupBy) return null
+    const buckets: Record<string, TokenomicsSessionRecord[]> = {}
+    for (const s of sorted) {
+      let key: string
+      if (groupBy === 'project') key = s.projectDir || '(no project)'
+      else if (groupBy === 'account') key = (s as any).accountEmail || '(unattributed)'
+      else key = s.model || 'unknown'
+      if (!buckets[key]) buckets[key] = []
+      buckets[key].push(s)
+    }
+    return Object.entries(buckets).sort(([a], [b]) => a.localeCompare(b))
+  }, [sorted, groupBy])
+
+  const flatPages = !groupBy
+  const totalPages = flatPages ? Math.ceil(sorted.length / PAGE_SIZE) : 1
+  const paginated = flatPages ? sorted.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE) : sorted
 
   // Compute totals for filtered sessions
   const totals = useMemo(() => {
@@ -583,6 +598,39 @@ function SessionsTable({ sessions, title, observedEmails, onRefresh }: { session
   // Reset page when sessions change
   useEffect(() => { setPage(0) }, [sessions])
 
+  const renderRow = (s: TokenomicsSessionRecord) => (
+    <tr key={s.sessionId} className="border-b border-surface1/50 hover:bg-surface1/30">
+      <td className="px-3 py-1.5 text-text truncate max-w-[180px]" title={s.projectDir}>
+        {s.projectDir || '-'}
+      </td>
+      <td className="px-3 py-1.5">
+        <span
+          className="text-xs px-1.5 py-0.5 rounded"
+          style={{ backgroundColor: `color-mix(in srgb, ${getModelColor(s.model)} 13%, transparent)`, color: getModelColor(s.model) }}
+        >
+          {getModelShort(s.model)}
+        </span>
+      </td>
+      <td className="px-3 py-1.5 font-mono text-peach">{formatCost(s.totalCostUsd)}</td>
+      <td className="px-3 py-1.5 font-mono text-overlay1">{formatTokens(s.totalInputTokens)}</td>
+      <td className="px-3 py-1.5 font-mono text-overlay1">{formatTokens(s.totalOutputTokens)}</td>
+      <td className="px-3 py-1.5 font-mono text-overlay0">{formatTokens(s.totalCacheReadTokens + s.totalCacheWriteTokens)}</td>
+      <td className="px-3 py-1.5 font-mono text-overlay0">{s.messageCount}</td>
+      <td className="px-3 py-1.5 font-mono text-overlay0">{formatDurationShort(s.durationMs || 0)}</td>
+      <td className={`px-3 py-1.5 font-mono ${
+        (s.costPerHour || 0) > 20 ? 'text-red' : (s.costPerHour || 0) > 5 ? 'text-yellow' : 'text-overlay0'
+      }`}>{s.costPerHour ? formatCost(s.costPerHour) : '-'}</td>
+      <td className="px-3 py-1.5 text-overlay0">{formatDate(s.firstTimestamp)}</td>
+      <td className="px-3 py-1.5">
+        <EditAttributionMenu
+          sessionId={s.sessionId}
+          detectedEmails={observedEmails}
+          onChange={onRefresh}
+        />
+      </td>
+    </tr>
+  )
+
   const SortHeader = ({ label, sortKey, className }: { label: string; sortKey: SortKey; className?: string }) => (
     <th
       className={`text-left text-xs text-overlay0 font-medium px-3 py-2 cursor-pointer hover:text-text select-none ${className || ''}`}
@@ -606,7 +654,7 @@ function SessionsTable({ sessions, title, observedEmails, onRefresh }: { session
           <span className="ml-3 text-peach normal-case">Total: {formatCost(totals.cost)}</span>
           <span className="ml-2 text-overlay1 normal-case">{formatTokens(totals.input)} in / {formatTokens(totals.output)} out</span>
         </div>
-        {totalPages > 1 && (
+        {flatPages && totalPages > 1 && (
           <div className="flex items-center gap-2 text-xs">
             <button
               onClick={() => setPage(p => Math.max(0, p - 1))}
@@ -644,44 +692,28 @@ function SessionsTable({ sessions, title, observedEmails, onRefresh }: { session
             </tr>
           </thead>
           <tbody>
-            {paginated.map(s => (
-              <tr key={s.sessionId} className="border-b border-surface1/50 hover:bg-surface1/30">
-                <td className="px-3 py-1.5 text-text truncate max-w-[180px]" title={s.projectDir}>
-                  {s.projectDir || '-'}
-                </td>
-                <td className="px-3 py-1.5">
-                  <span
-                    className="text-xs px-1.5 py-0.5 rounded"
-                    style={{ backgroundColor: `color-mix(in srgb, ${getModelColor(s.model)} 13%, transparent)`, color: getModelColor(s.model) }}
-                  >
-                    {getModelShort(s.model)}
-                  </span>
-                </td>
-                <td className="px-3 py-1.5 font-mono text-peach">{formatCost(s.totalCostUsd)}</td>
-                <td className="px-3 py-1.5 font-mono text-overlay1">{formatTokens(s.totalInputTokens)}</td>
-                <td className="px-3 py-1.5 font-mono text-overlay1">{formatTokens(s.totalOutputTokens)}</td>
-                <td className="px-3 py-1.5 font-mono text-overlay0">{formatTokens(s.totalCacheReadTokens + s.totalCacheWriteTokens)}</td>
-                <td className="px-3 py-1.5 font-mono text-overlay0">{s.messageCount}</td>
-                <td className="px-3 py-1.5 font-mono text-overlay0">{formatDurationShort(s.durationMs || 0)}</td>
-                <td className={`px-3 py-1.5 font-mono ${
-                  (s.costPerHour || 0) > 20 ? 'text-red' : (s.costPerHour || 0) > 5 ? 'text-yellow' : 'text-overlay0'
-                }`}>{s.costPerHour ? formatCost(s.costPerHour) : '-'}</td>
-                <td className="px-3 py-1.5 text-overlay0">{formatDate(s.firstTimestamp)}</td>
-                <td className="px-3 py-1.5">
-                  <EditAttributionMenu
-                    sessionId={s.sessionId}
-                    detectedEmails={observedEmails}
-                    onChange={onRefresh}
-                  />
-                </td>
-              </tr>
-            ))}
-            {paginated.length === 0 && (
-              <tr>
-                <td colSpan={11} className="px-3 py-6 text-center text-overlay0">
-                  No sessions match the current filter
-                </td>
-              </tr>
+            {groupedSorted ? (
+              groupedSorted.map(([key, group]) => (
+                <React.Fragment key={key}>
+                  <tr data-testid="group-header" className="bg-surface1/40">
+                    <td colSpan={11} className="px-3 py-1.5 text-xs text-overlay1 font-semibold">
+                      {key} <span className="text-overlay0 font-normal ml-2">{group.length}</span>
+                    </td>
+                  </tr>
+                  {group.map(s => renderRow(s))}
+                </React.Fragment>
+              ))
+            ) : (
+              <>
+                {paginated.map(s => renderRow(s))}
+                {paginated.length === 0 && (
+                  <tr>
+                    <td colSpan={11} className="px-3 py-6 text-center text-overlay0">
+                      No sessions match the current filter
+                    </td>
+                  </tr>
+                )}
+              </>
             )}
           </tbody>
         </table>
@@ -1067,6 +1099,7 @@ export default function TokenomicsPage() {
           title={selectedDate ? `Sessions on ${formatDateFull(selectedDate)}` : undefined}
           observedEmails={observedEmails}
           onRefresh={loadData}
+          groupBy={groupBy}
         />
       </div>
     </PageFrame>
