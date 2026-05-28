@@ -1,400 +1,262 @@
-<p align="center">
-  <img src="docs/screenshots/splash.png" alt="Claude Command Center" width="320" />
-</p>
+<div align="center">
 
-<h1 align="center">Claude Command Center</h1>
+<img src="docs/screenshots/splash.png" alt="Claude Command Center" width="220" />
 
-<p align="center">
-  <strong>Multi-session terminal orchestrator for <a href="https://docs.anthropic.com/en/docs/claude-code">Claude Code</a></strong><br/>
-  Run dozens of Claude sessions simultaneously with tabbed management, SSH remote access, cloud agents, browser automation, an in-app webview, an Excalidraw scratchpad, GitHub PR context, and real-time usage analytics.
-</p>
+# Claude Command Center
 
-<p align="center">
-  <a href="../../releases"><img src="https://img.shields.io/github/v/release/nubbymong/claude-command-center?include_prereleases&label=version&color=E39455" alt="Version" /></a>
-  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS-blue" alt="Platform" />
-  <img src="https://img.shields.io/badge/electron-33-47848F?logo=electron" alt="Electron" />
-  <img src="https://img.shields.io/badge/license-MIT-green" alt="License" />
-  <a href="../../actions"><img src="https://img.shields.io/badge/tests-passing-success" alt="Tests" /></a>
-</p>
+**The desktop orchestrator for [Claude Code](https://docs.anthropic.com/en/docs/claude-code).**
+Run dozens of Claude and Codex sessions side-by-side, watch every dollar, intercept every high-risk command, and ship without leaving the keyboard.
 
-<p align="center">
-  <a href="#installation">Installation</a> &bull;
-  <a href="#highlights">Highlights</a> &bull;
-  <a href="#features">Features</a> &bull;
-  <a href="#whats-new-in-v15">What's New in v1.5</a> &bull;
-  <a href="#whats-new-in-v14">What's New in v1.4</a> &bull;
-  <a href="#build-from-source">Build from Source</a> &bull;
-  <a href="#security">Security</a>
-</p>
+<br/>
+
+[![Latest release](https://img.shields.io/github/v/release/nubbymong/claude-command-center?include_prereleases&label=v2.0&color=cba6f7)](../../releases)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-89b4fa)](../../releases)
+[![Electron](https://img.shields.io/badge/electron-33-89dceb?logo=electron)](https://www.electronjs.org/)
+[![Tests](https://img.shields.io/badge/tests-1338%20passing-a6e3a1)](../../actions)
+[![License](https://img.shields.io/badge/license-MIT-fab387)](LICENSE)
+
+<br/>
+
+[Download](#install) &middot; [Features](#what-you-get) &middot; [Why CCC?](#why-ccc) &middot; [Architecture](#architecture) &middot; [Security](#security)
+
+<br/>
+
+<img src="docs/screenshots/tokenomics.jpg" alt="Claude Command Center in action" width="100%" />
+
+</div>
 
 ---
 
-> **Note** &nbsp;This project was developed privately since late 2025 and open-sourced in April 2026. Git history was squashed for the initial public release. All future development happens in the open.
-
-> **Windows note** &nbsp;The Windows installer is not code-signed, so SmartScreen will warn on first run. Click **More info** then **Run anyway** to proceed. The macOS DMG is signed and notarized.
-
-## Why?
-
-Claude Code is a powerful CLI, but managing multiple sessions across projects, SSH hosts, and Docker containers means juggling terminal windows, losing context, and manually tracking costs.
-
-**Claude Command Center** wraps Claude Code in a desktop app that gives you:
-
-- **Tabbed sessions** with save/restore, attention indicators, and instant switching
-- **SSH terminals** with encrypted credentials and automated remote setup
-- **Cloud agents** that run headless tasks in the background, plus multi-agent teams
-- **Browser automation** via MCP so Claude can see and interact with web pages
-- **In-app webview** for a side-by-side browser pane that talks to the same Vision tools
-- **Excalidraw scratchpad** for diagramming whose exports drop straight into Claude
-- **GitHub sidebar** showing the PR for your branch, CI runs, reviews, and linked issues
-- **Token analytics** with cost tracking, rate limit monitoring, and burn rate
-- **Memory visualizer** to browse Claude's learned context across all your projects
-- **Insights** &mdash; periodic Claude-driven analysis of your session logs
-
-It doesn't replace Claude Code &mdash; it orchestrates it.
-
----
-
-## Highlights
+## What's new in v2.0
 
 <table>
 <tr>
-<td width="50%">
+<td width="33%" valign="top">
 
-### Tokenomics Dashboard
-Track spending by model, daily cost trends, rate limit utilization, and burn rate across all sessions.
+### Opus 4.8 by default
+New sessions land on **Opus 4.8** with the full effort ladder &mdash; Low, Medium, High, **Extra high**, **Max**, and **Ultracode** (xhigh + automatic dynamic-workflow orchestration). Fast mode toggle exposes the cheaper $10/$50 2.5&times; lane.
 
-<img src="docs/screenshots/tokenomics.jpg" alt="Tokenomics Dashboard" width="100%" />
 </td>
-<td width="50%">
+<td width="33%" valign="top">
 
-### GitHub Sidebar
-PR snapshot for the current branch &mdash; status, CI runs, reviews, unresolved threads, linked issues, plus a session-context summary inferred from branch and transcript.
+### Permission Attention Tray
+High-risk Bash &mdash; `rm -rf`, `sudo`, `dd if=`, `chmod 777`, `--force`, fork bombs &mdash; stacks as toasts top-right via Claude Code&apos;s PreToolUse hook. Everything else auto-allows so the tray only fires when it should.
+
+</td>
+<td width="33%" valign="top">
+
+### V2 UX uplift
+Tokenomics gains a **Project / Account / Model** group-by lens. Insights drops the iframe for a native render. Logs paginates with incremental filter. The whole shell sits on a unified raised-surface tier with the new V2 primitives.
+
+</td>
+</tr>
+</table>
+
+<br/>
+
+> **Built for Claude Code 2.1.154+** &middot; **Opus 4.8 dynamic workflows are surfaced end-to-end** &middot; v2.0 promotes the v1.5 beta line; channels and channel-aware features land in v2.1.
+
+---
+
+## What you get
+
+<table>
+<tr>
+<td width="50%" valign="top">
+
+### Multi-session orchestration
+
+Tabbed sessions with save/restore, attention badges, identity colours, and one-keystroke switching. Local terminals in any cwd. SSH terminals with encrypted creds (DPAPI / Keychain) and automated remote setup. Combined Mode pairs Claude with a partner shell in the same tab. Shell-only mode for plain terminals when you just need one.
+
+<img src="src/renderer/assets/training/step-session-options.jpg" alt="Session configuration" width="100%" />
+
+</td>
+<td width="50%" valign="top">
+
+### Tokenomics that actually informs
+
+Daily cost trends, per-model breakdown, 5-hour + weekly rate-limit bars, burn-rate detection, anomaly alerts, and project filters. v2 adds a **group-by lens** that pivots the breakdown panel between project, account, and model with one click.
+
+<img src="docs/screenshots/tokenomics.jpg" alt="Tokenomics" width="100%" />
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+### Memory you can browse and prune
+
+Every Claude memory file across every project, surfaced as a card grid with size, type, recency, and search. Read rendered markdown in the right pane. Delete stale entries directly from the UI. Catches drift before it bloats your context.
+
+<img src="docs/screenshots/memory.jpg" alt="Memory visualizer" width="100%" />
+
+</td>
+<td valign="top">
+
+### Cloud agents + workflows
+
+Tasks dispatch headless Claude jobs with live output streaming. Library is where you author agent templates that double as in-session subagents. With Opus 4.8&apos;s dynamic workflows, the same orchestration patterns now scale to **up to 1,000 parallel subagents per run** &mdash; CCC&apos;s tray still gates the high-risk commands they invoke.
 
 <img src="docs/screenshots/agent-hub.jpg" alt="Agent Hub" width="100%" />
+
 </td>
 </tr>
 <tr>
-<td>
+<td valign="top">
 
-### Memory Visualizer
-Browse Claude's auto-memory across all projects. See memory types, staleness, and content at a glance.
+### GitHub PR context where you work
 
-<img src="docs/screenshots/memory.jpg" alt="Memory Visualizer" width="100%" />
+Right-rail panel surfaces PR status, CI runs, reviews, unresolved threads, and inferred issue context from your branch + transcript. Sign in via OAuth, PAT, or adopt your existing `gh` CLI auth. Per-session opt-in; collapses to a floating icon when you don&apos;t need it.
+
+<img src="src/renderer/assets/training/github-panel.jpg" alt="GitHub sidebar" width="100%" />
+
 </td>
-<td>
+<td valign="top">
 
-### Vision &amp; Browser Automation
-MCP server exposes 17 browser tools (screenshot, navigate, click, type, scroll, eval JS) to all Claude sessions &mdash; including over SSH via reverse tunnel.
+### Conductor MCP: vision, codex review, host transfer
 
-<img src="docs/screenshots/vision.jpg" alt="Vision System" width="100%" />
-</td>
-</tr>
-<tr>
-<td>
+Local MCP server exposes 17 browser-vision tools (screenshot, navigate, click, type, eval) plus `codex_review` so Claude can ask Codex to spot-check its work. SSH sessions reach the same server transparently through a reverse tunnel.
 
-### Excalidraw Scratchpad
-Tear off a side pane for whiteboarding flowcharts, architecture, sequence diagrams. One-click export drops the canvas straight into Claude as an image.
+<img src="docs/screenshots/vision.jpg" alt="Vision system" width="100%" />
 
-<img src="docs/screenshots/excalidraw.jpg" alt="Excalidraw Scratchpad" width="100%" />
-</td>
-<td>
-
-### Insights
-Periodic Claude-driven analysis of your session logs &mdash; surfaces recurring patterns, frequent fixes, dependency risks, and stuck flows.
-
-<img src="docs/screenshots/insights.jpg" alt="Insights" width="100%" />
-</td>
-</tr>
-<tr>
-<td>
-
-### Combined Mode
-Run Claude alongside a partner shell in the same tab &mdash; ideal for `git`, `docker`, build commands, and anything you want one keystroke away from your prompt.
-
-<img src="docs/screenshots/combined.jpg" alt="Combined Mode" width="100%" />
-</td>
-<td>
-
-### Logs &amp; Session History
-Full JSONL session logging with full-text and regex search across history, plus a project browser to discover and resume past sessions.
-
-<img src="docs/screenshots/logs.jpg" alt="Session Logs" width="100%" />
 </td>
 </tr>
 </table>
 
 ---
 
-## Features
+## Why CCC?
 
-### Session Management
+Claude Code is a powerful CLI. But the moment you have more than one project, more than one account, more than one machine &mdash; the experience fragments. You lose track of which terminal is which, which sessions are paused, what they&apos;ve spent, where their attention is going. You hand-edit `~/.claude/settings.json` to tune behaviour. You guess about cost.
 
-- **Tabbed multi-session interface** &mdash; run dozens of Claude Code sessions in parallel
-- **Session save/restore** &mdash; sessions persist across app restarts with automatic `/resume`
-- **Attention indicators** &mdash; tab badges pulse when Claude needs input or finishes work
-- **Config presets** &mdash; save terminal configurations as reusable presets with groups and sections
-- **Group launch** &mdash; start all configs in a group with a single click
-- **Session grouping** &mdash; organize active sessions into collapsible sidebar groups
+Claude Command Center wraps Claude Code (and Codex) in a desktop app that treats *the session* as the first-class object. Every session has a colour, a name, an account, a working directory, a saved config. Every spawn surfaces its tokens, its model, its rate-limit window, and its identity in a status strip you don&apos;t have to scroll. Every high-risk command stops at the tray before Claude runs it. Every cent is captured in Tokenomics and broken down the way you want.
 
-### Local &amp; Remote Terminals
-
-- **Local sessions** in any working directory with directory browser
-- **SSH remote sessions** with encrypted password storage (DPAPI / Keychain)
-- **Automated SSH setup** &mdash; statusline + Vision MCP auto-deployed to remote on first connect
-- **Sudo password auto-entry** &mdash; encrypted and machine-bound
-- **Combined mode** &mdash; optional partner shell pane alongside Claude in the same tab
-- **Shell-only mode** &mdash; create terminals without Claude for manual tasks
-
-### Custom Commands
-
-- **Command buttons** &mdash; one-click prompt buttons in the command bar
-- **Sections &amp; dividers** &mdash; organize buttons into named collapsible sections
-- **Target routing** &mdash; send commands to Claude, partner terminal, or active terminal
-- **Arguments system** &mdash; default args per button, Ctrl+click to override before sending
-- **Drag-and-drop reordering** with custom colors and global/per-config scope
-
-### Real-Time Status Line
-
-- **Context window tracking** &mdash; live token count with color-coded progress bar
-- **Model, cost, lines changed, session duration** &mdash; all visible at a glance
-- **Rate limit monitoring** &mdash; 5-hour and weekly windows with reset countdown
-- **Burn rate** &mdash; cost/hour and tokens/minute for the active session
-- **Customizable** &mdash; font and size, plus subtle red/green deltas for line-count changes
-
-### Screenshots, Excalidraw &amp; WebView
-
-- **Region capture** &mdash; select any screen region and inject it into Claude's context (built on `electron-screenshots`)
-- **Window capture** &mdash; pick a window from a visual list
-- **Clipboard paste** (`Alt+V`) &mdash; paste images with auto-resize (1920px max edge, JPEG q85)
-- **Excalidraw scratchpad** &mdash; full whiteboard pane, exports to image straight into Claude
-- **In-app WebView** &mdash; pinned browser pane next to your terminal, talks to the same Vision tools
-- **Unified MCP path** &mdash; all image transfer works identically on local and SSH sessions
-
-### Cloud Agents &amp; Teams
-
-- **Headless background agents** &mdash; dispatch Claude tasks that run without a terminal
-- **Agent dashboard** &mdash; monitor status, duration, tokens, and cost for all agents
-- **Agent teams** &mdash; orchestrate multi-agent pipelines with sequential / parallel steps
-- **Agent Hub Library** &mdash; canonical place to author your own templates; built-ins are starter examples to copy and edit
-- **Output viewer** &mdash; read full agent output with copy / retry / remove controls
-
-### Vision &mdash; Browser Automation
-
-- **MCP server with 17 tools** &mdash; screenshot, navigate, click, type, scroll, evaluate JS, and more
-- **Auto-discovery** &mdash; tools registered in `~/.claude/settings.json` automatically
-- **SSH reverse tunnel** &mdash; remote sessions access the MCP server transparently
-- **Chrome &amp; Edge support** &mdash; connect via Chrome DevTools Protocol
-- **Headless mode** &mdash; run browser automation without a visible window
-
-### Tokenomics &amp; Analytics
-
-- **Usage dashboard** &mdash; cost breakdown by model, time window (5h / today / 7d / all-time)
-- **Clickable daily cost chart** &mdash; 30-day trend; click a bar to filter the table to that day
-- **Model breakdown** &mdash; per-model token counts and costs (Opus, Sonnet, Haiku, etc.)
-- **Rate limit utilization** &mdash; visual bars for 5-hour and weekly limits, with anomaly alerts
-- **Burn rate calculation** &mdash; cost/hour and tokens/minute with peak detection
-- **Extra spend tracking** &mdash; monitor overages beyond plan limit
-- **Project filters** &mdash; view costs per project or globally
-
-### Memory Visualizer
-
-- **Project cards** &mdash; browse Claude's auto-memory organized by project
-- **Type grouping** &mdash; User, Feedback, Project, Reference memory types
-- **Full-text search** &mdash; find memories across all projects instantly
-- **Staleness indicators** &mdash; color-coded age (green / yellow / red) to spot stale context
-- **Markdown rendering** &mdash; read memory content with formatted display
-- **Memory management** &mdash; delete outdated entries directly from the UI
-
-### GitHub Sidebar
-
-- **PR snapshot for current branch** &mdash; status, CI runs, reviews, unresolved threads, linked issues
-- **Session context inference** &mdash; detect which issue/PR your terminal is working on from branch name, transcript, or PR body
-- **Local git state** &mdash; ahead / behind, dirty / clean, staged / unstaged at a glance
-- **Sign-in flexibility** &mdash; OAuth device flow, fine-grained PAT, or adopt your existing `gh` CLI auth
-- **Per-session opt-in** &mdash; nothing runs until you enable it for a specific session
-- **`Ctrl+/` toggle** (`Cmd+/` on macOS) &mdash; collapsible right panel keeps terminal space when hidden
-
-### Insights &mdash; Log Analysis
-
-- **Periodic analysis runs** &mdash; Claude reads your session logs in the background and generates a digest
-- **Cross-project patterns** &mdash; surfaces recurring issues, frequent fixes, and stuck flows
-- **Dependency risks** &mdash; highlights brittle areas you've debugged repeatedly
-- **Browser-friendly reports** &mdash; reports open in your system browser as standalone HTML
-
-### Session Logs &amp; History
-
-- **Full session logging** &mdash; all terminal output recorded to JSONL files
-- **Log search** &mdash; full-text and regex search across session history
-- **Session browser** &mdash; discover and resume past sessions grouped by date
-- **Project browser** &mdash; find sessions across all projects with metadata
-- **Log rotation** &mdash; auto-rotate at 10 MB with configurable retention
-
-### Security &amp; Credentials
-
-- **Encrypted credential storage** &mdash; SSH passwords, sudo passwords, and notes encrypted with OS credential store
-- **Machine-bound** &mdash; credentials only decrypt on the machine that stored them
-- **Encrypted notes** &mdash; per-session secure notepad for API keys, SQL snippets, secrets
-- **Daily CONFIG backups** &mdash; the app snapshots `CONFIG/*.json` to `CONFIG/_backups/YYYY-MM-DD/` on every launch (last 7 retained), so config files are always recoverable
-- **No telemetry** &mdash; zero data collection or transmission
-- **Local-only storage** &mdash; all data stays on your machine
-- **VirusTotal scanned** &mdash; every release scanned against 70+ antivirus engines
+It doesn&apos;t replace Claude Code. It conducts it.
 
 ---
 
-## What's New in v1.5
-
-- **Codex provider support** -- pick OpenAI's Codex CLI or Claude per session from the New Session dialog. The full session lifecycle works the same way: spawn, save / restore, resume picker, statusline, tokenomics
-- **Six gpt-5 models** -- `gpt-5.5`, `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.3-codex`, `gpt-5.3-codex-spark`, `gpt-5.2`. Pricing verified experimentally and applied to tokenomics
-- **Permissions presets in the toolbar** -- swap a running session between `read-only`, `standard`, `auto`, `unrestricted` from the same place you change models
-- **Codex resume picker** -- mirrors the Claude flow. Recent rollouts surface before spawn so you can resume in one click
-- **Tokenomics provider segmenting** -- Codex spend lands alongside Claude in the same chart, table, and rate-limit views, tagged by provider
-- **Provider-aware UI gating** -- Insights, Agent Library, ContextBar, sidebar mini-icon, terminal toolbar, and the Statusline tab all surface helpful copy for Codex sessions instead of Claude-only chrome
-
-See [`src/renderer/changelog.ts`](src/renderer/changelog.ts) for the full revision history.
-
----
-
-## What's New in v1.4
-
-- **GitHub sidebar** &mdash; collapsible right panel with PR snapshot, CI runs, reviews, unresolved threads, linked issues, and session-context inference
-- **OAuth / PAT / `gh` CLI sign-in** &mdash; three ways to authenticate; encrypted profiles in OS credential store
-- **In-app WebView pane** &mdash; pin any URL alongside the terminal, integrates with Vision tools
-- **Excalidraw scratchpad** &mdash; full whiteboard pane with one-click export into Claude
-- **Snap (region capture)** &mdash; rebuilt on `electron-screenshots`, far more reliable than the legacy overlay
-- **Combined Mode** &mdash; Claude + partner shell side-by-side in one tab
-- **Insights page** &mdash; periodic Claude-driven analysis of your logs
-- **Branded splash** &mdash; new asset on launch
-- **14-step hero-layout tour** &mdash; covers every major surface, keyboard-navigable
-- **Daily CONFIG safety backups** (v1.4.2+) &mdash; last 7 days of `CONFIG/*.json` retained automatically under `CONFIG/_backups/`
-- **YAML escape fix** for memory frontmatter writes (closes CodeQL alert &mdash; values with backslashes/newlines now round-trip correctly)
-- **Settings audit** &mdash; dropped flicker-free, PowerShell tool, and Docker Container session toggles (the env vars they set were either obsolete or never wired)
-- **Statusline polish** &mdash; configurable font / size, subtle red-green deltas for line-count changes
-
-See [`src/renderer/changelog.ts`](src/renderer/changelog.ts) for the full revision history.
-
----
-
-## Installation
+## Install
 
 ### Download
 
-1. Download the latest installer from [Releases](../../releases):
-   - **Windows**: `ClaudeCommandCenter-x.y.z.exe`
-   - **macOS**: `ClaudeCommandCenter-x.y.z-mac.dmg`
-2. Verify the SHA-256 checksum against `CHECKSUMS.txt` in the release
-3. Run the installer and choose your Data and Resources directories
-4. The setup wizard will guide you through Claude CLI authentication
+1. Grab the latest installer from **[Releases](../../releases)**:
+   - Windows: `ClaudeCommandCenter-x.y.z.exe`
+   - macOS: `ClaudeCommandCenter-x.y.z-mac.dmg`
+2. Verify the SHA-256 checksum against `CHECKSUMS.txt` in the release.
+3. Run the installer and pick your Data + Resources directories.
+4. The setup wizard hands off Claude CLI auth.
 
 ### Prerequisites
 
-- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and authenticated
-- Node.js 20+ (for Claude Code)
+- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) 2.1.154+ (for Opus 4.8 + dynamic workflows)
+- Node.js 20+ (Claude Code dependency)
 - Windows 10 / 11 or macOS 12+
+
+> **Windows note** &middot; The installer is not code-signed today, so SmartScreen will warn on first run. Click **More info** &rarr; **Run anyway**. The macOS DMG is signed and notarized. Every release is also scanned by VirusTotal across 70+ engines.
 
 ---
 
-## Build from Source
+## Build from source
 
-Don't trust the installer? Build it yourself &mdash; the source is identical to what ships in releases.
-
-**Prerequisites:** Node.js 20+, npm 9+, [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed.
+Don&apos;t trust the installer? Build it yourself &mdash; the source is what ships.
 
 ```bash
 git clone https://github.com/nubbymong/claude-command-center.git
 cd claude-command-center
 npm install
-npx vitest run       # unit suite
-npm run dev          # Development with hot reload
-npm run build        # Production build
+npx vitest run       # 1338 unit tests
+npm run dev          # HMR development
+npm run build        # production build
 ```
 
 ### Package for distribution
 
 ```bash
-# Windows NSIS installer
-npm run package:win
-
-# macOS DMG (signing + notarization requires Apple credentials)
-npm run package:mac
+npm run package:win  # Windows NSIS installer
+npm run package:mac  # macOS DMG (Apple credentials required for signing/notarization)
 ```
-
-Every release also includes `CHECKSUMS.txt` (SHA256) and is scanned by [VirusTotal](https://www.virustotal.com/) &mdash; check the release notes for scan links.
 
 ---
 
 ## Architecture
 
-| Layer | Technology |
-|-------|-----------|
-| Shell | Electron 33 |
-| UI | React 18 + Tailwind CSS v4 |
-| State | Zustand 5 |
-| Terminal | xterm.js 5.5 + node-pty |
+| Layer | Stack |
+|:------|:------|
+| Shell | Electron 33 (frameless, sandboxed renderer, zod-validated IPC) |
+| UI | React 18 + Tailwind CSS v4 (`@theme` tokens, Catppuccin Mocha) |
+| State | Zustand 5 (hydrated from disk on boot) |
+| Terminal | xterm.js 5.5 + node-pty (ConPTY on Windows) |
 | Build | electron-vite |
-| MCP | `@modelcontextprotocol/sdk` |
-| Diagramming | Excalidraw |
-| Tests | Vitest unit + Playwright E2E |
+| MCP | `@modelcontextprotocol/sdk` (Conductor MCP server: vision + codex review + host transfer) |
+| Tests | Vitest unit (1338) + Playwright E2E |
 
-The app runs a frameless Electron window with a React renderer. Each Claude session spawns a PTY process via `node-pty`. The Conductor MCP server (vision, codex_review, host transfer) runs locally and Claude Code discovers it via `~/.claude.json`; CCC-spawned sessions also get a per-session `--mcp-config` override at `~/.claude/mcp-<sid>.json`. SSH sessions get a reverse tunnel to the MCP server automatically.
+The main process owns config persistence, the PTY pool, the hooks HTTP gateway (drives the permission tray), the tokenomics aggregator, the statusline ingest, the Conductor MCP server, and cloud-agent dispatch. The renderer is a React SPA that hydrates from disk and talks to main exclusively through typed IPC channels. SSH sessions get a per-session settings file, a per-session MCP config, and a reverse tunnel injected automatically.
 
 ---
 
-## Keyboard Shortcuts
+## Security
+
+### Credentials
+
+| Platform | Backend | Scope |
+|:---------|:--------|:------|
+| Windows | DPAPI via Electron `safeStorage` | Machine + user |
+| macOS | Keychain via Electron `safeStorage` | Machine + user |
+| Linux | libsecret via Electron `safeStorage` | Machine + user |
+
+SSH passwords, sudo passwords, and encrypted notes are stored as base64 blobs &mdash; never plaintext. They&apos;re machine-bound and cannot be exfiltrated or transferred.
+
+### Network footprint
+
+CCC makes **no telemetry calls of its own**. The Claude API goes through the Claude CLI directly. The only outbound traffic is:
+
+- **Update check** &mdash; GitHub Releases API on launch and on window focus.
+- **Service status** &mdash; `status.claude.com` for the live Code/Claude.ai indicators.
+- **GitHub sidebar** (opt-in) &mdash; GitHub API after you sign in.
+- **Model pricing** &mdash; LiteLLM open pricing JSON, cached locally for 24h.
+
+### Defence in depth
+
+- **Permission Attention Tray** &mdash; high-risk Bash gates through the gateway before Claude executes. Overflow auto-denies; nothing leaks.
+- **Atomic config writes** &mdash; every `writeConfig` goes through a `.tmp` + rename so an interrupted save can&apos;t leave a half-written file.
+- **Daily CONFIG backups** &mdash; every launch snapshots `CONFIG/*.json` to `CONFIG/_backups/YYYY-MM-DD/`. Last 7 retained. Recovery is a copy.
+- **Capture-script lock** &mdash; the screenshot tool acquires a `.capture.lock` and only restores files it explicitly backed up.
+
+### Reporting vulnerabilities
+
+Please report security issues privately via [GitHub Security Advisories](../../security/advisories/new).
+
+---
+
+## Keyboard shortcuts
 
 | Shortcut | Action |
-|----------|--------|
+|:---------|:-------|
 | `Ctrl+T` | New config |
 | `Ctrl+W` | Close session |
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous session |
-| `Ctrl+1`&hellip;`Ctrl+9` | Jump to session N |
+| `Ctrl+1` &hellip; `Ctrl+9` | Jump to session N |
 | `Ctrl+B` | Toggle sidebar |
 | `Ctrl+/` (`Cmd+/` on macOS) | Toggle GitHub sidebar |
 | `Alt+V` | Paste clipboard image |
 | `Escape` | Interrupt Claude (`Ctrl+C`) |
 | `Shift+Enter` | New line without sending |
 
-All shortcuts are customizable in **Settings &rarr; Shortcuts**.
+All shortcuts are customisable in **Settings &rarr; Shortcuts**.
 
 ---
 
-## Security
+## Project history
 
-### Credential Storage
+CCC was developed privately from late 2025 and open-sourced in April 2026. The git history was squashed for the initial public release; everything from v1.0 forward is in the open.
 
-SSH passwords and secrets are encrypted using the OS credential store:
-
-| Platform | Backend | Scope |
-|----------|---------|-------|
-| Windows | DPAPI via Electron `safeStorage` | Machine + user account |
-| macOS | Keychain via Electron `safeStorage` | Machine + user account |
-| Linux | libsecret via Electron `safeStorage` | Machine + user account |
-
-Credentials are stored as encrypted base64 blobs &mdash; never plaintext. They are machine-bound and cannot be extracted or transferred.
-
-### Network Activity
-
-The app makes **no** network calls of its own. All Claude API communication goes through the Claude CLI directly. The only network activity is:
-
-- **Update checker** &mdash; fetches GitHub Releases API to check for new versions
-- **Service status** &mdash; polls `status.claude.com` for API health indicators
-- **GitHub sidebar** (opt-in only) &mdash; talks to the GitHub API after you sign in
-- **VirusTotal** (release builds only) &mdash; scans installer via VT API during CI
-
-### Defence in Depth
-
-- **Daily CONFIG backups** &mdash; every launch snapshots `CONFIG/*.json` to `CONFIG/_backups/YYYY-MM-DD/`, keeping the last 7. Recover from a corrupted write by copying any prior day's snapshot back.
-- **Atomic config writes** &mdash; all `writeConfig` operations write a `.tmp` then rename, so an interrupted save can never leave a half-written file.
-- **Capture-script lock** &mdash; the release-time screenshot tool acquires an exclusive `.capture.lock` and only restores files it explicitly backed up; never blind-deletes by filename.
-
-### Reporting Vulnerabilities
-
-If you discover a security issue, please report it privately via [GitHub Security Advisories](../../security/advisories/new).
+For the full per-release changelog see [`src/renderer/changelog.ts`](src/renderer/changelog.ts).
 
 ---
 
 ## Contributing
 
-Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup instructions, coding standards, and the PR process.
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, coding standards, and the PR process.
 
 ---
 
