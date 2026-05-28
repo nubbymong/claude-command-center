@@ -37,6 +37,7 @@ import { registerCodexHandlers } from './ipc/codex-handlers'
 import { registerCodexReviewHandlers } from './ipc/codex-review-handlers'
 import { registerChannelHandlers } from './ipc/channel-handlers'
 import { startRulesEngine } from './channel-rules'
+import { startPermissionTray } from './channel-permissions'
 import { readClipboardImageWithRetry } from './clipboard-image'
 import { HooksGateway } from './hooks/hooks-gateway'
 import { setGateway, getGateway } from './hooks'
@@ -607,6 +608,7 @@ if (!gotTheLock) {
     registerCodexReviewHandlers()
     registerChannelHandlers()
     startRulesEngine()
+    startPermissionTray()
     registerCloudAgentHandlers(getWindow)
     registerTeamHandlers(getWindow)
     registerLegacyVersionHandlers(getWindow)
