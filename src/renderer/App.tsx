@@ -46,6 +46,7 @@ import { setupCloudAgentListener } from './stores/cloudAgentStore'
 import { setupTokenomicsListener } from './stores/tokenomicsStore'
 import { setupConductorMcpListener, useConductorMcpStore } from './stores/conductorMcpStore'
 import { setupGitHubListener, useGitHubStore } from './stores/githubStore'
+import { setupChannelListeners } from './stores/channelStore'
 import { useCodexAccountStore } from './stores/codexAccountStore'
 import GitHubPanel from './components/github/GitHubPanel'
 import OnboardingModal from './components/github/onboarding/OnboardingModal'
@@ -284,6 +285,7 @@ export default function App() {
       setupTokenomicsListener()
       setupConductorMcpListener()
       setupGitHubListener()
+      setupChannelListeners()
       useGitHubStore.getState().loadConfig()
       useConductorMcpStore.getState().loadConfig()
       useConductorMcpStore.getState().fetchStatus()
