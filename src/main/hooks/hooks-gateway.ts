@@ -14,6 +14,9 @@ import type {
   HookEventKind,
   HooksGatewayStatus,
 } from '../../shared/hook-types'
+// channel-permissions is imported lazily inside handleHttp to avoid a circular
+// dependency chain: hooks-gateway -> channel-permissions -> hooks/index -> hooks-gateway.
+type RegisterResponderFn = (requestId: string, fn: (d: 'approved' | 'denied') => void) => void
 
 // Cap the incoming HTTP body at 256 KiB. Claude Code hook payloads top out
 // around a few KB; anything beyond this is either a misbehaving client or
@@ -214,12 +217,57 @@ export class HooksGateway {
       return
     }
     const body = Buffer.concat(chunks).toString('utf-8')
+
+    // For PermissionRequest events, hold the HTTP response open and register a
+    // responder so that respondPermission() can write the hook decision back to
+    // the Claude Code process.  The responder is registered BEFORE ingest runs
+    // (via _handleRequestForTest) to avoid a race on the auto-allow path.
+    // registerResponder is required lazily (not at module load time) to avoid
+    // the circular dependency: hooks-gateway -> channel-permissions -> hooks/index
+    // -> hooks-gateway.  A lazy require safely resolves once both modules are
+    // fully loaded; by the time the first HTTP request arrives the module graph
+    // is settled.
+    let isPermissionRequest = false
+    let permissionRequestId: string | undefined
+    try {
+      const peeked = JSON.parse(body) as Record<string, unknown>
+      if (peeked.event === 'PermissionRequest') {
+        isPermissionRequest = true
+        const payload = peeked.payload && typeof peeked.payload === 'object'
+          ? (peeked.payload as Record<string, unknown>)
+          : peeked
+        const rid = typeof payload.requestId === 'string' ? payload.requestId : undefined
+        permissionRequestId = rid ?? `${String(peeked.sessionId ?? 'unknown')}-${Date.now()}`
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { registerResponder } = require('../channel-permissions') as { registerResponder: RegisterResponderFn }
+        const capturedRes = res
+        const timeout = setTimeout(() => {
+          try {
+            capturedRes.writeHead(200, { 'Content-Type': 'application/json', 'Connection': 'close' })
+            capturedRes.end('{}')
+          } catch { /* response already closed */ }
+        }, 120_000)
+        registerResponder(permissionRequestId, (decision) => {
+          clearTimeout(timeout)
+          try {
+            capturedRes.writeHead(200, { 'Content-Type': 'application/json', 'Connection': 'close' })
+            capturedRes.end(JSON.stringify({ hookSpecificOutput: { permissionDecision: decision === 'approved' ? 'approved' : 'deny' } }))
+          } catch { /* response already closed; CC falls back to its own UI */ }
+        })
+      }
+    } catch { /* not valid JSON — fall through to normal path which will 400 */ }
+
     const result = await this._handleRequestForTest({
       remoteAddress: req.socket.remoteAddress,
       url: req.url,
       headers: req.headers as Record<string, string | string[] | undefined>,
       body,
     })
+
+    // For PermissionRequest events that passed auth, the response is held open
+    // and will be closed by the responder or the 120s timeout above.
+    if (isPermissionRequest && result.status === 200) return
+
     res.statusCode = result.status
     res.setHeader('content-type', 'application/json')
     res.end(result.body)
