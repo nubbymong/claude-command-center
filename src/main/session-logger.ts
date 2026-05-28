@@ -206,12 +206,12 @@ export async function readLogEntries(
   logDir: string,
   offset = 0,
   limit = 500
-): Promise<{ entries: LogEntry[]; total: number }> {
+): Promise<{ entries: LogEntry[]; total: number; hasMore: boolean }> {
   const logPath = path.join(logDir, 'session.jsonl')
   try {
     await fsp.access(logPath)
   } catch {
-    return { entries: [], total: 0 }
+    return { entries: [], total: 0, hasMore: false }
   }
 
   try {
@@ -221,9 +221,9 @@ export async function readLogEntries(
     const entries = lines.slice(offset, offset + limit).map((line) => {
       try { return JSON.parse(line) } catch { return null }
     }).filter(Boolean) as LogEntry[]
-    return { entries, total }
+    return { entries, total, hasMore: offset + entries.length < total }
   } catch {
-    return { entries: [], total: 0 }
+    return { entries: [], total: 0, hasMore: false }
   }
 }
 

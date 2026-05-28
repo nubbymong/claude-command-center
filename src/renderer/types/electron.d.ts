@@ -175,6 +175,7 @@ export interface ElectronAPI {
     read: (logDir: string, offset?: number, limit?: number) => Promise<{
       entries: Array<{ ts: number; type: string; data?: string }>
       total: number
+      hasMore: boolean
     }>
     search: (logDir: string, query: string) => Promise<Array<{ ts: number; type: string; data?: string }>>
     cleanup: (retentionDays?: number) => Promise<number>

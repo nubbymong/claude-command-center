@@ -98,7 +98,7 @@ export interface ElectronAPI {
   }
   logs: {
     list: () => Promise<unknown[]>
-    read: (logDir: string, offset?: number, limit?: number) => Promise<{ entries: unknown[]; total: number }>
+    read: (logDir: string, offset?: number, limit?: number) => Promise<{ entries: unknown[]; total: number; hasMore: boolean }>
     search: (logDir: string, query: string) => Promise<unknown[]>
     cleanup: (retentionDays?: number) => Promise<number>
   }
