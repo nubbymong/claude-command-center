@@ -148,10 +148,10 @@ export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
     <div
       className="titlebar-drag flex items-center h-10 px-3 shrink-0 relative"
       style={gradientColor ? {
-        background: `linear-gradient(90deg, var(--surface-chrome) 0%, ${gradientColor}18 30%, ${gradientColor}25 50%, ${gradientColor}18 70%, var(--surface-chrome) 100%)`,
+        background: `linear-gradient(90deg, var(--surface-raised) 0%, ${gradientColor}18 30%, ${gradientColor}25 50%, ${gradientColor}18 70%, var(--surface-raised) 100%)`,
         color: 'var(--text-on-chrome)',
       } : {
-        background: 'var(--surface-chrome)',
+        background: 'var(--surface-raised)',
         color: 'var(--text-on-chrome)',
       }}
     >
