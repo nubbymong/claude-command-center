@@ -235,7 +235,7 @@ export class HooksGateway {
     let cleanup: (() => void) = () => { /* no-op until PermissionRequest block runs */ }
     try {
       const peeked = JSON.parse(body) as Record<string, unknown>
-      // v2.0.0: Claude Code's actual permission hook fires as 'PreToolUse'
+      // v1.5.11: Claude Code's actual permission hook fires as 'PreToolUse'
       // (legacy 'PermissionRequest' kept for forward compatibility with any
       // future CC release that adopts the spec name). Held-open response
       // treatment is scoped to PermissionRequest OR PreToolUse for the

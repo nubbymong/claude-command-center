@@ -56,7 +56,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
   const [codexPreset, setCodexPreset] = useState<CodexOptions['permissionsPreset']>(initial?.codexOptions?.permissionsPreset ?? 'standard')
   const [label, setLabel] = useState(initial?.label ?? '')
   const [workingDir, setWorkingDir] = useState(initial?.workingDirectory ?? '')
-  // v2.0.0: default to the `opus` alias so new sessions land on Opus 4.8
+  // v1.5.11: default to the `opus` alias so new sessions land on Opus 4.8
   // (the latest Opus family member, as of 2026-05-28). The alias resolves
   // to whichever Opus version Claude Code currently ships, so this
   // doesn't go stale when Anthropic releases the next one.
@@ -106,7 +106,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
   )
   const [disableAutoMemory, setDisableAutoMemory] = useState(initialClaude?.disableAutoMemory ?? initial?.disableAutoMemory ?? false)
   const [enableCodexReview, setEnableCodexReview] = useState(initialClaude?.enableCodexReview ?? false)
-  // v2.0.0: Opus 4.8 fast mode -- 2.5x speed for 2x cost ($10/$50 per 1M
+  // v1.5.11: Opus 4.8 fast mode -- 2.5x speed for 2x cost ($10/$50 per 1M
   // tokens instead of $5/$25). Persisted on the config so tokenomics can
   // route the session record to the `<model>-fast` pricing row.
   const [fastMode, setFastMode] = useState(initialClaude?.fastMode ?? false)
@@ -628,7 +628,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
               </div>
             )}
 
-            {/* v2.0.0: Opus 4.8 fast mode toggle */}
+            {/* v1.5.11: Opus 4.8 fast mode toggle */}
             {!shellOnly && (
               <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer">
                 <input

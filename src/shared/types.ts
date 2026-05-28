@@ -75,7 +75,7 @@ export interface ClaudeOptions {
    *  and the SessionDialog toggle is persisted. Tool description still appears to all
    *  Claude sessions (soft ACL); this flag controls authorisation server-side. */
   enableCodexReview?: boolean
-  /** v2.0.0: Opus 4.8 fast mode (2.5x speed, $10/$50 per 1M tokens vs standard $5/$25).
+  /** v1.5.11: Opus 4.8 fast mode (2.5x speed, $10/$50 per 1M tokens vs standard $5/$25).
    *  Per-session toggle; tokenomics uses this to pick the correct pricing row. */
   fastMode?: boolean
 }

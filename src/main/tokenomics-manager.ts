@@ -38,7 +38,7 @@ interface ModelPricing {
 
 // Hardcoded fallback pricing (per 1M tokens)
 const FALLBACK_PRICING: Record<string, ModelPricing> = {
-  // v2.0.0: Opus 4.8 (released 2026-05-28) keeps the 4.7 base pricing but
+  // v1.5.11: Opus 4.8 (released 2026-05-28) keeps the 4.7 base pricing but
   // introduces an optional fast mode at 2.5x speed for 2x cost. fast variant
   // is keyed by `<model>-fast` and selected at calculateCost() time when the
   // session record carries fastMode: true.

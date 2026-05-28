@@ -906,7 +906,7 @@ export function spawnPty(
         os.platform() === 'win32' ? p.replace(/'/g, "''") : p.replace(/'/g, "'\\''")
       try {
         const sesPath = writeLocalSessionSettings(sessionId)
-        // Re-enabled in v2.0.0: the permission tray (CC P7-P9, shipped in
+        // Re-enabled in v1.5.11: the permission tray (CC P7-P9, shipped in
         // v1.5.10) is the consumer that was missing when the original
         // disable comment was written. injectHooks rewrites the per-session
         // settings file to point Claude's PreToolUse hook at our local

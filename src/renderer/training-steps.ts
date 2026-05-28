@@ -43,10 +43,10 @@ export const trainingSteps: TrainingStep[] = [
   {
     id: 'session-options',
     title: 'Session Configuration',
-    sinceVersion: '2.0.0',
+    sinceVersion: '1.5.11',
     section: 'getting-started',
     summary:
-      'Every workspace starts as a saved config -- label, colour, working directory, model, effort level, and any agents you want pre-loaded. v2.0.0 defaults new sessions to Opus 4.8 and adds the Extra high / Max effort levels plus a Fast mode toggle for 2.5x speed at 2x cost.',
+      'Every workspace starts as a saved config -- label, colour, working directory, model, effort level, and any agents you want pre-loaded. v1.5.11 defaults new sessions to Opus 4.8 and adds the Extra high / Max effort levels plus a Fast mode toggle for 2.5x speed at 2x cost.',
     highlights: [
       'Model defaults to **Opus 4.8** (Anthropic`s newest, released 2026-05-28)',
       'Effort level pins thinking depth -- Low / Medium / High / Extra high / Max / Auto',
