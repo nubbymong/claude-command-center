@@ -70,6 +70,27 @@ function formatSize(bytes: number): string {
   return (bytes / (1024 * 1024)).toFixed(1) + 'MB'
 }
 
+export function computeFilterDiff(before: number[], after: number[]): { added: number[]; removed: number[] } {
+  const beforeSet = new Set(before)
+  const afterSet = new Set(after)
+  return {
+    added: after.filter(i => !beforeSet.has(i)),
+    removed: before.filter(i => !afterSet.has(i)),
+  }
+}
+
+function writeEntry(term: { write: (s: string) => void }, entry: LogEntry) {
+  if (entry.type === 'start') {
+    const time = new Date(entry.ts).toLocaleString()
+    term.write(`\x1b[32m${String.fromCodePoint(0x25B6)}\x1b[90m Session started ${time}\x1b[0m\r\n`)
+  } else if (entry.type === 'end') {
+    const time = new Date(entry.ts).toLocaleString()
+    term.write(`\x1b[31m${String.fromCodePoint(0x25A0)}\x1b[90m Session ended ${time}\x1b[0m\r\n`)
+  } else if (entry.data) {
+    term.write(entry.data)
+  }
+}
+
 export default function LogViewer() {
   const [sessions, setSessions] = useState<LogSession[]>([])
   const [selectedSession, setSelectedSession] = useState<LogSession | null>(null)
@@ -94,6 +115,7 @@ export default function LogViewer() {
   const termRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
+  const prevFilterRef = useRef<number[]>([])
 
   // Load sessions on mount
   useEffect(() => {
@@ -217,62 +239,50 @@ export default function LogViewer() {
     }
   }, [searchQuery, useRegex])
 
-  // Filter entries based on search + type
-  const filteredEntries = useMemo(() => {
-    let entries = allEntries
-
-    if (typeFilter === 'events') {
-      entries = entries.filter(e => e.type === 'start' || e.type === 'end')
-    } else if (typeFilter === 'output') {
-      entries = entries.filter(e => e.type !== 'start' && e.type !== 'end')
-    }
-
-    if (searchQuery.trim() && !regexError) {
-      entries = entries.filter(e => {
+  // Filter entries to indices (index-based, diff-aware)
+  const filteredIndices = useMemo(() => {
+    const out: number[] = []
+    for (let i = 0; i < allEntries.length; i++) {
+      const e = allEntries[i]
+      if (typeFilter === 'events' && !(e.type === 'start' || e.type === 'end')) continue
+      if (typeFilter === 'output' && (e.type === 'start' || e.type === 'end')) continue
+      if (searchQuery.trim() && !regexError) {
         const text = e.data || ''
-        if (useRegex) {
-          try {
-            return new RegExp(searchQuery, caseSensitive ? '' : 'i').test(text)
-          } catch { return false }
-        }
-        return caseSensitive
-          ? text.includes(searchQuery)
-          : text.toLowerCase().includes(searchQuery.toLowerCase())
-      })
+        const matched = useRegex
+          ? (() => { try { return new RegExp(searchQuery, caseSensitive ? '' : 'i').test(text) } catch { return false } })()
+          : (caseSensitive ? text.includes(searchQuery) : text.toLowerCase().includes(searchQuery.toLowerCase()))
+        if (!matched) continue
+      }
+      out.push(i)
     }
-
-    return entries
+    return out
   }, [allEntries, searchQuery, useRegex, caseSensitive, typeFilter, regexError])
 
-  // Render filtered entries to terminal
+  // Render filtered entries to terminal (diff-aware: append-only when possible)
   useEffect(() => {
     const term = termRef.current
     if (!term || loading) return
+    const diff = computeFilterDiff(prevFilterRef.current, filteredIndices)
+    const sizeBefore = prevFilterRef.current.length
+    const fullRepaint =
+      sizeBefore === 0 ||
+      diff.removed.length > 0 ||
+      Math.abs(filteredIndices.length - sizeBefore) > sizeBefore * 0.25
 
-    term.clear()
-
-    if (filteredEntries.length === 0 && allEntries.length > 0) {
-      term.write('\x1b[90m  No matching entries\x1b[0m\r\n')
-      return
-    }
-
-    const hasFilters = searchQuery.trim() || typeFilter !== 'all'
-    if (hasFilters && allEntries.length > 0) {
-      term.write(`\x1b[90m  Showing ${filteredEntries.length} of ${allEntries.length} entries\x1b[0m\r\n\r\n`)
-    }
-
-    for (const entry of filteredEntries) {
-      if (entry.type === 'start') {
-        const time = new Date(entry.ts).toLocaleString()
-        term.write(`\x1b[32m${String.fromCodePoint(0x25B6)}\x1b[90m Session started ${time}\x1b[0m\r\n`)
-      } else if (entry.type === 'end') {
-        const time = new Date(entry.ts).toLocaleString()
-        term.write(`\x1b[31m${String.fromCodePoint(0x25A0)}\x1b[90m Session ended ${time}\x1b[0m\r\n`)
-      } else if (entry.data) {
-        term.write(entry.data)
+    if (fullRepaint) {
+      term.clear()
+      const hasFilters = searchQuery.trim() || typeFilter !== 'all'
+      if (filteredIndices.length === 0 && allEntries.length > 0) {
+        term.write('\x1b[90m  No matching entries\x1b[0m\r\n')
+      } else if (hasFilters && allEntries.length > 0) {
+        term.write(`\x1b[90m  Showing ${filteredIndices.length} of ${allEntries.length} entries\x1b[0m\r\n\r\n`)
       }
+      for (const idx of filteredIndices) writeEntry(term, allEntries[idx])
+    } else {
+      for (const idx of diff.added) writeEntry(term, allEntries[idx])
     }
-  }, [filteredEntries, loading])
+    prevFilterRef.current = filteredIndices
+  }, [filteredIndices, loading, allEntries, searchQuery, typeFilter])
 
   // Group sessions for sidebar (date groups + filter)
   const groupedSessions = useMemo(() => {
@@ -321,7 +331,7 @@ export default function LogViewer() {
 
   const hasActiveFilters = searchQuery.trim() !== '' || typeFilter !== 'all'
   const totalEntries = allEntries.length
-  const matchCount = filteredEntries.length
+  const matchCount = filteredIndices.length
 
   const logsIcon = (
     <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round">
