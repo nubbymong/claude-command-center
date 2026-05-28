@@ -11,7 +11,10 @@ const mod = await import('../../src/main/channel-permissions')
 describe('respondPermission', () => {
   it('invokes the registered responder with the mapped decision', () => {
     mod.startPermissionTray()
-    hookCb({ sessionId: 's', event: 'PermissionRequest', payload: { tool: 'Edit', arguments: 'x', requestId: 'r1' }, ts: 1 })
+    // v2.0.0: non-high-risk now auto-allows, so use a destructive Bash
+    // payload to land an entry in the pending map that respondPermission
+    // can actually resolve.
+    hookCb({ sessionId: 's', event: 'PermissionRequest', payload: { tool: 'Bash', arguments: 'rm -rf x', requestId: 'r1' }, ts: 1 })
     mod.registerResponder('r1', (d) => ended.push(d))
     mod.respondPermission({ requestId: 'r1', decision: 'allow' })
     expect(ended).toEqual(['approved'])

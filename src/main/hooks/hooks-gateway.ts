@@ -235,7 +235,20 @@ export class HooksGateway {
     let cleanup: (() => void) = () => { /* no-op until PermissionRequest block runs */ }
     try {
       const peeked = JSON.parse(body) as Record<string, unknown>
-      if (peeked.event === 'PermissionRequest') {
+      // v2.0.0: Claude Code's actual permission hook fires as 'PreToolUse'
+      // (legacy 'PermissionRequest' kept for forward compatibility with any
+      // future CC release that adopts the spec name). Held-open response
+      // treatment is scoped to PermissionRequest OR PreToolUse for the
+      // Bash tool -- the only tool channel-permissions classifies. Every
+      // other PreToolUse goes through the fire-and-forget ingest path, so
+      // Claude Code's own permission UI keeps gating non-Bash tools and
+      // unsubscribed environments (tests, headless smoke) don't hang on
+      // the 120s held-open timeout.
+      const peekedToolName = typeof peeked.tool_name === 'string'
+        ? (peeked.tool_name as string)
+        : typeof peeked.toolName === 'string' ? (peeked.toolName as string) : undefined
+      const isPreToolUseBash = peeked.event === 'PreToolUse' && peekedToolName === 'Bash'
+      if (peeked.event === 'PermissionRequest' || isPreToolUseBash) {
         isPermissionRequest = true
         const payload = peeked.payload && typeof peeked.payload === 'object'
           ? (peeked.payload as Record<string, unknown>)

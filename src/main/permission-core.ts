@@ -20,9 +20,15 @@ export function detectHighRisk(tool: string, payload: string): { matched: string
 interface SessionInfo { label: string; provider?: string; identityColorKey?: string }
 
 export function normalizePermission(e: HookEvent, info: SessionInfo, transport: 'hook' | 'mcp' = 'hook'): PendingPermission {
-  const pl = e.payload as { tool?: string; arguments?: string; command?: string; reason?: string; requestId?: string }
+  // v2.0.0: also reads `tool_input.command` because Claude Code's PreToolUse
+  // hook delivers Bash args under `tool_input.command`, not the top-level
+  // `command`/`arguments` fields the spec'd PermissionRequest event used.
+  const pl = e.payload as {
+    tool?: string; arguments?: string; command?: string; reason?: string; requestId?: string;
+    tool_input?: { command?: string }
+  }
   const tool = pl.tool ?? e.toolName ?? 'unknown'
-  const preview = String(pl.arguments ?? pl.command ?? '')
+  const preview = String(pl.arguments ?? pl.command ?? pl.tool_input?.command ?? '')
   return {
     requestId: pl.requestId ?? `${e.sessionId}-${e.ts}`,
     sessionId: e.sessionId,
@@ -40,7 +46,11 @@ export function normalizePermission(e: HookEvent, info: SessionInfo, transport: 
 }
 
 export type Disposition = 'auto-allow' | 'show'
-export function decideDisposition(p: PendingPermission, hasStandingApproval: (tool: string) => boolean): Disposition {
-  if (p.highRisk) return 'show'                       // never auto-allow destructive payloads
-  return hasStandingApproval(p.tool) ? 'auto-allow' : 'show'
+export function decideDisposition(p: PendingPermission, _hasStandingApproval: (tool: string) => boolean): Disposition {
+  // v2.0.0: the gateway is wired to CC's PreToolUse hook, so every tool
+  // call flows through here. Show the tray ONLY for the dangerous Bash
+  // patterns detectHighRisk recognises; auto-allow everything else so the
+  // user isn't drowned in prompts for ls/cat/Read/Edit.
+  if (p.highRisk) return 'show'
+  return 'auto-allow'
 }

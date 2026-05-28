@@ -22,10 +22,17 @@ describe('permission-core', () => {
     const p = { tool: 'Bash', payloadPreview: 'rm -rf x', highRisk: { matched: 'rm -rf' } } as any
     expect(decideDisposition(p, () => true)).toBe('show')
   })
-  it('decideDisposition: non-high-risk with a matching standing approval auto-allows', () => {
+  it('decideDisposition: non-high-risk Bash auto-allows regardless of standing approval (v2.0.0)', () => {
+    // v2.0.0: PreToolUse delivers every Bash call. Only the high-risk
+    // patterns (detectHighRisk) need user input; the rest auto-allow so
+    // the tray doesn't fire for ls/cat/git status.
     const p = { tool: 'Bash', payloadPreview: 'ls', highRisk: undefined } as any
     expect(decideDisposition(p, () => true)).toBe('auto-allow')
-    expect(decideDisposition(p, () => false)).toBe('show')
+    expect(decideDisposition(p, () => false)).toBe('auto-allow')
+  })
+  it('decideDisposition: non-Bash tools always auto-allow (v2.0.0)', () => {
+    const p = { tool: 'Edit', payloadPreview: 'foo', highRisk: undefined } as any
+    expect(decideDisposition(p, () => false)).toBe('auto-allow')
   })
   it('does not flag non-Bash tools even when payload looks destructive', () => {
     expect(detectHighRisk('Edit', 'rm -rf node_modules')).toBeUndefined()

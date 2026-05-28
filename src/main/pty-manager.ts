@@ -901,19 +901,28 @@ export function spawnPty(
       // P7.7.2: seed a per-session settings file for hooks/statusLine
       // overrides. P7.7.3: also seed a per-session MCP config file
       // (--mcp-config), because claude.exe ignores mcpServers in --settings
-      // and reads it ONLY from --mcp-config or ~/.claude.json. Per-session
-      // override ensures dev/prod CCC instances bind their sessions to the
-      // correct MCP port regardless of whichever instance last wrote the
-      // global ~/.claude.json.
-      //
-      // injectHooks remains DISABLED -- the Live Activity feed UI was cut
-      // in c957e5d so there's no hook consumer; Pre/PostToolUse would log
-      // ECONNREFUSED on every tool call. Re-enable when a consumer ships.
-      void getGateway, injectHooks
+      // and reads it ONLY from --mcp-config or ~/.claude.json.
       const quoteForShell = (p: string): string =>
         os.platform() === 'win32' ? p.replace(/'/g, "''") : p.replace(/'/g, "'\\''")
       try {
         const sesPath = writeLocalSessionSettings(sessionId)
+        // Re-enabled in v2.0.0: the permission tray (CC P7-P9, shipped in
+        // v1.5.10) is the consumer that was missing when the original
+        // disable comment was written. injectHooks rewrites the per-session
+        // settings file to point Claude's PreToolUse hook at our local
+        // gateway, which then drives the tray. Skipped only when the
+        // gateway is down (port-bind failure, etc.) so Claude still spawns
+        // cleanly without permission interception.
+        const gw = getGateway()
+        const gwStatus = gw?.status()
+        if (gw && gwStatus?.listening && gwStatus.port) {
+          try {
+            const secret = gw.registerSession(sessionId)
+            injectHooks({ sessionId, settingsPath: sesPath, port: gwStatus.port, secret })
+          } catch (err) {
+            logError(`[pty] Failed to inject hooks for ${sessionId}: ${(err as Error)?.message ?? err}`)
+          }
+        }
         extraFlags += ` --settings '${quoteForShell(sesPath)}'`
       } catch (err) {
         logError(`[pty] Failed to seed per-session settings for ${sessionId}: ${(err as Error)?.message ?? err}`)

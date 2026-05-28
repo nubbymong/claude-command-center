@@ -12,16 +12,20 @@ const { startPermissionTray, getPending } = await import('../../src/main/channel
 
 describe('channel-permissions', () => {
   beforeEach(() => { pushed.length = 0; ledger.length = 0 })
-  it('captures a PermissionRequest, pushes it to the renderer, and ledgers permission-prompt', () => {
+  it('captures a high-risk PermissionRequest, pushes it to the renderer, and ledgers permission-prompt', () => {
     startPermissionTray()
-    hookCb({ sessionId: 's1', event: 'PermissionRequest', payload: { tool: 'Bash', arguments: 'ls', requestId: 'r1' }, ts: 1 })
+    // v2.0.0: non-high-risk now auto-allows, so the test uses a destructive
+    // payload (rm -rf) to exercise the show path.
+    hookCb({ sessionId: 's1', event: 'PermissionRequest', payload: { tool: 'Bash', arguments: 'rm -rf node_modules', requestId: 'r1' }, ts: 1 })
     expect(getPending()).toHaveLength(1)
     expect(pushed.at(-1)![0].requestId).toBe('r1')
     expect(ledger.some(r => r.kind === 'permission-prompt')).toBe(true)
   })
   it('auto-denies past the 50 cap and ledgers tray-overflow', () => {
     startPermissionTray()
-    for (let i = 0; i < 55; i++) hookCb({ sessionId: 's', event: 'PermissionRequest', payload: { tool: 'Edit', arguments: 'x', requestId: `r${i}` }, ts: i })
+    // v2.0.0: needs high-risk Bash payloads to actually enter the pending
+    // map; non-Bash and non-high-risk auto-allow.
+    for (let i = 0; i < 55; i++) hookCb({ sessionId: 's', event: 'PermissionRequest', payload: { tool: 'Bash', arguments: `rm -rf path-${i}`, requestId: `r${i}` }, ts: i })
     expect(getPending().length).toBeLessThanOrEqual(50)
     expect(ledger.some(r => r.kind === 'tray-overflow')).toBe(true)
   })

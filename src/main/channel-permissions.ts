@@ -23,6 +23,10 @@ export function deregisterResponder(requestId: string): void { responders.delete
 
 function isPermissionEvent(e: HookEvent): boolean {
   if (e.event === 'PermissionRequest') return true
+  // v2.0.0: Claude Code's actual permission gate is the PreToolUse hook.
+  // Every tool call flows through; decideDisposition() auto-allows
+  // anything that isn't high-risk Bash so most fan out without UI.
+  if (e.event === 'PreToolUse') return true
   if (e.event === 'Notification' && (e.payload as { notification_type?: string }).notification_type === 'permission_prompt') return true
   // very-old fallback: a Stop event whose payload text looks like a permission prompt
   if (e.event === 'Stop' && /permission|allow this tool|approve/i.test(JSON.stringify(e.payload))) return true

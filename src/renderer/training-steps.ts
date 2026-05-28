@@ -43,15 +43,15 @@ export const trainingSteps: TrainingStep[] = [
   {
     id: 'session-options',
     title: 'Session Configuration',
-    sinceVersion: '1.0.0',
+    sinceVersion: '2.0.0',
     section: 'getting-started',
     summary:
-      'Every workspace starts as a saved config — label, colour, working directory, model, effort level, and any agents you want pre-loaded. SSH configs add host + auth and launch Claude on the remote machine the same way local sessions do.',
+      'Every workspace starts as a saved config -- label, colour, working directory, model, effort level, and any agents you want pre-loaded. v2.0.0 defaults new sessions to Opus 4.8 and adds the Extra high / Max effort levels plus a Fast mode toggle for 2.5x speed at 2x cost.',
     highlights: [
-      'Local or SSH — one config form, full Claude support either way',
-      'Effort level pins thinking depth (Low / Medium / High / Auto)',
-      'Model override (Sonnet / Opus / Haiku) when you need to pin a specific tier',
-      'Disable auto-memory if you want a fully ephemeral Claude session',
+      'Model defaults to **Opus 4.8** (Anthropic`s newest, released 2026-05-28)',
+      'Effort level pins thinking depth -- Low / Medium / High / Extra high / Max / Auto',
+      '**Fast mode** toggle (Opus 4.8): 2.5x speed at 2x cost; tokenomics tracks Fast spend separately',
+      'Local or SSH -- one config form, full Claude support either way',
       'Bundle agent templates from your Library into the session at spawn',
     ],
     howToTrigger: [
