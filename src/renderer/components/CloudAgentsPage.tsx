@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { useCloudAgentStore, setupCloudAgentListener } from '../stores/cloudAgentStore'
 import type { CloudAgent, CloudAgentStatus } from '../types/electron'
+import { StatusDot, type SessionState } from './ui/StatusDot'
 import NewAgentDialog from './NewAgentDialog'
 import AgentLibrary from './AgentLibrary'
 import TeamsPanel from './TeamsPanel'
@@ -24,6 +25,15 @@ const STATUS_LABELS: Record<CloudAgentStatus, string> = {
   completed: 'Completed',
   failed: 'Failed',
   cancelled: 'Cancelled',
+}
+
+function toSessionState(s: CloudAgentStatus): SessionState {
+  if (s === 'running')   return 'compacting'  // blue/info -- in-progress
+  if (s === 'pending')   return 'awaiting'    // yellow/warning -- queued
+  if (s === 'completed') return 'success'     // green/success -- done
+  if (s === 'failed')    return 'error'       // red/danger
+  if (s === 'cancelled') return 'error'       // red/danger
+  return 'idle'
 }
 
 function formatDuration(ms: number): string {
@@ -181,7 +191,7 @@ function FilterChip({ label, count, color, active, onClick }: {
   )
 }
 
-function AgentCard({ agent, selected, onClick, onContextMenu }: {
+export function AgentCard({ agent, selected, onClick, onContextMenu }: {
   agent: CloudAgent; selected: boolean; onClick: () => void; onContextMenu: (e: React.MouseEvent) => void
 }) {
   const color = STATUS_COLORS[agent.status]
@@ -213,10 +223,7 @@ function AgentCard({ agent, selected, onClick, onContextMenu }: {
     >
       {/* Row 1: Status dot + name + elapsed */}
       <div className="flex items-center gap-2 mb-1">
-        <span
-          className={`w-2.5 h-2.5 rounded-full shrink-0 ${isRunning ? 'animate-pulse' : ''}`}
-          style={{ backgroundColor: color, boxShadow: isRunning ? `0 0 8px 2px ${color}60` : undefined }}
-        />
+        <StatusDot state={toSessionState(agent.status)} />
         <span className="text-sm font-medium text-text truncate flex-1">{agent.name}</span>
         {elapsed && (
           <span className="text-[10px] text-overlay0 shrink-0 tabular-nums">{elapsed}</span>
