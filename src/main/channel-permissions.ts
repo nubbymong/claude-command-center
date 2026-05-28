@@ -69,7 +69,8 @@ export function resolvePending(requestId: string, decision: 'approved' | 'denied
 }
 
 export function respondPermission(p: { requestId: string; decision: 'allow' | 'deny' | 'allow-once' }): { ok: boolean } {
+  const had = pending.has(p.requestId)
   const mapped = p.decision === 'deny' ? 'denied' : 'approved'
   resolvePending(p.requestId, mapped)
-  return { ok: true }
+  return { ok: had }
 }

@@ -608,7 +608,6 @@ if (!gotTheLock) {
     registerCodexReviewHandlers()
     registerChannelHandlers()
     startRulesEngine()
-    startPermissionTray()
     registerCloudAgentHandlers(getWindow)
     registerTeamHandlers(getWindow)
     registerLegacyVersionHandlers(getWindow)
@@ -648,6 +647,7 @@ if (!gotTheLock) {
       },
     })
     setGateway(hooksGateway)
+    startPermissionTray()
     registerHooksHandlers(hooksGateway)
     if (hooksEnabled) {
       cleanupStaleHookEntries(new Set())
