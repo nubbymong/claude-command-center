@@ -279,29 +279,34 @@ function DailyChart({ selectedDate, onSelectDate }: {
   )
 }
 
-// ── Model Breakdown ──
+// ── Breakdown Panel ──
 
-function ModelBreakdown({ sessions }: { sessions: TokenomicsSessionRecord[] }) {
+export function BreakdownPanel({ sessions, groupBy }: { sessions: TokenomicsSessionRecord[]; groupBy: GroupByLens }) {
   const breakdown = useMemo(() => {
-    const models: Record<string, { costUsd: number; inputTokens: number; outputTokens: number; count: number }> = {}
+    const buckets: Record<string, { costUsd: number; inputTokens: number; outputTokens: number; count: number }> = {}
     for (const s of sessions) {
-      const key = s.model || 'unknown'
-      if (!models[key]) models[key] = { costUsd: 0, inputTokens: 0, outputTokens: 0, count: 0 }
-      models[key].costUsd += s.totalCostUsd
-      models[key].inputTokens += s.totalInputTokens + s.totalCacheReadTokens + s.totalCacheWriteTokens
-      models[key].outputTokens += s.totalOutputTokens
-      models[key].count++
+      let key: string
+      if (groupBy === 'project') key = s.projectDir || '(no project)'
+      else if (groupBy === 'account') key = (s as any).accountEmail || '(unattributed)'
+      else key = s.model || 'unknown'
+      if (!buckets[key]) buckets[key] = { costUsd: 0, inputTokens: 0, outputTokens: 0, count: 0 }
+      buckets[key].costUsd += s.totalCostUsd
+      buckets[key].inputTokens += s.totalInputTokens + s.totalCacheReadTokens + s.totalCacheWriteTokens
+      buckets[key].outputTokens += s.totalOutputTokens
+      buckets[key].count++
     }
-    return Object.entries(models)
-      .map(([model, stats]) => ({ model, ...stats }))
+    return Object.entries(buckets)
+      .map(([key, stats]) => ({ key, ...stats }))
       .sort((a, b) => b.costUsd - a.costUsd)
-  }, [sessions])
+  }, [sessions, groupBy])
   const maxCost = breakdown.length > 0 ? breakdown[0].costUsd : 1
+
+  const title = groupBy === 'project' ? 'Project Breakdown' : groupBy === 'account' ? 'Account Breakdown' : 'Model Breakdown'
 
   if (breakdown.length === 0) {
     return (
       <div className="bg-surface0 rounded-xl p-4">
-        <div className="text-xs text-overlay0 uppercase tracking-wider mb-3">Model Breakdown</div>
+        <div className="text-xs text-overlay0 uppercase tracking-wider mb-3">{title}</div>
         <div className="text-sm text-overlay0">No data yet</div>
       </div>
     )
@@ -309,15 +314,16 @@ function ModelBreakdown({ sessions }: { sessions: TokenomicsSessionRecord[] }) {
 
   return (
     <div className="bg-surface0 rounded-xl p-4">
-      <div className="text-xs text-overlay0 uppercase tracking-wider mb-3">Model Breakdown</div>
+      <div className="text-xs text-overlay0 uppercase tracking-wider mb-3">{title}</div>
       <div className="space-y-3">
         {breakdown.map(m => {
           const pct = maxCost > 0 ? (m.costUsd / maxCost) * 100 : 0
-          const color = getModelColor(m.model)
+          const color = groupBy === 'model' ? getModelColor(m.key) : 'var(--chart-other)'
+          const label = groupBy === 'model' ? getModelShort(m.key) : m.key
           return (
-            <div key={m.model}>
+            <div key={m.key}>
               <div className="flex justify-between text-xs mb-1">
-                <span className="text-text font-medium">{getModelShort(m.model)} <span className="text-overlay0 font-normal">({m.count})</span></span>
+                <span className="text-text font-medium">{label} <span className="text-overlay0 font-normal">({m.count})</span></span>
                 <span className="text-overlay1">{formatCost(m.costUsd)}</span>
               </div>
               <div className="h-3 bg-surface1 rounded-full overflow-hidden">
@@ -963,7 +969,7 @@ export default function TokenomicsPage() {
           <div className="col-span-2">
             <DailyChart selectedDate={selectedDate} onSelectDate={handleDateSelect} />
           </div>
-          <ModelBreakdown sessions={filteredSessions} />
+          <BreakdownPanel sessions={filteredSessions} groupBy={groupBy} />
         </div>
 
         {selectedDate && data?.codexReviewByDay?.[selectedDate] && data.codexReviewByDay[selectedDate].reviewCount > 0 && (
