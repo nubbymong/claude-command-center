@@ -506,6 +506,36 @@ function AgentDetail({ agent }: { agent: CloudAgent }) {
 
 type HubTab = 'tasks' | 'teams' | 'library'
 
+const HUB_TABS: { id: HubTab; label: string }[] = [
+  { id: 'tasks', label: 'Tasks' },
+  { id: 'teams', label: 'Teams' },
+  { id: 'library', label: 'Library' },
+]
+
+export function CloudRail({ hubTab, onChange }: { hubTab: HubTab; onChange: (id: HubTab) => void }) {
+  return (
+    <nav className="py-1.5">
+      {HUB_TABS.map(t => {
+        const active = hubTab === t.id
+        return (
+          <button
+            key={t.id}
+            onClick={() => onChange(t.id)}
+            className="w-full text-left px-3 py-1.5 text-xs transition-colors focus-ring"
+            style={{
+              background: active ? 'color-mix(in srgb, var(--accent) 15%, transparent)' : 'transparent',
+              color: active ? 'var(--accent)' : 'var(--text-secondary)',
+              borderLeft: `2px solid ${active ? 'var(--accent)' : 'transparent'}`,
+            }}
+          >
+            {t.label}
+          </button>
+        )
+      })}
+    </nav>
+  )
+}
+
 export default function CloudAgentsPage() {
   const [hubTab, setHubTab] = useState<HubTab>('tasks')
   const allAgents = useCloudAgentStore(s => s.agents)
@@ -556,29 +586,7 @@ export default function CloudAgentsPage() {
     </svg>
   )
 
-  const HUB_TABS: { id: HubTab; label: string }[] = [
-    { id: 'tasks', label: 'Tasks' },
-    { id: 'teams', label: 'Teams' },
-    { id: 'library', label: 'Library' },
-  ]
-
-  const cloudRail = (
-    <nav className="py-1.5">
-      {HUB_TABS.map(t => (
-        <button
-          key={t.id}
-          onClick={() => setHubTab(t.id)}
-          className={`w-full text-left px-3 py-1.5 text-xs transition-colors ${
-            hubTab === t.id
-              ? 'bg-sapphire/15 text-sapphire border-l-2 border-sapphire'
-              : 'text-overlay1 hover:text-text hover:bg-surface0/40 border-l-2 border-transparent'
-          }`}
-        >
-          {t.label}
-        </button>
-      ))}
-    </nav>
-  )
+  const cloudRail = <CloudRail hubTab={hubTab} onChange={setHubTab} />
 
   const cloudContext = hubTab === 'tasks' && counts.running > 0 ? (
     <span className="inline-flex items-center gap-1.5">
