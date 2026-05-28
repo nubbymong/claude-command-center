@@ -27,4 +27,9 @@ describe('permission-core', () => {
     expect(decideDisposition(p, () => true)).toBe('auto-allow')
     expect(decideDisposition(p, () => false)).toBe('show')
   })
+  it('does not flag non-Bash tools even when payload looks destructive', () => {
+    expect(detectHighRisk('Edit', 'rm -rf node_modules')).toBeUndefined()
+    expect(detectHighRisk('Write', 'sudo something')).toBeUndefined()
+    expect(detectHighRisk('Read', 'git push --force')).toBeUndefined()
+  })
 })
