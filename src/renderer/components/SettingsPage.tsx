@@ -12,6 +12,7 @@ import { CodexSettingsTab } from './codex/CodexSettingsTab'
 import HooksGatewaySection from './github/config/HooksGatewaySection'
 import PageFrame from './PageFrame'
 import AccountAliasesSection from './settings/AccountAliasesSection'
+import { SectionLabel } from './ui/SectionLabel'
 declare const __BUILD_TIME__: string
 
 export const SETTINGS_TAB_IDS = ['general', 'statusline', 'shortcuts', 'github', 'codex', 'hooks', 'about'] as const
@@ -689,14 +690,19 @@ function CheckForUpdatesField() {
 
 /* ── Shared section/field helpers ─────────────────────── */
 
-function Section({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
+export function Section({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
   return (
-    <div className="rounded-xl bg-surface0/30 border border-surface0/60 overflow-hidden">
-      <div className="px-4 py-2.5 border-b border-surface0/40 flex items-center gap-2">
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="text-overlay1 shrink-0">
-          {icon}
-        </svg>
-        <h3 className="text-xs font-semibold text-subtext0 uppercase tracking-wider">{title}</h3>
+    <div
+      className="rounded-xl overflow-hidden"
+      style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
+    >
+      <div className="px-4 py-2.5 flex items-center gap-2" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+        {icon && (
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="shrink-0" style={{ color: 'var(--text-secondary)' }}>
+            {icon}
+          </svg>
+        )}
+        <SectionLabel>{title}</SectionLabel>
       </div>
       <div className="p-4 space-y-3">{children}</div>
     </div>
