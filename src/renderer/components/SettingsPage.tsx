@@ -195,6 +195,16 @@ export default function SettingsPage({ initialTab }: SettingsPageProps = {}) {
                   Skip permission prompts for headless agents
                   <span className="text-[10px] text-overlay0">(--dangerously-skip-permissions)</span>
                 </label>
+                <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={!!settings.disableClaudeWorkflows}
+                    onChange={(e) => save({ disableClaudeWorkflows: e.target.checked })}
+                    className="rounded border-surface1"
+                  />
+                  Disable Claude Code dynamic workflows
+                  <span className="text-[10px] text-overlay0">(applies to new sessions; CC fans out up to 1000 subagents per workflow)</span>
+                </label>
               </Section>
 
               <AccountAliasesSection />

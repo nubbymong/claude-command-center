@@ -100,7 +100,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
   const agentUserTemplates = useAgentLibraryStore(s => s.templates)
   const allAgentTemplates = [...agentUserTemplates, ...BUILTIN_TEMPLATES]
   const [selectedAgentIds, setSelectedAgentIds] = useState<Set<string>>(new Set(initialClaude?.agentIds ?? initial?.agentIds ?? []))
-  type EffortLevelOpt = 'low' | 'medium' | 'high' | 'xhigh' | 'max' | ''
+  type EffortLevelOpt = 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode' | ''
   const [effortLevel, setEffortLevel] = useState<EffortLevelOpt>(
     (initialClaude?.effortLevel ?? initial?.effortLevel ?? '') as EffortLevelOpt
   )
@@ -624,6 +624,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                   <option value="high">High -- deep reasoning</option>
                   <option value="xhigh">Extra high -- Opus 4.8 hardest tasks</option>
                   <option value="max">Max -- maximum reasoning budget</option>
+                  <option value="ultracode">Ultracode -- xhigh + automatic workflows (research preview)</option>
                 </select>
               </div>
             )}
