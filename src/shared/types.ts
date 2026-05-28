@@ -65,7 +65,7 @@ export interface AccountIdentity {
 
 export interface ClaudeOptions {
   model?: string
-  effortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+  effortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode'
   legacyVersion?: LegacyVersion
   disableAutoMemory?: boolean
   flickerFree?: boolean
@@ -122,7 +122,7 @@ export interface SavedSession {
   /** @deprecated read from claudeOptions; removed in P1.2+ */
   powershellTool?: boolean
   /** @deprecated read from claudeOptions; removed in P1.2+ */
-  effortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+  effortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode'
   /** @deprecated read from claudeOptions; removed in P1.2+ */
   disableAutoMemory?: boolean
   /**

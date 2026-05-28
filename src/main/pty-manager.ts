@@ -30,6 +30,7 @@ import { disposeSession as disposeCodexReviewUsage } from './codex-review-usage'
 import { readCodexAccountEmail } from './account-identity'
 import type { AccountIdentity } from '../shared/types'
 import { updateSessionMeta, clearSessionMeta } from './session-registry'
+import { readConfig } from './config-manager'
 
 import * as path from 'path'
 import * as fs from 'fs'
@@ -905,7 +906,14 @@ export function spawnPty(
       const quoteForShell = (p: string): string =>
         os.platform() === 'win32' ? p.replace(/'/g, "''") : p.replace(/'/g, "'\\''")
       try {
-        const sesPath = writeLocalSessionSettings(sessionId)
+        // v1.5.12: thread the CCC AppSettings.disableClaudeWorkflows flag
+        // through so Claude Code's dynamic-workflow feature can be killed
+        // at the per-session level without the user hand-editing
+        // ~/.claude/settings.json. Read fresh on every spawn so a Settings
+        // toggle takes effect on the next session without an app restart.
+        const appSettings = readConfig<{ disableClaudeWorkflows?: boolean }>('settings')
+        const disableWorkflows = !!appSettings?.disableClaudeWorkflows
+        const sesPath = writeLocalSessionSettings(sessionId, { disableWorkflows })
         // Re-enabled in v1.5.11: the permission tray (CC P7-P9, shipped in
         // v1.5.10) is the consumer that was missing when the original
         // disable comment was written. injectHooks rewrites the per-session

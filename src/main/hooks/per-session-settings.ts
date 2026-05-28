@@ -33,7 +33,15 @@ export function getLocalSessionMcpConfigPath(sessionId: string): string {
  * the docs are ambiguous. Copying every top-level key (not just the keys
  * CCC cares about) is safe under both semantics.
  */
-export function writeLocalSessionSettings(sessionId: string): string {
+export interface WriteSessionSettingsOptions {
+  /** v1.5.12: when true, force `disableWorkflows: true` into the per-session
+   *  settings so Claude Code's dynamic-workflow feature is disabled at boot.
+   *  Caller (pty-manager) reads the CCC AppSettings.disableClaudeWorkflows
+   *  flag and passes it through. */
+  disableWorkflows?: boolean
+}
+
+export function writeLocalSessionSettings(sessionId: string, opts: WriteSessionSettingsOptions = {}): string {
   const claudeDir = path.join(os.homedir(), '.claude')
   try {
     fs.mkdirSync(claudeDir, { recursive: true })
@@ -53,10 +61,17 @@ export function writeLocalSessionSettings(sessionId: string): string {
     /* shared settings may not exist yet (fresh install) -- start empty */
   }
 
-  // Clone every top-level key from shared so injectHooks (when re-enabled)
-  // can overlay the `hooks` key without dropping the user's outputStyle,
-  // permissions, etc.
+  // Clone every top-level key from shared so injectHooks can overlay the
+  // `hooks` key without dropping the user's outputStyle, permissions, etc.
   const sesCfg: Record<string, unknown> = { ...shared }
+
+  // v1.5.12: opt-in disable of CC's dynamic workflows feature. Overrides any
+  // existing value in the shared settings.json -- the CCC toggle is the
+  // authoritative source for newly spawned sessions. Set to undefined would
+  // leave the shared value alone, which is what we want for the off path.
+  if (opts.disableWorkflows) {
+    sesCfg.disableWorkflows = true
+  }
 
   const sesPath = getLocalSessionSettingsPath(sessionId)
   return atomicJsonWrite(sesPath, sesCfg)

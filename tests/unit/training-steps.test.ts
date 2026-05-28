@@ -8,8 +8,9 @@ import {
 
 describe('training-steps', () => {
   describe('trainingSteps array', () => {
-    it('has exactly 15 steps', () => {
-      expect(trainingSteps).toHaveLength(15)
+    it('has exactly 17 steps', () => {
+      // v1.5.12: added permission-tray + dynamic-workflows steps
+      expect(trainingSteps).toHaveLength(17)
     })
 
     it('every step has required fields', () => {

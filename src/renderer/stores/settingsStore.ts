@@ -90,6 +90,12 @@ export interface AppSettings {
    *  is canonicalised at write time and is the lookup key into SavedSession
    *  /Session.accountAliasEmail. */
   accountAliases?: import('../../shared/account-alias').AccountAlias[]
+  /** v1.5.12: when true, CCC writes `disableWorkflows: true` into every
+   *  per-session Claude settings file so Claude Code's dynamic-workflow
+   *  feature is disabled at session boot. Affects newly spawned sessions
+   *  only -- in-flight sessions keep whatever setting they started with.
+   *  Off by default; CC's own /config toggle still wins per-session. */
+  disableClaudeWorkflows?: boolean
 }
 
 interface SettingsState {

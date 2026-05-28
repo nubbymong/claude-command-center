@@ -24,6 +24,7 @@ export const EFFORTS: OptionItem[] = [
   { label: 'High', value: 'high' },
   { label: 'Extra high', value: 'xhigh' },
   { label: 'Max', value: 'max' },
+  { label: 'Ultracode', value: 'ultracode', hint: 'xhigh + automatic dynamic workflows (Opus 4.8)' },
 ]
 
 export const PERMISSION_MODES: OptionItem[] = [
