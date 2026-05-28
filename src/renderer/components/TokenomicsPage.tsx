@@ -238,7 +238,7 @@ export function SummaryCards({ today, week, fiveHour, allTime, extraSpend, rateL
 
 // ── Daily Cost Chart (clickable) ──
 
-function DailyChart({ selectedDate, onSelectDate }: {
+export function DailyChart({ selectedDate, onSelectDate }: {
   selectedDate: string | null
   onSelectDate: (date: string | null) => void
 }) {
@@ -269,7 +269,10 @@ function DailyChart({ selectedDate, onSelectDate }: {
   const chartHeight = 120
 
   return (
-    <div className="bg-surface0 rounded-xl p-4">
+    <div
+      className="rounded-xl p-4"
+      style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
+    >
       <div className="flex items-center justify-between mb-3">
         <div className="text-xs text-overlay0 uppercase tracking-wider">
           Daily Cost (30 days)
@@ -349,7 +352,10 @@ export function BreakdownPanel({ sessions, groupBy }: { sessions: TokenomicsSess
 
   if (breakdown.length === 0) {
     return (
-      <div className="bg-surface0 rounded-xl p-4">
+      <div
+        className="rounded-xl p-4"
+        style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
+      >
         <div className="text-xs text-overlay0 uppercase tracking-wider mb-3">{title}</div>
         <div className="text-sm text-overlay0">No data yet</div>
       </div>
@@ -357,7 +363,10 @@ export function BreakdownPanel({ sessions, groupBy }: { sessions: TokenomicsSess
   }
 
   return (
-    <div className="bg-surface0 rounded-xl p-4">
+    <div
+      className="rounded-xl p-4"
+      style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
+    >
       <div className="text-xs text-overlay0 uppercase tracking-wider mb-3">{title}</div>
       <div className="space-y-3">
         {breakdown.map(m => {
@@ -587,7 +596,10 @@ function SessionsTable({ sessions, title, observedEmails, onRefresh }: { session
   )
 
   return (
-    <div className="bg-surface0 rounded-xl p-4">
+    <div
+      className="rounded-xl p-4"
+      style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
+    >
       <div className="flex items-center justify-between mb-3">
         <div className="text-xs text-overlay0 uppercase tracking-wider">
           {title || 'Sessions'} ({sessions.length})
