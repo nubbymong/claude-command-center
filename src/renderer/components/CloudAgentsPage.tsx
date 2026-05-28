@@ -7,11 +7,15 @@ import TeamsPanel from './TeamsPanel'
 import PageFrame from './PageFrame'
 
 const STATUS_COLORS: Record<CloudAgentStatus, string> = {
-  running: '#89B4FA',
-  pending: '#F9E2AF',
-  completed: '#A6E3A1',
-  failed: '#F38BA8',
-  cancelled: '#F38BA8',
+  running:   'var(--status-info)',
+  pending:   'var(--status-warning)',
+  completed: 'var(--status-success)',
+  failed:    'var(--status-danger)',
+  cancelled: 'var(--status-danger)',
+}
+
+export function getAgentStatusColor(s: CloudAgentStatus): string {
+  return STATUS_COLORS[s]
 }
 
 const STATUS_LABELS: Record<CloudAgentStatus, string> = {
@@ -166,9 +170,11 @@ function FilterChip({ label, count, color, active, onClick }: {
     <button
       onClick={onClick}
       className={`px-3 py-1 rounded-full text-[11px] font-medium transition-all ${
-        active ? 'text-crust shadow-sm' : 'text-overlay1 hover:text-text'
+        active ? 'shadow-sm' : 'text-overlay1 hover:text-text'
       }`}
-      style={active ? { backgroundColor: color } : { backgroundColor: 'transparent', border: `1px solid ${color}30` }}
+      style={active
+        ? { backgroundColor: color, color: 'var(--surface-chrome)' }
+        : { backgroundColor: 'transparent', border: `1px solid color-mix(in srgb, ${color} 30%, transparent)` }}
     >
       {label} {count}
     </button>
@@ -614,10 +620,10 @@ export default function CloudAgentsPage() {
         {/* Filter chips + search */}
         <div className="flex items-center gap-2 px-4 py-2 border-b border-surface0/40 shrink-0">
           <div className="flex gap-1">
-            <FilterChip label="All" count={counts.all} color="#b8c5d6" active={filter === 'all'} onClick={() => setFilter('all')} />
-            <FilterChip label="Running" count={counts.running} color="#89B4FA" active={filter === 'running'} onClick={() => setFilter('running')} />
-            <FilterChip label="Done" count={counts.completed} color="#A6E3A1" active={filter === 'completed'} onClick={() => setFilter('completed')} />
-            <FilterChip label="Failed" count={counts.failed} color="#F38BA8" active={filter === 'failed'} onClick={() => setFilter('failed')} />
+            <FilterChip label="All"     count={counts.all}       color="var(--text-secondary)"  active={filter === 'all'}       onClick={() => setFilter('all')} />
+            <FilterChip label="Running" count={counts.running}   color="var(--status-info)"     active={filter === 'running'}   onClick={() => setFilter('running')} />
+            <FilterChip label="Done"    count={counts.completed} color="var(--status-success)"  active={filter === 'completed'} onClick={() => setFilter('completed')} />
+            <FilterChip label="Failed"  count={counts.failed}    color="var(--status-danger)"   active={filter === 'failed'}    onClick={() => setFilter('failed')} />
           </div>
           <div className="flex-1" />
           <div className="relative">
