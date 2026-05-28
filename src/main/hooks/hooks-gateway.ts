@@ -17,6 +17,7 @@ import type {
 // channel-permissions is imported lazily inside handleHttp to avoid a circular
 // dependency chain: hooks-gateway -> channel-permissions -> hooks/index -> hooks-gateway.
 type RegisterResponderFn = (requestId: string, fn: (d: 'approved' | 'denied') => void) => void
+type DeregisterResponderFn = (requestId: string) => void
 
 // Cap the incoming HTTP body at 256 KiB. Claude Code hook payloads top out
 // around a few KB; anything beyond this is either a misbehaving client or
@@ -229,6 +230,9 @@ export class HooksGateway {
     // is settled.
     let isPermissionRequest = false
     let permissionRequestId: string | undefined
+    // cleanup is defined here so the auth-fail branch (after _handleRequestForTest)
+    // can call it even though it is set inside the try block below.
+    let cleanup: (() => void) = () => { /* no-op until PermissionRequest block runs */ }
     try {
       const peeked = JSON.parse(body) as Record<string, unknown>
       if (peeked.event === 'PermissionRequest') {
@@ -239,20 +243,39 @@ export class HooksGateway {
         const rid = typeof payload.requestId === 'string' ? payload.requestId : undefined
         permissionRequestId = rid ?? `${String(peeked.sessionId ?? 'unknown')}-${Date.now()}`
         // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const { registerResponder } = require('../channel-permissions') as { registerResponder: RegisterResponderFn }
+        const { registerResponder, deregisterResponder } = require('../channel-permissions') as {
+          registerResponder: RegisterResponderFn
+          deregisterResponder: DeregisterResponderFn
+        }
         const capturedRes = res
+        const capturedId = permissionRequestId
+        let done = false
+        cleanup = () => {
+          if (done) return
+          done = true
+          clearTimeout(timeout)
+          try { deregisterResponder(capturedId) } catch { /* module not yet loaded */ }
+        }
         const timeout = setTimeout(() => {
+          if (done) return
+          done = true
           try {
             capturedRes.writeHead(200, { 'Content-Type': 'application/json', 'Connection': 'close' })
             capturedRes.end('{}')
           } catch { /* response already closed */ }
+          try { deregisterResponder(capturedId) } catch {}
         }, 120_000)
-        registerResponder(permissionRequestId, (decision) => {
+        timeout.unref?.()
+        req.on('close', () => cleanup())
+        registerResponder(capturedId, (decision) => {
+          if (done) return  // timeout already fired or client aborted
+          done = true
           clearTimeout(timeout)
           try {
             capturedRes.writeHead(200, { 'Content-Type': 'application/json', 'Connection': 'close' })
             capturedRes.end(JSON.stringify({ hookSpecificOutput: { permissionDecision: decision === 'approved' ? 'approved' : 'deny' } }))
           } catch { /* response already closed; CC falls back to its own UI */ }
+          // note: responder entry deleted by resolvePending in channel-permissions.ts
         })
       }
     } catch { /* not valid JSON — fall through to normal path which will 400 */ }
@@ -267,6 +290,10 @@ export class HooksGateway {
     // For PermissionRequest events that passed auth, the response is held open
     // and will be closed by the responder or the 120s timeout above.
     if (isPermissionRequest && result.status === 200) return
+
+    // Auth/dispatch failed for a PermissionRequest — clean up the dangling
+    // responder and timeout so the Map and event loop don't leak.
+    if (isPermissionRequest && result.status !== 200) cleanup()
 
     res.statusCode = result.status
     res.setHeader('content-type', 'application/json')

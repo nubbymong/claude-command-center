@@ -18,6 +18,8 @@ export function getPending(): PendingPermission[] { return [...pending.values()]
 // real hook-response transport; capture stores the resolver here.
 const responders = new Map<string, (decision: 'approved' | 'denied') => void>()
 export function registerResponder(requestId: string, fn: (d: 'approved' | 'denied') => void): void { responders.set(requestId, fn) }
+/** Remove a responder without invoking it (e.g. on timeout or client abort). */
+export function deregisterResponder(requestId: string): void { responders.delete(requestId) }
 
 function isPermissionEvent(e: HookEvent): boolean {
   if (e.event === 'PermissionRequest') return true
