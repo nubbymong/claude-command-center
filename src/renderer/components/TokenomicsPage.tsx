@@ -340,11 +340,12 @@ function ModelBreakdown({ sessions }: { sessions: TokenomicsSessionRecord[] }) {
 
 // ── Filter Bar ──
 
-function FilterBar({
+export function FilterBar({
   dateFilter, spendFilter, providerFilter,
   onDateFilter, onSpendFilter, onProviderFilter,
   selectedDate, projects, projectFilter, onProjectFilter,
   accountEmails, accountFilter, onAccountFilter,
+  groupBy, onGroupBy,
 }: {
   dateFilter: DateFilter
   spendFilter: SpendFilter
@@ -359,6 +360,8 @@ function FilterBar({
   accountEmails: string[]
   accountFilter: AccountFilterValue
   onAccountFilter: (next: AccountFilterValue) => void
+  groupBy: GroupByLens
+  onGroupBy: (g: GroupByLens) => void
 }) {
   const dateButtons: Array<{ label: string; value: DateFilter }> = [
     { label: 'All', value: 'all' },
@@ -370,6 +373,22 @@ function FilterBar({
 
   return (
     <div className="flex items-center gap-4 mb-4 flex-wrap">
+      <div className="flex items-center gap-1">
+        <span className="text-xs text-overlay0 mr-1">Group by:</span>
+        {(['project', 'account', 'model'] as GroupByLens[]).map(g => (
+          <button
+            key={g}
+            onClick={() => onGroupBy(g)}
+            className={`px-2 py-0.5 text-xs rounded capitalize ${
+              groupBy === g
+                ? 'bg-blue/20 text-blue'
+                : 'bg-surface1 text-overlay1 hover:text-text'
+            }`}
+          >
+            {g}
+          </button>
+        ))}
+      </div>
       <div className="flex items-center gap-1">
         <span className="text-xs text-overlay0 mr-1">Time:</span>
         {dateButtons.map(b => (
@@ -976,6 +995,8 @@ export default function TokenomicsPage() {
           accountEmails={observedEmails}
           accountFilter={accountFilter}
           onAccountFilter={setAccountFilter}
+          groupBy={groupBy}
+          onGroupBy={setGroupBy}
         />
 
         {/* Sessions table */}
