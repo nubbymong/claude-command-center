@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useMemo } from 'react'
+import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import PageFrame from './PageFrame'
@@ -85,6 +85,9 @@ export default function LogViewer() {
   // Entries
   const [allEntries, setAllEntries] = useState<LogEntry[]>([])
   const [loading, setLoading] = useState(false)
+  const PAGE_LIMIT = 500
+  const [loadedOffset, setLoadedOffset] = useState(0)
+  const [hasMore, setHasMore] = useState(false)
 
   // Terminal
   const termContainerRef = useRef<HTMLDivElement>(null)
@@ -177,26 +180,31 @@ export default function LogViewer() {
     }
   }, [selectedSession])
 
-  // Load entries when session selected
+  // Load entries when session selected (chunked: 500 per page)
   useEffect(() => {
-    if (!selectedSession) {
-      setAllEntries([])
-      return
-    }
-
+    if (!selectedSession) { setAllEntries([]); setLoadedOffset(0); setHasMore(false); return }
     setLoading(true)
-    const loadEntries = async () => {
-      const { entries } = await window.electronAPI.logs.read(selectedSession.logDir, 0, 5000)
+    let cancelled = false
+    const load = async () => {
+      const { entries, hasMore: more } = await window.electronAPI.logs.read(selectedSession.logDir, 0, PAGE_LIMIT)
+      if (cancelled) return
       setAllEntries(entries as LogEntry[])
+      setLoadedOffset((entries as LogEntry[]).length)
+      setHasMore(!!more)
       setLoading(false)
     }
-
-    const checkAndLoad = () => {
-      if (termRef.current) loadEntries()
-      else setTimeout(checkAndLoad, 100)
-    }
-    setTimeout(checkAndLoad, 150)
+    const waitForTerm = () => { if (termRef.current) load(); else setTimeout(waitForTerm, 100) }
+    setTimeout(waitForTerm, 150)
+    return () => { cancelled = true }
   }, [selectedSession])
+
+  const loadMore = useCallback(async () => {
+    if (!selectedSession || !hasMore) return
+    const { entries, hasMore: more } = await window.electronAPI.logs.read(selectedSession.logDir, loadedOffset, PAGE_LIMIT)
+    setAllEntries(prev => prev.concat(entries as LogEntry[]))
+    setLoadedOffset(prev => prev + (entries as LogEntry[]).length)
+    setHasMore(!!more)
+  }, [selectedSession, loadedOffset, hasMore])
 
   // Validate regex
   const regexError = useMemo(() => {
@@ -563,6 +571,14 @@ export default function LogViewer() {
                   <span className="text-[10px] text-overlay0/50 shrink-0">{formatSize(selectedSession.size)}</span>
                   <span className="text-[10px] text-overlay0/50 font-mono shrink-0">{selectedSession.sessionId.slice(0, 8)}</span>
                 </div>
+              )}
+              {hasMore && !loading && (
+                <button
+                  onClick={loadMore}
+                  className="text-[10px] text-overlay1 hover:text-text px-3 py-1.5 border-t border-surface0/40 bg-crust/30"
+                >
+                  Load older entries...
+                </button>
               )}
             </>
           ) : (
