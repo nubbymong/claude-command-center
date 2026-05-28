@@ -274,18 +274,11 @@ export default function SettingsPage({ initialTab }: SettingsPageProps = {}) {
                   </div>
                 </Field>
                 <Field label="Cursor Blink">
-                  <button
+                  <Toggle
+                    on={(settings.terminal || DEFAULT_TERMINAL_SETTINGS).cursorBlink}
                     onClick={() => save({ terminal: { ...(settings.terminal || DEFAULT_TERMINAL_SETTINGS), cursorBlink: !(settings.terminal || DEFAULT_TERMINAL_SETTINGS).cursorBlink } })}
-                    className={`relative w-11 h-6 rounded-full transition-colors duration-200 ${
-                      (settings.terminal || DEFAULT_TERMINAL_SETTINGS).cursorBlink ? 'bg-green' : 'bg-surface1'
-                    }`}
-                  >
-                    <div
-                      className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-200 ${
-                        (settings.terminal || DEFAULT_TERMINAL_SETTINGS).cursorBlink ? 'translate-x-6' : 'translate-x-1'
-                      }`}
-                    />
-                  </button>
+                    label="Cursor Blink"
+                  />
                 </Field>
                 <p className="text-[11px] text-overlay0 mt-2 leading-relaxed">
                   Terminal settings apply to new terminals. Restart sessions for changes to take effect.
@@ -295,18 +288,11 @@ export default function SettingsPage({ initialTab }: SettingsPageProps = {}) {
               <Section title="Debug Logging" icon={<path d="M4 4l8 8M4 12l8-8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />}>
                 <Field label="Verbose Logging">
                   <div className="flex items-center gap-3">
-                    <button
+                    <Toggle
+                      on={settings.debugMode}
                       onClick={() => save({ debugMode: !settings.debugMode })}
-                      className={`relative w-11 h-6 rounded-full transition-colors duration-200 ${
-                        settings.debugMode ? 'bg-green' : 'bg-surface1'
-                      }`}
-                    >
-                      <div
-                        className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-200 ${
-                          settings.debugMode ? 'translate-x-6' : 'translate-x-1'
-                        }`}
-                      />
-                    </button>
+                      label="Verbose Logging"
+                    />
                     <span className={`text-xs font-medium ${settings.debugMode ? 'text-green' : 'text-overlay0'}`}>
                       {settings.debugMode ? 'ON' : 'OFF'}
                     </span>
@@ -534,18 +520,11 @@ function StatusLineTab({
                 key={key}
                 className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-surface0/30 transition-colors"
               >
-                <button
+                <Toggle
+                  on={sl[key]}
                   onClick={() => onToggle(key)}
-                  className={`relative w-9 h-5 rounded-full transition-colors duration-200 shrink-0 ${
-                    sl[key] ? 'bg-green' : 'bg-surface1'
-                  }`}
-                >
-                  <div
-                    className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-200 ${
-                      sl[key] ? 'translate-x-[18px]' : 'translate-x-0.5'
-                    }`}
-                  />
-                </button>
+                  label={label}
+                />
                 <div className="min-w-0">
                   <div className="text-sm text-text leading-tight">{label}</div>
                   <div className="text-[11px] text-overlay0 leading-tight">{description}</div>
@@ -725,6 +704,23 @@ export function ShortcutRow({ keys, action }: { keys: string; action: string }) 
       <span className="text-sm" style={{ color: 'var(--text-primary)' }}>{action}</span>
       <Kbd>{keys}</Kbd>
     </div>
+  )
+}
+
+export function Toggle({ on, onClick, label }: { on: boolean; onClick: () => void; label?: string }) {
+  return (
+    <button
+      onClick={onClick}
+      aria-pressed={on}
+      aria-label={label}
+      className="relative w-11 h-6 rounded-full transition-colors duration-200"
+      style={{ background: on ? 'var(--status-success)' : 'var(--surface-overlay)' }}
+    >
+      <span
+        className="absolute top-1 w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-200"
+        style={{ transform: on ? 'translateX(24px)' : 'translateX(4px)' }}
+      />
+    </button>
   )
 }
 
