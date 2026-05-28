@@ -81,6 +81,9 @@ type DateFilter = 'all' | 'today' | 'week' | '5h' | '7d' | string // string = sp
 type SpendFilter = 'all' | 'plan' | 'extra'
 type ProviderFilter = 'all' | 'claude' | 'codex'
 
+// V2 Phase 1: three lenses only. Channel/Member/Worktree are Phase 2.
+export type GroupByLens = 'project' | 'account' | 'model'
+
 // ── Summary Cards ──
 
 function formatDurationShort(ms: number): string {
@@ -686,6 +689,7 @@ export default function TokenomicsPage() {
   const [providerFilter, setProviderFilter] = useState<ProviderFilter>('all')
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
   const [projectFilter, setProjectFilter] = useState<string>('all')
+  const [groupBy, setGroupBy] = useState<GroupByLens>('project')
 
   // Account filter -- persisted via settings store (no local useState)
   const tokenomicsAccountFilter = useSettingsStore((s) => s.settings.tokenomicsAccountFilter ?? 'all')
