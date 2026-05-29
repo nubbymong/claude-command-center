@@ -349,7 +349,7 @@ function seedSampleData(): BackupInfo {
     'configs.json': SAMPLE_CONFIGS,
     'commands.json': SAMPLE_COMMANDS,
     'command-sections.json': SAMPLE_SECTIONS,
-    'settings.json': { localMachineName: process.platform === 'darwin' ? 'Mac Mini' : 'Dev Workstation', terminalFontSize: 14, updateChannel: 'stable', colourMigrationNoticeDismissed: true, colourMigrationNoticePending: false },
+    'settings.json': { localMachineName: 'Demo Workstation', terminalFontSize: 14, updateChannel: 'stable', colourMigrationNoticeDismissed: true, colourMigrationNoticePending: false },
     'app-meta.json': { setupVersion: '99.99.99', lastTrainingVersion: '99.99.99', lastWhatsNewVersion: '99.99.99', lastSeenVersion: '99.99.99' },
     'cloud-agents.json': SAMPLE_CLOUD_AGENTS,
     'tokenomics.json': sampleTokenomics,
@@ -626,7 +626,30 @@ async function clickTab(window: any, text: string): Promise<void> {
 }
 
 async function dismissModals(window: any): Promise<void> {
+  // First pass: Escape covers the dialogs that wire one in.
   for (let i = 0; i < 4; i++) { await window.keyboard.press('Escape'); await window.waitForTimeout(400) }
+  // Second pass: the What's New modal does not bind Escape; it needs an
+  // explicit click on its "Got it" button (or any "Close" / "Skip" / "X"
+  // button on similar one-shot modals). Walk visible buttons and click
+  // anything that looks like a dismiss action; the demo seed sets
+  // lastWhatsNewVersion to 99.99.99 so this should rarely fire, but the
+  // setupVersion bump cycle can still re-trigger it.
+  for (let i = 0; i < 3; i++) {
+    const clicked = await window.evaluate(() => {
+      const targets = ['Got it', 'Close', 'Skip', 'Dismiss', 'OK']
+      const buttons = Array.from(document.querySelectorAll('button')) as HTMLButtonElement[]
+      for (const b of buttons) {
+        const text = (b.textContent || '').trim()
+        if (b.offsetParent !== null && targets.includes(text)) {
+          b.click()
+          return true
+        }
+      }
+      return false
+    })
+    if (!clicked) break
+    await window.waitForTimeout(400)
+  }
 }
 
 /** Launch a session by clicking the Launch button on the matching config
@@ -1015,14 +1038,14 @@ async function main() {
 
     // v1.5.13 V2 README hero: capture the full shell with multiple live
     // sessions in the sidebar, the active terminal in the main pane, and
-    // the statusline strip lit. Launches an additional "API Server"
-    // session on top of the already-running Web App + Mobile App so the
-    // sidebar shows a three-deep active list. Switches focus back to the
-    // first session so the active row is the cleanest one.
+    // the statusline strip lit. Launches an additional "API Server" on
+    // top of the already-running Web App + Mobile App so the sidebar
+    // shows a three-deep active list. Active focus stays on API Server
+    // (the most recently launched) - the previous version re-launched
+    // Web App to "switch focus" but that created a duplicate sidebar
+    // entry.
     await launchSessionFromSidebar(window, 'API Server')
     await window.waitForTimeout(2500)
-    await launchSessionFromSidebar(window, 'Web App')
-    await window.waitForTimeout(1500)
     await capture(window, 'v2-shell-hero.jpg', 'V2 hero - multi-session shell + active terminal + statusline')
 
     // Webview is intentionally skipped — requires a real URL that loads,
