@@ -220,12 +220,33 @@ export function remoteSessionMcpConfigPath(sessionId: string): string {
  * All errors are suppressed (2>/dev/null) so a failed setup doesn't break
  * the SSH session — the user can still use Claude, just without statusline.
  */
+/**
+ * Allowed characters in a remote SSH path. The path is interpolated raw into
+ * a shell `cd` command, so we restrict to a character set that has no shell
+ * meaning: alphanumerics, "_", ".", "/", "-", "~". This deliberately rejects
+ * spaces -- a path with a space would need quoting that breaks "~" expansion,
+ * and the trade-off isn't worth the surface area on a per-host config field.
+ * Users with spaces in their remote root can symlink.
+ */
+const SAFE_REMOTE_PATH_RE = /^[~A-Za-z0-9_./\-]+$/
+
+export function assertSafeRemotePath(remotePath: string): void {
+  if (!SAFE_REMOTE_PATH_RE.test(remotePath)) {
+    throw new Error(
+      `Refusing to build SSH setup command: remotePath contains characters that ` +
+      `could be interpreted by the remote shell. Allowed: A-Z, a-z, 0-9, "_", ".", "/", "-", "~".`,
+    )
+  }
+}
+
 export function getRemoteSetupCommand(
   sessionId: string,
   remotePath: string,
   hooksConfig: { port: number; secret: string } | null,
 ): string {
+  assertSafeRemotePath(remotePath)
   const script = generateRemoteSetupScript(sessionId, hooksConfig)
   const b64 = Buffer.from(script).toString('base64')
-  return `stty -echo 2>/dev/null; echo '${b64}' | base64 -d | node 2>/dev/null; stty echo 2>/dev/null; cd ${remotePath} && clear`
+  // `cd --` so a path beginning with "-" is treated as an operand, not an option.
+  return `stty -echo 2>/dev/null; echo '${b64}' | base64 -d | node 2>/dev/null; stty echo 2>/dev/null; cd -- ${remotePath} && clear`
 }

