@@ -90,8 +90,15 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
         {sl.showModel && session.modelName && (
           <span className="font-medium truncate shrink-0">
             {session.modelName}
-            {session.reasoningEffort && (
-              <span className="ml-1 font-normal" style={{ color: 'var(--text-muted)' }}>{session.reasoningEffort}</span>
+            {/* v1.5.13: surface effort level next to the model name. Codex
+                uses reasoningEffort (set by its statusline bridge); Claude
+                uses effortLevel (config-time, set when the user pinned
+                --effort in Edit Config). Show whichever is set; Codex
+                wins on the rare case both are populated. */}
+            {(session.reasoningEffort || session.effortLevel) && (
+              <span className="ml-1 font-normal" style={{ color: 'var(--text-muted)' }}>
+                {session.reasoningEffort || session.effortLevel}
+              </span>
             )}
           </span>
         )}

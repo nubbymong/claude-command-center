@@ -41,7 +41,7 @@ interface Props {
     version: string
   }
   agentIds?: string[]
-  effortLevel?: 'low' | 'medium' | 'high'
+  effortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode'
   disableAutoMemory?: boolean
   /** P6: when true, the spawned Claude PTY is registered into the
    *  codex_review opt-in set in conductor-mcp-server. Mirrors

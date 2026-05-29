@@ -124,7 +124,7 @@ export interface ElectronAPI {
       }>
       flickerFree?: boolean
       powershellTool?: boolean
-      effortLevel?: 'low' | 'medium' | 'high'
+      effortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode'
       disableAutoMemory?: boolean
       enableCodexReview?: boolean
       model?: string

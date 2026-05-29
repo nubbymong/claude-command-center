@@ -75,7 +75,7 @@ export interface Session {
   agentIds?: string[]                    // Agent template IDs for this session
   flickerFree?: boolean                  // Enable flicker-free alternate screen rendering
   powershellTool?: boolean               // Enable native PowerShell tool
-  effortLevel?: 'low' | 'medium' | 'high'
+  effortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode'
   disableAutoMemory?: boolean
   /** P6: Claude opts in to the codex_review MCP tool for this session.
    *  Mirrors disableAutoMemory in shape (sparse boolean) and lifecycle. */
