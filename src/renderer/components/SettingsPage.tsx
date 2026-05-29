@@ -11,7 +11,6 @@ import GitHubConfigTab from './github/config/GitHubConfigTab'
 import { CodexSettingsTab } from './codex/CodexSettingsTab'
 import HooksGatewaySection from './github/config/HooksGatewaySection'
 import PageFrame from './PageFrame'
-import AccountAliasesSection from './settings/AccountAliasesSection'
 import { SectionLabel } from './ui/SectionLabel'
 import { Kbd } from './ui/Kbd'
 declare const __BUILD_TIME__: string
@@ -206,8 +205,6 @@ export default function SettingsPage({ initialTab }: SettingsPageProps = {}) {
                   <span className="text-[10px] text-overlay0">(applies to new sessions; CC fans out up to 1000 subagents per workflow)</span>
                 </label>
               </Section>
-
-              <AccountAliasesSection />
 
               <Section title="Terminal" icon={<><rect x="2" y="3" width="12" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.2" fill="none" /><path d="M5 7l2 2-2 2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" /><line x1="9" y1="11" x2="11" y2="11" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" /></>}>
                 <Field label="Font Family">

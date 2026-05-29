@@ -6,8 +6,6 @@ import { StatusPill } from '../ui/StatusPill'
 import { IdentityChip } from '../ui/IdentityChip'
 import { resolveIdentityColor, bucketLegacyColorToKey } from '../../../shared/identity-colors'
 import { useResolvedTheme } from '../../hooks/useThemeController'
-import { useSettingsStore } from '../../stores/settingsStore'
-import { resolveAliasForSession } from '../../../shared/account-alias'
 
 interface SessionRowProps {
   session: Session
@@ -52,10 +50,6 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
   const pct = session.contextPercent ?? 0
   const providerLabel = session.shellOnly ? 'shell' : (session.provider ?? 'claude')
   const metaLine = `${session.modelName ?? session.model ?? ''}${providerLabel ? ` · ${providerLabel}` : ''}`.trim()
-  // v1.5.9: alias label is resolved from settings at render time so renaming
-  // an alias in Settings updates every tagged session row automatically.
-  const aliases = useSettingsStore((s) => s.settings.accountAliases)
-  const aliasLabel = resolveAliasForSession(session.accountAliasEmail, aliases)
 
   // #398: when renaming, render a plain <div> (NOT a <button>) so the text input
   // is never nested inside interactive button content (invalid HTML / a11y).
@@ -130,15 +124,6 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
         <span className="text-[13px] truncate" style={{ fontWeight: isActive ? 700 : 600 }}>{session.label}</span>
         {session.sessionType === 'ssh' && <SshBadge />}
         {session.shellOnly ? <ShellBadge /> : (session.provider ?? 'claude') === 'codex' ? <CodexBadge needsAttention={needsAttention} /> : null}
-        {aliasLabel && (
-          <span
-            data-testid="session-row-account-alias"
-            className="text-[12px] truncate"
-            style={{ fontWeight: 400, color: 'var(--text-secondary)' }}
-          >
-            {aliasLabel}
-          </span>
-        )}
       </span>
 
       {/* Line 1, col 3: status pill + identity chip (chip selected-only) */}
