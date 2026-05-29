@@ -14,10 +14,10 @@ import type {
   HookEventKind,
   HooksGatewayStatus,
 } from '../../shared/hook-types'
-// channel-permissions is imported lazily inside handleHttp to avoid a circular
-// dependency chain: hooks-gateway -> channel-permissions -> hooks/index -> hooks-gateway.
-type RegisterResponderFn = (requestId: string, fn: (d: 'approved' | 'denied') => void) => void
-type DeregisterResponderFn = (requestId: string) => void
+// Responder registry lives in its own module so we can import it directly --
+// the old lazy-require workaround for the channel-permissions circular
+// dependency is no longer needed (#483).
+import { registerResponder, deregisterResponder } from '../permission-responders'
 
 // Cap the incoming HTTP body at 256 KiB. Claude Code hook payloads top out
 // around a few KB; anything beyond this is either a misbehaving client or
@@ -221,13 +221,8 @@ export class HooksGateway {
 
     // For PermissionRequest events, hold the HTTP response open and register a
     // responder so that respondPermission() can write the hook decision back to
-    // the Claude Code process.  The responder is registered BEFORE ingest runs
+    // the Claude Code process. The responder is registered BEFORE ingest runs
     // (via _handleRequestForTest) to avoid a race on the auto-allow path.
-    // registerResponder is required lazily (not at module load time) to avoid
-    // the circular dependency: hooks-gateway -> channel-permissions -> hooks/index
-    // -> hooks-gateway.  A lazy require safely resolves once both modules are
-    // fully loaded; by the time the first HTTP request arrives the module graph
-    // is settled.
     let isPermissionRequest = false
     let permissionRequestId: string | undefined
     // cleanup is defined here so the auth-fail branch (after _handleRequestForTest)
@@ -255,11 +250,6 @@ export class HooksGateway {
           : peeked
         const rid = typeof payload.requestId === 'string' ? payload.requestId : undefined
         permissionRequestId = rid ?? `${String(peeked.sessionId ?? 'unknown')}-${Date.now()}`
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const { registerResponder, deregisterResponder } = require('../channel-permissions') as {
-          registerResponder: RegisterResponderFn
-          deregisterResponder: DeregisterResponderFn
-        }
         const capturedRes = res
         const capturedId = permissionRequestId
         let done = false
@@ -267,7 +257,7 @@ export class HooksGateway {
           if (done) return
           done = true
           clearTimeout(timeout)
-          try { deregisterResponder(capturedId) } catch { /* module not yet loaded */ }
+          deregisterResponder(capturedId)
         }
         const timeout = setTimeout(() => {
           if (done) return
@@ -276,7 +266,7 @@ export class HooksGateway {
             capturedRes.writeHead(200, { 'Content-Type': 'application/json', 'Connection': 'close' })
             capturedRes.end('{}')
           } catch { /* response already closed */ }
-          try { deregisterResponder(capturedId) } catch {}
+          deregisterResponder(capturedId)
         }, 120_000)
         timeout.unref?.()
         req.on('close', () => cleanup())

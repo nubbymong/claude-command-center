@@ -5,6 +5,7 @@ import { matchApproval } from './standing-approvals-store'
 import { appendLedger } from './channel-ledger'
 import { pushPendingPermissions } from './ipc/channel-handlers'
 import { normalizePermission, decideDisposition } from './permission-core'
+import { resolveResponder } from './permission-responders'
 import type { PendingPermission } from '../shared/channel-types'
 import type { HookEvent } from '../shared/hook-types'
 
@@ -14,12 +15,11 @@ let started = false
 
 export function getPending(): PendingPermission[] { return [...pending.values()] }
 
-// requestId -> a resolver that replies to the originating hook. P7.3 fills the
-// real hook-response transport; capture stores the resolver here.
-const responders = new Map<string, (decision: 'approved' | 'denied') => void>()
-export function registerResponder(requestId: string, fn: (d: 'approved' | 'denied') => void): void { responders.set(requestId, fn) }
-/** Remove a responder without invoking it (e.g. on timeout or client abort). */
-export function deregisterResponder(requestId: string): void { responders.delete(requestId) }
+// The responder map moved to ./permission-responders so the hook gateway can
+// import it directly without the historic circular-import workaround. Re-
+// export the two surface functions for the existing call-sites (gateway uses
+// the lazy require path below for backward compat with on-the-wire callers).
+export { registerResponder, deregisterResponder } from './permission-responders'
 
 function isPermissionEvent(e: HookEvent): boolean {
   if (e.event === 'PermissionRequest') return true
@@ -40,15 +40,13 @@ function capture(e: HookEvent): void {
   const disposition = decideDisposition(p, (tool) => matchApproval(tool))
   if (disposition === 'auto-allow') {
     appendLedger({ source: 'permission', target: p.sessionLabel, transport: null, kind: 'permission-auto-allow', summary: `${p.tool}: ${p.payloadPreview}` })
-    responders.get(p.requestId)?.('approved')
-    responders.delete(p.requestId)
+    resolveResponder(p.requestId, 'approved')
     return
   }
 
   if (pending.size >= PENDING_CAP) {
     appendLedger({ source: 'permission', target: p.sessionLabel, transport: null, kind: 'tray-overflow', summary: `auto-denied (tray full): ${p.tool}` })
-    responders.get(p.requestId)?.('denied')
-    responders.delete(p.requestId)
+    resolveResponder(p.requestId, 'denied')
     return
   }
 
@@ -69,8 +67,7 @@ export function resolvePending(requestId: string, decision: 'approved' | 'denied
   if (!p) return
   pending.delete(requestId)
   appendLedger({ source: 'permission', target: p.sessionLabel, transport: p.transport === 'mcp' ? 'mcp' : null, kind: decision === 'approved' ? 'permission-approve' : 'permission-deny', summary: `${p.tool}: ${p.payloadPreview}` })
-  responders.get(requestId)?.(decision)
-  responders.delete(requestId)
+  resolveResponder(requestId, decision)
   pushPendingPermissions(getPending())
 }
 
