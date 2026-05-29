@@ -1,7 +1,39 @@
 import { describe, it, expect } from 'vitest'
-import { stripCursorSequences } from '../../src/renderer/utils/terminalFormatting'
+import { stripCursorSequences, formatDuration } from '../../src/renderer/utils/terminalFormatting'
 
 const ESC = '\x1b'
+
+describe('formatDuration', () => {
+  const SEC = 1000
+  const MIN = 60 * SEC
+  const HOUR = 60 * MIN
+  const DAY = 24 * HOUR
+
+  it('shows seconds under a minute', () => {
+    expect(formatDuration(0)).toBe('0s')
+    expect(formatDuration(5 * SEC)).toBe('5s')
+    expect(formatDuration(59 * SEC)).toBe('59s')
+  })
+  it('shows minutes + seconds under an hour', () => {
+    expect(formatDuration(MIN)).toBe('1m 0s')
+    expect(formatDuration(2 * MIN + 38 * SEC)).toBe('2m 38s')
+    expect(formatDuration(59 * MIN + 59 * SEC)).toBe('59m 59s')
+  })
+  it('rolls up to hours + minutes at/over 60 minutes', () => {
+    expect(formatDuration(HOUR)).toBe('1h 0m')
+    expect(formatDuration(HOUR + 30 * MIN)).toBe('1h 30m')
+    expect(formatDuration(23 * HOUR + 59 * MIN)).toBe('23h 59m')
+  })
+  it('rolls up to days + hours at/over 24 hours', () => {
+    expect(formatDuration(DAY)).toBe('1d 0h')
+    expect(formatDuration(DAY + 4 * HOUR)).toBe('1d 4h')
+    // The original report: 1731m 38s -> 28h 51m -> 1d 4h.
+    expect(formatDuration(1731 * MIN + 38 * SEC)).toBe('1d 4h')
+  })
+  it('clamps negative input to 0s', () => {
+    expect(formatDuration(-5000)).toBe('0s')
+  })
+})
 
 describe('stripCursorSequences', () => {
   describe('cursor control sequences', () => {

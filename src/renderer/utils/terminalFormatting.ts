@@ -23,10 +23,20 @@ export function formatTokens(n: number): string {
 }
 
 export function formatDuration(ms: number): string {
-  const sec = Math.floor(ms / 1000)
-  const m = Math.floor(sec / 60)
+  const sec = Math.max(0, Math.floor(ms / 1000))
   const s = sec % 60
-  return m > 0 ? `${m}m ${s}s` : `${s}s`
+  const totalMin = Math.floor(sec / 60)
+  const m = totalMin % 60
+  const totalHr = Math.floor(totalMin / 60)
+  const h = totalHr % 24
+  const d = Math.floor(totalHr / 24)
+  // Roll up so a long-lived / resumed Claude session reads "1d 4h" instead of
+  // an unreadable "1731m 38s". Two units max, largest-first; seconds only
+  // appear under a minute. (#496 follow-up.)
+  if (d > 0) return `${d}d ${h}h`
+  if (totalHr > 0) return `${totalHr}h ${m}m`
+  if (totalMin > 0) return `${totalMin}m ${s}s`
+  return `${s}s`
 }
 
 export function formatResetTime(iso: string): string {
