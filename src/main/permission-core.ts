@@ -2,12 +2,20 @@
 import type { HookEvent } from '../shared/hook-types'
 import type { PendingPermission } from '../shared/channel-types'
 
+// `--force-with-lease` is the SAFER replacement for `--force` and intentionally
+// excluded from the force-push label. The (?!-with-lease) lookahead lets a real
+// `git push --force` still match while letting the lease form pass.
+//
+// `sudo` is anchored to a command position (start of payload, or after a shell
+// separator) so it does not fire on `cat /etc/sudoers`, `# sudo foo`, or string
+// literals like `echo "sudo is a tool"`.
+const SUDO_RE = /(?:^|[\s;&|`(])sudo(?=\s|$)/
 const HIGH_RISK: Array<{ re: RegExp; label: string }> = [
-  { re: /git push\s+--force|--force-with-lease/, label: 'git push --force' },
+  { re: /git\s+push\s+(?:[^\n]*\s)?--force(?!-with-lease)\b/, label: 'git push --force' },
   { re: /rm\s+-rf|rm\s+-fr/, label: 'rm -rf' },
-  { re: /--force\b/, label: '--force' },
+  { re: /--force(?!-with-lease)\b/, label: '--force' },
   { re: /chmod\s+777/, label: 'chmod 777' },
-  { re: /\bsudo\b/, label: 'sudo' },
+  { re: SUDO_RE, label: 'sudo' },
   { re: /\bdd\s+if=/, label: 'dd if=' },
   { re: /:\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/, label: 'fork bomb' },
 ]
