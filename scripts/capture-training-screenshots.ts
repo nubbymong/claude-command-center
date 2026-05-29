@@ -24,7 +24,17 @@ import { execSync } from 'child_process'
 
 const SCREENSHOT_DIR = path.join(__dirname, '..', 'src', 'renderer', 'assets', 'training')
 const BUILT_APP = path.join(__dirname, '..', 'out', 'main', 'index.js')
-const PLATFORM_SUFFIX = process.platform === 'darwin' ? '-mac' : ''
+// Setting CAPTURE_NO_PLATFORM_SUFFIX=1 forces no -mac suffix even on darwin,
+// useful when you want the Mac run to produce the canonical filenames the
+// README + training-steps.ts reference (no-suffix). Defaults preserve the
+// historical platform tagging so the per-platform reconcile flow stays
+// untouched.
+const PLATFORM_SUFFIX =
+  process.env.CAPTURE_NO_PLATFORM_SUFFIX === '1'
+    ? ''
+    : process.platform === 'darwin'
+      ? '-mac'
+      : ''
 const WIDTH = 1280
 const HEIGHT = 800
 const JPEG_QUALITY = 85
@@ -681,6 +691,12 @@ const DOCS_COPY_MAP: Record<string, string> = {
   'step-vision.jpg': 'vision.jpg',
   'step-security.jpg': 'settings.jpg',
   'step-tips.jpg': 'shortcuts.jpg',
+  // v1.5.13 README hero block - new dedicated assets so the in-app tour
+  // for permission-tray + dynamic-workflows can point at the right surface
+  // rather than aliasing step-security.jpg / step-agent-hub.jpg.
+  'step-permission-tray.jpg': 'permission-tray.jpg',
+  'step-dynamic-workflows.jpg': 'dynamic-workflows.jpg',
+  'v2-shell-hero.jpg': 'v2-shell-hero.jpg',
 }
 
 async function capture(window: any, filename: string, description: string): Promise<void> {
@@ -735,7 +751,59 @@ async function main() {
       for (const el of items) { if (el.textContent?.trim() === 'Edit') { (el as HTMLElement).click(); return } }
     })
     await window.waitForTimeout(800)
-    await capture(window, 'step-session-options.jpg', 'Session config dialog')
+    // v1.5.13: seed the dialog state so the captured screenshot actually
+    // shows the v1.5.11/12 controls (Opus 4.8 model, Ultracode effort,
+    // Fast Mode). The Edit dialog opened on a "shellOnly:true" config so
+    // the Claude options are hidden by default - we have to uncheck Shell
+    // only FIRST (the effort/fastMode controls are conditionally rendered).
+    // All DOM mutation must live in a single inline anonymous arrow
+    // because esbuild/tsx names const-assigned arrows which triggers
+    // __name in the evaluate context.
+    await window.evaluate(() => {
+      const cbs = Array.from(document.querySelectorAll('input[type=checkbox]'))
+      for (const cb of cbs) {
+        const lbl = cb.closest('label')?.textContent || ''
+        if (lbl.includes('Shell only')) {
+          if ((cb as HTMLInputElement).checked) (cb as HTMLInputElement).click()
+          break
+        }
+      }
+    })
+    await window.waitForTimeout(400)
+    await window.evaluate(() => {
+      // Native value setter trick - React 18 reads value via the prototype
+      // descriptor, so a plain sel.value = 'opus' will not fire onChange.
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value')?.set
+      const selects = Array.from(document.querySelectorAll('select'))
+      let modelSel: HTMLSelectElement | null = null
+      let effortSel: HTMLSelectElement | null = null
+      for (const s of selects) {
+        const labelText = (s.previousElementSibling?.textContent || '') + ' ' + (s.closest('div')?.textContent || '')
+        if (!modelSel && /Model override/i.test(labelText)) modelSel = s as HTMLSelectElement
+        if (!effortSel && /Effort level/i.test(labelText)) effortSel = s as HTMLSelectElement
+      }
+      if (modelSel && setter) {
+        setter.call(modelSel, 'opus')
+        modelSel.dispatchEvent(new Event('change', { bubbles: true }))
+      }
+      if (effortSel && setter) {
+        setter.call(effortSel, 'ultracode')
+        effortSel.dispatchEvent(new Event('change', { bubbles: true }))
+      }
+    })
+    await window.waitForTimeout(400)
+    await window.evaluate(() => {
+      const cbs = Array.from(document.querySelectorAll('input[type=checkbox]'))
+      for (const cb of cbs) {
+        const lbl = cb.closest('label')?.textContent || ''
+        if (lbl.includes('Fast mode')) {
+          if (!(cb as HTMLInputElement).checked) (cb as HTMLInputElement).click()
+          break
+        }
+      }
+    })
+    await window.waitForTimeout(500)
+    await capture(window, 'step-session-options.jpg', 'Session config dialog (Opus 4.8 + Ultracode + Fast Mode)')
     // Close dialog — try multiple methods
     await window.keyboard.press('Escape')
     await window.waitForTimeout(300)
@@ -823,6 +891,66 @@ async function main() {
     await window.waitForTimeout(500)
     await capture(window, 'step-security.jpg', 'Settings page')
 
+    // Step 8a (v1.5.13): Dynamic Workflows toggle - on the Settings General
+    // tab, scroll the Security section into view so the "Disable Claude Code
+    // dynamic workflows" checkbox is centered. Capture as dedicated asset
+    // so the dynamic-workflows tour step stops aliasing step-agent-hub.jpg.
+    await clickTab(window, 'General')
+    await window.waitForTimeout(400)
+    await window.evaluate(() => {
+      const labels = Array.from(document.querySelectorAll('label'))
+      const target = labels.find((l) => (l.textContent || '').includes('Disable Claude Code dynamic workflows'))
+      if (target) target.scrollIntoView({ block: 'center' })
+    })
+    await window.waitForTimeout(500)
+    await capture(window, 'step-dynamic-workflows.jpg', 'Settings General - Disable Claude Code dynamic workflows toggle')
+
+    // Step 8b (v1.5.13): Permission Attention Tray - inject a fake
+    // high-risk Bash PendingPermission into channelStore so the toast
+    // renders. PermissionToastStack mounts unconditionally in App.tsx
+    // so the toast appears regardless of the active view. We capture on
+    // the Settings page so the page context behind the toast is calm
+    // (no live terminal motion).
+    await window.evaluate(() => {
+      // The store is exposed via window.__channelStore at boot by the
+      // capture-mode helper added in App.tsx for this script. If it's
+      // missing (e.g. running against a build that doesn't expose it),
+      // fall back to dynamic import.
+      const w = window as any
+      const fake = [{
+        requestId: 'capture-demo-1',
+        sessionId: 'demo-sess',
+        sessionLabel: 'Web App - main',
+        identityColorKey: 'peach',
+        provider: 'claude',
+        tool: 'Bash',
+        payloadPreview: 'rm -rf /tmp/old-builds',
+        reason: 'Cleanup before release build',
+        capturedAt: Date.now(),
+        transport: 'hook',
+        tierLabel: 'hooks',
+        highRisk: { matched: 'rm -rf' },
+      }]
+      if (w.__channelStore?.getState) {
+        w.__channelStore.getState().setPending(fake)
+      }
+    })
+    await window.waitForTimeout(700)
+    // Blur whatever Deny button auto-focused so the screenshot isn't
+    // dominated by a focus ring.
+    await window.evaluate(() => {
+      const ae = document.activeElement
+      if (ae && (ae as HTMLElement).blur) (ae as HTMLElement).blur()
+    })
+    await window.waitForTimeout(200)
+    await capture(window, 'step-permission-tray.jpg', 'Permission Attention Tray with high-risk Bash toast')
+    // Clear pending without firing IPC for the fake requestId.
+    await window.evaluate(() => {
+      const w = window as any
+      if (w.__channelStore?.getState) w.__channelStore.getState().setPending([])
+    })
+    await window.waitForTimeout(300)
+
     // Step 9: Tips (Shortcuts tab)
     await clickTab(window, 'Shortcuts')
     await window.waitForTimeout(500)
@@ -884,6 +1012,18 @@ async function main() {
     await launchSessionFromSidebar(window, 'Mobile App')
     await window.waitForTimeout(2500)
     await capture(window, 'step-combined.jpg', 'Combined mode (Claude + partner)')
+
+    // v1.5.13 V2 README hero: capture the full shell with multiple live
+    // sessions in the sidebar, the active terminal in the main pane, and
+    // the statusline strip lit. Launches an additional "API Server"
+    // session on top of the already-running Web App + Mobile App so the
+    // sidebar shows a three-deep active list. Switches focus back to the
+    // first session so the active row is the cleanest one.
+    await launchSessionFromSidebar(window, 'API Server')
+    await window.waitForTimeout(2500)
+    await launchSessionFromSidebar(window, 'Web App')
+    await window.waitForTimeout(1500)
+    await capture(window, 'v2-shell-hero.jpg', 'V2 hero - multi-session shell + active terminal + statusline')
 
     // Webview is intentionally skipped — requires a real URL that loads,
     // and the WebContentsView overlay does not surface in Playwright

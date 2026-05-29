@@ -472,7 +472,7 @@ export const trainingSteps: TrainingStep[] = [
       'Patterns: **rm -rf, sudo, force-push, dd, mkfs, chmod 777, fork bombs**',
       'Overflow (>50) auto-denies so a runaway agent can\'t bury you in prompts',
     ],
-    screenshotFilename: 'step-security.jpg',
+    screenshotFilename: 'step-permission-tray.jpg',
   },
   {
     id: 'dynamic-workflows',
@@ -501,7 +501,7 @@ export const trainingSteps: TrainingStep[] = [
       '**/deep-research** is the bundled example; **/workflows** lists active runs',
       'CCC: **Disable Claude Code dynamic workflows** in Settings -> Security if you want it off',
     ],
-    screenshotFilename: 'step-agent-hub.jpg',
+    screenshotFilename: 'step-dynamic-workflows.jpg',
   },
   {
     id: 'github-sidebar',
