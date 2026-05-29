@@ -729,20 +729,18 @@ async function main() {
     await window.waitForTimeout(6000)
     await dismissModals(window)
 
-    // Step 0 (v1.5.13): Permission Attention Tray - MUST run before any
-    // step that opens a fixed-position dialog overlay. The script's
-    // existing dialog cleanup (Step 1 + Step 1b) calls
-    // document.querySelectorAll('.fixed').forEach(el => el.remove())
-    // which manually detaches DOM nodes that React's fiber tree still
-    // tracks as siblings of App root. After that, the FIRST new .fixed
-    // child mounted as a sibling of App root (the toast container)
-    // triggers React's reconciler to call insertBefore against the
-    // stale ref -> NotFoundError. Running this step first means React
-    // mounts + unmounts the toast container cleanly via state, before
-    // any manual DOM removal has corrupted the sibling chain.
+    // Step 0 (v1.5.13): Permission Attention Tray, via the renderer
+    // capture harness (src/renderer/utils/capture-harness.ts). The
+    // harness wraps useChannelStore.setPending in flushSync so React
+    // commits the toast mount synchronously inside this call -- two
+    // prior runs that mutated the store without flushSync crashed with
+    // insertBefore NotFoundError, because React 18's automatic batching
+    // deferred the commit to a microtask where the sibling fiber chain
+    // had been touched by other automatic renders. flushSync removes
+    // the race.
     await window.evaluate(() => {
       const w = window as any
-      const fake = [{
+      const fake = {
         requestId: 'capture-demo-1',
         sessionId: 'demo-sess',
         sessionLabel: 'Web App - main',
@@ -755,12 +753,14 @@ async function main() {
         transport: 'hook',
         tierLabel: 'hooks',
         highRisk: { matched: 'rm -rf' },
-      }]
-      if (w.__channelStore?.getState) {
-        w.__channelStore.getState().setPending(fake)
+      }
+      if (w.__captureHarness?.showPermissionToast) {
+        w.__captureHarness.showPermissionToast(fake)
       }
     })
-    await window.waitForTimeout(700)
+    await window.waitForTimeout(500)
+    // Blur whatever Deny button auto-focused so the screenshot is not
+    // dominated by a focus ring.
     await window.evaluate(() => {
       const ae = document.activeElement
       if (ae && (ae as HTMLElement).blur) (ae as HTMLElement).blur()
@@ -769,7 +769,9 @@ async function main() {
     await capture(window, 'step-permission-tray.jpg', 'Permission Attention Tray with high-risk Bash toast')
     await window.evaluate(() => {
       const w = window as any
-      if (w.__channelStore?.getState) w.__channelStore.getState().setPending([])
+      if (w.__captureHarness?.clearPermissionToasts) {
+        w.__captureHarness.clearPermissionToasts()
+      }
     })
     await window.waitForTimeout(300)
 

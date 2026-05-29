@@ -48,6 +48,10 @@ import { setupConductorMcpListener, useConductorMcpStore } from './stores/conduc
 import { setupGitHubListener, useGitHubStore } from './stores/githubStore'
 import { setupChannelListeners } from './stores/channelStore'
 import PermissionToastStack from './components/channels/PermissionToastStack'
+// Side-effect import: registers window.__captureHarness for the
+// capture-training script. Renderer-local store mutations only, no
+// IPC surface widening (see capture-harness.ts header).
+import './utils/capture-harness'
 import { useCodexAccountStore } from './stores/codexAccountStore'
 import GitHubPanel from './components/github/GitHubPanel'
 import OnboardingModal from './components/github/onboarding/OnboardingModal'
