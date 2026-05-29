@@ -729,6 +729,50 @@ async function main() {
     await window.waitForTimeout(6000)
     await dismissModals(window)
 
+    // Step 0 (v1.5.13): Permission Attention Tray - MUST run before any
+    // step that opens a fixed-position dialog overlay. The script's
+    // existing dialog cleanup (Step 1 + Step 1b) calls
+    // document.querySelectorAll('.fixed').forEach(el => el.remove())
+    // which manually detaches DOM nodes that React's fiber tree still
+    // tracks as siblings of App root. After that, the FIRST new .fixed
+    // child mounted as a sibling of App root (the toast container)
+    // triggers React's reconciler to call insertBefore against the
+    // stale ref -> NotFoundError. Running this step first means React
+    // mounts + unmounts the toast container cleanly via state, before
+    // any manual DOM removal has corrupted the sibling chain.
+    await window.evaluate(() => {
+      const w = window as any
+      const fake = [{
+        requestId: 'capture-demo-1',
+        sessionId: 'demo-sess',
+        sessionLabel: 'Web App - main',
+        identityColorKey: 'peach',
+        provider: 'claude',
+        tool: 'Bash',
+        payloadPreview: 'rm -rf /tmp/old-builds',
+        reason: 'Cleanup before release build',
+        capturedAt: Date.now(),
+        transport: 'hook',
+        tierLabel: 'hooks',
+        highRisk: { matched: 'rm -rf' },
+      }]
+      if (w.__channelStore?.getState) {
+        w.__channelStore.getState().setPending(fake)
+      }
+    })
+    await window.waitForTimeout(700)
+    await window.evaluate(() => {
+      const ae = document.activeElement
+      if (ae && (ae as HTMLElement).blur) (ae as HTMLElement).blur()
+    })
+    await window.waitForTimeout(200)
+    await capture(window, 'step-permission-tray.jpg', 'Permission Attention Tray with high-risk Bash toast')
+    await window.evaluate(() => {
+      const w = window as any
+      if (w.__channelStore?.getState) w.__channelStore.getState().setPending([])
+    })
+    await window.waitForTimeout(300)
+
     // Step 1: Session Options — open edit dialog on first config
     await window.evaluate(() => {
       const items = document.querySelectorAll('button')
@@ -904,52 +948,6 @@ async function main() {
     })
     await window.waitForTimeout(500)
     await capture(window, 'step-dynamic-workflows.jpg', 'Settings General - Disable Claude Code dynamic workflows toggle')
-
-    // Step 8b (v1.5.13): Permission Attention Tray - inject a fake
-    // high-risk Bash PendingPermission into channelStore so the toast
-    // renders. PermissionToastStack mounts unconditionally in App.tsx
-    // so the toast appears regardless of the active view. We capture on
-    // the Settings page so the page context behind the toast is calm
-    // (no live terminal motion).
-    await window.evaluate(() => {
-      // The store is exposed via window.__channelStore at boot by the
-      // capture-mode helper added in App.tsx for this script. If it's
-      // missing (e.g. running against a build that doesn't expose it),
-      // fall back to dynamic import.
-      const w = window as any
-      const fake = [{
-        requestId: 'capture-demo-1',
-        sessionId: 'demo-sess',
-        sessionLabel: 'Web App - main',
-        identityColorKey: 'peach',
-        provider: 'claude',
-        tool: 'Bash',
-        payloadPreview: 'rm -rf /tmp/old-builds',
-        reason: 'Cleanup before release build',
-        capturedAt: Date.now(),
-        transport: 'hook',
-        tierLabel: 'hooks',
-        highRisk: { matched: 'rm -rf' },
-      }]
-      if (w.__channelStore?.getState) {
-        w.__channelStore.getState().setPending(fake)
-      }
-    })
-    await window.waitForTimeout(700)
-    // Blur whatever Deny button auto-focused so the screenshot isn't
-    // dominated by a focus ring.
-    await window.evaluate(() => {
-      const ae = document.activeElement
-      if (ae && (ae as HTMLElement).blur) (ae as HTMLElement).blur()
-    })
-    await window.waitForTimeout(200)
-    await capture(window, 'step-permission-tray.jpg', 'Permission Attention Tray with high-risk Bash toast')
-    // Clear pending without firing IPC for the fake requestId.
-    await window.evaluate(() => {
-      const w = window as any
-      if (w.__channelStore?.getState) w.__channelStore.getState().setPending([])
-    })
-    await window.waitForTimeout(300)
 
     // Step 9: Tips (Shortcuts tab)
     await clickTab(window, 'Shortcuts')
