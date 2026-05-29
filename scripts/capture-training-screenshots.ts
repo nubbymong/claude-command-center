@@ -1053,7 +1053,20 @@ async function main() {
     // screenshots reliably. Tour falls back to the legacy bullet view.
 
     console.log('[capture] Closing app...')
-    await app.close()
+    // app.close() opens a graceful-shutdown race; if Electron does not
+    // exit within ~5s we SIGKILL the underlying node-spawned process so
+    // it does not leave a window hanging on the user's screen. Playwright
+    // exposes the child via app.process().
+    const child = app.process()
+    let closed = false
+    await Promise.race([
+      app.close().then(() => { closed = true }),
+      new Promise<void>((r) => setTimeout(r, 5000)),
+    ])
+    if (!closed) {
+      console.warn('[capture] app.close() did not finish in 5s -- SIGKILL')
+      try { child.kill('SIGKILL') } catch {}
+    }
   } finally {
     cleanupSampleData(backupInfo)
   }
