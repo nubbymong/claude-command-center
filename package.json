@@ -76,7 +76,8 @@
     "fast-uri": "^3.1.2",
     "mermaid": "^11.15.0",
     "qs": "^6.15.2",
-    "uuid": "^11.1.1"
+    "uuid": "^11.1.1",
+    "tmp": "^0.2.6"
   },
   "build": {
     "appId": "com.claudeconductor.app",
