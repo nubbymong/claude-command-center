@@ -20,7 +20,7 @@ Conduct dozens of Claude and Codex sessions in parallel. Orchestrate up to **1,0
 
 <br/>
 
-<img src="src/renderer/assets/training/step-agent-hub.jpg" alt="Claude Command Center v2.0" width="100%" />
+<img src="docs/screenshots/v2-shell-hero.jpg" alt="Claude Command Center v2.0 -- multi-session shell with Opus 4.8 and the permission tray" width="100%" />
 
 </div>
 
@@ -44,7 +44,7 @@ When you flip the global **Disable Claude Code dynamic workflows** toggle in Set
 
 ### Permission Attention Tray
 
-<img src="src/renderer/assets/training/step-security.jpg" alt="Permission tray surfaces high-risk Bash commands" width="100%" />
+<img src="docs/screenshots/permission-tray.jpg" alt="Permission tray surfaces high-risk Bash commands as a top-right toast with Allow / Deny / Allow once buttons" width="100%" />
 
 CCC opens a local hooks gateway and rewrites the per-session Claude settings file so every `PreToolUse` event lands on the gateway before Claude executes the tool. A classifier inside CCC checks the Bash payload against destructive patterns &mdash; `rm -rf`, `sudo`, `dd if=`, `chmod 777`, `--force` / `--force-with-lease`, fork bombs &mdash; and surfaces matching prompts as toasts stacked in the top-right corner. Everything else auto-allows in microseconds so the tray stays quiet until it has something to say.
 
@@ -54,7 +54,7 @@ It catches commands invoked from **dynamic-workflow subagents** too. The same ho
 
 ### Dynamic workflows, surfaced end-to-end
 
-<img src="docs/screenshots/agent-hub.jpg" alt="Agent Hub with workflow-aware orchestration" width="100%" />
+<img src="docs/screenshots/dynamic-workflows.jpg" alt="Settings &rsaquo; Security &rsaquo; Disable Claude Code dynamic workflows toggle" width="100%" />
 
 Three ways to invoke an Opus 4.8 dynamic workflow from inside any Claude session:
 
