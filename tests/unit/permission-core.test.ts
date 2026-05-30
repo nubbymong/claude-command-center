@@ -2,6 +2,7 @@
 import { describe, it, expect } from 'vitest'
 import { detectHighRisk, normalizePermission, decideDisposition } from '../../src/main/permission-core'
 import type { HookEvent } from '../../src/shared/hook-types'
+import type { PendingPermission } from '../../src/shared/channel-types'
 
 describe('permission-core', () => {
   it('flags destructive Bash payloads', () => {
@@ -18,21 +19,27 @@ describe('permission-core', () => {
     expect(p.transport).toBe('hook')
     expect(p.highRisk?.matched).toBe('rm -rf')
   })
-  it('decideDisposition: high-risk always shows even with a standing approval', () => {
-    const p = { tool: 'Bash', payloadPreview: 'rm -rf x', highRisk: { matched: 'rm -rf' } } as any
-    expect(decideDisposition(p, () => true)).toBe('show')
-  })
-  it('decideDisposition: non-high-risk Bash auto-allows regardless of standing approval (v2.0.0)', () => {
-    // v2.0.0: PreToolUse delivers every Bash call. Only the high-risk
-    // patterns (detectHighRisk) need user input; the rest auto-allow so
-    // the tray doesn't fire for ls/cat/git status.
-    const p = { tool: 'Bash', payloadPreview: 'ls', highRisk: undefined } as any
-    expect(decideDisposition(p, () => true)).toBe('auto-allow')
-    expect(decideDisposition(p, () => false)).toBe('auto-allow')
-  })
-  it('decideDisposition: non-Bash tools always auto-allow (v2.0.0)', () => {
-    const p = { tool: 'Edit', payloadPreview: 'foo', highRisk: undefined } as any
-    expect(decideDisposition(p, () => false)).toBe('auto-allow')
+  describe('decideDisposition (CCC gate policy)', () => {
+    const base = (over: Partial<PendingPermission>): PendingPermission => ({
+      requestId: 'r', sessionId: 's', sessionLabel: 'S', tool: 'Edit', payloadPreview: '',
+      capturedAt: 0, transport: 'hook', tierLabel: 'hooks', ...over,
+    })
+    const noApproval = () => false
+    const yesApproval = () => true
+    it('high-risk always shows, even with a standing approval', () => {
+      expect(decideDisposition(base({ tool: 'Bash', highRisk: { matched: 'rm -rf' } }), yesApproval)).toBe('show')
+    })
+    it('standing approval auto-allows a non-high-risk tool', () => {
+      expect(decideDisposition(base({ tool: 'Bash' }), yesApproval)).toBe('auto-allow')
+    })
+    it('read-only safelist auto-allows', () => {
+      for (const tool of ['Read', 'Glob', 'Grep', 'LS', 'NotebookRead', 'BashOutput', 'TodoWrite'])
+        expect(decideDisposition(base({ tool }), noApproval)).toBe('auto-allow')
+    })
+    it('acting tools show', () => {
+      for (const tool of ['Edit', 'Write', 'MultiEdit', 'Bash', 'WebFetch', 'Task', 'mcp__conductor__vision_click'])
+        expect(decideDisposition(base({ tool }), noApproval)).toBe('show')
+    })
   })
   it('does not flag non-Bash tools even when payload looks destructive', () => {
     expect(detectHighRisk('Edit', 'rm -rf node_modules')).toBeUndefined()

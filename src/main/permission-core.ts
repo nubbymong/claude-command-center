@@ -54,11 +54,18 @@ export function normalizePermission(e: HookEvent, info: SessionInfo, transport: 
 }
 
 export type Disposition = 'auto-allow' | 'show'
-export function decideDisposition(p: PendingPermission, _hasStandingApproval: (tool: string) => boolean): Disposition {
-  // v1.5.11: the gateway is wired to CC's PreToolUse hook, so every tool
-  // call flows through here. Show the tray ONLY for the dangerous Bash
-  // patterns detectHighRisk recognises; auto-allow everything else so the
-  // user isn't drowned in prompts for ls/cat/Read/Edit.
-  if (p.highRisk) return 'show'
-  return 'auto-allow'
+
+// Tools with no external effect: auto-approved silently so the tray isn't a wall
+// of cards in an agent loop. TodoWrite mutates only the internal todo list (no
+// external effect) and is included deliberately. Everything not listed SHOWS
+// (err toward surfacing). High-risk is always shown regardless.
+const AUTO_ALLOW_TOOLS = new Set<string>([
+  'Read', 'Glob', 'Grep', 'LS', 'NotebookRead', 'BashOutput', 'TodoWrite',
+])
+
+export function decideDisposition(p: PendingPermission, hasStandingApproval: (tool: string) => boolean): Disposition {
+  if (p.highRisk) return 'show'                  // safety: never auto-allow a destructive payload
+  if (hasStandingApproval(p.tool)) return 'auto-allow'
+  if (AUTO_ALLOW_TOOLS.has(p.tool)) return 'auto-allow'
+  return 'show'
 }
