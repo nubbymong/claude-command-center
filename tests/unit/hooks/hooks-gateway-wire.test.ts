@@ -90,4 +90,23 @@ describe('hold-open gating', () => {
     expect((entry.payload as { requestId: string }).requestId).toMatch(/^s4-\d+$/)
     ac.abort()
   })
+
+  // Claude Code's real hook POST uses `hook_event_name` (not `event`) and
+  // snake_case fields. Before this was handled, ingest dropped EVERY live hook
+  // -> the events feed + tray were silently dead. Lock the real shape here since
+  // the real-Claude integration test is opt-in and skipped in CI.
+  it('ingests Claude real-shape payloads (hook_event_name + tool_name)', async () => {
+    gw = new HooksGateway({ emit: () => {}, defaultPort: 0 })
+    const { port } = await gw.start()
+    const secret = gw.registerSession('s5')
+    const res = await post(port!, 's5', secret, {
+      session_id: 's5', hook_event_name: 'PostToolUse', tool_name: 'Read',
+      tool_input: { file_path: 'F:/x/package.json' }, tool_use_id: 'toolu_abc',
+    })
+    expect(res.status).toBe(200)   // PostToolUse is fire-and-forget (not held open)
+    const buf = gw.getBuffer('s5')
+    expect(buf).toHaveLength(1)
+    expect(buf[0].event).toBe('PostToolUse')
+    expect(buf[0].toolName).toBe('Read')
+  })
 })

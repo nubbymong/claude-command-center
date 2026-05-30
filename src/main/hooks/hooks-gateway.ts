@@ -249,15 +249,26 @@ export class HooksGateway {
       const peekedToolName = typeof peeked.tool_name === 'string'
         ? (peeked.tool_name as string)
         : typeof peeked.toolName === 'string' ? (peeked.toolName as string) : undefined
-      const isPreToolUseBash = peeked.event === 'PreToolUse' && peekedToolName === 'Bash'
-      const isHeldOpenTool = isPreToolUseBash || (this.gateActive && peeked.event === 'PreToolUse')
-      if (peeked.event === 'PermissionRequest' || isHeldOpenTool) {
+      // Claude Code's real hook POST uses `hook_event_name` (not `event`) and
+      // snake_case fields; accept both so the gateway works with the live CLI as
+      // well as the spec'd PermissionRequest shape used by tests.
+      const peekedEvent = typeof peeked.hook_event_name === 'string'
+        ? (peeked.hook_event_name as string)
+        : typeof peeked.event === 'string' ? (peeked.event as string) : undefined
+      const isPreToolUseBash = peekedEvent === 'PreToolUse' && peekedToolName === 'Bash'
+      const isHeldOpenTool = isPreToolUseBash || (this.gateActive && peekedEvent === 'PreToolUse')
+      if (peekedEvent === 'PermissionRequest' || isHeldOpenTool) {
         isPermissionRequest = true
         const payload = peeked.payload && typeof peeked.payload === 'object'
           ? (peeked.payload as Record<string, unknown>)
           : peeked
-        const rid = typeof payload.requestId === 'string' ? payload.requestId : undefined
-        permissionRequestId = rid ?? `${String(peeked.sessionId ?? 'unknown')}-${Date.now()}`
+        // Prefer Claude's real per-call id `tool_use_id`; fall back to the spec'd
+        // `requestId`, then a synthetic id. Using the same field the pending card
+        // derives its id from keeps the responder key and the card key in lockstep.
+        const rid = typeof payload.tool_use_id === 'string'
+          ? (payload.tool_use_id as string)
+          : typeof payload.requestId === 'string' ? (payload.requestId as string) : undefined
+        permissionRequestId = rid ?? `${String(peeked.session_id ?? peeked.sessionId ?? 'unknown')}-${Date.now()}`
         const capturedRes = res
         const capturedId = permissionRequestId
         let done = false
@@ -372,8 +383,14 @@ export class HooksGateway {
     // is the only in-tree caller that hits this; returning early means
     // it gets dropped silently, matching the spec's "strict contract"
     // posture.
-    if (typeof parsed.event !== 'string') return
-    const event = parsed.event as HookEventKind
+    // Accept Claude Code's real `hook_event_name` as well as the spec'd `event`.
+    // Without this the gateway silently drops EVERY live hook (CC sends
+    // `hook_event_name`), which is why the events feed + tray appeared dead.
+    const eventName = typeof parsed.hook_event_name === 'string'
+      ? (parsed.hook_event_name as string)
+      : typeof parsed.event === 'string' ? (parsed.event as string) : undefined
+    if (eventName === undefined) return
+    const event = eventName as HookEventKind
     const toolName =
       typeof parsed.tool_name === 'string'
         ? (parsed.tool_name as string)

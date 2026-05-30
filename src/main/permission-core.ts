@@ -33,12 +33,15 @@ export function normalizePermission(e: HookEvent, info: SessionInfo, transport: 
   // `command`/`arguments` fields the spec'd PermissionRequest event used.
   const pl = e.payload as {
     tool?: string; arguments?: string; command?: string; reason?: string; requestId?: string;
-    tool_input?: { command?: string }
+    tool_use_id?: string; tool_input?: { command?: string; file_path?: string }
   }
   const tool = pl.tool ?? e.toolName ?? 'unknown'
-  const preview = String(pl.arguments ?? pl.command ?? pl.tool_input?.command ?? '')
+  // Claude's tool_input carries the command (Bash) or file_path (Edit/Write/Read).
+  const preview = String(pl.arguments ?? pl.command ?? pl.tool_input?.command ?? pl.tool_input?.file_path ?? '')
   return {
-    requestId: pl.requestId ?? `${e.sessionId}-${e.ts}`,
+    // tool_use_id is Claude's real stable per-call id; it MUST match the responder
+    // key the gateway registered (hooks-gateway peek) or Allow/Deny no-ops.
+    requestId: pl.tool_use_id ?? pl.requestId ?? `${e.sessionId}-${e.ts}`,
     sessionId: e.sessionId,
     sessionLabel: info.label,
     identityColorKey: info.identityColorKey,
