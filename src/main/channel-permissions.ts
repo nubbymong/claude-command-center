@@ -4,7 +4,7 @@ import { getSessionMeta } from './session-registry'
 import { matchApproval } from './standing-approvals-store'
 import { appendLedger } from './channel-ledger'
 import { pushPendingPermissions } from './ipc/channel-handlers'
-import { normalizePermission, decideDisposition } from './permission-core'
+import { normalizePermission, decideDisposition, isReadOnlyTool } from './permission-core'
 import { resolveResponder } from './permission-responders'
 import type { PendingPermission } from '../shared/channel-types'
 import type { HookEvent } from '../shared/hook-types'
@@ -38,9 +38,11 @@ function capture(e: HookEvent): void {
   const disposition = decideDisposition(p, (tool) => matchApproval(tool))
   if (disposition === 'auto-allow') {
     // Only ledger when a standing approval drove the allow (worth a record).
-    // Read-only safelist tools fire on every Read/Grep; ledgering them would
-    // hammer the disk + redactor on the hot path (spec section 4.3).
-    if (matchApproval(p.tool)) {
+    // A non-safelist auto-allow can ONLY have come from a standing approval, so
+    // a cheap Set check (isReadOnlyTool) avoids a second matchApproval() disk
+    // read on the hot path. Read-only safelist tools fire on every Read/Grep and
+    // are intentionally not ledgered (spec section 4.3).
+    if (!isReadOnlyTool(p.tool)) {
       appendLedger({ source: 'permission', target: p.sessionLabel, transport: null, kind: 'permission-auto-allow', summary: `${p.tool}: ${p.payloadPreview}` })
     }
     resolveResponder(p.requestId, 'approved')

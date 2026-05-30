@@ -66,9 +66,16 @@ const AUTO_ALLOW_TOOLS = new Set<string>([
   'Read', 'Glob', 'Grep', 'LS', 'NotebookRead', 'BashOutput', 'TodoWrite',
 ])
 
+/** True for the read-only safelist (a cheap Set check; no disk IO). */
+export function isReadOnlyTool(tool: string): boolean { return AUTO_ALLOW_TOOLS.has(tool) }
+
 export function decideDisposition(p: PendingPermission, hasStandingApproval: (tool: string) => boolean): Disposition {
   if (p.highRisk) return 'show'                  // safety: never auto-allow a destructive payload
-  if (hasStandingApproval(p.tool)) return 'auto-allow'
+  // Safelist BEFORE standing approvals: the safelist is a Set lookup, while
+  // hasStandingApproval reads standing-approvals.json from disk. The hottest
+  // tools (Read/Grep/Glob) are on the safelist, so this keeps the universal
+  // gate off the disk on its hot path.
   if (AUTO_ALLOW_TOOLS.has(p.tool)) return 'auto-allow'
+  if (hasStandingApproval(p.tool)) return 'auto-allow'
   return 'show'
 }

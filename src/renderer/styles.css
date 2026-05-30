@@ -335,4 +335,5 @@ body {
    the bottom-left stack reads as a deliberate entrance rather than a flash. */
 .channels-toast { animation: ccc-tray-in 180ms ease-out; }
 @keyframes ccc-tray-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .channels-toast { animation: none; } }
 

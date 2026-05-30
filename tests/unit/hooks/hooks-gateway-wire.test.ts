@@ -8,6 +8,9 @@ import { resolveResponder, _resetResponders, _responderCount } from '../../../sr
 async function waitForResponder(): Promise<void> {
   const deadline = Date.now() + 2000
   while (_responderCount() === 0 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 5))
+  // Fail loudly instead of silently falling through: otherwise a real
+  // "responder never registered" bug turns into a 120s held-open hang.
+  if (_responderCount() === 0) throw new Error('responder was never registered within 2s')
 }
 
 function post(port: number, sid: string, token: string, body: object, signal?: AbortSignal): Promise<{ status: number; body: string }> {
