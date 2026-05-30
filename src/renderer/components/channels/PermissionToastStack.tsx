@@ -9,26 +9,34 @@ export default function PermissionToastStack() {
   const respond = (requestId: string, decision: 'allow' | 'deny' | 'allow-once') =>
     window.electronAPI.channels.respondPermission({ requestId, decision })
 
+  // getPending() returns insertion order (oldest first); the tray shows the
+  // newest on top. Reverse once and use the same order for rendering, focus,
+  // and the keyboard shortcuts so they all agree on which card is "primary".
+  const ordered = [...pending].reverse()
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (pending.length === 0) return
+      if (ordered.length === 0) return
       const isMac = (window as any).electronPlatform === 'darwin'
       const mod = isMac ? e.metaKey : e.ctrlKey
-      if (e.key === 'Enter' && !mod) { respond(pending[0].requestId, 'allow'); e.preventDefault() }
-      else if (e.key === 'Escape') { respond(pending[0].requestId, 'deny'); e.preventDefault() }
+      if (e.key === 'Enter' && !mod) { respond(ordered[0].requestId, 'allow'); e.preventDefault() }
+      else if (e.key === 'Escape') { respond(ordered[0].requestId, 'deny'); e.preventDefault() }
       else if (mod && /^[1-9]$/.test(e.key)) {
-        const idx = +e.key - 1; if (pending[idx]) { respond(pending[idx].requestId, 'allow'); e.preventDefault() }
+        const idx = +e.key - 1; if (ordered[idx]) { respond(ordered[idx].requestId, 'allow'); e.preventDefault() }
       }
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
   }, [pending])
 
-  if (pending.length === 0) return null
-  const visible = pending.slice(0, MAX_VISIBLE)
-  const overflow = pending.length - visible.length
+  if (ordered.length === 0) return null
+  const visible = ordered.slice(0, MAX_VISIBLE)  // newest first
+  const overflow = ordered.length - visible.length
+  // Normal column: the box is pinned at bottom-left, so it grows UPWARD and the
+  // first child (newest) sits on top while the "+N waiting" pill sits at the
+  // bottom just above the bottom bar.
   return (
-    <div className="fixed left-3 bottom-12 z-50 flex flex-col-reverse gap-2 items-start channels-tray">
+    <div className="fixed left-3 bottom-12 z-50 flex flex-col gap-2 items-start channels-tray">
       {visible.map((p, i) => (
         <PermissionToast key={p.requestId} p={p} focused={i === 0}
           onAllow={() => respond(p.requestId, 'allow')}
