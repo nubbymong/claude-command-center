@@ -333,7 +333,10 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         // #406: focus in/out + cursor/mouse reports arrive via onData too. Only a real
         // keystroke/paste should un-ack the attention pulse, else leaving a session
         // re-arms the pulse without the user typing anything.
-        if (!isControlReportOnly(data)) attentionAckedRef.current = false
+        // Shell-only sessions have no Claude hooks, so the attention flasher still
+        // comes from PTY output; un-ack on real keystrokes. Provider sessions use
+        // the hook-driven attention source (attention-source.ts) instead.
+        if (session?.shellOnly && !isControlReportOnly(data)) attentionAckedRef.current = false
         window.electronAPI.pty.write(sessionId, data)
       })
 
@@ -398,7 +401,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
           // started a new task."
           if (attentionTimerRef.current) clearTimeout(attentionTimerRef.current)
           const promptPattern = /[❯$#>]\s*$|\(y\/n\)\s*$|\?\s*$|Do you want|Yes\/No|Accept\?|approve/i
-          if (promptPattern.test(stripped.trim()) && !attentionAckedRef.current) {
+          if (session?.shellOnly && promptPattern.test(stripped.trim()) && !attentionAckedRef.current) {
             attentionTimerRef.current = setTimeout(() => {
               attentionTimerRef.current = null
               // needsAttention: only for inactive tabs (controls tab notification dot)
