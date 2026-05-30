@@ -704,7 +704,7 @@ export function Toggle({ on, onClick, label }: { on: boolean; onClick: () => voi
       onClick={onClick}
       aria-pressed={on}
       aria-label={label}
-      className="relative w-11 h-6 rounded-full transition-colors duration-200"
+      className="relative shrink-0 w-11 h-6 rounded-full transition-colors duration-200"
       style={{ background: on ? 'var(--status-success)' : 'var(--surface-overlay)' }}
     >
       <span

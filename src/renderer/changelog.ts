@@ -15,6 +15,16 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '1.5.16',
+    date: '2026-05-30',
+    changes: [
+      { type: 'feature', description: 'Permission tray: approve or deny any tool request from one place, across all sessions' },
+      { type: 'improvement', description: 'Attention indicator no longer re-fires when you revisit a session' },
+      { type: 'fix', description: 'Effort level now shows permanently in the status line' },
+      { type: 'fix', description: 'Settings toggles no longer overlap their labels' },
+    ],
+  },
+  {
     version: '1.5.15',
     date: '2026-05-29',
     highlights: "Removes the per-session account alias feature. Showing which Claude account a session is on is not reliable without isolating each session's config (which would fragment your shared memory and settings), so the alias label on session rows, the right-click Account tagging, and the Settings account-alias list are gone. Per-account spend tracking on the Tokenomics page is unaffected.",

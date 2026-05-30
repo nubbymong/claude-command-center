@@ -18,6 +18,7 @@ import type {
 // the old lazy-require workaround for the channel-permissions circular
 // dependency is no longer needed (#483).
 import { registerResponder, deregisterResponder } from '../permission-responders'
+import { logDebug } from '../debug-logger'
 
 // Cap the incoming HTTP body at 256 KiB. Claude Code hook payloads top out
 // around a few KB; anything beyond this is either a misbehaving client or
@@ -52,6 +53,7 @@ export class HooksGateway {
   private buffers = new Map<string, RingBufferEntry[]>()
   private overflowLatched = new Set<string>()
   private subscribers = new Set<(e: HookEvent) => void>()
+  private gateActive = false
 
   constructor(opts: HooksGatewayOptions) {
     this.defaultPort = opts.defaultPort ?? DEFAULT_HOOKS_PORT
@@ -62,6 +64,11 @@ export class HooksGateway {
     this.subscribers.add(cb)
     return () => { this.subscribers.delete(cb) }
   }
+
+  // When true, the held-open + responder path applies to EVERY PreToolUse (so the
+  // tray can Allow/Deny any tool), not just Bash. Default false so a live gateway
+  // with no renderer mounted to answer does not hold tool calls open for 120s.
+  setPermissionGateActive(active: boolean): void { this.gateActive = active }
 
   // Test seam: runs the post-redaction dispatch path without HTTP.
   dispatchForTest(event: HookEvent): void { this.fanOut(event) }
@@ -232,24 +239,35 @@ export class HooksGateway {
       const peeked = JSON.parse(body) as Record<string, unknown>
       // v1.5.11: Claude Code's actual permission hook fires as 'PreToolUse'
       // (legacy 'PermissionRequest' kept for forward compatibility with any
-      // future CC release that adopts the spec name). Held-open response
-      // treatment is scoped to PermissionRequest OR PreToolUse for the
-      // Bash tool -- the only tool channel-permissions classifies. Every
-      // other PreToolUse goes through the fire-and-forget ingest path, so
-      // Claude Code's own permission UI keeps gating non-Bash tools and
-      // unsubscribed environments (tests, headless smoke) don't hang on
-      // the 120s held-open timeout.
+      // future CC release that adopts the spec name). Held-open scope: Bash
+      // PreToolUse is ALWAYS held open (back-compat); v1.5.16 broadens this to
+      // EVERY PreToolUse once `gateActive` is true (see setPermissionGateActive,
+      // flipped on renderer-ready), so the tray can Allow/Deny any tool. While
+      // gateActive is false (no renderer mounted, tests, headless smoke) non-Bash
+      // PreToolUse stays fire-and-forget and nothing hangs on the 120s timeout.
       const peekedToolName = typeof peeked.tool_name === 'string'
         ? (peeked.tool_name as string)
         : typeof peeked.toolName === 'string' ? (peeked.toolName as string) : undefined
-      const isPreToolUseBash = peeked.event === 'PreToolUse' && peekedToolName === 'Bash'
-      if (peeked.event === 'PermissionRequest' || isPreToolUseBash) {
+      // Claude Code's real hook POST uses `hook_event_name` (not `event`) and
+      // snake_case fields; accept both so the gateway works with the live CLI as
+      // well as the spec'd PermissionRequest shape used by tests.
+      const peekedEvent = typeof peeked.hook_event_name === 'string'
+        ? (peeked.hook_event_name as string)
+        : typeof peeked.event === 'string' ? (peeked.event as string) : undefined
+      const isPreToolUseBash = peekedEvent === 'PreToolUse' && peekedToolName === 'Bash'
+      const isHeldOpenTool = isPreToolUseBash || (this.gateActive && peekedEvent === 'PreToolUse')
+      if (peekedEvent === 'PermissionRequest' || isHeldOpenTool) {
         isPermissionRequest = true
         const payload = peeked.payload && typeof peeked.payload === 'object'
           ? (peeked.payload as Record<string, unknown>)
           : peeked
-        const rid = typeof payload.requestId === 'string' ? payload.requestId : undefined
-        permissionRequestId = rid ?? `${String(peeked.sessionId ?? 'unknown')}-${Date.now()}`
+        // Prefer Claude's real per-call id `tool_use_id`; fall back to the spec'd
+        // `requestId`, then a synthetic id. Using the same field the pending card
+        // derives its id from keeps the responder key and the card key in lockstep.
+        const rid = typeof payload.tool_use_id === 'string'
+          ? (payload.tool_use_id as string)
+          : typeof payload.requestId === 'string' ? (payload.requestId as string) : undefined
+        permissionRequestId = rid ?? `${String(peeked.session_id ?? peeked.sessionId ?? 'unknown')}-${Date.now()}`
         const capturedRes = res
         const capturedId = permissionRequestId
         let done = false
@@ -276,18 +294,42 @@ export class HooksGateway {
           clearTimeout(timeout)
           try {
             capturedRes.writeHead(200, { 'Content-Type': 'application/json', 'Connection': 'close' })
-            capturedRes.end(JSON.stringify({ hookSpecificOutput: { permissionDecision: decision === 'approved' ? 'approved' : 'deny' } }))
+            // 'defer' -> empty 2xx body = no decision, Claude proceeds with its own
+            // permission flow (used on tray overflow so the call is NOT stalled for
+            // the full 120s timeout). Otherwise emit the allow/deny decision.
+            capturedRes.end(decision === 'defer'
+              ? '{}'
+              : JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: decision === 'approved' ? 'allow' : 'deny' } }))
           } catch { /* response already closed; CC falls back to its own UI */ }
           // note: responder entry deleted by resolvePending in channel-permissions.ts
         })
       }
     } catch { /* not valid JSON — fall through to normal path which will 400 */ }
 
+    // The held-open responder is keyed by `permissionRequestId`. Downstream, the
+    // pending tray card derives its own id from `payload.requestId` (falling back
+    // to `${sessionId}-${entry.ts}`). Claude Code's real PreToolUse hook sends NO
+    // requestId, so without this both sides would invent DIFFERENT synthetic ids
+    // (two separate Date.now() reads) and Allow/Deny would target a responder that
+    // does not exist -> the request silently stalls until the 120s timeout. Inject
+    // the resolved id into the body so ingest -> normalizePermission key the card
+    // on the SAME value we registered the responder under.
+    let ingestBody = body
+    if (isPermissionRequest && permissionRequestId) {
+      try {
+        const obj = JSON.parse(body) as Record<string, unknown>
+        const pl = (obj.payload && typeof obj.payload === 'object')
+          ? (obj.payload as Record<string, unknown>)
+          : obj
+        if (pl.requestId == null) { pl.requestId = permissionRequestId; ingestBody = JSON.stringify(obj) }
+      } catch { /* keep original body; the normal path will 400 on bad JSON */ }
+    }
+
     const result = await this._handleRequestForTest({
       remoteAddress: req.socket.remoteAddress,
       url: req.url,
       headers: req.headers as Record<string, string | string[] | undefined>,
-      body,
+      body: ingestBody,
     })
 
     // For PermissionRequest events that passed auth, the response is held open
@@ -331,6 +373,12 @@ export class HooksGateway {
   }
 
   private ingest(sid: string, parsed: Record<string, unknown>): void {
+    // Diagnostic (verbose only): log the raw shape of every incoming hook POST
+    // BEFORE the strict `event` check below drops anything. This reveals exactly
+    // what Claude Code sends (e.g. `event` vs `hook_event_name`), which the unit
+    // tests cannot, and is the fastest way to confirm the gateway parses CC's
+    // real PreToolUse during the dev-demo permission round-trip.
+    logDebug(`[hooks] ingest sid=${sid} keys=[${Object.keys(parsed).join(',')}] event=${String(parsed.event)} hook_event_name=${String((parsed as Record<string, unknown>).hook_event_name)} tool_name=${String(parsed.tool_name)}`)
     // Reject payloads with a missing/non-string event field rather than
     // forging an 'Unknown' sentinel: the shared HookEventKind union
     // doesn't include it, so forging would propagate a type-contract
@@ -339,8 +387,14 @@ export class HooksGateway {
     // is the only in-tree caller that hits this; returning early means
     // it gets dropped silently, matching the spec's "strict contract"
     // posture.
-    if (typeof parsed.event !== 'string') return
-    const event = parsed.event as HookEventKind
+    // Accept Claude Code's real `hook_event_name` as well as the spec'd `event`.
+    // Without this the gateway silently drops EVERY live hook (CC sends
+    // `hook_event_name`), which is why the events feed + tray appeared dead.
+    const eventName = typeof parsed.hook_event_name === 'string'
+      ? (parsed.hook_event_name as string)
+      : typeof parsed.event === 'string' ? (parsed.event as string) : undefined
+    if (eventName === undefined) return
+    const event = eventName as HookEventKind
     const toolName =
       typeof parsed.tool_name === 'string'
         ? (parsed.tool_name as string)

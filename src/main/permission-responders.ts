@@ -7,7 +7,10 @@
 // is a clean DAG; channel-permissions -> hooks/index back to channel-permissions
 // is what the lazy `require` in the gateway used to dodge).
 
-export type PermissionDecision = 'approved' | 'denied'
+// 'defer' = close the held-open response with an empty body so Claude Code
+// proceeds with its OWN permission flow (used when the tray is full and we
+// cannot surface another card). It is NOT an allow and NOT a deny.
+export type PermissionDecision = 'approved' | 'denied' | 'defer'
 type Responder = (decision: PermissionDecision) => void
 
 const responders = new Map<string, Responder>()

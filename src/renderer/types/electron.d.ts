@@ -437,6 +437,8 @@ export interface ElectronAPI {
     killSwitch: (p: { disabled: boolean }) => Promise<FeatureState>
     onPendingPermissions: (cb: (list: PendingPermission[]) => void) => () => void
     onLedgerEvent: (cb: (r: LedgerRecord) => void) => () => void
+    rendererReady: () => Promise<unknown>
+    onAttention: (cb: (p: { sessionId: string; needsAttention: boolean }) => void) => () => void
   }
   codex: {
     status: () => Promise<{

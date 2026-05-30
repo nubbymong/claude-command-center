@@ -3,6 +3,7 @@
 
 export const HOOK_EVENT_KINDS = [
   'PreToolUse', 'PostToolUse', 'Notification', 'SessionStart', 'Stop',
+  'UserPromptSubmit',
   'PreCompact', 'SubagentStart', 'SubagentStop', 'StopFailure',
   'PermissionRequest', 'FileChanged',
 ] as const

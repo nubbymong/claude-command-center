@@ -7,11 +7,17 @@ import { loadApprovals, addApproval, removeApproval } from '../standing-approval
 import { getFeatureState, setKillSwitch, markIntroShown } from '../channel-feature-state'
 import { respondPermission } from '../channel-permissions'
 import { getCapabilityDiagnostics, forceTier } from '../channel-capability'
+import { getGateway } from '../hooks/index'
 import type { LedgerRecord, PendingPermission } from '../../shared/channel-types'
 
 // main -> renderer push helpers (broadcast to all windows)
 export function pushPendingPermissions(list: PendingPermission[]): void {
   for (const w of BrowserWindow.getAllWindows()) w.webContents.send(IPC.CHANNELS_PENDING_PERMISSIONS, list)
+}
+export function pushAttention(sessionId: string, needsAttention: boolean): void {
+  for (const w of BrowserWindow.getAllWindows()) {
+    try { w.webContents.send(IPC.CHANNELS_ATTENTION, { sessionId, needsAttention }) } catch { /* destroyed */ }
+  }
 }
 export function pushLedgerEvent(record: LedgerRecord): void {
   for (const w of BrowserWindow.getAllWindows()) w.webContents.send(IPC.CHANNELS_LEDGER_EVENT, record)
@@ -42,4 +48,11 @@ export function registerChannelHandlers(): void {
   ipcMain.handle(IPC.CHANNELS_CAPABILITY_DIAGNOSTICS, () => getCapabilityDiagnostics())
   ipcMain.handle(IPC.CHANNELS_INTRO_DISMISSED, () => { markIntroShown(); return getFeatureState() })
   ipcMain.handle(IPC.CHANNELS_KILL_SWITCH, (_e, p) => { setKillSwitch(!!p.disabled); return getFeatureState() })
+  ipcMain.handle(IPC.CHANNELS_RENDERER_READY, () => {
+    // Renderer has mounted its pending-permissions + attention listeners. Safe to
+    // make CCC the universal permission gate now (before this, non-Bash tools stay
+    // fire-and-forget so nothing holds open with no UI to answer).
+    getGateway()?.setPermissionGateActive(true)
+    return { ok: true }
+  })
 }

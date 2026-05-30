@@ -1,4 +1,5 @@
 import { clipboard, type NativeImage } from 'electron'
+import { logInfo } from './debug-logger'
 
 /**
  * Read an image off the clipboard, retrying briefly when the first read comes
@@ -29,11 +30,18 @@ export async function readClipboardImageWithRetry(
   sleep: (ms: number) => Promise<void> = (ms) =>
     new Promise((resolve) => setTimeout(resolve, ms)),
 ): Promise<NativeImage | null> {
+  const __t0 = Date.now()
   const tries = Math.max(1, attempts)
   for (let i = 0; i < tries; i++) {
     const img = clipboard.readImage()
-    if (!img.isEmpty()) return img
+    if (!img.isEmpty()) {
+      const __dt = Date.now() - __t0
+      if (__dt > 150) logInfo(`[perf] clipboard-image processing took ${__dt}ms`)
+      return img
+    }
     if (i < tries - 1) await sleep(delayMs)
   }
+  const __dt = Date.now() - __t0
+  if (__dt > 150) logInfo(`[perf] clipboard-image processing took ${__dt}ms`)
   return null
 }

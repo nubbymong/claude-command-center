@@ -263,6 +263,8 @@ export const IPC = {
   CHANNELS_LEDGER_EVENT: 'channels:ledgerEvent',                    // main -> renderer: live ledger row
   CHANNELS_RULE_CRUD: 'channels:ruleCRUD',                          // renderer -> main: payload { op: 'list'|'save'|'delete', ... }
   CHANNELS_STANDING_APPROVAL_CRUD: 'channels:standingApprovalCRUD', // renderer -> main: payload { op: 'list'|'add'|'remove', ... }
+  CHANNELS_RENDERER_READY: 'channels:rendererReady',   // renderer -> main: listeners mounted, safe to gate permissions
+  CHANNELS_ATTENTION: 'channels:attention',            // main -> renderer: { sessionId, needsAttention }
   CHANNELS_CAPABILITY_DIAGNOSTICS: 'channels:capabilityDiagnostics',// renderer -> main: capability + handshake history
   CHANNELS_INTRO_DISMISSED: 'channels:introDismissed',              // renderer -> main: persist first-run dismissal
   CHANNELS_KILL_SWITCH: 'channels:killSwitch',                      // renderer -> main: toggle disableConductorChannels

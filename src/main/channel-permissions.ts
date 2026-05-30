@@ -4,7 +4,7 @@ import { getSessionMeta } from './session-registry'
 import { matchApproval } from './standing-approvals-store'
 import { appendLedger } from './channel-ledger'
 import { pushPendingPermissions } from './ipc/channel-handlers'
-import { normalizePermission, decideDisposition } from './permission-core'
+import { normalizePermission, decideDisposition, isReadOnlyTool } from './permission-core'
 import { resolveResponder } from './permission-responders'
 import type { PendingPermission } from '../shared/channel-types'
 import type { HookEvent } from '../shared/hook-types'
@@ -23,13 +23,11 @@ export { registerResponder, deregisterResponder } from './permission-responders'
 
 function isPermissionEvent(e: HookEvent): boolean {
   if (e.event === 'PermissionRequest') return true
-  // v1.5.11: Claude Code's actual permission gate is the PreToolUse hook.
-  // Every tool call flows through; decideDisposition() auto-allows
-  // anything that isn't high-risk Bash so most fan out without UI.
   if (e.event === 'PreToolUse') return true
-  if (e.event === 'Notification' && (e.payload as { notification_type?: string }).notification_type === 'permission_prompt') return true
-  // very-old fallback: a Stop event whose payload text looks like a permission prompt
-  if (e.event === 'Stop' && /permission|allow this tool|approve/i.test(JSON.stringify(e.payload))) return true
+  // Notification(permission_prompt) is NOT a tray card: under the universal gate
+  // CCC decides before Claude would prompt, so it rarely fires; when it does
+  // (a settings ask-rule overriding a hook allow) it is an unanswerable on-screen
+  // prompt -> handled by the attention flasher (attention-source.ts), not here.
   return false
 }
 
@@ -39,14 +37,24 @@ function capture(e: HookEvent): void {
 
   const disposition = decideDisposition(p, (tool) => matchApproval(tool))
   if (disposition === 'auto-allow') {
-    appendLedger({ source: 'permission', target: p.sessionLabel, transport: null, kind: 'permission-auto-allow', summary: `${p.tool}: ${p.payloadPreview}` })
+    // Only ledger when a standing approval drove the allow (worth a record).
+    // A non-safelist auto-allow can ONLY have come from a standing approval, so
+    // a cheap Set check (isReadOnlyTool) avoids a second matchApproval() disk
+    // read on the hot path. Read-only safelist tools fire on every Read/Grep and
+    // are intentionally not ledgered (spec section 4.3).
+    if (!isReadOnlyTool(p.tool)) {
+      appendLedger({ source: 'permission', target: p.sessionLabel, transport: null, kind: 'permission-auto-allow', summary: `${p.tool}: ${p.payloadPreview}` })
+    }
     resolveResponder(p.requestId, 'approved')
     return
   }
 
   if (pending.size >= PENDING_CAP) {
-    appendLedger({ source: 'permission', target: p.sessionLabel, transport: null, kind: 'tray-overflow', summary: `auto-denied (tray full): ${p.tool}` })
-    resolveResponder(p.requestId, 'denied')
+    appendLedger({ source: 'permission', target: p.sessionLabel, transport: null, kind: 'tray-overflow', summary: `released to Claude (tray full): ${p.tool}` })
+    // Release to Claude's own prompt rather than denying real work. 'defer' closes
+    // the held-open response with an empty body IMMEDIATELY (no 120s stall), so
+    // Claude falls back to its in-terminal prompt right away.
+    resolveResponder(p.requestId, 'defer')
     return
   }
 

@@ -33,12 +33,15 @@ export function normalizePermission(e: HookEvent, info: SessionInfo, transport: 
   // `command`/`arguments` fields the spec'd PermissionRequest event used.
   const pl = e.payload as {
     tool?: string; arguments?: string; command?: string; reason?: string; requestId?: string;
-    tool_input?: { command?: string }
+    tool_use_id?: string; tool_input?: { command?: string; file_path?: string }
   }
   const tool = pl.tool ?? e.toolName ?? 'unknown'
-  const preview = String(pl.arguments ?? pl.command ?? pl.tool_input?.command ?? '')
+  // Claude's tool_input carries the command (Bash) or file_path (Edit/Write/Read).
+  const preview = String(pl.arguments ?? pl.command ?? pl.tool_input?.command ?? pl.tool_input?.file_path ?? '')
   return {
-    requestId: pl.requestId ?? `${e.sessionId}-${e.ts}`,
+    // tool_use_id is Claude's real stable per-call id; it MUST match the responder
+    // key the gateway registered (hooks-gateway peek) or Allow/Deny no-ops.
+    requestId: pl.tool_use_id ?? pl.requestId ?? `${e.sessionId}-${e.ts}`,
     sessionId: e.sessionId,
     sessionLabel: info.label,
     identityColorKey: info.identityColorKey,
@@ -54,11 +57,25 @@ export function normalizePermission(e: HookEvent, info: SessionInfo, transport: 
 }
 
 export type Disposition = 'auto-allow' | 'show'
-export function decideDisposition(p: PendingPermission, _hasStandingApproval: (tool: string) => boolean): Disposition {
-  // v1.5.11: the gateway is wired to CC's PreToolUse hook, so every tool
-  // call flows through here. Show the tray ONLY for the dangerous Bash
-  // patterns detectHighRisk recognises; auto-allow everything else so the
-  // user isn't drowned in prompts for ls/cat/Read/Edit.
-  if (p.highRisk) return 'show'
-  return 'auto-allow'
+
+// Tools with no external effect: auto-approved silently so the tray isn't a wall
+// of cards in an agent loop. TodoWrite mutates only the internal todo list (no
+// external effect) and is included deliberately. Everything not listed SHOWS
+// (err toward surfacing). High-risk is always shown regardless.
+const AUTO_ALLOW_TOOLS = new Set<string>([
+  'Read', 'Glob', 'Grep', 'LS', 'NotebookRead', 'BashOutput', 'TodoWrite',
+])
+
+/** True for the read-only safelist (a cheap Set check; no disk IO). */
+export function isReadOnlyTool(tool: string): boolean { return AUTO_ALLOW_TOOLS.has(tool) }
+
+export function decideDisposition(p: PendingPermission, hasStandingApproval: (tool: string) => boolean): Disposition {
+  if (p.highRisk) return 'show'                  // safety: never auto-allow a destructive payload
+  // Safelist BEFORE standing approvals: the safelist is a Set lookup, while
+  // hasStandingApproval reads standing-approvals.json from disk. The hottest
+  // tools (Read/Grep/Glob) are on the safelist, so this keeps the universal
+  // gate off the disk on its hot path.
+  if (AUTO_ALLOW_TOOLS.has(p.tool)) return 'auto-allow'
+  if (hasStandingApproval(p.tool)) return 'auto-allow'
+  return 'show'
 }

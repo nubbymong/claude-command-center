@@ -92,7 +92,9 @@ export interface ChannelRule {
   lastFiredAt?: string
 }
 
-export type StandingApprovalTool = 'Bash' | 'Edit' | 'WebFetch' | '*'
+// Any Claude/Codex/MCP tool name, or '*' for all. Was a 4-tool union; widened so
+// the tray can mute Write/MultiEdit/WebSearch/Task/MCP tools too.
+export type StandingApprovalTool = string
 export type StandingApprovalTtl = '1h' | '4h' | 'until-restart'
 export interface StandingApproval {
   id: string
