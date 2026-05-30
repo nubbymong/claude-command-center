@@ -38,6 +38,7 @@ import { registerCodexReviewHandlers } from './ipc/codex-review-handlers'
 import { registerChannelHandlers } from './ipc/channel-handlers'
 import { startRulesEngine } from './channel-rules'
 import { startPermissionTray } from './channel-permissions'
+import { startAttentionSource } from './attention-source'
 import { readClipboardImageWithRetry } from './clipboard-image'
 import { HooksGateway } from './hooks/hooks-gateway'
 import { setGateway, getGateway } from './hooks'
@@ -648,6 +649,7 @@ if (!gotTheLock) {
     })
     setGateway(hooksGateway)
     startPermissionTray()
+    startAttentionSource()
     registerHooksHandlers(hooksGateway)
     if (hooksEnabled) {
       cleanupStaleHookEntries(new Set())

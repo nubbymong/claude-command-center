@@ -11,6 +11,7 @@ export const MVP_EVENTS: HookEventKind[] = [
   'Notification',
   'SessionStart',
   'Stop',
+  'UserPromptSubmit',
 ]
 
 export interface InjectArgs {
