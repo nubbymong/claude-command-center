@@ -239,13 +239,12 @@ export class HooksGateway {
       const peeked = JSON.parse(body) as Record<string, unknown>
       // v1.5.11: Claude Code's actual permission hook fires as 'PreToolUse'
       // (legacy 'PermissionRequest' kept for forward compatibility with any
-      // future CC release that adopts the spec name). Held-open response
-      // treatment is scoped to PermissionRequest OR PreToolUse for the
-      // Bash tool -- the only tool channel-permissions classifies. Every
-      // other PreToolUse goes through the fire-and-forget ingest path, so
-      // Claude Code's own permission UI keeps gating non-Bash tools and
-      // unsubscribed environments (tests, headless smoke) don't hang on
-      // the 120s held-open timeout.
+      // future CC release that adopts the spec name). Held-open scope: Bash
+      // PreToolUse is ALWAYS held open (back-compat); v1.5.16 broadens this to
+      // EVERY PreToolUse once `gateActive` is true (see setPermissionGateActive,
+      // flipped on renderer-ready), so the tray can Allow/Deny any tool. While
+      // gateActive is false (no renderer mounted, tests, headless smoke) non-Bash
+      // PreToolUse stays fire-and-forget and nothing hangs on the 120s timeout.
       const peekedToolName = typeof peeked.tool_name === 'string'
         ? (peeked.tool_name as string)
         : typeof peeked.toolName === 'string' ? (peeked.toolName as string) : undefined
@@ -295,7 +294,12 @@ export class HooksGateway {
           clearTimeout(timeout)
           try {
             capturedRes.writeHead(200, { 'Content-Type': 'application/json', 'Connection': 'close' })
-            capturedRes.end(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: decision === 'approved' ? 'allow' : 'deny' } }))
+            // 'defer' -> empty 2xx body = no decision, Claude proceeds with its own
+            // permission flow (used on tray overflow so the call is NOT stalled for
+            // the full 120s timeout). Otherwise emit the allow/deny decision.
+            capturedRes.end(decision === 'defer'
+              ? '{}'
+              : JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: decision === 'approved' ? 'allow' : 'deny' } }))
           } catch { /* response already closed; CC falls back to its own UI */ }
           // note: responder entry deleted by resolvePending in channel-permissions.ts
         })

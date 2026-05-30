@@ -42,6 +42,21 @@ describe('hooks gateway permission wire value', () => {
     expect(res.status).toBe(200)
     expect(JSON.parse(res.body)).toEqual({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow' } })
   })
+
+  it('writes an empty {} (no decision) on a defer outcome so Claude falls back to its own prompt', async () => {
+    gw = new HooksGateway({ emit: () => {}, defaultPort: 0 })
+    const { port } = await gw.start()
+    const secret = gw.registerSession('s-defer')
+    const respPromise = post(port!, 's-defer', secret, {
+      event: 'PreToolUse', tool_name: 'Bash',
+      payload: { requestId: 'req-defer', tool_input: { command: 'rm -rf build' } },
+    })
+    await waitForResponder()
+    resolveResponder('req-defer', 'defer')
+    const res = await respPromise
+    expect(res.status).toBe(200)
+    expect(res.body).toBe('{}')
+  })
 })
 
 describe('hold-open gating', () => {

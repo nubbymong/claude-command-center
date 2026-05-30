@@ -7,7 +7,7 @@ import type { PendingPermission } from '../../../shared/channel-types'
 
 interface Props {
   p: PendingPermission; focused: boolean
-  onAllow: () => void; onDeny: () => void; onAllowOnce: () => void
+  onAllow: () => void; onDeny: () => void
 }
 export function PermissionToast({ p, focused, onAllow, onDeny }: Props) {
   const theme = getResolvedTheme()

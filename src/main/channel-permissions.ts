@@ -5,7 +5,7 @@ import { matchApproval } from './standing-approvals-store'
 import { appendLedger } from './channel-ledger'
 import { pushPendingPermissions } from './ipc/channel-handlers'
 import { normalizePermission, decideDisposition } from './permission-core'
-import { resolveResponder, deregisterResponder } from './permission-responders'
+import { resolveResponder } from './permission-responders'
 import type { PendingPermission } from '../shared/channel-types'
 import type { HookEvent } from '../shared/hook-types'
 
@@ -49,10 +49,10 @@ function capture(e: HookEvent): void {
 
   if (pending.size >= PENDING_CAP) {
     appendLedger({ source: 'permission', target: p.sessionLabel, transport: null, kind: 'tray-overflow', summary: `released to Claude (tray full): ${p.tool}` })
-    // Release to Claude's own prompt rather than denying real work. Resolving with
-    // 'approved' would auto-run it; instead drop the responder so the held-open
-    // response times out -> {} -> Claude falls back to its in-terminal prompt.
-    deregisterResponder(p.requestId)
+    // Release to Claude's own prompt rather than denying real work. 'defer' closes
+    // the held-open response with an empty body IMMEDIATELY (no 120s stall), so
+    // Claude falls back to its in-terminal prompt right away.
+    resolveResponder(p.requestId, 'defer')
     return
   }
 

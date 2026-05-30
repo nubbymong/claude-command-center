@@ -6,7 +6,7 @@ import { PermissionToast } from './PermissionToast'
 const MAX_VISIBLE = 4
 export default function PermissionToastStack() {
   const pending = useChannelStore((s) => s.pending)
-  const respond = (requestId: string, decision: 'allow' | 'deny' | 'allow-once') =>
+  const respond = (requestId: string, decision: 'allow' | 'deny') =>
     window.electronAPI.channels.respondPermission({ requestId, decision })
 
   // getPending() returns insertion order (oldest first); the tray shows the
@@ -40,8 +40,7 @@ export default function PermissionToastStack() {
       {visible.map((p, i) => (
         <PermissionToast key={p.requestId} p={p} focused={i === 0}
           onAllow={() => respond(p.requestId, 'allow')}
-          onDeny={() => respond(p.requestId, 'deny')}
-          onAllowOnce={() => respond(p.requestId, 'allow-once')} />
+          onDeny={() => respond(p.requestId, 'deny')} />
       ))}
       {overflow > 0 && <div className="text-[11px] text-overlay0 bg-surface0 border border-surface1 rounded px-2 py-1">+{overflow} waiting</div>}
     </div>
