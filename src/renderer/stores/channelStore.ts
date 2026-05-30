@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { PendingPermission, LedgerRecord } from '../../shared/channel-types'
+import { useSessionStore } from './sessionStore'
 
 interface ChannelState {
   pending: PendingPermission[]
@@ -18,5 +19,13 @@ export const useChannelStore = create<ChannelState>((set) => ({
 export function setupChannelListeners(): () => void {
   const offP = window.electronAPI.channels.onPendingPermissions((list) => useChannelStore.getState().setPending(list as PendingPermission[]))
   const offL = window.electronAPI.channels.onLedgerEvent((r) => useChannelStore.getState().pushLedger(r as LedgerRecord))
-  return () => { offP(); offL() }
+  const offA = window.electronAPI.channels.onAttention(({ sessionId, needsAttention }) => {
+    const ss = useSessionStore.getState()
+    // Don't raise on the session you're already looking at; clears always apply.
+    if (needsAttention && ss.activeSessionId === sessionId) return
+    ss.updateSession(sessionId, { needsAttention })
+  })
+  // Tell main the listeners are mounted -> safe to make CCC the universal gate.
+  void window.electronAPI.channels.rendererReady()
+  return () => { offP(); offL(); offA() }
 }
