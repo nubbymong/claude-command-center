@@ -43,3 +43,31 @@ describe('hooks gateway permission wire value', () => {
     expect(JSON.parse(res.body)).toEqual({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow' } })
   })
 })
+
+describe('hold-open gating', () => {
+  let gw: HooksGateway
+  afterEach(async () => { await gw?.stop(); _resetResponders() })
+
+  it('flag OFF: a non-Bash PreToolUse is fire-and-forget (returns promptly)', async () => {
+    gw = new HooksGateway({ emit: () => {}, defaultPort: 0 })
+    const { port } = await gw.start()
+    const secret = gw.registerSession('s2')
+    const res = await post(port!, 's2', secret, { event: 'PreToolUse', tool_name: 'Edit', payload: { requestId: 'e1' } })
+    expect(res.status).toBe(200)
+    expect(res.body).toBe('{}')
+  })
+
+  it('flag ON: a non-Bash PreToolUse is held open until resolved', async () => {
+    gw = new HooksGateway({ emit: () => {}, defaultPort: 0 })
+    gw.setPermissionGateActive(true)
+    const { port } = await gw.start()
+    const secret = gw.registerSession('s3')
+    const ac = new AbortController()
+    const respPromise = post(port!, 's3', secret, { event: 'PreToolUse', tool_name: 'Edit', payload: { requestId: 'e2' } }, ac.signal)
+      .then(() => 'resolved').catch(() => 'aborted')
+    const held = await Promise.race([respPromise, new Promise((r) => setTimeout(() => r('held'), 150))])
+    expect(held).toBe('held')   // still open after 150ms
+    ac.abort()                  // clean up; req.on('close') deregisters the responder
+    await respPromise
+  })
+})

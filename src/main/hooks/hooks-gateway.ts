@@ -52,6 +52,7 @@ export class HooksGateway {
   private buffers = new Map<string, RingBufferEntry[]>()
   private overflowLatched = new Set<string>()
   private subscribers = new Set<(e: HookEvent) => void>()
+  private gateActive = false
 
   constructor(opts: HooksGatewayOptions) {
     this.defaultPort = opts.defaultPort ?? DEFAULT_HOOKS_PORT
@@ -62,6 +63,11 @@ export class HooksGateway {
     this.subscribers.add(cb)
     return () => { this.subscribers.delete(cb) }
   }
+
+  // When true, the held-open + responder path applies to EVERY PreToolUse (so the
+  // tray can Allow/Deny any tool), not just Bash. Default false so a live gateway
+  // with no renderer mounted to answer does not hold tool calls open for 120s.
+  setPermissionGateActive(active: boolean): void { this.gateActive = active }
 
   // Test seam: runs the post-redaction dispatch path without HTTP.
   dispatchForTest(event: HookEvent): void { this.fanOut(event) }
@@ -243,7 +249,8 @@ export class HooksGateway {
         ? (peeked.tool_name as string)
         : typeof peeked.toolName === 'string' ? (peeked.toolName as string) : undefined
       const isPreToolUseBash = peeked.event === 'PreToolUse' && peekedToolName === 'Bash'
-      if (peeked.event === 'PermissionRequest' || isPreToolUseBash) {
+      const isHeldOpenTool = isPreToolUseBash || (this.gateActive && peeked.event === 'PreToolUse')
+      if (peeked.event === 'PermissionRequest' || isHeldOpenTool) {
         isPermissionRequest = true
         const payload = peeked.payload && typeof peeked.payload === 'object'
           ? (peeked.payload as Record<string, unknown>)
