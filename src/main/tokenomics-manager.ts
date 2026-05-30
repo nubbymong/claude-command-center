@@ -681,6 +681,7 @@ export async function seedTokenomics(
   if (isSeeding) return loadData()
   isSeeding = true
 
+  const __t0 = Date.now()
   logInfo('[tokenomics] Starting seed...')
   const data = loadData()
 
@@ -770,6 +771,8 @@ export async function seedTokenomics(
   } catch (err) {
     logError(`[tokenomics] Seed failed: ${err}`)
   } finally {
+    const __dt = Date.now() - __t0
+    if (__dt > 250) logInfo(`[perf] tokenomics scan took ${__dt}ms`)
     isSeeding = false
   }
 
