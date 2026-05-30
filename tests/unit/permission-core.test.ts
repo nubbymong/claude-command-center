@@ -29,6 +29,9 @@ describe('permission-core', () => {
     it('high-risk always shows, even with a standing approval', () => {
       expect(decideDisposition(base({ tool: 'Bash', highRisk: { matched: 'rm -rf' } }), yesApproval)).toBe('show')
     })
+    it('high-risk with no approval shows (the plain destructive-Bash path)', () => {
+      expect(decideDisposition(base({ tool: 'Bash', highRisk: { matched: 'rm -rf' } }), noApproval)).toBe('show')
+    })
     it('standing approval auto-allows a non-high-risk tool', () => {
       expect(decideDisposition(base({ tool: 'Bash' }), yesApproval)).toBe('auto-allow')
     })
