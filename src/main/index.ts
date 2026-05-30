@@ -399,12 +399,21 @@ function createWindow(): void {
     // after the window gains focus, which was the "no image detected" miss.
     const img = await readClipboardImageWithRetry()
     if (!img) return null
+    // [perf] resize + JPEG encode is the suspected clipboard-paste freeze; time it
+    // with the source dimensions, since cost scales with input size.
+    const __t0 = Date.now()
     const resized = constrainToMaxDim(img, 1920)
+    const jpeg = resized.toJPEG(85)
+    const __dt = Date.now() - __t0
+    if (__dt > 150) {
+      const s = img.getSize()
+      logInfo(`[perf] clipboard-image resize+encode took ${__dt}ms (${s.width}x${s.height})`)
+    }
     const screenshotsDir = join(getResourcesDirectory(), 'screenshots')
     if (!existsSync(screenshotsDir)) mkdirSync(screenshotsDir, { recursive: true })
     const filename = `clipboard-${Date.now()}-${randomBytes(4).toString('hex')}.jpg`
     const filePath = join(screenshotsDir, filename)
-    writeFileSync(filePath, resized.toJPEG(85))
+    writeFileSync(filePath, jpeg)
     return filePath
   })
 
