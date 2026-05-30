@@ -276,7 +276,7 @@ export class HooksGateway {
           clearTimeout(timeout)
           try {
             capturedRes.writeHead(200, { 'Content-Type': 'application/json', 'Connection': 'close' })
-            capturedRes.end(JSON.stringify({ hookSpecificOutput: { permissionDecision: decision === 'approved' ? 'approved' : 'deny' } }))
+            capturedRes.end(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: decision === 'approved' ? 'allow' : 'deny' } }))
           } catch { /* response already closed; CC falls back to its own UI */ }
           // note: responder entry deleted by resolvePending in channel-permissions.ts
         })
