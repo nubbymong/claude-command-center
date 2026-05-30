@@ -200,6 +200,8 @@ export interface ElectronAPI {
     killSwitch: (p: unknown) => Promise<unknown>
     onPendingPermissions: (cb: (list: unknown) => void) => () => void
     onLedgerEvent: (cb: (r: unknown) => void) => () => void
+    rendererReady: () => Promise<unknown>
+    onAttention: (cb: (p: { sessionId: string; needsAttention: boolean }) => void) => () => void
   }
 }
 
@@ -695,6 +697,12 @@ const electronAPI: ElectronAPI = {
       const fn = (_e: unknown, r: unknown) => cb(r)
       ipcRenderer.on(IPC.CHANNELS_LEDGER_EVENT, fn)
       return () => ipcRenderer.removeListener(IPC.CHANNELS_LEDGER_EVENT, fn)
+    },
+    rendererReady: () => ipcRenderer.invoke(IPC.CHANNELS_RENDERER_READY),
+    onAttention: (cb: (p: { sessionId: string; needsAttention: boolean }) => void) => {
+      const fn = (_e: unknown, p: { sessionId: string; needsAttention: boolean }) => cb(p)
+      ipcRenderer.on(IPC.CHANNELS_ATTENTION, fn)
+      return () => ipcRenderer.removeListener(IPC.CHANNELS_ATTENTION, fn)
     },
   },
 }
