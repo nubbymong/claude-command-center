@@ -3,7 +3,7 @@ import React, { useEffect } from 'react'
 import { useChannelStore } from '../../stores/channelStore'
 import { PermissionToast } from './PermissionToast'
 
-const MAX_VISIBLE = 5
+const MAX_VISIBLE = 4
 export default function PermissionToastStack() {
   const pending = useChannelStore((s) => s.pending)
   const respond = (requestId: string, decision: 'allow' | 'deny' | 'allow-once') =>
@@ -28,14 +28,14 @@ export default function PermissionToastStack() {
   const visible = pending.slice(0, MAX_VISIBLE)
   const overflow = pending.length - visible.length
   return (
-    <div className="fixed top-4 right-4 z-50 flex flex-col gap-2 items-end">
+    <div className="fixed left-3 bottom-12 z-50 flex flex-col-reverse gap-2 items-start channels-tray">
       {visible.map((p, i) => (
         <PermissionToast key={p.requestId} p={p} focused={i === 0}
           onAllow={() => respond(p.requestId, 'allow')}
           onDeny={() => respond(p.requestId, 'deny')}
           onAllowOnce={() => respond(p.requestId, 'allow-once')} />
       ))}
-      {overflow > 0 && <div className="text-[11px] text-overlay0 bg-surface0 border border-surface1 rounded px-2 py-1">+{overflow} more</div>}
+      {overflow > 0 && <div className="text-[11px] text-overlay0 bg-surface0 border border-surface1 rounded px-2 py-1">+{overflow} waiting</div>}
     </div>
   )
 }
