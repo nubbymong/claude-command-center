@@ -39,6 +39,7 @@ import { registerChannelHandlers } from './ipc/channel-handlers'
 import { startRulesEngine } from './channel-rules'
 import { startPermissionTray } from './channel-permissions'
 import { startAttentionSource } from './attention-source'
+import { startJankDetector } from './jank-detector'
 import { readClipboardImageWithRetry } from './clipboard-image'
 import { HooksGateway } from './hooks/hooks-gateway'
 import { setGateway, getGateway } from './hooks'
@@ -650,6 +651,7 @@ if (!gotTheLock) {
     setGateway(hooksGateway)
     startPermissionTray()
     startAttentionSource()
+    startJankDetector()
     registerHooksHandlers(hooksGateway)
     if (hooksEnabled) {
       cleanupStaleHookEntries(new Set())
