@@ -18,6 +18,7 @@ import type {
 // the old lazy-require workaround for the channel-permissions circular
 // dependency is no longer needed (#483).
 import { registerResponder, deregisterResponder } from '../permission-responders'
+import { logDebug } from '../debug-logger'
 
 // Cap the incoming HTTP body at 256 KiB. Claude Code hook payloads top out
 // around a few KB; anything beyond this is either a misbehaving client or
@@ -290,11 +291,30 @@ export class HooksGateway {
       }
     } catch { /* not valid JSON — fall through to normal path which will 400 */ }
 
+    // The held-open responder is keyed by `permissionRequestId`. Downstream, the
+    // pending tray card derives its own id from `payload.requestId` (falling back
+    // to `${sessionId}-${entry.ts}`). Claude Code's real PreToolUse hook sends NO
+    // requestId, so without this both sides would invent DIFFERENT synthetic ids
+    // (two separate Date.now() reads) and Allow/Deny would target a responder that
+    // does not exist -> the request silently stalls until the 120s timeout. Inject
+    // the resolved id into the body so ingest -> normalizePermission key the card
+    // on the SAME value we registered the responder under.
+    let ingestBody = body
+    if (isPermissionRequest && permissionRequestId) {
+      try {
+        const obj = JSON.parse(body) as Record<string, unknown>
+        const pl = (obj.payload && typeof obj.payload === 'object')
+          ? (obj.payload as Record<string, unknown>)
+          : obj
+        if (pl.requestId == null) { pl.requestId = permissionRequestId; ingestBody = JSON.stringify(obj) }
+      } catch { /* keep original body; the normal path will 400 on bad JSON */ }
+    }
+
     const result = await this._handleRequestForTest({
       remoteAddress: req.socket.remoteAddress,
       url: req.url,
       headers: req.headers as Record<string, string | string[] | undefined>,
-      body,
+      body: ingestBody,
     })
 
     // For PermissionRequest events that passed auth, the response is held open
@@ -338,6 +358,12 @@ export class HooksGateway {
   }
 
   private ingest(sid: string, parsed: Record<string, unknown>): void {
+    // Diagnostic (verbose only): log the raw shape of every incoming hook POST
+    // BEFORE the strict `event` check below drops anything. This reveals exactly
+    // what Claude Code sends (e.g. `event` vs `hook_event_name`), which the unit
+    // tests cannot, and is the fastest way to confirm the gateway parses CC's
+    // real PreToolUse during the dev-demo permission round-trip.
+    logDebug(`[hooks] ingest sid=${sid} keys=[${Object.keys(parsed).join(',')}] event=${String(parsed.event)} hook_event_name=${String((parsed as Record<string, unknown>).hook_event_name)} tool_name=${String(parsed.tool_name)}`)
     // Reject payloads with a missing/non-string event field rather than
     // forging an 'Unknown' sentinel: the shared HookEventKind union
     // doesn't include it, so forging would propagate a type-contract

@@ -70,4 +70,24 @@ describe('hold-open gating', () => {
     ac.abort()                  // clean up; req.on('close') deregisters the responder
     await respPromise
   })
+
+  // Claude Code's real PreToolUse hook carries no requestId. The gateway must
+  // inject the SAME synthetic id it keyed the responder under into the ingested
+  // payload, so the downstream tray card resolves to that exact responder (else
+  // Allow/Deny no-ops and the call stalls 120s).
+  it('injects a synthetic requestId into the ingested payload when CC sends none', async () => {
+    gw = new HooksGateway({ emit: () => {}, defaultPort: 0 })
+    const { port } = await gw.start()
+    const secret = gw.registerSession('s4')
+    const ac = new AbortController()
+    // high-risk Bash is held open (no response); ingest still runs first
+    void post(port!, 's4', secret, { event: 'PreToolUse', sessionId: 's4', tool_name: 'Bash', payload: { tool_input: { command: 'rm -rf build' } } }, ac.signal).catch(() => {})
+    const deadline = Date.now() + 2000
+    while (gw.getBuffer('s4').length === 0 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 5))
+    const entry = gw.getBuffer('s4')[0]
+    expect(entry).toBeDefined()
+    expect(typeof (entry.payload as { requestId?: unknown }).requestId).toBe('string')
+    expect((entry.payload as { requestId: string }).requestId).toMatch(/^s4-\d+$/)
+    ac.abort()
+  })
 })
