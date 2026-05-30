@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { useSessionStore } from '../stores/sessionStore'
+import { useSessionStore, type Session } from '../stores/sessionStore'
 import { useSettingsStore, DEFAULT_STATUS_LINE } from '../stores/settingsStore'
 import RateLimitBar from './terminal/RateLimitBar'
 import { formatResetTime, formatTokens, formatDuration } from '../utils/terminalFormatting'
@@ -36,6 +36,7 @@ const CONTROL_PILL =
 // THIS terminal's session -- not whatever the globally-active session is.
 export default function SessionStatusStrip({ sessionId }: SessionStatusStripProps) {
   const session = useSessionStore((s) => s.sessions.find((x) => x.id === sessionId) || null)
+  const updateSession = useSessionStore((s) => s.updateSession)
   const sl = useSettingsStore((s) => s.settings.statusLine) || DEFAULT_STATUS_LINE
   const codexReview = useCodexReviewUsage(session?.enableCodexReview ? sessionId : null)
   const { restart } = useRestartSession(session, false)
@@ -58,6 +59,11 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
       write(`/model ${v}\n`)
     } else {
       setLastEffort(v)
+      // Persist the chosen effort on the session so it shows (and stays) in the
+      // status strip next to the model name. Without this, /effort was written to
+      // the PTY but session.effortLevel never updated, so the strip showed nothing
+      // after a mid-session effort change.
+      updateSession(sessionId, { effortLevel: v as Session['effortLevel'] })
       write(`/effort ${v}\n`)
     }
     setOpenPicker(null)
