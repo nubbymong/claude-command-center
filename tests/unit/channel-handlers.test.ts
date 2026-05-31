@@ -7,7 +7,7 @@ vi.mock('electron', () => ({
 const sendMock = vi.fn(async () => ({ ok: true, transport: 'pty', ledgerId: 'l1' }))
 vi.mock('../../src/main/channel-bus', () => ({ send: sendMock, retract: vi.fn() }))
 vi.mock('../../src/main/channel-rules', () => ({ startRulesEngine: vi.fn() }))
-vi.mock('../../src/main/channel-permissions', () => ({ startPermissionTray: vi.fn(), respondPermission: vi.fn() }))
+vi.mock('../../src/main/channel-permissions', () => ({ startPermissionTray: vi.fn(), dismissPermission: vi.fn(), _resetPending: vi.fn(), getPending: vi.fn(() => []) }))
 const { registerChannelHandlers } = await import('../../src/main/ipc/channel-handlers')
 
 describe('channel-handlers', () => {

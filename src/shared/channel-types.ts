@@ -31,6 +31,7 @@ export type ChannelPayload =
 export const LEDGER_KINDS = [
   'bus-fire', 'bus-overflow', 'tray-overflow', 'permission-prompt',
   'permission-auto-allow', 'permission-approve', 'permission-deny',
+  'permission-dismiss',
   'tier-2-fallback', 'tier-2-timeout', 'failed',
 ] as const
 export type LedgerKind = typeof LEDGER_KINDS[number]

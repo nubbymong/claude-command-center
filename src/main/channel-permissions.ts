@@ -1,87 +1,108 @@
 // src/main/channel-permissions.ts
 import { getGateway } from './hooks/index'
 import { getSessionMeta } from './session-registry'
-import { matchApproval } from './standing-approvals-store'
 import { appendLedger } from './channel-ledger'
 import { pushPendingPermissions } from './ipc/channel-handlers'
-import { normalizePermission, decideDisposition, isReadOnlyTool } from './permission-core'
-import { resolveResponder } from './permission-responders'
+import { readConfig } from './config-manager'
+import { detectHighRisk } from './permission-core'
 import type { PendingPermission } from '../shared/channel-types'
 import type { HookEvent } from '../shared/hook-types'
 
+// Genuine-only tray (v1.5.17). CCC is NOT the permission gate; Claude's own
+// settings decide. We surface ONLY `Notification(permission_prompt)` events
+// (fire only when settings did NOT auto-approve), enriched with the session's
+// pending tool. Cards deep-link or dismiss -- they never answer Claude.
 const PENDING_CAP = 50
 const pending = new Map<string, PendingPermission>()
+// Per session: the most recent PreToolUse with no following PostToolUse/Stop.
+// On a permission_prompt (which carries no tool detail) this IS the blocked tool.
+const lastPendingTool = new Map<string, { tool: string; preview: string }>()
 let started = false
 
 export function getPending(): PendingPermission[] { return [...pending.values()] }
 
-// The responder map moved to ./permission-responders so the hook gateway can
-// import it directly without the historic circular-import workaround. Re-
-// export the two surface functions for the existing call-sites (gateway uses
-// the lazy require path below for backward compat with on-the-wire callers).
-export { registerResponder, deregisterResponder } from './permission-responders'
+/** Test seam: reset module state between cases. */
+export function _resetPending(): void { pending.clear(); lastPendingTool.clear() }
 
-function isPermissionEvent(e: HookEvent): boolean {
-  if (e.event === 'PermissionRequest') return true
-  if (e.event === 'PreToolUse') return true
-  // Notification(permission_prompt) is NOT a tray card: under the universal gate
-  // CCC decides before Claude would prompt, so it rarely fires; when it does
-  // (a settings ask-rule overriding a hook allow) it is an unanswerable on-screen
-  // prompt -> handled by the attention flasher (attention-source.ts), not here.
-  return false
+function trayEnabled(): boolean {
+  // Mirror cloud-agent-manager.ts -- read AppSettings fresh; default ON.
+  return readConfig<{ permissionTrayEnabled?: boolean }>('settings')?.permissionTrayEnabled !== false
 }
 
-function capture(e: HookEvent): void {
+function isPermissionPrompt(e: HookEvent): boolean {
+  return e.event === 'Notification' &&
+    (e.payload as { notification_type?: string }).notification_type === 'permission_prompt'
+}
+
+function previewFor(e: HookEvent): { tool: string; preview: string } {
+  const pl = e.payload as {
+    tool?: string; command?: string; arguments?: string
+    tool_input?: { command?: string; file_path?: string }
+  }
+  const tool = e.toolName ?? pl.tool ?? 'tool'
+  const preview = String(pl.tool_input?.command ?? pl.tool_input?.file_path ?? pl.command ?? pl.arguments ?? '')
+  return { tool, preview }
+}
+
+function dismissForSession(sessionId: string): void {
+  let changed = false
+  for (const [id, p] of pending) if (p.sessionId === sessionId) { pending.delete(id); changed = true }
+  if (changed) pushPendingPermissions(getPending())
+}
+
+function captureNotification(e: HookEvent): void {
+  if (!trayEnabled()) return
   const meta = getSessionMeta(e.sessionId)
-  const p = normalizePermission(e, { label: meta?.label ?? e.sessionId, provider: meta?.provider, identityColorKey: meta?.identityColorKey })
-
-  const disposition = decideDisposition(p, (tool) => matchApproval(tool))
-  if (disposition === 'auto-allow') {
-    // Only ledger when a standing approval drove the allow (worth a record).
-    // A non-safelist auto-allow can ONLY have come from a standing approval, so
-    // a cheap Set check (isReadOnlyTool) avoids a second matchApproval() disk
-    // read on the hot path. Read-only safelist tools fire on every Read/Grep and
-    // are intentionally not ledgered (spec section 4.3).
-    if (!isReadOnlyTool(p.tool)) {
-      appendLedger({ source: 'permission', target: p.sessionLabel, transport: null, kind: 'permission-auto-allow', summary: `${p.tool}: ${p.payloadPreview}` })
-    }
-    resolveResponder(p.requestId, 'approved')
-    return
+  const enrich = lastPendingTool.get(e.sessionId)
+  const id = `${e.sessionId}-${e.ts}`
+  const p: PendingPermission = {
+    requestId: id,
+    sessionId: e.sessionId,
+    sessionLabel: meta?.label ?? e.sessionId,
+    identityColorKey: meta?.identityColorKey,
+    provider: meta?.provider,
+    tool: enrich?.tool ?? 'Permission',
+    payloadPreview: enrich?.preview || 'Claude needs your permission',
+    capturedAt: Date.now(),
+    transport: 'hook',
+    tierLabel: 'hooks',
+    highRisk: enrich ? detectHighRisk(enrich.tool, enrich.preview) : undefined,
   }
-
   if (pending.size >= PENDING_CAP) {
-    appendLedger({ source: 'permission', target: p.sessionLabel, transport: null, kind: 'tray-overflow', summary: `released to Claude (tray full): ${p.tool}` })
-    // Release to Claude's own prompt rather than denying real work. 'defer' closes
-    // the held-open response with an empty body IMMEDIATELY (no 120s stall), so
-    // Claude falls back to its in-terminal prompt right away.
-    resolveResponder(p.requestId, 'defer')
-    return
+    const oldest = pending.keys().next().value
+    if (oldest) pending.delete(oldest)
   }
-
-  pending.set(p.requestId, p)
+  pending.set(id, p)
   appendLedger({ source: 'permission', target: p.sessionLabel, transport: null, kind: 'permission-prompt', summary: `${p.tool}: ${p.payloadPreview}` })
   pushPendingPermissions(getPending())
+}
+
+function track(e: HookEvent): void {
+  if (e.event === 'PreToolUse') { lastPendingTool.set(e.sessionId, previewFor(e)); return }
+  if (e.event === 'PostToolUse' || e.event === 'Stop') {
+    lastPendingTool.delete(e.sessionId)
+    dismissForSession(e.sessionId)
+    return
+  }
+  if (isPermissionPrompt(e)) captureNotification(e)
 }
 
 export function startPermissionTray(): void {
   if (started) return
   started = true
   const gw = getGateway()
-  if (gw) gw.subscribe((e) => { if (isPermissionEvent(e)) capture(e) })
+  if (gw) gw.subscribe(track)
 }
 
-export function resolvePending(requestId: string, decision: 'approved' | 'denied'): void {
-  const p = pending.get(requestId)
-  if (!p) return
-  pending.delete(requestId)
-  appendLedger({ source: 'permission', target: p.sessionLabel, transport: p.transport === 'mcp' ? 'mcp' : null, kind: decision === 'approved' ? 'permission-approve' : 'permission-deny', summary: `${p.tool}: ${p.payloadPreview}` })
-  resolveResponder(requestId, decision)
+/**
+ * Per-card "Ignore". Removes ONLY the tray card; it does not answer Claude's own
+ * in-terminal prompt (which stays until the user acts in the session).
+ */
+export function dismissPermission(p: { requestId: string }): { ok: boolean } {
+  const card = pending.get(p.requestId)
+  if (!card) return { ok: false }
+  pending.delete(p.requestId)
+  appendLedger({ source: 'permission', target: card.sessionLabel, transport: null, kind: 'permission-dismiss', summary: `ignored ${card.tool}` })
   pushPendingPermissions(getPending())
-}
-
-export function respondPermission(p: { requestId: string; decision: 'allow' | 'deny' | 'allow-once' }): { ok: boolean } {
-  const had = pending.has(p.requestId)
-  const mapped = p.decision === 'deny' ? 'denied' : 'approved'
-  resolvePending(p.requestId, mapped)
-  return { ok: had }
+  return { ok: true }
 }

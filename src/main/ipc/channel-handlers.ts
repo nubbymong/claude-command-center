@@ -5,7 +5,7 @@ import { send, retract } from '../channel-bus'
 import { loadRules, saveRule, deleteRule } from '../channel-rules-store'
 import { loadApprovals, addApproval, removeApproval } from '../standing-approvals-store'
 import { getFeatureState, setKillSwitch, markIntroShown } from '../channel-feature-state'
-import { respondPermission } from '../channel-permissions'
+import { dismissPermission } from '../channel-permissions'
 import { getCapabilityDiagnostics, forceTier } from '../channel-capability'
 import type { LedgerRecord, PendingPermission } from '../../shared/channel-types'
 
@@ -31,7 +31,7 @@ export function registerChannelHandlers(): void {
     if (!p?.targetSessionId) return { ok: false, reason: 'bad request' }
     return retract(p.targetSessionId, p.targetLabel)
   })
-  ipcMain.handle(IPC.CHANNELS_RESPOND_PERMISSION, (_e, p) => respondPermission(p))
+  ipcMain.handle(IPC.CHANNELS_DISMISS_PERMISSION, (_e, p) => dismissPermission(p))
   ipcMain.handle(IPC.CHANNELS_FORCE_TIER, (_e, p) => forceTier(p.sessionId, p.tier))
   ipcMain.handle(IPC.CHANNELS_RULE_CRUD, (_e, p) => {
     if (p.op === 'list') return loadRules()
