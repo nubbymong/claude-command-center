@@ -5,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import {
   _setRootsForTest, listProfiles, upsertProfile, deleteProfileMeta, getProfileConfigDir,
+  setupProfileLinks,
 } from '../../src/main/account-profiles'
 
 let tmp: string
@@ -28,5 +29,25 @@ describe('profile metadata CRUD', () => {
   })
   it('computes the per-profile config dir under the resources root', () => {
     expect(getProfileConfigDir('p1')).toBe(path.join(tmp, 'resources', 'account-profiles', 'p1'))
+  })
+})
+
+describe('setupProfileLinks', () => {
+  it('junctions shared dirs and copies settings.json one-way from the shared root', () => {
+    const shared = path.join(tmp, 'shared')
+    fs.mkdirSync(path.join(shared, 'projects'), { recursive: true })
+    fs.mkdirSync(path.join(shared, 'memory'), { recursive: true })
+    fs.writeFileSync(path.join(shared, 'memory', 'M.md'), 'shared mem')
+    fs.writeFileSync(path.join(shared, 'settings.json'), '{"effortLevel":"xhigh"}')
+
+    const dir = getProfileConfigDir('p1')
+    fs.mkdirSync(dir, { recursive: true })
+    setupProfileLinks('p1')
+
+    expect(fs.existsSync(path.join(dir, 'memory', 'M.md'))).toBe(true)
+    expect(fs.lstatSync(path.join(dir, 'projects')).isSymbolicLink()).toBe(true)
+    expect(fs.existsSync(path.join(dir, 'settings.json'))).toBe(true)
+    expect(fs.lstatSync(path.join(dir, 'settings.json')).isSymbolicLink()).toBe(false)
+    expect(JSON.parse(fs.readFileSync(path.join(dir, 'settings.json'), 'utf8')).effortLevel).toBe('xhigh')
   })
 })
