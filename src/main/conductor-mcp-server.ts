@@ -27,7 +27,7 @@ import * as http from 'http'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
-import { logInfo, logError } from './debug-logger'
+import { logInfo, logError, logDebug, logWarn } from './debug-logger'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import { injectConductorVisionInCodexConfig, removeConductorVisionFromCodexConfig } from './providers/codex/mcp-config'
 import { getGlobalManager, startGlobalVision, launchBrowser } from './vision-manager'
@@ -286,11 +286,57 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
   const createServer = (
     source: 'claude' | 'codex' | 'unknown' = 'unknown',
     boundSessionId: string | null = null,
+    transport: 'sse' | 'http' = 'sse',
   ) => {
     const server = new McpServer(
       { name: 'conductor', version: '1.1.0' },
       { capabilities: {} }
     )
+
+    // Diagnostics (opt-in, verbose-gated): wrap server.tool ONCE so every tool
+    // request is logged at a single narrow point -- name + resolved cccSessionId
+    // + transport on entry, ok/duration on completion (logWarn on failure with
+    // the error MESSAGE only). The MCP SDK always passes the handler as the LAST
+    // argument to server.tool(...); we replace just that function with a
+    // transparent wrapper that forwards the SAME args/`this`, returns the
+    // original result unchanged, and rethrows on error. Tool ARGUMENTS and
+    // RESULTS are never logged -- metadata only. Zero behavior change.
+    const rawTool = server.tool.bind(server)
+    server.tool = (...toolArgs: any[]) => {
+      const toolName = typeof toolArgs[0] === 'string' ? toolArgs[0] : 'unknown'
+      const handlerIdx = toolArgs.length - 1
+      const originalHandler = toolArgs[handlerIdx]
+      if (typeof originalHandler === 'function') {
+        toolArgs[handlerIdx] = function (this: unknown, ...handlerArgs: any[]) {
+          const sid = boundSessionId ?? 'unresolved'
+          const startedAt = Date.now()
+          logDebug(`[mcp] tool=${toolName} sid=${sid} transport=${transport}`)
+          let result: any
+          try {
+            result = originalHandler.apply(this, handlerArgs)
+          } catch (err: any) {
+            // Synchronous throw (rare for these handlers, but be faithful).
+            logWarn(`[mcp] tool=${toolName} FAILED dur=${Date.now() - startedAt}ms`, err?.message ?? String(err))
+            throw err
+          }
+          if (result && typeof result.then === 'function') {
+            return result.then(
+              (value: any) => {
+                logDebug(`[mcp] tool=${toolName} done ok=${value?.isError ? 'false' : 'true'} dur=${Date.now() - startedAt}ms`)
+                return value
+              },
+              (err: any) => {
+                logWarn(`[mcp] tool=${toolName} FAILED dur=${Date.now() - startedAt}ms`, err?.message ?? String(err))
+                throw err
+              },
+            )
+          }
+          logDebug(`[mcp] tool=${toolName} done ok=${result?.isError ? 'false' : 'true'} dur=${Date.now() - startedAt}ms`)
+          return result
+        }
+      }
+      return rawTool(...toolArgs)
+    }
 
     // ── Host file access (always available, no vision required) ────────────
 
@@ -449,7 +495,7 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
         const source = parseSourceFromUrl(req.url)
         const boundSessionId = parseCccSessionIdFromUrl(req.url)
         logInfo(`[vision-mcp] New SSE connection (source=${source}, sid=${boundSessionId ?? 'none'})`)
-        const server = createServer(source, boundSessionId)
+        const server = createServer(source, boundSessionId, 'sse')
         const transport = new SSEServerTransport('/messages', res)
         transports.set(transport.sessionId, transport)
 
@@ -519,7 +565,7 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
         try {
           const source = parseSourceFromUrl(req.url)
           const boundSessionId = parseCccSessionIdFromUrl(req.url)
-          const server = createServer(source, boundSessionId)
+          const server = createServer(source, boundSessionId, 'http')
           const transport = new StreamableHTTPServerTransport({
             sessionIdGenerator: undefined,  // stateless
             enableJsonResponse: true,       // prefer JSON for unary responses (what rmcp expects)
