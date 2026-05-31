@@ -5,9 +5,10 @@ import RateLimitBar from './terminal/RateLimitBar'
 import { formatResetTime, formatTokens, formatDuration } from '../utils/terminalFormatting'
 import { useCodexReviewUsage } from '../hooks/useCodexReviewUsage'
 import { useRestartSession } from '../hooks/useRestartSession'
+import { useSwitchAccount } from '../hooks/useSwitchAccount'
 import { useResolvedTheme } from '../hooks/useThemeController'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
-import { resolveAccountName } from '../../shared/account-chip-color'
+import { resolveAccountName, middleTruncateEmail } from '../../shared/account-chip-color'
 import { resolveIdentityColor } from '../../shared/identity-colors'
 import ToolbarPopup from './ToolbarPopup'
 import {
@@ -44,6 +45,7 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
   const sl = useSettingsStore((s) => s.settings.statusLine) || DEFAULT_STATUS_LINE
   const codexReview = useCodexReviewUsage(session?.enableCodexReview ? sessionId : null)
   const { restart } = useRestartSession(session, false)
+  const switchAccount = useSwitchAccount(session)
   const theme = useResolvedTheme()
   // Account identity (drift-immune source: spawn-time capture -> Session fields).
   // The chip is always-on for every session that has a resolved account; the
@@ -54,8 +56,14 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
   // No profileId -> undefined -> resolveAccountName falls back to alias/email.
   const profileName = useAccountProfilesStore((s) => s.profiles.find((p) => p.id === session?.profileId)?.name)
   const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
+  // Mid-session account switch (respawn + resume): gated on the multi-account
+  // feature flag + having more than one profile to switch between. Selector
+  // form on every read so the strip never re-renders on unrelated store churn.
+  const profiles = useAccountProfilesStore((s) => s.profiles)
+  const multipleAccountsEnabled = useSettingsStore((s) => s.settings.multipleAccountsEnabled)
+  const canSwitchAccount = !!multipleAccountsEnabled && profiles.length > 1
 
-  const [openPicker, setOpenPicker] = useState<'mode' | 'model' | null>(null)
+  const [openPicker, setOpenPicker] = useState<'mode' | 'model' | 'account' | null>(null)
   const [lastMode, setLastMode] = useState<string | null>(null)
   const [lastEffort, setLastEffort] = useState<string | null>(null)
   const isClaude = (session?.provider ?? 'claude') === 'claude'
@@ -82,6 +90,13 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
     }
     setOpenPicker(null)
   }
+  // Account chooser select: value '' = the default account (undefined
+  // profileId), otherwise the chosen profile id. switchAccount no-ops when
+  // it equals the session's current account.
+  const onSwitchAccount = (_si: number, v: string) => {
+    switchAccount(sessionId, v || undefined)
+    setOpenPicker(null)
+  }
 
   if (!session) return null
 
@@ -103,6 +118,23 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
     ? resolveAccountName(session.accountEmail, profileName, accountAliases)
     : null
   const accountDot = resolveIdentityColor(session.accountColour ?? 'mauve', theme)
+
+  // Account chooser: every profile (resolved name + truncated email hint) plus
+  // a "Default account" entry. The current account is marked active; selecting
+  // it is a no-op in switchAccount. value '' = default (undefined profileId).
+  const accountItems = [
+    {
+      label: 'Default account',
+      value: '',
+      active: !session.profileId,
+    },
+    ...profiles.map((p) => ({
+      label: resolveAccountName(p.accountEmail, p.name, accountAliases),
+      value: p.id,
+      active: p.id === session.profileId,
+      hint: middleTruncateEmail(p.accountEmail),
+    })),
+  ]
 
   return (
     <div
@@ -192,6 +224,42 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
           danger-on-hover treatment. (UAT R2 Tasks 2 + 4.) */}
       {isClaude && (
         <div className="flex items-center gap-1 shrink-0">
+          {/* Account switch (multi-account only): respawns the session under the
+              chosen profile and resumes the transcript. Same pill styling as the
+              Mode/Model controls; opens upward (ToolbarPopup is bottom-anchored)
+              so it isn't clipped by the telemetry zone's overflow. */}
+          {canSwitchAccount && (
+            <div className="relative">
+              <button
+                onClick={() => setOpenPicker(openPicker === 'account' ? null : 'account')}
+                className={CONTROL_PILL}
+                style={{
+                  background: 'var(--surface-raised)',
+                  border: '1px solid var(--border-subtle)',
+                  color: 'var(--text-secondary)',
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--surface-overlay)'; e.currentTarget.style.color = 'var(--text-primary)' }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--surface-raised)'; e.currentTarget.style.color = 'var(--text-secondary)' }}
+                title="Switch account (respawns + resumes this session)"
+              >
+                <span className="flex items-center gap-1">
+                  <span
+                    className="w-1.5 h-1.5 rounded-full shrink-0"
+                    style={{ backgroundColor: accountDot }}
+                    aria-hidden
+                  />
+                  <span className="truncate max-w-[10rem]">{accountName ?? 'Account'}</span>
+                </span>
+              </button>
+              {openPicker === 'account' && (
+                <ToolbarPopup
+                  sections={[{ title: 'Switch account', items: accountItems }]}
+                  onSelect={onSwitchAccount}
+                  onClose={() => setOpenPicker(null)}
+                />
+              )}
+            </div>
+          )}
           <div className="relative">
             <button
               onClick={() => setOpenPicker(openPicker === 'mode' ? null : 'mode')}
