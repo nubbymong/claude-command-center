@@ -113,3 +113,13 @@ export function safeTeardownProfile(id: string): void {
   if (fs.existsSync(dir)) safeTeardown(dir)
   deleteProfileMeta(id)
 }
+
+/** Reliable per-session identity: each profile has its OWN .claude.json.
+ *  (The v1.5.9 alias attempt failed because it read the GLOBAL last-login.) */
+export function readProfileAccountEmail(id: string): string | null {
+  try {
+    const raw = fs.readFileSync(path.join(getProfileConfigDir(id), '.claude.json'), 'utf8')
+    const email = (JSON.parse(raw) as { oauthAccount?: { emailAddress?: unknown } })?.oauthAccount?.emailAddress
+    return typeof email === 'string' && email ? email : null
+  } catch { return null }
+}
