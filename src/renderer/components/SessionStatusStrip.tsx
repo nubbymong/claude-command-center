@@ -49,7 +49,10 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
   // The chip is always-on for every session that has a resolved account; the
   // profile name + alias map let it render the friendly name, falling back to
   // the raw email. Selector form (never destructure the store).
-  const profileName = useAccountProfilesStore((s) => s.profileName)
+  // Reactive name selection: pick THIS session's profile name directly so a
+  // rename re-renders the chip (selecting the stable profileName fn would not).
+  // No profileId -> undefined -> resolveAccountName falls back to alias/email.
+  const profileName = useAccountProfilesStore((s) => s.profiles.find((p) => p.id === session?.profileId)?.name)
   const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
 
   const [openPicker, setOpenPicker] = useState<'mode' | 'model' | null>(null)
@@ -97,7 +100,7 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
   // resolves profile > alias > email; dot uses the session's identity colour
   // key (fallback to neutral 'mauve' so a missing colour never crashes).
   const accountName = session.accountEmail
-    ? resolveAccountName(session.accountEmail, profileName(session.profileId), accountAliases)
+    ? resolveAccountName(session.accountEmail, profileName, accountAliases)
     : null
   const accountDot = resolveIdentityColor(session.accountColour ?? 'mauve', theme)
 

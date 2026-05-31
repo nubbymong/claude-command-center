@@ -58,10 +58,13 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
   // colour dot in the col-3 chip slot + the resolved account name as tiny muted
   // text on line 2, rendered only when accountEmail is set so the layout never
   // shifts for accountless sessions. Selector form (never destructure).
-  const profileName = useAccountProfilesStore((s) => s.profileName)
+  // Reactive name selection: pick THIS session's profile name directly so a
+  // rename re-renders the row (selecting the stable profileName fn would not).
+  // No profileId -> undefined -> resolveAccountName falls back to alias/email.
+  const profileName = useAccountProfilesStore((s) => s.profiles.find((p) => p.id === session.profileId)?.name)
   const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
   const accountName = session.accountEmail
-    ? resolveAccountName(session.accountEmail, profileName(session.profileId), accountAliases)
+    ? resolveAccountName(session.accountEmail, profileName, accountAliases)
     : null
   const accountDot = session.accountEmail
     ? resolveIdentityColor(session.accountColour ?? 'mauve', theme)
