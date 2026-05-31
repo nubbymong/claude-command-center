@@ -94,6 +94,22 @@ describe('SessionRow card', () => {
     expect(input.closest('button')).toBeNull()
   })
 
+  it('renders a persistent account stamp (dot + name) when accountEmail is set', () => {
+    render(root, { accountEmail: 'nicholas@example.com', accountColour: 'mauve' })
+    expect(container.querySelector('[data-testid="account-dot"]')).toBeTruthy()
+    const name = container.querySelector('[data-testid="account-name"]') as HTMLElement
+    expect(name).toBeTruthy()
+    // No profile/alias resolved here, so the visible name falls back to the email.
+    expect(name.textContent).toBe('nicholas@example.com')
+    expect(name.getAttribute('title')).toBe('nicholas@example.com')
+  })
+
+  it('renders no account stamp when accountEmail is absent', () => {
+    render(root, { accountEmail: undefined })
+    expect(container.querySelector('[data-testid="account-dot"]')).toBeNull()
+    expect(container.querySelector('[data-testid="account-name"]')).toBeNull()
+  })
+
   it('line 2 spans out of the 9px dot column so the model meta is not clipped', () => {
     // jsdom cannot compute CSS grid, so lock the structural intent: the line-2
     // content lives in ONE child that spans grid columns 2 / 4 (never auto-placed

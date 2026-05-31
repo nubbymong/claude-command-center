@@ -6,6 +6,9 @@ import { StatusPill } from '../ui/StatusPill'
 import { IdentityChip } from '../ui/IdentityChip'
 import { resolveIdentityColor, bucketLegacyColorToKey } from '../../../shared/identity-colors'
 import { useResolvedTheme } from '../../hooks/useThemeController'
+import { useAccountProfilesStore } from '../../stores/accountProfilesStore'
+import { useSettingsStore } from '../../stores/settingsStore'
+import { resolveAccountName } from '../../../shared/account-chip-color'
 
 interface SessionRowProps {
   session: Session
@@ -50,6 +53,19 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
   const pct = session.contextPercent ?? 0
   const providerLabel = session.shellOnly ? 'shell' : (session.provider ?? 'claude')
   const metaLine = `${session.modelName ?? session.model ?? ''}${providerLabel ? ` · ${providerLabel}` : ''}`.trim()
+
+  // Persistent account stamp (drift-immune source: spawn-time capture). A small
+  // colour dot in the col-3 chip slot + the resolved account name as tiny muted
+  // text on line 2, rendered only when accountEmail is set so the layout never
+  // shifts for accountless sessions. Selector form (never destructure).
+  const profileName = useAccountProfilesStore((s) => s.profileName)
+  const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
+  const accountName = session.accountEmail
+    ? resolveAccountName(session.accountEmail, profileName(session.profileId), accountAliases)
+    : null
+  const accountDot = session.accountEmail
+    ? resolveIdentityColor(session.accountColour ?? 'mauve', theme)
+    : null
 
   // #398: when renaming, render a plain <div> (NOT a <button>) so the text input
   // is never nested inside interactive button content (invalid HTML / a11y).
@@ -129,6 +145,16 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
       {/* Line 1, col 3: status pill + identity chip (chip selected-only) */}
       <span className="relative z-10 row-start-1 flex items-center gap-1.5 justify-self-end">
         <StatusPill state={st} />
+        {accountDot && (
+          <span
+            data-testid="account-dot"
+            className="w-1.5 h-1.5 rounded-full shrink-0"
+            style={{ backgroundColor: accountDot }}
+            role="img"
+            aria-label={accountName ? `Account: ${accountName}` : 'Account'}
+            title={session.accountEmail}
+          />
+        )}
         {isActive && <span data-testid="identity-chip"><IdentityChip color={identity} title="Selected session" /></span>}
       </span>
 
@@ -138,6 +164,16 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
           empty on line 2, so line 2 aligns under the name. */}
       <div className="relative z-10 row-start-2 flex items-center gap-2" style={{ gridColumn: '2 / 4' }} data-testid="card-line2">
         <span className="meta truncate">{metaLine}</span>
+        {accountName && (
+          <span
+            className="meta truncate min-w-0"
+            style={{ color: 'var(--text-muted)' }}
+            title={session.accountEmail}
+            data-testid="account-name"
+          >
+            {accountName}
+          </span>
+        )}
         <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--surface-sunken)' }}>
           <div className={`meter-fill ${meterClass(pct)}`} style={{ width: `${pct}%` }} />
         </div>
