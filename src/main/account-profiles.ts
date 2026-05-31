@@ -90,3 +90,26 @@ export function resyncProfileSettings(id: string): void {
   const src = path.join(sharedRoot(), 'settings.json')
   if (fs.existsSync(src)) fs.copyFileSync(src, path.join(getProfileConfigDir(id), 'settings.json'))
 }
+
+/** Recursive teardown that removes junction LINKS only, never their targets. */
+function safeTeardown(dir: string): void {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, e.name)
+    const st = fs.lstatSync(full)
+    if (st.isSymbolicLink()) {
+      // junction/symlink: remove the reparse point ONLY, never its target.
+      try { fs.rmdirSync(full) } catch { fs.unlinkSync(full) }
+    } else if (st.isDirectory()) {
+      safeTeardown(full)
+    } else {
+      fs.unlinkSync(full)
+    }
+  }
+  fs.rmdirSync(dir)
+}
+
+export function safeTeardownProfile(id: string): void {
+  const dir = getProfileConfigDir(id)
+  if (fs.existsSync(dir)) safeTeardown(dir)
+  deleteProfileMeta(id)
+}

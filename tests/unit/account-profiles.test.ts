@@ -5,7 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import {
   _setRootsForTest, listProfiles, upsertProfile, deleteProfileMeta, getProfileConfigDir,
-  setupProfileLinks,
+  setupProfileLinks, safeTeardownProfile,
 } from '../../src/main/account-profiles'
 
 let tmp: string
@@ -49,5 +49,22 @@ describe('setupProfileLinks', () => {
     expect(fs.existsSync(path.join(dir, 'settings.json'))).toBe(true)
     expect(fs.lstatSync(path.join(dir, 'settings.json')).isSymbolicLink()).toBe(false)
     expect(JSON.parse(fs.readFileSync(path.join(dir, 'settings.json'), 'utf8')).effortLevel).toBe('xhigh')
+  })
+})
+
+describe('safeTeardownProfile (junction-safe)', () => {
+  it('removes the profile dir but PRESERVES junction targets (the data behind ~/.claude/projects)', () => {
+    const shared = path.join(tmp, 'shared')
+    fs.mkdirSync(path.join(shared, 'projects'), { recursive: true })
+    fs.writeFileSync(path.join(shared, 'projects', 'PRECIOUS.jsonl'), 'do not delete')
+    const dir = getProfileConfigDir('p1')
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(path.join(dir, '.credentials.json'), '{}')
+    setupProfileLinks('p1')
+
+    safeTeardownProfile('p1')
+
+    expect(fs.existsSync(dir)).toBe(false)
+    expect(fs.existsSync(path.join(shared, 'projects', 'PRECIOUS.jsonl'))).toBe(true)
   })
 })
