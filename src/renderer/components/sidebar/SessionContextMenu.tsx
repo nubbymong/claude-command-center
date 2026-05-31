@@ -1,6 +1,8 @@
-import React, { useRef } from 'react'
+import React, { useRef, useState } from 'react'
 import { Session } from '../../stores/sessionStore'
 import { useClickOutside } from '../../hooks/useClickOutside'
+import type { AccountProfile } from '../../../shared/account-types'
+import { resolveAccountName, middleTruncateEmail } from '../../../shared/account-chip-color'
 
 interface SessionContextMenuProps {
   x: number
@@ -11,13 +13,26 @@ interface SessionContextMenuProps {
   onRemoveFromGroup: () => void
   onClose: () => void
   onDismiss: () => void
+  /** Multi-account switch: gated by the caller. When false the item is hidden. */
+  canSwitchAccount?: boolean
+  /** All known account profiles, for the Switch Account sub-chooser. */
+  profiles?: AccountProfile[]
+  /** User aliases (canonical email -> name), for friendly labels. */
+  accountAliases?: Record<string, string>
+  /** Switch this session to the chosen account (undefined = default account).
+   *  No-op upstream when it equals the current account. */
+  onSwitchAccount?: (profileId: string | undefined) => void
 }
 
 export default function SessionContextMenu({
-  x, y, hasGroup, onRename, onRemoveFromGroup, onClose, onDismiss,
+  x, y, session, hasGroup, onRename, onRemoveFromGroup, onClose, onDismiss,
+  canSwitchAccount, profiles, accountAliases, onSwitchAccount,
 }: SessionContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null)
   useClickOutside(menuRef, onDismiss)
+  const [accountOpen, setAccountOpen] = useState(false)
+
+  const showSwitch = !!canSwitchAccount && !!profiles && profiles.length > 1 && !!onSwitchAccount
 
   return (
     <div
@@ -43,6 +58,52 @@ export default function SessionContextMenu({
           </svg>
           Remove from Group
         </button>
+      )}
+
+      {showSwitch && (
+        <>
+          <div className="my-1 border-t border-surface1" />
+          <button
+            onClick={() => setAccountOpen((o) => !o)}
+            className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-surface1 transition-colors flex items-center gap-2"
+          >
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.2">
+              <circle cx="6" cy="4" r="2.2"/>
+              <path d="M1.8 10.5c0-2 1.9-3.3 4.2-3.3s4.2 1.3 4.2 3.3" strokeLinecap="round"/>
+            </svg>
+            <span className="flex-1">Switch Account</span>
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" style={{ transform: accountOpen ? 'rotate(90deg)' : undefined, transition: 'transform 150ms' }}>
+              <path d="M3.5 2.5L6.5 5l-3 2.5" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </button>
+          {accountOpen && (
+            <div className="pl-2">
+              <button
+                onClick={() => { onSwitchAccount?.(undefined); onDismiss() }}
+                className="w-full text-left px-3 py-1.5 text-xs hover:bg-surface1 transition-colors flex items-center gap-2"
+                style={{ color: !session.profileId ? 'var(--color-text)' : 'var(--color-subtext0)' }}
+              >
+                <span className="w-3 shrink-0 text-green">{!session.profileId ? String.fromCodePoint(0x2713) : ''}</span>
+                Default account
+              </button>
+              {profiles!.map((p) => (
+                <button
+                  key={p.id}
+                  onClick={() => { onSwitchAccount?.(p.id); onDismiss() }}
+                  className="w-full text-left px-3 py-1.5 text-xs hover:bg-surface1 transition-colors flex items-center gap-2"
+                  style={{ color: p.id === session.profileId ? 'var(--color-text)' : 'var(--color-subtext0)' }}
+                  title={p.accountEmail}
+                >
+                  <span className="w-3 shrink-0 text-green">{p.id === session.profileId ? String.fromCodePoint(0x2713) : ''}</span>
+                  <span className="flex flex-col min-w-0">
+                    <span className="truncate">{resolveAccountName(p.accountEmail, p.name, accountAliases)}</span>
+                    <span className="truncate text-overlay0" style={{ fontSize: 10, lineHeight: '13px' }}>{middleTruncateEmail(p.accountEmail)}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </>
       )}
 
       <div className="my-1 border-t border-surface1" />
