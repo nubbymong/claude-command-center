@@ -5,22 +5,24 @@ import { PermissionToast } from '../../../src/renderer/components/channels/Permi
 import type { PendingPermission } from '../../../src/shared/channel-types'
 
 const base: PendingPermission = { requestId: 'r', sessionId: 's', sessionLabel: 'api-server', provider: 'claude',
-  tool: 'Bash', payloadPreview: 'ls -la', reason: 'list files', capturedAt: 0, transport: 'hook', tierLabel: 'hooks' }
+  tool: 'Bash', payloadPreview: 'ls -la', capturedAt: 0, transport: 'hook', tierLabel: 'hooks' }
 
 describe('PermissionToast', () => {
-  it('renders tool, preview, reason, alias and Allow/Deny/Allow once', () => {
-    const html = renderToStaticMarkup(<PermissionToast p={base} focused onAllow={vi.fn()} onDeny={vi.fn()} onAllowOnce={vi.fn()} />)
+  it('renders label, tool, preview, and the Go to session / Ignore actions', () => {
+    const html = renderToStaticMarkup(<PermissionToast p={base} onGoToSession={vi.fn()} onIgnore={vi.fn()} />)
     expect(html).toContain('api-server'); expect(html).toContain('Bash'); expect(html).toContain('ls -la')
-    expect(html).toContain('list files'); expect(html).toContain('Allow'); expect(html).toContain('Deny')
+    expect(html).toContain('needs your permission')
+    expect(html).toContain('Go to session'); expect(html).toContain('Ignore')
   })
-  it('shows a destructive strip and does NOT render the channel-relay badge for hooks transport', () => {
+  it('shows a destructive strip for high-risk and never offers an allow/deny action', () => {
     const hot = { ...base, payloadPreview: 'rm -rf x', highRisk: { matched: 'rm -rf' } }
-    const html = renderToStaticMarkup(<PermissionToast p={hot} focused onAllow={vi.fn()} onDeny={vi.fn()} onAllowOnce={vi.fn()} />)
+    const html = renderToStaticMarkup(<PermissionToast p={hot} onGoToSession={vi.fn()} onIgnore={vi.fn()} />)
     expect(html).toContain('destructive'); expect(html).toContain('rm -rf')
-    expect(html).not.toContain('via channel-relay')
+    expect(html).not.toContain('Allow'); expect(html).not.toContain('Deny')
   })
-  it('renders the via channel-relay badge only for channel-relay tierLabel', () => {
-    const html = renderToStaticMarkup(<PermissionToast p={{ ...base, tierLabel: 'channel-relay' }} focused onAllow={vi.fn()} onDeny={vi.fn()} onAllowOnce={vi.fn()} />)
-    expect(html).toContain('via channel-relay')
+  it('renders the generic message (no tool block) when the card was not enriched', () => {
+    const generic = { ...base, tool: 'Permission', payloadPreview: 'Claude needs your permission' }
+    const html = renderToStaticMarkup(<PermissionToast p={generic} onGoToSession={vi.fn()} onIgnore={vi.fn()} />)
+    expect(html).toContain('Claude needs your permission')
   })
 })

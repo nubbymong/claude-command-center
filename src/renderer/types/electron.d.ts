@@ -428,7 +428,7 @@ export interface ElectronAPI {
   channels: {
     send: (req: { targetSessionId: string; targetLabel?: string; payload: ChannelPayload; meta: ChannelEnvelopeMeta }) => Promise<{ ok: boolean; reason?: string; transport?: 'pty' | 'mcp'; ledgerId?: string }>
     retract: (p: { targetSessionId: string; targetLabel?: string }) => Promise<{ ok: boolean; reason?: string; transport?: 'pty' | 'mcp'; ledgerId?: string }>
-    respondPermission: (p: { requestId: string; decision: 'allow' | 'deny' | 'allow-once' }) => Promise<{ ok: boolean }>
+    dismissPermission: (p: { requestId: string }) => Promise<{ ok: boolean }>
     forceTier: (p: { sessionId: string; tier: 'auto' | 'tier-1' | 'tier-2' }) => Promise<{ ok: boolean }>
     ruleCRUD: (p: { op: 'list' } | { op: 'save'; rule: ChannelRule } | { op: 'delete'; id: string }) => Promise<ChannelRule[] | { ok: boolean; rules: ChannelRule[] }>
     standingApprovalCRUD: (p: { op: 'add'; tool: StandingApprovalTool; ttl: StandingApprovalTtl } | { op: 'remove'; id: string } | { op: 'list' }) => Promise<StandingApproval[]>

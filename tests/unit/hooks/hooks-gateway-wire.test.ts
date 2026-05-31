@@ -33,6 +33,7 @@ describe('hooks gateway permission wire value', () => {
 
   it('writes permissionDecision "allow" (not "approved") when a Bash request is approved', async () => {
     gw = new HooksGateway({ emit: () => {}, defaultPort: 0 })
+    gw.setPermissionGateActive(true)
     const { port } = await gw.start()
     const secret = gw.registerSession('sess-1')
     const respPromise = post(port!, 'sess-1', secret, {
@@ -48,6 +49,7 @@ describe('hooks gateway permission wire value', () => {
 
   it('writes an empty {} (no decision) on a defer outcome so Claude falls back to its own prompt', async () => {
     gw = new HooksGateway({ emit: () => {}, defaultPort: 0 })
+    gw.setPermissionGateActive(true)
     const { port } = await gw.start()
     const secret = gw.registerSession('s-defer')
     const respPromise = post(port!, 's-defer', secret, {
@@ -75,6 +77,21 @@ describe('hold-open gating', () => {
     expect(res.body).toBe('{}')
   })
 
+  // Regression lock for the v1.5.16 flood: Bash PreToolUse used to be held open
+  // UNCONDITIONALLY (the old `isPreToolUseBash` path). With the genuine-only
+  // un-gate, Bash must be fire-and-forget too while the flag is OFF -- otherwise
+  // CCC is back to being the gate and the flood/stall returns. If someone
+  // re-adds an unconditional Bash hold, this test fails (the post would hang).
+  it('flag OFF: a Bash PreToolUse is ALSO fire-and-forget (no unconditional hold)', async () => {
+    gw = new HooksGateway({ emit: () => {}, defaultPort: 0 })
+    const { port } = await gw.start()
+    const secret = gw.registerSession('s2b')
+    const res = await post(port!, 's2b', secret, { event: 'PreToolUse', tool_name: 'Bash', payload: { requestId: 'b1', tool_input: { command: 'git status' } } })
+    expect(res.status).toBe(200)
+    expect(res.body).toBe('{}')
+    expect(_responderCount()).toBe(0)   // nothing registered -> nothing held
+  })
+
   it('flag ON: a non-Bash PreToolUse is held open until resolved', async () => {
     gw = new HooksGateway({ emit: () => {}, defaultPort: 0 })
     gw.setPermissionGateActive(true)
@@ -95,6 +112,7 @@ describe('hold-open gating', () => {
   // Allow/Deny no-ops and the call stalls 120s).
   it('injects a synthetic requestId into the ingested payload when CC sends none', async () => {
     gw = new HooksGateway({ emit: () => {}, defaultPort: 0 })
+    gw.setPermissionGateActive(true)
     const { port } = await gw.start()
     const secret = gw.registerSession('s4')
     const ac = new AbortController()

@@ -3,10 +3,11 @@ import { describe, it, expect } from 'vitest'
 import { LEDGER_KINDS, CHANNEL_SOURCES, isChannelPayload } from '../../src/shared/channel-types'
 
 describe('channel-types', () => {
-  it('LEDGER_KINDS has exactly the 10 spec values', () => {
+  it('LEDGER_KINDS has exactly the 11 spec values', () => {
     expect(LEDGER_KINDS).toEqual([
       'bus-fire', 'bus-overflow', 'tray-overflow', 'permission-prompt',
       'permission-auto-allow', 'permission-approve', 'permission-deny',
+      'permission-dismiss',
       'tier-2-fallback', 'tier-2-timeout', 'failed',
     ])
   })

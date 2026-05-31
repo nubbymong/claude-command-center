@@ -15,6 +15,14 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '1.5.17',
+    date: '2026-05-31',
+    changes: [
+      { type: 'improvement', description: 'Permission tray now surfaces only genuine prompts Claude is blocked on, honoring your Claude settings (no more cards for auto-approved commands).' },
+      { type: 'feature', description: 'Each card has Go to session and Ignore; a Settings toggle disables the tray.' },
+    ],
+  },
+  {
     version: '1.5.16',
     date: '2026-05-30',
     changes: [

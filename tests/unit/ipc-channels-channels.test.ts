@@ -5,7 +5,7 @@ import { IPC } from '../../src/shared/ipc-channels'
 const EXPECTED = {
   CHANNELS_SEND: 'channels:send',
   CHANNELS_RETRACT: 'channels:retract',
-  CHANNELS_RESPOND_PERMISSION: 'channels:respondPermission',
+  CHANNELS_DISMISS_PERMISSION: 'channels:dismissPermission',
   CHANNELS_FORCE_TIER: 'channels:forceTier',
   CHANNELS_PENDING_PERMISSIONS: 'channels:pendingPermissions',
   CHANNELS_LEDGER_EVENT: 'channels:ledgerEvent',

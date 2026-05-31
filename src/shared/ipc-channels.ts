@@ -257,7 +257,7 @@ export const IPC = {
   // Conductor Channels (v1.5.10)
   CHANNELS_SEND: 'channels:send',                                   // renderer -> main: dispatch a payload
   CHANNELS_RETRACT: 'channels:retract',                             // renderer -> main: send retraction follow-up
-  CHANNELS_RESPOND_PERMISSION: 'channels:respondPermission',        // renderer -> main: allow/deny a pending prompt
+  CHANNELS_DISMISS_PERMISSION: 'channels:dismissPermission',        // renderer -> main: dismiss ("Ignore") a tray card; does NOT answer Claude
   CHANNELS_FORCE_TIER: 'channels:forceTier',                        // renderer -> main: per-session tier override
   CHANNELS_PENDING_PERMISSIONS: 'channels:pendingPermissions',      // main -> renderer: pending tray updates
   CHANNELS_LEDGER_EVENT: 'channels:ledgerEvent',                    // main -> renderer: live ledger row

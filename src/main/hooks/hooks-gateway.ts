@@ -226,10 +226,12 @@ export class HooksGateway {
     }
     const body = Buffer.concat(chunks).toString('utf-8')
 
-    // For PermissionRequest events, hold the HTTP response open and register a
-    // responder so that respondPermission() can write the hook decision back to
-    // the Claude Code process. The responder is registered BEFORE ingest runs
-    // (via _handleRequestForTest) to avoid a race on the auto-allow path.
+    // For held-open events (PermissionRequest, or PreToolUse while gateActive),
+    // hold the HTTP response open and register a responder so a resolver can
+    // write the hook decision back to the Claude Code process. gateActive is
+    // never set in production (v1.5.17 genuine-only), so this path is dormant.
+    // The responder is registered BEFORE ingest runs (via _handleRequestForTest)
+    // to avoid a race on the auto-allow path.
     let isPermissionRequest = false
     let permissionRequestId: string | undefined
     // cleanup is defined here so the auth-fail branch (after _handleRequestForTest)
@@ -237,25 +239,18 @@ export class HooksGateway {
     let cleanup: (() => void) = () => { /* no-op until PermissionRequest block runs */ }
     try {
       const peeked = JSON.parse(body) as Record<string, unknown>
-      // v1.5.11: Claude Code's actual permission hook fires as 'PreToolUse'
-      // (legacy 'PermissionRequest' kept for forward compatibility with any
-      // future CC release that adopts the spec name). Held-open scope: Bash
-      // PreToolUse is ALWAYS held open (back-compat); v1.5.16 broadens this to
-      // EVERY PreToolUse once `gateActive` is true (see setPermissionGateActive,
-      // flipped on renderer-ready), so the tray can Allow/Deny any tool. While
-      // gateActive is false (no renderer mounted, tests, headless smoke) non-Bash
-      // PreToolUse stays fire-and-forget and nothing hangs on the 120s timeout.
-      const peekedToolName = typeof peeked.tool_name === 'string'
-        ? (peeked.tool_name as string)
-        : typeof peeked.toolName === 'string' ? (peeked.toolName as string) : undefined
       // Claude Code's real hook POST uses `hook_event_name` (not `event`) and
       // snake_case fields; accept both so the gateway works with the live CLI as
       // well as the spec'd PermissionRequest shape used by tests.
       const peekedEvent = typeof peeked.hook_event_name === 'string'
         ? (peeked.hook_event_name as string)
         : typeof peeked.event === 'string' ? (peeked.event as string) : undefined
-      const isPreToolUseBash = peekedEvent === 'PreToolUse' && peekedToolName === 'Bash'
-      const isHeldOpenTool = isPreToolUseBash || (this.gateActive && peekedEvent === 'PreToolUse')
+      // Genuine-only (v1.5.17): CCC is no longer the permission gate. Hold a
+      // PreToolUse open ONLY when gateActive is explicitly set (a dormant path
+      // reserved for a possible future inline-for-high-risk feature). gateActive
+      // is never flipped in production now, so every PreToolUse is fire-and-
+      // forget and Claude's own settings fully decide -> no flood, no stalls.
+      const isHeldOpenTool = this.gateActive && peekedEvent === 'PreToolUse'
       if (peekedEvent === 'PermissionRequest' || isHeldOpenTool) {
         isPermissionRequest = true
         const payload = peeked.payload && typeof peeked.payload === 'object'
@@ -301,7 +296,10 @@ export class HooksGateway {
               ? '{}'
               : JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: decision === 'approved' ? 'allow' : 'deny' } }))
           } catch { /* response already closed; CC falls back to its own UI */ }
-          // note: responder entry deleted by resolvePending in channel-permissions.ts
+          // The responder entry is removed by cleanup() (on req close / 120s
+          // timeout). This whole hold-open branch is dormant in prod (gateActive
+          // is never set true post-v1.5.17); it remains for a possible future
+          // inline-for-high-risk path.
         })
       }
     } catch { /* not valid JSON — fall through to normal path which will 400 */ }

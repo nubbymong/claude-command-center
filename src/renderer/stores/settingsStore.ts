@@ -91,6 +91,9 @@ export interface AppSettings {
    *  only -- in-flight sessions keep whatever setting they started with.
    *  Off by default; CC's own /config toggle still wins per-session. */
   disableClaudeWorkflows?: boolean
+  /** v1.5.17: show the genuine-only permission tray (cards for prompts Claude is
+   *  blocked on). Default on; set false to hide the tray and skip capture. */
+  permissionTrayEnabled?: boolean
 }
 
 interface SettingsState {
@@ -117,6 +120,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   hooksEnabled: true,
   hooksPort: 19334,
   theme: 'dark',
+  permissionTrayEnabled: true,
 }
 
 // V2 changed the bundled terminal default from Cascadia Code @14 to JetBrains
