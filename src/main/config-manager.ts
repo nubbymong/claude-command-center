@@ -30,6 +30,7 @@ const CONFIG_FILES = {
   commandSections: 'command-sections.json',
   usageTracking: 'usage-tracking.json',
   commandBarUi: 'command-bar-ui.json',
+  accountProfiles: 'account-profiles.json',
 } as const
 
 export type ConfigKey = keyof typeof CONFIG_FILES

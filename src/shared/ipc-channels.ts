@@ -271,6 +271,14 @@ export const IPC = {
   CHANNELS_CAPABILITY_DIAGNOSTICS: 'channels:capabilityDiagnostics',// renderer -> main: capability + handshake history
   CHANNELS_INTRO_DISMISSED: 'channels:introDismissed',              // renderer -> main: persist first-run dismissal
   CHANNELS_KILL_SWITCH: 'channels:killSwitch',                      // renderer -> main: toggle disableConductorChannels
+
+  // Account profiles (per-process CLAUDE_CONFIG_DIR multi-account)
+  ACCOUNT_PROFILES_LIST: 'accountProfiles:list',
+  ACCOUNT_PROFILES_CREATE: 'accountProfiles:create',
+  ACCOUNT_PROFILES_RENAME: 'accountProfiles:rename',
+  ACCOUNT_PROFILES_DELETE: 'accountProfiles:delete',
+  ACCOUNT_PROFILES_ADD_ACCOUNT: 'accountProfiles:addAccount',
+  ACCOUNT_PROFILES_REFRESH_IDENTITY: 'accountProfiles:refreshIdentity',
 } as const
 
 /** Helper to build per-session PTY data channels */
