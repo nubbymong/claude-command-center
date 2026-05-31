@@ -48,6 +48,7 @@ export const spawnOptionsSchema = z.object({
   disableAutoMemory: z.boolean().optional(),
   enableCodexReview: z.boolean().optional(),
   model: z.string().optional(),
+  profileId: z.string().optional(),
   provider: z.enum(['claude', 'codex']).optional(),
   codexOptions: z.object({
     model: z.string().optional(),
@@ -82,6 +83,7 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     disableAutoMemory?: boolean
     enableCodexReview?: boolean
     model?: string
+    profileId?: string
     provider?: 'claude' | 'codex'
     codexOptions?: {
       model?: string

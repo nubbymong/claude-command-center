@@ -60,6 +60,7 @@ export interface ElectronAPI {
       disableAutoMemory?: boolean
       enableCodexReview?: boolean
       model?: string
+      profileId?: string
       provider?: 'claude' | 'codex'
       codexOptions?: {
         model?: string

@@ -437,6 +437,7 @@ export default function App() {
           status: 'idle' as const,
           createdAt: Date.now(),
           provider: saved.provider,
+          profileId: saved.profileId,
           codexOptions: saved.codexOptions,
         }
       })

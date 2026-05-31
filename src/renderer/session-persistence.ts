@@ -38,6 +38,7 @@ export function buildSessionState(): SessionState {
     // provider='codex' + codexOptions; Claude sessions stay on the legacy
     // top-level fields packed into claudeOptions below.
     provider: s.provider ?? 'claude',
+    profileId: s.profileId,
     claudeOptions: (s.provider ?? 'claude') === 'claude' ? {
       model: s.model || undefined,
       legacyVersion: s.legacyVersion,

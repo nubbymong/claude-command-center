@@ -316,7 +316,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
               }))
             if (agentsConfig.length === 0) agentsConfig = undefined
           }
-          window.electronAPI.pty.spawn(sessionId, { cwd, cols, rows, ssh, shellOnly, elevated, configId, configLabel, useResumePicker, legacyVersion, agentsConfig, effortLevel, disableAutoMemory, enableCodexReview, model, provider, codexOptions })
+          window.electronAPI.pty.spawn(sessionId, { cwd, cols, rows, ssh, shellOnly, elevated, configId, configLabel, useResumePicker, legacyVersion, agentsConfig, effortLevel, disableAutoMemory, enableCodexReview, model, provider, codexOptions, profileId: session?.profileId })
         }
       }
 
