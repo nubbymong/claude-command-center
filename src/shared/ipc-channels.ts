@@ -51,6 +51,9 @@ export const IPC = {
   // Statusline
   STATUSLINE_UPDATE: 'statusline:update',
 
+  // Live reasoning effort pushed from the hooks gateway (main -> renderer).
+  HOOKS_EFFORT_UPDATE: 'hooks:effortUpdate',
+
   // Debug
   DEBUG_ON_DEBUG: 'claude:debug',
   DEBUG_ENABLE: 'debug:enable',
