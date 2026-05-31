@@ -84,6 +84,9 @@ export interface ElectronAPI {
   statusline: {
     onUpdate: (callback: (data: StatuslineData) => void) => () => void
   }
+  effort: {
+    onUpdate: (callback: (data: { sessionId: string; effortLevel: string }) => void) => () => void
+  }
   debug: {
     onDebug: (callback: (data: unknown) => void) => () => void
     enable: () => Promise<boolean>
@@ -369,6 +372,13 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.on(IPC.STATUSLINE_UPDATE, handler)
       return () => ipcRenderer.removeListener(IPC.STATUSLINE_UPDATE, handler)
     }
+  },
+  effort: {
+    onUpdate: (callback) => {
+      const handler = (_: unknown, data: unknown) => callback(data as { sessionId: string; effortLevel: string })
+      ipcRenderer.on(IPC.HOOKS_EFFORT_UPDATE, handler)
+      return () => ipcRenderer.removeListener(IPC.HOOKS_EFFORT_UPDATE, handler)
+    },
   },
   debug: {
     onDebug: (callback: (data: unknown) => void) => {

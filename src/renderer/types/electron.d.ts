@@ -151,6 +151,9 @@ export interface ElectronAPI {
   statusline: {
     onUpdate: (callback: (data: StatuslineData) => void) => () => void
   }
+  effort: {
+    onUpdate: (callback: (data: { sessionId: string; effortLevel: string }) => void) => () => void
+  }
   debug: {
     onDebug: (callback: (data: any) => void) => () => void
     enable: () => Promise<boolean>
