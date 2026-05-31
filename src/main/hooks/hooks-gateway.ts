@@ -226,10 +226,12 @@ export class HooksGateway {
     }
     const body = Buffer.concat(chunks).toString('utf-8')
 
-    // For PermissionRequest events, hold the HTTP response open and register a
-    // responder so that respondPermission() can write the hook decision back to
-    // the Claude Code process. The responder is registered BEFORE ingest runs
-    // (via _handleRequestForTest) to avoid a race on the auto-allow path.
+    // For held-open events (PermissionRequest, or PreToolUse while gateActive),
+    // hold the HTTP response open and register a responder so a resolver can
+    // write the hook decision back to the Claude Code process. gateActive is
+    // never set in production (v1.5.17 genuine-only), so this path is dormant.
+    // The responder is registered BEFORE ingest runs (via _handleRequestForTest)
+    // to avoid a race on the auto-allow path.
     let isPermissionRequest = false
     let permissionRequestId: string | undefined
     // cleanup is defined here so the auth-fail branch (after _handleRequestForTest)
