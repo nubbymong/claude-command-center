@@ -85,6 +85,9 @@ export interface AppSettings {
    *  v1.5.9: no longer surfaced anywhere in the UI (AccountColoursSection removed).
    *  Retained so older saved settings still hydrate without errors. */
   accountColourOverrides?: Record<string, import('../../shared/identity-colors').IdentityColorKey>
+  /** v1.5.19: friendly names for accounts WITHOUT a profile (the default/single
+   *  account), keyed by canonical email. Profiles carry their own `name`. */
+  accountAliases?: Record<string, string>
   /** v1.5.12: when true, CCC writes `disableWorkflows: true` into every
    *  per-session Claude settings file so Claude Code's dynamic-workflow
    *  feature is disabled at session boot. Affects newly spawned sessions
