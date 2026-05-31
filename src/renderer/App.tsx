@@ -34,6 +34,7 @@ import { useCommandStore } from './stores/commandStore'
 import { useMagicButtonStore } from './stores/magicButtonStore'
 import { useAppMetaStore } from './stores/appMetaStore'
 import { useSettingsStore } from './stores/settingsStore'
+import { useAccountProfilesStore } from './stores/accountProfilesStore'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 import { useThemeController } from './hooks/useThemeController'
 import { useLaunchConfig } from './hooks/useLaunchConfig'
@@ -295,6 +296,7 @@ export default function App() {
       useConductorMcpStore.getState().loadConfig()
       useConductorMcpStore.getState().fetchStatus()
       useCodexAccountStore.getState().refresh()
+      useAccountProfilesStore.getState().hydrate()
 
       const magicSettings = useMagicButtonStore.getState().settings
       if (magicSettings.autoDeleteDays != null && magicSettings.autoDeleteDays > 0) {
