@@ -33,6 +33,7 @@ describe('hooks gateway permission wire value', () => {
 
   it('writes permissionDecision "allow" (not "approved") when a Bash request is approved', async () => {
     gw = new HooksGateway({ emit: () => {}, defaultPort: 0 })
+    gw.setPermissionGateActive(true)
     const { port } = await gw.start()
     const secret = gw.registerSession('sess-1')
     const respPromise = post(port!, 'sess-1', secret, {
@@ -48,6 +49,7 @@ describe('hooks gateway permission wire value', () => {
 
   it('writes an empty {} (no decision) on a defer outcome so Claude falls back to its own prompt', async () => {
     gw = new HooksGateway({ emit: () => {}, defaultPort: 0 })
+    gw.setPermissionGateActive(true)
     const { port } = await gw.start()
     const secret = gw.registerSession('s-defer')
     const respPromise = post(port!, 's-defer', secret, {
@@ -95,6 +97,7 @@ describe('hold-open gating', () => {
   // Allow/Deny no-ops and the call stalls 120s).
   it('injects a synthetic requestId into the ingested payload when CC sends none', async () => {
     gw = new HooksGateway({ emit: () => {}, defaultPort: 0 })
+    gw.setPermissionGateActive(true)
     const { port } = await gw.start()
     const secret = gw.registerSession('s4')
     const ac = new AbortController()

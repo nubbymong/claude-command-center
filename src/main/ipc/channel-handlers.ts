@@ -7,7 +7,6 @@ import { loadApprovals, addApproval, removeApproval } from '../standing-approval
 import { getFeatureState, setKillSwitch, markIntroShown } from '../channel-feature-state'
 import { respondPermission } from '../channel-permissions'
 import { getCapabilityDiagnostics, forceTier } from '../channel-capability'
-import { getGateway } from '../hooks/index'
 import type { LedgerRecord, PendingPermission } from '../../shared/channel-types'
 
 // main -> renderer push helpers (broadcast to all windows)
@@ -49,10 +48,10 @@ export function registerChannelHandlers(): void {
   ipcMain.handle(IPC.CHANNELS_INTRO_DISMISSED, () => { markIntroShown(); return getFeatureState() })
   ipcMain.handle(IPC.CHANNELS_KILL_SWITCH, (_e, p) => { setKillSwitch(!!p.disabled); return getFeatureState() })
   ipcMain.handle(IPC.CHANNELS_RENDERER_READY, () => {
-    // Renderer has mounted its pending-permissions + attention listeners. Safe to
-    // make CCC the universal permission gate now (before this, non-Bash tools stay
-    // fire-and-forget so nothing holds open with no UI to answer).
-    getGateway()?.setPermissionGateActive(true)
+    // Genuine-only (v1.5.17): the renderer mounts its pending-permissions +
+    // attention listeners here, but CCC no longer gates permissions, so we do
+    // NOT activate the hold-open path. Kept as a handshake the renderer still
+    // calls; returning ok keeps the contract stable.
     return { ok: true }
   })
 }
