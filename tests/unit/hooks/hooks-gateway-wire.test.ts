@@ -77,6 +77,21 @@ describe('hold-open gating', () => {
     expect(res.body).toBe('{}')
   })
 
+  // Regression lock for the v1.5.16 flood: Bash PreToolUse used to be held open
+  // UNCONDITIONALLY (the old `isPreToolUseBash` path). With the genuine-only
+  // un-gate, Bash must be fire-and-forget too while the flag is OFF -- otherwise
+  // CCC is back to being the gate and the flood/stall returns. If someone
+  // re-adds an unconditional Bash hold, this test fails (the post would hang).
+  it('flag OFF: a Bash PreToolUse is ALSO fire-and-forget (no unconditional hold)', async () => {
+    gw = new HooksGateway({ emit: () => {}, defaultPort: 0 })
+    const { port } = await gw.start()
+    const secret = gw.registerSession('s2b')
+    const res = await post(port!, 's2b', secret, { event: 'PreToolUse', tool_name: 'Bash', payload: { requestId: 'b1', tool_input: { command: 'git status' } } })
+    expect(res.status).toBe(200)
+    expect(res.body).toBe('{}')
+    expect(_responderCount()).toBe(0)   // nothing registered -> nothing held
+  })
+
   it('flag ON: a non-Bash PreToolUse is held open until resolved', async () => {
     gw = new HooksGateway({ emit: () => {}, defaultPort: 0 })
     gw.setPermissionGateActive(true)

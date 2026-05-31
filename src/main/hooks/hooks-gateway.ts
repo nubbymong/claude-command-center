@@ -296,7 +296,10 @@ export class HooksGateway {
               ? '{}'
               : JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: decision === 'approved' ? 'allow' : 'deny' } }))
           } catch { /* response already closed; CC falls back to its own UI */ }
-          // note: responder entry deleted by resolvePending in channel-permissions.ts
+          // The responder entry is removed by cleanup() (on req close / 120s
+          // timeout). This whole hold-open branch is dormant in prod (gateActive
+          // is never set true post-v1.5.17); it remains for a possible future
+          // inline-for-high-risk path.
         })
       }
     } catch { /* not valid JSON — fall through to normal path which will 400 */ }
