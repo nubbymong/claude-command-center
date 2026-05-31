@@ -108,6 +108,8 @@ export interface SavedSession {
   githubIntegration?: import('./github-types').SessionGitHubIntegration
   // Provider discriminator + sub-options
   provider: ProviderId
+  /** v1.5.19: links a session to an account profile (multi-account). */
+  profileId?: string
   claudeOptions?: ClaudeOptions
   codexOptions?: CodexOptions
   // Legacy top-level fields -- kept for backward compat during migration; read from claudeOptions after P1.2

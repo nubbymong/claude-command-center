@@ -79,6 +79,8 @@ export interface Session {
   // Provider discriminator + Codex sub-options (Claude options live in the
   // top-level legacy fields above for now; Codex spawns need this struct).
   provider?: ProviderId
+  /** v1.5.19: account profile this session runs under (CLAUDE_CONFIG_DIR). */
+  profileId?: string
   codexOptions?: CodexOptions
   // Optional per-session GitHub integration state. Hydrated from SavedSession
   // on restore so the panel can gate on the per-session `enabled` flag instead
