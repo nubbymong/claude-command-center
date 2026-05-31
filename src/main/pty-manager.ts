@@ -5,7 +5,7 @@ import * as os from 'os'
 import { execSync } from 'child_process'
 import { startSessionLog, logSessionData, endSessionLog } from './session-logger'
 import { logPtyOutput, isDebugModeEnabled } from './debug-capture'
-import { logInfo, logDebug, logError } from './debug-logger'
+import { logInfo, logDebug, logError, logWarn } from './debug-logger'
 import { writeCliSetupPty, getResourcesDirectory } from './ipc/setup-handlers'
 import { isGlobalVisionRunning, getGlobalVisionConfig } from './vision-manager'
 import { getConductorMcpPort } from './conductor-mcp-server'
@@ -839,12 +839,24 @@ export function spawnPty(
       useResumePicker: options?.useResumePicker,
       agentsConfig: options?.agentsConfig,
     })
-    const profileDir = options?.profileId ? getProfileConfigDir(options.profileId) : null
+    // B2: a session can carry a profileId whose profile dir was deleted (Phase 6
+    // allows deletion). Pointing CLAUDE_CONFIG_DIR at a missing dir would spawn
+    // Claude "Not logged in". Instead fall back to the default account: drop the
+    // override AND capture identity from the default. For a valid existing profile
+    // (existsSync true) or no profileId, this is byte-equivalent to before.
+    const wantProfileId = options?.profileId
+    let profileDir = wantProfileId ? getProfileConfigDir(wantProfileId) : null
+    if (profileDir && !fs.existsSync(profileDir)) {
+      logWarn(`[profiles] session ${sessionId}: profile dir missing for profileId=${wantProfileId}; falling back to default account`)
+      profileDir = null
+    }
+    const effectiveProfileId = profileDir ? wantProfileId : undefined
     const finalSpawnEnv = withProfileConfigDir(spawnEnv, profileDir)
     // Reliable, drift-immune account identity: capture once at spawn from the
     // session's profile (or the default ~/.claude.json), never re-read.
-    captureClaudeAccount(sessionId, options?.profileId)
-    pushAccountIdentity(sessionId)
+    // B3: capture is deferred until AFTER the interactive Claude pty.spawn
+    // succeeds (see below) so a spawn throw can't leak the per-session map entry,
+    // and shell-only sessions (no Claude) never capture.
     const resolvedCwd = resolveCwd(options?.cwd)
 
     if (shellOnly) {
@@ -888,6 +900,13 @@ export function spawnPty(
         env: finalSpawnEnv,
         useConpty: true
       })
+
+      // B3: capture identity ONLY after the spawn succeeds — if pty.spawn throws,
+      // no map entry is created (no leak), and shell-only sessions never reach
+      // here. effectiveProfileId is undefined when the profile dir was missing
+      // (B2 fallback), so identity comes from the default account in that case.
+      captureClaudeAccount(sessionId, effectiveProfileId)
+      pushAccountIdentity(sessionId)
 
       // P6: register for codex_review opt-in if the session config requested it.
       // Only Claude sessions can opt in; Codex sessions never reach this branch
