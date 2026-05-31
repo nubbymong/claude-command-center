@@ -10,14 +10,21 @@ import { markSessionForResumePicker } from '../utils/resumePicker'
 export function useRestartSession(
   session: Session | null | undefined,
   isShowingPartner = false,
-): { restart: () => void; recover: () => void } {
+): { restart: (overrides?: Partial<Session>) => void; recover: () => void } {
   const forceRemount = useCallback(
-    (status: 'idle' | 'working') => {
+    (status: 'idle' | 'working', overrides?: Partial<Session>) => {
       if (!session) return
       const store = useSessionStore.getState()
+      // Merge from the LIVE store record (not just the captured closure) so a
+      // store mutation made immediately before restart -- e.g. switchAccount
+      // setting profileId -- survives the remove/re-add. `overrides` lets the
+      // caller force specific fields (profileId) even if the store read raced.
+      const live = store.getSession(session.id)
       store.removeSession(session.id)
       store.addSession({
         ...session,
+        ...live,
+        ...overrides,
         id: session.id,
         status,
         createdAt: Date.now(),
@@ -41,7 +48,7 @@ export function useRestartSession(
     [session],
   )
 
-  const restart = useCallback(() => {
+  const restart = useCallback((overrides?: Partial<Session>) => {
     if (!session) return
     if (isShowingPartner) {
       // Partner terminal: just kill partner PTY, leave main Claude untouched
@@ -50,10 +57,12 @@ export function useRestartSession(
       window.electronAPI.pty.kill(partnerPtyId)
       // Clear partner from spawn tracker so it respawns on remount
       clearSpawned(partnerPtyId)
-      // Force re-mount by bumping createdAt
+      // Force re-mount by bumping createdAt. Merge the live store record +
+      // overrides so a pre-restart store mutation (e.g. profileId) survives.
       const store = useSessionStore.getState()
+      const live = store.getSession(session.id)
       store.removeSession(session.id)
-      store.addSession({ ...session, id: session.id, status: session.status, createdAt: Date.now() })
+      store.addSession({ ...session, ...live, ...overrides, id: session.id, status: session.status, createdAt: Date.now() })
       return
     }
     // Kill the old PTY (also clears spawn tracker so new one will spawn)
@@ -63,7 +72,7 @@ export function useRestartSession(
       markSessionForResumePicker(session.id)
     }
     // Force re-mount with clean metadata
-    forceRemount('idle')
+    forceRemount('idle', overrides)
   }, [session, isShowingPartner, forceRemount])
 
   const recover = useCallback(() => {
