@@ -191,7 +191,7 @@ export interface ElectronAPI {
   channels: {
     send: (req: unknown) => Promise<unknown>
     retract: (p: unknown) => Promise<unknown>
-    respondPermission: (p: unknown) => Promise<unknown>
+    dismissPermission: (p: unknown) => Promise<unknown>
     forceTier: (p: unknown) => Promise<unknown>
     ruleCRUD: (p: unknown) => Promise<unknown>
     standingApprovalCRUD: (p: unknown) => Promise<unknown>
@@ -681,7 +681,7 @@ const electronAPI: ElectronAPI = {
   channels: {
     send: (req: unknown) => ipcRenderer.invoke(IPC.CHANNELS_SEND, req),
     retract: (p: unknown) => ipcRenderer.invoke(IPC.CHANNELS_RETRACT, p),
-    respondPermission: (p: unknown) => ipcRenderer.invoke(IPC.CHANNELS_RESPOND_PERMISSION, p),
+    dismissPermission: (p: unknown) => ipcRenderer.invoke(IPC.CHANNELS_DISMISS_PERMISSION, p),
     forceTier: (p: unknown) => ipcRenderer.invoke(IPC.CHANNELS_FORCE_TIER, p),
     ruleCRUD: (p: unknown) => ipcRenderer.invoke(IPC.CHANNELS_RULE_CRUD, p),
     standingApprovalCRUD: (p: unknown) => ipcRenderer.invoke(IPC.CHANNELS_STANDING_APPROVAL_CRUD, p),
