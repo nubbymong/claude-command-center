@@ -15,6 +15,15 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '1.5.18',
+    date: '2026-05-31',
+    changes: [
+      { type: 'improvement', description: 'Permission tray no longer shows a card for the session you are currently viewing (Claude prompts you right there). The card appears if you switch to another session while the prompt is still waiting.' },
+      { type: 'fix', description: 'Permission cards now reliably show which tool and command Claude is asking about, even when several tools run at once.' },
+      { type: 'improvement', description: 'Added a footer note clarifying this is an independent project, not affiliated with or endorsed by Anthropic.' },
+    ],
+  },
+  {
     version: '1.5.17',
     date: '2026-05-31',
     changes: [
