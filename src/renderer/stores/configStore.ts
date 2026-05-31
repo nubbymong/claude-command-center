@@ -33,6 +33,9 @@ export interface TerminalConfig {
   }
   pinned?: boolean
   machineName?: string // Identifies which machine this session runs on
+  /** v1.5.19: account profile a session spawned from this config runs under
+   *  (drives CLAUDE_CONFIG_DIR at PTY spawn). Absent = the bare default account. */
+  profileId?: string
   /**
    * P9.3 (#280): persisted GitHub integration on the CONFIG template so any
    * session spawned from it inherits the activation + repo + auth profile.
