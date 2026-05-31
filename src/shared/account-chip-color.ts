@@ -28,6 +28,23 @@ export function resolveAccountChipColorKey(
 }
 
 /**
+ * Friendly display name for an account ("renameable everywhere"):
+ * a non-empty profile name wins; else a user alias keyed by canonical email;
+ * else the raw email. Used by the status strip + session rows + tokenomics.
+ */
+export function resolveAccountName(
+  email: string,
+  profileName: string | undefined,
+  aliases: Record<string, string> | undefined,
+): string {
+  const pn = profileName?.trim()
+  if (pn) return pn
+  const alias = aliases?.[canonicaliseEmail(email)]?.trim()
+  if (alias) return alias
+  return email
+}
+
+/**
  * Truncate an email to `max` chars, removing from the MIDDLE so the local-part
  * start and the domain end (the disambiguating parts) stay visible. Callers
  * keep the full address in a `title` attribute.
