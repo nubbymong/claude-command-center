@@ -17,6 +17,13 @@ import type { AccountProfile, AccountProfilesConfig } from '../shared/account-ty
 // are deliberately NOT here -- they stay private per profile.
 export const SHARED_DIR_NAMES = ['projects', 'memory', 'agents', 'skills', 'commands', 'plugins'] as const
 
+// Profile ids are CCC-generated, lowercase-alphanumeric + hyphen. Validating
+// here is the primary defense against a malicious/buggy renderer-supplied id
+// (e.g. "..\\..\\.claude") escaping the profiles root in teardown.
+const PROFILE_ID_RE = /^[a-z0-9][a-z0-9-]*$/
+
+export function isValidProfileId(id: string): boolean { return PROFILE_ID_RE.test(id) }
+
 let rootsOverride: { resourcesDir: string; sharedRoot: string } | null = null
 /** Test seam: inject temp roots so we never touch ~/.claude. */
 export function _setRootsForTest(roots: { resourcesDir: string; sharedRoot: string } | null): void { rootsOverride = roots }
@@ -62,6 +69,7 @@ function ensureLink(target: string, link: string): void {
     if (st.isSymbolicLink()) { try { fs.rmdirSync(link) } catch { fs.unlinkSync(link) } }
     else if (st.isDirectory()) fs.rmdirSync(link) // only if empty; a real dir we created
     else fs.unlinkSync(link)
+  // NOTE: a pre-existing REAL non-empty dir at `link` throws ENOTEMPTY here (swallowed) then EEXIST at symlinkSync. That is safe (rmdirSync never deletes non-empty dirs) but surfaces a confusing error; in this feature's flows `link` is always our own junction or absent.
   } catch { /* not present */ }
   fs.mkdirSync(path.dirname(link), { recursive: true })
   fs.symlinkSync(target, link, isWin ? 'junction' : 'dir')
@@ -71,6 +79,7 @@ function ensureLink(target: string, link: string): void {
  * Junction the shared dirs from `sharedRoot()` into the profile, and copy
  * settings.json one-way (junctions are dir-only; a file symlink needs elevation
  * on Windows, and a shared settings.json must never be mutated by a profile).
+ * Idempotent: re-running replaces existing junctions and re-copies settings.json.
  */
 export function setupProfileLinks(id: string): void {
   const dir = getProfileConfigDir(id)
@@ -109,8 +118,18 @@ function safeTeardown(dir: string): void {
 }
 
 export function safeTeardownProfile(id: string): void {
+  if (!isValidProfileId(id)) throw new Error(`refusing teardown: invalid profile id ${JSON.stringify(id)}`)
   const dir = getProfileConfigDir(id)
-  if (fs.existsSync(dir)) safeTeardown(dir)
+  // Defense-in-depth: the dir MUST be exactly <profilesRoot>/<id>. A validated
+  // id can't contain separators or "..", but assert containment anyway.
+  if (path.resolve(dir) !== path.resolve(getProfilesRoot(), id)) {
+    throw new Error('refusing teardown: path escapes the profiles root')
+  }
+  if (fs.existsSync(dir)) {
+    // Never recurse a reparse point AS THE ROOT (would walk into a junction target).
+    if (fs.lstatSync(dir).isSymbolicLink()) throw new Error('refusing teardown: profile dir is a reparse point')
+    safeTeardown(dir)
+  }
   deleteProfileMeta(id)
 }
 

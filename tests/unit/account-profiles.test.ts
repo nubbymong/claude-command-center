@@ -5,7 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import {
   _setRootsForTest, listProfiles, upsertProfile, deleteProfileMeta, getProfileConfigDir,
-  setupProfileLinks, safeTeardownProfile,
+  setupProfileLinks, safeTeardownProfile, isValidProfileId,
 } from '../../src/main/account-profiles'
 
 let tmp: string
@@ -62,9 +62,50 @@ describe('safeTeardownProfile (junction-safe)', () => {
     fs.writeFileSync(path.join(dir, '.credentials.json'), '{}')
     setupProfileLinks('p1')
 
+    // The gate's load-bearing invariant: the shared dir is reachable as a LINK.
+    expect(fs.lstatSync(path.join(dir, 'projects')).isSymbolicLink()).toBe(true)
+
     safeTeardownProfile('p1')
 
     expect(fs.existsSync(dir)).toBe(false)
     expect(fs.existsSync(path.join(shared, 'projects', 'PRECIOUS.jsonl'))).toBe(true)
+  })
+})
+
+describe('isValidProfileId', () => {
+  it('accepts CCC-generated ids and rejects escaping ones', () => {
+    expect(isValidProfileId('profile-123-primary')).toBe(true)
+    expect(isValidProfileId('../x')).toBe(false)
+  })
+})
+
+describe('safeTeardownProfile safety guards', () => {
+  it('preserves a junction TARGET nested inside a real profile subdir', () => {
+    const shared = path.join(tmp, 'shared')
+    fs.mkdirSync(path.join(shared, 'projects'), { recursive: true })
+    fs.writeFileSync(path.join(shared, 'projects', 'PRECIOUS.jsonl'), 'do not delete')
+    const dir = getProfileConfigDir('p1')
+    fs.mkdirSync(path.join(dir, 'realsub'), { recursive: true })
+    fs.writeFileSync(path.join(dir, 'realsub', 'note.txt'), 'private')
+    // a junction nested inside a REAL subdir
+    fs.symlinkSync(path.join(shared, 'projects'), path.join(dir, 'realsub', 'linked'), process.platform === 'win32' ? 'junction' : 'dir')
+
+    safeTeardownProfile('p1')
+
+    expect(fs.existsSync(dir)).toBe(false)
+    expect(fs.existsSync(path.join(shared, 'projects', 'PRECIOUS.jsonl'))).toBe(true)
+  })
+  it('rejects an invalid/escaping id without touching the filesystem', () => {
+    expect(() => safeTeardownProfile('../evil')).toThrow(/invalid profile id/)
+    expect(() => safeTeardownProfile('..\\..\\.claude')).toThrow(/invalid profile id/)
+    expect(() => safeTeardownProfile('')).toThrow(/invalid profile id/)
+  })
+  it('setupProfileLinks is idempotent (re-run does not throw and keeps junctions)', () => {
+    const shared = path.join(tmp, 'shared')
+    fs.mkdirSync(path.join(shared, 'projects'), { recursive: true })
+    const dir = getProfileConfigDir('p1'); fs.mkdirSync(dir, { recursive: true })
+    setupProfileLinks('p1')
+    expect(() => setupProfileLinks('p1')).not.toThrow()
+    expect(fs.lstatSync(path.join(dir, 'projects')).isSymbolicLink()).toBe(true)
   })
 })
