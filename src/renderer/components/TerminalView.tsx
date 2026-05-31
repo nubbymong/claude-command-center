@@ -15,6 +15,7 @@ import { useSettingsStore, DEFAULT_TERMINAL_SETTINGS } from '../stores/settingsS
 import { ScrollToBottomButton } from './terminal'
 import { useStatuslineSubscription } from '../hooks/useStatuslineSubscription'
 import { useEffortSubscription } from '../hooks/useEffortSubscription'
+import { useAccountIdentitySubscription } from '../hooks/useAccountIdentitySubscription'
 import { useActiveTabEffect } from '../hooks/useActiveTabEffect'
 import { useCursorLayerVisibility } from '../hooks/useCursorLayerVisibility'
 import { useAgentLibraryStore, BUILTIN_TEMPLATES } from '../stores/agentLibraryStore'
@@ -72,6 +73,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
   // Extracted hooks
   useStatuslineSubscription(sessionId)
   useEffortSubscription(sessionId)
+  useAccountIdentitySubscription(sessionId)
   useActiveTabEffect(sessionId, isActive, terminalRef, attentionTimerRef, attentionAckedRef)
   useCursorLayerVisibility(xtermContainerRef, isActive, shellOnly)
 
