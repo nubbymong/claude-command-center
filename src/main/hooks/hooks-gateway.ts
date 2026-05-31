@@ -18,7 +18,14 @@ import type {
 // the old lazy-require workaround for the channel-permissions circular
 // dependency is no longer needed (#483).
 import { registerResponder, deregisterResponder } from '../permission-responders'
-import { logDebug } from '../debug-logger'
+import { logDebug, logWarn, logError } from '../debug-logger'
+
+// Diagnostics (opt-in, verbose-gated): module-level in-flight counter for the
+// hooks HTTP handler. Incremented on handler entry, decremented when the
+// handler returns. Logged on receipt + response so a heavy parallel tool-use
+// workload (ultracode) shows whether requests are piling up at the gateway.
+// Metadata only -- never reflects payload contents.
+let hooksInFlight = 0
 
 // Cap the incoming HTTP body at 256 KiB. Claude Code hook payloads top out
 // around a few KB; anything beyond this is either a misbehaving client or
@@ -166,7 +173,11 @@ export class HooksGateway {
   private bindOnce(port: number): Promise<number> {
     return new Promise((resolve, reject) => {
       const srv = http.createServer((req, res) => {
-        this.handleHttp(req, res).catch(() => {
+        this.handleHttp(req, res).catch((err) => {
+          // Diagnostics: a thrown handler error is a genuine fault -- log it
+          // (always written) before producing the same 500 response as before.
+          // Behavior is unchanged; only the log line is new.
+          logError('[hooks] handler error', err)
           try {
             res.statusCode = 500
             res.end('{}')
@@ -192,6 +203,31 @@ export class HooksGateway {
     req: http.IncomingMessage,
     res: http.ServerResponse,
   ): Promise<void> {
+    // Diagnostics (opt-in, verbose-gated): capture the request shape + timing
+    // for every hook POST so a heavy parallel tool-use workload can be
+    // diagnosed from app.log. Metadata only -- method, request path, body size,
+    // in-flight count, response status, duration. NEVER the body itself.
+    const startTime = Date.now()
+    hooksInFlight++
+    const reqMethod = req.method ?? '?'
+    const reqPath = redactHookPath(req.url)
+    const reqLen = headerValue(req.headers as Record<string, string | string[] | undefined>, 'content-length') ?? '?'
+    logDebug(`[hooks] req method=${reqMethod} path=${reqPath} len=${reqLen} inflight=${hooksInFlight}`)
+    // The response may be written synchronously here OR held open (the
+    // PermissionRequest / gateActive path) and closed later by the responder
+    // or the 120s timeout. Hook the response lifecycle event so the in-flight
+    // decrement + response log fire EXACTLY ONCE on every exit path without
+    // restructuring the control flow below (zero behavior change).
+    let settled = false
+    const onSettled = () => {
+      if (settled) return
+      settled = true
+      hooksInFlight--
+      const dur = Date.now() - startTime
+      logDebug(`[hooks] resp path=${reqPath} status=${res.statusCode} dur=${dur}ms inflight=${hooksInFlight}`)
+    }
+    res.once('finish', onSettled)
+    res.once('close', onSettled)
     // Send Connection: close on every response so Node's fetch client
     // doesn't put the socket back into its keep-alive pool. Pool reuse
     // surfaced as "socket connection was closed unexpectedly" errors
@@ -330,6 +366,17 @@ export class HooksGateway {
       body: ingestBody,
     })
 
+    // Diagnostics: surface the session-match outcome. A 404 here is the
+    // "unmatched / stale endpoint" misroute the user already hit -- log it as a
+    // genuine warning (always written) so it's visible even outside verbose
+    // mode. Path only -- never the body. Matched/other outcomes are verbose.
+    const sid = parseSidFromUrl(req.url)
+    if (result.status === 404) {
+      logWarn(`[hooks] unmatched/stale endpoint -> 404 path=${reqPath} sid=${sid ?? 'none'}`)
+    } else {
+      logDebug(`[hooks] matched sid=${sid ?? 'none'} status=${result.status}`)
+    }
+
     // For PermissionRequest events that passed auth, the response is held open
     // and will be closed by the responder or the 120s timeout above.
     if (isPermissionRequest && result.status === 200) return
@@ -451,6 +498,17 @@ function isLoopback(a: string | undefined): boolean {
     a === '::1' ||
     a === '::ffff:127.0.0.1'
   )
+}
+
+/** Diagnostics helper: derive a log-safe request path from the raw URL.
+ *  Strips any query string (the HARD RULE forbids logging URLs with query)
+ *  and caps length so a malformed/oversized URL can't bloat a log line.
+ *  Returns just the path portion (e.g. `/hook/<sid>`); never the query. */
+function redactHookPath(url: string | undefined): string {
+  if (!url) return '?'
+  const q = url.indexOf('?')
+  const pathOnly = q === -1 ? url : url.slice(0, q)
+  return pathOnly.length > 128 ? pathOnly.slice(0, 128) : pathOnly
 }
 
 function parseSidFromUrl(url: string | undefined): string | null {
