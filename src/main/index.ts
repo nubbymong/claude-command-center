@@ -38,6 +38,7 @@ import { registerCodexReviewHandlers } from './ipc/codex-review-handlers'
 import { registerChannelHandlers } from './ipc/channel-handlers'
 import { startRulesEngine } from './channel-rules'
 import { startPermissionTray } from './channel-permissions'
+import { startEffortTracker } from './effort-tracker'
 import { startAttentionSource } from './attention-source'
 import { startJankDetector } from './jank-detector'
 import { readClipboardImageWithRetry } from './clipboard-image'
@@ -659,6 +660,7 @@ if (!gotTheLock) {
     })
     setGateway(hooksGateway)
     startPermissionTray()
+    startEffortTracker()
     startAttentionSource()
     startJankDetector()
     registerHooksHandlers(hooksGateway)
