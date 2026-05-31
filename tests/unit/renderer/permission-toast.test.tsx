@@ -25,4 +25,10 @@ describe('PermissionToast', () => {
     const html = renderToStaticMarkup(<PermissionToast p={generic} onGoToSession={vi.fn()} onIgnore={vi.fn()} />)
     expect(html).toContain('Claude needs your permission')
   })
+  it('is mouse-only: both action buttons are out of the keyboard tab order (tabIndex -1)', () => {
+    // Guards against a card stealing focus from the terminal or a stray key
+    // activating an action while the user is typing. Click only.
+    const html = renderToStaticMarkup(<PermissionToast p={base} onGoToSession={vi.fn()} onIgnore={vi.fn()} />)
+    expect(html.split('tabindex="-1"').length - 1).toBe(2)
+  })
 })

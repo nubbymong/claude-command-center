@@ -20,6 +20,10 @@ Conduct dozens of Claude and Codex sessions in parallel. Orchestrate up to **1,0
 
 <br/>
 
+<sub>An independent, community-built project &middot; not affiliated with, endorsed by, or sponsored by Anthropic. See [Disclaimer](#disclaimer-and-trademarks).</sub>
+
+<br/>
+
 <img src="docs/screenshots/v2-shell-hero.jpg" alt="Claude Command Center v2.0 -- multi-session shell with Opus 4.8 and the permission tray" width="100%" />
 
 </div>
@@ -251,6 +255,16 @@ Per-release detail lives in [`src/renderer/changelog.ts`](src/renderer/changelog
 ## Contributing
 
 Contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, coding standards, and the PR process.
+
+---
+
+## Disclaimer and trademarks
+
+Claude and Claude Code are trademarks of Anthropic, PBC. OpenAI and Codex are trademarks of OpenAI. This project is an independent, community-built tool. It is **not affiliated with, endorsed by, sponsored by, or supported by Anthropic or OpenAI**.
+
+All references to "Claude", "Claude Code", "Codex", "Anthropic", or "OpenAI" are nominative, used solely to identify the third-party software this tool interoperates with. Claude Command Center is a separate work that wraps and orchestrates the official Claude Code and Codex CLIs. It does not include, modify, or redistribute their code, and it requires you to install and authenticate those tools yourself under their own terms.
+
+If you are a rights holder with a concern about this project's use of a name or mark, please open a [GitHub issue](../../issues) or contact the maintainer and it will be addressed promptly.
 
 ---
 

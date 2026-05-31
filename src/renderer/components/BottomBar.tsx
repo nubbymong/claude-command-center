@@ -109,6 +109,16 @@ export default function BottomBar({ currentView, onViewChange, onUpdateRequested
         )}
       </div>
 
+      {/* Independent-project disclaimer, pinned bottom-right. Nominative use of
+          "Anthropic"/"Claude" only; this app is not an Anthropic product. */}
+      <span
+        className="ml-auto shrink truncate italic text-[10px]"
+        style={{ color: 'var(--text-muted)' }}
+        title="Claude and Claude Code are trademarks of Anthropic, PBC. This is an independent community project."
+      >
+        Not affiliated with or endorsed by Anthropic
+      </span>
+
       {/* CLI help modal -- ported verbatim from StatusBar so the
           "CLI not found -- click for help" path still works. */}
       {showCliHelp && (
