@@ -204,6 +204,16 @@ export default function SettingsPage({ initialTab }: SettingsPageProps = {}) {
                   Disable Claude Code dynamic workflows
                   <span className="text-[10px] text-overlay0">(applies to new sessions; CC fans out up to 1000 subagents per workflow)</span>
                 </label>
+                <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.permissionTrayEnabled !== false}
+                    onChange={(e) => save({ permissionTrayEnabled: e.target.checked })}
+                    className="rounded border-surface1"
+                  />
+                  Show permission tray
+                  <span className="text-[10px] text-overlay0">(surfaces only prompts Claude is blocked on)</span>
+                </label>
               </Section>
 
               <Section title="Terminal" icon={<><rect x="2" y="3" width="12" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.2" fill="none" /><path d="M5 7l2 2-2 2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" /><line x1="9" y1="11" x2="11" y2="11" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" /></>}>
