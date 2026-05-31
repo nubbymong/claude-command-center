@@ -94,6 +94,10 @@ export interface ElectronAPI {
   effort: {
     onUpdate: (callback: (data: { sessionId: string; effortLevel: string }) => void) => () => void
   }
+  accountIdentity: {
+    get: (sessionId: string) => Promise<{ email: string; colourKey: string } | null>
+    onUpdate: (callback: (data: { sessionId: string; email: string; colourKey: string }) => void) => () => void
+  }
   debug: {
     onDebug: (callback: (data: unknown) => void) => () => void
     enable: () => Promise<boolean>
@@ -391,6 +395,14 @@ const electronAPI: ElectronAPI = {
       const handler = (_: unknown, data: unknown) => callback(data as { sessionId: string; effortLevel: string })
       ipcRenderer.on(IPC.HOOKS_EFFORT_UPDATE, handler)
       return () => ipcRenderer.removeListener(IPC.HOOKS_EFFORT_UPDATE, handler)
+    },
+  },
+  accountIdentity: {
+    get: (sessionId) => ipcRenderer.invoke(IPC.ACCOUNT_IDENTITY_GET, { sessionId }),
+    onUpdate: (callback) => {
+      const handler = (_: unknown, data: unknown) => callback(data as { sessionId: string; email: string; colourKey: string })
+      ipcRenderer.on(IPC.ACCOUNT_IDENTITY_UPDATE, handler)
+      return () => ipcRenderer.removeListener(IPC.ACCOUNT_IDENTITY_UPDATE, handler)
     },
   },
   debug: {

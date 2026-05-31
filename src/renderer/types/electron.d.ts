@@ -161,6 +161,10 @@ export interface ElectronAPI {
   effort: {
     onUpdate: (callback: (data: { sessionId: string; effortLevel: string }) => void) => () => void
   }
+  accountIdentity: {
+    get: (sessionId: string) => Promise<{ email: string; colourKey: string } | null>
+    onUpdate: (callback: (data: { sessionId: string; email: string; colourKey: string }) => void) => () => void
+  }
   debug: {
     onDebug: (callback: (data: any) => void) => () => void
     enable: () => Promise<boolean>
