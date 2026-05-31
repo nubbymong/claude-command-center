@@ -5,9 +5,13 @@ import {
   listProfiles, upsertProfile, safeTeardownProfile,
   readProfileAccountEmail, getProfileConfigDir, isValidProfileId,
 } from '../account-profiles'
+import { getAccountIdentity } from '../claude-account-identity'
 
 export function registerAccountProfilesHandlers(): void {
   ipcMain.handle(IPC.ACCOUNT_PROFILES_LIST, () => listProfiles())
+
+  // Renderer pull: the reliable per-session account identity captured at spawn.
+  ipcMain.handle(IPC.ACCOUNT_IDENTITY_GET, (_e, p: { sessionId: string }) => (p?.sessionId ? getAccountIdentity(p.sessionId) : null))
 
   ipcMain.handle(IPC.ACCOUNT_PROFILES_RENAME, (_e, p: { id: string; name: string }) => {
     if (!p || !isValidProfileId(p.id)) return { ok: false }
