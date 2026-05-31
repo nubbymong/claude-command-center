@@ -32,10 +32,13 @@ export function PermissionToast({ p, onGoToSession, onIgnore }: Props) {
               <pre className="text-[11px] font-mono text-text whitespace-pre-wrap break-all max-h-16 overflow-hidden">{p.payloadPreview}</pre>
             </>)
           : (<div className="mt-1.5 text-[11px] text-subtext0">{p.payloadPreview}</div>)}
+        {/* MOUSE ONLY. No autoFocus (a card must never steal focus from the
+            terminal and interrupt typing) and tabIndex=-1 (so a stray Enter /
+            Space while typing can never activate an action). Click only. */}
         <div className="mt-2 flex items-center gap-2">
-          <button onClick={onGoToSession} autoFocus
+          <button onClick={onGoToSession} tabIndex={-1}
             className="px-2 py-1 rounded text-[11px] bg-surface1 hover:bg-surface2 text-text">Go to session</button>
-          <button onClick={onIgnore}
+          <button onClick={onIgnore} tabIndex={-1}
             className="ml-auto px-2 py-1 rounded text-[11px] text-subtext0 hover:bg-surface1"
             title="Dismiss this card -- Claude's own prompt stays in the session">Ignore</button>
         </div>

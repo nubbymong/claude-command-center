@@ -1,5 +1,5 @@
 // src/renderer/components/channels/PermissionToastStack.tsx
-import React, { useEffect } from 'react'
+import React from 'react'
 import { useChannelStore } from '../../stores/channelStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { useSessionStore } from '../../stores/sessionStore'
@@ -30,14 +30,9 @@ export default function PermissionToastStack() {
 
   const ordered = visiblePermissionCards(pending, activeSessionId)
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (ordered.length === 0) return
-      if (e.key === 'Escape') { ignore(ordered[0].requestId); e.preventDefault() }   // Esc dismisses the top card
-    }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [pending, activeSessionId])
+  // MOUSE ONLY -- deliberately NO keyboard handler. A global keydown listener
+  // here would intercept the user's typing (e.g. swallow Escape mid-edit) and
+  // let a stray key act on a card. The card is dismissed only by clicking Ignore.
 
   if (!enabled || ordered.length === 0) return null
   const visible = ordered.slice(0, MAX_VISIBLE)
