@@ -28,6 +28,7 @@ import {
 import { registerCodexReviewSession, unregisterCodexReviewSession } from './conductor-mcp-server'
 import { disposeSession as disposeCodexReviewUsage } from './codex-review-usage'
 import { readCodexAccountEmail } from './account-identity'
+import { getProfileConfigDir } from './account-profiles'
 import type { AccountIdentity } from '../shared/types'
 import { updateSessionMeta, clearSessionMeta } from './session-registry'
 import { readConfig } from './config-manager'
@@ -53,6 +54,11 @@ export function clearCodexSpawnIdentity(sessionId: string): void {
 
 export function getCodexSpawnIdentityMap(): Map<string, AccountIdentity> {
   return codexSpawnIdentity
+}
+
+/** Per-process account isolation: overlay CLAUDE_CONFIG_DIR for a profile. */
+export function withProfileConfigDir(env: Record<string, string>, configDir: string | null): Record<string, string> {
+  return configDir ? { ...env, CLAUDE_CONFIG_DIR: configDir } : env
 }
 
 function escapeShellArg(str: string): string {
@@ -214,6 +220,8 @@ export function spawnPty(
     effortLevel?: 'low' | 'medium' | 'high'
     disableAutoMemory?: boolean
     model?: string
+    /** Per-session account isolation: spawn claude under this profile's CLAUDE_CONFIG_DIR. */
+    profileId?: string
     /** v1.5 P6: when true, register session into MCP server's codex_review opt-in set. */
     enableCodexReview?: boolean
     provider?: 'claude' | 'codex'
@@ -830,6 +838,8 @@ export function spawnPty(
       useResumePicker: options?.useResumePicker,
       agentsConfig: options?.agentsConfig,
     })
+    const profileDir = options?.profileId ? getProfileConfigDir(options.profileId) : null
+    const finalSpawnEnv = withProfileConfigDir(spawnEnv, profileDir)
     const resolvedCwd = resolveCwd(options?.cwd)
 
     if (shellOnly) {
@@ -840,7 +850,7 @@ export function spawnPty(
         cols,
         rows,
         cwd: resolvedCwd,
-        env: spawnEnv,
+        env: finalSpawnEnv,
         useConpty: true
       })
 
@@ -870,7 +880,7 @@ export function spawnPty(
         cols,
         rows,
         cwd: resolvedCwd,
-        env: spawnEnv,
+        env: finalSpawnEnv,
         useConpty: true
       })
 
