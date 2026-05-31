@@ -44,4 +44,10 @@ describe('effort push + dedupe', () => {
     _emitForTest(ev({ sessionId: '', payload: { effort: { level: 'high' } } }))
     expect(sent).toHaveLength(0)
   })
+  it('clears per-session state on Stop so a later same-level event pushes again', () => {
+    _emitForTest(ev({ payload: { effort: { level: 'high' } } }))
+    _emitForTest(ev({ event: 'Stop', payload: {} }))
+    _emitForTest(ev({ payload: { effort: { level: 'high' } } }))
+    expect(sent).toHaveLength(2)
+  })
 })

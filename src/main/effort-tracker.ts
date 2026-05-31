@@ -27,6 +27,9 @@ function pushEffort(sessionId: string, effortLevel: string): void {
 }
 
 function track(e: HookEvent): void {
+  // Turn ended -> drop the session's last-effort so the map can't grow
+  // unbounded. Mirrors channel-permissions.ts clearing per-session state on Stop.
+  if (e.event === 'Stop') { lastBySession.delete(e.sessionId); return }
   const level = effortFromEvent(e)
   if (!level || !e.sessionId) return
   if (lastBySession.get(e.sessionId) === level) return
