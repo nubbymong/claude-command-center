@@ -26,6 +26,7 @@ import { computeCodexCostUsd } from './providers/codex/pricing'
 import { getCodexHome } from './providers/codex/auth'
 import { canonicalEmail } from './account-attribution'
 import { getCodexSpawnIdentityMap } from './pty-manager'
+import { getClaudeAccount, getClaudeAccountMap } from './claude-account-identity'
 
 // ── Model Pricing (per 1M tokens) ──
 
@@ -554,6 +555,19 @@ export function applyIdentityAtFlush(
       record.accountUuid = record.accountUuid ?? codexId.accountUuid
     }
   }
+
+  // Claude attribution from the per-session spawn-time capture
+  // (getClaudeAccountMap) — drift-immune, mirroring the Codex pass above.
+  // Iterates the capture map (not every session) so a historic Claude
+  // record from a prior process run is never touched. Only stamps Claude
+  // records with no accountEmail yet — never overwrites (first-identity-wins).
+  for (const [sessionId, claudeEmail] of getClaudeAccountMap()) {
+    const record = data.sessions[sessionId]
+    if (!record || record.accountEmail) continue  // never overwrite
+    if (record.provider !== 'claude') continue     // only touch Claude records
+    const e = canonicalEmail(claudeEmail)
+    if (e) record.accountEmail = e
+  }
 }
 
 function updateSessionRecord(
@@ -956,7 +970,13 @@ export function handleStatuslineUpdate(rawStatuslineData: StatuslineData): void 
   // Never overwrite -- first identity seen for the session wins, matching
   // the wizard / Codex "never overwrite" rule.
   if (!record.accountEmail) {
-    const liveEmail = canonicalEmail(statuslineData.accountEmail)
+    // Prefer the per-session spawn-time capture (getClaudeAccount) — it is
+    // drift-immune (read once at spawn), whereas statuslineData.accountEmail
+    // is the bridge's read of the GLOBAL ~/.claude.json at tick time and so
+    // drifts if the user logs in/out mid-session. Fall back to the statusline
+    // payload when no capture exists (e.g. statusline-only sessions).
+    const reliable = getClaudeAccount(sessionId)
+    const liveEmail = canonicalEmail(reliable ?? statuslineData.accountEmail)
     if (liveEmail) record.accountEmail = liveEmail
   }
 
