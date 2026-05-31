@@ -29,6 +29,7 @@ import { registerCodexReviewSession, unregisterCodexReviewSession } from './cond
 import { disposeSession as disposeCodexReviewUsage } from './codex-review-usage'
 import { readCodexAccountEmail } from './account-identity'
 import { getProfileConfigDir } from './account-profiles'
+import { captureClaudeAccount, clearClaudeAccount } from './claude-account-identity'
 import type { AccountIdentity } from '../shared/types'
 import { updateSessionMeta, clearSessionMeta } from './session-registry'
 import { readConfig } from './config-manager'
@@ -840,6 +841,9 @@ export function spawnPty(
     })
     const profileDir = options?.profileId ? getProfileConfigDir(options.profileId) : null
     const finalSpawnEnv = withProfileConfigDir(spawnEnv, profileDir)
+    // Reliable, drift-immune account identity: capture once at spawn from the
+    // session's profile (or the default ~/.claude.json), never re-read.
+    captureClaudeAccount(sessionId, options?.profileId)
     const resolvedCwd = resolveCwd(options?.cwd)
 
     if (shellOnly) {
@@ -1059,6 +1063,8 @@ export function spawnPty(
       disposeCodexReviewUsage(sessionId)
       // P8.8: clear spawn-time identity capture. Safe no-op for non-codex sessions.
       clearCodexSpawnIdentity(sessionId)
+      // Phase R: clear spawn-time Claude account capture so the map can't grow unbounded.
+      clearClaudeAccount(sessionId)
     } else {
       logInfo(`[pty] Stale exit for ${sessionId} — newer PTY has taken over, skipping cleanup`)
     }
