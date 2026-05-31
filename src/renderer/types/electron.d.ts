@@ -73,6 +73,12 @@ export interface ElectronAPI {
     save: (key: string, data: unknown) => Promise<boolean>
     migrateFromLocalStorage: (data: Record<string, unknown>) => Promise<boolean>
   }
+  accountProfiles: {
+    list: () => Promise<import('../../shared/account-types').AccountProfile[]>
+    rename: (id: string, name: string) => Promise<{ ok: boolean }>
+    delete: (id: string) => Promise<{ ok: boolean }>
+    refreshIdentity: (id: string) => Promise<{ ok: boolean; email: string | null; configDir?: string }>
+  }
   window: {
     minimize: () => void
     maximize: () => void

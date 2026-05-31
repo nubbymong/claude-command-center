@@ -9,6 +9,12 @@ export interface ElectronAPI {
     save: (key: string, data: unknown) => Promise<boolean>
     migrateFromLocalStorage: (data: Record<string, unknown>) => Promise<boolean>
   }
+  accountProfiles: {
+    list: () => Promise<import('../shared/account-types').AccountProfile[]>
+    rename: (id: string, name: string) => Promise<{ ok: boolean }>
+    delete: (id: string) => Promise<{ ok: boolean }>
+    refreshIdentity: (id: string) => Promise<{ ok: boolean; email: string | null; configDir?: string }>
+  }
   window: {
     minimize: () => void
     maximize: () => void
@@ -297,6 +303,12 @@ const electronAPI: ElectronAPI = {
     loadAll: () => ipcRenderer.invoke(IPC.CONFIG_LOAD_ALL),
     save: (key, data) => ipcRenderer.invoke(IPC.CONFIG_SAVE, key, data),
     migrateFromLocalStorage: (data) => ipcRenderer.invoke(IPC.CONFIG_MIGRATE, data),
+  },
+  accountProfiles: {
+    list: () => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_LIST),
+    rename: (id, name) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_RENAME, { id, name }),
+    delete: (id) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_DELETE, { id }),
+    refreshIdentity: (id) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_REFRESH_IDENTITY, { id }),
   },
   window: {
     minimize: () => ipcRenderer.send(IPC.WINDOW_MINIMIZE),

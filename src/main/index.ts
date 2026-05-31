@@ -25,6 +25,7 @@ import { registerInsightsHandlers } from './ipc/insights-handlers'
 import { registerNotesHandlers } from './ipc/notes-handlers'
 import { registerVisionHandlers } from './ipc/vision-handlers'
 import { registerConfigHandlers } from './ipc/config-handlers'
+import { registerAccountProfilesHandlers } from './ipc/account-profiles-handlers'
 import { registerCloudAgentHandlers } from './ipc/cloud-agent-handlers'
 import { registerTeamHandlers } from './ipc/team-handlers'
 import { registerLegacyVersionHandlers } from './ipc/legacy-version-handlers'
@@ -611,6 +612,7 @@ if (!gotTheLock) {
     registerUpdateHandlers()
     registerSetupHandlers()
     registerConfigHandlers()
+    registerAccountProfilesHandlers()
     registerScreenshotHandlers(getWindow)
     registerWebviewHandlers(getWindow)
     registerInsightsHandlers(getWindow)
