@@ -4,7 +4,11 @@
 // default ~/.claude.json for single-account sessions), never re-read. Fixes the
 // v1.5.9 chip removal (whose source was the GLOBAL last-login at tick time).
 import fs from 'node:fs'; import path from 'node:path'
+import { BrowserWindow } from 'electron'
 import { readProfileAccountEmail, sharedRoot } from './account-profiles'
+import { IPC } from '../shared/ipc-channels'
+import { colourForEmail } from './account-color'
+import type { IdentityColorKey } from '../shared/identity-colors'
 
 const bySession = new Map<string, string>()
 
@@ -25,5 +29,20 @@ export function captureClaudeAccount(sessionId: string, profileId: string | unde
 export function getClaudeAccount(sessionId: string): string | null { return bySession.get(sessionId) ?? null }
 export function getClaudeAccountMap(): ReadonlyMap<string, string> { return bySession }
 export function clearClaudeAccount(sessionId: string): void { bySession.delete(sessionId) }
+
+export function getAccountIdentity(sessionId: string): { email: string; colourKey: IdentityColorKey } | null {
+  const email = bySession.get(sessionId)
+  return email ? { email, colourKey: colourForEmail(email) } : null
+}
+
+/** Push the captured identity to all renderer windows (one-shot, at spawn). */
+export function pushAccountIdentity(sessionId: string): void {
+  const id = getAccountIdentity(sessionId)
+  if (!id) return
+  for (const w of BrowserWindow.getAllWindows()) {
+    try { w.webContents.send(IPC.ACCOUNT_IDENTITY_UPDATE, { sessionId, email: id.email, colourKey: id.colourKey }) } catch { /* window destroyed */ }
+  }
+}
+
 /** Test seam. */
 export function _resetClaudeAccounts(): void { bySession.clear() }
