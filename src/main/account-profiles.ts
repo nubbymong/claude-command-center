@@ -3,11 +3,12 @@
 // are private per profile; projects/memory/etc are junctioned back to the shared
 // ~/.claude. SAFETY: this module only ever copies into / links from the shared
 // root; it never moves or recursive-deletes through a junction. All path roots
-// are injectable so tests never touch the live ~/.claude.
+// are injectable so tests never touch the live ~/.claude. Profile metadata is
+// persisted as an atomic profiles.json under the profiles root (NOT via
+// config-manager) so _setRootsForTest is a total seam.
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { readConfig, writeConfig } from './config-manager'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import type { AccountProfile, AccountProfilesConfig } from '../shared/account-types'
 
@@ -27,11 +28,21 @@ export function sharedRoot(): string { return rootsOverride?.sharedRoot ?? path.
 export function getProfilesRoot(): string { return path.join(resourcesDir(), 'account-profiles') }
 export function getProfileConfigDir(id: string): string { return path.join(getProfilesRoot(), id) }
 
+function profilesMetaFile(): string { return path.join(getProfilesRoot(), 'profiles.json') }
+
 export function listProfiles(): AccountProfile[] {
-  return readConfig<AccountProfilesConfig>('accountProfiles')?.profiles ?? []
+  try {
+    const raw = fs.readFileSync(profilesMetaFile(), 'utf8')
+    return (JSON.parse(raw) as AccountProfilesConfig)?.profiles ?? []
+  } catch { return [] }
 }
+
 function saveProfiles(profiles: AccountProfile[]): void {
-  writeConfig('accountProfiles', { profiles } satisfies AccountProfilesConfig)
+  const file = profilesMetaFile()
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  const tmp = file + '.tmp'
+  fs.writeFileSync(tmp, JSON.stringify({ profiles } satisfies AccountProfilesConfig, null, 2))
+  fs.renameSync(tmp, file) // atomic; Node renameSync overwrites existing on win + posix
 }
 export function upsertProfile(p: AccountProfile): void {
   const all = listProfiles().filter((x) => x.id !== p.id)
