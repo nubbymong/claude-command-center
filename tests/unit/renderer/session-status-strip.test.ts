@@ -238,6 +238,27 @@ describe('SessionStatusStrip -- controls (Claude)', () => {
   })
 })
 
+describe('SessionStatusStrip -- account chip', () => {
+  it('renders the account name + dot when accountEmail is set', async () => {
+    sessionState = {
+      activeSessionId: claudeSession.id,
+      sessions: [{ ...claudeSession, accountEmail: 'nicholas@example.com', accountColour: 'mauve' }],
+    }
+    await render(claudeSession.id)
+    const chip = container.querySelector('[data-testid="account-chip"]') as HTMLElement | null
+    expect(chip).toBeTruthy()
+    // No profile/alias resolved in this test, so the visible name is the email,
+    // and the full email lives in the title tooltip.
+    expect(chip!.textContent).toContain('nicholas@example.com')
+    expect(chip!.getAttribute('title')).toBe('nicholas@example.com')
+  })
+
+  it('renders no account chip when accountEmail is absent', async () => {
+    await render(claudeSession.id)
+    expect(container.querySelector('[data-testid="account-chip"]')).toBeNull()
+  })
+})
+
 describe('SessionStatusStrip -- provider gating', () => {
   it('hides the Claude controls for a codex session but keeps telemetry', async () => {
     sessionState = { activeSessionId: codexSession.id, sessions: [codexSession] }

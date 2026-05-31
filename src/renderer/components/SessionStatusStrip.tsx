@@ -5,6 +5,10 @@ import RateLimitBar from './terminal/RateLimitBar'
 import { formatResetTime, formatTokens, formatDuration } from '../utils/terminalFormatting'
 import { useCodexReviewUsage } from '../hooks/useCodexReviewUsage'
 import { useRestartSession } from '../hooks/useRestartSession'
+import { useResolvedTheme } from '../hooks/useThemeController'
+import { useAccountProfilesStore } from '../stores/accountProfilesStore'
+import { resolveAccountName } from '../../shared/account-chip-color'
+import { resolveIdentityColor } from '../../shared/identity-colors'
 import ToolbarPopup from './ToolbarPopup'
 import {
   MODELS,
@@ -40,6 +44,13 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
   const sl = useSettingsStore((s) => s.settings.statusLine) || DEFAULT_STATUS_LINE
   const codexReview = useCodexReviewUsage(session?.enableCodexReview ? sessionId : null)
   const { restart } = useRestartSession(session, false)
+  const theme = useResolvedTheme()
+  // Account identity (drift-immune source: spawn-time capture -> Session fields).
+  // The chip is always-on for every session that has a resolved account; the
+  // profile name + alias map let it render the friendly name, falling back to
+  // the raw email. Selector form (never destructure the store).
+  const profileName = useAccountProfilesStore((s) => s.profileName)
+  const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
 
   const [openPicker, setOpenPicker] = useState<'mode' | 'model' | null>(null)
   const [lastMode, setLastMode] = useState<string | null>(null)
@@ -82,6 +93,14 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
   const hasModelLabel = !!session.modelName && rawModelLabel !== 'default'
   const modelLabel = hasModelLabel ? rawModelLabel : 'model'
 
+  // Account chip (always-on when the session has a resolved account). Name
+  // resolves profile > alias > email; dot uses the session's identity colour
+  // key (fallback to neutral 'mauve' so a missing colour never crashes).
+  const accountName = session.accountEmail
+    ? resolveAccountName(session.accountEmail, profileName(session.profileId), accountAliases)
+    : null
+  const accountDot = resolveIdentityColor(session.accountColour ?? 'mauve', theme)
+
   return (
     <div
       className="min-h-7 shrink-0 flex items-center gap-3 px-3 text-xs border-t border-b"
@@ -106,6 +125,21 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
                 {session.reasoningEffort || session.effortLevel}
               </span>
             )}
+          </span>
+        )}
+        {accountName && (
+          <span
+            className="flex items-center gap-1 shrink-0"
+            style={{ color: 'var(--text-muted)' }}
+            title={session.accountEmail}
+            data-testid="account-chip"
+          >
+            <span
+              className="w-1.5 h-1.5 rounded-full shrink-0"
+              style={{ backgroundColor: accountDot }}
+              aria-hidden
+            />
+            <span className="truncate max-w-[14rem]">{accountName}</span>
           </span>
         )}
         {sl.showTokens && session.inputTokens != null && session.contextWindowSize && (

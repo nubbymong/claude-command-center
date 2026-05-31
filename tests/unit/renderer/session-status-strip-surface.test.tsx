@@ -11,10 +11,12 @@ vi.mock('../../../src/renderer/stores/sessionStore', () => ({
     sessions: [{ id: 's1', provider: 'claude', contextPercent: 10 }],
   }),
 }))
-vi.mock('../../../src/renderer/stores/settingsStore', () => ({
-  useSettingsStore: (sel: any) => sel({ settings: { statusLine: { font: 'sans', fontSize: 11 } } }),
-  DEFAULT_STATUS_LINE: { font: 'sans', fontSize: 11 },
-}))
+vi.mock('../../../src/renderer/stores/settingsStore', () => {
+  const STATE = { settings: { statusLine: { font: 'sans', fontSize: 11 }, theme: 'dark' as const } }
+  const useSettingsStore: any = (sel: any) => sel(STATE)
+  useSettingsStore.getState = () => STATE
+  return { useSettingsStore, DEFAULT_STATUS_LINE: { font: 'sans', fontSize: 11 } }
+})
 vi.mock('../../../src/renderer/hooks/useCodexReviewUsage', () => ({
   useCodexReviewUsage: () => null,
 }))
