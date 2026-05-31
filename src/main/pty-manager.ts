@@ -29,7 +29,7 @@ import { registerCodexReviewSession, unregisterCodexReviewSession } from './cond
 import { disposeSession as disposeCodexReviewUsage } from './codex-review-usage'
 import { readCodexAccountEmail } from './account-identity'
 import { getProfileConfigDir } from './account-profiles'
-import { captureClaudeAccount, clearClaudeAccount } from './claude-account-identity'
+import { captureClaudeAccount, clearClaudeAccount, pushAccountIdentity } from './claude-account-identity'
 import type { AccountIdentity } from '../shared/types'
 import { updateSessionMeta, clearSessionMeta } from './session-registry'
 import { readConfig } from './config-manager'
@@ -844,6 +844,7 @@ export function spawnPty(
     // Reliable, drift-immune account identity: capture once at spawn from the
     // session's profile (or the default ~/.claude.json), never re-read.
     captureClaudeAccount(sessionId, options?.profileId)
+    pushAccountIdentity(sessionId)
     const resolvedCwd = resolveCwd(options?.cwd)
 
     if (shellOnly) {
