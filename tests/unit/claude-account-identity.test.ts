@@ -14,7 +14,7 @@ vi.mock('electron', () => ({
 vi.mock('../../src/main/account-color', () => ({ colourForEmail: () => 'mauve' }))
 
 import { _setRootsForTest, getProfileConfigDir as getProfileConfigDirForTest } from '../../src/main/account-profiles'
-import { captureClaudeAccount, getClaudeAccount, clearClaudeAccount, getAccountIdentity, pushAccountIdentity, _resetClaudeAccounts } from '../../src/main/claude-account-identity'
+import { captureClaudeAccount, getClaudeAccount, clearClaudeAccount, getAccountIdentity, pushAccountIdentity, _resetClaudeAccounts, getDefaultAccountEmail } from '../../src/main/claude-account-identity'
 
 let tmp: string
 beforeEach(() => {
@@ -61,6 +61,21 @@ describe('getAccountIdentity', () => {
   })
   it('returns null when the session was never captured', () => {
     expect(getAccountIdentity('nope')).toBeNull()
+  })
+})
+
+describe('getDefaultAccountEmail', () => {
+  it('returns the oauth email from home-root .claude.json when present', () => {
+    fs.writeFileSync(path.join(tmp, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'default@me.com' } }))
+    expect(getDefaultAccountEmail()).toBe('default@me.com')
+  })
+  it('returns null when .claude.json does not exist', () => {
+    // tmp dir has no .claude.json in this test
+    expect(getDefaultAccountEmail()).toBeNull()
+  })
+  it('returns null when .claude.json has no oauthAccount', () => {
+    fs.writeFileSync(path.join(tmp, '.claude.json'), JSON.stringify({ someOtherKey: true }))
+    expect(getDefaultAccountEmail()).toBeNull()
   })
 })
 

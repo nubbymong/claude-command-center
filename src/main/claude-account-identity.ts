@@ -12,7 +12,7 @@ import type { IdentityColorKey } from '../shared/identity-colors'
 
 const bySession = new Map<string, string>()
 
-function defaultAccountEmail(): string | null {
+export function getDefaultAccountEmail(): string | null {
   try {
     // The default account's identity lives in ~/.claude.json (home root), a
     // SIBLING of sharedRoot() (~/.claude) -- NOT a file inside it. Reading
@@ -29,7 +29,7 @@ function defaultAccountEmail(): string | null {
 /** Capture once at spawn. profileId undefined => single-account/default. */
 export function captureClaudeAccount(sessionId: string, profileId: string | undefined): void {
   if (bySession.has(sessionId)) return // drift-immune: first capture wins
-  const email = profileId ? readProfileAccountEmail(profileId) : defaultAccountEmail()
+  const email = profileId ? readProfileAccountEmail(profileId) : getDefaultAccountEmail()
   if (email) bySession.set(sessionId, email)
 }
 export function getClaudeAccount(sessionId: string): string | null { return bySession.get(sessionId) ?? null }
