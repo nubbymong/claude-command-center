@@ -44,15 +44,6 @@ describe('SessionRow card', () => {
     expect(container.querySelector('[title="Codex is working"]')).toBeTruthy()
   })
 
-  it('shows an identity chip only when selected (isActive)', () => {
-    render(root, {}, { isActive: false })
-    const before = container.querySelectorAll('[data-testid="identity-chip"]').length
-    render(root, {}, { isActive: true })
-    const after = container.querySelectorAll('[data-testid="identity-chip"]').length
-    expect(before).toBe(0)
-    expect(after).toBe(1)
-  })
-
   it('applies the quiet dashed focus ring class when focused', () => {
     render(root, {}, { isFocused: true })
     expect(container.querySelector('.card-focus')).toBeTruthy()

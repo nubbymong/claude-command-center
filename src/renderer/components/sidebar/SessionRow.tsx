@@ -3,7 +3,6 @@ import { Session } from '../../stores/sessionStore'
 import { CodexBadge, ShellBadge, SshBadge } from './Badges'
 import { StatusDot, type SessionState } from '../ui/StatusDot'
 import { StatusPill } from '../ui/StatusPill'
-import { IdentityChip } from '../ui/IdentityChip'
 import { resolveIdentityColor, bucketLegacyColorToKey } from '../../../shared/identity-colors'
 import { useResolvedTheme } from '../../hooks/useThemeController'
 import { useAccountProfilesStore } from '../../stores/accountProfilesStore'
@@ -145,20 +144,11 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
         {session.shellOnly ? <ShellBadge /> : (session.provider ?? 'claude') === 'codex' ? <CodexBadge needsAttention={needsAttention} /> : null}
       </span>
 
-      {/* Line 1, col 3: status pill + identity chip (chip selected-only) */}
+      {/* Line 1, col 3: status pill only. The account colour dot lives on line 3
+          next to the account name; the old right-side account dot + identity chip
+          were redundant with that dot and the card's left identity rail. */}
       <span className="relative z-10 row-start-1 flex items-center gap-1.5 justify-self-end">
         <StatusPill state={st} />
-        {accountDot && (
-          <span
-            data-testid="account-dot"
-            className="w-1.5 h-1.5 rounded-full shrink-0"
-            style={{ backgroundColor: accountDot }}
-            role="img"
-            aria-label={accountName ? `Account: ${accountName}` : 'Account'}
-            title={session.accountEmail}
-          />
-        )}
-        {isActive && <span data-testid="identity-chip"><IdentityChip color={identity} title="Selected session" /></span>}
       </span>
 
       {/* Line 2: model meta + context meter + right-aligned %. One grid child
@@ -181,7 +171,7 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
       {accountName && (
         <div className="relative z-10 row-start-3 flex items-center gap-1.5 min-w-0" style={{ gridColumn: '2 / 4' }} data-testid="card-line3">
           {accountDot && (
-            <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: accountDot }} aria-hidden="true" />
+            <span data-testid="account-dot" className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: accountDot }} role="img" aria-label={accountName ? `Account: ${accountName}` : 'Account'} title={session.accountEmail} />
           )}
           <span className="meta truncate min-w-0" style={{ color: 'var(--text-muted)' }} title={session.accountEmail} data-testid="account-name">
             {accountName}
