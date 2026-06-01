@@ -830,6 +830,11 @@ export default function App() {
               setShowAccountGate(false)
             }}
             onAdd={async () => {
+              // Adding closes the gate and drops the user into the new login
+              // shell, because the interactive /login must happen in the visible
+              // terminal (it can't be done behind a modal). To add MORE accounts,
+              // the user reopens Settings > Accounts (now discoverable once
+              // multi-account is enabled) and clicks Add again.
               await addAccount()
               setShowAccountGate(false)
               setView('sessions')

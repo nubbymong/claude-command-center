@@ -49,12 +49,12 @@ export default function MultiAccountGate({
     // NOTE: no onClick on this backdrop -- the gate is intentionally
     // non-dismissible by clicking outside.
     <div className={backdropClass} data-testid="account-gate-backdrop">
-      <div className={dialogClass} data-testid="account-gate-dialog">
+      <div className={dialogClass} data-testid="account-gate-dialog" role="dialog" aria-modal="true" aria-labelledby="account-gate-heading">
         {stage === 'ask' ? (
           <>
             {/* Header -- no (x) close button by design */}
             <div className="p-4 border-b border-surface0">
-              <h2 className="text-xl font-bold text-text">{heading}</h2>
+              <h2 id="account-gate-heading" className="text-xl font-bold text-text">{heading}</h2>
             </div>
 
             {/* Body */}
