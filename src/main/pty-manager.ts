@@ -852,6 +852,10 @@ export function spawnPty(
     }
     const effectiveProfileId = profileDir ? wantProfileId : undefined
     const finalSpawnEnv = withProfileConfigDir(spawnEnv, profileDir)
+    // Diagnostic: record exactly which account this spawn runs under, so a
+    // "card says X but Claude logged in as Y" mismatch can be bisected to either
+    // the renderer (requestedProfileId missing) or main (config dir not applied).
+    logInfo(`[profiles] session ${sessionId} account spawn: requestedProfileId=${wantProfileId ?? '(none)'} effectiveProfileId=${effectiveProfileId ?? '(default)'} CLAUDE_CONFIG_DIR=${profileDir ?? '(default ~/.claude)'}`)
     // Reliable, drift-immune account identity: capture once at spawn from the
     // session's profile (or the default ~/.claude.json), never re-read.
     // B3: capture is deferred until AFTER the interactive Claude pty.spawn
