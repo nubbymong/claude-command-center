@@ -167,16 +167,6 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
           empty on line 2, so line 2 aligns under the name. */}
       <div className="relative z-10 row-start-2 flex items-center gap-2" style={{ gridColumn: '2 / 4' }} data-testid="card-line2">
         <span className="meta truncate">{metaLine}</span>
-        {accountName && (
-          <span
-            className="meta truncate min-w-0"
-            style={{ color: 'var(--text-muted)' }}
-            title={session.accountEmail}
-            data-testid="account-name"
-          >
-            {accountName}
-          </span>
-        )}
         <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--surface-sunken)' }}>
           <div className={`meter-fill ${meterClass(pct)}`} style={{ width: `${pct}%` }} />
         </div>
@@ -184,6 +174,20 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
           {session.contextPercent != null ? `${Math.round(pct)}%` : ''}
         </span>
       </div>
+
+      {/* Line 3: account on its own row, under the model (col 2/4 so it aligns
+          under the name/meta and never clips the way the cramped line-2 chip did).
+          Rendered only when accountEmail is set so accountless sessions stay 2 lines. */}
+      {accountName && (
+        <div className="relative z-10 row-start-3 flex items-center gap-1.5 min-w-0" style={{ gridColumn: '2 / 4' }} data-testid="card-line3">
+          {accountDot && (
+            <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: accountDot }} aria-hidden="true" />
+          )}
+          <span className="meta truncate min-w-0" style={{ color: 'var(--text-muted)' }} title={session.accountEmail} data-testid="account-name">
+            {accountName}
+          </span>
+        </div>
+      )}
     </button>
   )
 }

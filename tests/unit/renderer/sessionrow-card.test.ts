@@ -102,12 +102,19 @@ describe('SessionRow card', () => {
     // No profile/alias resolved here, so the visible name falls back to the email.
     expect(name.textContent).toBe('nicholas@example.com')
     expect(name.getAttribute('title')).toBe('nicholas@example.com')
+    // Account name now lives on its own line-3 row, not crammed into line-2.
+    const line3 = container.querySelector('[data-testid="card-line3"]') as HTMLElement
+    expect(line3).toBeTruthy()
+    expect(line3.style.gridColumn).toBe('2 / 4')
+    expect(line3.contains(name)).toBe(true)
   })
 
   it('renders no account stamp when accountEmail is absent', () => {
     render(root, { accountEmail: undefined })
     expect(container.querySelector('[data-testid="account-dot"]')).toBeNull()
     expect(container.querySelector('[data-testid="account-name"]')).toBeNull()
+    // No line-3 row for accountless sessions (no layout shift).
+    expect(container.querySelector('[data-testid="card-line3"]')).toBeNull()
   })
 
   it('line 2 spans out of the 9px dot column so the model meta is not clipped', () => {
