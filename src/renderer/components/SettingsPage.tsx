@@ -16,6 +16,8 @@ import HooksGatewaySection from './github/config/HooksGatewaySection'
 import PageFrame from './PageFrame'
 import { SectionLabel } from './ui/SectionLabel'
 import { Kbd } from './ui/Kbd'
+import { useAddAccount } from '../hooks/useAddAccount'
+import AccountsPanel from './AccountsPanel'
 declare const __BUILD_TIME__: string
 
 export const SETTINGS_TAB_IDS = ['general', 'statusline', 'shortcuts', 'github', 'codex', 'hooks', 'about'] as const
@@ -57,9 +59,12 @@ interface SettingsPageProps {
   // modal "Set up now" + auto-detect banner Accept/Edit) to deep-link into
   // the GitHub tab instead of landing on the default General view.
   initialTab?: SettingsTab
+  // Called after the user triggers "Add another account" so the parent can
+  // switch the view to Sessions (where the login shell opens).
+  onNavigateToSessions?: () => void
 }
 
-export default function SettingsPage({ initialTab }: SettingsPageProps = {}) {
+export default function SettingsPage({ initialTab, onNavigateToSessions }: SettingsPageProps = {}) {
   const settings = useSettingsStore((s) => s.settings)
   const updateSettings = useSettingsStore((s) => s.updateSettings)
   const updateAppMeta = useAppMetaStore((s) => s.update)
@@ -99,6 +104,19 @@ export default function SettingsPage({ initialTab }: SettingsPageProps = {}) {
 
   const openDebugFolder = async () => {
     await window.electronAPI.debug.openFolder()
+  }
+
+  // Multi-account: fetch the global (default) email once on mount.
+  const [globalEmail, setGlobalEmail] = useState<string | null>(null)
+  useEffect(() => {
+    window.electronAPI.accountProfiles.globalEmail().then(setGlobalEmail).catch(() => {})
+  }, [])
+
+  // Add account: create a profile + open a login shell, then navigate to Sessions.
+  const addAccount = useAddAccount()
+  const handleAddAccount = async () => {
+    await addAccount()
+    onNavigateToSessions?.()
   }
 
   const sl = settings.statusLine || DEFAULT_STATUS_LINE
@@ -229,7 +247,10 @@ export default function SettingsPage({ initialTab }: SettingsPageProps = {}) {
                 </label>
               </Section>
 
-              <AccountNamesSection />
+              {settings.multipleAccountsEnabled
+                ? <AccountsPanel defaultEmail={globalEmail} onAdd={handleAddAccount} />
+                : <AccountNamesSection />
+              }
 
               <Section title="Terminal" icon={<><rect x="2" y="3" width="12" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.2" fill="none" /><path d="M5 7l2 2-2 2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" /><line x1="9" y1="11" x2="11" y2="11" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" /></>}>
                 <Field label="Font Family">

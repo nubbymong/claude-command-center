@@ -50,6 +50,9 @@ if (typeof window !== 'undefined') {
     debug: {
       isEnabled: vi.fn().mockResolvedValue(false),
     },
+    accountProfiles: {
+      globalEmail: vi.fn().mockResolvedValue(null),
+    },
   }
 }
 

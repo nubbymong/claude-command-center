@@ -531,7 +531,7 @@ export default function App() {
   // Render non-session views (shown on top of sessions)
   const renderOverlayView = () => {
     if (view === 'logs') return <LogViewer />
-    if (view === 'settings') return <SettingsPage initialTab={pendingSettingsTab ?? undefined} />
+    if (view === 'settings') return <SettingsPage initialTab={pendingSettingsTab ?? undefined} onNavigateToSessions={() => setView('sessions')} />
     if (view === 'insights') return <InsightsPage />
     if (view === 'cloud-agents') return <CloudAgentsPage />
     if (view === 'tokenomics') return <TokenomicsPage />
