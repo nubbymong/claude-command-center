@@ -26,6 +26,7 @@ import { registerNotesHandlers } from './ipc/notes-handlers'
 import { registerVisionHandlers } from './ipc/vision-handlers'
 import { registerConfigHandlers } from './ipc/config-handlers'
 import { registerAccountProfilesHandlers } from './ipc/account-profiles-handlers'
+import { migrateProfilesToHomeLayout } from './account-profiles'
 import { registerCloudAgentHandlers } from './ipc/cloud-agent-handlers'
 import { registerTeamHandlers } from './ipc/team-handlers'
 import { registerLegacyVersionHandlers } from './ipc/legacy-version-handlers'
@@ -627,6 +628,10 @@ if (!gotTheLock) {
     registerSetupHandlers()
     registerConfigHandlers()
     registerAccountProfilesHandlers()
+    // One-time migration to the USERPROFILE fake-home isolation layout (older
+    // profiles isolated only CLAUDE_CONFIG_DIR, which never isolated the account
+    // identity). Idempotent + best-effort; never touches the real home.
+    try { migrateProfilesToHomeLayout() } catch (e) { logInfo(`[profiles] home-layout migration skipped: ${e}`) }
     registerScreenshotHandlers(getWindow)
     registerWebviewHandlers(getWindow)
     registerInsightsHandlers(getWindow)

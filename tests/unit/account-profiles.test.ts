@@ -44,11 +44,13 @@ describe('setupProfileLinks', () => {
     fs.mkdirSync(dir, { recursive: true })
     setupProfileLinks('p1')
 
-    expect(fs.existsSync(path.join(dir, 'memory', 'M.md'))).toBe(true)
-    expect(fs.lstatSync(path.join(dir, 'projects')).isSymbolicLink()).toBe(true)
-    expect(fs.existsSync(path.join(dir, 'settings.json'))).toBe(true)
-    expect(fs.lstatSync(path.join(dir, 'settings.json')).isSymbolicLink()).toBe(false)
-    expect(JSON.parse(fs.readFileSync(path.join(dir, 'settings.json'), 'utf8')).effortLevel).toBe('xhigh')
+    // New layout: the shared junctions + settings live under <home>/.claude/.
+    const claudeDir = path.join(dir, '.claude')
+    expect(fs.existsSync(path.join(claudeDir, 'memory', 'M.md'))).toBe(true)
+    expect(fs.lstatSync(path.join(claudeDir, 'projects')).isSymbolicLink()).toBe(true)
+    expect(fs.existsSync(path.join(claudeDir, 'settings.json'))).toBe(true)
+    expect(fs.lstatSync(path.join(claudeDir, 'settings.json')).isSymbolicLink()).toBe(false)
+    expect(JSON.parse(fs.readFileSync(path.join(claudeDir, 'settings.json'), 'utf8')).effortLevel).toBe('xhigh')
   })
 })
 
@@ -63,7 +65,7 @@ describe('safeTeardownProfile (junction-safe)', () => {
     setupProfileLinks('p1')
 
     // The gate's load-bearing invariant: the shared dir is reachable as a LINK.
-    expect(fs.lstatSync(path.join(dir, 'projects')).isSymbolicLink()).toBe(true)
+    expect(fs.lstatSync(path.join(dir, '.claude', 'projects')).isSymbolicLink()).toBe(true)
 
     safeTeardownProfile('p1')
 
@@ -101,8 +103,8 @@ describe('createProfile', () => {
     // profile dir exists
     const dir = getProfileConfigDir(profile.id)
     expect(fs.existsSync(dir)).toBe(true)
-    // projects inside the profile dir is a symlink/junction
-    expect(fs.lstatSync(path.join(dir, 'projects')).isSymbolicLink()).toBe(true)
+    // projects inside the profile's .claude dir is a symlink/junction
+    expect(fs.lstatSync(path.join(dir, '.claude', 'projects')).isSymbolicLink()).toBe(true)
     // listProfiles includes the new profile
     const all = listProfiles()
     expect(all.some((p) => p.id === profile.id)).toBe(true)
@@ -152,6 +154,6 @@ describe('safeTeardownProfile safety guards', () => {
     const dir = getProfileConfigDir('p1'); fs.mkdirSync(dir, { recursive: true })
     setupProfileLinks('p1')
     expect(() => setupProfileLinks('p1')).not.toThrow()
-    expect(fs.lstatSync(path.join(dir, 'projects')).isSymbolicLink()).toBe(true)
+    expect(fs.lstatSync(path.join(dir, '.claude', 'projects')).isSymbolicLink()).toBe(true)
   })
 })

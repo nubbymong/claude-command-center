@@ -28,7 +28,7 @@ import {
 import { registerCodexReviewSession, unregisterCodexReviewSession } from './conductor-mcp-server'
 import { disposeSession as disposeCodexReviewUsage } from './codex-review-usage'
 import { readCodexAccountEmail } from './account-identity'
-import { getProfileConfigDir } from './account-profiles'
+import { getProfileConfigDir, setupProfileLinks } from './account-profiles'
 import { captureClaudeAccount, clearClaudeAccount, pushAccountIdentity, startWatchingAccountIdentity, stopWatchingAccountIdentity } from './claude-account-identity'
 import type { AccountIdentity } from '../shared/types'
 import { updateSessionMeta, clearSessionMeta } from './session-registry'
@@ -57,9 +57,26 @@ export function getCodexSpawnIdentityMap(): Map<string, AccountIdentity> {
   return codexSpawnIdentity
 }
 
-/** Per-process account isolation: overlay CLAUDE_CONFIG_DIR for a profile. */
-export function withProfileConfigDir(env: Record<string, string>, configDir: string | null): Record<string, string> {
-  return configDir ? { ...env, CLAUDE_CONFIG_DIR: configDir } : env
+/**
+ * Per-process account isolation: run Claude under a per-account fake HOME so the
+ * account identity (~/.claude.json, which follows USERPROFILE on Windows / HOME
+ * on Unix) is private. CLAUDE_CONFIG_DIR alone does NOT isolate identity. Git/npm
+ * are pointed back at the real home so shared dev tooling is unaffected. Returns
+ * the env unchanged for the Default account (home == null).
+ */
+export function withProfileHome(env: Record<string, string>, home: string | null): Record<string, string> {
+  if (!home) return env
+  const realHome = os.homedir()
+  const next: Record<string, string> = {
+    ...env,
+    USERPROFILE: home,
+    // Belt-and-suspenders: keep git/npm reading the real shared config even if a
+    // hard-linked dotfile ever desyncs (the mirror also links these through).
+    GIT_CONFIG_GLOBAL: path.join(realHome, '.gitconfig'),
+    npm_config_userconfig: path.join(realHome, '.npmrc'),
+  }
+  if (process.platform !== 'win32') next.HOME = home
+  return next
 }
 
 function escapeShellArg(str: string): string {
@@ -851,11 +868,16 @@ export function spawnPty(
       profileDir = null
     }
     const effectiveProfileId = profileDir ? wantProfileId : undefined
-    const finalSpawnEnv = withProfileConfigDir(spawnEnv, profileDir)
+    // Refresh the per-account fake home (idempotent) right before spawn so the
+    // dot-entry mirror of the real home never drifts (new tools/configs picked up).
+    if (effectiveProfileId) {
+      try { setupProfileLinks(effectiveProfileId) } catch (e) { logWarn(`[profiles] session ${sessionId}: home refresh failed: ${e}`) }
+    }
+    const finalSpawnEnv = withProfileHome(spawnEnv, profileDir)
     // Diagnostic: record exactly which account this spawn runs under, so a
     // "card says X but Claude logged in as Y" mismatch can be bisected to either
-    // the renderer (requestedProfileId missing) or main (config dir not applied).
-    logInfo(`[profiles] session ${sessionId} account spawn: requestedProfileId=${wantProfileId ?? '(none)'} effectiveProfileId=${effectiveProfileId ?? '(default)'} CLAUDE_CONFIG_DIR=${profileDir ?? '(default ~/.claude)'}`)
+    // the renderer (requestedProfileId missing) or main (home not applied).
+    logInfo(`[profiles] session ${sessionId} account spawn: requestedProfileId=${wantProfileId ?? '(none)'} effectiveProfileId=${effectiveProfileId ?? '(default)'} USERPROFILE=${profileDir ?? '(real home)'}`)
     // Reliable, drift-immune account identity: capture once at spawn from the
     // session's profile (or the default ~/.claude.json), never re-read.
     // B3: capture is deferred until AFTER the interactive Claude pty.spawn

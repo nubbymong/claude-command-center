@@ -15,6 +15,17 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '1.5.25',
+    date: '2026-06-01',
+    highlights: 'Sessions now genuinely run under the account you choose, with no impact on your other tools.',
+    changes: [
+      { type: 'fix', description: 'Added accounts are now truly isolated. Previously only the credentials were separated, not the account identity, so a session could still run as the wrong account. Each added account now runs under its own private home, so the account you pick is the account Claude uses.' },
+      { type: 'improvement', description: 'Zero degradation to your other tools: each account home mirrors your real home, so git, ssh, npm and the rest behave exactly as before. Only the Claude account is private; your memory and history stay shared.' },
+      { type: 'improvement', description: 'Cleaner session cards: removed the redundant right-side dots. The account colour dot stays next to the account name.' },
+      { type: 'fix', description: 'One-time after this update: re-run /login once per added account so it re-establishes its isolated login.' },
+    ],
+  },
+  {
     version: '1.5.23',
     date: '2026-06-01',
     highlights: 'Pick the account a session runs under when it starts, and a clearer Accounts list.',

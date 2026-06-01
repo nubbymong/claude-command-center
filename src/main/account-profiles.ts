@@ -81,6 +81,16 @@ export function createProfile(name?: string): AccountProfile {
 
 const isWin = process.platform === 'win32'
 
+/** The real user home (parent of the shared ~/.claude). Test-overridable seam. */
+function realHomeDir(): string {
+  return rootsOverride ? path.dirname(rootsOverride.sharedRoot) : os.homedir()
+}
+
+// Home-root entries that stay PRIVATE per account -- never mirrored from the real
+// home. The Claude identity (.claude.json) + config dir (.claude) are isolated;
+// everything else mirrors the real home so tools behave identically.
+const HOME_PRIVATE = new Set(['.claude', '.claude.json'])
+
 function ensureLink(target: string, link: string): void {
   // Replace any existing entry at `link` (safely: never recurse a junction).
   try {
@@ -94,29 +104,119 @@ function ensureLink(target: string, link: string): void {
   fs.symlinkSync(target, link, isWin ? 'junction' : 'dir')
 }
 
+/** Hard-link a FILE from the real home into the fake home (same data, no admin
+ *  on Windows). `link` is ALWAYS inside the fake home; we only replace our own
+ *  link/file there, never the target. Cross-volume falls back to a copy. */
+function ensureHardLink(target: string, link: string): void {
+  try {
+    const st = fs.lstatSync(link)
+    if (st.isSymbolicLink()) { try { fs.rmdirSync(link) } catch { fs.unlinkSync(link) } }
+    else if (st.isDirectory()) return // never clobber a real dir with a file link
+    else fs.unlinkSync(link)
+  } catch { /* not present */ }
+  try {
+    fs.linkSync(target, link)
+  } catch {
+    // Different volume / permission: a one-way copy is a safe best-effort fallback.
+    try { fs.copyFileSync(target, link) } catch { /* skip this entry */ }
+  }
+}
+
 /**
- * Junction the shared dirs from `sharedRoot()` into the profile, and copy
- * settings.json one-way (junctions are dir-only; a file symlink needs elevation
- * on Windows, and a shared settings.json must never be mutated by a profile).
- * Idempotent: re-running replaces existing junctions and re-copies settings.json.
+ * Mirror every DOT-entry of the real home into the fake home so git, ssh, npm,
+ * gh and friends resolve to the real config: directories via junctions, files
+ * via hard links. Skips the private Claude files. SAFETY: only ever writes UNDER
+ * `home`; refuses to run if `home` resolves to the real home; best-effort per
+ * entry so one bad item never aborts the spawn.
+ */
+function mirrorRealHome(home: string): void {
+  const real = realHomeDir()
+  if (path.resolve(home) === path.resolve(real)) return // never mirror onto self
+  let entries: fs.Dirent[]
+  try { entries = fs.readdirSync(real, { withFileTypes: true }) } catch { return }
+  for (const e of entries) {
+    if (!e.name.startsWith('.')) continue       // only dot-entries hold tool config
+    if (HOME_PRIVATE.has(e.name)) continue       // .claude + .claude.json stay private
+    const target = path.join(real, e.name)
+    const link = path.join(home, e.name)
+    try {
+      const st = fs.lstatSync(target)
+      if (st.isDirectory()) ensureLink(target, link)
+      else if (st.isFile()) ensureHardLink(target, link)
+      // symlinks / special files at the real root are skipped (don't chain links)
+    } catch { /* best-effort: skip entries we can't stat or link */ }
+  }
+}
+
+/** Remove OLD-layout direct junctions (`<home>/<sharedName>`) left by the prior
+ *  CLAUDE_CONFIG_DIR model so they don't linger beside the new `.claude/` ones.
+ *  Removes LINKS only -- never their targets. */
+function migrateOldLayout(home: string): void {
+  for (const name of SHARED_DIR_NAMES) {
+    const p = path.join(home, name)
+    try {
+      if (fs.lstatSync(p).isSymbolicLink()) { try { fs.rmdirSync(p) } catch { fs.unlinkSync(p) } }
+    } catch { /* absent */ }
+  }
+}
+
+/**
+ * Build the per-account fake HOME: a private `.claude/` (credentials + a one-way
+ * settings copy + junctions to the shared ~/.claude dirs) plus a dot-entry mirror
+ * of the real home so every other tool behaves identically. Idempotent -- safe to
+ * re-run at every spawn to keep the mirror current. NEVER touches the real home.
  */
 export function setupProfileLinks(id: string): void {
-  const dir = getProfileConfigDir(id)
-  fs.mkdirSync(dir, { recursive: true })
+  const home = getProfileConfigDir(id)
+  fs.mkdirSync(home, { recursive: true })
+  migrateOldLayout(home)
+
+  // Private Claude config dir: shared junctions + a one-way settings copy.
+  const claudeDir = path.join(home, '.claude')
+  fs.mkdirSync(claudeDir, { recursive: true })
   const shared = sharedRoot()
   for (const name of SHARED_DIR_NAMES) {
     const target = path.join(shared, name)
     if (!fs.existsSync(target)) fs.mkdirSync(target, { recursive: true })
-    ensureLink(target, path.join(dir, name))
+    ensureLink(target, path.join(claudeDir, name))
   }
   const srcSettings = path.join(shared, 'settings.json')
-  if (fs.existsSync(srcSettings)) fs.copyFileSync(srcSettings, path.join(dir, 'settings.json'))
+  if (fs.existsSync(srcSettings)) fs.copyFileSync(srcSettings, path.join(claudeDir, 'settings.json'))
+
+  // Seamless tool state: mirror the real home's dot-entries (git/ssh/npm/...).
+  mirrorRealHome(home)
 }
 
-/** Re-copy settings.json from shared -> profile (call after the user edits shared settings). */
+/** Re-copy settings.json from shared -> profile's `.claude/` (after shared edits). */
 export function resyncProfileSettings(id: string): void {
   const src = path.join(sharedRoot(), 'settings.json')
-  if (fs.existsSync(src)) fs.copyFileSync(src, path.join(getProfileConfigDir(id), 'settings.json'))
+  if (fs.existsSync(src)) {
+    const claudeDir = path.join(getProfileConfigDir(id), '.claude')
+    fs.mkdirSync(claudeDir, { recursive: true })
+    fs.copyFileSync(src, path.join(claudeDir, 'settings.json'))
+  }
+}
+
+/**
+ * One-time migration to the USERPROFILE fake-home layout. A profile is on the OLD
+ * layout when it has no `<home>/.claude/` dir. For each such profile we drop the
+ * now-ambiguous identity + credentials (the old model polluted them with the
+ * global account), rebuild the new layout, and reset accountEmail so the user
+ * re-runs /login once. Only ever touches files UNDER the profile dir.
+ */
+export function migrateProfilesToHomeLayout(): void {
+  for (const p of listProfiles()) {
+    if (!isValidProfileId(p.id)) continue
+    const home = getProfileConfigDir(p.id)
+    if (!fs.existsSync(home)) continue
+    if (fs.existsSync(path.join(home, '.claude'))) continue // already new layout
+    // Drop the polluted identity + creds so re-login is clean (profile dir only).
+    for (const f of ['.claude.json', '.credentials.json']) {
+      try { fs.unlinkSync(path.join(home, f)) } catch { /* absent */ }
+    }
+    try { setupProfileLinks(p.id) } catch { /* best-effort; leaves it setup-incomplete */ }
+    upsertProfile({ ...p, accountEmail: '' })
+  }
 }
 
 /** Recursive teardown that removes junction LINKS only, never their targets. */
