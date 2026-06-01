@@ -1,12 +1,14 @@
 // src/renderer/components/AccountsPanel.tsx
 // Shared "Accounts" panel rendered inside Settings when multipleAccountsEnabled is on.
-// Each account is identified by its email. The Default row (real ~/.claude) is
-// never deletable; each managed profile row has a delete button. An "Add
-// another account" affordance starts the login flow. No friendly-name editing --
-// accounts are shown by email so the panel is unambiguous.
-import React, { useEffect } from 'react'
+// Each account shows its email as the read-only identity, with a clearly-labelled
+// "Name" field beneath for an optional friendly name (shown on session rows, the
+// status strip and tokenomics). The Default row (real ~/.claude) is never
+// deletable and names via settings.accountAliases; each managed profile names via
+// the accountProfiles IPC and has a delete button.
+import React, { useState, useEffect, useRef } from 'react'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
-import { middleTruncateEmail } from '../../shared/account-chip-color'
+import { useSettingsStore } from '../stores/settingsStore'
+import { canonicaliseEmail, middleTruncateEmail } from '../../shared/account-chip-color'
 import { useResolvedTheme } from '../hooks/useThemeController'
 import { resolveIdentityColor } from '../../shared/identity-colors'
 import type { AccountProfile } from '../../shared/account-types'
@@ -21,42 +23,109 @@ export interface AccountsPanelProps {
 
 // ---- sub-components ---------------------------------------------------------
 
-/** The always-present Default (real ~/.claude) row. Email-only, never deletable. */
-function DefaultAccountRow({ email }: { email: string | null }) {
-  const theme = useResolvedTheme()
-  // Neutral dot for the default account (no profile colour key available).
-  const dot = resolveIdentityColor('mauve', theme)
+/** Labelled, obviously-editable friendly-name field. Commits on blur/Enter. */
+function NameField({
+  initialValue,
+  onCommit,
+}: {
+  initialValue: string
+  onCommit: (value: string) => void | Promise<void>
+}) {
+  const [value, setValue] = useState(initialValue)
+  // Last committed value so an unchanged blur/Enter is a no-op.
+  const lastCommitted = useRef(initialValue)
+
+  // Sync if the source changes externally (e.g. another surface renamed it).
+  useEffect(() => {
+    setValue(initialValue)
+    lastCommitted.current = initialValue
+  }, [initialValue])
+
+  const commit = () => {
+    if (value.trim() === lastCommitted.current.trim()) return
+    lastCommitted.current = value
+    onCommit(value)
+  }
 
   return (
-    <div
-      className="flex items-center gap-3 py-2 px-1 rounded-lg"
-      data-testid="default-account-row"
-    >
-      <span
-        className="w-2 h-2 rounded-full shrink-0"
-        style={{ backgroundColor: dot }}
-        aria-hidden
+    <div className="flex items-center gap-2 mt-1.5">
+      <span className="text-[11px] text-subtext0 w-10 shrink-0">Name</span>
+      <input
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault()
+            ;(e.currentTarget as HTMLInputElement).blur()
+          }
+        }}
+        placeholder="Optional friendly name"
+        className="flex-1 bg-crust/60 border border-surface0/80 rounded-lg px-3 py-1.5 text-sm text-text focus:outline-none focus:border-blue/50 placeholder:text-overlay0 transition-colors"
       />
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold text-subtext0 uppercase tracking-wide">Default</span>
-          <span className="text-[10px] text-overlay0 border border-overlay0/30 rounded px-1">current login</span>
-        </div>
-        <span
-          className="text-sm font-mono truncate block mt-0.5"
-          style={{ color: 'var(--text-secondary)' }}
-          title={email ?? undefined}
-        >
-          {email ? middleTruncateEmail(email) : <span className="text-overlay0 italic">not signed in</span>}
-        </span>
-      </div>
     </div>
   )
 }
 
-/** A row for a managed profile. Email-only; deletable. */
+/** The always-present Default (real ~/.claude) row. Name writes into accountAliases. */
+function DefaultAccountRow({ email }: { email: string | null }) {
+  const settings = useSettingsStore((s) => s.settings)
+  const updateSettings = useSettingsStore((s) => s.updateSettings)
+  const theme = useResolvedTheme()
+
+  const currentAlias = email
+    ? (settings.accountAliases?.[canonicaliseEmail(email)] ?? '')
+    : ''
+
+  const commitAlias = async (raw: string) => {
+    if (!email) return
+    const name = raw.trim()
+    const key = canonicaliseEmail(email)
+    const existing = settings.accountAliases ?? {}
+    if (name) {
+      await updateSettings({ accountAliases: { ...existing, [key]: name } })
+    } else {
+      const next = { ...existing }
+      delete next[key]
+      await updateSettings({ accountAliases: next })
+    }
+  }
+
+  const dot = resolveIdentityColor('mauve', theme)
+
+  return (
+    <div className="py-2 px-1 rounded-lg" data-testid="default-account-row">
+      <div className="flex items-center gap-3">
+        <span
+          className="w-2 h-2 rounded-full shrink-0"
+          style={{ backgroundColor: dot }}
+          aria-hidden
+        />
+        <div className="flex-1 min-w-0 flex items-center gap-2">
+          <span
+            className="text-sm font-mono truncate"
+            style={{ color: 'var(--text-secondary)' }}
+            title={email ?? undefined}
+          >
+            {email ? middleTruncateEmail(email) : <span className="text-overlay0 italic">not signed in</span>}
+          </span>
+          <span className="text-[10px] text-overlay0 border border-overlay0/30 rounded px-1 shrink-0">current login</span>
+        </div>
+      </div>
+      {email && <div className="ml-5"><NameField initialValue={currentAlias} onCommit={commitAlias} /></div>}
+    </div>
+  )
+}
+
+/** A row for a managed profile. Name via IPC; deletable. */
 function ProfileRow({ profile }: { profile: AccountProfile }) {
   const theme = useResolvedTheme()
+
+  const commitName = async (raw: string) => {
+    const name = raw.trim()
+    await window.electronAPI.accountProfiles.rename(profile.id, name)
+    await useAccountProfilesStore.getState().hydrate()
+  }
 
   const handleDelete = async () => {
     const confirmed = window.confirm(
@@ -67,44 +136,43 @@ function ProfileRow({ profile }: { profile: AccountProfile }) {
     await useAccountProfilesStore.getState().hydrate()
   }
 
-  // Colour dot: use the profile's colour key if set, else fall back to 'mauve'.
   const dot = resolveIdentityColor(profile.colourKey ?? 'mauve', theme)
   const hasEmail = !!profile.accountEmail
 
   return (
-    <div
-      className="flex items-center gap-3 py-2 px-1 rounded-lg"
-      data-testid={`profile-row-${profile.id}`}
-    >
-      <span
-        className="w-2 h-2 rounded-full shrink-0"
-        style={{ backgroundColor: dot }}
-        aria-hidden
-      />
-      <div className="flex-1 min-w-0">
+    <div className="py-2 px-1 rounded-lg" data-testid={`profile-row-${profile.id}`}>
+      <div className="flex items-center gap-3">
         <span
-          className="text-sm font-mono truncate block"
-          style={{ color: hasEmail ? 'var(--text-secondary)' : undefined }}
-          title={hasEmail ? profile.accountEmail : undefined}
+          className="w-2 h-2 rounded-full shrink-0"
+          style={{ backgroundColor: dot }}
+          aria-hidden
+        />
+        <div className="flex-1 min-w-0">
+          <span
+            className="text-sm font-mono truncate block"
+            style={{ color: hasEmail ? 'var(--text-secondary)' : undefined }}
+            title={hasEmail ? profile.accountEmail : undefined}
+          >
+            {hasEmail ? (
+              middleTruncateEmail(profile.accountEmail)
+            ) : (
+              <span className="text-overlay0 italic">setup incomplete</span>
+            )}
+          </span>
+        </div>
+        <button
+          onClick={handleDelete}
+          title="Remove this account from CCC"
+          data-testid={`delete-profile-${profile.id}`}
+          className="ml-1 p-1 rounded text-overlay1 hover:text-red hover:bg-red/10 transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-red/50 shrink-0"
+          aria-label="Remove account"
         >
-          {hasEmail ? (
-            middleTruncateEmail(profile.accountEmail)
-          ) : (
-            <span className="text-overlay0 italic">setup incomplete</span>
-          )}
-        </span>
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden>
+            <path d="M3 4h10M5 4V2.5h6V4M6.5 7v5M9.5 7v5M4 4l.75 8.5a1 1 0 001 .9h4.5a1 1 0 001-.9L12 4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
       </div>
-      <button
-        onClick={handleDelete}
-        title="Remove this account from CCC"
-        data-testid={`delete-profile-${profile.id}`}
-        className="ml-1 p-1 rounded text-overlay1 hover:text-red hover:bg-red/10 transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-red/50 shrink-0"
-        aria-label="Remove account"
-      >
-        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden>
-          <path d="M3 4h10M5 4V2.5h6V4M6.5 7v5M9.5 7v5M4 4l.75 8.5a1 1 0 001 .9h4.5a1 1 0 001-.9L12 4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </button>
+      <div className="ml-5"><NameField initialValue={profile.name} onCommit={commitName} /></div>
     </div>
   )
 }
@@ -170,9 +238,10 @@ export default function AccountsPanel({ defaultEmail, onAdd }: AccountsPanelProp
 
       {/* Informational note - no em dashes */}
       <p className="text-[11px] text-overlay0 leading-relaxed mt-2">
-        Signing in or out of an added account never touches the others or your default.
-        Memory, settings and history stay shared. You pick which account a session runs
-        under when it starts.
+        The email is the account; the name is just a friendly label for you. Signing in or
+        out of an added account never touches the others or your default, and memory,
+        settings and history stay shared. You pick which account a session runs under when
+        it starts.
       </p>
     </Section>
   )

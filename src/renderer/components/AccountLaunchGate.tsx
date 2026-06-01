@@ -7,7 +7,8 @@
 import React, { useState, useEffect } from 'react'
 import { useAccountGateStore } from '../stores/accountGateStore'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
-import { middleTruncateEmail } from '../../shared/account-chip-color'
+import { useSettingsStore } from '../stores/settingsStore'
+import { middleTruncateEmail, resolveAccountName } from '../../shared/account-chip-color'
 import { useResolvedTheme } from '../hooks/useThemeController'
 import { resolveIdentityColor } from '../../shared/identity-colors'
 
@@ -15,6 +16,7 @@ export default function AccountLaunchGate() {
   const pending = useAccountGateStore((s) => s.queue[0] ?? null)
   const resolveChoice = useAccountGateStore((s) => s.resolveChoice)
   const profiles = useAccountProfilesStore((s) => s.profiles)
+  const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
   const theme = useResolvedTheme()
   const [selected, setSelected] = useState<string>('')
 
@@ -68,11 +70,19 @@ export default function AccountLaunchGate() {
             className="flex-1 bg-base border border-surface1 rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-blue"
           >
             <option value="">Default account</option>
-            {profiles.map((p) => (
-              <option key={p.id} value={p.id} title={p.accountEmail || undefined}>
-                {p.accountEmail ? middleTruncateEmail(p.accountEmail) : `${p.name} (setup incomplete)`}
-              </option>
-            ))}
+            {profiles.map((p) => {
+              // Friendly name wins when set; otherwise the email (or a clear
+              // "setup incomplete" hint for a profile still mid-login).
+              const resolved = resolveAccountName(p.accountEmail, p.name, accountAliases)
+              const label = p.accountEmail
+                ? (resolved === p.accountEmail ? middleTruncateEmail(p.accountEmail) : resolved)
+                : `${p.name || 'New account'} (setup incomplete)`
+              return (
+                <option key={p.id} value={p.id} title={p.accountEmail || undefined}>
+                  {label}
+                </option>
+              )
+            })}
           </select>
         </div>
 
