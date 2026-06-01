@@ -16,8 +16,12 @@ function getDefaultDataDir(): string {
   if (process.platform === 'linux') {
     return path.join(app.getPath('home'), '.claude-conductor', 'data')
   }
-  // Windows
-  return path.join(app.getPath('localAppData'), 'Claude Command Center')
+  // Windows: Electron's app.getPath() has NO 'localAppData' key and throws on it,
+  // which broke first-run on any machine without the registry DataDirectory set
+  // (e.g. a clean install before the setup wizard writes it). Derive %LOCALAPPDATA%
+  // from the env var, falling back to <home>\AppData\Local.
+  const localAppData = process.env.LOCALAPPDATA || path.join(homedir(), 'AppData', 'Local')
+  return path.join(localAppData, 'Claude Command Center')
 }
 
 // Cache registry values — they don't change during the app's lifetime
