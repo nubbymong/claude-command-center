@@ -29,7 +29,6 @@ export default function GuidedConfigView({ onConfirm, onSkip }: Props) {
   const [sshRemotePath, setSshRemotePath] = useState('~')
   const [sshPassword, setSshPassword] = useState('')
   const [model, setModel] = useState('')
-  const [effortLevel, setEffortLevel] = useState<'low' | 'medium' | 'high' | ''>('')
   const [disableAutoMemory, setDisableAutoMemory] = useState(false)
 
   const [activeSection, setActiveSection] = useState<SectionKey>('identity')
@@ -79,7 +78,6 @@ export default function GuidedConfigView({ onConfirm, onSkip }: Props) {
       } : undefined,
       claudeOptions: {
         model: model || undefined,
-        effortLevel: effortLevel || undefined,
         disableAutoMemory: disableAutoMemory || undefined,
       },
     }
@@ -276,20 +274,6 @@ export default function GuidedConfigView({ onConfirm, onSkip }: Props) {
                     <option value="haiku">Haiku (fast, cheap)</option>
                   </select>
                 </div>
-                <div>
-                  <label className="block text-sm text-subtext1 mb-1">Effort Level</label>
-                  <select
-                    value={effortLevel}
-                    onChange={(e) => setEffortLevel(e.target.value as any)}
-                    onFocus={focusSection('claude')}
-                    className="w-full px-3 py-2 bg-surface0 border border-surface1 rounded text-text text-sm focus:outline-none focus:border-mauve"
-                  >
-                    <option value="">Auto (default)</option>
-                    <option value="low">Low — Fast responses, less thinking</option>
-                    <option value="medium">Medium — Balanced</option>
-                    <option value="high">High — Deep thinking, slower</option>
-                  </select>
-                </div>
               </div>
             </section>
 
@@ -378,12 +362,6 @@ export default function GuidedConfigView({ onConfirm, onSkip }: Props) {
               <p className="text-sm text-subtext0 leading-relaxed mb-3">
                 <strong className="text-text">Model Override</strong> lets you force a specific Claude model for this config. Leave as Default to use your subscription's best model (usually Opus). Pick Sonnet or Haiku for faster/cheaper responses on simpler tasks.
               </p>
-              <p className="text-sm text-subtext0 leading-relaxed mb-3">
-                <strong className="text-text">Effort Level</strong> controls how deeply Claude thinks before responding. Higher effort = better quality but slower and more expensive. Auto lets Claude decide.
-              </p>
-              <div className="bg-surface0/50 border border-surface0 rounded p-3 text-xs text-subtext1">
-                <strong className="text-blue">💡 Tip:</strong> Use High effort for architecture decisions and debugging hard bugs. Use Low effort for simple refactors and doc updates.
-              </div>
             </div>
 
             {/* Advanced help */}

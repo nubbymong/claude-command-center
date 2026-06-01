@@ -14,7 +14,13 @@ const bySession = new Map<string, string>()
 
 function defaultAccountEmail(): string | null {
   try {
-    const raw = fs.readFileSync(path.join(sharedRoot(), '.claude.json'), 'utf8')
+    // The default account's identity lives in ~/.claude.json (home root), a
+    // SIBLING of sharedRoot() (~/.claude) -- NOT a file inside it. Reading
+    // sharedRoot()/.claude.json (the prior bug) always missed on real machines,
+    // so the account chip stayed blank for every single-account user.
+    // dirname(sharedRoot()) resolves to the home root in production and still
+    // routes through the _setRootsForTest seam in tests.
+    const raw = fs.readFileSync(path.join(path.dirname(sharedRoot()), '.claude.json'), 'utf8')
     const email = (JSON.parse(raw) as { oauthAccount?: { emailAddress?: unknown } })?.oauthAccount?.emailAddress
     return typeof email === 'string' && email ? email : null
   } catch { return null }

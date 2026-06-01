@@ -6,7 +6,7 @@
  *
  * Ports the still-relevant intent of the old BottomBar middle/right tests:
  *  - telemetry honours statusLine show* flags (model, context %, tokens, ...)
- *  - Mode / Model / Compact / Restart controls present + write to the right pty
+ *  - Model / Compact / Restart controls present + write to the right pty
  *  - provider gating (codex hides the Claude controls)
  *  - Model pill shows the real short name, never a bare "default"
  *  - rate-limit + codex-review rows render
@@ -23,6 +23,8 @@ import { act } from 'react'
 
 const DEFAULT_STATUS_LINE = {
   showModel: true,
+  showEffort: true,
+  showAccount: true,
   showTokens: true,
   showContextBar: true,
   showCost: true,
@@ -183,9 +185,9 @@ describe('SessionStatusStrip -- telemetry', () => {
 })
 
 describe('SessionStatusStrip -- controls (Claude)', () => {
-  it('renders Mode / Model / Compact / Restart controls', async () => {
+  it('renders Model / Compact / Restart controls (Mode button removed)', async () => {
     await render(claudeSession.id)
-    expect(buttonByTitle('Permission mode')).toBeTruthy()
+    expect(buttonByTitle('Permission mode')).toBeFalsy()
     expect(buttonByTitle('Model')).toBeTruthy()
     expect(buttonByTitle('Compact the conversation')).toBeTruthy()
     expect(buttonByTitle('Restart session')).toBeTruthy()
@@ -206,17 +208,6 @@ describe('SessionStatusStrip -- controls (Claude)', () => {
     expect(opt).toBeTruthy()
     act(() => { opt!.click() })
     expect(ptyWrite).toHaveBeenCalledWith(claudeSession.id, '/model opus\n')
-  })
-
-  it('selecting a mode writes /permission-mode <value>', async () => {
-    await render(claudeSession.id)
-    act(() => { buttonByTitle('Permission mode')!.click() })
-    const opt = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
-      (b) => (b.textContent ?? '').includes('Ask permissions'),
-    )
-    expect(opt).toBeTruthy()
-    act(() => { opt!.click() })
-    expect(ptyWrite).toHaveBeenCalledWith(claudeSession.id, expect.stringMatching(/^\/permission-mode .+\n$/))
   })
 
   it('Restart invokes the restart hook', async () => {

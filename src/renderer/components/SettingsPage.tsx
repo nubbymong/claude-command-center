@@ -440,6 +440,8 @@ export default function SettingsPage({ initialTab }: SettingsPageProps = {}) {
 
 const STATUS_LINE_TOGGLES: { key: keyof StatusLineSettings; label: string; description: string }[] = [
   { key: 'showModel', label: 'Model Name', description: 'Shows the active Claude model' },
+  { key: 'showEffort', label: 'Effort Level', description: 'Active reasoning effort next to the model' },
+  { key: 'showAccount', label: 'Account', description: 'Claude account this session runs as' },
   { key: 'showTokens', label: 'Token Count', description: 'Input tokens / context window' },
   { key: 'showContextBar', label: 'Context Bar', description: 'Visual progress bar + percentage' },
   { key: 'showCost', label: 'API Cost', description: 'API equivalent cost estimate' },
@@ -569,6 +571,11 @@ function StatusLinePreview({ sl }: { sl: StatusLineSettings }) {
       {/* Row 1 */}
       <div className="flex items-center gap-3 px-2 py-1">
         <span className={`text-text font-medium ${vis(sl.showModel)}`}>Claude 4 Sonnet</span>
+        <span className={`text-overlay1 ${vis(sl.showEffort)}`}>xhigh</span>
+        <span className={`flex items-center gap-1 ${vis(sl.showAccount)}`}>
+          <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: 'var(--color-mauve)' }} />
+          you@example.com
+        </span>
         <span className={`tabular-nums ${vis(sl.showTokens)}`}>84K / 200K</span>
         <div className={`flex items-center gap-1.5 ${!sl.showContextBar ? 'opacity-30' : ''}`}>
           <div className="w-20 h-1.5 bg-surface1 rounded-full overflow-hidden">
@@ -826,18 +833,22 @@ export function ShortcutRow({ keys, action }: { keys: string; action: string }) 
   )
 }
 
+// Geometry uses inline styles (not Tailwind w-/h-/translate utilities) so the
+// control renders identically regardless of utility emission or cascade order
+// -- a prior build showed the knob detached from a collapsed track. Track is
+// 44x24, the 16px knob is inset 4px and slides 20px between off and on.
 export function Toggle({ on, onClick, label }: { on: boolean; onClick: () => void; label?: string }) {
   return (
     <button
       onClick={onClick}
       aria-pressed={on}
       aria-label={label}
-      className="relative shrink-0 w-11 h-6 rounded-full transition-colors duration-200"
-      style={{ background: on ? 'var(--status-success)' : 'var(--surface-overlay)' }}
+      className="relative shrink-0 rounded-full transition-colors duration-200"
+      style={{ width: 44, height: 24, background: on ? 'var(--status-success)' : 'var(--surface-overlay)' }}
     >
       <span
-        className="absolute top-1 w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-200"
-        style={{ transform: on ? 'translateX(24px)' : 'translateX(4px)' }}
+        className="absolute rounded-full bg-white shadow-sm transition-transform duration-200"
+        style={{ width: 16, height: 16, top: 4, left: 4, transform: on ? 'translateX(20px)' : 'translateX(0)' }}
       />
     </button>
   )

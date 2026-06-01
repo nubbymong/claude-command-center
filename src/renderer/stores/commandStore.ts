@@ -51,15 +51,10 @@ interface CommandState {
   reorderSections: (reordered: CommandSection[]) => void
 }
 
-export const DEFAULT_COMMANDS: CustomCommand[] = [
-  {
-    id: 'builtin-setup-statusline',
-    label: 'Setup Statusline',
-    prompt: 'Please configure Claude\'s statusline on this machine so context usage is reported. Run these bash commands: 1) Create ~/.claude directory if it doesn\'t exist. 2) Write a Node.js script to ~/.claude/.sl.js that reads JSON from stdin, extracts context_window.used_percentage and cost.total_cost_usd, and outputs "XX% context | $Y.YYYY" to stdout. 3) Update ~/.claude/settings.json to set statusLine to {"type":"command","command":"node ~/.claude/.sl.js","padding":0} — merge with existing settings, don\'t overwrite them. After setup, confirm it worked by showing the contents of both files.',
-    scope: 'global',
-    color: '#89B4FA',
-  },
-]
+// No built-in commands: CCC auto-configures the statusline on install, so the
+// old "Setup Statusline" command was redundant and only added noise on a fresh
+// install. Users create their own commands via the Commands UI.
+export const DEFAULT_COMMANDS: CustomCommand[] = []
 
 export const useCommandStore = create<CommandState>((set, get) => ({
   commands: [],

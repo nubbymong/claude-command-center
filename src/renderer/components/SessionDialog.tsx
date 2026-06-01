@@ -117,10 +117,6 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
   const agentUserTemplates = useAgentLibraryStore(s => s.templates)
   const allAgentTemplates = [...agentUserTemplates, ...BUILTIN_TEMPLATES]
   const [selectedAgentIds, setSelectedAgentIds] = useState<Set<string>>(new Set(initialClaude?.agentIds ?? initial?.agentIds ?? []))
-  type EffortLevelOpt = 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode' | ''
-  const [effortLevel, setEffortLevel] = useState<EffortLevelOpt>(
-    (initialClaude?.effortLevel ?? initial?.effortLevel ?? '') as EffortLevelOpt
-  )
   const [disableAutoMemory, setDisableAutoMemory] = useState(initialClaude?.disableAutoMemory ?? initial?.disableAutoMemory ?? false)
   const [enableCodexReview, setEnableCodexReview] = useState(initialClaude?.enableCodexReview ?? false)
   // v1.5.11: Opus 4.8 fast mode -- 2.5x speed for 2x cost ($10/$50 per 1M
@@ -267,7 +263,6 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
       model: model || undefined,
       legacyVersion: legacyEnabled && legacyVersion ? { enabled: true, version: legacyVersion } : undefined,
       agentIds: !shellOnly && selectedAgentIds.size > 0 ? Array.from(selectedAgentIds) : undefined,
-      effortLevel: !shellOnly && effortLevel ? effortLevel : undefined,
       disableAutoMemory: !shellOnly && disableAutoMemory ? true : undefined,
       enableCodexReview: !shellOnly && enableCodexReview ? true : undefined,
       fastMode: !shellOnly && fastMode ? true : undefined,
@@ -652,29 +647,6 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                 <option value="haiku">Haiku</option>
               </select>
             </div>
-
-            {/* Effort level */}
-            {!shellOnly && (
-              <div>
-                <label className="block text-xs text-subtext0 mb-1">
-                  Effort level
-                  <span className="text-overlay0 ml-1">(thinking depth vs cost)</span>
-                </label>
-                <select
-                  value={effortLevel}
-                  onChange={(e) => setEffortLevel(e.target.value as EffortLevelOpt)}
-                  className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-blue"
-                >
-                  <option value="">Auto (default)</option>
-                  <option value="low">Low -- fast, minimal thinking</option>
-                  <option value="medium">Medium -- balanced</option>
-                  <option value="high">High -- deep reasoning</option>
-                  <option value="xhigh">Extra high -- Opus 4.8 hardest tasks</option>
-                  <option value="max">Max -- maximum reasoning budget</option>
-                  <option value="ultracode">Ultracode -- xhigh + automatic workflows (research preview)</option>
-                </select>
-              </div>
-            )}
 
             {/* v1.5.11: Opus 4.8 fast mode toggle */}
             {!shellOnly && (

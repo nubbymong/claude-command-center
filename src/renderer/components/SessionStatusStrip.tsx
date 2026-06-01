@@ -14,7 +14,6 @@ import ToolbarPopup from './ToolbarPopup'
 import {
   MODELS,
   EFFORTS,
-  PERMISSION_MODES,
   shortModelName,
   isModelActive,
 } from '../lib/claude-cli-options'
@@ -63,18 +62,12 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
   const multipleAccountsEnabled = useSettingsStore((s) => s.settings.multipleAccountsEnabled)
   const canSwitchAccount = !!multipleAccountsEnabled && profiles.length > 1
 
-  const [openPicker, setOpenPicker] = useState<'mode' | 'model' | 'account' | null>(null)
-  const [lastMode, setLastMode] = useState<string | null>(null)
+  const [openPicker, setOpenPicker] = useState<'model' | 'account' | null>(null)
   const [lastEffort, setLastEffort] = useState<string | null>(null)
   const isClaude = (session?.provider ?? 'claude') === 'claude'
 
   const write = (cmd: string) => {
     window.electronAPI.pty.write(sessionId, cmd)
-  }
-  const onMode = (_si: number, v: string) => {
-    setLastMode(v)
-    write(`/permission-mode ${v}\n`)
-    setOpenPicker(null)
   }
   const onModel = (si: number, v: string) => {
     if (si === 0) {
@@ -155,14 +148,17 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
                 uses effortLevel (config-time, set when the user pinned
                 --effort in Edit Config). Show whichever is set; Codex
                 wins on the rare case both are populated. */}
-            {(session.reasoningEffort || session.effortLevel) && (
+            {/* Effort renders as a suffix of the model name ("Sonnet xhigh"),
+                so it is intentionally also gated by showModel above -- an
+                orphaned effort with no model would look broken. */}
+            {sl.showEffort && (session.reasoningEffort || session.effortLevel) && (
               <span className="ml-1 font-normal" style={{ color: 'var(--text-muted)' }}>
                 {session.reasoningEffort || session.effortLevel}
               </span>
             )}
           </span>
         )}
-        {accountName && (
+        {sl.showAccount && accountName && (
           <span
             className="flex items-center gap-1 shrink-0"
             style={{ color: 'var(--text-muted)' }}
@@ -260,29 +256,6 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
               )}
             </div>
           )}
-          <div className="relative">
-            <button
-              onClick={() => setOpenPicker(openPicker === 'mode' ? null : 'mode')}
-              className={CONTROL_PILL}
-              style={{
-                background: 'var(--surface-raised)',
-                border: '1px solid var(--border-subtle)',
-                color: 'var(--text-secondary)',
-              }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--surface-overlay)'; e.currentTarget.style.color = 'var(--text-primary)' }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--surface-raised)'; e.currentTarget.style.color = 'var(--text-secondary)' }}
-              title="Permission mode"
-            >
-              Mode
-            </button>
-            {openPicker === 'mode' && (
-              <ToolbarPopup
-                sections={[{ title: 'Mode', items: PERMISSION_MODES.map((m) => ({ ...m, active: m.value === lastMode })) }]}
-                onSelect={onMode}
-                onClose={() => setOpenPicker(null)}
-              />
-            )}
-          </div>
           <div className="relative">
             <button
               onClick={() => setOpenPicker(openPicker === 'model' ? null : 'model')}

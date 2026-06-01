@@ -16,6 +16,8 @@ export function useStatuslineSubscription(sessionId: string) {
       if (data.costUsd != null) updates.costUsd = data.costUsd
       if (data.model) updates.modelName = data.model
       if (data.reasoningEffort) updates.reasoningEffort = data.reasoningEffort
+      // Claude live effort (statusline effort.level) -- updates on mid-session /effort
+      if (data.effortLevel) updates.effortLevel = data.effortLevel
       if (data.linesAdded != null) updates.linesAdded = data.linesAdded
       if (data.linesRemoved != null) updates.linesRemoved = data.linesRemoved
       if (data.contextWindowSize != null) updates.contextWindowSize = data.contextWindowSize

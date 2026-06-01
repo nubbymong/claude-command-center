@@ -148,6 +148,7 @@ process.stdin.on('end', async () => {
     const status = {
       sessionId,
       model: data.model?.display_name || data.model?.id,
+      effortLevel: data.effort && data.effort.level,
       contextUsedPercent: data.context_window?.used_percentage,
       contextRemainingPercent: data.context_window?.remaining_percentage,
       contextWindowSize: data.context_window?.context_window_size,

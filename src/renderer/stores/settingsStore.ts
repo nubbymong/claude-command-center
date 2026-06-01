@@ -6,6 +6,8 @@ export type StatusLineFont = 'sans' | 'mono'
 
 export interface StatusLineSettings {
   showModel: boolean
+  showEffort: boolean
+  showAccount: boolean
   showTokens: boolean
   showContextBar: boolean
   showCost: boolean
@@ -19,6 +21,8 @@ export interface StatusLineSettings {
 
 export const DEFAULT_STATUS_LINE: StatusLineSettings = {
   showModel: true,
+  showEffort: true,
+  showAccount: true,
   showTokens: true,
   showContextBar: true,
   showCost: true,

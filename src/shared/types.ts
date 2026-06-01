@@ -150,6 +150,9 @@ export interface StatuslineData {
   // Codex: reasoning effort label (e.g. "xhigh"), surfaced alongside model in the
   // ContextBar. Always undefined for Claude sessions.
   reasoningEffort?: string
+  // Claude: live reasoning effort from the statusline payload (effort.level),
+  // reflects mid-session /effort changes. Maps to session.effortLevel.
+  effortLevel?: string
   contextUsedPercent?: number
   contextRemainingPercent?: number
   contextWindowSize?: number

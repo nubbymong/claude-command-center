@@ -28,14 +28,14 @@ afterEach(() => { _setRootsForTest(null); try { fs.rmSync(tmp, { recursive: true
 
 describe('captureClaudeAccount', () => {
   it('captures the DEFAULT account when the session has no profile', () => {
-    fs.writeFileSync(path.join(tmp, 'shared', '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'a@me.com' } }))
+    fs.writeFileSync(path.join(tmp, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'a@me.com' } }))
     captureClaudeAccount('s1', undefined)
     expect(getClaudeAccount('s1')).toBe('a@me.com')
   })
   it('does not change once captured (drift-immune)', () => {
-    fs.writeFileSync(path.join(tmp, 'shared', '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'a@me.com' } }))
+    fs.writeFileSync(path.join(tmp, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'a@me.com' } }))
     captureClaudeAccount('s1', undefined)
-    fs.writeFileSync(path.join(tmp, 'shared', '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'b@live.co.uk' } }))
+    fs.writeFileSync(path.join(tmp, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'b@live.co.uk' } }))
     captureClaudeAccount('s1', undefined)
     expect(getClaudeAccount('s1')).toBe('a@me.com')
   })
@@ -47,7 +47,7 @@ describe('captureClaudeAccount', () => {
     expect(getClaudeAccount('s2')).toBe('b@live.co.uk')
   })
   it('clears on cleanup', () => {
-    fs.writeFileSync(path.join(tmp, 'shared', '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'a@me.com' } }))
+    fs.writeFileSync(path.join(tmp, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'a@me.com' } }))
     captureClaudeAccount('s1', undefined); clearClaudeAccount('s1')
     expect(getClaudeAccount('s1')).toBeNull()
   })
@@ -55,7 +55,7 @@ describe('captureClaudeAccount', () => {
 
 describe('getAccountIdentity', () => {
   it('returns { email, colourKey } after capture', () => {
-    fs.writeFileSync(path.join(tmp, 'shared', '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'a@me.com' } }))
+    fs.writeFileSync(path.join(tmp, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'a@me.com' } }))
     captureClaudeAccount('s1', undefined)
     expect(getAccountIdentity('s1')).toEqual({ email: 'a@me.com', colourKey: 'mauve' })
   })
@@ -66,7 +66,7 @@ describe('getAccountIdentity', () => {
 
 describe('pushAccountIdentity', () => {
   it('sends { sessionId, email, colourKey } on identity:accountUpdate', () => {
-    fs.writeFileSync(path.join(tmp, 'shared', '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'a@me.com' } }))
+    fs.writeFileSync(path.join(tmp, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'a@me.com' } }))
     captureClaudeAccount('s1', undefined)
     pushAccountIdentity('s1')
     expect(sent).toHaveLength(1)
