@@ -170,7 +170,7 @@ describe('useAddAccount', () => {
     expect(refreshIdentityMock).not.toHaveBeenCalled()
   })
 
-  it('stops polling after MAX_ATTEMPTS when no email ever appears (bounded)', async () => {
+  it('keeps polling past the old 2-minute cap while the session is alive', async () => {
     refreshIdentityMock.mockResolvedValue(null) // login never completes
 
     const { result, unmount: u } = renderHook(() => useAddAccount())
@@ -180,8 +180,10 @@ describe('useAddAccount', () => {
       await result.current('Work')
     })
 
-    // Run 31 interval ticks; the poll must self-terminate at MAX_ATTEMPTS (30).
-    for (let i = 0; i < 31; i++) {
+    // Advance 40 ticks (40 * 4100ms = ~164 s, well past the old 30-attempt cap).
+    // With MAX_ATTEMPTS = 300 the poll must still be running and have called
+    // refreshIdentity 40 times (one per tick, session still present).
+    for (let i = 0; i < 40; i++) {
       await act(async () => {
         vi.advanceTimersByTime(4100)
         await Promise.resolve()
@@ -189,7 +191,7 @@ describe('useAddAccount', () => {
       })
     }
 
-    expect(refreshIdentityMock).toHaveBeenCalledTimes(30)
+    expect(refreshIdentityMock.mock.calls.length).toBeGreaterThan(30)
     // Login never completed, so the banner flag is still set on the session.
     const sess = useSessionStore.getState().sessions[0]
     expect(sess.needsLogin).toBe(true)

@@ -4,8 +4,11 @@ import { useSessionStore } from '../stores/sessionStore'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import type { AccountProfile } from '../../shared/account-types'
 
+// The poll keeps checking while the login session is open (the user may take
+// minutes completing the browser OAuth flow). It stops on detection, when the
+// session is closed (the real bound), or after the 20-min backstop.
 const POLL_MS = 4000
-const MAX_ATTEMPTS = 30 // ~2 min
+const MAX_ATTEMPTS = 300 // ~20 min backstop; the session-gone check is the real bound
 
 function pollForIdentity(profileId: string, sessionId: string): void {
   let attempts = 0
@@ -34,8 +37,8 @@ function pollForIdentity(profileId: string, sessionId: string): void {
  *  The flow starts from Settings/the gate, but the user then navigates to the
  *  sessions view to run /login -- so a useEffect cleanup tied to the trigger
  *  component would cancel the poll exactly when it must keep running. The poll
- *  is self-bounding instead: it stops on success, when the session is closed, or
- *  after MAX_ATTEMPTS. */
+ *  is self-bounding: it stops on success, when the session is closed (the real
+ *  bound), or after the 20-min backstop (MAX_ATTEMPTS). */
 export function useAddAccount(): (name?: string) => Promise<{ profile: AccountProfile; sessionId: string }> {
   const addSession = useSessionStore((s) => s.addSession)
   return useCallback(async (name?: string) => {
