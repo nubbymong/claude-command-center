@@ -169,4 +169,29 @@ describe('useAddAccount', () => {
     // refreshIdentity should NOT have been called because the poll bails early
     expect(refreshIdentityMock).not.toHaveBeenCalled()
   })
+
+  it('stops polling after MAX_ATTEMPTS when no email ever appears (bounded)', async () => {
+    refreshIdentityMock.mockResolvedValue(null) // login never completes
+
+    const { result, unmount: u } = renderHook(() => useAddAccount())
+    unmount = u
+
+    await act(async () => {
+      await result.current('Work')
+    })
+
+    // Run 31 interval ticks; the poll must self-terminate at MAX_ATTEMPTS (30).
+    for (let i = 0; i < 31; i++) {
+      await act(async () => {
+        vi.advanceTimersByTime(4100)
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+    }
+
+    expect(refreshIdentityMock).toHaveBeenCalledTimes(30)
+    // Login never completed, so the banner flag is still set on the session.
+    const sess = useSessionStore.getState().sessions[0]
+    expect(sess.needsLogin).toBe(true)
+  })
 })

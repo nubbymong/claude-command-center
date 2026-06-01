@@ -28,7 +28,14 @@ function pollForIdentity(profileId: string, sessionId: string): void {
 
 /** Create an empty profile, open a shell-only login session under it, and poll
  *  until the user's /login writes the account. Returns the new profile + session id.
- *  Callers should switch to the sessions view so the user sees the login shell. */
+ *  Callers should switch to the sessions view so the user sees the login shell.
+ *
+ *  NOTE: pollForIdentity is intentionally decoupled from any component lifetime.
+ *  The flow starts from Settings/the gate, but the user then navigates to the
+ *  sessions view to run /login -- so a useEffect cleanup tied to the trigger
+ *  component would cancel the poll exactly when it must keep running. The poll
+ *  is self-bounding instead: it stops on success, when the session is closed, or
+ *  after MAX_ATTEMPTS. */
 export function useAddAccount(): (name?: string) => Promise<{ profile: AccountProfile; sessionId: string }> {
   const addSession = useSessionStore((s) => s.addSession)
   return useCallback(async (name?: string) => {

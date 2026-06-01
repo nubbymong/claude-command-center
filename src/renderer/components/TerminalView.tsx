@@ -565,7 +565,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
     <div className="flex-1 flex flex-col titlebar-no-drag overflow-hidden relative" style={{ minHeight: 0 }}>
       {needsLogin && (
         <div className="bg-blue/10 border-b border-blue/30 text-lavender text-xs px-3 py-1.5 shrink-0">
-          Setting up a new account. Run claude, then type /login and choose the account &mdash; we&apos;ll detect it automatically.
+          Setting up a new account. Run claude, type /login, and choose the account. We&apos;ll detect it automatically.
         </div>
       )}
       <div
