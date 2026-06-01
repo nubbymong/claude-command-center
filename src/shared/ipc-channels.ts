@@ -279,6 +279,7 @@ export const IPC = {
   ACCOUNT_PROFILES_DELETE: 'accountProfiles:delete',
   ACCOUNT_PROFILES_ADD_ACCOUNT: 'accountProfiles:addAccount',
   ACCOUNT_PROFILES_REFRESH_IDENTITY: 'accountProfiles:refreshIdentity',
+  ACCOUNT_GLOBAL_EMAIL_GET: 'accountProfiles:globalEmail',
 
   // Reliable per-session account identity (main -> renderer push at spawn; renderer pull on mount)
   ACCOUNT_IDENTITY_UPDATE: 'identity:accountUpdate',

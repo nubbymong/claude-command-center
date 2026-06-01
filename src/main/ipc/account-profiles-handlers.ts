@@ -3,9 +3,9 @@ import { ipcMain } from 'electron'
 import { IPC } from '../../shared/ipc-channels'
 import {
   listProfiles, upsertProfile, safeTeardownProfile,
-  readProfileAccountEmail, getProfileConfigDir, isValidProfileId,
+  readProfileAccountEmail, getProfileConfigDir, isValidProfileId, createProfile,
 } from '../account-profiles'
-import { getAccountIdentity } from '../claude-account-identity'
+import { getAccountIdentity, getDefaultAccountEmail } from '../claude-account-identity'
 
 export function registerAccountProfilesHandlers(): void {
   ipcMain.handle(IPC.ACCOUNT_PROFILES_LIST, () => listProfiles())
@@ -38,5 +38,6 @@ export function registerAccountProfilesHandlers(): void {
     }
     return { ok: true, email, configDir: getProfileConfigDir(p.id) }
   })
-  // ACCOUNT_PROFILES_CREATE / ACCOUNT_PROFILES_ADD_ACCOUNT are wired in the migration phase.
+  ipcMain.handle(IPC.ACCOUNT_PROFILES_CREATE, (_e, p: { name?: string }) => createProfile(p?.name))
+  ipcMain.handle(IPC.ACCOUNT_GLOBAL_EMAIL_GET, () => getDefaultAccountEmail())
 }

@@ -11,9 +11,11 @@ export interface ElectronAPI {
   }
   accountProfiles: {
     list: () => Promise<import('../shared/account-types').AccountProfile[]>
+    create: (name?: string) => Promise<import('../shared/account-types').AccountProfile>
     rename: (id: string, name: string) => Promise<{ ok: boolean }>
     delete: (id: string) => Promise<{ ok: boolean }>
     refreshIdentity: (id: string) => Promise<{ ok: boolean; email: string | null; configDir?: string }>
+    globalEmail: () => Promise<string | null>
   }
   window: {
     minimize: () => void
@@ -311,9 +313,11 @@ const electronAPI: ElectronAPI = {
   },
   accountProfiles: {
     list: () => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_LIST),
+    create: (name?: string) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_CREATE, { name }),
     rename: (id, name) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_RENAME, { id, name }),
     delete: (id) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_DELETE, { id }),
     refreshIdentity: (id) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_REFRESH_IDENTITY, { id }),
+    globalEmail: () => ipcRenderer.invoke(IPC.ACCOUNT_GLOBAL_EMAIL_GET),
   },
   window: {
     minimize: () => ipcRenderer.send(IPC.WINDOW_MINIMIZE),
