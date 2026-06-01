@@ -15,6 +15,18 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '1.5.19',
+    date: '2026-06-01',
+    highlights: 'Run multiple Claude accounts in CCC: add accounts, switch per session, keep them isolated.',
+    changes: [
+      { type: 'feature', description: 'Multiple accounts: add a second or third Claude account and run different sessions under different accounts. A first-run prompt walks you through it, and you can manage accounts anytime in Settings then Accounts.' },
+      { type: 'feature', description: 'Switch a session to another account from the status strip pill or the right-click menu (it respawns and resumes under the chosen account). Signing in or out of an added account never touches your other accounts.' },
+      { type: 'improvement', description: 'The status strip shows which account a session is using, and the account chip now resolves correctly for single-account users.' },
+      { type: 'improvement', description: 'Effort level now reflects live /effort changes in the status line, and you can toggle the Effort and Account elements in Statusline settings.' },
+      { type: 'improvement', description: 'Removed the Mode pill from the status strip (use Shift+Tab to change permission mode) and the redundant Setup Statusline command.' },
+    ],
+  },
+  {
     version: '1.5.18',
     date: '2026-05-31',
     changes: [
