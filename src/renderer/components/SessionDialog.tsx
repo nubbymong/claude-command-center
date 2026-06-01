@@ -5,10 +5,6 @@ import { ProviderSegmentedControl } from './SessionDialog/ProviderSegmentedContr
 import { CodexFormFields } from './SessionDialog/CodexFormFields'
 import { IDENTITY_COLOR_KEYS, resolveIdentityColor, bucketLegacyColorToKey, type IdentityColorKey } from '../../shared/identity-colors'
 import { useResolvedTheme } from '../hooks/useThemeController'
-import { useSettingsStore } from '../stores/settingsStore'
-import { useAccountProfilesStore } from '../stores/accountProfilesStore'
-import { resolveAccountName, middleTruncateEmail } from '../../shared/account-chip-color'
-import { defaultPickerProfileId } from '../lib/account-picker'
 
 export type SessionType = 'local' | 'ssh'
 
@@ -52,11 +48,6 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
   const addGroup = useConfigStore((s) => s.addGroup)
   const sections = useConfigStore((s) => s.sections)
   const addSection = useConfigStore((s) => s.addSection)
-  // Account picker gate + data (Phase 5 multi-account UX). Hidden unless the
-  // user has opted into multiple accounts AND has at least one profile.
-  const multipleAccountsEnabled = useSettingsStore((s) => s.settings.multipleAccountsEnabled)
-  const accountProfiles = useAccountProfilesStore((s) => s.profiles)
-  const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
   // Read legacy + claudeOptions fields with claudeOptions taking precedence (P1.4 migration)
   const initialClaude = initial?.claudeOptions
   const [provider, setProvider] = useState<ProviderId>(initial?.provider ?? 'claude')
@@ -73,14 +64,6 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
   const [colorKey, setColorKey] = useState<IdentityColorKey>(
     (initial?.identityColorKey as IdentityColorKey) ?? bucketLegacyColorToKey(initial?.color ?? '')
   )
-  // Account profile this session runs under. Defaults to an explicit
-  // initial.profileId, else the primary profile, else '' (default account).
-  // Lazy initializer reads the profile list once at mount; the picker is only
-  // rendered (and this value only used) when multi-account is on with profiles.
-  const [profileId, setProfileId] = useState(() =>
-    defaultPickerProfileId(useAccountProfilesStore.getState().profiles, initial?.profileId)
-  )
-  const showAccountPicker = !!multipleAccountsEnabled && accountProfiles.length > 0
   const theme = useResolvedTheme()
   const [sessionType, setSessionType] = useState<SessionType>(initial?.sessionType ?? 'local')
   const [shellOnly, setShellOnly] = useState(initial?.shellOnly ?? false)
@@ -295,9 +278,10 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
       claudeOptions,
       codexOptions,
       machineName: machineName.trim() || undefined,
-      // Empty selection (default account) carries no profileId, so the spawn
-      // path runs under the bare ~/.claude (no CLAUDE_CONFIG_DIR override).
-      profileId: profileId || undefined,
+      // Account is no longer a config field -- it's chosen at launch by the
+      // pre-spawn account gate. Preserve any pre-existing value on edit so older
+      // configs aren't silently rewritten, but never set it from this dialog.
+      profileId: initial?.profileId,
     }
 
     onConfirm(
@@ -367,33 +351,6 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                 className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue"
               />
             </div>
-
-            {/* Account picker — only when multi-account is enabled AND >=1 profile
-                exists. Single-account users never see this. The chosen profileId
-                flows config -> session -> spawn (CLAUDE_CONFIG_DIR). */}
-            {showAccountPicker && (
-              <div>
-                <label className="block text-xs text-subtext0 mb-1">Account</label>
-                <select
-                  value={profileId}
-                  onChange={(e) => setProfileId(e.target.value)}
-                  className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-blue"
-                >
-                  <option value="">Default account</option>
-                  {accountProfiles.map((p) => {
-                    // Friendly name (profile name / alias) wins; otherwise show the
-                    // middle-truncated email so a long address stays readable.
-                    const resolved = resolveAccountName(p.accountEmail, p.name, accountAliases)
-                    const label = resolved === p.accountEmail ? middleTruncateEmail(p.accountEmail) : resolved
-                    return (
-                      <option key={p.id} value={p.id} title={p.accountEmail}>
-                        {label}
-                      </option>
-                    )
-                  })}
-                </select>
-              </div>
-            )}
 
             {sessionType === 'ssh' && (
               <div>

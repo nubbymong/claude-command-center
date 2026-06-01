@@ -2,6 +2,7 @@ import { useCallback } from 'react'
 import { Session, useSessionStore } from '../stores/sessionStore'
 import { killSessionPty, clearSpawned } from '../ptyTracker'
 import { markSessionForResumePicker } from '../utils/resumePicker'
+import { useAccountGateStore } from '../stores/accountGateStore'
 
 // Shared restart/recover logic for SessionHeader and the v2 bottom bar.
 // Behaviour is identical to the inline functions that previously lived in
@@ -71,6 +72,9 @@ export function useRestartSession(
     if (session.sessionType === 'local' && !session.shellOnly) {
       markSessionForResumePicker(session.id)
     }
+    // Restart (and switch, which routes through here) already determines the
+    // account -- the re-spawn must NOT pop the pre-spawn account gate.
+    useAccountGateStore.getState().markPredetermined(session.id)
     // Force re-mount with clean metadata
     forceRemount('idle', overrides)
   }, [session, isShowingPartner, forceRemount])
@@ -87,6 +91,8 @@ export function useRestartSession(
     if (session.sessionType === 'local' && !session.shellOnly) {
       markSessionForResumePicker(session.id)
     }
+    // Recover preserves the current account -- skip the pre-spawn gate.
+    useAccountGateStore.getState().markPredetermined(session.id)
     forceRemount('idle')
   }, [session, forceRemount])
 

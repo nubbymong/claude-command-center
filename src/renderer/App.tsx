@@ -23,6 +23,7 @@ import MemoryPage from './components/MemoryPage'
 import SetupDialog from './components/SetupDialog'
 import WhatsNewModal, { shouldShowWhatsNew, markWhatsNewSeen } from './components/WhatsNewModal'
 import MultiAccountGate from './components/MultiAccountGate'
+import AccountLaunchGate from './components/AccountLaunchGate'
 import { shouldShowAccountGate } from './lib/accountGate'
 import { useAddAccount } from './hooks/useAddAccount'
 import TrainingWalkthrough, { shouldShowTraining, isFirstInstall } from './components/TrainingWalkthrough'
@@ -1012,6 +1013,10 @@ export default function App() {
             mode={showTrainingAll ? 'help' : 'first-run'}
           />
         )}
+        {/* Pre-spawn account launch gate: asks which account a session runs
+            under on its first spawn (multi-account only). App-root so it
+            overlays every view. */}
+        <AccountLaunchGate />
       </div>
     </ErrorBoundary>
   )

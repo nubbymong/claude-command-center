@@ -56,11 +56,13 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
   const profileName = useAccountProfilesStore((s) => s.profiles.find((p) => p.id === session?.profileId)?.name)
   const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
   // Mid-session account switch (respawn + resume): gated on the multi-account
-  // feature flag + having more than one profile to switch between. Selector
-  // form on every read so the strip never re-renders on unrelated store churn.
+  // feature flag + having at least one managed profile. The picker always also
+  // offers the Default account, so one added profile already means two choices
+  // (Default + that profile). Selector form on every read so the strip never
+  // re-renders on unrelated store churn.
   const profiles = useAccountProfilesStore((s) => s.profiles)
   const multipleAccountsEnabled = useSettingsStore((s) => s.settings.multipleAccountsEnabled)
-  const canSwitchAccount = !!multipleAccountsEnabled && profiles.length > 1
+  const canSwitchAccount = !!multipleAccountsEnabled && profiles.length >= 1
 
   const [openPicker, setOpenPicker] = useState<'model' | 'account' | null>(null)
   const [lastEffort, setLastEffort] = useState<string | null>(null)

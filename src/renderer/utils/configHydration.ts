@@ -12,6 +12,24 @@ import { useExcalidrawStore } from '../stores/excalidrawStore'
 import { migrateColorRecords } from './migrateIdentityColors'
 
 /**
+ * Ids of built-in commands that have been retired and must be removed from any
+ * persisted command list on hydrate. `builtin-setup-statusline` was the old
+ * "Setup Statusline" command; CCC now auto-configures the statusline on install.
+ */
+const RETIRED_COMMAND_IDS = new Set(['builtin-setup-statusline'])
+
+/**
+ * One-time cleanup of retired built-in commands from a persisted list. Keyed on
+ * stable built-in ids so a user's own command can never be removed (user
+ * commands use generated ids). Returns the SAME array reference when nothing
+ * changed, so callers can cheaply detect a no-op.
+ */
+export function removeRetiredCommands(commands: CustomCommand[]): CustomCommand[] {
+  const filtered = commands.filter((c) => !RETIRED_COMMAND_IDS.has(c.id))
+  return filtered.length === commands.length ? commands : filtered
+}
+
+/**
  * Gather all relevant localStorage keys for migration to CONFIG/.
  */
 export function gatherLocalStorageData(): Record<string, string> {
@@ -151,6 +169,14 @@ export function hydrateStores(configData: Record<string, unknown>): void {
     // Save migrated commands back
     window.electronAPI.config.save('commands', commands)
     console.log('[configHydration] Migrated command args from prompt field')
+  }
+  // One-time cleanup: drop retired built-in commands (currently the legacy
+  // "Setup Statusline") from existing persisted configs so they stop appearing.
+  const cleaned = removeRetiredCommands(commands)
+  if (cleaned !== commands) {
+    commands = cleaned
+    window.electronAPI.config.save('commands', commands)
+    console.log('[configHydration] Removed retired built-in command(s)')
   }
   const commandSections = (configData.commandSections as CommandSection[]) || []
   useCommandStore.getState().hydrate(commands, commandSections)

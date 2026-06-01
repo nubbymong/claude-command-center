@@ -5,6 +5,8 @@ import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { useSessionStore } from '../stores/sessionStore'
+import { useAccountProfilesStore } from '../stores/accountProfilesStore'
+import { useAccountGateStore } from '../stores/accountGateStore'
 import { hasSpawned, markSpawned, killSessionPty } from '../ptyTracker'
 import SshFlowOverlay from './SshFlowOverlay'
 import { shouldUseResumePicker } from '../utils/resumePicker'
@@ -297,7 +299,10 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         try { fitAddon.fit() } catch { /* ignore */ }
 
         if (!hasSpawned(sessionId)) {
-          markSpawned(sessionId)
+          const gate = useAccountGateStore.getState()
+          // Re-entry guard: a gate modal is already up for this session, so a
+          // re-run of this effect must not open a second one or double-spawn.
+          if (gate.isPending(sessionId)) return
           const cols = term.cols
           const rows = term.rows
           const configLabel = session?.label || 'default'
@@ -318,7 +323,45 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
               }))
             if (agentsConfig.length === 0) agentsConfig = undefined
           }
-          window.electronAPI.pty.spawn(sessionId, { cwd, cols, rows, ssh, shellOnly, elevated, configId, configLabel, useResumePicker, legacyVersion, agentsConfig, effortLevel, disableAutoMemory, enableCodexReview, model, provider, codexOptions, profileId: session?.profileId })
+          // markSpawned only fires at the real spawn, so an unanswered/aborted
+          // account gate leaves the session unspawned and re-gates on remount.
+          const doSpawn = (resolvedProfileId: string | undefined) => {
+            markSpawned(sessionId)
+            window.electronAPI.pty.spawn(sessionId, { cwd, cols, rows, ssh, shellOnly, elevated, configId, configLabel, useResumePicker, legacyVersion, agentsConfig, effortLevel, disableAutoMemory, enableCodexReview, model, provider, codexOptions, profileId: resolvedProfileId })
+          }
+          // Pre-spawn account gate: on a session's first spawn this run, ask which
+          // account to launch under (multi-account on + >=1 profile), unless a
+          // restart/switch already predetermined it. FAIL-OPEN: any error spawns
+          // with the session's last-used account so a session never gets stuck.
+          const profilesCount = useAccountProfilesStore.getState().profiles.length
+          const multiAccount = !!useSettingsStore.getState().settings.multipleAccountsEnabled
+          // Only provider sessions that actually authenticate are eligible. Skip
+          // shell-only panes -- the partner terminal (its sessionId has no store
+          // record), user "shell only" sessions, and the add-account login shell
+          // (which already carries an explicit profileId) -- and skip when there
+          // is no real session record.
+          const eligible = !shellOnly && !!session && multiAccount && profilesCount > 0
+          // Consume the predetermined flag only for eligible sessions so a
+          // restart/switch re-spawn skips the gate and uses its chosen account.
+          const predetermined = eligible && gate.consumePredetermined(sessionId)
+          const needGate = eligible && !predetermined
+          if (!needGate) {
+            doSpawn(session?.profileId)
+          } else {
+            gate
+              .requestChoice(sessionId, session?.label || '', session?.profileId)
+              .then((chosen) => {
+                useSessionStore.getState().updateSession(sessionId, { profileId: chosen })
+                if (!disposed) {
+                  doSpawn(chosen)
+                } else {
+                  // View unmounted while the gate was open: the choice is saved,
+                  // so the remount spawns it without re-prompting.
+                  gate.markPredetermined(sessionId)
+                }
+              })
+              .catch(() => doSpawn(session?.profileId))
+          }
         }
       }
 

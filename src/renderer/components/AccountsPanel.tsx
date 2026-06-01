@@ -1,11 +1,12 @@
 // src/renderer/components/AccountsPanel.tsx
 // Shared "Accounts" panel rendered inside Settings when multipleAccountsEnabled is on.
-// Shows the Default account row (alias-only rename, no delete) + one row per managed
-// profile (IPC rename + delete) + an "Add another account" affordance.
-import React, { useState, useEffect, useRef } from 'react'
+// Each account is identified by its email. The Default row (real ~/.claude) is
+// never deletable; each managed profile row has a delete button. An "Add
+// another account" affordance starts the login flow. No friendly-name editing --
+// accounts are shown by email so the panel is unambiguous.
+import React, { useEffect } from 'react'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
-import { useSettingsStore } from '../stores/settingsStore'
-import { canonicaliseEmail, middleTruncateEmail } from '../../shared/account-chip-color'
+import { middleTruncateEmail } from '../../shared/account-chip-color'
 import { useResolvedTheme } from '../hooks/useThemeController'
 import { resolveIdentityColor } from '../../shared/identity-colors'
 import type { AccountProfile } from '../../shared/account-types'
@@ -20,75 +21,9 @@ export interface AccountsPanelProps {
 
 // ---- sub-components ---------------------------------------------------------
 
-/** Editable name field with blur/Enter commit. Shared by Default and profile rows. */
-function NameInput({
-  initialValue,
-  placeholder,
-  onCommit,
-}: {
-  initialValue: string
-  placeholder: string
-  onCommit: (value: string) => void | Promise<void>
-}) {
-  const [value, setValue] = useState(initialValue)
-  // Last value we actually committed, so an unchanged blur/Enter is a no-op
-  // (mirrors AccountNameRow in SettingsPage; avoids a superfluous rename IPC /
-  // alias write every time the field loses focus).
-  const lastCommitted = useRef(initialValue)
-
-  // Sync if the source changes externally (e.g. another surface renamed the profile).
-  useEffect(() => {
-    setValue(initialValue)
-    lastCommitted.current = initialValue
-  }, [initialValue])
-
-  const commit = () => {
-    if (value.trim() === lastCommitted.current.trim()) return
-    lastCommitted.current = value
-    onCommit(value)
-  }
-
-  return (
-    <input
-      value={value}
-      onChange={(e) => setValue(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') {
-          e.preventDefault()
-          ;(e.currentTarget as HTMLInputElement).blur()
-        }
-      }}
-      placeholder={placeholder}
-      className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-1.5 text-sm text-text w-44 shrink-0 focus:outline-none focus:border-blue/50 placeholder:text-overlay0 transition-colors"
-    />
-  )
-}
-
-/** The always-present Default (real ~/.claude) row. Rename writes into accountAliases. */
+/** The always-present Default (real ~/.claude) row. Email-only, never deletable. */
 function DefaultAccountRow({ email }: { email: string | null }) {
-  const settings = useSettingsStore((s) => s.settings)
-  const updateSettings = useSettingsStore((s) => s.updateSettings)
   const theme = useResolvedTheme()
-
-  const currentAlias = email
-    ? (settings.accountAliases?.[canonicaliseEmail(email)] ?? '')
-    : ''
-
-  const commitAlias = async (raw: string) => {
-    if (!email) return
-    const name = raw.trim()
-    const key = canonicaliseEmail(email)
-    const existing = settings.accountAliases ?? {}
-    if (name) {
-      await updateSettings({ accountAliases: { ...existing, [key]: name } })
-    } else {
-      const next = { ...existing }
-      delete next[key]
-      await updateSettings({ accountAliases: next })
-    }
-  }
-
   // Neutral dot for the default account (no profile colour key available).
   const dot = resolveIdentityColor('mauve', theme)
 
@@ -97,13 +32,11 @@ function DefaultAccountRow({ email }: { email: string | null }) {
       className="flex items-center gap-3 py-2 px-1 rounded-lg"
       data-testid="default-account-row"
     >
-      {/* Colour dot */}
       <span
         className="w-2 h-2 rounded-full shrink-0"
         style={{ backgroundColor: dot }}
         aria-hidden
       />
-      {/* Label + email */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
           <span className="text-xs font-semibold text-subtext0 uppercase tracking-wide">Default</span>
@@ -117,25 +50,13 @@ function DefaultAccountRow({ email }: { email: string | null }) {
           {email ? middleTruncateEmail(email) : <span className="text-overlay0 italic">not signed in</span>}
         </span>
       </div>
-      {/* Alias rename input - no delete button for Default */}
-      <NameInput
-        initialValue={currentAlias}
-        placeholder={email ? middleTruncateEmail(email, 20) : 'Friendly name'}
-        onCommit={commitAlias}
-      />
     </div>
   )
 }
 
-/** A row for a managed profile. Rename via IPC; deletable. */
+/** A row for a managed profile. Email-only; deletable. */
 function ProfileRow({ profile }: { profile: AccountProfile }) {
   const theme = useResolvedTheme()
-
-  const commitName = async (raw: string) => {
-    const name = raw.trim()
-    await window.electronAPI.accountProfiles.rename(profile.id, name)
-    await useAccountProfilesStore.getState().hydrate()
-  }
 
   const handleDelete = async () => {
     const confirmed = window.confirm(
@@ -148,7 +69,6 @@ function ProfileRow({ profile }: { profile: AccountProfile }) {
 
   // Colour dot: use the profile's colour key if set, else fall back to 'mauve'.
   const dot = resolveIdentityColor(profile.colourKey ?? 'mauve', theme)
-
   const hasEmail = !!profile.accountEmail
 
   return (
@@ -156,13 +76,11 @@ function ProfileRow({ profile }: { profile: AccountProfile }) {
       className="flex items-center gap-3 py-2 px-1 rounded-lg"
       data-testid={`profile-row-${profile.id}`}
     >
-      {/* Colour dot */}
       <span
         className="w-2 h-2 rounded-full shrink-0"
         style={{ backgroundColor: dot }}
         aria-hidden
       />
-      {/* Email / status */}
       <div className="flex-1 min-w-0">
         <span
           className="text-sm font-mono truncate block"
@@ -176,13 +94,6 @@ function ProfileRow({ profile }: { profile: AccountProfile }) {
           )}
         </span>
       </div>
-      {/* Profile rename input */}
-      <NameInput
-        initialValue={profile.name}
-        placeholder="Friendly name"
-        onCommit={commitName}
-      />
-      {/* Delete button */}
       <button
         onClick={handleDelete}
         title="Remove this account from CCC"
@@ -260,7 +171,8 @@ export default function AccountsPanel({ defaultEmail, onAdd }: AccountsPanelProp
       {/* Informational note - no em dashes */}
       <p className="text-[11px] text-overlay0 leading-relaxed mt-2">
         Signing in or out of an added account never touches the others or your default.
-        Memory, settings and history stay shared.
+        Memory, settings and history stay shared. You pick which account a session runs
+        under when it starts.
       </p>
     </Section>
   )
