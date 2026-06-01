@@ -109,7 +109,9 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
   // Multi-account: fetch the global (default) email once on mount.
   const [globalEmail, setGlobalEmail] = useState<string | null>(null)
   useEffect(() => {
-    window.electronAPI.accountProfiles.globalEmail().then(setGlobalEmail).catch(() => {})
+    // Optional-chained: a synchronous throw on a missing accountProfiles bridge
+    // (only happens with an incomplete electronAPI mock in tests) would skip .catch.
+    window.electronAPI.accountProfiles?.globalEmail?.()?.then(setGlobalEmail).catch(() => {})
   }, [])
 
   // Add account: create a profile + open a login shell, then navigate to Sessions.

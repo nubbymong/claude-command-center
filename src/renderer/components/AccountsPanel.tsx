@@ -2,7 +2,7 @@
 // Shared "Accounts" panel rendered inside Settings when multipleAccountsEnabled is on.
 // Shows the Default account row (alias-only rename, no delete) + one row per managed
 // profile (IPC rename + delete) + an "Add another account" affordance.
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { canonicaliseEmail, middleTruncateEmail } from '../../shared/account-chip-color'
@@ -31,13 +31,20 @@ function NameInput({
   onCommit: (value: string) => void | Promise<void>
 }) {
   const [value, setValue] = useState(initialValue)
+  // Last value we actually committed, so an unchanged blur/Enter is a no-op
+  // (mirrors AccountNameRow in SettingsPage; avoids a superfluous rename IPC /
+  // alias write every time the field loses focus).
+  const lastCommitted = useRef(initialValue)
 
   // Sync if the source changes externally (e.g. another surface renamed the profile).
   useEffect(() => {
     setValue(initialValue)
+    lastCommitted.current = initialValue
   }, [initialValue])
 
   const commit = () => {
+    if (value.trim() === lastCommitted.current.trim()) return
+    lastCommitted.current = value
     onCommit(value)
   }
 
