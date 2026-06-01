@@ -5,7 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import {
   _setRootsForTest, listProfiles, upsertProfile, deleteProfileMeta, getProfileConfigDir,
-  setupProfileLinks, safeTeardownProfile, isValidProfileId,
+  setupProfileLinks, safeTeardownProfile, isValidProfileId, createProfile,
 } from '../../src/main/account-profiles'
 
 let tmp: string
@@ -76,6 +76,46 @@ describe('isValidProfileId', () => {
   it('accepts CCC-generated ids and rejects escaping ones', () => {
     expect(isValidProfileId('profile-123-primary')).toBe(true)
     expect(isValidProfileId('../x')).toBe(false)
+  })
+})
+
+describe('createProfile', () => {
+  it('creates a profile with a valid id, blank email, correct name, junctioned projects dir, and does not touch the shared root', () => {
+    const shared = path.join(tmp, 'shared')
+    // Pre-populate shared dirs + a sentinel file to model a real ~/.claude
+    for (const name of ['projects', 'memory', 'agents', 'skills', 'commands', 'plugins']) {
+      fs.mkdirSync(path.join(shared, name), { recursive: true })
+    }
+    fs.writeFileSync(path.join(shared, 'settings.json'), '{"theme":"dark"}')
+    fs.writeFileSync(path.join(shared, 'projects', 'SENTINEL.jsonl'), 'keep me')
+    const sharedBefore = fs.readdirSync(shared).sort()
+
+    const profile = createProfile('Work')
+
+    // id is valid
+    expect(isValidProfileId(profile.id)).toBe(true)
+    // name set correctly
+    expect(profile.name).toBe('Work')
+    // accountEmail is empty (not logged in yet)
+    expect(profile.accountEmail).toBe('')
+    // profile dir exists
+    const dir = getProfileConfigDir(profile.id)
+    expect(fs.existsSync(dir)).toBe(true)
+    // projects inside the profile dir is a symlink/junction
+    expect(fs.lstatSync(path.join(dir, 'projects')).isSymbolicLink()).toBe(true)
+    // listProfiles includes the new profile
+    const all = listProfiles()
+    expect(all.some((p) => p.id === profile.id)).toBe(true)
+    // shared root is UNCHANGED
+    const sharedAfter = fs.readdirSync(shared).sort()
+    expect(sharedAfter).toEqual(sharedBefore)
+  })
+
+  it('uses "New account" as the default name when none is provided', () => {
+    const profile = createProfile()
+    expect(profile.name).toBe('New account')
+    expect(profile.accountEmail).toBe('')
+    expect(isValidProfileId(profile.id)).toBe(true)
   })
 })
 

@@ -60,6 +60,23 @@ export function deleteProfileMeta(id: string): void {
   saveProfiles(listProfiles().filter((x) => x.id !== id))
 }
 
+/** Create a fresh, EMPTY profile dir + shared junctions + metadata. The account
+ *  email is filled in later by readProfileAccountEmail once the user runs /login
+ *  under this profile's CLAUDE_CONFIG_DIR. Never copies credentials; never
+ *  touches the default ~/.claude. */
+export function createProfile(name?: string): AccountProfile {
+  const id = `profile-${Date.now().toString(36)}`
+  setupProfileLinks(id)
+  const profile: AccountProfile = {
+    id,
+    name: (name && name.trim()) ? name.trim().slice(0, 120) : 'New account',
+    accountEmail: '',
+    createdAt: Date.now(),
+  }
+  upsertProfile(profile)
+  return profile
+}
+
 const isWin = process.platform === 'win32'
 
 function ensureLink(target: string, link: string): void {
