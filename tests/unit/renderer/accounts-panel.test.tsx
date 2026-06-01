@@ -26,6 +26,7 @@ const listMock = vi.fn<[], Promise<AccountProfile[]>>()
 const deleteMock = vi.fn<[string], Promise<{ ok: boolean }>>()
 const renameMock = vi.fn<[string, string], Promise<{ ok: boolean }>>()
 const globalEmailMock = vi.fn<[], Promise<string | null>>()
+const refreshIdentityMock = vi.fn<[string], Promise<{ ok: boolean; email: string; configDir: string } | null>>()
 const updateSettingsMock = vi.fn()
 
 ;(globalThis as any).window = (globalThis as any).window ?? {}
@@ -37,7 +38,7 @@ const updateSettingsMock = vi.fn()
     rename: renameMock,
     globalEmail: globalEmailMock,
     create: vi.fn(),
-    refreshIdentity: vi.fn(),
+    refreshIdentity: refreshIdentityMock,
   },
 }
 
@@ -101,6 +102,7 @@ describe('AccountsPanel', () => {
     deleteMock.mockResolvedValue({ ok: true })
     renameMock.mockResolvedValue({ ok: true })
     globalEmailMock.mockResolvedValue(null)
+    refreshIdentityMock.mockResolvedValue(null)
     vi.mocked((globalThis as any).window.confirm).mockReturnValue(true)
   })
 
@@ -193,5 +195,33 @@ describe('AccountsPanel', () => {
     await act(async () => { btn.click() })
 
     expect(deleteMock).toHaveBeenCalledWith(profileWithEmail.id)
+  })
+
+  it('self-heals a setup-incomplete profile when the panel mounts', async () => {
+    // Start with a profile whose accountEmail is empty (login completed after poll expired).
+    useAccountProfilesStore.setState({ profiles: [profileWithoutEmail] })
+
+    // refreshIdentity now finds the email (the profile's own .claude.json was written).
+    refreshIdentityMock.mockResolvedValue({ ok: true, email: 'work@me.com', configDir: '/p/new' })
+    // hydrate (list) returns the now-emailed profile.
+    const healed: AccountProfile = { ...profileWithoutEmail, accountEmail: 'work@me.com' }
+    listMock.mockResolvedValue([healed])
+
+    const { unmount: u } = renderComponent(
+      React.createElement(AccountsPanel, { defaultEmail: 'me@example.com', onAdd: vi.fn() })
+    )
+    unmount = u
+
+    // Flush the async self-heal effect.
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    // refreshIdentity was called with the incomplete profile's id.
+    expect(refreshIdentityMock).toHaveBeenCalledWith(profileWithoutEmail.id)
+    // hydrate (list) was called to refresh the store after the email was found.
+    expect(listMock).toHaveBeenCalled()
   })
 })

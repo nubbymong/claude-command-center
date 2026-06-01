@@ -203,6 +203,26 @@ function ProfileRow({ profile }: { profile: AccountProfile }) {
 export default function AccountsPanel({ defaultEmail, onAdd }: AccountsPanelProps) {
   const profiles = useAccountProfilesStore((s) => s.profiles)
 
+  // On open, reconcile any "setup incomplete" account: the user's /login may have
+  // finished after the live add-account poll's window, so re-read each empty
+  // profile's own .claude.json (refreshIdentity upserts the email if present).
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      const incomplete = useAccountProfilesStore.getState().profiles.filter((p) => !p.accountEmail)
+      if (incomplete.length === 0) return
+      let found = false
+      for (const p of incomplete) {
+        try {
+          const res = await window.electronAPI.accountProfiles?.refreshIdentity?.(p.id)
+          if (res && res.email) found = true
+        } catch { /* ignore; best-effort reconcile */ }
+      }
+      if (found && !cancelled) await useAccountProfilesStore.getState().hydrate()
+    })()
+    return () => { cancelled = true }
+  }, [])
+
   return (
     <Section
       title="Accounts"
