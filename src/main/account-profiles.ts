@@ -252,6 +252,37 @@ export function safeTeardownProfile(id: string): void {
   deleteProfileMeta(id)
 }
 
+/** The authoritative, protected credential copy for an account. NEVER run live. */
+export function getAccountIdentityDir(id: string): string {
+  return path.join(getProfileConfigDir(id), 'identity')
+}
+
+/** Write the canonical identity files (atomic-ish: write then rename). */
+export function writeCanonicalIdentity(
+  id: string,
+  files: { claudeJson?: string; credentials?: string },
+): void {
+  const dir = getAccountIdentityDir(id)
+  fs.mkdirSync(dir, { recursive: true })
+  if (files.claudeJson != null) {
+    const f = path.join(dir, '.claude.json')
+    fs.writeFileSync(f + '.tmp', files.claudeJson); fs.renameSync(f + '.tmp', f)
+  }
+  if (files.credentials != null) {
+    const f = path.join(dir, '.credentials.json')
+    fs.writeFileSync(f + '.tmp', files.credentials); fs.renameSync(f + '.tmp', f)
+  }
+}
+
+/** Read the account email from the canonical .claude.json (source of truth). */
+export function readCanonicalIdentityEmail(id: string): string | null {
+  try {
+    const raw = fs.readFileSync(path.join(getAccountIdentityDir(id), '.claude.json'), 'utf8')
+    const email = (JSON.parse(raw) as { oauthAccount?: { emailAddress?: unknown } })?.oauthAccount?.emailAddress
+    return typeof email === 'string' && email ? email : null
+  } catch { return null }
+}
+
 /** Reliable per-session identity: each profile has its OWN .claude.json.
  *  (The v1.5.9 alias attempt failed because it read the GLOBAL last-login.) */
 export function readProfileAccountEmail(id: string): string | null {
