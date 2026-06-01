@@ -6,6 +6,7 @@
 // are injectable so tests never touch the live ~/.claude. Profile metadata is
 // persisted as an atomic profiles.json under the profiles root (NOT via
 // config-manager) so _setRootsForTest is a total seam.
+import { randomBytes } from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -65,11 +66,12 @@ export function deleteProfileMeta(id: string): void {
  *  under this profile's CLAUDE_CONFIG_DIR. Never copies credentials; never
  *  touches the default ~/.claude. */
 export function createProfile(name?: string): AccountProfile {
-  const id = `profile-${Date.now().toString(36)}`
+  const id = `profile-${Date.now().toString(36)}-${randomBytes(3).toString('hex')}`
   setupProfileLinks(id)
+  const trimmed = name?.trim()
   const profile: AccountProfile = {
     id,
-    name: (name && name.trim()) ? name.trim().slice(0, 120) : 'New account',
+    name: trimmed ? trimmed.slice(0, 120) : 'New account',
     accountEmail: '',
     createdAt: Date.now(),
   }

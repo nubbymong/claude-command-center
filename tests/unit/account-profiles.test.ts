@@ -117,6 +117,12 @@ describe('createProfile', () => {
     expect(profile.accountEmail).toBe('')
     expect(isValidProfileId(profile.id)).toBe(true)
   })
+
+  it('uses "New account" as the fallback when only whitespace is provided', () => {
+    const profile = createProfile('   ')
+    expect(profile.name).toBe('New account')
+    expect(isValidProfileId(profile.id)).toBe(true)
+  })
 })
 
 describe('safeTeardownProfile safety guards', () => {

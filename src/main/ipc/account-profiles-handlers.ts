@@ -17,7 +17,7 @@ export function registerAccountProfilesHandlers(): void {
     if (!p || !isValidProfileId(p.id)) return { ok: false }
     const prof = listProfiles().find((x) => x.id === p.id)
     if (!prof) return { ok: false }
-    upsertProfile({ ...prof, name: String(p.name ?? '').slice(0, 120) })
+    upsertProfile({ ...prof, name: String(p.name ?? '').trim().slice(0, 120) })
     return { ok: true }
   })
 
