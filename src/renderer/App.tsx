@@ -22,6 +22,9 @@ import ConductorMcpPage from './components/ConductorMcpPage'
 import MemoryPage from './components/MemoryPage'
 import SetupDialog from './components/SetupDialog'
 import WhatsNewModal, { shouldShowWhatsNew, markWhatsNewSeen } from './components/WhatsNewModal'
+import MultiAccountGate from './components/MultiAccountGate'
+import { shouldShowAccountGate } from './lib/accountGate'
+import { useAddAccount } from './hooks/useAddAccount'
 import TrainingWalkthrough, { shouldShowTraining, isFirstInstall } from './components/TrainingWalkthrough'
 import GuidedConfigView from './components/GuidedConfigView'
 import TipModal from './components/TipModal'
@@ -99,6 +102,11 @@ export default function App() {
   const [showTraining, setShowTraining] = useState(false)
   const [showTrainingAll, setShowTrainingAll] = useState(false)
   const [showGitHubOnboarding, setShowGitHubOnboarding] = useState(false)
+  // Forced multi-account gate (see lib/accountGate + MultiAccountGate).
+  const [showAccountGate, setShowAccountGate] = useState(false)
+  const [gateChangedTo, setGateChangedTo] = useState<string | null>(null)
+  const [gateDefaultEmail, setGateDefaultEmail] = useState<string | null>(null)
+  const addAccount = useAddAccount()
   // Deep-link the Settings page to a specific tab the next time it opens.
   // Set by the onboarding "Set up now" button and the auto-detect banner
   // Accept/Edit actions; consumed once by SettingsPage's initialTab prop.
@@ -309,7 +317,26 @@ export default function App() {
         setTimeout(() => setShowMachineNamePrompt(true), 800)
       }
 
+      // Multi-account gate: decide before What's New so it takes priority.
+      let gateShown = false
+      try {
+        const ge = await window.electronAPI.accountProfiles.globalEmail().catch(() => null)
+        const meta = useAppMetaStore.getState().meta
+        const last = meta.lastSeenGlobalAccount
+        const globalChanged = !!last && !!ge && last !== ge
+        useAppMetaStore.getState().update({ lastSeenGlobalAccount: ge ?? undefined })
+        const decided = !!meta.accountGateDecided
+        const multiEnabled = !!useSettingsStore.getState().settings.multipleAccountsEnabled
+        if (shouldShowAccountGate({ decided, multiEnabled, globalChanged })) {
+          setGateDefaultEmail(ge)
+          setGateChangedTo(decided && globalChanged ? ge : null) // reword only on the change re-trigger
+          setShowAccountGate(true)
+          gateShown = true
+        }
+      } catch { /* never block boot on the gate */ }
+
       setTimeout(() => {
+        if (gateShown) return
         if (isFirstInstall()) {
           setShowTraining(true)
         } else {
@@ -365,11 +392,11 @@ export default function App() {
   // change before it fires.
   useEffect(() => {
     if (!isGitHubOnboardingDue()) return
-    if (showWhatsNew || showTraining || showTrainingAll) return
+    if (showWhatsNew || showTraining || showTrainingAll || showAccountGate) return
     if (isFirstInstall() || shouldShowWhatsNew() || shouldShowTraining()) return
     const t = setTimeout(() => setShowGitHubOnboarding(true), 120)
     return () => clearTimeout(t)
-  }, [githubConfig, showWhatsNew, showTraining, showTrainingAll, needsCliSetup])
+  }, [githubConfig, showWhatsNew, showTraining, showTrainingAll, showAccountGate, needsCliSetup])
 
   // useCallback: passed to OnboardingModal as `onClose`, which forwards it
   // to useFocusTrap. Without stable identity, the focus-trap effect re-runs
@@ -790,6 +817,26 @@ export default function App() {
       <div className="flex flex-col h-screen bg-base text-text">
         <PermissionToastStack />
         {showWhatsNew && <WhatsNewModal onClose={handleWhatsNewClose} />}
+        {showAccountGate && (
+          <MultiAccountGate
+            defaultEmail={gateDefaultEmail}
+            changedTo={gateChangedTo}
+            onEnable={() => {
+              useSettingsStore.getState().updateSettings({ multipleAccountsEnabled: true })
+              useAppMetaStore.getState().update({ accountGateDecided: true })
+            }}
+            onDecline={() => {
+              useAppMetaStore.getState().update({ accountGateDecided: true })
+              setShowAccountGate(false)
+            }}
+            onAdd={async () => {
+              await addAccount()
+              setShowAccountGate(false)
+              setView('sessions')
+            }}
+            onDone={() => setShowAccountGate(false)}
+          />
+        )}
         {showTipModal && <TipModal onClose={() => setShowTipModal(false)} onNavigate={(v) => setView(v)} />}
         {showGitHubOnboarding && (
           <OnboardingModal
