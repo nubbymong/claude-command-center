@@ -165,8 +165,22 @@ function createSplashWindow(): void {
   }
   @keyframes fadeIn { to { opacity: 1; } }
   img { width: 100%; height: 100%; object-fit: contain; }
+  .disclaimer {
+    position: fixed;
+    bottom: 10px;
+    left: 0;
+    right: 0;
+    text-align: center;
+    font: 500 10px/1.3 system-ui, -apple-system, 'Segoe UI', sans-serif;
+    letter-spacing: 0.2px;
+    color: rgba(205, 214, 244, 0.82);
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85), 0 0 2px rgba(0, 0, 0, 0.7);
+    padding: 0 14px;
+    pointer-events: none;
+  }
 </style></head><body>
   <img src="data:${splash.mime};base64,${imgData}" />
+  <div class="disclaimer">Independent community project. Not affiliated with or endorsed by Anthropic.</div>
 </body></html>`
 
   const tmpHtml = join(tmpdir(), 'claude-command-center-splash.html')

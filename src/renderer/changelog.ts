@@ -15,14 +15,16 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
-    version: '1.5.21',
+    version: '1.5.22',
     date: '2026-06-01',
     highlights: 'Pick the account a session runs under when it starts, and a clearer Accounts list.',
     changes: [
       { type: 'improvement', description: 'Account is now chosen when a session starts, not saved on the config. The first time a session launches you pick which account it runs under, so the account stays a live choice rather than a buried setting.' },
       { type: 'improvement', description: 'The Accounts list in Settings now shows each account by its email, with a clearly labelled Name field below it to give the account a friendly label. Add and remove accounts as before.' },
+      { type: 'improvement', description: 'The start-session account picker now shows the friendly name you gave each account, including your default account.' },
       { type: 'fix', description: 'You can now switch a session between your Default account and a single added account from the status strip (previously this needed two added accounts).' },
       { type: 'fix', description: 'Removed the leftover Setup Statusline command from existing setups.' },
+      { type: 'improvement', description: 'Added the independent-project disclaimer to the startup splash screen.' },
     ],
   },
   {
