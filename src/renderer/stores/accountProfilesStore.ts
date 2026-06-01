@@ -11,6 +11,8 @@ interface AccountProfilesState {
    *  session row chips). Returns undefined for a missing/unknown id so callers
    *  can fall back to the alias map / raw email via resolveAccountName. */
   profileName: (profileId?: string) => string | undefined
+  /** Create a new empty account profile via IPC, re-hydrate, and return it. */
+  create: (name?: string) => Promise<AccountProfile>
 }
 
 export const useAccountProfilesStore = create<AccountProfilesState>((set, get) => ({
@@ -28,5 +30,11 @@ export const useAccountProfilesStore = create<AccountProfilesState>((set, get) =
   profileName: (profileId) => {
     if (!profileId) return undefined
     return get().profiles.find((p) => p.id === profileId)?.name
+  },
+
+  create: async (name) => {
+    const profile = await window.electronAPI.accountProfiles.create(name)
+    await get().hydrate()
+    return profile
   },
 }))
