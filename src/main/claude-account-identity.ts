@@ -5,7 +5,7 @@
 // v1.5.9 chip removal (whose source was the GLOBAL last-login at tick time).
 import fs from 'node:fs'; import path from 'node:path'
 import { BrowserWindow } from 'electron'
-import { readProfileAccountEmail, sharedRoot } from './account-profiles'
+import { readProfileAccountEmail, sharedRoot, getProfileConfigDir } from './account-profiles'
 import { IPC } from '../shared/ipc-channels'
 import { colourForEmail } from './account-color'
 import type { IdentityColorKey } from '../shared/identity-colors'
@@ -50,5 +50,76 @@ export function pushAccountIdentity(sessionId: string): void {
   }
 }
 
+// ---- mid-session account watch ---------------------------------------------
+// The spawn-time capture above is "first capture wins" and never re-reads. But a
+// user can change a session's account WITHOUT a respawn by running `/login` in
+// the terminal -- that rewrites the session's own .claude.json (the profile dir
+// for a profile session, or ~/.claude.json for the default account). We poll
+// each live session's identity file and, on a real change, update the map and
+// re-push so the status strip, the session-card account line, and the statusline
+// chip all follow. mtime-guarded so the JSON is only parsed when the file
+// actually changes (the default account's ~/.claude.json can be multi-MB).
+
+const watched = new Map<string, string | undefined>() // sessionId -> profileId
+const lastMtimeMs = new Map<string, number>()         // sessionId -> last seen identity-file mtime
+let pollTimer: ReturnType<typeof setInterval> | null = null
+const POLL_MS = 3000
+
+/** Resolve the .claude.json that holds a session's account identity. */
+function identityFilePath(profileId: string | undefined): string {
+  return profileId
+    ? path.join(getProfileConfigDir(profileId), '.claude.json')
+    : path.join(path.dirname(sharedRoot()), '.claude.json')
+}
+
+/**
+ * Re-read a session's identity file; if the account email changed since the last
+ * captured value, update the map and return the NEW email (else null). Exported
+ * for the poll loop and for tests. mtime-guarded: returns null fast when the file
+ * has not changed, so the (possibly large) JSON is only parsed on a real change.
+ */
+export function recheckSessionIdentity(sessionId: string, profileId: string | undefined): string | null {
+  const file = identityFilePath(profileId)
+  let mtime: number
+  try { mtime = fs.statSync(file).mtimeMs } catch { return null }
+  if (lastMtimeMs.get(sessionId) === mtime) return null
+  lastMtimeMs.set(sessionId, mtime)
+  let email: string | null = null
+  try { email = profileId ? readProfileAccountEmail(profileId) : getDefaultAccountEmail() } catch { return null }
+  if (!email || bySession.get(sessionId) === email) return null
+  bySession.set(sessionId, email) // mid-session change: bypass the first-capture guard
+  return email
+}
+
+function recheckAll(): void {
+  for (const [sessionId, profileId] of watched) {
+    let changed: string | null = null
+    try { changed = recheckSessionIdentity(sessionId, profileId) } catch { /* best-effort */ }
+    if (changed) pushAccountIdentity(sessionId)
+  }
+}
+
+/** Start polling a live session's identity file for mid-session account changes. */
+export function startWatchingAccountIdentity(sessionId: string, profileId: string | undefined): void {
+  watched.set(sessionId, profileId)
+  if (!pollTimer) {
+    pollTimer = setInterval(recheckAll, POLL_MS)
+    // Never keep the process alive just for this poll.
+    if (typeof (pollTimer as { unref?: () => void }).unref === 'function') (pollTimer as { unref: () => void }).unref()
+  }
+}
+
+/** Stop polling a session (called alongside clearClaudeAccount on PTY exit). */
+export function stopWatchingAccountIdentity(sessionId: string): void {
+  watched.delete(sessionId)
+  lastMtimeMs.delete(sessionId)
+  if (watched.size === 0 && pollTimer) { clearInterval(pollTimer); pollTimer = null }
+}
+
 /** Test seam. */
-export function _resetClaudeAccounts(): void { bySession.clear() }
+export function _resetClaudeAccounts(): void {
+  bySession.clear()
+  watched.clear()
+  lastMtimeMs.clear()
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
+}

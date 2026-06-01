@@ -29,7 +29,7 @@ import { registerCodexReviewSession, unregisterCodexReviewSession } from './cond
 import { disposeSession as disposeCodexReviewUsage } from './codex-review-usage'
 import { readCodexAccountEmail } from './account-identity'
 import { getProfileConfigDir } from './account-profiles'
-import { captureClaudeAccount, clearClaudeAccount, pushAccountIdentity } from './claude-account-identity'
+import { captureClaudeAccount, clearClaudeAccount, pushAccountIdentity, startWatchingAccountIdentity, stopWatchingAccountIdentity } from './claude-account-identity'
 import type { AccountIdentity } from '../shared/types'
 import { updateSessionMeta, clearSessionMeta } from './session-registry'
 import { readConfig } from './config-manager'
@@ -907,6 +907,9 @@ export function spawnPty(
       // (B2 fallback), so identity comes from the default account in that case.
       captureClaudeAccount(sessionId, effectiveProfileId)
       pushAccountIdentity(sessionId)
+      // Watch for a mid-session account change (user runs /login in the terminal
+      // without a respawn), so the strip/card/statusline follow the new account.
+      startWatchingAccountIdentity(sessionId, effectiveProfileId)
 
       // P6: register for codex_review opt-in if the session config requested it.
       // Only Claude sessions can opt in; Codex sessions never reach this branch
@@ -1085,6 +1088,7 @@ export function spawnPty(
       clearCodexSpawnIdentity(sessionId)
       // Phase R: clear spawn-time Claude account capture so the map can't grow unbounded.
       clearClaudeAccount(sessionId)
+      stopWatchingAccountIdentity(sessionId)
     } else {
       logInfo(`[pty] Stale exit for ${sessionId} — newer PTY has taken over, skipping cleanup`)
     }
