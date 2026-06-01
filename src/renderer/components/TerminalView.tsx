@@ -559,9 +559,15 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
   }, [sessionId])
 
   const needsAttention = session?.needsAttention ?? false
+  const needsLogin = session?.needsLogin ?? false
 
   return (
     <div className="flex-1 flex flex-col titlebar-no-drag overflow-hidden relative" style={{ minHeight: 0 }}>
+      {needsLogin && (
+        <div className="bg-blue/10 border-b border-blue/30 text-lavender text-xs px-3 py-1.5 shrink-0">
+          Setting up a new account. Run claude, then type /login and choose the account &mdash; we&apos;ll detect it automatically.
+        </div>
+      )}
       <div
         ref={xtermContainerRef}
         className="flex-1 overflow-hidden"

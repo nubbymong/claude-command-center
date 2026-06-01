@@ -81,6 +81,9 @@ export interface Session {
   provider?: ProviderId
   /** v1.5.19: account profile this session runs under (CLAUDE_CONFIG_DIR). */
   profileId?: string
+  /** True only for an in-progress add-account login shell; drives the /login
+   *  guidance banner. Cleared once the account is detected. */
+  needsLogin?: boolean
   codexOptions?: CodexOptions
   // Optional per-session GitHub integration state. Hydrated from SavedSession
   // on restore so the panel can gate on the per-session `enabled` flag instead
