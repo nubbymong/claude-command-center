@@ -540,10 +540,17 @@ export function launchBrowser(browser: 'chrome' | 'edge', debugPort: number, url
   const tmpDir = process.env.TEMP || process.env.TMP || os.tmpdir()
   const profileDir = path.join(tmpDir, `${browser}-debug-${debugPort}`)
 
+  // Resolve the requested browser's real install path. If it isn't installed
+  // (e.g. a clean Windows with only Edge), fall back to the OTHER browser's
+  // real path before resorting to a bare command name.
+  const other: 'chrome' | 'edge' = browser === 'edge' ? 'chrome' : 'edge'
   const fallback = process.platform === 'darwin'
     ? (browser === 'edge' ? 'Microsoft Edge' : 'Google Chrome')
     : (browser === 'edge' ? 'msedge' : 'chrome')
-  const executable = getBrowserPaths(browser).find(p => fs.existsSync(p)) || fallback
+  const executable =
+    getBrowserPaths(browser).find(p => fs.existsSync(p)) ||
+    getBrowserPaths(other).find(p => fs.existsSync(p)) ||
+    fallback
 
   const args = [
     `--remote-debugging-port=${debugPort}`,
@@ -565,6 +572,13 @@ export function launchBrowser(browser: 'chrome' | 'edge', debugPort: number, url
     detached: true,
     stdio: 'ignore',
     windowsHide: headless
+  })
+  // A missing/failed browser binary must NEVER crash CCC -- vision is optional.
+  // Without this listener a spawn ENOENT becomes an uncaught exception (the boot
+  // caller's promise .catch() cannot catch a child 'error' event), which hard-
+  // crashed the app at startup on machines that don't have the browser installed.
+  child.on('error', (err) => {
+    logInfo(`[vision] Browser launch failed; vision disabled (non-fatal): ${err instanceof Error ? err.message : String(err)}`)
   })
   child.unref()
 
