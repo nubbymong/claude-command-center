@@ -66,20 +66,15 @@ describe('NewAccountPrompt', () => {
     const input = container.querySelector('input') as HTMLInputElement
     expect(input).toBeTruthy()
 
+    // Use nativeInputValueSetter so React's synthetic onChange sees the new value
+    // (React tracks internal value state and ignores .value= without this)
     await act(async () => {
-      input.value = 'Work'
-      input.dispatchEvent(new Event('input', { bubbles: true }))
-      // Use React's synthetic onChange pathway
-      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set
+      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        'value'
+      )?.set
       nativeInputValueSetter?.call(input, 'Work')
       input.dispatchEvent(new Event('input', { bubbles: true }))
-    })
-
-    // Simulate React controlled component change
-    await act(async () => {
-      const changeEvent = new Event('change', { bubbles: true })
-      Object.defineProperty(changeEvent, 'target', { value: { value: 'Work' } })
-      input.dispatchEvent(changeEvent)
     })
 
     // Find and click "Add account" button
@@ -91,6 +86,7 @@ describe('NewAccountPrompt', () => {
     await act(async () => { addBtn.click() })
 
     expect(onAdd).toHaveBeenCalledOnce()
+    expect(onAdd).toHaveBeenCalledWith('Work')
   })
 
   it('calls onDismiss when "Not now" is clicked', async () => {
