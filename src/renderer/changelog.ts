@@ -15,6 +15,15 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '1.5.27',
+    date: '2026-06-02',
+    highlights: 'Per-session account isolation, plus a safety backup of your Claude config taken before anything runs.',
+    changes: [
+      { type: 'fix', description: 'Two sessions running the same account are now fully isolated. Previously they shared one login on disk, so signing into a different account in one session changed the other and could overwrite the saved account. Each session now gets its own private home.' },
+      { type: 'feature', description: 'Safety backup: on first launch the app snapshots your existing Claude login and settings to a backup folder before the multi-account feature does anything, so your original login is always recoverable.' },
+    ],
+  },
+  {
     version: '1.5.26',
     date: '2026-06-02',
     highlights: 'Multi-account is always on and clobber-proof: your accounts are protected and signing in never overwrites your main login.',
