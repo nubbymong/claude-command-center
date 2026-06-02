@@ -292,10 +292,16 @@ export function captureGlobalLogin(name?: string): AccountProfile | null {
   try { credentials = fs.readFileSync(path.join(sharedRoot(), '.credentials.json'), 'utf8') } catch { credentials = undefined }
 
   const profile = createProfile(name)
-  writeCanonicalIdentity(profile.id, { claudeJson, credentials })
-  const updated: AccountProfile = { ...profile, accountEmail: email }
-  upsertProfile(updated)
-  return updated
+  try {
+    writeCanonicalIdentity(profile.id, { claudeJson, credentials })
+    const updated: AccountProfile = { ...profile, accountEmail: email }
+    upsertProfile(updated)
+    return updated
+  } catch {
+    // capture failed mid-write: don't leave a dangling empty profile
+    try { safeTeardownProfile(profile.id) } catch { /* best-effort */ }
+    return null
+  }
 }
 
 /** Read oauthAccount.emailAddress from a Claude identity JSON file. Never throws. */

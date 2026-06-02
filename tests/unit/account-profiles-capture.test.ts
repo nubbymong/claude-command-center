@@ -24,6 +24,7 @@ describe('captureGlobalLogin', () => {
 
     expect(profile).not.toBeNull()
     expect(profile!.accountEmail).toBe('me@live.co.uk')
+    expect(profile!.name).toBe('Live')
     expect(readCanonicalIdentityEmail(profile!.id)).toBe('me@live.co.uk')
     expect(fs.existsSync(path.join(getAccountIdentityDir(profile!.id), '.credentials.json'))).toBe(true)
     // real home untouched
@@ -31,6 +32,11 @@ describe('captureGlobalLogin', () => {
   })
 
   it('returns null when there is no global login', () => {
+    expect(captureGlobalLogin()).toBeNull()
+  })
+
+  it('returns null when .claude.json exists but has no oauthAccount email', () => {
+    fs.writeFileSync(path.join(path.dirname(sharedRoot), '.claude.json'), JSON.stringify({ somethingElse: true }))
     expect(captureGlobalLogin()).toBeNull()
   })
 })
