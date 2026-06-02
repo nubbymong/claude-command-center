@@ -10,7 +10,7 @@ export interface PendingAccountGate {
   sessionId: string
   /** Friendly label shown in the modal ("Choose the account for X"). */
   sessionLabel: string
-  /** Pre-selected profile id ('' / undefined => Default account). */
+  /** Pre-selected profile id. Always a real profile id in the multi-account UI. */
   currentProfileId: string | undefined
   /** Resolves the awaiting spawn with the chosen profile id (undefined = Default). */
   resolve: (profileId: string | undefined) => void

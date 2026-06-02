@@ -78,14 +78,6 @@ export default function SessionContextMenu({
           </button>
           {accountOpen && (
             <div className="pl-2">
-              <button
-                onClick={() => { onSwitchAccount?.(undefined); onDismiss() }}
-                className="w-full text-left px-3 py-1.5 text-xs hover:bg-surface1 transition-colors flex items-center gap-2"
-                style={{ color: !session.profileId ? 'var(--color-text)' : 'var(--color-subtext0)' }}
-              >
-                <span className="w-3 shrink-0 text-green">{!session.profileId ? String.fromCodePoint(0x2713) : ''}</span>
-                Default account
-              </button>
               {profiles!.map((p) => (
                 <button
                   key={p.id}
