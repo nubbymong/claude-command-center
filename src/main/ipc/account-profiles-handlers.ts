@@ -43,9 +43,9 @@ export function registerAccountProfilesHandlers(): void {
     return { ok: true, email, configDir: getProfileConfigDir(p.id) }
   })
   ipcMain.handle(IPC.ACCOUNT_PROFILES_CREATE, (_e, p: { name?: string }) => createProfile(p?.name))
-  ipcMain.handle(IPC.ACCOUNT_PROFILES_CAPTURE_DETECTED, (_e, p: { sourceProfileId: string; name?: string }) => {
-    if (!p || !isValidProfileId(p.sourceProfileId)) return null
-    return captureDetectedAccount(p.sourceProfileId, p.name)
+  ipcMain.handle(IPC.ACCOUNT_PROFILES_CAPTURE_DETECTED, (_e, p: { sessionId: string; name?: string }) => {
+    if (!p || !p.sessionId) return null
+    return captureDetectedAccount(p.sessionId, p.name)
   })
   ipcMain.handle(IPC.ACCOUNT_GLOBAL_EMAIL_GET, () => getDefaultAccountEmail())
 }

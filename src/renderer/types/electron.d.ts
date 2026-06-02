@@ -80,7 +80,7 @@ export interface ElectronAPI {
     refreshIdentity: (id: string) => Promise<{ ok: boolean; email: string | null; configDir?: string }>
     create: (name?: string) => Promise<import('../../shared/account-types').AccountProfile>
     globalEmail: () => Promise<string | null>
-    captureDetected: (sourceProfileId: string, name?: string) => Promise<import('../../shared/account-types').AccountProfile | null>
+    captureDetected: (sessionId: string, name?: string) => Promise<import('../../shared/account-types').AccountProfile | null>
     onAccountNewDetected: (cb: (data: { sessionId: string; profileId: string; email: string }) => void) => () => void
   }
   window: {

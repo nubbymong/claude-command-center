@@ -827,7 +827,7 @@ export default function App() {
             email={newAccountDetected.email}
             onDismiss={() => setNewAccountDetected(null)}
             onAdd={async (name) => {
-              const np = await window.electronAPI.accountProfiles.captureDetected(newAccountDetected.profileId, name || undefined)
+              const np = await window.electronAPI.accountProfiles.captureDetected(newAccountDetected.sessionId, name || undefined)
               await useAccountProfilesStore.getState().hydrate()
               if (np) useSessionStore.getState().updateSession(newAccountDetected.sessionId, { profileId: np.id })
               setNewAccountDetected(null)

@@ -396,6 +396,35 @@ export function readCanonicalIdentityEmail(id: string): string | null {
   return readEmailFromFile(path.join(getAccountIdentityDir(id), '.claude.json'))
 }
 
+/** Read the account email from a live session's own working home. */
+export function readSessionHomeEmail(sessionId: string): string | null {
+  return readEmailFromFile(path.join(getSessionHomeDir(sessionId), '.claude.json'))
+}
+
+function normEmail(email: string): string { return email.toLowerCase().trim() }
+
+/** Persist a session's working-home identity back to the account it currently
+ *  belongs to (matched by email), so token refreshes + a mid-session account
+ *  change survive the session-home teardown. Best-effort; no-op if the home has
+ *  no identity or no profile matches the email. Writes only under profile dirs. */
+export function syncSessionHomeToAccount(sessionId: string): void {
+  const home = getSessionHomeDir(sessionId)
+  let claudeJson: string
+  try { claudeJson = fs.readFileSync(path.join(home, '.claude.json'), 'utf8') } catch { return }
+  const email = readEmailFromFile(path.join(home, '.claude.json'))
+  if (!email) return
+  const prof = listProfiles().find((p) => p.accountEmail && normEmail(p.accountEmail) === normEmail(email))
+  if (!prof) return
+  let credentials: string | undefined
+  try { credentials = fs.readFileSync(path.join(home, '.claude', '.credentials.json'), 'utf8') } catch { credentials = undefined }
+  writeCanonicalIdentity(prof.id, { claudeJson, credentials })
+  const pHome = getProfileConfigDir(prof.id)
+  try { fs.writeFileSync(path.join(pHome, '.claude.json'), claudeJson) } catch { /* best-effort */ }
+  if (credentials != null) {
+    try { const cd = path.join(pHome, '.claude'); fs.mkdirSync(cd, { recursive: true }); fs.writeFileSync(path.join(cd, '.credentials.json'), credentials) } catch { /* best-effort */ }
+  }
+}
+
 /** Reliable per-session identity: each profile has its OWN .claude.json.
  *  (The v1.5.9 alias attempt failed because it read the GLOBAL last-login.) */
 export function readProfileAccountEmail(id: string): string | null {
@@ -432,35 +461,29 @@ export function backupProfileHomeToCanonical(id: string): void {
   writeCanonicalIdentity(id, { claudeJson, credentials })
 }
 
-/** A /login switched `sourceProfileId`'s session to a new account (now on disk in
- *  that profile's home). Capture it as a NEW named profile, then restore the
- *  source profile from its canonical backup so it keeps its original account.
- *  Returns the new profile, or null if there is nothing to capture. */
-export function captureDetectedAccount(sourceProfileId: string, name?: string): AccountProfile | null {
-  if (!isValidProfileId(sourceProfileId)) return null
-  const srcHome = getProfileConfigDir(sourceProfileId)
+/** A /login switched a session to a new account (now in the session's WORKING
+ *  home). Capture it as a NEW named profile. The source account's saved profile
+ *  is untouched (the /login only wrote the per-session home). Returns the new
+ *  profile, or null if there is nothing to capture. */
+export function captureDetectedAccount(sessionId: string, name?: string): AccountProfile | null {
+  const home = getSessionHomeDir(sessionId)
   let claudeJson: string
-  try { claudeJson = fs.readFileSync(path.join(srcHome, '.claude.json'), 'utf8') } catch { return null }
-  const email = readEmailFromFile(path.join(srcHome, '.claude.json'))
+  try { claudeJson = fs.readFileSync(path.join(home, '.claude.json'), 'utf8') } catch { return null }
+  const email = readEmailFromFile(path.join(home, '.claude.json'))
   if (!email) return null
   let credentials: string | undefined
-  try { credentials = fs.readFileSync(path.join(srcHome, '.claude', '.credentials.json'), 'utf8') } catch { credentials = undefined }
+  try { credentials = fs.readFileSync(path.join(home, '.claude', '.credentials.json'), 'utf8') } catch { credentials = undefined }
   const np = createProfile(name)
   try {
     writeCanonicalIdentity(np.id, { claudeJson, credentials })
     const npHome = getProfileConfigDir(np.id)
     fs.writeFileSync(path.join(npHome, '.claude.json'), claudeJson)
     if (credentials != null) {
-      const cd = path.join(npHome, '.claude')
-      fs.mkdirSync(cd, { recursive: true })
+      const cd = path.join(npHome, '.claude'); fs.mkdirSync(cd, { recursive: true })
       fs.writeFileSync(path.join(cd, '.credentials.json'), credentials)
     }
     const updated: AccountProfile = { ...np, accountEmail: email }
     upsertProfile(updated)
-    // Restore the source to its original account. Best-effort + isolated: a restore
-    // failure must not undo the successful capture above (the source's canonical
-    // backup stays intact for a later retry).
-    try { restoreProfileHomeFromCanonical(sourceProfileId) } catch { /* canonical intact; retriable */ }
     return updated
   } catch {
     try { safeTeardownProfile(np.id) } catch { /* best-effort */ }

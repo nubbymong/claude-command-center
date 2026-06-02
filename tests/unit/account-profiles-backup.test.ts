@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path'
 import {
   _setRootsForTest, createProfile, getProfileConfigDir,
-  readProfileAccountEmail, readCanonicalIdentityEmail, getAccountIdentityDir,
-  backupProfileHomeToCanonical, captureDetectedAccount,
+  readCanonicalIdentityEmail, getAccountIdentityDir,
+  backupProfileHomeToCanonical, captureDetectedAccount, getSessionHomeDir,
 } from '../../src/main/account-profiles'
 
 let base: string; let resourcesDir: string; let sharedRoot: string
@@ -36,26 +36,28 @@ describe('backupProfileHomeToCanonical', () => {
     expect(readCanonicalIdentityEmail(p.id)).toBeNull()
   })
 
-  it('end-to-end gap closed: refreshIdentity backup lets capture/restore work in same run', () => {
-    // Create profile P2 and write its initial identity (simulating add-account login completing)
+  it('end-to-end: capture-detected reads from session home, not the source profile', () => {
+    // Create source profile P2 with its identity backed up canonically.
     const p2 = createProfile('P2')
     const p2Home = getProfileConfigDir(p2.id)
     fs.writeFileSync(path.join(p2Home, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'p2@x.com' } }))
     fs.mkdirSync(path.join(p2Home, '.claude'), { recursive: true })
     fs.writeFileSync(path.join(p2Home, '.claude', '.credentials.json'), JSON.stringify({ token: 'p2tok' }))
-
-    // Simulate refreshIdentity snapshotting the canonical backup (the fix)
     backupProfileHomeToCanonical(p2.id)
 
-    // Simulate a /login in the P2 session switching to a different account
-    fs.writeFileSync(path.join(p2Home, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'third@x.com' } }))
-    fs.writeFileSync(path.join(p2Home, '.claude', '.credentials.json'), JSON.stringify({ token: 'thirdtok' }))
+    // Simulate a /login in a SESSION writing a third account into the session home.
+    const sessionId = 'sess-e2e'
+    const sessHome = getSessionHomeDir(sessionId)
+    fs.mkdirSync(path.join(sessHome, '.claude'), { recursive: true })
+    fs.writeFileSync(path.join(sessHome, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'third@x.com' } }))
+    fs.writeFileSync(path.join(sessHome, '.claude', '.credentials.json'), JSON.stringify({ token: 'thirdtok' }))
 
-    // captureDetectedAccount should capture 'third' and restore P2 to 'p2@x.com'
-    const captured = captureDetectedAccount(p2.id, 'Third')
+    // captureDetectedAccount reads the SESSION home (not the source profile home).
+    const captured = captureDetectedAccount(sessionId, 'Third')
 
     expect(captured).not.toBeNull()
     expect(captured!.accountEmail).toBe('third@x.com')
-    expect(readProfileAccountEmail(p2.id)).toBe('p2@x.com')
+    // Source profile home is completely untouched.
+    expect(readCanonicalIdentityEmail(p2.id)).toBe('p2@x.com')
   })
 })

@@ -16,7 +16,7 @@ export interface ElectronAPI {
     delete: (id: string) => Promise<{ ok: boolean }>
     refreshIdentity: (id: string) => Promise<{ ok: boolean; email: string | null; configDir?: string }>
     globalEmail: () => Promise<string | null>
-    captureDetected: (sourceProfileId: string, name?: string) => Promise<import('../shared/account-types').AccountProfile | null>
+    captureDetected: (sessionId: string, name?: string) => Promise<import('../shared/account-types').AccountProfile | null>
     onAccountNewDetected: (cb: (data: { sessionId: string; profileId: string; email: string }) => void) => () => void
   }
   window: {
@@ -320,7 +320,7 @@ const electronAPI: ElectronAPI = {
     delete: (id) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_DELETE, { id }),
     refreshIdentity: (id) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_REFRESH_IDENTITY, { id }),
     globalEmail: () => ipcRenderer.invoke(IPC.ACCOUNT_GLOBAL_EMAIL_GET),
-    captureDetected: (sourceProfileId: string, name?: string) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_CAPTURE_DETECTED, { sourceProfileId, name }),
+    captureDetected: (sessionId: string, name?: string) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_CAPTURE_DETECTED, { sessionId, name }),
     onAccountNewDetected: (cb: (data: { sessionId: string; profileId: string; email: string }) => void) => {
       const handler = (_e: unknown, data: { sessionId: string; profileId: string; email: string }) => cb(data)
       ipcRenderer.on(IPC.ACCOUNT_NEW_DETECTED, handler)

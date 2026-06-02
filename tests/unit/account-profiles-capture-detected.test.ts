@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path'
 import {
   _setRootsForTest, createProfile, writeCanonicalIdentity, getProfileConfigDir,
-  readProfileAccountEmail, captureDetectedAccount, restoreProfileHomeFromCanonical, listProfiles,
+  getSessionHomeDir, readProfileAccountEmail, readCanonicalIdentityEmail,
+  captureDetectedAccount, restoreProfileHomeFromCanonical, listProfiles,
 } from '../../src/main/account-profiles'
 
 let base: string; let resourcesDir: string; let sharedRoot: string
@@ -14,39 +15,61 @@ beforeEach(() => {
 })
 afterEach(() => { _setRootsForTest(null); fs.rmSync(base, { recursive: true, force: true }) })
 
-function writeHomeIdentity(id: string, email: string, token: string) {
-  const home = getProfileConfigDir(id)
+/** Write a /login result directly into a session's working home. */
+function writeSessionHomeIdentity(sessionId: string, email: string, token: string) {
+  const home = getSessionHomeDir(sessionId)
   fs.mkdirSync(path.join(home, '.claude'), { recursive: true })
   fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: email } }))
   fs.writeFileSync(path.join(home, '.claude', '.credentials.json'), JSON.stringify({ token }))
 }
 
 describe('captureDetectedAccount', () => {
-  it('captures the new account into a new profile and restores the source from canonical', () => {
+  it('captures new account from session home into a fresh profile; source profile untouched', () => {
     const src = createProfile('Live')
-    // canonical backup = the original (live) account
-    writeCanonicalIdentity(src.id, { claudeJson: JSON.stringify({ oauthAccount: { emailAddress: 'live@x.com' } }), credentials: '{"token":"live"}' })
-    // simulate a /login that switched the source home to a NEW account
-    writeHomeIdentity(src.id, 'new@x.com', 'newtok')
+    // Give the source profile its canonical identity (the original account).
+    writeCanonicalIdentity(src.id, {
+      claudeJson: JSON.stringify({ oauthAccount: { emailAddress: 'live@x.com' } }),
+      credentials: '{"token":"livetok"}',
+    })
+    // Seed the profile home from canonical (mirrors setupSessionHome behavior).
+    const srcHome = getProfileConfigDir(src.id)
+    fs.writeFileSync(path.join(srcHome, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'live@x.com' } }))
 
-    const np = captureDetectedAccount(src.id, 'iCloud')
+    // Simulate a /login in the SESSION writing a new account to the session home.
+    const sessionId = 'sess-abc123'
+    writeSessionHomeIdentity(sessionId, 'icloud@x.com', 'icloudtok')
+
+    const np = captureDetectedAccount(sessionId, 'iCloud')
 
     expect(np).not.toBeNull()
     expect(np!.name).toBe('iCloud')
-    expect(np!.accountEmail).toBe('new@x.com')
-    expect(np!.isPrimary).not.toBe(true) // a captured account is never primary
-    // new profile carries the new account in both layouts
-    expect(readProfileAccountEmail(np!.id)).toBe('new@x.com')
+    expect(np!.accountEmail).toBe('icloud@x.com')
+    expect(np!.isPrimary).not.toBe(true) // captured accounts are never primary
+
+    // New profile carries the new account identity.
+    expect(readProfileAccountEmail(np!.id)).toBe('icloud@x.com')
     expect(fs.existsSync(path.join(getProfileConfigDir(np!.id), '.claude', '.credentials.json'))).toBe(true)
-    // SOURCE restored to its original (live) account
+    expect(readCanonicalIdentityEmail(np!.id)).toBe('icloud@x.com')
+
+    // SOURCE PROFILE IS UNTOUCHED — /login only wrote the session home.
     expect(readProfileAccountEmail(src.id)).toBe('live@x.com')
-    // two profiles now
+    expect(readCanonicalIdentityEmail(src.id)).toBe('live@x.com')
+
+    // Two profiles now exist.
     expect(listProfiles().length).toBe(2)
   })
 
-  it('returns null when the source home has no identity to capture', () => {
-    const src = createProfile('Empty')
-    expect(captureDetectedAccount(src.id, 'X')).toBeNull()
+  it('returns null when the session home has no identity to capture', () => {
+    // No session home at all.
+    expect(captureDetectedAccount('sess-empty', 'X')).toBeNull()
+  })
+
+  it('returns null when the session home .claude.json has no email', () => {
+    const sessionId = 'sess-noemail'
+    const home = getSessionHomeDir(sessionId)
+    fs.mkdirSync(home, { recursive: true })
+    fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ noEmail: true }))
+    expect(captureDetectedAccount(sessionId, 'Y')).toBeNull()
   })
 })
 
