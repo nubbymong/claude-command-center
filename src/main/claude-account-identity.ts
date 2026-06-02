@@ -8,6 +8,7 @@ import { BrowserWindow } from 'electron'
 import { readProfileAccountEmail, sharedRoot, getProfileConfigDir } from './account-profiles'
 import { IPC } from '../shared/ipc-channels'
 import { colourForEmail } from './account-color'
+import { canonicaliseEmail } from '../shared/account-chip-color'
 import type { IdentityColorKey } from '../shared/identity-colors'
 
 const bySession = new Map<string, string>()
@@ -114,6 +115,25 @@ export function stopWatchingAccountIdentity(sessionId: string): void {
   watched.delete(sessionId)
   lastMtimeMs.delete(sessionId)
   if (watched.size === 0 && pollTimer) { clearInterval(pollTimer); pollTimer = null }
+}
+
+// ---- pure classifier (no side effects, fully unit-testable) ----------------
+
+export type IdentityChange = { kind: 'refresh' | 'adopt' | 'capture' }
+
+/** Classify what a session's identity-file change means. Pure + unit-testable.
+ *  refresh = same account (token refresh); adopt = switched to an existing
+ *  account; capture = switched to an email not yet known as a profile. */
+export function classifyIdentityChange(
+  _sessionId: string,
+  newEmail: string,
+  currentEmail: string | null,
+  knownEmails: string[],
+): IdentityChange {
+  const ne = canonicaliseEmail(newEmail)
+  if (currentEmail && canonicaliseEmail(currentEmail) === ne) return { kind: 'refresh' }
+  if (knownEmails.some((e) => canonicaliseEmail(e) === ne)) return { kind: 'adopt' }
+  return { kind: 'capture' }
 }
 
 /** Test seam. */

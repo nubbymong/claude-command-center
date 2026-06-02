@@ -283,6 +283,7 @@ export const IPC = {
   // Reliable per-session account identity (main -> renderer push at spawn; renderer pull on mount)
   ACCOUNT_IDENTITY_UPDATE: 'identity:accountUpdate',
   ACCOUNT_IDENTITY_GET: 'identity:accountGet',
+  ACCOUNT_NEW_DETECTED: 'account:new-detected',
 } as const
 
 /** Helper to build per-session PTY data channels */
