@@ -6,9 +6,6 @@ import { useSettingsStore, DEFAULT_STATUS_LINE, DEFAULT_TERMINAL_SETTINGS, Updat
 import type { StatusLineSettings, TerminalSettings, CursorStyle, ThemeMode } from '../stores/settingsStore'
 import { useSessionStore } from '../stores/sessionStore'
 import { useAppMetaStore } from '../stores/appMetaStore'
-import { useAccountProfilesStore } from '../stores/accountProfilesStore'
-import { buildNameableAccounts, type NameableAccount } from '../lib/account-name-list'
-import { canonicaliseEmail, middleTruncateEmail } from '../../shared/account-chip-color'
 import { eventToShortcutString, DEFAULT_SHORTCUTS, SHORTCUT_LABELS } from '../utils/shortcuts'
 import GitHubConfigTab from './github/config/GitHubConfigTab'
 import { CodexSettingsTab } from './codex/CodexSettingsTab'
@@ -105,14 +102,6 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
   const openDebugFolder = async () => {
     await window.electronAPI.debug.openFolder()
   }
-
-  // Multi-account: fetch the global (default) email once on mount.
-  const [globalEmail, setGlobalEmail] = useState<string | null>(null)
-  useEffect(() => {
-    // Optional-chained: a synchronous throw on a missing accountProfiles bridge
-    // (only happens with an incomplete electronAPI mock in tests) would skip .catch.
-    window.electronAPI.accountProfiles?.globalEmail?.()?.then(setGlobalEmail).catch(() => {})
-  }, [])
 
   // Add account: create a profile + open a login shell, then navigate to Sessions.
   const addAccount = useAddAccount()
@@ -239,7 +228,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
                 </label>
               </Section>
 
-              <AccountsPanel defaultEmail={globalEmail} onAdd={handleAddAccount} />
+              <AccountsPanel onAdd={handleAddAccount} />
 
               <Section title="Terminal" icon={<><rect x="2" y="3" width="12" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.2" fill="none" /><path d="M5 7l2 2-2 2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" /><line x1="9" y1="11" x2="11" y2="11" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" /></>}>
                 <Field label="Font Family">
@@ -698,109 +687,6 @@ function CheckForUpdatesField() {
         )}
       </div>
     </Field>
-  )
-}
-
-/* ── Account names section ────────────────────────────── */
-
-// "Renameable everywhere": one editable friendly name per known account. Profile
-// accounts rename through the accountProfiles IPC (updates profile.name);
-// accounts without a profile (the default/single account) write into
-// settings.accountAliases keyed by canonical email. The section is hidden when
-// there are no accounts to name at all.
-function AccountNamesSection() {
-  const settings = useSettingsStore((s) => s.settings)
-  const updateSettings = useSettingsStore((s) => s.updateSettings)
-  const profiles = useAccountProfilesStore((s) => s.profiles)
-  const sessions = useSessionStore((s) => s.sessions)
-
-  const sessionEmails = sessions
-    .map((sess) => sess.accountEmail)
-    .filter((e): e is string => !!e)
-  const accounts = buildNameableAccounts(profiles, sessionEmails, settings.accountAliases)
-
-  if (accounts.length === 0) return null
-
-  const commit = async (account: NameableAccount, raw: string) => {
-    const name = raw.trim()
-    if (account.profileId) {
-      // Profile accounts own their name on disk; rename via IPC, then re-pull
-      // so the store (and every reactive name selector) reflects the change.
-      await window.electronAPI.accountProfiles.rename(account.profileId, name)
-      await useAccountProfilesStore.getState().hydrate()
-      return
-    }
-    const key = canonicaliseEmail(account.email)
-    const existing = settings.accountAliases ?? {}
-    if (name) {
-      await updateSettings({ accountAliases: { ...existing, [key]: name } })
-    } else {
-      // Empty clears the alias entirely (don't persist a blank string).
-      const next = { ...existing }
-      delete next[key]
-      await updateSettings({ accountAliases: next })
-    }
-  }
-
-  return (
-    <Section
-      title="Account names"
-      icon={<><circle cx="8" cy="5.5" r="2.5" stroke="currentColor" strokeWidth="1.2" fill="none" /><path d="M3.5 13c0-2.2 2-3.5 4.5-3.5s4.5 1.3 4.5 3.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" fill="none" /></>}
-    >
-      <p className="text-[11px] text-overlay0 leading-relaxed">
-        Give each Claude account a friendly name. Names show on session rows, the status strip, and tokenomics.
-      </p>
-      <div className="space-y-2">
-        {accounts.map((account) => (
-          <AccountNameRow
-            key={account.profileId ?? canonicaliseEmail(account.email)}
-            account={account}
-            onCommit={(value) => commit(account, value)}
-          />
-        ))}
-      </div>
-    </Section>
-  )
-}
-
-function AccountNameRow({ account, onCommit }: { account: NameableAccount; onCommit: (value: string) => void | Promise<void> }) {
-  const [value, setValue] = useState(account.currentName)
-
-  // Keep the input in sync if the source name changes elsewhere (e.g. a profile
-  // rename made from another surface), but only while not actively editing-then-
-  // committing is handled on blur/Enter so this is a benign external sync.
-  useEffect(() => {
-    setValue(account.currentName)
-  }, [account.currentName])
-
-  const commit = () => {
-    if (value.trim() === account.currentName.trim()) return
-    onCommit(value)
-  }
-
-  return (
-    <div className="flex items-center justify-between gap-3">
-      <span
-        className="text-sm font-mono truncate min-w-0"
-        style={{ color: 'var(--text-secondary)' }}
-        title={account.email}
-      >
-        {middleTruncateEmail(account.email)}
-      </span>
-      <input
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault()
-            ;(e.currentTarget as HTMLInputElement).blur()
-          }
-        }}
-        placeholder={account.email}
-        className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-1.5 text-sm text-text w-48 shrink-0 focus:outline-none focus:border-blue/50 placeholder:text-overlay0 transition-colors"
-      />
-    </div>
   )
 }
 

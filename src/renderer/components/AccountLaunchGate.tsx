@@ -8,7 +8,7 @@ import React, { useState, useEffect } from 'react'
 import { useAccountGateStore } from '../stores/accountGateStore'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { useSettingsStore } from '../stores/settingsStore'
-import { middleTruncateEmail, resolveAccountName, canonicaliseEmail } from '../../shared/account-chip-color'
+import { middleTruncateEmail, resolveAccountName } from '../../shared/account-chip-color'
 import { useResolvedTheme } from '../hooks/useThemeController'
 import { resolveIdentityColor } from '../../shared/identity-colors'
 
@@ -18,29 +18,21 @@ export default function AccountLaunchGate() {
   const profiles = useAccountProfilesStore((s) => s.profiles)
   const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
   const theme = useResolvedTheme()
-  const [selected, setSelected] = useState<string>('')
-  const [defaultEmail, setDefaultEmail] = useState<string | null>(null)
-
-  // Fetch the global (default) account email once so the Default option can show
-  // the friendly name the user gave it, not a generic "Default account".
-  useEffect(() => {
-    window.electronAPI.accountProfiles?.globalEmail?.()?.then(setDefaultEmail).catch(() => {})
-  }, [])
+  // Pre-select: use the session's pinned profile, otherwise fall back to primary.
+  const primaryId = profiles.find((p) => p.isPrimary)?.id ?? profiles[0]?.id ?? ''
+  const [selected, setSelected] = useState<string>(pending?.currentProfileId ?? primaryId)
 
   // Re-seed the selection each time a new session reaches the head of the queue.
   useEffect(() => {
-    setSelected(pending?.currentProfileId ?? '')
+    const pid = pending?.currentProfileId ?? profiles.find((p) => p.isPrimary)?.id ?? profiles[0]?.id ?? ''
+    setSelected(pid)
   }, [pending?.sessionId])
 
   if (!pending) return null
 
   const launch = () => resolveChoice(selected || undefined)
 
-  // The Default account shows its friendly name (alias) when the user set one.
-  const defaultAlias = defaultEmail ? accountAliases?.[canonicaliseEmail(defaultEmail)] : undefined
-  const defaultLabel = defaultAlias || 'Default account'
-
-  // Colour dot for the current selection (Default => neutral mauve).
+  // Colour dot for the current selection (fallback to neutral mauve).
   const selectedDot = resolveIdentityColor(
     profiles.find((p) => p.id === selected)?.colourKey ?? 'mauve',
     theme,
@@ -80,7 +72,6 @@ export default function AccountLaunchGate() {
             data-testid="account-launch-select"
             className="flex-1 bg-base border border-surface1 rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-blue"
           >
-            <option value="">{defaultLabel}</option>
             {profiles.map((p) => {
               // Friendly name wins when set; otherwise the email (or a clear
               // "setup incomplete" hint for a profile still mid-login).

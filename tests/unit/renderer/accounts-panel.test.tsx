@@ -3,10 +3,11 @@
  * AccountsPanel -- unit tests.
  *
  * Verifies:
- *   - Default row renders with the supplied email and has NO delete button.
+ *   - Primary profile shows a "primary" badge and has NO delete button.
+ *   - Non-primary profiles have a delete button.
  *   - One row per profile; profile with accountEmail '' shows "setup incomplete".
  *   - "+ Add another account" button invokes the onAdd prop.
- *   - Clicking a profile's Delete (window.confirm stubbed true) calls
+ *   - Clicking a non-primary profile's Delete (window.confirm stubbed true) calls
  *     accountProfiles.delete with that profile's id.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
@@ -70,6 +71,14 @@ const { default: AccountsPanel } = await import('../../../src/renderer/component
 // ---------------------------------------------------------------------------
 // Fixture data
 
+const primaryProfile: AccountProfile = {
+  id: 'profile-primary',
+  name: 'Personal',
+  accountEmail: 'me@example.com',
+  isPrimary: true,
+  createdAt: 500_000,
+}
+
 const profileWithEmail: AccountProfile = {
   id: 'profile-work',
   name: 'Work',
@@ -111,44 +120,49 @@ describe('AccountsPanel', () => {
     vi.clearAllMocks()
   })
 
-  it('renders the Default row with the passed defaultEmail', () => {
+  it('shows a "primary" badge on the primary profile row', () => {
+    useAccountProfilesStore.setState({ profiles: [primaryProfile] })
+
     const { container, unmount: u } = renderComponent(
-      React.createElement(AccountsPanel, { defaultEmail: 'me@example.com', onAdd: vi.fn() })
+      React.createElement(AccountsPanel, { onAdd: vi.fn() })
     )
     unmount = u
 
-    const row = container.querySelector('[data-testid="default-account-row"]')
+    const row = container.querySelector(`[data-testid="profile-row-${primaryProfile.id}"]`)
     expect(row).toBeTruthy()
-    expect(row!.textContent).toContain('me@example.com')
+    expect(row!.textContent).toContain('primary')
   })
 
-  it('shows "not signed in" when defaultEmail is null', () => {
+  it('has NO delete button on the primary profile row', () => {
+    useAccountProfilesStore.setState({ profiles: [primaryProfile] })
+
     const { container, unmount: u } = renderComponent(
-      React.createElement(AccountsPanel, { defaultEmail: null, onAdd: vi.fn() })
+      React.createElement(AccountsPanel, { onAdd: vi.fn() })
     )
     unmount = u
 
-    const row = container.querySelector('[data-testid="default-account-row"]')
-    expect(row).toBeTruthy()
-    expect(row!.textContent).toContain('not signed in')
+    const primaryRow = container.querySelector(`[data-testid="profile-row-${primaryProfile.id}"]`)
+    const deleteInPrimary = primaryRow?.querySelector('[data-testid^="delete-profile-"]')
+    expect(deleteInPrimary).toBeNull()
   })
 
-  it('has NO delete button on the Default row', () => {
+  it('has a delete button on non-primary profiles', () => {
+    useAccountProfilesStore.setState({ profiles: [primaryProfile, profileWithEmail] })
+
     const { container, unmount: u } = renderComponent(
-      React.createElement(AccountsPanel, { defaultEmail: 'me@example.com', onAdd: vi.fn() })
+      React.createElement(AccountsPanel, { onAdd: vi.fn() })
     )
     unmount = u
 
-    const defaultRow = container.querySelector('[data-testid="default-account-row"]')
-    const deleteInDefault = defaultRow?.querySelector('[data-testid^="delete-profile-"]')
-    expect(deleteInDefault).toBeNull()
+    expect(container.querySelector(`[data-testid="delete-profile-${profileWithEmail.id}"]`)).toBeTruthy()
+    expect(container.querySelector(`[data-testid="delete-profile-${primaryProfile.id}"]`)).toBeNull()
   })
 
   it('renders one row per profile', () => {
     useAccountProfilesStore.setState({ profiles: [profileWithEmail, profileWithoutEmail] })
 
     const { container, unmount: u } = renderComponent(
-      React.createElement(AccountsPanel, { defaultEmail: 'me@example.com', onAdd: vi.fn() })
+      React.createElement(AccountsPanel, { onAdd: vi.fn() })
     )
     unmount = u
 
@@ -160,7 +174,7 @@ describe('AccountsPanel', () => {
     useAccountProfilesStore.setState({ profiles: [profileWithoutEmail] })
 
     const { container, unmount: u } = renderComponent(
-      React.createElement(AccountsPanel, { defaultEmail: 'me@example.com', onAdd: vi.fn() })
+      React.createElement(AccountsPanel, { onAdd: vi.fn() })
     )
     unmount = u
 
@@ -171,7 +185,7 @@ describe('AccountsPanel', () => {
   it('calls onAdd when the "+ Add another account" button is clicked', async () => {
     const onAdd = vi.fn()
     const { container, unmount: u } = renderComponent(
-      React.createElement(AccountsPanel, { defaultEmail: null, onAdd })
+      React.createElement(AccountsPanel, { onAdd })
     )
     unmount = u
 
@@ -186,7 +200,7 @@ describe('AccountsPanel', () => {
     listMock.mockResolvedValue([]) // hydrate after delete returns empty
 
     const { container, unmount: u } = renderComponent(
-      React.createElement(AccountsPanel, { defaultEmail: 'me@example.com', onAdd: vi.fn() })
+      React.createElement(AccountsPanel, { onAdd: vi.fn() })
     )
     unmount = u
 
@@ -208,7 +222,7 @@ describe('AccountsPanel', () => {
     listMock.mockResolvedValue([healed])
 
     const { unmount: u } = renderComponent(
-      React.createElement(AccountsPanel, { defaultEmail: 'me@example.com', onAdd: vi.fn() })
+      React.createElement(AccountsPanel, { onAdd: vi.fn() })
     )
     unmount = u
 

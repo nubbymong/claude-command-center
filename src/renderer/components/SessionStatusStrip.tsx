@@ -55,11 +55,9 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
   // No profileId -> undefined -> resolveAccountName falls back to alias/email.
   const profileName = useAccountProfilesStore((s) => s.profiles.find((p) => p.id === session?.profileId)?.name)
   const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
-  // Mid-session account switch (respawn + resume): gated on the multi-account
-  // feature flag + having at least one managed profile. The picker always also
-  // offers the Default account, so one added profile already means two choices
-  // (Default + that profile). Selector form on every read so the strip never
-  // re-renders on unrelated store churn.
+  // Mid-session account switch (respawn + resume): gated on having at least 2
+  // profiles (need a real choice). Selector form on every read so the strip
+  // never re-renders on unrelated store churn.
   const profiles = useAccountProfilesStore((s) => s.profiles)
   const canSwitchAccount = profiles.length >= 2
 
@@ -84,9 +82,8 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
     }
     setOpenPicker(null)
   }
-  // Account chooser select: value '' = the default account (undefined
-  // profileId), otherwise the chosen profile id. switchAccount no-ops when
-  // it equals the session's current account.
+  // Account chooser select: value is always a real profile id.
+  // switchAccount no-ops when it equals the session's current account.
   const onSwitchAccount = (_si: number, v: string) => {
     switchAccount(sessionId, v || undefined)
     setOpenPicker(null)
@@ -113,22 +110,14 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
     : null
   const accountDot = resolveIdentityColor(session.accountColour ?? 'mauve', theme)
 
-  // Account chooser: every profile (resolved name + truncated email hint) plus
-  // a "Default account" entry. The current account is marked active; selecting
-  // it is a no-op in switchAccount. value '' = default (undefined profileId).
-  const accountItems = [
-    {
-      label: 'Default account',
-      value: '',
-      active: !session.profileId,
-    },
-    ...profiles.map((p) => ({
-      label: resolveAccountName(p.accountEmail, p.name, accountAliases),
-      value: p.id,
-      active: p.id === session.profileId,
-      hint: middleTruncateEmail(p.accountEmail),
-    })),
-  ]
+  // Account chooser: every profile (resolved name + truncated email hint).
+  // The current account is marked active; selecting it is a no-op in switchAccount.
+  const accountItems = profiles.map((p) => ({
+    label: resolveAccountName(p.accountEmail, p.name, accountAliases),
+    value: p.id,
+    active: p.id === session.profileId,
+    hint: middleTruncateEmail(p.accountEmail),
+  }))
 
   return (
     <div

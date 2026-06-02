@@ -1,14 +1,11 @@
 // src/renderer/components/AccountsPanel.tsx
-// Shared "Accounts" panel rendered inside Settings when multipleAccountsEnabled is on.
-// Each account shows its email as the read-only identity, with a clearly-labelled
-// "Name" field beneath for an optional friendly name (shown on session rows, the
-// status strip and tokenomics). The Default row (real ~/.claude) is never
-// deletable and names via settings.accountAliases; each managed profile names via
-// the accountProfiles IPC and has a delete button.
+// Shared "Accounts" panel rendered inside Settings when multi-account is on.
+// Every account is a profile; the primary profile (captured global) is shown
+// with a "primary" badge and cannot be deleted. All other profiles are
+// renameable and deletable.
 import React, { useState, useEffect, useRef } from 'react'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
-import { useSettingsStore } from '../stores/settingsStore'
-import { canonicaliseEmail, middleTruncateEmail } from '../../shared/account-chip-color'
+import { middleTruncateEmail } from '../../shared/account-chip-color'
 import { useResolvedTheme } from '../hooks/useThemeController'
 import { resolveIdentityColor } from '../../shared/identity-colors'
 import type { AccountProfile } from '../../shared/account-types'
@@ -17,7 +14,6 @@ import { Section } from './SettingsPage'
 // ---- props ------------------------------------------------------------------
 
 export interface AccountsPanelProps {
-  defaultEmail: string | null
   onAdd: () => void | Promise<void>
 }
 
@@ -67,57 +63,7 @@ function NameField({
   )
 }
 
-/** The always-present Default (real ~/.claude) row. Name writes into accountAliases. */
-function DefaultAccountRow({ email }: { email: string | null }) {
-  const settings = useSettingsStore((s) => s.settings)
-  const updateSettings = useSettingsStore((s) => s.updateSettings)
-  const theme = useResolvedTheme()
-
-  const currentAlias = email
-    ? (settings.accountAliases?.[canonicaliseEmail(email)] ?? '')
-    : ''
-
-  const commitAlias = async (raw: string) => {
-    if (!email) return
-    const name = raw.trim()
-    const key = canonicaliseEmail(email)
-    const existing = settings.accountAliases ?? {}
-    if (name) {
-      await updateSettings({ accountAliases: { ...existing, [key]: name } })
-    } else {
-      const next = { ...existing }
-      delete next[key]
-      await updateSettings({ accountAliases: next })
-    }
-  }
-
-  const dot = resolveIdentityColor('mauve', theme)
-
-  return (
-    <div className="py-2 px-1 rounded-lg" data-testid="default-account-row">
-      <div className="flex items-center gap-3">
-        <span
-          className="w-2 h-2 rounded-full shrink-0"
-          style={{ backgroundColor: dot }}
-          aria-hidden
-        />
-        <div className="flex-1 min-w-0 flex items-center gap-2">
-          <span
-            className="text-sm font-mono truncate"
-            style={{ color: 'var(--text-secondary)' }}
-            title={email ?? undefined}
-          >
-            {email ? middleTruncateEmail(email) : <span className="text-overlay0 italic">not signed in</span>}
-          </span>
-          <span className="text-[10px] text-overlay0 border border-overlay0/30 rounded px-1 shrink-0">current login</span>
-        </div>
-      </div>
-      {email && <div className="ml-5"><NameField initialValue={currentAlias} onCommit={commitAlias} /></div>}
-    </div>
-  )
-}
-
-/** A row for a managed profile. Name via IPC; deletable. */
+/** One row per profile. Primary profile shows a "primary" badge and has no delete button. */
 function ProfileRow({ profile }: { profile: AccountProfile }) {
   const theme = useResolvedTheme()
 
@@ -147,9 +93,9 @@ function ProfileRow({ profile }: { profile: AccountProfile }) {
           style={{ backgroundColor: dot }}
           aria-hidden
         />
-        <div className="flex-1 min-w-0">
+        <div className="flex-1 min-w-0 flex items-center gap-2">
           <span
-            className="text-sm font-mono truncate block"
+            className="text-sm font-mono truncate"
             style={{ color: hasEmail ? 'var(--text-secondary)' : undefined }}
             title={hasEmail ? profile.accountEmail : undefined}
           >
@@ -159,18 +105,25 @@ function ProfileRow({ profile }: { profile: AccountProfile }) {
               <span className="text-overlay0 italic">setup incomplete</span>
             )}
           </span>
+          {profile.isPrimary && (
+            <span className="text-[10px] text-overlay0 border border-overlay0/30 rounded px-1 shrink-0">
+              primary
+            </span>
+          )}
         </div>
-        <button
-          onClick={handleDelete}
-          title="Remove this account from CCC"
-          data-testid={`delete-profile-${profile.id}`}
-          className="ml-1 p-1 rounded text-overlay1 hover:text-red hover:bg-red/10 transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-red/50 shrink-0"
-          aria-label="Remove account"
-        >
-          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden>
-            <path d="M3 4h10M5 4V2.5h6V4M6.5 7v5M9.5 7v5M4 4l.75 8.5a1 1 0 001 .9h4.5a1 1 0 001-.9L12 4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </button>
+        {!profile.isPrimary && (
+          <button
+            onClick={handleDelete}
+            title="Remove this account from CCC"
+            data-testid={`delete-profile-${profile.id}`}
+            className="ml-1 p-1 rounded text-overlay1 hover:text-red hover:bg-red/10 transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-red/50 shrink-0"
+            aria-label="Remove account"
+          >
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden>
+              <path d="M3 4h10M5 4V2.5h6V4M6.5 7v5M9.5 7v5M4 4l.75 8.5a1 1 0 001 .9h4.5a1 1 0 001-.9L12 4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        )}
       </div>
       <div className="ml-5"><NameField initialValue={profile.name} onCommit={commitName} /></div>
     </div>
@@ -179,7 +132,7 @@ function ProfileRow({ profile }: { profile: AccountProfile }) {
 
 // ---- main component ---------------------------------------------------------
 
-export default function AccountsPanel({ defaultEmail, onAdd }: AccountsPanelProps) {
+export default function AccountsPanel({ onAdd }: AccountsPanelProps) {
   const profiles = useAccountProfilesStore((s) => s.profiles)
 
   // On open, reconcile any "setup incomplete" account: the user's /login may have
@@ -213,10 +166,7 @@ export default function AccountsPanel({ defaultEmail, onAdd }: AccountsPanelProp
       }
     >
       <div className="space-y-1 divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
-        {/* Default row - always shown, never deletable */}
-        <DefaultAccountRow email={defaultEmail} />
-
-        {/* One row per managed profile */}
+        {/* One ProfileRow per profile; primary shows badge and has no delete */}
         {profiles.map((profile) => (
           <div key={profile.id} className="pt-1">
             <ProfileRow profile={profile} />
