@@ -61,6 +61,17 @@ export function deleteProfileMeta(id: string): void {
   saveProfiles(listProfiles().filter((x) => x.id !== id))
 }
 
+/** The captured-global "primary" account, or null if none is marked yet. */
+export function getPrimaryProfileId(): string | null {
+  return listProfiles().find((p) => p.isPrimary)?.id ?? null
+}
+
+/** Mark exactly one profile as primary (clears the flag on all others). */
+export function setPrimaryProfile(id: string): void {
+  const all = listProfiles().map((p) => ({ ...p, isPrimary: p.id === id }))
+  saveProfiles(all)
+}
+
 /** Create a fresh, EMPTY profile dir + shared junctions + metadata. The account
  *  email is filled in later by readProfileAccountEmail once the user runs /login
  *  under this profile's CLAUDE_CONFIG_DIR. Never copies credentials; never

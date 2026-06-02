@@ -27,6 +27,7 @@ import { registerVisionHandlers } from './ipc/vision-handlers'
 import { registerConfigHandlers } from './ipc/config-handlers'
 import { registerAccountProfilesHandlers } from './ipc/account-profiles-handlers'
 import { migrateProfilesToHomeLayout } from './account-profiles'
+import { runFirstRunCapture } from './first-run-accounts'
 import { registerCloudAgentHandlers } from './ipc/cloud-agent-handlers'
 import { registerTeamHandlers } from './ipc/team-handlers'
 import { registerLegacyVersionHandlers } from './ipc/legacy-version-handlers'
@@ -632,6 +633,9 @@ if (!gotTheLock) {
     // profiles isolated only CLAUDE_CONFIG_DIR, which never isolated the account
     // identity). Idempotent + best-effort; never touches the real home.
     try { migrateProfilesToHomeLayout() } catch (e) { logInfo(`[profiles] home-layout migration skipped: ${e}`) }
+    // Capture the current global login into a protected "primary" profile so no
+    // session runs on the bare global ~/.claude (idempotent; best-effort).
+    try { runFirstRunCapture() } catch (e) { logInfo(`[profiles] first-run capture skipped: ${e}`) }
     registerScreenshotHandlers(getWindow)
     registerWebviewHandlers(getWindow)
     registerInsightsHandlers(getWindow)
