@@ -255,7 +255,7 @@ export interface ElectronAPI {
     gracefulExit: () => Promise<boolean>
   }
   insights: {
-    run: () => Promise<string>
+    run: (opts?: { profileId?: string }) => Promise<string>
     getCatalogue: () => Promise<InsightsCatalogue>
     getReport: (runId: string) => Promise<string | null>
     getKpis: (runId: string) => Promise<KpiData | null>

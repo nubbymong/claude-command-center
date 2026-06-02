@@ -12,15 +12,20 @@ import {
 import { spawn } from 'child_process'
 import * as pty from 'node-pty'
 import { BrowserWindow } from 'electron'
-import { logInfo, logError } from './debug-logger'
-import { resolveClaudeForPty } from './pty-manager'
+import { logInfo, logWarn, logError } from './debug-logger'
+import { resolveClaudeForPty, withProfileHome } from './pty-manager'
+import { getProfileConfigDir, getPrimaryProfileId, setupProfileLinks, listProfiles } from './account-profiles'
 import { getProjectRootPath, getInstallPath } from './update-watcher'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import { readConfig } from './config-manager'
 
-// Source locations (Claude CLI output)
-const CLAUDE_REPORT = join(homedir(), '.claude', 'usage-data', 'report.html')
-const CLAUDE_FACETS = join(homedir(), '.claude', 'usage-data', 'facets')
+// Source locations (Claude CLI output). `/insights` writes report.html under the
+// running account's HOME (~/.claude/usage-data); with per-account isolation the
+// HOME is the profile's fake home, so these are resolved against the spawn home
+// rather than a fixed ~/.claude.
+export function usageDataDir(home: string | null): string { return join(home ?? homedir(), '.claude', 'usage-data') }
+export function claudeReportPath(home: string | null): string { return join(usageDataDir(home), 'report.html') }
+export function claudeFacetsDir(home: string | null): string { return join(usageDataDir(home), 'facets') }
 
 // Dynamic paths based on data directory
 function getInsightsDir(): string { return join(getResourcesDirectory(), 'insights') }
@@ -32,6 +37,31 @@ export interface InsightsRun {
   status: 'running' | 'extracting_kpis' | 'complete' | 'failed'
   statusMessage?: string  // e.g. "Step 1/3: Generating report..."
   error?: string
+  /** Account this run was generated for (multi-account). Undefined = default. */
+  accountEmail?: string
+  profileId?: string
+}
+
+/**
+ * Resolve which account a run executes under. Mirrors the cloud-agent path: an
+ * explicit (and existing) profile wins; otherwise fall back to the captured
+ * primary so a run is never silently attributed to the bare global login when
+ * multi-account is active. Single-account users (no profiles) get home=null →
+ * the global ~/.claude, unchanged.
+ */
+function resolveInsightsAccount(profileId?: string): { home: string | null; profileId?: string; accountEmail?: string } {
+  let resolved: string | null = null
+  if (profileId && existsSync(getProfileConfigDir(profileId))) {
+    resolved = profileId
+  } else {
+    if (profileId) logWarn(`[insights] profile dir missing for ${profileId}; falling back to primary/default`)
+    const primary = getPrimaryProfileId()
+    if (primary && existsSync(getProfileConfigDir(primary))) resolved = primary
+  }
+  if (!resolved) return { home: null }
+  try { setupProfileLinks(resolved) } catch (e) { logWarn(`[insights] home refresh failed for ${resolved}: ${e}`) }
+  const accountEmail = listProfiles().find(p => p.id === resolved)?.accountEmail || undefined
+  return { home: getProfileConfigDir(resolved), profileId: resolved, accountEmail }
 }
 
 export interface InsightsCatalogue {
@@ -72,22 +102,24 @@ function notifyRenderer(getWindow: () => BrowserWindow | null, run: InsightsRun)
   }
 }
 
-function copyReportToArchive(archiveDir: string): boolean {
+function copyReportToArchive(archiveDir: string, home: string | null): boolean {
   try {
-    if (!existsSync(CLAUDE_REPORT)) {
-      logError('[insights] report.html not found at ' + CLAUDE_REPORT)
+    const report = claudeReportPath(home)
+    const facets = claudeFacetsDir(home)
+    if (!existsSync(report)) {
+      logError('[insights] report.html not found at ' + report)
       return false
     }
-    copyFileSync(CLAUDE_REPORT, join(archiveDir, 'report.html'))
+    copyFileSync(report, join(archiveDir, 'report.html'))
 
     // Copy facets if they exist
-    if (existsSync(CLAUDE_FACETS)) {
+    if (existsSync(facets)) {
       const facetsTarget = join(archiveDir, 'facets')
       ensureDir(facetsTarget)
-      const files = readdirSync(CLAUDE_FACETS)
+      const files = readdirSync(facets)
       for (const file of files) {
         if (file.endsWith('.json')) {
-          copyFileSync(join(CLAUDE_FACETS, file), join(facetsTarget, file))
+          copyFileSync(join(facets, file), join(facetsTarget, file))
         }
       }
     }
@@ -138,18 +170,19 @@ function findTrustedCwd(): string {
  * Spawn Claude interactively via node-pty, type /insights, wait for report.html to update, then /exit.
  * This is needed because /insights is a TUI slash command, not a CLI argument.
  */
-function spawnClaudeInsights(timeoutMs = 600000): Promise<{ code: number; output: string }> {
+function spawnClaudeInsights(home: string | null, timeoutMs = 600000): Promise<{ code: number; output: string }> {
   return new Promise((resolve) => {
     const { cmd } = resolveClaudeForPty()
     const cwd = findTrustedCwd()
-    logInfo(`[insights] Spawning Claude PTY for /insights: ${cmd} in ${cwd}`)
+    const reportPath = claudeReportPath(home)
+    logInfo(`[insights] Spawning Claude PTY for /insights: ${cmd} in ${cwd} (home=${home ?? 'default'})`)
 
     const proc = pty.spawn(cmd, [], {
       name: 'xterm-256color',
       cols: 120,
       rows: 30,
       cwd,
-      env: process.env as Record<string, string>,
+      env: withProfileHome(process.env as Record<string, string>, home),
       useConpty: false
     })
 
@@ -164,8 +197,8 @@ function spawnClaudeInsights(timeoutMs = 600000): Promise<{ code: number; output
     // Record initial mtime of report.html (0 if doesn't exist yet)
     let initialMtime = 0
     try {
-      if (existsSync(CLAUDE_REPORT)) {
-        initialMtime = statSync(CLAUDE_REPORT).mtimeMs
+      if (existsSync(reportPath)) {
+        initialMtime = statSync(reportPath).mtimeMs
       }
     } catch { /* ignore */ }
     logInfo(`[insights] Initial report.html mtime: ${initialMtime}`)
@@ -227,8 +260,8 @@ function spawnClaudeInsights(timeoutMs = 600000): Promise<{ code: number; output
       if (Date.now() - pollStartTime < 5000) return // wait at least 5s after sending command
 
       try {
-        if (existsSync(CLAUDE_REPORT)) {
-          const currentMtime = statSync(CLAUDE_REPORT).mtimeMs
+        if (existsSync(reportPath)) {
+          const currentMtime = statSync(reportPath).mtimeMs
           if (currentMtime > initialMtime) {
             logInfo('[insights] report.html updated! Waiting 2s then sending /exit...')
             exitSent = true
@@ -315,15 +348,15 @@ function spawnClaudeInsights(timeoutMs = 600000): Promise<{ code: number; output
   })
 }
 
-function spawnClaude(args: string[], timeoutMs = 600000, stdinData?: string): Promise<{ code: number; stdout: string; stderr: string }> {
+function spawnClaude(args: string[], timeoutMs = 600000, stdinData?: string, home: string | null = null): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
     // Use native CLI (claude.exe) or npm wrapper (claude.cmd) — 'claude' with shell:true finds either
-    logInfo(`[insights] Spawning: claude ${args.join(' ')}${stdinData ? ' (with stdin)' : ''}`)
+    logInfo(`[insights] Spawning: claude ${args.join(' ')}${stdinData ? ' (with stdin)' : ''}${home ? ' (account home)' : ''}`)
 
     const proc = spawn('claude', args, {
       shell: true,
       windowsHide: true,
-      env: { ...process.env }
+      env: withProfileHome({ ...process.env } as Record<string, string>, home)
     })
 
     // Pipe prompt via stdin if provided
@@ -424,7 +457,7 @@ function loadPreviousKpis(currentRunId: string): string | null {
   }
 }
 
-async function extractKpis(archiveDir: string, runId: string): Promise<boolean> {
+async function extractKpis(archiveDir: string, runId: string, home: string | null = null): Promise<boolean> {
   const reportPath = join(archiveDir, 'report.html').replace(/\\/g, '/')
 
   // Build previous context for comparison
@@ -453,7 +486,7 @@ async function extractKpis(archiveDir: string, runId: string): Promise<boolean> 
 
   // Pipe the prompt via stdin — passing multi-KB prompts with embedded JSON
   // as shell arguments is unreliable on Windows (quoting/escaping breaks).
-  const result = await spawnClaude(spawnArgs, 600000, prompt)
+  const result = await spawnClaude(spawnArgs, 600000, prompt, home)
 
   if (result.code !== 0) {
     logError('[insights] KPI extraction failed (code ' + result.code + '):', result.stderr)
@@ -506,19 +539,21 @@ async function extractKpis(archiveDir: string, runId: string): Promise<boolean> 
   }
 }
 
-export async function runInsights(getWindow: () => BrowserWindow | null): Promise<string> {
+export async function runInsights(getWindow: () => BrowserWindow | null, opts?: { profileId?: string }): Promise<string> {
   if (running) throw new Error('Insights already running')
   running = true
 
+  const account = resolveInsightsAccount(opts?.profileId)
   const id = generateRunId()
   const archiveDir = join(getInsightsDir(), id)
   ensureDir(archiveDir)
 
   const catalogue = loadCatalogue()
-  const run: InsightsRun = { id, timestamp: Date.now(), status: 'running' }
+  const run: InsightsRun = { id, timestamp: Date.now(), status: 'running', accountEmail: account.accountEmail, profileId: account.profileId }
   catalogue.runs.push(run)
   saveCatalogue(catalogue)
   notifyRenderer(getWindow, run)
+  logInfo(`[insights] Run ${id} account=${account.accountEmail ?? '(default)'} home=${account.home ?? 'global'}`)
 
   try {
     // Step 1: Run /insights via interactive PTY
@@ -526,7 +561,7 @@ export async function runInsights(getWindow: () => BrowserWindow | null): Promis
     saveCatalogue(catalogue)
     notifyRenderer(getWindow, run)
     logInfo('[insights] Running /insights via PTY...')
-    const result = await spawnClaudeInsights()
+    const result = await spawnClaudeInsights(account.home)
 
     if (result.code !== 0) {
       run.status = 'failed'
@@ -541,7 +576,7 @@ export async function runInsights(getWindow: () => BrowserWindow | null): Promis
     run.statusMessage = 'Step 2/3: Archiving report...'
     saveCatalogue(catalogue)
     notifyRenderer(getWindow, run)
-    if (!copyReportToArchive(archiveDir)) {
+    if (!copyReportToArchive(archiveDir, account.home)) {
       run.status = 'failed'
       run.error = 'Failed to copy report files'
       saveCatalogue(catalogue)
@@ -556,7 +591,7 @@ export async function runInsights(getWindow: () => BrowserWindow | null): Promis
     saveCatalogue(catalogue)
     notifyRenderer(getWindow, run)
 
-    const kpiSuccess = await extractKpis(archiveDir, id)
+    const kpiSuccess = await extractKpis(archiveDir, id, account.home)
     if (!kpiSuccess) {
       // KPI extraction is non-fatal — report is still viewable
       logError('[insights] KPI extraction failed, report is still available')
@@ -580,13 +615,15 @@ export async function runInsights(getWindow: () => BrowserWindow | null): Promis
 // Seed: copy existing report.html into the archive and extract KPIs in background.
 // KPI extraction is cheap (just reads the HTML, ~$0.20) and needed for trend comparison.
 export async function seedFromExisting(getWindow: () => BrowserWindow | null): Promise<string | null> {
-  if (!existsSync(CLAUDE_REPORT)) return null
+  // Seed is a one-time bootstrap from whatever report already exists in the
+  // global ~/.claude (pre-isolation); it is not account-attributed.
+  if (!existsSync(claudeReportPath(null))) return null
 
   const id = generateRunId()
   const archiveDir = join(getInsightsDir(), id)
   ensureDir(archiveDir)
 
-  if (!copyReportToArchive(archiveDir)) {
+  if (!copyReportToArchive(archiveDir, null)) {
     logError('[insights] seedFromExisting: failed to copy report')
     return null
   }

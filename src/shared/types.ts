@@ -220,6 +220,9 @@ export interface InsightsRun {
   status: 'running' | 'extracting_kpis' | 'complete' | 'failed'
   statusMessage?: string
   error?: string
+  /** Account this run was generated for (multi-account). Undefined = default. */
+  accountEmail?: string
+  profileId?: string
 }
 
 export interface InsightsCatalogue {

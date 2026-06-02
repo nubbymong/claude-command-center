@@ -13,8 +13,8 @@ import {
 export function registerInsightsHandlers(getWindow: () => BrowserWindow | null): void {
   // On startup, mark any stuck runs as failed
   cleanupStuckRuns()
-  ipcMain.handle('insights:run', async () => {
-    return runInsights(getWindow)
+  ipcMain.handle('insights:run', async (_event, opts?: { profileId?: string }) => {
+    return runInsights(getWindow, opts)
   })
 
   ipcMain.handle('insights:getCatalogue', async () => {

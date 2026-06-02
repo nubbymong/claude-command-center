@@ -515,7 +515,7 @@ const electronAPI: ElectronAPI = {
     gracefulExit: () => ipcRenderer.invoke(IPC.SESSION_GRACEFUL_EXIT)
   },
   insights: {
-    run: () => ipcRenderer.invoke(IPC.INSIGHTS_RUN),
+    run: (opts?: { profileId?: string }) => ipcRenderer.invoke(IPC.INSIGHTS_RUN, opts),
     getCatalogue: () => ipcRenderer.invoke(IPC.INSIGHTS_GET_CATALOGUE),
     getReport: (runId: string) => ipcRenderer.invoke(IPC.INSIGHTS_GET_REPORT, runId),
     getKpis: (runId: string) => ipcRenderer.invoke(IPC.INSIGHTS_GET_KPIS, runId),
