@@ -201,6 +201,10 @@ export interface CloudAgent {
   updatedAt: number
   projectPath: string
   configId?: string
+  /** Account profile this agent ran under (multi-account). Undefined = default/global account. */
+  profileId?: string
+  /** Resolved account email at dispatch time. Drives the card label + account filter. */
+  accountEmail?: string
   output: string
   cost?: number
   duration?: number

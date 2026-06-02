@@ -1,5 +1,8 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { useCloudAgentStore, setupCloudAgentListener } from '../stores/cloudAgentStore'
+import { useAccountProfilesStore } from '../stores/accountProfilesStore'
+import { useSettingsStore } from '../stores/settingsStore'
+import { resolveAccountNameByEmail } from '../../shared/account-chip-color'
 import type { CloudAgent, CloudAgentStatus } from '../types/electron'
 import { StatusDot, type SessionState } from './ui/StatusDot'
 import { MetricChip } from './ui/MetricChip'
@@ -192,8 +195,8 @@ function FilterChip({ label, count, color, active, onClick }: {
   )
 }
 
-export function AgentCard({ agent, selected, onClick, onContextMenu }: {
-  agent: CloudAgent; selected: boolean; onClick: () => void; onContextMenu: (e: React.MouseEvent) => void
+export function AgentCard({ agent, selected, onClick, onContextMenu, accountName }: {
+  agent: CloudAgent; selected: boolean; onClick: () => void; onContextMenu: (e: React.MouseEvent) => void; accountName?: string | null
 }) {
   const color = STATUS_COLORS[agent.status]
   const isRunning = agent.status === 'running' || agent.status === 'pending'
@@ -249,6 +252,12 @@ export function AgentCard({ agent, selected, onClick, onContextMenu }: {
           <>
             <span>{String.fromCodePoint(0x00B7)}</span>
             <span>{formatCost(agent.cost)}</span>
+          </>
+        )}
+        {accountName && (
+          <>
+            <span>{String.fromCodePoint(0x00B7)}</span>
+            <span className="truncate max-w-[120px] text-overlay1" title={agent.accountEmail}>{accountName}</span>
           </>
         )}
       </div>
@@ -346,6 +355,11 @@ function OutputTab({ agent }: { agent: CloudAgent }) {
 
 export function SummaryTab({ agent }: { agent: CloudAgent }) {
   const isRunning = agent.status === 'running' || agent.status === 'pending'
+  const profiles = useAccountProfilesStore(s => s.profiles)
+  const accountAliases = useSettingsStore(s => s.settings.accountAliases)
+  const accountName = agent.accountEmail
+    ? resolveAccountNameByEmail(agent.accountEmail, profiles, accountAliases)
+    : null
 
   return (
     <div className="flex-1 overflow-auto space-y-4 p-1">
@@ -378,6 +392,11 @@ export function SummaryTab({ agent }: { agent: CloudAgent }) {
         <InfoCell label="Agent ID">
           <span className="font-mono text-[10px]">{agent.id}</span>
         </InfoCell>
+        {accountName && (
+          <InfoCell label="Account">
+            <span className="truncate" title={agent.accountEmail}>{accountName}</span>
+          </InfoCell>
+        )}
       </div>
 
       {/* Cost & Tokens */}
@@ -545,13 +564,35 @@ export default function CloudAgentsPage() {
   const setFilter = useCloudAgentStore(s => s.setFilter)
   const searchQuery = useCloudAgentStore(s => s.searchQuery)
   const setSearchQuery = useCloudAgentStore(s => s.setSearchQuery)
+  const accountFilter = useCloudAgentStore(s => s.accountFilter)
+  const setAccountFilter = useCloudAgentStore(s => s.setAccountFilter)
   const clearCompleted = useCloudAgentStore(s => s.clearCompleted)
   const [showNewDialog, setShowNewDialog] = useState(false)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
 
+  // Account naming: resolve an agent's accountEmail to its friendly name via the
+  // shared single-source resolver (profile name > alias > raw email).
+  const profiles = useAccountProfilesStore(s => s.profiles)
+  const accountAliases = useSettingsStore(s => s.settings.accountAliases)
+  const nameForAccount = useCallback(
+    (email?: string) => (email ? resolveAccountNameByEmail(email, profiles, accountAliases) : null),
+    [profiles, accountAliases],
+  )
+  // Distinct accounts present across all agents (drives the account filter,
+  // shown only when more than one account appears).
+  const agentAccounts = useMemo(() => {
+    const seen = new Map<string, string>()
+    for (const a of allAgents) {
+      if (a.accountEmail && !seen.has(a.accountEmail)) {
+        seen.set(a.accountEmail, nameForAccount(a.accountEmail) || a.accountEmail)
+      }
+    }
+    return Array.from(seen, ([email, name]) => ({ email, name }))
+  }, [allAgents, nameForAccount])
+
   const agents = useMemo(() => {
     return useCloudAgentStore.getState().getFilteredAgents()
-  }, [allAgents, filter, searchQuery])
+  }, [allAgents, filter, searchQuery, accountFilter])
 
   const counts = useMemo(() => {
     return useCloudAgentStore.getState().getCounts()
@@ -641,6 +682,19 @@ export default function CloudAgentsPage() {
             <FilterChip label="Failed"  count={counts.failed}    color="var(--status-danger)"   active={filter === 'failed'}    onClick={() => setFilter('failed')} />
           </div>
           <div className="flex-1" />
+          {agentAccounts.length > 1 && (
+            <select
+              value={accountFilter}
+              onChange={e => setAccountFilter(e.target.value)}
+              className="bg-surface0/40 border border-surface0/80 rounded-lg px-2 py-1.5 text-xs text-text outline-none focus:border-blue/40 transition-colors"
+              title="Filter agents by account"
+            >
+              <option value="all">All accounts</option>
+              {agentAccounts.map(a => (
+                <option key={a.email} value={a.email}>{a.name}</option>
+              ))}
+            </select>
+          )}
           <div className="relative">
             <input
               value={searchQuery}
@@ -700,6 +754,7 @@ export default function CloudAgentsPage() {
                   selected={agent.id === selectedAgentId}
                   onClick={() => selectAgent(agent.id)}
                   onContextMenu={(e) => handleCardContextMenu(e, agent.id)}
+                  accountName={agentAccounts.length > 1 ? nameForAccount(agent.accountEmail) : null}
                 />
               ))}
             </>

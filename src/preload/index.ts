@@ -563,7 +563,7 @@ const electronAPI: ElectronAPI = {
     }
   },
   cloudAgent: {
-    dispatch: (params: { name: string; description: string; projectPath: string; configId?: string }) =>
+    dispatch: (params: { name: string; description: string; projectPath: string; configId?: string; profileId?: string }) =>
       ipcRenderer.invoke(IPC.CLOUD_AGENT_DISPATCH, params),
     cancel: (id: string) => ipcRenderer.invoke(IPC.CLOUD_AGENT_CANCEL, id),
     remove: (id: string) => ipcRenderer.invoke(IPC.CLOUD_AGENT_REMOVE, id),

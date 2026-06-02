@@ -289,7 +289,7 @@ export interface ElectronAPI {
     onInstallProgress: (cb: (data: { version: string; message: string }) => void) => () => void
   }
   cloudAgent: {
-    dispatch: (agent: { name: string; description: string; projectPath: string; configId?: string; legacyVersion?: { enabled: boolean; version: string } }) => Promise<CloudAgent>
+    dispatch: (agent: { name: string; description: string; projectPath: string; configId?: string; profileId?: string; legacyVersion?: { enabled: boolean; version: string } }) => Promise<CloudAgent>
     cancel: (id: string) => Promise<boolean>
     remove: (id: string) => Promise<boolean>
     retry: (id: string) => Promise<CloudAgent | null>
