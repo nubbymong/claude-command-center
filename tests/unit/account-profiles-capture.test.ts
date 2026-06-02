@@ -3,6 +3,7 @@ import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path'
 import {
   _setRootsForTest, captureGlobalLogin, getAccountIdentityDir, getProfileConfigDir, readCanonicalIdentityEmail,
 } from '../../src/main/account-profiles'
+import { resolveAccountName } from '../../src/shared/account-chip-color'
 
 let base: string; let resourcesDir: string; let sharedRoot: string
 beforeEach(() => {
@@ -42,5 +43,17 @@ describe('captureGlobalLogin', () => {
   it('returns null when .claude.json exists but has no oauthAccount email', () => {
     fs.writeFileSync(path.join(path.dirname(sharedRoot), '.claude.json'), JSON.stringify({ somethingElse: true }))
     expect(captureGlobalLogin()).toBeNull()
+  })
+
+  it('leaves name empty (not "New account") when no name is passed, so email shows via resolveAccountName', () => {
+    const homeRoot = path.dirname(sharedRoot)
+    fs.writeFileSync(path.join(homeRoot, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'nicholas@live.co.uk' } }))
+
+    const profile = captureGlobalLogin() // no name argument
+
+    expect(profile).not.toBeNull()
+    expect(profile!.name).toBe('')
+    // resolveAccountName must fall back to the email
+    expect(resolveAccountName(profile!.accountEmail, profile!.name, undefined)).toBe('nicholas@live.co.uk')
   })
 })

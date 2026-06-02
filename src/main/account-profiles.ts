@@ -355,7 +355,7 @@ export function captureGlobalLogin(name?: string): AccountProfile | null {
       fs.mkdirSync(claudeDir, { recursive: true })
       fs.writeFileSync(path.join(claudeDir, '.credentials.json'), credentials)
     }
-    const updated: AccountProfile = { ...profile, accountEmail: email }
+    const updated: AccountProfile = { ...profile, accountEmail: email, name: name?.trim() || '' }
     upsertProfile(updated)
     return updated
   } catch {
@@ -379,6 +379,15 @@ export function migrateProfilesToCanonicalLayout(): void {
     let credentials: string | undefined
     try { credentials = fs.readFileSync(path.join(home, '.claude', '.credentials.json'), 'utf8') } catch { /* none */ }
     if (claudeJson || credentials) writeCanonicalIdentity(p.id, { claudeJson, credentials })
+  }
+}
+
+/** A captured/completed profile left with the placeholder name "New account"
+ *  should display its email instead. Clears that placeholder on profiles that
+ *  have a real account email (an in-progress add-account with no email keeps it). */
+export function healPlaceholderNames(): void {
+  for (const p of listProfiles()) {
+    if (p.accountEmail && p.name === 'New account') upsertProfile({ ...p, name: '' })
   }
 }
 

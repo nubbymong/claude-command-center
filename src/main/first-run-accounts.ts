@@ -4,7 +4,7 @@
 // on the bare global ~/.claude login (which a /login could otherwise clobber).
 import {
   listProfiles, captureGlobalLogin, migrateProfilesToCanonicalLayout,
-  getPrimaryProfileId, setPrimaryProfile, readCanonicalIdentityEmail,
+  getPrimaryProfileId, setPrimaryProfile, readCanonicalIdentityEmail, healPlaceholderNames,
 } from './account-profiles'
 import { getDefaultAccountEmail } from './claude-account-identity'
 import { canonicaliseEmail } from '../shared/account-chip-color'
@@ -19,6 +19,7 @@ export function decideFirstRunCapture(s: { hasPrimary: boolean; hasGlobalLogin: 
 /** Run once at startup (after config + setup are ready). Idempotent. */
 export function runFirstRunCapture(): void {
   migrateProfilesToCanonicalLayout()
+  healPlaceholderNames()
   if (getPrimaryProfileId()) return
   const globalEmail = getDefaultAccountEmail()
   if (!globalEmail) return // fresh, not yet logged in: capture happens after /login (later task)
