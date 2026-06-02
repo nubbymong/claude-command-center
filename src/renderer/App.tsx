@@ -23,6 +23,7 @@ import MemoryPage from './components/MemoryPage'
 import SetupDialog from './components/SetupDialog'
 import WhatsNewModal, { shouldShowWhatsNew, markWhatsNewSeen } from './components/WhatsNewModal'
 import AccountLaunchGate from './components/AccountLaunchGate'
+import NewAccountPrompt from './components/NewAccountPrompt'
 import { useAddAccount } from './hooks/useAddAccount'
 import TrainingWalkthrough, { shouldShowTraining, isFirstInstall } from './components/TrainingWalkthrough'
 import GuidedConfigView from './components/GuidedConfigView'
@@ -101,6 +102,7 @@ export default function App() {
   const [showTraining, setShowTraining] = useState(false)
   const [showTrainingAll, setShowTrainingAll] = useState(false)
   const [showGitHubOnboarding, setShowGitHubOnboarding] = useState(false)
+  const [newAccountDetected, setNewAccountDetected] = useState<{ sessionId: string; profileId: string; email: string } | null>(null)
   const addAccount = useAddAccount()
   // Deep-link the Settings page to a specific tab the next time it opens.
   // Set by the onboarding "Set up now" button and the auto-detect banner
@@ -215,6 +217,13 @@ export default function App() {
       if (document.querySelector('[role="dialog"][aria-modal="true"]')) return
       useWebviewStore.getState().setOpen(sessionId, false)
     })
+  }, [])
+
+  // Subscribe to main-process notification that a /login produced a previously
+  // unseen account. The prompt lets the user name + save it as a profile.
+  useEffect(() => {
+    const off = window.electronAPI.accountProfiles.onAccountNewDetected?.((d) => setNewAccountDetected(d))
+    return () => off?.()
   }, [])
 
   const togglePartner = (sessionId: string) => {
@@ -809,6 +818,19 @@ export default function App() {
               void dismissGitHubOnboarding()
               setPendingSettingsTab('github')
               setView('settings')
+            }}
+          />
+        )}
+
+        {newAccountDetected && (
+          <NewAccountPrompt
+            email={newAccountDetected.email}
+            onDismiss={() => setNewAccountDetected(null)}
+            onAdd={async (name) => {
+              const np = await window.electronAPI.accountProfiles.captureDetected(newAccountDetected.profileId, name || undefined)
+              await useAccountProfilesStore.getState().hydrate()
+              if (np) useSessionStore.getState().updateSession(newAccountDetected.sessionId, { profileId: np.id })
+              setNewAccountDetected(null)
             }}
           />
         )}

@@ -81,6 +81,7 @@ export interface ElectronAPI {
     create: (name?: string) => Promise<import('../../shared/account-types').AccountProfile>
     globalEmail: () => Promise<string | null>
     captureDetected: (sourceProfileId: string, name?: string) => Promise<import('../../shared/account-types').AccountProfile | null>
+    onAccountNewDetected: (cb: (data: { sessionId: string; profileId: string; email: string }) => void) => () => void
   }
   window: {
     minimize: () => void
