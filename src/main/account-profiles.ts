@@ -252,7 +252,7 @@ export function safeTeardownProfile(id: string): void {
   deleteProfileMeta(id)
 }
 
-/** The authoritative, protected credential copy for an account. NEVER run live. */
+/** The authoritative, protected credential copy for an account. This dir is the source of truth; it is never used directly as a process HOME/CLAUDE_CONFIG_DIR. */
 export function getAccountIdentityDir(id: string): string {
   return path.join(getProfileConfigDir(id), 'identity')
 }
@@ -266,29 +266,32 @@ export function writeCanonicalIdentity(
   fs.mkdirSync(dir, { recursive: true })
   if (files.claudeJson != null) {
     const f = path.join(dir, '.claude.json')
-    fs.writeFileSync(f + '.tmp', files.claudeJson); fs.renameSync(f + '.tmp', f)
+    fs.writeFileSync(f + '.tmp', files.claudeJson)
+    fs.renameSync(f + '.tmp', f)
   }
   if (files.credentials != null) {
     const f = path.join(dir, '.credentials.json')
-    fs.writeFileSync(f + '.tmp', files.credentials); fs.renameSync(f + '.tmp', f)
+    fs.writeFileSync(f + '.tmp', files.credentials)
+    fs.renameSync(f + '.tmp', f)
   }
+}
+
+/** Read oauthAccount.emailAddress from a Claude identity JSON file. Never throws. */
+function readEmailFromFile(filePath: string): string | null {
+  try {
+    const raw = fs.readFileSync(filePath, 'utf8')
+    const email = (JSON.parse(raw) as { oauthAccount?: { emailAddress?: unknown } })?.oauthAccount?.emailAddress
+    return typeof email === 'string' && email ? email : null
+  } catch { return null }
 }
 
 /** Read the account email from the canonical .claude.json (source of truth). */
 export function readCanonicalIdentityEmail(id: string): string | null {
-  try {
-    const raw = fs.readFileSync(path.join(getAccountIdentityDir(id), '.claude.json'), 'utf8')
-    const email = (JSON.parse(raw) as { oauthAccount?: { emailAddress?: unknown } })?.oauthAccount?.emailAddress
-    return typeof email === 'string' && email ? email : null
-  } catch { return null }
+  return readEmailFromFile(path.join(getAccountIdentityDir(id), '.claude.json'))
 }
 
 /** Reliable per-session identity: each profile has its OWN .claude.json.
  *  (The v1.5.9 alias attempt failed because it read the GLOBAL last-login.) */
 export function readProfileAccountEmail(id: string): string | null {
-  try {
-    const raw = fs.readFileSync(path.join(getProfileConfigDir(id), '.claude.json'), 'utf8')
-    const email = (JSON.parse(raw) as { oauthAccount?: { emailAddress?: unknown } })?.oauthAccount?.emailAddress
-    return typeof email === 'string' && email ? email : null
-  } catch { return null }
+  return readEmailFromFile(path.join(getProfileConfigDir(id), '.claude.json'))
 }
