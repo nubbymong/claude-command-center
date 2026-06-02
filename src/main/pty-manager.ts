@@ -28,7 +28,7 @@ import {
 import { registerCodexReviewSession, unregisterCodexReviewSession } from './conductor-mcp-server'
 import { disposeSession as disposeCodexReviewUsage } from './codex-review-usage'
 import { readCodexAccountEmail } from './account-identity'
-import { getProfileConfigDir, setupProfileLinks, getPrimaryProfileId } from './account-profiles'
+import { getProfileConfigDir, setupProfileLinks, getPrimaryProfileId, setupSessionHome, teardownSessionHome, syncSessionHomeToAccount } from './account-profiles'
 import { captureClaudeAccount, clearClaudeAccount, pushAccountIdentity, startWatchingAccountIdentity, stopWatchingAccountIdentity } from './claude-account-identity'
 import type { AccountIdentity } from '../shared/types'
 import { updateSessionMeta, clearSessionMeta } from './session-registry'
@@ -857,29 +857,35 @@ export function spawnPty(
       agentsConfig: options?.agentsConfig,
     })
     const wantProfileId = options?.profileId
-    // Resolve which account this session runs as.
     let resolvedProfileId: string | undefined = undefined
     if (wantProfileId && fs.existsSync(getProfileConfigDir(wantProfileId))) {
       resolvedProfileId = wantProfileId
     } else if (wantProfileId) {
       logWarn(`[profiles] session ${sessionId}: profile dir missing for profileId=${wantProfileId}; falling back to primary/default`)
     }
-    // Clobber-proofing: a CLAUDE session must never run on the bare global ~/.claude
-    // (a /login there would overwrite the global login). When no explicit profile
-    // resolved, fall back to the captured "primary" profile. Shell-only sessions
-    // (plain shells + the add-account login flow) keep their existing behavior.
+    // Clobber-proofing: a non-shell Claude session never runs on the bare global
+    // home -- fall back to the captured primary profile.
     if (!shellOnly && !resolvedProfileId) {
       const primary = getPrimaryProfileId()
       if (primary && fs.existsSync(getProfileConfigDir(primary))) resolvedProfileId = primary
     }
-    let profileDir = resolvedProfileId ? getProfileConfigDir(resolvedProfileId) : null
-    // Refresh the per-account fake home (idempotent) right before spawn so the
-    // dot-entry mirror of the real home never drifts (new tools/configs picked up).
+    // Home selection:
+    //  - shell-only (plain shells + the add-account login flow): run directly in
+    //    the profile dir so a /login persists to that profile (unchanged).
+    //  - non-shell Claude session: run in a PER-SESSION working home seeded from
+    //    the account's canonical identity, so two sessions of the same account are
+    //    isolated and a /login can never corrupt the saved profile.
+    let home: string | null = null
     if (resolvedProfileId) {
-      try { setupProfileLinks(resolvedProfileId) } catch (e) { logWarn(`[profiles] session ${sessionId}: home refresh failed: ${e}`) }
+      if (shellOnly) {
+        try { setupProfileLinks(resolvedProfileId) } catch (e) { logWarn(`[profiles] session ${sessionId}: home refresh failed: ${e}`) }
+        home = getProfileConfigDir(resolvedProfileId)
+      } else {
+        try { home = setupSessionHome(sessionId, resolvedProfileId) } catch (e) { logWarn(`[profiles] session ${sessionId}: session home setup failed: ${e}`); home = null }
+      }
     }
-    const finalSpawnEnv = withProfileHome(spawnEnv, profileDir)
-    logInfo(`[profiles] session ${sessionId} account spawn: requestedProfileId=${wantProfileId ?? '(none)'} resolvedProfileId=${resolvedProfileId ?? '(default/bare-global)'} USERPROFILE=${profileDir ?? '(real home)'}`)
+    const finalSpawnEnv = withProfileHome(spawnEnv, home)
+    logInfo(`[profiles] session ${sessionId} account spawn: requestedProfileId=${wantProfileId ?? '(none)'} resolvedProfileId=${resolvedProfileId ?? '(none/bare-global)'} shellOnly=${shellOnly} USERPROFILE=${home ?? '(real home)'}`)
     // Reliable, drift-immune account identity: capture once at spawn from the
     // session's profile (or the default ~/.claude.json), never re-read.
     // B3: capture is deferred until AFTER the interactive Claude pty.spawn
@@ -1117,6 +1123,11 @@ export function spawnPty(
       // Phase R: clear spawn-time Claude account capture so the map can't grow unbounded.
       clearClaudeAccount(sessionId)
       stopWatchingAccountIdentity(sessionId)
+      // Persist any token refresh or mid-session /login from the session home back
+      // to the account's canonical profile, then tear down the per-session home.
+      // Both are no-ops for shell-only sessions (no session home was created).
+      try { syncSessionHomeToAccount(sessionId) } catch { /* best-effort: persist token/adopt back to the account */ }
+      try { teardownSessionHome(sessionId) } catch { /* best-effort */ }
     } else {
       logInfo(`[pty] Stale exit for ${sessionId} — newer PTY has taken over, skipping cleanup`)
     }
