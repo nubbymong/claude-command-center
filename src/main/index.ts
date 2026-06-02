@@ -28,6 +28,7 @@ import { registerConfigHandlers } from './ipc/config-handlers'
 import { registerAccountProfilesHandlers } from './ipc/account-profiles-handlers'
 import { migrateProfilesToHomeLayout } from './account-profiles'
 import { runFirstRunCapture } from './first-run-accounts'
+import { backupRealClaudeOnce } from './claude-backup'
 import { registerCloudAgentHandlers } from './ipc/cloud-agent-handlers'
 import { registerTeamHandlers } from './ipc/team-handlers'
 import { registerLegacyVersionHandlers } from './ipc/legacy-version-handlers'
@@ -629,6 +630,9 @@ if (!gotTheLock) {
     registerSetupHandlers()
     registerConfigHandlers()
     registerAccountProfilesHandlers()
+    // SAFETY: snapshot the real Claude config before the multi-account feature
+    // does anything, so the user's original login is always recoverable.
+    try { backupRealClaudeOnce() } catch (e) { logInfo(`[backup] snapshot skipped: ${e}`) }
     // One-time migration to the USERPROFILE fake-home isolation layout (older
     // profiles isolated only CLAUDE_CONFIG_DIR, which never isolated the account
     // identity). Idempotent + best-effort; never touches the real home.
