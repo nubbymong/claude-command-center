@@ -66,7 +66,13 @@ export function pushAccountIdentity(sessionId: string): void {
 const watched = new Map<string, string | undefined>() // sessionId -> profileId
 const lastMtimeMs = new Map<string, number>()         // sessionId -> last seen identity-file mtime
 let pollTimer: ReturnType<typeof setInterval> | null = null
-const POLL_MS = 3000
+// One shared timer ticks every POLL_MS and stats each watched session's identity
+// file (mtime-guarded, so the possibly-multi-MB JSON is only parsed on an actual
+// /login change). A mid-session account switch is rare and not latency-critical,
+// so 5s keeps the per-tick stat fan-out (N sessions x 1 stat) off the hot path
+// without a perceptible delay -- 3s woke the main thread ~40% more often for no
+// real benefit at scale.
+const POLL_MS = 5000
 
 /** Resolve the .claude.json that holds a session's account identity. */
 function identityFilePath(sessionId: string, profileId: string | undefined): string {
