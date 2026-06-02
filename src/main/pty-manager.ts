@@ -28,7 +28,7 @@ import {
 import { registerCodexReviewSession, unregisterCodexReviewSession } from './conductor-mcp-server'
 import { disposeSession as disposeCodexReviewUsage } from './codex-review-usage'
 import { readCodexAccountEmail } from './account-identity'
-import { getProfileConfigDir, setupProfileLinks } from './account-profiles'
+import { getProfileConfigDir, setupProfileLinks, getPrimaryProfileId } from './account-profiles'
 import { captureClaudeAccount, clearClaudeAccount, pushAccountIdentity, startWatchingAccountIdentity, stopWatchingAccountIdentity } from './claude-account-identity'
 import type { AccountIdentity } from '../shared/types'
 import { updateSessionMeta, clearSessionMeta } from './session-registry'
@@ -856,28 +856,30 @@ export function spawnPty(
       useResumePicker: options?.useResumePicker,
       agentsConfig: options?.agentsConfig,
     })
-    // B2: a session can carry a profileId whose profile dir was deleted (Phase 6
-    // allows deletion). Pointing CLAUDE_CONFIG_DIR at a missing dir would spawn
-    // Claude "Not logged in". Instead fall back to the default account: drop the
-    // override AND capture identity from the default. For a valid existing profile
-    // (existsSync true) or no profileId, this is byte-equivalent to before.
     const wantProfileId = options?.profileId
-    let profileDir = wantProfileId ? getProfileConfigDir(wantProfileId) : null
-    if (profileDir && !fs.existsSync(profileDir)) {
-      logWarn(`[profiles] session ${sessionId}: profile dir missing for profileId=${wantProfileId}; falling back to default account`)
-      profileDir = null
+    // Resolve which account this session runs as.
+    let resolvedProfileId: string | undefined = undefined
+    if (wantProfileId && fs.existsSync(getProfileConfigDir(wantProfileId))) {
+      resolvedProfileId = wantProfileId
+    } else if (wantProfileId) {
+      logWarn(`[profiles] session ${sessionId}: profile dir missing for profileId=${wantProfileId}; falling back to primary/default`)
     }
-    const effectiveProfileId = profileDir ? wantProfileId : undefined
+    // Clobber-proofing: a CLAUDE session must never run on the bare global ~/.claude
+    // (a /login there would overwrite the global login). When no explicit profile
+    // resolved, fall back to the captured "primary" profile. Shell-only sessions
+    // (plain shells + the add-account login flow) keep their existing behavior.
+    if (!shellOnly && !resolvedProfileId) {
+      const primary = getPrimaryProfileId()
+      if (primary && fs.existsSync(getProfileConfigDir(primary))) resolvedProfileId = primary
+    }
+    let profileDir = resolvedProfileId ? getProfileConfigDir(resolvedProfileId) : null
     // Refresh the per-account fake home (idempotent) right before spawn so the
     // dot-entry mirror of the real home never drifts (new tools/configs picked up).
-    if (effectiveProfileId) {
-      try { setupProfileLinks(effectiveProfileId) } catch (e) { logWarn(`[profiles] session ${sessionId}: home refresh failed: ${e}`) }
+    if (resolvedProfileId) {
+      try { setupProfileLinks(resolvedProfileId) } catch (e) { logWarn(`[profiles] session ${sessionId}: home refresh failed: ${e}`) }
     }
     const finalSpawnEnv = withProfileHome(spawnEnv, profileDir)
-    // Diagnostic: record exactly which account this spawn runs under, so a
-    // "card says X but Claude logged in as Y" mismatch can be bisected to either
-    // the renderer (requestedProfileId missing) or main (home not applied).
-    logInfo(`[profiles] session ${sessionId} account spawn: requestedProfileId=${wantProfileId ?? '(none)'} effectiveProfileId=${effectiveProfileId ?? '(default)'} USERPROFILE=${profileDir ?? '(real home)'}`)
+    logInfo(`[profiles] session ${sessionId} account spawn: requestedProfileId=${wantProfileId ?? '(none)'} resolvedProfileId=${resolvedProfileId ?? '(default/bare-global)'} USERPROFILE=${profileDir ?? '(real home)'}`)
     // Reliable, drift-immune account identity: capture once at spawn from the
     // session's profile (or the default ~/.claude.json), never re-read.
     // B3: capture is deferred until AFTER the interactive Claude pty.spawn
@@ -929,13 +931,13 @@ export function spawnPty(
 
       // B3: capture identity ONLY after the spawn succeeds — if pty.spawn throws,
       // no map entry is created (no leak), and shell-only sessions never reach
-      // here. effectiveProfileId is undefined when the profile dir was missing
-      // (B2 fallback), so identity comes from the default account in that case.
-      captureClaudeAccount(sessionId, effectiveProfileId)
+      // here. resolvedProfileId is undefined when no explicit or primary profile
+      // resolved, so identity comes from the default account in that case.
+      captureClaudeAccount(sessionId, resolvedProfileId)
       pushAccountIdentity(sessionId)
       // Watch for a mid-session account change (user runs /login in the terminal
       // without a respawn), so the strip/card/statusline follow the new account.
-      startWatchingAccountIdentity(sessionId, effectiveProfileId)
+      startWatchingAccountIdentity(sessionId, resolvedProfileId)
 
       // P6: register for codex_review opt-in if the session config requested it.
       // Only Claude sessions can opt in; Codex sessions never reach this branch
