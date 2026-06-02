@@ -101,8 +101,6 @@ export interface AppSettings {
   /** v1.5.17: show the genuine-only permission tray (cards for prompts Claude is
    *  blocked on). Default on; set false to hide the tray and skip capture. */
   permissionTrayEnabled?: boolean
-  /** v1.5.19: enable opt-in per-session multi-account profiles. Default OFF. */
-  multipleAccountsEnabled?: boolean
 }
 
 interface SettingsState {

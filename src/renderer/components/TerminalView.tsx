@@ -334,13 +334,12 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
           // restart/switch already predetermined it. FAIL-OPEN: any error spawns
           // with the session's last-used account so a session never gets stuck.
           const profilesCount = useAccountProfilesStore.getState().profiles.length
-          const multiAccount = !!useSettingsStore.getState().settings.multipleAccountsEnabled
           // Only provider sessions that actually authenticate are eligible. Skip
           // shell-only panes -- the partner terminal (its sessionId has no store
           // record), user "shell only" sessions, and the add-account login shell
           // (which already carries an explicit profileId) -- and skip when there
           // is no real session record.
-          const eligible = !shellOnly && !!session && multiAccount && profilesCount > 0
+          const eligible = !shellOnly && !!session && profilesCount >= 2
           // Consume the predetermined flag only for eligible sessions so a
           // restart/switch re-spawn skips the gate and uses its chosen account.
           const predetermined = eligible && gate.consumePredetermined(sessionId)

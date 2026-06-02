@@ -61,8 +61,7 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
   // (Default + that profile). Selector form on every read so the strip never
   // re-renders on unrelated store churn.
   const profiles = useAccountProfilesStore((s) => s.profiles)
-  const multipleAccountsEnabled = useSettingsStore((s) => s.settings.multipleAccountsEnabled)
-  const canSwitchAccount = !!multipleAccountsEnabled && profiles.length >= 1
+  const canSwitchAccount = profiles.length >= 2
 
   const [openPicker, setOpenPicker] = useState<'model' | 'account' | null>(null)
   const [lastEffort, setLastEffort] = useState<string | null>(null)

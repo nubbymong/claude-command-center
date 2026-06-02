@@ -117,13 +117,12 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
   const newSectionInputRef = useRef<HTMLInputElement>(null)
 
   // Mid-session account switch (respawn + resume) for the session context menu.
-  // Gated on the multi-account flag + >1 profile. The hook is bound to whichever
+  // Gated on having 2+ profiles. The hook is bound to whichever
   // session currently has its context menu open; it reads the live session and
   // no-ops when the chosen account equals the current one.
   const accountProfiles = useAccountProfilesStore((s) => s.profiles)
-  const multipleAccountsEnabled = useSettingsStore((s) => s.settings.multipleAccountsEnabled)
   const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
-  const canSwitchAccount = !!multipleAccountsEnabled && accountProfiles.length > 1
+  const canSwitchAccount = accountProfiles.length >= 2
   const menuSession = sessionContextMenu ? sessions.find((s) => s.id === sessionContextMenu.sessionId) ?? null : null
   const switchMenuAccount = useSwitchAccount(menuSession)
 

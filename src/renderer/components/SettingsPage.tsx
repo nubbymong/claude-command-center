@@ -237,22 +237,9 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
                   Show permission tray
                   <span className="text-[10px] text-overlay0">(surfaces only prompts Claude is blocked on)</span>
                 </label>
-                <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={!!settings.multipleAccountsEnabled}
-                    onChange={(e) => save({ multipleAccountsEnabled: e.target.checked })}
-                    className="rounded border-surface1"
-                  />
-                  Multiple accounts
-                  <span className="text-[10px] text-overlay0">(Run sessions under different Claude accounts (account picker + switch). Single-account users can leave this off.)</span>
-                </label>
               </Section>
 
-              {settings.multipleAccountsEnabled
-                ? <AccountsPanel defaultEmail={globalEmail} onAdd={handleAddAccount} />
-                : <AccountNamesSection />
-              }
+              <AccountsPanel defaultEmail={globalEmail} onAdd={handleAddAccount} />
 
               <Section title="Terminal" icon={<><rect x="2" y="3" width="12" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.2" fill="none" /><path d="M5 7l2 2-2 2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" /><line x1="9" y1="11" x2="11" y2="11" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" /></>}>
                 <Field label="Font Family">
