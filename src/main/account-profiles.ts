@@ -444,7 +444,10 @@ export function captureDetectedAccount(sourceProfileId: string, name?: string): 
     }
     const updated: AccountProfile = { ...np, accountEmail: email }
     upsertProfile(updated)
-    restoreProfileHomeFromCanonical(sourceProfileId) // best-effort
+    // Restore the source to its original account. Best-effort + isolated: a restore
+    // failure must not undo the successful capture above (the source's canonical
+    // backup stays intact for a later retry).
+    try { restoreProfileHomeFromCanonical(sourceProfileId) } catch { /* canonical intact; retriable */ }
     return updated
   } catch {
     try { safeTeardownProfile(np.id) } catch { /* best-effort */ }
