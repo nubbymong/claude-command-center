@@ -287,6 +287,8 @@ export function setupSessionHome(sessionId: string, profileId: string): string {
 
 export function teardownSessionHome(sessionId: string): void {
   const home = getSessionHomeDir(sessionId)
+  // Defense-in-depth: only ever tear down INSIDE the session-homes root.
+  if (!path.resolve(home).startsWith(path.resolve(getSessionHomesRoot()) + path.sep)) return
   if (!fs.existsSync(home)) return
   if (fs.lstatSync(home).isSymbolicLink()) return // never recurse a reparse-point root
   safeTeardown(home)
