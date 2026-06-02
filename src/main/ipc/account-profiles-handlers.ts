@@ -4,7 +4,7 @@ import { IPC } from '../../shared/ipc-channels'
 import {
   listProfiles, upsertProfile, safeTeardownProfile,
   readProfileAccountEmail, getProfileConfigDir, isValidProfileId, createProfile,
-  captureDetectedAccount,
+  captureDetectedAccount, backupProfileHomeToCanonical,
 } from '../account-profiles'
 import { getAccountIdentity, getDefaultAccountEmail } from '../claude-account-identity'
 
@@ -36,6 +36,9 @@ export function registerAccountProfilesHandlers(): void {
     if (email) {
       const prof = listProfiles().find((x) => x.id === p.id)
       if (prof) upsertProfile({ ...prof, accountEmail: email })
+      // Ensure a canonical backup exists now (not just after the next restart),
+      // so a later capture/restore always has a source to restore from.
+      backupProfileHomeToCanonical(p.id)
     }
     return { ok: true, email, configDir: getProfileConfigDir(p.id) }
   })

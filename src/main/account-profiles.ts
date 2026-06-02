@@ -419,6 +419,19 @@ export function restoreProfileHomeFromCanonical(id: string): boolean {
   return true
 }
 
+/** Snapshot a profile's CURRENT per-account-home identity into its canonical
+ *  backup, so it can be restored later. Best-effort; no-op if the home has no
+ *  identity yet. Only reads/writes under the profile dir. */
+export function backupProfileHomeToCanonical(id: string): void {
+  if (!isValidProfileId(id)) return
+  const home = getProfileConfigDir(id)
+  let claudeJson: string
+  try { claudeJson = fs.readFileSync(path.join(home, '.claude.json'), 'utf8') } catch { return }
+  let credentials: string | undefined
+  try { credentials = fs.readFileSync(path.join(home, '.claude', '.credentials.json'), 'utf8') } catch { credentials = undefined }
+  writeCanonicalIdentity(id, { claudeJson, credentials })
+}
+
 /** A /login switched `sourceProfileId`'s session to a new account (now on disk in
  *  that profile's home). Capture it as a NEW named profile, then restore the
  *  source profile from its canonical backup so it keeps its original account.
