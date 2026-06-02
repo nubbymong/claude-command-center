@@ -347,6 +347,14 @@ export function captureGlobalLogin(name?: string): AccountProfile | null {
   const profile = createProfile(name)
   try {
     writeCanonicalIdentity(profile.id, { claudeJson, credentials })
+    // Also seed the per-account-home layout the spawn reads (USERPROFILE=<profileDir>):
+    const home = getProfileConfigDir(profile.id)
+    fs.writeFileSync(path.join(home, '.claude.json'), claudeJson)
+    if (credentials != null) {
+      const claudeDir = path.join(home, '.claude')
+      fs.mkdirSync(claudeDir, { recursive: true })
+      fs.writeFileSync(path.join(claudeDir, '.credentials.json'), credentials)
+    }
     const updated: AccountProfile = { ...profile, accountEmail: email }
     upsertProfile(updated)
     return updated

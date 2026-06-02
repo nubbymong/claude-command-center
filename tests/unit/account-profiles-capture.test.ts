@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path'
 import {
-  _setRootsForTest, captureGlobalLogin, getAccountIdentityDir, readCanonicalIdentityEmail,
+  _setRootsForTest, captureGlobalLogin, getAccountIdentityDir, getProfileConfigDir, readCanonicalIdentityEmail,
 } from '../../src/main/account-profiles'
 
 let base: string; let resourcesDir: string; let sharedRoot: string
@@ -27,6 +27,10 @@ describe('captureGlobalLogin', () => {
     expect(profile!.name).toBe('Live')
     expect(readCanonicalIdentityEmail(profile!.id)).toBe('me@live.co.uk')
     expect(fs.existsSync(path.join(getAccountIdentityDir(profile!.id), '.credentials.json'))).toBe(true)
+    // per-account-home layout (USERPROFILE=<profileDir>) also seeded
+    const homeDir = getProfileConfigDir(profile!.id)
+    expect(fs.readFileSync(path.join(homeDir, '.claude.json'), 'utf8')).toContain('me@live.co.uk')
+    expect(fs.existsSync(path.join(homeDir, '.claude', '.credentials.json'))).toBe(true)
     // real home untouched
     expect(fs.readFileSync(path.join(homeRoot, '.claude.json'), 'utf8')).toBe(beforeJson)
   })
