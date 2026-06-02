@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useMemo } from 'react'
 import { useMemoryStore } from '../stores/memoryStore'
+import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import type { MemoryFile, MemoryProject } from '../../shared/types'
 import PageFrame from './PageFrame'
 
@@ -350,6 +351,11 @@ export default function MemoryPage() {
   const [searchInput, setSearchInput] = useState('')
   const [warningsExpanded, setWarningsExpanded] = useState(false)
 
+  // Memory lives in ~/.claude/projects (junctioned into every account home), so
+  // it is intentionally shared across accounts. Surface that only when more than
+  // one account profile exists, so single-account users see no extra noise.
+  const multiAccount = useAccountProfilesStore((s) => s.profiles.length >= 2)
+
   useEffect(() => { scan() }, [])
 
   // Debounce search
@@ -390,17 +396,30 @@ export default function MemoryPage() {
   )
 
   const memoryActions = (
-    <div className="relative w-56">
-      <svg className="absolute left-2 top-1/2 -translate-y-1/2 text-overlay0" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-      </svg>
-      <input
-        type="text"
-        value={searchInput}
-        onChange={e => setSearchInput(e.target.value)}
-        placeholder="Search all memories…"
-        className="w-full bg-surface0 border border-surface1 text-text pl-7 pr-2 py-0.5 rounded text-xs focus:outline-none focus:border-blue placeholder:text-overlay0"
-      />
+    <div className="flex items-center gap-2">
+      {multiAccount && (
+        <span
+          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-lavender/10 text-lavender border border-lavender/25 shrink-0"
+          title="Memory lives in ~/.claude/projects, which is shared across every account"
+        >
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" />
+          </svg>
+          Shared across accounts
+        </span>
+      )}
+      <div className="relative w-56">
+        <svg className="absolute left-2 top-1/2 -translate-y-1/2 text-overlay0" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+        </svg>
+        <input
+          type="text"
+          value={searchInput}
+          onChange={e => setSearchInput(e.target.value)}
+          placeholder="Search all memories…"
+          className="w-full bg-surface0 border border-surface1 text-text pl-7 pr-2 py-0.5 rounded text-xs focus:outline-none focus:border-blue placeholder:text-overlay0"
+        />
+      </div>
     </div>
   )
 
