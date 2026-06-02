@@ -2,6 +2,9 @@ import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import PageFrame from './PageFrame'
+import { useAccountProfilesStore } from '../stores/accountProfilesStore'
+import { useSettingsStore } from '../stores/settingsStore'
+import { resolveAccountNameByEmail } from '../../shared/account-chip-color'
 
 interface LogSession {
   configLabel: string
@@ -10,6 +13,8 @@ interface LogSession {
   startTime?: number
   endTime?: number
   size: number
+  accountEmail?: string
+  profileId?: string
 }
 
 interface LogEntry {
@@ -95,6 +100,27 @@ export default function LogViewer() {
   const [sessions, setSessions] = useState<LogSession[]>([])
   const [selectedSession, setSelectedSession] = useState<LogSession | null>(null)
   const [sessionFilter, setSessionFilter] = useState('')
+  const [accountFilter, setAccountFilter] = useState<string>('all')
+
+  // Account naming: resolve a session's accountEmail to its friendly name via the
+  // shared single-source resolver (profile name > alias > raw email).
+  const profiles = useAccountProfilesStore((s) => s.profiles)
+  const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
+  const nameForAccount = useCallback(
+    (email?: string) => (email ? resolveAccountNameByEmail(email, profiles, accountAliases) : null),
+    [profiles, accountAliases],
+  )
+  // Distinct accounts present in the recorded logs (drives the account filter,
+  // shown only when more than one account appears).
+  const logAccounts = useMemo(() => {
+    const seen = new Map<string, string>()
+    for (const s of sessions) {
+      if (s.accountEmail && !seen.has(s.accountEmail)) {
+        seen.set(s.accountEmail, nameForAccount(s.accountEmail) || s.accountEmail)
+      }
+    }
+    return Array.from(seen, ([email, name]) => ({ email, name }))
+  }, [sessions, nameForAccount])
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
 
   // Search/filter state
@@ -287,11 +313,16 @@ export default function LogViewer() {
   // Group sessions for sidebar (date groups + filter)
   const groupedSessions = useMemo(() => {
     let filtered = sessions
+    if (accountFilter !== 'all') {
+      filtered = filtered.filter(s => s.accountEmail === accountFilter)
+    }
     if (sessionFilter) {
       const q = sessionFilter.toLowerCase()
       filtered = filtered.filter(s =>
         s.configLabel.toLowerCase().includes(q) ||
-        s.sessionId.toLowerCase().includes(q)
+        s.sessionId.toLowerCase().includes(q) ||
+        (s.accountEmail?.toLowerCase().includes(q) ?? false) ||
+        (nameForAccount(s.accountEmail)?.toLowerCase().includes(q) ?? false)
       )
     }
 
@@ -308,7 +339,7 @@ export default function LogViewer() {
     }
 
     return { groups, order }
-  }, [sessions, sessionFilter])
+  }, [sessions, sessionFilter, accountFilter, nameForAccount])
 
   const toggleGroup = (group: string) => {
     setExpandedGroups(prev => {
@@ -473,7 +504,7 @@ export default function LogViewer() {
         {/* Session sidebar */}
         <div className="w-56 bg-mantle/30 border-r border-surface0/60 flex flex-col overflow-hidden shrink-0">
           {/* Session search */}
-          <div className="p-2 border-b border-surface0/40">
+          <div className="p-2 border-b border-surface0/40 space-y-2">
             <input
               type="text"
               value={sessionFilter}
@@ -481,6 +512,19 @@ export default function LogViewer() {
               className="w-full bg-surface0/30 rounded-md px-2.5 py-1.5 text-[11px] text-text placeholder:text-overlay0 outline-none border border-transparent focus:border-surface1 transition-colors"
               placeholder="Filter sessions..."
             />
+            {logAccounts.length > 1 && (
+              <select
+                value={accountFilter}
+                onChange={e => setAccountFilter(e.target.value)}
+                className="w-full bg-surface0/30 rounded-md px-2 py-1.5 text-[11px] text-text outline-none border border-transparent focus:border-surface1 transition-colors"
+                title="Filter sessions by account"
+              >
+                <option value="all">All accounts</option>
+                {logAccounts.map(a => (
+                  <option key={a.email} value={a.email}>{a.name}</option>
+                ))}
+              </select>
+            )}
           </div>
 
           {/* Session list grouped by date */}
@@ -515,6 +559,11 @@ export default function LogViewer() {
                           }`}
                         >
                           <div className="text-[11px] text-text truncate font-medium">{s.configLabel}</div>
+                          {nameForAccount(s.accountEmail) && (
+                            <div className="text-[10px] text-overlay1 truncate mt-0.5" title={s.accountEmail}>
+                              {nameForAccount(s.accountEmail)}
+                            </div>
+                          )}
                           <div className="flex items-center gap-1.5 mt-0.5 text-[10px] text-overlay0">
                             <span>
                               {s.startTime

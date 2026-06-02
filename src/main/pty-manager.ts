@@ -29,7 +29,7 @@ import { registerCodexReviewSession, unregisterCodexReviewSession } from './cond
 import { disposeSession as disposeCodexReviewUsage } from './codex-review-usage'
 import { readCodexAccountEmail } from './account-identity'
 import { getProfileConfigDir, setupProfileLinks, getPrimaryProfileId, setupSessionHome, teardownSessionHome, syncSessionHomeToAccount } from './account-profiles'
-import { captureClaudeAccount, clearClaudeAccount, pushAccountIdentity, startWatchingAccountIdentity, stopWatchingAccountIdentity } from './claude-account-identity'
+import { captureClaudeAccount, clearClaudeAccount, getAccountIdentity, pushAccountIdentity, startWatchingAccountIdentity, stopWatchingAccountIdentity } from './claude-account-identity'
 import type { AccountIdentity } from '../shared/types'
 import { updateSessionMeta, clearSessionMeta } from './session-registry'
 import { readConfig } from './config-manager'
@@ -1084,9 +1084,10 @@ export function spawnPty(
     pendingWrites.delete(sessionId)
   }
 
-  // Start session logging
+  // Start session logging — stamp the captured account (set at line ~950 for
+  // non-shell Claude sessions) so logs can be labelled/filtered by account.
   const configLabel = options?.configLabel || 'default'
-  startSessionLog(sessionId, configLabel)
+  startSessionLog(sessionId, configLabel, getAccountIdentity(sessionId)?.email, resolvedProfileId)
 
   // Pipe PTY output to session logger and debug capture
   ptyProcess.onData((data) => {

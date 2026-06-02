@@ -18,7 +18,42 @@ interface LogEntry {
 }
 
 const activeStreams = new Map<string, fs.WriteStream>()
-const sessionMeta = new Map<string, { configLabel: string; logDir: string }>()
+const sessionMeta = new Map<string, { configLabel: string; logDir: string; accountEmail?: string; profileId?: string }>()
+
+/** Persisted, account-aware metadata for a logged session. */
+export interface SessionLogMeta {
+  configLabel?: string
+  accountEmail?: string
+  profileId?: string
+}
+
+/**
+ * Write the session's account metadata as a `meta.json` sidecar next to the
+ * JSONL log. Persisting it (rather than relying on the in-memory map) lets
+ * `listLogSessions` label historical sessions by account after a restart.
+ * Undefined fields are omitted so we never serialise nulls.
+ */
+export function writeSessionMeta(logDir: string, meta: SessionLogMeta): void {
+  try {
+    if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true })
+    const clean: SessionLogMeta = {}
+    if (meta.configLabel !== undefined) clean.configLabel = meta.configLabel
+    if (meta.accountEmail !== undefined) clean.accountEmail = meta.accountEmail
+    if (meta.profileId !== undefined) clean.profileId = meta.profileId
+    fs.writeFileSync(path.join(logDir, 'meta.json'), JSON.stringify(clean))
+  } catch { /* metadata is best-effort; never block logging */ }
+}
+
+/** Read the `meta.json` sidecar for a session log dir; {} when absent/corrupt. */
+export function readSessionMeta(logDir: string): SessionLogMeta {
+  try {
+    const raw = fs.readFileSync(path.join(logDir, 'meta.json'), 'utf-8')
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch {
+    return {}
+  }
+}
 
 function getLogDir(configLabel: string, sessionId: string): string {
   const sanitized = configLabel.replace(/[^a-zA-Z0-9_-]/g, '_') || 'default'
@@ -75,13 +110,21 @@ function getOrCreateStream(logDir: string): fs.WriteStream {
   return stream
 }
 
-export function startSessionLog(sessionId: string, configLabel: string): void {
+export function startSessionLog(
+  sessionId: string,
+  configLabel: string,
+  accountEmail?: string,
+  profileId?: string,
+): void {
   const logDir = getLogDir(configLabel, sessionId)
-  sessionMeta.set(sessionId, { configLabel, logDir })
+  sessionMeta.set(sessionId, { configLabel, logDir, accountEmail, profileId })
 
   const stream = getOrCreateStream(logDir)
   const entry: LogEntry = { ts: Date.now(), type: 'start' }
   stream.write(JSON.stringify(entry) + '\n')
+  // Persist account attribution so the log viewer can label/filter by account
+  // even for sessions that ended before the app restarted.
+  writeSessionMeta(logDir, { configLabel, accountEmail, profileId })
 }
 
 export function logSessionData(sessionId: string, data: string): void {
@@ -125,6 +168,8 @@ export interface LogSessionInfo {
   startTime?: number
   endTime?: number
   size: number
+  accountEmail?: string
+  profileId?: string
 }
 
 /** Read only the first and last lines of a file without loading it all into memory */
@@ -185,6 +230,7 @@ export async function listLogSessions(): Promise<LogSessionInfo[]> {
         try {
           const fileStat = await fsp.stat(logPath)
           const { start, end } = await readFirstLastTimestamps(logPath)
+          const meta = readSessionMeta(sessionPath)
 
           results.push({
             configLabel,
@@ -192,7 +238,9 @@ export async function listLogSessions(): Promise<LogSessionInfo[]> {
             logDir: sessionPath,
             startTime: start,
             endTime: end,
-            size: fileStat.size
+            size: fileStat.size,
+            accountEmail: meta.accountEmail,
+            profileId: meta.profileId,
           })
         } catch { /* file doesn't exist, skip */ }
       }
