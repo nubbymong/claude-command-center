@@ -8,7 +8,7 @@ import { useRestartSession } from '../hooks/useRestartSession'
 import { useSwitchAccount } from '../hooks/useSwitchAccount'
 import { useResolvedTheme } from '../hooks/useThemeController'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
-import { resolveAccountName, middleTruncateEmail } from '../../shared/account-chip-color'
+import { resolveAccountName, resolveAccountNameByEmail, resolveAccountColourKey, middleTruncateEmail } from '../../shared/account-chip-color'
 import { resolveIdentityColor } from '../../shared/identity-colors'
 import ToolbarPopup from './ToolbarPopup'
 import {
@@ -46,19 +46,15 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
   const { restart } = useRestartSession(session, false)
   const switchAccount = useSwitchAccount(session)
   const theme = useResolvedTheme()
-  // Account identity (drift-immune source: spawn-time capture -> Session fields).
-  // The chip is always-on for every session that has a resolved account; the
-  // profile name + alias map let it render the friendly name, falling back to
-  // the raw email. Selector form (never destructure the store).
-  // Reactive name selection: pick THIS session's profile name directly so a
-  // rename re-renders the chip (selecting the stable profileName fn would not).
-  // No profileId -> undefined -> resolveAccountName falls back to alias/email.
-  const profileName = useAccountProfilesStore((s) => s.profiles.find((p) => p.id === session?.profileId)?.name)
+  // Account identity resolved by LIVE email so a mid-session /login instantly
+  // reflects the new account name/colour without a respawn. Selector form
+  // (never destructure the whole store).
+  const profiles = useAccountProfilesStore((s) => s.profiles)
   const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
+  const accountColourOverrides = useSettingsStore((s) => s.settings.accountColourOverrides)
   // Mid-session account switch (respawn + resume): gated on having at least 2
   // profiles (need a real choice). Selector form on every read so the strip
   // never re-renders on unrelated store churn.
-  const profiles = useAccountProfilesStore((s) => s.profiles)
   const canSwitchAccount = profiles.length >= 2
 
   const [openPicker, setOpenPicker] = useState<'model' | 'account' | null>(null)
@@ -103,12 +99,16 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
   const modelLabel = hasModelLabel ? rawModelLabel : 'model'
 
   // Account chip (always-on when the session has a resolved account). Name
-  // resolves profile > alias > email; dot uses the session's identity colour
-  // key (fallback to neutral 'mauve' so a missing colour never crashes).
+  // and colour are resolved by live email: a mid-session /login that updates
+  // session.accountEmail immediately shows the right name/colour. Override
+  // wins over the spawn-time colour key.
   const accountName = session.accountEmail
-    ? resolveAccountName(session.accountEmail, profileName, accountAliases)
+    ? resolveAccountNameByEmail(session.accountEmail, profiles, accountAliases)
     : null
-  const accountDot = resolveIdentityColor(session.accountColour ?? 'mauve', theme)
+  const accountDot = resolveIdentityColor(
+    resolveAccountColourKey(session.accountEmail, accountColourOverrides, session.accountColour),
+    theme,
+  )
 
   // Account chooser: every profile (resolved name + truncated email hint).
   // The current account is marked active; selecting it is a no-op in switchAccount.

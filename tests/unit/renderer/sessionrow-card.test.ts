@@ -6,11 +6,24 @@ import { act } from 'react'
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
 
 vi.mock('../../../src/renderer/stores/settingsStore', () => {
-  const STATE = { settings: { theme: 'dark' as const } }
+  const STATE = { settings: { theme: 'dark' as const, accountAliases: {} as Record<string, string>, accountColourOverrides: {} as Record<string, import('../../../src/shared/identity-colors').IdentityColorKey> } }
   const useSettingsStore: any = (sel: (s: typeof STATE) => unknown) => sel(STATE)
   useSettingsStore.getState = () => STATE
   return { useSettingsStore }
 })
+
+vi.mock('../../../src/renderer/stores/accountProfilesStore', () => {
+  // Default: no profiles. Tests that need profile-name resolution seed the
+  // mock directly via the STATE reference.
+  const PROFILES_STATE = { profiles: [] as Array<{ id: string; name: string; accountEmail: string }> }
+  const useAccountProfilesStore: any = (sel: (s: typeof PROFILES_STATE) => unknown) => sel(PROFILES_STATE)
+  useAccountProfilesStore.getState = () => PROFILES_STATE
+  // Expose STATE so individual tests can seed profiles.
+  useAccountProfilesStore.__state = PROFILES_STATE
+  return { useAccountProfilesStore }
+})
+
+const { useAccountProfilesStore: profilesStore } = await import('../../../src/renderer/stores/accountProfilesStore')
 const { default: SessionRow } = await import('../../../src/renderer/components/sidebar/SessionRow')
 
 const base = {
@@ -98,6 +111,27 @@ describe('SessionRow card', () => {
     expect(line3).toBeTruthy()
     expect(line3.style.gridColumn).toBe('2 / 4')
     expect(line3.contains(name)).toBe(true)
+  })
+
+  it('resolves account name by live email, not by launch profileId', () => {
+    // Seed a profile whose email matches the session's live accountEmail.
+    const state = (profilesStore as any).__state
+    state.profiles = [{ id: 'profile-abc', name: 'iCloud', accountEmail: 'me@icloud.com' }]
+    // Session was launched under a different profile but /login changed it.
+    render(root, { accountEmail: 'me@icloud.com', profileId: 'profile-xyz', accountColour: 'mauve' })
+    const name = container.querySelector('[data-testid="account-name"]') as HTMLElement
+    expect(name).toBeTruthy()
+    // Name follows the LIVE email -> profile match, not the stale launch profileId.
+    expect(name.textContent).toBe('iCloud')
+    // Restore
+    state.profiles = []
+  })
+
+  it('falls back to email when accountEmail does not match any profile', () => {
+    render(root, { accountEmail: 'unknown@example.com', accountColour: 'mauve' })
+    const name = container.querySelector('[data-testid="account-name"]') as HTMLElement
+    expect(name).toBeTruthy()
+    expect(name.textContent).toBe('unknown@example.com')
   })
 
   it('renders no account stamp when accountEmail is absent', () => {

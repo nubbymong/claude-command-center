@@ -30,6 +30,8 @@ const globalEmailMock = vi.fn<[], Promise<string | null>>()
 const refreshIdentityMock = vi.fn<[string], Promise<{ ok: boolean; email: string; configDir: string } | null>>()
 const updateSettingsMock = vi.fn()
 
+const configSaveMock = vi.fn<[string, unknown], Promise<unknown>>().mockResolvedValue(undefined)
+
 ;(globalThis as any).window = (globalThis as any).window ?? {}
 ;(globalThis as any).window.electronAPI = {
   ...((globalThis as any).window?.electronAPI ?? {}),
@@ -40,6 +42,9 @@ const updateSettingsMock = vi.fn()
     globalEmail: globalEmailMock,
     create: vi.fn(),
     refreshIdentity: refreshIdentityMock,
+  },
+  config: {
+    save: configSaveMock,
   },
 }
 
@@ -104,7 +109,7 @@ describe('AccountsPanel', () => {
     useAccountProfilesStore.setState({ profiles: [] })
     useSettingsStore.setState((s) => ({
       ...s,
-      settings: { ...s.settings, accountAliases: {} },
+      settings: { ...s.settings, accountAliases: {}, accountColourOverrides: {} },
     }))
 
     listMock.mockResolvedValue([])
@@ -112,6 +117,7 @@ describe('AccountsPanel', () => {
     renameMock.mockResolvedValue({ ok: true })
     globalEmailMock.mockResolvedValue(null)
     refreshIdentityMock.mockResolvedValue(null)
+    configSaveMock.mockResolvedValue(undefined)
     vi.mocked((globalThis as any).window.confirm).mockReturnValue(true)
   })
 
@@ -209,6 +215,53 @@ describe('AccountsPanel', () => {
     await act(async () => { btn.click() })
 
     expect(deleteMock).toHaveBeenCalledWith(profileWithEmail.id)
+  })
+
+  it('clicking a colour swatch calls updateSettings with accountColourOverrides keyed by canonical email', async () => {
+    // A profile with a resolved email -- the colour picker is shown.
+    useAccountProfilesStore.setState({ profiles: [primaryProfile] })
+    // Seed an override for a different email so we can verify the merge.
+    useSettingsStore.setState((s) => ({
+      ...s,
+      settings: { ...s.settings, accountColourOverrides: { 'other@example.com': 'rose' as const } },
+    }))
+
+    const { container, unmount: u } = renderComponent(
+      React.createElement(AccountsPanel, { onAdd: vi.fn() })
+    )
+    unmount = u
+
+    // The colour picker should be present for the profile with an email.
+    const picker = container.querySelector(`[data-testid="colour-picker-${primaryProfile.id}"]`)
+    expect(picker).toBeTruthy()
+
+    // Click the 'indigo' swatch.
+    const indigoSwatch = container.querySelector(
+      `[data-testid="colour-swatch-${primaryProfile.id}-indigo"]`
+    ) as HTMLButtonElement
+    expect(indigoSwatch).toBeTruthy()
+
+    await act(async () => { indigoSwatch.click() })
+
+    // updateSettings should have been called. Because the real store is used,
+    // we verify the store was updated with the right override key.
+    const overrides = useSettingsStore.getState().settings.accountColourOverrides
+    // canonical email = 'me@example.com' (primaryProfile.accountEmail lowercase+trim)
+    expect(overrides?.['me@example.com']).toBe('indigo')
+    // Pre-existing override for other email is preserved.
+    expect(overrides?.['other@example.com']).toBe('rose')
+  })
+
+  it('does NOT show a colour picker for a setup-incomplete profile (no email)', async () => {
+    useAccountProfilesStore.setState({ profiles: [profileWithoutEmail] })
+
+    const { container, unmount: u } = renderComponent(
+      React.createElement(AccountsPanel, { onAdd: vi.fn() })
+    )
+    unmount = u
+
+    const picker = container.querySelector(`[data-testid="colour-picker-${profileWithoutEmail.id}"]`)
+    expect(picker).toBeNull()
   })
 
   it('self-heals a setup-incomplete profile when the panel mounts', async () => {

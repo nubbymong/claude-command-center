@@ -8,7 +8,7 @@ import React, { useState, useEffect } from 'react'
 import { useAccountGateStore } from '../stores/accountGateStore'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { useSettingsStore } from '../stores/settingsStore'
-import { middleTruncateEmail, resolveAccountName } from '../../shared/account-chip-color'
+import { middleTruncateEmail, resolveAccountName, resolveAccountColourKey } from '../../shared/account-chip-color'
 import { useResolvedTheme } from '../hooks/useThemeController'
 import { resolveIdentityColor } from '../../shared/identity-colors'
 
@@ -17,6 +17,7 @@ export default function AccountLaunchGate() {
   const resolveChoice = useAccountGateStore((s) => s.resolveChoice)
   const profiles = useAccountProfilesStore((s) => s.profiles)
   const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
+  const accountColourOverrides = useSettingsStore((s) => s.settings.accountColourOverrides)
   const theme = useResolvedTheme()
   // Pre-select: use the session's pinned profile, otherwise fall back to primary.
   const primaryId = profiles.find((p) => p.isPrimary)?.id ?? profiles[0]?.id ?? ''
@@ -32,9 +33,11 @@ export default function AccountLaunchGate() {
 
   const launch = () => resolveChoice(selected || undefined)
 
-  // Colour dot for the current selection (fallback to neutral mauve).
+  // Colour dot for the current selection: user override wins, else the profile's
+  // stored colourKey, else neutral mauve.
+  const selectedProfile = profiles.find((p) => p.id === selected)
   const selectedDot = resolveIdentityColor(
-    profiles.find((p) => p.id === selected)?.colourKey ?? 'mauve',
+    resolveAccountColourKey(selectedProfile?.accountEmail, accountColourOverrides, selectedProfile?.colourKey),
     theme,
   )
 

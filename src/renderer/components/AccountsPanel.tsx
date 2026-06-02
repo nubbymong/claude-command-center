@@ -5,9 +5,11 @@
 // renameable and deletable.
 import React, { useState, useEffect, useRef } from 'react'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
-import { middleTruncateEmail } from '../../shared/account-chip-color'
+import { useSettingsStore } from '../stores/settingsStore'
+import { middleTruncateEmail, canonicaliseEmail, resolveAccountColourKey } from '../../shared/account-chip-color'
 import { useResolvedTheme } from '../hooks/useThemeController'
-import { resolveIdentityColor } from '../../shared/identity-colors'
+import { resolveIdentityColor, IDENTITY_COLOR_KEYS } from '../../shared/identity-colors'
+import type { IdentityColorKey } from '../../shared/identity-colors'
 import type { AccountProfile } from '../../shared/account-types'
 import { Section } from './SettingsPage'
 
@@ -63,9 +65,54 @@ function NameField({
   )
 }
 
+/** Compact colour-swatch palette picker for a profile's identity colour. Only
+ *  shown when the profile has a resolved accountEmail (incomplete profiles have
+ *  no identity to colour yet). */
+function ColourPicker({
+  profile,
+  currentKey,
+  onPick,
+}: {
+  profile: AccountProfile
+  currentKey: IdentityColorKey
+  onPick: (key: IdentityColorKey) => void
+}) {
+  const theme = useResolvedTheme()
+  return (
+    <div className="flex items-center gap-2 mt-1.5" data-testid={`colour-picker-${profile.id}`}>
+      <span className="text-[11px] text-subtext0 w-10 shrink-0">Colour</span>
+      <div className="flex flex-wrap gap-1.5">
+        {IDENTITY_COLOR_KEYS.map((key) => {
+          const hex = resolveIdentityColor(key, theme)
+          const isSelected = key === currentKey
+          return (
+            <button
+              key={key}
+              data-testid={`colour-swatch-${profile.id}-${key}`}
+              title={key}
+              aria-label={`Set colour to ${key}${isSelected ? ' (current)' : ''}`}
+              aria-pressed={isSelected}
+              onClick={() => onPick(key)}
+              className="w-4 h-4 rounded-full transition-transform focus:outline-none focus-visible:ring-1 focus-visible:ring-blue/50"
+              style={{
+                backgroundColor: hex,
+                outline: isSelected ? `2px solid ${hex}` : undefined,
+                outlineOffset: isSelected ? '2px' : undefined,
+                transform: isSelected ? 'scale(1.2)' : undefined,
+              }}
+            />
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 /** One row per profile. Primary profile shows a "primary" badge and has no delete button. */
 function ProfileRow({ profile }: { profile: AccountProfile }) {
   const theme = useResolvedTheme()
+  const accountColourOverrides = useSettingsStore((s) => s.settings.accountColourOverrides)
+  const updateSettings = useSettingsStore((s) => s.updateSettings)
 
   const commitName = async (raw: string) => {
     const name = raw.trim()
@@ -82,7 +129,20 @@ function ProfileRow({ profile }: { profile: AccountProfile }) {
     await useAccountProfilesStore.getState().hydrate()
   }
 
-  const dot = resolveIdentityColor(profile.colourKey ?? 'mauve', theme)
+  const handlePickColour = async (key: IdentityColorKey) => {
+    if (!profile.accountEmail) return
+    const emailKey = canonicaliseEmail(profile.accountEmail)
+    const next = { ...(accountColourOverrides ?? {}), [emailKey]: key }
+    await updateSettings({ accountColourOverrides: next })
+  }
+
+  // Colour dot: user override (by email) wins over the profile's stored key.
+  const activeColourKey = resolveAccountColourKey(
+    profile.accountEmail,
+    accountColourOverrides,
+    profile.colourKey,
+  )
+  const dot = resolveIdentityColor(activeColourKey, theme)
   const hasEmail = !!profile.accountEmail
 
   return (
@@ -125,7 +185,16 @@ function ProfileRow({ profile }: { profile: AccountProfile }) {
           </button>
         )}
       </div>
-      <div className="ml-5"><NameField initialValue={profile.name} onCommit={commitName} /></div>
+      <div className="ml-5">
+        <NameField initialValue={profile.name} onCommit={commitName} />
+        {hasEmail && (
+          <ColourPicker
+            profile={profile}
+            currentKey={activeColourKey}
+            onPick={handlePickColour}
+          />
+        )}
+      </div>
     </div>
   )
 }

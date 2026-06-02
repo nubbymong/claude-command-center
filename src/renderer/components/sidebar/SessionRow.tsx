@@ -7,7 +7,7 @@ import { resolveIdentityColor, bucketLegacyColorToKey } from '../../../shared/id
 import { useResolvedTheme } from '../../hooks/useThemeController'
 import { useAccountProfilesStore } from '../../stores/accountProfilesStore'
 import { useSettingsStore } from '../../stores/settingsStore'
-import { resolveAccountName } from '../../../shared/account-chip-color'
+import { resolveAccountNameByEmail, resolveAccountColourKey } from '../../../shared/account-chip-color'
 
 interface SessionRowProps {
   session: Session
@@ -53,20 +53,20 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
   const providerLabel = session.shellOnly ? 'shell' : (session.provider ?? 'claude')
   const metaLine = `${session.modelName ?? session.model ?? ''}${providerLabel ? ` · ${providerLabel}` : ''}`.trim()
 
-  // Persistent account stamp (drift-immune source: spawn-time capture). A small
-  // colour dot in the col-3 chip slot + the resolved account name as tiny muted
-  // text on line 2, rendered only when accountEmail is set so the layout never
-  // shifts for accountless sessions. Selector form (never destructure).
-  // Reactive name selection: pick THIS session's profile name directly so a
-  // rename re-renders the row (selecting the stable profileName fn would not).
-  // No profileId -> undefined -> resolveAccountName falls back to alias/email.
-  const profileName = useAccountProfilesStore((s) => s.profiles.find((p) => p.id === session.profileId)?.name)
+  // Persistent account stamp -- resolved by LIVE email so a mid-session /login
+  // that changes accountEmail immediately shows the right name/colour without
+  // waiting for a respawn. Selector form (never destructure the whole store).
+  const profiles = useAccountProfilesStore((s) => s.profiles)
   const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
+  const accountColourOverrides = useSettingsStore((s) => s.settings.accountColourOverrides)
   const accountName = session.accountEmail
-    ? resolveAccountName(session.accountEmail, profileName, accountAliases)
+    ? resolveAccountNameByEmail(session.accountEmail, profiles, accountAliases)
     : null
   const accountDot = session.accountEmail
-    ? resolveIdentityColor(session.accountColour ?? 'mauve', theme)
+    ? resolveIdentityColor(
+        resolveAccountColourKey(session.accountEmail, accountColourOverrides, session.accountColour),
+        theme,
+      )
     : null
 
   // #398: when renaming, render a plain <div> (NOT a <button>) so the text input
