@@ -2,6 +2,8 @@ import React, { useState, useRef, useEffect } from 'react'
 import { useConfigStore } from '../stores/configStore'
 import { useCloudAgentStore } from '../stores/cloudAgentStore'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
+import { useSettingsStore } from '../stores/settingsStore'
+import { resolveAccountName } from '../../shared/account-chip-color'
 
 interface Props {
   onClose: () => void
@@ -21,6 +23,7 @@ export default function NewAgentDialog({ onClose }: Props) {
   // agent never silently runs on whatever the global login happens to be. Only
   // surfaced when more than one account profile exists.
   const profiles = useAccountProfilesStore(s => s.profiles)
+  const accountAliases = useSettingsStore(s => s.settings.accountAliases)
   const defaultProfileId = (profiles.find(p => p.isPrimary) ?? profiles[0])?.id ?? ''
   const [selectedProfileId, setSelectedProfileId] = useState<string>('')
   const effectiveProfileId = selectedProfileId || defaultProfileId
@@ -135,7 +138,7 @@ export default function NewAgentDialog({ onClose }: Props) {
             >
               {profiles.map(p => (
                 <option key={p.id} value={p.id}>
-                  {(p.name?.trim() || p.accountEmail || 'Account')}{p.isPrimary ? ' (primary)' : ''}
+                  {(resolveAccountName(p.accountEmail, p.name, accountAliases) || 'Account')}{p.isPrimary ? ' (primary)' : ''}
                 </option>
               ))}
             </select>

@@ -3,7 +3,7 @@ import { useInsightsStore } from '../stores/insightsStore'
 import { useTokenomicsStore } from '../stores/tokenomicsStore'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { useSettingsStore } from '../stores/settingsStore'
-import { resolveAccountNameByEmail } from '../../shared/account-chip-color'
+import { resolveAccountNameByEmail, resolveAccountName } from '../../shared/account-chip-color'
 import KpiSidebar from './KpiSidebar'
 import type { InsightsData } from '../types/electron'
 import type { TokenomicsSessionRecord } from '../../shared/types'
@@ -41,6 +41,8 @@ export default function InsightsPage() {
   const [runProfileId, setRunProfileId] = useState<string>('')
   const effectiveRunProfileId = runProfileId || defaultProfileId
   const nameForAccount = (email?: string) => (email ? resolveAccountNameByEmail(email, profiles, accountAliases) : null)
+  const labelForProfile = (p: { accountEmail: string; name?: string; isPrimary?: boolean }) =>
+    (resolveAccountName(p.accountEmail, p.name, accountAliases) || 'Account') + (p.isPrimary ? ' (primary)' : '')
 
   useEffect(() => {
     loadCatalogue()
@@ -154,7 +156,7 @@ export default function InsightsPage() {
                     title="Account to analyze"
                   >
                     {profiles.map((p) => (
-                      <option key={p.id} value={p.id}>{(p.name?.trim() || p.accountEmail || 'Account')}{p.isPrimary ? ' (primary)' : ''}</option>
+                      <option key={p.id} value={p.id}>{labelForProfile(p)}</option>
                     ))}
                   </select>
                 )}
@@ -204,7 +206,7 @@ export default function InsightsPage() {
           title="Account for the next run"
         >
           {profiles.map((p) => (
-            <option key={p.id} value={p.id}>{(p.name?.trim() || p.accountEmail || 'Account')}{p.isPrimary ? ' (primary)' : ''}</option>
+            <option key={p.id} value={p.id}>{labelForProfile(p)}</option>
           ))}
         </select>
       )}

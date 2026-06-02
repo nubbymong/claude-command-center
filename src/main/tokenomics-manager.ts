@@ -217,6 +217,15 @@ function loadData(): TokenomicsData {
   }
 }
 
+// Monotonic per-write sequence. Combined with the pid, this guarantees that no
+// two in-flight writes (sync or async, in any interleaving) ever share a tmp
+// path -- the async statusline-driven write and a sync seed/sync-checkpoint
+// write can otherwise overlap within one process and rename a torn tmp.
+let saveSeq = 0
+function nextTmpPath(filePath: string): string {
+  return `${filePath}.tmp.${process.pid}.${++saveSeq}`
+}
+
 function saveData(data: TokenomicsData): void {
   try {
     // P8.7 / p9.17: stamp accountEmail on Codex records that don't have
@@ -243,10 +252,10 @@ function saveData(data: TokenomicsData): void {
     // last remaining writer with the strictAtomicWriteJson contract used in
     // conductor-mcp-server.ts.
     //
-    // Tmp name carries the pid so two CCC instances against the same
-    // resourcesDir (rare, but possible if a user points dev + prod at the
-    // same directory) don't race each other's intermediate write.
-    const tmpPath = `${filePath}.tmp.${process.pid}`
+    // Tmp name carries the pid (so two CCC instances against the same
+    // resourcesDir don't race) plus a monotonic seq (so an async statusline
+    // write never shares this tmp with a concurrent sync seed/sync write).
+    const tmpPath = nextTmpPath(filePath)
     fs.writeFileSync(tmpPath, JSON.stringify(data), 'utf-8')
     try {
       fs.renameSync(tmpPath, filePath)
@@ -274,7 +283,7 @@ async function saveDataAsync(data: TokenomicsData): Promise<void> {
 
     ensureConfigDir()
     const filePath = getTokenomicsPath()
-    const tmpPath = `${filePath}.tmp.${process.pid}`
+    const tmpPath = nextTmpPath(filePath)
     await fs.promises.writeFile(tmpPath, JSON.stringify(data), 'utf-8')
     try {
       await fs.promises.rename(tmpPath, filePath)

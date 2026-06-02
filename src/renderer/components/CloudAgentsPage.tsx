@@ -590,6 +590,15 @@ export default function CloudAgentsPage() {
     return Array.from(seen, ([email, name]) => ({ email, name }))
   }, [allAgents, nameForAccount])
 
+  // Reset a stale account filter when its account no longer appears among the
+  // agents (e.g. its agents were cleared) — otherwise the dropdown hides while
+  // the filter still applies, stranding the user on an empty list.
+  useEffect(() => {
+    if (accountFilter !== 'all' && !agentAccounts.some(a => a.email === accountFilter)) {
+      setAccountFilter('all')
+    }
+  }, [accountFilter, agentAccounts, setAccountFilter])
+
   const agents = useMemo(() => {
     return useCloudAgentStore.getState().getFilteredAgents()
   }, [allAgents, filter, searchQuery, accountFilter])
