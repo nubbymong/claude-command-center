@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { useSettingsStore } from '../stores/settingsStore'
 import { ViewType } from '../types/views'
+import MultiAccountStatusline from './MultiAccountStatusline'
 
 declare const __BUILD_TIME__: string
 declare const __APP_VERSION__: string
@@ -108,6 +109,11 @@ export default function BottomBar({ currentView, onViewChange, onUpdateRequested
           </button>
         )}
       </div>
+
+      {/* Multi-account usage readout. Renders only when >=2 accounts are live
+          (else null, incl. its own separator) -- single-account users see
+          nothing. Pure render over session-store data; no new polling/IPC. */}
+      <MultiAccountStatusline />
 
       {/* Independent-project disclaimer, pinned bottom-right. Nominative use of
           "Anthropic"/"Claude" only; this app is not an Anthropic product. */}
