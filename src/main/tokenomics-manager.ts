@@ -259,11 +259,39 @@ function saveData(data: TokenomicsData): void {
   }
 }
 
+/**
+ * Async twin of saveData for the debounced (statusline-driven) write path, so a
+ * multi-MB JSON.stringify + write never blocks the main thread. Same atomic
+ * temp+rename contract. The explicit saveData() callers (seed/sync/quit-flush)
+ * stay synchronous on purpose -- they need the write to complete before they
+ * return (e.g. before the process exits).
+ */
+async function saveDataAsync(data: TokenomicsData): Promise<void> {
+  try {
+    try {
+      applyIdentityAtFlush(data, getCodexSpawnIdentityMap())
+    } catch { /* identity is best-effort -- never block the save */ }
+
+    ensureConfigDir()
+    const filePath = getTokenomicsPath()
+    const tmpPath = `${filePath}.tmp.${process.pid}`
+    await fs.promises.writeFile(tmpPath, JSON.stringify(data), 'utf-8')
+    try {
+      await fs.promises.rename(tmpPath, filePath)
+    } catch (renameErr) {
+      try { await fs.promises.unlink(tmpPath) } catch { /* ignore */ }
+      throw renameErr
+    }
+  } catch (err) {
+    logError(`[tokenomics] Failed to save data (async): ${err}`)
+  }
+}
+
 let saveTimeout: ReturnType<typeof setTimeout> | null = null
 
 function saveDataDebounced(data: TokenomicsData): void {
   if (saveTimeout) clearTimeout(saveTimeout)
-  saveTimeout = setTimeout(() => saveData(data), 5000)
+  saveTimeout = setTimeout(() => { void saveDataAsync(data) }, 5000)
 }
 
 // ── JSONL Parsing ──
