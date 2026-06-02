@@ -346,6 +346,23 @@ export function captureGlobalLogin(name?: string): AccountProfile | null {
   }
 }
 
+/** One-time: move each profile's live-home identity into its canonical identity/.
+ *  Idempotent (skips profiles already having identity/.claude.json). Profile dir
+ *  files only; never touches the real home. */
+export function migrateProfilesToCanonicalLayout(): void {
+  for (const p of listProfiles()) {
+    if (!isValidProfileId(p.id)) continue
+    const idDir = getAccountIdentityDir(p.id)
+    if (fs.existsSync(path.join(idDir, '.claude.json'))) continue // already migrated
+    const home = getProfileConfigDir(p.id)
+    let claudeJson: string | undefined
+    try { claudeJson = fs.readFileSync(path.join(home, '.claude.json'), 'utf8') } catch { /* none */ }
+    let credentials: string | undefined
+    try { credentials = fs.readFileSync(path.join(home, '.claude', '.credentials.json'), 'utf8') } catch { /* none */ }
+    if (claudeJson || credentials) writeCanonicalIdentity(p.id, { claudeJson, credentials })
+  }
+}
+
 /** Read oauthAccount.emailAddress from a Claude identity JSON file. Never throws. */
 function readEmailFromFile(filePath: string): string | null {
   try {
