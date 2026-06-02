@@ -43,6 +43,14 @@ interface HandleArgs {
   url: string | undefined
   headers: Record<string, string | string[] | undefined>
   body: string
+  /**
+   * Optional pre-parsed body. The live HTTP path parses the request body once
+   * and threads the result through here so ingest does NOT re-parse it (the
+   * body used to be JSON.parsed up to 3x per request on the single-main-thread
+   * hot path). `null` means "already attempted and the body was invalid JSON".
+   * Undefined (the unit-test entrypoint) falls back to parsing `body`.
+   */
+  parsedBody?: Record<string, unknown> | null
 }
 
 interface HandleResult {
@@ -262,6 +270,14 @@ export class HooksGateway {
     }
     const body = Buffer.concat(chunks).toString('utf-8')
 
+    // Parse the body ONCE here and thread the result through the peek logic, the
+    // requestId injection, and ingest. Every tool call in every session funnels
+    // through this single main-thread server, and the body used to be JSON.parsed
+    // up to three times per request (peek + requestId inject + ingest) -- pure
+    // waste on the hot path. `null` => invalid JSON; ingest returns 400 for it.
+    let parsedBody: Record<string, unknown> | null = null
+    try { parsedBody = JSON.parse(body) as Record<string, unknown> } catch { /* ingest path returns 400 */ }
+
     // For held-open events (PermissionRequest, or PreToolUse while gateActive),
     // hold the HTTP response open and register a responder so a resolver can
     // write the hook decision back to the Claude Code process. gateActive is
@@ -273,8 +289,8 @@ export class HooksGateway {
     // cleanup is defined here so the auth-fail branch (after _handleRequestForTest)
     // can call it even though it is set inside the try block below.
     let cleanup: (() => void) = () => { /* no-op until PermissionRequest block runs */ }
-    try {
-      const peeked = JSON.parse(body) as Record<string, unknown>
+    if (parsedBody) {
+      const peeked = parsedBody
       // Claude Code's real hook POST uses `hook_event_name` (not `event`) and
       // snake_case fields; accept both so the gateway works with the live CLI as
       // well as the spec'd PermissionRequest shape used by tests.
@@ -338,7 +354,7 @@ export class HooksGateway {
           // inline-for-high-risk path.
         })
       }
-    } catch { /* not valid JSON — fall through to normal path which will 400 */ }
+    }
 
     // The held-open responder is keyed by `permissionRequestId`. Downstream, the
     // pending tray card derives its own id from `payload.requestId` (falling back
@@ -346,24 +362,21 @@ export class HooksGateway {
     // requestId, so without this both sides would invent DIFFERENT synthetic ids
     // (two separate Date.now() reads) and Allow/Deny would target a responder that
     // does not exist -> the request silently stalls until the 120s timeout. Inject
-    // the resolved id into the body so ingest -> normalizePermission key the card
-    // on the SAME value we registered the responder under.
-    let ingestBody = body
-    if (isPermissionRequest && permissionRequestId) {
-      try {
-        const obj = JSON.parse(body) as Record<string, unknown>
-        const pl = (obj.payload && typeof obj.payload === 'object')
-          ? (obj.payload as Record<string, unknown>)
-          : obj
-        if (pl.requestId == null) { pl.requestId = permissionRequestId; ingestBody = JSON.stringify(obj) }
-      } catch { /* keep original body; the normal path will 400 on bad JSON */ }
+    // the resolved id into the already-parsed body so ingest -> normalizePermission
+    // key the card on the SAME value we registered the responder under.
+    if (isPermissionRequest && permissionRequestId && parsedBody) {
+      const pl = (parsedBody.payload && typeof parsedBody.payload === 'object')
+        ? (parsedBody.payload as Record<string, unknown>)
+        : parsedBody
+      if (pl.requestId == null) pl.requestId = permissionRequestId
     }
 
     const result = await this._handleRequestForTest({
       remoteAddress: req.socket.remoteAddress,
       url: req.url,
       headers: req.headers as Record<string, string | string[] | undefined>,
-      body: ingestBody,
+      body,
+      parsedBody,
     })
 
     // Diagnostics: surface the session-match outcome. A 404 here is the
@@ -406,12 +419,17 @@ export class HooksGateway {
     const token = headerValue(args.headers, 'x-ccc-hook-token')
     if (token !== expected) return { status: 404, body: '{}' }
 
-    let parsed: Record<string, unknown>
-    try {
-      parsed = JSON.parse(args.body) as Record<string, unknown>
-    } catch {
-      return { status: 400, body: '{}' }
+    // Reuse the body parsed once by the live HTTP path; only parse here when the
+    // caller is the unit-test entrypoint (parsedBody undefined).
+    let parsed: Record<string, unknown> | null | undefined = args.parsedBody
+    if (parsed === undefined) {
+      try {
+        parsed = JSON.parse(args.body) as Record<string, unknown>
+      } catch {
+        return { status: 400, body: '{}' }
+      }
     }
+    if (parsed === null) return { status: 400, body: '{}' }
 
     this.ingest(sid, parsed)
     return { status: 200, body: '{}' }
