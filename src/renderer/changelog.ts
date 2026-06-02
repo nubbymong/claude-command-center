@@ -15,6 +15,17 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '1.5.26',
+    date: '2026-06-02',
+    highlights: 'Multi-account is always on and clobber-proof: your accounts are protected and signing in never overwrites your main login.',
+    changes: [
+      { type: 'feature', description: 'No on/off switch any more. On first run your current Claude login is captured into a protected account, and every session runs under a saved account, so you are multi-account ready from the start.' },
+      { type: 'fix', description: 'Your main login can no longer be overwritten. A session never runs on the bare global login, so running /login in a session can no longer replace the account you are signed in with globally.' },
+      { type: 'feature', description: 'New account detection: run /login as a different account inside a session and CCC offers to add it as a separate named account, keeping your original account intact.' },
+      { type: 'improvement', description: 'The Accounts list shows every account the same way, with the captured original marked as primary (and never deletable).' },
+    ],
+  },
+  {
     version: '1.5.25',
     date: '2026-06-01',
     highlights: 'Sessions now genuinely run under the account you choose, with no impact on your other tools.',
