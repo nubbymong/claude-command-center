@@ -5,7 +5,7 @@
 // v1.5.9 chip removal (whose source was the GLOBAL last-login at tick time).
 import fs from 'node:fs'; import path from 'node:path'
 import { BrowserWindow } from 'electron'
-import { readProfileAccountEmail, sharedRoot, getProfileConfigDir } from './account-profiles'
+import { readProfileAccountEmail, sharedRoot, getProfileConfigDir, listProfiles } from './account-profiles'
 import { IPC } from '../shared/ipc-channels'
 import { colourForEmail } from './account-color'
 import { canonicaliseEmail } from '../shared/account-chip-color'
@@ -92,11 +92,27 @@ export function recheckSessionIdentity(sessionId: string, profileId: string | un
   return email
 }
 
-function recheckAll(): void {
+/** Notify renderers that a session's /login authenticated an account not yet
+ *  known as a profile, so the UI can offer to add + name it. */
+function broadcastNewAccountDetected(sessionId: string, profileId: string, email: string): void {
+  for (const w of BrowserWindow.getAllWindows()) {
+    try { w.webContents.send(IPC.ACCOUNT_NEW_DETECTED, { sessionId, profileId, email }) } catch { /* window destroyed */ }
+  }
+}
+
+export function recheckAll(): void {
   for (const [sessionId, profileId] of watched) {
+    const before = bySession.get(sessionId) ?? null
     let changed: string | null = null
     try { changed = recheckSessionIdentity(sessionId, profileId) } catch { /* best-effort */ }
-    if (changed) pushAccountIdentity(sessionId)
+    if (!changed) continue
+    pushAccountIdentity(sessionId)
+    if (!profileId) continue // bare-global/default session: no profile context to detect against
+    // Detection: a /login to an email that is not yet a known account.
+    const known = listProfiles().map((p) => p.accountEmail).filter((e): e is string => !!e)
+    if (classifyIdentityChange(sessionId, changed, before, known).kind === 'capture') {
+      broadcastNewAccountDetected(sessionId, profileId, changed)
+    }
   }
 }
 
