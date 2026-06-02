@@ -5,6 +5,8 @@ import { appendLedger } from './channel-ledger'
 import { pushPendingPermissions } from './ipc/channel-handlers'
 import { readConfig } from './config-manager'
 import { detectHighRisk } from './permission-core'
+import { getActiveSessionId } from './active-session'
+import { logDebug } from './debug-logger'
 import type { PendingPermission } from '../shared/channel-types'
 import type { HookEvent } from '../shared/hook-types'
 
@@ -106,6 +108,13 @@ function captureNotification(e: HookEvent): void {
   }
   pending.set(id, p)
   cardTool.set(id, enrichTuid)
+  // Diagnostic (verbose/beta only): capture whether this card is for the session
+  // the user is currently viewing. If a card the user SEES logs
+  // suppressForActive=true, the renderer filter has a real defect; if it logs
+  // false, the card is for a backgrounded session (working as designed). Metadata
+  // only -- no payload/preview (which can contain sensitive commands/paths).
+  const active = getActiveSessionId()
+  logDebug(`[perm-tray] card session=${e.sessionId} active=${active ?? 'none'} suppressForActive=${active === e.sessionId} tool=${p.tool} enriched=${enrich ? 'yes' : 'no'}`)
   appendLedger({ source: 'permission', target: p.sessionLabel, transport: null, kind: 'permission-prompt', summary: `${p.tool}: ${p.payloadPreview}` })
   pushPendingPermissions(getPending())
 }

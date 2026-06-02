@@ -18,7 +18,7 @@ import type {
 // the old lazy-require workaround for the channel-permissions circular
 // dependency is no longer needed (#483).
 import { registerResponder, deregisterResponder } from '../permission-responders'
-import { logDebug, logWarn, logError } from '../debug-logger'
+import { logTrace, logWarn, logError } from '../debug-logger'
 
 // Diagnostics (opt-in, verbose-gated): module-level in-flight counter for the
 // hooks HTTP handler. Incremented on handler entry, decremented when the
@@ -220,7 +220,7 @@ export class HooksGateway {
     const reqMethod = req.method ?? '?'
     const reqPath = redactHookPath(req.url)
     const reqLen = headerValue(req.headers as Record<string, string | string[] | undefined>, 'content-length') ?? '?'
-    logDebug(`[hooks] req method=${reqMethod} path=${reqPath} len=${reqLen} inflight=${hooksInFlight}`)
+    logTrace(`[hooks] req method=${reqMethod} path=${reqPath} len=${reqLen} inflight=${hooksInFlight}`)
     // The response may be written synchronously here OR held open (the
     // PermissionRequest / gateActive path) and closed later by the responder
     // or the 120s timeout. Hook the response lifecycle event so the in-flight
@@ -232,7 +232,7 @@ export class HooksGateway {
       settled = true
       hooksInFlight--
       const dur = Date.now() - startTime
-      logDebug(`[hooks] resp path=${reqPath} status=${res.statusCode} dur=${dur}ms inflight=${hooksInFlight}`)
+      logTrace(`[hooks] resp path=${reqPath} status=${res.statusCode} dur=${dur}ms inflight=${hooksInFlight}`)
     }
     res.once('finish', onSettled)
     res.once('close', onSettled)
@@ -387,7 +387,7 @@ export class HooksGateway {
     if (result.status === 404) {
       logWarn(`[hooks] unmatched/stale endpoint -> 404 path=${reqPath} sid=${sid ?? 'none'}`)
     } else {
-      logDebug(`[hooks] matched sid=${sid ?? 'none'} status=${result.status}`)
+      logTrace(`[hooks] matched sid=${sid ?? 'none'} status=${result.status}`)
     }
 
     // For PermissionRequest events that passed auth, the response is held open
@@ -441,7 +441,7 @@ export class HooksGateway {
     // what Claude Code sends (e.g. `event` vs `hook_event_name`), which the unit
     // tests cannot, and is the fastest way to confirm the gateway parses CC's
     // real PreToolUse during the dev-demo permission round-trip.
-    logDebug(`[hooks] ingest sid=${sid} keys=[${Object.keys(parsed).join(',')}] event=${String(parsed.event)} hook_event_name=${String((parsed as Record<string, unknown>).hook_event_name)} tool_name=${String(parsed.tool_name)}`)
+    logTrace(`[hooks] ingest sid=${sid} keys=[${Object.keys(parsed).join(',')}] event=${String(parsed.event)} hook_event_name=${String((parsed as Record<string, unknown>).hook_event_name)} tool_name=${String(parsed.tool_name)}`)
     // Reject payloads with a missing/non-string event field rather than
     // forging an 'Unknown' sentinel: the shared HookEventKind union
     // doesn't include it, so forging would propagate a type-contract

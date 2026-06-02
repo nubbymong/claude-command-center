@@ -65,7 +65,7 @@ import { resolveConductorMcpPort } from '../shared/mcp-ports'
 import { IPC } from '../shared/ipc-channels'
 
 import { migrateRegistryKeys } from './registry'
-import { installGlobalErrorHandlers, logInfo, logError, closeDebugLogger } from './debug-logger'
+import { installGlobalErrorHandlers, logInfo, logError, closeDebugLogger, setVerboseBaseline } from './debug-logger'
 
 // Install global error handlers that log to file
 installGlobalErrorHandlers()
@@ -629,6 +629,15 @@ if (!gotTheLock) {
     registerUpdateHandlers()
     registerSetupHandlers()
     registerConfigHandlers()
+    // Beta builds default to verbose logging (lightweight async DEBUG lines ->
+    // app.log) so field issues are captured. NEVER on stable. This enables only
+    // the verbose level, NOT the per-event hot-path TRACE logs and NOT the heavy
+    // per-PTY debug capture (debugMode) -- so it's perf-neutral. Sticky baseline:
+    // toggling debug mode off later won't silence it on beta.
+    try {
+      const ch = readConfig<{ updateChannel?: string }>('settings')?.updateChannel
+      if (ch === 'beta') { setVerboseBaseline(true); logInfo('[boot] verbose logging enabled (beta channel)') }
+    } catch { /* settings unreadable this early -- skip */ }
     registerAccountProfilesHandlers()
     // SAFETY: snapshot the real Claude config before the multi-account feature
     // does anything, so the user's original login is always recoverable.
