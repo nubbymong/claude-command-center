@@ -276,6 +276,28 @@ export function writeCanonicalIdentity(
   }
 }
 
+/** Capture the CURRENT global login (~/.claude.json + ~/.claude/.credentials.json)
+ *  into a fresh canonical profile. Read-only on the real home. Returns the new
+ *  profile, or null if there is no global login to capture. */
+export function captureGlobalLogin(name?: string): AccountProfile | null {
+  const homeRoot = path.dirname(sharedRoot())
+  let claudeJson: string
+  try { claudeJson = fs.readFileSync(path.join(homeRoot, '.claude.json'), 'utf8') } catch { return null }
+  const email = (() => {
+    try { return (JSON.parse(claudeJson) as { oauthAccount?: { emailAddress?: unknown } })?.oauthAccount?.emailAddress }
+    catch { return undefined }
+  })()
+  if (typeof email !== 'string' || !email) return null
+  let credentials: string | undefined
+  try { credentials = fs.readFileSync(path.join(sharedRoot(), '.credentials.json'), 'utf8') } catch { credentials = undefined }
+
+  const profile = createProfile(name)
+  writeCanonicalIdentity(profile.id, { claudeJson, credentials })
+  const updated: AccountProfile = { ...profile, accountEmail: email }
+  upsertProfile(updated)
+  return updated
+}
+
 /** Read oauthAccount.emailAddress from a Claude identity JSON file. Never throws. */
 function readEmailFromFile(filePath: string): string | null {
   try {
