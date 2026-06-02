@@ -5,7 +5,7 @@
 // v1.5.9 chip removal (whose source was the GLOBAL last-login at tick time).
 import fs from 'node:fs'; import path from 'node:path'
 import { BrowserWindow } from 'electron'
-import { readProfileAccountEmail, sharedRoot, getProfileConfigDir, listProfiles } from './account-profiles'
+import { readProfileAccountEmail, readSessionHomeEmail, getSessionHomeDir, sharedRoot, listProfiles } from './account-profiles'
 import { IPC } from '../shared/ipc-channels'
 import { colourForEmail } from './account-color'
 import { canonicaliseEmail } from '../shared/account-chip-color'
@@ -30,7 +30,9 @@ export function getDefaultAccountEmail(): string | null {
 /** Capture once at spawn. profileId undefined => single-account/default. */
 export function captureClaudeAccount(sessionId: string, profileId: string | undefined): void {
   if (bySession.has(sessionId)) return // drift-immune: first capture wins
-  const email = profileId ? readProfileAccountEmail(profileId) : getDefaultAccountEmail()
+  const email = profileId
+    ? (readSessionHomeEmail(sessionId) ?? readProfileAccountEmail(profileId))
+    : getDefaultAccountEmail()
   if (email) bySession.set(sessionId, email)
 }
 export function getClaudeAccount(sessionId: string): string | null { return bySession.get(sessionId) ?? null }
@@ -67,9 +69,9 @@ let pollTimer: ReturnType<typeof setInterval> | null = null
 const POLL_MS = 3000
 
 /** Resolve the .claude.json that holds a session's account identity. */
-function identityFilePath(profileId: string | undefined): string {
+function identityFilePath(sessionId: string, profileId: string | undefined): string {
   return profileId
-    ? path.join(getProfileConfigDir(profileId), '.claude.json')
+    ? path.join(getSessionHomeDir(sessionId), '.claude.json')
     : path.join(path.dirname(sharedRoot()), '.claude.json')
 }
 
@@ -80,13 +82,13 @@ function identityFilePath(profileId: string | undefined): string {
  * has not changed, so the (possibly large) JSON is only parsed on a real change.
  */
 export function recheckSessionIdentity(sessionId: string, profileId: string | undefined): string | null {
-  const file = identityFilePath(profileId)
+  const file = identityFilePath(sessionId, profileId)
   let mtime: number
   try { mtime = fs.statSync(file).mtimeMs } catch { return null }
   if (lastMtimeMs.get(sessionId) === mtime) return null
   lastMtimeMs.set(sessionId, mtime)
   let email: string | null = null
-  try { email = profileId ? readProfileAccountEmail(profileId) : getDefaultAccountEmail() } catch { return null }
+  try { email = profileId ? readSessionHomeEmail(sessionId) : getDefaultAccountEmail() } catch { return null }
   if (!email || bySession.get(sessionId) === email) return null
   bySession.set(sessionId, email) // mid-session change: bypass the first-capture guard
   return email

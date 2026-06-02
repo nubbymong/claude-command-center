@@ -8,7 +8,7 @@ import { join } from 'path'
 // resolves and pushAccountIdentity is a harmless no-op.
 vi.mock('electron', () => ({ BrowserWindow: { getAllWindows: () => [] } }))
 
-import { _setRootsForTest } from '../../../src/main/account-profiles'
+import { _setRootsForTest, getSessionHomeDir } from '../../../src/main/account-profiles'
 import {
   captureClaudeAccount,
   getClaudeAccount,
@@ -16,8 +16,9 @@ import {
   _resetClaudeAccounts,
 } from '../../../src/main/claude-account-identity'
 
-function writeProfileEmail(profilesRoot: string, id: string, email: string, mtimeSec: number): void {
-  const dir = join(profilesRoot, id)
+/** Write a .claude.json identity file in the session's working home with a fixed mtime. */
+function writeSessionEmail(sessionId: string, email: string, mtimeSec: number): void {
+  const dir = getSessionHomeDir(sessionId)
   mkdirSync(dir, { recursive: true })
   const file = join(dir, '.claude.json')
   writeFileSync(file, JSON.stringify({ oauthAccount: { emailAddress: email } }))
@@ -26,12 +27,10 @@ function writeProfileEmail(profilesRoot: string, id: string, email: string, mtim
 
 describe('recheckSessionIdentity (mid-session /login account change)', () => {
   let sandbox: string
-  let profilesRoot: string
 
   beforeEach(() => {
     sandbox = mkdtempSync(join(tmpdir(), 'claude-acct-watch-'))
     _setRootsForTest({ resourcesDir: sandbox, sharedRoot: join(sandbox, '.claude') })
-    profilesRoot = join(sandbox, 'account-profiles')
     _resetClaudeAccounts()
   })
 
@@ -43,15 +42,16 @@ describe('recheckSessionIdentity (mid-session /login account change)', () => {
 
   it('detects a profile session account change after /login and updates the map', () => {
     const sid = 's1', pid = 'profile-x'
-    writeProfileEmail(profilesRoot, pid, 'old@x.com', 1_000_000)
+    // Seed the session home (the source recheckSessionIdentity reads from).
+    writeSessionEmail(sid, 'old@x.com', 1_000_000)
     captureClaudeAccount(sid, pid)
     expect(getClaudeAccount(sid)).toBe('old@x.com')
 
     // No change yet -> null (and seeds the mtime guard).
     expect(recheckSessionIdentity(sid, pid)).toBeNull()
 
-    // /login rewrote the profile's .claude.json with a new account + newer mtime.
-    writeProfileEmail(profilesRoot, pid, 'new@y.com', 2_000_000)
+    // /login rewrote the session home's .claude.json with a new account + newer mtime.
+    writeSessionEmail(sid, 'new@y.com', 2_000_000)
     expect(recheckSessionIdentity(sid, pid)).toBe('new@y.com')
     expect(getClaudeAccount(sid)).toBe('new@y.com')
 
@@ -65,11 +65,11 @@ describe('recheckSessionIdentity (mid-session /login account change)', () => {
 
   it('does not report a change when the email is unchanged even if mtime moved', () => {
     const sid = 's3', pid = 'profile-y'
-    writeProfileEmail(profilesRoot, pid, 'same@x.com', 1_000_000)
+    writeSessionEmail(sid, 'same@x.com', 1_000_000)
     captureClaudeAccount(sid, pid)
 
     // Same email, newer mtime -> the file is re-read but no change is reported.
-    writeProfileEmail(profilesRoot, pid, 'same@x.com', 3_000_000)
+    writeSessionEmail(sid, 'same@x.com', 3_000_000)
     expect(recheckSessionIdentity(sid, pid)).toBeNull()
     expect(getClaudeAccount(sid)).toBe('same@x.com')
   })

@@ -11,7 +11,7 @@ vi.mock('electron', () => ({
 }))
 vi.mock('../../src/main/account-color', () => ({ colourForEmail: () => 'mauve' }))
 
-import { _setRootsForTest, getProfileConfigDir, upsertProfile } from '../../src/main/account-profiles'
+import { _setRootsForTest, getSessionHomeDir, upsertProfile } from '../../src/main/account-profiles'
 import {
   captureClaudeAccount,
   startWatchingAccountIdentity,
@@ -35,20 +35,20 @@ afterEach(() => {
   try { fs.rmSync(tmp, { recursive: true, force: true }) } catch { /* ignore */ }
 })
 
-/** Write a .claude.json identity file inside the profile's config dir and return its path. */
-function writeProfileIdentity(profileId: string, email: string): string {
-  const dir = getProfileConfigDir(profileId)
+/** Write a .claude.json identity file inside the session's working home and return its path. */
+function writeSessionIdentity(sessionId: string, email: string): string {
+  const dir = getSessionHomeDir(sessionId)
   fs.mkdirSync(dir, { recursive: true })
   const file = path.join(dir, '.claude.json')
   fs.writeFileSync(file, JSON.stringify({ oauthAccount: { emailAddress: email } }))
   return file
 }
 
-/** Advance a file's mtime by writing it again (ensures the watcher sees a change). */
-function rewriteProfileIdentity(profileId: string, email: string): void {
+/** Advance a session home's .claude.json mtime by writing it again (ensures the watcher sees a change). */
+function rewriteSessionIdentity(sessionId: string, email: string): void {
   // We must ensure a different mtime; on fast filesystems write twice with a
   // stat-verify loop, falling back to utimesSync to force the stamp forward.
-  const dir = getProfileConfigDir(profileId)
+  const dir = getSessionHomeDir(sessionId)
   const file = path.join(dir, '.claude.json')
   const before = fs.statSync(file).mtimeMs
   const content = JSON.stringify({ oauthAccount: { emailAddress: email } })
@@ -63,38 +63,40 @@ function rewriteProfileIdentity(profileId: string, email: string): void {
 describe('recheckAll — ACCOUNT_NEW_DETECTED', () => {
   it('fires when /login switches to an email not yet a known profile', () => {
     const profileId = 'profile-detect-1'
+    const sessionId = 's1'
     // Set up the profile with an initial email.
     upsertProfile({ id: profileId, name: 'Test', accountEmail: 'a@x.com', createdAt: Date.now() })
-    writeProfileIdentity(profileId, 'a@x.com')
+    writeSessionIdentity(sessionId, 'a@x.com')
 
     // Capture the initial identity so bySession is populated.
-    captureClaudeAccount('s1', profileId)
-    startWatchingAccountIdentity('s1', profileId)
+    captureClaudeAccount(sessionId, profileId)
+    startWatchingAccountIdentity(sessionId, profileId)
 
     // Advance the identity file to a NEW, unknown email.
-    rewriteProfileIdentity(profileId, 'new@x.com')
+    rewriteSessionIdentity(sessionId, 'new@x.com')
 
     recheckAll()
 
     const detected = sent.filter((m) => m.channel === IPC.ACCOUNT_NEW_DETECTED)
     expect(detected).toHaveLength(1)
-    expect(detected[0].payload).toEqual({ sessionId: 's1', profileId, email: 'new@x.com' })
+    expect(detected[0].payload).toEqual({ sessionId, profileId, email: 'new@x.com' })
   })
 
   it('does NOT fire when /login switches to an email that IS already a known profile', () => {
     const profileA = 'profile-detect-A'
     const profileB = 'profile-detect-B'
+    const sessionId = 's2'
 
     // Two known profiles.
     upsertProfile({ id: profileA, name: 'Alice', accountEmail: 'a@x.com', createdAt: Date.now() })
     upsertProfile({ id: profileB, name: 'Bob', accountEmail: 'b@x.com', createdAt: Date.now() })
-    writeProfileIdentity(profileA, 'a@x.com')
+    writeSessionIdentity(sessionId, 'a@x.com')
 
-    captureClaudeAccount('s2', profileA)
-    startWatchingAccountIdentity('s2', profileA)
+    captureClaudeAccount(sessionId, profileA)
+    startWatchingAccountIdentity(sessionId, profileA)
 
     // Switch to b@x.com — which IS already profile B.
-    rewriteProfileIdentity(profileA, 'b@x.com')
+    rewriteSessionIdentity(sessionId, 'b@x.com')
 
     recheckAll()
 
