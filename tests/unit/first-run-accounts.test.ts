@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path'
 import {
   _setRootsForTest, getPrimaryProfileId, listProfiles,
+  createProfile, writeCanonicalIdentity, upsertProfile,
 } from '../../src/main/account-profiles'
 import { runFirstRunCapture, decideFirstRunCapture } from '../../src/main/first-run-accounts'
 
@@ -74,5 +75,41 @@ describe('runFirstRunCapture (integration)', () => {
     // No .claude.json written
     runFirstRunCapture()
     expect(getPrimaryProfileId()).toBeNull()
+  })
+
+  it('promotes existing profile by metadata email (no duplicate)', () => {
+    // Arrange: a profile with metadata email matching the global login
+    const p = createProfile('existing')
+    writeCanonicalIdentity(p.id, { claudeJson: JSON.stringify({ oauthAccount: { emailAddress: 'me@x.com' } }) })
+    upsertProfile({ ...p, accountEmail: 'me@x.com' })
+    fs.writeFileSync(
+      path.join(homeRoot, '.claude.json'),
+      JSON.stringify({ oauthAccount: { emailAddress: 'me@x.com' } }),
+    )
+
+    // Act
+    runFirstRunCapture()
+
+    // Assert: promoted, not duplicated
+    expect(getPrimaryProfileId()).toBe(p.id)
+    expect(listProfiles()).toHaveLength(1)
+  })
+
+  it('promotes existing profile by canonical email when metadata email is blank (no duplicate)', () => {
+    // Arrange: profile created with blank metadata email; canonical identity has the email
+    const p = createProfile('migrated')
+    writeCanonicalIdentity(p.id, { claudeJson: JSON.stringify({ oauthAccount: { emailAddress: 'me@x.com' } }) })
+    // accountEmail left blank as createProfile sets it
+    fs.writeFileSync(
+      path.join(homeRoot, '.claude.json'),
+      JSON.stringify({ oauthAccount: { emailAddress: 'me@x.com' } }),
+    )
+
+    // Act
+    runFirstRunCapture()
+
+    // Assert: canonical-email fallback matched; no duplicate created
+    expect(getPrimaryProfileId()).toBe(p.id)
+    expect(listProfiles()).toHaveLength(1)
   })
 })

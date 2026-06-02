@@ -4,7 +4,7 @@
 // on the bare global ~/.claude login (which a /login could otherwise clobber).
 import {
   listProfiles, captureGlobalLogin, migrateProfilesToCanonicalLayout,
-  getPrimaryProfileId, setPrimaryProfile,
+  getPrimaryProfileId, setPrimaryProfile, readCanonicalIdentityEmail,
 } from './account-profiles'
 import { getDefaultAccountEmail } from './claude-account-identity'
 import { canonicaliseEmail } from '../shared/account-chip-color'
@@ -23,9 +23,11 @@ export function runFirstRunCapture(): void {
   const globalEmail = getDefaultAccountEmail()
   if (!globalEmail) return // fresh, not yet logged in: capture happens after /login (later task)
   // If a profile already IS this account, just promote it to primary (no duplicate).
-  const existing = listProfiles().find(
-    (p) => p.accountEmail && canonicaliseEmail(p.accountEmail) === canonicaliseEmail(globalEmail),
-  )
+  // Fall back to the canonical identity email in case metadata email is blank (e.g. after migration).
+  const existing = listProfiles().find((p) => {
+    const email = p.accountEmail || readCanonicalIdentityEmail(p.id)
+    return email != null && email !== '' && canonicaliseEmail(email) === canonicaliseEmail(globalEmail)
+  })
   if (existing) { setPrimaryProfile(existing.id); return }
   const captured = captureGlobalLogin()
   if (captured) setPrimaryProfile(captured.id)
