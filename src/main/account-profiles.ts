@@ -401,3 +401,53 @@ export function readCanonicalIdentityEmail(id: string): string | null {
 export function readProfileAccountEmail(id: string): string | null {
   return readEmailFromFile(path.join(getProfileConfigDir(id), '.claude.json'))
 }
+
+/** Restore a profile's per-account-home identity from its canonical backup.
+ *  Returns false if there is no canonical backup to restore from. */
+export function restoreProfileHomeFromCanonical(id: string): boolean {
+  const idDir = getAccountIdentityDir(id)
+  const srcJson = path.join(idDir, '.claude.json')
+  if (!fs.existsSync(srcJson)) return false
+  const home = getProfileConfigDir(id)
+  fs.copyFileSync(srcJson, path.join(home, '.claude.json'))
+  const srcCred = path.join(idDir, '.credentials.json')
+  if (fs.existsSync(srcCred)) {
+    const claudeDir = path.join(home, '.claude')
+    fs.mkdirSync(claudeDir, { recursive: true })
+    fs.copyFileSync(srcCred, path.join(claudeDir, '.credentials.json'))
+  }
+  return true
+}
+
+/** A /login switched `sourceProfileId`'s session to a new account (now on disk in
+ *  that profile's home). Capture it as a NEW named profile, then restore the
+ *  source profile from its canonical backup so it keeps its original account.
+ *  Returns the new profile, or null if there is nothing to capture. */
+export function captureDetectedAccount(sourceProfileId: string, name?: string): AccountProfile | null {
+  if (!isValidProfileId(sourceProfileId)) return null
+  const srcHome = getProfileConfigDir(sourceProfileId)
+  let claudeJson: string
+  try { claudeJson = fs.readFileSync(path.join(srcHome, '.claude.json'), 'utf8') } catch { return null }
+  const email = readEmailFromFile(path.join(srcHome, '.claude.json'))
+  if (!email) return null
+  let credentials: string | undefined
+  try { credentials = fs.readFileSync(path.join(srcHome, '.claude', '.credentials.json'), 'utf8') } catch { credentials = undefined }
+  const np = createProfile(name)
+  try {
+    writeCanonicalIdentity(np.id, { claudeJson, credentials })
+    const npHome = getProfileConfigDir(np.id)
+    fs.writeFileSync(path.join(npHome, '.claude.json'), claudeJson)
+    if (credentials != null) {
+      const cd = path.join(npHome, '.claude')
+      fs.mkdirSync(cd, { recursive: true })
+      fs.writeFileSync(path.join(cd, '.credentials.json'), credentials)
+    }
+    const updated: AccountProfile = { ...np, accountEmail: email }
+    upsertProfile(updated)
+    restoreProfileHomeFromCanonical(sourceProfileId) // best-effort
+    return updated
+  } catch {
+    try { safeTeardownProfile(np.id) } catch { /* best-effort */ }
+    return null
+  }
+}

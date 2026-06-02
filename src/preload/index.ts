@@ -16,6 +16,7 @@ export interface ElectronAPI {
     delete: (id: string) => Promise<{ ok: boolean }>
     refreshIdentity: (id: string) => Promise<{ ok: boolean; email: string | null; configDir?: string }>
     globalEmail: () => Promise<string | null>
+    captureDetected: (sourceProfileId: string, name?: string) => Promise<import('../shared/account-types').AccountProfile | null>
   }
   window: {
     minimize: () => void
@@ -318,6 +319,7 @@ const electronAPI: ElectronAPI = {
     delete: (id) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_DELETE, { id }),
     refreshIdentity: (id) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_REFRESH_IDENTITY, { id }),
     globalEmail: () => ipcRenderer.invoke(IPC.ACCOUNT_GLOBAL_EMAIL_GET),
+    captureDetected: (sourceProfileId: string, name?: string) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_CAPTURE_DETECTED, { sourceProfileId, name }),
   },
   window: {
     minimize: () => ipcRenderer.send(IPC.WINDOW_MINIMIZE),

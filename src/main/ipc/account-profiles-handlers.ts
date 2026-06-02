@@ -4,6 +4,7 @@ import { IPC } from '../../shared/ipc-channels'
 import {
   listProfiles, upsertProfile, safeTeardownProfile,
   readProfileAccountEmail, getProfileConfigDir, isValidProfileId, createProfile,
+  captureDetectedAccount,
 } from '../account-profiles'
 import { getAccountIdentity, getDefaultAccountEmail } from '../claude-account-identity'
 
@@ -39,5 +40,9 @@ export function registerAccountProfilesHandlers(): void {
     return { ok: true, email, configDir: getProfileConfigDir(p.id) }
   })
   ipcMain.handle(IPC.ACCOUNT_PROFILES_CREATE, (_e, p: { name?: string }) => createProfile(p?.name))
+  ipcMain.handle(IPC.ACCOUNT_PROFILES_CAPTURE_DETECTED, (_e, p: { sourceProfileId: string; name?: string }) => {
+    if (!p || !isValidProfileId(p.sourceProfileId)) return null
+    return captureDetectedAccount(p.sourceProfileId, p.name)
+  })
   ipcMain.handle(IPC.ACCOUNT_GLOBAL_EMAIL_GET, () => getDefaultAccountEmail())
 }
