@@ -161,14 +161,11 @@ function migrateOldLayout(home: string): void {
 }
 
 /**
- * Build the per-account fake HOME: a private `.claude/` (credentials + a one-way
- * settings copy + junctions to the shared ~/.claude dirs) plus a dot-entry mirror
- * of the real home so every other tool behaves identically. Idempotent -- safe to
- * re-run at every spawn to keep the mirror current. NEVER touches the real home.
+ * Inner: build the shared-junction structure + dot-entry mirror inside a given
+ * home dir. Extracted so both profile homes and session homes can reuse the same
+ * logic without duplicating it. NEVER touches the real home.
  */
-export function setupProfileLinks(id: string): void {
-  const home = getProfileConfigDir(id)
-  fs.mkdirSync(home, { recursive: true })
+function buildHomeLinks(home: string): void {
   migrateOldLayout(home)
 
   // Private Claude config dir: shared junctions + a one-way settings copy.
@@ -185,6 +182,18 @@ export function setupProfileLinks(id: string): void {
 
   // Seamless tool state: mirror the real home's dot-entries (git/ssh/npm/...).
   mirrorRealHome(home)
+}
+
+/**
+ * Build the per-account fake HOME: a private `.claude/` (credentials + a one-way
+ * settings copy + junctions to the shared ~/.claude dirs) plus a dot-entry mirror
+ * of the real home so every other tool behaves identically. Idempotent -- safe to
+ * re-run at every spawn to keep the mirror current. NEVER touches the real home.
+ */
+export function setupProfileLinks(id: string): void {
+  const home = getProfileConfigDir(id)
+  fs.mkdirSync(home, { recursive: true })
+  buildHomeLinks(home)
 }
 
 /** Re-copy settings.json from shared -> profile's `.claude/` (after shared edits). */
@@ -250,6 +259,37 @@ export function safeTeardownProfile(id: string): void {
     safeTeardown(dir)
   }
   deleteProfileMeta(id)
+}
+
+// ---------------------------------------------------------------------------
+// Per-session working home
+// ---------------------------------------------------------------------------
+
+export function getSessionHomesRoot(): string { return path.join(resourcesDir(), 'account-homes') }
+export function getSessionHomeDir(sessionId: string): string {
+  const safe = sessionId.replace(/[^a-zA-Z0-9_-]/g, '_')
+  return path.join(getSessionHomesRoot(), safe)
+}
+
+/** Build a per-session working home seeded from the account's canonical identity.
+ *  Reuses the same junction/mirror logic as profile homes. Returns the home path. */
+export function setupSessionHome(sessionId: string, profileId: string): string {
+  const home = getSessionHomeDir(sessionId)
+  fs.mkdirSync(home, { recursive: true })
+  buildHomeLinks(home)
+  const idDir = getAccountIdentityDir(profileId)
+  const claudeDir = path.join(home, '.claude')
+  fs.mkdirSync(claudeDir, { recursive: true })
+  try { fs.copyFileSync(path.join(idDir, '.claude.json'), path.join(home, '.claude.json')) } catch { /* no identity yet */ }
+  try { fs.copyFileSync(path.join(idDir, '.credentials.json'), path.join(claudeDir, '.credentials.json')) } catch { /* none */ }
+  return home
+}
+
+export function teardownSessionHome(sessionId: string): void {
+  const home = getSessionHomeDir(sessionId)
+  if (!fs.existsSync(home)) return
+  if (fs.lstatSync(home).isSymbolicLink()) return // never recurse a reparse-point root
+  safeTeardown(home)
 }
 
 /** The authoritative, protected credential copy for an account. This dir is the source of truth; it is never used directly as a process HOME/CLAUDE_CONFIG_DIR. */
