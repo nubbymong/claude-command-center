@@ -32,6 +32,16 @@ export default function ExcalidrawPane({ sessionId }: Props) {
   const deleteDrawing = useExcalidrawStore((s) => s.deleteDrawing)
   const updateScene = useExcalidrawStore((s) => s.updateScene)
   const resolvedTheme = useResolvedTheme()
+  // Excalidraw paints a real <canvas>, so the board background must be a concrete
+  // colour (CSS vars don't reach it). Resolve the live theme surface token like
+  // the modal does, instead of Excalidraw's hardcoded white which clashes on the
+  // dark theme. Falls back to per-theme defaults if the var is missing.
+  const canvasBg = useMemo(() => {
+    const v = typeof window !== 'undefined'
+      ? getComputedStyle(document.documentElement).getPropertyValue('--surface-stage').trim()
+      : ''
+    return v || (resolvedTheme === 'light' ? '#e8ecf3' : '#171e27')
+  }, [resolvedTheme])
 
   const apiRef = useRef<ExcalidrawImperativeAPI | null>(null)
   const saveTimerRef = useRef<number | null>(null)
@@ -57,11 +67,18 @@ export default function ExcalidrawPane({ sessionId }: Props) {
   }, [state])
 
   const initialData = useMemo(() => {
-    if (!activeDrawing?.scene) return undefined
-    // Excalidraw expects { elements, appState, files } — accept the
-    // serialised shape we stored and pass it through.
-    return activeDrawing.scene as never
-  }, [activeDrawing])
+    // Excalidraw expects { elements, appState, files }. Pass the serialised scene
+    // through (or start empty), but always default the board background to the
+    // themed surface so a fresh scratchpad isn't a white rectangle on dark.
+    const scene = (activeDrawing?.scene ?? {}) as { appState?: Record<string, unknown> }
+    return { ...scene, appState: { ...(scene.appState ?? {}), viewBackgroundColor: canvasBg } } as never
+  }, [activeDrawing, canvasBg])
+
+  // initialData only applies on mount / drawing switch; keep the OPEN board's
+  // background in sync when the app theme changes live.
+  useEffect(() => {
+    apiRef.current?.updateScene({ appState: { viewBackgroundColor: canvasBg } } as never)
+  }, [canvasBg])
 
   // Autosave handler. Excalidraw fires onChange on every micro-event
   // (pointer move while drawing, etc.) so we can't write to the store
