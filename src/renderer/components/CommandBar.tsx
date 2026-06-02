@@ -1109,7 +1109,7 @@ function SectionNameInput({ x, y, initialName, initialColor, onConfirm, onCancel
               className={`w-4 h-4 rounded-full border transition-all shrink-0 ${
                 (c || undefined) === color ? 'ring-1 ring-offset-1 ring-offset-surface0 ring-blue scale-110' : 'hover:scale-110'
               }`}
-              style={{ backgroundColor: c || '#a6adc8', borderColor: c ? c + '60' : '#585b7060' }}
+              style={{ backgroundColor: c || 'var(--text-muted)', borderColor: c ? c + '60' : 'var(--border-subtle)' }}
               title={c || 'Default'}
             />
           ))}

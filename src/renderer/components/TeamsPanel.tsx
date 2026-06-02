@@ -5,11 +5,11 @@ import TeamRunView from './TeamRunView'
 import type { TeamTemplate, TeamRun, TeamRunStatus } from '../types/electron'
 
 const STATUS_COLORS: Record<TeamRunStatus, string> = {
-  pending: '#F9E2AF',
-  running: '#89B4FA',
-  completed: '#A6E3A1',
-  failed: '#F38BA8',
-  cancelled: '#F38BA8',
+  pending: 'var(--status-warning)',
+  running: 'var(--status-info)',
+  completed: 'var(--status-success)',
+  failed: 'var(--status-danger)',
+  cancelled: 'var(--status-danger)',
 }
 
 function formatTimestamp(ts: number): string {

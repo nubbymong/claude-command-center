@@ -55,9 +55,9 @@ const STATUS_LONG_LABELS: Record<string, string> = {
 }
 
 const STATUS_GRADIENT_COLORS: Record<string, string> = {
-  degraded_performance: '#F9E2AF',
-  partial_outage: '#FAB387',
-  major_outage: '#F38BA8',
+  degraded_performance: 'var(--status-warning)',
+  partial_outage: 'var(--brand)',
+  major_outage: 'var(--status-danger)',
 }
 
 function formatRelative(iso: string): string {
