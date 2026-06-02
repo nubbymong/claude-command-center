@@ -3,13 +3,17 @@ import { useMemoryStore } from '../stores/memoryStore'
 import type { MemoryFile, MemoryProject } from '../../shared/types'
 import PageFrame from './PageFrame'
 
+// Theme-aware badge colours: foreground reads a semantic token, background is a
+// low-opacity tint of the same token via color-mix so the badge stays legible in
+// both light and dark themes (previously these were hardcoded dark-only hexes).
+const tint = (token: string) => `color-mix(in srgb, var(${token}) 14%, transparent)`
 const TYPE_COLORS: Record<string, { bg: string; fg: string; label: string }> = {
-  user:          { bg: 'rgba(137,180,250,0.12)', fg: '#89b4fa', label: 'User' },
-  feedback:      { bg: 'rgba(249,226,175,0.12)', fg: '#f9e2af', label: 'Feedback' },
-  project:       { bg: 'rgba(166,227,161,0.12)', fg: '#a6e3a1', label: 'Project' },
-  reference:     { bg: 'rgba(203,166,247,0.12)', fg: '#cba6f7', label: 'Reference' },
-  snapshot:      { bg: 'rgba(127,132,156,0.12)', fg: '#7f849c', label: 'Snapshot' },
-  uncategorized: { bg: 'rgba(88,91,112,0.12)',   fg: '#585b70', label: 'Uncategorized' },
+  user:          { bg: tint('--status-info'),    fg: 'var(--status-info)',     label: 'User' },
+  feedback:      { bg: tint('--status-warning'), fg: 'var(--status-warning)',  label: 'Feedback' },
+  project:       { bg: tint('--status-success'), fg: 'var(--status-success)',  label: 'Project' },
+  reference:     { bg: tint('--chart-other'),    fg: 'var(--chart-other)',     label: 'Reference' },
+  snapshot:      { bg: tint('--text-secondary'), fg: 'var(--text-secondary)',  label: 'Snapshot' },
+  uncategorized: { bg: tint('--text-muted'),     fg: 'var(--text-muted)',      label: 'Uncategorized' },
 }
 const TYPE_ORDER = ['user', 'feedback', 'project', 'reference', 'snapshot', 'uncategorized']
 

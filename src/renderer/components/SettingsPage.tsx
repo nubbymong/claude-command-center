@@ -619,13 +619,13 @@ function StatusLinePreview({ sl }: { sl: StatusLineSettings }) {
 function MockRateDots({ label, pct }: { label: string; pct: number }) {
   const barWidth = 10
   const filled = Math.round(pct * barWidth / 100)
-  const color = pct >= 90 ? '#F38BA8' : pct >= 70 ? '#F9E2AF' : pct >= 50 ? '#FAB387' : '#A6E3A1'
+  const color = pct >= 90 ? 'var(--status-danger)' : pct >= 70 ? 'var(--status-warning)' : pct >= 50 ? 'var(--brand)' : 'var(--status-success)'
   return (
     <span className="flex items-center gap-1">
       <span className="text-subtext0">{label}:</span>
       <span style={{ letterSpacing: '-1px' }}>
         {Array.from({ length: barWidth }, (_, i) => (
-          <span key={i} style={{ color: i < filled ? color : '#2a3342', fontSize: '9px' }}>{String.fromCodePoint(0x25CF)}</span>
+          <span key={i} style={{ color: i < filled ? color : 'var(--border-strong)', fontSize: '9px' }}>{String.fromCodePoint(0x25CF)}</span>
         ))}
       </span>
       <span className="text-subtext0">{pct}%</span>
