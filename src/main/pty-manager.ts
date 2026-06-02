@@ -881,7 +881,15 @@ export function spawnPty(
         try { setupProfileLinks(resolvedProfileId) } catch (e) { logWarn(`[profiles] session ${sessionId}: home refresh failed: ${e}`) }
         home = getProfileConfigDir(resolvedProfileId)
       } else {
-        try { home = setupSessionHome(sessionId, resolvedProfileId) } catch (e) { logWarn(`[profiles] session ${sessionId}: session home setup failed: ${e}`); home = null }
+        try {
+          home = setupSessionHome(sessionId, resolvedProfileId)
+        } catch (e) {
+          // Never fall through to the bare global home (clobber risk): use the
+          // profile dir as an isolated fallback if the per-session home fails.
+          logWarn(`[profiles] session ${sessionId}: session home setup failed: ${e}; falling back to profile home`)
+          try { setupProfileLinks(resolvedProfileId) } catch (e2) { logWarn(`[profiles] session ${sessionId}: profile home refresh failed: ${e2}`) }
+          home = getProfileConfigDir(resolvedProfileId)
+        }
       }
     }
     const finalSpawnEnv = withProfileHome(spawnEnv, home)
