@@ -15,6 +15,17 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '1.5.28',
+    date: '2026-06-02',
+    highlights: 'Per-account statusline stats, settable account colours, and the account follows a mid-session sign-in.',
+    changes: [
+      { type: 'fix', description: 'Each account now shows its own usage and rate limits in the statusline. Previously the usage numbers could briefly show another account figures.' },
+      { type: 'feature', description: 'Set a colour for each account in Settings that sticks, so you can tell your accounts apart at a glance.' },
+      { type: 'fix', description: 'When you sign in to a different account inside a session, the account name and colour now follow the new account.' },
+      { type: 'fix', description: 'Your captured main account now shows its email instead of a generic placeholder name.' },
+    ],
+  },
+  {
     version: '1.5.27',
     date: '2026-06-02',
     highlights: 'Per-session account isolation, plus a safety backup of your Claude config taken before anything runs.',
