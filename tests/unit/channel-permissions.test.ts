@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
 let hookCb!: (e: any) => void
 const pushMock = vi.fn()
@@ -15,24 +15,64 @@ const { startPermissionTray, getPending, dismissPermission, _resetPending } = mo
 const notif = (sid: string, ts = 1) => ({ sessionId: sid, event: 'Notification', payload: { notification_type: 'permission_prompt', message: 'Claude needs your permission' }, ts })
 const pre = (sid: string, tool: string, input: any, tuid: string, ts = 1) => ({ sessionId: sid, event: 'PreToolUse', toolName: tool, payload: { tool_name: tool, tool_input: input, tool_use_id: tuid }, ts })
 const post = (sid: string, tuid: string, ts = 1) => ({ sessionId: sid, event: 'PostToolUse', payload: { tool_use_id: tuid }, ts })
+const postNamed = (sid: string, tool: string, ts = 1) => ({ sessionId: sid, event: 'PostToolUse', payload: { tool_name: tool }, ts })
 
-describe('channel-permissions (genuine-only)', () => {
-  beforeEach(() => { _resetPending(); pushMock.mockClear(); readConfigMock.mockReturnValue({}) ; startPermissionTray() })
+// Past the grace window (GRACE_MS = 500) before a candidate becomes a real card.
+const GRACE = 600
+
+describe('channel-permissions (genuine-only, grace-deferred)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    _resetPending(); pushMock.mockClear(); readConfigMock.mockReturnValue({}); startPermissionTray()
+  })
+  afterEach(() => { vi.useRealTimers() })
 
   it('PreToolUse alone never creates a card (it only tracks)', () => {
     hookCb(pre('s1', 'Bash', { command: 'whoami' }, 't1'))
+    vi.advanceTimersByTime(GRACE)
     expect(getPending()).toHaveLength(0)
   })
 
-  it('a permission_prompt Notification creates ONE card', () => {
+  it('a permission_prompt surfaces ONE card only AFTER the grace window', () => {
     hookCb(notif('s1'))
+    expect(getPending()).toHaveLength(0) // deferred, not yet visible
+    vi.advanceTimersByTime(GRACE)
     expect(getPending()).toHaveLength(1)
     expect(getPending()[0].sessionId).toBe('s1')
+  })
+
+  it('does NOT surface a card when the tool proceeds within the grace window (phantom prevented)', () => {
+    hookCb(pre('s1', 'Glob', { query: '**/x' }, 't1'))
+    hookCb(notif('s1', 2))       // candidate enriched from Glob (which never really blocks)
+    hookCb(post('s1', 't1', 3))  // Glob proceeds before grace elapses
+    vi.advanceTimersByTime(GRACE)
+    expect(getPending()).toHaveLength(0)
+  })
+
+  it('cancels the candidate by tool NAME when PostToolUse omits tool_use_id', () => {
+    hookCb(pre('s1', 'Glob', { query: '**/x' }, 't1'))
+    hookCb(notif('s1', 2))
+    hookCb(postNamed('s1', 'Glob', 3)) // proceeds, no tool_use_id on the Post
+    vi.advanceTimersByTime(GRACE)
+    expect(getPending()).toHaveLength(0)
+  })
+
+  it('does NOT cancel a blocked candidate when a same-named sibling proceeds id-less (ambiguous)', () => {
+    // Two Bash tools in flight: t1 auto-approves, t2 is genuinely blocked.
+    hookCb(pre('s1', 'Bash', { command: 'echo a' }, 't1'))
+    hookCb(pre('s1', 'Bash', { command: 'rm -rf /x' }, 't2'))
+    hookCb(notif('s1', 3))             // candidate enriched from the newest (blocked t2)
+    hookCb(postNamed('s1', 'Bash', 4)) // t1 proceeds but carries no tool_use_id -> ambiguous
+    vi.advanceTimersByTime(GRACE)
+    // The genuinely-blocked Bash card must still surface, not be suppressed.
+    expect(getPending()).toHaveLength(1)
+    expect(getPending()[0].tool).toBe('Bash')
   })
 
   it('enriches the card from the blocked in-flight PreToolUse', () => {
     hookCb(pre('s1', 'Bash', { command: 'whoami' }, 't1'))
     hookCb(notif('s1', 2))
+    vi.advanceTimersByTime(GRACE)
     const card = getPending()[0]
     expect(card.tool).toBe('Bash')
     expect(card.payloadPreview).toBe('whoami')
@@ -41,17 +81,17 @@ describe('channel-permissions (genuine-only)', () => {
   it('enriches WebFetch from the url', () => {
     hookCb(pre('s1', 'WebFetch', { url: 'https://example.com' }, 't1'))
     hookCb(notif('s1', 2))
+    vi.advanceTimersByTime(GRACE)
     expect(getPending()[0].tool).toBe('WebFetch')
     expect(getPending()[0].payloadPreview).toBe('https://example.com')
   })
 
   it('a sibling tool completing does NOT wipe the blocked tool detail (parallel calls)', () => {
-    // Read (t1) and Glob (t2) both fire; Read auto-approves and completes; Glob
-    // is the blocked one. The notification must still enrich from Glob.
     hookCb(pre('s1', 'Read', { file_path: '/a' }, 't1'))
     hookCb(pre('s1', 'Glob', { query: '**/x' }, 't2'))
-    hookCb(post('s1', 't1', 3))           // Read completes
-    hookCb(notif('s1', 4))
+    hookCb(post('s1', 't1', 3))           // Read auto-approves and completes
+    hookCb(notif('s1', 4))                // Glob is the blocked one
+    vi.advanceTimersByTime(GRACE)
     const card = getPending()[0]
     expect(card.tool).toBe('Glob')
     expect(card.payloadPreview).toBe('**/x')
@@ -59,26 +99,30 @@ describe('channel-permissions (genuine-only)', () => {
 
   it('falls back to the generic message when no tool is in-flight', () => {
     hookCb(notif('s1'))
+    vi.advanceTimersByTime(GRACE)
     expect(getPending()[0].payloadPreview).toBe('Claude needs your permission')
   })
 
   it('flags a destructive pending command as high-risk', () => {
     hookCb(pre('s1', 'Bash', { command: 'rm -rf /tmp/x' }, 't1'))
     hookCb(notif('s1', 2))
+    vi.advanceTimersByTime(GRACE)
     expect(getPending()[0].highRisk?.matched).toBe('rm -rf')
   })
 
-  it('the matching PostToolUse auto-dismisses the card (approve path)', () => {
+  it('the matching PostToolUse AFTER surfacing auto-dismisses the card (approve path)', () => {
     hookCb(pre('s1', 'Bash', { command: 'whoami' }, 't1'))
     hookCb(notif('s1', 2))
+    vi.advanceTimersByTime(GRACE)         // genuinely blocked -> surfaces
     expect(getPending()).toHaveLength(1)
-    hookCb(post('s1', 't1', 3))
+    hookCb(post('s1', 't1', 3))           // approved in-terminal later
     expect(getPending()).toHaveLength(0)
   })
 
   it('a SIBLING PostToolUse does NOT dismiss the card; the matching one does', () => {
     hookCb(pre('s1', 'Bash', { command: 'whoami' }, 't1'))
-    hookCb(notif('s1', 2))                // card enriched from t1
+    hookCb(notif('s1', 2))
+    vi.advanceTimersByTime(GRACE)
     hookCb(pre('s1', 'Read', { file_path: '/b' }, 't2'))
     hookCb(post('s1', 't2', 3))           // sibling completes -> card stays
     expect(getPending()).toHaveLength(1)
@@ -86,14 +130,23 @@ describe('channel-permissions (genuine-only)', () => {
     expect(getPending()).toHaveLength(0)
   })
 
-  it('Stop for the session auto-dismisses its card', () => {
+  it('Stop AFTER surfacing dismisses the session card', () => {
+    hookCb(notif('s1'))
+    vi.advanceTimersByTime(GRACE)
+    hookCb({ sessionId: 's1', event: 'Stop', payload: {}, ts: 2 })
+    expect(getPending()).toHaveLength(0)
+  })
+
+  it('Stop BEFORE the grace window cancels the candidate (no card)', () => {
     hookCb(notif('s1'))
     hookCb({ sessionId: 's1', event: 'Stop', payload: {}, ts: 2 })
+    vi.advanceTimersByTime(GRACE)
     expect(getPending()).toHaveLength(0)
   })
 
   it('dismissPermission removes a single card without touching others', () => {
     hookCb(notif('s1', 1)); hookCb(notif('s2', 2))
+    vi.advanceTimersByTime(GRACE)
     const id = getPending()[0].requestId
     expect(dismissPermission({ requestId: id })).toEqual({ ok: true })
     expect(getPending().map((p: any) => p.sessionId)).toEqual(['s2'])
@@ -102,6 +155,7 @@ describe('channel-permissions (genuine-only)', () => {
   it('does NOT capture when the tray is disabled in settings', () => {
     readConfigMock.mockReturnValue({ permissionTrayEnabled: false })
     hookCb(notif('s1'))
+    vi.advanceTimersByTime(GRACE)
     expect(getPending()).toHaveLength(0)
   })
 })

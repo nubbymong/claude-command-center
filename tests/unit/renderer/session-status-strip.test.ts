@@ -130,9 +130,13 @@ function buttonByText(text: string): HTMLButtonElement | undefined {
 }
 
 describe('SessionStatusStrip -- telemetry', () => {
-  it('renders model name and context % honouring statusLine flags', async () => {
+  it('renders the model (on the Model pill) and context %, deduped from telemetry', async () => {
     await render(claudeSession.id)
-    expect(container.textContent).toContain('sonnet')
+    // Bug 6: for Claude the model lives ONCE on the interactive Model pill, not
+    // also as read-only telemetry. shortModelName('sonnet') -> 'Sonnet'.
+    expect(buttonByTitle('Model')!.textContent).toContain('Sonnet')
+    // And it is NOT duplicated in the telemetry zone (no second 'Sonnet'/'sonnet').
+    expect((container.textContent ?? '').match(/sonnet/gi)?.length ?? 0).toBe(1)
     expect(container.textContent).toContain('42%')
   })
 

@@ -110,15 +110,18 @@ export default function BottomBar({ currentView, onViewChange, onUpdateRequested
         )}
       </div>
 
-      {/* Multi-account usage readout. Renders only when >=2 accounts are live
-          (else null, incl. its own separator) -- single-account users see
-          nothing. Pure render over session-store data; no new polling/IPC. */}
-      <MultiAccountStatusline />
+      {/* Multi-account usage readout, centred along the footer (Bug 3). Renders
+          only when >=2 accounts are live (else null). The flex-1 spacer centres
+          it between the runtime band and the disclaimer, and keeps the disclaimer
+          pinned right when single-account. Pure render over session-store data. */}
+      <div className="flex-1 flex justify-center min-w-0 overflow-hidden">
+        <MultiAccountStatusline />
+      </div>
 
       {/* Independent-project disclaimer, pinned bottom-right. Nominative use of
           "Anthropic"/"Claude" only; this app is not an Anthropic product. */}
       <span
-        className="ml-auto shrink truncate italic text-[10px]"
+        className="shrink truncate italic text-[10px]"
         style={{ color: 'var(--text-muted)' }}
         title="Claude and Claude Code are trademarks of Anthropic, PBC. This is an independent community project."
       >

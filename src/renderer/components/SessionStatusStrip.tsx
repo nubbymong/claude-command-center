@@ -130,7 +130,10 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
         className="flex items-center gap-3 flex-1 min-w-0 overflow-hidden"
         style={{ fontSize: `${sl.fontSize}px`, fontFamily: sl.font === 'mono' ? "'JetBrains Mono', monospace" : undefined }}
       >
-        {sl.showModel && session.modelName && (
+        {/* Bug 6: for Claude the interactive Model pill (controls cluster, right)
+            is the single home for the model + effort, so the read-only telemetry
+            copy would double it. Codex has no model pill, so it keeps this. */}
+        {sl.showModel && session.modelName && !isClaude && (
           <span className="font-medium truncate shrink-0">
             {session.modelName}
             {/* v1.5.13: surface effort level next to the model name. Codex
@@ -148,7 +151,10 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
             )}
           </span>
         )}
-        {sl.showAccount && accountName && (
+        {/* Bug 6: when the interactive account-switch pill is shown (multi-account),
+            it already displays the account + dot, so this read-only chip would
+            double it. Single-account sessions (no switch pill) keep this chip. */}
+        {sl.showAccount && accountName && !canSwitchAccount && (
           <span
             className="flex items-center gap-1 shrink-0"
             style={{ color: 'var(--text-muted)' }}
@@ -260,6 +266,14 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
               title="Model"
             >
               {modelLabel}
+              {/* Bug 6: effort lives on the Model pill now (the telemetry model is
+                  hidden for Claude to avoid doubling). Preserves the "Opus 4.8 xhigh"
+                  display the user configured via showEffort. */}
+              {sl.showEffort && hasModelLabel && (session.reasoningEffort || session.effortLevel) && (
+                <span className="ml-1 font-normal" style={{ color: 'var(--text-muted)' }}>
+                  {session.reasoningEffort || session.effortLevel}
+                </span>
+              )}
             </button>
             {openPicker === 'model' && (
               <ToolbarPopup

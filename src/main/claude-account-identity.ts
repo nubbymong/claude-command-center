@@ -5,7 +5,7 @@
 // v1.5.9 chip removal (whose source was the GLOBAL last-login at tick time).
 import fs from 'node:fs'; import path from 'node:path'
 import { BrowserWindow } from 'electron'
-import { readProfileAccountEmail, readSessionHomeEmail, getSessionHomeDir, sharedRoot, listProfiles } from './account-profiles'
+import { readProfileAccountEmail, getProfileConfigDir, sharedRoot, listProfiles } from './account-profiles'
 import { IPC } from '../shared/ipc-channels'
 import { colourForEmail } from './account-color'
 import { canonicaliseEmail } from '../shared/account-chip-color'
@@ -27,11 +27,12 @@ export function getDefaultAccountEmail(): string | null {
   } catch { return null }
 }
 
-/** Capture once at spawn. profileId undefined => single-account/default. */
+/** Capture once at spawn. profileId undefined => single-account/default.
+ *  Reads the account's shared PROFILE home (Bug 2: sessions of an account share it). */
 export function captureClaudeAccount(sessionId: string, profileId: string | undefined): void {
   if (bySession.has(sessionId)) return // drift-immune: first capture wins
   const email = profileId
-    ? (readSessionHomeEmail(sessionId) ?? readProfileAccountEmail(profileId))
+    ? readProfileAccountEmail(profileId)
     : getDefaultAccountEmail()
   if (email) bySession.set(sessionId, email)
 }
@@ -65,6 +66,10 @@ export function pushAccountIdentity(sessionId: string): void {
 
 const watched = new Map<string, string | undefined>() // sessionId -> profileId
 const lastMtimeMs = new Map<string, number>()         // sessionId -> last seen identity-file mtime
+// profileId -> the email we last broadcast a "new account detected" prompt for.
+// Sessions sharing a profile home all observe the same /login, so this dedups the
+// prompt to one per (profile, email) instead of one per session.
+const detectedByProfile = new Map<string, string>()
 let pollTimer: ReturnType<typeof setInterval> | null = null
 // One shared timer ticks every POLL_MS and stats each watched session's identity
 // file (mtime-guarded, so the possibly-multi-MB JSON is only parsed on an actual
@@ -74,10 +79,12 @@ let pollTimer: ReturnType<typeof setInterval> | null = null
 // real benefit at scale.
 const POLL_MS = 5000
 
-/** Resolve the .claude.json that holds a session's account identity. */
-function identityFilePath(sessionId: string, profileId: string | undefined): string {
+/** Resolve the .claude.json that holds a session's account identity. For a profile
+ *  session this is the account's shared profile home (Bug 2); for the default
+ *  account it is ~/.claude.json. */
+function identityFilePath(profileId: string | undefined): string {
   return profileId
-    ? path.join(getSessionHomeDir(sessionId), '.claude.json')
+    ? path.join(getProfileConfigDir(profileId), '.claude.json')
     : path.join(path.dirname(sharedRoot()), '.claude.json')
 }
 
@@ -88,13 +95,13 @@ function identityFilePath(sessionId: string, profileId: string | undefined): str
  * has not changed, so the (possibly large) JSON is only parsed on a real change.
  */
 export function recheckSessionIdentity(sessionId: string, profileId: string | undefined): string | null {
-  const file = identityFilePath(sessionId, profileId)
+  const file = identityFilePath(profileId)
   let mtime: number
   try { mtime = fs.statSync(file).mtimeMs } catch { return null }
   if (lastMtimeMs.get(sessionId) === mtime) return null
   lastMtimeMs.set(sessionId, mtime)
   let email: string | null = null
-  try { email = profileId ? readSessionHomeEmail(sessionId) : getDefaultAccountEmail() } catch { return null }
+  try { email = profileId ? readProfileAccountEmail(profileId) : getDefaultAccountEmail() } catch { return null }
   if (!email || bySession.get(sessionId) === email) return null
   bySession.set(sessionId, email) // mid-session change: bypass the first-capture guard
   return email
@@ -119,9 +126,23 @@ export function recheckAll(): void {
     // Detection: a /login to an email that is not yet a known account.
     const known = listProfiles().map((p) => p.accountEmail).filter((e): e is string => !!e)
     if (classifyIdentityChange(sessionId, changed, before, known).kind === 'capture') {
+      // Sessions sharing one profile home all observe the same /login; broadcast the
+      // "new account" prompt ONCE per (profile, email) so we never double-prompt or
+      // double-capture.
+      if (detectedByProfile.get(profileId) === changed) continue
+      detectedByProfile.set(profileId, changed)
       broadcastNewAccountDetected(sessionId, profileId, changed)
+    } else {
+      // Home is back on a known account -> let a future switch re-broadcast.
+      detectedByProfile.delete(profileId)
     }
   }
+}
+
+/** The profileId a live session is watching -- used by the capture-detected IPC
+ *  handler to read the right shared profile home. */
+export function getWatchedProfileId(sessionId: string): string | undefined {
+  return watched.get(sessionId)
 }
 
 /** Start polling a live session's identity file for mid-session account changes. */
@@ -165,5 +186,6 @@ export function _resetClaudeAccounts(): void {
   bySession.clear()
   watched.clear()
   lastMtimeMs.clear()
+  detectedByProfile.clear()
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
 }

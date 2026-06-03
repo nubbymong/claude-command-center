@@ -26,7 +26,7 @@ import { registerNotesHandlers } from './ipc/notes-handlers'
 import { registerVisionHandlers } from './ipc/vision-handlers'
 import { registerConfigHandlers } from './ipc/config-handlers'
 import { registerAccountProfilesHandlers } from './ipc/account-profiles-handlers'
-import { migrateProfilesToHomeLayout } from './account-profiles'
+import { migrateProfilesToHomeLayout, cleanupSessionHomes } from './account-profiles'
 import { runFirstRunCapture } from './first-run-accounts'
 import { backupRealClaudeOnce } from './claude-backup'
 import { registerCloudAgentHandlers } from './ipc/cloud-agent-handlers'
@@ -649,6 +649,11 @@ if (!gotTheLock) {
     // Capture the current global login into a protected "primary" profile so no
     // session runs on the bare global ~/.claude (idempotent; best-effort).
     try { runFirstRunCapture() } catch (e) { logInfo(`[profiles] first-run capture skipped: ${e}`) }
+    // Bug 2: migrate OFF the per-session-home model. Sessions of one account now
+    // share its profile home (one rotating-OAuth store); salvage the freshest live
+    // token out of any retired account-homes/<sessionId>/ into the profile home +
+    // canonical (so no re-auth after upgrade), then remove them. Idempotent.
+    try { cleanupSessionHomes() } catch (e) { logInfo(`[profiles] session-home cleanup skipped: ${e}`) }
     registerScreenshotHandlers(getWindow)
     registerWebviewHandlers(getWindow)
     registerInsightsHandlers(getWindow)

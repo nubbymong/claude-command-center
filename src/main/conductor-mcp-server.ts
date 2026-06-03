@@ -276,8 +276,10 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
 
   loadMcpDeps()
 
-  // Helper: run a command if vision is connected, otherwise return unavailable
-  const withVision = async (cmd: VisionCommand) => {
+  // Helper: run a command if vision is connected, otherwise return unavailable.
+  // createServer wraps this with the connection's bound CCC session id so the
+  // VisionManager routes to that session's own pinned target (Bug 4).
+  const runVision = async (cmd: VisionCommand) => {
     const vm = getVisionManager()
     if (!vm) return visionUnavailable()
     return resultToMcpContent(await vm.executeCommand(cmd))
@@ -338,6 +340,10 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
       return rawTool(...toolArgs)
     }
 
+    // Bug 4: every vision tool on THIS connection routes to its bound CCC
+    // session's own pinned browser target, so concurrent sessions never collide.
+    const withVision = (cmd: VisionCommand) => runVision({ ...cmd, sessionId: boundSessionId ?? undefined })
+
     // ── Host file access (always available, no vision required) ────────────
 
     // -- fetch_host_screenshot --
@@ -361,7 +367,7 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
     server.tool('vision_status', 'Check browser connection status', {}, async () => {
       const vm = getVisionManager()
       if (!vm) return resultToMcpContent({ ok: true, data: { connected: false, browser: null } })
-      return resultToMcpContent(await vm.executeCommand({ command: 'status', args: [] }))
+      return resultToMcpContent(await vm.executeCommand({ command: 'status', args: [], sessionId: boundSessionId ?? undefined }))
     })
 
     // -- Screenshot --
@@ -369,7 +375,7 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
     server.tool('vision_screenshot', 'Capture a screenshot of the current browser page and return it as inline image content. No need to call Read afterwards — the image is included in the response.', {}, async () => {
       const vm = getVisionManager()
       if (!vm) return visionUnavailable()
-      const result = await vm.executeCommand({ command: 'screenshot', args: [] })
+      const result = await vm.executeCommand({ command: 'screenshot', args: [], sessionId: boundSessionId ?? undefined })
       if (!result.ok || !result.path) return resultToMcpContent(result)
       // Extract bare filename and return as inline image
       const filename = path.basename(result.path)
@@ -460,6 +466,17 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
       if (direction) args.push(direction)
       if (pixels) args.push(String(pixels))
       return withVision({ command: 'scroll', args })
+    })
+
+    // -- Set viewport (Bug 4) --
+    server.tool('vision_setViewport', 'Set the browser viewport size (and optional deviceScaleFactor) for THIS session. The default headless viewport is ~800x600, which trips responsive layouts and clips wide content -- set e.g. 1440x900 to render at desktop size.', {
+      width: z.number().describe('Viewport width in CSS pixels'),
+      height: z.number().describe('Viewport height in CSS pixels'),
+      deviceScaleFactor: z.number().optional().describe('Device pixel ratio (default 1)')
+    }, async ({ width, height, deviceScaleFactor }: { width: number; height: number; deviceScaleFactor?: number }) => {
+      const args = [String(width), String(height)]
+      if (deviceScaleFactor !== undefined) args.push(String(deviceScaleFactor))
+      return withVision({ command: 'setViewport', args })
     })
 
     // P6.9: codex_review is intentionally NOT advertised to Codex sessions.

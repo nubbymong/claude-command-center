@@ -4,9 +4,9 @@ import { IPC } from '../../shared/ipc-channels'
 import {
   listProfiles, upsertProfile, safeTeardownProfile,
   readProfileAccountEmail, getProfileConfigDir, isValidProfileId, createProfile,
-  captureDetectedAccount, backupProfileHomeToCanonical,
+  captureDetectedAccount, backupProfileHomeToCanonical, restoreProfileHomeFromCanonical,
 } from '../account-profiles'
-import { getAccountIdentity, getDefaultAccountEmail } from '../claude-account-identity'
+import { getAccountIdentity, getDefaultAccountEmail, getWatchedProfileId } from '../claude-account-identity'
 
 export function registerAccountProfilesHandlers(): void {
   ipcMain.handle(IPC.ACCOUNT_PROFILES_LIST, () => listProfiles())
@@ -45,7 +45,15 @@ export function registerAccountProfilesHandlers(): void {
   ipcMain.handle(IPC.ACCOUNT_PROFILES_CREATE, (_e, p: { name?: string }) => createProfile(p?.name))
   ipcMain.handle(IPC.ACCOUNT_PROFILES_CAPTURE_DETECTED, (_e, p: { sessionId: string; name?: string }) => {
     if (!p || !p.sessionId) return null
-    return captureDetectedAccount(p.sessionId, p.name)
+    // Bug 2: the /login wrote the new account into the session's SHARED profile home.
+    // Resolve that profile, capture the new account out of it into a fresh profile,
+    // then restore the source profile home from canonical so the source account's
+    // other sessions (and its saved profile) recover.
+    const profileId = getWatchedProfileId(p.sessionId)
+    if (!profileId) return null
+    const np = captureDetectedAccount(profileId, p.name)
+    if (np) { try { restoreProfileHomeFromCanonical(profileId) } catch { /* best-effort */ } }
+    return np
   })
   ipcMain.handle(IPC.ACCOUNT_GLOBAL_EMAIL_GET, () => getDefaultAccountEmail())
 }

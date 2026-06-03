@@ -7,7 +7,7 @@ import { startSessionLog, logSessionData, endSessionLog } from './session-logger
 import { logPtyOutput, isDebugModeEnabled } from './debug-capture'
 import { logInfo, logDebug, logError, logWarn } from './debug-logger'
 import { writeCliSetupPty, getResourcesDirectory } from './ipc/setup-handlers'
-import { isGlobalVisionRunning, getGlobalVisionConfig } from './vision-manager'
+import { isGlobalVisionRunning, getGlobalVisionConfig, teardownVisionSession } from './vision-manager'
 import { getConductorMcpPort } from './conductor-mcp-server'
 import { resolveClaudeBinary } from './providers/claude/spawn'
 import { detectClaudeUi, lastPromptLineForClaude } from './providers/claude/ui-detection'
@@ -28,8 +28,8 @@ import {
 import { registerCodexReviewSession, unregisterCodexReviewSession } from './conductor-mcp-server'
 import { disposeSession as disposeCodexReviewUsage } from './codex-review-usage'
 import { readCodexAccountEmail } from './account-identity'
-import { getProfileConfigDir, setupProfileLinks, getPrimaryProfileId, setupSessionHome, teardownSessionHome, syncSessionHomeToAccount } from './account-profiles'
-import { captureClaudeAccount, clearClaudeAccount, getAccountIdentity, pushAccountIdentity, startWatchingAccountIdentity, stopWatchingAccountIdentity } from './claude-account-identity'
+import { getProfileConfigDir, setupProfileLinks, getPrimaryProfileId, backupProfileHomeToCanonical } from './account-profiles'
+import { captureClaudeAccount, clearClaudeAccount, getAccountIdentity, pushAccountIdentity, startWatchingAccountIdentity, stopWatchingAccountIdentity, getWatchedProfileId } from './claude-account-identity'
 import type { AccountIdentity } from '../shared/types'
 import { updateSessionMeta, clearSessionMeta } from './session-registry'
 import { readConfig } from './config-manager'
@@ -869,28 +869,17 @@ export function spawnPty(
       const primary = getPrimaryProfileId()
       if (primary && fs.existsSync(getProfileConfigDir(primary))) resolvedProfileId = primary
     }
-    // Home selection:
-    //  - shell-only (plain shells + the add-account login flow): run directly in
-    //    the profile dir so a /login persists to that profile (unchanged).
-    //  - non-shell Claude session: run in a PER-SESSION working home seeded from
-    //    the account's canonical identity, so two sessions of the same account are
-    //    isolated and a /login can never corrupt the saved profile.
+    // Home selection (Bug 2): EVERY session of an account -- shell-only (plain
+    // shells + the add-account login flow) AND interactive Claude -- runs in the
+    // account's shared PROFILE home. That way concurrent sessions of one account
+    // share ONE rotating-OAuth credential store and coordinate token refreshes the
+    // way a normal single-account install does. The old per-session-home model gave
+    // each session a private COPY of the credential; the first refresh rotated the
+    // token and invalidated every other copy, forcing a re-auth on resume.
     let home: string | null = null
     if (resolvedProfileId) {
-      if (shellOnly) {
-        try { setupProfileLinks(resolvedProfileId) } catch (e) { logWarn(`[profiles] session ${sessionId}: home refresh failed: ${e}`) }
-        home = getProfileConfigDir(resolvedProfileId)
-      } else {
-        try {
-          home = setupSessionHome(sessionId, resolvedProfileId)
-        } catch (e) {
-          // Never fall through to the bare global home (clobber risk): use the
-          // profile dir as an isolated fallback if the per-session home fails.
-          logWarn(`[profiles] session ${sessionId}: session home setup failed: ${e}; falling back to profile home`)
-          try { setupProfileLinks(resolvedProfileId) } catch (e2) { logWarn(`[profiles] session ${sessionId}: profile home refresh failed: ${e2}`) }
-          home = getProfileConfigDir(resolvedProfileId)
-        }
-      }
+      try { setupProfileLinks(resolvedProfileId) } catch (e) { logWarn(`[profiles] session ${sessionId}: home refresh failed: ${e}`) }
+      home = getProfileConfigDir(resolvedProfileId)
     }
     const finalSpawnEnv = withProfileHome(spawnEnv, home)
     logInfo(`[profiles] session ${sessionId} account spawn: requestedProfileId=${wantProfileId ?? '(none)'} resolvedProfileId=${resolvedProfileId ?? '(none/bare-global)'} shellOnly=${shellOnly} USERPROFILE=${home ?? '(real home)'}`)
@@ -1130,13 +1119,17 @@ export function spawnPty(
       // P8.8: clear spawn-time identity capture. Safe no-op for non-codex sessions.
       clearCodexSpawnIdentity(sessionId)
       // Phase R: clear spawn-time Claude account capture so the map can't grow unbounded.
+      // Capture the watched profileId BEFORE stopWatching clears it.
+      const exitProfileId = getWatchedProfileId(sessionId)
       clearClaudeAccount(sessionId)
       stopWatchingAccountIdentity(sessionId)
-      // Persist any token refresh or mid-session /login from the session home back
-      // to the account's canonical profile, then tear down the per-session home.
-      // Both are no-ops for shell-only sessions (no session home was created).
-      try { syncSessionHomeToAccount(sessionId) } catch { /* best-effort: persist token/adopt back to the account */ }
-      try { teardownSessionHome(sessionId) } catch { /* best-effort */ }
+      // Bug 2: snapshot any token refresh from the shared profile home into the
+      // account's canonical backup. Email-guarded, so a mid-session /login that
+      // switched the home to a different account can never corrupt canonical.
+      // No-op for default (no-profile) sessions.
+      if (exitProfileId) { try { backupProfileHomeToCanonical(exitProfileId) } catch { /* best-effort */ } }
+      // Bug 4: release this session's pinned vision browser target/context.
+      try { teardownVisionSession(sessionId) } catch { /* best-effort */ }
     } else {
       logInfo(`[pty] Stale exit for ${sessionId} — newer PTY has taken over, skipping cleanup`)
     }

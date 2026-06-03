@@ -9,6 +9,7 @@ import {
   canonicaliseEmail,
 } from '../../shared/account-chip-color'
 import { resolveIdentityColor, type IdentityColorKey } from '../../shared/identity-colors'
+import RateLimitBar from './terminal/RateLimitBar'
 import type { AccountProfile } from '../../shared/account-types'
 
 export interface LiveAccount {
@@ -77,17 +78,6 @@ export function liveAccountUsage(
   })
 }
 
-function pctText(pct: number | null): string {
-  return pct === null ? '—' : `${pct}%`
-}
-
-// Muted until it matters, then warning >=70, danger >=90 (mirrors RateLimitBar).
-function pctColour(pct: number | null): string {
-  if (pct !== null && pct >= 90) return 'var(--status-danger)'
-  if (pct !== null && pct >= 70) return 'var(--status-warning)'
-  return 'var(--text-muted)'
-}
-
 function tooltip(a: LiveAccount): string {
   const lines = [`${a.name} — ${a.count} live session${a.count === 1 ? '' : 's'}`]
   if (a.resets5h) lines.push(`5h resets ${a.resets5h}`)
@@ -114,27 +104,29 @@ export default function MultiAccountStatusline() {
 
   if (accounts.length < 2) return null
 
+  // Bug 3: per account show the FULL email + the real statusline progress bars
+  // (RateLimitBar, same as SessionStatusStrip), not "5h X% · 7d Y%" text with a
+  // clipped name. BottomBar centres this cluster along the footer.
   return (
     <div
-      className="flex items-center gap-3 min-w-0 overflow-hidden pl-3 ml-1 border-l"
-      style={{ borderColor: 'var(--border-subtle)' }}
+      className="flex items-center gap-6 min-w-0"
       data-testid="multi-account-statusline"
     >
       {accounts.map((a) => (
-        <span key={a.email} className="flex items-center gap-1.5 shrink-0" title={tooltip(a)}>
+        <span key={a.email} className="flex items-center gap-2 shrink-0" title={tooltip(a)}>
           <span
             className="w-2 h-2 rounded-full shrink-0"
             style={{ background: resolveIdentityColor(a.colourKey, theme) }}
           />
-          <span className="font-medium truncate max-w-[120px]" style={{ color: 'var(--text-on-chrome)' }}>
-            {a.name}
+          <span className="font-medium" style={{ color: 'var(--text-on-chrome)' }}>
+            {a.email}
           </span>
-          <span className="tabular-nums">
-            <span style={{ color: 'var(--text-muted)' }}>5h </span>
-            <span style={{ color: pctColour(a.pct5h) }}>{pctText(a.pct5h)}</span>
-            <span style={{ color: 'var(--text-muted)' }}> · 7d </span>
-            <span style={{ color: pctColour(a.pct7d) }}>{pctText(a.pct7d)}</span>
-          </span>
+          {a.pct5h !== null
+            ? <RateLimitBar label="5h" pct={a.pct5h} resets={a.resets5h} />
+            : <span style={{ color: 'var(--text-muted)' }}>5h —</span>}
+          {a.pct7d !== null
+            ? <RateLimitBar label="7d" pct={a.pct7d} resets={a.resets7d} />
+            : <span style={{ color: 'var(--text-muted)' }}>7d —</span>}
         </span>
       ))}
     </div>

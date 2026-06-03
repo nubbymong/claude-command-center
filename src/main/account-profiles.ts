@@ -11,6 +11,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { getResourcesDirectory } from './ipc/setup-handlers'
+import { canonicaliseEmail } from '../shared/account-chip-color'
 import type { AccountProfile, AccountProfilesConfig } from '../shared/account-types'
 
 // Shared-directory names junctioned from a profile back to the shared root.
@@ -277,32 +278,81 @@ export function safeTeardownProfile(id: string): void {
 // ---------------------------------------------------------------------------
 
 export function getSessionHomesRoot(): string { return path.join(resourcesDir(), 'account-homes') }
-export function getSessionHomeDir(sessionId: string): string {
-  const safe = sessionId.replace(/[^a-zA-Z0-9_-]/g, '_')
-  return path.join(getSessionHomesRoot(), safe)
+
+/** Read the OAuth expiry (ms) from a credentials JSON; 0 when absent/unparseable.
+ *  Used to pick the freshest live token when migrating off the per-session homes. */
+function credentialExpiry(raw: string | undefined): number {
+  if (!raw) return 0
+  try {
+    const c = JSON.parse(raw) as { claudeAiOauth?: { expiresAt?: unknown }; expiresAt?: unknown }
+    const e = c.claudeAiOauth?.expiresAt ?? c.expiresAt
+    return typeof e === 'number' ? e : 0
+  } catch { return 0 }
 }
 
-/** Build a per-session working home seeded from the account's canonical identity.
- *  Reuses the same junction/mirror logic as profile homes. Returns the home path. */
-export function setupSessionHome(sessionId: string, profileId: string): string {
-  const home = getSessionHomeDir(sessionId)
-  fs.mkdirSync(home, { recursive: true })
-  buildHomeLinks(home)
-  const idDir = getAccountIdentityDir(profileId)
-  const claudeDir = path.join(home, '.claude')
-  fs.mkdirSync(claudeDir, { recursive: true })
-  try { fs.copyFileSync(path.join(idDir, '.claude.json'), path.join(home, '.claude.json')) } catch { /* no identity yet */ }
-  try { fs.copyFileSync(path.join(idDir, '.credentials.json'), path.join(claudeDir, '.credentials.json')) } catch { /* none */ }
-  return home
-}
+/**
+ * One-time migration OFF the per-session-home model (Bug 2). Each account's sessions
+ * used to get a private COPY of its credentials under account-homes/<sessionId>/.
+ * Rotating OAuth refresh tokens can't survive being copied across N homes (the first
+ * session to refresh invalidates every other copy), which forced a re-auth on resume.
+ * Every session of an account now shares the account's profile home instead.
+ *
+ * Before deleting the retired session homes we SALVAGE the freshest live token for
+ * each account (the profile home + canonical seed are typically the stale, dead seed)
+ * into the profile home + canonical, so the user does not re-auth even once after
+ * upgrading. Junction-safe teardown: link reparse points are removed, never their
+ * targets. Only ever reads session homes and writes under profile dirs; never the real home.
+ */
+export function cleanupSessionHomes(): void {
+  const root = getSessionHomesRoot()
+  let entries: fs.Dirent[]
+  try { entries = fs.readdirSync(root, { withFileTypes: true }) } catch { return } // absent -> nothing to do
 
-export function teardownSessionHome(sessionId: string): void {
-  const home = getSessionHomeDir(sessionId)
-  // Defense-in-depth: only ever tear down INSIDE the session-homes root.
-  if (!path.resolve(home).startsWith(path.resolve(getSessionHomesRoot()) + path.sep)) return
-  if (!fs.existsSync(home)) return
-  if (fs.lstatSync(home).isSymbolicLink()) return // never recurse a reparse-point root
-  safeTeardown(home)
+  const profiles = listProfiles()
+  type Cand = { claudeJson: string; credentials: string | undefined; exp: number; fromSession: boolean }
+  const best = new Map<string, Cand>() // profileId -> freshest candidate
+
+  const consider = (profileId: string, dir: string, fromSession: boolean): void => {
+    let claudeJson: string
+    try { claudeJson = fs.readFileSync(path.join(dir, '.claude.json'), 'utf8') } catch { return }
+    let credentials: string | undefined
+    try { credentials = fs.readFileSync(path.join(dir, '.claude', '.credentials.json'), 'utf8') } catch { credentials = undefined }
+    const exp = credentialExpiry(credentials)
+    const cur = best.get(profileId)
+    if (!cur || exp > cur.exp) best.set(profileId, { claudeJson, credentials, exp, fromSession })
+  }
+
+  // Seed candidates with each profile's CURRENT home so we never downgrade it.
+  for (const p of profiles) consider(p.id, getProfileConfigDir(p.id), false)
+  // Add the retiring session homes, matched to a profile by account email.
+  for (const e of entries) {
+    if (!e.isDirectory()) continue
+    const email = readEmailFromFile(path.join(root, e.name, '.claude.json'))
+    if (!email) continue
+    const prof = profiles.find((p) => p.accountEmail && normEmail(p.accountEmail) === normEmail(email))
+    if (prof) consider(prof.id, path.join(root, e.name), true)
+  }
+  // Apply only when a session home was fresher than the profile home.
+  for (const [profileId, cand] of best) {
+    if (!cand.fromSession) continue
+    writeCanonicalIdentity(profileId, { claudeJson: cand.claudeJson, credentials: cand.credentials })
+    const home = getProfileConfigDir(profileId)
+    try { fs.writeFileSync(path.join(home, '.claude.json'), cand.claudeJson) } catch { /* best-effort */ }
+    if (cand.credentials != null) {
+      try { const cd = path.join(home, '.claude'); fs.mkdirSync(cd, { recursive: true }); fs.writeFileSync(path.join(cd, '.credentials.json'), cand.credentials) } catch { /* best-effort */ }
+    }
+  }
+
+  // Tear down the whole account-homes tree (junction LINKS only, never targets).
+  for (const e of entries) {
+    const full = path.join(root, e.name)
+    try {
+      const st = fs.lstatSync(full)
+      if (st.isDirectory() && !st.isSymbolicLink()) safeTeardown(full)
+      else { try { fs.rmdirSync(full) } catch { fs.unlinkSync(full) } }
+    } catch { /* best-effort */ }
+  }
+  try { fs.rmdirSync(root) } catch { /* non-empty if a teardown failed; leave it */ }
 }
 
 /** The authoritative, protected credential copy for an account. This dir is the source of truth; it is never used directly as a process HOME/CLAUDE_CONFIG_DIR. */
@@ -405,34 +455,7 @@ export function readCanonicalIdentityEmail(id: string): string | null {
   return readEmailFromFile(path.join(getAccountIdentityDir(id), '.claude.json'))
 }
 
-/** Read the account email from a live session's own working home. */
-export function readSessionHomeEmail(sessionId: string): string | null {
-  return readEmailFromFile(path.join(getSessionHomeDir(sessionId), '.claude.json'))
-}
-
 function normEmail(email: string): string { return email.toLowerCase().trim() }
-
-/** Persist a session's working-home identity back to the account it currently
- *  belongs to (matched by email), so token refreshes + a mid-session account
- *  change survive the session-home teardown. Best-effort; no-op if the home has
- *  no identity or no profile matches the email. Writes only under profile dirs. */
-export function syncSessionHomeToAccount(sessionId: string): void {
-  const home = getSessionHomeDir(sessionId)
-  let claudeJson: string
-  try { claudeJson = fs.readFileSync(path.join(home, '.claude.json'), 'utf8') } catch { return }
-  const email = readEmailFromFile(path.join(home, '.claude.json'))
-  if (!email) return
-  const prof = listProfiles().find((p) => p.accountEmail && normEmail(p.accountEmail) === normEmail(email))
-  if (!prof) return
-  let credentials: string | undefined
-  try { credentials = fs.readFileSync(path.join(home, '.claude', '.credentials.json'), 'utf8') } catch { credentials = undefined }
-  writeCanonicalIdentity(prof.id, { claudeJson, credentials })
-  const pHome = getProfileConfigDir(prof.id)
-  try { fs.writeFileSync(path.join(pHome, '.claude.json'), claudeJson) } catch { /* best-effort */ }
-  if (credentials != null) {
-    try { const cd = path.join(pHome, '.claude'); fs.mkdirSync(cd, { recursive: true }); fs.writeFileSync(path.join(cd, '.credentials.json'), credentials) } catch { /* best-effort */ }
-  }
-}
 
 /** Reliable per-session identity: each profile has its OWN .claude.json.
  *  (The v1.5.9 alias attempt failed because it read the GLOBAL last-login.) */
@@ -459,23 +482,37 @@ export function restoreProfileHomeFromCanonical(id: string): boolean {
 
 /** Snapshot a profile's CURRENT per-account-home identity into its canonical
  *  backup, so it can be restored later. Best-effort; no-op if the home has no
- *  identity yet. Only reads/writes under the profile dir. */
+ *  identity yet. Only reads/writes under the profile dir.
+ *
+ *  EMAIL-GUARDED: canonical is the recovery source of truth, so a /login that
+ *  switched this shared home to a DIFFERENT account must never overwrite it. We
+ *  back up only when the home identity still matches the profile's known account
+ *  (a token refresh keeps the email; only an account switch changes it). A profile
+ *  with no accountEmail yet is a first capture -- nothing to protect, so allow it. */
 export function backupProfileHomeToCanonical(id: string): void {
   if (!isValidProfileId(id)) return
   const home = getProfileConfigDir(id)
   let claudeJson: string
   try { claudeJson = fs.readFileSync(path.join(home, '.claude.json'), 'utf8') } catch { return }
+  // A null homeEmail (a .claude.json with no parseable oauthAccount -- a corrupt /
+  // in-progress login) counts as "does not match", so an identity-less home can
+  // never overwrite a profile that already has a known account.
+  const homeEmail = readEmailFromFile(path.join(home, '.claude.json'))
+  const prof = listProfiles().find((p) => p.id === id)
+  if (prof?.accountEmail && canonicaliseEmail(prof.accountEmail) !== canonicaliseEmail(homeEmail ?? '')) return
   let credentials: string | undefined
   try { credentials = fs.readFileSync(path.join(home, '.claude', '.credentials.json'), 'utf8') } catch { credentials = undefined }
   writeCanonicalIdentity(id, { claudeJson, credentials })
 }
 
-/** A /login switched a session to a new account (now in the session's WORKING
- *  home). Capture it as a NEW named profile. The source account's saved profile
- *  is untouched (the /login only wrote the per-session home). Returns the new
- *  profile, or null if there is nothing to capture. */
-export function captureDetectedAccount(sessionId: string, name?: string): AccountProfile | null {
-  const home = getSessionHomeDir(sessionId)
+/** A /login switched a session to a new account, written into the account's SHARED
+ *  profile home. Capture it as a NEW named profile from that home. The caller is
+ *  responsible for restoring the source profile home from canonical afterwards so
+ *  the source account's other sessions recover. Returns the new profile, or null if
+ *  there is nothing to capture / the profile id is invalid. */
+export function captureDetectedAccount(profileId: string, name?: string): AccountProfile | null {
+  if (!isValidProfileId(profileId)) return null
+  const home = getProfileConfigDir(profileId)
   let claudeJson: string
   try { claudeJson = fs.readFileSync(path.join(home, '.claude.json'), 'utf8') } catch { return null }
   const email = readEmailFromFile(path.join(home, '.claude.json'))

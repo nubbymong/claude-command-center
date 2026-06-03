@@ -32,16 +32,15 @@ export default function ExcalidrawPane({ sessionId }: Props) {
   const deleteDrawing = useExcalidrawStore((s) => s.deleteDrawing)
   const updateScene = useExcalidrawStore((s) => s.updateScene)
   const resolvedTheme = useResolvedTheme()
-  // Excalidraw paints a real <canvas>, so the board background must be a concrete
-  // colour (CSS vars don't reach it). Resolve the live theme surface token like
-  // the modal does, instead of Excalidraw's hardcoded white which clashes on the
-  // dark theme. Falls back to per-theme defaults if the var is missing.
-  const canvasBg = useMemo(() => {
-    const v = typeof window !== 'undefined'
-      ? getComputedStyle(document.documentElement).getPropertyValue('--surface-stage').trim()
-      : ''
-    return v || (resolvedTheme === 'light' ? '#e8ecf3' : '#171e27')
-  }, [resolvedTheme])
+  // Excalidraw paints a real <canvas> and, in its DARK theme, applies an inversion
+  // filter (invert + hue-rotate) to EVERYTHING on the canvas -- viewBackgroundColor
+  // included. Feeding it the dark surface colour (the previous bug) therefore got
+  // inverted into a light-grey board on the dark app. So we always feed the LIGHT
+  // surface "paper" colour: in light mode Excalidraw shows it as-is; in dark mode
+  // its theme inverts it back to ~the dark surface, blending with the UX uplift.
+  // (theme={resolvedTheme} on <Excalidraw/> drives that inversion.) Keep this value
+  // in sync with --surface-stage under [data-theme="light"] in styles.css.
+  const canvasBg = '#e8ecf3'
 
   const apiRef = useRef<ExcalidrawImperativeAPI | null>(null)
   const saveTimerRef = useRef<number | null>(null)
