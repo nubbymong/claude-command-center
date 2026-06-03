@@ -138,7 +138,11 @@ export class HooksGatewayProxy implements HooksGatewayLike {
     if (this.inProcess) { await this.inProcessReady; return this.inProcess.start() }
     this.transport.post({ type: 'start', port: this.port })
     this._status = { ...this._status, enabled: true }
-    if (this._status.listening) return this.status()   // already bound (e.g. re-enable)
+    // Already listening (e.g. a re-enable). Safe because the supervisor resets
+    // listening:false via rebindTransport() on every child restart, so a dead
+    // child can't leave this stale-true — and we already posted `start` above, so
+    // a live child re-receives it regardless.
+    if (this._status.listening) return this.status()
     return new Promise<HooksGatewayStatus>((resolve) => {
       const waiter = {
         resolve,
@@ -158,6 +162,7 @@ export class HooksGatewayProxy implements HooksGatewayLike {
     if (this.inProcess) { await this.inProcessReady; await this.inProcess.stop(); return }
     this.transport.post({ type: 'stop' })
     this._status = { enabled: false, listening: false, port: null }
+    this.resolveBoundWaiters()   // a start()->stop() race must not wait out the 4s bound fallback
   }
 
   setPermissionGateActive(active: boolean): void {
@@ -176,7 +181,11 @@ export class HooksGatewayProxy implements HooksGatewayLike {
     for (const [sid, secret] of this.secrets) gw.registerSessionWithSecret(sid, secret)
     for (const cb of this.subscribers) gw.subscribe(cb)
     this.inProcess = gw
-    this.inProcessReady = gw.start()   // tracked so stop() can await it (no socket leak / race)
+    // Tracked so stop() can await it (no socket leak / race). Draining the bound
+    // waiters only AFTER the in-process gateway binds lets a start() awaited across
+    // the fail-open transition resolve with the real listening status (via
+    // status()->inProcess) instead of waiting out the 4s bound fallback.
+    this.inProcessReady = gw.start().then((s) => { this.resolveBoundWaiters(); return s })
   }
 
   /** Renderer Allow/Deny path. In-process: the module responder registry already
@@ -191,6 +200,7 @@ export class HooksGatewayProxy implements HooksGatewayLike {
   rebindTransport(t: ChildTransport): void {
     this.transport = t
     this._status = { ...this._status, listening: false }
+    this.resolveBoundWaiters()   // drop any waiter (and its timer) tied to the previous child
   }
 
   // Precondition: utility-process mode only (called on child restart, before any

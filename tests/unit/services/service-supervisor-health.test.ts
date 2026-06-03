@@ -2,12 +2,12 @@ import { describe, it, expect } from 'vitest'
 import { ServiceSupervisor } from '../../../src/main/services/service-supervisor'
 import { FakeChildTransport } from '../../../src/main/services/service-transport'
 
-function makeSup() {
+function makeSup(emit: (channel: string, payload: unknown) => void = () => {}) {
   const t = new FakeChildTransport()
   const sup = new ServiceSupervisor({
     forkChild: () => ({ transport: t, kill: () => t.kill(), onExit: () => {} }),
     defaultPort: 19430,
-    emit: () => {},
+    emit,
   })
   return { sup, t }
 }
@@ -43,6 +43,16 @@ describe('ServiceSupervisor health', () => {
     t.emitToParent({ type: 'bound', port: 19430, pid: 4242 })
     expect(proxy.status().listening).toBe(true)
     expect(proxy.status().port).toBe(19430)
+  })
+  it('forwarding bound emits HOOKS_STATUS to the renderer (supervisor-driven path)', () => {
+    const emitted: Array<{ channel: string; payload: unknown }> = []
+    const { sup, t } = makeSup((channel, payload) => emitted.push({ channel, payload }))
+    sup.start()
+    t.emitToParent({ type: 'bound', port: 19430, pid: 4242 })
+    const status = emitted.find((e) => e.channel === 'hooks:status')
+    expect(status).toBeDefined()
+    expect((status!.payload as { listening: boolean }).listening).toBe(true)
+    expect((status!.payload as { port: number }).port).toBe(19430)
   })
   it('start() returns a proxy and forwards child events to it (single-owner subscription)', () => {
     const { sup, t } = makeSup()

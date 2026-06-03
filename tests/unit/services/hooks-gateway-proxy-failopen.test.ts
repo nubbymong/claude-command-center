@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import { FakeChildTransport } from '../../../src/main/services/service-transport'
 import { HooksGatewayProxy } from '../../../src/main/services/hooks-gateway-proxy'
 
@@ -32,6 +32,45 @@ describe('HooksGatewayProxy fail-open + permission bridge', () => {
     expect(status).toBeDefined()
     expect((status!.payload as { listening: boolean }).listening).toBe(true)
     expect((status!.payload as { port: number }).port).toBe(19431)
+  })
+
+  it('start() resolves via the 4s timeout fallback (no hang) when bound never arrives', async () => {
+    vi.useFakeTimers()
+    try {
+      const t = new FakeChildTransport()
+      p = new HooksGatewayProxy({ transport: t, defaultPort: 19430 })
+      const startP = p.start()                 // utility mode: registers a 4s bound-waiter
+      await vi.advanceTimersByTimeAsync(4000)   // no bound ever arrives -> fallback fires
+      const status = await startP
+      expect(status.listening).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('stop() drains a pending start() so an awaited toggle resolves immediately (no 4s wait)', async () => {
+    vi.useFakeTimers()
+    try {
+      const t = new FakeChildTransport()
+      p = new HooksGatewayProxy({ transport: t, defaultPort: 19430 })
+      const startP = p.start()   // pending, awaiting bound
+      await p.stop()             // must drain the waiter synchronously
+      // Without advancing timers: if stop() did NOT drain, this await would hang
+      // (the 4s fallback timer never fires under fake timers) and the test times out.
+      const status = await startP
+      expect(status.listening).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('failOpen() resolves a pending start() with the in-process listening status', async () => {
+    const t = new FakeChildTransport()
+    p = new HooksGatewayProxy({ transport: t, defaultPort: 0 })
+    const startP = p.start()   // utility mode: pending bound-waiter
+    p.failOpen()               // swaps to in-process; drains the waiter once the gateway binds
+    const status = await startP
+    expect(status.listening).toBe(true)   // resolved with the real in-process bind, not a 4s fallback
   })
 
   it('stop() posts stop to the child (utility-process mode)', async () => {
