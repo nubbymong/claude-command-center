@@ -1,6 +1,24 @@
 import { describe, it, expect, vi } from 'vitest'
 import { FakeChildTransport } from '../../../src/main/services/service-transport'
 import { createHooksHost } from '../../../src/main/services/hooks-host-core'
+import type { HooksGatewayHostFace } from '../../../src/main/services/hooks-host-core'
+
+/** A no-op gateway whose start() resolves to a bind failure. Lets the bind-failed
+ *  path be exercised DETERMINISTICALLY (a real bind failure is not reliable — the
+ *  gateway tries the port plus random offsets). */
+function stubGateway(start: HooksGatewayHostFace['start']): HooksGatewayHostFace {
+  return {
+    registerSessionWithSecret: () => {},
+    unregisterSession: () => {},
+    start,
+    stop: async () => {},
+    setPermissionGateActive: () => {},
+    metrics: () => ({ inFlight: 0, eventsTotal: 0, dropsTotal: 0 }),
+    hasSecret: () => false,
+    _handleRequestForTest: async () => ({ status: 200, body: '' }),
+    permissionRegister: () => {},
+  }
+}
 
 describe('createHooksHost', () => {
   it('a register control message populates the gateway secret map', () => {
@@ -48,5 +66,23 @@ describe('createHooksHost', () => {
     // `stop` -> gateway.stop() closes the server asynchronously; give it a tick.
     t.post({ type: 'stop' })
     await new Promise((r) => setTimeout(r, 50))
+  })
+
+  it('posts bind-failed (not bound) when the gateway cannot bind', async () => {
+    const t = new FakeChildTransport()
+    const gw = stubGateway(async () => ({
+      enabled: false, listening: false, port: null, error: 'bind-failed after 5 attempts',
+    }))
+    createHooksHost(t.asHostTransport(), {
+      healthBeat: false,
+      createGateway: () => gw as unknown as never,
+    } as never)
+    t.post({ type: 'start', port: 19430 })
+    await vi.waitFor(() => {
+      expect(t.parentMessages.some((m) => m.type === 'bind-failed')).toBe(true)
+    })
+    const bf = t.parentMessages.find((m) => m.type === 'bind-failed') as { type: 'bind-failed'; error: string }
+    expect(bf.error).toContain('bind-failed')
+    expect(t.parentMessages.some((m) => m.type === 'bound')).toBe(false)
   })
 })

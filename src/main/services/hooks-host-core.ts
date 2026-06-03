@@ -1,12 +1,35 @@
 import { HooksGateway } from '../hooks/hooks-gateway'
 import { IPC } from '../../shared/ipc-channels'
+import type { HooksGatewayOptions } from '../hooks/hooks-gateway'
 import type { HostTransport } from './service-transport'
-import type { HookEvent } from '../../shared/hook-types'
+import type { HookEvent, HooksGatewayStatus } from '../../shared/hook-types'
 
 export interface HooksHost {
   _gatewayHasSecret(sid: string): boolean
   _ingestForTest(sid: string, secret: string): Promise<void>
   _registerResponderForTest(id: string, cb: (decision: string) => void): void
+}
+
+/** The minimal gateway surface `createHooksHost` depends on. The default
+ *  `createGateway` builds a real `HooksGateway`; tests inject a stub (e.g. one
+ *  whose `start()` resolves to a bind failure) to exercise the bind-failed path
+ *  deterministically. */
+export interface HooksGatewayHostFace {
+  registerSessionWithSecret(sid: string, secret: string): void
+  unregisterSession(sid: string): void
+  start(portOverride?: number): Promise<HooksGatewayStatus>
+  stop(): Promise<void>
+  setPermissionGateActive(active: boolean): void
+  metrics(): { inFlight: number; eventsTotal: number; dropsTotal: number }
+  hasSecret(sid: string): boolean
+  _handleRequestForTest(args: Parameters<HooksGateway['_handleRequestForTest']>[0]): Promise<{ status: number; body: string }>
+  permissionRegister(id: string, cb: (decision: string) => void): void
+}
+
+export interface CreateHooksHostOptions {
+  healthBeat?: boolean
+  /** Injection seam (default builds a real HooksGateway). */
+  createGateway?: (o: HooksGatewayOptions) => HooksGatewayHostFace
 }
 
 /**
@@ -17,10 +40,11 @@ export interface HooksHost {
  *   (permission-respond) -- B2: the gateway must NOT import permission-responders.
  * - control messages from parent drive register/unregister/start/stop/setGate.
  */
-export function createHooksHost(transport: HostTransport, opts?: { healthBeat?: boolean }): HooksHost {
+export function createHooksHost(transport: HostTransport, opts?: CreateHooksHostOptions): HooksHost {
   const localResponders = new Map<string, (decision: string) => void>()
 
-  const gateway = new HooksGateway({
+  const createGateway = opts?.createGateway ?? ((o: HooksGatewayOptions) => new HooksGateway(o))
+  const gateway = createGateway({
     emit: (channel, payload) => {
       if (channel === IPC.HOOKS_EVENT) {
         transport.post({ type: 'event', entry: payload as HookEvent })
@@ -43,7 +67,11 @@ export function createHooksHost(transport: HostTransport, opts?: { healthBeat?: 
       case 'unregister': gateway.unregisterSession(msg.sid); break
       case 'start':
         void gateway.start(msg.port).then((s) => {
-          if (s.listening && s.port != null) transport.post({ type: 'bound', port: s.port, pid: process.pid })
+          if (s.listening && s.port != null) {
+            transport.post({ type: 'bound', port: s.port, pid: process.pid })
+          } else {
+            transport.post({ type: 'bind-failed', error: s.error ?? 'bind-failed' })
+          }
         })
         break
       case 'stop': void gateway.stop(); break

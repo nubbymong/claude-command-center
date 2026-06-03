@@ -13,6 +13,7 @@ export type ToChildMessage =
 /** child -> main */
 export type FromChildMessage =
   | { type: 'bound'; port: number; pid: number }
+  | { type: 'bind-failed'; error: string }
   | { type: 'event'; entry: HookEvent }
   | { type: 'dropped'; sessionId: string }
   | { type: 'permission-open'; requestId: string; sid: string }
