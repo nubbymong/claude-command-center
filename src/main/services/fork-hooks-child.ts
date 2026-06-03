@@ -13,5 +13,5 @@ export function forkHooksChild(): ForkedChild {
     onMessage: (handler: (m: FromChildMessage) => void) => proc.on('message', (m) => handler(m as FromChildMessage)),
     kill: () => { try { proc.kill() } catch { /* already dead */ } },
   }
-  return { transport, kill: () => transport.kill(), onExit: (cb) => proc.once('exit', cb) }
+  return { transport, kill: transport.kill, onExit: (cb) => proc.once('exit', cb) }
 }

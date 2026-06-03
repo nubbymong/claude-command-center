@@ -4,6 +4,7 @@ import { RING_BUFFER_CAP } from '../hooks/hooks-types'
 import { HooksGateway } from '../hooks/hooks-gateway'
 import type { RingBufferEntry } from '../hooks/hooks-types'
 import type { HookEvent, HooksGatewayStatus } from '../../shared/hook-types'
+import type { HooksGatewayLike } from '../hooks'
 import type { ChildTransport, FromChildMessage } from './service-transport'
 
 export interface HooksGatewayProxyOptions {
@@ -13,7 +14,9 @@ export interface HooksGatewayProxyOptions {
   selfSubscribe?: boolean   // default true; supervisor passes false and drives handleChildMessage
 }
 
-export class HooksGatewayProxy {
+// `implements HooksGatewayLike` enforces the drop-in contract at compile time: if a
+// method is added to the consumed gateway surface, the proxy must implement it too.
+export class HooksGatewayProxy implements HooksGatewayLike {
   private transport: ChildTransport
   private port: number
   private emit: (channel: string, payload: unknown) => void
