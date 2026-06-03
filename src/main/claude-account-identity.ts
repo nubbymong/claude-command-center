@@ -3,7 +3,7 @@
 // RELIABLE + drift-immune: read once at spawn from the session's profile (or the
 // default ~/.claude.json for single-account sessions), never re-read. Fixes the
 // v1.5.9 chip removal (whose source was the GLOBAL last-login at tick time).
-import fs from 'node:fs'; import path from 'node:path'
+import fs, { promises as fsp } from 'node:fs'; import path from 'node:path'
 import { BrowserWindow } from 'electron'
 import { readProfileAccountEmail, getProfileConfigDir, sharedRoot, listProfiles } from './account-profiles'
 import { IPC } from '../shared/ipc-channels'
@@ -145,11 +145,54 @@ export function getWatchedProfileId(sessionId: string): string | undefined {
   return watched.get(sessionId)
 }
 
+/**
+ * Async variant of recheckSessionIdentity. Uses fsp.stat (async) for the
+ * per-tick mtime check so the Electron main event loop is not blocked.
+ * The expensive JSON parse only runs on a real mtime change (rare) and may
+ * remain synchronous -- it is not on the hot path.
+ */
+export async function recheckSessionIdentityAsync(
+  sessionId: string,
+  profileId: string | undefined,
+): Promise<string | null> {
+  const file = identityFilePath(profileId)
+  let mtime: number
+  try { mtime = (await fsp.stat(file)).mtimeMs } catch { return null }
+  if (lastMtimeMs.get(sessionId) === mtime) return null
+  lastMtimeMs.set(sessionId, mtime)
+  let email: string | null = null
+  try { email = profileId ? readProfileAccountEmail(profileId) : getDefaultAccountEmail() } catch { return null }
+  if (!email || bySession.get(sessionId) === email) return null
+  bySession.set(sessionId, email) // mid-session change: bypass the first-capture guard
+  return email
+}
+
+/** Async poll loop: iterates all watched sessions with async mtime checks off
+ *  the synchronous hot path. Mirrors recheckAll logic but uses fsp.stat. */
+export async function recheckAllAsync(): Promise<void> {
+  for (const [sessionId, profileId] of [...watched]) {
+    const before = bySession.get(sessionId) ?? null
+    let changed: string | null = null
+    try { changed = await recheckSessionIdentityAsync(sessionId, profileId) } catch { /* best-effort */ }
+    if (!changed) continue
+    pushAccountIdentity(sessionId)
+    if (!profileId) continue // bare-global/default session: no profile context to detect against
+    const known = listProfiles().map((p) => p.accountEmail).filter((e): e is string => !!e)
+    if (classifyIdentityChange(sessionId, changed, before, known).kind === 'capture') {
+      if (detectedByProfile.get(profileId) === changed) continue
+      detectedByProfile.set(profileId, changed)
+      broadcastNewAccountDetected(sessionId, profileId, changed)
+    } else {
+      detectedByProfile.delete(profileId)
+    }
+  }
+}
+
 /** Start polling a live session's identity file for mid-session account changes. */
 export function startWatchingAccountIdentity(sessionId: string, profileId: string | undefined): void {
   watched.set(sessionId, profileId)
   if (!pollTimer) {
-    pollTimer = setInterval(recheckAll, POLL_MS)
+    pollTimer = setInterval(() => { void recheckAllAsync() }, POLL_MS)
     // Never keep the process alive just for this poll.
     if (typeof (pollTimer as { unref?: () => void }).unref === 'function') (pollTimer as { unref: () => void }).unref()
   }
@@ -189,3 +232,6 @@ export function _resetClaudeAccounts(): void {
   detectedByProfile.clear()
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
 }
+
+/** Alias for the async-poll test suite (same semantics, shorter name). */
+export const _resetForTest = _resetClaudeAccounts
