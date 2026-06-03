@@ -4,7 +4,10 @@ import { homedir } from 'os'
 import { readRegistry, writeRegistry } from './registry'
 import { logInfo } from './debug-logger'
 
-// Lazy getter for default data dir — can't call at module load time
+// Default data dir. Uses os.homedir() (not Electron's app.getPath('home')) so
+// this module stays electron-free and can run inside the hooks utilityProcess.
+// Resolved lazily via getDataDirectory() so downstream lazy-initializers
+// (e.g. debug-logger) can call it without a module-load-order constraint.
 function getDefaultDataDir(): string {
   if (process.platform === 'darwin') {
     return path.join(homedir(), 'Library', 'Application Support', 'Claude Conductor')

@@ -2,11 +2,12 @@ import { describe, it, expect, vi } from 'vitest'
 import { readFileSync } from 'fs'
 import { resolve } from 'path'
 
-// The global setup mocks both setup-handlers and debug-logger.
-// This suite tests the REAL data-paths functions, so unmock both.
+// The global setup mocks setup-handlers and debug-logger. This suite tests the
+// REAL data-paths + setup-handlers re-export, so unmock those two. We KEEP
+// debug-logger mocked so getDataDirectory()'s logInfo() stays a no-op and the
+// test never touches the real log dir on disk (CI hygiene).
 vi.unmock('../../../src/main/ipc/setup-handlers')
 vi.unmock('../../../src/main/data-paths')
-vi.unmock('../../../src/main/debug-logger')
 
 // Test 1: Re-export identity
 import {
@@ -49,8 +50,9 @@ describe('data-paths module', () => {
       'utf-8'
     )
 
-    it('does not import from electron', () => {
-      expect(src).not.toMatch(/from ['"]electron['"]/)
+    it('does not import from electron (incl. subpaths / require)', () => {
+      expect(src).not.toMatch(/from ['"]electron(\/[^'"]*)?['"]/)
+      expect(src).not.toMatch(/require\(['"]electron(\/[^'"]*)?['"]\)/)
     })
 
     it('does not import from setup-handlers', () => {
