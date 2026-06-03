@@ -7,6 +7,8 @@ import type { ServiceSupervisor } from '../services/service-supervisor'
 type SupGetter = () => Pick<ServiceSupervisor, 'getDiagnosticsSnapshot' | 'manualRestart'> | null
 type PtyGetter = () => { snapshot: PtyIntegritySnapshot; logs: ServiceLogEntry[] } | null
 
+// Mirrors ServiceSupervisor's own LOG_CAP (service-supervisor.ts) so the merged
+// tail matches the size the diagnostics panel already expects.
 const LOG_CAP = 200
 
 /** Pure: the live supervisor snapshot (or an honest synthetic "hooks off"

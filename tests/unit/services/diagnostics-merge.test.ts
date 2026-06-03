@@ -31,4 +31,16 @@ describe('getMergedDiagnostics', () => {
     expect(out.pty).toBeUndefined()
     expect(out.log).toHaveLength(1)
   })
+
+  it('caps the merged log at 200, keeping the newest by ts', () => {
+    // 150 hooks logs (ts 0..149) + 150 pty logs (ts 1000..1149) = 300 -> capped to 200.
+    const hooksLog: ServiceLogEntry[] = Array.from({ length: 150 }, (_, i) => ({ ts: i, serviceId: 'hooks', level: 'info', code: 'h', message: `h${i}` }))
+    const ptyLog: ServiceLogEntry[] = Array.from({ length: 150 }, (_, i) => ({ ts: 1000 + i, serviceId: 'pty', level: 'info', code: 'p', message: `p${i}` }))
+    const bigSup: DiagnosticsSnapshot = { ...supSnap, log: hooksLog }
+    const out = getMergedDiagnostics(() => ({ getDiagnosticsSnapshot: () => bigSup, manualRestart: () => ({ ok: true }) }) as any, () => ({ snapshot: ptySnap, logs: ptyLog }))
+    expect(out.log).toHaveLength(200)
+    // Newest 200 kept (oldest 100 hooks entries dropped): first survivor is hooks ts=100, last is pty ts=1149.
+    expect(out.log[0].ts).toBe(100)
+    expect(out.log[out.log.length - 1].ts).toBe(1149)
+  })
 })

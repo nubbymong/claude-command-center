@@ -163,6 +163,9 @@ export class PtyIntegrityMonitor {
         resizes: sessions.reduce((a, s) => a + s.resizeCount, 0),
         desyncs: sessions.reduce((a, s) => a + s.widthDesyncCount, 0),
       },
+      // Shallow array copies are safe: event/log entries are write-once (pushed,
+      // never mutated), and the only consumer is IPC structured-clone. Matches the
+      // ServiceSupervisor's own shallow `[...this.log]` pattern.
       recentEvents: [...this.events],
     }
   }
