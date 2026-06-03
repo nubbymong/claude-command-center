@@ -167,9 +167,24 @@ export async function recheckSessionIdentityAsync(
   return email
 }
 
+// In-flight guard: a slow disk can make a 5s poll tick outlast the interval, so
+// the next tick must not start a second concurrent fan-out (overlapping stat
+// storms + duplicate broadcasts). Set on entry, cleared in `finally`.
+let recheckInFlight = false
+
 /** Async poll loop: iterates all watched sessions with async mtime checks off
  *  the synchronous hot path. Mirrors recheckAll logic but uses fsp.stat. */
 export async function recheckAllAsync(): Promise<void> {
+  if (recheckInFlight) return
+  recheckInFlight = true
+  try {
+    await recheckAllAsyncInner()
+  } finally {
+    recheckInFlight = false
+  }
+}
+
+async function recheckAllAsyncInner(): Promise<void> {
   for (const [sessionId, profileId] of [...watched]) {
     // Guard the WHOLE per-session body (not just the stat) so a throw in
     // pushAccountIdentity/listProfiles/classify/broadcast can never abort the poll
@@ -235,8 +250,13 @@ export function _resetClaudeAccounts(): void {
   watched.clear()
   lastMtimeMs.clear()
   detectedByProfile.clear()
+  recheckInFlight = false
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
 }
 
 /** Alias for the async-poll test suite (same semantics, shorter name). */
 export const _resetForTest = _resetClaudeAccounts
+
+/** Test seam: exposes the in-flight guard state so a test can assert overlapping
+ *  poll ticks do not run concurrently. */
+export function __isRecheckInFlightForTest(): boolean { return recheckInFlight }
