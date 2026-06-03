@@ -6,6 +6,8 @@ import { logInfo } from '../debug-logger'
 import { isVersionInstalled, installVersion } from '../legacy-version-manager'
 import { loadCredential } from '../credential-store'
 import { IPC } from '../../shared/ipc-channels'
+import { getPtyIntegrityMonitor } from '../services/pty-integrity-monitor'
+import type { PtyIntegrityReport } from '../../shared/service-health'
 
 /** SSH options as received from the renderer (no passwords — only configId) */
 interface RendererSSHOptions {
@@ -141,6 +143,10 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
 
   ipcMain.on('pty:kill', (_event, sessionId: string) => {
     killPty(sessionId)
+  })
+
+  ipcMain.on(IPC.PTY_INTEGRITY_REPORT, (_event, report: PtyIntegrityReport) => {
+    getPtyIntegrityMonitor()?.recordRendererReport(report)
   })
 
   // SSH manual-flow controller — renderer drives stage transitions.

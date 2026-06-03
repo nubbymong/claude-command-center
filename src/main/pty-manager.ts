@@ -33,6 +33,7 @@ import { captureClaudeAccount, clearClaudeAccount, getAccountIdentity, pushAccou
 import type { AccountIdentity } from '../shared/types'
 import { updateSessionMeta, clearSessionMeta } from './session-registry'
 import { readConfig } from './config-manager'
+import { getPtyIntegrityMonitor } from './services/pty-integrity-monitor'
 
 import * as path from 'path'
 import * as fs from 'fs'
@@ -615,6 +616,7 @@ export function spawnPty(
       // Strip SSH statusline OSC sentinels before forwarding to xterm.
       // Parsed sentinels are dispatched to the statusline pipeline as a side effect.
       const data = extractSshOscSentinels(sessionId, rawData)
+      getPtyIntegrityMonitor()?.recordPtyData(sessionId, data.length)
       win.webContents.send(`pty:data:${sessionId}`, data)
 
       // Arm the idle-data fallback. Re-arms on every chunk so the timer
@@ -813,6 +815,7 @@ export function spawnPty(
       })
       ptyProcess.onData((data) => {
         if (win.isDestroyed()) return
+        getPtyIntegrityMonitor()?.recordPtyData(sessionId, data.length)
         win.webContents.send(`pty:data:${sessionId}`, data)
       })
       // Start rollout watch-and-claim telemetry. Updates are dispatched to the
@@ -1056,6 +1059,7 @@ export function spawnPty(
 
     ptyProcess.onData((data) => {
       if (win.isDestroyed()) return
+      getPtyIntegrityMonitor()?.recordPtyData(sessionId, data.length)
       win.webContents.send(`pty:data:${sessionId}`, data)
     })
   }
@@ -1107,6 +1111,7 @@ export function spawnPty(
     if (weAreCurrent) {
       ptySessions.delete(sessionId)
       clearSessionMeta(sessionId)
+      getPtyIntegrityMonitor()?.endSession(sessionId)
       try {
         const gwExit = getGateway()
         if (gwExit) gwExit.unregisterSession(sessionId)
@@ -1259,6 +1264,7 @@ export function writePty(sessionId: string, data: string): void {
 export function resizePty(sessionId: string, cols: number, rows: number): void {
   try {
     ptySessions.get(sessionId)?.ptyProcess.resize(cols, rows)
+    getPtyIntegrityMonitor()?.recordResizeApplied(sessionId, cols, rows)
   } catch (err: unknown) {
     const code = (err as NodeJS.ErrnoException)?.code
     if (code === 'EPIPE' || code === 'EIO') {
