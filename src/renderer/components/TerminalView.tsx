@@ -316,6 +316,10 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       const fitAndSpawn = () => {
         if (disposed || !fitAddon || !term) return
         try { fitAddon.fit() } catch { /* ignore */ }
+        // Seed the integrity geometry from the initial (font-aware) fit so the
+        // first throttled report carries the real cols/rows instead of 0 — and
+        // so the ResizeObserver's "changed" guard has a correct baseline.
+        if (term.cols > 0 && term.rows > 0) { lastSentCols = term.cols; lastSentRows = term.rows }
 
         if (!hasSpawned(sessionId)) {
           const gate = useAccountGateStore.getState()

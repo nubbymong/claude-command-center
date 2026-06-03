@@ -29,6 +29,21 @@ describe('PtyIntegrityMonitor', () => {
     expect(m.snapshot().recentEvents.some(e => e.kind === 'desync')).toBe(true)
   })
 
+  it('counts a desync once per episode (hysteresis), not once per persistent report', () => {
+    const { m } = makeMonitor({ eventCap: 100 })
+    m.recordResizeApplied('s1', 120, 30)
+    // Three reports with the SAME mismatch -> ONE desync episode.
+    for (let i = 0; i < 3; i++) {
+      m.recordRendererReport({ sessionId: 's1', bytesReceived: 0, bytesWritten: 0, strippedBytes: 0, cols: 100, rows: 30, resizeCount: 1 })
+    }
+    expect(m.snapshot().sessions.find(x => x.sessionId === 's1')!.widthDesyncCount).toBe(1)
+    expect(m.snapshot().recentEvents.filter(e => e.kind === 'desync').length).toBe(1)
+    // Re-sync (renderer matches main) clears the flag; a fresh mismatch is a NEW episode.
+    m.recordRendererReport({ sessionId: 's1', bytesReceived: 0, bytesWritten: 0, strippedBytes: 0, cols: 120, rows: 30, resizeCount: 2 })
+    m.recordRendererReport({ sessionId: 's1', bytesReceived: 0, bytesWritten: 0, strippedBytes: 0, cols: 90, rows: 30, resizeCount: 3 })
+    expect(m.snapshot().sessions.find(x => x.sessionId === 's1')!.widthDesyncCount).toBe(2)
+  })
+
   it('computes byteGap and emits a byte-gap event once past the threshold', () => {
     const { m } = makeMonitor({ byteGapThreshold: 4096 })
     m.recordPtyData('s1', 10000)

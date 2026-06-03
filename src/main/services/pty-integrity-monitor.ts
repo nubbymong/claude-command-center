@@ -17,6 +17,7 @@ interface SessionRec {
   rendererResizeCount: number
   widthDesyncCount: number
   byteGapFlagged: boolean
+  desyncFlagged: boolean
 }
 
 export interface PtyIntegrityMonitorOptions {
@@ -59,7 +60,7 @@ export class PtyIntegrityMonitor {
         lastAppliedCols: null, lastAppliedRows: null,
         bytesReceived: 0, bytesWritten: 0, strippedBytes: 0,
         lastRendererCols: null, lastRendererRows: null, rendererResizeCount: 0,
-        widthDesyncCount: 0, byteGapFlagged: false,
+        widthDesyncCount: 0, byteGapFlagged: false, desyncFlagged: false,
       }
       this.sessions.set(sessionId, r)
     }
@@ -123,10 +124,19 @@ export class PtyIntegrityMonitor {
   }
 
   private checkDesync(r: SessionRec): void {
-    if (r.lastAppliedCols != null && r.lastRendererCols != null && r.lastAppliedCols !== r.lastRendererCols) {
+    // Hysteresis (mirrors checkByteGap): count + log ONE event per desync EPISODE
+    // (a synced->desynced transition), not once per report tick. Persistent
+    // mismatches would otherwise inflate widthDesyncCount and flood the rings,
+    // evicting the genuinely-useful timeline.
+    const isDesynced =
+      r.lastAppliedCols != null && r.lastRendererCols != null && r.lastAppliedCols !== r.lastRendererCols
+    if (isDesynced && !r.desyncFlagged) {
+      r.desyncFlagged = true
       r.widthDesyncCount += 1
       this.pushEvent('desync', r.sessionId, `cols main=${r.lastAppliedCols} renderer=${r.lastRendererCols}`)
       this.pushLog('warn', 'pty-width-desync', `${r.sessionId}: cols main=${r.lastAppliedCols} renderer=${r.lastRendererCols}`)
+    } else if (!isDesynced && r.desyncFlagged) {
+      r.desyncFlagged = false
     }
   }
 
