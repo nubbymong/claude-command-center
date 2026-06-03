@@ -444,8 +444,6 @@ export default function App() {
           sshConfig: saved.sshConfig,
           legacyVersion: claude?.legacyVersion ?? saved.legacyVersion,
           agentIds: claude?.agentIds ?? saved.agentIds,
-          flickerFree: claude?.flickerFree ?? saved.flickerFree,
-          powershellTool: claude?.powershellTool ?? saved.powershellTool,
           effortLevel: claude?.effortLevel ?? saved.effortLevel,
           disableAutoMemory: claude?.disableAutoMemory ?? saved.disableAutoMemory,
           enableCodexReview: claude?.enableCodexReview,

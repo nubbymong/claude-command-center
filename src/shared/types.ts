@@ -68,16 +68,11 @@ export interface ClaudeOptions {
   effortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode'
   legacyVersion?: LegacyVersion
   disableAutoMemory?: boolean
-  flickerFree?: boolean
-  powershellTool?: boolean
   agentIds?: string[]
   /** v1.5 P6: when true, the Claude PTY is registered into the codex_review opt-in set
    *  and the SessionDialog toggle is persisted. Tool description still appears to all
    *  Claude sessions (soft ACL); this flag controls authorisation server-side. */
   enableCodexReview?: boolean
-  /** v1.5.11: Opus 4.8 fast mode (2.5x speed, $10/$50 per 1M tokens vs standard $5/$25).
-   *  Per-session toggle; tokenomics uses this to pick the correct pricing row. */
-  fastMode?: boolean
 }
 
 export interface CodexOptions {
@@ -119,10 +114,6 @@ export interface SavedSession {
   legacyVersion?: LegacyVersion
   /** @deprecated read from claudeOptions; removed in P1.2+ */
   agentIds?: string[]
-  /** @deprecated read from claudeOptions; removed in P1.2+ */
-  flickerFree?: boolean
-  /** @deprecated read from claudeOptions; removed in P1.2+ */
-  powershellTool?: boolean
   /** @deprecated read from claudeOptions; removed in P1.2+ */
   effortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode'
   /** @deprecated read from claudeOptions; removed in P1.2+ */

@@ -132,8 +132,6 @@ export interface ElectronAPI {
         name: string; description: string; prompt: string
         model?: string; tools?: string[]
       }>
-      flickerFree?: boolean
-      powershellTool?: boolean
       effortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode'
       disableAutoMemory?: boolean
       enableCodexReview?: boolean
