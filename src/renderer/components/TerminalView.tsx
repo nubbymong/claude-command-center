@@ -178,6 +178,25 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
     let refreshTimer: ReturnType<typeof setTimeout> | null = null
     let handleWheel: ((e: WheelEvent) => void) | null = null
 
+    // PTY-integrity instrumentation (scoped to this session's mount; resets on
+    // sessionId change because the effect re-runs).
+    let bytesReceived = 0, bytesWritten = 0, strippedBytes = 0, ptyResizeCount = 0
+    let lastSentCols: number | null = null, lastSentRows: number | null = null
+    let reportTimer: ReturnType<typeof setTimeout> | null = null
+    let resizeDebounce: ReturnType<typeof setTimeout> | null = null
+    const reportIntegrity = () => {
+      if (reportTimer) return
+      reportTimer = setTimeout(() => {
+        reportTimer = null
+        window.electronAPI.ptyIntegrity?.report({
+          sessionId,
+          bytesReceived, bytesWritten, strippedBytes,
+          cols: lastSentCols ?? 0, rows: lastSentRows ?? 0,
+          resizeCount: ptyResizeCount,
+        })
+      }, 1000)
+    }
+
     const initTerminal = () => {
       if (disposed) return
 
@@ -510,6 +529,9 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       // backgrounds, or spinner glyphs.
       unsubData = window.electronAPI.pty.onData(sessionId, (data) => {
         const filtered = shellOnly ? data : stripCursorSequences(data)
+        bytesReceived += data.length
+        strippedBytes += data.length - filtered.length
+        bytesWritten += filtered.length
         term?.write(filtered)
 
         // Only auto-scroll if user hasn't scrolled up
@@ -517,6 +539,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
           term?.scrollToBottom()
         }
 
+        reportIntegrity()
         pendingParseData += data
         scheduleParse()
       })
@@ -527,14 +550,28 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
 
       // Handle resize
       resizeObserver = new ResizeObserver(() => {
-        if (disposed || !fitAddon || !term) return
-        try {
-          fitAddon.fit()
-          window.electronAPI.pty.resize(sessionId, term.cols, term.rows)
-          // xterm recreates / resizes the cursor canvas after fit;
-          // re-stamp the inline hide so the caret stays gone.
-          hideClaudeCursorLayer()
-        } catch { /* ignore */ }
+        // Trailing debounce: coalesce resize storms (a ConPTY-reflow aggravator)
+        // into a single fit + resize.
+        if (resizeDebounce) clearTimeout(resizeDebounce)
+        resizeDebounce = setTimeout(() => {
+          resizeDebounce = null
+          if (disposed || !fitAddon || !term) return
+          try {
+            fitAddon.fit()
+            const cols = term.cols, rows = term.rows
+            // Guard: only resize on a valid, CHANGED geometry (skip failed/no-op fits).
+            if (cols > 0 && rows > 0 && (cols !== lastSentCols || rows !== lastSentRows)) {
+              lastSentCols = cols
+              lastSentRows = rows
+              ptyResizeCount += 1
+              window.electronAPI.pty.resize(sessionId, cols, rows)
+              reportIntegrity()
+            }
+            // xterm recreates / resizes the cursor canvas after fit;
+            // re-stamp the inline hide so the caret stays gone.
+            hideClaudeCursorLayer()
+          } catch { /* ignore */ }
+        }, 80)
       })
       resizeObserver.observe(container)
 
@@ -586,6 +623,8 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       if (attentionTimerRef.current) clearTimeout(attentionTimerRef.current)
       if (parseTimer) clearTimeout(parseTimer)
       if (refreshTimer) clearTimeout(refreshTimer)
+      if (reportTimer) clearTimeout(reportTimer)
+      if (resizeDebounce) clearTimeout(resizeDebounce)
       if (handleKeyDownCopy) document.removeEventListener('keydown', handleKeyDownCopy)
       if (handleContextMenu) container.removeEventListener('contextmenu', handleContextMenu, true)
       if (handleWheel) container.removeEventListener('wheel', handleWheel)
