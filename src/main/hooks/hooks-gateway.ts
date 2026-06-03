@@ -17,7 +17,7 @@ import type {
 // Responder registry lives in its own module so we can import it directly --
 // the old lazy-require workaround for the channel-permissions circular
 // dependency is no longer needed (#483).
-import { registerResponder, deregisterResponder } from '../permission-responders'
+import { registerResponder as defaultRegister, deregisterResponder as defaultDeregister } from '../permission-responders'
 import { logTrace, logWarn, logError } from '../debug-logger'
 
 // Diagnostics (opt-in, verbose-gated): module-level in-flight counter for the
@@ -36,6 +36,10 @@ const MAX_REQUEST_BODY_BYTES = 256 * 1024
 export interface HooksGatewayOptions {
   defaultPort?: number
   emit: (channel: string, payload: unknown) => void
+  permissionResponders?: {
+    register: (id: string, cb: (decision: string) => void) => void
+    deregister: (id: string) => void
+  }
 }
 
 interface HandleArgs {
@@ -64,6 +68,11 @@ export class HooksGateway {
   private defaultPort: number
   private emit: HooksGatewayOptions['emit']
 
+  public readonly permissionRegister: (id: string, cb: (decision: string) => void) => void
+  public readonly permissionDeregister: (id: string) => void
+  private _eventsTotal = 0
+  private _dropsTotal = 0
+
   private secrets = new Map<string, string>()
   private buffers = new Map<string, RingBufferEntry[]>()
   private overflowLatched = new Set<string>()
@@ -73,6 +82,8 @@ export class HooksGateway {
   constructor(opts: HooksGatewayOptions) {
     this.defaultPort = opts.defaultPort ?? DEFAULT_HOOKS_PORT
     this.emit = opts.emit
+    this.permissionRegister = opts.permissionResponders?.register ?? defaultRegister
+    this.permissionDeregister = opts.permissionResponders?.deregister ?? defaultDeregister
   }
 
   subscribe(cb: (e: HookEvent) => void): () => void {
@@ -145,6 +156,18 @@ export class HooksGateway {
     const secret = randomUUID()
     this.secrets.set(sessionId, secret)
     return secret
+  }
+
+  registerSessionWithSecret(sessionId: string, secret: string): void {
+    this.secrets.set(sessionId, secret)
+  }
+
+  hasSecret(sessionId: string): boolean {
+    return this.secrets.has(sessionId)
+  }
+
+  metrics(): { inFlight: number; eventsTotal: number; dropsTotal: number } {
+    return { inFlight: hooksInFlight, eventsTotal: this._eventsTotal, dropsTotal: this._dropsTotal }
   }
 
   unregisterSession(sessionId: string): void {
@@ -322,7 +345,7 @@ export class HooksGateway {
           if (done) return
           done = true
           clearTimeout(timeout)
-          deregisterResponder(capturedId)
+          this.permissionDeregister(capturedId)
         }
         const timeout = setTimeout(() => {
           if (done) return
@@ -331,11 +354,11 @@ export class HooksGateway {
             capturedRes.writeHead(200, { 'Content-Type': 'application/json', 'Connection': 'close' })
             capturedRes.end('{}')
           } catch { /* response already closed */ }
-          deregisterResponder(capturedId)
+          this.permissionDeregister(capturedId)
         }, 120_000)
         timeout.unref?.()
         req.on('close', () => cleanup())
-        registerResponder(capturedId, (decision) => {
+        this.permissionRegister(capturedId, (decision) => {
           if (done) return  // timeout already fired or client aborted
           done = true
           clearTimeout(timeout)
@@ -484,11 +507,13 @@ export class HooksGateway {
       payload: redacted,
       ts: Date.now(),
     }
+    this._eventsTotal++
 
     const buf = this.buffers.get(sid) ?? []
     buf.push(entry)
     if (buf.length > RING_BUFFER_CAP) {
       buf.splice(0, buf.length - RING_BUFFER_CAP)
+      this._dropsTotal++
       if (!this.overflowLatched.has(sid)) {
         this.overflowLatched.add(sid)
         try {
