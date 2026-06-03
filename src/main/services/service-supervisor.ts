@@ -1,5 +1,6 @@
 import { HooksGatewayProxy } from './hooks-gateway-proxy'
 import { createInitialHealth } from '../../shared/service-health'
+import { IPC } from '../../shared/ipc-channels'
 import type { ServiceHealth, ServiceLogEntry, DiagnosticsSnapshot } from '../../shared/service-health'
 import type { ChildTransport, FromChildMessage } from './service-transport'
 
@@ -55,6 +56,14 @@ export class ServiceSupervisor {
     if (this.log.length > LOG_CAP) this.log.splice(0, this.log.length - LOG_CAP)
   }
 
+  // Push the live diagnostics snapshot to the renderer. Called after every
+  // health mutation (and after a forwarded child log lands) so the health pill +
+  // services console reflect reality without polling. Guarded: the window may be
+  // gone during teardown.
+  private pushHealth(): void {
+    try { this.opts.emit(IPC.SERVICE_HEALTH_UPDATE, this.getDiagnosticsSnapshot()) } catch { /* window gone */ }
+  }
+
   // The supervisor owns the SINGLE transport subscription (ChildTransport.onMessage
   // is last-writer-wins). It consumes bound/health/log itself and forwards the
   // proxy-relevant messages (event/dropped/permission-open) via handleChildMessage.
@@ -73,6 +82,7 @@ export class ServiceSupervisor {
         startedAt: this.health.startedAt ?? this.now(),
       }
       this.appendLog('info', 'bound', `bound :${m.port} pid=${m.pid}`)
+      this.pushHealth()
     } else if (m.type === 'health') {
       this.health = {
         ...this.health,
@@ -82,9 +92,11 @@ export class ServiceSupervisor {
         childLoopStallsLastMin: m.stallsLastMin,
         lastHeartbeatAt: this.now(),
       }
+      this.pushHealth()
     } else if (m.type === 'log') {
       this.log.push(m.entry)
       if (this.log.length > LOG_CAP) this.log.splice(0, this.log.length - LOG_CAP)
+      this.pushHealth()
     }
     // Forward `bound` to the proxy too so its status/HOOKS_STATUS broadcast and
     // start()-await-bound resolve in the production (supervisor-driven) path, not
@@ -120,8 +132,9 @@ export class ServiceSupervisor {
     this.proxy.replaySecretsTo(c.transport)
     this.health = { ...this.health, state: this.restarts > 0 ? 'restarting' : 'starting' }
     this.appendLog('info', 'child-up', `hooks child forked (restart ${this.restarts})`)
+    this.pushHealth()
     void this.proxy.start()
-    c.onExit(() => this.onChildExit())
+    c.onExit(() => { if (this.child === c) this.onChildExit() })
   }
 
   private onChildExit(): void {
@@ -130,6 +143,7 @@ export class ServiceSupervisor {
     if (this.shuttingDown || this.fellOpen) return
     this.health = { ...this.health, state: 'crashed', lastError: { message: 'child exited', ts: this.now() } }
     this.appendLog('error', 'crashed', 'hooks child exited unexpectedly')
+    this.pushHealth()
     if (this.restarts >= (this.opts.maxRestarts ?? 5)) { this.activateFallback(); return }
     const delay = ServiceSupervisor.BACKOFFS[Math.min(this.backoffIdx, ServiceSupervisor.BACKOFFS.length - 1)]
     this.backoffIdx++
@@ -149,6 +163,7 @@ export class ServiceSupervisor {
     this.child?.kill()   // free the port BEFORE the in-process gateway binds (mutual exclusion)
     this.health = { ...this.health, host: 'in-process-fallback', state: 'degraded', restartCount: this.restarts }
     this.proxy?.failOpen()
+    this.pushHealth()
   }
 
   shutdown(): void {

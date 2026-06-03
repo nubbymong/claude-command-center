@@ -69,4 +69,23 @@ describe('ServiceSupervisor health', () => {
     t.emitToParent({ type: 'log', entry: { ts: 1, serviceId: 'hooks', level: 'warn', code: 'x', message: 'hi' } })
     expect(sup.getDiagnosticsSnapshot().log.some((l) => l.code === 'x')).toBe(true)
   })
+  it('pushes SERVICE_HEALTH_UPDATE with a snapshot on a bound transition', () => {
+    const emitted: Array<{ channel: string; payload: unknown }> = []
+    const { sup, t } = makeSup((c, p) => emitted.push({ channel: c, payload: p }))
+    sup.start()
+    emitted.length = 0   // drop the 'starting' push from spawnChild; assert the bound push
+    t.emitToParent({ type: 'bound', port: 19430, pid: 4242 })
+    const upd = emitted.find((e) => e.channel === 'serviceHealth:update')
+    expect(upd).toBeDefined()
+    const snap = upd!.payload as import('../../../src/shared/service-health').DiagnosticsSnapshot
+    expect(snap.services[0].state).toBe('listening')
+  })
+  it('pushes SERVICE_HEALTH_UPDATE when a forwarded child log lands', () => {
+    const emitted: Array<{ channel: string; payload: unknown }> = []
+    const { sup, t } = makeSup((c, p) => emitted.push({ channel: c, payload: p }))
+    sup.start()
+    emitted.length = 0
+    t.emitToParent({ type: 'log', entry: { ts: 1, serviceId: 'hooks', level: 'info', code: 'child-stop', message: 'stop' } })
+    expect(emitted.some((e) => e.channel === 'serviceHealth:update')).toBe(true)
+  })
 })
