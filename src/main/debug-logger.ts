@@ -1,6 +1,6 @@
 import * as fs from 'fs'
 import * as path from 'path'
-import { getDataDirectory } from './ipc/setup-handlers'
+import { getDataDirectory } from './data-paths'
 
 // Lazy-initialized: can't call getDataDirectory() at module load time
 let LOG_DIR: string | null = null
