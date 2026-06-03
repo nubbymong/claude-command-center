@@ -37,6 +37,7 @@ import { registerTokenomicsHandlers } from './ipc/tokenomics-handlers'
 import { registerAccountAttributionHandlers } from './ipc/account-attribution-handlers'
 import { registerGitHubHandlers } from './ipc/github-handlers'
 import { registerHooksHandlers } from './ipc/hooks-handlers'
+import { registerServiceHealthHandlers } from './ipc/service-health-handlers'
 import { registerCodexHandlers } from './ipc/codex-handlers'
 import { registerCodexReviewHandlers } from './ipc/codex-review-handlers'
 import { registerChannelHandlers } from './ipc/channel-handlers'
@@ -121,6 +122,7 @@ let mainWindow: BrowserWindow | null = null
 let splashWindow: BrowserWindow | null = null
 let _hooksSupervisor: ServiceSupervisor | null = null
 function setHooksSupervisor(s: ServiceSupervisor): void { _hooksSupervisor = s }
+function getHooksSupervisor(): ServiceSupervisor | null { return _hooksSupervisor }
 
 function getSplashImagePath(): { path: string; mime: string } | null {
   // In dev: repo root. In production: resources/ directory inside app.
@@ -719,6 +721,9 @@ if (!gotTheLock) {
     startAttentionSource()
     startJankDetector()
     registerHooksHandlers(getGateway()!)   // B1: handlers get whatever gateway backs the singleton
+    // D1b: diagnostics IPC. The getter returns null in the hooks-disabled branch
+    // (supervisor never set) -> the handler serves an honest synthetic "hooks off" snapshot.
+    registerServiceHealthHandlers(() => getHooksSupervisor())
     if (hooksEnabled) {
       cleanupStaleHookEntries(new Set())   // supervisor.start() already fired proxy.start()
     }
