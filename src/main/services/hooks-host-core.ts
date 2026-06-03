@@ -61,6 +61,12 @@ export function createHooksHost(transport: HostTransport, opts?: CreateHooksHost
     },
   })
 
+  // Forward a small set of operationally-useful child events to the diagnostics
+  // ring. Metadata-only (never hook bodies). `Date.now()` is fine here -- this is
+  // a real child process, NOT a workflow script.
+  const postLog = (level: 'info' | 'warn' | 'error', code: string, message: string) =>
+    transport.post({ type: 'log', entry: { ts: Date.now(), serviceId: 'hooks', level, code, message } })
+
   transport.onMessage((msg) => {
     switch (msg.type) {
       case 'register': gateway.registerSessionWithSecret(msg.sid, msg.secret); break
@@ -70,11 +76,12 @@ export function createHooksHost(transport: HostTransport, opts?: CreateHooksHost
           if (s.listening && s.port != null) {
             transport.post({ type: 'bound', port: s.port, pid: process.pid })
           } else {
+            postLog('error', 'bind-failed', s.error ?? 'bind-failed')
             transport.post({ type: 'bind-failed', error: s.error ?? 'bind-failed' })
           }
         })
         break
-      case 'stop': void gateway.stop(); break
+      case 'stop': postLog('info', 'child-stop', 'gateway stop requested'); void gateway.stop(); break
       case 'setGate': gateway.setPermissionGateActive(msg.active); break
       case 'permission-respond': localResponders.get(msg.requestId)?.(msg.decision); break
       default: break

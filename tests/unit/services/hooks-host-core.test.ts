@@ -68,6 +68,15 @@ describe('createHooksHost', () => {
     await new Promise((r) => setTimeout(r, 50))
   })
 
+  it('forwards a log entry to the parent on stop', async () => {
+    const t = new FakeChildTransport()
+    createHooksHost(t.asHostTransport(), { healthBeat: false })
+    t.post({ type: 'stop' })
+    await vi.waitFor(() => {
+      expect(t.parentMessages.some((m) => m.type === 'log' && (m as { entry: { code: string } }).entry.code === 'child-stop')).toBe(true)
+    })
+  })
+
   it('posts bind-failed (not bound) when the gateway cannot bind', async () => {
     const t = new FakeChildTransport()
     const gw = stubGateway(async () => ({
