@@ -1,6 +1,6 @@
 import { BrowserWindow, ipcMain } from 'electron'
 import { IPC } from '../../shared/ipc-channels'
-import type { HooksGateway } from '../hooks/hooks-gateway'
+import type { HooksGatewayLike } from '../hooks'
 import type { HooksToggleRequest, HooksGetBufferRequest, HooksGatewayStatus } from '../../shared/hook-types'
 import { getActivePtySessionIds } from '../pty-manager'
 import { removeHooks } from '../hooks/session-hooks-writer'
@@ -14,7 +14,7 @@ function broadcastStatus(status: HooksGatewayStatus): void {
   }
 }
 
-export function registerHooksHandlers(gateway: HooksGateway): void {
+export function registerHooksHandlers(gateway: HooksGatewayLike): void {
   ipcMain.handle(IPC.HOOKS_TOGGLE, async (_e, req: HooksToggleRequest) => {
     let status: HooksGatewayStatus
     if (req.enabled) {

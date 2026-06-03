@@ -48,6 +48,8 @@ import { startJankDetector } from './jank-detector'
 import { readClipboardImageWithRetry } from './clipboard-image'
 import { HooksGateway } from './hooks/hooks-gateway'
 import { setGateway, getGateway } from './hooks'
+import { ServiceSupervisor } from './services/service-supervisor'
+import { forkHooksChild } from './services/fork-hooks-child'
 import { cleanupStaleHookEntries } from './hooks/boot-cleanup'
 import { DEFAULT_HOOKS_PORT } from './hooks/hooks-types'
 import { fetchModelPricing } from './tokenomics-manager'
@@ -117,6 +119,8 @@ function saveWindowState(win: BrowserWindow): void {
 
 let mainWindow: BrowserWindow | null = null
 let splashWindow: BrowserWindow | null = null
+let _hooksSupervisor: ServiceSupervisor | null = null
+function setHooksSupervisor(s: ServiceSupervisor): void { _hooksSupervisor = s }
 
 function getSplashImagePath(): { path: string; mime: string } | null {
   // In dev: repo root. In production: resources/ directory inside app.
@@ -692,26 +696,31 @@ if (!gotTheLock) {
     const hooksSettings = readConfig<{ hooksEnabled?: boolean; hooksPort?: number }>('settings')
     const hooksEnabled = hooksSettings?.hooksEnabled !== false
     const hooksPort = hooksSettings?.hooksPort ?? DEFAULT_HOOKS_PORT
-    const hooksGateway = new HooksGateway({
-      defaultPort: hooksPort,
-      emit: (channel, payload) => {
-        const win = getWindow()
-        if (win && !win.isDestroyed()) {
-          try { win.webContents.send(channel, payload) } catch { /* destroyed */ }
-        }
-      },
-    })
-    setGateway(hooksGateway)
+    const emitToWindow = (channel: string, payload: unknown) => {
+      const win = getWindow()
+      if (win && !win.isDestroyed()) {
+        try { win.webContents.send(channel, payload) } catch { /* destroyed */ }
+      }
+    }
+    if (hooksEnabled) {
+      // Supervised out-of-process gateway: a utilityProcess child runs the HooksGateway,
+      // crash-isolated from the main thread, with restart/backoff + fail-open-to-in-process.
+      const hooksSupervisor = new ServiceSupervisor({ forkChild: forkHooksChild, defaultPort: hooksPort, emit: emitToWindow })
+      const hooksProxy = hooksSupervisor.start()   // forks the child + posts start (S1 replay-before-listen inside)
+      setGateway(hooksProxy)                        // B1: consumers + handlers all use the proxy
+      setHooksSupervisor(hooksSupervisor)           // module-scope ref for before-quit (S5)
+    } else {
+      // Hooks disabled: today's exact behavior — an in-process gateway exists (so
+      // registerSession still mints secrets) but never binds; no child is forked.
+      setGateway(new HooksGateway({ defaultPort: hooksPort, emit: emitToWindow }))
+    }
     startPermissionTray()
     startEffortTracker()
     startAttentionSource()
     startJankDetector()
-    registerHooksHandlers(hooksGateway)
+    registerHooksHandlers(getGateway()!)   // B1: handlers get whatever gateway backs the singleton
     if (hooksEnabled) {
-      cleanupStaleHookEntries(new Set())
-      hooksGateway.start().catch((err) => {
-        logError(`[hooks] Gateway failed to start: ${err?.message ?? err}`)
-      })
+      cleanupStaleHookEntries(new Set())   // supervisor.start() already fired proxy.start()
     }
 
     // Shell — open URLs in system browser
@@ -778,6 +787,9 @@ if (!gotTheLock) {
 
   app.on('before-quit', () => {
     logInfo('App quitting...')
+    // S5: mark the supervisor shutting-down BEFORE killAllPty() so a hooks-child
+    // exit during teardown does NOT trigger a restart (race-free shutdown).
+    try { _hooksSupervisor?.shutdown() } catch { /* never started / hooks disabled */ }
     stopServiceStatusPoller()
     stopUpdateWatcher()
     stopUpdateServer()
