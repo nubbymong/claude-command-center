@@ -603,6 +603,17 @@ const electronAPI: ElectronAPI = {
       return () => ipcRenderer.removeListener(IPC.SERVICE_STATUS, handler)
     }
   },
+  serviceHealth: {
+    get: (): Promise<import('../shared/service-health').DiagnosticsSnapshot> =>
+      ipcRenderer.invoke(IPC.SERVICE_HEALTH_GET),
+    restart: (serviceId: string): Promise<{ ok: boolean; reason?: string }> =>
+      ipcRenderer.invoke(IPC.SERVICE_RESTART, serviceId),
+    onUpdate: (callback: (snap: import('../shared/service-health').DiagnosticsSnapshot) => void) => {
+      const handler = (_: unknown, snap: import('../shared/service-health').DiagnosticsSnapshot) => callback(snap)
+      ipcRenderer.on(IPC.SERVICE_HEALTH_UPDATE, handler)
+      return () => ipcRenderer.removeListener(IPC.SERVICE_HEALTH_UPDATE, handler)
+    }
+  },
   cli: {
     check: () => ipcRenderer.invoke(IPC.CLI_CHECK)
   },

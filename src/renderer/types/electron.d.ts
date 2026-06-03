@@ -312,6 +312,11 @@ export interface ElectronAPI {
     get: () => Promise<any>
     onUpdate: (callback: (data: { status: string; description: string }) => void) => () => void
   }
+  serviceHealth: {
+    get: () => Promise<import('../../shared/service-health').DiagnosticsSnapshot>
+    restart: (serviceId: string) => Promise<{ ok: boolean; reason?: string }>
+    onUpdate: (callback: (snap: import('../../shared/service-health').DiagnosticsSnapshot) => void) => () => void
+  }
   cli: {
     check: () => Promise<boolean>
   }
