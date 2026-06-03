@@ -35,6 +35,24 @@ describe('ServiceSupervisor lifecycle', () => {
     expect(h.state).toBe('degraded')
   })
 
+  it('ignores the self-kill exit after fail-open (single fallback log, no re-entry)', () => {
+    let exitCb: (() => void) | null = null
+    // kill() synchronously fires the stored exit callback — the WORST case for
+    // re-entry (the real utilityProcess fires it async). The fellOpen flag (set
+    // before kill in activateFallback) must suppress it either way.
+    const fork = vi.fn(() => ({
+      transport: new FakeChildTransport(),
+      kill: () => { exitCb?.() },
+      onExit: (cb: () => void) => { exitCb = cb },
+    }))
+    sup = new ServiceSupervisor({ forkChild: fork, defaultPort: 0, emit: () => {}, maxRestarts: 1 })
+    sup.start()
+    for (let i = 0; i < 2; i++) { exitCb?.(); vi.advanceTimersByTime(5000) }
+    expect(sup.getProxy()?.isInProcessFallback()).toBe(true)
+    const fallbackLogs = sup.getDiagnosticsSnapshot().log.filter((l) => l.code === 'fallback')
+    expect(fallbackLogs).toHaveLength(1)   // the kill-triggered re-entry was ignored
+  })
+
   it('does NOT restart when shutting down', () => {
     let exitCb: (() => void) | null = null
     const fork = vi.fn(() => ({ transport: new FakeChildTransport(), kill: () => {}, onExit: (cb: () => void) => { exitCb = cb } }))

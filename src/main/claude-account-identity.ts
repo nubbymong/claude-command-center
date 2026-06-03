@@ -171,20 +171,25 @@ export async function recheckSessionIdentityAsync(
  *  the synchronous hot path. Mirrors recheckAll logic but uses fsp.stat. */
 export async function recheckAllAsync(): Promise<void> {
   for (const [sessionId, profileId] of [...watched]) {
-    const before = bySession.get(sessionId) ?? null
-    let changed: string | null = null
-    try { changed = await recheckSessionIdentityAsync(sessionId, profileId) } catch { /* best-effort */ }
-    if (!changed) continue
-    pushAccountIdentity(sessionId)
-    if (!profileId) continue // bare-global/default session: no profile context to detect against
-    const known = listProfiles().map((p) => p.accountEmail).filter((e): e is string => !!e)
-    if (classifyIdentityChange(sessionId, changed, before, known).kind === 'capture') {
-      if (detectedByProfile.get(profileId) === changed) continue
-      detectedByProfile.set(profileId, changed)
-      broadcastNewAccountDetected(sessionId, profileId, changed)
-    } else {
-      detectedByProfile.delete(profileId)
-    }
+    // Guard the WHOLE per-session body (not just the stat) so a throw in
+    // pushAccountIdentity/listProfiles/classify/broadcast can never abort the poll
+    // or reject this promise (it's void'd in a setInterval -> would be an unhandled
+    // rejection). One bad session is skipped; the rest still poll.
+    try {
+      const before = bySession.get(sessionId) ?? null
+      const changed = await recheckSessionIdentityAsync(sessionId, profileId)
+      if (!changed) continue
+      pushAccountIdentity(sessionId)
+      if (!profileId) continue // bare-global/default session: no profile context to detect against
+      const known = listProfiles().map((p) => p.accountEmail).filter((e): e is string => !!e)
+      if (classifyIdentityChange(sessionId, changed, before, known).kind === 'capture') {
+        if (detectedByProfile.get(profileId) === changed) continue
+        detectedByProfile.set(profileId, changed)
+        broadcastNewAccountDetected(sessionId, profileId, changed)
+      } else {
+        detectedByProfile.delete(profileId)
+      }
+    } catch { /* best-effort per-session; never abort the poll or reject */ }
   }
 }
 

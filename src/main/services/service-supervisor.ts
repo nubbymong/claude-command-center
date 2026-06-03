@@ -27,6 +27,10 @@ export class ServiceSupervisor {
   private child: ForkedChild | null = null
   private proxy: HooksGatewayProxy | null = null
   private shuttingDown = false
+  // Set once we commit to fail-open. activateFallback()'s own child.kill() fires an
+  // exit event; this flag (set BEFORE the kill) stops that exit re-entering
+  // onChildExit and logging a spurious second 'falling open'.
+  private fellOpen = false
   private restarts = 0
   // backoffIdx only advances (never reset on a healthy bind) — a conservative
   // D1a choice: slower escalation toward fail-open is safer than restart thrash.
@@ -121,7 +125,9 @@ export class ServiceSupervisor {
   }
 
   private onChildExit(): void {
-    if (this.shuttingDown) return
+    // Ignore exits once shutting down OR once we've committed to fail-open (the
+    // latter so activateFallback()'s own child.kill() can't re-enter and re-run).
+    if (this.shuttingDown || this.fellOpen) return
     this.health = { ...this.health, state: 'crashed', lastError: { message: 'child exited', ts: this.now() } }
     this.appendLog('error', 'crashed', 'hooks child exited unexpectedly')
     if (this.restarts >= (this.opts.maxRestarts ?? 5)) { this.activateFallback(); return }
@@ -138,6 +144,7 @@ export class ServiceSupervisor {
 
   /** Tear down the child path and run the gateway in-process (proxy.failOpen). */
   private activateFallback(): void {
+    this.fellOpen = true   // BEFORE kill() so the kill's exit event can't re-enter onChildExit
     this.appendLog('warn', 'fallback', 'falling open to in-process gateway')
     this.child?.kill()   // free the port BEFORE the in-process gateway binds (mutual exclusion)
     this.health = { ...this.health, host: 'in-process-fallback', state: 'degraded', restartCount: this.restarts }
