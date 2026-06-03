@@ -15,6 +15,16 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '1.5.29',
+    date: '2026-06-03',
+    highlights: 'See each session effort at a glance, plus a new terminal-health view in the Conductor diagnostics.',
+    changes: [
+      { type: 'feature', description: 'Session cards now show a colour-coded effort pill (Low through Ultracode) in the top-right, tinted from green to red as effort rises, so you can read each session effort level at a glance without opening it.' },
+      { type: 'improvement', description: 'Tidied the session cards by removing the small leading dot. It only showed grey when idle and duplicated the status pill already shown on the right.' },
+      { type: 'feature', description: 'The Conductor diagnostics console gained a PTY integrity section with live terminal metrics per session (bytes received, resize events and width desyncs) to help track down terminal display glitches.' },
+    ],
+  },
+  {
     version: '1.5.28',
     date: '2026-06-02',
     highlights: 'Per-account statusline stats, settable account colours, and the account follows a mid-session sign-in.',

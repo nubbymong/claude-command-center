@@ -97,7 +97,10 @@ function LogTail({ log }: { log: ServiceLogEntry[] }) {
 function PtySection({ pty }: { pty: PtyIntegritySnapshot }) {
   return (
     <div className="rounded border border-surface0 bg-crust/50 p-2.5">
-      <div className="flex items-center gap-1.5 mb-2">
+      <div
+        className="flex items-center gap-1.5 mb-2"
+        title="Per-session terminal health. Bytes in = bytes read from the shell; Resizes = terminal size changes; Desyncs = times the app and the shell disagreed on the terminal width (a display-corruption signal)."
+      >
         <span className="w-2 h-2 rounded-full bg-overlay0" />
         <span className="text-[12px] font-semibold text-text">PTY integrity</span>
         <span className="text-[10px] text-subtext0">{pty.totals.activeSessions} active</span>

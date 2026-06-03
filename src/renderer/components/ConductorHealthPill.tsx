@@ -72,7 +72,7 @@ export default function ConductorHealthPill({ open, onOpen }: Props) {
       }`}
       title={w.tip}
       aria-expanded={open}
-      aria-label="Services health"
+      aria-label="Services health and PTY integrity diagnostics"
     >
       <span className={`w-1.5 h-1.5 rounded-full ${DOT[w.tone]}`} />
       <span className={`text-[10px] font-medium leading-none ${TXT[w.tone]}`}>
