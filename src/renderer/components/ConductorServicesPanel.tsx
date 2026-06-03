@@ -3,6 +3,7 @@ import type {
   DiagnosticsSnapshot,
   ServiceHealth,
   ServiceLogEntry,
+  PtyIntegritySnapshot,
 } from '../../shared/service-health'
 
 // No \u{...} escapes in JSX (esbuild). U+21BB CLOCKWISE OPEN CIRCLE ARROW,
@@ -93,6 +94,34 @@ function LogTail({ log }: { log: ServiceLogEntry[] }) {
   )
 }
 
+function PtySection({ pty }: { pty: PtyIntegritySnapshot }) {
+  return (
+    <div className="rounded border border-surface0 bg-crust/50 p-2.5">
+      <div className="flex items-center gap-1.5 mb-2">
+        <span className="w-2 h-2 rounded-full bg-overlay0" />
+        <span className="text-[12px] font-semibold text-text">PTY integrity</span>
+        <span className="text-[10px] text-subtext0">{pty.totals.activeSessions} active</span>
+      </div>
+      <div className="grid grid-cols-4 gap-x-2 gap-y-1.5 mb-2">
+        <Metric label="Sessions" value={pty.totals.activeSessions} />
+        <Metric label="Bytes in" value={pty.totals.bytesFromPty} />
+        <Metric label="Resizes" value={pty.totals.resizes} />
+        <Metric label="Desyncs" value={pty.totals.desyncs} />
+      </div>
+      {pty.sessions.length > 0 && (
+        <div className="font-mono text-[10px] leading-snug text-subtext0 max-h-24 overflow-y-auto">
+          {pty.sessions.map((s) => (
+            <div key={s.sessionId} className="whitespace-pre-wrap break-words">
+              <span className="text-overlay1">{s.sessionId.slice(0, 8)} </span>
+              in:{s.bytesFromPty} gap:{s.byteGap} cols:{s.appliedCols ?? '-'}/{s.rendererCols ?? '-'} dsy:{s.widthDesyncCount}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function ConductorServicesPanel({ open = true, onClose }: { open?: boolean; onClose: () => void }) {
   const [snap, setSnap] = useState<DiagnosticsSnapshot | null>(null)
   const [entered, setEntered] = useState(false)
@@ -156,6 +185,7 @@ export default function ConductorServicesPanel({ open = true, onClose }: { open?
         <ServiceCard key={s.id} s={s} />
       ))}
       <LogTail log={snap?.log ?? []} />
+      {snap?.pty && <PtySection pty={snap.pty} />}
       <div
         className="rounded border border-surface0/60 bg-crust/30 px-2.5 py-1.5 text-[11px] text-overlay1 flex items-center gap-1.5"
         title="MCP relocation is a future phase"
