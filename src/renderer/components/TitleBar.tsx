@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { useSettingsStore } from '../stores/settingsStore'
 import ThemeToggle from './ThemeToggle'
 import ConductorHealthPill from './ConductorHealthPill'
+import ConductorServicesPanel from './ConductorServicesPanel'
 
 interface Props {
   sidebarOpen: boolean
@@ -181,6 +182,7 @@ export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
         {/* Conductor services health pill + anchored diagnostics console (D1b) */}
         <div className="relative mr-2">
           <ConductorHealthPill open={panelOpen} onOpen={() => setPanelOpen((o) => !o)} />
+          {panelOpen && <ConductorServicesPanel onClose={() => setPanelOpen(false)} />}
         </div>
         {/* Claude service status — two pills (Claude Code + Claude.ai) with API in tooltip */}
         {serviceStatus && (

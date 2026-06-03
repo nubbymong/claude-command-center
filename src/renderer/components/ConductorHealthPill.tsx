@@ -66,6 +66,7 @@ export default function ConductorHealthPill({ open, onOpen }: Props) {
   return (
     <button
       onClick={onOpen}
+      data-conductor-pill
       className={`titlebar-no-drag flex items-center gap-1 px-1.5 py-0.5 rounded border transition-colors focus-ring ${
         open ? 'border-current bg-surface0/70' : 'border-surface0/60 bg-surface0/40'
       }`}
