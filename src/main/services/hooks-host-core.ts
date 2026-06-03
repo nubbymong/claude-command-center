@@ -41,7 +41,11 @@ export function createHooksHost(transport: HostTransport, opts?: { healthBeat?: 
     switch (msg.type) {
       case 'register': gateway.registerSessionWithSecret(msg.sid, msg.secret); break
       case 'unregister': gateway.unregisterSession(msg.sid); break
-      case 'start': void gateway.start(); break
+      case 'start':
+        void gateway.start(msg.port).then((s) => {
+          if (s.listening && s.port != null) transport.post({ type: 'bound', port: s.port, pid: process.pid })
+        })
+        break
       case 'stop': void gateway.stop(); break
       case 'setGate': gateway.setPermissionGateActive(msg.active); break
       case 'permission-respond': localResponders.get(msg.requestId)?.(msg.decision); break

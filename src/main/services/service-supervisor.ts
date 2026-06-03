@@ -82,7 +82,10 @@ export class ServiceSupervisor {
       this.log.push(m.entry)
       if (this.log.length > LOG_CAP) this.log.splice(0, this.log.length - LOG_CAP)
     }
-    if (m.type === 'event' || m.type === 'dropped' || m.type === 'permission-open') {
+    // Forward `bound` to the proxy too so its status/HOOKS_STATUS broadcast and
+    // start()-await-bound resolve in the production (supervisor-driven) path, not
+    // just when the proxy self-subscribes.
+    if (m.type === 'bound' || m.type === 'event' || m.type === 'dropped' || m.type === 'permission-open') {
       this.proxy?.handleChildMessage(m)
     }
   }

@@ -6,12 +6,32 @@ describe('HooksGatewayProxy fail-open + permission bridge', () => {
   let p: HooksGatewayProxy
   afterEach(async () => { await p?.stop() })
 
-  it('start() posts start to the child (utility-process mode)', async () => {
+  it('start() posts start to the child and resolves listening on bound', async () => {
     const t = new FakeChildTransport(); const sent: unknown[] = []
     t.onChild((m) => sent.push(m))
     p = new HooksGatewayProxy({ transport: t, defaultPort: 19430 })
-    await p.start()
+    const startP = p.start()
+    t.emitToParent({ type: 'bound', port: 19430, pid: 1 })
+    const status = await startP
     expect(sent).toContainEqual({ type: 'start', port: 19430 })
+    expect(status.listening).toBe(true)
+  })
+
+  it('a bound message sets listening + port AND broadcasts HOOKS_STATUS to the renderer', () => {
+    const t = new FakeChildTransport()
+    const emitted: Array<{ channel: string; payload: unknown }> = []
+    p = new HooksGatewayProxy({
+      transport: t,
+      defaultPort: 19430,
+      emit: (channel, payload) => emitted.push({ channel, payload }),
+    })
+    t.emitToParent({ type: 'bound', port: 19431, pid: 7 })
+    expect(p.status().listening).toBe(true)
+    expect(p.status().port).toBe(19431)
+    const status = emitted.find((e) => e.channel === 'hooks:status')
+    expect(status).toBeDefined()
+    expect((status!.payload as { listening: boolean }).listening).toBe(true)
+    expect((status!.payload as { port: number }).port).toBe(19431)
   })
 
   it('stop() posts stop to the child (utility-process mode)', async () => {

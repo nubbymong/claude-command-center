@@ -36,6 +36,14 @@ describe('ServiceSupervisor health', () => {
     expect(h.state).toBe('listening'); expect(h.port).toBe(19430); expect(h.pid).toBe(4242)
     expect(h.host).toBe('utility-process')
   })
+  it('forwards bound to the proxy so its status reflects listening (supervisor-driven path)', () => {
+    const { sup, t } = makeSup()
+    const proxy = sup.start()
+    expect(proxy.status().listening).toBe(false)
+    t.emitToParent({ type: 'bound', port: 19430, pid: 4242 })
+    expect(proxy.status().listening).toBe(true)
+    expect(proxy.status().port).toBe(19430)
+  })
   it('start() returns a proxy and forwards child events to it (single-owner subscription)', () => {
     const { sup, t } = makeSup()
     const proxy = sup.start()

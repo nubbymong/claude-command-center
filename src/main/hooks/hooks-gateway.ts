@@ -109,10 +109,10 @@ export class HooksGateway {
     return { ...this._status }
   }
 
-  async start(): Promise<HooksGatewayStatus> {
+  async start(portOverride?: number): Promise<HooksGatewayStatus> {
     if (this.server) return this.status()
     this._status = { ...this._status, enabled: true }
-    const port = await this.bindWithRetry(this.defaultPort)
+    const port = await this.bindWithRetry(portOverride ?? this.defaultPort)
     if (port === null) {
       this._status = {
         enabled: false,

@@ -32,6 +32,16 @@ export class HooksGatewayProxy implements HooksGatewayLike {
   // Presence-tracking only — the actual held-open responder lives in the child;
   // resolvePermission routes the decision back over the transport.
   private openPermissionRequests = new Set<string>()
+  // start() (utility mode) returns only once the child announces `bound`, so the
+  // hooks toggle persists the REAL listening status (not a premature listening:false).
+  // An UNREF'd timeout fallback guarantees a bind failure can't hang the toggle.
+  private static BOUND_WAIT_MS = 4000
+  private boundWaiters: Array<{ resolve: (s: HooksGatewayStatus) => void; timer: ReturnType<typeof setTimeout> }> = []
+
+  private resolveBoundWaiters(): void {
+    const waiters = this.boundWaiters.splice(0)
+    for (const w of waiters) { clearTimeout(w.timer); w.resolve(this.status()) }
+  }
 
   constructor(opts: HooksGatewayProxyOptions) {
     this.transport = opts.transport
@@ -94,7 +104,10 @@ export class HooksGatewayProxy implements HooksGatewayLike {
   private onChildMessage(m: FromChildMessage): void {
     switch (m.type) {
       case 'bound':
-        this._status = { enabled: true, listening: true, port: m.port }; break
+        this._status = { enabled: true, listening: true, port: m.port }
+        try { this.emit(IPC.HOOKS_STATUS, { ...this._status }) } catch { /* destroyed */ }
+        this.resolveBoundWaiters()
+        break
       case 'event': {
         const entry = m.entry
         const buf = this.buffers.get(entry.sessionId) ?? []
@@ -125,7 +138,18 @@ export class HooksGatewayProxy implements HooksGatewayLike {
     if (this.inProcess) { await this.inProcessReady; return this.inProcess.start() }
     this.transport.post({ type: 'start', port: this.port })
     this._status = { ...this._status, enabled: true }
-    return this.status()
+    if (this._status.listening) return this.status()   // already bound (e.g. re-enable)
+    return new Promise<HooksGatewayStatus>((resolve) => {
+      const waiter = {
+        resolve,
+        timer: setTimeout(() => {
+          this.boundWaiters = this.boundWaiters.filter((w) => w !== waiter)
+          resolve(this.status())   // timed out — return whatever we have
+        }, HooksGatewayProxy.BOUND_WAIT_MS),
+      }
+      if (typeof (waiter.timer as { unref?: () => void }).unref === 'function') (waiter.timer as { unref: () => void }).unref()
+      this.boundWaiters.push(waiter)
+    })
   }
 
   /** Disable the gateway. Awaits the in-process bind first (if fail-open) so a

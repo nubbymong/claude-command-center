@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { FakeChildTransport } from '../../../src/main/services/service-transport'
 import { createHooksHost } from '../../../src/main/services/hooks-host-core'
 
@@ -32,5 +32,21 @@ describe('createHooksHost', () => {
     host._registerResponderForTest('req-1', (d) => { got = d })
     t.post({ type: 'permission-respond', requestId: 'req-1', decision: 'approved' })
     expect(got).toBe('approved')
+  })
+
+  it('a start control message binds the requested port and announces bound to the parent', async () => {
+    const t = new FakeChildTransport()
+    createHooksHost(t.asHostTransport(), { healthBeat: false })
+    // port 0 -> ephemeral OS-assigned port; the child must announce the ACTUAL bound port
+    t.post({ type: 'start', port: 0 })
+    await vi.waitFor(() => {
+      expect(t.parentMessages.some((m) => m.type === 'bound')).toBe(true)
+    })
+    const bound = t.parentMessages.find((m) => m.type === 'bound') as { type: 'bound'; port: number; pid: number }
+    expect(bound.port).toBeGreaterThan(0)
+    // clean up the real listening socket so the test doesn't leak a handle.
+    // `stop` -> gateway.stop() closes the server asynchronously; give it a tick.
+    t.post({ type: 'stop' })
+    await new Promise((r) => setTimeout(r, 50))
   })
 })
