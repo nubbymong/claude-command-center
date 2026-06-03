@@ -17,8 +17,9 @@ export const changelog: ChangelogEntry[] = [
   {
     version: '1.5.29',
     date: '2026-06-03',
-    highlights: 'See each session effort at a glance, plus a new terminal-health view in the Conductor diagnostics.',
+    highlights: 'Keeps your Claude login working in scripts outside the app, shows each session effort at a glance, plus a new terminal-health view.',
     changes: [
+      { type: 'fix', description: 'Running the Claude CLI outside the app (e.g. claude -p in your own scripts) no longer breaks authentication. The app now keeps your real Claude login in lockstep with your main account, so a token refresh inside a session never leaves your outside scripts on a dead login. Only your main account\'s token is mirrored, and only when both sides are still that account.' },
       { type: 'feature', description: 'Session cards now show a colour-coded effort pill (Low through Ultracode) in the top-right, tinted from green to red as effort rises, so you can read each session effort level at a glance without opening it.' },
       { type: 'improvement', description: 'Tidied the session cards by removing the small leading dot. It only showed grey when idle and duplicated the status pill already shown on the right.' },
       { type: 'feature', description: 'The Conductor diagnostics console gained a PTY integrity section with live terminal metrics per session (bytes received, resize events and width desyncs) to help track down terminal display glitches.' },
