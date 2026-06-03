@@ -4,6 +4,7 @@ import type { IdentityColorKey } from '../../shared/identity-colors'
 
 export type SessionStatus = 'idle' | 'working' | 'complete' | 'error' | 'disconnected'
 export type SessionType = 'local' | 'ssh'
+export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode'
 
 export interface SSHConfig {
   host: string
@@ -70,7 +71,7 @@ export interface Session {
   agentIds?: string[]                    // Agent template IDs for this session
   flickerFree?: boolean                  // Enable flicker-free alternate screen rendering
   powershellTool?: boolean               // Enable native PowerShell tool
-  effortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode'
+  effortLevel?: EffortLevel
   disableAutoMemory?: boolean
   /** P6: Claude opts in to the codex_review MCP tool for this session.
    *  Mirrors disableAutoMemory in shape (sparse boolean) and lifecycle. */
