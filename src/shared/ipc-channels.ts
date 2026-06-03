@@ -39,6 +39,7 @@ export const IPC = {
   PTY_KILL: 'pty:kill',
   PTY_DATA: 'pty:data',   // Suffixed with :sessionId at runtime
   PTY_EXIT: 'pty:exit',   // Suffixed with :sessionId at runtime
+  PTY_INTEGRITY_REPORT: 'pty:integrityReport',   // renderer -> main per-session byte/resize report
 
   // SSH connection-flow controller (manual mode user-gated stages).
   // Main->renderer notification is suffixed with :<sessionId> at runtime.

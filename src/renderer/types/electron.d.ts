@@ -152,6 +152,9 @@ export interface ElectronAPI {
     onData: (sessionId: string, callback: (data: string) => void) => () => void
     onExit: (sessionId: string, callback: (exitCode: number) => void) => () => void
   }
+  ptyIntegrity: {
+    report: (report: import('../../shared/service-health').PtyIntegrityReport) => void
+  }
   ssh: {
     runPostCommand: (sessionId: string) => Promise<void>
     launchClaude: (sessionId: string) => Promise<void>

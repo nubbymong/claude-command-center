@@ -379,6 +379,10 @@ const electronAPI: ElectronAPI = {
       return () => ipcRenderer.removeListener(channel, handler)
     }
   },
+  ptyIntegrity: {
+    report: (report: import('../shared/service-health').PtyIntegrityReport) =>
+      ipcRenderer.send(IPC.PTY_INTEGRITY_REPORT, report),
+  },
   ssh: {
     runPostCommand: (sessionId: string) =>
       ipcRenderer.invoke(IPC.SSH_FLOW_RUN_POSTCOMMAND, sessionId),
