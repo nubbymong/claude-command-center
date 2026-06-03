@@ -1,0 +1,95 @@
+import { HooksGatewayProxy } from './hooks-gateway-proxy'
+import { createInitialHealth } from '../../shared/service-health'
+import type { ServiceHealth, ServiceLogEntry, DiagnosticsSnapshot } from '../../shared/service-health'
+import type { ChildTransport, FromChildMessage } from './service-transport'
+
+export interface ForkedChild {
+  transport: ChildTransport
+  kill: () => void
+  onExit: (cb: () => void) => void
+}
+
+export interface ServiceSupervisorOptions {
+  forkChild: () => ForkedChild
+  defaultPort: number
+  emit: (channel: string, payload: unknown) => void
+  now?: () => number   // injectable clock for tests
+}
+
+const LOG_CAP = 200
+
+export class ServiceSupervisor {
+  private opts: ServiceSupervisorOptions
+  private now: () => number
+  private health: ServiceHealth = createInitialHealth('hooks', 'Hooks gateway')
+  private log: ServiceLogEntry[] = []
+  private child: ForkedChild | null = null
+  private proxy: HooksGatewayProxy | null = null
+  // shuttingDown is used by Task 10 lifecycle extension
+  private shuttingDown = false
+
+  constructor(opts: ServiceSupervisorOptions) {
+    this.opts = opts
+    this.now = opts.now ?? (() => Date.now())
+  }
+
+  getDiagnosticsSnapshot(): DiagnosticsSnapshot {
+    return { capturedAt: this.now(), services: [{ ...this.health }], log: [...this.log] }
+  }
+
+  getProxy(): HooksGatewayProxy | null { return this.proxy }
+
+  private appendLog(level: ServiceLogEntry['level'], code: string, message: string): void {
+    this.log.push({ ts: this.now(), serviceId: 'hooks', level, code, message })
+    if (this.log.length > LOG_CAP) this.log.splice(0, this.log.length - LOG_CAP)
+  }
+
+  // The supervisor owns the SINGLE transport subscription (ChildTransport.onMessage
+  // is last-writer-wins). It consumes bound/health/log itself and forwards the
+  // proxy-relevant messages (event/dropped/permission-open) via handleChildMessage.
+  private onChildMessage(m: FromChildMessage): void {
+    if (m.type === 'bound') {
+      this.health = {
+        ...this.health,
+        state: 'listening',
+        host: 'utility-process',
+        port: m.port,
+        pid: m.pid,
+        startedAt: this.health.startedAt ?? this.now(),
+      }
+      this.appendLog('info', 'bound', `bound :${m.port} pid=${m.pid}`)
+    } else if (m.type === 'health') {
+      this.health = {
+        ...this.health,
+        inFlight: m.inFlight,
+        eventsTotal: m.eventsTotal,
+        dropsTotal: m.dropsTotal,
+        childLoopStallsLastMin: m.stallsLastMin,
+        lastHeartbeatAt: this.now(),
+      }
+    } else if (m.type === 'log') {
+      this.log.push(m.entry)
+      if (this.log.length > LOG_CAP) this.log.splice(0, this.log.length - LOG_CAP)
+    }
+    if (m.type === 'event' || m.type === 'dropped' || m.type === 'permission-open') {
+      this.proxy?.handleChildMessage(m)
+    }
+  }
+
+  start(): HooksGatewayProxy {
+    const c = this.opts.forkChild()
+    this.child = c
+    this.proxy = new HooksGatewayProxy({
+      transport: c.transport,
+      defaultPort: this.opts.defaultPort,
+      emit: this.opts.emit,
+      selfSubscribe: false,
+    })
+    c.transport.onMessage((m) => this.onChildMessage(m))
+    this.appendLog('info', 'child-up', 'hooks child forked')
+    void this.proxy.start()
+    return this.proxy
+  }
+
+  // Task 10 extends this with spawnChild/restart/backoff/failOpen/shutdown.
+}
