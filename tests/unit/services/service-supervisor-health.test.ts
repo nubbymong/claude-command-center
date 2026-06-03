@@ -88,7 +88,7 @@ describe('ServiceSupervisor health', () => {
     t.emitToParent({ type: 'log', entry: { ts: 1, serviceId: 'hooks', level: 'info', code: 'child-stop', message: 'stop' } })
     expect(emitted.some((e) => e.channel === 'serviceHealth:update')).toBe(true)
   })
-  it('bind-failed marks crashed and schedules a restart', () => {
+  it('bind-failed marks crashed + kills the child to escalate (restart proven in the lifecycle suite)', () => {
     const { sup, t } = makeSup()
     sup.start()
     t.emitToParent({ type: 'bind-failed', error: 'bind-failed after N attempts' })

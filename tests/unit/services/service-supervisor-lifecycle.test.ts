@@ -35,6 +35,25 @@ describe('ServiceSupervisor lifecycle', () => {
     expect(h.state).toBe('degraded')
   })
 
+  it('bind-failed escalates to a restart (kill -> exit -> backoff -> re-fork)', () => {
+    let exitCb: (() => void) | null = null
+    let curT: FakeChildTransport | null = null
+    // kill() fires the stored exit callback (as a real utilityProcess does), so the
+    // bind-failed handler's child.kill() drives the exit-based restart path end-to-end.
+    const fork = vi.fn(() => {
+      curT = new FakeChildTransport()
+      return { transport: curT, kill: () => exitCb?.(), onExit: (cb: () => void) => { exitCb = cb } }
+    })
+    sup = new ServiceSupervisor({ forkChild: fork, defaultPort: 0, emit: () => {} })
+    sup.start()
+    expect(fork).toHaveBeenCalledTimes(1)
+    curT!.emitToParent({ type: 'bind-failed', error: 'bind-failed after 5 attempts' })
+    expect(sup.getDiagnosticsSnapshot().services[0].state).toBe('crashed')
+    vi.advanceTimersByTime(300)   // first backoff (250ms)
+    expect(fork).toHaveBeenCalledTimes(2)   // escalation re-forked the child
+    expect(sup.getDiagnosticsSnapshot().services[0].restartCount).toBe(1)
+  })
+
   it('ignores the self-kill exit after fail-open (single fallback log, no re-entry)', () => {
     let exitCb: (() => void) | null = null
     // kill() synchronously fires the stored exit callback — the WORST case for

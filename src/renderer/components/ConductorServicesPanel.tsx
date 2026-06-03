@@ -49,9 +49,9 @@ function ServiceCard({ s }: { s: ServiceHealth }) {
         <span className={`w-2 h-2 rounded-full ${STATE_DOT[s.state] ?? 'bg-overlay0'}`} />
         <span className="text-[12px] font-semibold text-text">{s.label}</span>
         <span className="text-[10px] text-subtext0">
-          {s.host}
-          {s.port ? ` :${s.port}` : ''}
-          {s.state !== 'listening' ? ` (${s.state})` : ''}
+          {s.state === 'stopped'
+            ? 'disabled'
+            : `${s.host}${s.port ? ` :${s.port}` : ''}${s.state !== 'listening' ? ` (${s.state})` : ''}`}
         </span>
       </div>
       <div className="grid grid-cols-4 gap-x-2 gap-y-1.5">
@@ -61,8 +61,11 @@ function ServiceCard({ s }: { s: ServiceHealth }) {
         <Metric label="Restarts" value={s.restartCount} />
         <Metric label="Events" value={s.eventsTotal} />
         <Metric label="Drops" value={s.dropsTotal} />
-        <Metric label="Thrput/s" value={s.throughputPerSec} />
-        <Metric label="Jank m/c" value={`${s.mainLoopStallsLastMin}/${s.childLoopStallsLastMin}`} />
+        {/* throughputPerSec + mainLoopStallsLastMin are not yet instrumented in the
+            backbone (always 0) -> show '-' rather than a dishonest 0. Child-loop
+            jank IS live. Wire these in a follow-up when the supervisor computes them. */}
+        <Metric label="Thrput/s" value={'-'} />
+        <Metric label="Jank m/c" value={`-/${s.childLoopStallsLastMin}`} />
       </div>
       {s.lastError && (
         <div className="mt-2 text-[10px] text-red break-words">
@@ -90,7 +93,7 @@ function LogTail({ log }: { log: ServiceLogEntry[] }) {
   )
 }
 
-export default function ConductorServicesPanel({ onClose }: { onClose: () => void }) {
+export default function ConductorServicesPanel({ open = true, onClose }: { open?: boolean; onClose: () => void }) {
   const [snap, setSnap] = useState<DiagnosticsSnapshot | null>(null)
   const [entered, setEntered] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -99,10 +102,16 @@ export default function ConductorServicesPanel({ onClose }: { onClose: () => voi
     let active = true
     window.electronAPI.serviceHealth.get().then((s) => { if (active) setSnap(s) })
     const unsub = window.electronAPI.serviceHealth.onUpdate((s) => setSnap(s))
-    // Trigger the enter transition on the next frame.
-    const t = setTimeout(() => setEntered(true), 0)
-    return () => { active = false; unsub(); clearTimeout(t) }
+    return () => { active = false; unsub() }
   }, [])
+
+  // Drive BOTH the enter and leave transitions off `open`. TitleBar keeps us
+  // mounted for ~200ms after open flips false so the closing animation plays
+  // (feedback_animations: all panel changes animated), then unmounts.
+  useEffect(() => {
+    if (open) { const t = setTimeout(() => setEntered(true), 0); return () => clearTimeout(t) }
+    setEntered(false)
+  }, [open])
 
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
@@ -117,7 +126,17 @@ export default function ConductorServicesPanel({ onClose }: { onClose: () => voi
   }, [onClose])
 
   const services = snap?.services ?? []
-  const inFallback = services[0]?.host === 'in-process-fallback'
+  const svc = services[0]
+  // A 'stopped' service (hooks off in Settings) defaults to host 'in-process-fallback'
+  // but is NOT a crash-fallback — distinguish so we don't tell the user to relaunch.
+  const stopped = svc?.state === 'stopped'
+  const inFallback = !stopped && svc?.host === 'in-process-fallback'
+  const restartDisabled = stopped || inFallback
+  const restartTitle = stopped
+    ? 'Hooks are disabled in Settings'
+    : inFallback
+      ? 'Relaunch the app to retry the supervised gateway'
+      : 'Restart the hooks gateway'
 
   const handleRestart = () => { void window.electronAPI.serviceHealth.restart('hooks') }
   const handleCopy = () => {
@@ -148,8 +167,8 @@ export default function ConductorServicesPanel({ onClose }: { onClose: () => voi
       <div className="flex items-center gap-2 pt-0.5">
         <button
           onClick={handleRestart}
-          disabled={inFallback}
-          title={inFallback ? 'Relaunch the app to retry the supervised gateway' : 'Restart the hooks gateway'}
+          disabled={restartDisabled}
+          title={restartTitle}
           className="flex-1 px-2 py-1 rounded border border-surface0 bg-surface0/40 text-[11px] text-text transition-colors hover:bg-surface0/70 disabled:opacity-40 disabled:cursor-not-allowed focus-ring"
         >
           {RESTART_GLYPH} Restart

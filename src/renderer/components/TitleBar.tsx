@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { useSettingsStore } from '../stores/settingsStore'
 import ThemeToggle from './ThemeToggle'
 import ConductorHealthPill from './ConductorHealthPill'
@@ -112,7 +112,21 @@ function StatusPill({ label, status, highlight }: StatusPillProps) {
 export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
   const [maximized, setMaximized] = useState(false)
   const [serviceStatus, setServiceStatus] = useState<ServiceStatusPayload | null>(null)
+  // panelOpen drives the open/closed visual state; panelMounted keeps the panel in
+  // the DOM through its ~200ms closing transition before unmount (so close is animated).
   const [panelOpen, setPanelOpen] = useState(false)
+  const [panelMounted, setPanelMounted] = useState(false)
+  const panelCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const openPanel = () => {
+    if (panelCloseTimer.current) { clearTimeout(panelCloseTimer.current); panelCloseTimer.current = null }
+    setPanelMounted(true)
+    setPanelOpen(true)
+  }
+  const closePanel = () => {
+    setPanelOpen(false)
+    panelCloseTimer.current = setTimeout(() => { setPanelMounted(false); panelCloseTimer.current = null }, 200)
+  }
 
   useEffect(() => {
     window.electronAPI.window.isMaximized().then(setMaximized)
@@ -181,8 +195,8 @@ export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
       <div className="titlebar-no-drag flex items-center gap-1">
         {/* Conductor services health pill + anchored diagnostics console (D1b) */}
         <div className="relative mr-2">
-          <ConductorHealthPill open={panelOpen} onOpen={() => setPanelOpen((o) => !o)} />
-          {panelOpen && <ConductorServicesPanel onClose={() => setPanelOpen(false)} />}
+          <ConductorHealthPill open={panelOpen} onOpen={() => (panelOpen ? closePanel() : openPanel())} />
+          {panelMounted && <ConductorServicesPanel open={panelOpen} onClose={closePanel} />}
         </div>
         {/* Claude service status — two pills (Claude Code + Claude.ai) with API in tooltip */}
         {serviceStatus && (
