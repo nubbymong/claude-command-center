@@ -30,7 +30,9 @@ describe('ServiceSupervisor lifecycle', () => {
     sup.start()
     for (let i = 0; i < 3; i++) { exitCb?.(); vi.advanceTimersByTime(5000) }
     expect(sup.getProxy()?.isInProcessFallback()).toBe(true)
-    expect(sup.getDiagnosticsSnapshot().services[0].host).toBe('in-process-fallback')
+    const h = sup.getDiagnosticsSnapshot().services[0]
+    expect(h.host).toBe('in-process-fallback')
+    expect(h.state).toBe('degraded')
   })
 
   it('does NOT restart when shutting down', () => {
@@ -39,5 +41,16 @@ describe('ServiceSupervisor lifecycle', () => {
     sup = new ServiceSupervisor({ forkChild: fork, defaultPort: 0, emit: () => {} })
     sup.start(); sup.shutdown(); exitCb?.(); vi.advanceTimersByTime(5000)
     expect(fork).toHaveBeenCalledTimes(1)
+  })
+
+  it('shutdown() during the backoff window cancels the pending restart (no resurrection)', () => {
+    let exitCb: (() => void) | null = null
+    const fork = vi.fn(() => ({ transport: new FakeChildTransport(), kill: () => {}, onExit: (cb: () => void) => { exitCb = cb } }))
+    sup = new ServiceSupervisor({ forkChild: fork, defaultPort: 0, emit: () => {} })
+    sup.start()
+    exitCb?.()              // crash -> schedules a backoff restart
+    sup.shutdown()          // races the backoff timer
+    vi.advanceTimersByTime(5000)
+    expect(fork).toHaveBeenCalledTimes(1)   // the pending restart was cancelled
   })
 })

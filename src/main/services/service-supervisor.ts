@@ -26,10 +26,13 @@ export class ServiceSupervisor {
   private log: ServiceLogEntry[] = []
   private child: ForkedChild | null = null
   private proxy: HooksGatewayProxy | null = null
-  // shuttingDown is used by Task 10 lifecycle extension
   private shuttingDown = false
   private restarts = 0
+  // backoffIdx only advances (never reset on a healthy bind) — a conservative
+  // D1a choice: slower escalation toward fail-open is safer than restart thrash.
+  // A "healthy for N seconds -> reset the counters" policy is a hardening follow-up.
   private backoffIdx = 0
+  private restartTimer: ReturnType<typeof setTimeout> | null = null
   private static BACKOFFS = [250, 1000, 4000, 4000, 4000]
 
   constructor(opts: ServiceSupervisorOptions) {
@@ -52,6 +55,10 @@ export class ServiceSupervisor {
   // is last-writer-wins). It consumes bound/health/log itself and forwards the
   // proxy-relevant messages (event/dropped/permission-open) via handleChildMessage.
   private onChildMessage(m: FromChildMessage): void {
+    // Once we've failed open (or are shutting down) the child is dead; ignore any
+    // messages still draining out of the pipe so a stale `bound`/`health` can't
+    // flip the host back to utility-process and clobber the `degraded` state.
+    if (this.shuttingDown || this.proxy?.isInProcessFallback()) return
     if (m.type === 'bound') {
       this.health = {
         ...this.health,
@@ -114,25 +121,29 @@ export class ServiceSupervisor {
     if (this.shuttingDown) return
     this.health = { ...this.health, state: 'crashed', lastError: { message: 'child exited', ts: this.now() } }
     this.appendLog('error', 'crashed', 'hooks child exited unexpectedly')
-    if (this.restarts >= (this.opts.maxRestarts ?? 5)) { this.failOpen(); return }
+    if (this.restarts >= (this.opts.maxRestarts ?? 5)) { this.activateFallback(); return }
     const delay = ServiceSupervisor.BACKOFFS[Math.min(this.backoffIdx, ServiceSupervisor.BACKOFFS.length - 1)]
     this.backoffIdx++
-    setTimeout(() => {
+    this.restartTimer = setTimeout(() => {
+      this.restartTimer = null
+      if (this.shuttingDown) return   // shutdown() raced the backoff — do not resurrect the child
       this.restarts++
       this.health = { ...this.health, restartCount: this.restarts }
       this.spawnChild()
     }, delay)
   }
 
-  private failOpen(): void {
+  /** Tear down the child path and run the gateway in-process (proxy.failOpen). */
+  private activateFallback(): void {
     this.appendLog('warn', 'fallback', 'falling open to in-process gateway')
     this.child?.kill()   // free the port BEFORE the in-process gateway binds (mutual exclusion)
-    this.health = { ...this.health, host: 'in-process-fallback', state: 'degraded' }
+    this.health = { ...this.health, host: 'in-process-fallback', state: 'degraded', restartCount: this.restarts }
     this.proxy?.failOpen()
   }
 
   shutdown(): void {
     this.shuttingDown = true
+    if (this.restartTimer !== null) { clearTimeout(this.restartTimer); this.restartTimer = null }
     try { this.child?.kill() } catch { /* best-effort */ }
   }
 }
