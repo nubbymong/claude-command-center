@@ -158,6 +158,8 @@ export class HooksGateway {
     return secret
   }
 
+  // Used by the proxy to replay an existing (known) secret into a fail-open
+  // in-process gateway, vs registerSession which mints a fresh UUID.
   registerSessionWithSecret(sessionId: string, secret: string): void {
     this.secrets.set(sessionId, secret)
   }
@@ -166,6 +168,11 @@ export class HooksGateway {
     return this.secrets.has(sessionId)
   }
 
+  // NB: inFlight reads the module-scoped `hooksInFlight` (process-global) -- by
+  // design there is exactly one gateway per process (the prod singleton, or the
+  // in-process fail-open instance; the child runs in its own process with its own
+  // module scope). eventsTotal/dropsTotal are per-instance. If two gateways are
+  // ever instantiated in ONE process, inFlight would be shared across them.
   metrics(): { inFlight: number; eventsTotal: number; dropsTotal: number } {
     return { inFlight: hooksInFlight, eventsTotal: this._eventsTotal, dropsTotal: this._dropsTotal }
   }
