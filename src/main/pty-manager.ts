@@ -236,7 +236,7 @@ export function spawnPty(
     useResumePicker?: boolean
     legacyVersion?: { enabled: boolean; version: string }
     agentsConfig?: Array<{ name: string; description: string; prompt: string; model?: string; tools?: string[] }>
-    effortLevel?: 'low' | 'medium' | 'high'
+    effortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode'
     disableAutoMemory?: boolean
     model?: string
     /** Per-session account isolation: spawn claude under this profile's CLAUDE_CONFIG_DIR. */

@@ -60,7 +60,7 @@ export interface ElectronAPI {
         name: string; description: string; prompt: string
         model?: string; tools?: string[]
       }>
-      effortLevel?: 'low' | 'medium' | 'high'
+      effortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode'
       disableAutoMemory?: boolean
       enableCodexReview?: boolean
       model?: string

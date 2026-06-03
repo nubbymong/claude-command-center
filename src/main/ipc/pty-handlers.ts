@@ -46,7 +46,9 @@ export const spawnOptionsSchema = z.object({
     model: z.string().optional(),
     tools: z.array(z.string()).optional(),
   })).optional(),
-  effortLevel: z.enum(['low', 'medium', 'high']).optional(),
+  // All 6 live effort levels (set via /effort, persisted, restored at spawn).
+  // Capping at low/medium/high made a restored xhigh/max/ultracode session throw here.
+  effortLevel: z.enum(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode']).optional(),
   disableAutoMemory: z.boolean().optional(),
   enableCodexReview: z.boolean().optional(),
   model: z.string().optional(),
@@ -81,7 +83,7 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     useResumePicker?: boolean
     legacyVersion?: { enabled: boolean; version: string }
     agentsConfig?: Array<{ name: string; description: string; prompt: string; model?: string; tools?: string[] }>
-    effortLevel?: 'low' | 'medium' | 'high'
+    effortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode'
     disableAutoMemory?: boolean
     enableCodexReview?: boolean
     model?: string
