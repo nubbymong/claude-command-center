@@ -26,6 +26,13 @@ export interface ChildTransport {
   kill(): void
 }
 
+/** Child-side transport: the host posts FromChildMessage to its parent and
+ *  receives ToChildMessage from it (the inverse of ChildTransport). */
+export interface HostTransport {
+  post(msg: FromChildMessage): void
+  onMessage(handler: (msg: ToChildMessage) => void): void
+}
+
 /** In-memory fake: `post`/`onMessage` carry main->child; `emitToParent`/`parentMessages`
  *  simulate child->main so tests can drive both directions without a real process. */
 export class FakeChildTransport implements ChildTransport {
@@ -41,4 +48,13 @@ export class FakeChildTransport implements ChildTransport {
   // test helpers
   onChild(handler: (m: ToChildMessage) => void): void { this.childHandler = handler }
   emitToParent(msg: FromChildMessage): void { this.parentMessages.push(msg); this.parentHandler?.(msg) }
+
+  /** View this fake from the CHILD side: post() -> parent (emitToParent),
+   *  onMessage() receives what main posted (onChild). */
+  asHostTransport(): HostTransport {
+    return {
+      post: (m: FromChildMessage) => this.emitToParent(m),
+      onMessage: (h: (m: ToChildMessage) => void) => this.onChild(h),
+    }
+  }
 }
