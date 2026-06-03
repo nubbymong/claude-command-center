@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { IPC } from '../../shared/ipc-channels'
 import { RING_BUFFER_CAP } from '../hooks/hooks-types'
+import { HooksGateway } from '../hooks/hooks-gateway'
 import type { RingBufferEntry } from '../hooks/hooks-types'
 import type { HookEvent, HooksGatewayStatus } from '../../shared/hook-types'
 import type { ChildTransport, FromChildMessage } from './service-transport'
@@ -20,7 +21,12 @@ export class HooksGatewayProxy {
   private buffers = new Map<string, RingBufferEntry[]>()
   private subscribers = new Set<(e: HookEvent) => void>()
   private _status: HooksGatewayStatus = { enabled: true, listening: false, port: null }
-  // (the permission-bridge responder map lands in Task 8 alongside the logic that uses it)
+  // Fail-open: when set, the gateway runs IN-PROCESS (today's exact HooksGateway)
+  // and every consumer method delegates to it so the proxy stays a faithful drop-in.
+  private inProcess: HooksGateway | null = null
+  private inProcessReady: Promise<unknown> | null = null
+  // Permission bridge: child-opened request ids awaiting a main-side decision.
+  private responders = new Map<string, (decision: string) => void>()
 
   constructor(opts: HooksGatewayProxyOptions) {
     this.transport = opts.transport
@@ -30,12 +36,18 @@ export class HooksGatewayProxy {
   }
 
   subscribe(cb: (e: HookEvent) => void): () => void {
-    this.subscribers.add(cb); return () => { this.subscribers.delete(cb) }
+    this.subscribers.add(cb)
+    // After fail-open the in-process gateway is the real event source, so the
+    // subscriber must be registered there too; unsubscribe removes from both.
+    const offInProc = this.inProcess?.subscribe(cb)
+    return () => { this.subscribers.delete(cb); offInProc?.() }
   }
 
   /** SYNCHRONOUS: secret minted in main (keeps pty-manager's spawn path sync),
-   *  registration fire-and-forget to the child. */
+   *  registration fire-and-forget to the child. After fail-open it delegates to
+   *  the in-process gateway (still synchronous) instead of posting to a dead child. */
   registerSession(sessionId: string): string {
+    if (this.inProcess) return this.inProcess.registerSession(sessionId)
     const secret = randomUUID()
     this.secrets.set(sessionId, secret)
     this.transport.post({ type: 'register', sid: sessionId, secret })
@@ -43,13 +55,21 @@ export class HooksGatewayProxy {
   }
 
   unregisterSession(sessionId: string): void {
+    if (this.inProcess) { this.inProcess.unregisterSession(sessionId); return }
     this.secrets.delete(sessionId); this.buffers.delete(sessionId)
     this.transport.post({ type: 'unregister', sid: sessionId })
     try { this.emit(IPC.HOOKS_SESSION_ENDED, sessionId) } catch { /* webContents destroyed */ }
   }
 
-  getBuffer(sessionId: string): RingBufferEntry[] { return [...(this.buffers.get(sessionId) ?? [])] }
-  status(): HooksGatewayStatus { return { ...this._status } }
+  getBuffer(sessionId: string): RingBufferEntry[] {
+    if (this.inProcess) return this.inProcess.getBuffer(sessionId)
+    return [...(this.buffers.get(sessionId) ?? [])]
+  }
+
+  status(): HooksGatewayStatus {
+    if (this.inProcess) return this.inProcess.status()
+    return { ...this._status }
+  }
 
   /** Test/seam parity with HooksGateway. */
   dispatchForTest(event: HookEvent): void { this.fanOut(event) }
@@ -81,12 +101,70 @@ export class HooksGatewayProxy {
         try { this.emit(IPC.HOOKS_DROPPED, { sessionId: m.sessionId }) } catch { /* destroyed */ }
         break
       case 'permission-open':
-        // Task 8 fills this in (main-side responder registry)
+        // Record the open request so a later resolvePermission(requestId, ...)
+        // is meaningful (we route the decision back to the child).
+        this.responders.set(m.requestId, () => { /* decision routed via transport.post */ })
         break
       default: break
     }
   }
 
-  // start/stop/setPermissionGateActive/failOpen/isInProcessFallback/resolvePermission/
-  // rebindTransport/replaySecretsTo: Task 8 + Task 10.
+  /** Enable the gateway. Utility-process mode posts `start` to the child;
+   *  after fail-open it drives the in-process gateway directly. */
+  async start(): Promise<HooksGatewayStatus> {
+    if (this.inProcess) { await this.inProcessReady; return this.inProcess.start() }
+    this.transport.post({ type: 'start', port: this.port })
+    this._status = { ...this._status, enabled: true }
+    return this.status()
+  }
+
+  /** Disable the gateway. Awaits the in-process bind first (if fail-open) so a
+   *  start->stop race can't leak the listening socket. */
+  async stop(): Promise<void> {
+    if (this.inProcess) { await this.inProcessReady; await this.inProcess.stop(); return }
+    this.transport.post({ type: 'stop' })
+    this._status = { enabled: false, listening: false, port: null }
+  }
+
+  setPermissionGateActive(active: boolean): void {
+    if (this.inProcess) { this.inProcess.setPermissionGateActive(active); return }
+    this.transport.post({ type: 'setGate', active })
+  }
+
+  isInProcessFallback(): boolean { return this.inProcess !== null }
+
+  /** Tear down the child path and run the gateway in-process (today's exact code).
+   *  Replays known secrets + current subscribers so live sessions keep working.
+   *  PRECONDITION: the supervisor has already killed the child (no double bind). */
+  failOpen(): void {
+    if (this.inProcess) return
+    const gw = new HooksGateway({ defaultPort: this.port, emit: this.emit })
+    for (const [sid, secret] of this.secrets) gw.registerSessionWithSecret(sid, secret)
+    for (const cb of this.subscribers) gw.subscribe(cb)
+    this.inProcess = gw
+    this.inProcessReady = gw.start()   // tracked so stop() can await it (no socket leak / race)
+  }
+
+  /** Renderer Allow/Deny path. In-process: the module responder registry already
+   *  handles it (no-op here). Utility-process: route the decision back to the child. */
+  resolvePermission(requestId: string, decision: string): void {
+    if (this.inProcess) return
+    this.responders.delete(requestId)
+    this.transport.post({ type: 'permission-respond', requestId, decision })
+  }
+
+  // Supervisor helpers (used in Task 10):
+  rebindTransport(t: ChildTransport): void {
+    this.transport = t
+    this._status = { ...this._status, listening: false }
+  }
+
+  replaySecretsTo(t: ChildTransport): void {
+    for (const [sid, secret] of this.secrets) t.post({ type: 'register', sid, secret })
+  }
+
+  /** Test-only: reflects whichever store currently owns the session secret. */
+  hasSecretForTest(sid: string): boolean {
+    return this.inProcess ? this.inProcess.hasSecret(sid) : this.secrets.has(sid)
+  }
 }
