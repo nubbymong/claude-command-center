@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { useSettingsStore } from '../stores/settingsStore'
 import ThemeToggle from './ThemeToggle'
+import ConductorHealthPill from './ConductorHealthPill'
 
 interface Props {
   sidebarOpen: boolean
@@ -110,6 +111,7 @@ function StatusPill({ label, status, highlight }: StatusPillProps) {
 export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
   const [maximized, setMaximized] = useState(false)
   const [serviceStatus, setServiceStatus] = useState<ServiceStatusPayload | null>(null)
+  const [panelOpen, setPanelOpen] = useState(false)
 
   useEffect(() => {
     window.electronAPI.window.isMaximized().then(setMaximized)
@@ -176,6 +178,10 @@ export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
       </div>
 
       <div className="titlebar-no-drag flex items-center gap-1">
+        {/* Conductor services health pill + anchored diagnostics console (D1b) */}
+        <div className="relative mr-2">
+          <ConductorHealthPill open={panelOpen} onOpen={() => setPanelOpen((o) => !o)} />
+        </div>
         {/* Claude service status — two pills (Claude Code + Claude.ai) with API in tooltip */}
         {serviceStatus && (
           <div

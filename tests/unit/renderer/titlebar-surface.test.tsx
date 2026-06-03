@@ -33,6 +33,11 @@ beforeEach(() => {
       get: vi.fn().mockResolvedValue(null),
       onUpdate: vi.fn().mockReturnValue(() => {}),
     },
+    serviceHealth: {
+      get: vi.fn().mockResolvedValue(null),
+      restart: vi.fn(),
+      onUpdate: vi.fn().mockReturnValue(() => {}),
+    },
   }
   container = document.createElement('div')
   document.body.appendChild(container)
