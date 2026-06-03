@@ -97,6 +97,15 @@ export class ServiceSupervisor {
       this.log.push(m.entry)
       if (this.log.length > LOG_CAP) this.log.splice(0, this.log.length - LOG_CAP)
       this.pushHealth()
+    } else if (m.type === 'bind-failed') {
+      this.health = { ...this.health, state: 'crashed', lastError: { message: m.error, ts: this.now() } }
+      this.appendLog('error', 'bind-failed', `hooks child failed to bind: ${m.error}`)
+      this.pushHealth()
+      // Escalate like an exit: the child is alive but useless. Kill it so the normal
+      // exit-driven restart/backoff -> fail-open path runs (single-owner of that logic).
+      // Do NOT forward bind-failed to the proxy.
+      try { this.child?.kill() } catch { /* best-effort */ }
+      return
     }
     // Forward `bound` to the proxy too so its status/HOOKS_STATUS broadcast and
     // start()-await-bound resolve in the production (supervisor-driven) path, not

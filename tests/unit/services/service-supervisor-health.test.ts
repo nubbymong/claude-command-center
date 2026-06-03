@@ -88,4 +88,14 @@ describe('ServiceSupervisor health', () => {
     t.emitToParent({ type: 'log', entry: { ts: 1, serviceId: 'hooks', level: 'info', code: 'child-stop', message: 'stop' } })
     expect(emitted.some((e) => e.channel === 'serviceHealth:update')).toBe(true)
   })
+  it('bind-failed marks crashed and schedules a restart', () => {
+    const { sup, t } = makeSup()
+    sup.start()
+    t.emitToParent({ type: 'bind-failed', error: 'bind-failed after N attempts' })
+    const h = sup.getDiagnosticsSnapshot().services[0]
+    expect(h.state).toBe('crashed')
+    expect(h.lastError?.message).toContain('bind-failed')
+    expect(sup.getDiagnosticsSnapshot().log.some((l) => l.code === 'bind-failed')).toBe(true)
+    expect(t.killed).toBe(true)   // escalates by killing the child -> exit-driven restart path
+  })
 })
