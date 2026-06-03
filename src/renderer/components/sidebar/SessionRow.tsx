@@ -1,7 +1,8 @@
 import React from 'react'
 import { Session } from '../../stores/sessionStore'
 import { CodexBadge, ShellBadge, SshBadge } from './Badges'
-import { StatusDot, type SessionState } from '../ui/StatusDot'
+import { type SessionState } from '../ui/StatusDot'
+import { EffortPill } from '../ui/EffortPill'
 import { StatusPill } from '../ui/StatusPill'
 import { resolveIdentityColor, bucketLegacyColorToKey } from '../../../shared/identity-colors'
 import { useResolvedTheme } from '../../hooks/useThemeController'
@@ -125,9 +126,6 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
         <div className="absolute inset-0 rounded-md attention-pulse-bg" style={{ backgroundColor: identity }} />
       )}
 
-      {/* Line 1, col 1: health dot */}
-      <span className="relative z-10 row-start-1"><StatusDot state={st} /></span>
-
       {/* Line 1, col 2: name + (non-default) provider/ssh badges + optional
           v1.5.9 account alias. The project name keeps the higher visual weight;
           the alias sits to the right in non-bold text-secondary. Truncation
@@ -149,13 +147,14 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
           were redundant with that dot and the card's left identity rail. */}
       <span className="relative z-10 row-start-1 flex items-center gap-1.5 justify-self-end">
         <StatusPill state={st} />
+        {session.effortLevel && <EffortPill level={session.effortLevel} />}
       </span>
 
       {/* Line 2: model meta + context meter + right-aligned %. One grid child
           spanning the name+meta columns (2 / 4) so the meta does NOT auto-place
           into the 9px dot column (col 1) and get clipped. The dot column stays
           empty on line 2, so line 2 aligns under the name. */}
-      <div className="relative z-10 row-start-2 flex items-center gap-2" style={{ gridColumn: '2 / 4' }} data-testid="card-line2">
+      <div className="relative z-10 row-start-2 flex items-center gap-2" style={{ gridColumn: '1 / 3' }} data-testid="card-line2">
         <span className="meta truncate">{metaLine}</span>
         <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--surface-sunken)' }}>
           <div className={`meter-fill ${meterClass(pct)}`} style={{ width: `${pct}%` }} />
@@ -169,7 +168,7 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
           under the name/meta and never clips the way the cramped line-2 chip did).
           Rendered only when accountEmail is set so accountless sessions stay 2 lines. */}
       {accountName && (
-        <div className="relative z-10 row-start-3 flex items-center gap-1.5 min-w-0" style={{ gridColumn: '2 / 4' }} data-testid="card-line3">
+        <div className="relative z-10 row-start-3 flex items-center gap-1.5 min-w-0" style={{ gridColumn: '1 / 3' }} data-testid="card-line3">
           {accountDot && (
             <span data-testid="account-dot" className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: accountDot }} role="img" aria-label={accountName ? `Account: ${accountName}` : 'Account'} title={session.accountEmail} />
           )}

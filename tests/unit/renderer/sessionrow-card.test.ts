@@ -109,7 +109,7 @@ describe('SessionRow card', () => {
     // Account name now lives on its own line-3 row, not crammed into line-2.
     const line3 = container.querySelector('[data-testid="card-line3"]') as HTMLElement
     expect(line3).toBeTruthy()
-    expect(line3.style.gridColumn).toBe('2 / 4')
+    expect(line3.style.gridColumn).toBe('1 / 3')
     expect(line3.contains(name)).toBe(true)
   })
 
@@ -142,14 +142,15 @@ describe('SessionRow card', () => {
     expect(container.querySelector('[data-testid="card-line3"]')).toBeNull()
   })
 
-  it('line 2 spans out of the 9px dot column so the model meta is not clipped', () => {
+  it('line 2 spans the full 2-column grid so the model meta is not clipped', () => {
     // jsdom cannot compute CSS grid, so lock the structural intent: the line-2
-    // content lives in ONE child that spans grid columns 2 / 4 (never auto-placed
-    // into the dot column), and the model meta text lives inside that wrapper.
+    // content lives in ONE child that spans the full grid (columns 1 / 3, after
+    // the leading status-dot column was removed), and the model meta text lives
+    // inside that wrapper.
     render(root, { model: 'sonnet', provider: 'claude' })
     const line2 = container.querySelector('[data-testid="card-line2"]') as HTMLElement
     expect(line2).toBeTruthy()
-    expect(line2.style.gridColumn).toBe('2 / 4')
+    expect(line2.style.gridColumn).toBe('1 / 3')
     expect(line2.textContent).toContain('sonnet')
     expect(line2.textContent).toContain('claude')
   })
