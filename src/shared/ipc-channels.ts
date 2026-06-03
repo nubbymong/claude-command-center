@@ -174,6 +174,9 @@ export const IPC = {
   // Service status
   SERVICE_STATUS: 'serviceStatus:update',
   SERVICE_STATUS_GET: 'serviceStatus:get',
+  SERVICE_HEALTH_GET: 'serviceHealth:get',
+  SERVICE_HEALTH_UPDATE: 'serviceHealth:update',
+  SERVICE_RESTART: 'serviceHealth:restart',
 
   // CLI
   CLI_CHECK: 'cli:check',
