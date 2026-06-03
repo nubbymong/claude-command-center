@@ -102,10 +102,6 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
   const [selectedAgentIds, setSelectedAgentIds] = useState<Set<string>>(new Set(initialClaude?.agentIds ?? initial?.agentIds ?? []))
   const [disableAutoMemory, setDisableAutoMemory] = useState(initialClaude?.disableAutoMemory ?? initial?.disableAutoMemory ?? false)
   const [enableCodexReview, setEnableCodexReview] = useState(initialClaude?.enableCodexReview ?? false)
-  // v1.5.11: Opus 4.8 fast mode -- 2.5x speed for 2x cost ($10/$50 per 1M
-  // tokens instead of $5/$25). Persisted on the config so tokenomics can
-  // route the session record to the `<model>-fast` pricing row.
-  const [fastMode, setFastMode] = useState(initialClaude?.fastMode ?? false)
   const [machineName, setMachineName] = useState(initial?.machineName ?? '')
 
   // Fetch available versions when legacy checkbox enabled
@@ -248,7 +244,6 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
       agentIds: !shellOnly && selectedAgentIds.size > 0 ? Array.from(selectedAgentIds) : undefined,
       disableAutoMemory: !shellOnly && disableAutoMemory ? true : undefined,
       enableCodexReview: !shellOnly && enableCodexReview ? true : undefined,
-      fastMode: !shellOnly && fastMode ? true : undefined,
     } : undefined
 
     const codexOptions: CodexOptions | undefined = provider === 'codex' ? {
@@ -604,22 +599,6 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                 <option value="haiku">Haiku</option>
               </select>
             </div>
-
-            {/* v1.5.11: Opus 4.8 fast mode toggle */}
-            {!shellOnly && (
-              <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={fastMode}
-                  onChange={(e) => setFastMode(e.target.checked)}
-                  className="mt-0.5 rounded border-surface1"
-                />
-                <span>
-                  Fast mode (Opus 4.8)
-                  <span className="block text-[10px] text-overlay0">2.5x speed at 2x cost ($10/$50 per 1M tokens). Tokenomics tracks Fast spend separately.</span>
-                </span>
-              </label>
-            )}
 
             {/* Disable auto-memory toggle */}
             {!shellOnly && (

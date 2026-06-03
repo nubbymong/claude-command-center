@@ -14,7 +14,7 @@ export type { SavedSession, SessionState }
 
 // Legacy top-level Claude fields that get migrated into claudeOptions.
 // Mirrors CLAUDE_FIELDS in config-manager.ts for the SavedSession case.
-const LEGACY_CLAUDE_FIELDS = ['model', 'effortLevel', 'legacyVersion', 'disableAutoMemory', 'flickerFree', 'powershellTool', 'agentIds'] as const
+const LEGACY_CLAUDE_FIELDS = ['model', 'effortLevel', 'legacyVersion', 'disableAutoMemory', 'agentIds'] as const
 
 // Lazy getter -- can't call getConfigDir() at module load time
 function getSessionStateFile(): string {

@@ -46,8 +46,6 @@ export function buildSessionState(): SessionState {
       effortLevel: s.effortLevel,
       disableAutoMemory: s.disableAutoMemory,
       enableCodexReview: s.enableCodexReview ? true : undefined,
-      flickerFree: s.flickerFree,
-      powershellTool: s.powershellTool,
     } : undefined,
     codexOptions: s.codexOptions,
   }))

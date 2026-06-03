@@ -69,8 +69,6 @@ export interface Session {
     version: string
   }
   agentIds?: string[]                    // Agent template IDs for this session
-  flickerFree?: boolean                  // Enable flicker-free alternate screen rendering
-  powershellTool?: boolean               // Enable native PowerShell tool
   effortLevel?: EffortLevel
   /** True once a LIVE effort tick (statusline effort.level or the hooks effort
    *  gateway) has arrived for THIS session. The sidebar card gates its EffortPill

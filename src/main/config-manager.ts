@@ -213,7 +213,7 @@ export function loadAllConfig(): { data: Record<string, unknown>; needsMigration
 }
 
 // v1.5: provider-shape migration constants
-const CLAUDE_FIELDS = ['model', 'effortLevel', 'legacyVersion', 'disableAutoMemory', 'flickerFree', 'powershellTool', 'agentIds'] as const
+const CLAUDE_FIELDS = ['model', 'effortLevel', 'legacyVersion', 'disableAutoMemory', 'agentIds'] as const
 
 /**
  * Migrate a single TerminalConfig from the legacy flat shape to the

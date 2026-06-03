@@ -39,10 +39,10 @@ interface ModelPricing {
 
 // Hardcoded fallback pricing (per 1M tokens)
 const FALLBACK_PRICING: Record<string, ModelPricing> = {
-  // v1.5.11: Opus 4.8 (released 2026-05-28) keeps the 4.7 base pricing but
-  // introduces an optional fast mode at 2.5x speed for 2x cost. fast variant
-  // is keyed by `<model>-fast` and selected at calculateCost() time when the
-  // session record carries fastMode: true.
+  // v1.5.11: Opus 4.8 (released 2026-05-28) keeps the 4.7 base pricing. A
+  // `<model>-fast` pricing row exists for the 2.5x-speed/2x-cost variant and
+  // is keyed by model name when reported by the CLI; there is no per-session
+  // toggle that selects it.
   'claude-opus-4-8': { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
   'claude-opus-4-8-fast': { input: 10, output: 50, cacheRead: 1.0, cacheWrite: 12.5 },
   'claude-opus-4-7': { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
