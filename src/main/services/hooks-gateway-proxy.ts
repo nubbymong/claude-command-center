@@ -20,8 +20,7 @@ export class HooksGatewayProxy {
   private buffers = new Map<string, RingBufferEntry[]>()
   private subscribers = new Set<(e: HookEvent) => void>()
   private _status: HooksGatewayStatus = { enabled: true, listening: false, port: null }
-  // permission bridge map — populated in Task 8
-  private responders = new Map<string, (decision: string) => void>()
+  // (the permission-bridge responder map lands in Task 8 alongside the logic that uses it)
 
   constructor(opts: HooksGatewayProxyOptions) {
     this.transport = opts.transport
@@ -77,6 +76,8 @@ export class HooksGatewayProxy {
         break
       }
       case 'dropped':
+        // The child's gateway latches HOOKS_DROPPED once per session (overflowLatched),
+        // so we receive at most one 'dropped' per session and don't need a local latch.
         try { this.emit(IPC.HOOKS_DROPPED, { sessionId: m.sessionId }) } catch { /* destroyed */ }
         break
       case 'permission-open':

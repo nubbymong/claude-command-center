@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { FakeChildTransport } from '../../../src/main/services/service-transport'
 import { HooksGatewayProxy } from '../../../src/main/services/hooks-gateway-proxy'
+import { RING_BUFFER_CAP } from '../../../src/main/hooks/hooks-types'
 
 describe('HooksGatewayProxy (core)', () => {
   it('registerSession returns a secret SYNCHRONOUSLY and posts register to the child', () => {
@@ -43,11 +44,13 @@ describe('HooksGatewayProxy (core)', () => {
   it('respects RING_BUFFER_CAP (oldest dropped)', () => {
     const t = new FakeChildTransport()
     const p = new HooksGatewayProxy({ transport: t, defaultPort: 19430 })
-    for (let i = 0; i < 250; i++) {
+    const total = RING_BUFFER_CAP + 50
+    for (let i = 0; i < total; i++) {
       t.emitToParent({ type: 'event', entry: { sessionId: 's1', event: 'PostToolUse', summary: String(i), payload: {}, ts: i } as never })
     }
-    expect(p.getBuffer('s1')).toHaveLength(200)
-    expect(p.getBuffer('s1')[0].summary).toBe('50') // first 50 dropped
+    expect(p.getBuffer('s1')).toHaveLength(RING_BUFFER_CAP)
+    // oldest (total - cap) entries dropped, so the first retained summary is that index
+    expect(p.getBuffer('s1')[0].summary).toBe(String(total - RING_BUFFER_CAP))
   })
 
   // The supervisor (Task 9) owns the transport subscription, so the proxy must be

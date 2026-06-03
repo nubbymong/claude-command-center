@@ -19,7 +19,11 @@ export type FromChildMessage =
   | { type: 'health'; inFlight: number; eventsTotal: number; dropsTotal: number; stallsLastMin: number }
   | { type: 'log'; entry: ServiceLogEntry }
 
-/** The transport the main-side proxy/supervisor use to talk to the child. */
+/** The transport the main-side proxy/supervisor use to talk to the child.
+ *  NOTE: `onMessage` is SINGLE-HANDLER — the last registration wins. When both the
+ *  supervisor and the proxy need child messages, the supervisor owns the single
+ *  subscription and forwards to the proxy via `proxy.handleChildMessage` (the proxy
+ *  is constructed with `selfSubscribe: false`). */
 export interface ChildTransport {
   post(msg: ToChildMessage): void
   onMessage(handler: (msg: FromChildMessage) => void): void
