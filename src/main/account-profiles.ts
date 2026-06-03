@@ -505,6 +505,79 @@ export function backupProfileHomeToCanonical(id: string): void {
   writeCanonicalIdentity(id, { claudeJson, credentials })
 }
 
+export type PrimaryCredentialSyncResult = 'none' | 'profile->global' | 'global->profile'
+
+/** Atomic file write (tmp + rename), creating parent dirs. */
+function atomicWriteFile(file: string, data: string): void {
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  const tmp = file + '.tmp'
+  fs.writeFileSync(tmp, data)
+  fs.renameSync(tmp, file)
+}
+
+function readFileMaybe(file: string): string | undefined {
+  try { return fs.readFileSync(file, 'utf8') } catch { return undefined }
+}
+
+/**
+ * Keep the user's REAL global Claude login (`~/.claude/.credentials.json`) in
+ * lockstep with the PRIMARY account's profile home, so an OAuth token rotation
+ * inside a CCC session never leaves an external `claude -p` on a stale, dead
+ * refresh token -- and a `/login` OUTSIDE CCC is picked up by the next session.
+ * (Root cause: capture COPIES the global creds into the primary profile home;
+ * sessions then rotate the token there, silently invalidating the global copy.)
+ *
+ * Deliberately minimal + safe:
+ *  - Syncs ONLY the small `.credentials.json` token file. NEVER writes the large
+ *    `~/.claude.json` identity/state file (it only READS the email from it).
+ *  - FRESHEST-WINS on the OAuth expiry: whichever side holds the newer token
+ *    wins; we never downgrade a live token to an older one.
+ *  - EMAIL-GUARDED on BOTH sides: the primary profile home AND the real global
+ *    must CURRENTLY be the primary account. A `/login` to a DIFFERENT account on
+ *    either side aborts the sync, so a wrong account's token can never be written
+ *    across. Primary-only; no-op without a captured primary profile + email.
+ *  - Atomic write; best-effort; never throws. The one-time backupRealClaudeOnce
+ *    snapshot of the real `~/.claude` is the recovery net.
+ *
+ * Returns what it did (for logging/tests).
+ */
+export function syncPrimaryCredentialsWithGlobal(): PrimaryCredentialSyncResult {
+  try {
+    const primaryId = getPrimaryProfileId()
+    if (!primaryId || !isValidProfileId(primaryId)) return 'none'
+    const prof = listProfiles().find((p) => p.id === primaryId)
+    if (!prof?.accountEmail) return 'none' // no known account -> cannot guard
+    const want = canonicaliseEmail(prof.accountEmail)
+
+    const home = getProfileConfigDir(primaryId)
+    // Guard A: the primary profile home must STILL be the primary account. A
+    // mid-session /login may have switched it -> let detection handle that, not us.
+    if (canonicaliseEmail(readEmailFromFile(path.join(home, '.claude.json')) ?? '') !== want) return 'none'
+    // Guard B: the real global must ALSO be the primary account. The user may have
+    // logged a DIFFERENT account globally -> never cross-contaminate either store.
+    if (canonicaliseEmail(readEmailFromFile(path.join(realHomeDir(), '.claude.json')) ?? '') !== want) return 'none'
+
+    const profCredPath = path.join(home, '.claude', '.credentials.json')
+    const globalCredPath = path.join(sharedRoot(), '.credentials.json')
+    const profCred = readFileMaybe(profCredPath)
+    const globalCred = readFileMaybe(globalCredPath)
+    const profExp = credentialExpiry(profCred)
+    const globalExp = credentialExpiry(globalCred)
+
+    if (profCred != null && profExp > globalExp) {
+      atomicWriteFile(globalCredPath, profCred)
+      return 'profile->global'
+    }
+    if (globalCred != null && globalExp > profExp) {
+      atomicWriteFile(profCredPath, globalCred)
+      // Keep canonical in lockstep with the externally-refreshed token.
+      try { writeCanonicalIdentity(primaryId, { credentials: globalCred }) } catch { /* best-effort */ }
+      return 'global->profile'
+    }
+    return 'none'
+  } catch { return 'none' }
+}
+
 /** A /login switched a session to a new account, written into the account's SHARED
  *  profile home. Capture it as a NEW named profile from that home. The caller is
  *  responsible for restoring the source profile home from canonical afterwards so

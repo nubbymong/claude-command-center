@@ -26,7 +26,7 @@ import { registerNotesHandlers } from './ipc/notes-handlers'
 import { registerVisionHandlers } from './ipc/vision-handlers'
 import { registerConfigHandlers } from './ipc/config-handlers'
 import { registerAccountProfilesHandlers } from './ipc/account-profiles-handlers'
-import { migrateProfilesToHomeLayout, cleanupSessionHomes } from './account-profiles'
+import { migrateProfilesToHomeLayout, cleanupSessionHomes, syncPrimaryCredentialsWithGlobal } from './account-profiles'
 import { runFirstRunCapture } from './first-run-accounts'
 import { backupRealClaudeOnce } from './claude-backup'
 import { registerCloudAgentHandlers } from './ipc/cloud-agent-handlers'
@@ -661,6 +661,10 @@ if (!gotTheLock) {
     // token out of any retired account-homes/<sessionId>/ into the profile home +
     // canonical (so no re-auth after upgrade), then remove them. Idempotent.
     try { cleanupSessionHomes() } catch (e) { logInfo(`[profiles] session-home cleanup skipped: ${e}`) }
+    // Auth-outside-CCC fix: heal a stale real global ~/.claude/.credentials.json on
+    // launch (a prior session rotated the primary account's OAuth token, leaving
+    // external `claude -p` on a dead refresh token). Freshest-wins + email-guarded.
+    try { const r = syncPrimaryCredentialsWithGlobal(); if (r !== 'none') logInfo(`[profiles] primary<->global credential sync at launch: ${r}`) } catch (e) { logInfo(`[profiles] credential sync skipped: ${e}`) }
     registerScreenshotHandlers(getWindow)
     registerWebviewHandlers(getWindow)
     registerInsightsHandlers(getWindow)

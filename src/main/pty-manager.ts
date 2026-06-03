@@ -28,7 +28,7 @@ import {
 import { registerCodexReviewSession, unregisterCodexReviewSession } from './conductor-mcp-server'
 import { disposeSession as disposeCodexReviewUsage } from './codex-review-usage'
 import { readCodexAccountEmail } from './account-identity'
-import { getProfileConfigDir, setupProfileLinks, getPrimaryProfileId, backupProfileHomeToCanonical } from './account-profiles'
+import { getProfileConfigDir, setupProfileLinks, getPrimaryProfileId, backupProfileHomeToCanonical, syncPrimaryCredentialsWithGlobal } from './account-profiles'
 import { captureClaudeAccount, clearClaudeAccount, getAccountIdentity, pushAccountIdentity, startWatchingAccountIdentity, stopWatchingAccountIdentity, getWatchedProfileId } from './claude-account-identity'
 import type { AccountIdentity } from '../shared/types'
 import { updateSessionMeta, clearSessionMeta } from './session-registry'
@@ -879,6 +879,11 @@ export function spawnPty(
     // way a normal single-account install does. The old per-session-home model gave
     // each session a private COPY of the credential; the first refresh rotated the
     // token and invalidated every other copy, forcing a re-auth on resume.
+    // Auth-outside-CCC fix: before a session reads the primary account's profile
+    // home, pull a fresher global token (e.g. a /login the user ran OUTSIDE CCC)
+    // into it so this session starts on the live token. Primary-only + email-guarded;
+    // no-op otherwise.
+    try { syncPrimaryCredentialsWithGlobal() } catch { /* best-effort */ }
     let home: string | null = null
     if (resolvedProfileId) {
       try { setupProfileLinks(resolvedProfileId) } catch (e) { logWarn(`[profiles] session ${sessionId}: home refresh failed: ${e}`) }
@@ -1133,6 +1138,11 @@ export function spawnPty(
       // switched the home to a different account can never corrupt canonical.
       // No-op for default (no-profile) sessions.
       if (exitProfileId) { try { backupProfileHomeToCanonical(exitProfileId) } catch { /* best-effort */ } }
+      // Auth-outside-CCC fix: this session may have rotated the primary account's
+      // OAuth token; push the freshest token back to the real global ~/.claude so an
+      // external `claude -p` keeps working. Freshest-wins + email-guarded; no-op when
+      // the exiting session wasn't the primary account.
+      try { syncPrimaryCredentialsWithGlobal() } catch { /* best-effort */ }
       // Bug 4: release this session's pinned vision browser target/context.
       try { teardownVisionSession(sessionId) } catch { /* best-effort */ }
     } else {
