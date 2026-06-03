@@ -25,8 +25,10 @@ export class HooksGatewayProxy {
   // and every consumer method delegates to it so the proxy stays a faithful drop-in.
   private inProcess: HooksGateway | null = null
   private inProcessReady: Promise<unknown> | null = null
-  // Permission bridge: child-opened request ids awaiting a main-side decision.
-  private responders = new Map<string, (decision: string) => void>()
+  // Permission bridge: ids of child-opened requests awaiting a main-side decision.
+  // Presence-tracking only — the actual held-open responder lives in the child;
+  // resolvePermission routes the decision back over the transport.
+  private openPermissionRequests = new Set<string>()
 
   constructor(opts: HooksGatewayProxyOptions) {
     this.transport = opts.transport
@@ -71,8 +73,12 @@ export class HooksGatewayProxy {
     return { ...this._status }
   }
 
-  /** Test/seam parity with HooksGateway. */
-  dispatchForTest(event: HookEvent): void { this.fanOut(event) }
+  /** Test/seam parity with HooksGateway. After fail-open the in-process gateway
+   *  owns fan-out, so delegate there (matches the other read-path delegations). */
+  dispatchForTest(event: HookEvent): void {
+    if (this.inProcess) { this.inProcess.dispatchForTest(event); return }
+    this.fanOut(event)
+  }
 
   /** Public entry the supervisor uses when it owns the transport subscription. */
   handleChildMessage(m: FromChildMessage): void { this.onChildMessage(m) }
@@ -103,7 +109,7 @@ export class HooksGatewayProxy {
       case 'permission-open':
         // Record the open request so a later resolvePermission(requestId, ...)
         // is meaningful (we route the decision back to the child).
-        this.responders.set(m.requestId, () => { /* decision routed via transport.post */ })
+        this.openPermissionRequests.add(m.requestId)
         break
       default: break
     }
@@ -149,7 +155,7 @@ export class HooksGatewayProxy {
    *  handles it (no-op here). Utility-process: route the decision back to the child. */
   resolvePermission(requestId: string, decision: string): void {
     if (this.inProcess) return
-    this.responders.delete(requestId)
+    this.openPermissionRequests.delete(requestId)
     this.transport.post({ type: 'permission-respond', requestId, decision })
   }
 

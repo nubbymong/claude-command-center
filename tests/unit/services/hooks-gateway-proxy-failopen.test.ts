@@ -59,6 +59,17 @@ describe('HooksGatewayProxy fail-open + permission bridge', () => {
     expect(secret.length).toBeGreaterThan(0)
   })
 
+  it('a subscriber registered BEFORE failOpen still receives events after failOpen', () => {
+    const t = new FakeChildTransport()
+    p = new HooksGatewayProxy({ transport: t, defaultPort: 0 })
+    const seen: string[] = []
+    p.subscribe((e) => seen.push(e.event))
+    p.failOpen() // copies current subscribers into the in-process gateway
+    // After fail-open the in-process gateway owns fan-out; dispatchForTest delegates there.
+    p.dispatchForTest({ sessionId: 's1', event: 'Stop', summary: 'Stop', payload: {}, ts: 1 } as never)
+    expect(seen).toEqual(['Stop']) // fires exactly once, via the in-process gateway
+  })
+
   it('a child permission-open lets resolvePermission route the decision back to the child', () => {
     const t = new FakeChildTransport(); const sent: unknown[] = []
     t.onChild((m) => sent.push(m))
