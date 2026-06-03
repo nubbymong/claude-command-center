@@ -151,9 +151,8 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
       </span>
 
       {/* Line 2: model meta + context meter + right-aligned %. One grid child
-          spanning the name+meta columns (2 / 4) so the meta does NOT auto-place
-          into the 9px dot column (col 1) and get clipped. The dot column stays
-          empty on line 2, so line 2 aligns under the name. */}
+          spanning the full 2-column grid (1 / 3) so it aligns under the name in
+          column 1. */}
       <div className="relative z-10 row-start-2 flex items-center gap-2" style={{ gridColumn: '1 / 3' }} data-testid="card-line2">
         <span className="meta truncate">{metaLine}</span>
         <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--surface-sunken)' }}>
@@ -164,7 +163,7 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
         </span>
       </div>
 
-      {/* Line 3: account on its own row, under the model (col 2/4 so it aligns
+      {/* Line 3: account on its own row, under the model (spans 1 / 3 so it aligns
           under the name/meta and never clips the way the cramped line-2 chip did).
           Rendered only when accountEmail is set so accountless sessions stay 2 lines. */}
       {accountName && (

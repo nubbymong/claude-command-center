@@ -5,6 +5,8 @@ import type { EffortLevel } from '../../stores/sessionStore'
 // grammar) coloured by the per-level --effort-<level> ramp token (theme-aware,
 // defined in styles.css). Text + tooltip carry the meaning, so it is not
 // colour-only. Returns null for an unknown level (defensive).
+// Background tint is 18% (vs StatusPill's 15%): the effort pill often sits
+// immediately right of the status pill, so a hair more fill reads as its own chip.
 const LEVELS = new Set<EffortLevel>(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
 
 export function EffortPill({ level }: { level: EffortLevel }) {
