@@ -71,4 +71,38 @@ describe('ServiceSupervisor lifecycle', () => {
     vi.advanceTimersByTime(5000)
     expect(fork).toHaveBeenCalledTimes(1)   // the pending restart was cancelled
   })
+
+  it('manualRestart (utility mode) kills + respawns and resets counters', () => {
+    let exitCb: (() => void) | null = null
+    const fork = vi.fn(() => ({ transport: new FakeChildTransport(), kill: () => {}, onExit: (cb: () => void) => { exitCb = cb } }))
+    sup = new ServiceSupervisor({ forkChild: fork, defaultPort: 0, emit: () => {} })
+    sup.start()
+    exitCb?.(); vi.advanceTimersByTime(300)      // one crash -> restartCount 1
+    expect(sup.getDiagnosticsSnapshot().services[0].restartCount).toBe(1)
+    const r = sup.manualRestart('hooks')
+    expect(r.ok).toBe(true)
+    expect(fork).toHaveBeenCalledTimes(3)        // initial + backoff respawn + manual respawn
+    expect(sup.getDiagnosticsSnapshot().services[0].restartCount).toBe(0)  // counters reset
+  })
+
+  it('manualRestart returns {ok:false, reason:"fallback"} when in in-process fallback', () => {
+    let exitCb: (() => void) | null = null
+    const fork = vi.fn(() => ({ transport: new FakeChildTransport(), kill: () => {}, onExit: (cb: () => void) => { exitCb = cb } }))
+    sup = new ServiceSupervisor({ forkChild: fork, defaultPort: 0, emit: () => {}, maxRestarts: 1 })
+    sup.start()
+    for (let i = 0; i < 2; i++) { exitCb?.(); vi.advanceTimersByTime(5000) }   // -> fallback
+    expect(sup.getProxy()?.isInProcessFallback()).toBe(true)
+    const forkCalls = fork.mock.calls.length
+    const r = sup.manualRestart('hooks')
+    expect(r).toEqual({ ok: false, reason: 'fallback' })
+    expect(fork).toHaveBeenCalledTimes(forkCalls)   // no respawn in fallback
+  })
+
+  it('manualRestart returns {ok:false, reason:"shutting-down"} after shutdown', () => {
+    const fork = vi.fn(() => ({ transport: new FakeChildTransport(), kill: () => {}, onExit: () => {} }))
+    sup = new ServiceSupervisor({ forkChild: fork, defaultPort: 0, emit: () => {} })
+    sup.start()
+    sup.shutdown()
+    expect(sup.manualRestart('hooks')).toEqual({ ok: false, reason: 'shutting-down' })
+  })
 })

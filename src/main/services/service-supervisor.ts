@@ -111,6 +111,29 @@ export class ServiceSupervisor {
     return this.proxy!
   }
 
+  /** User-requested restart of a service. In utility-process mode this kills the
+   *  current child and immediately respawns, resetting the restart/backoff/fail-open
+   *  counters so a manual restart is a clean slate (not counted against the fail-open
+   *  budget). Declines in in-process fallback (live un-fail-open is deferred, spec §7)
+   *  and during shutdown. The old child's kill fires its onExit, but the spawnChild
+   *  guard (`this.child === c`) ignores a non-current child's exit so no spurious
+   *  extra spawn occurs. */
+  manualRestart(serviceId: string): { ok: boolean; reason?: string } {
+    if (serviceId !== 'hooks') return { ok: false, reason: 'unknown-service' }
+    if (this.shuttingDown) return { ok: false, reason: 'shutting-down' }
+    if (this.proxy?.isInProcessFallback()) return { ok: false, reason: 'fallback' } // live revert deferred (spec §7)
+    this.appendLog('info', 'manual-restart', 'manual restart requested')
+    if (this.restartTimer !== null) { clearTimeout(this.restartTimer); this.restartTimer = null }
+    this.restarts = 0
+    this.backoffIdx = 0
+    this.fellOpen = false
+    this.health = { ...this.health, restartCount: 0 }
+    try { this.child?.kill() } catch { /* best-effort */ }
+    this.spawnChild()   // rebinds the long-lived proxy to the fresh child + replays secrets + start
+    this.pushHealth()
+    return { ok: true }
+  }
+
   private spawnChild(): void {
     const c = this.opts.forkChild()
     this.child = c
