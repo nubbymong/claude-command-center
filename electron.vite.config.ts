@@ -12,7 +12,8 @@ export default defineConfig({
       outDir: 'out/main',
       rollupOptions: {
         input: {
-          index: resolve(__dirname, 'src/main/index.ts')
+          index: resolve(__dirname, 'src/main/index.ts'),
+          'hooks-host': resolve(__dirname, 'src/main/services/hooks-host.ts')
         }
       }
     }
