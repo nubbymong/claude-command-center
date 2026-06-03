@@ -37,7 +37,8 @@ import { registerTokenomicsHandlers } from './ipc/tokenomics-handlers'
 import { registerAccountAttributionHandlers } from './ipc/account-attribution-handlers'
 import { registerGitHubHandlers } from './ipc/github-handlers'
 import { registerHooksHandlers } from './ipc/hooks-handlers'
-import { registerServiceHealthHandlers } from './ipc/service-health-handlers'
+import { registerServiceHealthHandlers, getMergedDiagnostics } from './ipc/service-health-handlers'
+import { PtyIntegrityMonitor, setPtyIntegrityMonitor, getPtyIntegrityMonitor } from './services/pty-integrity-monitor'
 import { registerCodexHandlers } from './ipc/codex-handlers'
 import { registerCodexReviewHandlers } from './ipc/codex-review-handlers'
 import { registerChannelHandlers } from './ipc/channel-handlers'
@@ -704,17 +705,29 @@ if (!gotTheLock) {
         try { win.webContents.send(channel, payload) } catch { /* destroyed */ }
       }
     }
+    // PTY-integrity monitor (D1 diagnostics). Lives in main; surfaces through the
+    // SAME SERVICE_HEALTH_GET/UPDATE as the hooks supervisor via a merge so every
+    // push carries BOTH snapshots (else one source would wipe the other in the UI).
+    const getSup = () => getHooksSupervisor()
+    const getPtyDiag = () => getPtyIntegrityMonitor()?.diagnostics() ?? null
+    const pushDiagnostics = () => emitToWindow(IPC.SERVICE_HEALTH_UPDATE, getMergedDiagnostics(getSup, getPtyDiag))
+    const ptyMonitor = new PtyIntegrityMonitor({ emit: pushDiagnostics })
+    setPtyIntegrityMonitor(ptyMonitor)
+    // Redirect ONLY SERVICE_HEALTH_UPDATE through the merge; every other channel
+    // (HOOKS_STATUS, HOOKS_EVENT, ...) the supervisor/gateway emit passes through.
+    const emitWithMerge = (channel: string, payload: unknown) =>
+      channel === IPC.SERVICE_HEALTH_UPDATE ? pushDiagnostics() : emitToWindow(channel, payload)
     if (hooksEnabled) {
       // Supervised out-of-process gateway: a utilityProcess child runs the HooksGateway,
       // crash-isolated from the main thread, with restart/backoff + fail-open-to-in-process.
-      const hooksSupervisor = new ServiceSupervisor({ forkChild: forkHooksChild, defaultPort: hooksPort, emit: emitToWindow })
+      const hooksSupervisor = new ServiceSupervisor({ forkChild: forkHooksChild, defaultPort: hooksPort, emit: emitWithMerge })
       const hooksProxy = hooksSupervisor.start()   // forks the child + posts start (S1 replay-before-listen inside)
       setGateway(hooksProxy)                        // B1: consumers + handlers all use the proxy
       setHooksSupervisor(hooksSupervisor)           // module-scope ref for before-quit (S5)
     } else {
       // Hooks disabled: today's exact behavior — an in-process gateway exists (so
       // registerSession still mints secrets) but never binds; no child is forked.
-      setGateway(new HooksGateway({ defaultPort: hooksPort, emit: emitToWindow }))
+      setGateway(new HooksGateway({ defaultPort: hooksPort, emit: emitWithMerge }))
     }
     startPermissionTray()
     startEffortTracker()
@@ -723,7 +736,7 @@ if (!gotTheLock) {
     registerHooksHandlers(getGateway()!)   // B1: handlers get whatever gateway backs the singleton
     // D1b: diagnostics IPC. The getter returns null in the hooks-disabled branch
     // (supervisor never set) -> the handler serves an honest synthetic "hooks off" snapshot.
-    registerServiceHealthHandlers(() => getHooksSupervisor())
+    registerServiceHealthHandlers(getSup, getPtyDiag)
     if (hooksEnabled) {
       cleanupStaleHookEntries(new Set())   // supervisor.start() already fired proxy.start()
     }
