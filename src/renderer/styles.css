@@ -79,6 +79,15 @@
   --status-danger: #f08a8a;
   --status-info: #5b9df0;
 
+  /* Effort ramp (R2 smooth heat green->yellow->red). Used by EffortPill on
+     session cards via var(--effort-<level>). Not status colours -> distinct tokens. */
+  --effort-low: #a6e3a1;
+  --effort-medium: #cfe2a8;
+  --effort-high: #f9e2af;
+  --effort-xhigh: #f7c5ad;
+  --effort-max: #f5a8aa;
+  --effort-ultracode: #f38ba8;
+
   --chart-opus: #b8714a;
   --chart-sonnet: #3fbecb;
   --chart-codex: #5b9df0;
@@ -155,6 +164,14 @@
   --status-warning: #946a12;
   --status-danger: #bd3a2c;
   --status-info: #2360c2;
+
+  /* Effort ramp — darkened for contrast as text on the light background. */
+  --effort-low: #40a02b;
+  --effort-medium: #8f9724;
+  --effort-high: #df8e1d;
+  --effort-xhigh: #e46426;
+  --effort-max: #d6392f;
+  --effort-ultracode: #d20f39;
 
   --chart-opus: #a85a2c;
   --chart-sonnet: #15808d;
@@ -233,7 +250,7 @@ body {
      - keyboard focus        -> quiet teal DASHED ring, distinct from selection */
 .session-card {
   display: grid;
-  grid-template-columns: 9px 1fr auto;
+  grid-template-columns: 1fr auto;
   align-items: center;
   column-gap: 9px;
   row-gap: 2px;
