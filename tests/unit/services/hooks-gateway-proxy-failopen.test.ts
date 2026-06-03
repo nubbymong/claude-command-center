@@ -43,7 +43,7 @@ describe('HooksGatewayProxy fail-open + permission bridge', () => {
     t.onChild((m) => sent.push(m))
     p = new HooksGatewayProxy({ transport: t, defaultPort: 0 })
     p.failOpen()
-    await new Promise((r) => setTimeout(r, 0)) // let the in-process gateway finish binding
+    await p.start() // deterministically awaits the in-process bind (inProcessReady)
     p.registerSession('s1')
     expect(sent.some((m: any) => m.type === 'register')).toBe(false) // went to in-process, not the child
     expect(p.status().listening).toBe(true)                          // in-process gateway is listening
@@ -68,6 +68,16 @@ describe('HooksGatewayProxy fail-open + permission bridge', () => {
     // After fail-open the in-process gateway owns fan-out; dispatchForTest delegates there.
     p.dispatchForTest({ sessionId: 's1', event: 'Stop', summary: 'Stop', payload: {}, ts: 1 } as never)
     expect(seen).toEqual(['Stop']) // fires exactly once, via the in-process gateway
+  })
+
+  it('a subscriber registered AFTER failOpen fires exactly once (no dormant double-add)', () => {
+    const t = new FakeChildTransport()
+    p = new HooksGatewayProxy({ transport: t, defaultPort: 0 })
+    p.failOpen()
+    const seen: string[] = []
+    p.subscribe((e) => seen.push(e.event)) // registers directly on the in-process gateway
+    p.dispatchForTest({ sessionId: 's1', event: 'Stop', summary: 'Stop', payload: {}, ts: 1 } as never)
+    expect(seen).toEqual(['Stop'])
   })
 
   it('a child permission-open lets resolvePermission route the decision back to the child', () => {

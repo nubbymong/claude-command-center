@@ -38,11 +38,12 @@ export class HooksGatewayProxy {
   }
 
   subscribe(cb: (e: HookEvent) => void): () => void {
+    // After fail-open the in-process gateway owns fan-out, so a new subscriber goes
+    // straight there. this.subscribers stays dormant once inProcess is set (the
+    // pre-failOpen subscribers were already copied into the gateway by failOpen()).
+    if (this.inProcess) return this.inProcess.subscribe(cb)
     this.subscribers.add(cb)
-    // After fail-open the in-process gateway is the real event source, so the
-    // subscriber must be registered there too; unsubscribe removes from both.
-    const offInProc = this.inProcess?.subscribe(cb)
-    return () => { this.subscribers.delete(cb); offInProc?.() }
+    return () => { this.subscribers.delete(cb) }
   }
 
   /** SYNCHRONOUS: secret minted in main (keeps pty-manager's spawn path sync),
@@ -154,8 +155,8 @@ export class HooksGatewayProxy {
   /** Renderer Allow/Deny path. In-process: the module responder registry already
    *  handles it (no-op here). Utility-process: route the decision back to the child. */
   resolvePermission(requestId: string, decision: string): void {
-    if (this.inProcess) return
-    this.openPermissionRequests.delete(requestId)
+    this.openPermissionRequests.delete(requestId)   // clear regardless of host
+    if (this.inProcess) return   // in-process: the module responder registry already resolved it
     this.transport.post({ type: 'permission-respond', requestId, decision })
   }
 
@@ -165,6 +166,9 @@ export class HooksGatewayProxy {
     this._status = { ...this._status, listening: false }
   }
 
+  // Precondition: utility-process mode only (called on child restart, before any
+  // fail-open). this.secrets is the source of truth there; after failOpen() it goes
+  // stale because registerSession delegates to the in-process gateway.
   replaySecretsTo(t: ChildTransport): void {
     for (const [sid, secret] of this.secrets) t.post({ type: 'register', sid, secret })
   }
