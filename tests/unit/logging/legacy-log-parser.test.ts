@@ -78,11 +78,30 @@ describe('legacy-log-parser', () => {
   it('folds <id>-partner into the base session, appended after base events', () => {
     makeSession('P', 's4', { 'session.jsonl': line({ ts: 1, type: 'data', data: 'base' }) })
     makeSession('P', 's4-partner', { 'session.jsonl': line({ ts: 2, type: 'data', data: 'partner' }) })
-    const { sessions } = parseLegacyLogs(logsDir)
+    const { sessions, foldedPartnerDirs } = parseLegacyLogs(logsDir)
     // Exactly one logical session s4 (partner folded in), no separate s4-partner.
     expect(sessions.map((s) => s.sessionId).sort()).toEqual(['s4'])
     const s = sessions.find((x) => x.sessionId === 's4')!
     expect(s.events.map((e) => e.data)).toEqual(['base', 'partner'])
+    // The partner dir folded into the base counts toward reconciliation.
+    expect(foldedPartnerDirs).toBe(1)
+  })
+
+  it('reports foldedPartnerDirs === 0 when no partner/duplicate folders exist', () => {
+    makeSession('A', 's1', { 'session.jsonl': line({ ts: 1, type: 'data', data: 'a' }) })
+    makeSession('B', 's2', { 'session.jsonl': line({ ts: 2, type: 'data', data: 'b' }) })
+    const { foldedPartnerDirs } = parseLegacyLogs(logsDir)
+    expect(foldedPartnerDirs).toBe(0)
+  })
+
+  it('does NOT count a 0-event partner dir as folded (it is unparseable instead)', () => {
+    makeSession('P', 's8', { 'session.jsonl': line({ ts: 1, type: 'data', data: 'base' }) })
+    // Partner dir with no valid events -> reported unparseable, NOT folded.
+    makeSession('P', 's8-partner', { 'session.jsonl': 'garbage\n' })
+    const { sessions, unparseable, foldedPartnerDirs } = parseLegacyLogs(logsDir)
+    expect(sessions.map((s) => s.sessionId).sort()).toEqual(['s8'])
+    expect(foldedPartnerDirs).toBe(0)
+    expect(unparseable.some((u) => u.path.includes('s8-partner'))).toBe(true)
   })
 
   it('collects unparseable / malformed-line files instead of dropping silently', () => {
@@ -120,8 +139,9 @@ describe('legacy-log-parser', () => {
   })
 
   it('returns empty result for a missing logs dir', () => {
-    const { sessions, unparseable } = parseLegacyLogs(join(root, 'does-not-exist'))
+    const { sessions, unparseable, foldedPartnerDirs } = parseLegacyLogs(join(root, 'does-not-exist'))
     expect(sessions).toEqual([])
     expect(unparseable).toEqual([])
+    expect(foldedPartnerDirs).toBe(0)
   })
 })

@@ -40,6 +40,11 @@ export interface UnparseableFile {
 export interface ParseResult {
   sessions: ParsedSession[]
   unparseable: UnparseableFile[]
+  /** Count of folders that folded into an already-seen base session (partner
+   *  terminals / duplicates). These contribute no separate imported row, so the
+   *  report uses this to reconcile the detected folder count. A 0-event partner
+   *  dir does NOT fold (it is listed in `unparseable` instead). */
+  foldedPartnerDirs: number
 }
 
 /** Order one session dir's log files chronologically: oldest rotation first
@@ -114,6 +119,7 @@ function readMeta(sessionDir: string): { configLabel?: string; accountEmail?: st
  */
 export function parseLegacyLogs(logsDir: string): ParseResult {
   const unparseable: UnparseableFile[] = []
+  let foldedPartnerDirs = 0
   // Accumulate by BASE session id so partner dirs merge in.
   const byBase = new Map<string, { configLabel: string; accountEmail?: string; profileId?: string; events: ParsedEvent[] }>()
 
@@ -121,7 +127,7 @@ export function parseLegacyLogs(logsDir: string): ParseResult {
   try {
     labelDirs = fs.readdirSync(logsDir)
   } catch {
-    return { sessions: [], unparseable: [] }
+    return { sessions: [], unparseable: [], foldedPartnerDirs: 0 }
   }
   labelDirs.sort((a, b) => a.localeCompare(b))
 
@@ -187,7 +193,9 @@ export function parseLegacyLogs(logsDir: string): ParseResult {
       const existing = byBase.get(baseId)
       if (existing) {
         // Partner (or a duplicate) folded into the base: append events; keep the
-        // first-seen meta (base dir sorts before its `-partner` sibling).
+        // first-seen meta (base dir sorts before its `-partner` sibling). Counted
+        // for reconciliation since this folder yields no separate imported row.
+        foldedPartnerDirs += 1
         for (const ev of events) existing.events.push(ev)
       } else {
         byBase.set(baseId, {
@@ -221,5 +229,5 @@ export function parseLegacyLogs(logsDir: string): ParseResult {
   // Stable final ordering by sessionId for deterministic reports.
   sessions.sort((a, b) => a.sessionId.localeCompare(b.sessionId))
 
-  return { sessions, unparseable }
+  return { sessions, unparseable, foldedPartnerDirs }
 }

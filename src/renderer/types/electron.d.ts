@@ -222,6 +222,8 @@ export interface ElectronAPI {
       skippedSessions: number
       importedEvents: number
       unparseable: { path: string; reason: string; skippedLines: number }[]
+      foldedPartnerDirs: number
+      detectedFolders: number
       dbBytesBefore: number
       dbBytesAfter: number
     }>

@@ -3,6 +3,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { useMigrationStore } from '../../../src/renderer/stores/migrationStore'
+import { useSettingsStore } from '../../../src/renderer/stores/settingsStore'
 
 const api = {
   detect: vi.fn(),
@@ -11,10 +12,17 @@ const api = {
   onProgress: vi.fn(() => () => {}),
 }
 
+// run() success now marks legacyLogsMigrated centrally, which routes through
+// settingsStore.updateSettings -> saveConfigNow -> window.electronAPI.config.save.
+// Mirror the config mock used by log-migration-prompt.test.tsx so the call is a no-op.
+const configSave = vi.fn().mockResolvedValue(undefined)
+
 beforeEach(() => {
   vi.clearAllMocks()
-  ;(globalThis as any).window = { electronAPI: { logMigration: api } }
+  ;(globalThis as any).window = { electronAPI: { logMigration: api, config: { save: configSave } } }
   useMigrationStore.setState({ phase: 'idle', present: false, sessionFolders: 0, progressDone: 0, progressTotal: 0, report: null })
+  // Reset the migrated flag so the run() success assertion starts from false.
+  useSettingsStore.setState((s) => ({ settings: { ...s.settings, legacyLogsMigrated: false } }))
 })
 
 describe('migrationStore', () => {
@@ -26,7 +34,7 @@ describe('migrationStore', () => {
   })
 
   it('run() drives phase idle -> running -> done and stores the report', async () => {
-    const report = { totalSessions: 2, importedSessions: 2, skippedSessions: 0, importedEvents: 5, unparseable: [], dbBytesBefore: 10, dbBytesAfter: 20 }
+    const report = { totalSessions: 2, importedSessions: 2, skippedSessions: 0, importedEvents: 5, unparseable: [], foldedPartnerDirs: 0, detectedFolders: 2, dbBytesBefore: 10, dbBytesAfter: 20 }
     api.run.mockResolvedValue(report)
     const phases: string[] = []
     const unsub = useMigrationStore.subscribe((s) => phases.push(s.phase))
@@ -35,6 +43,8 @@ describe('migrationStore', () => {
     expect(phases).toContain('running')
     expect(useMigrationStore.getState().phase).toBe('done')
     expect(useMigrationStore.getState().report).toEqual(report)
+    // run() success marks migration complete centrally (covers the prompt path too).
+    expect(useSettingsStore.getState().settings.legacyLogsMigrated).toBe(true)
   })
 
   it('run() goes to phase error when the IPC rejects', async () => {

@@ -41,6 +41,8 @@ const report = {
     { path: 'C:/logs/APP/s5/session.jsonl', reason: 'skipped malformed line(s)', skippedLines: 3 },
     { path: 'C:/logs/APP/s9', reason: 'no parseable events', skippedLines: 0 },
   ],
+  foldedPartnerDirs: 1,
+  detectedFolders: 990,
   dbBytesBefore: 1_000_000, dbBytesAfter: 4_000_000,
 }
 
@@ -72,6 +74,26 @@ describe('MigrationReport', () => {
     // Lists both unparseable paths
     expect(text).toContain('s5/session.jsonl')
     expect(text).toContain('no parseable events')
+  })
+
+  it('renders the reconciliation line with the detected count and merged partner count', () => {
+    const { container, unmount: u } = renderComponent(
+      React.createElement(MigrationReport, {
+        report,
+        onReclaim: () => {},
+        onDismiss: () => {},
+        reclaiming: false,
+      })
+    )
+    unmount = u
+
+    const text = (container.textContent ?? '').replace(/\s+/g, ' ')
+    // Detected folder count + the reconciliation phrasing.
+    expect(text).toContain('Detected 990 session folder(s)')
+    // The merged-partner term accounts for the folded partner dir.
+    expect(text).toContain('1 partner terminal(s) merged into their base session')
+    // No-readable-event folders are surfaced (one such unparseable entry in the fixture).
+    expect(text).toContain('1 with no readable events')
   })
 
   it('requires a two-step confirm before invoking onReclaim', async () => {

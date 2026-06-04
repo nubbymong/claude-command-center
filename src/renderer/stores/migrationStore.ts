@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { useSettingsStore } from './settingsStore'
 
 export interface MigrationReportData {
   totalSessions: number
@@ -6,6 +7,8 @@ export interface MigrationReportData {
   skippedSessions: number
   importedEvents: number
   unparseable: { path: string; reason: string; skippedLines: number }[]
+  foldedPartnerDirs: number
+  detectedFolders: number
   dbBytesBefore: number
   dbBytesAfter: number
 }
@@ -57,6 +60,11 @@ export const useMigrationStore = create<MigrationState>((set, get) => ({
     try {
       const report = await window.electronAPI.logMigration.run()
       set({ phase: 'done', report })
+      // Mark migration complete centrally so BOTH the one-time prompt and the
+      // Settings path record completion (Settings later checks this flag before
+      // re-offering "Migrate existing logs"). Fire-and-forget: the phase
+      // transition above must NOT depend on the settings save resolving.
+      void useSettingsStore.getState().updateSettings({ legacyLogsMigrated: true })
     } catch (e) {
       set({ phase: 'error', errorKind: 'run', errorMessage: e instanceof Error ? e.message : String(e) })
     } finally {

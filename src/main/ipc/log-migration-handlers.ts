@@ -11,6 +11,7 @@ import { IPC } from '../../shared/ipc-channels'
 import { getDataDirectory } from '../data-paths'
 import { getLogSupervisor } from '../logging/logging-service'
 import { parseLegacyLogs } from '../logging/legacy-log-parser'
+import { stripAnsi } from '../logging/ansi-strip'
 import { runImport } from '../logging/legacy-log-importer'
 import { snapshotLegacyLogs, isLegacyLogsFrozen, markLegacyImportComplete, reclaimLegacyLogs } from '../logging/log-snapshot'
 import { logInfo, logWarn } from '../debug-logger'
@@ -75,8 +76,11 @@ export function registerLogMigrationHandlers(getWindow: () => BrowserWindow | nu
       if (!sup) throw new Error('logging worker not available (logging disabled?)')
       const dir = legacyLogsDir()
       const dbBefore = dbSizeBytes()
+      // Snapshot the detected folder count once (the tree is read-only until reclaim,
+      // so it is stable for the run) for the report's reconciliation line.
+      const detectedFolders = countSessionFolders(dir)
       snapshotLegacyLogs()                                    // 1) one-time read-only snapshot/marker
-      const { sessions, unparseable } = parseLegacyLogs(dir)  // 2) pure parse off-DB
+      const { sessions, unparseable, foldedPartnerDirs } = parseLegacyLogs(dir)  // 2) pure parse off-DB
       let chunkId = 1
       const report = await runImport(                         // 3) chunked import through the SINGLE worker
         sessions,
@@ -88,7 +92,7 @@ export function registerLogMigrationHandlers(getWindow: () => BrowserWindow | nu
             profileId: s.profileId,
             provider: s.provider,
             startedAt: s.startedAt,
-            events: s.events.map((e) => ({ ts: e.ts, type: e.type, raw: new Uint8Array(Buffer.from(e.data ?? '', 'utf8')), text: e.data ?? '' })),
+            events: s.events.map((e) => ({ ts: e.ts, type: e.type, raw: new Uint8Array(Buffer.from(e.data ?? '', 'utf8')), text: stripAnsi(e.data ?? '') })),
           })),
           chunkId++,
         ),
@@ -110,6 +114,8 @@ export function registerLogMigrationHandlers(getWindow: () => BrowserWindow | nu
       return {
         ...report,
         unparseable: unparseable.map((u) => ({ path: u.path, reason: u.reason, skippedLines: u.skippedLines })),
+        foldedPartnerDirs,
+        detectedFolders,
         dbBytesBefore: dbBefore,
         dbBytesAfter: dbAfter,
       }

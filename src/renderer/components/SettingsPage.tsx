@@ -64,7 +64,6 @@ function fmtBytesLocal(n: number): string {
 
 function LogMigrationAction() {
   const settings = useSettingsStore((s) => s.settings)
-  const updateSettings = useSettingsStore((s) => s.updateSettings)
   const present = useMigrationStore((s) => s.present)
   const sessionFolders = useMigrationStore((s) => s.sessionFolders)
   const phase = useMigrationStore((s) => s.phase)
@@ -82,12 +81,10 @@ function LogMigrationAction() {
 
   useEffect(() => { void detect() }, [detect])   // A6: named import, not React.useEffect
 
-  // Mark migration complete as soon as run succeeds — NOT gated on reclaim.
-  useEffect(() => {
-    if (phase === 'done' && settings.legacyLogsMigrated !== true) {
-      void updateSettings({ legacyLogsMigrated: true })
-    }
-  }, [phase, settings.legacyLogsMigrated, updateSettings])
+  // NOTE: marking legacyLogsMigrated on run success now lives centrally in
+  // migrationStore.run(), so BOTH this Settings path and the one-time App prompt
+  // record completion. (Previously a local effect here did it, missing the prompt
+  // path when the user never opened Settings.)
 
   const migrated = settings.legacyLogsMigrated === true
   const showRun = present && !migrated && (phase === 'idle' || (phase === 'error' && errorKind === 'run'))

@@ -26,6 +26,12 @@ interface Props {
 export function MigrationReport({ report, reclaiming, onReclaim, onDismiss }: Props) {
   const [confirming, setConfirming] = useState(false)
 
+  // Folders that yielded no readable events get no imported row. Surface them in
+  // the reconciliation line so every detected folder is accountable before the
+  // permanent reclaim: detected = imported + already-present + merged partners +
+  // no-readable-event folders.
+  const noEventDirs = report.unparseable.filter((u) => u.reason === 'no parseable events').length
+
   const row = (label: string, value: string) => (
     <div className="flex items-center justify-between py-1 text-sm">
       <span className="text-subtext0">{label}</span>
@@ -44,6 +50,17 @@ export function MigrationReport({ report, reclaiming, onReclaim, onDismiss }: Pr
       {row('Events imported', report.importedEvents.toLocaleString())}
       {row('Sessions skipped (already present)', report.skippedSessions.toLocaleString())}
       {row('Database size', `${fmtBytes(report.dbBytesBefore)} -> ${fmtBytes(report.dbBytesAfter)}`)}
+
+      <div
+        className="mt-3 rounded-lg p-2 text-[11px] leading-relaxed text-subtext0"
+        style={{ background: 'var(--color-mantle, rgba(0,0,0,0.25))' }}
+      >
+        Detected {report.detectedFolders.toLocaleString()} session folder(s):{' '}
+        {report.importedSessions.toLocaleString()} imported,{' '}
+        {report.skippedSessions.toLocaleString()} already in the database,{' '}
+        {report.foldedPartnerDirs.toLocaleString()} partner terminal(s) merged into their base session,{' '}
+        {noEventDirs.toLocaleString()} with no readable events.
+      </div>
 
       {report.unparseable.length > 0 && (
         <div className="mt-3">
