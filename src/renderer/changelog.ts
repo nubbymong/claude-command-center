@@ -16,11 +16,14 @@ export interface ChangelogEntry {
 export const changelog: ChangelogEntry[] = [
   {
     version: '1.5.29',
-    date: '2026-06-03',
-    highlights: 'See each session effort at a glance, plus a new terminal-health view in the Conductor diagnostics.',
+    date: '2026-06-04',
+    highlights: 'Read each session effort and fast mode at a glance, with a tidier, more consistent dark and light theme, plus a new terminal-health view in the Conductor diagnostics.',
     changes: [
       { type: 'feature', description: 'Session cards now show a colour-coded effort pill (Low through Ultracode) in the top-right, tinted from green to red as effort rises, so you can read each session effort level at a glance without opening it.' },
+      { type: 'feature', description: 'Session cards now show a lightning bolt when a session is running in Fast Mode, so you can spot fast-mode sessions at a glance. It appears only while Fast Mode is actually on and clears the moment you turn it off.' },
+      { type: 'improvement', description: 'The effort pill now waits for live data before it appears, so a card no longer briefly shows a stale or default effort (for example XHIGH) before the real level loads. A restarted session stays calm until its new effort is known.' },
       { type: 'improvement', description: 'Tidied the session cards by removing the small leading dot. It only showed grey when idle and duplicated the status pill already shown on the right.' },
+      { type: 'fix', description: 'Themed the Settings pages and the top and tab bars to match the rest of the app, removing the leftover near-black backgrounds and making dark and light mode consistent throughout. The window background now follows the theme instead of staying dark in light mode.' },
       { type: 'feature', description: 'The Conductor diagnostics console gained a PTY integrity section with live terminal metrics per session (bytes received, resize events and width desyncs) to help track down terminal display glitches.' },
     ],
   },
