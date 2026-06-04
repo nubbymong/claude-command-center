@@ -324,6 +324,25 @@ describe('log-db', () => {
     expect(eventsB[1].text).toBe('bbb')
   })
 
+  it('markRunningCrashed sets status=crashed only for still-running sessions', () => {
+    db.upsertSession({ sessionId: 's-crash-a', configLabel: 'L', provider: 'claude', startedAt: 1 })
+    db.upsertSession({ sessionId: 's-crash-b', configLabel: 'L', provider: 'claude', startedAt: 2 })
+    // Finish one of them so it's no longer 'running'
+    db.finishSession('s-crash-a', 99, 'exited')
+
+    const changed = db.markRunningCrashed()
+
+    // Only the still-running session should be flipped
+    expect(changed).toBe(1)
+
+    const sessions = db.listSessions()
+    const sessA = sessions.find((s) => s.sessionId === 's-crash-a')!
+    const sessB = sessions.find((s) => s.sessionId === 's-crash-b')!
+
+    expect(sessA.status).toBe('exited')   // untouched
+    expect(sessB.status).toBe('crashed')  // flipped
+  })
+
   it('appendBatch with empty array does not throw and changes nothing', () => {
     db.upsertSession({ sessionId: 's-empty-batch', configLabel: 'L', provider: 'claude', startedAt: 1 })
     expect(() => db.appendBatch([])).not.toThrow()

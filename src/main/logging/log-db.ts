@@ -82,6 +82,13 @@ export interface LogDb {
 
   finishSession(sessionId: string, endedAt: number, status: string): void
 
+  /**
+   * Flip all sessions whose status is 'running' to the given status (default
+   * 'crashed'). Called on worker startup to reconcile sessions left open by a
+   * previous process crash. Returns the number of rows updated.
+   */
+  markRunningCrashed(status?: string): number
+
   close(): void
 }
 
@@ -214,6 +221,10 @@ export function openLogDb(path: string): LogDb {
 
   const stmtFinishSession: Statement = sqlite.prepare(`
     UPDATE sessions SET endedAt = @endedAt, status = @status WHERE sessionId = @sessionId
+  `)
+
+  const stmtMarkRunningCrashed: Statement = sqlite.prepare(`
+    UPDATE sessions SET status = @status WHERE status = 'running'
   `)
 
   const stmtDeleteSession: Statement = sqlite.prepare(
@@ -356,6 +367,11 @@ export function openLogDb(path: string): LogDb {
 
     finishSession(sessionId, endedAt, status) {
       stmtFinishSession.run({ sessionId, endedAt, status })
+    },
+
+    markRunningCrashed(status = 'crashed') {
+      const info = stmtMarkRunningCrashed.run({ status })
+      return info.changes
     },
 
     close() {
