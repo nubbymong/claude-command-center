@@ -6,18 +6,35 @@ const DIAMOND = String.fromCodePoint(0x25c6)
 
 type Tone = 'green' | 'amber' | 'red' | 'grey'
 
+// Severity ordering: higher index = worse. Used by worst() to pick the
+// most-alarming service across all supervised services (hooks + logging).
+const STATE_SEVERITY: Record<string, number> = {
+  listening: 0,
+  stopped: 1,
+  starting: 2,
+  restarting: 3,
+  degraded: 4,
+  crashed: 5,
+}
+
 function worst(services: ServiceHealth[]): { tone: Tone; word: string | null; tip: string } {
   if (!services.length) return { tone: 'grey', word: null, tip: 'Services: unknown' }
-  // Hooks is the only supervised service today; generalize to worst-of when >1.
-  const s = services[0]
-  const tip = `Hooks: ${s.host} ${s.state}${s.port ? ' :' + s.port : ''} - ${s.inFlight} in-flight`
+
+  // Pick the service with the highest severity across ALL supervised services
+  // (hooks + logging, and any future additions). Falls back to services[0] when
+  // all severities are tied (e.g. all listening = green).
+  const s = services.reduce((a, b) =>
+    (STATE_SEVERITY[b.state] ?? 0) > (STATE_SEVERITY[a.state] ?? 0) ? b : a
+  )
+
+  const tip = `${s.label}: ${s.host} ${s.state}${s.port ? ' :' + s.port : ''} - ${s.inFlight} in-flight`
   switch (s.state) {
     case 'listening':
       return { tone: 'green', word: null, tip }
     case 'crashed':
       return { tone: 'red', word: 'Down', tip }
     case 'stopped':
-      return { tone: 'grey', word: null, tip: 'Hooks: off' }
+      return { tone: 'grey', word: null, tip: `${s.label}: off` }
     default:
       // starting / restarting / degraded
       return {

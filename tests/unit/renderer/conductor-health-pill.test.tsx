@@ -135,4 +135,42 @@ describe('ConductorHealthPill', () => {
     await act(async () => { btn.click() })
     expect(onOpen).toHaveBeenCalledOnce()
   })
+
+  // --- worst-of-all-services: hooks listening + logging crashed -> red ---
+  it('picks the worst state when multiple services are present (hooks ok + logging crashed -> red)', async () => {
+    const hooks = { ...createInitialHealth('hooks', 'Hooks gateway'), state: 'listening' as const, host: 'utility-process' as const }
+    const logging = { ...createInitialHealth('logging', 'Session logging'), state: 'crashed' as const, host: 'utility-process' as const }
+    const snap: DiagnosticsSnapshot = { capturedAt: 1, services: [hooks, logging], log: [] }
+    ;(globalThis as any).window.electronAPI = {
+      serviceHealth: {
+        get: vi.fn().mockResolvedValue(snap),
+        restart: vi.fn(),
+        onUpdate: vi.fn().mockReturnValue(() => {}),
+      },
+    }
+    const r = await renderPill({ open: false, onOpen: () => {} })
+    unmount = r.unmount
+    const dot = r.container.querySelector('span.rounded-full') as HTMLElement
+    expect(dot.className).toContain('bg-red')
+    expect(r.container.textContent).toContain('Down')
+  })
+
+  // --- worst-of-all-services: both listening -> green ---
+  it('stays green when all services are listening (hooks + logging both ok)', async () => {
+    const hooks = { ...createInitialHealth('hooks', 'Hooks gateway'), state: 'listening' as const, host: 'utility-process' as const }
+    const logging = { ...createInitialHealth('logging', 'Session logging'), state: 'listening' as const, host: 'utility-process' as const }
+    const snap: DiagnosticsSnapshot = { capturedAt: 1, services: [hooks, logging], log: [] }
+    ;(globalThis as any).window.electronAPI = {
+      serviceHealth: {
+        get: vi.fn().mockResolvedValue(snap),
+        restart: vi.fn(),
+        onUpdate: vi.fn().mockReturnValue(() => {}),
+      },
+    }
+    const r = await renderPill({ open: false, onOpen: () => {} })
+    unmount = r.unmount
+    const dot = r.container.querySelector('span.rounded-full') as HTMLElement
+    expect(dot.className).toContain('bg-green')
+    expect(r.container.textContent).not.toMatch(/Degraded|Down|Fallback/)
+  })
 })

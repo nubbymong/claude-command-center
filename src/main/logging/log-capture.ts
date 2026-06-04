@@ -276,6 +276,10 @@ export function makeCapture(
   }
 
   function stop(): void {
+    // Flush first so the last <250ms of buffered chunks for still-active sessions
+    // is posted before the periodic timer is cleared. Without this, data buffered
+    // since the last tick interval would be silently lost on quit.
+    flushNow()
     clearInterval(timer)
   }
 

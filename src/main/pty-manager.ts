@@ -1090,12 +1090,22 @@ export function spawnPty(
   // The captured account (set at line ~950 for non-shell Claude sessions) +
   // configId/profileId are stamped so logs can be filtered by config/account.
   const configLabel = options?.configLabel || 'default'
+  // Reading settings here (rather than relying solely on getLogCapture()) gives
+  // a LIVE disable: if logging was enabled at boot (so the supervisor is running)
+  // but the user later turns it off in Settings, new session captures are skipped
+  // immediately — the worker keeps running idle. Asymmetry: if logging was
+  // DISABLED at boot there is no supervisor, so a mid-run enable needs a restart.
   const settings = readConfig<{ loggingEnabled?: boolean }>('settings') ?? {}
   const capture = shouldCapture(options ?? {}, settings) ? getLogCapture() : null
   capture?.start(sessionId, {
     configId: options?.configId,
     configLabel,
     projectCwd: resolvedCwd,
+    // accountEmail is typically undefined here: identity is captured asynchronously
+    // AFTER spawn (recheckSessionIdentity / startWatchingAccountIdentity wired in
+    // pty-manager). The Phase-1 session row therefore stamps a null email; configId
+    // and profileId ARE stamped correctly at spawn. A Phase-2 enrichment can join
+    // on profileId to back-fill the email once the identity poll resolves.
     accountEmail: getAccountIdentity(sessionId)?.email,
     profileId: resolvedProfileId,
     provider: options?.provider ?? 'claude',

@@ -307,8 +307,29 @@ describe('makeCapture / LogCapture', () => {
     cap.record('s1', Buffer.from('x'))
     cap.stop()
     vi.advanceTimersByTime(1000)
-    // timer was cleared, so no flush happened
+    // timer was cleared, so no additional flush happens after stop()
+    // (the stop()-time flush is the only postBatch call)
+    expect(posted).toHaveLength(1)
+  })
+
+  // --- stop() flushes pending data before clearing the timer ---
+  it('stop() flushes buffered data before clearing the timer (no data loss on quit)', () => {
+    // Use real timers so the periodic interval never fires — only stop() can flush.
+    vi.useRealTimers()
+    const { sup, posted } = makeFakeSup()
+    // Large flushMs so the interval does not auto-fire during the test.
+    const cap = makeCapture(sup, { flushMs: 60_000, now: () => 1 })
+    cap.start('s1', { configLabel: 'C', provider: 'claude' })
+    // Record below the 64 KB size-trigger so no auto-flush happens.
+    cap.record('s1', Buffer.from('buffered-on-quit'))
+    // No flush yet — only the periodic timer would fire (far future).
     expect(posted).toHaveLength(0)
+    // stop() must flush first, then clear the timer.
+    cap.stop()
+    expect(posted).toHaveLength(1)
+    const batch = posted[0] as { sessions: { sessionId: string; chunks: { raw: Uint8Array }[] }[] }
+    expect(batch.sessions[0].sessionId).toBe('s1')
+    expect(Buffer.from(batch.sessions[0].chunks[0].raw).toString('utf8')).toBe('buffered-on-quit')
   })
 
   // --- guard: record on inactive session buffers nothing ---
