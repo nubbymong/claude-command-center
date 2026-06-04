@@ -157,19 +157,26 @@ export function parseLegacyLogs(logsDir: string): ParseResult {
       const files = orderedLogFiles(sessionDir)
       const events: ParsedEvent[] = []
       let anyValid = false
+      let fileReported = false // a file-level unparseable entry already explains a failure
       for (const filePath of files) {
         const skipped = parseFile(filePath, events)
         if (skipped < 0) {
           unparseable.push({ path: filePath, reason: 'unreadable file', skippedLines: 0 })
+          fileReported = true
         } else if (skipped > 0) {
           unparseable.push({ path: filePath, reason: 'skipped malformed line(s)', skippedLines: skipped })
+          fileReported = true
         }
         if (events.length > 0) anyValid = true
       }
 
       if (!anyValid) {
-        // No usable events at all -> report the session dir, do not synthesize a row.
-        unparseable.push({ path: sessionDir, reason: 'no parseable events', skippedLines: 0 })
+        // No usable events at all -> do not synthesize a row. Report the session dir
+        // ONLY when no file-level entry already explained it (e.g. all lines were
+        // empty/whitespace, not malformed), so a single bad file is not double-listed.
+        if (!fileReported) {
+          unparseable.push({ path: sessionDir, reason: 'no parseable events', skippedLines: 0 })
+        }
         continue
       }
 

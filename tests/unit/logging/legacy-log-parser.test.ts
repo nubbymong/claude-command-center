@@ -116,6 +116,7 @@ describe('legacy-log-parser', () => {
     const r1 = parseLegacyLogs(logsDir).sessions.map((s) => s.sessionId)
     const r2 = parseLegacyLogs(logsDir).sessions.map((s) => s.sessionId)
     expect(r1).toEqual(r2)
+    expect(r1).toEqual(['a', 'b']) // pinned: final order is lexicographic by sessionId
   })
 
   it('returns empty result for a missing logs dir', () => {
