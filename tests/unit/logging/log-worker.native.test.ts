@@ -235,6 +235,29 @@ describe('log-worker handleWorkerMessage', () => {
     expect(err.id).toBe(7)
   })
 
+  it('query kind=clearAll deletes non-running and returns a single count row', () => {
+    db.upsertSession({ sessionId: 'd', configLabel: 'A', provider: 'claude', startedAt: 1 })
+    db.appendBatch([{ sessionId: 'd', ts: 2, type: 'data', raw: Buffer.from('x'), text: 'x' }])
+    db.finishSession('d', 3, 'exited')
+    const out: any[] = []
+    handleWorkerMessage(db, { type: 'query', id: 7, kind: 'clearAll', args: {} }, (m) => out.push(m))
+    const res = out.find((m) => m.type === 'query-result' && m.id === 7)
+    expect(res).toBeTruthy()
+    expect(res.rows).toEqual([{ deletedSessions: 1, deletedEvents: 1 }])
+    expect(db.listSessions().length).toBe(0)
+  })
+
+  it('query kind=prune excludes running sessions', () => {
+    db.upsertSession({ sessionId: 'd', configLabel: 'A', provider: 'claude', startedAt: 1 })
+    db.finishSession('d', 3, 'exited')
+    db.upsertSession({ sessionId: 'r', configLabel: 'A', provider: 'claude', startedAt: 1 }) // running
+    const out: any[] = []
+    handleWorkerMessage(db, { type: 'query', id: 8, kind: 'prune', args: { ids: ['d', 'r'] } }, (m) => out.push(m))
+    const res = out.find((m) => m.type === 'query-result' && m.id === 8)
+    expect(res.rows[0].deletedSessions).toBe(1)
+    expect(db.listSessions().map((s) => s.sessionId)).toEqual(['r'])
+  })
+
   // ---- query kind: readEvents ----
   it('query kind=readEvents returns events cursor for a session', () => {
     const { out, post } = makePost()

@@ -165,6 +165,20 @@ function _handleWorkerMessage(
           rows = db.search(query, opts)
           break
         }
+        case 'prune': {
+          const ids = Array.isArray(args.ids) ? (args.ids as string[]) : []
+          const res = db.pruneSessions(ids)
+          // checkpoint after a delete so a follow-up dbBytes is honest.
+          db.checkpoint()
+          rows = [res]
+          break
+        }
+        case 'clearAll': {
+          const res = db.clearAll()
+          db.checkpoint()
+          rows = [res]
+          break
+        }
         default: {
           post({ type: 'error', id, message: `unknown query kind: ${kind}` })
           return

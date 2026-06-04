@@ -78,7 +78,22 @@ export interface LogDb {
 
   search(query: string, opts?: { limit?: number }): SearchHit[]
 
-  pruneSessions(ids: string[]): void
+  /**
+   * Delete the given sessions EXCEPT any whose status is 'running' (never delete
+   * an in-progress session). One transaction; FK CASCADE + FTS delete triggers
+   * remove the events + their search rows. Returns the actual counts removed.
+   */
+  pruneSessions(ids: string[]): { deletedSessions: number; deletedEvents: number }
+
+  /**
+   * Delete every session whose status is not 'running' (and its events + FTS
+   * rows). One transaction. Returns the counts removed.
+   */
+  clearAll(): { deletedSessions: number; deletedEvents: number }
+
+  /** Run a WAL truncate checkpoint so the -wal file can't grow unbounded and a
+   *  post-delete size report is honest. Safe no-op on a :memory: DB. */
+  checkpoint(): void
 
   finishSession(sessionId: string, endedAt: number, status: string): void
 
@@ -231,6 +246,30 @@ export function openLogDb(path: string): LogDb {
     `DELETE FROM sessions WHERE sessionId = ?`,
   )
 
+  // Count events that WOULD be deleted for a set of non-running sessions, so a
+  // delete can report an honest event count (CASCADE deletes them after).
+  const stmtCountEventsForIds = (n: number): Statement =>
+    sqlite.prepare(
+      `SELECT COUNT(*) AS c FROM events
+       WHERE sessionId IN (${new Array(n).fill('?').join(',')})
+         AND sessionId IN (SELECT sessionId FROM sessions WHERE status != 'running')`,
+    )
+
+  const stmtDeleteNonRunningByIds = (n: number): Statement =>
+    sqlite.prepare(
+      `DELETE FROM sessions
+       WHERE status != 'running'
+         AND sessionId IN (${new Array(n).fill('?').join(',')})`,
+    )
+
+  const stmtCountAllNonRunningEvents: Statement = sqlite.prepare(
+    `SELECT COUNT(*) AS c FROM events
+     WHERE sessionId IN (SELECT sessionId FROM sessions WHERE status != 'running')`,
+  )
+  const stmtDeleteAllNonRunning: Statement = sqlite.prepare(
+    `DELETE FROM sessions WHERE status != 'running'`,
+  )
+
   // Wrap the entire appendBatch in a single SQLite transaction.
   const runAppendBatch = sqlite.transaction(
     (
@@ -290,13 +329,22 @@ export function openLogDb(path: string): LogDb {
     },
   )
 
-  // Wrap the entire pruneSessions in a single transaction.
-  // events CASCADE-delete when the session is deleted, and the events_ad
-  // trigger fires for each deleted event row, cleaning up events_fts.
-  const runPruneSessions = sqlite.transaction((ids: string[]) => {
-    for (const id of ids) {
-      stmtDeleteSession.run(id)
-    }
+  // Prune the given ids EXCEPT running sessions. Count events first (inside the
+  // txn so it's consistent), then delete — CASCADE + the events_ad trigger clean
+  // up events + events_fts. Returns honest counts.
+  const runPruneSessions = sqlite.transaction(
+    (ids: string[]): { deletedSessions: number; deletedEvents: number } => {
+      if (ids.length === 0) return { deletedSessions: 0, deletedEvents: 0 }
+      const evRow = stmtCountEventsForIds(ids.length).get(...ids) as { c: number }
+      const info = stmtDeleteNonRunningByIds(ids.length).run(...ids)
+      return { deletedSessions: info.changes, deletedEvents: evRow.c }
+    },
+  )
+
+  const runClearAll = sqlite.transaction((): { deletedSessions: number; deletedEvents: number } => {
+    const evRow = stmtCountAllNonRunningEvents.get() as { c: number }
+    const info = stmtDeleteAllNonRunning.run()
+    return { deletedSessions: info.changes, deletedEvents: evRow.c }
   })
 
   // ---------------------------------------------------------------------------
@@ -361,8 +409,22 @@ export function openLogDb(path: string): LogDb {
     },
 
     pruneSessions(ids) {
-      if (ids.length === 0) return
-      runPruneSessions(ids)
+      if (ids.length === 0) return { deletedSessions: 0, deletedEvents: 0 }
+      return runPruneSessions(ids)
+    },
+
+    clearAll() {
+      return runClearAll()
+    },
+
+    checkpoint() {
+      // TRUNCATE so the -wal file is reset to zero after large deletes. On a
+      // :memory: DB there is no WAL file; pragma is a harmless no-op.
+      try {
+        sqlite.pragma('wal_checkpoint(TRUNCATE)')
+      } catch {
+        // never throw from a maintenance op
+      }
     },
 
     finishSession(sessionId, endedAt, status) {

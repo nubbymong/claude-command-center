@@ -164,6 +164,8 @@ describe('log-db', () => {
     db.appendBatch([
       { sessionId: 's-prune', ts: 1, type: 'data', raw: Buffer.from('bye'), text: 'bye' },
     ])
+    // pruneSessions skips running sessions, so finish it first.
+    db.finishSession('s-prune', 2, 'exited')
 
     db.pruneSessions(['s-prune'])
 
@@ -182,6 +184,8 @@ describe('log-db', () => {
         text: 'uniqueftsterm',
       },
     ])
+    // pruneSessions skips running sessions, so finish it first.
+    db.finishSession('s-fts-prune', 2, 'exited')
 
     // Must find it before prune
     expect(db.search('uniqueftsterm').length).toBeGreaterThan(0)
@@ -197,6 +201,8 @@ describe('log-db', () => {
     db.upsertSession({ sessionId: 'gone', configLabel: 'L', provider: 'claude', startedAt: 2 })
     db.appendBatch([{ sessionId: 'gone', ts: 1, type: 'data', raw: Buffer.from('x'), text: 'x' }])
     db.appendBatch([{ sessionId: 'keep', ts: 1, type: 'data', raw: Buffer.from('y'), text: 'y' }])
+    // pruneSessions skips running sessions, so finish 'gone' first.
+    db.finishSession('gone', 3, 'exited')
 
     db.pruneSessions(['gone'])
 
