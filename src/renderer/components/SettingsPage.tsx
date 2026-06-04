@@ -128,7 +128,7 @@ function LogMigrationAction() {
       {phase === 'error' && (
         <div className="text-[11px]" style={{ color: 'var(--color-red, #f38ba8)' }}>
           {errorKind === 'reclaim'
-            ? 'Could not delete the old log files. You can try Reclaim again from the report. Your imported logs are safe.'
+            ? 'Could not delete the old log files. Your imported logs are safe and the original files were left in place.'
             : 'Migration failed. You can retry. Your original logs were not modified.'}
         </div>
       )}
