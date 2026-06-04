@@ -105,4 +105,23 @@ describe('GlobalLogsView', () => {
     expect(broadcastIds).toContain('a')          // a non-running session is broadcast
     cleanup()
   })
+
+  it('clears search hits after a destructive delete (no orphaned rows)', async () => {
+    const { container, cleanup } = await mount(<GlobalLogsView />)
+    // type a query -> hits appear
+    const search = container.querySelector('input[type="text"]') as HTMLInputElement
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+      setter.call(search, 'needle')
+      search.dispatchEvent(new Event('input', { bubbles: true }))
+      await new Promise((r) => setTimeout(r, 350))
+    })
+    expect(container.textContent).toMatch(/hit/)
+    // clear all while the query is still active
+    const btn = Array.from(container.querySelectorAll('button')).find((b) => /clear all/i.test(b.textContent || ''))!
+    await act(async () => { btn.click(); await new Promise((r) => setTimeout(r, 10)) })
+    // hits cleared -> the search pane shows the empty state, not the stale 'hit' row
+    expect(container.textContent).toMatch(/No matches/i)
+    cleanup()
+  })
 })

@@ -65,11 +65,12 @@ export default function GlobalLogsView() {
   useEffect(() => {
     const q = query.trim()
     if (!q) { setHits([]); return }
+    let active = true
     const t = setTimeout(async () => {
       const rows = (await window.electronAPI.logsdb.search(q, 100)) as SearchHitRow[]
-      setHits(rows)
+      if (active) setHits(rows)
     }, 300)
-    return () => clearTimeout(t)
+    return () => { active = false; clearTimeout(t) }
   }, [query])
 
   const onSelectHit = useCallback((h: SearchHitRow) => {
@@ -92,6 +93,7 @@ export default function GlobalLogsView() {
         broadcastDeleted(ids ?? sessions.filter((s) => s.status !== 'running').map((s) => s.sessionId))
         if (selected && (ids ? ids.includes(selected.sessionId) : true)) setSelected(null)
         await refresh()
+        setHits([])
         window.alert(`Deleted ${res.deletedSessions} session(s), ${res.deletedEvents} event(s). Active sessions are kept.`)
       } finally {
         setBusy(false)
