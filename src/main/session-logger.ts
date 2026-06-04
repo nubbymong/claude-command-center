@@ -3,11 +3,53 @@ import * as fsp from 'fs/promises'
 import * as path from 'path'
 import * as readline from 'readline'
 import { getDataDirectory } from './ipc/setup-handlers'
+import { logError, logWarn } from './debug-logger'
+
+// ---------------------------------------------------------------------------
+// Error reporter indirection — allows tests to inject a fake reporter without
+// fighting ESM spy binding restrictions on logError. Production code delegates
+// through this; the test seam replaces it per-test.
+// ---------------------------------------------------------------------------
+type ErrorReporter = (msg: string, err?: unknown) => void
+
+let _errorReporter: ErrorReporter = (msg, err) => {
+  if (err !== undefined) logError(msg, err)
+  else logError(msg)
+}
+
+/**
+ * Test seam: replace the error reporter. Pass null to restore the default
+ * logError delegate. Resetting warnedSessions here keeps each test isolated.
+ */
+export function _setErrorReporterForTest(fn: ErrorReporter | null): void {
+  _errorReporter = fn ?? ((msg, err) => {
+    if (err !== undefined) logError(msg, err)
+    else logError(msg)
+  })
+  // Reset per-session warning dedup so tests start clean.
+  warnedSessions.clear()
+}
+
+// ---------------------------------------------------------------------------
+// Log root override — test seam so tests never touch real data directories.
+// ---------------------------------------------------------------------------
+let logRootOverride: string | null = null
+
+/** Test seam: override the log root. Pass null to restore the real data dir. */
+export function _setLogRootForTest(p: string | null): void {
+  logRootOverride = p
+}
+
+// ---------------------------------------------------------------------------
+// Log root resolution
+// ---------------------------------------------------------------------------
 
 // Get log base from custom data directory
 function getLogBase(): string {
+  if (logRootOverride !== null) return path.join(logRootOverride, 'logs')
   return path.join(getDataDirectory(), 'logs')
 }
+
 const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB
 const MAX_ROTATED = 10
 
@@ -19,6 +61,9 @@ interface LogEntry {
 
 const activeStreams = new Map<string, fs.WriteStream>()
 const sessionMeta = new Map<string, { configLabel: string; logDir: string; accountEmail?: string; profileId?: string }>()
+
+/** Sessions for which a "no meta" warning has already been emitted. */
+const warnedSessions = new Set<string>()
 
 /** Persisted, account-aware metadata for a logged session. */
 export interface SessionLogMeta {
@@ -41,7 +86,10 @@ export function writeSessionMeta(logDir: string, meta: SessionLogMeta): void {
     if (meta.accountEmail !== undefined) clean.accountEmail = meta.accountEmail
     if (meta.profileId !== undefined) clean.profileId = meta.profileId
     fs.writeFileSync(path.join(logDir, 'meta.json'), JSON.stringify(clean))
-  } catch { /* metadata is best-effort; never block logging */ }
+  } catch (err) {
+    // Metadata is best-effort; report but never block logging.
+    _errorReporter('[logs] Failed to write session meta', err)
+  }
 }
 
 /** Read the `meta.json` sidecar for a session log dir; {} when absent/corrupt. */
@@ -91,25 +139,49 @@ function rotateIfNeeded(logDir: string): void {
       }
     }
     fs.renameSync(logPath, `${logPath}.1`)
-  } catch { /* ignore rotation errors */ }
+  } catch (err) {
+    // Rotation failure is non-fatal but must be visible, not swallowed silently.
+    _errorReporter('[logs] Log rotation failed', err)
+  }
 }
 
+/**
+ * Get or create a write stream for the given log directory.
+ * Throws on failure — callers must guard. Attaches an 'error' listener so an
+ * async stream error is surfaced rather than crashing the process.
+ */
 function getOrCreateStream(logDir: string): fs.WriteStream {
   const logPath = getLogPath(logDir)
-  let stream = activeStreams.get(logPath)
-  if (stream && !stream.destroyed) return stream
+  const existing = activeStreams.get(logPath)
+  if (existing && !existing.destroyed) return existing
 
   if (!fs.existsSync(logDir)) {
-    fs.mkdirSync(logDir, { recursive: true })
+    fs.mkdirSync(logDir, { recursive: true }) // throws on failure — caller catches
   }
 
   rotateIfNeeded(logDir)
 
-  stream = fs.createWriteStream(logPath, { flags: 'a' })
+  const stream = fs.createWriteStream(logPath, { flags: 'a' })
+  // An unhandled WriteStream 'error' event propagates as an uncaught exception.
+  // Attach a listener here so any async I/O error is surfaced via the reporter.
+  stream.on('error', (err) => {
+    _errorReporter(`[logs] WriteStream error for ${logPath}`, err)
+    // Remove the dead stream so the next write attempt can create a fresh one.
+    if (activeStreams.get(logPath) === stream) {
+      activeStreams.delete(logPath)
+    }
+  })
   activeStreams.set(logPath, stream)
   return stream
 }
 
+/**
+ * Begin logging for a session. This function is BEST-EFFORT: it will never
+ * throw, because it runs in pty-manager BEFORE the logging onData handler and
+ * endSessionLog wiring are attached. A throw here would silently skip all
+ * subsequent log wiring, leaving the terminal working but capture permanently
+ * dead for that session.
+ */
 export function startSessionLog(
   sessionId: string,
   configLabel: string,
@@ -117,23 +189,47 @@ export function startSessionLog(
   profileId?: string,
 ): void {
   const logDir = getLogDir(configLabel, sessionId)
-  sessionMeta.set(sessionId, { configLabel, logDir, accountEmail, profileId })
-
-  const stream = getOrCreateStream(logDir)
-  const entry: LogEntry = { ts: Date.now(), type: 'start' }
-  stream.write(JSON.stringify(entry) + '\n')
-  // Persist account attribution so the log viewer can label/filter by account
-  // even for sessions that ended before the app restarted.
-  writeSessionMeta(logDir, { configLabel, accountEmail, profileId })
+  try {
+    const stream = getOrCreateStream(logDir)
+    // Only register session meta after the stream is successfully created so
+    // logSessionData can guard cleanly on meta presence.
+    sessionMeta.set(sessionId, { configLabel, logDir, accountEmail, profileId })
+    const entry: LogEntry = { ts: Date.now(), type: 'start' }
+    stream.write(JSON.stringify(entry) + '\n')
+    // Persist account attribution so the log viewer can label/filter by account
+    // even for sessions that ended before the app restarted.
+    writeSessionMeta(logDir, { configLabel, accountEmail, profileId })
+  } catch (err) {
+    _errorReporter(
+      `[logs] startSessionLog failed for session ${sessionId} (logDir: ${logDir}) — logging disabled for this session`,
+      err,
+    )
+    // Intentionally do NOT re-throw: the caller (pty-manager) must continue so
+    // that the xterm onData + endSessionLog wiring is never skipped.
+  }
 }
 
 export function logSessionData(sessionId: string, data: string): void {
   const meta = sessionMeta.get(sessionId)
-  if (!meta) return
+  if (!meta) {
+    // Warn once per unknown session — logSessionData is called on every PTY
+    // data chunk, so a per-chunk warning would flood the log.
+    if (!warnedSessions.has(sessionId)) {
+      warnedSessions.add(sessionId)
+      _errorReporter(
+        `[logs] logSessionData called for unknown session ${sessionId} — startSessionLog may have failed or session already ended`,
+      )
+    }
+    return
+  }
 
-  const stream = getOrCreateStream(meta.logDir)
-  const entry: LogEntry = { ts: Date.now(), type: 'data', data }
-  stream.write(JSON.stringify(entry) + '\n')
+  try {
+    const stream = getOrCreateStream(meta.logDir)
+    const entry: LogEntry = { ts: Date.now(), type: 'data', data }
+    stream.write(JSON.stringify(entry) + '\n')
+  } catch (err) {
+    _errorReporter(`[logs] logSessionData write failed for session ${sessionId}`, err)
+  }
 }
 
 export function endSessionLog(sessionId: string): void {
@@ -143,20 +239,28 @@ export function endSessionLog(sessionId: string): void {
   const logPath = getLogPath(meta.logDir)
   const stream = activeStreams.get(logPath)
   if (stream) {
-    const entry: LogEntry = { ts: Date.now(), type: 'end' }
-    stream.write(JSON.stringify(entry) + '\n')
-    stream.end()
+    try {
+      const entry: LogEntry = { ts: Date.now(), type: 'end' }
+      stream.write(JSON.stringify(entry) + '\n')
+      stream.end()
+    } catch (err) {
+      _errorReporter(`[logs] endSessionLog write/close failed for session ${sessionId}`, err)
+    }
     activeStreams.delete(logPath)
   }
   sessionMeta.delete(sessionId)
+  // Clear warn dedup for this session so a future session with the same id
+  // (unlikely but defensive) still gets its warning.
+  warnedSessions.delete(sessionId)
 }
 
 export function closeAllLogs(): void {
   for (const [, stream] of activeStreams) {
-    try { stream.end() } catch { /* ignore */ }
+    try { stream.end() } catch { /* ignore — shutting down */ }
   }
   activeStreams.clear()
   sessionMeta.clear()
+  warnedSessions.clear()
 }
 
 // --- Query functions for log viewer (all async to avoid blocking UI) ---
