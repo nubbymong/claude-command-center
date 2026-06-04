@@ -55,6 +55,7 @@ import { setupGitHubListener, useGitHubStore } from './stores/githubStore'
 import { setupChannelListeners } from './stores/channelStore'
 import PermissionToastStack from './components/channels/PermissionToastStack'
 import LoggingConsentPrompt from './components/LoggingConsentPrompt'
+import LogMigrationPrompt from './components/LogMigrationPrompt'
 // Side-effect import: registers window.__captureHarness for the
 // capture-training script. Renderer-local store mutations only, no
 // IPC surface widening (see capture-harness.ts header).
@@ -846,6 +847,8 @@ export default function App() {
         {configLoaded && !loggingConsentSeen && (
           <LoggingConsentPrompt />
         )}
+
+        {configLoaded && loggingConsentSeen && <LogMigrationPrompt />}
 
         {showMachineNamePrompt && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
