@@ -17,6 +17,7 @@ import UsageDashboard from './components/UsageDashboard'
 import ProjectBrowser from './components/ProjectBrowser'
 import SettingsPage, { SETTINGS_TAB_IDS, type SettingsTab } from './components/SettingsPage'
 import LogViewer from './components/LogViewer'
+import GlobalLogsView from './components/GlobalLogsView'
 import InsightsPage from './components/InsightsPage'
 import CloudAgentsPage from './components/CloudAgentsPage'
 import TokenomicsPage from './components/TokenomicsPage'
@@ -551,7 +552,7 @@ export default function App() {
 
   // Render non-session views (shown on top of sessions)
   const renderOverlayView = () => {
-    if (view === 'logs') return <LogViewer />
+    if (view === 'logs') return <GlobalLogsView />
     if (view === 'settings') return <SettingsPage initialTab={pendingSettingsTab ?? undefined} onNavigateToSessions={() => setView('sessions')} />
     if (view === 'insights') return <InsightsPage />
     if (view === 'cloud-agents') return <CloudAgentsPage />
