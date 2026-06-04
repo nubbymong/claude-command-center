@@ -4,7 +4,8 @@
 // re-auth on resume. These tests cover the new pieces:
 //   - cleanupSessionHomes(): one-time migration that salvages the freshest live token
 //     out of the retiring per-session homes into the profile home + canonical, then
-//     removes the account-homes tree (junction-safe).
+//     KEEPS each home and re-points its shared dirs at the canonical store (upgrade
+//     guard) -- it never deletes the homes or any junction target.
 //   - backupProfileHomeToCanonical(): email-guarded so a /login that switches a shared
 //     home to a different account can never corrupt the account's canonical backup.
 //   - captureDetectedAccount(): reads the PROFILE home (the shared home a /login writes),

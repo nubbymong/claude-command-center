@@ -659,7 +659,9 @@ if (!gotTheLock) {
     // Bug 2: migrate OFF the per-session-home model. Sessions of one account now
     // share its profile home (one rotating-OAuth store); salvage the freshest live
     // token out of any retired account-homes/<sessionId>/ into the profile home +
-    // canonical (so no re-auth after upgrade), then remove them. Idempotent.
+    // canonical (so no re-auth after upgrade), then KEEP + re-point those homes at
+    // the shared store (UPGRADE GUARD -- a resumed pre-upgrade session may still
+    // name an account-homes path, so we never delete it). Idempotent; bounded set.
     try { cleanupSessionHomes() } catch (e) { logInfo(`[profiles] session-home cleanup skipped: ${e}`) }
     // Auth-outside-CCC fix: heal a stale real global ~/.claude/.credentials.json on
     // launch (a prior session rotated the primary account's OAuth token, leaving
