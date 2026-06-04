@@ -277,6 +277,7 @@ export class LogSupervisor {
       this.bufferBytes = 0
       return
     }
+    // Note: a worker death mid-flush loses the just-flushed messages — inherent to best-effort fork transport.
     for (const item of this.buffer) {
       this.worker.transport.post(item.msg)
     }
@@ -345,12 +346,15 @@ export class LogSupervisor {
   }
 
   /** Terminal state: no in-process DB fallback exists, so logging just degrades
-   *  (drops + a visible log). The pill stays out of utility-process host. */
+   *  (drops + a visible log). Host stays utility-process (not in-process-fallback)
+   *  because there IS no fallback — the worker is dead and events will be dropped.
+   *  Keeping utility-process means the renderer pill shows the honest label
+   *  "Degraded" rather than the misleading "Fallback". */
   private degradePermanently(): void {
     this.degradedPermanently = true
     this.appendLog('error', 'degraded',
       `logging worker failed to recover after ${this.restarts} restarts; logging degraded (events will be dropped)`)
-    this.health = { ...this.health, host: 'in-process-fallback', state: 'degraded', restartCount: this.restarts }
+    this.health = { ...this.health, host: 'utility-process', state: 'degraded', restartCount: this.restarts }
     // Free the dead worker; there is nothing to fall back to.
     try { this.worker?.kill() } catch { /* best-effort */ }
     this.pushHealth()

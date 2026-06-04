@@ -229,7 +229,9 @@ describe('LogSupervisor', () => {
     for (let i = 0; i < 3; i++) { h.current().triggerExit(); vi.advanceTimersByTime(5000) }
     const svc = h.sup.getDiagnosticsSnapshot().services[0]
     expect(svc.state).toBe('degraded')
-    expect(svc.host).toBe('in-process-fallback')   // never flips to utility-process; no fallback engine
+    // host stays utility-process (not in-process-fallback): no fallback engine exists, so
+    // the pill correctly shows "Degraded" rather than the misleading "Fallback".
+    expect(svc.host).toBe('utility-process')
     const forksAtDegrade = h.forkSpy.mock.calls.length
     vi.advanceTimersByTime(60_000)   // no resurrection after permanent degrade
     expect(h.forkSpy).toHaveBeenCalledTimes(forksAtDegrade)
@@ -294,5 +296,123 @@ describe('LogSupervisor', () => {
     w.triggerExit()
     vi.advanceTimersByTime(5000)
     expect(h.forkSpy).toHaveBeenCalledTimes(forks)
+  })
+
+  // ---------------------------------------------------------------------------
+  // Concurrency regression tests (lock in the load-bearing async paths)
+  // ---------------------------------------------------------------------------
+
+  describe('query double-settle safety', () => {
+    it('timeout-then-late-result: a late query-result after the timeout is a no-op (no throw, no second settle)', async () => {
+      const h = makeHarness({ maxRestarts: 5 })
+      h.sup.start()
+      h.current().emit({ type: 'ready' })
+      const p = h.sup.query('listSessions', {})
+      const q = h.current().posts.find((m) => m.type === 'query') as Extract<ToWorker, { type: 'query' }>
+      expect(q).toBeDefined()
+
+      // Advance past the timeout so the query rejects.
+      const rejected = expect(p).rejects.toThrow(/timed out/i)
+      await vi.advanceTimersByTimeAsync(20_000)
+      await rejected
+
+      // Now emit a late result for the same id — must be silently ignored (no unhandled rejection).
+      expect(() => {
+        h.current().emit({ type: 'query-result', id: q.id, rows: [{ late: true }] })
+      }).not.toThrow()
+      // Supervisor remains healthy — the stale result didn't corrupt state.
+      expect(h.sup.getDiagnosticsSnapshot().services[0].state).toBe('listening')
+    })
+
+    it('result-then-timeout: resolving a query clears its timer so the timeout never fires as a second settle', async () => {
+      const h = makeHarness()
+      h.sup.start()
+      h.current().emit({ type: 'ready' })
+      const p = h.sup.query('listSessions', {})
+      const q = h.current().posts.find((m) => m.type === 'query') as Extract<ToWorker, { type: 'query' }>
+
+      // Resolve before the timeout.
+      h.current().emit({ type: 'query-result', id: q.id, rows: [{ ok: true }] })
+      await expect(p).resolves.toEqual([{ ok: true }])
+
+      // Advance well past the timeout — the timer must have been cleared; no unhandled rejection.
+      await vi.advanceTimersByTimeAsync(20_000)
+      // If the timer were NOT cleared, the pending.delete(id) guard would have fired but
+      // the id is already gone — so this just asserts no crash occurred.
+      expect(h.sup.getDiagnosticsSnapshot().services[0].state).toBe('listening')
+    })
+  })
+
+  describe('stale-child exit guard', () => {
+    it('a second triggerExit from the OLD worker after a restart does not spawn a third worker or reject queries on the new worker', async () => {
+      const h = makeHarness({ maxRestarts: 5 })
+      h.sup.start()
+      // Bring the first worker up and capture it as "old".
+      const old = h.current()
+      old.emit({ type: 'ready' })
+      expect(h.forkSpy).toHaveBeenCalledTimes(1)
+
+      // Crash the first worker -> backoff -> new worker spawns.
+      old.triggerExit()
+      await vi.advanceTimersByTimeAsync(500)   // past 250 ms first backoff
+      expect(h.forkSpy).toHaveBeenCalledTimes(2)
+
+      // Bring the new worker up and start a query on it.
+      const neo = h.current()
+      neo.emit({ type: 'ready' })
+      const p = h.sup.query('listSessions', {})
+      const q = neo.posts.find((m) => m.type === 'query') as Extract<ToWorker, { type: 'query' }>
+      expect(q).toBeDefined()
+
+      // Fire the OLD worker's exit a SECOND time (stale callback that somehow fires again).
+      old.triggerExit()
+      await vi.advanceTimersByTimeAsync(500)
+
+      // Must NOT have spawned a third worker.
+      expect(h.forkSpy).toHaveBeenCalledTimes(2)
+
+      // The query on the NEW worker must still be resolvable (stale exit didn't reject it).
+      neo.emit({ type: 'query-result', id: q.id, rows: [{ stale: false }] })
+      await expect(p).resolves.toEqual([{ stale: false }])
+    })
+  })
+
+  describe('permanent-degrade stickiness', () => {
+    it('stale ready and health from a worker after maxRestarts do not flip state back to listening', () => {
+      const h = makeHarness({ maxRestarts: 1 })
+      h.sup.start()
+      // Exhaust restarts: 2 exits -> permanent degrade.
+      for (let i = 0; i < 2; i++) { h.current().triggerExit(); vi.advanceTimersByTime(5000) }
+      expect(h.sup.getDiagnosticsSnapshot().services[0].state).toBe('degraded')
+
+      // Now emit a stale `ready` from the dead worker — the guard must block it.
+      h.current().emit({ type: 'ready' })
+      expect(h.sup.getDiagnosticsSnapshot().services[0].state).toBe('degraded')
+      expect(h.sup.getDiagnosticsSnapshot().services[0].host).toBe('utility-process')
+
+      // Emit a stale `health` — must also be ignored.
+      h.current().emit({ type: 'health', inFlight: 0, eventsTotal: 0, dropsTotal: 0, dbBytes: 0 })
+      expect(h.sup.getDiagnosticsSnapshot().services[0].state).toBe('degraded')
+    })
+  })
+
+  describe('reconcile is sent once-ever, not re-sent across restarts', () => {
+    it('reconcile is posted only on the first ready, not on subsequent ready after a restart', () => {
+      const h = makeHarness({ maxRestarts: 5 })
+      h.sup.start()
+      h.current().emit({ type: 'ready' })
+      // First worker's reconcile.
+      const firstReconciles = h.current().posts.filter((m) => m.type === 'reconcile')
+      expect(firstReconciles).toHaveLength(1)
+
+      // Crash + restart.
+      h.current().triggerExit()
+      vi.advanceTimersByTime(500)
+
+      // Second worker emits ready — reconcile must NOT be sent again.
+      h.current().emit({ type: 'ready' })
+      const secondReconciles = h.current().posts.filter((m) => m.type === 'reconcile')
+      expect(secondReconciles).toHaveLength(0)
+    })
   })
 })
