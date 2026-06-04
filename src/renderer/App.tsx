@@ -52,6 +52,7 @@ import { setupConductorMcpListener, useConductorMcpStore } from './stores/conduc
 import { setupGitHubListener, useGitHubStore } from './stores/githubStore'
 import { setupChannelListeners } from './stores/channelStore'
 import PermissionToastStack from './components/channels/PermissionToastStack'
+import LoggingConsentPrompt from './components/LoggingConsentPrompt'
 // Side-effect import: registers window.__captureHarness for the
 // capture-training script. Renderer-local store mutations only, no
 // IPC surface widening (see capture-harness.ts header).
@@ -147,6 +148,7 @@ export default function App() {
   // Sidebar receives onShowFirstRun={() => setShowGuidedConfig(true)}, so we use the
   // same setter here to open the real create dialog from the stage empty state.
   const onCreateConfigFromStage = () => setShowGuidedConfig(true)
+  const loggingConsentSeen = useSettingsStore((s) => s.settings.loggingConsentSeen)
   const activeSessionId = useSessionStore((s) => s.activeSessionId)
   const sessions = useSessionStore((s) => s.sessions)
   const webviewBySession = useWebviewStore((s) => s.bySessionId)
@@ -833,6 +835,10 @@ export default function App() {
               setNewAccountDetected(null)
             }}
           />
+        )}
+
+        {configLoaded && !loggingConsentSeen && (
+          <LoggingConsentPrompt />
         )}
 
         {showMachineNamePrompt && (

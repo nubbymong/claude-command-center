@@ -226,6 +226,16 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
                   Show permission tray
                   <span className="text-[10px] text-overlay0">(surfaces only prompts Claude is blocked on)</span>
                 </label>
+                <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.loggingEnabled !== false}
+                    onChange={(e) => save({ loggingEnabled: e.target.checked })}
+                    className="rounded border-surface1"
+                  />
+                  Session logging
+                  <span className="text-[10px] text-overlay0">(records terminal output locally for search; may include secrets)</span>
+                </label>
               </Section>
 
               <AccountsPanel onAdd={handleAddAccount} />

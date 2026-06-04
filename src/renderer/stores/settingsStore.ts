@@ -101,6 +101,16 @@ export interface AppSettings {
   /** v1.5.17: show the genuine-only permission tray (cards for prompts Claude is
    *  blocked on). Default on; set false to hide the tray and skip capture. */
   permissionTrayEnabled?: boolean
+  /** v1.5.31: record each session's terminal output locally for search and
+   *  review. Logs never leave the machine. Default on; set false to disable
+   *  capture. The main process capture gate reads this key from the shared
+   *  settings config (readConfig('settings').loggingEnabled). */
+  loggingEnabled?: boolean
+  /** v1.5.31: one-time first-run consent notice has been shown. Falsy = show
+   *  the notice on the next boot so the user can opt out before any data is
+   *  written. Set true (with or without disabling logging) to suppress the
+   *  prompt permanently. */
+  loggingConsentSeen?: boolean
 }
 
 interface SettingsState {
@@ -128,6 +138,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   hooksPort: 19334,
   theme: 'dark',
   permissionTrayEnabled: true,
+  loggingEnabled: true,
 }
 
 // V2 changed the bundled terminal default from Cascadia Code @14 to JetBrains
