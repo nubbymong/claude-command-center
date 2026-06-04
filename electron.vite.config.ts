@@ -13,7 +13,8 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: resolve(__dirname, 'src/main/index.ts'),
-          'hooks-host': resolve(__dirname, 'src/main/services/hooks-host.ts')
+          'hooks-host': resolve(__dirname, 'src/main/services/hooks-host.ts'),
+          'log-worker': resolve(__dirname, 'src/main/logging/log-worker.ts')
         }
       }
     }

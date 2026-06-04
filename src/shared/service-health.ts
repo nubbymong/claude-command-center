@@ -19,6 +19,11 @@ export interface ServiceHealth {
   mainLoopStallsLastMin: number
   childLoopStallsLastMin: number
   lastHeartbeatAt: number
+  // Logging-service-specific, OPTIONAL so the hooks service + createInitialHealth
+  // are unaffected. dbBytes = on-disk size of the log DB; lastFlushAt = ts of the
+  // last worker health beat (the worker is synchronous, so a beat == a flush point).
+  dbBytes?: number
+  lastFlushAt?: number
 }
 
 export interface ServiceLogEntry {
