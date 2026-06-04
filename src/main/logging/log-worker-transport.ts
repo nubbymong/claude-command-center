@@ -43,6 +43,21 @@ export type ToWorker =
     }
   | { type: 'session-end'; sessionId: string; ts: number; status: string }
   | { type: 'query'; id: number; kind: string; args: Record<string, unknown> }
+  | {
+      type: 'migrate'
+      /** Correlates this chunk's ack back to the caller. */
+      id: number
+      sessions: {
+        sessionId: string
+        configLabel: string
+        projectCwd?: string
+        accountEmail?: string
+        profileId?: string
+        provider: string
+        startedAt: number
+        events: { ts: number; type: 'start' | 'data' | 'restart' | 'switch' | 'end'; raw: Uint8Array; text: string }[]
+      }[]
+    }
   | { type: 'reconcile' }
   | { type: 'shutdown' }
 
@@ -52,6 +67,8 @@ export type FromWorker =
   | { type: 'health'; inFlight: number; eventsTotal: number; dropsTotal: number; dbBytes: number }
   | { type: 'log'; entry: { level: 'info' | 'warn' | 'error'; message: string } }
   | { type: 'query-result'; id: number; rows: unknown[] }
+  | { type: 'migrate-progress'; id: number; importedSessions: number; skippedSessions: number; importedEvents: number }
+  | { type: 'migrate-error'; id: number; message: string }
   | { type: 'error'; id?: number; message: string }
 
 // ---------------------------------------------------------------------------

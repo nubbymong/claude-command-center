@@ -189,6 +189,58 @@ function _handleWorkerMessage(
       return
     }
 
+    // ---- migrate (legacy import; runs INSIDE the single live worker) ----
+    case 'migrate': {
+      // AMENDMENT A2: wrap the ENTIRE case in try/catch. The outer
+      // handleWorkerMessage wrapper sets `id` ONLY for `query` (see :62), so a
+      // throw that escapes the per-session loop (e.g. msg.sessions not iterable,
+      // or `post` throwing) would otherwise post `{type:'error', id:undefined}`,
+      // which LogSupervisor.migrate() never matches -> the ack hangs. Here we
+      // always terminate the chunk with a migrate-error carrying msg.id.
+      try {
+        let importedSessions = 0
+        let skippedSessions = 0
+        let importedEvents = 0
+        for (const sess of msg.sessions) {
+          // Per-session try/catch so one bad session never aborts the chunk.
+          try {
+            const res = db.importSession(
+              {
+                sessionId: sess.sessionId,
+                configLabel: sess.configLabel,
+                projectCwd: sess.projectCwd,
+                accountEmail: sess.accountEmail,
+                profileId: sess.profileId,
+                provider: sess.provider,
+                startedAt: sess.startedAt,
+              },
+              sess.events.map((e) => ({ ts: e.ts, type: e.type, raw: e.raw, text: e.text })),
+            )
+            if (res.imported) {
+              importedSessions += 1
+              importedEvents += res.events
+            } else {
+              skippedSessions += 1
+            }
+          } catch (err) {
+            // Surface, never swallow: report this session and keep going.
+            skippedSessions += 1
+            post({
+              type: 'log',
+              entry: {
+                level: 'warn',
+                message: `[migrate] session ${sess.sessionId} failed: ${err instanceof Error ? err.message : String(err)}`,
+              },
+            })
+          }
+        }
+        post({ type: 'migrate-progress', id: msg.id, importedSessions, skippedSessions, importedEvents })
+      } catch (err) {
+        post({ type: 'migrate-error', id: msg.id, message: err instanceof Error ? err.message : String(err) })
+      }
+      return
+    }
+
     // ---- reconcile ----
     case 'reconcile':
       db.markRunningCrashed()
