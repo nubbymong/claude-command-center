@@ -53,6 +53,15 @@ function formatBuildTime(iso: string): string {
   }
 }
 
+function fmtBytesLocal(n: number): string {
+  if (n < 1024) return `${n} B`
+  const units = ['KB', 'MB', 'GB', 'TB']
+  let v = n / 1024
+  let i = 0
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i += 1 }
+  return `${v.toFixed(1)} ${units[i]}`
+}
+
 function LogMigrationAction() {
   const settings = useSettingsStore((s) => s.settings)
   const updateSettings = useSettingsStore((s) => s.updateSettings)
@@ -62,17 +71,30 @@ function LogMigrationAction() {
   const progressDone = useMigrationStore((s) => s.progressDone)
   const progressTotal = useMigrationStore((s) => s.progressTotal)
   const report = useMigrationStore((s) => s.report)
+  const reclaimedBytes = useMigrationStore((s) => s.reclaimedBytes)
   const failedFolders = useMigrationStore((s) => s.failedFolders)   // A5
+  const errorKind = useMigrationStore((s) => s.errorKind)
   const detect = useMigrationStore((s) => s.detect)
   const run = useMigrationStore((s) => s.run)
   const reclaim = useMigrationStore((s) => s.reclaim)
 
+  const [dismissed, setDismissed] = useState(false)
+
   useEffect(() => { void detect() }, [detect])   // A6: named import, not React.useEffect
 
-  const migrated = settings.legacyLogsMigrated === true
-  const showRun = present && !migrated && (phase === 'idle' || phase === 'error')
+  // Mark migration complete as soon as run succeeds — NOT gated on reclaim.
+  useEffect(() => {
+    if (phase === 'done' && settings.legacyLogsMigrated !== true) {
+      void updateSettings({ legacyLogsMigrated: true })
+    }
+  }, [phase, settings.legacyLogsMigrated, updateSettings])
 
-  if (!present && !migrated && phase === 'idle') return null
+  const migrated = settings.legacyLogsMigrated === true
+  const showRun = present && !migrated && (phase === 'idle' || (phase === 'error' && errorKind === 'run'))
+
+  // Nothing actionable to show.
+  if (phase === 'idle' && (!present || migrated)) return null
+  if (phase === 'done' && dismissed) return null
 
   return (
     <div className="mt-3 pt-3" style={{ borderTop: '1px solid var(--border-subtle)' }}>
@@ -88,17 +110,26 @@ function LogMigrationAction() {
       {phase === 'running' && (
         <div className="text-[11px] text-overlay0">Importing {progressDone.toLocaleString()} of {progressTotal.toLocaleString()} ...</div>
       )}
-      {phase === 'error' && (
-        <div className="text-[11px]" style={{ color: 'var(--color-red, #f38ba8)' }}>Migration failed. You can retry. Your original logs were not modified.</div>
+      {phase === 'reclaiming' && (
+        <div className="text-[11px] text-overlay0">Removing old log files ...</div>
       )}
-      {(phase === 'done' || phase === 'reclaimed') && report && (
+      {phase === 'done' && report && !dismissed && (
         <MigrationReport report={report} reclaiming={false}
-          onReclaim={() => { void reclaim(); void updateSettings({ legacyLogsMigrated: true }) }}
-          onDismiss={() => { void updateSettings({ legacyLogsMigrated: true }) }} />
+          onReclaim={() => { void reclaim() }}
+          onDismiss={() => { setDismissed(true) }} />
       )}
       {phase === 'reclaimed' && (
-        <div className="text-[11px] text-overlay0 mt-1">
-          Old log files removed.{failedFolders.length > 0 ? ` ${failedFolders.length.toLocaleString()} folder(s) could not be removed.` : ''}
+        <div className="text-[11px] text-overlay0">
+          Old log files removed.{failedFolders.length > 0
+            ? ` ${failedFolders.length.toLocaleString()} folder(s) could not be removed.`
+            : ` ${fmtBytesLocal(reclaimedBytes)} freed.`}
+        </div>
+      )}
+      {phase === 'error' && (
+        <div className="text-[11px]" style={{ color: 'var(--color-red, #f38ba8)' }}>
+          {errorKind === 'reclaim'
+            ? 'Could not delete the old log files. You can try Reclaim again from the report. Your imported logs are safe.'
+            : 'Migration failed. You can retry. Your original logs were not modified.'}
         </div>
       )}
     </div>

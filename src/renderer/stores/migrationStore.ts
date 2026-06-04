@@ -10,7 +10,7 @@ export interface MigrationReportData {
   dbBytesAfter: number
 }
 
-type Phase = 'idle' | 'running' | 'done' | 'error' | 'reclaimed'
+type Phase = 'idle' | 'running' | 'done' | 'reclaiming' | 'error' | 'reclaimed'
 
 interface MigrationState {
   phase: Phase
@@ -22,6 +22,7 @@ interface MigrationState {
   reclaimedBytes: number
   failedFolders: string[]          // A5
   errorMessage?: string
+  errorKind?: 'run' | 'reclaim'
 
   detect: () => Promise<void>
   run: () => Promise<void>
@@ -49,7 +50,7 @@ export const useMigrationStore = create<MigrationState>((set, get) => ({
   },
 
   run: async () => {
-    set({ phase: 'running', progressDone: 0, progressTotal: get().sessionFolders, errorMessage: undefined })
+    set({ phase: 'running', progressDone: 0, progressTotal: get().sessionFolders, errorMessage: undefined, errorKind: undefined })
     const unsub = window.electronAPI.logMigration.onProgress(({ done, total }) => {
       set({ progressDone: done, progressTotal: total })
     })
@@ -57,18 +58,19 @@ export const useMigrationStore = create<MigrationState>((set, get) => ({
       const report = await window.electronAPI.logMigration.run()
       set({ phase: 'done', report })
     } catch (e) {
-      set({ phase: 'error', errorMessage: e instanceof Error ? e.message : String(e) })
+      set({ phase: 'error', errorKind: 'run', errorMessage: e instanceof Error ? e.message : String(e) })
     } finally {
       unsub()
     }
   },
 
   reclaim: async () => {
+    set({ phase: 'reclaiming', errorKind: undefined })
     try {
       const r = await window.electronAPI.logMigration.reclaim()
       set({ phase: 'reclaimed', reclaimedBytes: r.reclaimedBytes, failedFolders: r.failedFolders ?? [], present: false, sessionFolders: 0 })  // A5
     } catch (e) {
-      set({ phase: 'error', errorMessage: e instanceof Error ? e.message : String(e) })
+      set({ phase: 'error', errorKind: 'reclaim', errorMessage: e instanceof Error ? e.message : String(e) })
     }
   },
 

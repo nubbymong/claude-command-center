@@ -3,7 +3,7 @@ import type { MigrationReportData } from '../stores/migrationStore'
 
 function fmtBytes(n: number): string {
   if (n < 1024) return `${n} B`
-  const units = ['KB', 'MB', 'GB']
+  const units = ['KB', 'MB', 'GB', 'TB']
   let v = n / 1024
   let i = 0
   while (v >= 1024 && i < units.length - 1) { v /= 1024; i += 1 }
@@ -54,8 +54,8 @@ export function MigrationReport({ report, reclaiming, onReclaim, onDismiss }: Pr
             className="max-h-40 overflow-auto rounded-lg p-2 text-[11px] space-y-1"
             style={{ background: 'var(--color-mantle, rgba(0,0,0,0.25))' }}
           >
-            {report.unparseable.map((u, i) => (
-              <li key={i} className="text-overlay1 break-all">
+            {report.unparseable.map((u) => (
+              <li key={u.path} className="text-overlay1 break-all">
                 <span className="text-subtext0">{u.path}</span> {String.fromCodePoint(0x2014)} {u.reason}
                 {u.skippedLines > 0 ? ` (${u.skippedLines} line(s))` : ''}
               </li>
@@ -65,30 +65,41 @@ export function MigrationReport({ report, reclaiming, onReclaim, onDismiss }: Pr
       )}
 
       <div className="mt-4 flex items-center justify-end gap-2">
-        <button
-          onClick={onDismiss}
-          className="px-3 py-1.5 rounded-lg text-sm text-subtext0 transition-colors hover:text-text"
-          style={{ background: 'var(--surface-overlay, var(--color-surface1))' }}
-        >
-          Close
-        </button>
         {!confirming ? (
-          <button
-            onClick={() => setConfirming(true)}
-            className="px-3 py-1.5 rounded-lg text-sm transition-colors"
-            style={{ background: 'var(--surface-overlay, var(--color-surface1))', color: 'var(--text-secondary)' }}
-          >
-            Reclaim space
-          </button>
+          <>
+            <button
+              onClick={onDismiss}
+              className="px-3 py-1.5 rounded-lg text-sm text-subtext0 transition-colors hover:text-text"
+              style={{ background: 'var(--surface-overlay, var(--color-surface1))' }}
+            >
+              Close
+            </button>
+            <button
+              onClick={() => setConfirming(true)}
+              className="px-3 py-1.5 rounded-lg text-sm transition-colors"
+              style={{ background: 'var(--surface-overlay, var(--color-surface1))', color: 'var(--text-secondary)' }}
+            >
+              Reclaim space
+            </button>
+          </>
         ) : (
-          <button
-            onClick={onReclaim}
-            disabled={reclaiming}
-            className="px-3 py-1.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-60"
-            style={{ background: 'var(--color-red, #f38ba8)', color: 'var(--color-crust)' }}
-          >
-            {reclaiming ? 'Deleting...' : 'Delete old logs permanently'}
-          </button>
+          <>
+            <button
+              onClick={() => setConfirming(false)}
+              className="px-3 py-1.5 rounded-lg text-sm text-subtext0 transition-colors hover:text-text"
+              style={{ background: 'var(--surface-overlay, var(--color-surface1))' }}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={onReclaim}
+              disabled={reclaiming}
+              className="px-3 py-1.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-60"
+              style={{ background: 'var(--color-red, #f38ba8)', color: 'var(--color-crust)' }}
+            >
+              {reclaiming ? 'Deleting...' : 'Delete old logs permanently'}
+            </button>
+          </>
         )}
       </div>
 

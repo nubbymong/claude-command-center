@@ -59,4 +59,22 @@ describe('migrationStore', () => {
     expect(shouldSurface({ present: true, migrated: false, seen: true })).toBe(false)
     expect(shouldSurface({ present: false, migrated: false, seen: false })).toBe(false)
   })
+
+  it('reclaim() failure sets phase error with errorKind reclaim and leaves failedFolders empty', async () => {
+    useMigrationStore.setState({ phase: 'done', report: { totalSessions: 1, importedSessions: 1, skippedSessions: 0, importedEvents: 1, unparseable: [], dbBytesBefore: 1, dbBytesAfter: 2 } })
+    api.reclaim.mockRejectedValue(new Error('locked'))
+    await useMigrationStore.getState().reclaim()
+    expect(useMigrationStore.getState().phase).toBe('error')
+    expect(useMigrationStore.getState().errorKind).toBe('reclaim')
+    expect(useMigrationStore.getState().failedFolders).toEqual([])
+    expect(useMigrationStore.getState().errorMessage).toMatch(/locked/)
+  })
+
+  it('reclaim() surfaces failedFolders from the IPC result', async () => {
+    useMigrationStore.setState({ phase: 'done', report: { totalSessions: 1, importedSessions: 1, skippedSessions: 0, importedEvents: 1, unparseable: [], dbBytesBefore: 1, dbBytesAfter: 2 } })
+    api.reclaim.mockResolvedValue({ deletedFolders: 5, reclaimedBytes: 1000, failedFolders: ['C:/logs/APP/s3'] })
+    await useMigrationStore.getState().reclaim()
+    expect(useMigrationStore.getState().phase).toBe('reclaimed')
+    expect(useMigrationStore.getState().failedFolders).toEqual(['C:/logs/APP/s3'])
+  })
 })
