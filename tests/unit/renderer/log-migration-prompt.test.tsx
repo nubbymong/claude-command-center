@@ -17,6 +17,10 @@ import { useSettingsStore } from '../../../src/renderer/stores/settingsStore'
 
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
 
+// Saved so tests that stub rAF (for fake-timer runs) can restore it and never
+// leak the synchronous stub into other tests.
+const ORIGINAL_RAF = globalThis.requestAnimationFrame
+
 // ---------------------------------------------------------------------------
 // Minimal electronAPI mock so both stores can function.
 ;(globalThis as any).window = (globalThis as any).window ?? {}
@@ -82,6 +86,7 @@ describe('LogMigrationPrompt', () => {
     unmount = undefined
     vi.clearAllMocks()
     vi.useRealTimers()
+    globalThis.requestAnimationFrame = ORIGINAL_RAF
   })
 
   it('renders when present + not seen + not migrated', () => {
@@ -140,5 +145,37 @@ describe('LogMigrationPrompt', () => {
     })
 
     expect(update).toHaveBeenCalledWith(expect.objectContaining({ legacyLogsSurfacingSeen: true }))
+  })
+
+  it('dismiss ("Import now") marks seen AND starts the migration run', async () => {
+    globalThis.requestAnimationFrame = (cb: FrameRequestCallback) => { cb(0); return 0 }
+
+    vi.useFakeTimers()
+    setFlags(false)
+
+    const update = vi.fn().mockResolvedValue(undefined)
+    const runSpy = vi.fn().mockResolvedValue(undefined)
+    useSettingsStore.setState({ updateSettings: update as never })
+    useMigrationStore.setState({ run: runSpy as never })
+
+    const { container, unmount: u } = renderComponent(React.createElement(LogMigrationPrompt))
+    unmount = u
+
+    const buttons = Array.from(container.querySelectorAll('button'))
+    const importBtn = buttons.find((b) => /import now/i.test(b.textContent ?? '')) as HTMLButtonElement
+    expect(importBtn).toBeTruthy()
+
+    await act(async () => {
+      importBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    // Deferred until after the close animation.
+    expect(runSpy).not.toHaveBeenCalled()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(200)
+    })
+
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ legacyLogsSurfacingSeen: true }))
+    expect(runSpy).toHaveBeenCalledTimes(1)
   })
 })

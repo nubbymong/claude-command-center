@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useMigrationStore } from '../stores/migrationStore'
 
@@ -27,21 +27,30 @@ export default function LogMigrationPrompt() {
 
   const [entering, setEntering] = useState(false)
   const [closing, setClosing] = useState(false)
-
-  useEffect(() => { void detect() }, [detect])
-  useEffect(() => {
-    const id = requestAnimationFrame(() => setEntering(true))
-    return () => cancelAnimationFrame(id)
-  }, [])
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const seen = settings.legacyLogsSurfacingSeen === true
   const migrated = settings.legacyLogsMigrated === true
   const surface = shouldSurface({ present, migrated, seen })
 
+  // Detect legacy logs only when this notice could actually surface -- avoids a
+  // wasted IPC round-trip on every launch for users who already dismissed it or
+  // already migrated.
+  useEffect(() => {
+    if (!seen && !migrated) void detect()
+  }, [detect, seen, migrated])
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setEntering(true))
+    return () => cancelAnimationFrame(id)
+  }, [])
+  // Cancel a pending dismiss timer on unmount so it never fires updateSettings()
+  // or run() on a gone component (e.g. a silent migration start after unmount).
+  useEffect(() => () => { if (closeTimer.current !== null) clearTimeout(closeTimer.current) }, [])
+
   const dismiss = (alsoRun: boolean) => {
     if (closing) return
     setClosing(true)
-    setTimeout(() => {
+    closeTimer.current = setTimeout(() => {
       void updateSettings({ legacyLogsSurfacingSeen: true })
       if (alsoRun) void run()
     }, CLOSE_ANIM_MS)
