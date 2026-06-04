@@ -73,4 +73,20 @@ describe('legacy-log-importer runImport', () => {
     expect(postChunk).not.toHaveBeenCalled()
     expect(report.totalSessions).toBe(0)
   })
+
+  it('always ships a single session that alone exceeds the byte budget (lone-oversize)', async () => {
+    // One ~3 MB session against a 2 MB budget must STILL import, alone in its chunk
+    // (the chunk.length===0 guard) -> a huge session is never silently dropped.
+    const sessions = [mkSession('huge', 1, 3 * 1024 * 1024)]
+    const seen: number[] = []
+    const postChunk = vi.fn(async (chunk: ParsedSession[]) => {
+      seen.push(chunk.length)
+      return { importedSessions: chunk.length, skippedSessions: 0, importedEvents: chunk.length }
+    })
+    const report = await runImport(sessions, postChunk, { maxSessionsPerChunk: 25, maxBytesPerChunk: 2 * 1024 * 1024 })
+    expect(postChunk).toHaveBeenCalledTimes(1)
+    expect(seen).toEqual([1])
+    expect(report.importedSessions).toBe(1)
+    expect(report.totalSessions).toBe(1)
+  })
 })

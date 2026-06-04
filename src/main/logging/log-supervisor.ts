@@ -215,6 +215,12 @@ export class LogSupervisor {
         this.pushHealth()
         return
       }
+      case 'migrate-progress':
+      case 'migrate-error':
+        // Placeholder so the exhaustive `never` check below holds now that the
+        // transport carries these arms. Task 5 (supervisor.migrate) REPLACES these
+        // with the real id-keyed resolve/reject of pending migrate chunks.
+        return
       default: {
         const _exhaustive: never = m
         void _exhaustive

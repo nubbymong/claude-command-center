@@ -104,6 +104,35 @@ describe('worker migrate op', () => {
     expect(db.getSessionEventCount('ok')).toBe(1)
   })
 
+  it('a session whose importSession THROWS is skipped (surfaced as a log warn) without aborting the chunk', () => {
+    // Force importSession to throw for one specific session; the per-session
+    // try/catch must skip it and emit a log warn while the good session imports.
+    const realImport = db.importSession.bind(db)
+    ;(db as { importSession: LogDb['importSession'] }).importSession = ((meta, events) => {
+      if (meta.sessionId === 'thrower') throw new Error('boom')
+      return realImport(meta, events)
+    }) as LogDb['importSession']
+
+    handleWorkerMessage(db, {
+      type: 'migrate', id: 4,
+      sessions: [
+        { sessionId: 'thrower', configLabel: 'L', provider: 'claude', startedAt: 1, events: [{ ts: 1, type: 'data', raw: u8('x'), text: 'x' }] },
+        { sessionId: 'good', configLabel: 'L', provider: 'claude', startedAt: 1, events: [{ ts: 1, type: 'data', raw: u8('ok'), text: 'ok' }] },
+      ],
+    }, post)
+
+    const prog = posted.find((p) => p.type === 'migrate-progress') as Extract<FromWorker, { type: 'migrate-progress' }>
+    expect(prog).toBeTruthy()
+    expect(prog.skippedSessions).toBe(1)
+    expect(prog.importedSessions).toBe(1)
+    expect(db.getSessionEventCount('good')).toBe(1)
+    expect(db.getSessionEventCount('thrower')).toBe(0)
+    // The failure is surfaced (never swallowed) as a worker log warn.
+    expect(
+      posted.some((p) => p.type === 'log' && /thrower/.test((p as Extract<FromWorker, { type: 'log' }>).entry.message)),
+    ).toBe(true)
+  })
+
   it('A2: a migrate op with a malformed sessions array posts migrate-error with the right id', () => {
     // `sessions: null` is not iterable -> the for..of throws OUTSIDE the
     // per-session try/catch. The outer A2 guard must post migrate-error carrying
