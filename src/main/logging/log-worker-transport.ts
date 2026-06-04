@@ -52,7 +52,7 @@ export type FromWorker =
   | { type: 'health'; inFlight: number; eventsTotal: number; dropsTotal: number; dbBytes: number }
   | { type: 'log'; entry: { level: 'info' | 'warn' | 'error'; message: string } }
   | { type: 'query-result'; id: number; rows: unknown[] }
-  | { type: 'error'; message: string }
+  | { type: 'error'; id?: number; message: string }
 
 // ---------------------------------------------------------------------------
 // Transport interfaces

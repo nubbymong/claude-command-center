@@ -113,6 +113,14 @@ describe('log worker transport', () => {
     if (e.type === 'error') expect(e.message).toBe('db open failed')
   })
 
+  it('error message accepts optional id for query correlation', () => {
+    const e: FromWorker = { type: 'error', id: 7, message: 'unknown query kind: bogus' }
+    if (e.type === 'error') {
+      expect(e.id).toBe(7)
+      expect(e.message).toMatch(/unknown/)
+    }
+  })
+
   it('log entry carries level + message', () => {
     const l: FromWorker = { type: 'log', entry: { level: 'warn', message: 'slow write' } }
     if (l.type === 'log') {

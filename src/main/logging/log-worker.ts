@@ -27,6 +27,9 @@ import type { ToWorker, FromWorker } from './log-worker-transport'
 // the same module instance. Tests that call handleWorkerMessage directly will
 // share these, which is fine: the tests only assert that drops are reflected,
 // not the exact cumulative total across independent test cases.
+//
+// Intentional process-lifetime singletons for health reporting. Tests must not
+// assert absolute totals across independent test cases.
 // ---------------------------------------------------------------------------
 
 let _eventsTotal = 0
@@ -54,11 +57,14 @@ export function handleWorkerMessage(
   msg: ToWorker,
   post: (m: FromWorker) => void,
 ): void {
+  // Extract the query id before entering the try so the catch can correlate
+  // the error back to the caller's pending promise (avoids a hung promise).
+  const queryId = msg.type === 'query' ? msg.id : undefined
   try {
     _handleWorkerMessage(db, msg, post)
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err)
-    post({ type: 'error', message })
+    post({ type: 'error', id: queryId, message })
   }
 }
 
@@ -71,7 +77,7 @@ function _handleWorkerMessage(
     // ---- open / shutdown: lifecycle — bootstrap handles these, not this fn ----
     case 'open':
     case 'shutdown':
-      // No-op in the pure handler; bootstrap owns lifecycle.
+      // intentional no-op in the pure handler; lifecycle handled by the bootstrap
       return
 
     // ---- session-start ----
@@ -97,6 +103,9 @@ function _handleWorkerMessage(
       for (const sess of msg.sessions) {
         // Flatten all chunks for this session into the flat array
         for (const chunk of sess.chunks) {
+          // Note: a multi-byte UTF-8 char split across batch boundaries may yield
+          // U+FFFD in this search-text projection only — raw bytes are stored intact
+          // so replay is unaffected; acceptable for a best-effort search index.
           const text = stripAnsi(Buffer.from(chunk.raw).toString('utf8'))
           flat.push({
             sessionId: sess.sessionId,
@@ -157,7 +166,7 @@ function _handleWorkerMessage(
           break
         }
         default: {
-          post({ type: 'error', message: `unknown query kind: ${kind}` })
+          post({ type: 'error', id, message: `unknown query kind: ${kind}` })
           return
         }
       }
@@ -205,6 +214,30 @@ if (parentPort) {
 
   const post = (m: FromWorker) => parentPort!.postMessage(m)
 
+  // ---- periodic health report (every 10 s) ----
+  // dbBytes: read the DB file size when available; :memory: reports 0.
+  // Declared before the message handler so shutdown can call clearInterval().
+  const HEALTH_INTERVAL_MS = 10_000
+
+  const healthTimer = setInterval(() => {
+    let dbBytes = 0
+    if (openedDbPath && openedDbPath !== ':memory:') {
+      try {
+        dbBytes = fs.statSync(openedDbPath).size
+      } catch {
+        // DB file might not be flushed yet — ignore
+      }
+    }
+    const { eventsTotal, dropsTotal } = getStats()
+    post({
+      type: 'health',
+      inFlight: 0, // synchronous worker — no async in-flight ops
+      eventsTotal,
+      dropsTotal,
+      dbBytes,
+    })
+  }, HEALTH_INTERVAL_MS).unref()
+
   parentPort.on('message', (e) => {
     const msg = e.data as ToWorker
 
@@ -225,6 +258,7 @@ if (parentPort) {
 
     // ---- shutdown: lifecycle ----
     if (msg.type === 'shutdown') {
+      clearInterval(healthTimer)
       db?.close()
       db = undefined
       openedDbPath = undefined
@@ -240,29 +274,6 @@ if (parentPort) {
 
     handleWorkerMessage(db, msg, post)
   })
-
-  // ---- periodic health report (every 10 s) ----
-  // dbBytes: read the DB file size when available; :memory: reports 0.
-  const HEALTH_INTERVAL_MS = 10_000
-
-  setInterval(() => {
-    let dbBytes = 0
-    if (openedDbPath && openedDbPath !== ':memory:') {
-      try {
-        dbBytes = fs.statSync(openedDbPath).size
-      } catch {
-        // DB file might not be flushed yet — ignore
-      }
-    }
-    const { eventsTotal, dropsTotal } = getStats()
-    post({
-      type: 'health',
-      inFlight: 0, // synchronous worker — no async in-flight ops
-      eventsTotal,
-      dropsTotal,
-      dbBytes,
-    })
-  }, HEALTH_INTERVAL_MS).unref()
 
   // TODO (Task 6/8): WAL checkpoint cadence. Preferred approach: add a
   // `checkpoint()` method to LogDb (it owns the connection) and call it from

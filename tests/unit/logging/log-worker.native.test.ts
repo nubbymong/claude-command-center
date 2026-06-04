@@ -226,6 +226,15 @@ describe('log-worker handleWorkerMessage', () => {
     expect(err.message).toMatch(/unknown/i)
   })
 
+  // ---- unknown query kind error carries the query id (prevents hung promises) ----
+  it('unknown query kind posts an error with the same id as the query', () => {
+    const { out, post } = makePost()
+    handleWorkerMessage(db, { type: 'query', id: 7, kind: 'bogus', args: {} }, post)
+    const err = out.find((m) => m.type === 'error')
+    expect(err).toBeDefined()
+    expect(err.id).toBe(7)
+  })
+
   // ---- query kind: readEvents ----
   it('query kind=readEvents returns events cursor for a session', () => {
     const { out, post } = makePost()
