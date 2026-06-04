@@ -179,10 +179,13 @@ function reclaimDirSizeBytes(dir: string): number {
  *   (3) that completion marker was recorded for THIS exact logsDir (defends the
  *       data-dir-switch edge).
  * A5: returns `failedFolders` (any session dir whose removal threw), never swallowed.
+ * The pure helper stays logger-free; pass `onFailure` to surface WHY a folder could
+ * not be removed (the IPC handler logs it -- the realistic case is a locked file /
+ * EBUSY/EPERM on Windows, which is undiagnosable from a bare count).
  * A7: only DIRECTORIES are removed; a sibling FILE (e.g. a logs.db) is skipped.
  * Params injectable for tests.
  */
-export function reclaimLegacyLogs(opts?: { logsDir?: string; resourcesDir?: string }): { deletedFolders: number; reclaimedBytes: number; failedFolders: string[] } {
+export function reclaimLegacyLogs(opts?: { logsDir?: string; resourcesDir?: string; onFailure?: (sessPath: string, reason: string) => void }): { deletedFolders: number; reclaimedBytes: number; failedFolders: string[] } {
   const logsDir = opts?.logsDir ?? path.join(getDataDirectory(), 'logs')
   const resourcesDir = opts?.resourcesDir ?? getResourcesDirectory()
 
@@ -224,8 +227,11 @@ export function reclaimLegacyLogs(opts?: { logsDir?: string; resourcesDir?: stri
         fs.rmSync(sessPath, { recursive: true, force: true })
         deletedFolders += 1
         reclaimedBytes += bytes
-      } catch {
-        failedFolders.push(sessPath) // A5: surface, never swallow
+      } catch (err) {
+        // A5: surface, never swallow. failedFolders carries the path for the UI;
+        // onFailure lets the caller log the reason (helper stays logger-free).
+        failedFolders.push(sessPath)
+        opts?.onFailure?.(sessPath, err instanceof Error ? err.message : String(err))
       }
     }
     try {

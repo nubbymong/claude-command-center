@@ -13,7 +13,7 @@ import { getLogSupervisor } from '../logging/logging-service'
 import { parseLegacyLogs } from '../logging/legacy-log-parser'
 import { runImport } from '../logging/legacy-log-importer'
 import { snapshotLegacyLogs, isLegacyLogsFrozen, markLegacyImportComplete, reclaimLegacyLogs } from '../logging/log-snapshot'
-import { logInfo } from '../debug-logger'
+import { logInfo, logWarn } from '../debug-logger'
 
 // A4: module-level reentrancy guard — a double-click must not spawn two runImport loops.
 let migrationRunning = false
@@ -126,7 +126,9 @@ export function registerLogMigrationHandlers(getWindow: () => BrowserWindow | nu
     if (!sup) throw new Error('refusing to reclaim: logging worker not available')
     const rows = await sup.query('listSessions', { offset: 0, limit: 1 })
     if (!rows.length) throw new Error('refusing to reclaim: no imported sessions in the database')
-    const res = reclaimLegacyLogs()
+    const res = reclaimLegacyLogs({
+      onFailure: (p, reason) => logWarn(`[migrate] reclaim failed for ${p}: ${reason}`),
+    })
     logInfo(`[migrate] reclaimed ${res.deletedFolders} folders (${res.reclaimedBytes} bytes), ${res.failedFolders.length} failed`)
     return res
   })
