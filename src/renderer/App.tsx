@@ -8,8 +8,10 @@ import CommandBar from './components/CommandBar'
 import SessionStatusStrip from './components/SessionStatusStrip'
 import WebviewPane from './components/WebviewPane'
 import ExcalidrawPane from './components/ExcalidrawPane'
+import LogsPane from './components/LogsPane'
 import { useWebviewStore } from './stores/webviewStore'
 import { useExcalidrawStore } from './stores/excalidrawStore'
+import { useLogsStore } from './stores/useLogsStore'
 import BottomBar from './components/BottomBar'
 import UsageDashboard from './components/UsageDashboard'
 import ProjectBrowser from './components/ProjectBrowser'
@@ -153,6 +155,7 @@ export default function App() {
   const sessions = useSessionStore((s) => s.sessions)
   const webviewBySession = useWebviewStore((s) => s.bySessionId)
   const excalidrawBySession = useExcalidrawStore((s) => s.bySessionId)
+  const logsBySession = useLogsStore((s) => s.bySessionId)
   const activeSession = sessions.find((s) => s.id === activeSessionId)
   const hasRestoredRef = useRef(false)
 
@@ -171,6 +174,7 @@ export default function App() {
   useEffect(() => {
     if (sessions.length === 0) return
     useExcalidrawStore.getState().reconcile(sessions.map((s) => s.id))
+    useLogsStore.getState().reconcile(sessions.map((s) => s.id))
   }, [sessions])
 
   // Global keyboard shortcuts
@@ -663,9 +667,10 @@ export default function App() {
               const partnerPtyId = session.id + '-partner'
               const isShowingWebview = !!webviewBySession[session.id]?.isOpen
               const isShowingExcalidraw = !!excalidrawBySession[session.id]?.isOpen
-              // Priority: webview > excalidraw > partner > claude. Each
-              // alternative pane replaces the underlying terminal panes.
-              const altPaneShowing = isShowingWebview || isShowingExcalidraw
+              const isShowingLogs = !!logsBySession[session.id]?.isOpen
+              // Priority: logs > webview > excalidraw > partner > claude. Logs
+              // sits TOP so an open log view isn't suppressed by Draw/Web/Partner.
+              const altPaneShowing = isShowingLogs || isShowingWebview || isShowingExcalidraw
               return (
                 <div
                   key={session.id + '-' + session.createdAt}
@@ -719,10 +724,13 @@ export default function App() {
                       />
                     </div>
                   )}
-                  {/* Webview takes precedence over Excalidraw if both are
-                      somehow open (the toggle buttons are independent so
-                      the user CAN have both flags true). Render only one. */}
-                  {isShowingWebview ? (
+                  {/* Alt-pane priority: Logs > Webview > Excalidraw. Each
+                      alternative pane replaces the underlying terminal panes.
+                      Toggle buttons are independent so multiple flags can be
+                      true; render only the highest-priority one. */}
+                  {isShowingLogs ? (
+                    <LogsPane sessionId={session.id} />
+                  ) : isShowingWebview ? (
                     <WebviewPane sessionId={session.id} isActive={session.id === activeSessionId} />
                   ) : isShowingExcalidraw ? (
                     <ExcalidrawPane sessionId={session.id} />

@@ -5,6 +5,7 @@ import { useCommandBarStore } from '../stores/commandBarStore'
 import CommandDialog from './CommandDialog'
 import ScreenshotButton from './ScreenshotButton'
 import ExcalidrawButton from './ExcalidrawButton'
+import LogsButton from './LogsButton'
 import WebviewButton from './WebviewButton'
 import { useWebviewStore, pollUrlForContent, probeWebviewUrls } from '../stores/webviewStore'
 import { generateId } from '../utils/id'
@@ -536,6 +537,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
         <div className="w-px h-4 bg-surface1 mx-0.5" />
         <ScreenshotButton sessionId={sessionId} sessionType={sessionType} />
         <ExcalidrawButton sessionId={sessionId} />
+        <LogsButton sessionId={sessionId} />
         <WebviewButton sessionId={webviewKey} hasWebviewCommand={hasWebviewCommand} />
         {/* Back to Claude / Partner toggle - same monochrome tool-button shape as Snap */}
         {partnerEnabled && onTogglePartner && (
