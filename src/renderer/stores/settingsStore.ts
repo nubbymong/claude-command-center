@@ -111,6 +111,10 @@ export interface AppSettings {
    *  written. Set true (with or without disabling logging) to suppress the
    *  prompt permanently. */
   loggingConsentSeen?: boolean
+  /** True once the legacy file logs have been imported into SQLite (Phase 2b). */
+  legacyLogsMigrated?: boolean
+  /** True once the one-time "legacy logs detected" surfacing has been shown. */
+  legacyLogsSurfacingSeen?: boolean
 }
 
 interface SettingsState {

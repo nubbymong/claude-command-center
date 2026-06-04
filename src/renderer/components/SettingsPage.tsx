@@ -15,6 +15,8 @@ import { SectionLabel } from './ui/SectionLabel'
 import { Kbd } from './ui/Kbd'
 import { useAddAccount } from '../hooks/useAddAccount'
 import AccountsPanel from './AccountsPanel'
+import { useMigrationStore } from '../stores/migrationStore'
+import { MigrationReport } from './MigrationReport'
 declare const __BUILD_TIME__: string
 
 export const SETTINGS_TAB_IDS = ['general', 'statusline', 'shortcuts', 'github', 'codex', 'hooks', 'about'] as const
@@ -49,6 +51,58 @@ function formatBuildTime(iso: string): string {
   } catch {
     return iso
   }
+}
+
+function LogMigrationAction() {
+  const settings = useSettingsStore((s) => s.settings)
+  const updateSettings = useSettingsStore((s) => s.updateSettings)
+  const present = useMigrationStore((s) => s.present)
+  const sessionFolders = useMigrationStore((s) => s.sessionFolders)
+  const phase = useMigrationStore((s) => s.phase)
+  const progressDone = useMigrationStore((s) => s.progressDone)
+  const progressTotal = useMigrationStore((s) => s.progressTotal)
+  const report = useMigrationStore((s) => s.report)
+  const failedFolders = useMigrationStore((s) => s.failedFolders)   // A5
+  const detect = useMigrationStore((s) => s.detect)
+  const run = useMigrationStore((s) => s.run)
+  const reclaim = useMigrationStore((s) => s.reclaim)
+
+  useEffect(() => { void detect() }, [detect])   // A6: named import, not React.useEffect
+
+  const migrated = settings.legacyLogsMigrated === true
+  const showRun = present && !migrated && (phase === 'idle' || phase === 'error')
+
+  if (!present && !migrated && phase === 'idle') return null
+
+  return (
+    <div className="mt-3 pt-3" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+      <div className="text-sm text-subtext0 mb-1">Existing logs</div>
+      {showRun && (
+        <div className="flex items-center gap-3">
+          <span className="text-[11px] text-overlay0">{sessionFolders.toLocaleString()} legacy session folder(s) found</span>
+          <button onClick={() => void run()} className="px-3 py-1.5 rounded-lg text-sm font-medium transition-colors" style={{ background: 'var(--color-blue)', color: 'var(--color-crust)' }}>
+            Migrate existing logs
+          </button>
+        </div>
+      )}
+      {phase === 'running' && (
+        <div className="text-[11px] text-overlay0">Importing {progressDone.toLocaleString()} of {progressTotal.toLocaleString()} ...</div>
+      )}
+      {phase === 'error' && (
+        <div className="text-[11px]" style={{ color: 'var(--color-red, #f38ba8)' }}>Migration failed. You can retry. Your original logs were not modified.</div>
+      )}
+      {(phase === 'done' || phase === 'reclaimed') && report && (
+        <MigrationReport report={report} reclaiming={false}
+          onReclaim={() => { void reclaim(); void updateSettings({ legacyLogsMigrated: true }) }}
+          onDismiss={() => { void updateSettings({ legacyLogsMigrated: true }) }} />
+      )}
+      {phase === 'reclaimed' && (
+        <div className="text-[11px] text-overlay0 mt-1">
+          Old log files removed.{failedFolders.length > 0 ? ` ${failedFolders.length.toLocaleString()} folder(s) could not be removed.` : ''}
+        </div>
+      )}
+    </div>
+  )
 }
 
 interface SettingsPageProps {
@@ -255,6 +309,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
                   </button>
                   <span className="text-[10px] text-overlay0">(permanent; active sessions are kept)</span>
                 </div>
+                <LogMigrationAction />
               </Section>
 
               <AccountsPanel onAdd={handleAddAccount} />
