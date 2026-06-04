@@ -99,6 +99,11 @@
 
   --shadow-panel: 7px 0 18px -6px rgba(0,0,0,.55);
   --shadow-raised: -10px 0 24px rgba(0,0,0,.5);
+  /* Soft, centred drop shadow for small floating chips (e.g. the GitHub FAB).
+     The big directional --shadow-raised is for the tall side panel; on a ~30px
+     button it smears a dark halo over the terminal that reads as "cut-out"
+     content rather than a hovering element. */
+  --shadow-fab: 0 3px 10px rgba(0,0,0,.4);
   --highlight-inset: inset 0 1px 0 rgba(255,255,255,.04);
 }
 
