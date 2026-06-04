@@ -155,3 +155,82 @@ export function readLegacyImportCompletion(opts?: { resourcesDir?: string }): Le
     return null
   }
 }
+
+/** Sum byte sizes of the files directly under `dir` (session dirs are flat). */
+function reclaimDirSizeBytes(dir: string): number {
+  let total = 0
+  try {
+    for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (ent.isFile()) { try { total += fs.statSync(path.join(dir, ent.name)).size } catch { /* skip */ } }
+    }
+  } catch { /* unreadable */ }
+  return total
+}
+
+/**
+ * Permanently delete the legacy session DIRECTORIES under `logsDir`. The ONLY
+ * function in the migration that writes to the logs dir, and only after the user
+ * confirms the reconciliation report.
+ *
+ * A1 [SAFETY-CRITICAL] multi-layer gate — refuses (throws, deletes NOTHING) unless:
+ *   (1) a FROZEN snapshot marker exists, AND
+ *   (2) an import-completion marker exists (FROZEN alone is written at snapshot
+ *       time, BEFORE any import, so it does not prove data reached the DB), AND
+ *   (3) that completion marker was recorded for THIS exact logsDir (defends the
+ *       data-dir-switch edge).
+ * A5: returns `failedFolders` (any session dir whose removal threw), never swallowed.
+ * A7: only DIRECTORIES are removed; a sibling FILE (e.g. a logs.db) is skipped.
+ * Params injectable for tests.
+ */
+export function reclaimLegacyLogs(opts?: { logsDir?: string; resourcesDir?: string }): { deletedFolders: number; reclaimedBytes: number; failedFolders: string[] } {
+  const logsDir = opts?.logsDir ?? path.join(getDataDirectory(), 'logs')
+  const resourcesDir = opts?.resourcesDir ?? getResourcesDirectory()
+
+  if (!isLegacyLogsFrozen({ resourcesDir })) {
+    throw new Error('refusing to reclaim: no snapshot (FROZEN) marker present')
+  }
+  const completion = readLegacyImportCompletion({ resourcesDir })
+  if (!completion) {
+    throw new Error('refusing to reclaim: import has not completed (no completion marker)')
+  }
+  if (completion.logsDir !== logsDir) {
+    throw new Error('refusing to reclaim: completion marker was recorded for a different logs dir')
+  }
+  if (!fs.existsSync(logsDir)) return { deletedFolders: 0, reclaimedBytes: 0, failedFolders: [] }
+
+  let deletedFolders = 0
+  let reclaimedBytes = 0
+  const failedFolders: string[] = []
+  let labels: fs.Dirent[]
+  try {
+    labels = fs.readdirSync(logsDir, { withFileTypes: true })
+  } catch {
+    return { deletedFolders, reclaimedBytes, failedFolders }
+  }
+  for (const label of labels) {
+    if (!label.isDirectory()) continue // A7: skip sibling FILES (e.g. logs.db); only session DIRECTORIES are removed
+    const labelPath = path.join(logsDir, label.name)
+    let sessions: fs.Dirent[]
+    try {
+      sessions = fs.readdirSync(labelPath, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    for (const sess of sessions) {
+      if (!sess.isDirectory()) continue
+      const sessPath = path.join(labelPath, sess.name)
+      const bytes = reclaimDirSizeBytes(sessPath)
+      try {
+        fs.rmSync(sessPath, { recursive: true, force: true })
+        deletedFolders += 1
+        reclaimedBytes += bytes
+      } catch {
+        failedFolders.push(sessPath) // A5: surface, never swallow
+      }
+    }
+    try {
+      if (fs.readdirSync(labelPath).length === 0) fs.rmdirSync(labelPath)
+    } catch { /* leave non-empty (a folder failed) or already gone */ }
+  }
+  return { deletedFolders, reclaimedBytes, failedFolders }
+}

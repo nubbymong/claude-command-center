@@ -12,8 +12,8 @@ import { getDataDirectory } from '../data-paths'
 import { getLogSupervisor } from '../logging/logging-service'
 import { parseLegacyLogs } from '../logging/legacy-log-parser'
 import { runImport } from '../logging/legacy-log-importer'
-import { snapshotLegacyLogs, isLegacyLogsFrozen, markLegacyImportComplete } from '../logging/log-snapshot'
-import { logInfo, logWarn } from '../debug-logger'
+import { snapshotLegacyLogs, isLegacyLogsFrozen, markLegacyImportComplete, reclaimLegacyLogs } from '../logging/log-snapshot'
+import { logInfo } from '../debug-logger'
 
 // A4: module-level reentrancy guard — a double-click must not spawn two runImport loops.
 let migrationRunning = false
@@ -56,30 +56,6 @@ function dbSizeBytes(): number {
   } catch {
     return 0
   }
-}
-
-/** Sum the byte size of every regular file directly or recursively under `dir`. */
-function dirSizeBytes(dir: string): number {
-  let entries: fs.Dirent[]
-  try {
-    entries = fs.readdirSync(dir, { withFileTypes: true })
-  } catch {
-    return 0
-  }
-  let total = 0
-  for (const ent of entries) {
-    const abs = path.join(dir, ent.name)
-    if (ent.isDirectory()) {
-      total += dirSizeBytes(abs)
-    } else if (ent.isFile()) {
-      try {
-        total += fs.statSync(abs).size
-      } catch {
-        // Unreadable file — skip from the tally (it will be force-removed anyway).
-      }
-    }
-  }
-  return total
 }
 
 export function registerLogMigrationHandlers(getWindow: () => BrowserWindow | null): void {
@@ -142,54 +118,16 @@ export function registerLogMigrationHandlers(getWindow: () => BrowserWindow | nu
     }
   })
 
-  // PROVISIONAL reclaim handler — Task 8 will extract reclaimLegacyLogs + harden it
-  // (A1 completion+logsDir gate, A5 failedFolders, DB-presence assert). For T5 the
-  // basic frozen-guarded inline version is fine. failedFolders is threaded now so
-  // the IPC return type is stable.
   ipcMain.handle(IPC.LOGS_MIGRATE_RECLAIM, async () => {
-    const dir = legacyLogsDir()
-    if (!fs.existsSync(dir)) return { deletedFolders: 0, reclaimedBytes: 0, failedFolders: [] as string[] }
-    if (!isLegacyLogsFrozen()) throw new Error('refusing to reclaim: no snapshot marker present')
-    let deletedFolders = 0
-    let reclaimedBytes = 0
-    const failedFolders: string[] = []
-    let labels: fs.Dirent[]
-    try {
-      labels = fs.readdirSync(dir, { withFileTypes: true })
-    } catch {
-      return { deletedFolders, reclaimedBytes, failedFolders }
-    }
-    for (const label of labels) {
-      if (!label.isDirectory()) continue
-      const labelPath = path.join(dir, label.name)
-      let sessions: fs.Dirent[]
-      try {
-        sessions = fs.readdirSync(labelPath, { withFileTypes: true })
-      } catch {
-        continue
-      }
-      for (const sess of sessions) {
-        if (!sess.isDirectory()) continue
-        const sessPath = path.join(labelPath, sess.name)
-        const bytes = dirSizeBytes(sessPath)
-        try {
-          fs.rmSync(sessPath, { recursive: true, force: true })
-          deletedFolders += 1
-          reclaimedBytes += bytes
-        } catch (err) {
-          // A5: surface, never swallow — record the folder we could not delete.
-          failedFolders.push(sessPath)
-          logWarn(`[migrate] reclaim failed for ${sessPath}: ${err instanceof Error ? err.message : String(err)}`)
-        }
-      }
-      // Remove the now-empty label dir (best-effort: only when truly empty).
-      try {
-        if (fs.readdirSync(labelPath).length === 0) fs.rmdirSync(labelPath)
-      } catch {
-        // Non-empty (a folder failed to delete) or already gone — leave it.
-      }
-    }
-    logInfo(`[migrate] reclaimed ${deletedFolders} folders (${reclaimedBytes} bytes)`)
-    return { deletedFolders, reclaimedBytes, failedFolders }
+    // A1 [SAFETY-CRITICAL] belt-and-suspenders: never delete unless the DB actually
+    // holds imported sessions. (The frozen + completion-marker(+logsDir) gate lives
+    // in reclaimLegacyLogs.) This defends the case where an import wrote nothing.
+    const sup = getLogSupervisor()
+    if (!sup) throw new Error('refusing to reclaim: logging worker not available')
+    const rows = await sup.query('listSessions', { offset: 0, limit: 1 })
+    if (!rows.length) throw new Error('refusing to reclaim: no imported sessions in the database')
+    const res = reclaimLegacyLogs()
+    logInfo(`[migrate] reclaimed ${res.deletedFolders} folders (${res.reclaimedBytes} bytes), ${res.failedFolders.length} failed`)
+    return res
   })
 }
