@@ -13,6 +13,8 @@ const mod = await import('../../src/main/channel-permissions')
 const { startPermissionTray, getPending, dismissPermission, _resetPending } = mod as any
 
 const notif = (sid: string, ts = 1) => ({ sessionId: sid, event: 'Notification', payload: { notification_type: 'permission_prompt', message: 'Claude needs your permission' }, ts })
+const notifWithTool = (sid: string, ts = 1) => ({ sessionId: sid, event: 'Notification', payload: { notification_type: 'permission_prompt', message: 'Claude needs your permission to use Bash' }, ts })
+const notifQueued = (sid: string, ts = 1, msg = 'Edit your queued messages') => ({ sessionId: sid, event: 'Notification', payload: { notification_type: 'permission_prompt', message: msg }, ts })
 const pre = (sid: string, tool: string, input: any, tuid: string, ts = 1) => ({ sessionId: sid, event: 'PreToolUse', toolName: tool, payload: { tool_name: tool, tool_input: input, tool_use_id: tuid }, ts })
 const post = (sid: string, tuid: string, ts = 1) => ({ sessionId: sid, event: 'PostToolUse', payload: { tool_use_id: tuid }, ts })
 const postNamed = (sid: string, tool: string, ts = 1) => ({ sessionId: sid, event: 'PostToolUse', payload: { tool_name: tool }, ts })
@@ -155,6 +157,27 @@ describe('channel-permissions (genuine-only, grace-deferred)', () => {
   it('does NOT capture when the tray is disabled in settings', () => {
     readConfigMock.mockReturnValue({ permissionTrayEnabled: false })
     hookCb(notif('s1'))
+    vi.advanceTimersByTime(GRACE)
+    expect(getPending()).toHaveLength(0)
+  })
+
+  it('surfaces a genuine prompt whose message includes the tool name (conservative substring, not exact-match)', () => {
+    // "Claude needs your permission to use Bash" contains "permission" -> must surface
+    hookCb(notifWithTool('s1'))
+    vi.advanceTimersByTime(GRACE)
+    expect(getPending()).toHaveLength(1)
+    expect(getPending()[0].sessionId).toBe('s1')
+  })
+
+  it('does NOT surface a permission_prompt notification whose message lacks "permission" (queued-messages false positive)', () => {
+    // e.g. "Edit your queued messages" has notification_type='permission_prompt' but no "permission" in message
+    hookCb(notifQueued('s1'))
+    vi.advanceTimersByTime(GRACE)
+    expect(getPending()).toHaveLength(0)
+  })
+
+  it('does NOT surface a permission_prompt notification with an empty message', () => {
+    hookCb(notifQueued('s1', 1, ''))
     vi.advanceTimersByTime(GRACE)
     expect(getPending()).toHaveLength(0)
   })

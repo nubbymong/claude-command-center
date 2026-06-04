@@ -6,7 +6,7 @@ import { pushPendingPermissions } from './ipc/channel-handlers'
 import { readConfig } from './config-manager'
 import { detectHighRisk } from './permission-core'
 import { getActiveSessionId } from './active-session'
-import { logDebug } from './debug-logger'
+import { logDebug, logInfo } from './debug-logger'
 import type { PendingPermission } from '../shared/channel-types'
 import type { HookEvent } from '../shared/hook-types'
 
@@ -57,8 +57,16 @@ function trayEnabled(): boolean {
 }
 
 function isPermissionPrompt(e: HookEvent): boolean {
-  return e.event === 'Notification' &&
-    (e.payload as { notification_type?: string }).notification_type === 'permission_prompt'
+  if (e.event !== 'Notification') return false
+  const pl = e.payload as { notification_type?: string; message?: string }
+  if (pl.notification_type !== 'permission_prompt') return false
+  const msg = (pl.message ?? '').toLowerCase()
+  const surfaced = msg.includes('permission')
+  // Diagnostic: log every permission_prompt-typed Notification so we can confirm the fix and
+  // capture the real queued-messages payload on the next repro (the payload was inferred, not
+  // captured -- this log self-corrects if the assumption is wrong).
+  logInfo(`[perm-tray] permission_prompt notification: surfaced=${surfaced} message="${(pl.message ?? '').slice(0, 120)}"`)
+  return surfaced
 }
 
 function toolUseId(e: HookEvent): string | undefined {
