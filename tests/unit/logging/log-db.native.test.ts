@@ -244,6 +244,94 @@ describe('log-db', () => {
     expect(db.search('zzznomatchzzz').length).toBe(0)
   })
 
+  it('search handles FTS operator words literally (sanitizer fix)', () => {
+    // Insert an event whose text contains the bare FTS operator word "AND".
+    // With the old character-class regex the word was NOT quoted, hitting FTS5
+    // as a boolean operator and returning [] (silent false-negative).
+    db.upsertSession({ sessionId: 's-fts-op', configLabel: 'L', provider: 'claude', startedAt: 1 })
+    db.appendBatch([
+      {
+        sessionId: 's-fts-op',
+        ts: 1,
+        type: 'data',
+        raw: Buffer.from('deploy AND release notes'),
+        text: 'deploy AND release notes',
+      },
+    ])
+
+    // Single operator word — must return the session, not []
+    const hitsAnd = db.search('AND')
+    expect(hitsAnd.map((h) => h.sessionId)).toContain('s-fts-op')
+
+    // Multi-word phrase — each token quoted → FTS5 AND-of-phrases, still matches
+    const hitsPhrase = db.search('release notes')
+    expect(hitsPhrase.map((h) => h.sessionId)).toContain('s-fts-op')
+  })
+
+  it('appendBatch stores non-zero byteOffset Uint8Array correctly', () => {
+    db.upsertSession({ sessionId: 's-byteoffset', configLabel: 'L', provider: 'claude', startedAt: 1 })
+
+    // Build a view that starts at byte 3 of an 8-byte backing buffer.
+    // Without the byteOffset slice fix, Buffer.from(u8.buffer) would store all
+    // 8 bytes (including the leading zeros) rather than just the 4 view bytes.
+    const buf = new ArrayBuffer(8)
+    const view = new Uint8Array(buf, 3, 4)
+    view.set([104, 105, 33, 63]) // h, i, !, ?
+
+    db.appendBatch([
+      { sessionId: 's-byteoffset', ts: 1, type: 'data', raw: view, text: 'hi!?' },
+    ])
+
+    const events = db.readEvents('s-byteoffset', { offset: 0, limit: 10 })
+    expect(events.length).toBe(1)
+    const stored = events[0].raw
+    expect(stored.length).toBe(4)
+    expect(Array.from(stored)).toEqual([104, 105, 33, 63])
+  })
+
+  it('appendBatch handles events for two sessions in one call', () => {
+    db.upsertSession({ sessionId: 'mix-a', configLabel: 'L', provider: 'claude', startedAt: 1 })
+    db.upsertSession({ sessionId: 'mix-b', configLabel: 'L', provider: 'claude', startedAt: 2 })
+
+    const rawA = Buffer.from('aaa')
+    const rawB1 = Buffer.from('bb')
+    const rawB2 = Buffer.from('bbb')
+
+    db.appendBatch([
+      { sessionId: 'mix-a', ts: 1, type: 'data', raw: rawA, text: 'aaa' },
+      { sessionId: 'mix-b', ts: 2, type: 'data', raw: rawB1, text: 'bb' },
+      { sessionId: 'mix-b', ts: 3, type: 'data', raw: rawB2, text: 'bbb' },
+    ])
+
+    const sessions = db.listSessions()
+    const sessA = sessions.find((s) => s.sessionId === 'mix-a')!
+    const sessB = sessions.find((s) => s.sessionId === 'mix-b')!
+
+    expect(sessA.eventCount).toBe(1)
+    expect(sessA.byteSize).toBe(rawA.length)
+
+    expect(sessB.eventCount).toBe(2)
+    expect(sessB.byteSize).toBe(rawB1.length + rawB2.length)
+
+    const eventsA = db.readEvents('mix-a', { offset: 0, limit: 10 })
+    const eventsB = db.readEvents('mix-b', { offset: 0, limit: 10 })
+
+    expect(eventsA.length).toBe(1)
+    expect(eventsA[0].text).toBe('aaa')
+
+    expect(eventsB.length).toBe(2)
+    expect(eventsB[0].text).toBe('bb')
+    expect(eventsB[1].text).toBe('bbb')
+  })
+
+  it('appendBatch with empty array does not throw and changes nothing', () => {
+    db.upsertSession({ sessionId: 's-empty-batch', configLabel: 'L', provider: 'claude', startedAt: 1 })
+    expect(() => db.appendBatch([])).not.toThrow()
+    const [sess] = db.listSessions()
+    expect(sess.eventCount).toBe(0)
+    expect(sess.byteSize).toBe(0)
+  })
+
   it('reopening an existing DB path is idempotent (CREATE IF NOT EXISTS guards)', () => {
     // This test needs a real temp file, not :memory: — so we create one,
     // close it, reopen, and verify data survived.

@@ -11,7 +11,7 @@
  * logging utilityProcess worker. It runs cleanly under Electron-as-Node in tests.
  */
 import Database from 'better-sqlite3'
-import type { Database as BetterSqlite3Database, Statement } from 'better-sqlite3'
+import type { Statement } from 'better-sqlite3'
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -328,14 +328,18 @@ export function openLogDb(path: string): LogDb {
     search(query, opts = {}) {
       const limit = opts.limit ?? 50
 
-      // Sanitize the query: wrap a plain word (no FTS operators) in double
-      // quotes so it's treated as a phrase and never throws a syntax error.
-      // Users that pass raw FTS syntax (e.g. "foo OR bar") bypass this.
-      let safeQuery = query.trim()
-      if (safeQuery && !/["*^()ANDORNOT]/.test(safeQuery)) {
-        // Plain term — quote it so FTS5 handles it literally
-        safeQuery = `"${safeQuery.replace(/"/g, '""')}"`
-      }
+      // Sanitize the query: tokenize on whitespace and double-quote each token
+      // per FTS5 phrase rules (embedded `"` → `""`). This makes every plain
+      // query match literally regardless of casing or special chars — so a
+      // term like "AND", "OR", "NOT", or "foo(bar)" is never parsed as an FTS
+      // boolean operator or a syntax error.  The try/catch below is a final
+      // safety net for any edge case the sanitizer doesn't cover.
+      const trimmed = query.trim()
+      const safeQuery = trimmed
+        .split(/\s+/)
+        .filter(Boolean)
+        .map((tok) => `"${tok.replace(/"/g, '""')}"`)
+        .join(' ')
 
       try {
         return stmtSearch.all({ query: safeQuery, limit }) as SearchHit[]
