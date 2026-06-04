@@ -104,6 +104,37 @@ export interface LogDb {
    */
   markRunningCrashed(status?: string): number
 
+  /**
+   * Number of events already recorded for a session (0 if the session row does
+   * not exist). Used by migration to SKIP any session already present with
+   * events (covers re-runs and any live/just-captured session).
+   */
+  getSessionEventCount(sessionId: string): number
+
+  /**
+   * Atomically import ONE legacy session: skip if it already has events; else,
+   * in a single transaction, upsert the session (configId forced NULL) and insert
+   * every event with explicit seq 0..n-1, updating byteSize/eventCount. FTS stays
+   * consistent via the existing AFTER INSERT trigger. Never double-appends.
+   */
+  importSession(
+    meta: {
+      sessionId: string
+      configLabel: string
+      projectCwd?: string
+      accountEmail?: string
+      profileId?: string
+      provider: string
+      startedAt: number
+    },
+    events: Array<{
+      ts: number
+      type: 'start' | 'data' | 'restart' | 'switch' | 'end'
+      raw: Buffer | Uint8Array
+      text: string
+    }>,
+  ): { imported: boolean; skipped: boolean; events: number }
+
   close(): void
 }
 
@@ -202,6 +233,13 @@ export function openLogDb(path: string): LogDb {
   const stmtGetEventCount: Statement = sqlite.prepare<[string], { eventCount: number }>(
     `SELECT eventCount FROM sessions WHERE sessionId = ?`,
   )
+
+  // Migration: import a session's events with an EXPLICIT seq (not derived from a
+  // running counter) so a one-shot import assigns 0..n-1 deterministically.
+  const stmtInsertEventSeq: Statement = sqlite.prepare(`
+    INSERT INTO events (sessionId, seq, ts, type, raw, text)
+    VALUES (@sessionId, @seq, @ts, @type, @raw, @text)
+  `)
 
   const stmtUpdateSessionCounts: Statement = sqlite.prepare(`
     UPDATE sessions
@@ -343,6 +381,65 @@ export function openLogDb(path: string): LogDb {
     return { deletedSessions: info.changes, deletedEvents: evRow.c }
   })
 
+  // One transaction: upsert (configId NULL) + insert all events with explicit seq
+  // + set counts. Caller guarantees this only runs for a session with no events.
+  const runImportSession = sqlite.transaction(
+    (
+      meta: {
+        sessionId: string
+        configLabel: string
+        projectCwd?: string
+        accountEmail?: string
+        profileId?: string
+        provider: string
+        startedAt: number
+      },
+      events: Array<{ ts: number; type: string; raw: Buffer | Uint8Array; text: string }>,
+    ): number => {
+      // Upsert is ON CONFLICT DO NOTHING — for a brand-new session it inserts the
+      // row; for a pre-existing empty row it leaves the existing fields intact.
+      stmtUpsertSession.run({
+        sessionId: meta.sessionId,
+        configId: null, // migrated rows are always orphan-classified
+        configLabel: meta.configLabel,
+        projectCwd: meta.projectCwd ?? null,
+        accountEmail: meta.accountEmail ?? null,
+        profileId: meta.profileId ?? null,
+        provider: meta.provider,
+        startedAt: meta.startedAt,
+      })
+
+      let bytes = 0
+      let seq = 0
+      for (const ev of events) {
+        let rawBuf: Buffer
+        if (Buffer.isBuffer(ev.raw)) {
+          rawBuf = ev.raw
+        } else {
+          const u8 = ev.raw as Uint8Array
+          rawBuf = Buffer.from(u8.buffer, u8.byteOffset, u8.byteLength)
+        }
+        stmtInsertEventSeq.run({
+          sessionId: meta.sessionId,
+          seq,
+          ts: ev.ts,
+          type: ev.type,
+          raw: rawBuf,
+          text: ev.text,
+        })
+        bytes += rawBuf.length
+        seq += 1
+      }
+
+      stmtUpdateSessionCounts.run({
+        sessionId: meta.sessionId,
+        bytesDelta: bytes,
+        countDelta: events.length,
+      })
+      return events.length
+    },
+  )
+
   // ---------------------------------------------------------------------------
   // LogDb implementation
   // ---------------------------------------------------------------------------
@@ -430,6 +527,20 @@ export function openLogDb(path: string): LogDb {
     markRunningCrashed(status = 'crashed') {
       const info = stmtMarkRunningCrashed.run({ status })
       return info.changes
+    },
+
+    getSessionEventCount(sessionId) {
+      const row = stmtGetEventCount.get(sessionId) as { eventCount: number } | undefined
+      return row?.eventCount ?? 0
+    },
+
+    importSession(meta, events) {
+      if (events.length === 0) return { imported: false, skipped: true, events: 0 }
+      // Skip any session already present WITH events (re-run / live-captured).
+      const existing = stmtGetEventCount.get(meta.sessionId) as { eventCount: number } | undefined
+      if (existing && existing.eventCount > 0) return { imported: false, skipped: true, events: 0 }
+      const n = runImportSession(meta, events)
+      return { imported: true, skipped: false, events: n }
     },
 
     close() {
