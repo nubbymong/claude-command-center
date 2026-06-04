@@ -38,13 +38,13 @@ export default function PermissionToastStack() {
   const visible = ordered.slice(0, MAX_VISIBLE)
   const overflow = ordered.length - visible.length
   return (
-    <div className="fixed left-3 bottom-12 z-50 flex flex-col gap-2 items-start channels-tray">
+    <div className="fixed left-2 bottom-12 z-50 w-60 flex flex-col gap-2 channels-tray">
       {visible.map((p) => (
         <PermissionToast key={p.requestId} p={p}
           onGoToSession={() => goTo(p.sessionId)}
           onIgnore={() => ignore(p.requestId)} />
       ))}
-      {overflow > 0 && <div className="text-[11px] text-overlay0 bg-surface0 border border-surface1 rounded px-2 py-1">+{overflow} waiting</div>}
+      {overflow > 0 && <div className="self-start text-[11px] text-overlay0 bg-surface0 border border-surface1 rounded px-2 py-1">+{overflow} waiting</div>}
     </div>
   )
 }
