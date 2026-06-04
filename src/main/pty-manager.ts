@@ -262,6 +262,13 @@ export function spawnPty(
 
   let ptyProcess: pty.IPty
 
+  // Hoisted to function scope so the shared post-spawn tail (session-log capture)
+  // can read them for EVERY branch (ssh / codex / claude / shell-only). They were
+  // previously declared inside the codex/claude branches and so were out of scope
+  // at capture?.start() in the tail -> a latent ReferenceError on spawn-with-logging.
+  const resolvedCwd = resolveCwd(options?.cwd)
+  let resolvedProfileId: string | undefined = undefined
+
   if (options?.ssh) {
     // Defensive guard: Codex over SSH is not yet supported. The renderer-side
     // dialog prevents this combination, but guard here in case of direct IPC calls.
@@ -804,7 +811,6 @@ export function spawnPty(
         useResumePicker: options?.useResumePicker,
         codexOptions: options?.codexOptions,
       })
-      const resolvedCwd = resolveCwd(options?.cwd)
       logInfo(`[pty-manager] Launching Codex PTY: ${spawnCmd} ${spawnArgs.join(' ')} cwd=${resolvedCwd}`)
       // Capture timestamp before spawn so the watch-and-claim window starts no later than PTY launch.
       const codexSpawnTimestamp = Date.now()
@@ -863,7 +869,6 @@ export function spawnPty(
       agentsConfig: options?.agentsConfig,
     })
     const wantProfileId = options?.profileId
-    let resolvedProfileId: string | undefined = undefined
     if (wantProfileId && fs.existsSync(getProfileConfigDir(wantProfileId))) {
       resolvedProfileId = wantProfileId
     } else if (wantProfileId) {
@@ -899,7 +904,6 @@ export function spawnPty(
     // B3: capture is deferred until AFTER the interactive Claude pty.spawn
     // succeeds (see below) so a spawn throw can't leak the per-session map entry,
     // and shell-only sessions (no Claude) never capture.
-    const resolvedCwd = resolveCwd(options?.cwd)
 
     if (shellOnly) {
       logInfo(`[pty-manager] Launching shell-only PTY: ${spawnCmd} ${spawnArgs.join(' ')} cwd=${resolvedCwd}${options?.elevated ? ' (elevated)' : ''}`)
