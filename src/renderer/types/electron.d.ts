@@ -214,6 +214,20 @@ export interface ElectronAPI {
     prune: (ids: string[]) => Promise<{ deletedSessions: number; deletedEvents: number }>
     clearAll: () => Promise<{ deletedSessions: number; deletedEvents: number }>
   }
+  logMigration: {
+    detect: () => Promise<{ present: boolean; sessionFolders: number; frozen: boolean }>
+    run: () => Promise<{
+      totalSessions: number
+      importedSessions: number
+      skippedSessions: number
+      importedEvents: number
+      unparseable: { path: string; reason: string; skippedLines: number }[]
+      dbBytesBefore: number
+      dbBytesAfter: number
+    }>
+    reclaim: () => Promise<{ deletedFolders: number; reclaimedBytes: number; failedFolders: string[] }>
+    onProgress: (cb: (p: { done: number; total: number }) => void) => () => void
+  }
   discovery: {
     getProjects: () => Promise<any>
     getSessionHistory: (projectPath: string) => Promise<any>

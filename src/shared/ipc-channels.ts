@@ -74,6 +74,12 @@ export const IPC = {
   LOGSDB_PRUNE: 'logsdb:prune',
   LOGSDB_CLEAR_ALL: 'logsdb:clearAll',
 
+  // Logs — migration (Phase 2b)
+  LOGS_MIGRATE_DETECT: 'logs:migrate:detect',
+  LOGS_MIGRATE_RUN: 'logs:migrate:run',
+  LOGS_MIGRATE_PROGRESS: 'logs:migrate:progress',
+  LOGS_MIGRATE_RECLAIM: 'logs:migrate:reclaim',
+
   // Discovery
   DISCOVERY_PROJECTS: 'discovery:projects',
   DISCOVERY_SESSIONS: 'discovery:sessions',

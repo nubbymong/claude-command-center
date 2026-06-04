@@ -26,6 +26,7 @@ import { IPC } from '../../shared/ipc-channels'
 import type { ServiceHealth, ServiceLogEntry, DiagnosticsSnapshot } from '../../shared/service-health'
 import type { ForkedLogWorker } from './fork-log-worker'
 import type { ToWorker, FromWorker } from './log-worker-transport'
+import type { ChunkProgress } from './legacy-log-importer'
 
 export interface LogSupervisorOptions {
   forkChild: () => ForkedLogWorker
@@ -47,6 +48,10 @@ const LIFECYCLE_EST_BYTES = 256
 
 type BatchMessage = Extract<ToWorker, { type: 'batch' }>
 type SessionStartMessage = Extract<ToWorker, { type: 'session-start' }>
+type MigrateMessage = Extract<ToWorker, { type: 'migrate' }>
+/** The per-chunk session list the migration importer hands migrate() (the `migrate`
+ *  message's `sessions` field). */
+type MigrateSessions = MigrateMessage['sessions']
 /** The batch payload the rest of main hands us (the `batch` message minus its tag). */
 export type LogBatch = Omit<BatchMessage, 'type'>
 
@@ -94,6 +99,11 @@ export class LogSupervisor {
   // id-keyed pending queries.
   private pending = new Map<number, PendingQuery>()
   private nextQueryId = 1
+
+  // id-keyed pending migration chunks (mirrors `pending` so a chunk's ack can
+  // never hang: resolved by migrate-progress, rejected by migrate-error / exit /
+  // shutdown / timeout). The id is supplied by the caller (one per chunk).
+  private pendingMigrations = new Map<number, { resolve: (p: ChunkProgress) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> | null }>()
 
   constructor(opts: LogSupervisorOptions) {
     this.opts = opts
@@ -215,12 +225,24 @@ export class LogSupervisor {
         this.pushHealth()
         return
       }
-      case 'migrate-progress':
-      case 'migrate-error':
-        // Placeholder so the exhaustive `never` check below holds now that the
-        // transport carries these arms. Task 5 (supervisor.migrate) REPLACES these
-        // with the real id-keyed resolve/reject of pending migrate chunks.
+      case 'migrate-progress': {
+        const p = this.pendingMigrations.get(m.id)
+        if (p) {
+          if (p.timer) clearTimeout(p.timer)
+          this.pendingMigrations.delete(m.id)
+          p.resolve({ importedSessions: m.importedSessions, skippedSessions: m.skippedSessions, importedEvents: m.importedEvents })
+        }
         return
+      }
+      case 'migrate-error': {
+        const p = this.pendingMigrations.get(m.id)
+        if (p) {
+          if (p.timer) clearTimeout(p.timer)
+          this.pendingMigrations.delete(m.id)
+          p.reject(new Error(m.message))
+        }
+        return
+      }
       default: {
         const _exhaustive: never = m
         void _exhaustive
@@ -317,6 +339,25 @@ export class LogSupervisor {
     })
   }
 
+  /** Post a migration chunk and resolve on its ack. Rejects fast when the worker
+   *  is unavailable and on worker exit/shutdown — like query(), it can never hang.
+   *  `id` correlates the chunk to its ack; callers pass a unique id per chunk. */
+  migrate(sessions: MigrateSessions, id: number): Promise<ChunkProgress> {
+    if (this.shuttingDown) return Promise.reject(new Error('log supervisor is shutting down'))
+    if (!this.isListening() || !this.worker) {
+      return Promise.reject(new Error(`logging worker not available (state=${this.health.state})`))
+    }
+    return new Promise<ChunkProgress>((resolve, reject) => {
+      const timeoutMs = this.opts.queryTimeoutMs ?? DEFAULT_QUERY_TIMEOUT_MS
+      const timer = setTimeout(() => {
+        if (this.pendingMigrations.delete(id)) reject(new Error(`migrate chunk timed out after ${timeoutMs * 4}ms`))
+      }, timeoutMs * 4)
+      ;(timer as { unref?: () => void }).unref?.()
+      this.pendingMigrations.set(id, { resolve, reject, timer })
+      this.worker!.transport.post({ type: 'migrate', id, sessions })
+    })
+  }
+
   /** Reject + clear every pending query so none can hang (on exit/shutdown). */
   private rejectAllPending(reason: string): void {
     for (const [, p] of this.pending) {
@@ -324,6 +365,11 @@ export class LogSupervisor {
       p.reject(new Error(reason))
     }
     this.pending.clear()
+    for (const [, p] of this.pendingMigrations) {
+      if (p.timer) clearTimeout(p.timer)
+      p.reject(new Error(reason))
+    }
+    this.pendingMigrations.clear()
   }
 
   // -------------------------------------------------------------------------
