@@ -8,8 +8,11 @@
       body {
         margin: 0;
         padding: 0;
-        background: #1E1E2E;
-        color: #CDD6F4;
+        /* Theme-aware: rethemes with the picker (was a hardcoded dark Mocha
+           #1E1E2E that stayed dark behind the app in light mode). Fallback
+           matches the dark default for the pre-stylesheet paint. */
+        background: var(--surface-stage, #171e27);
+        color: var(--text-primary, #e8e8e8);
         overflow: hidden;
       }
     </style>

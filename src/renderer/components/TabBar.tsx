@@ -34,7 +34,7 @@ export default function TabBar() {
   if (sessions.length === 0) return null
 
   return (
-    <div className="flex items-center bg-crust border-b border-surface0 shrink-0">
+    <div className="flex items-center shrink-0" style={{ background: 'var(--surface-panel)', borderBottom: '1px solid var(--border-subtle)' }}>
       <div className="flex items-center overflow-x-auto flex-1 min-w-0">
       {sessions.map((session) => {
         const needsAttention = session.needsAttention && activeSessionId !== session.id
