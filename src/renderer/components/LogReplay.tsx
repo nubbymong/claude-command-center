@@ -20,8 +20,11 @@ interface Props {
   tailNonce?: number
   /** Seek so the batch containing this seq is the first thing shown (search jump). */
   seekToSeq?: number
-  /** Total events in the session (from the SessionRecord) so the initial load can
-   *  start at the LAST page (tail-first) and appendNew() tails the live end. */
+  /** Total events in the session (a STABLE snapshot taken when the replay opens,
+   *  e.g. SessionRecord.eventCount). Lets the initial load start at the LAST page
+   *  (tail-first) so appendNew() tails the live end. MUST NOT be a live-updating
+   *  value: every change re-runs the initial load (clear + reload), fighting
+   *  live-tail. Consumers pass the count captured at open, not a growing total. */
   eventCount?: number
 }
 
@@ -36,6 +39,7 @@ function readVar(name: string, fallback: string): string {
   return v || fallback
 }
 
+// TODO(Task 9): extract a shared log terminal theme when LogViewer is removed.
 // Lifted verbatim from LogViewer.tsx:32-57 — keep the semantic-token theme.
 export function buildLogTheme() {
   return {
@@ -75,6 +79,8 @@ const LogReplay = forwardRef<LogReplayHandle, Props>(function LogReplay(
   const fitRef = useRef<FitAddon | null>(null)
   // Next read offset (seq-equivalent: events are gap-free per session).
   const loadedRef = useRef(0)
+  const inFlightRef = useRef(false)      // serialize appendNew; no overlapping reads of loadedRef
+  const initialDoneRef = useRef(false)   // tail must not run until the initial load owns offset 0
   const [loading, setLoading] = useState(true)
   const [isEmpty, setIsEmpty] = useState(false)
 
@@ -128,6 +134,7 @@ const LogReplay = forwardRef<LogReplayHandle, Props>(function LogReplay(
     loadedRef.current = 0
     setLoading(true)
     setIsEmpty(false)
+    initialDoneRef.current = false
     const run = async () => {
       let tries = 0
       while (!termRef.current && tries < 50) { await new Promise((r) => setTimeout(r, 50)); tries++ }
@@ -143,25 +150,34 @@ const LogReplay = forwardRef<LogReplayHandle, Props>(function LogReplay(
             : 0
       const rows = (await window.electronAPI.logsdb.readEvents(sessionId, startOffset, PAGE)) as EventRow[]
       if (cancelled) return
-      if (rows.length === 0 && startOffset === 0) { setIsEmpty(true); setLoading(false); return }
+      if (rows.length === 0 && startOffset === 0) {
+        setIsEmpty(true); setLoading(false); initialDoneRef.current = true; return
+      }
       term?.clear()
       for (const ev of rows) term?.write(ev.raw)
       loadedRef.current = startOffset + rows.length
       setLoading(false)
+      initialDoneRef.current = true
     }
     run()
     return () => { cancelled = true }
   }, [sessionId, deleted, seekToSeq, eventCount])
 
   const appendNew = useCallback(async () => {
-    if (deleted) return
+    if (deleted || inFlightRef.current || !initialDoneRef.current) return
     const term = termRef.current
     if (!term) return
-    const rows = (await window.electronAPI.logsdb.readEvents(sessionId, loadedRef.current, PAGE)) as EventRow[]
-    if (rows.length === 0) return
-    for (const ev of rows) term.write(ev.raw)
-    loadedRef.current += rows.length
-    if (isEmpty && rows.length > 0) setIsEmpty(false)
+    inFlightRef.current = true
+    try {
+      const start = loadedRef.current
+      const rows = (await window.electronAPI.logsdb.readEvents(sessionId, start, PAGE)) as EventRow[]
+      if (rows.length === 0) return
+      for (const ev of rows) term.write(ev.raw)
+      loadedRef.current = start + rows.length
+      if (isEmpty) setIsEmpty(false)
+    } finally {
+      inFlightRef.current = false
+    }
   }, [sessionId, deleted, isEmpty])
 
   useImperativeHandle(ref, () => ({ appendNew }), [appendNew])
@@ -170,7 +186,8 @@ const LogReplay = forwardRef<LogReplayHandle, Props>(function LogReplay(
   useEffect(() => {
     if (tailNonce === undefined) return
     void appendNew()
-  }, [tailNonce, appendNew])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tailNonce])
 
   if (deleted) {
     return (

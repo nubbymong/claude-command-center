@@ -96,4 +96,18 @@ describe('LogReplay', () => {
     expect(container.textContent).toMatch(/These logs were deleted/i)
     cleanup()
   })
+
+  it('does not double-read offset 0 when a constant tailNonce is present (no double-write)', async () => {
+    ;(globalThis as any).window.electronAPI.logsdb.readEvents = vi.fn().mockImplementation(
+      (sessionId: string, offset: number, limit: number) => {
+        reads.push({ sessionId, offset, limit })
+        // one event on the first page, nothing after
+        return Promise.resolve(offset === 0 ? [{ id: 1, sessionId, seq: 0, ts: 1, type: 'data', raw: new Uint8Array([65]), text: 'A' }] : [])
+      },
+    )
+    const { cleanup } = await mount(<LogReplay sessionId="s1" tailNonce={7} />)
+    // The initial load reads offset 0 exactly once; the tail effect must NOT also read offset 0.
+    expect(reads.filter((r) => r.offset === 0).length).toBe(1)
+    cleanup()
+  })
 })
