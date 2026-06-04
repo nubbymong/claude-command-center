@@ -15,7 +15,8 @@ export function useEffortSubscription(sessionId: string) {
     const unsub = window.electronAPI.effort.onUpdate(({ sessionId: sid, effortLevel }) => {
       if (sid !== sessionId) return
       if (!VALID.includes(effortLevel as NonNullable<Session['effortLevel']>)) return
-      updateSession(sessionId, { effortLevel: effortLevel as Session['effortLevel'] })
+      // effortLive: this is a live hooks tick, so the card may now show the pill.
+      updateSession(sessionId, { effortLevel: effortLevel as Session['effortLevel'], effortLive: true })
     })
     return unsub
   }, [sessionId, updateSession])

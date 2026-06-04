@@ -72,6 +72,17 @@ export interface Session {
   flickerFree?: boolean                  // Enable flicker-free alternate screen rendering
   powershellTool?: boolean               // Enable native PowerShell tool
   effortLevel?: EffortLevel
+  /** True once a LIVE effort tick (statusline effort.level or the hooks effort
+   *  gateway) has arrived for THIS session. The sidebar card gates its EffortPill
+   *  on this so a spawn-time / persisted / default-guess effortLevel never shows
+   *  before real data confirms it. Never persisted -- a restored session starts
+   *  with this unset and shows no pill until the first live tick. */
+  effortLive?: boolean
+  /** LIVE Fast Mode flag from the statusline payload (fast_mode). Set ONLY by the
+   *  statusline subscription, never at spawn and never persisted, so the card's ⚡
+   *  bolt shows iff a real tick reports fast_mode:true. Distinct from the removed
+   *  config-time ClaudeOptions.fastMode toggle. */
+  fastMode?: boolean
   disableAutoMemory?: boolean
   /** P6: Claude opts in to the codex_review MCP tool for this session.
    *  Mirrors disableAutoMemory in shape (sparse boolean) and lifecycle. */

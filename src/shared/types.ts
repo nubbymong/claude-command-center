@@ -153,6 +153,10 @@ export interface StatuslineData {
   // Claude: live reasoning effort from the statusline payload (effort.level),
   // reflects mid-session /effort changes. Maps to session.effortLevel.
   effortLevel?: string
+  // Claude: live Fast Mode flag from the statusline payload (fast_mode), reflects
+  // mid-session /fast toggles. Per-session and verified to flip true<->false.
+  // Maps to session.fastMode; drives the sidebar card's ⚡ bolt.
+  fastMode?: boolean
   contextUsedPercent?: number
   contextRemainingPercent?: number
   contextWindowSize?: number

@@ -3,6 +3,7 @@ import { Session } from '../../stores/sessionStore'
 import { CodexBadge, ShellBadge, SshBadge } from './Badges'
 import { type SessionState } from '../ui/StatusDot'
 import { EffortPill } from '../ui/EffortPill'
+import { FastBolt } from '../ui/FastBolt'
 import { StatusPill } from '../ui/StatusPill'
 import { resolveIdentityColor, bucketLegacyColorToKey } from '../../../shared/identity-colors'
 import { useResolvedTheme } from '../../hooks/useThemeController'
@@ -147,7 +148,15 @@ export default function SessionRow({ session, isActive, needsAttention, isRenami
           were redundant with that dot and the card's left identity rail. */}
       <span className="relative z-10 row-start-1 flex items-center gap-1.5 justify-self-end">
         <StatusPill state={st} />
-        {session.effortLevel && <EffortPill level={session.effortLevel} />}
+        {/* Graceful-fail: show effort ONLY once a live tick (statusline / hooks)
+            has confirmed it. A spawn-time or persisted guess (e.g. a default
+            xhigh) is suppressed until effortLive flips, so the card never shows
+            a stale/wrong level. */}
+        {session.effortLive && session.effortLevel && <EffortPill level={session.effortLevel} />}
+        {/* Fast Mode bolt -- only on a LIVE statusline fast_mode:true (verified
+            per-session). Grouped with the effort pill as the model's run-mode
+            indicators; clears automatically when /fast is toggled off. */}
+        {session.fastMode === true && <FastBolt />}
       </span>
 
       {/* Line 2: model meta + context meter + right-aligned %. One grid child

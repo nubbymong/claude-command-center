@@ -88,6 +88,10 @@
   --effort-max: #f5a8aa;
   --effort-ultracode: #f38ba8;
 
+  /* Fast Mode bolt -- warm orange, echoes the CLI's fast-mode glyph colour.
+     Only shown on a LIVE statusline fast_mode:true (see FastBolt / SessionRow). */
+  --fast-mode: #f5a35a;
+
   --chart-opus: #b8714a;
   --chart-sonnet: #3fbecb;
   --chart-codex: #5b9df0;
@@ -172,6 +176,9 @@
   --effort-xhigh: #e46426;
   --effort-max: #d6392f;
   --effort-ultracode: #d20f39;
+
+  /* Fast Mode bolt -- darkened for contrast as a glyph on the light background. */
+  --fast-mode: #c2570f;
 
   --chart-opus: #a85a2c;
   --chart-sonnet: #15808d;

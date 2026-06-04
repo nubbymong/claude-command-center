@@ -34,6 +34,11 @@ export function useRestartSession(
         costUsd: undefined,
         needsAttention: false,
         modelName: undefined,
+        // Graceful-fail: the previous run's live indicators must not linger on the
+        // restarted card. Clearing effortLive re-hides the effort pill (and fastMode
+        // the bolt) until the new run's first statusline tick confirms them.
+        effortLive: undefined,
+        fastMode: undefined,
         linesAdded: undefined,
         linesRemoved: undefined,
         inputTokens: undefined,

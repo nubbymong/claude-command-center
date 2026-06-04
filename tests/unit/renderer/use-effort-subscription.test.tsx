@@ -47,19 +47,22 @@ beforeEach(() => {
 })
 
 describe('useEffortSubscription', () => {
-  it('updates effortLevel for the matching session', () => {
+  it('updates effortLevel and marks effortLive for the matching session', () => {
     renderHook(() => useEffortSubscription('s1'))
     act(() => { cb!({ sessionId: 's1', effortLevel: 'xhigh' }) })
     expect(useSessionStore.getState().sessions[0].effortLevel).toBe('xhigh')
+    // A live hooks tick must flip effortLive so the card may render the pill.
+    expect(useSessionStore.getState().sessions[0].effortLive).toBe(true)
   })
   it('ignores updates for other sessions', () => {
     renderHook(() => useEffortSubscription('s1'))
     act(() => { cb!({ sessionId: 's2', effortLevel: 'xhigh' }) })
     expect(useSessionStore.getState().sessions[0].effortLevel).toBeUndefined()
   })
-  it('ignores invalid levels', () => {
+  it('ignores invalid levels (no effortLive flip)', () => {
     renderHook(() => useEffortSubscription('s1'))
     act(() => { cb!({ sessionId: 's1', effortLevel: 'bogus' }) })
     expect(useSessionStore.getState().sessions[0].effortLevel).toBeUndefined()
+    expect(useSessionStore.getState().sessions[0].effortLive).toBeUndefined()
   })
 })

@@ -52,8 +52,8 @@ afterEach(() => {
 })
 
 describe('SessionRow effort indicator', () => {
-  it('shows the EffortPill when the session has an effort level', () => {
-    act(() => { root.render(createElement(SessionRow, { session: makeSession({ effortLevel: 'xhigh' }), ...baseProps })) })
+  it('shows the EffortPill when the session has a LIVE effort level', () => {
+    act(() => { root.render(createElement(SessionRow, { session: makeSession({ effortLevel: 'xhigh', effortLive: true }), ...baseProps })) })
     const pill = container.querySelector('[data-testid="effort-pill"]') as HTMLElement
     expect(pill).not.toBeNull()
     expect(pill.textContent).toBe('xhigh')
@@ -64,9 +64,33 @@ describe('SessionRow effort indicator', () => {
     expect(container.querySelector('[data-testid="effort-pill"]')).toBeNull()
   })
 
+  it('graceful-fail: omits the EffortPill when effortLevel is set but no live tick has arrived', () => {
+    // A spawn-time / persisted guess sets effortLevel but NOT effortLive -- the
+    // card must stay calm (no pill) until a statusline/hooks tick confirms it.
+    act(() => { root.render(createElement(SessionRow, { session: makeSession({ effortLevel: 'xhigh' }), ...baseProps })) })
+    expect(container.querySelector('[data-testid="effort-pill"]')).toBeNull()
+  })
+
   it('no longer renders the 7px status dot', () => {
     act(() => { root.render(createElement(SessionRow, { session: makeSession({ status: 'working' }), ...baseProps })) })
     // StatusDot rendered an inline 7x7 span; it must be gone.
     expect(container.querySelector('span[style*="width: 7px"]')).toBeNull()
+  })
+})
+
+describe('SessionRow fast-mode bolt', () => {
+  it('shows the FastBolt when session.fastMode is true (live)', () => {
+    act(() => { root.render(createElement(SessionRow, { session: makeSession({ fastMode: true }), ...baseProps })) })
+    expect(container.querySelector('[data-testid="fast-bolt"]')).not.toBeNull()
+  })
+
+  it('omits the FastBolt when fastMode is false', () => {
+    act(() => { root.render(createElement(SessionRow, { session: makeSession({ fastMode: false }), ...baseProps })) })
+    expect(container.querySelector('[data-testid="fast-bolt"]')).toBeNull()
+  })
+
+  it('omits the FastBolt when fastMode is unset (no live tick yet)', () => {
+    act(() => { root.render(createElement(SessionRow, { session: makeSession(), ...baseProps })) })
+    expect(container.querySelector('[data-testid="fast-bolt"]')).toBeNull()
   })
 })
