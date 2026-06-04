@@ -3,7 +3,7 @@ import * as fsp from 'fs/promises'
 import * as path from 'path'
 import * as readline from 'readline'
 import { getDataDirectory } from './ipc/setup-handlers'
-import { logError, logWarn } from './debug-logger'
+import { logError } from './debug-logger'
 
 // ---------------------------------------------------------------------------
 // Error reporter indirection — allows tests to inject a fake reporter without
@@ -38,6 +38,9 @@ let logRootOverride: string | null = null
 /** Test seam: override the log root. Pass null to restore the real data dir. */
 export function _setLogRootForTest(p: string | null): void {
   logRootOverride = p
+  // Reset per-session warning dedup so tests start clean, matching the
+  // behaviour of _setErrorReporterForTest.
+  warnedSessions.clear()
 }
 
 // ---------------------------------------------------------------------------

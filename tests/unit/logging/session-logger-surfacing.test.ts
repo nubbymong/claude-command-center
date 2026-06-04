@@ -61,7 +61,7 @@ describe('session-logger surfacing', () => {
       logger.startSessionLog('sid-fail2', 'testConfig', 'user@test.com', 'prof-1')
 
       expect(errors.length).toBeGreaterThanOrEqual(1)
-      expect(errors[0].msg).toContain('[logs]')
+      expect(errors[0].msg).toContain('startSessionLog failed')
     })
   })
 
