@@ -65,7 +65,7 @@ describe('log-db delete-ops', () => {
     expect(db.search('live').length).toBeGreaterThan(0)
   })
 
-  it('checkpoint() returns without throwing on a file DB', () => {
+  it('checkpoint() returns without throwing on a :memory: DB', () => {
     // :memory: has no WAL file; checkpoint must be a safe no-throw there too.
     expect(() => db.checkpoint()).not.toThrow()
   })

@@ -242,32 +242,28 @@ export function openLogDb(path: string): LogDb {
     UPDATE sessions SET status = @status WHERE status = 'running'
   `)
 
-  const stmtDeleteSession: Statement = sqlite.prepare(
-    `DELETE FROM sessions WHERE sessionId = ?`,
-  )
-
   // Count events that WOULD be deleted for a set of non-running sessions, so a
   // delete can report an honest event count (CASCADE deletes them after).
   const stmtCountEventsForIds = (n: number): Statement =>
     sqlite.prepare(
       `SELECT COUNT(*) AS c FROM events
        WHERE sessionId IN (${new Array(n).fill('?').join(',')})
-         AND sessionId IN (SELECT sessionId FROM sessions WHERE status != 'running')`,
+         AND sessionId IN (SELECT sessionId FROM sessions WHERE (status IS NULL OR status != 'running'))`,
     )
 
   const stmtDeleteNonRunningByIds = (n: number): Statement =>
     sqlite.prepare(
       `DELETE FROM sessions
-       WHERE status != 'running'
+       WHERE (status IS NULL OR status != 'running')
          AND sessionId IN (${new Array(n).fill('?').join(',')})`,
     )
 
   const stmtCountAllNonRunningEvents: Statement = sqlite.prepare(
     `SELECT COUNT(*) AS c FROM events
-     WHERE sessionId IN (SELECT sessionId FROM sessions WHERE status != 'running')`,
+     WHERE sessionId IN (SELECT sessionId FROM sessions WHERE (status IS NULL OR status != 'running'))`,
   )
   const stmtDeleteAllNonRunning: Statement = sqlite.prepare(
-    `DELETE FROM sessions WHERE status != 'running'`,
+    `DELETE FROM sessions WHERE (status IS NULL OR status != 'running')`,
   )
 
   // Wrap the entire appendBatch in a single SQLite transaction.
