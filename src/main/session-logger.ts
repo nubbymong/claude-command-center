@@ -1,3 +1,4 @@
+// NOTE: write path superseded by src/main/logging/ (SQLite worker). Retained for the legacy file-based read UI (LogViewer); removed in the Phase 2 read-path cutover.
 import * as fs from 'fs'
 import * as fsp from 'fs/promises'
 import * as path from 'path'

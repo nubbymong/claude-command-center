@@ -3,8 +3,9 @@ import * as pty from 'node-pty'
 import { PasteQueue } from './paste-queue'
 import * as os from 'os'
 import { execSync } from 'child_process'
-import { startSessionLog, logSessionData, endSessionLog } from './session-logger'
 import { logPtyOutput, isDebugModeEnabled } from './debug-capture'
+import { shouldCapture } from './logging/should-capture'
+import { getLogCapture } from './logging/logging-service'
 import { logInfo, logDebug, logError, logWarn } from './debug-logger'
 import { writeCliSetupPty, getResourcesDirectory } from './ipc/setup-handlers'
 import { isGlobalVisionRunning, getGlobalVisionConfig, teardownVisionSession } from './vision-manager'
@@ -233,6 +234,8 @@ export function spawnPty(
     shellOnly?: boolean
     elevated?: boolean
     configLabel?: string
+    /** Config id that owns the session. Stamped onto the session-log row for per-config filtering. */
+    configId?: string
     useResumePicker?: boolean
     legacyVersion?: { enabled: boolean; version: string }
     agentsConfig?: Array<{ name: string; description: string; prompt: string; model?: string; tools?: string[] }>
@@ -1082,14 +1085,25 @@ export function spawnPty(
     pendingWrites.delete(sessionId)
   }
 
-  // Start session logging — stamp the captured account (set at line ~950 for
-  // non-shell Claude sessions) so logs can be labelled/filtered by account.
+  // Start session logging via the SQLite worker pipeline. Gated on the live
+  // `loggingEnabled` setting (default-true) and never for shell-only sessions.
+  // The captured account (set at line ~950 for non-shell Claude sessions) +
+  // configId/profileId are stamped so logs can be filtered by config/account.
   const configLabel = options?.configLabel || 'default'
-  startSessionLog(sessionId, configLabel, getAccountIdentity(sessionId)?.email, resolvedProfileId)
+  const settings = readConfig<{ loggingEnabled?: boolean }>('settings') ?? {}
+  const capture = shouldCapture(options ?? {}, settings) ? getLogCapture() : null
+  capture?.start(sessionId, {
+    configId: options?.configId,
+    configLabel,
+    projectCwd: resolvedCwd,
+    accountEmail: getAccountIdentity(sessionId)?.email,
+    profileId: resolvedProfileId,
+    provider: options?.provider ?? 'claude',
+  })
 
-  // Pipe PTY output to session logger and debug capture
+  // Pipe PTY output to the logging capture (O(1) record) and debug capture.
   ptyProcess.onData((data) => {
-    logSessionData(sessionId, data)
+    capture?.record(sessionId, data)
     if (isDebugModeEnabled()) {
       logPtyOutput(sessionId, data)
     }
@@ -1097,7 +1111,6 @@ export function spawnPty(
 
   ptyProcess.onExit(({ exitCode }) => {
     logInfo(`[pty] PTY exited for session ${sessionId} with code ${exitCode}`)
-    endSessionLog(sessionId)
 
     // Restart-race guard: the renderer's restart flow kills the old PTY
     // and re-spawns synchronously with the SAME sessionId. node-pty's
@@ -1116,6 +1129,10 @@ export function spawnPty(
     if (weAreCurrent) {
       ptySessions.delete(sessionId)
       clearSessionMeta(sessionId)
+      // End session logging (flush + mark ended). Gated on weAreCurrent so the
+      // restart-race stale exit can't end the just-respawned session's capture.
+      // No-op when logging is disabled / never captured this session.
+      capture?.end(sessionId, exitCode === 0 ? 'exited' : 'crashed')
       getPtyIntegrityMonitor()?.endSession(sessionId)
       try {
         const gwExit = getGateway()

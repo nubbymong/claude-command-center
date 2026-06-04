@@ -17,7 +17,7 @@ import { CodexProvider } from './providers/codex'
 import { registerDebugHandlers } from './ipc/debug-handlers'
 import { disableDebugMode } from './debug-capture'
 import { registerUpdateHandlers } from './ipc/update-handlers'
-import { registerSetupHandlers, getResourcesDirectory } from './ipc/setup-handlers'
+import { registerSetupHandlers, getResourcesDirectory, getDataDirectory } from './ipc/setup-handlers'
 import { registerScreenshotHandlers } from './ipc/screenshot-handlers'
 import { registerWebviewHandlers } from './ipc/webview-handlers'
 import { closeAllWebviews } from './webview-manager'
@@ -52,6 +52,7 @@ import { HooksGateway } from './hooks/hooks-gateway'
 import { setGateway, getGateway } from './hooks'
 import { ServiceSupervisor } from './services/service-supervisor'
 import { forkHooksChild } from './services/fork-hooks-child'
+import { initLogging, shutdownLogging } from './logging/logging-service'
 import { cleanupStaleHookEntries } from './hooks/boot-cleanup'
 import { DEFAULT_HOOKS_PORT } from './hooks/hooks-types'
 import { fetchModelPricing } from './tokenomics-manager'
@@ -735,6 +736,15 @@ if (!gotTheLock) {
       // registerSession still mints secrets) but never binds; no child is forked.
       setGateway(new HooksGateway({ defaultPort: hooksPort, emit: emitWithMerge }))
     }
+    // Session logging: start the SQLite worker supervisor + capture (gated on
+    // loggingEnabled, default true; no-op + no fork when disabled). The supervisor
+    // reconciles dangling sessions on its first worker-ready. The native dep
+    // (better-sqlite3) lives ONLY in the forked worker — this call stays main-clean.
+    try {
+      initLogging({ emit: emitWithMerge, dbPath: join(getDataDirectory(), 'logs.db') })
+    } catch (err) {
+      logError(`[logs] initLogging failed; session logging disabled this run: ${(err as Error)?.message ?? err}`)
+    }
     startPermissionTray()
     startEffortTracker()
     startAttentionSource()
@@ -814,6 +824,9 @@ if (!gotTheLock) {
     // S5: mark the supervisor shutting-down BEFORE killAllPty() so a hooks-child
     // exit during teardown does NOT trigger a restart (race-free shutdown).
     try { _hooksSupervisor?.shutdown() } catch { /* never started / hooks disabled */ }
+    // Flush + tear down session logging BEFORE killAllPty so a final batch is
+    // written and the worker shuts down cleanly. No-op when never init / disabled.
+    try { shutdownLogging() } catch { /* never init / disabled */ }
     stopServiceStatusPoller()
     stopUpdateWatcher()
     stopUpdateServer()
