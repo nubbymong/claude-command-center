@@ -114,12 +114,6 @@ export interface ElectronAPI {
     getTotalUsage: () => Promise<unknown>
     getUsageHistory: (hours: number) => Promise<unknown>
   }
-  logs: {
-    list: () => Promise<unknown[]>
-    read: (logDir: string, offset?: number, limit?: number) => Promise<{ entries: unknown[]; total: number; hasMore: boolean }>
-    search: (logDir: string, query: string) => Promise<unknown[]>
-    cleanup: (retentionDays?: number) => Promise<number>
-  }
   logsdb: {
     listSessions: (args?: { offset?: number; limit?: number }) => Promise<unknown[]>
     readEvents: (sessionId: string, offset?: number, limit?: number) => Promise<unknown[]>
@@ -444,12 +438,6 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.invoke(IPC.USAGE_SESSION, sessionId),
     getTotalUsage: () => ipcRenderer.invoke(IPC.USAGE_TOTAL),
     getUsageHistory: (hours) => ipcRenderer.invoke(IPC.USAGE_HISTORY, hours)
-  },
-  logs: {
-    list: () => ipcRenderer.invoke(IPC.LOGS_LIST),
-    read: (logDir, offset, limit) => ipcRenderer.invoke(IPC.LOGS_READ, logDir, offset, limit),
-    search: (logDir, query) => ipcRenderer.invoke(IPC.LOGS_SEARCH, logDir, query),
-    cleanup: (retentionDays) => ipcRenderer.invoke(IPC.LOGS_CLEANUP, retentionDays)
   },
   logsdb: {
     listSessions: (args?: { offset?: number; limit?: number }) => ipcRenderer.invoke(IPC.LOGSDB_LIST_SESSIONS, args),

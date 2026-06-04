@@ -39,8 +39,7 @@ function readVar(name: string, fallback: string): string {
   return v || fallback
 }
 
-// TODO(Task 9): extract a shared log terminal theme when LogViewer is removed.
-// Lifted verbatim from LogViewer.tsx:32-57 — keep the semantic-token theme.
+// Shared log terminal theme (semantic tokens). Also consumed by SetupDialog.
 export function buildLogTheme() {
   return {
     background:          readVar('--surface-stage', '#0f1218'),
@@ -84,7 +83,7 @@ const LogReplay = forwardRef<LogReplayHandle, Props>(function LogReplay(
   const [loading, setLoading] = useState(true)
   const [isEmpty, setIsEmpty] = useState(false)
 
-  // Terminal lifecycle — lifted from LogViewer.tsx:175-229, re-init per session.
+  // Terminal lifecycle — re-init per session.
   useEffect(() => {
     if (deleted) return
     const container = containerRef.current

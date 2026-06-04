@@ -7,9 +7,7 @@ import { registerPtyHandlers } from './ipc/pty-handlers'
 import { registerUsageHandlers } from './ipc/usage-handlers'
 import { registerDiscoveryHandlers } from './ipc/discovery-handlers'
 import { killAllPty, gracefulExitAllPty } from './pty-manager'
-import { registerLogHandlers } from './ipc/log-handlers'
 import { registerLogsdbHandlers } from './ipc/logsdb-handlers'
-import { closeAllLogs } from './session-logger'
 
 import { startStatuslineWatcher } from './statusline-watcher'
 import { registerProvider, getProvider } from './providers'
@@ -633,7 +631,6 @@ if (!gotTheLock) {
     registerPtyHandlers(getWindow)
     registerUsageHandlers()
     registerDiscoveryHandlers()
-    registerLogHandlers()
     registerLogsdbHandlers()
     registerDebugHandlers()
     registerUpdateHandlers()
@@ -833,7 +830,6 @@ if (!gotTheLock) {
     stopUpdateWatcher()
     stopUpdateServer()
     disableDebugMode()
-    closeAllLogs()
     stopGlobalVision()
     stopConductorMcpServer()
     killAllAgents()

@@ -67,12 +67,6 @@ export const IPC = {
   USAGE_TOTAL: 'usage:total',
   USAGE_HISTORY: 'usage:history',
 
-  // Logs
-  LOGS_LIST: 'logs:list',
-  LOGS_READ: 'logs:read',
-  LOGS_SEARCH: 'logs:search',
-  LOGS_CLEANUP: 'logs:cleanup',
-
   // Logs (SQLite worker-backed; Phase 2a). All go through getLogSupervisor().query.
   LOGSDB_LIST_SESSIONS: 'logsdb:listSessions',
   LOGSDB_READ_EVENTS: 'logsdb:readEvents',

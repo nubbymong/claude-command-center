@@ -14,8 +14,6 @@ export type {
   KpiMetric,
   InsightsData,
   KpiData,
-  LogSession,
-  LogEntry,
   NoteMetadata,
   AgentTemplate,
   AgentModelOverride,
@@ -183,23 +181,6 @@ export interface ElectronAPI {
     getSessionUsage: (sessionId: string) => Promise<any>
     getTotalUsage: () => Promise<any>
     getUsageHistory: (hours: number) => Promise<any>
-  }
-  logs: {
-    list: () => Promise<Array<{
-      configLabel: string
-      sessionId: string
-      logDir: string
-      startTime?: number
-      endTime?: number
-      size: number
-    }>>
-    read: (logDir: string, offset?: number, limit?: number) => Promise<{
-      entries: Array<{ ts: number; type: string; data?: string }>
-      total: number
-      hasMore: boolean
-    }>
-    search: (logDir: string, query: string) => Promise<Array<{ ts: number; type: string; data?: string }>>
-    cleanup: (retentionDays?: number) => Promise<number>
   }
   logsdb: {
     listSessions: (args?: { offset?: number; limit?: number }) => Promise<Array<{

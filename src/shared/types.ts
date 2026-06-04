@@ -255,23 +255,6 @@ export interface InsightsData {
 /** Alias for backward compatibility */
 export type KpiData = InsightsData
 
-// ── Logs ──
-
-export interface LogSession {
-  configLabel: string
-  sessionId: string
-  logDir: string
-  startTime?: number
-  endTime?: number
-  size: number
-}
-
-export interface LogEntry {
-  ts: number
-  type: string
-  data?: string
-}
-
 // ── Agent Teams ──
 
 export type TeamStepMode = 'sequential' | 'parallel'

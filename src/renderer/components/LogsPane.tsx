@@ -78,7 +78,7 @@ export default function LogsPane({ sessionId }: Props) {
 
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-surface-stage">
-      {/* Find-in-session bar — toggles lifted from LogViewer.tsx:427-452. */}
+      {/* Find-in-session bar. */}
       <div className="flex items-center gap-2 px-3 py-1.5 border-b border-surface0 bg-crust shrink-0">
         <input
           type="text"

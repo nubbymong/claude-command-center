@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
-import { buildLogTheme } from './LogViewer'
+import { buildLogTheme } from './LogReplay'
 
 interface Props {
   onComplete: () => void
