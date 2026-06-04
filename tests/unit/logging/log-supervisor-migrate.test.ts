@@ -1,8 +1,9 @@
 /**
  * Pure unit test (system Node) for LogSupervisor.migrate(). Uses FakeWorkerTransport
  * to simulate the worker: the supervisor posts a 'migrate' op and resolves the
- * returned promise on the matching 'migrate-progress'. Also asserts it rejects
- * fast when the worker is not listening (never hangs).
+ * returned promise on the matching 'migrate-progress', rejects it on a matching
+ * 'migrate-error', and rejects fast when the worker is not listening or exits
+ * mid-flight (it can never hang).
  */
 import { describe, it, expect, vi } from 'vitest'
 import { LogSupervisor } from '../../../src/main/logging/log-supervisor'
@@ -43,6 +44,18 @@ describe('LogSupervisor.migrate', () => {
     expect(res.importedEvents).toBe(1)
     const posted = transport.workerMessages.find((m) => m.type === 'migrate')
     expect(posted).toBeTruthy()
+  })
+
+  it('rejects a pending migrate on a matching migrate-error', async () => {
+    const { sup, transport } = makeSup()
+    sup.start()
+    transport.onWorker((msg) => {
+      if (msg.type === 'migrate') {
+        transport.emitToMain({ type: 'migrate-error', id: msg.id, message: 'boom' })
+      }
+    })
+    transport.emitToMain({ type: 'ready' })
+    await expect(sup.migrate([], 7)).rejects.toThrow(/boom/)
   })
 
   it('rejects an in-flight migrate when the worker exits', async () => {

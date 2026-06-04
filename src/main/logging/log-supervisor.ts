@@ -349,6 +349,9 @@ export class LogSupervisor {
     }
     return new Promise<ChunkProgress>((resolve, reject) => {
       const timeoutMs = this.opts.queryTimeoutMs ?? DEFAULT_QUERY_TIMEOUT_MS
+      // 4x the query budget: a migrate chunk imports a whole chunk of sessions +
+      // their events (far heavier than a single read), so it needs more headroom --
+      // but it stays bounded so a wedged worker can never hang the import forever.
       const timer = setTimeout(() => {
         if (this.pendingMigrations.delete(id)) reject(new Error(`migrate chunk timed out after ${timeoutMs * 4}ms`))
       }, timeoutMs * 4)
