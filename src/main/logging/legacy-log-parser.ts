@@ -45,6 +45,14 @@ export interface ParseResult {
    *  report uses this to reconcile the detected folder count. A 0-event partner
    *  dir does NOT fold (it is listed in `unparseable` instead). */
   foldedPartnerDirs: number
+  /** Count of session dirs that had zero valid events (all files malformed or
+   *  unreadable). Incremented unconditionally so the report can reconcile:
+   *  detectedFolders === sessions + foldedPartnerDirs + noEventDirs.
+   *  (A dir-level 'no parseable events' unparseable entry may be suppressed to
+   *  avoid double-listing when file-level entries already explain the failure,
+   *  which is why this must be counted explicitly rather than inferred from
+   *  the unparseable array in the UI.) */
+  noEventDirs: number
 }
 
 /** Order one session dir's log files chronologically: oldest rotation first
@@ -120,6 +128,7 @@ function readMeta(sessionDir: string): { configLabel?: string; accountEmail?: st
 export function parseLegacyLogs(logsDir: string): ParseResult {
   const unparseable: UnparseableFile[] = []
   let foldedPartnerDirs = 0
+  let noEventDirs = 0
   // Accumulate by BASE session id so partner dirs merge in.
   const byBase = new Map<string, { configLabel: string; accountEmail?: string; profileId?: string; events: ParsedEvent[] }>()
 
@@ -127,7 +136,7 @@ export function parseLegacyLogs(logsDir: string): ParseResult {
   try {
     labelDirs = fs.readdirSync(logsDir)
   } catch {
-    return { sessions: [], unparseable: [], foldedPartnerDirs: 0 }
+    return { sessions: [], unparseable: [], foldedPartnerDirs: 0, noEventDirs: 0 }
   }
   labelDirs.sort((a, b) => a.localeCompare(b))
 
@@ -180,6 +189,7 @@ export function parseLegacyLogs(logsDir: string): ParseResult {
         // No usable events at all -> do not synthesize a row. Report the session dir
         // ONLY when no file-level entry already explained it (e.g. all lines were
         // empty/whitespace, not malformed), so a single bad file is not double-listed.
+        noEventDirs += 1
         if (!fileReported) {
           unparseable.push({ path: sessionDir, reason: 'no parseable events', skippedLines: 0 })
         }
@@ -229,5 +239,5 @@ export function parseLegacyLogs(logsDir: string): ParseResult {
   // Stable final ordering by sessionId for deterministic reports.
   sessions.sort((a, b) => a.sessionId.localeCompare(b.sessionId))
 
-  return { sessions, unparseable, foldedPartnerDirs }
+  return { sessions, unparseable, foldedPartnerDirs, noEventDirs }
 }

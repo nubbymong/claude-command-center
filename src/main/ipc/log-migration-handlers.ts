@@ -80,7 +80,7 @@ export function registerLogMigrationHandlers(getWindow: () => BrowserWindow | nu
       // so it is stable for the run) for the report's reconciliation line.
       const detectedFolders = countSessionFolders(dir)
       snapshotLegacyLogs()                                    // 1) one-time read-only snapshot/marker
-      const { sessions, unparseable, foldedPartnerDirs } = parseLegacyLogs(dir)  // 2) pure parse off-DB
+      const { sessions, unparseable, foldedPartnerDirs, noEventDirs } = parseLegacyLogs(dir)  // 2) pure parse off-DB
       let chunkId = 1
       const report = await runImport(                         // 3) chunked import through the SINGLE worker
         sessions,
@@ -115,6 +115,7 @@ export function registerLogMigrationHandlers(getWindow: () => BrowserWindow | nu
         ...report,
         unparseable: unparseable.map((u) => ({ path: u.path, reason: u.reason, skippedLines: u.skippedLines })),
         foldedPartnerDirs,
+        noEventDirs,
         detectedFolders,
         dbBytesBefore: dbBefore,
         dbBytesAfter: dbAfter,

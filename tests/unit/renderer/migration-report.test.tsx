@@ -34,7 +34,8 @@ function renderComponent(ui: React.ReactElement): { container: HTMLElement; unmo
 const { MigrationReport } = await import('../../../src/renderer/components/MigrationReport')
 
 // ---------------------------------------------------------------------------
-// Shared fixture
+// Shared fixture — detectedFolders (990) = importedSessions (980) + skippedSessions (8)
+//                                         + foldedPartnerDirs (1) + noEventDirs (1) = 990
 const report = {
   totalSessions: 990, importedSessions: 980, skippedSessions: 8, importedEvents: 123456,
   unparseable: [
@@ -42,6 +43,7 @@ const report = {
     { path: 'C:/logs/APP/s9', reason: 'no parseable events', skippedLines: 0 },
   ],
   foldedPartnerDirs: 1,
+  noEventDirs: 1,
   detectedFolders: 990,
   dbBytesBefore: 1_000_000, dbBytesAfter: 4_000_000,
 }

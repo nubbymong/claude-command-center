@@ -8,6 +8,7 @@ export interface MigrationReportData {
   importedEvents: number
   unparseable: { path: string; reason: string; skippedLines: number }[]
   foldedPartnerDirs: number
+  noEventDirs: number
   detectedFolders: number
   dbBytesBefore: number
   dbBytesAfter: number

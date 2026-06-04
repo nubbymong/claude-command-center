@@ -34,7 +34,7 @@ describe('migrationStore', () => {
   })
 
   it('run() drives phase idle -> running -> done and stores the report', async () => {
-    const report = { totalSessions: 2, importedSessions: 2, skippedSessions: 0, importedEvents: 5, unparseable: [], foldedPartnerDirs: 0, detectedFolders: 2, dbBytesBefore: 10, dbBytesAfter: 20 }
+    const report = { totalSessions: 2, importedSessions: 2, skippedSessions: 0, importedEvents: 5, unparseable: [], foldedPartnerDirs: 0, noEventDirs: 0, detectedFolders: 2, dbBytesBefore: 10, dbBytesAfter: 20 }
     api.run.mockResolvedValue(report)
     const phases: string[] = []
     const unsub = useMigrationStore.subscribe((s) => phases.push(s.phase))

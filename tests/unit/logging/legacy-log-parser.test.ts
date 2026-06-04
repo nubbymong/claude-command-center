@@ -78,20 +78,22 @@ describe('legacy-log-parser', () => {
   it('folds <id>-partner into the base session, appended after base events', () => {
     makeSession('P', 's4', { 'session.jsonl': line({ ts: 1, type: 'data', data: 'base' }) })
     makeSession('P', 's4-partner', { 'session.jsonl': line({ ts: 2, type: 'data', data: 'partner' }) })
-    const { sessions, foldedPartnerDirs } = parseLegacyLogs(logsDir)
+    const { sessions, foldedPartnerDirs, noEventDirs } = parseLegacyLogs(logsDir)
     // Exactly one logical session s4 (partner folded in), no separate s4-partner.
     expect(sessions.map((s) => s.sessionId).sort()).toEqual(['s4'])
     const s = sessions.find((x) => x.sessionId === 's4')!
     expect(s.events.map((e) => e.data)).toEqual(['base', 'partner'])
     // The partner dir folded into the base counts toward reconciliation.
     expect(foldedPartnerDirs).toBe(1)
+    expect(noEventDirs).toBe(0)
   })
 
   it('reports foldedPartnerDirs === 0 when no partner/duplicate folders exist', () => {
     makeSession('A', 's1', { 'session.jsonl': line({ ts: 1, type: 'data', data: 'a' }) })
     makeSession('B', 's2', { 'session.jsonl': line({ ts: 2, type: 'data', data: 'b' }) })
-    const { foldedPartnerDirs } = parseLegacyLogs(logsDir)
+    const { foldedPartnerDirs, noEventDirs } = parseLegacyLogs(logsDir)
     expect(foldedPartnerDirs).toBe(0)
+    expect(noEventDirs).toBe(0)
   })
 
   it('does NOT count a 0-event partner dir as folded (it is unparseable instead)', () => {
@@ -110,12 +112,16 @@ describe('legacy-log-parser', () => {
     // A good session alongside it must still import.
     makeSession('OK', 's6', { 'session.jsonl': line({ ts: 5, type: 'data', data: 'ok' }) })
 
-    const { sessions, unparseable } = parseLegacyLogs(logsDir)
+    const { sessions, unparseable, noEventDirs } = parseLegacyLogs(logsDir)
     expect(sessions.map((s) => s.sessionId)).toContain('s6')
     expect(sessions.map((s) => s.sessionId)).not.toContain('s5')
     // s5's file is listed (path + reason), never thrown away.
     expect(unparseable.length).toBeGreaterThan(0)
     expect(unparseable.some((u) => u.path.includes('s5'))).toBe(true)
+    // s5 has all-malformed files -> counts as noEventDirs; s6 is valid -> not counted.
+    // Key: noEventDirs is incremented unconditionally even when file-level unparseable
+    // entries suppress the dir-level 'no parseable events' entry (the s5 case).
+    expect(noEventDirs).toBe(1)
   })
 
   it('skips malformed lines within an otherwise-valid file and records the skip count', () => {
@@ -138,10 +144,28 @@ describe('legacy-log-parser', () => {
     expect(r1).toEqual(['a', 'b']) // pinned: final order is lexicographic by sessionId
   })
 
+  it('reconciliation identity: detectedFolders === sessions + foldedPartnerDirs + noEventDirs', () => {
+    // 1 valid session, 1 partner fold (2 dirs -> 1 session), 1 all-malformed dir.
+    makeSession('VALID', 'v1', { 'session.jsonl': line({ ts: 1, type: 'data', data: 'ok' }) })
+    makeSession('VALID', 'v1-partner', { 'session.jsonl': line({ ts: 2, type: 'data', data: 'ok2' }) })
+    makeSession('VALID', 'v2', { 'session.jsonl': line({ ts: 3, type: 'data', data: 'ok3' }) })
+    makeSession('BAD', 'bad1', { 'session.jsonl': 'not json at all\n' })
+    // Folder count: v1 + v1-partner + v2 + bad1 = 4 dirs total.
+    const detectedFolders = 4
+    const { sessions, foldedPartnerDirs, noEventDirs } = parseLegacyLogs(logsDir)
+    // v1 + v1-partner fold into 1 session; v2 is a separate session -> 2 sessions total.
+    expect(sessions.length).toBe(2)
+    expect(foldedPartnerDirs).toBe(1)
+    expect(noEventDirs).toBe(1)
+    // The identity must hold.
+    expect(sessions.length + foldedPartnerDirs + noEventDirs).toBe(detectedFolders)
+  })
+
   it('returns empty result for a missing logs dir', () => {
-    const { sessions, unparseable, foldedPartnerDirs } = parseLegacyLogs(join(root, 'does-not-exist'))
+    const { sessions, unparseable, foldedPartnerDirs, noEventDirs } = parseLegacyLogs(join(root, 'does-not-exist'))
     expect(sessions).toEqual([])
     expect(unparseable).toEqual([])
     expect(foldedPartnerDirs).toBe(0)
+    expect(noEventDirs).toBe(0)
   })
 })
