@@ -8,6 +8,7 @@ import { registerUsageHandlers } from './ipc/usage-handlers'
 import { registerDiscoveryHandlers } from './ipc/discovery-handlers'
 import { killAllPty, gracefulExitAllPty } from './pty-manager'
 import { registerLogHandlers } from './ipc/log-handlers'
+import { registerLogsdbHandlers } from './ipc/logsdb-handlers'
 import { closeAllLogs } from './session-logger'
 
 import { startStatuslineWatcher } from './statusline-watcher'
@@ -633,6 +634,7 @@ if (!gotTheLock) {
     registerUsageHandlers()
     registerDiscoveryHandlers()
     registerLogHandlers()
+    registerLogsdbHandlers()
     registerDebugHandlers()
     registerUpdateHandlers()
     registerSetupHandlers()

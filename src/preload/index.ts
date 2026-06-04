@@ -120,6 +120,13 @@ export interface ElectronAPI {
     search: (logDir: string, query: string) => Promise<unknown[]>
     cleanup: (retentionDays?: number) => Promise<number>
   }
+  logsdb: {
+    listSessions: (args?: { offset?: number; limit?: number }) => Promise<unknown[]>
+    readEvents: (sessionId: string, offset?: number, limit?: number) => Promise<unknown[]>
+    search: (query: string, limit?: number) => Promise<unknown[]>
+    prune: (ids: string[]) => Promise<{ deletedSessions: number; deletedEvents: number }>
+    clearAll: () => Promise<{ deletedSessions: number; deletedEvents: number }>
+  }
   discovery: {
     getProjects: () => Promise<unknown>
     getSessionHistory: (projectPath: string) => Promise<unknown>
@@ -443,6 +450,13 @@ const electronAPI: ElectronAPI = {
     read: (logDir, offset, limit) => ipcRenderer.invoke(IPC.LOGS_READ, logDir, offset, limit),
     search: (logDir, query) => ipcRenderer.invoke(IPC.LOGS_SEARCH, logDir, query),
     cleanup: (retentionDays) => ipcRenderer.invoke(IPC.LOGS_CLEANUP, retentionDays)
+  },
+  logsdb: {
+    listSessions: (args?: { offset?: number; limit?: number }) => ipcRenderer.invoke(IPC.LOGSDB_LIST_SESSIONS, args),
+    readEvents: (sessionId: string, offset?: number, limit?: number) => ipcRenderer.invoke(IPC.LOGSDB_READ_EVENTS, sessionId, offset, limit),
+    search: (query: string, limit?: number) => ipcRenderer.invoke(IPC.LOGSDB_SEARCH, query, limit),
+    prune: (ids: string[]) => ipcRenderer.invoke(IPC.LOGSDB_PRUNE, ids),
+    clearAll: () => ipcRenderer.invoke(IPC.LOGSDB_CLEAR_ALL),
   },
   discovery: {
     getProjects: () => ipcRenderer.invoke(IPC.DISCOVERY_PROJECTS),

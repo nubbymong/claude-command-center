@@ -201,6 +201,40 @@ export interface ElectronAPI {
     search: (logDir: string, query: string) => Promise<Array<{ ts: number; type: string; data?: string }>>
     cleanup: (retentionDays?: number) => Promise<number>
   }
+  logsdb: {
+    listSessions: (args?: { offset?: number; limit?: number }) => Promise<Array<{
+      sessionId: string
+      configId: string | null
+      configLabel: string
+      projectCwd: string | null
+      accountEmail: string | null
+      profileId: string | null
+      provider: string
+      startedAt: number
+      endedAt: number | null
+      status: string
+      byteSize: number
+      eventCount: number
+    }>>
+    readEvents: (sessionId: string, offset?: number, limit?: number) => Promise<Array<{
+      id: number
+      sessionId: string
+      seq: number
+      ts: number
+      type: string
+      raw: Uint8Array
+      text: string
+    }>>
+    search: (query: string, limit?: number) => Promise<Array<{
+      sessionId: string
+      eventId: number
+      seq: number
+      ts: number
+      snippet?: string
+    }>>
+    prune: (ids: string[]) => Promise<{ deletedSessions: number; deletedEvents: number }>
+    clearAll: () => Promise<{ deletedSessions: number; deletedEvents: number }>
+  }
   discovery: {
     getProjects: () => Promise<any>
     getSessionHistory: (projectPath: string) => Promise<any>
