@@ -146,6 +146,7 @@ function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMe
       title={title}
       aria-label={title}
       aria-disabled={isLogsDisabled || undefined}
+      tabIndex={isLogsDisabled ? -1 : undefined}
       className={`group ${isCollapsed ? 'w-10 h-10' : 'flex-1 py-2'} flex items-center justify-center rounded-lg transition-colors relative ${
         isLogsDisabled
           ? 'text-overlay0/40 cursor-not-allowed'

@@ -59,9 +59,6 @@ export default function LoggingConsentPrompt() {
     <div
       className={backdropClass}
       style={{ background: 'rgba(0,0,0,0.55)' }}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="logging-consent-heading"
       onKeyDown={handleKeyDown}
     >
       <div
@@ -70,6 +67,9 @@ export default function LoggingConsentPrompt() {
           background: 'var(--surface-raised)',
           border: '1px solid var(--border-subtle)',
         }}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="logging-consent-heading"
       >
         {/* Header */}
         <div
