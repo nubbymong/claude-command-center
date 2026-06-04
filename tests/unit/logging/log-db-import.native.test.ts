@@ -122,4 +122,22 @@ describe('log-db import primitives', () => {
     const [sess] = db.listSessions()
     expect(sess.configId).toBe('c-pre') // pre-existing configId preserved
   })
+
+  it('rolls back the entire session if an event fails mid-import (atomic transaction)', () => {
+    // Force a throw on the SECOND event (after the session row + first event are
+    // inserted inside the transaction) by handing it a `raw` the Buffer conversion
+    // cannot handle. better-sqlite3's transaction wrapper must roll the WHOLE thing
+    // back -> no partial session is left behind.
+    const meta = { sessionId: 'rollback1', configLabel: 'L', provider: 'claude', startedAt: 1 }
+    expect(() =>
+      db.importSession(meta, [
+        { ts: 1, type: 'data', raw: buf('ok'), text: 'ok' },
+        { ts: 2, type: 'data', raw: {} as unknown as Uint8Array, text: 'boom' },
+      ]),
+    ).toThrow()
+    // The upserted row and the first event were rolled back together.
+    expect(db.listSessions().some((s) => s.sessionId === 'rollback1')).toBe(false)
+    expect(db.getSessionEventCount('rollback1')).toBe(0)
+    expect(db.readEvents('rollback1', { offset: 0, limit: 10 }).length).toBe(0)
+  })
 })

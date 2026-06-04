@@ -235,7 +235,9 @@ export function openLogDb(path: string): LogDb {
   )
 
   // Migration: import a session's events with an EXPLICIT seq (not derived from a
-  // running counter) so a one-shot import assigns 0..n-1 deterministically.
+  // running counter) so a one-shot import assigns 0..n-1 deterministically. SQL is
+  // identical to stmtInsertEvent; the distinct handle documents the explicit-seq
+  // caller contract (importSession computes seq; appendBatch derives it).
   const stmtInsertEventSeq: Statement = sqlite.prepare(`
     INSERT INTO events (sessionId, seq, ts, type, raw, text)
     VALUES (@sessionId, @seq, @ts, @type, @raw, @text)
