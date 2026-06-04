@@ -110,6 +110,16 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
     onNavigateToSessions?.()
   }
 
+  const handleClearAllLogs = async () => {
+    if (!window.confirm('Permanently delete ALL session logs? This cannot be undone. Active sessions are kept.')) return
+    try {
+      const res = await window.electronAPI.logsdb.clearAll()
+      window.alert(`Deleted ${res.deletedSessions} session(s), ${res.deletedEvents} event(s). Active sessions are kept.`)
+    } catch {
+      window.alert('Could not clear logs — the logging service may be unavailable.')
+    }
+  }
+
   const sl = settings.statusLine || DEFAULT_STATUS_LINE
 
   const toggleStatusLine = (key: keyof StatusLineSettings) => {
@@ -236,6 +246,15 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
                   Session logging
                   <span className="text-[10px] text-overlay0">(records terminal output locally for search; may include secrets)</span>
                 </label>
+                <div className="flex items-center gap-2 mt-1">
+                  <button
+                    onClick={handleClearAllLogs}
+                    className="px-2.5 py-1 text-xs rounded border border-surface1 bg-surface0 text-overlay1 hover:bg-red/10 hover:text-red hover:border-red/40 transition-colors"
+                  >
+                    Clear all session logs
+                  </button>
+                  <span className="text-[10px] text-overlay0">(permanent; active sessions are kept)</span>
+                </div>
               </Section>
 
               <AccountsPanel onAdd={handleAddAccount} />
