@@ -87,6 +87,10 @@ jobs:
         if: matrix.os == 'windows-latest' && startsWith(github.head_ref, 'release/')
         run: npx electron-builder --win
 
+      - name: Verify native modules unpacked (release/* branches only)
+        if: matrix.os == 'windows-latest' && startsWith(github.head_ref, 'release/')
+        run: npm run verify:package
+
       - name: Package macOS DMG (release/* branches only)
         if: matrix.os == 'macos-latest' && startsWith(github.head_ref, 'release/')
         run: npx electron-builder --mac
