@@ -9,6 +9,7 @@ import { act } from 'react'
 const sample = [
   { sessionId: 'a', configId: 'c1', configLabel: 'APP', projectCwd: null, accountEmail: null, profileId: null, provider: 'claude', startedAt: 200, endedAt: 300, status: 'exited', byteSize: 1024, eventCount: 3 },
   { sessionId: 'orph', configId: 'dead', configLabel: 'OLD', projectCwd: null, accountEmail: null, profileId: null, provider: 'claude', startedAt: 100, endedAt: 150, status: 'exited', byteSize: 512, eventCount: 1 },
+  { sessionId: 'live', configId: 'c1', configLabel: 'APP', projectCwd: null, accountEmail: null, profileId: null, provider: 'claude', startedAt: 250, endedAt: null, status: 'running', byteSize: 100, eventCount: 1 },
 ]
 const clearAll = vi.fn().mockResolvedValue({ deletedSessions: 2, deletedEvents: 4 })
 const prune = vi.fn().mockResolvedValue({ deletedSessions: 1, deletedEvents: 1 })
@@ -88,6 +89,20 @@ describe('GlobalLogsView', () => {
     loggingEnabled = false
     const { container, cleanup } = await mount(<GlobalLogsView />)
     expect(container.textContent).toMatch(/Enable session logging in Settings/i)
+    cleanup()
+  })
+
+  it('clear-all broadcast excludes running sessions', async () => {
+    const { container, cleanup } = await mount(<GlobalLogsView />)
+    let broadcastIds: string[] | null = null
+    const onDel = (e: Event) => { broadcastIds = (e as CustomEvent<{ sessionIds: string[] }>).detail.sessionIds }
+    window.addEventListener('logs:sessionsDeleted', onDel as EventListener)
+    const btn = Array.from(container.querySelectorAll('button')).find((b) => /clear all/i.test(b.textContent || ''))!
+    await act(async () => { btn.click(); await new Promise((r) => setTimeout(r, 10)) })
+    window.removeEventListener('logs:sessionsDeleted', onDel as EventListener)
+    expect(broadcastIds).not.toBeNull()
+    expect(broadcastIds).not.toContain('live')   // running session must NOT be broadcast as deleted
+    expect(broadcastIds).toContain('a')          // a non-running session is broadcast
     cleanup()
   })
 })

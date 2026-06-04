@@ -89,7 +89,7 @@ export default function GlobalLogsView() {
         const res = ids
           ? await window.electronAPI.logsdb.prune(ids)
           : await window.electronAPI.logsdb.clearAll()
-        broadcastDeleted(ids ?? sessions.map((s) => s.sessionId))
+        broadcastDeleted(ids ?? sessions.filter((s) => s.status !== 'running').map((s) => s.sessionId))
         if (selected && (ids ? ids.includes(selected.sessionId) : true)) setSelected(null)
         await refresh()
         window.alert(`Deleted ${res.deletedSessions} session(s), ${res.deletedEvents} event(s). Active sessions are kept.`)
@@ -102,11 +102,13 @@ export default function GlobalLogsView() {
 
   const deleteGroup = useCallback((g: ConfigGroup) => {
     const deletable = g.sessions.filter((s) => s.status !== 'running').map((s) => s.sessionId)
+    if (deletable.length === 0) return
     void confirmAndRun(`Permanently delete ${deletable.length} log(s) under "${g.configLabel}"? This cannot be undone. Active sessions are kept.`, deletable)
   }, [confirmAndRun])
 
   const deleteOrphaned = useCallback(() => {
     const deletable = orphaned.filter((s) => s.status !== 'running').map((s) => s.sessionId)
+    if (deletable.length === 0) return
     void confirmAndRun(`Permanently delete ${deletable.length} orphaned log(s)? This cannot be undone. Active sessions are kept.`, deletable)
   }, [orphaned, confirmAndRun])
 
