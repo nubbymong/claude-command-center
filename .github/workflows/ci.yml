@@ -68,6 +68,9 @@ jobs:
       - name: Unit tests
         run: npx vitest run
 
+      - name: Unit tests (native / SQLite under Electron-as-Node)
+        run: npm run test:unit:native
+
       - name: Build
         run: npm run build
 
