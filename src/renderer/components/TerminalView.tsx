@@ -4,6 +4,7 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
+import { installWebglWithRecovery } from './terminal/terminalWebgl'
 import { useSessionStore } from '../stores/sessionStore'
 import { persistLastUsedAccount } from '../session-persistence'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
@@ -265,13 +266,17 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       // glyphs — different cursor draw path, different glyph
       // fallback, and uniform across platforms. Fails gracefully if
       // WebGL is unavailable in the Electron renderer.
-      try {
-        const webglAddon = new WebglAddon()
-        webglAddon.onContextLoss(() => webglAddon.dispose())
-        term.loadAddon(webglAddon)
-      } catch (e) {
-        // Stay on default renderer — WebGL not available in this env.
-      }
+      //
+      // On context loss (GPU crash / OOM / driver preempt > 3 s) the
+      // addon disposes itself (xterm falls back to canvas automatically)
+      // then we try ONE recreate in the next frame (GPU-blip recovery).
+      // If recreate fails, we force term.refresh so the canvas renderer
+      // repaints the viewport the dead WebGL canvas left garbled.
+      installWebglWithRecovery(term, {
+        WebglAddonCtor: WebglAddon,
+        raf: requestAnimationFrame,
+        isDisposed: () => disposed,
+      })
 
       // Belt-and-braces hide for xterm's caret in Claude sessions.
       // The .claude-session class + global CSS rule should already
