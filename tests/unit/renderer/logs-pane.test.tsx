@@ -47,7 +47,7 @@ beforeEach(() => {
   }
 })
 
-// Mock the session store so we can flip status working->exited.
+// Mock the session store so we can control session status.
 // NOTE: SessionStatus uses 'working' (not 'running') for an active session.
 let sessionStatus = 'working'
 vi.mock('../../../src/renderer/stores/sessionStore', () => ({
@@ -71,8 +71,19 @@ const mount = async (el: React.ReactElement) => {
 }
 
 describe('LogsPane', () => {
-  it('live-tails (polls readEvents) while the session status is working', async () => {
+  it('live-tails (polls readEvents) while mounted, regardless of session status', async () => {
     sessionStatus = 'working'
+    const { cleanup } = await mount(<LogsPane sessionId="s1" />)
+    const before = reads.length
+    await act(async () => {
+      vi.advanceTimersByTime(1100)
+    })
+    expect(reads.length).toBeGreaterThan(before)
+    cleanup()
+  })
+
+  it('continues polling when status is "complete" (not gated on working)', async () => {
+    sessionStatus = 'complete'
     const { cleanup } = await mount(<LogsPane sessionId="s1" />)
     const before = reads.length
     await act(async () => {

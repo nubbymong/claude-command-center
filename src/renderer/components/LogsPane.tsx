@@ -11,7 +11,7 @@ interface Props {
  * Per-session Logs alt pane (sibling of Draw/Web). Read-only replay of THIS
  * session's captured log from SQLite, a client-side find-in-session bar
  * (case + regex; the legacy type filter is intentionally dropped), and a
- * live-tail that polls readEvents ~1x/s while the session is still running.
+ * live-tail that polls readEvents ~1x/s while the pane is mounted (not gated on status).
  *
  * v1 NOTE (head-first): the replay loads from the start (no eventCount passed);
  * for a very long running session live-tail pages forward to catch the live end.
@@ -23,9 +23,9 @@ interface Props {
  */
 export default function LogsPane({ sessionId }: Props) {
   const togglePane = useLogsStore((s) => s.togglePane)
-  // SessionStatus uses 'working' for an active/running session.
   const status = useSessionStore((s) => s.sessions.find((x) => x.id === sessionId)?.status)
-  const isRunning = status === 'working'
+  // The session is "alive" (capture may still append) in every state except disconnected.
+  const isAlive = status !== undefined && status !== 'disconnected'
 
   const replayRef = useRef<LogReplayHandle>(null)
   const [find, setFind] = useState('')
@@ -35,13 +35,14 @@ export default function LogsPane({ sessionId }: Props) {
   // while the pane is open (the global view broadcasts via a custom event).
   const [deleted, setDeleted] = useState(false)
 
-  // Live-tail: while running, nudge LogReplay.appendNew ~1x/s. Stop on unmount /
-  // when status leaves working (single source of truth = the DB, <=~1s lag).
+  // Live-tail: poll LogReplay.appendNew ~1x/s while the pane is mounted. NOT gated
+  // on Claude's working/idle status — output can arrive between turns; an ended
+  // session just yields empty no-op reads. Stops on unmount / after-delete.
   useEffect(() => {
-    if (!isRunning || deleted) return
+    if (deleted) return
     const id = setInterval(() => { void replayRef.current?.appendNew() }, 1000)
     return () => clearInterval(id)
-  }, [isRunning, deleted, sessionId])
+  }, [deleted, sessionId])
 
   // Listen for an after-delete broadcast targeting this session.
   useEffect(() => {
@@ -103,7 +104,7 @@ export default function LogsPane({ sessionId }: Props) {
         </button>
         {matchHint && <span className="text-[10px] text-overlay1 tabular-nums shrink-0">{matchHint}</span>}
         <div className="flex-1" />
-        {isRunning && !deleted && (
+        {isAlive && !deleted && (
           <span className="flex items-center gap-1 text-[10px] text-green shrink-0" title="Live-tailing">
             <span className="w-1.5 h-1.5 rounded-full bg-green animate-pulse" />
             Live
