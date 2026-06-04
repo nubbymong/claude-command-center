@@ -125,6 +125,9 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         live.options.theme = shellOnly
           ? palette
           : { ...palette, cursor: palette.background, cursorAccent: palette.background }
+        // Keep the light-mode contrast floor in lockstep with the theme flip
+        // (see constructor): on in light, off in dark.
+        live.options.minimumContrastRatio = document.documentElement.getAttribute('data-theme') === 'light' ? 4.5 : 1
         try {
           live.refresh(0, live.rows - 1)
         } catch {
@@ -241,6 +244,13 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         cursorInactiveStyle: 'none',
         scrollback: 10000,
         allowTransparency: true,
+        // Light mode only: enforce a minimum contrast ratio so Claude's dim,
+        // dark-theme-tuned greys (e.g. "Shell cwd was reset") stay readable on
+        // the light terminal background. xterm darkens only text that fails the
+        // ratio; the background and already-readable colours are untouched.
+        // 1 (off) in dark mode, where Claude's colours already contrast well, so
+        // dark rendering is unchanged. Kept in lockstep on theme flips below.
+        minimumContrastRatio: document.documentElement.getAttribute('data-theme') === 'light' ? 4.5 : 1,
       })
 
       fitAddon = new FitAddon()
