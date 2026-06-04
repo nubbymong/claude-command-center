@@ -101,10 +101,10 @@ export function snapshotLegacyLogs(opts?: { logsDir?: string; resourcesDir?: str
   }
 
   fs.mkdirSync(dest, { recursive: true })
-  fs.writeFileSync(path.join(dest, 'manifest.json'), JSON.stringify(manifest))
+  fs.writeFileSync(path.join(dest, 'manifest.json'), JSON.stringify(manifest), 'utf-8')
   // FROZEN marker, written LAST so a crash mid-write never leaves a half-marker
   // that would fool isLegacyLogsFrozen into thinking the snapshot is complete.
-  fs.writeFileSync(path.join(dest, 'FROZEN'), `frozen ${new Date(manifest.takenAt).toISOString()}\n`)
+  fs.writeFileSync(path.join(dest, 'FROZEN'), `frozen ${new Date(manifest.takenAt).toISOString()}\n`, 'utf-8')
   return dest
 }
 
@@ -133,7 +133,7 @@ export function markLegacyImportComplete(opts: {
     unparseableCount: opts.stats.unparseableCount,
   }
   fs.mkdirSync(dest, { recursive: true })
-  fs.writeFileSync(path.join(dest, 'import-complete.json'), JSON.stringify(marker))
+  fs.writeFileSync(path.join(dest, 'import-complete.json'), JSON.stringify(marker), 'utf-8')
 }
 
 /**
@@ -145,6 +145,8 @@ export function readLegacyImportCompletion(opts?: { resourcesDir?: string }): Le
   try {
     const raw = fs.readFileSync(path.join(snapshotDir(resourcesDir), 'import-complete.json'), 'utf-8')
     const parsed = JSON.parse(raw)
+    // Minimal shape check (completedAt + logsDir) — the writer controls the schema;
+    // callers that read the stats fields are responsible for their own checks.
     if (parsed && typeof parsed === 'object' && typeof parsed.completedAt === 'number' && typeof parsed.logsDir === 'string') {
       return parsed as LegacyImportCompletion
     }
