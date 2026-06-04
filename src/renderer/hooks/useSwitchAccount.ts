@@ -1,5 +1,6 @@
 import { useCallback } from 'react'
-import { Session, useSessionStore } from '../stores/sessionStore'
+import { Session } from '../stores/sessionStore'
+import { persistLastUsedAccount } from '../session-persistence'
 import { useRestartSession } from './useRestartSession'
 
 /**
@@ -34,7 +35,6 @@ export function shouldSwitch(
 export function useSwitchAccount(
   session: Session | null | undefined,
 ): (sessionId: string, newProfileId: string | undefined) => void {
-  const updateSession = useSessionStore((s) => s.updateSession)
   const { restart } = useRestartSession(session, false)
 
   return useCallback(
@@ -42,12 +42,14 @@ export function useSwitchAccount(
       if (!session || session.id !== sessionId) return
       // 1. No-op when the chosen account is already the active one.
       if (!shouldSwitch(session.profileId, newProfileId)) return
-      // 2. Pin the new profile (undefined => default account).
-      updateSession(sessionId, { profileId: newProfileId })
+      // 2. Pin the new profile (undefined => default account) AND flush it to disk
+      //    eagerly so a crash can't lose the switch. updateSession runs
+      //    synchronously inside, before restart() reads session.profileId.
+      void persistLastUsedAccount(sessionId, newProfileId)
       // 3. Respawn via the existing Restart path, forcing the new profileId so
       //    the remount reads the new account; resume is inherited from Restart.
       restart({ profileId: newProfileId })
     },
-    [session, updateSession, restart],
+    [session, restart],
   )
 }

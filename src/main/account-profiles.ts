@@ -297,11 +297,15 @@ function credentialExpiry(raw: string | undefined): number {
  * session to refresh invalidates every other copy), which forced a re-auth on resume.
  * Every session of an account now shares the account's profile home instead.
  *
- * Before deleting the retired session homes we SALVAGE the freshest live token for
- * each account (the profile home + canonical seed are typically the stale, dead seed)
- * into the profile home + canonical, so the user does not re-auth even once after
- * upgrading. Junction-safe teardown: link reparse points are removed, never their
- * targets. Only ever reads session homes and writes under profile dirs; never the real home.
+ * We SALVAGE the freshest live token for each account (the profile home + canonical
+ * seed are typically the stale, dead seed) into the profile home + canonical, so the
+ * user does not re-auth even once after upgrading. Then -- crucially -- we do NOT
+ * delete the retired session homes: a long-running or later-resumed session may still
+ * name an `account-homes\<sessionId>` path in its durable transcript. We strip the
+ * private credential copies and re-point each home's shared dirs (projects/memory/...)
+ * at the canonical store so those paths keep resolving to the same shared memory (see
+ * UPGRADE GUARD below). Only ever writes under account-homes / profile dirs; never the
+ * real home.
  */
 export function cleanupSessionHomes(): void {
   const root = getSessionHomesRoot()
@@ -343,16 +347,38 @@ export function cleanupSessionHomes(): void {
     }
   }
 
-  // Tear down the whole account-homes tree (junction LINKS only, never targets).
+  // UPGRADE GUARD -- do NOT delete the retired session homes. A session created
+  // under the old per-session-home build baked the literal path
+  // `account-homes\<sessionId>\.claude\projects\...\memory` into its DURABLE
+  // conversation transcript. A prior build DELETED this tree on upgrade, so
+  // resuming such a session afterwards pointed it at a now-missing path -- the
+  // memory-divergence incident (no data was lost because the dirs were junctions
+  // to the shared store, but the path looked dead). Instead we KEEP each home and
+  // re-point its shared dirs (projects/memory/...) at the canonical store, after
+  // stripping the now-superseded PRIVATE credential copies (salvaged above) so the
+  // Bug-2 stale-token problem cannot recur. Net: any lingering account-homes path
+  // resolves to the SAME shared memory a current per-account session sees, so
+  // resuming or switching an account across an upgrade never disrupts memory.
+  const shared = sharedRoot()
   for (const e of entries) {
-    const full = path.join(root, e.name)
+    if (!e.isDirectory()) continue
+    const home = path.join(root, e.name)
     try {
-      const st = fs.lstatSync(full)
-      if (st.isDirectory() && !st.isSymbolicLink()) safeTeardown(full)
-      else { try { fs.rmdirSync(full) } catch { fs.unlinkSync(full) } }
-    } catch { /* best-effort */ }
+      // Drop the private per-session identity copies (freshest token already
+      // salvaged into the profile + canonical above).
+      try { fs.unlinkSync(path.join(home, '.claude.json')) } catch { /* absent */ }
+      const claudeDir = path.join(home, '.claude')
+      try { fs.unlinkSync(path.join(claudeDir, '.credentials.json')) } catch { /* absent */ }
+      // Re-point the shared dirs to canonical (self-heals a missing/old junction).
+      fs.mkdirSync(claudeDir, { recursive: true })
+      for (const name of SHARED_DIR_NAMES) {
+        const target = path.join(shared, name)
+        if (!fs.existsSync(target)) fs.mkdirSync(target, { recursive: true })
+        ensureLink(target, path.join(claudeDir, name))
+      }
+    } catch { /* best-effort: a redirect we couldn't rebuild just leaves that one old session on a stale path */ }
   }
-  try { fs.rmdirSync(root) } catch { /* non-empty if a teardown failed; leave it */ }
+  // NOTE: intentionally NOT removing the account-homes root -- see UPGRADE GUARD above.
 }
 
 /** The authoritative, protected credential copy for an account. This dir is the source of truth; it is never used directly as a process HOME/CLAUDE_CONFIG_DIR. */

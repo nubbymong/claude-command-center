@@ -5,6 +5,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { useSessionStore } from '../stores/sessionStore'
+import { persistLastUsedAccount } from '../session-persistence'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { useAccountGateStore } from '../stores/accountGateStore'
 import { hasSpawned, markSpawned, killSessionPty } from '../ptyTracker'
@@ -383,7 +384,9 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
             gate
               .requestChoice(sessionId, session?.label || '', session?.profileId)
               .then((chosen) => {
-                useSessionStore.getState().updateSession(sessionId, { profileId: chosen })
+                // Persist the chosen account eagerly so a crash can't lose it
+                // (the gate pre-selects session.profileId on the next launch).
+                void persistLastUsedAccount(sessionId, chosen)
                 if (!disposed) {
                   doSpawn(chosen)
                 } else {

@@ -51,8 +51,12 @@ function canonRefreshToken(profileId: string): string {
   return JSON.parse(raw).claudeAiOauth.refreshToken
 }
 
-describe('cleanupSessionHomes (migration off the per-session-home model)', () => {
-  it('salvages the freshest live token into the profile home + canonical, then removes the homes', () => {
+describe('cleanupSessionHomes (UPGRADE GUARD: salvage creds, then keep + re-point, never delete)', () => {
+  function isJunction(p: string): boolean {
+    try { return fs.lstatSync(p).isSymbolicLink() } catch { return false }
+  }
+
+  it('salvages the freshest live token into the profile home + canonical, and KEEPS each home re-pointed to canonical', () => {
     const p = createProfile('Live')
     upsertProfile({ ...p, accountEmail: 'live@x.com' })
     // Profile home + canonical hold the STALE seed (this is the dead token that
@@ -67,12 +71,22 @@ describe('cleanupSessionHomes (migration off the per-session-home model)', () =>
 
     cleanupSessionHomes()
 
+    // Credential salvage unchanged: freshest token wins.
     expect(homeRefreshToken(p.id)).toBe('freshest')
     expect(canonRefreshToken(p.id)).toBe('freshest')
-    expect(fs.existsSync(getSessionHomesRoot())).toBe(false)
+    // UPGRADE GUARD: homes are KEPT so a resumed session that still names
+    // account-homes\<sessionId>\... keeps resolving (the divergence fix).
+    expect(fs.existsSync(getSessionHomesRoot())).toBe(true)
+    const s1 = path.join(getSessionHomesRoot(), 's1')
+    // Private per-session credential copies stripped (Bug-2 cannot recur).
+    expect(fs.existsSync(path.join(s1, '.claude.json'))).toBe(false)
+    expect(fs.existsSync(path.join(s1, '.claude', '.credentials.json'))).toBe(false)
+    // Shared dirs re-pointed to canonical (memory continuity preserved).
+    expect(isJunction(path.join(s1, '.claude', 'memory'))).toBe(true)
+    expect(isJunction(path.join(s1, '.claude', 'projects'))).toBe(true)
   })
 
-  it('keeps the profile home token when it is already fresher than every session home', () => {
+  it('keeps the profile home token when it is already fresher than every session home (homes still kept)', () => {
     const p = createProfile('Live')
     upsertProfile({ ...p, accountEmail: 'live@x.com' })
     writeProfileHome(p.id, 'live@x.com', { expiresAt: 9000, refreshToken: 'already-fresh' })
@@ -81,10 +95,10 @@ describe('cleanupSessionHomes (migration off the per-session-home model)', () =>
     cleanupSessionHomes()
 
     expect(homeRefreshToken(p.id)).toBe('already-fresh')
-    expect(fs.existsSync(getSessionHomesRoot())).toBe(false)
+    expect(fs.existsSync(getSessionHomesRoot())).toBe(true)
   })
 
-  it('removes a session home that matches no profile without salvaging it anywhere', () => {
+  it('does not salvage a session home that matches no profile, but still keeps + re-points it', () => {
     const p = createProfile('Live')
     upsertProfile({ ...p, accountEmail: 'live@x.com' })
     writeProfileHome(p.id, 'live@x.com', { expiresAt: 5000, refreshToken: 'mine' })
@@ -93,10 +107,13 @@ describe('cleanupSessionHomes (migration off the per-session-home model)', () =>
     cleanupSessionHomes()
 
     expect(homeRefreshToken(p.id)).toBe('mine') // unchanged by the stranger
-    expect(fs.existsSync(getSessionHomesRoot())).toBe(false)
+    const orphan = path.join(getSessionHomesRoot(), 'orphan')
+    expect(fs.existsSync(orphan)).toBe(true)
+    expect(fs.existsSync(path.join(orphan, '.claude', '.credentials.json'))).toBe(false)
+    expect(isJunction(path.join(orphan, '.claude', 'memory'))).toBe(true)
   })
 
-  it('does not delete junction targets when tearing down a session home', () => {
+  it('re-points a session home junction WITHOUT deleting its target (critical safety invariant)', () => {
     fs.mkdirSync(path.join(sharedRoot, 'projects'), { recursive: true })
     fs.writeFileSync(path.join(sharedRoot, 'projects', 'keep.txt'), 'keep')
     const homesRoot = getSessionHomesRoot()
@@ -107,7 +124,8 @@ describe('cleanupSessionHomes (migration off the per-session-home model)', () =>
 
     cleanupSessionHomes()
 
-    expect(fs.existsSync(homesRoot)).toBe(false)
+    // Home kept; junction TARGET never deleted (the never-wipe invariant).
+    expect(fs.existsSync(homesRoot)).toBe(true)
     expect(fs.readFileSync(path.join(sharedRoot, 'projects', 'keep.txt'), 'utf8')).toBe('keep')
   })
 
