@@ -15,6 +15,15 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '1.5.30',
+    date: '2026-06-04',
+    highlights: 'Critical multi-account stability: upgrades no longer disrupt a running session memory, and your last-used account survives a crash.',
+    changes: [
+      { type: 'fix', description: 'Upgrades no longer disrupt session memory. A session left running across an app update could end up pointing at an old per-session home that the update had cleaned away, so on resume it looked like it had lost its memory. The update now keeps those old homes and re-points them at your shared memory store, so resuming or switching accounts across an update always reaches the same memory. No data was affected, your memory is shared as designed.' },
+      { type: 'fix', description: 'Your last-used account now survives a crash. The account you pick for a session is saved to disk immediately instead of only on a clean close, so after an unexpected shutdown a session still defaults to the account you last used for it.' },
+    ],
+  },
+  {
     version: '1.5.29',
     date: '2026-06-04',
     highlights: 'Read each session effort and fast mode at a glance, with a tidier, more consistent dark and light theme, plus a new terminal-health view in the Conductor diagnostics.',
