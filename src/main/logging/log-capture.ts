@@ -153,6 +153,12 @@ export function makeCapture(
   // ---------------------------------------------------------------------------
 
   function flushNow(): void {
+    // Both guards are needed: globalPendingBytes === 0 is the fast path for the
+    // common case (no data at all), but a session with only dropped > 0 and zero
+    // buffered chunks has globalPendingBytes === 0 yet MUST still surface its
+    // dropped count in the batch (so the worker can insert an honest gap marker).
+    // hasPendingSessions() catches that case without iterating further when the
+    // fast-path guard fires.
     if (globalPendingBytes === 0 && !hasPendingSessions()) return
 
     // Build the batch in a single pass over the sessions map.
@@ -166,6 +172,13 @@ export function makeCapture(
       if (state.chunks.length === 0 && state.dropped === 0) continue
       const entry: { sessionId: string; chunks: Chunk[]; dropped?: number } = {
         sessionId,
+        // Live-array handoff: we assign state.chunks and immediately replace
+        // state.chunks with a fresh array. postBatch MUST NOT synchronously call
+        // back into record() — if it did, the new record() call would push onto
+        // the NEW state.chunks array (safe), but a re-entrant flushNow() inside
+        // postBatch would observe the stale in-flight array still referenced by
+        // `entry.chunks`. postBatch is async / queued today; this note is a
+        // guard-rail against future callers making it synchronous-with-re-entry.
         chunks: state.chunks,
       }
       if (state.dropped > 0) entry.dropped = state.dropped
@@ -212,6 +225,16 @@ export function makeCapture(
   }
 
   function record(sessionId: string, data: string | Buffer | Uint8Array): void {
+    // Guard: only buffer data for sessions that are currently active (i.e. have
+    // been start()-ed and not yet end()-ed).  A record() for an unknown or already-
+    // ended session would otherwise create a ghost SessionState entry.  Downstream,
+    // the logging worker's appendBatch inserts events with a FK to the sessions
+    // table; a ghost session has no matching startSession row, so its batch entry
+    // would violate the FK and roll back the ENTIRE tick's batch for ALL sessions.
+    // Early-return here is O(1) and prevents that class of corruption entirely.
+    const state = sessions.get(sessionId)
+    if (!state) return
+
     // Normalise to Uint8Array — O(1): Buffer.from(str) allocates once, Uint8Array
     // and Buffer are both already Uint8Array-compatible (no extra copy for binary).
     let raw: Uint8Array
@@ -226,22 +249,9 @@ export function makeCapture(
 
     // Apply global cap (drop-newest).
     if (globalPendingBytes + byteLen > capBytes) {
-      // Drop this chunk; accumulate on the session's dropped counter.
-      let state = sessions.get(sessionId)
-      if (!state) {
-        // Unknown session — create a minimal entry so dropped is not lost.
-        state = { chunks: [], dropped: 0 }
-        sessions.set(sessionId, state)
-      }
+      // Drop this chunk; accumulate on the (confirmed-active) session's dropped counter.
       state.dropped += byteLen
       return
-    }
-
-    // Get or create the session state.
-    let state = sessions.get(sessionId)
-    if (!state) {
-      state = { chunks: [], dropped: 0 }
-      sessions.set(sessionId, state)
     }
 
     // O(1) push.

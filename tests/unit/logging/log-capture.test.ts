@@ -264,6 +264,28 @@ describe('makeCapture / LogCapture', () => {
     cap.stop()
   })
 
+  // --- 100% dropped: session with dropped > 0 and zero surviving chunks ---
+  it('flushNow includes a session entry when ALL chunks were dropped (dropped > 0, chunks: [])', () => {
+    const { sup, posted } = makeFakeSup()
+    // cap = 2 bytes so every record() of 3+ bytes overflows immediately.
+    // First record (3 bytes): globalPendingBytes(0) + 3 > 2 -> dropped.
+    // Second record (4 bytes): still dropped.
+    const cap = makeCapture(sup, { capBytes: 2, now: () => 1 })
+    cap.start('s1', { configLabel: 'C', provider: 'claude' })
+    cap.record('s1', Buffer.from('abc'))   // 3 bytes > cap 2: dropped
+    cap.record('s1', Buffer.from('defg'))  // 4 bytes > cap 2: dropped
+    cap.flushNow()
+    // A batch must still be posted so the worker knows bytes were lost.
+    expect(posted).toHaveLength(1)
+    const batch = posted[0] as { sessions: { sessionId: string; dropped?: number; chunks: unknown[] }[] }
+    expect(batch.sessions).toHaveLength(1)
+    expect(batch.sessions[0].sessionId).toBe('s1')
+    expect(batch.sessions[0].dropped).toBeGreaterThan(0)
+    // No surviving chunks — the session entry must still carry chunks: [].
+    expect(batch.sessions[0].chunks).toHaveLength(0)
+    cap.stop()
+  })
+
   // --- timer-driven flush ---
   it('timer fires every flushMs and calls flushNow when pending', () => {
     vi.useFakeTimers()
@@ -289,12 +311,28 @@ describe('makeCapture / LogCapture', () => {
     expect(posted).toHaveLength(0)
   })
 
-  // --- record with unknown sessionId (no crash) ---
-  it('record on an unknown sessionId does not throw', () => {
-    const { sup } = makeFakeSup()
+  // --- guard: record on inactive session buffers nothing ---
+  it('record() before start() does not throw and buffers nothing (ghost-session guard)', () => {
+    const { sup, posted } = makeFakeSup()
     const cap = makeCapture(sup, { now: () => 1 })
-    // no start() call for this session
+    // No start() call — session is inactive.
     expect(() => cap.record('unknown', Buffer.from('x'))).not.toThrow()
+    cap.flushNow()
+    // No ghost session entry in the batch.
+    expect(posted).toHaveLength(0)
+    cap.stop()
+  })
+
+  it('record() after end() buffers nothing (late-chunk guard)', () => {
+    const { sup, posted } = makeFakeSup()
+    const cap = makeCapture(sup, { now: () => 1 })
+    cap.start('s1', { configLabel: 'C', provider: 'claude' })
+    cap.end('s1', 'done')
+    posted.length = 0   // clear the flush that end() triggered
+    // Session is now inactive — record() must drop silently.
+    cap.record('s1', Buffer.from('late'))
+    cap.flushNow()
+    expect(posted).toHaveLength(0)
     cap.stop()
   })
 
