@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { useSettingsStore } from '../stores/settingsStore'
 
 const CLOSE_ANIM_MS = 200
@@ -19,16 +19,22 @@ export default function LoggingConsentPrompt() {
 
   const [entering, setEntering] = useState(false)
   const [closing, setClosing] = useState(false)
+  // The close-animation timer must be cleared on unmount: the parent removes this
+  // prompt as soon as loggingConsentSeen flips, which can happen before the timer
+  // fires — a stale timer would call updateSettings on an unmounted component.
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     const id = requestAnimationFrame(() => setEntering(true))
     return () => cancelAnimationFrame(id)
   }, [])
 
+  useEffect(() => () => { if (closeTimer.current) clearTimeout(closeTimer.current) }, [])
+
   const save = (updates: Parameters<typeof updateSettings>[0]) => {
     if (closing) return
     setClosing(true)
-    setTimeout(() => updateSettings(updates), CLOSE_ANIM_MS)
+    closeTimer.current = setTimeout(() => updateSettings(updates), CLOSE_ANIM_MS)
   }
 
   const handleKeepOn = () => save({ loggingConsentSeen: true })

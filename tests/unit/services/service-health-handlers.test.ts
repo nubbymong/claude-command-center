@@ -40,6 +40,18 @@ describe('service-health-handlers', () => {
     const restart = buildRestart(() => null)
     expect(restart('hooks')).toEqual({ ok: false, reason: 'no-supervisor' })
   })
+  it('RESTART routes a logging serviceId to the log supervisor (not the hooks one)', () => {
+    mockGetLogSupervisor.mockReturnValue({ manualRestart: (id: string) => ({ ok: true, who: 'logging', id }) })
+    const hooksGetter = vi.fn(() => ({ manualRestart: () => ({ ok: true, who: 'hooks' }) } as never))
+    const restart = buildRestart(hooksGetter)
+    expect(restart('logging')).toEqual({ ok: true, who: 'logging', id: 'logging' })
+    expect(hooksGetter).not.toHaveBeenCalled()
+  })
+  it('RESTART returns no-supervisor for logging when the log supervisor is absent', () => {
+    mockGetLogSupervisor.mockReturnValue(null)
+    const restart = buildRestart(() => ({ manualRestart: () => ({ ok: true }) } as never))
+    expect(restart('logging')).toEqual({ ok: false, reason: 'no-supervisor' })
+  })
 
   // --- §14: logging service merging ---
 

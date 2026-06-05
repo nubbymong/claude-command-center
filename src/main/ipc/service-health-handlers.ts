@@ -44,6 +44,15 @@ export function getMergedDiagnostics(getSup: SupGetter, getPty: PtyGetter): Diag
 
 export function buildRestart(getSup: SupGetter): (serviceId: string) => { ok: boolean; reason?: string } {
   return (serviceId) => {
+    // The logging worker is owned by a SEPARATE supervisor (LogSupervisor) with no
+    // in-process fallback; route its restart there so a permanently-degraded logging
+    // service can actually be revived (the hooks supervisor would only answer
+    // 'unknown-service' for it).
+    if (serviceId === 'logging') {
+      const logSup = getLogSupervisor()
+      if (!logSup) return { ok: false, reason: 'no-supervisor' }
+      return logSup.manualRestart(serviceId)
+    }
     const sup = getSup()
     if (!sup) return { ok: false, reason: 'no-supervisor' }
     return sup.manualRestart(serviceId)
