@@ -10,6 +10,9 @@ import type { ParsedSession } from './legacy-log-parser'
 export interface ChunkProgress {
   importedSessions: number
   skippedSessions: number
+  /** Sessions whose import THREW (data did NOT reach the DB) — distinct from a
+   *  benign already-present skip. Any failure makes the run incomplete. */
+  failedSessions: number
   importedEvents: number
 }
 
@@ -17,6 +20,7 @@ export interface ImportReport {
   totalSessions: number
   importedSessions: number
   skippedSessions: number
+  failedSessions: number
   importedEvents: number
 }
 
@@ -56,6 +60,7 @@ export async function runImport(
     totalSessions: sessions.length,
     importedSessions: 0,
     skippedSessions: 0,
+    failedSessions: 0,
     importedEvents: 0,
   }
 
@@ -80,6 +85,7 @@ export async function runImport(
     const progress = await postChunk(chunk)
     report.importedSessions += progress.importedSessions
     report.skippedSessions += progress.skippedSessions
+    report.failedSessions += progress.failedSessions
     report.importedEvents += progress.importedEvents
     done += chunk.length
     opts?.onProgress?.(done, sessions.length)

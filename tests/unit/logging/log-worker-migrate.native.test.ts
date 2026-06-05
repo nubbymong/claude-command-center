@@ -104,9 +104,11 @@ describe('worker migrate op', () => {
     expect(db.getSessionEventCount('ok')).toBe(1)
   })
 
-  it('a session whose importSession THROWS is skipped (surfaced as a log warn) without aborting the chunk', () => {
-    // Force importSession to throw for one specific session; the per-session
-    // try/catch must skip it and emit a log warn while the good session imports.
+  it('a session whose importSession THROWS is counted as FAILED (not skipped), surfaced as a log warn, without aborting the chunk', () => {
+    // Force importSession to throw for one specific session. The per-session
+    // try/catch must count it as a FAILURE (its data did NOT reach the DB) — NOT a
+    // benign already-present skip — and emit a log warn while the good session
+    // imports. This distinction is what keeps reclaim blocked on a partial import.
     const realImport = db.importSession.bind(db)
     ;(db as { importSession: LogDb['importSession'] }).importSession = ((meta, events) => {
       if (meta.sessionId === 'thrower') throw new Error('boom')
@@ -123,7 +125,8 @@ describe('worker migrate op', () => {
 
     const prog = posted.find((p) => p.type === 'migrate-progress') as Extract<FromWorker, { type: 'migrate-progress' }>
     expect(prog).toBeTruthy()
-    expect(prog.skippedSessions).toBe(1)
+    expect(prog.failedSessions).toBe(1)   // counted as FAILED, not skipped
+    expect(prog.skippedSessions).toBe(0)
     expect(prog.importedSessions).toBe(1)
     expect(db.getSessionEventCount('good')).toBe(1)
     expect(db.getSessionEventCount('thrower')).toBe(0)

@@ -5,6 +5,7 @@ export interface MigrationReportData {
   totalSessions: number
   importedSessions: number
   skippedSessions: number
+  failedSessions: number
   importedEvents: number
   unparseable: { path: string; reason: string; skippedLines: number }[]
   foldedPartnerDirs: number
@@ -65,7 +66,12 @@ export const useMigrationStore = create<MigrationState>((set, get) => ({
       // Settings path record completion (Settings later checks this flag before
       // re-offering "Migrate existing logs"). Fire-and-forget: the phase
       // transition above must NOT depend on the settings save resolving.
-      void useSettingsStore.getState().updateSettings({ legacyLogsMigrated: true })
+      // ONLY on a CLEAN run: if any session failed to import, leave the flag unset
+      // so the user is still offered "Migrate existing logs" to finish — reclaim is
+      // already blocked server-side until then, and we must not strand them.
+      if (report.failedSessions === 0) {
+        void useSettingsStore.getState().updateSettings({ legacyLogsMigrated: true })
+      }
     } catch (e) {
       set({ phase: 'error', errorKind: 'run', errorMessage: e instanceof Error ? e.message : String(e) })
     } finally {
@@ -74,6 +80,10 @@ export const useMigrationStore = create<MigrationState>((set, get) => ({
   },
 
   reclaim: async () => {
+    // Double-click / re-entry guard: the report can be clicked again before React
+    // re-renders it away, and reclaim is a PERMANENT delete. A second pass would
+    // race the first and clobber the reclaim tally. Refuse if one is in flight.
+    if (get().phase === 'reclaiming') return
     set({ phase: 'reclaiming', errorKind: undefined })
     try {
       const r = await window.electronAPI.logMigration.reclaim()

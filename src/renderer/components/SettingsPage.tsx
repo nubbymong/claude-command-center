@@ -111,6 +111,11 @@ function LogMigrationAction() {
         <div className="text-[11px] text-overlay0">Removing old log files ...</div>
       )}
       {phase === 'done' && report && !dismissed && (
+        // `reclaiming` is always false here: the instant reclaim() runs, phase flips
+        // to 'reclaiming' and this report unmounts (the 'reclaiming' branch above
+        // renders instead), so the in-button disabled state never applies. Double-
+        // delete is prevented by the re-entry guards in migrationStore.reclaim() and
+        // the LOGS_MIGRATE_RECLAIM handler, not by this prop.
         <MigrationReport report={report} reclaiming={false}
           onReclaim={() => { void reclaim() }}
           onDismiss={() => { setDismissed(true) }} />

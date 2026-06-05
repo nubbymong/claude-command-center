@@ -37,7 +37,7 @@ const { MigrationReport } = await import('../../../src/renderer/components/Migra
 // Shared fixture — detectedFolders (990) = importedSessions (980) + skippedSessions (8)
 //                                         + foldedPartnerDirs (1) + noEventDirs (1) = 990
 const report = {
-  totalSessions: 990, importedSessions: 980, skippedSessions: 8, importedEvents: 123456,
+  totalSessions: 990, importedSessions: 980, skippedSessions: 8, failedSessions: 0, importedEvents: 123456,
   unparseable: [
     { path: 'C:/logs/APP/s5/session.jsonl', reason: 'skipped malformed line(s)', skippedLines: 3 },
     { path: 'C:/logs/APP/s9', reason: 'no parseable events', skippedLines: 0 },
@@ -132,5 +132,32 @@ describe('MigrationReport', () => {
     })
 
     expect(onReclaim).toHaveBeenCalledOnce()
+  })
+
+  it('with failed sessions: shows the failure count, an errors heading, and NO reclaim action', () => {
+    const onReclaim = vi.fn()
+    const { container, unmount: u } = renderComponent(
+      React.createElement(MigrationReport, {
+        report: { ...report, failedSessions: 2 },
+        onReclaim,
+        onDismiss: () => {},
+        reclaiming: false,
+      })
+    )
+    unmount = u
+
+    const text = (container.textContent ?? '').replace(/\s+/g, ' ')
+    expect(text).toMatch(/finished with errors/i)
+    expect(text).toContain('Sessions failed to import')
+    // The reconciliation line accounts for the failures.
+    expect(text).toMatch(/2 failed to import/)
+
+    // The permanent-delete action MUST NOT be offered when data failed to import
+    // (reclaim is blocked server-side; offering it would only error).
+    const buttons = Array.from(container.querySelectorAll('button')) as HTMLButtonElement[]
+    expect(buttons.some((b) => /reclaim/i.test(b.textContent ?? ''))).toBe(false)
+    expect(buttons.some((b) => /delete .*permanently/i.test(b.textContent ?? ''))).toBe(false)
+    // Only a Close button is offered.
+    expect(buttons.some((b) => /close/i.test(b.textContent ?? ''))).toBe(true)
   })
 })

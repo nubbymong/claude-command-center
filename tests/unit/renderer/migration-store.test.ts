@@ -34,7 +34,7 @@ describe('migrationStore', () => {
   })
 
   it('run() drives phase idle -> running -> done and stores the report', async () => {
-    const report = { totalSessions: 2, importedSessions: 2, skippedSessions: 0, importedEvents: 5, unparseable: [], foldedPartnerDirs: 0, noEventDirs: 0, detectedFolders: 2, dbBytesBefore: 10, dbBytesAfter: 20 }
+    const report = { totalSessions: 2, importedSessions: 2, skippedSessions: 0, failedSessions: 0, importedEvents: 5, unparseable: [], foldedPartnerDirs: 0, noEventDirs: 0, detectedFolders: 2, dbBytesBefore: 10, dbBytesAfter: 20 }
     api.run.mockResolvedValue(report)
     const phases: string[] = []
     const unsub = useMigrationStore.subscribe((s) => phases.push(s.phase))
@@ -43,8 +43,26 @@ describe('migrationStore', () => {
     expect(phases).toContain('running')
     expect(useMigrationStore.getState().phase).toBe('done')
     expect(useMigrationStore.getState().report).toEqual(report)
-    // run() success marks migration complete centrally (covers the prompt path too).
+    // A CLEAN run() marks migration complete centrally (covers the prompt path too).
     expect(useSettingsStore.getState().settings.legacyLogsMigrated).toBe(true)
+  })
+
+  it('run() with failed sessions does NOT mark migration complete (so the user can re-run)', async () => {
+    const report = { totalSessions: 3, importedSessions: 2, skippedSessions: 0, failedSessions: 1, importedEvents: 5, unparseable: [], foldedPartnerDirs: 0, noEventDirs: 0, detectedFolders: 3, dbBytesBefore: 10, dbBytesAfter: 20 }
+    api.run.mockResolvedValue(report)
+    await useMigrationStore.getState().run()
+    expect(useMigrationStore.getState().phase).toBe('done')
+    expect(useMigrationStore.getState().report).toEqual(report)
+    // A failed session means reclaim is blocked server-side (no completion marker);
+    // leaving the flag unset keeps "Migrate existing logs" available to finish.
+    expect(useSettingsStore.getState().settings.legacyLogsMigrated).toBe(false)
+  })
+
+  it('reclaim() is a no-op while a reclaim is already in flight (double-click guard)', async () => {
+    useMigrationStore.setState({ phase: 'reclaiming', report: { totalSessions: 1, importedSessions: 1, skippedSessions: 0, failedSessions: 0, importedEvents: 1, unparseable: [], foldedPartnerDirs: 0, noEventDirs: 0, detectedFolders: 1, dbBytesBefore: 1, dbBytesAfter: 2 } })
+    await useMigrationStore.getState().reclaim()
+    expect(api.reclaim).not.toHaveBeenCalled()
+    expect(useMigrationStore.getState().phase).toBe('reclaiming')
   })
 
   it('run() goes to phase error when the IPC rejects', async () => {

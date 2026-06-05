@@ -34,7 +34,7 @@ describe('LogSupervisor.migrate', () => {
     sup.start()
     transport.onWorker((msg) => {
       if (msg.type === 'migrate') {
-        transport.emitToMain({ type: 'migrate-progress', id: msg.id, importedSessions: msg.sessions.length, skippedSessions: 0, importedEvents: msg.sessions.length })
+        transport.emitToMain({ type: 'migrate-progress', id: msg.id, importedSessions: msg.sessions.length, skippedSessions: 0, failedSessions: 0, importedEvents: msg.sessions.length })
       }
     })
     transport.emitToMain({ type: 'ready' })
@@ -42,6 +42,7 @@ describe('LogSupervisor.migrate', () => {
     const res = await sup.migrate(chunk, 1)
     expect(res.importedSessions).toBe(1)
     expect(res.importedEvents).toBe(1)
+    expect(res.failedSessions).toBe(0)
     const posted = transport.workerMessages.find((m) => m.type === 'migrate')
     expect(posted).toBeTruthy()
   })

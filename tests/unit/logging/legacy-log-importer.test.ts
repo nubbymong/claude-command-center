@@ -25,7 +25,7 @@ describe('legacy-log-importer runImport', () => {
     const seenChunkSizes: number[] = []
     const postChunk = vi.fn(async (chunk: ParsedSession[]) => {
       seenChunkSizes.push(chunk.length)
-      return { importedSessions: chunk.length, skippedSessions: 0, importedEvents: chunk.length }
+      return { importedSessions: chunk.length, skippedSessions: 0, failedSessions: 0, importedEvents: chunk.length }
     })
 
     const progressUpdates: number[] = []
@@ -51,7 +51,7 @@ describe('legacy-log-importer runImport', () => {
     const seen: number[] = []
     const postChunk = vi.fn(async (chunk: ParsedSession[]) => {
       seen.push(chunk.length)
-      return { importedSessions: chunk.length, skippedSessions: 0, importedEvents: chunk.length }
+      return { importedSessions: chunk.length, skippedSessions: 0, failedSessions: 0, importedEvents: chunk.length }
     })
     await runImport(sessions, postChunk, { maxSessionsPerChunk: 25, maxBytesPerChunk: 2 * 1024 * 1024 })
     // No chunk exceeds the byte budget -> each chunk has <= 2 sessions.
@@ -61,14 +61,23 @@ describe('legacy-log-importer runImport', () => {
 
   it('aggregates skips reported by the worker', async () => {
     const sessions = [mkSession('x', 1), mkSession('y', 1)]
-    const postChunk = vi.fn(async () => ({ importedSessions: 1, skippedSessions: 1, importedEvents: 1 }))
+    const postChunk = vi.fn(async () => ({ importedSessions: 1, skippedSessions: 1, failedSessions: 0, importedEvents: 1 }))
     const report = await runImport(sessions, postChunk, { maxSessionsPerChunk: 25, maxBytesPerChunk: 9e9 })
     expect(report.importedSessions).toBe(1)
     expect(report.skippedSessions).toBe(1)
   })
 
+  it('aggregates FAILED sessions reported by the worker (kept distinct from skips)', async () => {
+    const sessions = [mkSession('p', 1), mkSession('q', 1), mkSession('r', 1)]
+    const postChunk = vi.fn(async () => ({ importedSessions: 2, skippedSessions: 0, failedSessions: 1, importedEvents: 2 }))
+    const report = await runImport(sessions, postChunk, { maxSessionsPerChunk: 25, maxBytesPerChunk: 9e9 })
+    expect(report.failedSessions).toBe(1)
+    expect(report.skippedSessions).toBe(0)
+    expect(report.importedSessions).toBe(2)
+  })
+
   it('handles an empty session list without calling postChunk', async () => {
-    const postChunk = vi.fn(async () => ({ importedSessions: 0, skippedSessions: 0, importedEvents: 0 }))
+    const postChunk = vi.fn(async () => ({ importedSessions: 0, skippedSessions: 0, failedSessions: 0, importedEvents: 0 }))
     const report = await runImport([], postChunk, { maxSessionsPerChunk: 25, maxBytesPerChunk: 9e9 })
     expect(postChunk).not.toHaveBeenCalled()
     expect(report.totalSessions).toBe(0)
@@ -81,7 +90,7 @@ describe('legacy-log-importer runImport', () => {
     const seen: number[] = []
     const postChunk = vi.fn(async (chunk: ParsedSession[]) => {
       seen.push(chunk.length)
-      return { importedSessions: chunk.length, skippedSessions: 0, importedEvents: chunk.length }
+      return { importedSessions: chunk.length, skippedSessions: 0, failedSessions: 0, importedEvents: chunk.length }
     })
     const report = await runImport(sessions, postChunk, { maxSessionsPerChunk: 25, maxBytesPerChunk: 2 * 1024 * 1024 })
     expect(postChunk).toHaveBeenCalledTimes(1)

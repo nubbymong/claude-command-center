@@ -230,7 +230,7 @@ export class LogSupervisor {
         if (p) {
           if (p.timer) clearTimeout(p.timer)
           this.pendingMigrations.delete(m.id)
-          p.resolve({ importedSessions: m.importedSessions, skippedSessions: m.skippedSessions, importedEvents: m.importedEvents })
+          p.resolve({ importedSessions: m.importedSessions, skippedSessions: m.skippedSessions, failedSessions: m.failedSessions, importedEvents: m.importedEvents })
         }
         return
       }

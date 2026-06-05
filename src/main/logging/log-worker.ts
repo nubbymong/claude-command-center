@@ -200,6 +200,7 @@ function _handleWorkerMessage(
       try {
         let importedSessions = 0
         let skippedSessions = 0
+        let failedSessions = 0
         let importedEvents = 0
         for (const sess of msg.sessions) {
           // Per-session try/catch so one bad session never aborts the chunk.
@@ -223,8 +224,12 @@ function _handleWorkerMessage(
               skippedSessions += 1
             }
           } catch (err) {
-            // Surface, never swallow: report this session and keep going.
-            skippedSessions += 1
+            // Surface, never swallow. CRITICAL: a THROW means this session's data
+            // did NOT reach the DB, so it is FAILED — distinct from a benign
+            // already-present skip. The run handler must treat any failure as an
+            // incomplete migration (do not mark complete -> reclaim stays blocked),
+            // otherwise reclaim could permanently delete a folder we never imported.
+            failedSessions += 1
             post({
               type: 'log',
               entry: {
@@ -234,7 +239,7 @@ function _handleWorkerMessage(
             })
           }
         }
-        post({ type: 'migrate-progress', id: msg.id, importedSessions, skippedSessions, importedEvents })
+        post({ type: 'migrate-progress', id: msg.id, importedSessions, skippedSessions, failedSessions, importedEvents })
       } catch (err) {
         post({ type: 'migrate-error', id: msg.id, message: err instanceof Error ? err.message : String(err) })
       }
@@ -305,40 +310,49 @@ if (parentPort) {
   }, HEALTH_INTERVAL_MS).unref()
 
   parentPort.on('message', (e) => {
-    const msg = e.data as ToWorker
+    // Defense-in-depth: the lifecycle branches (open/shutdown) and the pre-dispatch
+    // guards below run OUTSIDE handleWorkerMessage's own try/catch. An exception
+    // escaping here would become an uncaught exception that exits the worker
+    // process; a deterministic poison message could then drive a restart loop
+    // straight to permanent degrade. Catch + report instead of crashing.
+    try {
+      const msg = e.data as ToWorker
 
-    // ---- open: lifecycle ----
-    if (msg.type === 'open') {
-      try {
-        db = openLogDb(msg.dbPath)
-        openedDbPath = msg.dbPath
-        post({ type: 'ready' })
-      } catch (err: unknown) {
-        post({
-          type: 'error',
-          message: `failed to open DB: ${err instanceof Error ? err.message : String(err)}`,
-        })
+      // ---- open: lifecycle ----
+      if (msg.type === 'open') {
+        try {
+          db = openLogDb(msg.dbPath)
+          openedDbPath = msg.dbPath
+          post({ type: 'ready' })
+        } catch (err: unknown) {
+          post({
+            type: 'error',
+            message: `failed to open DB: ${err instanceof Error ? err.message : String(err)}`,
+          })
+        }
+        return
       }
-      return
-    }
 
-    // ---- shutdown: lifecycle ----
-    if (msg.type === 'shutdown') {
-      clearInterval(healthTimer)
-      db?.close()
-      db = undefined
-      openedDbPath = undefined
-      // Let the process exit naturally; the supervisor will await it.
-      return
-    }
+      // ---- shutdown: lifecycle ----
+      if (msg.type === 'shutdown') {
+        clearInterval(healthTimer)
+        db?.close()
+        db = undefined
+        openedDbPath = undefined
+        // Let the process exit naturally; the supervisor will await it.
+        return
+      }
 
-    // ---- all other messages require an open DB ----
-    if (!db) {
-      post({ type: 'error', message: `worker received ${msg.type} before open` })
-      return
-    }
+      // ---- all other messages require an open DB ----
+      if (!db) {
+        post({ type: 'error', message: `worker received ${msg.type} before open` })
+        return
+      }
 
-    handleWorkerMessage(db, msg, post)
+      handleWorkerMessage(db, msg, post)
+    } catch (err: unknown) {
+      post({ type: 'error', message: `worker message handling failed: ${err instanceof Error ? err.message : String(err)}` })
+    }
   })
 
   // TODO (Task 6/8): WAL checkpoint cadence. Preferred approach: add a

@@ -18,6 +18,9 @@ import { logInfo, logWarn } from '../debug-logger'
 
 // A4: module-level reentrancy guard — a double-click must not spawn two runImport loops.
 let migrationRunning = false
+// Same guard for reclaim: a double-click (or any second caller) must not start a
+// second permanent-delete pass while the first is still running.
+let reclaimRunning = false
 
 function legacyLogsDir(): string {
   return path.join(getDataDirectory(), 'logs')
@@ -99,18 +102,25 @@ export function registerLogMigrationHandlers(getWindow: () => BrowserWindow | nu
         { onProgress: (done, total) => { try { getWindow()?.webContents.send(IPC.LOGS_MIGRATE_PROGRESS, { done, total }) } catch { /* window gone */ } } },
       )
       const dbAfter = dbSizeBytes()
-      // A1 [SAFETY-CRITICAL]: runImport RESOLVED with no throw -> record import
-      // completion so reclaim can later be gated on it (Task 8). A re-run where
-      // everything skips still means the data is in the DB, so we mark on ANY
-      // non-throwing completion. Never written on failure (the throw skips this).
-      markLegacyImportComplete({ logsDir: dir, stats: {
-        totalSessions: report.totalSessions,
-        importedSessions: report.importedSessions,
-        skippedSessions: report.skippedSessions,
-        importedEvents: report.importedEvents,
-        unparseableCount: unparseable.length,
-      } })
-      logInfo(`[migrate] imported ${report.importedSessions} sessions (${report.importedEvents} events), skipped ${report.skippedSessions}, ${unparseable.length} unparseable`)
+      // A1 [SAFETY-CRITICAL]: record import completion (the marker reclaim is later
+      // gated on) ONLY when every session either imported or was a benign
+      // already-present skip. A FAILED session (importSession threw) means its data
+      // never reached the DB; marking complete would let reclaim permanently delete
+      // that legacy folder. So on ANY failure we deliberately LEAVE THE MARKER
+      // UNWRITTEN -> reclaim stays blocked until a clean re-run. (A re-run where
+      // everything merely skips is still a clean completion: the data is in the DB.)
+      if (report.failedSessions === 0) {
+        markLegacyImportComplete({ logsDir: dir, stats: {
+          totalSessions: report.totalSessions,
+          importedSessions: report.importedSessions,
+          skippedSessions: report.skippedSessions,
+          importedEvents: report.importedEvents,
+          unparseableCount: unparseable.length,
+        } })
+      } else {
+        logWarn(`[migrate] ${report.failedSessions} session(s) failed to import; NOT marking migration complete -> reclaim stays blocked until a clean re-run`)
+      }
+      logInfo(`[migrate] imported ${report.importedSessions} sessions (${report.importedEvents} events), skipped ${report.skippedSessions}, failed ${report.failedSessions}, ${unparseable.length} unparseable`)
       return {
         ...report,
         unparseable: unparseable.map((u) => ({ path: u.path, reason: u.reason, skippedLines: u.skippedLines })),
@@ -126,17 +136,27 @@ export function registerLogMigrationHandlers(getWindow: () => BrowserWindow | nu
   })
 
   ipcMain.handle(IPC.LOGS_MIGRATE_RECLAIM, async () => {
-    // A1 [SAFETY-CRITICAL] belt-and-suspenders: never delete unless the DB actually
-    // holds imported sessions. (The frozen + completion-marker(+logsDir) gate lives
-    // in reclaimLegacyLogs.) This defends the case where an import wrote nothing.
-    const sup = getLogSupervisor()
-    if (!sup) throw new Error('refusing to reclaim: logging worker not available')
-    const rows = await sup.query('listSessions', { offset: 0, limit: 1 })
-    if (!rows.length) throw new Error('refusing to reclaim: no imported sessions in the database')
-    const res = reclaimLegacyLogs({
-      onFailure: (p, reason) => logWarn(`[migrate] reclaim failed for ${p}: ${reason}`),
-    })
-    logInfo(`[migrate] reclaimed ${res.deletedFolders} folders (${res.reclaimedBytes} bytes), ${res.failedFolders.length} failed`)
-    return res
+    // Reentrancy guard mirrors the RUN guard. A permanent-delete double-click would
+    // otherwise start a second pass that races the first: it runs against an
+    // already-emptied tree and overwrites the real reclaim tally with a bogus
+    // near-zero result. Refuse the second call outright.
+    if (reclaimRunning) throw new Error('reclaim already in progress')
+    reclaimRunning = true
+    try {
+      // A1 [SAFETY-CRITICAL] belt-and-suspenders: never delete unless the DB actually
+      // holds imported sessions. (The frozen + completion-marker(+logsDir) gate lives
+      // in reclaimLegacyLogs.) This defends the case where an import wrote nothing.
+      const sup = getLogSupervisor()
+      if (!sup) throw new Error('refusing to reclaim: logging worker not available')
+      const rows = await sup.query('listSessions', { offset: 0, limit: 1 })
+      if (!rows.length) throw new Error('refusing to reclaim: no imported sessions in the database')
+      const res = reclaimLegacyLogs({
+        onFailure: (p, reason) => logWarn(`[migrate] reclaim failed for ${p}: ${reason}`),
+      })
+      logInfo(`[migrate] reclaimed ${res.deletedFolders} folders (${res.reclaimedBytes} bytes), ${res.failedFolders.length} failed`)
+      return res
+    } finally {
+      reclaimRunning = false
+    }
   })
 }

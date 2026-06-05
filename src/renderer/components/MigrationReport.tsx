@@ -25,6 +25,10 @@ interface Props {
  */
 export function MigrationReport({ report, reclaiming, onReclaim, onDismiss }: Props) {
   const [confirming, setConfirming] = useState(false)
+  // A failed import means that session's data did NOT reach the DB; reclaim is
+  // blocked server-side (no completion marker is written), so we must not offer the
+  // permanent-delete action here. Re-running the migration is the path forward.
+  const hasFailures = report.failedSessions > 0
 
   const row = (label: string, value: string) => (
     <div className="flex items-center justify-between py-1 text-sm">
@@ -38,11 +42,21 @@ export function MigrationReport({ report, reclaiming, onReclaim, onDismiss }: Pr
       className="rounded-xl p-4 transition-all duration-200"
       style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
     >
-      <h3 className="text-sm font-semibold text-text mb-2">Migration complete</h3>
+      <h3 className="text-sm font-semibold text-text mb-2">
+        {hasFailures ? 'Migration finished with errors' : 'Migration complete'}
+      </h3>
 
       {row('Sessions imported', `${report.importedSessions.toLocaleString()} of ${report.totalSessions.toLocaleString()}`)}
       {row('Events imported', report.importedEvents.toLocaleString())}
       {row('Sessions skipped (already present)', report.skippedSessions.toLocaleString())}
+      {hasFailures && (
+        <div className="flex items-center justify-between py-1 text-sm">
+          <span style={{ color: 'var(--color-red, #f38ba8)' }}>Sessions failed to import</span>
+          <span className="tabular-nums" style={{ color: 'var(--color-red, #f38ba8)' }}>
+            {report.failedSessions.toLocaleString()}
+          </span>
+        </div>
+      )}
       {row('Database size', `${fmtBytes(report.dbBytesBefore)} -> ${fmtBytes(report.dbBytesAfter)}`)}
 
       <div
@@ -52,6 +66,7 @@ export function MigrationReport({ report, reclaiming, onReclaim, onDismiss }: Pr
         Detected {report.detectedFolders.toLocaleString()} session folder(s):{' '}
         {report.importedSessions.toLocaleString()} imported,{' '}
         {report.skippedSessions.toLocaleString()} already in the database,{' '}
+        {hasFailures ? `${report.failedSessions.toLocaleString()} failed to import, ` : ''}
         {report.foldedPartnerDirs.toLocaleString()} partner terminal(s) merged into their base session,{' '}
         {report.noEventDirs.toLocaleString()} with no readable events.
       </div>
@@ -75,9 +90,14 @@ export function MigrationReport({ report, reclaiming, onReclaim, onDismiss }: Pr
         </div>
       )}
 
-      <div className="mt-4 flex items-center justify-end gap-2">
-        {!confirming ? (
-          <>
+      {hasFailures ? (
+        <>
+          <p className="mt-3 text-[11px] leading-relaxed" style={{ color: 'var(--color-red, #f38ba8)' }}>
+            {report.failedSessions.toLocaleString()} session(s) could not be imported, so the original log
+            files were kept and cannot be reclaimed yet. Re-run the migration to finish importing them;
+            once it completes with no failures you can reclaim the space.
+          </p>
+          <div className="mt-3 flex items-center justify-end">
             <button
               onClick={onDismiss}
               className="px-3 py-1.5 rounded-lg text-sm text-subtext0 transition-colors hover:text-text"
@@ -85,39 +105,55 @@ export function MigrationReport({ report, reclaiming, onReclaim, onDismiss }: Pr
             >
               Close
             </button>
-            <button
-              onClick={() => setConfirming(true)}
-              className="px-3 py-1.5 rounded-lg text-sm transition-colors"
-              style={{ background: 'var(--surface-overlay, var(--color-surface1))', color: 'var(--text-secondary)' }}
-            >
-              Reclaim space
-            </button>
-          </>
-        ) : (
-          <>
-            <button
-              onClick={() => setConfirming(false)}
-              className="px-3 py-1.5 rounded-lg text-sm text-subtext0 transition-colors hover:text-text"
-              style={{ background: 'var(--surface-overlay, var(--color-surface1))' }}
-            >
-              Cancel
-            </button>
-            <button
-              onClick={onReclaim}
-              disabled={reclaiming}
-              className="px-3 py-1.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-60"
-              style={{ background: 'var(--color-red, #f38ba8)', color: 'var(--color-crust)' }}
-            >
-              {reclaiming ? 'Deleting...' : 'Delete old logs permanently'}
-            </button>
-          </>
-        )}
-      </div>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="mt-4 flex items-center justify-end gap-2">
+            {!confirming ? (
+              <>
+                <button
+                  onClick={onDismiss}
+                  className="px-3 py-1.5 rounded-lg text-sm text-subtext0 transition-colors hover:text-text"
+                  style={{ background: 'var(--surface-overlay, var(--color-surface1))' }}
+                >
+                  Close
+                </button>
+                <button
+                  onClick={() => setConfirming(true)}
+                  className="px-3 py-1.5 rounded-lg text-sm transition-colors"
+                  style={{ background: 'var(--surface-overlay, var(--color-surface1))', color: 'var(--text-secondary)' }}
+                >
+                  Reclaim space
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  onClick={() => setConfirming(false)}
+                  className="px-3 py-1.5 rounded-lg text-sm text-subtext0 transition-colors hover:text-text"
+                  style={{ background: 'var(--surface-overlay, var(--color-surface1))' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={onReclaim}
+                  disabled={reclaiming}
+                  className="px-3 py-1.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-60"
+                  style={{ background: 'var(--color-red, #f38ba8)', color: 'var(--color-crust)' }}
+                >
+                  {reclaiming ? 'Deleting...' : 'Delete old logs permanently'}
+                </button>
+              </>
+            )}
+          </div>
 
-      {confirming && (
-        <p className="mt-2 text-[11px] text-right" style={{ color: 'var(--color-red, #f38ba8)' }}>
-          This permanently deletes the old log files. It cannot be undone.
-        </p>
+          {confirming && (
+            <p className="mt-2 text-[11px] text-right" style={{ color: 'var(--color-red, #f38ba8)' }}>
+              This permanently deletes the old log files. It cannot be undone.
+            </p>
+          )}
+        </>
       )}
     </div>
   )
