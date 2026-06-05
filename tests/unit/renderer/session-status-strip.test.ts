@@ -6,7 +6,7 @@
  *
  * Ports the still-relevant intent of the old BottomBar middle/right tests:
  *  - telemetry honours statusLine show* flags (model, context %, tokens, ...)
- *  - Mode / Model / Compact / Restart controls present + write to the right pty
+ *  - Model / Compact / Restart controls present + write to the right pty
  *  - provider gating (codex hides the Claude controls)
  *  - Model pill shows the real short name, never a bare "default"
  *  - rate-limit + codex-review rows render
@@ -23,6 +23,8 @@ import { act } from 'react'
 
 const DEFAULT_STATUS_LINE = {
   showModel: true,
+  showEffort: true,
+  showAccount: true,
   showTokens: true,
   showContextBar: true,
   showCost: true,
@@ -128,9 +130,13 @@ function buttonByText(text: string): HTMLButtonElement | undefined {
 }
 
 describe('SessionStatusStrip -- telemetry', () => {
-  it('renders model name and context % honouring statusLine flags', async () => {
+  it('renders the model (on the Model pill) and context %, deduped from telemetry', async () => {
     await render(claudeSession.id)
-    expect(container.textContent).toContain('sonnet')
+    // Bug 6: for Claude the model lives ONCE on the interactive Model pill, not
+    // also as read-only telemetry. shortModelName('sonnet') -> 'Sonnet'.
+    expect(buttonByTitle('Model')!.textContent).toContain('Sonnet')
+    // And it is NOT duplicated in the telemetry zone (no second 'Sonnet'/'sonnet').
+    expect((container.textContent ?? '').match(/sonnet/gi)?.length ?? 0).toBe(1)
     expect(container.textContent).toContain('42%')
   })
 
@@ -183,9 +189,9 @@ describe('SessionStatusStrip -- telemetry', () => {
 })
 
 describe('SessionStatusStrip -- controls (Claude)', () => {
-  it('renders Mode / Model / Compact / Restart controls', async () => {
+  it('renders Model / Compact / Restart controls (Mode button removed)', async () => {
     await render(claudeSession.id)
-    expect(buttonByTitle('Permission mode')).toBeTruthy()
+    expect(buttonByTitle('Permission mode')).toBeFalsy()
     expect(buttonByTitle('Model')).toBeTruthy()
     expect(buttonByTitle('Compact the conversation')).toBeTruthy()
     expect(buttonByTitle('Restart session')).toBeTruthy()
@@ -208,17 +214,6 @@ describe('SessionStatusStrip -- controls (Claude)', () => {
     expect(ptyWrite).toHaveBeenCalledWith(claudeSession.id, '/model opus\n')
   })
 
-  it('selecting a mode writes /permission-mode <value>', async () => {
-    await render(claudeSession.id)
-    act(() => { buttonByTitle('Permission mode')!.click() })
-    const opt = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
-      (b) => (b.textContent ?? '').includes('Ask permissions'),
-    )
-    expect(opt).toBeTruthy()
-    act(() => { opt!.click() })
-    expect(ptyWrite).toHaveBeenCalledWith(claudeSession.id, expect.stringMatching(/^\/permission-mode .+\n$/))
-  })
-
   it('Restart invokes the restart hook', async () => {
     await render(claudeSession.id)
     act(() => { buttonByTitle('Restart session')!.click() })
@@ -235,6 +230,27 @@ describe('SessionStatusStrip -- controls (Claude)', () => {
     expect(modelBtn).toBeTruthy()
     expect(modelBtn!.textContent).toBe('model')
     expect(modelBtn!.textContent).not.toContain('default')
+  })
+})
+
+describe('SessionStatusStrip -- account chip', () => {
+  it('renders the account name + dot when accountEmail is set', async () => {
+    sessionState = {
+      activeSessionId: claudeSession.id,
+      sessions: [{ ...claudeSession, accountEmail: 'nicholas@example.com', accountColour: 'mauve' }],
+    }
+    await render(claudeSession.id)
+    const chip = container.querySelector('[data-testid="account-chip"]') as HTMLElement | null
+    expect(chip).toBeTruthy()
+    // No profile/alias resolved in this test, so the visible name is the email,
+    // and the full email lives in the title tooltip.
+    expect(chip!.textContent).toContain('nicholas@example.com')
+    expect(chip!.getAttribute('title')).toBe('nicholas@example.com')
+  })
+
+  it('renders no account chip when accountEmail is absent', async () => {
+    await render(claudeSession.id)
+    expect(container.querySelector('[data-testid="account-chip"]')).toBeNull()
   })
 })
 

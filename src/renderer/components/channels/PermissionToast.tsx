@@ -15,7 +15,7 @@ export function PermissionToast({ p, onGoToSession, onIgnore }: Props) {
   const hasDetail = p.tool !== 'Permission'
   return (
     <div role="alertdialog" aria-label={`Permission needed in ${p.sessionLabel}`}
-      className="w-[360px] rounded-md bg-surface0 border border-surface1 shadow-2xl overflow-hidden channels-toast"
+      className="w-full rounded-md bg-surface0 border border-surface1 shadow-2xl overflow-hidden channels-toast"
       style={{ boxShadow: `inset 4px 0 0 ${rail}` }}>
       {p.highRisk && (
         <div className="bg-red/20 text-red text-[10px] font-semibold px-3 py-1">! destructive -- {p.highRisk.matched}</div>

@@ -62,8 +62,8 @@ export default function PageFrame({
   children,
 }: Props) {
   return (
-    <div className="flex-1 flex flex-col bg-base overflow-hidden min-h-0">
-      <div className="flex items-center gap-2 px-3 py-1.5 border-b border-surface0 bg-crust shrink-0">
+    <div className="flex-1 flex flex-col overflow-hidden min-h-0" style={{ background: 'var(--surface-stage)' }}>
+      <div className="flex items-center gap-2 px-3 py-1.5 shrink-0" style={{ background: 'var(--surface-panel)', borderBottom: '1px solid var(--border-subtle)' }}>
         {icon && (
           <span className={`${ACCENT_CLASS[iconAccent]} shrink-0 flex items-center`}>{icon}</span>
         )}
@@ -85,7 +85,7 @@ export default function PageFrame({
       </div>
       {leftRail ? (
         <div className="flex-1 flex flex-row min-h-0">
-          <div className="w-44 shrink-0 flex flex-col border-r border-surface0 bg-mantle/40 overflow-y-auto">
+          <div className="w-44 shrink-0 flex flex-col overflow-y-auto" style={{ background: 'var(--surface-panel)', borderRight: '1px solid var(--border-subtle)' }}>
             {leftRail}
           </div>
           <div className={`flex-1 min-w-0 ${scrollable ? 'overflow-y-auto' : 'flex flex-col min-h-0'}`}>

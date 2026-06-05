@@ -8,13 +8,15 @@ import CommandBar from './components/CommandBar'
 import SessionStatusStrip from './components/SessionStatusStrip'
 import WebviewPane from './components/WebviewPane'
 import ExcalidrawPane from './components/ExcalidrawPane'
+import LogsPane from './components/LogsPane'
 import { useWebviewStore } from './stores/webviewStore'
 import { useExcalidrawStore } from './stores/excalidrawStore'
+import { useLogsStore } from './stores/useLogsStore'
 import BottomBar from './components/BottomBar'
 import UsageDashboard from './components/UsageDashboard'
 import ProjectBrowser from './components/ProjectBrowser'
 import SettingsPage, { SETTINGS_TAB_IDS, type SettingsTab } from './components/SettingsPage'
-import LogViewer from './components/LogViewer'
+import GlobalLogsView from './components/GlobalLogsView'
 import InsightsPage from './components/InsightsPage'
 import CloudAgentsPage from './components/CloudAgentsPage'
 import TokenomicsPage from './components/TokenomicsPage'
@@ -22,6 +24,9 @@ import ConductorMcpPage from './components/ConductorMcpPage'
 import MemoryPage from './components/MemoryPage'
 import SetupDialog from './components/SetupDialog'
 import WhatsNewModal, { shouldShowWhatsNew, markWhatsNewSeen } from './components/WhatsNewModal'
+import AccountLaunchGate from './components/AccountLaunchGate'
+import NewAccountPrompt from './components/NewAccountPrompt'
+import { useAddAccount } from './hooks/useAddAccount'
 import TrainingWalkthrough, { shouldShowTraining, isFirstInstall } from './components/TrainingWalkthrough'
 import GuidedConfigView from './components/GuidedConfigView'
 import TipModal from './components/TipModal'
@@ -34,6 +39,7 @@ import { useCommandStore } from './stores/commandStore'
 import { useMagicButtonStore } from './stores/magicButtonStore'
 import { useAppMetaStore } from './stores/appMetaStore'
 import { useSettingsStore } from './stores/settingsStore'
+import { useAccountProfilesStore } from './stores/accountProfilesStore'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 import { useThemeController } from './hooks/useThemeController'
 import { useLaunchConfig } from './hooks/useLaunchConfig'
@@ -48,6 +54,8 @@ import { setupConductorMcpListener, useConductorMcpStore } from './stores/conduc
 import { setupGitHubListener, useGitHubStore } from './stores/githubStore'
 import { setupChannelListeners } from './stores/channelStore'
 import PermissionToastStack from './components/channels/PermissionToastStack'
+import LoggingConsentPrompt from './components/LoggingConsentPrompt'
+import LogMigrationPrompt from './components/LogMigrationPrompt'
 // Side-effect import: registers window.__captureHarness for the
 // capture-training script. Renderer-local store mutations only, no
 // IPC surface widening (see capture-harness.ts header).
@@ -98,6 +106,8 @@ export default function App() {
   const [showTraining, setShowTraining] = useState(false)
   const [showTrainingAll, setShowTrainingAll] = useState(false)
   const [showGitHubOnboarding, setShowGitHubOnboarding] = useState(false)
+  const [newAccountDetected, setNewAccountDetected] = useState<{ sessionId: string; profileId: string; email: string } | null>(null)
+  const addAccount = useAddAccount()
   // Deep-link the Settings page to a specific tab the next time it opens.
   // Set by the onboarding "Set up now" button and the auto-detect banner
   // Accept/Edit actions; consumed once by SettingsPage's initialTab prop.
@@ -141,10 +151,12 @@ export default function App() {
   // Sidebar receives onShowFirstRun={() => setShowGuidedConfig(true)}, so we use the
   // same setter here to open the real create dialog from the stage empty state.
   const onCreateConfigFromStage = () => setShowGuidedConfig(true)
+  const loggingConsentSeen = useSettingsStore((s) => s.settings.loggingConsentSeen)
   const activeSessionId = useSessionStore((s) => s.activeSessionId)
   const sessions = useSessionStore((s) => s.sessions)
   const webviewBySession = useWebviewStore((s) => s.bySessionId)
   const excalidrawBySession = useExcalidrawStore((s) => s.bySessionId)
+  const logsBySession = useLogsStore((s) => s.bySessionId)
   const activeSession = sessions.find((s) => s.id === activeSessionId)
   const hasRestoredRef = useRef(false)
 
@@ -163,6 +175,7 @@ export default function App() {
   useEffect(() => {
     if (sessions.length === 0) return
     useExcalidrawStore.getState().reconcile(sessions.map((s) => s.id))
+    useLogsStore.getState().reconcile(sessions.map((s) => s.id))
   }, [sessions])
 
   // Global keyboard shortcuts
@@ -211,6 +224,13 @@ export default function App() {
       if (document.querySelector('[role="dialog"][aria-modal="true"]')) return
       useWebviewStore.getState().setOpen(sessionId, false)
     })
+  }, [])
+
+  // Subscribe to main-process notification that a /login produced a previously
+  // unseen account. The prompt lets the user name + save it as a profile.
+  useEffect(() => {
+    const off = window.electronAPI.accountProfiles.onAccountNewDetected?.((d) => setNewAccountDetected(d))
+    return () => off?.()
   }, [])
 
   const togglePartner = (sessionId: string) => {
@@ -295,6 +315,7 @@ export default function App() {
       useConductorMcpStore.getState().loadConfig()
       useConductorMcpStore.getState().fetchStatus()
       useCodexAccountStore.getState().refresh()
+      useAccountProfilesStore.getState().hydrate()
 
       const magicSettings = useMagicButtonStore.getState().settings
       if (magicSettings.autoDeleteDays != null && magicSettings.autoDeleteDays > 0) {
@@ -307,7 +328,10 @@ export default function App() {
         setTimeout(() => setShowMachineNamePrompt(true), 800)
       }
 
+      const gateShown = false
+
       setTimeout(() => {
+        if (gateShown) return
         if (isFirstInstall()) {
           setShowTraining(true)
         } else {
@@ -427,8 +451,6 @@ export default function App() {
           sshConfig: saved.sshConfig,
           legacyVersion: claude?.legacyVersion ?? saved.legacyVersion,
           agentIds: claude?.agentIds ?? saved.agentIds,
-          flickerFree: claude?.flickerFree ?? saved.flickerFree,
-          powershellTool: claude?.powershellTool ?? saved.powershellTool,
           effortLevel: claude?.effortLevel ?? saved.effortLevel,
           disableAutoMemory: claude?.disableAutoMemory ?? saved.disableAutoMemory,
           enableCodexReview: claude?.enableCodexReview,
@@ -437,6 +459,7 @@ export default function App() {
           status: 'idle' as const,
           createdAt: Date.now(),
           provider: saved.provider,
+          profileId: saved.profileId,
           codexOptions: saved.codexOptions,
         }
       })
@@ -527,8 +550,8 @@ export default function App() {
 
   // Render non-session views (shown on top of sessions)
   const renderOverlayView = () => {
-    if (view === 'logs') return <LogViewer />
-    if (view === 'settings') return <SettingsPage initialTab={pendingSettingsTab ?? undefined} />
+    if (view === 'logs') return <GlobalLogsView />
+    if (view === 'settings') return <SettingsPage initialTab={pendingSettingsTab ?? undefined} onNavigateToSessions={() => setView('sessions')} />
     if (view === 'insights') return <InsightsPage />
     if (view === 'cloud-agents') return <CloudAgentsPage />
     if (view === 'tokenomics') return <TokenomicsPage />
@@ -643,9 +666,10 @@ export default function App() {
               const partnerPtyId = session.id + '-partner'
               const isShowingWebview = !!webviewBySession[session.id]?.isOpen
               const isShowingExcalidraw = !!excalidrawBySession[session.id]?.isOpen
-              // Priority: webview > excalidraw > partner > claude. Each
-              // alternative pane replaces the underlying terminal panes.
-              const altPaneShowing = isShowingWebview || isShowingExcalidraw
+              const isShowingLogs = !!logsBySession[session.id]?.isOpen
+              // Priority: logs > webview > excalidraw > partner > claude. Logs
+              // sits TOP so an open log view isn't suppressed by Draw/Web/Partner.
+              const altPaneShowing = isShowingLogs || isShowingWebview || isShowingExcalidraw
               return (
                 <div
                   key={session.id + '-' + session.createdAt}
@@ -699,10 +723,13 @@ export default function App() {
                       />
                     </div>
                   )}
-                  {/* Webview takes precedence over Excalidraw if both are
-                      somehow open (the toggle buttons are independent so
-                      the user CAN have both flags true). Render only one. */}
-                  {isShowingWebview ? (
+                  {/* Alt-pane priority: Logs > Webview > Excalidraw. Each
+                      alternative pane replaces the underlying terminal panes.
+                      Toggle buttons are independent so multiple flags can be
+                      true; render only the highest-priority one. */}
+                  {isShowingLogs ? (
+                    <LogsPane sessionId={session.id} />
+                  ) : isShowingWebview ? (
                     <WebviewPane sessionId={session.id} isActive={session.id === activeSessionId} />
                   ) : isShowingExcalidraw ? (
                     <ExcalidrawPane sessionId={session.id} />
@@ -803,6 +830,25 @@ export default function App() {
             }}
           />
         )}
+
+        {newAccountDetected && (
+          <NewAccountPrompt
+            email={newAccountDetected.email}
+            onDismiss={() => setNewAccountDetected(null)}
+            onAdd={async (name) => {
+              const np = await window.electronAPI.accountProfiles.captureDetected(newAccountDetected.sessionId, name || undefined)
+              await useAccountProfilesStore.getState().hydrate()
+              if (np) useSessionStore.getState().updateSession(newAccountDetected.sessionId, { profileId: np.id })
+              setNewAccountDetected(null)
+            }}
+          />
+        )}
+
+        {configLoaded && !loggingConsentSeen && (
+          <LoggingConsentPrompt />
+        )}
+
+        {configLoaded && loggingConsentSeen && <LogMigrationPrompt />}
 
         {showMachineNamePrompt && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
@@ -957,6 +1003,10 @@ export default function App() {
             mode={showTrainingAll ? 'help' : 'first-run'}
           />
         )}
+        {/* Pre-spawn account launch gate: asks which account a session runs
+            under on its first spawn (multi-account only). App-root so it
+            overlays every view. */}
+        <AccountLaunchGate />
       </div>
     </ErrorBoundary>
   )

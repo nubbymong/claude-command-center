@@ -38,6 +38,7 @@ export function buildSessionState(): SessionState {
     // provider='codex' + codexOptions; Claude sessions stay on the legacy
     // top-level fields packed into claudeOptions below.
     provider: s.provider ?? 'claude',
+    profileId: s.profileId,
     claudeOptions: (s.provider ?? 'claude') === 'claude' ? {
       model: s.model || undefined,
       legacyVersion: s.legacyVersion,
@@ -45,8 +46,6 @@ export function buildSessionState(): SessionState {
       effortLevel: s.effortLevel,
       disableAutoMemory: s.disableAutoMemory,
       enableCodexReview: s.enableCodexReview ? true : undefined,
-      flickerFree: s.flickerFree,
-      powershellTool: s.powershellTool,
     } : undefined,
     codexOptions: s.codexOptions,
   }))
@@ -54,5 +53,27 @@ export function buildSessionState(): SessionState {
     sessions,
     activeSessionId: state.activeSessionId,
     savedAt: Date.now(),
+  }
+}
+
+/**
+ * Persist a session's chosen account (profileId) to disk IMMEDIATELY.
+ *
+ * The pre-spawn account gate and the mid-session switch both pin profileId in
+ * the in-memory store, but session-state.json was previously only written on a
+ * graceful close. A CRASH therefore dropped the per-session account, so the next
+ * launch re-defaulted the gate to the primary profile instead of the account the
+ * user last used for that session (the exact symptom seen after the OOM crash).
+ * Flushing eagerly here makes the choice crash-durable: on restore the gate
+ * pre-selects the persisted session.profileId. updateSession runs synchronously
+ * BEFORE the await, so callers that immediately read the store / respawn still
+ * see the new id; the disk flush is best-effort and never blocks the spawn.
+ */
+export async function persistLastUsedAccount(sessionId: string, profileId: string | undefined): Promise<void> {
+  useSessionStore.getState().updateSession(sessionId, { profileId })
+  try {
+    await window.electronAPI.session.save(buildSessionState())
+  } catch {
+    /* best-effort: the choice still lives in the store for this run */
   }
 }

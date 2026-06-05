@@ -8,8 +8,10 @@ import * as os from 'os'
 import * as fs from 'fs'
 import * as path from 'path'
 import { readConfig, writeConfig } from './config-manager'
-import { logInfo, logError } from './debug-logger'
+import { logInfo, logWarn, logError } from './debug-logger'
 import { resolveVersionBinary, isVersionInstalled, installVersion } from './legacy-version-manager'
+import { getProfileConfigDir, getPrimaryProfileId, setupProfileLinks, listProfiles } from './account-profiles'
+import { withProfileHome } from './pty-manager'
 
 export interface CloudAgentData {
   id: string
@@ -20,12 +22,51 @@ export interface CloudAgentData {
   updatedAt: number
   projectPath: string
   configId?: string
+  /** Account profile this agent ran under (multi-account). Undefined = default/global account. */
+  profileId?: string
+  /** Resolved account email at dispatch time. Drives the card label + account filter. */
+  accountEmail?: string
   output: string
   cost?: number
   duration?: number
   tokenUsage?: { inputTokens: number; outputTokens: number }
   error?: string
   legacyVersion?: { enabled: boolean; version: string }
+}
+
+/**
+ * Resolve the per-account spawn environment for a headless agent. Mirrors the
+ * shell-only path in pty-manager: run under the profile's fake HOME so the
+ * account identity (~/.claude.json + ~/.claude) is private to that account.
+ * Falls back to the captured primary profile so an agent never silently runs on
+ * the bare global login when multi-account is active; returns the bare env
+ * (behaviour unchanged) for single-account users with no profiles.
+ */
+function resolveAgentEnv(profileId: string | undefined): {
+  env: Record<string, string>
+  resolvedProfileId: string | null
+  accountEmail?: string
+} {
+  const baseEnv: Record<string, string> = {}
+  for (const [k, v] of Object.entries(process.env)) {
+    if (v !== undefined) baseEnv[k] = v
+  }
+
+  let resolvedProfileId: string | null = null
+  if (profileId && fs.existsSync(getProfileConfigDir(profileId))) {
+    resolvedProfileId = profileId
+  } else {
+    if (profileId) logWarn(`[cloud-agent] profile dir missing for profileId=${profileId}; falling back to primary/default`)
+    const primary = getPrimaryProfileId()
+    if (primary && fs.existsSync(getProfileConfigDir(primary))) resolvedProfileId = primary
+  }
+
+  if (!resolvedProfileId) return { env: baseEnv, resolvedProfileId: null }
+
+  try { setupProfileLinks(resolvedProfileId) } catch (e) { logWarn(`[cloud-agent] home refresh failed for ${resolvedProfileId}: ${e}`) }
+  const home = getProfileConfigDir(resolvedProfileId)
+  const accountEmail = listProfiles().find(p => p.id === resolvedProfileId)?.accountEmail || undefined
+  return { env: withProfileHome(baseEnv, home), resolvedProfileId, accountEmail }
 }
 
 const MAX_OUTPUT_BYTES = 512 * 1024 // 500KB cap per agent
@@ -90,8 +131,14 @@ export async function dispatchAgent(params: {
   description: string
   projectPath: string
   configId?: string
+  profileId?: string
   legacyVersion?: { enabled: boolean; version: string }
 }): Promise<CloudAgentData> {
+  // Resolve the per-account isolated environment up front so the agent record
+  // is stamped with the account it actually ran under (drives the card label,
+  // the account filter, and a consistent retry).
+  const { env: spawnEnvVars, resolvedProfileId, accountEmail } = resolveAgentEnv(params.profileId)
+
   const agent: CloudAgentData = {
     id: generateId(),
     name: params.name,
@@ -101,6 +148,8 @@ export async function dispatchAgent(params: {
     updatedAt: Date.now(),
     projectPath: params.projectPath,
     configId: params.configId,
+    profileId: resolvedProfileId || undefined,
+    accountEmail,
     output: '',
     legacyVersion: params.legacyVersion,
   }
@@ -147,10 +196,11 @@ export async function dispatchAgent(params: {
     shell: true,
     windowsHide: true,
     stdio: ['ignore', 'pipe', 'pipe'],
+    env: spawnEnvVars,
   })
 
   activeProcesses.set(agent.id, child)
-  logInfo(`[cloud-agent] Dispatched agent ${agent.id} (${agent.name}) pid=${child.pid}`)
+  logInfo(`[cloud-agent] Dispatched agent ${agent.id} (${agent.name}) pid=${child.pid} profile=${resolvedProfileId ?? '(default/global)'} account=${accountEmail ?? '(none)'}`)
   logInfo(`[cloud-agent] Shell cmd: ${shellCmd}`)
   logInfo(`[cloud-agent] CWD: ${params.projectPath}, prompt length: ${params.description.length}`)
 
@@ -316,6 +366,7 @@ export async function retryAgent(id: string): Promise<CloudAgentData | null> {
     description: agent.description,
     projectPath: agent.projectPath,
     configId: agent.configId,
+    profileId: agent.profileId,
     legacyVersion: agent.legacyVersion,
   })
 }

@@ -4,6 +4,7 @@ import type { IdentityColorKey } from '../../shared/identity-colors'
 
 export type SessionStatus = 'idle' | 'working' | 'complete' | 'error' | 'disconnected'
 export type SessionType = 'local' | 'ssh'
+export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode'
 
 export interface SSHConfig {
   host: string
@@ -68,9 +69,18 @@ export interface Session {
     version: string
   }
   agentIds?: string[]                    // Agent template IDs for this session
-  flickerFree?: boolean                  // Enable flicker-free alternate screen rendering
-  powershellTool?: boolean               // Enable native PowerShell tool
-  effortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode'
+  effortLevel?: EffortLevel
+  /** True once a LIVE effort tick (statusline effort.level or the hooks effort
+   *  gateway) has arrived for THIS session. The sidebar card gates its EffortPill
+   *  on this so a spawn-time / persisted / default-guess effortLevel never shows
+   *  before real data confirms it. Never persisted -- a restored session starts
+   *  with this unset and shows no pill until the first live tick. */
+  effortLive?: boolean
+  /** LIVE Fast Mode flag from the statusline payload (fast_mode). Set ONLY by the
+   *  statusline subscription, never at spawn and never persisted, so the card's ⚡
+   *  bolt shows iff a real tick reports fast_mode:true. Distinct from the removed
+   *  config-time ClaudeOptions.fastMode toggle. */
+  fastMode?: boolean
   disableAutoMemory?: boolean
   /** P6: Claude opts in to the codex_review MCP tool for this session.
    *  Mirrors disableAutoMemory in shape (sparse boolean) and lifecycle. */
@@ -79,6 +89,11 @@ export interface Session {
   // Provider discriminator + Codex sub-options (Claude options live in the
   // top-level legacy fields above for now; Codex spawns need this struct).
   provider?: ProviderId
+  /** v1.5.19: account profile this session runs under (CLAUDE_CONFIG_DIR). */
+  profileId?: string
+  /** True only for an in-progress add-account login shell; drives the /login
+   *  guidance banner. Cleared once the account is detected. */
+  needsLogin?: boolean
   codexOptions?: CodexOptions
   // Optional per-session GitHub integration state. Hydrated from SavedSession
   // on restore so the panel can gate on the per-session `enabled` flag instead

@@ -36,6 +36,39 @@ describe('HooksGateway.start/stop', () => {
     expect(r.status).toBe(403)
   })
 
+  it('uses parsedBody when provided and does NOT re-parse the body string (perf dedup)', async () => {
+    // The live HTTP path parses the body once and passes the object as
+    // parsedBody so ingest never re-parses. Prove it: garbage body string but a
+    // valid parsedBody => still 200 + emitted (body string is ignored).
+    const emit = vi.fn()
+    gw = new HooksGateway({ emit, defaultPort: 0 })
+    await gw.start()
+    const secret = gw.registerSession('sid-a')
+    const r = await gw._handleRequestForTest({
+      remoteAddress: '127.0.0.1',
+      url: '/hook/sid-a',
+      headers: { 'x-ccc-hook-token': secret },
+      body: 'not-json-at-all',
+      parsedBody: { event: 'PreToolUse', tool_name: 'Bash' },
+    })
+    expect(r.status).toBe(200)
+    expect(emit).toHaveBeenCalled()
+  })
+
+  it('treats parsedBody=null as invalid JSON (400) without parsing body', async () => {
+    gw = new HooksGateway({ emit: vi.fn(), defaultPort: 0 })
+    await gw.start()
+    const secret = gw.registerSession('sid-a')
+    const r = await gw._handleRequestForTest({
+      remoteAddress: '127.0.0.1',
+      url: '/hook/sid-a',
+      headers: { 'x-ccc-hook-token': secret },
+      body: '{"event":"PreToolUse"}', // valid, but parsedBody=null wins
+      parsedBody: null,
+    })
+    expect(r.status).toBe(400)
+  })
+
   it('accepts IPv6 loopback :: and :: ffff:127.0.0.1', async () => {
     gw = new HooksGateway({ emit: vi.fn(), defaultPort: 0 })
     await gw.start()

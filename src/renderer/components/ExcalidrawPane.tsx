@@ -32,6 +32,15 @@ export default function ExcalidrawPane({ sessionId }: Props) {
   const deleteDrawing = useExcalidrawStore((s) => s.deleteDrawing)
   const updateScene = useExcalidrawStore((s) => s.updateScene)
   const resolvedTheme = useResolvedTheme()
+  // Excalidraw paints a real <canvas> and, in its DARK theme, applies an inversion
+  // filter (invert + hue-rotate) to EVERYTHING on the canvas -- viewBackgroundColor
+  // included. Feeding it the dark surface colour (the previous bug) therefore got
+  // inverted into a light-grey board on the dark app. So we always feed the LIGHT
+  // surface "paper" colour: in light mode Excalidraw shows it as-is; in dark mode
+  // its theme inverts it back to ~the dark surface, blending with the UX uplift.
+  // (theme={resolvedTheme} on <Excalidraw/> drives that inversion.) Keep this value
+  // in sync with --surface-stage under [data-theme="light"] in styles.css.
+  const canvasBg = '#e8ecf3'
 
   const apiRef = useRef<ExcalidrawImperativeAPI | null>(null)
   const saveTimerRef = useRef<number | null>(null)
@@ -57,11 +66,18 @@ export default function ExcalidrawPane({ sessionId }: Props) {
   }, [state])
 
   const initialData = useMemo(() => {
-    if (!activeDrawing?.scene) return undefined
-    // Excalidraw expects { elements, appState, files } — accept the
-    // serialised shape we stored and pass it through.
-    return activeDrawing.scene as never
-  }, [activeDrawing])
+    // Excalidraw expects { elements, appState, files }. Pass the serialised scene
+    // through (or start empty), but always default the board background to the
+    // themed surface so a fresh scratchpad isn't a white rectangle on dark.
+    const scene = (activeDrawing?.scene ?? {}) as { appState?: Record<string, unknown> }
+    return { ...scene, appState: { ...(scene.appState ?? {}), viewBackgroundColor: canvasBg } } as never
+  }, [activeDrawing, canvasBg])
+
+  // initialData only applies on mount / drawing switch; keep the OPEN board's
+  // background in sync when the app theme changes live.
+  useEffect(() => {
+    apiRef.current?.updateScene({ appState: { viewBackgroundColor: canvasBg } } as never)
+  }, [canvasBg])
 
   // Autosave handler. Excalidraw fires onChange on every micro-event
   // (pointer move while drawing, etc.) so we can't write to the store

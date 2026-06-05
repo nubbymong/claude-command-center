@@ -15,6 +15,97 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '1.5.30',
+    date: '2026-06-04',
+    highlights: 'Critical multi-account stability: upgrades no longer disrupt a running session memory, and your last-used account survives a crash.',
+    changes: [
+      { type: 'fix', description: 'Upgrades no longer disrupt session memory. A session left running across an app update could end up pointing at an old per-session home that the update had cleaned away, so on resume it looked like it had lost its memory. The update now keeps those old homes and re-points them at your shared memory store, so resuming or switching accounts across an update always reaches the same memory. No data was affected, your memory is shared as designed.' },
+      { type: 'fix', description: 'Your last-used account now survives a crash. The account you pick for a session is saved to disk immediately instead of only on a clean close, so after an unexpected shutdown a session still defaults to the account you last used for it.' },
+    ],
+  },
+  {
+    version: '1.5.29',
+    date: '2026-06-04',
+    highlights: 'Keeps your Claude login working in scripts outside the app, read each session effort and fast mode at a glance, with a tidier, more consistent dark and light theme, plus a new terminal-health view in the Conductor diagnostics.',
+    changes: [
+      { type: 'fix', description: 'Running the Claude CLI outside the app (e.g. claude -p in your own scripts) no longer breaks authentication. The app now keeps your real Claude login in lockstep with your main account, so a token refresh inside a session never leaves your outside scripts on a dead login. Only your main account\'s token is mirrored, and only when both sides are still that account.' },
+      { type: 'feature', description: 'Session cards now show a colour-coded effort pill (Low through Ultracode) in the top-right, tinted from green to red as effort rises, so you can read each session effort level at a glance without opening it.' },
+      { type: 'feature', description: 'Session cards now show a lightning bolt when a session is running in Fast Mode, so you can spot fast-mode sessions at a glance. It appears only while Fast Mode is actually on and clears the moment you turn it off.' },
+      { type: 'improvement', description: 'The effort pill now waits for live data before it appears, so a card no longer briefly shows a stale or default effort (for example XHIGH) before the real level loads. A restarted session stays calm until its new effort is known.' },
+      { type: 'improvement', description: 'Tidied the session cards by removing the small leading dot. It only showed grey when idle and duplicated the status pill already shown on the right.' },
+      { type: 'fix', description: 'Themed the Settings pages and the top and tab bars to match the rest of the app, removing the leftover near-black backgrounds and making dark and light mode consistent throughout. The window background now follows the theme instead of staying dark in light mode.' },
+      { type: 'feature', description: 'The Conductor diagnostics console gained a PTY integrity section with live terminal metrics per session (bytes received, resize events and width desyncs) to help track down terminal display glitches.' },
+    ],
+  },
+  {
+    version: '1.5.28',
+    date: '2026-06-02',
+    highlights: 'Per-account statusline stats, settable account colours, and the account follows a mid-session sign-in.',
+    changes: [
+      { type: 'fix', description: 'Each account now shows its own usage and rate limits in the statusline. Previously the usage numbers could briefly show another account figures.' },
+      { type: 'feature', description: 'Set a colour for each account in Settings that sticks, so you can tell your accounts apart at a glance.' },
+      { type: 'fix', description: 'When you sign in to a different account inside a session, the account name and colour now follow the new account.' },
+      { type: 'fix', description: 'Your captured main account now shows its email instead of a generic placeholder name.' },
+    ],
+  },
+  {
+    version: '1.5.27',
+    date: '2026-06-02',
+    highlights: 'Per-session account isolation, plus a safety backup of your Claude config taken before anything runs.',
+    changes: [
+      { type: 'fix', description: 'Two sessions running the same account are now fully isolated. Previously they shared one login on disk, so signing into a different account in one session changed the other and could overwrite the saved account. Each session now gets its own private home.' },
+      { type: 'feature', description: 'Safety backup: on first launch the app snapshots your existing Claude login and settings to a backup folder before the multi-account feature does anything, so your original login is always recoverable.' },
+    ],
+  },
+  {
+    version: '1.5.26',
+    date: '2026-06-02',
+    highlights: 'Multi-account is always on and clobber-proof: your accounts are protected and signing in never overwrites your main login.',
+    changes: [
+      { type: 'feature', description: 'No on/off switch any more. On first run your current Claude login is captured into a protected account, and every session runs under a saved account, so you are multi-account ready from the start.' },
+      { type: 'fix', description: 'Your main login can no longer be overwritten. A session never runs on the bare global login, so running /login in a session can no longer replace the account you are signed in with globally.' },
+      { type: 'feature', description: 'New account detection: run /login as a different account inside a session and CCC offers to add it as a separate named account, keeping your original account intact.' },
+      { type: 'improvement', description: 'The Accounts list shows every account the same way, with the captured original marked as primary (and never deletable).' },
+    ],
+  },
+  {
+    version: '1.5.25',
+    date: '2026-06-01',
+    highlights: 'Sessions now genuinely run under the account you choose, with no impact on your other tools.',
+    changes: [
+      { type: 'fix', description: 'Added accounts are now truly isolated. Previously only the credentials were separated, not the account identity, so a session could still run as the wrong account. Each added account now runs under its own private home, so the account you pick is the account Claude uses.' },
+      { type: 'improvement', description: 'Zero degradation to your other tools: each account home mirrors your real home, so git, ssh, npm and the rest behave exactly as before. Only the Claude account is private; your memory and history stay shared.' },
+      { type: 'improvement', description: 'Cleaner session cards: removed the redundant right-side dots. The account colour dot stays next to the account name.' },
+      { type: 'fix', description: 'One-time after this update: re-run /login once per added account so it re-establishes its isolated login.' },
+    ],
+  },
+  {
+    version: '1.5.23',
+    date: '2026-06-01',
+    highlights: 'Pick the account a session runs under when it starts, and a clearer Accounts list.',
+    changes: [
+      { type: 'improvement', description: 'Account is now chosen when a session starts, not saved on the config. The first time a session launches you pick which account it runs under, so the account stays a live choice rather than a buried setting.' },
+      { type: 'improvement', description: 'The Accounts list in Settings now shows each account by its email, with a clearly labelled Name field below it to give the account a friendly label. Add and remove accounts as before.' },
+      { type: 'improvement', description: 'The start-session account picker now shows the friendly name you gave each account, including your default account.' },
+      { type: 'fix', description: 'If you run /login inside a session and change account, the status strip, session card and statusline now update to the new account (previously they stayed on the account the session started with).' },
+      { type: 'fix', description: 'You can now switch a session between your Default account and a single added account from the status strip (previously this needed two added accounts).' },
+      { type: 'fix', description: 'Removed the leftover Setup Statusline command from existing setups.' },
+      { type: 'improvement', description: 'Added the independent-project disclaimer to the startup splash screen.' },
+    ],
+  },
+  {
+    version: '1.5.19',
+    date: '2026-06-01',
+    highlights: 'Run multiple Claude accounts in CCC: add accounts, switch per session, keep them isolated.',
+    changes: [
+      { type: 'feature', description: 'Multiple accounts: add a second or third Claude account and run different sessions under different accounts. A first-run prompt walks you through it, and you can manage accounts anytime in Settings then Accounts.' },
+      { type: 'feature', description: 'Switch a session to another account from the status strip pill or the right-click menu (it respawns and resumes under the chosen account). Signing in or out of an added account never touches your other accounts.' },
+      { type: 'improvement', description: 'The status strip shows which account a session is using, and the account chip now resolves correctly for single-account users.' },
+      { type: 'improvement', description: 'Effort level now reflects live /effort changes in the status line, and you can toggle the Effort and Account elements in Statusline settings.' },
+      { type: 'improvement', description: 'Removed the Mode pill from the status strip (use Shift+Tab to change permission mode) and the redundant Setup Statusline command.' },
+    ],
+  },
+  {
     version: '1.5.18',
     date: '2026-05-31',
     changes: [

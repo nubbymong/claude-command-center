@@ -1,4 +1,4 @@
-import { ipcMain, app, dialog, BrowserWindow } from 'electron'
+import { ipcMain, dialog, BrowserWindow } from 'electron'
 import * as path from 'path'
 import * as fs from 'fs'
 import { homedir } from 'os'
@@ -6,105 +6,21 @@ import * as pty from 'node-pty'
 import { logInfo } from '../debug-logger'
 import { getInstallPath } from '../update-watcher'
 import { resolveClaudeForPty } from '../pty-manager'
-import { readRegistry, writeRegistry } from '../registry'
+import {
+  getDataDirectory,
+  getResourcesDirectory,
+  setDataDirectory,
+  setResourcesDirectory,
+  isDataDirFromRegistry,
+} from '../data-paths'
 
-// Lazy getter for default data dir - can't call app.getPath() at module load time
-function getDefaultDataDir(): string {
-  if (process.platform === 'darwin') {
-    return path.join(app.getPath('home'), 'Library', 'Application Support', 'Claude Conductor')
-  }
-  if (process.platform === 'linux') {
-    return path.join(app.getPath('home'), '.claude-conductor', 'data')
-  }
-  // Windows
-  return path.join(app.getPath('localAppData'), 'Claude Command Center')
-}
-
-// Cache registry values — they don't change during the app's lifetime
-// (only set during installer wizard or setup dialog, which restarts the app)
-let cachedDataDir: string | null = null
-let cachedResourcesDir: string | null = null
-let dataDirFromRegistry = false // true if DataDirectory was found in registry
-
-// Read data directory from registry (cached after first call)
-export function getDataDirectory(): string {
-  if (cachedDataDir) return cachedDataDir
-
-  const regVal = readRegistry('DataDirectory')
-  if (regVal) {
-    cachedDataDir = regVal
-    dataDirFromRegistry = true
-    logInfo(`[setup] Data directory from registry: ${cachedDataDir}`)
-    return cachedDataDir
-  }
-
-  cachedDataDir = getDefaultDataDir()
-  logInfo(`[setup] Data directory default: ${cachedDataDir}`)
-  return cachedDataDir
-}
-
-// Read resources directory from registry (cached after first call)
-export function getResourcesDirectory(): string {
-  if (cachedResourcesDir) return cachedResourcesDir
-
-  const regVal = readRegistry('ResourcesDirectory')
-  if (regVal) {
-    cachedResourcesDir = regVal
-    logInfo(`[setup] Resources directory from registry: ${cachedResourcesDir}`)
-    return cachedResourcesDir
-  }
-
-  cachedResourcesDir = path.join(getDataDirectory(), 'resources')
-  logInfo(`[setup] Resources directory fallback: ${cachedResourcesDir}`)
-  return cachedResourcesDir
-}
-
-// Set resources directory in registry and create folders
-function setResourcesDirectory(resourcesDir: string): boolean {
-  try {
-    fs.mkdirSync(path.join(resourcesDir, 'insights'), { recursive: true })
-    fs.mkdirSync(path.join(resourcesDir, 'screenshots'), { recursive: true })
-    fs.mkdirSync(path.join(resourcesDir, 'skills'), { recursive: true })
-    fs.mkdirSync(path.join(resourcesDir, 'scripts'), { recursive: true })
-    fs.mkdirSync(path.join(resourcesDir, 'status'), { recursive: true })
-
-    writeRegistry('ResourcesDirectory', resourcesDir)
-
-    cachedResourcesDir = resourcesDir // Update cache
-    logInfo(`[setup] Resources directory set to: ${resourcesDir}`)
-    return true
-  } catch (err) {
-    logInfo(`[setup] Failed to set resources directory: ${err}`)
-    return false
-  }
-}
+export { getDataDirectory, getResourcesDirectory } from '../data-paths'
 
 // Check if setup is complete (uses cached registry/config check)
 export function isSetupComplete(): boolean {
   // Ensure getDataDirectory() has been called at least once to populate cache
   getDataDirectory()
-  return dataDirFromRegistry
-}
-
-// Set data directory in registry and create folders
-function setDataDirectory(dataDir: string): boolean {
-  try {
-    // Create directory structure
-    fs.mkdirSync(path.join(dataDir, 'sessions'), { recursive: true })
-    fs.mkdirSync(path.join(dataDir, 'logs'), { recursive: true })
-    fs.mkdirSync(path.join(dataDir, 'debug'), { recursive: true })
-    fs.mkdirSync(path.join(dataDir, 'config'), { recursive: true })
-
-    writeRegistry('DataDirectory', dataDir)
-
-    cachedDataDir = dataDir // Update cache
-    dataDirFromRegistry = true
-    logInfo(`[setup] Data directory set to: ${dataDir}`)
-    return true
-  } catch (err) {
-    logInfo(`[setup] Failed to set data directory: ${err}`)
-    return false
-  }
+  return isDataDirFromRegistry()
 }
 
 // Shared helper lives in utils/claude-project-path. Both this module and the

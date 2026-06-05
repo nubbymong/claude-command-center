@@ -4,11 +4,11 @@ import { useCloudAgentStore } from '../stores/cloudAgentStore'
 import type { TeamRun, TeamRunStep, TeamRunStatus } from '../types/electron'
 
 const STATUS_COLORS: Record<TeamRunStatus, string> = {
-  pending: '#F9E2AF',
-  running: '#89B4FA',
-  completed: '#A6E3A1',
-  failed: '#F38BA8',
-  cancelled: '#F38BA8',
+  pending: 'var(--status-warning)',
+  running: 'var(--status-info)',
+  completed: 'var(--status-success)',
+  failed: 'var(--status-danger)',
+  cancelled: 'var(--status-danger)',
 }
 
 const STATUS_LABELS: Record<TeamRunStatus, string> = {
@@ -93,7 +93,7 @@ export default function TeamRunView({ run }: { run: TeamRun }) {
             className="h-full rounded-full transition-all duration-500"
             style={{
               width: `${totalSteps > 0 ? (completedSteps / totalSteps) * 100 : 0}%`,
-              backgroundColor: run.status === 'failed' ? '#F38BA8' : '#A6E3A1',
+              backgroundColor: run.status === 'failed' ? 'var(--status-danger)' : 'var(--status-success)',
             }}
           />
         </div>

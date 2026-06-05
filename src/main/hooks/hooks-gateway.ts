@@ -17,8 +17,15 @@ import type {
 // Responder registry lives in its own module so we can import it directly --
 // the old lazy-require workaround for the channel-permissions circular
 // dependency is no longer needed (#483).
-import { registerResponder, deregisterResponder } from '../permission-responders'
-import { logDebug } from '../debug-logger'
+import { registerResponder as defaultRegister, deregisterResponder as defaultDeregister } from '../permission-responders'
+import { logTrace, logWarn, logError } from '../debug-logger'
+
+// Diagnostics (opt-in, verbose-gated): module-level in-flight counter for the
+// hooks HTTP handler. Incremented on handler entry, decremented when the
+// handler returns. Logged on receipt + response so a heavy parallel tool-use
+// workload (ultracode) shows whether requests are piling up at the gateway.
+// Metadata only -- never reflects payload contents.
+let hooksInFlight = 0
 
 // Cap the incoming HTTP body at 256 KiB. Claude Code hook payloads top out
 // around a few KB; anything beyond this is either a misbehaving client or
@@ -29,6 +36,10 @@ const MAX_REQUEST_BODY_BYTES = 256 * 1024
 export interface HooksGatewayOptions {
   defaultPort?: number
   emit: (channel: string, payload: unknown) => void
+  permissionResponders?: {
+    register: (id: string, cb: (decision: string) => void) => void
+    deregister: (id: string) => void
+  }
 }
 
 interface HandleArgs {
@@ -36,6 +47,14 @@ interface HandleArgs {
   url: string | undefined
   headers: Record<string, string | string[] | undefined>
   body: string
+  /**
+   * Optional pre-parsed body. The live HTTP path parses the request body once
+   * and threads the result through here so ingest does NOT re-parse it (the
+   * body used to be JSON.parsed up to 3x per request on the single-main-thread
+   * hot path). `null` means "already attempted and the body was invalid JSON".
+   * Undefined (the unit-test entrypoint) falls back to parsing `body`.
+   */
+  parsedBody?: Record<string, unknown> | null
 }
 
 interface HandleResult {
@@ -49,6 +68,11 @@ export class HooksGateway {
   private defaultPort: number
   private emit: HooksGatewayOptions['emit']
 
+  public readonly permissionRegister: (id: string, cb: (decision: string) => void) => void
+  public readonly permissionDeregister: (id: string) => void
+  private _eventsTotal = 0
+  private _dropsTotal = 0
+
   private secrets = new Map<string, string>()
   private buffers = new Map<string, RingBufferEntry[]>()
   private overflowLatched = new Set<string>()
@@ -58,6 +82,8 @@ export class HooksGateway {
   constructor(opts: HooksGatewayOptions) {
     this.defaultPort = opts.defaultPort ?? DEFAULT_HOOKS_PORT
     this.emit = opts.emit
+    this.permissionRegister = opts.permissionResponders?.register ?? defaultRegister
+    this.permissionDeregister = opts.permissionResponders?.deregister ?? defaultDeregister
   }
 
   subscribe(cb: (e: HookEvent) => void): () => void {
@@ -83,10 +109,10 @@ export class HooksGateway {
     return { ...this._status }
   }
 
-  async start(): Promise<HooksGatewayStatus> {
+  async start(portOverride?: number): Promise<HooksGatewayStatus> {
     if (this.server) return this.status()
     this._status = { ...this._status, enabled: true }
-    const port = await this.bindWithRetry(this.defaultPort)
+    const port = await this.bindWithRetry(portOverride ?? this.defaultPort)
     if (port === null) {
       this._status = {
         enabled: false,
@@ -132,6 +158,25 @@ export class HooksGateway {
     return secret
   }
 
+  // Used by the proxy to replay an existing (known) secret into a fail-open
+  // in-process gateway, vs registerSession which mints a fresh UUID.
+  registerSessionWithSecret(sessionId: string, secret: string): void {
+    this.secrets.set(sessionId, secret)
+  }
+
+  hasSecret(sessionId: string): boolean {
+    return this.secrets.has(sessionId)
+  }
+
+  // NB: inFlight reads the module-scoped `hooksInFlight` (process-global) -- by
+  // design there is exactly one gateway per process (the prod singleton, or the
+  // in-process fail-open instance; the child runs in its own process with its own
+  // module scope). eventsTotal/dropsTotal are per-instance. If two gateways are
+  // ever instantiated in ONE process, inFlight would be shared across them.
+  metrics(): { inFlight: number; eventsTotal: number; dropsTotal: number } {
+    return { inFlight: hooksInFlight, eventsTotal: this._eventsTotal, dropsTotal: this._dropsTotal }
+  }
+
   unregisterSession(sessionId: string): void {
     this.secrets.delete(sessionId)
     this.buffers.delete(sessionId)
@@ -166,7 +211,11 @@ export class HooksGateway {
   private bindOnce(port: number): Promise<number> {
     return new Promise((resolve, reject) => {
       const srv = http.createServer((req, res) => {
-        this.handleHttp(req, res).catch(() => {
+        this.handleHttp(req, res).catch((err) => {
+          // Diagnostics: a thrown handler error is a genuine fault -- log it
+          // (always written) before producing the same 500 response as before.
+          // Behavior is unchanged; only the log line is new.
+          logError('[hooks] handler error', err)
           try {
             res.statusCode = 500
             res.end('{}')
@@ -192,6 +241,31 @@ export class HooksGateway {
     req: http.IncomingMessage,
     res: http.ServerResponse,
   ): Promise<void> {
+    // Diagnostics (opt-in, verbose-gated): capture the request shape + timing
+    // for every hook POST so a heavy parallel tool-use workload can be
+    // diagnosed from app.log. Metadata only -- method, request path, body size,
+    // in-flight count, response status, duration. NEVER the body itself.
+    const startTime = Date.now()
+    hooksInFlight++
+    const reqMethod = req.method ?? '?'
+    const reqPath = redactHookPath(req.url)
+    const reqLen = headerValue(req.headers as Record<string, string | string[] | undefined>, 'content-length') ?? '?'
+    logTrace(`[hooks] req method=${reqMethod} path=${reqPath} len=${reqLen} inflight=${hooksInFlight}`)
+    // The response may be written synchronously here OR held open (the
+    // PermissionRequest / gateActive path) and closed later by the responder
+    // or the 120s timeout. Hook the response lifecycle event so the in-flight
+    // decrement + response log fire EXACTLY ONCE on every exit path without
+    // restructuring the control flow below (zero behavior change).
+    let settled = false
+    const onSettled = () => {
+      if (settled) return
+      settled = true
+      hooksInFlight--
+      const dur = Date.now() - startTime
+      logTrace(`[hooks] resp path=${reqPath} status=${res.statusCode} dur=${dur}ms inflight=${hooksInFlight}`)
+    }
+    res.once('finish', onSettled)
+    res.once('close', onSettled)
     // Send Connection: close on every response so Node's fetch client
     // doesn't put the socket back into its keep-alive pool. Pool reuse
     // surfaced as "socket connection was closed unexpectedly" errors
@@ -226,6 +300,14 @@ export class HooksGateway {
     }
     const body = Buffer.concat(chunks).toString('utf-8')
 
+    // Parse the body ONCE here and thread the result through the peek logic, the
+    // requestId injection, and ingest. Every tool call in every session funnels
+    // through this single main-thread server, and the body used to be JSON.parsed
+    // up to three times per request (peek + requestId inject + ingest) -- pure
+    // waste on the hot path. `null` => invalid JSON; ingest returns 400 for it.
+    let parsedBody: Record<string, unknown> | null = null
+    try { parsedBody = JSON.parse(body) as Record<string, unknown> } catch { /* ingest path returns 400 */ }
+
     // For held-open events (PermissionRequest, or PreToolUse while gateActive),
     // hold the HTTP response open and register a responder so a resolver can
     // write the hook decision back to the Claude Code process. gateActive is
@@ -237,8 +319,8 @@ export class HooksGateway {
     // cleanup is defined here so the auth-fail branch (after _handleRequestForTest)
     // can call it even though it is set inside the try block below.
     let cleanup: (() => void) = () => { /* no-op until PermissionRequest block runs */ }
-    try {
-      const peeked = JSON.parse(body) as Record<string, unknown>
+    if (parsedBody) {
+      const peeked = parsedBody
       // Claude Code's real hook POST uses `hook_event_name` (not `event`) and
       // snake_case fields; accept both so the gateway works with the live CLI as
       // well as the spec'd PermissionRequest shape used by tests.
@@ -270,7 +352,7 @@ export class HooksGateway {
           if (done) return
           done = true
           clearTimeout(timeout)
-          deregisterResponder(capturedId)
+          this.permissionDeregister(capturedId)
         }
         const timeout = setTimeout(() => {
           if (done) return
@@ -279,11 +361,11 @@ export class HooksGateway {
             capturedRes.writeHead(200, { 'Content-Type': 'application/json', 'Connection': 'close' })
             capturedRes.end('{}')
           } catch { /* response already closed */ }
-          deregisterResponder(capturedId)
+          this.permissionDeregister(capturedId)
         }, 120_000)
         timeout.unref?.()
         req.on('close', () => cleanup())
-        registerResponder(capturedId, (decision) => {
+        this.permissionRegister(capturedId, (decision) => {
           if (done) return  // timeout already fired or client aborted
           done = true
           clearTimeout(timeout)
@@ -302,7 +384,7 @@ export class HooksGateway {
           // inline-for-high-risk path.
         })
       }
-    } catch { /* not valid JSON — fall through to normal path which will 400 */ }
+    }
 
     // The held-open responder is keyed by `permissionRequestId`. Downstream, the
     // pending tray card derives its own id from `payload.requestId` (falling back
@@ -310,25 +392,33 @@ export class HooksGateway {
     // requestId, so without this both sides would invent DIFFERENT synthetic ids
     // (two separate Date.now() reads) and Allow/Deny would target a responder that
     // does not exist -> the request silently stalls until the 120s timeout. Inject
-    // the resolved id into the body so ingest -> normalizePermission key the card
-    // on the SAME value we registered the responder under.
-    let ingestBody = body
-    if (isPermissionRequest && permissionRequestId) {
-      try {
-        const obj = JSON.parse(body) as Record<string, unknown>
-        const pl = (obj.payload && typeof obj.payload === 'object')
-          ? (obj.payload as Record<string, unknown>)
-          : obj
-        if (pl.requestId == null) { pl.requestId = permissionRequestId; ingestBody = JSON.stringify(obj) }
-      } catch { /* keep original body; the normal path will 400 on bad JSON */ }
+    // the resolved id into the already-parsed body so ingest -> normalizePermission
+    // key the card on the SAME value we registered the responder under.
+    if (isPermissionRequest && permissionRequestId && parsedBody) {
+      const pl = (parsedBody.payload && typeof parsedBody.payload === 'object')
+        ? (parsedBody.payload as Record<string, unknown>)
+        : parsedBody
+      if (pl.requestId == null) pl.requestId = permissionRequestId
     }
 
     const result = await this._handleRequestForTest({
       remoteAddress: req.socket.remoteAddress,
       url: req.url,
       headers: req.headers as Record<string, string | string[] | undefined>,
-      body: ingestBody,
+      body,
+      parsedBody,
     })
+
+    // Diagnostics: surface the session-match outcome. A 404 here is the
+    // "unmatched / stale endpoint" misroute the user already hit -- log it as a
+    // genuine warning (always written) so it's visible even outside verbose
+    // mode. Path only -- never the body. Matched/other outcomes are verbose.
+    const sid = parseSidFromUrl(req.url)
+    if (result.status === 404) {
+      logWarn(`[hooks] unmatched/stale endpoint -> 404 path=${reqPath} sid=${sid ?? 'none'}`)
+    } else {
+      logTrace(`[hooks] matched sid=${sid ?? 'none'} status=${result.status}`)
+    }
 
     // For PermissionRequest events that passed auth, the response is held open
     // and will be closed by the responder or the 120s timeout above.
@@ -359,12 +449,17 @@ export class HooksGateway {
     const token = headerValue(args.headers, 'x-ccc-hook-token')
     if (token !== expected) return { status: 404, body: '{}' }
 
-    let parsed: Record<string, unknown>
-    try {
-      parsed = JSON.parse(args.body) as Record<string, unknown>
-    } catch {
-      return { status: 400, body: '{}' }
+    // Reuse the body parsed once by the live HTTP path; only parse here when the
+    // caller is the unit-test entrypoint (parsedBody undefined).
+    let parsed: Record<string, unknown> | null | undefined = args.parsedBody
+    if (parsed === undefined) {
+      try {
+        parsed = JSON.parse(args.body) as Record<string, unknown>
+      } catch {
+        return { status: 400, body: '{}' }
+      }
     }
+    if (parsed === null) return { status: 400, body: '{}' }
 
     this.ingest(sid, parsed)
     return { status: 200, body: '{}' }
@@ -376,7 +471,7 @@ export class HooksGateway {
     // what Claude Code sends (e.g. `event` vs `hook_event_name`), which the unit
     // tests cannot, and is the fastest way to confirm the gateway parses CC's
     // real PreToolUse during the dev-demo permission round-trip.
-    logDebug(`[hooks] ingest sid=${sid} keys=[${Object.keys(parsed).join(',')}] event=${String(parsed.event)} hook_event_name=${String((parsed as Record<string, unknown>).hook_event_name)} tool_name=${String(parsed.tool_name)}`)
+    logTrace(`[hooks] ingest sid=${sid} keys=[${Object.keys(parsed).join(',')}] event=${String(parsed.event)} hook_event_name=${String((parsed as Record<string, unknown>).hook_event_name)} tool_name=${String(parsed.tool_name)}`)
     // Reject payloads with a missing/non-string event field rather than
     // forging an 'Unknown' sentinel: the shared HookEventKind union
     // doesn't include it, so forging would propagate a type-contract
@@ -419,11 +514,13 @@ export class HooksGateway {
       payload: redacted,
       ts: Date.now(),
     }
+    this._eventsTotal++
 
     const buf = this.buffers.get(sid) ?? []
     buf.push(entry)
     if (buf.length > RING_BUFFER_CAP) {
       buf.splice(0, buf.length - RING_BUFFER_CAP)
+      this._dropsTotal++
       if (!this.overflowLatched.has(sid)) {
         this.overflowLatched.add(sid)
         try {
@@ -451,6 +548,17 @@ function isLoopback(a: string | undefined): boolean {
     a === '::1' ||
     a === '::ffff:127.0.0.1'
   )
+}
+
+/** Diagnostics helper: derive a log-safe request path from the raw URL.
+ *  Strips any query string (the HARD RULE forbids logging URLs with query)
+ *  and caps length so a malformed/oversized URL can't bloat a log line.
+ *  Returns just the path portion (e.g. `/hook/<sid>`); never the query. */
+function redactHookPath(url: string | undefined): string {
+  if (!url) return '?'
+  const q = url.indexOf('?')
+  const pathOnly = q === -1 ? url : url.slice(0, q)
+  return pathOnly.length > 128 ? pathOnly.slice(0, 128) : pathOnly
 }
 
 function parseSidFromUrl(url: string | undefined): string | null {

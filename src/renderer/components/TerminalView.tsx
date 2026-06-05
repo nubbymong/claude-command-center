@@ -4,7 +4,11 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { WebglAddon } from '@xterm/addon-webgl'
+import { installWebglWithRecovery } from './terminal/terminalWebgl'
 import { useSessionStore } from '../stores/sessionStore'
+import { persistLastUsedAccount } from '../session-persistence'
+import { useAccountProfilesStore } from '../stores/accountProfilesStore'
+import { useAccountGateStore } from '../stores/accountGateStore'
 import { hasSpawned, markSpawned, killSessionPty } from '../ptyTracker'
 import SshFlowOverlay from './SshFlowOverlay'
 import { shouldUseResumePicker } from '../utils/resumePicker'
@@ -14,6 +18,8 @@ import { getTerminalTheme } from './terminal/terminalTheme'
 import { useSettingsStore, DEFAULT_TERMINAL_SETTINGS } from '../stores/settingsStore'
 import { ScrollToBottomButton } from './terminal'
 import { useStatuslineSubscription } from '../hooks/useStatuslineSubscription'
+import { useEffortSubscription } from '../hooks/useEffortSubscription'
+import { useAccountIdentitySubscription } from '../hooks/useAccountIdentitySubscription'
 import { useActiveTabEffect } from '../hooks/useActiveTabEffect'
 import { useCursorLayerVisibility } from '../hooks/useCursorLayerVisibility'
 import { useAgentLibraryStore, BUILTIN_TEMPLATES } from '../stores/agentLibraryStore'
@@ -70,6 +76,8 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
 
   // Extracted hooks
   useStatuslineSubscription(sessionId)
+  useEffortSubscription(sessionId)
+  useAccountIdentitySubscription(sessionId)
   useActiveTabEffect(sessionId, isActive, terminalRef, attentionTimerRef, attentionAckedRef)
   useCursorLayerVisibility(xtermContainerRef, isActive, shellOnly)
 
@@ -119,6 +127,9 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         live.options.theme = shellOnly
           ? palette
           : { ...palette, cursor: palette.background, cursorAccent: palette.background }
+        // Keep the light-mode contrast floor in lockstep with the theme flip
+        // (see constructor): on in light, off in dark.
+        live.options.minimumContrastRatio = document.documentElement.getAttribute('data-theme') === 'light' ? 4.5 : 1
         try {
           live.refresh(0, live.rows - 1)
         } catch {
@@ -172,6 +183,25 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
     let refreshTimer: ReturnType<typeof setTimeout> | null = null
     let handleWheel: ((e: WheelEvent) => void) | null = null
 
+    // PTY-integrity instrumentation (scoped to this session's mount; resets on
+    // sessionId change because the effect re-runs).
+    let bytesReceived = 0, bytesWritten = 0, strippedBytes = 0, ptyResizeCount = 0
+    let lastSentCols: number | null = null, lastSentRows: number | null = null
+    let reportTimer: ReturnType<typeof setTimeout> | null = null
+    let resizeDebounce: ReturnType<typeof setTimeout> | null = null
+    const reportIntegrity = () => {
+      if (reportTimer) return
+      reportTimer = setTimeout(() => {
+        reportTimer = null
+        window.electronAPI.ptyIntegrity?.report({
+          sessionId,
+          bytesReceived, bytesWritten, strippedBytes,
+          cols: lastSentCols ?? 0, rows: lastSentRows ?? 0,
+          resizeCount: ptyResizeCount,
+        })
+      }, 1000)
+    }
+
     const initTerminal = () => {
       if (disposed) return
 
@@ -216,6 +246,13 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         cursorInactiveStyle: 'none',
         scrollback: 10000,
         allowTransparency: true,
+        // Light mode only: enforce a minimum contrast ratio so Claude's dim,
+        // dark-theme-tuned greys (e.g. "Shell cwd was reset") stay readable on
+        // the light terminal background. xterm darkens only text that fails the
+        // ratio; the background and already-readable colours are untouched.
+        // 1 (off) in dark mode, where Claude's colours already contrast well, so
+        // dark rendering is unchanged. Kept in lockstep on theme flips below.
+        minimumContrastRatio: document.documentElement.getAttribute('data-theme') === 'light' ? 4.5 : 1,
       })
 
       fitAddon = new FitAddon()
@@ -229,13 +266,17 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       // glyphs — different cursor draw path, different glyph
       // fallback, and uniform across platforms. Fails gracefully if
       // WebGL is unavailable in the Electron renderer.
-      try {
-        const webglAddon = new WebglAddon()
-        webglAddon.onContextLoss(() => webglAddon.dispose())
-        term.loadAddon(webglAddon)
-      } catch (e) {
-        // Stay on default renderer — WebGL not available in this env.
-      }
+      //
+      // On context loss (GPU crash / OOM / driver preempt > 3 s) the
+      // addon disposes itself (xterm falls back to canvas automatically)
+      // then we try ONE recreate in the next frame (GPU-blip recovery).
+      // If recreate fails, we force term.refresh so the canvas renderer
+      // repaints the viewport the dead WebGL canvas left garbled.
+      installWebglWithRecovery(term, {
+        WebglAddonCtor: WebglAddon,
+        raf: requestAnimationFrame,
+        isDisposed: () => disposed,
+      })
 
       // Belt-and-braces hide for xterm's caret in Claude sessions.
       // The .claude-session class + global CSS rule should already
@@ -278,7 +319,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       // dialogs keep their focus trap.
       if (isActive && !document.querySelector('[role="dialog"][aria-modal="true"]')) {
         requestAnimationFrame(() => {
-          try { term.focus() } catch { /* ignore */ }
+          try { term?.focus() } catch { /* ignore */ }
         })
       }
 
@@ -291,9 +332,16 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       const fitAndSpawn = () => {
         if (disposed || !fitAddon || !term) return
         try { fitAddon.fit() } catch { /* ignore */ }
+        // Seed the integrity geometry from the initial (font-aware) fit so the
+        // first throttled report carries the real cols/rows instead of 0 — and
+        // so the ResizeObserver's "changed" guard has a correct baseline.
+        if (term.cols > 0 && term.rows > 0) { lastSentCols = term.cols; lastSentRows = term.rows }
 
         if (!hasSpawned(sessionId)) {
-          markSpawned(sessionId)
+          const gate = useAccountGateStore.getState()
+          // Re-entry guard: a gate modal is already up for this session, so a
+          // re-run of this effect must not open a second one or double-spawn.
+          if (gate.isPending(sessionId)) return
           const cols = term.cols
           const rows = term.rows
           const configLabel = session?.label || 'default'
@@ -314,7 +362,46 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
               }))
             if (agentsConfig.length === 0) agentsConfig = undefined
           }
-          window.electronAPI.pty.spawn(sessionId, { cwd, cols, rows, ssh, shellOnly, elevated, configId, configLabel, useResumePicker, legacyVersion, agentsConfig, effortLevel, disableAutoMemory, enableCodexReview, model, provider, codexOptions })
+          // markSpawned only fires at the real spawn, so an unanswered/aborted
+          // account gate leaves the session unspawned and re-gates on remount.
+          const doSpawn = (resolvedProfileId: string | undefined) => {
+            markSpawned(sessionId)
+            window.electronAPI.pty.spawn(sessionId, { cwd, cols, rows, ssh, shellOnly, elevated, configId, configLabel, useResumePicker, legacyVersion, agentsConfig, effortLevel, disableAutoMemory, enableCodexReview, model, provider, codexOptions, profileId: resolvedProfileId })
+          }
+          // Pre-spawn account gate: on a session's first spawn this run, ask which
+          // account to launch under (multi-account on + >=1 profile), unless a
+          // restart/switch already predetermined it. FAIL-OPEN: any error spawns
+          // with the session's last-used account so a session never gets stuck.
+          const profilesCount = useAccountProfilesStore.getState().profiles.length
+          // Only provider sessions that actually authenticate are eligible. Skip
+          // shell-only panes -- the partner terminal (its sessionId has no store
+          // record), user "shell only" sessions, and the add-account login shell
+          // (which already carries an explicit profileId) -- and skip when there
+          // is no real session record.
+          const eligible = !shellOnly && !!session && profilesCount >= 2
+          // Consume the predetermined flag only for eligible sessions so a
+          // restart/switch re-spawn skips the gate and uses its chosen account.
+          const predetermined = eligible && gate.consumePredetermined(sessionId)
+          const needGate = eligible && !predetermined
+          if (!needGate) {
+            doSpawn(session?.profileId)
+          } else {
+            gate
+              .requestChoice(sessionId, session?.label || '', session?.profileId)
+              .then((chosen) => {
+                // Persist the chosen account eagerly so a crash can't lose it
+                // (the gate pre-selects session.profileId on the next launch).
+                void persistLastUsedAccount(sessionId, chosen)
+                if (!disposed) {
+                  doSpawn(chosen)
+                } else {
+                  // View unmounted while the gate was open: the choice is saved,
+                  // so the remount spawns it without re-prompting.
+                  gate.markPredetermined(sessionId)
+                }
+              })
+              .catch(() => doSpawn(session?.profileId))
+          }
         }
       }
 
@@ -464,6 +551,9 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       // backgrounds, or spinner glyphs.
       unsubData = window.electronAPI.pty.onData(sessionId, (data) => {
         const filtered = shellOnly ? data : stripCursorSequences(data)
+        bytesReceived += data.length
+        strippedBytes += data.length - filtered.length
+        bytesWritten += filtered.length
         term?.write(filtered)
 
         // Only auto-scroll if user hasn't scrolled up
@@ -471,6 +561,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
           term?.scrollToBottom()
         }
 
+        reportIntegrity()
         pendingParseData += data
         scheduleParse()
       })
@@ -481,14 +572,28 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
 
       // Handle resize
       resizeObserver = new ResizeObserver(() => {
-        if (disposed || !fitAddon || !term) return
-        try {
-          fitAddon.fit()
-          window.electronAPI.pty.resize(sessionId, term.cols, term.rows)
-          // xterm recreates / resizes the cursor canvas after fit;
-          // re-stamp the inline hide so the caret stays gone.
-          hideClaudeCursorLayer()
-        } catch { /* ignore */ }
+        // Trailing debounce: coalesce resize storms (a ConPTY-reflow aggravator)
+        // into a single fit + resize.
+        if (resizeDebounce) clearTimeout(resizeDebounce)
+        resizeDebounce = setTimeout(() => {
+          resizeDebounce = null
+          if (disposed || !fitAddon || !term) return
+          try {
+            fitAddon.fit()
+            const cols = term.cols, rows = term.rows
+            // Guard: only resize on a valid, CHANGED geometry (skip failed/no-op fits).
+            if (cols > 0 && rows > 0 && (cols !== lastSentCols || rows !== lastSentRows)) {
+              lastSentCols = cols
+              lastSentRows = rows
+              ptyResizeCount += 1
+              window.electronAPI.pty.resize(sessionId, cols, rows)
+              reportIntegrity()
+            }
+            // xterm recreates / resizes the cursor canvas after fit;
+            // re-stamp the inline hide so the caret stays gone.
+            hideClaudeCursorLayer()
+          } catch { /* ignore */ }
+        }, 80)
       })
       resizeObserver.observe(container)
 
@@ -540,6 +645,8 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       if (attentionTimerRef.current) clearTimeout(attentionTimerRef.current)
       if (parseTimer) clearTimeout(parseTimer)
       if (refreshTimer) clearTimeout(refreshTimer)
+      if (reportTimer) clearTimeout(reportTimer)
+      if (resizeDebounce) clearTimeout(resizeDebounce)
       if (handleKeyDownCopy) document.removeEventListener('keydown', handleKeyDownCopy)
       if (handleContextMenu) container.removeEventListener('contextmenu', handleContextMenu, true)
       if (handleWheel) container.removeEventListener('wheel', handleWheel)
@@ -555,9 +662,15 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
   }, [sessionId])
 
   const needsAttention = session?.needsAttention ?? false
+  const needsLogin = session?.needsLogin ?? false
 
   return (
     <div className="flex-1 flex flex-col titlebar-no-drag overflow-hidden relative" style={{ minHeight: 0 }}>
+      {needsLogin && (
+        <div className="bg-blue/10 border-b border-blue/30 text-lavender text-xs px-3 py-1.5 shrink-0">
+          Setting up a new account. Run claude, type /login, and choose the account. We&apos;ll detect it automatically.
+        </div>
+      )}
       <div
         ref={xtermContainerRef}
         className="flex-1 overflow-hidden"

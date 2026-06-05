@@ -103,38 +103,46 @@ export function startStatuslineWatcher(getWindow: () => BrowserWindow | null): (
   // Track last-seen mtime per file to avoid redundant sends
   const lastMtime = new Map<string, number>()
 
-  function processFile(filename: string): void {
+  // Async so the per-tick stat + read never block the main thread. The
+  // statusline bridge rewrites these files frequently (≈1-3/s per session) and
+  // fs.watch fired this synchronously on every write -- a sync readFileSync +
+  // JSON.parse on the hot path, multiplied by N sessions. The mtime guard stays
+  // race-safe: the check+set sits in one synchronous block immediately after the
+  // awaited stat (no await between), so two concurrent calls for the same file
+  // can't both pass the guard -- the first sets the mtime, the second is deduped.
+  async function processFile(filename: string): Promise<void> {
     const win = getWindow()
     if (!win || win.isDestroyed()) return
 
     const filePath = path.join(statusDir, filename)
     try {
-      const stat = fs.statSync(filePath)
-      const mtime = stat.mtimeMs
+      const mtime = (await fs.promises.stat(filePath)).mtimeMs
       if (lastMtime.get(filename) === mtime) return
       lastMtime.set(filename, mtime)
 
-      const content = fs.readFileSync(filePath, 'utf-8')
+      const content = await fs.promises.readFile(filePath, 'utf-8')
       const data: StatuslineData = JSON.parse(content)
       fanOutStatusline(data, getWindow)
     } catch { /* ignore read errors during writes */ }
   }
 
-  // fs.watch: instant for local writes
+  // fs.watch: instant for local writes (fire-and-forget; errors swallowed inside)
   const watcher = fs.watch(statusDir, (_eventType, filename) => {
     if (!filename || !filename.endsWith('.json')) return
-    processFile(filename)
+    void processFile(filename)
   })
 
-  // Polling fallback: catches remote/SMB writes that fs.watch misses
-  const POLL_INTERVAL = 3000
+  // Polling fallback: catches remote/SMB writes that fs.watch misses. Local
+  // writes are caught instantly by fs.watch above, so this only needs to be a
+  // slow safety net -- 5s (was 3s) cuts the periodic readdir + stat fan-out.
+  const POLL_INTERVAL = 5000
   const pollTimer = setInterval(() => {
-    try {
-      const files = fs.readdirSync(statusDir).filter(f => f.endsWith('.json'))
-      for (const file of files) {
-        processFile(file)
-      }
-    } catch { /* ignore */ }
+    void (async () => {
+      try {
+        const files = (await fs.promises.readdir(statusDir)).filter(f => f.endsWith('.json'))
+        await Promise.all(files.map(f => processFile(f)))
+      } catch { /* ignore */ }
+    })()
   }, POLL_INTERVAL)
 
   return () => {

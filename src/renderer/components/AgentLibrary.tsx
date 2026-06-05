@@ -3,11 +3,12 @@ import { useAgentLibraryStore, BUILTIN_TEMPLATES } from '../stores/agentLibraryS
 import type { AgentTemplate } from '../types/electron'
 import AgentTemplateDialog from './AgentTemplateDialog'
 
+// Semantic tokens (light/dark-aware) instead of dark-only Catppuccin hex.
 const MODEL_COLORS: Record<string, string> = {
-  inherit: '#b8c5d6',
-  sonnet: '#89B4FA',
-  opus: '#CBA6F7',
-  haiku: '#A6E3A1',
+  inherit: 'var(--text-secondary)',
+  sonnet: 'var(--chart-sonnet)',
+  opus: 'var(--chart-opus)',
+  haiku: 'var(--status-success)',
 }
 
 interface ContextMenuState {

@@ -3,6 +3,8 @@ import { describe, it, expect } from 'vitest'
 import {
   canonicaliseEmail,
   resolveAccountChipColorKey,
+  resolveAccountNameByEmail,
+  resolveAccountColourKey,
   middleTruncateEmail,
 } from '../../../src/shared/account-chip-color'
 
@@ -28,6 +30,70 @@ describe('resolveAccountChipColorKey', () => {
 
   it('returns neutral when email is undefined', () => {
     expect(resolveAccountChipColorKey(undefined, undefined, { 'x@y.com': 'rose' })).toBe('mauve')
+  })
+})
+
+describe('resolveAccountNameByEmail', () => {
+  const profiles = [
+    { accountEmail: 'me@example.com', name: 'Personal' },
+    { accountEmail: 'work@corp.com', name: 'Work' },
+    { accountEmail: '', name: 'Incomplete' },
+  ]
+
+  it('returns the profile name when email matches exactly', () => {
+    expect(resolveAccountNameByEmail('me@example.com', profiles, undefined)).toBe('Personal')
+  })
+
+  it('matches case-insensitively', () => {
+    expect(resolveAccountNameByEmail('Me@EXAMPLE.COM', profiles, undefined)).toBe('Personal')
+  })
+
+  it('falls back to the email when no profile matches', () => {
+    expect(resolveAccountNameByEmail('other@example.com', profiles, undefined)).toBe('other@example.com')
+  })
+
+  it('does not match a profile with empty accountEmail', () => {
+    // the empty-email profile should never match any real email
+    expect(resolveAccountNameByEmail('', profiles, undefined)).toBe('')
+  })
+
+  it('falls back to alias when no profile name matches but alias exists', () => {
+    const aliases = { 'other@example.com': 'Alias Name' }
+    expect(resolveAccountNameByEmail('other@example.com', profiles, aliases)).toBe('Alias Name')
+  })
+
+  it('profile name wins over alias', () => {
+    const aliases = { 'me@example.com': 'Alias Name' }
+    expect(resolveAccountNameByEmail('me@example.com', profiles, aliases)).toBe('Personal')
+  })
+})
+
+describe('resolveAccountColourKey', () => {
+  it('override wins when email and overrides are provided', () => {
+    const overrides = { 'me@example.com': 'rose' as const }
+    expect(resolveAccountColourKey('Me@Example.com', overrides, 'violet')).toBe('rose')
+  })
+
+  it('falls back to the provided fallback when no override', () => {
+    expect(resolveAccountColourKey('me@example.com', {}, 'violet')).toBe('violet')
+  })
+
+  it('returns mauve when nothing is supplied', () => {
+    expect(resolveAccountColourKey(undefined, undefined, undefined)).toBe('mauve')
+  })
+
+  it('returns mauve when email is undefined even with overrides', () => {
+    const overrides = { 'me@example.com': 'rose' as const }
+    expect(resolveAccountColourKey(undefined, overrides, undefined)).toBe('mauve')
+  })
+
+  it('returns fallback when override map does not contain the email', () => {
+    const overrides = { 'other@example.com': 'rose' as const }
+    expect(resolveAccountColourKey('me@example.com', overrides, 'indigo')).toBe('indigo')
+  })
+
+  it('returns mauve when fallback is also undefined', () => {
+    expect(resolveAccountColourKey('me@example.com', {}, undefined)).toBe('mauve')
   })
 })
 

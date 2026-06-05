@@ -61,4 +61,14 @@ describe('readClipboardImageWithRetry (Alt+V first-attempt fix)', () => {
     expect(await readClipboardImageWithRetry(0, 20, noSleep)).toBeNull()
     expect(readImage).toHaveBeenCalledTimes(1)
   })
+
+  it('defaults to 6 attempts so Windows delayed-render has time to land', async () => {
+    // The default (no-arg) call is what both clipboard IPC handlers use. On
+    // Windows the bitmap can take 50-200ms to materialise after focus, so the
+    // default must retry enough times to outlast that, not give up at ~40ms.
+    readImage.mockReturnValue(fakeImage(true))
+    const result = await readClipboardImageWithRetry(undefined, undefined, noSleep)
+    expect(result).toBeNull()
+    expect(readImage).toHaveBeenCalledTimes(6)
+  })
 })

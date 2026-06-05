@@ -7,8 +7,8 @@ import { registerPtyHandlers } from './ipc/pty-handlers'
 import { registerUsageHandlers } from './ipc/usage-handlers'
 import { registerDiscoveryHandlers } from './ipc/discovery-handlers'
 import { killAllPty, gracefulExitAllPty } from './pty-manager'
-import { registerLogHandlers } from './ipc/log-handlers'
-import { closeAllLogs } from './session-logger'
+import { registerLogsdbHandlers } from './ipc/logsdb-handlers'
+import { registerLogMigrationHandlers } from './ipc/log-migration-handlers'
 
 import { startStatuslineWatcher } from './statusline-watcher'
 import { registerProvider, getProvider } from './providers'
@@ -17,7 +17,7 @@ import { CodexProvider } from './providers/codex'
 import { registerDebugHandlers } from './ipc/debug-handlers'
 import { disableDebugMode } from './debug-capture'
 import { registerUpdateHandlers } from './ipc/update-handlers'
-import { registerSetupHandlers, getResourcesDirectory } from './ipc/setup-handlers'
+import { registerSetupHandlers, getResourcesDirectory, getDataDirectory } from './ipc/setup-handlers'
 import { registerScreenshotHandlers } from './ipc/screenshot-handlers'
 import { registerWebviewHandlers } from './ipc/webview-handlers'
 import { closeAllWebviews } from './webview-manager'
@@ -25,6 +25,10 @@ import { registerInsightsHandlers } from './ipc/insights-handlers'
 import { registerNotesHandlers } from './ipc/notes-handlers'
 import { registerVisionHandlers } from './ipc/vision-handlers'
 import { registerConfigHandlers } from './ipc/config-handlers'
+import { registerAccountProfilesHandlers } from './ipc/account-profiles-handlers'
+import { migrateProfilesToHomeLayout, cleanupSessionHomes, syncPrimaryCredentialsWithGlobal } from './account-profiles'
+import { runFirstRunCapture } from './first-run-accounts'
+import { backupRealClaudeOnce } from './claude-backup'
 import { registerCloudAgentHandlers } from './ipc/cloud-agent-handlers'
 import { registerTeamHandlers } from './ipc/team-handlers'
 import { registerLegacyVersionHandlers } from './ipc/legacy-version-handlers'
@@ -33,16 +37,22 @@ import { registerTokenomicsHandlers } from './ipc/tokenomics-handlers'
 import { registerAccountAttributionHandlers } from './ipc/account-attribution-handlers'
 import { registerGitHubHandlers } from './ipc/github-handlers'
 import { registerHooksHandlers } from './ipc/hooks-handlers'
+import { registerServiceHealthHandlers, getMergedDiagnostics } from './ipc/service-health-handlers'
+import { PtyIntegrityMonitor, setPtyIntegrityMonitor, getPtyIntegrityMonitor } from './services/pty-integrity-monitor'
 import { registerCodexHandlers } from './ipc/codex-handlers'
 import { registerCodexReviewHandlers } from './ipc/codex-review-handlers'
 import { registerChannelHandlers } from './ipc/channel-handlers'
 import { startRulesEngine } from './channel-rules'
 import { startPermissionTray } from './channel-permissions'
+import { startEffortTracker } from './effort-tracker'
 import { startAttentionSource } from './attention-source'
 import { startJankDetector } from './jank-detector'
 import { readClipboardImageWithRetry } from './clipboard-image'
 import { HooksGateway } from './hooks/hooks-gateway'
 import { setGateway, getGateway } from './hooks'
+import { ServiceSupervisor } from './services/service-supervisor'
+import { forkHooksChild } from './services/fork-hooks-child'
+import { initLogging, shutdownLogging } from './logging/logging-service'
 import { cleanupStaleHookEntries } from './hooks/boot-cleanup'
 import { DEFAULT_HOOKS_PORT } from './hooks/hooks-types'
 import { fetchModelPricing } from './tokenomics-manager'
@@ -60,7 +70,7 @@ import { resolveConductorMcpPort } from '../shared/mcp-ports'
 import { IPC } from '../shared/ipc-channels'
 
 import { migrateRegistryKeys } from './registry'
-import { installGlobalErrorHandlers, logInfo, logError, closeDebugLogger } from './debug-logger'
+import { installGlobalErrorHandlers, logInfo, logError, closeDebugLogger, setVerboseBaseline } from './debug-logger'
 
 // Install global error handlers that log to file
 installGlobalErrorHandlers()
@@ -112,6 +122,9 @@ function saveWindowState(win: BrowserWindow): void {
 
 let mainWindow: BrowserWindow | null = null
 let splashWindow: BrowserWindow | null = null
+let _hooksSupervisor: ServiceSupervisor | null = null
+function setHooksSupervisor(s: ServiceSupervisor): void { _hooksSupervisor = s }
+function getHooksSupervisor(): ServiceSupervisor | null { return _hooksSupervisor }
 
 function getSplashImagePath(): { path: string; mime: string } | null {
   // In dev: repo root. In production: resources/ directory inside app.
@@ -163,8 +176,22 @@ function createSplashWindow(): void {
   }
   @keyframes fadeIn { to { opacity: 1; } }
   img { width: 100%; height: 100%; object-fit: contain; }
+  .disclaimer {
+    position: fixed;
+    bottom: 10px;
+    left: 0;
+    right: 0;
+    text-align: center;
+    font: 500 10px/1.3 system-ui, -apple-system, 'Segoe UI', sans-serif;
+    letter-spacing: 0.2px;
+    color: rgba(205, 214, 244, 0.82);
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85), 0 0 2px rgba(0, 0, 0, 0.7);
+    padding: 0 14px;
+    pointer-events: none;
+  }
 </style></head><body>
   <img src="data:${splash.mime};base64,${imgData}" />
+  <div class="disclaimer">Independent community project. Not affiliated with or endorsed by Anthropic.</div>
 </body></html>`
 
   const tmpHtml = join(tmpdir(), 'claude-command-center-splash.html')
@@ -605,11 +632,43 @@ if (!gotTheLock) {
     registerPtyHandlers(getWindow)
     registerUsageHandlers()
     registerDiscoveryHandlers()
-    registerLogHandlers()
+    registerLogsdbHandlers()
+    registerLogMigrationHandlers(getWindow)
     registerDebugHandlers()
     registerUpdateHandlers()
     registerSetupHandlers()
     registerConfigHandlers()
+    // Beta builds default to verbose logging (lightweight async DEBUG lines ->
+    // app.log) so field issues are captured. NEVER on stable. This enables only
+    // the verbose level, NOT the per-event hot-path TRACE logs and NOT the heavy
+    // per-PTY debug capture (debugMode) -- so it's perf-neutral. Sticky baseline:
+    // toggling debug mode off later won't silence it on beta.
+    try {
+      const ch = readConfig<{ updateChannel?: string }>('settings')?.updateChannel
+      if (ch === 'beta') { setVerboseBaseline(true); logInfo('[boot] verbose logging enabled (beta channel)') }
+    } catch { /* settings unreadable this early -- skip */ }
+    registerAccountProfilesHandlers()
+    // SAFETY: snapshot the real Claude config before the multi-account feature
+    // does anything, so the user's original login is always recoverable.
+    try { backupRealClaudeOnce() } catch (e) { logInfo(`[backup] snapshot skipped: ${e}`) }
+    // One-time migration to the USERPROFILE fake-home isolation layout (older
+    // profiles isolated only CLAUDE_CONFIG_DIR, which never isolated the account
+    // identity). Idempotent + best-effort; never touches the real home.
+    try { migrateProfilesToHomeLayout() } catch (e) { logInfo(`[profiles] home-layout migration skipped: ${e}`) }
+    // Capture the current global login into a protected "primary" profile so no
+    // session runs on the bare global ~/.claude (idempotent; best-effort).
+    try { runFirstRunCapture() } catch (e) { logInfo(`[profiles] first-run capture skipped: ${e}`) }
+    // Bug 2: migrate OFF the per-session-home model. Sessions of one account now
+    // share its profile home (one rotating-OAuth store); salvage the freshest live
+    // token out of any retired account-homes/<sessionId>/ into the profile home +
+    // canonical (so no re-auth after upgrade), then KEEP + re-point those homes at
+    // the shared store (UPGRADE GUARD -- a resumed pre-upgrade session may still
+    // name an account-homes path, so we never delete it). Idempotent; bounded set.
+    try { cleanupSessionHomes() } catch (e) { logInfo(`[profiles] session-home cleanup skipped: ${e}`) }
+    // Auth-outside-CCC fix: heal a stale real global ~/.claude/.credentials.json on
+    // launch (a prior session rotated the primary account's OAuth token, leaving
+    // external `claude -p` on a dead refresh token). Freshest-wins + email-guarded.
+    try { const r = syncPrimaryCredentialsWithGlobal(); if (r !== 'none') logInfo(`[profiles] primary<->global credential sync at launch: ${r}`) } catch (e) { logInfo(`[profiles] credential sync skipped: ${e}`) }
     registerScreenshotHandlers(getWindow)
     registerWebviewHandlers(getWindow)
     registerInsightsHandlers(getWindow)
@@ -648,25 +707,55 @@ if (!gotTheLock) {
     const hooksSettings = readConfig<{ hooksEnabled?: boolean; hooksPort?: number }>('settings')
     const hooksEnabled = hooksSettings?.hooksEnabled !== false
     const hooksPort = hooksSettings?.hooksPort ?? DEFAULT_HOOKS_PORT
-    const hooksGateway = new HooksGateway({
-      defaultPort: hooksPort,
-      emit: (channel, payload) => {
-        const win = getWindow()
-        if (win && !win.isDestroyed()) {
-          try { win.webContents.send(channel, payload) } catch { /* destroyed */ }
-        }
-      },
-    })
-    setGateway(hooksGateway)
+    const emitToWindow = (channel: string, payload: unknown) => {
+      const win = getWindow()
+      if (win && !win.isDestroyed()) {
+        try { win.webContents.send(channel, payload) } catch { /* destroyed */ }
+      }
+    }
+    // PTY-integrity monitor (D1 diagnostics). Lives in main; surfaces through the
+    // SAME SERVICE_HEALTH_GET/UPDATE as the hooks supervisor via a merge so every
+    // push carries BOTH snapshots (else one source would wipe the other in the UI).
+    const getSup = () => getHooksSupervisor()
+    const getPtyDiag = () => getPtyIntegrityMonitor()?.diagnostics() ?? null
+    const pushDiagnostics = () => emitToWindow(IPC.SERVICE_HEALTH_UPDATE, getMergedDiagnostics(getSup, getPtyDiag))
+    const ptyMonitor = new PtyIntegrityMonitor({ emit: pushDiagnostics })
+    setPtyIntegrityMonitor(ptyMonitor)
+    // Redirect ONLY SERVICE_HEALTH_UPDATE through the merge; every other channel
+    // (HOOKS_STATUS, HOOKS_EVENT, ...) the supervisor/gateway emit passes through.
+    const emitWithMerge = (channel: string, payload: unknown) =>
+      channel === IPC.SERVICE_HEALTH_UPDATE ? pushDiagnostics() : emitToWindow(channel, payload)
+    if (hooksEnabled) {
+      // Supervised out-of-process gateway: a utilityProcess child runs the HooksGateway,
+      // crash-isolated from the main thread, with restart/backoff + fail-open-to-in-process.
+      const hooksSupervisor = new ServiceSupervisor({ forkChild: forkHooksChild, defaultPort: hooksPort, emit: emitWithMerge })
+      const hooksProxy = hooksSupervisor.start()   // forks the child + posts start (S1 replay-before-listen inside)
+      setGateway(hooksProxy)                        // B1: consumers + handlers all use the proxy
+      setHooksSupervisor(hooksSupervisor)           // module-scope ref for before-quit (S5)
+    } else {
+      // Hooks disabled: today's exact behavior — an in-process gateway exists (so
+      // registerSession still mints secrets) but never binds; no child is forked.
+      setGateway(new HooksGateway({ defaultPort: hooksPort, emit: emitWithMerge }))
+    }
+    // Session logging: start the SQLite worker supervisor + capture (gated on
+    // loggingEnabled, default true; no-op + no fork when disabled). The supervisor
+    // reconciles dangling sessions on its first worker-ready. The native dep
+    // (better-sqlite3) lives ONLY in the forked worker — this call stays main-clean.
+    try {
+      initLogging({ emit: emitWithMerge, dbPath: join(getDataDirectory(), 'logs.db') })
+    } catch (err) {
+      logError(`[logs] initLogging failed; session logging disabled this run: ${(err as Error)?.message ?? err}`)
+    }
     startPermissionTray()
+    startEffortTracker()
     startAttentionSource()
     startJankDetector()
-    registerHooksHandlers(hooksGateway)
+    registerHooksHandlers(getGateway()!)   // B1: handlers get whatever gateway backs the singleton
+    // D1b: diagnostics IPC. The getter returns null in the hooks-disabled branch
+    // (supervisor never set) -> the handler serves an honest synthetic "hooks off" snapshot.
+    registerServiceHealthHandlers(getSup, getPtyDiag)
     if (hooksEnabled) {
-      cleanupStaleHookEntries(new Set())
-      hooksGateway.start().catch((err) => {
-        logError(`[hooks] Gateway failed to start: ${err?.message ?? err}`)
-      })
+      cleanupStaleHookEntries(new Set())   // supervisor.start() already fired proxy.start()
     }
 
     // Shell — open URLs in system browser
@@ -733,11 +822,16 @@ if (!gotTheLock) {
 
   app.on('before-quit', () => {
     logInfo('App quitting...')
+    // S5: mark the supervisor shutting-down BEFORE killAllPty() so a hooks-child
+    // exit during teardown does NOT trigger a restart (race-free shutdown).
+    try { _hooksSupervisor?.shutdown() } catch { /* never started / hooks disabled */ }
+    // Flush + tear down session logging BEFORE killAllPty so a final batch is
+    // written and the worker shuts down cleanly. No-op when never init / disabled.
+    try { shutdownLogging() } catch { /* never init / disabled */ }
     stopServiceStatusPoller()
     stopUpdateWatcher()
     stopUpdateServer()
     disableDebugMode()
-    closeAllLogs()
     stopGlobalVision()
     stopConductorMcpServer()
     killAllAgents()

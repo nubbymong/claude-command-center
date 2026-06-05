@@ -63,10 +63,13 @@ jobs:
           "
 
       - name: Typecheck
-        run: npx tsc --noEmit
+        run: npm run typecheck
 
       - name: Unit tests
         run: npx vitest run
+
+      - name: Unit tests (native / SQLite under Electron-as-Node)
+        run: npm run test:unit:native
 
       - name: Build
         run: npm run build
@@ -83,6 +86,10 @@ jobs:
       - name: Package Windows installer (release/* branches only)
         if: matrix.os == 'windows-latest' && startsWith(github.head_ref, 'release/')
         run: npx electron-builder --win
+
+      - name: Verify native modules unpacked (release/* branches only)
+        if: matrix.os == 'windows-latest' && startsWith(github.head_ref, 'release/')
+        run: npm run verify:package
 
       - name: Package macOS DMG (release/* branches only)
         if: matrix.os == 'macos-latest' && startsWith(github.head_ref, 'release/')

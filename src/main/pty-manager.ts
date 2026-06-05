@@ -3,11 +3,12 @@ import * as pty from 'node-pty'
 import { PasteQueue } from './paste-queue'
 import * as os from 'os'
 import { execSync } from 'child_process'
-import { startSessionLog, logSessionData, endSessionLog } from './session-logger'
 import { logPtyOutput, isDebugModeEnabled } from './debug-capture'
-import { logInfo, logDebug, logError } from './debug-logger'
+import { shouldCapture } from './logging/should-capture'
+import { getLogCapture } from './logging/logging-service'
+import { logInfo, logDebug, logError, logWarn } from './debug-logger'
 import { writeCliSetupPty, getResourcesDirectory } from './ipc/setup-handlers'
-import { isGlobalVisionRunning, getGlobalVisionConfig } from './vision-manager'
+import { isGlobalVisionRunning, getGlobalVisionConfig, teardownVisionSession } from './vision-manager'
 import { getConductorMcpPort } from './conductor-mcp-server'
 import { resolveClaudeBinary } from './providers/claude/spawn'
 import { detectClaudeUi, lastPromptLineForClaude } from './providers/claude/ui-detection'
@@ -28,9 +29,12 @@ import {
 import { registerCodexReviewSession, unregisterCodexReviewSession } from './conductor-mcp-server'
 import { disposeSession as disposeCodexReviewUsage } from './codex-review-usage'
 import { readCodexAccountEmail } from './account-identity'
+import { getProfileConfigDir, setupProfileLinks, getPrimaryProfileId, backupProfileHomeToCanonical, syncPrimaryCredentialsWithGlobal } from './account-profiles'
+import { captureClaudeAccount, clearClaudeAccount, getAccountIdentity, pushAccountIdentity, startWatchingAccountIdentity, stopWatchingAccountIdentity, getWatchedProfileId } from './claude-account-identity'
 import type { AccountIdentity } from '../shared/types'
 import { updateSessionMeta, clearSessionMeta } from './session-registry'
 import { readConfig } from './config-manager'
+import { getPtyIntegrityMonitor } from './services/pty-integrity-monitor'
 
 import * as path from 'path'
 import * as fs from 'fs'
@@ -53,6 +57,28 @@ export function clearCodexSpawnIdentity(sessionId: string): void {
 
 export function getCodexSpawnIdentityMap(): Map<string, AccountIdentity> {
   return codexSpawnIdentity
+}
+
+/**
+ * Per-process account isolation: run Claude under a per-account fake HOME so the
+ * account identity (~/.claude.json, which follows USERPROFILE on Windows / HOME
+ * on Unix) is private. CLAUDE_CONFIG_DIR alone does NOT isolate identity. Git/npm
+ * are pointed back at the real home so shared dev tooling is unaffected. Returns
+ * the env unchanged for the Default account (home == null).
+ */
+export function withProfileHome(env: Record<string, string>, home: string | null): Record<string, string> {
+  if (!home) return env
+  const realHome = os.homedir()
+  const next: Record<string, string> = {
+    ...env,
+    USERPROFILE: home,
+    // Belt-and-suspenders: keep git/npm reading the real shared config even if a
+    // hard-linked dotfile ever desyncs (the mirror also links these through).
+    GIT_CONFIG_GLOBAL: path.join(realHome, '.gitconfig'),
+    npm_config_userconfig: path.join(realHome, '.npmrc'),
+  }
+  if (process.platform !== 'win32') next.HOME = home
+  return next
 }
 
 function escapeShellArg(str: string): string {
@@ -208,12 +234,16 @@ export function spawnPty(
     shellOnly?: boolean
     elevated?: boolean
     configLabel?: string
+    /** Config id that owns the session. Stamped onto the session-log row for per-config filtering. */
+    configId?: string
     useResumePicker?: boolean
     legacyVersion?: { enabled: boolean; version: string }
     agentsConfig?: Array<{ name: string; description: string; prompt: string; model?: string; tools?: string[] }>
-    effortLevel?: 'low' | 'medium' | 'high'
+    effortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode'
     disableAutoMemory?: boolean
     model?: string
+    /** Per-session account isolation: spawn claude under this profile's CLAUDE_CONFIG_DIR. */
+    profileId?: string
     /** v1.5 P6: when true, register session into MCP server's codex_review opt-in set. */
     enableCodexReview?: boolean
     provider?: 'claude' | 'codex'
@@ -231,6 +261,13 @@ export function spawnPty(
   const rows = options?.rows || 30
 
   let ptyProcess: pty.IPty
+
+  // Hoisted to function scope so the shared post-spawn tail (session-log capture)
+  // can read them for EVERY branch (ssh / codex / claude / shell-only). They were
+  // previously declared inside the codex/claude branches and so were out of scope
+  // at capture?.start() in the tail -> a latent ReferenceError on spawn-with-logging.
+  const resolvedCwd = resolveCwd(options?.cwd)
+  let resolvedProfileId: string | undefined = undefined
 
   if (options?.ssh) {
     // Defensive guard: Codex over SSH is not yet supported. The renderer-side
@@ -589,6 +626,7 @@ export function spawnPty(
       // Strip SSH statusline OSC sentinels before forwarding to xterm.
       // Parsed sentinels are dispatched to the statusline pipeline as a side effect.
       const data = extractSshOscSentinels(sessionId, rawData)
+      getPtyIntegrityMonitor()?.recordPtyData(sessionId, data.length)
       win.webContents.send(`pty:data:${sessionId}`, data)
 
       // Arm the idle-data fallback. Re-arms on every chunk so the timer
@@ -773,7 +811,6 @@ export function spawnPty(
         useResumePicker: options?.useResumePicker,
         codexOptions: options?.codexOptions,
       })
-      const resolvedCwd = resolveCwd(options?.cwd)
       logInfo(`[pty-manager] Launching Codex PTY: ${spawnCmd} ${spawnArgs.join(' ')} cwd=${resolvedCwd}`)
       // Capture timestamp before spawn so the watch-and-claim window starts no later than PTY launch.
       const codexSpawnTimestamp = Date.now()
@@ -787,6 +824,7 @@ export function spawnPty(
       })
       ptyProcess.onData((data) => {
         if (win.isDestroyed()) return
+        getPtyIntegrityMonitor()?.recordPtyData(sessionId, data.length)
         win.webContents.send(`pty:data:${sessionId}`, data)
       })
       // Start rollout watch-and-claim telemetry. Updates are dispatched to the
@@ -830,7 +868,42 @@ export function spawnPty(
       useResumePicker: options?.useResumePicker,
       agentsConfig: options?.agentsConfig,
     })
-    const resolvedCwd = resolveCwd(options?.cwd)
+    const wantProfileId = options?.profileId
+    if (wantProfileId && fs.existsSync(getProfileConfigDir(wantProfileId))) {
+      resolvedProfileId = wantProfileId
+    } else if (wantProfileId) {
+      logWarn(`[profiles] session ${sessionId}: profile dir missing for profileId=${wantProfileId}; falling back to primary/default`)
+    }
+    // Clobber-proofing: a non-shell Claude session never runs on the bare global
+    // home -- fall back to the captured primary profile.
+    if (!shellOnly && !resolvedProfileId) {
+      const primary = getPrimaryProfileId()
+      if (primary && fs.existsSync(getProfileConfigDir(primary))) resolvedProfileId = primary
+    }
+    // Home selection (Bug 2): EVERY session of an account -- shell-only (plain
+    // shells + the add-account login flow) AND interactive Claude -- runs in the
+    // account's shared PROFILE home. That way concurrent sessions of one account
+    // share ONE rotating-OAuth credential store and coordinate token refreshes the
+    // way a normal single-account install does. The old per-session-home model gave
+    // each session a private COPY of the credential; the first refresh rotated the
+    // token and invalidated every other copy, forcing a re-auth on resume.
+    // Auth-outside-CCC fix: before a session reads the primary account's profile
+    // home, pull a fresher global token (e.g. a /login the user ran OUTSIDE CCC)
+    // into it so this session starts on the live token. Primary-only + email-guarded;
+    // no-op otherwise.
+    try { syncPrimaryCredentialsWithGlobal() } catch { /* best-effort */ }
+    let home: string | null = null
+    if (resolvedProfileId) {
+      try { setupProfileLinks(resolvedProfileId) } catch (e) { logWarn(`[profiles] session ${sessionId}: home refresh failed: ${e}`) }
+      home = getProfileConfigDir(resolvedProfileId)
+    }
+    const finalSpawnEnv = withProfileHome(spawnEnv, home)
+    logInfo(`[profiles] session ${sessionId} account spawn: requestedProfileId=${wantProfileId ?? '(none)'} resolvedProfileId=${resolvedProfileId ?? '(none/bare-global)'} shellOnly=${shellOnly} USERPROFILE=${home ?? '(real home)'}`)
+    // Reliable, drift-immune account identity: capture once at spawn from the
+    // session's profile (or the default ~/.claude.json), never re-read.
+    // B3: capture is deferred until AFTER the interactive Claude pty.spawn
+    // succeeds (see below) so a spawn throw can't leak the per-session map entry,
+    // and shell-only sessions (no Claude) never capture.
 
     if (shellOnly) {
       logInfo(`[pty-manager] Launching shell-only PTY: ${spawnCmd} ${spawnArgs.join(' ')} cwd=${resolvedCwd}${options?.elevated ? ' (elevated)' : ''}`)
@@ -840,7 +913,7 @@ export function spawnPty(
         cols,
         rows,
         cwd: resolvedCwd,
-        env: spawnEnv,
+        env: finalSpawnEnv,
         useConpty: true
       })
 
@@ -870,9 +943,19 @@ export function spawnPty(
         cols,
         rows,
         cwd: resolvedCwd,
-        env: spawnEnv,
+        env: finalSpawnEnv,
         useConpty: true
       })
+
+      // B3: capture identity ONLY after the spawn succeeds — if pty.spawn throws,
+      // no map entry is created (no leak), and shell-only sessions never reach
+      // here. resolvedProfileId is undefined when no explicit or primary profile
+      // resolved, so identity comes from the default account in that case.
+      captureClaudeAccount(sessionId, resolvedProfileId)
+      pushAccountIdentity(sessionId)
+      // Watch for a mid-session account change (user runs /login in the terminal
+      // without a respawn), so the strip/card/statusline follow the new account.
+      startWatchingAccountIdentity(sessionId, resolvedProfileId)
 
       // P6: register for codex_review opt-in if the session config requested it.
       // Only Claude sessions can opt in; Codex sessions never reach this branch
@@ -988,6 +1071,7 @@ export function spawnPty(
 
     ptyProcess.onData((data) => {
       if (win.isDestroyed()) return
+      getPtyIntegrityMonitor()?.recordPtyData(sessionId, data.length)
       win.webContents.send(`pty:data:${sessionId}`, data)
     })
   }
@@ -1005,13 +1089,35 @@ export function spawnPty(
     pendingWrites.delete(sessionId)
   }
 
-  // Start session logging
+  // Start session logging via the SQLite worker pipeline. Gated on the live
+  // `loggingEnabled` setting (default-true) and never for shell-only sessions.
+  // The captured account (set at line ~950 for non-shell Claude sessions) +
+  // configId/profileId are stamped so logs can be filtered by config/account.
   const configLabel = options?.configLabel || 'default'
-  startSessionLog(sessionId, configLabel)
+  // Reading settings here (rather than relying solely on getLogCapture()) gives
+  // a LIVE disable: if logging was enabled at boot (so the supervisor is running)
+  // but the user later turns it off in Settings, new session captures are skipped
+  // immediately — the worker keeps running idle. Asymmetry: if logging was
+  // DISABLED at boot there is no supervisor, so a mid-run enable needs a restart.
+  const settings = readConfig<{ loggingEnabled?: boolean }>('settings') ?? {}
+  const capture = shouldCapture(options ?? {}, settings) ? getLogCapture() : null
+  capture?.start(sessionId, {
+    configId: options?.configId,
+    configLabel,
+    projectCwd: resolvedCwd,
+    // accountEmail is typically undefined here: identity is captured asynchronously
+    // AFTER spawn (recheckSessionIdentity / startWatchingAccountIdentity wired in
+    // pty-manager). The Phase-1 session row therefore stamps a null email; configId
+    // and profileId ARE stamped correctly at spawn. A Phase-2 enrichment can join
+    // on profileId to back-fill the email once the identity poll resolves.
+    accountEmail: getAccountIdentity(sessionId)?.email,
+    profileId: resolvedProfileId,
+    provider: options?.provider ?? 'claude',
+  })
 
-  // Pipe PTY output to session logger and debug capture
+  // Pipe PTY output to the logging capture (O(1) record) and debug capture.
   ptyProcess.onData((data) => {
-    logSessionData(sessionId, data)
+    capture?.record(sessionId, data)
     if (isDebugModeEnabled()) {
       logPtyOutput(sessionId, data)
     }
@@ -1019,7 +1125,6 @@ export function spawnPty(
 
   ptyProcess.onExit(({ exitCode }) => {
     logInfo(`[pty] PTY exited for session ${sessionId} with code ${exitCode}`)
-    endSessionLog(sessionId)
 
     // Restart-race guard: the renderer's restart flow kills the old PTY
     // and re-spawns synchronously with the SAME sessionId. node-pty's
@@ -1038,6 +1143,11 @@ export function spawnPty(
     if (weAreCurrent) {
       ptySessions.delete(sessionId)
       clearSessionMeta(sessionId)
+      // End session logging (flush + mark ended). Gated on weAreCurrent so the
+      // restart-race stale exit can't end the just-respawned session's capture.
+      // No-op when logging is disabled / never captured this session.
+      capture?.end(sessionId, exitCode === 0 ? 'exited' : 'crashed')
+      getPtyIntegrityMonitor()?.endSession(sessionId)
       try {
         const gwExit = getGateway()
         if (gwExit) gwExit.unregisterSession(sessionId)
@@ -1049,6 +1159,23 @@ export function spawnPty(
       disposeCodexReviewUsage(sessionId)
       // P8.8: clear spawn-time identity capture. Safe no-op for non-codex sessions.
       clearCodexSpawnIdentity(sessionId)
+      // Phase R: clear spawn-time Claude account capture so the map can't grow unbounded.
+      // Capture the watched profileId BEFORE stopWatching clears it.
+      const exitProfileId = getWatchedProfileId(sessionId)
+      clearClaudeAccount(sessionId)
+      stopWatchingAccountIdentity(sessionId)
+      // Bug 2: snapshot any token refresh from the shared profile home into the
+      // account's canonical backup. Email-guarded, so a mid-session /login that
+      // switched the home to a different account can never corrupt canonical.
+      // No-op for default (no-profile) sessions.
+      if (exitProfileId) { try { backupProfileHomeToCanonical(exitProfileId) } catch { /* best-effort */ } }
+      // Auth-outside-CCC fix: this session may have rotated the primary account's
+      // OAuth token; push the freshest token back to the real global ~/.claude so an
+      // external `claude -p` keeps working. Freshest-wins + email-guarded; no-op when
+      // the exiting session wasn't the primary account.
+      try { syncPrimaryCredentialsWithGlobal() } catch { /* best-effort */ }
+      // Bug 4: release this session's pinned vision browser target/context.
+      try { teardownVisionSession(sessionId) } catch { /* best-effort */ }
     } else {
       logInfo(`[pty] Stale exit for ${sessionId} — newer PTY has taken over, skipping cleanup`)
     }
@@ -1178,6 +1305,7 @@ export function writePty(sessionId: string, data: string): void {
 export function resizePty(sessionId: string, cols: number, rows: number): void {
   try {
     ptySessions.get(sessionId)?.ptyProcess.resize(cols, rows)
+    getPtyIntegrityMonitor()?.recordResizeApplied(sessionId, cols, rows)
   } catch (err: unknown) {
     const code = (err as NodeJS.ErrnoException)?.code
     if (code === 'EPIPE' || code === 'EIO') {

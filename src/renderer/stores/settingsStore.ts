@@ -6,6 +6,8 @@ export type StatusLineFont = 'sans' | 'mono'
 
 export interface StatusLineSettings {
   showModel: boolean
+  showEffort: boolean
+  showAccount: boolean
   showTokens: boolean
   showContextBar: boolean
   showCost: boolean
@@ -19,6 +21,8 @@ export interface StatusLineSettings {
 
 export const DEFAULT_STATUS_LINE: StatusLineSettings = {
   showModel: true,
+  showEffort: true,
+  showAccount: true,
   showTokens: true,
   showContextBar: true,
   showCost: true,
@@ -85,6 +89,9 @@ export interface AppSettings {
    *  v1.5.9: no longer surfaced anywhere in the UI (AccountColoursSection removed).
    *  Retained so older saved settings still hydrate without errors. */
   accountColourOverrides?: Record<string, import('../../shared/identity-colors').IdentityColorKey>
+  /** v1.5.19: friendly names for accounts WITHOUT a profile (the default/single
+   *  account), keyed by canonical email. Profiles carry their own `name`. */
+  accountAliases?: Record<string, string>
   /** v1.5.12: when true, CCC writes `disableWorkflows: true` into every
    *  per-session Claude settings file so Claude Code's dynamic-workflow
    *  feature is disabled at session boot. Affects newly spawned sessions
@@ -94,6 +101,20 @@ export interface AppSettings {
   /** v1.5.17: show the genuine-only permission tray (cards for prompts Claude is
    *  blocked on). Default on; set false to hide the tray and skip capture. */
   permissionTrayEnabled?: boolean
+  /** v1.5.31: record each session's terminal output locally for search and
+   *  review. Logs never leave the machine. Default on; set false to disable
+   *  capture. The main process capture gate reads this key from the shared
+   *  settings config (readConfig('settings').loggingEnabled). */
+  loggingEnabled?: boolean
+  /** v1.5.31: one-time first-run consent notice has been shown. Falsy = show
+   *  the notice on the next boot so the user can opt out before any data is
+   *  written. Set true (with or without disabling logging) to suppress the
+   *  prompt permanently. */
+  loggingConsentSeen?: boolean
+  /** True once the legacy file logs have been imported into SQLite (Phase 2b). */
+  legacyLogsMigrated?: boolean
+  /** True once the one-time "legacy logs detected" surfacing has been shown. */
+  legacyLogsSurfacingSeen?: boolean
 }
 
 interface SettingsState {
@@ -121,6 +142,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   hooksPort: 19334,
   theme: 'dark',
   permissionTrayEnabled: true,
+  loggingEnabled: true,
 }
 
 // V2 changed the bundled terminal default from Cascadia Code @14 to JetBrains

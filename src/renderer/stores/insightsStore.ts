@@ -11,7 +11,7 @@ interface InsightsState {
   selectedRunId: string | null
   error: string | null
 
-  startInsights: () => Promise<void>
+  startInsights: (profileId?: string) => Promise<void>
   loadCatalogue: () => Promise<void>
   selectRun: (runId: string) => void
   handleStatusChanged: (run: InsightsRun) => void
@@ -25,10 +25,10 @@ export const useInsightsStore = create<InsightsState>((set, get) => ({
   selectedRunId: null,
   error: null,
 
-  startInsights: async () => {
+  startInsights: async (profileId?: string) => {
     try {
       set({ status: 'running', error: null })
-      const runId = await window.electronAPI.insights.run()
+      const runId = await window.electronAPI.insights.run(profileId ? { profileId } : undefined)
       set({ currentRunId: runId })
     } catch (err: any) {
       set({ status: 'failed', error: err.message || 'Failed to start insights' })

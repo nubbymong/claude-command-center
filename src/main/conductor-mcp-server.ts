@@ -27,7 +27,7 @@ import * as http from 'http'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
-import { logInfo, logError } from './debug-logger'
+import { logInfo, logError, logDebug, logWarn } from './debug-logger'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import { injectConductorVisionInCodexConfig, removeConductorVisionFromCodexConfig } from './providers/codex/mcp-config'
 import { getGlobalManager, startGlobalVision, launchBrowser } from './vision-manager'
@@ -276,8 +276,10 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
 
   loadMcpDeps()
 
-  // Helper: run a command if vision is connected, otherwise return unavailable
-  const withVision = async (cmd: VisionCommand) => {
+  // Helper: run a command if vision is connected, otherwise return unavailable.
+  // createServer wraps this with the connection's bound CCC session id so the
+  // VisionManager routes to that session's own pinned target (Bug 4).
+  const runVision = async (cmd: VisionCommand) => {
     const vm = getVisionManager()
     if (!vm) return visionUnavailable()
     return resultToMcpContent(await vm.executeCommand(cmd))
@@ -286,11 +288,61 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
   const createServer = (
     source: 'claude' | 'codex' | 'unknown' = 'unknown',
     boundSessionId: string | null = null,
+    transport: 'sse' | 'http' = 'sse',
   ) => {
     const server = new McpServer(
       { name: 'conductor', version: '1.1.0' },
       { capabilities: {} }
     )
+
+    // Diagnostics (opt-in, verbose-gated): wrap server.tool ONCE so every tool
+    // request is logged at a single narrow point -- name + resolved cccSessionId
+    // + transport on entry, ok/duration on completion (logWarn on failure with
+    // the error MESSAGE only). The MCP SDK always passes the handler as the LAST
+    // argument to server.tool(...); we replace just that function with a
+    // transparent wrapper that forwards the SAME args/`this`, returns the
+    // original result unchanged, and rethrows on error. Tool ARGUMENTS and
+    // RESULTS are never logged -- metadata only. Zero behavior change.
+    const rawTool = server.tool.bind(server)
+    server.tool = (...toolArgs: any[]) => {
+      const toolName = typeof toolArgs[0] === 'string' ? toolArgs[0] : 'unknown'
+      const handlerIdx = toolArgs.length - 1
+      const originalHandler = toolArgs[handlerIdx]
+      if (typeof originalHandler === 'function') {
+        toolArgs[handlerIdx] = function (this: unknown, ...handlerArgs: any[]) {
+          const sid = boundSessionId ?? 'unresolved'
+          const startedAt = Date.now()
+          logDebug(`[mcp] tool=${toolName} sid=${sid} transport=${transport}`)
+          let result: any
+          try {
+            result = originalHandler.apply(this, handlerArgs)
+          } catch (err: any) {
+            // Synchronous throw (rare for these handlers, but be faithful).
+            logWarn(`[mcp] tool=${toolName} FAILED dur=${Date.now() - startedAt}ms`, err?.message ?? String(err))
+            throw err
+          }
+          if (result && typeof result.then === 'function') {
+            return result.then(
+              (value: any) => {
+                logDebug(`[mcp] tool=${toolName} done ok=${value?.isError ? 'false' : 'true'} dur=${Date.now() - startedAt}ms`)
+                return value
+              },
+              (err: any) => {
+                logWarn(`[mcp] tool=${toolName} FAILED dur=${Date.now() - startedAt}ms`, err?.message ?? String(err))
+                throw err
+              },
+            )
+          }
+          logDebug(`[mcp] tool=${toolName} done ok=${result?.isError ? 'false' : 'true'} dur=${Date.now() - startedAt}ms`)
+          return result
+        }
+      }
+      return rawTool(...toolArgs)
+    }
+
+    // Bug 4: every vision tool on THIS connection routes to its bound CCC
+    // session's own pinned browser target, so concurrent sessions never collide.
+    const withVision = (cmd: VisionCommand) => runVision({ ...cmd, sessionId: boundSessionId ?? undefined })
 
     // ── Host file access (always available, no vision required) ────────────
 
@@ -315,7 +367,7 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
     server.tool('vision_status', 'Check browser connection status', {}, async () => {
       const vm = getVisionManager()
       if (!vm) return resultToMcpContent({ ok: true, data: { connected: false, browser: null } })
-      return resultToMcpContent(await vm.executeCommand({ command: 'status', args: [] }))
+      return resultToMcpContent(await vm.executeCommand({ command: 'status', args: [], sessionId: boundSessionId ?? undefined }))
     })
 
     // -- Screenshot --
@@ -323,7 +375,7 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
     server.tool('vision_screenshot', 'Capture a screenshot of the current browser page and return it as inline image content. No need to call Read afterwards — the image is included in the response.', {}, async () => {
       const vm = getVisionManager()
       if (!vm) return visionUnavailable()
-      const result = await vm.executeCommand({ command: 'screenshot', args: [] })
+      const result = await vm.executeCommand({ command: 'screenshot', args: [], sessionId: boundSessionId ?? undefined })
       if (!result.ok || !result.path) return resultToMcpContent(result)
       // Extract bare filename and return as inline image
       const filename = path.basename(result.path)
@@ -416,6 +468,17 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
       return withVision({ command: 'scroll', args })
     })
 
+    // -- Set viewport (Bug 4) --
+    server.tool('vision_setViewport', 'Set the browser viewport size (and optional deviceScaleFactor) for THIS session. The default headless viewport is ~800x600, which trips responsive layouts and clips wide content -- set e.g. 1440x900 to render at desktop size.', {
+      width: z.number().describe('Viewport width in CSS pixels'),
+      height: z.number().describe('Viewport height in CSS pixels'),
+      deviceScaleFactor: z.number().optional().describe('Device pixel ratio (default 1)')
+    }, async ({ width, height, deviceScaleFactor }: { width: number; height: number; deviceScaleFactor?: number }) => {
+      const args = [String(width), String(height)]
+      if (deviceScaleFactor !== undefined) args.push(String(deviceScaleFactor))
+      return withVision({ command: 'setViewport', args })
+    })
+
     // P6.9: codex_review is intentionally NOT advertised to Codex sessions.
     // Codex calling itself would be confusing UX in v1.5; v1.5.x can
     // reconsider if reciprocal review demand surfaces.
@@ -449,7 +512,7 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
         const source = parseSourceFromUrl(req.url)
         const boundSessionId = parseCccSessionIdFromUrl(req.url)
         logInfo(`[vision-mcp] New SSE connection (source=${source}, sid=${boundSessionId ?? 'none'})`)
-        const server = createServer(source, boundSessionId)
+        const server = createServer(source, boundSessionId, 'sse')
         const transport = new SSEServerTransport('/messages', res)
         transports.set(transport.sessionId, transport)
 
@@ -519,7 +582,7 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
         try {
           const source = parseSourceFromUrl(req.url)
           const boundSessionId = parseCccSessionIdFromUrl(req.url)
-          const server = createServer(source, boundSessionId)
+          const server = createServer(source, boundSessionId, 'http')
           const transport = new StreamableHTTPServerTransport({
             sessionIdGenerator: undefined,  // stateless
             enableJsonResponse: true,       // prefer JSON for unary responses (what rmcp expects)

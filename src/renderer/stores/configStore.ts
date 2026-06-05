@@ -33,6 +33,9 @@ export interface TerminalConfig {
   }
   pinned?: boolean
   machineName?: string // Identifies which machine this session runs on
+  /** v1.5.19: account profile a session spawned from this config runs under
+   *  (drives CLAUDE_CONFIG_DIR at PTY spawn). Absent = the bare default account. */
+  profileId?: string
   /**
    * P9.3 (#280): persisted GitHub integration on the CONFIG template so any
    * session spawned from it inherits the activation + repo + auth profile.
@@ -57,10 +60,6 @@ export interface TerminalConfig {
   }
   /** @deprecated read from claudeOptions; removed in P1.2+ */
   agentIds?: string[]  // Selected agent template IDs
-  /** @deprecated read from claudeOptions; removed in P1.2+ */
-  flickerFree?: boolean // Enable CLAUDE_CODE_NO_FLICKER=1 (alternate screen buffer rendering)
-  /** @deprecated read from claudeOptions; removed in P1.2+ */
-  powershellTool?: boolean // Enable CLAUDE_CODE_USE_POWERSHELL_TOOL=1 (native PowerShell tool)
   /** @deprecated read from claudeOptions; removed in P1.2+ */
   effortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode' // Claude Code --effort flag
   /** @deprecated read from claudeOptions; removed in P1.2+ */

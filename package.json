@@ -1,6 +1,6 @@
 {
   "name": "claude-conductor",
-  "version": "1.5.18",
+  "version": "1.5.30",
   "description": "Multi-session Claude Code terminal orchestrator",
   "author": "Nicholas Moger",
   "main": "./out/main/index.js",
@@ -11,8 +11,10 @@
     "package": "electron-vite build && electron-builder --win --dir",
     "package:win": "electron-vite build && electron-builder --win",
     "package:mac": "electron-vite build && electron-builder --mac",
-    "test": "vitest run && npx playwright test",
+    "verify:package": "node scripts/verify-native-unpack.mjs",
+    "test": "vitest run && npm run test:unit:native && npx playwright test",
     "test:unit": "vitest run",
+    "test:unit:native": "node scripts/run-native-tests.mjs",
     "test:e2e": "npx playwright test",
     "release": "node scripts/release.js",
     "promote": "node scripts/promote.js",
@@ -20,7 +22,7 @@
     "postinstall": "electron-rebuild --only=node-pty,better-sqlite3",
     "rebuild": "electron-rebuild",
     "capture-training": "npx tsx scripts/capture-training-screenshots.ts",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.web.json --noEmit",
     "test:minimal": "electron test/minimal/main.js"
   },
   "dependencies": {
@@ -137,6 +139,10 @@
       "buildResources": "build"
     },
     "asar": true,
+    "asarUnpack": [
+      "**/node_modules/better-sqlite3/**",
+      "**/node_modules/node-pty/**"
+    ],
     "extraResources": [
       {
         "from": "build/config-template.json",

@@ -1,6 +1,8 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { useSettingsStore } from '../stores/settingsStore'
 import ThemeToggle from './ThemeToggle'
+import ConductorHealthPill from './ConductorHealthPill'
+import ConductorServicesPanel from './ConductorServicesPanel'
 
 interface Props {
   sidebarOpen: boolean
@@ -55,9 +57,9 @@ const STATUS_LONG_LABELS: Record<string, string> = {
 }
 
 const STATUS_GRADIENT_COLORS: Record<string, string> = {
-  degraded_performance: '#F9E2AF',
-  partial_outage: '#FAB387',
-  major_outage: '#F38BA8',
+  degraded_performance: 'var(--status-warning)',
+  partial_outage: 'var(--brand)',
+  major_outage: 'var(--status-danger)',
 }
 
 function formatRelative(iso: string): string {
@@ -110,6 +112,21 @@ function StatusPill({ label, status, highlight }: StatusPillProps) {
 export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
   const [maximized, setMaximized] = useState(false)
   const [serviceStatus, setServiceStatus] = useState<ServiceStatusPayload | null>(null)
+  // panelOpen drives the open/closed visual state; panelMounted keeps the panel in
+  // the DOM through its ~200ms closing transition before unmount (so close is animated).
+  const [panelOpen, setPanelOpen] = useState(false)
+  const [panelMounted, setPanelMounted] = useState(false)
+  const panelCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const openPanel = () => {
+    if (panelCloseTimer.current) { clearTimeout(panelCloseTimer.current); panelCloseTimer.current = null }
+    setPanelMounted(true)
+    setPanelOpen(true)
+  }
+  const closePanel = () => {
+    setPanelOpen(false)
+    panelCloseTimer.current = setTimeout(() => { setPanelMounted(false); panelCloseTimer.current = null }, 200)
+  }
 
   useEffect(() => {
     window.electronAPI.window.isMaximized().then(setMaximized)
@@ -148,10 +165,10 @@ export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
     <div
       className="titlebar-drag flex items-center h-10 px-3 shrink-0 relative"
       style={gradientColor ? {
-        background: `linear-gradient(90deg, var(--surface-raised) 0%, ${gradientColor}18 30%, ${gradientColor}25 50%, ${gradientColor}18 70%, var(--surface-raised) 100%)`,
+        background: `linear-gradient(90deg, var(--surface-panel) 0%, ${gradientColor}18 30%, ${gradientColor}25 50%, ${gradientColor}18 70%, var(--surface-panel) 100%)`,
         color: 'var(--text-on-chrome)',
       } : {
-        background: 'var(--surface-raised)',
+        background: 'var(--surface-panel)',
         color: 'var(--text-on-chrome)',
       }}
     >
@@ -176,6 +193,11 @@ export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
       </div>
 
       <div className="titlebar-no-drag flex items-center gap-1">
+        {/* Conductor services health pill + anchored diagnostics console (D1b) */}
+        <div className="relative mr-2">
+          <ConductorHealthPill open={panelOpen} onOpen={() => (panelOpen ? closePanel() : openPanel())} />
+          {panelMounted && <ConductorServicesPanel open={panelOpen} onClose={closePanel} />}
+        </div>
         {/* Claude service status — two pills (Claude Code + Claude.ai) with API in tooltip */}
         {serviceStatus && (
           <div

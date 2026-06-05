@@ -22,6 +22,14 @@ export default function ExcalidrawModal({ backgroundImage, onClose }: Props) {
   const copyResetTimerRef = useRef<number | null>(null)
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copying' | 'copied' | 'failed'>('idle')
   const resolvedTheme = useResolvedTheme()
+  // Canvas background must be a concrete colour (Excalidraw paints a <canvas>,
+  // not CSS), so resolve the live theme surface token rather than hardcoding a
+  // dark-only palette value. Falls back to per-theme defaults if the var is
+  // missing (e.g. SSR/tests).
+  const canvasBg =
+    (typeof window !== 'undefined'
+      ? getComputedStyle(document.documentElement).getPropertyValue('--surface-stage').trim()
+      : '') || (resolvedTheme === 'light' ? '#e8ecf3' : '#171e27')
   // Trap focus inside the modal so keyboard users can't tab into the
   // underlying app while annotating. Also handles Escape → close, so
   // we don't need a separate document keydown listener — `useFocusTrap`
@@ -140,7 +148,7 @@ export default function ExcalidrawModal({ backgroundImage, onClose }: Props) {
                 created: Date.now(),
               },
             } as never,
-            appState: { viewBackgroundColor: resolvedTheme === 'light' ? '#eff1f5' : '#1e1e2e', exportBackground: true } as never,
+            appState: { viewBackgroundColor: canvasBg, exportBackground: true } as never,
           } : undefined}
         />
       </div>

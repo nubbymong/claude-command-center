@@ -1,6 +1,8 @@
 import React, { useEffect, useState, useMemo, useCallback } from 'react'
 import { useTokenomicsStore } from '../stores/tokenomicsStore'
 import { useSettingsStore } from '../stores/settingsStore'
+import { useAccountProfilesStore } from '../stores/accountProfilesStore'
+import { resolveAccountNameByEmail } from '../../shared/account-chip-color'
 import type { TokenomicsSessionRecord, TokenomicsDailyAggregate } from '../../shared/types'
 import PageFrame from './PageFrame'
 import { AccountFilter, type AccountFilterValue } from './tokenomics/AccountFilter'
@@ -73,6 +75,48 @@ function getRateLimitPeriod(): { fiveHourStart: string; sevenDayStart: string } 
   const fiveHourStart = new Date(now.getTime() - 5 * 60 * 60 * 1000).toISOString()
   const sevenDayStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString()
   return { fiveHourStart, sevenDayStart }
+}
+
+// ── Account-scoped rollups (pure, exported for unit testing) ──
+
+/** Roll a session list up into a per-day map (date key 'YYYY-MM-DD' from the
+ *  session's firstTimestamp). Drives the per-account DailyChart. */
+export function rollupSessionsByDay(
+  sessions: TokenomicsSessionRecord[],
+): Record<string, { totalCostUsd: number; sessionCount: number; messageCount: number }> {
+  const m: Record<string, { totalCostUsd: number; sessionCount: number; messageCount: number }> = {}
+  for (const s of sessions) {
+    const key = s.firstTimestamp.slice(0, 10)
+    const e = (m[key] ||= { totalCostUsd: 0, sessionCount: 0, messageCount: 0 })
+    e.totalCostUsd += s.totalCostUsd
+    e.sessionCount++
+    e.messageCount += s.messageCount
+  }
+  return m
+}
+
+/** Per-account summary-card windows derived from a session list. `now` is
+ *  injected so this is deterministically testable. Matches the global card
+ *  semantics: today + 7-day by calendar (UTC) date key, 5h rolling, all-time =
+ *  sum of every scoped session. */
+export function computeAccountSummaryCosts(
+  sessions: TokenomicsSessionRecord[],
+  now: Date,
+  fiveHourStartIso: string,
+): { todayCost: number; weekCost: number; fiveHourCost: number; allTimeCost: number } {
+  const todayKey = now.toISOString().slice(0, 10)
+  const weekStart = new Date(now)
+  weekStart.setDate(weekStart.getDate() - 6) // 7 calendar days incl. today
+  const weekStartKey = weekStart.toISOString().slice(0, 10)
+  let todayCost = 0, weekCost = 0, fiveHourCost = 0, allTimeCost = 0
+  for (const s of sessions) {
+    const day = s.firstTimestamp.slice(0, 10)
+    allTimeCost += s.totalCostUsd
+    if (day === todayKey) todayCost += s.totalCostUsd
+    if (day >= weekStartKey) weekCost += s.totalCostUsd
+    if (s.firstTimestamp >= fiveHourStartIso) fiveHourCost += s.totalCostUsd
+  }
+  return { todayCost, weekCost, fiveHourCost, allTimeCost }
 }
 
 // ── Filter types ──
@@ -238,20 +282,26 @@ export function SummaryCards({ today, week, fiveHour, allTime, extraSpend, rateL
 
 // ── Daily Cost Chart (clickable) ──
 
-export function DailyChart({ selectedDate, onSelectDate }: {
+export function DailyChart({ selectedDate, onSelectDate, accountSessions }: {
   selectedDate: string | null
   onSelectDate: (date: string | null) => void
+  /** When provided (a specific account is filtered), the chart is built from
+   *  these account-scoped sessions instead of the global daily aggregates. */
+  accountSessions?: TokenomicsSessionRecord[] | null
 }) {
   const data = useTokenomicsStore(s => s.data)
   const aggregates = useMemo(() => {
-    if (!data) return []
     const result: Array<{ date: string; totalCostUsd: number; sessionCount: number; messageCount: number }> = []
     const now = new Date()
+
+    // Per-account: roll the account-scoped sessions up into a per-day map.
+    const perDay = accountSessions ? rollupSessionsByDay(accountSessions) : null
+
     for (let i = 29; i >= 0; i--) {
       const d = new Date(now)
       d.setDate(d.getDate() - i)
       const key = d.toISOString().slice(0, 10)
-      const agg = data.dailyAggregates[key]
+      const agg = perDay ? perDay[key] : data?.dailyAggregates[key]
       result.push({
         date: key,
         totalCostUsd: agg?.totalCostUsd || 0,
@@ -260,7 +310,7 @@ export function DailyChart({ selectedDate, onSelectDate }: {
       })
     }
     return result
-  }, [data])
+  }, [data, accountSessions])
   const maxCost = Math.max(...aggregates.map(a => a.totalCostUsd), 0.01)
 
   const barWidth = 16
@@ -328,7 +378,7 @@ export function DailyChart({ selectedDate, onSelectDate }: {
 
 // ── Breakdown Panel ──
 
-export function BreakdownPanel({ sessions, groupBy }: { sessions: TokenomicsSessionRecord[]; groupBy: GroupByLens }) {
+export function BreakdownPanel({ sessions, groupBy, labelForAccount }: { sessions: TokenomicsSessionRecord[]; groupBy: GroupByLens; labelForAccount?: (email: string) => string }) {
   const breakdown = useMemo(() => {
     const buckets: Record<string, { costUsd: number; inputTokens: number; outputTokens: number; count: number }> = {}
     for (const s of sessions) {
@@ -372,7 +422,11 @@ export function BreakdownPanel({ sessions, groupBy }: { sessions: TokenomicsSess
         {breakdown.map(m => {
           const pct = maxCost > 0 ? (m.costUsd / maxCost) * 100 : 0
           const color = groupBy === 'model' ? getModelColor(m.key) : 'var(--chart-other)'
-          const label = groupBy === 'model' ? getModelShort(m.key) : m.key
+          const label = groupBy === 'model'
+            ? getModelShort(m.key)
+            : groupBy === 'account' && labelForAccount && m.key !== '(unattributed)'
+            ? labelForAccount(m.key)
+            : m.key
           return (
             <div key={m.key}>
               <div className="flex justify-between text-xs mb-1">
@@ -403,7 +457,7 @@ export function FilterBar({
   dateFilter, spendFilter, providerFilter,
   onDateFilter, onSpendFilter, onProviderFilter,
   selectedDate, projects, projectFilter, onProjectFilter,
-  accountEmails, accountFilter, onAccountFilter,
+  accountEmails, accountFilter, onAccountFilter, accountLabelFor,
   groupBy, onGroupBy,
 }: {
   dateFilter: DateFilter
@@ -419,6 +473,7 @@ export function FilterBar({
   accountEmails: string[]
   accountFilter: AccountFilterValue
   onAccountFilter: (next: AccountFilterValue) => void
+  accountLabelFor?: (email: string) => string
   groupBy: GroupByLens
   onGroupBy: (g: GroupByLens) => void
 }) {
@@ -519,7 +574,7 @@ export function FilterBar({
       )}
       <div className="flex items-center gap-1">
         <span className="text-xs text-overlay0 mr-1">Account:</span>
-        <AccountFilter emails={accountEmails} value={accountFilter} onChange={onAccountFilter} />
+        <AccountFilter emails={accountEmails} value={accountFilter} onChange={onAccountFilter} labelForEmail={accountLabelFor} />
       </div>
     </div>
   )
@@ -529,7 +584,7 @@ export function FilterBar({
 
 type SortKey = 'project' | 'model' | 'cost' | 'inputTokens' | 'outputTokens' | 'date' | 'messages' | 'cacheTokens' | 'duration' | 'costPerHour'
 
-export function SessionsTable({ sessions, title, observedEmails, onRefresh, groupBy }: { sessions: TokenomicsSessionRecord[]; title?: string; observedEmails: string[]; onRefresh: () => void; groupBy?: GroupByLens }) {
+export function SessionsTable({ sessions, title, observedEmails, onRefresh, groupBy, labelForAccount }: { sessions: TokenomicsSessionRecord[]; title?: string; observedEmails: string[]; onRefresh: () => void; groupBy?: GroupByLens; labelForAccount?: (email: string) => string }) {
   const [sortBy, setSortBy] = useState<SortKey>('cost')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [page, setPage] = useState(0)
@@ -697,7 +752,8 @@ export function SessionsTable({ sessions, title, observedEmails, onRefresh, grou
                 <React.Fragment key={key}>
                   <tr data-testid="group-header" className="bg-surface1/40">
                     <td colSpan={11} className="px-3 py-1.5 text-xs text-overlay1 font-semibold">
-                      {key} <span className="text-overlay0 font-normal ml-2">{group.length}</span>
+                      {groupBy === 'account' && labelForAccount && key !== '(unattributed)' ? labelForAccount(key) : key}
+                      <span className="text-overlay0 font-normal ml-2">{group.length}</span>
                     </td>
                   </tr>
                   {group.map(s => renderRow(s))}
@@ -808,6 +864,14 @@ export default function TokenomicsPage() {
   const tokenomicsAccountFilter = useSettingsStore((s) => s.settings.tokenomicsAccountFilter ?? 'all')
   const updateSettings = useSettingsStore((s) => s.updateSettings)
 
+  // Friendly account names for the filter dropdown (raw email stays the value).
+  const accountProfiles = useAccountProfilesStore((s) => s.profiles)
+  const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
+  const nameForAccount = useCallback(
+    (email: string) => resolveAccountNameByEmail(email, accountProfiles, accountAliases),
+    [accountProfiles, accountAliases],
+  )
+
   // Account attribution wizard banner -- dismissible via appMeta
   const wizardDismissed = useAppMetaStore((s) => s.meta.accountWizardDismissed ?? false)
   const updateAppMeta = useAppMetaStore((s) => s.update)
@@ -878,9 +942,24 @@ export default function TokenomicsPage() {
     }
   }, [data, tokenomicsAccountFilter, observedEmails, updateSettings])
 
-  // Burn rate from recent activity (last 5h window)
+  // Account-scoped sessions: the same per-account predicate the table/breakdown
+  // use, but WITHOUT date/project/spend/provider filters — the summary cards and
+  // chart each apply their own time windows. `null` signals the 'all accounts'
+  // fast path (precomputed daily aggregates). Derived from sessions so it covers
+  // every filter mode (email, mixed, unknown) and works on existing data with no
+  // reseed (the persisted aggregates are global-only).
+  const accountScopedSessions = useMemo<TokenomicsSessionRecord[] | null>(() => {
+    if (accountFilter === 'all') return null
+    if (accountFilter === '__mixed__') return allSessions.filter(s => s.attributionMixed === true)
+    if (accountFilter === '__unknown__') return allSessions.filter(s => !s.accountEmail && !s.attributionMixed)
+    return allSessions.filter(s => s.accountEmail === accountFilter && !s.attributionMixed)
+  }, [allSessions, accountFilter])
+
+  // Burn rate from recent activity (last 5h window) — account-scoped when a
+  // specific account is selected so the card matches the rest of the view.
   const burnRate = useMemo(() => {
-    const recent = allSessions.filter(s => s.firstTimestamp >= periods.fiveHourStart && s.costPerHour)
+    const scope = accountScopedSessions ?? allSessions
+    const recent = scope.filter(s => s.firstTimestamp >= periods.fiveHourStart && s.costPerHour)
     if (recent.length === 0) return undefined
     // Weight by duration
     let totalCost = 0, totalMs = 0, totalTokens = 0
@@ -896,7 +975,7 @@ export default function TokenomicsPage() {
       costPerHour: (totalCost / totalMs) * 3_600_000,
       tokensPerMinute: (totalTokens / totalMs) * 60_000,
     }
-  }, [allSessions, periods])
+  }, [allSessions, accountScopedSessions, periods])
 
   // Filtered sessions based on date + spend + provider + project + account filters
   const filteredSessions = useMemo(() => {
@@ -954,10 +1033,18 @@ export default function TokenomicsPage() {
     return list
   }, [allSessions, dateFilter, spendFilter, providerFilter, projectFilter, accountFilter, selectedDate, periods])
 
-  // Summary costs
+  // Summary costs — honour the account filter. When a specific account/sentinel
+  // is selected, every window is derived from the account-scoped sessions so the
+  // cards agree with the table/breakdown; otherwise the precomputed global daily
+  // aggregates are used (fast path, unchanged behaviour).
   const { todayCost, weekCost, fiveHourCost, allTimeCost } = useMemo(() => {
     if (!data) return { todayCost: 0, weekCost: 0, fiveHourCost: 0, allTimeCost: 0 }
     const today = new Date().toISOString().slice(0, 10)
+
+    if (accountScopedSessions) {
+      return computeAccountSummaryCosts(accountScopedSessions, new Date(), periods.fiveHourStart)
+    }
+
     const todayCost = data.dailyAggregates[today]?.totalCostUsd || 0
 
     let weekCost = 0
@@ -974,7 +1061,7 @@ export default function TokenomicsPage() {
       .reduce((sum, s) => sum + s.totalCostUsd, 0)
 
     return { todayCost, weekCost, fiveHourCost, allTimeCost: data.totalCostUsd || 0 }
-  }, [data, allSessions, periods])
+  }, [data, allSessions, accountScopedSessions, periods])
 
   const rateLimits = useMemo(() => ({
     current: data?.rateLimits?.fiveHour,
@@ -1055,9 +1142,9 @@ export default function TokenomicsPage() {
         {/* Charts row */}
         <div className="grid grid-cols-3 gap-4 mb-6">
           <div className="col-span-2">
-            <DailyChart selectedDate={selectedDate} onSelectDate={handleDateSelect} />
+            <DailyChart selectedDate={selectedDate} onSelectDate={handleDateSelect} accountSessions={accountScopedSessions} />
           </div>
-          <BreakdownPanel sessions={filteredSessions} groupBy={groupBy} />
+          <BreakdownPanel sessions={filteredSessions} groupBy={groupBy} labelForAccount={nameForAccount} />
         </div>
 
         {selectedDate && data?.codexReviewByDay?.[selectedDate] && data.codexReviewByDay[selectedDate].reviewCount > 0 && (
@@ -1089,6 +1176,7 @@ export default function TokenomicsPage() {
           accountEmails={observedEmails}
           accountFilter={accountFilter}
           onAccountFilter={setAccountFilter}
+          accountLabelFor={nameForAccount}
           groupBy={groupBy}
           onGroupBy={setGroupBy}
         />
@@ -1100,6 +1188,7 @@ export default function TokenomicsPage() {
           observedEmails={observedEmails}
           onRefresh={loadData}
           groupBy={groupBy}
+          labelForAccount={nameForAccount}
         />
       </div>
     </PageFrame>

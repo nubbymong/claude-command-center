@@ -68,16 +68,11 @@ export interface ClaudeOptions {
   effortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode'
   legacyVersion?: LegacyVersion
   disableAutoMemory?: boolean
-  flickerFree?: boolean
-  powershellTool?: boolean
   agentIds?: string[]
   /** v1.5 P6: when true, the Claude PTY is registered into the codex_review opt-in set
    *  and the SessionDialog toggle is persisted. Tool description still appears to all
    *  Claude sessions (soft ACL); this flag controls authorisation server-side. */
   enableCodexReview?: boolean
-  /** v1.5.11: Opus 4.8 fast mode (2.5x speed, $10/$50 per 1M tokens vs standard $5/$25).
-   *  Per-session toggle; tokenomics uses this to pick the correct pricing row. */
-  fastMode?: boolean
 }
 
 export interface CodexOptions {
@@ -108,6 +103,8 @@ export interface SavedSession {
   githubIntegration?: import('./github-types').SessionGitHubIntegration
   // Provider discriminator + sub-options
   provider: ProviderId
+  /** v1.5.19: links a session to an account profile (multi-account). */
+  profileId?: string
   claudeOptions?: ClaudeOptions
   codexOptions?: CodexOptions
   // Legacy top-level fields -- kept for backward compat during migration; read from claudeOptions after P1.2
@@ -117,10 +114,6 @@ export interface SavedSession {
   legacyVersion?: LegacyVersion
   /** @deprecated read from claudeOptions; removed in P1.2+ */
   agentIds?: string[]
-  /** @deprecated read from claudeOptions; removed in P1.2+ */
-  flickerFree?: boolean
-  /** @deprecated read from claudeOptions; removed in P1.2+ */
-  powershellTool?: boolean
   /** @deprecated read from claudeOptions; removed in P1.2+ */
   effortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode'
   /** @deprecated read from claudeOptions; removed in P1.2+ */
@@ -148,6 +141,13 @@ export interface StatuslineData {
   // Codex: reasoning effort label (e.g. "xhigh"), surfaced alongside model in the
   // ContextBar. Always undefined for Claude sessions.
   reasoningEffort?: string
+  // Claude: live reasoning effort from the statusline payload (effort.level),
+  // reflects mid-session /effort changes. Maps to session.effortLevel.
+  effortLevel?: string
+  // Claude: live Fast Mode flag from the statusline payload (fast_mode), reflects
+  // mid-session /fast toggles. Per-session and verified to flip true<->false.
+  // Maps to session.fastMode; drives the sidebar card's ⚡ bolt.
+  fastMode?: boolean
   contextUsedPercent?: number
   contextRemainingPercent?: number
   contextWindowSize?: number
@@ -196,6 +196,10 @@ export interface CloudAgent {
   updatedAt: number
   projectPath: string
   configId?: string
+  /** Account profile this agent ran under (multi-account). Undefined = default/global account. */
+  profileId?: string
+  /** Resolved account email at dispatch time. Drives the card label + account filter. */
+  accountEmail?: string
   output: string
   cost?: number
   duration?: number
@@ -211,6 +215,9 @@ export interface InsightsRun {
   status: 'running' | 'extracting_kpis' | 'complete' | 'failed'
   statusMessage?: string
   error?: string
+  /** Account this run was generated for (multi-account). Undefined = default. */
+  accountEmail?: string
+  profileId?: string
 }
 
 export interface InsightsCatalogue {
@@ -238,23 +245,6 @@ export interface InsightsData {
 
 /** Alias for backward compatibility */
 export type KpiData = InsightsData
-
-// ── Logs ──
-
-export interface LogSession {
-  configLabel: string
-  sessionId: string
-  logDir: string
-  startTime?: number
-  endTime?: number
-  size: number
-}
-
-export interface LogEntry {
-  ts: number
-  type: string
-  data?: string
-}
 
 // ── Agent Teams ──
 

@@ -2,6 +2,7 @@ import { useCallback } from 'react'
 import { Session, useSessionStore } from '../stores/sessionStore'
 import { killSessionPty, clearSpawned } from '../ptyTracker'
 import { markSessionForResumePicker } from '../utils/resumePicker'
+import { useAccountGateStore } from '../stores/accountGateStore'
 
 // Shared restart/recover logic for SessionHeader and the v2 bottom bar.
 // Behaviour is identical to the inline functions that previously lived in
@@ -10,14 +11,21 @@ import { markSessionForResumePicker } from '../utils/resumePicker'
 export function useRestartSession(
   session: Session | null | undefined,
   isShowingPartner = false,
-): { restart: () => void; recover: () => void } {
+): { restart: (overrides?: Partial<Session>) => void; recover: () => void } {
   const forceRemount = useCallback(
-    (status: 'idle' | 'working') => {
+    (status: 'idle' | 'working', overrides?: Partial<Session>) => {
       if (!session) return
       const store = useSessionStore.getState()
+      // Merge from the LIVE store record (not just the captured closure) so a
+      // store mutation made immediately before restart -- e.g. switchAccount
+      // setting profileId -- survives the remove/re-add. `overrides` lets the
+      // caller force specific fields (profileId) even if the store read raced.
+      const live = store.getSession(session.id)
       store.removeSession(session.id)
       store.addSession({
         ...session,
+        ...live,
+        ...overrides,
         id: session.id,
         status,
         createdAt: Date.now(),
@@ -26,6 +34,11 @@ export function useRestartSession(
         costUsd: undefined,
         needsAttention: false,
         modelName: undefined,
+        // Graceful-fail: the previous run's live indicators must not linger on the
+        // restarted card. Clearing effortLive re-hides the effort pill (and fastMode
+        // the bolt) until the new run's first statusline tick confirms them.
+        effortLive: undefined,
+        fastMode: undefined,
         linesAdded: undefined,
         linesRemoved: undefined,
         inputTokens: undefined,
@@ -41,7 +54,7 @@ export function useRestartSession(
     [session],
   )
 
-  const restart = useCallback(() => {
+  const restart = useCallback((overrides?: Partial<Session>) => {
     if (!session) return
     if (isShowingPartner) {
       // Partner terminal: just kill partner PTY, leave main Claude untouched
@@ -50,10 +63,12 @@ export function useRestartSession(
       window.electronAPI.pty.kill(partnerPtyId)
       // Clear partner from spawn tracker so it respawns on remount
       clearSpawned(partnerPtyId)
-      // Force re-mount by bumping createdAt
+      // Force re-mount by bumping createdAt. Merge the live store record +
+      // overrides so a pre-restart store mutation (e.g. profileId) survives.
       const store = useSessionStore.getState()
+      const live = store.getSession(session.id)
       store.removeSession(session.id)
-      store.addSession({ ...session, id: session.id, status: session.status, createdAt: Date.now() })
+      store.addSession({ ...session, ...live, ...overrides, id: session.id, status: session.status, createdAt: Date.now() })
       return
     }
     // Kill the old PTY (also clears spawn tracker so new one will spawn)
@@ -62,8 +77,11 @@ export function useRestartSession(
     if (session.sessionType === 'local' && !session.shellOnly) {
       markSessionForResumePicker(session.id)
     }
+    // Restart (and switch, which routes through here) already determines the
+    // account -- the re-spawn must NOT pop the pre-spawn account gate.
+    useAccountGateStore.getState().markPredetermined(session.id)
     // Force re-mount with clean metadata
-    forceRemount('idle')
+    forceRemount('idle', overrides)
   }, [session, isShowingPartner, forceRemount])
 
   const recover = useCallback(() => {
@@ -78,6 +96,8 @@ export function useRestartSession(
     if (session.sessionType === 'local' && !session.shellOnly) {
       markSessionForResumePicker(session.id)
     }
+    // Recover preserves the current account -- skip the pre-spawn gate.
+    useAccountGateStore.getState().markPredetermined(session.id)
     forceRemount('idle')
   }, [session, forceRemount])
 

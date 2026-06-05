@@ -58,7 +58,6 @@ const os = require('os');
 // Derive status dir from script location: scripts/xxx.js → ../status/
 // Works on any mount path (local resources dir, SSH remote mount, etc.)
 const statusDir = path.join(path.dirname(process.argv[1]), '..', 'status');
-const cacheFile = path.join(os.tmpdir(), 'claude-command-center-usage-cache.json');
 const CACHE_MAX_AGE = 60; // seconds
 
 function fetchUsageLimits() {
@@ -99,7 +98,9 @@ function fetchUsageLimits() {
   });
 }
 
-async function getCachedUsageLimits() {
+async function getCachedUsageLimits(accountEmail) {
+  const cacheKey = (accountEmail || 'default').toLowerCase().replace(/[^a-z0-9]/g, '_');
+  const cacheFile = path.join(os.tmpdir(), 'claude-command-center-usage-cache-' + cacheKey + '.json');
   // Check cache first
   try {
     if (fs.existsSync(cacheFile)) {
@@ -110,8 +111,6 @@ async function getCachedUsageLimits() {
       }
     }
   } catch {}
-
-  // Fetch fresh data
   const data = await fetchUsageLimits();
   if (data) {
     try { fs.writeFileSync(cacheFile, JSON.stringify(data)); } catch {}
@@ -148,6 +147,8 @@ process.stdin.on('end', async () => {
     const status = {
       sessionId,
       model: data.model?.display_name || data.model?.id,
+      effortLevel: data.effort && data.effort.level,
+      fastMode: data.fast_mode,
       contextUsedPercent: data.context_window?.used_percentage,
       contextRemainingPercent: data.context_window?.remaining_percentage,
       contextWindowSize: data.context_window?.context_window_size,
@@ -161,8 +162,8 @@ process.stdin.on('end', async () => {
       timestamp: Date.now()
     };
 
-    // Fetch rate limits (cached, non-blocking)
-    const limits = await getCachedUsageLimits();
+    // Fetch rate limits (cached per-account, non-blocking)
+    const limits = await getCachedUsageLimits(accountEmail);
     if (limits) {
       if (limits.five_hour) {
         status.rateLimitCurrent = Math.round(Number(limits.five_hour.utilization) || 0);

@@ -5,6 +5,7 @@ import { useCommandBarStore } from '../stores/commandBarStore'
 import CommandDialog from './CommandDialog'
 import ScreenshotButton from './ScreenshotButton'
 import ExcalidrawButton from './ExcalidrawButton'
+import LogsButton from './LogsButton'
 import WebviewButton from './WebviewButton'
 import { useWebviewStore, pollUrlForContent, probeWebviewUrls } from '../stores/webviewStore'
 import { generateId } from '../utils/id'
@@ -536,6 +537,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
         <div className="w-px h-4 bg-surface1 mx-0.5" />
         <ScreenshotButton sessionId={sessionId} sessionType={sessionType} />
         <ExcalidrawButton sessionId={sessionId} />
+        <LogsButton sessionId={sessionId} />
         <WebviewButton sessionId={webviewKey} hasWebviewCommand={hasWebviewCommand} />
         {/* Back to Claude / Partner toggle - same monochrome tool-button shape as Snap */}
         {partnerEnabled && onTogglePartner && (
@@ -1109,7 +1111,7 @@ function SectionNameInput({ x, y, initialName, initialColor, onConfirm, onCancel
               className={`w-4 h-4 rounded-full border transition-all shrink-0 ${
                 (c || undefined) === color ? 'ring-1 ring-offset-1 ring-offset-surface0 ring-blue scale-110' : 'hover:scale-110'
               }`}
-              style={{ backgroundColor: c || '#a6adc8', borderColor: c ? c + '60' : '#585b7060' }}
+              style={{ backgroundColor: c || 'var(--text-muted)', borderColor: c ? c + '60' : 'var(--border-subtle)' }}
               title={c || 'Default'}
             />
           ))}

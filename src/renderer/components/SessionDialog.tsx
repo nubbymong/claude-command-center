@@ -100,16 +100,8 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
   const agentUserTemplates = useAgentLibraryStore(s => s.templates)
   const allAgentTemplates = [...agentUserTemplates, ...BUILTIN_TEMPLATES]
   const [selectedAgentIds, setSelectedAgentIds] = useState<Set<string>>(new Set(initialClaude?.agentIds ?? initial?.agentIds ?? []))
-  type EffortLevelOpt = 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode' | ''
-  const [effortLevel, setEffortLevel] = useState<EffortLevelOpt>(
-    (initialClaude?.effortLevel ?? initial?.effortLevel ?? '') as EffortLevelOpt
-  )
   const [disableAutoMemory, setDisableAutoMemory] = useState(initialClaude?.disableAutoMemory ?? initial?.disableAutoMemory ?? false)
   const [enableCodexReview, setEnableCodexReview] = useState(initialClaude?.enableCodexReview ?? false)
-  // v1.5.11: Opus 4.8 fast mode -- 2.5x speed for 2x cost ($10/$50 per 1M
-  // tokens instead of $5/$25). Persisted on the config so tokenomics can
-  // route the session record to the `<model>-fast` pricing row.
-  const [fastMode, setFastMode] = useState(initialClaude?.fastMode ?? false)
   const [machineName, setMachineName] = useState(initial?.machineName ?? '')
 
   // Fetch available versions when legacy checkbox enabled
@@ -250,10 +242,8 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
       model: model || undefined,
       legacyVersion: legacyEnabled && legacyVersion ? { enabled: true, version: legacyVersion } : undefined,
       agentIds: !shellOnly && selectedAgentIds.size > 0 ? Array.from(selectedAgentIds) : undefined,
-      effortLevel: !shellOnly && effortLevel ? effortLevel : undefined,
       disableAutoMemory: !shellOnly && disableAutoMemory ? true : undefined,
       enableCodexReview: !shellOnly && enableCodexReview ? true : undefined,
-      fastMode: !shellOnly && fastMode ? true : undefined,
     } : undefined
 
     const codexOptions: CodexOptions | undefined = provider === 'codex' ? {
@@ -283,6 +273,10 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
       claudeOptions,
       codexOptions,
       machineName: machineName.trim() || undefined,
+      // Account is no longer a config field -- it's chosen at launch by the
+      // pre-spawn account gate. Preserve any pre-existing value on edit so older
+      // configs aren't silently rewritten, but never set it from this dialog.
+      profileId: initial?.profileId,
     }
 
     onConfirm(
@@ -605,45 +599,6 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                 <option value="haiku">Haiku</option>
               </select>
             </div>
-
-            {/* Effort level */}
-            {!shellOnly && (
-              <div>
-                <label className="block text-xs text-subtext0 mb-1">
-                  Effort level
-                  <span className="text-overlay0 ml-1">(thinking depth vs cost)</span>
-                </label>
-                <select
-                  value={effortLevel}
-                  onChange={(e) => setEffortLevel(e.target.value as EffortLevelOpt)}
-                  className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-blue"
-                >
-                  <option value="">Auto (default)</option>
-                  <option value="low">Low -- fast, minimal thinking</option>
-                  <option value="medium">Medium -- balanced</option>
-                  <option value="high">High -- deep reasoning</option>
-                  <option value="xhigh">Extra high -- Opus 4.8 hardest tasks</option>
-                  <option value="max">Max -- maximum reasoning budget</option>
-                  <option value="ultracode">Ultracode -- xhigh + automatic workflows (research preview)</option>
-                </select>
-              </div>
-            )}
-
-            {/* v1.5.11: Opus 4.8 fast mode toggle */}
-            {!shellOnly && (
-              <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={fastMode}
-                  onChange={(e) => setFastMode(e.target.checked)}
-                  className="mt-0.5 rounded border-surface1"
-                />
-                <span>
-                  Fast mode (Opus 4.8)
-                  <span className="block text-[10px] text-overlay0">2.5x speed at 2x cost ($10/$50 per 1M tokens). Tokenomics tracks Fast spend separately.</span>
-                </span>
-              </label>
-            )}
 
             {/* Disable auto-memory toggle */}
             {!shellOnly && (

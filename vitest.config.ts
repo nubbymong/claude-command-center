@@ -1,4 +1,4 @@
-import { defineConfig } from 'vitest/config'
+import { defineConfig, configDefaults } from 'vitest/config'
 import { resolve } from 'path'
 
 export default defineConfig({
@@ -9,6 +9,10 @@ export default defineConfig({
   test: {
     globals: true,
     include: ['tests/unit/**/*.test.ts', 'tests/unit/**/*.test.tsx', 'tests/integration/**/*.test.ts'],
+    // `*.native.test.ts` load better-sqlite3 (built for Electron's ABI) and run
+    // under Electron-as-Node via `npm run test:unit:native` — excluded here so
+    // this system-Node run never tries to dlopen an Electron-ABI binary.
+    exclude: [...configDefaults.exclude, '**/*.native.test.{ts,tsx}'],
     environment: 'node',
     setupFiles: ['tests/unit/setup.ts'],
     // Integration tests (e.g. hooks synthetic path) spin up a real loopback

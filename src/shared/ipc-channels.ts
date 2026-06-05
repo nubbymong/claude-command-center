@@ -39,6 +39,7 @@ export const IPC = {
   PTY_KILL: 'pty:kill',
   PTY_DATA: 'pty:data',   // Suffixed with :sessionId at runtime
   PTY_EXIT: 'pty:exit',   // Suffixed with :sessionId at runtime
+  PTY_INTEGRITY_REPORT: 'pty:integrityReport',   // renderer -> main per-session byte/resize report
 
   // SSH connection-flow controller (manual mode user-gated stages).
   // Main->renderer notification is suffixed with :<sessionId> at runtime.
@@ -50,6 +51,9 @@ export const IPC = {
 
   // Statusline
   STATUSLINE_UPDATE: 'statusline:update',
+
+  // Live reasoning effort pushed from the hooks gateway (main -> renderer).
+  HOOKS_EFFORT_UPDATE: 'hooks:effortUpdate',
 
   // Debug
   DEBUG_ON_DEBUG: 'claude:debug',
@@ -63,11 +67,18 @@ export const IPC = {
   USAGE_TOTAL: 'usage:total',
   USAGE_HISTORY: 'usage:history',
 
-  // Logs
-  LOGS_LIST: 'logs:list',
-  LOGS_READ: 'logs:read',
-  LOGS_SEARCH: 'logs:search',
-  LOGS_CLEANUP: 'logs:cleanup',
+  // Logs (SQLite worker-backed; Phase 2a). All go through getLogSupervisor().query.
+  LOGSDB_LIST_SESSIONS: 'logsdb:listSessions',
+  LOGSDB_READ_EVENTS: 'logsdb:readEvents',
+  LOGSDB_SEARCH: 'logsdb:search',
+  LOGSDB_PRUNE: 'logsdb:prune',
+  LOGSDB_CLEAR_ALL: 'logsdb:clearAll',
+
+  // Logs — migration (Phase 2b)
+  LOGS_MIGRATE_DETECT: 'logs:migrate:detect',
+  LOGS_MIGRATE_RUN: 'logs:migrate:run',
+  LOGS_MIGRATE_PROGRESS: 'logs:migrate:progress',
+  LOGS_MIGRATE_RECLAIM: 'logs:migrate:reclaim',
 
   // Discovery
   DISCOVERY_PROJECTS: 'discovery:projects',
@@ -171,6 +182,9 @@ export const IPC = {
   // Service status
   SERVICE_STATUS: 'serviceStatus:update',
   SERVICE_STATUS_GET: 'serviceStatus:get',
+  SERVICE_HEALTH_GET: 'serviceHealth:get',
+  SERVICE_HEALTH_UPDATE: 'serviceHealth:update',
+  SERVICE_RESTART: 'serviceHealth:restart',
 
   // CLI
   CLI_CHECK: 'cli:check',
@@ -268,6 +282,20 @@ export const IPC = {
   CHANNELS_CAPABILITY_DIAGNOSTICS: 'channels:capabilityDiagnostics',// renderer -> main: capability + handshake history
   CHANNELS_INTRO_DISMISSED: 'channels:introDismissed',              // renderer -> main: persist first-run dismissal
   CHANNELS_KILL_SWITCH: 'channels:killSwitch',                      // renderer -> main: toggle disableConductorChannels
+
+  // Account profiles (per-process CLAUDE_CONFIG_DIR multi-account)
+  ACCOUNT_PROFILES_LIST: 'accountProfiles:list',
+  ACCOUNT_PROFILES_CREATE: 'accountProfiles:create',
+  ACCOUNT_PROFILES_RENAME: 'accountProfiles:rename',
+  ACCOUNT_PROFILES_DELETE: 'accountProfiles:delete',
+  ACCOUNT_PROFILES_REFRESH_IDENTITY: 'accountProfiles:refreshIdentity',
+  ACCOUNT_PROFILES_CAPTURE_DETECTED: 'accountProfiles:captureDetected',
+  ACCOUNT_GLOBAL_EMAIL_GET: 'accountProfiles:globalEmail',
+
+  // Reliable per-session account identity (main -> renderer push at spawn; renderer pull on mount)
+  ACCOUNT_IDENTITY_UPDATE: 'identity:accountUpdate',
+  ACCOUNT_IDENTITY_GET: 'identity:accountGet',
+  ACCOUNT_NEW_DETECTED: 'account:new-detected',
 } as const
 
 /** Helper to build per-session PTY data channels */

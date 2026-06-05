@@ -44,6 +44,7 @@ export function useLaunchConfig(): (config: TerminalConfig) => string {
       disableAutoMemory: config.claudeOptions?.disableAutoMemory,
       enableCodexReview: config.claudeOptions?.enableCodexReview,
       provider: config.provider,
+      profileId: config.profileId,
       codexOptions: config.codexOptions,
       githubIntegration: config.githubIntegration,
     }

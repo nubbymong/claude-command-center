@@ -33,6 +33,11 @@ beforeEach(() => {
       get: vi.fn().mockResolvedValue(null),
       onUpdate: vi.fn().mockReturnValue(() => {}),
     },
+    serviceHealth: {
+      get: vi.fn().mockResolvedValue(null),
+      restart: vi.fn(),
+      onUpdate: vi.fn().mockReturnValue(() => {}),
+    },
   }
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -45,12 +50,14 @@ afterEach(() => {
 })
 
 describe('TitleBar surface tier (U1 shell chrome)', () => {
-  it('uses --surface-raised, not --surface-chrome, for its background', () => {
+  it('uses --surface-panel (aligned to the side panel/rails), not the near-black --surface-chrome', () => {
     act(() => {
       root.render(createElement(TitleBar, { sidebarOpen: true, onToggleSidebar: () => {} }))
     })
     const bar = container.firstChild as HTMLElement
-    expect(bar.style.background).toContain('var(--surface-raised)')
+    // Aligned to --surface-panel so the top chrome matches the panel/rail depth
+    // instead of floating at the lighter --surface-raised card tier.
+    expect(bar.style.background).toContain('var(--surface-panel)')
     expect(bar.style.background).not.toContain('var(--surface-chrome)')
   })
 })

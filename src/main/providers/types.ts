@@ -14,7 +14,7 @@ export interface SpawnOptions {
   useResumePicker?: boolean
   legacyVersion?: LegacyVersion
   agentsConfig?: Array<{ name: string; description: string; prompt: string; model?: string; tools?: string[] }>
-  effortLevel?: 'low' | 'medium' | 'high'
+  effortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode'
   disableAutoMemory?: boolean
   model?: string
   // Codex-specific (only present when provider === 'codex')

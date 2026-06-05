@@ -16,8 +16,12 @@ import { logInfo } from './debug-logger'
  * the bitmap sync land before we conclude the clipboard is empty.
  *
  * Deterministic and cheap: returns as soon as a non-empty image appears, and
- * gives up after `attempts` tries (default 3, ~20ms spacing) so a genuinely
- * empty clipboard still resolves null promptly.
+ * gives up after `attempts` tries (default 6, ~80ms spacing => up to ~400ms)
+ * so a genuinely empty clipboard still resolves null promptly. The default
+ * window is sized to outlast Windows delayed-render sync (50-200ms after
+ * focus); 3x20ms was too short, which is why the FIRST Alt+V often missed and
+ * only the second press worked. On success it short-circuits, so the common
+ * case (image already present) still returns on the first read with no delay.
  *
  * @param attempts total number of reads to try (>= 1)
  * @param delayMs  delay between reads in milliseconds
@@ -25,8 +29,8 @@ import { logInfo } from './debug-logger'
  * @returns the first non-empty NativeImage, or null if all attempts were empty
  */
 export async function readClipboardImageWithRetry(
-  attempts = 3,
-  delayMs = 20,
+  attempts = 6,
+  delayMs = 80,
   sleep: (ms: number) => Promise<void> = (ms) =>
     new Promise((resolve) => setTimeout(resolve, ms)),
 ): Promise<NativeImage | null> {

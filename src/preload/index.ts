@@ -9,12 +9,23 @@ export interface ElectronAPI {
     save: (key: string, data: unknown) => Promise<boolean>
     migrateFromLocalStorage: (data: Record<string, unknown>) => Promise<boolean>
   }
+  accountProfiles: {
+    list: () => Promise<import('../shared/account-types').AccountProfile[]>
+    create: (name?: string) => Promise<import('../shared/account-types').AccountProfile>
+    rename: (id: string, name: string) => Promise<{ ok: boolean }>
+    delete: (id: string) => Promise<{ ok: boolean }>
+    refreshIdentity: (id: string) => Promise<{ ok: boolean; email: string | null; configDir?: string }>
+    globalEmail: () => Promise<string | null>
+    captureDetected: (sessionId: string, name?: string) => Promise<import('../shared/account-types').AccountProfile | null>
+    onAccountNewDetected: (cb: (data: { sessionId: string; profileId: string; email: string }) => void) => () => void
+  }
   window: {
     minimize: () => void
     maximize: () => void
     close: () => void
     forceClose: () => void
     allowClose: () => void
+    cancelClose: () => void
     isMaximized: () => Promise<boolean>
     onMaximizedChanged: (callback: (maximized: boolean) => void) => () => void
     onCloseRequested: (callback: () => void) => () => void
@@ -50,10 +61,11 @@ export interface ElectronAPI {
         name: string; description: string; prompt: string
         model?: string; tools?: string[]
       }>
-      effortLevel?: 'low' | 'medium' | 'high'
+      effortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode'
       disableAutoMemory?: boolean
       enableCodexReview?: boolean
       model?: string
+      profileId?: string
       provider?: 'claude' | 'codex'
       codexOptions?: {
         model?: string
@@ -66,6 +78,9 @@ export interface ElectronAPI {
     kill: (sessionId: string) => void
     onData: (sessionId: string, callback: (data: string) => void) => () => void
     onExit: (sessionId: string, callback: (exitCode: number) => void) => () => void
+  }
+  ptyIntegrity: {
+    report: (report: import('../shared/service-health').PtyIntegrityReport) => void
   }
   ssh: {
     /** Manually trigger the post-connect command stage. */
@@ -84,6 +99,13 @@ export interface ElectronAPI {
   statusline: {
     onUpdate: (callback: (data: StatuslineData) => void) => () => void
   }
+  effort: {
+    onUpdate: (callback: (data: { sessionId: string; effortLevel: string }) => void) => () => void
+  }
+  accountIdentity: {
+    get: (sessionId: string) => Promise<{ email: string; colourKey: string } | null>
+    onUpdate: (callback: (data: { sessionId: string; email: string; colourKey: string }) => void) => () => void
+  }
   debug: {
     onDebug: (callback: (data: unknown) => void) => () => void
     enable: () => Promise<boolean>
@@ -96,11 +118,30 @@ export interface ElectronAPI {
     getTotalUsage: () => Promise<unknown>
     getUsageHistory: (hours: number) => Promise<unknown>
   }
-  logs: {
-    list: () => Promise<unknown[]>
-    read: (logDir: string, offset?: number, limit?: number) => Promise<{ entries: unknown[]; total: number; hasMore: boolean }>
-    search: (logDir: string, query: string) => Promise<unknown[]>
-    cleanup: (retentionDays?: number) => Promise<number>
+  logsdb: {
+    listSessions: (args?: { offset?: number; limit?: number }) => Promise<unknown[]>
+    readEvents: (sessionId: string, offset?: number, limit?: number) => Promise<unknown[]>
+    search: (query: string, limit?: number) => Promise<unknown[]>
+    prune: (ids: string[]) => Promise<{ deletedSessions: number; deletedEvents: number }>
+    clearAll: () => Promise<{ deletedSessions: number; deletedEvents: number }>
+  }
+  logMigration: {
+    detect: () => Promise<{ present: boolean; sessionFolders: number; frozen: boolean }>
+    run: () => Promise<{
+      totalSessions: number
+      importedSessions: number
+      skippedSessions: number
+      failedSessions: number
+      importedEvents: number
+      unparseable: { path: string; reason: string; skippedLines: number }[]
+      foldedPartnerDirs: number
+      noEventDirs: number
+      detectedFolders: number
+      dbBytesBefore: number
+      dbBytesAfter: number
+    }>
+    reclaim: () => Promise<{ deletedFolders: number; reclaimedBytes: number; failedFolders: string[] }>
+    onProgress: (cb: (p: { done: number; total: number }) => void) => () => void
   }
   discovery: {
     getProjects: () => Promise<unknown>
@@ -108,8 +149,14 @@ export interface ElectronAPI {
   }
   update: {
     check: () => Promise<boolean>
+    getVersion: () => Promise<string>
     installAndRestart: () => Promise<boolean>
-    onAvailable: (callback: (available: boolean) => void) => () => void
+    hasSourcePath: () => Promise<boolean>
+    getSourcePath: () => Promise<string>
+    setSourcePath: (path: string) => Promise<boolean>
+    selectSourcePath: () => Promise<{ path?: string; error?: string } | null>
+    onAvailable: (callback: (available: boolean, version?: string) => void) => () => void
+    onSourceConfigured: (callback: (configured: boolean) => void) => () => void
     onServerConnected: (callback: (connected: boolean) => void) => () => void
   }
   screenshot: {
@@ -203,6 +250,93 @@ export interface ElectronAPI {
     rendererReady: () => Promise<unknown>
     onAttention: (cb: (p: { sessionId: string; needsAttention: boolean }) => void) => () => void
   }
+  setup: {
+    isComplete: () => Promise<boolean>
+    getDefaultDataDir: () => Promise<string>
+    selectDataDir: () => Promise<string | null>
+    setDataDir: (dir: string) => Promise<boolean>
+    getDataDir: () => Promise<string>
+    getResourcesDir: () => Promise<string>
+    selectResourcesDir: () => Promise<string | null>
+    setResourcesDir: (dir: string) => Promise<boolean>
+    isCliReady: () => Promise<boolean>
+    spawnCliSetup: (cols: number, rows: number) => Promise<string>
+    killCliSetup: () => Promise<boolean>
+  }
+  insights: {
+    run: (opts?: { profileId?: string }) => Promise<string>
+    getCatalogue: () => Promise<import('../shared/types').InsightsCatalogue>
+    getReport: (runId: string) => Promise<string | null>
+    getKpis: (runId: string) => Promise<import('../shared/types').KpiData | null>
+    getLatest: () => Promise<import('../shared/types').InsightsRun | null>
+    isRunning: () => Promise<boolean>
+    seed: () => Promise<string | null>
+    onStatusChanged: (callback: (run: unknown) => void) => () => void
+  }
+  vision: {
+    start: () => Promise<{ ok: boolean; error?: string }>
+    stop: () => Promise<{ ok: boolean }>
+    status: () => Promise<{ running: boolean; connected: boolean; browser: string; mcpPort: number }>
+    launch: (browser: string, debugPort: number, url?: string, headless?: boolean) => Promise<{ ok: boolean; pid?: number; command?: string; error?: string }>
+    saveConfig: (config: { enabled?: boolean; browser: 'chrome' | 'edge'; debugPort: number; mcpPort?: number; url?: string; headless?: boolean }) => Promise<{ ok: boolean }>
+    getConfig: () => Promise<{ enabled?: boolean; browser: 'chrome' | 'edge'; debugPort: number; mcpPort?: number; url?: string; headless?: boolean } | null>
+    onStatusChanged: (callback: (data: { connected: boolean; browser: string; mcpPort: number }) => void) => () => void
+  }
+  legacyVersion: {
+    fetchVersions: () => Promise<string[]>
+    isInstalled: (version: string) => Promise<boolean>
+    install: (version: string) => Promise<{ ok: boolean; error?: string }>
+    remove: (version: string) => Promise<boolean>
+    listInstalled: () => Promise<Array<{ version: string; sizeBytes: number }>>
+    onInstallProgress: (cb: (data: { version: string; message: string }) => void) => () => void
+  }
+  cloudAgent: {
+    dispatch: (agent: { name: string; description: string; projectPath: string; configId?: string; profileId?: string }) => Promise<import('../shared/types').CloudAgent>
+    cancel: (id: string) => Promise<boolean>
+    remove: (id: string) => Promise<boolean>
+    retry: (id: string) => Promise<import('../shared/types').CloudAgent | null>
+    list: () => Promise<import('../shared/types').CloudAgent[]>
+    getOutput: (id: string) => Promise<string>
+    clearCompleted: () => Promise<number>
+    onStatusChanged: (callback: (agent: import('../shared/types').CloudAgent) => void) => () => void
+    onOutputChunk: (callback: (data: { id: string; chunk: string }) => void) => () => void
+  }
+  team: {
+    list: () => Promise<import('../shared/types').TeamTemplate[]>
+    save: (team: import('../shared/types').TeamTemplate) => Promise<import('../shared/types').TeamTemplate>
+    delete: (id: string) => Promise<boolean>
+    run: (teamId: string, projectPath?: string) => Promise<import('../shared/types').TeamRun | null>
+    cancelRun: (runId: string) => Promise<boolean>
+    listRuns: () => Promise<import('../shared/types').TeamRun[]>
+    onRunStatusChanged: (callback: (run: import('../shared/types').TeamRun) => void) => () => void
+  }
+  serviceStatus: {
+    get: () => Promise<unknown>
+    onUpdate: (callback: (data: unknown) => void) => () => void
+  }
+  serviceHealth: {
+    get: () => Promise<import('../shared/service-health').DiagnosticsSnapshot>
+    restart: (serviceId: string) => Promise<{ ok: boolean; reason?: string }>
+    onUpdate: (callback: (snap: import('../shared/service-health').DiagnosticsSnapshot) => void) => () => void
+  }
+  cli: {
+    check: () => Promise<boolean>
+  }
+  tokenomics: {
+    getData: () => Promise<import('../shared/types').TokenomicsData>
+    seed: () => Promise<import('../shared/types').TokenomicsData>
+    sync: () => Promise<import('../shared/types').TokenomicsData>
+    onProgress: (callback: (data: import('../shared/types').TokenomicsSyncProgress) => void) => () => void
+    listUnattributed: () => Promise<import('../shared/types').UnattributedSessionGroup[]>
+    listKnownEmails: () => Promise<string[]>
+    attributeSessions: (payload: import('../shared/types').AttributionPayload) => Promise<{ ok: boolean; error?: string }>
+  }
+  memory: {
+    scan: () => Promise<import('../shared/types').MemoryScanResult>
+    read: (filePath: string) => Promise<string>
+    delete: (filePath: string) => Promise<void>
+    writeFrontmatter: (filePath: string, frontmatter: { name?: string; description?: string; type?: string }) => Promise<void>
+  }
 }
 
 interface HooksBridge {
@@ -295,6 +429,20 @@ const electronAPI: ElectronAPI = {
     save: (key, data) => ipcRenderer.invoke(IPC.CONFIG_SAVE, key, data),
     migrateFromLocalStorage: (data) => ipcRenderer.invoke(IPC.CONFIG_MIGRATE, data),
   },
+  accountProfiles: {
+    list: () => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_LIST),
+    create: (name?: string) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_CREATE, { name }),
+    rename: (id, name) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_RENAME, { id, name }),
+    delete: (id) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_DELETE, { id }),
+    refreshIdentity: (id) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_REFRESH_IDENTITY, { id }),
+    globalEmail: () => ipcRenderer.invoke(IPC.ACCOUNT_GLOBAL_EMAIL_GET),
+    captureDetected: (sessionId: string, name?: string) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_CAPTURE_DETECTED, { sessionId, name }),
+    onAccountNewDetected: (cb: (data: { sessionId: string; profileId: string; email: string }) => void) => {
+      const handler = (_e: unknown, data: { sessionId: string; profileId: string; email: string }) => cb(data)
+      ipcRenderer.on(IPC.ACCOUNT_NEW_DETECTED, handler)
+      return () => ipcRenderer.removeListener(IPC.ACCOUNT_NEW_DETECTED, handler)
+    },
+  },
   window: {
     minimize: () => ipcRenderer.send(IPC.WINDOW_MINIMIZE),
     maximize: () => ipcRenderer.send(IPC.WINDOW_MAXIMIZE),
@@ -347,6 +495,10 @@ const electronAPI: ElectronAPI = {
       return () => ipcRenderer.removeListener(channel, handler)
     }
   },
+  ptyIntegrity: {
+    report: (report: import('../shared/service-health').PtyIntegrityReport) =>
+      ipcRenderer.send(IPC.PTY_INTEGRITY_REPORT, report),
+  },
   ssh: {
     runPostCommand: (sessionId: string) =>
       ipcRenderer.invoke(IPC.SSH_FLOW_RUN_POSTCOMMAND, sessionId),
@@ -370,6 +522,21 @@ const electronAPI: ElectronAPI = {
       return () => ipcRenderer.removeListener(IPC.STATUSLINE_UPDATE, handler)
     }
   },
+  effort: {
+    onUpdate: (callback) => {
+      const handler = (_: unknown, data: unknown) => callback(data as { sessionId: string; effortLevel: string })
+      ipcRenderer.on(IPC.HOOKS_EFFORT_UPDATE, handler)
+      return () => ipcRenderer.removeListener(IPC.HOOKS_EFFORT_UPDATE, handler)
+    },
+  },
+  accountIdentity: {
+    get: (sessionId) => ipcRenderer.invoke(IPC.ACCOUNT_IDENTITY_GET, { sessionId }),
+    onUpdate: (callback) => {
+      const handler = (_: unknown, data: unknown) => callback(data as { sessionId: string; email: string; colourKey: string })
+      ipcRenderer.on(IPC.ACCOUNT_IDENTITY_UPDATE, handler)
+      return () => ipcRenderer.removeListener(IPC.ACCOUNT_IDENTITY_UPDATE, handler)
+    },
+  },
   debug: {
     onDebug: (callback: (data: unknown) => void) => {
       const handler = (_: unknown, data: unknown) => callback(data)
@@ -387,11 +554,22 @@ const electronAPI: ElectronAPI = {
     getTotalUsage: () => ipcRenderer.invoke(IPC.USAGE_TOTAL),
     getUsageHistory: (hours) => ipcRenderer.invoke(IPC.USAGE_HISTORY, hours)
   },
-  logs: {
-    list: () => ipcRenderer.invoke(IPC.LOGS_LIST),
-    read: (logDir, offset, limit) => ipcRenderer.invoke(IPC.LOGS_READ, logDir, offset, limit),
-    search: (logDir, query) => ipcRenderer.invoke(IPC.LOGS_SEARCH, logDir, query),
-    cleanup: (retentionDays) => ipcRenderer.invoke(IPC.LOGS_CLEANUP, retentionDays)
+  logsdb: {
+    listSessions: (args?: { offset?: number; limit?: number }) => ipcRenderer.invoke(IPC.LOGSDB_LIST_SESSIONS, args),
+    readEvents: (sessionId: string, offset?: number, limit?: number) => ipcRenderer.invoke(IPC.LOGSDB_READ_EVENTS, sessionId, offset, limit),
+    search: (query: string, limit?: number) => ipcRenderer.invoke(IPC.LOGSDB_SEARCH, query, limit),
+    prune: (ids: string[]) => ipcRenderer.invoke(IPC.LOGSDB_PRUNE, ids),
+    clearAll: () => ipcRenderer.invoke(IPC.LOGSDB_CLEAR_ALL),
+  },
+  logMigration: {
+    detect: () => ipcRenderer.invoke(IPC.LOGS_MIGRATE_DETECT),
+    run: () => ipcRenderer.invoke(IPC.LOGS_MIGRATE_RUN),
+    reclaim: () => ipcRenderer.invoke(IPC.LOGS_MIGRATE_RECLAIM),
+    onProgress: (cb: (p: { done: number; total: number }) => void) => {
+      const handler = (_e: unknown, p: { done: number; total: number }) => cb(p)
+      ipcRenderer.on(IPC.LOGS_MIGRATE_PROGRESS, handler)
+      return () => ipcRenderer.removeListener(IPC.LOGS_MIGRATE_PROGRESS, handler)
+    },
   },
   discovery: {
     getProjects: () => ipcRenderer.invoke(IPC.DISCOVERY_PROJECTS),
@@ -468,7 +646,7 @@ const electronAPI: ElectronAPI = {
     gracefulExit: () => ipcRenderer.invoke(IPC.SESSION_GRACEFUL_EXIT)
   },
   insights: {
-    run: () => ipcRenderer.invoke(IPC.INSIGHTS_RUN),
+    run: (opts?: { profileId?: string }) => ipcRenderer.invoke(IPC.INSIGHTS_RUN, opts),
     getCatalogue: () => ipcRenderer.invoke(IPC.INSIGHTS_GET_CATALOGUE),
     getReport: (runId: string) => ipcRenderer.invoke(IPC.INSIGHTS_GET_REPORT, runId),
     getKpis: (runId: string) => ipcRenderer.invoke(IPC.INSIGHTS_GET_KPIS, runId),
@@ -516,7 +694,7 @@ const electronAPI: ElectronAPI = {
     }
   },
   cloudAgent: {
-    dispatch: (params: { name: string; description: string; projectPath: string; configId?: string }) =>
+    dispatch: (params: { name: string; description: string; projectPath: string; configId?: string; profileId?: string }) =>
       ipcRenderer.invoke(IPC.CLOUD_AGENT_DISPATCH, params),
     cancel: (id: string) => ipcRenderer.invoke(IPC.CLOUD_AGENT_CANCEL, id),
     remove: (id: string) => ipcRenderer.invoke(IPC.CLOUD_AGENT_REMOVE, id),
@@ -554,6 +732,17 @@ const electronAPI: ElectronAPI = {
       const handler = (_: unknown, data: any) => callback(data)
       ipcRenderer.on(IPC.SERVICE_STATUS, handler)
       return () => ipcRenderer.removeListener(IPC.SERVICE_STATUS, handler)
+    }
+  },
+  serviceHealth: {
+    get: (): Promise<import('../shared/service-health').DiagnosticsSnapshot> =>
+      ipcRenderer.invoke(IPC.SERVICE_HEALTH_GET),
+    restart: (serviceId: string): Promise<{ ok: boolean; reason?: string }> =>
+      ipcRenderer.invoke(IPC.SERVICE_RESTART, serviceId),
+    onUpdate: (callback: (snap: import('../shared/service-health').DiagnosticsSnapshot) => void) => {
+      const handler = (_: unknown, snap: import('../shared/service-health').DiagnosticsSnapshot) => callback(snap)
+      ipcRenderer.on(IPC.SERVICE_HEALTH_UPDATE, handler)
+      return () => ipcRenderer.removeListener(IPC.SERVICE_HEALTH_UPDATE, handler)
     }
   },
   cli: {

@@ -14,8 +14,6 @@ export type {
   KpiMetric,
   InsightsData,
   KpiData,
-  LogSession,
-  LogEntry,
   NoteMetadata,
   AgentTemplate,
   AgentModelOverride,
@@ -67,11 +65,38 @@ export type {
   ChannelRule, StandingApproval, FeatureState,
 } from '../../shared/channel-types'
 
+// Mirror of the main-process service-status payload (src/main/service-status.ts).
+// Declared locally so the renderer/web tsconfig doesn't pull a main-process
+// module (with its Node imports) into its type graph.
+export interface ServiceComponentStatus {
+  id: string
+  label: string
+  status: string
+  name: string
+}
+export interface ServiceStatusPayload {
+  fetchedAt: string
+  claudeCode: ServiceComponentStatus | null
+  claudeAi: ServiceComponentStatus | null
+  api: ServiceComponentStatus | null
+  worst: string
+}
+
 export interface ElectronAPI {
   config: {
     loadAll: () => Promise<{ data: Record<string, unknown>; needsMigration: boolean }>
     save: (key: string, data: unknown) => Promise<boolean>
     migrateFromLocalStorage: (data: Record<string, unknown>) => Promise<boolean>
+  }
+  accountProfiles: {
+    list: () => Promise<import('../../shared/account-types').AccountProfile[]>
+    rename: (id: string, name: string) => Promise<{ ok: boolean }>
+    delete: (id: string) => Promise<{ ok: boolean }>
+    refreshIdentity: (id: string) => Promise<{ ok: boolean; email: string | null; configDir?: string }>
+    create: (name?: string) => Promise<import('../../shared/account-types').AccountProfile>
+    globalEmail: () => Promise<string | null>
+    captureDetected: (sessionId: string, name?: string) => Promise<import('../../shared/account-types').AccountProfile | null>
+    onAccountNewDetected: (cb: (data: { sessionId: string; profileId: string; email: string }) => void) => () => void
   }
   window: {
     minimize: () => void
@@ -122,12 +147,11 @@ export interface ElectronAPI {
         name: string; description: string; prompt: string
         model?: string; tools?: string[]
       }>
-      flickerFree?: boolean
-      powershellTool?: boolean
       effortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode'
       disableAutoMemory?: boolean
       enableCodexReview?: boolean
       model?: string
+      profileId?: string
       provider?: 'claude' | 'codex'
       codexOptions?: {
         model?: string
@@ -141,6 +165,9 @@ export interface ElectronAPI {
     onData: (sessionId: string, callback: (data: string) => void) => () => void
     onExit: (sessionId: string, callback: (exitCode: number) => void) => () => void
   }
+  ptyIntegrity: {
+    report: (report: import('../../shared/service-health').PtyIntegrityReport) => void
+  }
   ssh: {
     runPostCommand: (sessionId: string) => Promise<void>
     launchClaude: (sessionId: string) => Promise<void>
@@ -150,6 +177,13 @@ export interface ElectronAPI {
   }
   statusline: {
     onUpdate: (callback: (data: StatuslineData) => void) => () => void
+  }
+  effort: {
+    onUpdate: (callback: (data: { sessionId: string; effortLevel: string }) => void) => () => void
+  }
+  accountIdentity: {
+    get: (sessionId: string) => Promise<{ email: string; colourKey: string } | null>
+    onUpdate: (callback: (data: { sessionId: string; email: string; colourKey: string }) => void) => () => void
   }
   debug: {
     onDebug: (callback: (data: any) => void) => () => void
@@ -163,22 +197,57 @@ export interface ElectronAPI {
     getTotalUsage: () => Promise<any>
     getUsageHistory: (hours: number) => Promise<any>
   }
-  logs: {
-    list: () => Promise<Array<{
-      configLabel: string
+  logsdb: {
+    listSessions: (args?: { offset?: number; limit?: number }) => Promise<Array<{
       sessionId: string
-      logDir: string
-      startTime?: number
-      endTime?: number
-      size: number
+      configId: string | null
+      configLabel: string
+      projectCwd: string | null
+      accountEmail: string | null
+      profileId: string | null
+      provider: string
+      startedAt: number
+      endedAt: number | null
+      status: string
+      byteSize: number
+      eventCount: number
     }>>
-    read: (logDir: string, offset?: number, limit?: number) => Promise<{
-      entries: Array<{ ts: number; type: string; data?: string }>
-      total: number
-      hasMore: boolean
+    readEvents: (sessionId: string, offset?: number, limit?: number) => Promise<Array<{
+      id: number
+      sessionId: string
+      seq: number
+      ts: number
+      type: string
+      raw: Uint8Array
+      text: string
+    }>>
+    search: (query: string, limit?: number) => Promise<Array<{
+      sessionId: string
+      eventId: number
+      seq: number
+      ts: number
+      snippet?: string
+    }>>
+    prune: (ids: string[]) => Promise<{ deletedSessions: number; deletedEvents: number }>
+    clearAll: () => Promise<{ deletedSessions: number; deletedEvents: number }>
+  }
+  logMigration: {
+    detect: () => Promise<{ present: boolean; sessionFolders: number; frozen: boolean }>
+    run: () => Promise<{
+      totalSessions: number
+      importedSessions: number
+      skippedSessions: number
+      failedSessions: number
+      importedEvents: number
+      unparseable: { path: string; reason: string; skippedLines: number }[]
+      foldedPartnerDirs: number
+      noEventDirs: number
+      detectedFolders: number
+      dbBytesBefore: number
+      dbBytesAfter: number
     }>
-    search: (logDir: string, query: string) => Promise<Array<{ ts: number; type: string; data?: string }>>
-    cleanup: (retentionDays?: number) => Promise<number>
+    reclaim: () => Promise<{ deletedFolders: number; reclaimedBytes: number; failedFolders: string[] }>
+    onProgress: (cb: (p: { done: number; total: number }) => void) => () => void
   }
   discovery: {
     getProjects: () => Promise<any>
@@ -237,7 +306,7 @@ export interface ElectronAPI {
     gracefulExit: () => Promise<boolean>
   }
   insights: {
-    run: () => Promise<string>
+    run: (opts?: { profileId?: string }) => Promise<string>
     getCatalogue: () => Promise<InsightsCatalogue>
     getReport: (runId: string) => Promise<string | null>
     getKpis: (runId: string) => Promise<KpiData | null>
@@ -271,7 +340,7 @@ export interface ElectronAPI {
     onInstallProgress: (cb: (data: { version: string; message: string }) => void) => () => void
   }
   cloudAgent: {
-    dispatch: (agent: { name: string; description: string; projectPath: string; configId?: string; legacyVersion?: { enabled: boolean; version: string } }) => Promise<CloudAgent>
+    dispatch: (agent: { name: string; description: string; projectPath: string; configId?: string; profileId?: string; legacyVersion?: { enabled: boolean; version: string } }) => Promise<CloudAgent>
     cancel: (id: string) => Promise<boolean>
     remove: (id: string) => Promise<boolean>
     retry: (id: string) => Promise<CloudAgent | null>
@@ -291,8 +360,13 @@ export interface ElectronAPI {
     onRunStatusChanged: (callback: (run: TeamRun) => void) => () => void
   }
   serviceStatus: {
-    get: () => Promise<any>
-    onUpdate: (callback: (data: { status: string; description: string }) => void) => () => void
+    get: () => Promise<ServiceStatusPayload | null>
+    onUpdate: (callback: (data: ServiceStatusPayload) => void) => () => void
+  }
+  serviceHealth: {
+    get: () => Promise<import('../../shared/service-health').DiagnosticsSnapshot>
+    restart: (serviceId: string) => Promise<{ ok: boolean; reason?: string }>
+    onUpdate: (callback: (snap: import('../../shared/service-health').DiagnosticsSnapshot) => void) => () => void
   }
   cli: {
     check: () => Promise<boolean>

@@ -39,11 +39,24 @@ describe('AccountAttributionWizard', () => {
     container.remove()
   })
 
-  async function flush() { await new Promise(r => setTimeout(r, 0)) }
+  async function flush() { await act(async () => { await new Promise(r => setTimeout(r, 0)) }) }
+
+  // The wizard renders its rows (and their Confirm / Mark-mixed buttons) only
+  // AFTER two async IPC calls (listUnattributed + listKnownEmails) resolve and
+  // React re-renders. A single setTimeout(0) tick is racy under load and caused an
+  // intermittent Windows-CI failure, so poll until the awaited DOM actually exists.
+  async function waitFor(predicate: () => boolean, tries = 50) {
+    for (let i = 0; i < tries; i++) {
+      if (predicate()) return
+      await act(async () => { await new Promise(r => setTimeout(r, 10)) })
+    }
+  }
+  const buttonsByText = (label: string) =>
+    Array.from(container.querySelectorAll<HTMLButtonElement>('button')).filter(b => b.textContent === label)
 
   it('renders one row per group with cost + suggested email', async () => {
     act(() => { root.render(createElement(AccountAttributionWizard, { onClose: () => {} })) })
-    await flush()
+    await waitFor(() => (container.textContent ?? '').includes('This App Dev'))
     expect(container.textContent).toContain('This App Dev')
     expect(container.textContent).toContain('Windows Dev')
     expect(container.textContent).toContain('a@x.com')
@@ -54,8 +67,8 @@ describe('AccountAttributionWizard', () => {
   it('Confirm fires attributeSessions with the suggested email', async () => {
     const onClose = vi.fn()
     act(() => { root.render(createElement(AccountAttributionWizard, { onClose })) })
-    await flush()
-    const buttons = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).filter(b => b.textContent === 'Confirm')
+    await waitFor(() => buttonsByText('Confirm').length > 0)
+    const buttons = buttonsByText('Confirm')
     expect(buttons.length).toBeGreaterThan(0)
     act(() => { buttons[0].click() })
     await flush()
@@ -67,8 +80,8 @@ describe('AccountAttributionWizard', () => {
 
   it('Mark mixed fires attributeSessions with mixed assignment', async () => {
     act(() => { root.render(createElement(AccountAttributionWizard, { onClose: () => {} })) })
-    await flush()
-    const buttons = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).filter(b => b.textContent === 'Mark mixed')
+    await waitFor(() => buttonsByText('Mark mixed').length > 0)
+    const buttons = buttonsByText('Mark mixed')
     expect(buttons.length).toBeGreaterThan(0)
     act(() => { buttons[0].click() })
     await flush()

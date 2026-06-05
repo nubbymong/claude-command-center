@@ -1,5 +1,6 @@
 import React from 'react'
 import { ViewType } from '../../types/views'
+import { useSettingsStore } from '../../stores/settingsStore'
 
 interface SidebarNavProps {
   currentView: ViewType
@@ -94,7 +95,7 @@ const navItems: { view: ViewType; icon: React.ReactNode; label: string }[] = [
   },
 ]
 
-function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMessage, cloudAgentRunning, visionRunning, serverRunning, isCollapsed }: {
+function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMessage, cloudAgentRunning, visionRunning, serverRunning, isCollapsed, loggingEnabled }: {
   item: typeof navItems[0]
   currentView: ViewType
   onViewChange: (view: ViewType) => void
@@ -104,7 +105,11 @@ function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMe
   visionRunning?: boolean
   serverRunning?: boolean
   isCollapsed: boolean
+  loggingEnabled?: boolean
 }) {
+  // Logs nav entry is greyed and non-interactive when session logging is off.
+  const isLogsDisabled = item.view === 'logs' && loggingEnabled === false
+
   const isInsightsActive = item.view === 'insights' && !!insightsStatus
   const insightsDotColor = insightsStatus === 'running' ? 'var(--status-info)'
     : insightsStatus === 'extracting_kpis' ? 'var(--status-warning)'
@@ -125,7 +130,9 @@ function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMe
   // indicators on the Conductor MCP page.
   void visionRunning
 
-  const title = isCollapsed
+  const title = isLogsDisabled
+    ? 'Enable session logging in Settings'
+    : isCollapsed
     ? item.label
     : isCloudAgentsRunning
     ? `${cloudAgentRunning} agent${cloudAgentRunning !== 1 ? 's' : ''} running`
@@ -135,11 +142,15 @@ function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMe
 
   return (
     <button
-      onClick={() => onViewChange(item.view)}
+      onClick={isLogsDisabled ? undefined : () => onViewChange(item.view)}
       title={title}
       aria-label={title}
+      aria-disabled={isLogsDisabled || undefined}
+      tabIndex={isLogsDisabled ? -1 : undefined}
       className={`group ${isCollapsed ? 'w-10 h-10' : 'flex-1 py-2'} flex items-center justify-center rounded-lg transition-colors relative ${
-        currentView === item.view
+        isLogsDisabled
+          ? 'text-overlay0/40 cursor-not-allowed'
+          : currentView === item.view
           ? 'bg-surface0 rail-active focus-ring'
           : isInsightsAnimating
           ? 'text-blue'
@@ -147,9 +158,9 @@ function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMe
           ? 'text-blue'
           : 'text-overlay0 hover:text-text hover:bg-surface0/50 focus-ring'
       }`}
-      style={currentView === item.view ? { color: 'var(--accent)' } : undefined}
+      style={!isLogsDisabled && currentView === item.view ? { color: 'var(--accent)' } : undefined}
     >
-      {item.icon}
+      <span className={isLogsDisabled ? 'opacity-40' : undefined}>{item.icon}</span>
       {/* Fast inline tooltip -- appears immediately on hover instead of waiting
           for the OS native `title` delay. Pointer-events:none so it doesn't
           block clicks. Position adapts: collapsed = right of icon; expanded = below. */}
@@ -197,6 +208,8 @@ function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMe
 }
 
 export default function SidebarNav({ currentView, onViewChange, insightsStatus, insightsMessage, cloudAgentRunning, visionRunning, serverRunning, collapsed, onShowHelp }: SidebarNavProps) {
+  const loggingEnabled = useSettingsStore((s) => s.settings.loggingEnabled)
+
   const helpButton = onShowHelp ? (
     <button
       onClick={onShowHelp}
@@ -225,7 +238,8 @@ export default function SidebarNav({ currentView, onViewChange, insightsStatus, 
   const renderItem = (item: typeof navItems[0]) => (
     <NavButton key={item.view} item={item} currentView={currentView} onViewChange={onViewChange}
       insightsStatus={insightsStatus} insightsMessage={insightsMessage} cloudAgentRunning={cloudAgentRunning}
-      visionRunning={visionRunning} serverRunning={serverRunning} isCollapsed={false} />
+      visionRunning={visionRunning} serverRunning={serverRunning} isCollapsed={false}
+      loggingEnabled={loggingEnabled} />
   )
 
   if (collapsed) {
@@ -237,13 +251,15 @@ export default function SidebarNav({ currentView, onViewChange, insightsStatus, 
         {navItems.filter(i => ['cloud-agents', 'insights', 'tokenomics'].includes(i.view)).map(item => (
           <NavButton key={item.view} item={item} currentView={currentView} onViewChange={onViewChange}
             insightsStatus={insightsStatus} insightsMessage={insightsMessage} cloudAgentRunning={cloudAgentRunning}
-            visionRunning={visionRunning} serverRunning={serverRunning} isCollapsed />
+            visionRunning={visionRunning} serverRunning={serverRunning} isCollapsed
+            loggingEnabled={loggingEnabled} />
         ))}
         <span className="h-px w-6 my-1 bg-surface1" aria-hidden />
         {navItems.filter(i => !['cloud-agents', 'insights', 'tokenomics'].includes(i.view)).map(item => (
           <NavButton key={item.view} item={item} currentView={currentView} onViewChange={onViewChange}
             insightsStatus={insightsStatus} insightsMessage={insightsMessage} cloudAgentRunning={cloudAgentRunning}
-            visionRunning={visionRunning} serverRunning={serverRunning} isCollapsed />
+            visionRunning={visionRunning} serverRunning={serverRunning} isCollapsed
+            loggingEnabled={loggingEnabled} />
         ))}
         {helpButton}
       </div>

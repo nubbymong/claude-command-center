@@ -81,11 +81,11 @@ export default function DebugPanel({ visible, onClose }: { visible: boolean; onC
         zIndex: 9999,
         display: 'flex',
         flexDirection: 'column',
-        backgroundColor: '#181825',
-        borderTop: '2px solid #45475a',
+        backgroundColor: 'var(--surface-panel)',
+        borderTop: '2px solid var(--border-strong)',
         fontFamily: 'Consolas, monospace',
         fontSize: '12px',
-        color: '#cdd6f4'
+        color: 'var(--text-primary)'
       }}
     >
       {/* Header bar */}
@@ -94,19 +94,19 @@ export default function DebugPanel({ visible, onClose }: { visible: boolean; onC
         alignItems: 'center',
         gap: '12px',
         padding: '4px 12px',
-        backgroundColor: '#11111b',
-        borderBottom: '1px solid #313244',
+        backgroundColor: 'var(--surface-chrome)',
+        borderBottom: '1px solid var(--border-subtle)',
         flexShrink: 0
       }}>
-        <span style={{ fontWeight: 'bold', color: '#cba6f7' }}>DEBUG</span>
-        <span style={{ color: '#6c7086' }}>{entries.length} events</span>
+        <span style={{ fontWeight: 'bold', color: 'var(--chart-other)' }}>DEBUG</span>
+        <span style={{ color: 'var(--text-muted)' }}>{entries.length} events</span>
         <div style={{ flex: 1 }} />
         <button
           onClick={() => setEntries([])}
           style={{
             background: 'none',
-            border: '1px solid #45475a',
-            color: '#a6adc8',
+            border: '1px solid var(--border-strong)',
+            color: 'var(--text-secondary)',
             padding: '2px 8px',
             borderRadius: '3px',
             cursor: 'pointer',
@@ -118,9 +118,9 @@ export default function DebugPanel({ visible, onClose }: { visible: boolean; onC
         <button
           onClick={(e) => { e.preventDefault(); e.stopPropagation(); onClose(); }}
           style={{
-            background: '#f38ba8',
+            background: 'var(--status-danger)',
             border: 'none',
-            color: '#11111b',
+            color: 'var(--surface-chrome)',
             padding: '2px 12px',
             borderRadius: '3px',
             cursor: 'pointer',
@@ -135,12 +135,12 @@ export default function DebugPanel({ visible, onClose }: { visible: boolean; onC
       {/* Events */}
       <div ref={scrollRef} style={{ flex: 1, overflow: 'auto', padding: '0' }}>
         {entries.length === 0 && (
-          <div style={{ textAlign: 'center', color: '#6c7086', padding: '24px' }}>
+          <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '24px' }}>
             No events yet. Send a chat message to see IPC events here.
           </div>
         )}
         {entries.map(entry => (
-          <div key={entry.id} style={{ borderBottom: '1px solid #1e1e2e' }}>
+          <div key={entry.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
             <div
               onClick={() => toggle(entry.id)}
               style={{
@@ -150,25 +150,25 @@ export default function DebugPanel({ visible, onClose }: { visible: boolean; onC
                 gap: '12px',
                 alignItems: 'center'
               }}
-              onMouseEnter={e => (e.currentTarget.style.backgroundColor = '#1e1e2e')}
+              onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'var(--surface-overlay)')}
               onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
             >
-              <span style={{ color: '#6c7086', width: '80px', flexShrink: 0 }}>
+              <span style={{ color: 'var(--text-muted)', width: '80px', flexShrink: 0 }}>
                 {formatTime(entry.timestamp)}
               </span>
               <span style={{
                 width: '80px',
                 flexShrink: 0,
                 fontWeight: 'bold',
-                color: entry.type === 'STDERR' ? '#f38ba8'
-                  : entry.type === 'assistant' ? '#a6e3a1'
-                  : entry.type === 'result' ? '#89b4fa'
-                  : entry.type === 'system' ? '#cba6f7'
-                  : '#fab387'
+                color: entry.type === 'STDERR' ? 'var(--status-danger)'
+                  : entry.type === 'assistant' ? 'var(--status-success)'
+                  : entry.type === 'result' ? 'var(--status-info)'
+                  : entry.type === 'system' ? 'var(--chart-other)'
+                  : 'var(--status-warning)'
               }}>
                 {entry.type}
               </span>
-              <span style={{ color: '#a6adc8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <span style={{ color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {entry.summary}
               </span>
             </div>
@@ -176,8 +176,8 @@ export default function DebugPanel({ visible, onClose }: { visible: boolean; onC
               <pre style={{
                 margin: 0,
                 padding: '8px 12px 8px 104px',
-                backgroundColor: '#11111b',
-                color: '#a6adc8',
+                backgroundColor: 'var(--surface-sunken)',
+                color: 'var(--text-secondary)',
                 whiteSpace: 'pre-wrap',
                 wordBreak: 'break-all',
                 maxHeight: '200px',

@@ -5,11 +5,15 @@ import RateLimitBar from './terminal/RateLimitBar'
 import { formatResetTime, formatTokens, formatDuration } from '../utils/terminalFormatting'
 import { useCodexReviewUsage } from '../hooks/useCodexReviewUsage'
 import { useRestartSession } from '../hooks/useRestartSession'
+import { useSwitchAccount } from '../hooks/useSwitchAccount'
+import { useResolvedTheme } from '../hooks/useThemeController'
+import { useAccountProfilesStore } from '../stores/accountProfilesStore'
+import { resolveAccountName, resolveAccountNameByEmail, resolveAccountColourKey, middleTruncateEmail } from '../../shared/account-chip-color'
+import { resolveIdentityColor } from '../../shared/identity-colors'
 import ToolbarPopup from './ToolbarPopup'
 import {
   MODELS,
   EFFORTS,
-  PERMISSION_MODES,
   shortModelName,
   isModelActive,
 } from '../lib/claude-cli-options'
@@ -40,19 +44,25 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
   const sl = useSettingsStore((s) => s.settings.statusLine) || DEFAULT_STATUS_LINE
   const codexReview = useCodexReviewUsage(session?.enableCodexReview ? sessionId : null)
   const { restart } = useRestartSession(session, false)
+  const switchAccount = useSwitchAccount(session)
+  const theme = useResolvedTheme()
+  // Account identity resolved by LIVE email so a mid-session /login instantly
+  // reflects the new account name/colour without a respawn. Selector form
+  // (never destructure the whole store).
+  const profiles = useAccountProfilesStore((s) => s.profiles)
+  const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
+  const accountColourOverrides = useSettingsStore((s) => s.settings.accountColourOverrides)
+  // Mid-session account switch (respawn + resume): gated on having at least 2
+  // profiles (need a real choice). Selector form on every read so the strip
+  // never re-renders on unrelated store churn.
+  const canSwitchAccount = profiles.length >= 2
 
-  const [openPicker, setOpenPicker] = useState<'mode' | 'model' | null>(null)
-  const [lastMode, setLastMode] = useState<string | null>(null)
+  const [openPicker, setOpenPicker] = useState<'model' | 'account' | null>(null)
   const [lastEffort, setLastEffort] = useState<string | null>(null)
   const isClaude = (session?.provider ?? 'claude') === 'claude'
 
   const write = (cmd: string) => {
     window.electronAPI.pty.write(sessionId, cmd)
-  }
-  const onMode = (_si: number, v: string) => {
-    setLastMode(v)
-    write(`/permission-mode ${v}\n`)
-    setOpenPicker(null)
   }
   const onModel = (si: number, v: string) => {
     if (si === 0) {
@@ -66,6 +76,12 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
       updateSession(sessionId, { effortLevel: v as Session['effortLevel'] })
       write(`/effort ${v}\n`)
     }
+    setOpenPicker(null)
+  }
+  // Account chooser select: value is always a real profile id.
+  // switchAccount no-ops when it equals the session's current account.
+  const onSwitchAccount = (_si: number, v: string) => {
+    switchAccount(sessionId, v || undefined)
     setOpenPicker(null)
   }
 
@@ -82,6 +98,27 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
   const hasModelLabel = !!session.modelName && rawModelLabel !== 'default'
   const modelLabel = hasModelLabel ? rawModelLabel : 'model'
 
+  // Account chip (always-on when the session has a resolved account). Name
+  // and colour are resolved by live email: a mid-session /login that updates
+  // session.accountEmail immediately shows the right name/colour. Override
+  // wins over the spawn-time colour key.
+  const accountName = session.accountEmail
+    ? resolveAccountNameByEmail(session.accountEmail, profiles, accountAliases)
+    : null
+  const accountDot = resolveIdentityColor(
+    resolveAccountColourKey(session.accountEmail, accountColourOverrides, session.accountColour),
+    theme,
+  )
+
+  // Account chooser: every profile (resolved name + truncated email hint).
+  // The current account is marked active; selecting it is a no-op in switchAccount.
+  const accountItems = profiles.map((p) => ({
+    label: resolveAccountName(p.accountEmail, p.name, accountAliases),
+    value: p.id,
+    active: p.id === session.profileId,
+    hint: middleTruncateEmail(p.accountEmail),
+  }))
+
   return (
     <div
       className="min-h-7 shrink-0 flex items-center gap-3 px-3 text-xs border-t border-b"
@@ -93,7 +130,10 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
         className="flex items-center gap-3 flex-1 min-w-0 overflow-hidden"
         style={{ fontSize: `${sl.fontSize}px`, fontFamily: sl.font === 'mono' ? "'JetBrains Mono', monospace" : undefined }}
       >
-        {sl.showModel && session.modelName && (
+        {/* Bug 6: for Claude the interactive Model pill (controls cluster, right)
+            is the single home for the model + effort, so the read-only telemetry
+            copy would double it. Codex has no model pill, so it keeps this. */}
+        {sl.showModel && session.modelName && !isClaude && (
           <span className="font-medium truncate shrink-0">
             {session.modelName}
             {/* v1.5.13: surface effort level next to the model name. Codex
@@ -101,11 +141,32 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
                 uses effortLevel (config-time, set when the user pinned
                 --effort in Edit Config). Show whichever is set; Codex
                 wins on the rare case both are populated. */}
-            {(session.reasoningEffort || session.effortLevel) && (
+            {/* Effort renders as a suffix of the model name ("Sonnet xhigh"),
+                so it is intentionally also gated by showModel above -- an
+                orphaned effort with no model would look broken. */}
+            {sl.showEffort && (session.reasoningEffort || session.effortLevel) && (
               <span className="ml-1 font-normal" style={{ color: 'var(--text-muted)' }}>
                 {session.reasoningEffort || session.effortLevel}
               </span>
             )}
+          </span>
+        )}
+        {/* Bug 6: when the interactive account-switch pill is shown (multi-account),
+            it already displays the account + dot, so this read-only chip would
+            double it. Single-account sessions (no switch pill) keep this chip. */}
+        {sl.showAccount && accountName && !canSwitchAccount && (
+          <span
+            className="flex items-center gap-1 shrink-0"
+            style={{ color: 'var(--text-muted)' }}
+            title={session.accountEmail}
+            data-testid="account-chip"
+          >
+            <span
+              className="w-1.5 h-1.5 rounded-full shrink-0"
+              style={{ backgroundColor: accountDot }}
+              aria-hidden
+            />
+            <span className="truncate max-w-[14rem]">{accountName}</span>
           </span>
         )}
         {sl.showTokens && session.inputTokens != null && session.contextWindowSize && (
@@ -155,29 +216,42 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
           danger-on-hover treatment. (UAT R2 Tasks 2 + 4.) */}
       {isClaude && (
         <div className="flex items-center gap-1 shrink-0">
-          <div className="relative">
-            <button
-              onClick={() => setOpenPicker(openPicker === 'mode' ? null : 'mode')}
-              className={CONTROL_PILL}
-              style={{
-                background: 'var(--surface-raised)',
-                border: '1px solid var(--border-subtle)',
-                color: 'var(--text-secondary)',
-              }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--surface-overlay)'; e.currentTarget.style.color = 'var(--text-primary)' }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--surface-raised)'; e.currentTarget.style.color = 'var(--text-secondary)' }}
-              title="Permission mode"
-            >
-              Mode
-            </button>
-            {openPicker === 'mode' && (
-              <ToolbarPopup
-                sections={[{ title: 'Mode', items: PERMISSION_MODES.map((m) => ({ ...m, active: m.value === lastMode })) }]}
-                onSelect={onMode}
-                onClose={() => setOpenPicker(null)}
-              />
-            )}
-          </div>
+          {/* Account switch (multi-account only): respawns the session under the
+              chosen profile and resumes the transcript. Same pill styling as the
+              Mode/Model controls; opens upward (ToolbarPopup is bottom-anchored)
+              so it isn't clipped by the telemetry zone's overflow. */}
+          {canSwitchAccount && (
+            <div className="relative">
+              <button
+                onClick={() => setOpenPicker(openPicker === 'account' ? null : 'account')}
+                className={CONTROL_PILL}
+                style={{
+                  background: 'var(--surface-raised)',
+                  border: '1px solid var(--border-subtle)',
+                  color: 'var(--text-secondary)',
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--surface-overlay)'; e.currentTarget.style.color = 'var(--text-primary)' }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--surface-raised)'; e.currentTarget.style.color = 'var(--text-secondary)' }}
+                title="Switch account (respawns + resumes this session)"
+              >
+                <span className="flex items-center gap-1">
+                  <span
+                    className="w-1.5 h-1.5 rounded-full shrink-0"
+                    style={{ backgroundColor: accountDot }}
+                    aria-hidden
+                  />
+                  <span className="truncate max-w-[10rem]">{accountName ?? 'Account'}</span>
+                </span>
+              </button>
+              {openPicker === 'account' && (
+                <ToolbarPopup
+                  sections={[{ title: 'Switch account', items: accountItems }]}
+                  onSelect={onSwitchAccount}
+                  onClose={() => setOpenPicker(null)}
+                />
+              )}
+            </div>
+          )}
           <div className="relative">
             <button
               onClick={() => setOpenPicker(openPicker === 'model' ? null : 'model')}
@@ -192,6 +266,14 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
               title="Model"
             >
               {modelLabel}
+              {/* Bug 6: effort lives on the Model pill now (the telemetry model is
+                  hidden for Claude to avoid doubling). Preserves the "Opus 4.8 xhigh"
+                  display the user configured via showEffort. */}
+              {sl.showEffort && hasModelLabel && (session.reasoningEffort || session.effortLevel) && (
+                <span className="ml-1 font-normal" style={{ color: 'var(--text-muted)' }}>
+                  {session.reasoningEffort || session.effortLevel}
+                </span>
+              )}
             </button>
             {openPicker === 'model' && (
               <ToolbarPopup
@@ -228,7 +310,7 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
           {/* Divider -- sets Restart apart as the disruptive action. */}
           <span className="w-px self-stretch my-1.5 mx-0.5" style={{ background: 'var(--border-subtle)' }} aria-hidden />
           <button
-            onClick={restart}
+            onClick={() => restart()}
             className={CONTROL_PILL}
             style={{
               background: 'transparent',

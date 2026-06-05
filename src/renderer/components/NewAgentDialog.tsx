@@ -1,6 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { useConfigStore } from '../stores/configStore'
 import { useCloudAgentStore } from '../stores/cloudAgentStore'
+import { useAccountProfilesStore } from '../stores/accountProfilesStore'
+import { useSettingsStore } from '../stores/settingsStore'
+import { resolveAccountName } from '../../shared/account-chip-color'
 
 interface Props {
   onClose: () => void
@@ -15,6 +18,15 @@ export default function NewAgentDialog({ onClose }: Props) {
   const configs = useConfigStore(s => s.configs)
   const dispatch = useCloudAgentStore(s => s.dispatch)
   const nameRef = useRef<HTMLInputElement>(null)
+
+  // Account selection (multi-account): default to the captured primary so an
+  // agent never silently runs on whatever the global login happens to be. Only
+  // surfaced when more than one account profile exists.
+  const profiles = useAccountProfilesStore(s => s.profiles)
+  const accountAliases = useSettingsStore(s => s.settings.accountAliases)
+  const defaultProfileId = (profiles.find(p => p.isPrimary) ?? profiles[0])?.id ?? ''
+  const [selectedProfileId, setSelectedProfileId] = useState<string>('')
+  const effectiveProfileId = selectedProfileId || defaultProfileId
 
   // Filter to local configs only
   const localConfigs = configs.filter(c => c.sessionType === 'local')
@@ -49,6 +61,7 @@ export default function NewAgentDialog({ onClose }: Props) {
       description: description.trim(),
       projectPath: projectPath.trim(),
       configId: selectedConfigId || undefined,
+      profileId: effectiveProfileId || undefined,
       legacyVersion: selectedConfig?.legacyVersion,
     })
     onClose()
@@ -113,6 +126,24 @@ export default function NewAgentDialog({ onClose }: Props) {
             <div className="mt-1 text-xs text-overlay0 truncate">{projectPath}</div>
           )}
         </div>
+
+        {/* Account picker (multi-account only) */}
+        {profiles.length >= 2 && (
+          <div className="mb-4">
+            <label className="block text-xs text-subtext0 mb-1">Account</label>
+            <select
+              value={effectiveProfileId}
+              onChange={e => setSelectedProfileId(e.target.value)}
+              className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text outline-none focus:border-blue"
+            >
+              {profiles.map(p => (
+                <option key={p.id} value={p.id}>
+                  {(resolveAccountName(p.accountEmail, p.name, accountAliases) || 'Account')}{p.isPrimary ? ' (primary)' : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
 
         {/* Safety notice */}
         <div className="mb-3 px-3 py-2 rounded-lg bg-yellow/8 border border-yellow/20 text-[11px] text-yellow leading-relaxed">

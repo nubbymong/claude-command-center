@@ -1,6 +1,9 @@
 import React, { useEffect, useState } from 'react'
 import { useInsightsStore } from '../stores/insightsStore'
 import { useTokenomicsStore } from '../stores/tokenomicsStore'
+import { useAccountProfilesStore } from '../stores/accountProfilesStore'
+import { useSettingsStore } from '../stores/settingsStore'
+import { resolveAccountNameByEmail, resolveAccountName } from '../../shared/account-chip-color'
 import KpiSidebar from './KpiSidebar'
 import type { InsightsData } from '../types/electron'
 import type { TokenomicsSessionRecord } from '../../shared/types'
@@ -28,6 +31,18 @@ export default function InsightsPage() {
   const [currentKpis, setCurrentKpis] = useState<InsightsData | null>(null)
   const [previousKpis, setPreviousKpis] = useState<InsightsData | null>(null)
   const [loading, setLoading] = useState(false)
+
+  // Account selection: which account a new run executes under. Defaults to the
+  // captured primary; only surfaced when more than one account profile exists.
+  const profiles = useAccountProfilesStore((s) => s.profiles)
+  const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
+  const multiAccount = profiles.length >= 2
+  const defaultProfileId = (profiles.find((p) => p.isPrimary) ?? profiles[0])?.id ?? ''
+  const [runProfileId, setRunProfileId] = useState<string>('')
+  const effectiveRunProfileId = runProfileId || defaultProfileId
+  const nameForAccount = (email?: string) => (email ? resolveAccountNameByEmail(email, profiles, accountAliases) : null)
+  const labelForProfile = (p: { accountEmail: string; name?: string; isPrimary?: boolean }) =>
+    (resolveAccountName(p.accountEmail, p.name, accountAliases) || 'Account') + (p.isPrimary ? ' (primary)' : '')
 
   useEffect(() => {
     loadCatalogue()
@@ -133,8 +148,20 @@ export default function InsightsPage() {
             ) : (
               <>
                 <p className="text-xs text-overlay0 mb-4 max-w-[240px]">Generate an AI-powered analysis of your session history and workflow patterns</p>
+                {multiAccount && (
+                  <select
+                    value={effectiveRunProfileId}
+                    onChange={(e) => setRunProfileId(e.target.value)}
+                    className="block mx-auto mb-3 bg-surface0 text-text text-xs rounded border border-surface1 px-2 py-1 focus:outline-none focus:border-teal/40"
+                    title="Account to analyze"
+                  >
+                    {profiles.map((p) => (
+                      <option key={p.id} value={p.id}>{labelForProfile(p)}</option>
+                    ))}
+                  </select>
+                )}
                 <button
-                  onClick={startInsights}
+                  onClick={() => startInsights(effectiveRunProfileId || undefined)}
                   className="px-4 py-2 bg-teal/10 border border-teal/25 text-teal rounded-lg hover:bg-teal/20 transition-colors text-xs font-medium"
                 >
                   Run Insights Now
@@ -167,11 +194,24 @@ export default function InsightsPage() {
             month: 'short', day: 'numeric', year: 'numeric',
             hour: '2-digit', minute: '2-digit'
           })
-          return <option key={run.id} value={run.id}>{label}</option>
+          const acct = multiAccount ? nameForAccount(run.accountEmail) : null
+          return <option key={run.id} value={run.id}>{acct ? `${label} · ${acct}` : label}</option>
         })}
       </select>
+      {multiAccount && (
+        <select
+          value={effectiveRunProfileId}
+          onChange={(e) => setRunProfileId(e.target.value)}
+          className="bg-surface0 text-text text-xs rounded border border-surface1 px-2 py-0.5 focus:outline-none focus:border-teal/40 transition-colors"
+          title="Account for the next run"
+        >
+          {profiles.map((p) => (
+            <option key={p.id} value={p.id}>{labelForProfile(p)}</option>
+          ))}
+        </select>
+      )}
       <button
-        onClick={startInsights}
+        onClick={() => startInsights(effectiveRunProfileId || undefined)}
         disabled={isRunning}
         className={`text-xs px-2.5 py-0.5 rounded border font-medium transition-all flex items-center gap-1.5 ${
           isRunning

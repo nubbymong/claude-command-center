@@ -36,8 +36,15 @@ vi.mock('electron', () => ({
 // Mock the debug-logger to prevent file I/O
 vi.mock('../../src/main/debug-logger', () => ({
   logInfo: vi.fn(),
+  logWarn: vi.fn(),
   logError: vi.fn(),
   logDebug: vi.fn(),
+  logTrace: vi.fn(),
+  setVerboseMode: vi.fn(),
+  isVerboseMode: vi.fn(() => false),
+  setVerboseBaseline: vi.fn(),
+  setTraceMode: vi.fn(),
+  isTraceMode: vi.fn(() => false),
   installGlobalErrorHandlers: vi.fn(),
   closeDebugLogger: vi.fn(),
 }))

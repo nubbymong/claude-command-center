@@ -13,6 +13,10 @@ import HooksGatewaySection from './github/config/HooksGatewaySection'
 import PageFrame from './PageFrame'
 import { SectionLabel } from './ui/SectionLabel'
 import { Kbd } from './ui/Kbd'
+import { useAddAccount } from '../hooks/useAddAccount'
+import AccountsPanel from './AccountsPanel'
+import { useMigrationStore } from '../stores/migrationStore'
+import { MigrationReport } from './MigrationReport'
 declare const __BUILD_TIME__: string
 
 export const SETTINGS_TAB_IDS = ['general', 'statusline', 'shortcuts', 'github', 'codex', 'hooks', 'about'] as const
@@ -49,14 +53,102 @@ function formatBuildTime(iso: string): string {
   }
 }
 
+function fmtBytesLocal(n: number): string {
+  if (n < 1024) return `${n} B`
+  const units = ['KB', 'MB', 'GB', 'TB']
+  let v = n / 1024
+  let i = 0
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i += 1 }
+  return `${v.toFixed(1)} ${units[i]}`
+}
+
+function LogMigrationAction() {
+  const settings = useSettingsStore((s) => s.settings)
+  const present = useMigrationStore((s) => s.present)
+  const sessionFolders = useMigrationStore((s) => s.sessionFolders)
+  const phase = useMigrationStore((s) => s.phase)
+  const progressDone = useMigrationStore((s) => s.progressDone)
+  const progressTotal = useMigrationStore((s) => s.progressTotal)
+  const report = useMigrationStore((s) => s.report)
+  const reclaimedBytes = useMigrationStore((s) => s.reclaimedBytes)
+  const failedFolders = useMigrationStore((s) => s.failedFolders)   // A5
+  const errorKind = useMigrationStore((s) => s.errorKind)
+  const detect = useMigrationStore((s) => s.detect)
+  const run = useMigrationStore((s) => s.run)
+  const reclaim = useMigrationStore((s) => s.reclaim)
+
+  const [dismissed, setDismissed] = useState(false)
+
+  useEffect(() => { void detect() }, [detect])   // A6: named import, not React.useEffect
+
+  // NOTE: marking legacyLogsMigrated on run success now lives centrally in
+  // migrationStore.run(), so BOTH this Settings path and the one-time App prompt
+  // record completion. (Previously a local effect here did it, missing the prompt
+  // path when the user never opened Settings.)
+
+  const migrated = settings.legacyLogsMigrated === true
+  const showRun = present && !migrated && (phase === 'idle' || (phase === 'error' && errorKind === 'run'))
+
+  // Nothing actionable to show.
+  if (phase === 'idle' && (!present || migrated)) return null
+  if (phase === 'done' && dismissed) return null
+
+  return (
+    <div className="mt-3 pt-3" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+      <div className="text-sm text-subtext0 mb-1">Existing logs</div>
+      {showRun && (
+        <div className="flex items-center gap-3">
+          <span className="text-[11px] text-overlay0">{sessionFolders.toLocaleString()} legacy session folder(s) found</span>
+          <button onClick={() => void run()} className="px-3 py-1.5 rounded-lg text-sm font-medium transition-colors" style={{ background: 'var(--color-blue)', color: 'var(--color-crust)' }}>
+            Migrate existing logs
+          </button>
+        </div>
+      )}
+      {phase === 'running' && (
+        <div className="text-[11px] text-overlay0">Importing {progressDone.toLocaleString()} of {progressTotal.toLocaleString()} ...</div>
+      )}
+      {phase === 'reclaiming' && (
+        <div className="text-[11px] text-overlay0">Removing old log files ...</div>
+      )}
+      {phase === 'done' && report && !dismissed && (
+        // `reclaiming` is always false here: the instant reclaim() runs, phase flips
+        // to 'reclaiming' and this report unmounts (the 'reclaiming' branch above
+        // renders instead), so the in-button disabled state never applies. Double-
+        // delete is prevented by the re-entry guards in migrationStore.reclaim() and
+        // the LOGS_MIGRATE_RECLAIM handler, not by this prop.
+        <MigrationReport report={report} reclaiming={false}
+          onReclaim={() => { void reclaim() }}
+          onDismiss={() => { setDismissed(true) }} />
+      )}
+      {phase === 'reclaimed' && (
+        <div className="text-[11px] text-overlay0">
+          Old log files removed.{failedFolders.length > 0
+            ? ` ${failedFolders.length.toLocaleString()} folder(s) could not be removed.`
+            : ` ${fmtBytesLocal(reclaimedBytes)} freed.`}
+        </div>
+      )}
+      {phase === 'error' && (
+        <div className="text-[11px]" style={{ color: 'var(--color-red, #f38ba8)' }}>
+          {errorKind === 'reclaim'
+            ? 'Could not delete the old log files. Your imported logs are safe and the original files were left in place.'
+            : 'Migration failed. You can retry. Your original logs were not modified.'}
+        </div>
+      )}
+    </div>
+  )
+}
+
 interface SettingsPageProps {
   // Initial tab selection used on first render. Allows callers (onboarding
   // modal "Set up now" + auto-detect banner Accept/Edit) to deep-link into
   // the GitHub tab instead of landing on the default General view.
   initialTab?: SettingsTab
+  // Called after the user triggers "Add another account" so the parent can
+  // switch the view to Sessions (where the login shell opens).
+  onNavigateToSessions?: () => void
 }
 
-export default function SettingsPage({ initialTab }: SettingsPageProps = {}) {
+export default function SettingsPage({ initialTab, onNavigateToSessions }: SettingsPageProps = {}) {
   const settings = useSettingsStore((s) => s.settings)
   const updateSettings = useSettingsStore((s) => s.updateSettings)
   const updateAppMeta = useAppMetaStore((s) => s.update)
@@ -96,6 +188,23 @@ export default function SettingsPage({ initialTab }: SettingsPageProps = {}) {
 
   const openDebugFolder = async () => {
     await window.electronAPI.debug.openFolder()
+  }
+
+  // Add account: create a profile + open a login shell, then navigate to Sessions.
+  const addAccount = useAddAccount()
+  const handleAddAccount = async () => {
+    await addAccount()
+    onNavigateToSessions?.()
+  }
+
+  const handleClearAllLogs = async () => {
+    if (!window.confirm('Permanently delete ALL session logs? This cannot be undone. Active sessions are kept.')) return
+    try {
+      const res = await window.electronAPI.logsdb.clearAll()
+      window.alert(`Deleted ${res.deletedSessions} session(s), ${res.deletedEvents} event(s). Active sessions are kept.`)
+    } catch {
+      window.alert('Could not clear logs — the logging service may be unavailable.')
+    }
   }
 
   const sl = settings.statusLine || DEFAULT_STATUS_LINE
@@ -214,7 +323,29 @@ export default function SettingsPage({ initialTab }: SettingsPageProps = {}) {
                   Show permission tray
                   <span className="text-[10px] text-overlay0">(surfaces only prompts Claude is blocked on)</span>
                 </label>
+                <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.loggingEnabled !== false}
+                    onChange={(e) => save({ loggingEnabled: e.target.checked })}
+                    className="rounded border-surface1"
+                  />
+                  Session logging
+                  <span className="text-[10px] text-overlay0">(records terminal output locally for search; may include secrets)</span>
+                </label>
+                <div className="flex items-center gap-2 mt-1">
+                  <button
+                    onClick={handleClearAllLogs}
+                    className="px-2.5 py-1 text-xs rounded border border-surface1 bg-surface0 text-overlay1 hover:bg-red/10 hover:text-red hover:border-red/40 transition-colors"
+                  >
+                    Clear all session logs
+                  </button>
+                  <span className="text-[10px] text-overlay0">(permanent; active sessions are kept)</span>
+                </div>
+                <LogMigrationAction />
               </Section>
+
+              <AccountsPanel onAdd={handleAddAccount} />
 
               <Section title="Terminal" icon={<><rect x="2" y="3" width="12" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.2" fill="none" /><path d="M5 7l2 2-2 2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" /><line x1="9" y1="11" x2="11" y2="11" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" /></>}>
                 <Field label="Font Family">
@@ -423,8 +554,17 @@ export default function SettingsPage({ initialTab }: SettingsPageProps = {}) {
 
 /* ── Status Line Tab ─────────────────────────────────── */
 
-const STATUS_LINE_TOGGLES: { key: keyof StatusLineSettings; label: string; description: string }[] = [
+// Only the boolean-valued keys of StatusLineSettings are toggles (font/fontSize
+// are not). Narrowing the key type here lets sl[key] resolve to `boolean` for
+// the Toggle `on` prop instead of the full number | boolean | StatusLineFont union.
+type BooleanStatusLineKey = {
+  [K in keyof StatusLineSettings]: StatusLineSettings[K] extends boolean ? K : never
+}[keyof StatusLineSettings]
+
+const STATUS_LINE_TOGGLES: { key: BooleanStatusLineKey; label: string; description: string }[] = [
   { key: 'showModel', label: 'Model Name', description: 'Shows the active Claude model' },
+  { key: 'showEffort', label: 'Effort Level', description: 'Active reasoning effort next to the model' },
+  { key: 'showAccount', label: 'Account', description: 'Claude account this session runs as' },
   { key: 'showTokens', label: 'Token Count', description: 'Input tokens / context window' },
   { key: 'showContextBar', label: 'Context Bar', description: 'Visual progress bar + percentage' },
   { key: 'showCost', label: 'API Cost', description: 'API equivalent cost estimate' },
@@ -554,6 +694,11 @@ function StatusLinePreview({ sl }: { sl: StatusLineSettings }) {
       {/* Row 1 */}
       <div className="flex items-center gap-3 px-2 py-1">
         <span className={`text-text font-medium ${vis(sl.showModel)}`}>Claude 4 Sonnet</span>
+        <span className={`text-overlay1 ${vis(sl.showEffort)}`}>xhigh</span>
+        <span className={`flex items-center gap-1 ${vis(sl.showAccount)}`}>
+          <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: 'var(--color-mauve)' }} />
+          you@example.com
+        </span>
         <span className={`tabular-nums ${vis(sl.showTokens)}`}>84K / 200K</span>
         <div className={`flex items-center gap-1.5 ${!sl.showContextBar ? 'opacity-30' : ''}`}>
           <div className="w-20 h-1.5 bg-surface1 rounded-full overflow-hidden">
@@ -598,13 +743,13 @@ function StatusLinePreview({ sl }: { sl: StatusLineSettings }) {
 function MockRateDots({ label, pct }: { label: string; pct: number }) {
   const barWidth = 10
   const filled = Math.round(pct * barWidth / 100)
-  const color = pct >= 90 ? '#F38BA8' : pct >= 70 ? '#F9E2AF' : pct >= 50 ? '#FAB387' : '#A6E3A1'
+  const color = pct >= 90 ? 'var(--status-danger)' : pct >= 70 ? 'var(--status-warning)' : pct >= 50 ? 'var(--brand)' : 'var(--status-success)'
   return (
     <span className="flex items-center gap-1">
       <span className="text-subtext0">{label}:</span>
       <span style={{ letterSpacing: '-1px' }}>
         {Array.from({ length: barWidth }, (_, i) => (
-          <span key={i} style={{ color: i < filled ? color : '#2a3342', fontSize: '9px' }}>{String.fromCodePoint(0x25CF)}</span>
+          <span key={i} style={{ color: i < filled ? color : 'var(--border-strong)', fontSize: '9px' }}>{String.fromCodePoint(0x25CF)}</span>
         ))}
       </span>
       <span className="text-subtext0">{pct}%</span>
@@ -708,18 +853,22 @@ export function ShortcutRow({ keys, action }: { keys: string; action: string }) 
   )
 }
 
+// Geometry uses inline styles (not Tailwind w-/h-/translate utilities) so the
+// control renders identically regardless of utility emission or cascade order
+// -- a prior build showed the knob detached from a collapsed track. Track is
+// 44x24, the 16px knob is inset 4px and slides 20px between off and on.
 export function Toggle({ on, onClick, label }: { on: boolean; onClick: () => void; label?: string }) {
   return (
     <button
       onClick={onClick}
       aria-pressed={on}
       aria-label={label}
-      className="relative shrink-0 w-11 h-6 rounded-full transition-colors duration-200"
-      style={{ background: on ? 'var(--status-success)' : 'var(--surface-overlay)' }}
+      className="relative shrink-0 rounded-full transition-colors duration-200"
+      style={{ width: 44, height: 24, background: on ? 'var(--status-success)' : 'var(--surface-overlay)' }}
     >
       <span
-        className="absolute top-1 w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-200"
-        style={{ transform: on ? 'translateX(24px)' : 'translateX(4px)' }}
+        className="absolute rounded-full bg-white shadow-sm transition-transform duration-200"
+        style={{ width: 16, height: 16, top: 4, left: 4, transform: on ? 'translateX(20px)' : 'translateX(0)' }}
       />
     </button>
   )

@@ -6,6 +6,8 @@ import { logInfo } from '../debug-logger'
 import { isVersionInstalled, installVersion } from '../legacy-version-manager'
 import { loadCredential } from '../credential-store'
 import { IPC } from '../../shared/ipc-channels'
+import { getPtyIntegrityMonitor } from '../services/pty-integrity-monitor'
+import type { PtyIntegrityReport } from '../../shared/service-health'
 
 /** SSH options as received from the renderer (no passwords — only configId) */
 interface RendererSSHOptions {
@@ -44,10 +46,13 @@ export const spawnOptionsSchema = z.object({
     model: z.string().optional(),
     tools: z.array(z.string()).optional(),
   })).optional(),
-  effortLevel: z.enum(['low', 'medium', 'high']).optional(),
+  // All 6 live effort levels (set via /effort, persisted, restored at spawn).
+  // Capping at low/medium/high made a restored xhigh/max/ultracode session throw here.
+  effortLevel: z.enum(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode']).optional(),
   disableAutoMemory: z.boolean().optional(),
   enableCodexReview: z.boolean().optional(),
   model: z.string().optional(),
+  profileId: z.string().optional(),
   provider: z.enum(['claude', 'codex']).optional(),
   codexOptions: z.object({
     model: z.string().optional(),
@@ -78,10 +83,11 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     useResumePicker?: boolean
     legacyVersion?: { enabled: boolean; version: string }
     agentsConfig?: Array<{ name: string; description: string; prompt: string; model?: string; tools?: string[] }>
-    effortLevel?: 'low' | 'medium' | 'high'
+    effortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode'
     disableAutoMemory?: boolean
     enableCodexReview?: boolean
     model?: string
+    profileId?: string
     provider?: 'claude' | 'codex'
     codexOptions?: {
       model?: string
@@ -139,6 +145,10 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
 
   ipcMain.on('pty:kill', (_event, sessionId: string) => {
     killPty(sessionId)
+  })
+
+  ipcMain.on(IPC.PTY_INTEGRITY_REPORT, (_event, report: PtyIntegrityReport) => {
+    getPtyIntegrityMonitor()?.recordRendererReport(report)
   })
 
   // SSH manual-flow controller — renderer drives stage transitions.

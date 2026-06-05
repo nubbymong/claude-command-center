@@ -4,6 +4,7 @@
     "module": "ES2022",
     "moduleResolution": "bundler",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["vite/client"],
     "jsx": "react-jsx",
     "outDir": "./out",
     "rootDir": "./src",

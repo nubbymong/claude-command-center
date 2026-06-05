@@ -304,7 +304,10 @@ function launchClaude(resumeId) {
     const { execSync } = require('child_process')
     for (const bin of ['claude.exe', 'claude.cmd']) {
       try {
-        cmd = execSync(`where ${bin}`, { encoding: 'utf-8', timeout: 5000 })
+        // stdio: ignore stderr so Windows `where`'s "INFO: Could not find files
+        // for the given pattern(s)." (printed when claude.exe isn't found before
+        // claude.cmd) doesn't leak into the session terminal.
+        cmd = execSync(`where ${bin}`, { encoding: 'utf-8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] })
           .trim().split('\n')[0].trim()
         break
       } catch { /* try next */ }

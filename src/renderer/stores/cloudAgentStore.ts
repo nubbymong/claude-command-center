@@ -8,9 +8,10 @@ interface CloudAgentState {
   selectedAgentId: string | null
   filter: FilterType
   searchQuery: string
+  accountFilter: string
 
   hydrate: (agents: CloudAgent[]) => void
-  dispatch: (params: { name: string; description: string; projectPath: string; configId?: string; legacyVersion?: { enabled: boolean; version: string } }) => Promise<void>
+  dispatch: (params: { name: string; description: string; projectPath: string; configId?: string; profileId?: string; legacyVersion?: { enabled: boolean; version: string } }) => Promise<void>
   cancel: (id: string) => Promise<void>
   remove: (id: string) => Promise<void>
   retry: (id: string) => Promise<void>
@@ -18,6 +19,7 @@ interface CloudAgentState {
   selectAgent: (id: string | null) => void
   setFilter: (filter: FilterType) => void
   setSearchQuery: (query: string) => void
+  setAccountFilter: (email: string) => void
 
   handleStatusChanged: (agent: CloudAgent) => void
   handleOutputChunk: (data: { id: string; chunk: string }) => void
@@ -45,6 +47,7 @@ export const useCloudAgentStore = create<CloudAgentState>((set, get) => ({
   selectedAgentId: null,
   filter: 'all',
   searchQuery: '',
+  accountFilter: 'all',
 
   hydrate: (agents: CloudAgent[]) => {
     set({ agents: agents || [] })
@@ -97,6 +100,7 @@ export const useCloudAgentStore = create<CloudAgentState>((set, get) => ({
   selectAgent: (id: string | null) => set({ selectedAgentId: id }),
   setFilter: (filter: FilterType) => set({ filter }),
   setSearchQuery: (query: string) => set({ searchQuery: query }),
+  setAccountFilter: (email: string) => set({ accountFilter: email }),
 
   handleStatusChanged: (agent: CloudAgent) => {
     set(state => {
@@ -126,7 +130,7 @@ export const useCloudAgentStore = create<CloudAgentState>((set, get) => ({
   },
 
   getFilteredAgents: () => {
-    const { agents, filter, searchQuery } = get()
+    const { agents, filter, searchQuery, accountFilter } = get()
     let filtered = agents
 
     if (filter === 'running') {
@@ -135,6 +139,10 @@ export const useCloudAgentStore = create<CloudAgentState>((set, get) => ({
       filtered = filtered.filter(a => a.status === 'completed')
     } else if (filter === 'failed') {
       filtered = filtered.filter(a => a.status === 'failed' || a.status === 'cancelled')
+    }
+
+    if (accountFilter !== 'all') {
+      filtered = filtered.filter(a => a.accountEmail === accountFilter)
     }
 
     if (searchQuery) {

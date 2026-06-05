@@ -26,6 +26,8 @@ import PinnedConfigsPanel from './sidebar/PinnedConfigsPanel'
 import FirstRunCard from './FirstRunCard'
 import ColourMigrationNotice from './ColourMigrationNotice'
 import { useAppMetaStore } from '../stores/appMetaStore'
+import { useAccountProfilesStore } from '../stores/accountProfilesStore'
+import { useSwitchAccount } from '../hooks/useSwitchAccount'
 
 // Inject keyframes for attention pulse animation (shared with TabBar)
 const ATTENTION_STYLES_ID = 'attention-pulse-styles'
@@ -113,6 +115,16 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
   const sessionRenameRef = useRef<HTMLInputElement>(null)
   const sectionRenameRef = useRef<HTMLInputElement>(null)
   const newSectionInputRef = useRef<HTMLInputElement>(null)
+
+  // Mid-session account switch (respawn + resume) for the session context menu.
+  // Gated on having 2+ profiles. The hook is bound to whichever
+  // session currently has its context menu open; it reads the live session and
+  // no-ops when the chosen account equals the current one.
+  const accountProfiles = useAccountProfilesStore((s) => s.profiles)
+  const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
+  const canSwitchAccount = accountProfiles.length >= 2
+  const menuSession = sessionContextMenu ? sessions.find((s) => s.id === sessionContextMenu.sessionId) ?? null : null
+  const switchMenuAccount = useSwitchAccount(menuSession)
 
   // Inject attention styles on mount
   useEffect(() => {
@@ -946,6 +958,10 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
               setSessionContextMenu(null)
             }}
             onDismiss={() => setSessionContextMenu(null)}
+            canSwitchAccount={canSwitchAccount}
+            profiles={accountProfiles}
+            accountAliases={accountAliases}
+            onSwitchAccount={(profileId) => switchMenuAccount(s.id, profileId)}
           />
         ) : null
       })()}

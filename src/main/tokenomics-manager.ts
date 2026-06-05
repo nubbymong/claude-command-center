@@ -26,6 +26,7 @@ import { computeCodexCostUsd } from './providers/codex/pricing'
 import { getCodexHome } from './providers/codex/auth'
 import { canonicalEmail } from './account-attribution'
 import { getCodexSpawnIdentityMap } from './pty-manager'
+import { getClaudeAccount, getClaudeAccountMap } from './claude-account-identity'
 
 // ── Model Pricing (per 1M tokens) ──
 
@@ -38,10 +39,10 @@ interface ModelPricing {
 
 // Hardcoded fallback pricing (per 1M tokens)
 const FALLBACK_PRICING: Record<string, ModelPricing> = {
-  // v1.5.11: Opus 4.8 (released 2026-05-28) keeps the 4.7 base pricing but
-  // introduces an optional fast mode at 2.5x speed for 2x cost. fast variant
-  // is keyed by `<model>-fast` and selected at calculateCost() time when the
-  // session record carries fastMode: true.
+  // v1.5.11: Opus 4.8 (released 2026-05-28) keeps the 4.7 base pricing. A
+  // `<model>-fast` pricing row exists for the 2.5x-speed/2x-cost variant and
+  // is keyed by model name when reported by the CLI; there is no per-session
+  // toggle that selects it.
   'claude-opus-4-8': { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
   'claude-opus-4-8-fast': { input: 10, output: 50, cacheRead: 1.0, cacheWrite: 12.5 },
   'claude-opus-4-7': { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
@@ -216,6 +217,15 @@ function loadData(): TokenomicsData {
   }
 }
 
+// Monotonic per-write sequence. Combined with the pid, this guarantees that no
+// two in-flight writes (sync or async, in any interleaving) ever share a tmp
+// path -- the async statusline-driven write and a sync seed/sync-checkpoint
+// write can otherwise overlap within one process and rename a torn tmp.
+let saveSeq = 0
+function nextTmpPath(filePath: string): string {
+  return `${filePath}.tmp.${process.pid}.${++saveSeq}`
+}
+
 function saveData(data: TokenomicsData): void {
   try {
     // P8.7 / p9.17: stamp accountEmail on Codex records that don't have
@@ -242,10 +252,10 @@ function saveData(data: TokenomicsData): void {
     // last remaining writer with the strictAtomicWriteJson contract used in
     // conductor-mcp-server.ts.
     //
-    // Tmp name carries the pid so two CCC instances against the same
-    // resourcesDir (rare, but possible if a user points dev + prod at the
-    // same directory) don't race each other's intermediate write.
-    const tmpPath = `${filePath}.tmp.${process.pid}`
+    // Tmp name carries the pid (so two CCC instances against the same
+    // resourcesDir don't race) plus a monotonic seq (so an async statusline
+    // write never shares this tmp with a concurrent sync seed/sync write).
+    const tmpPath = nextTmpPath(filePath)
     fs.writeFileSync(tmpPath, JSON.stringify(data), 'utf-8')
     try {
       fs.renameSync(tmpPath, filePath)
@@ -258,11 +268,39 @@ function saveData(data: TokenomicsData): void {
   }
 }
 
+/**
+ * Async twin of saveData for the debounced (statusline-driven) write path, so a
+ * multi-MB JSON.stringify + write never blocks the main thread. Same atomic
+ * temp+rename contract. The explicit saveData() callers (seed/sync/quit-flush)
+ * stay synchronous on purpose -- they need the write to complete before they
+ * return (e.g. before the process exits).
+ */
+async function saveDataAsync(data: TokenomicsData): Promise<void> {
+  try {
+    try {
+      applyIdentityAtFlush(data, getCodexSpawnIdentityMap())
+    } catch { /* identity is best-effort -- never block the save */ }
+
+    ensureConfigDir()
+    const filePath = getTokenomicsPath()
+    const tmpPath = nextTmpPath(filePath)
+    await fs.promises.writeFile(tmpPath, JSON.stringify(data), 'utf-8')
+    try {
+      await fs.promises.rename(tmpPath, filePath)
+    } catch (renameErr) {
+      try { await fs.promises.unlink(tmpPath) } catch { /* ignore */ }
+      throw renameErr
+    }
+  } catch (err) {
+    logError(`[tokenomics] Failed to save data (async): ${err}`)
+  }
+}
+
 let saveTimeout: ReturnType<typeof setTimeout> | null = null
 
 function saveDataDebounced(data: TokenomicsData): void {
   if (saveTimeout) clearTimeout(saveTimeout)
-  saveTimeout = setTimeout(() => saveData(data), 5000)
+  saveTimeout = setTimeout(() => { void saveDataAsync(data) }, 5000)
 }
 
 // ── JSONL Parsing ──
@@ -553,6 +591,19 @@ export function applyIdentityAtFlush(
       record.accountEmail = e
       record.accountUuid = record.accountUuid ?? codexId.accountUuid
     }
+  }
+
+  // Claude attribution from the per-session spawn-time capture
+  // (getClaudeAccountMap) — drift-immune, mirroring the Codex pass above.
+  // Iterates the capture map (not every session) so a historic Claude
+  // record from a prior process run is never touched. Only stamps Claude
+  // records with no accountEmail yet — never overwrites (first-identity-wins).
+  for (const [sessionId, claudeEmail] of getClaudeAccountMap()) {
+    const record = data.sessions[sessionId]
+    if (!record || record.accountEmail) continue  // never overwrite
+    if (record.provider !== 'claude') continue     // only touch Claude records
+    const e = canonicalEmail(claudeEmail)
+    if (e) record.accountEmail = e
   }
 }
 
@@ -956,7 +1007,13 @@ export function handleStatuslineUpdate(rawStatuslineData: StatuslineData): void 
   // Never overwrite -- first identity seen for the session wins, matching
   // the wizard / Codex "never overwrite" rule.
   if (!record.accountEmail) {
-    const liveEmail = canonicalEmail(statuslineData.accountEmail)
+    // Prefer the per-session spawn-time capture (getClaudeAccount) — it is
+    // drift-immune (read once at spawn), whereas statuslineData.accountEmail
+    // is the bridge's read of the GLOBAL ~/.claude.json at tick time and so
+    // drifts if the user logs in/out mid-session. Fall back to the statusline
+    // payload when no capture exists (e.g. statusline-only sessions).
+    const reliable = getClaudeAccount(sessionId)
+    const liveEmail = canonicalEmail(reliable ?? statuslineData.accountEmail)
     if (liveEmail) record.accountEmail = liveEmail
   }
 

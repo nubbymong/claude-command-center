@@ -16,6 +16,16 @@ export function useStatuslineSubscription(sessionId: string) {
       if (data.costUsd != null) updates.costUsd = data.costUsd
       if (data.model) updates.modelName = data.model
       if (data.reasoningEffort) updates.reasoningEffort = data.reasoningEffort
+      // Claude live effort (statusline effort.level) -- updates on mid-session /effort.
+      // Mark effortLive so the sidebar card can show the pill ONLY now that a real
+      // statusline tick has confirmed the level (no spawn/persisted guess shown first).
+      if (data.effortLevel) {
+        updates.effortLevel = data.effortLevel
+        updates.effortLive = true
+      }
+      // Claude live Fast Mode (statusline fast_mode) -- per-session, flips on
+      // /fast. Copy both true and false so the card's bolt clears when toggled off.
+      if (data.fastMode != null) updates.fastMode = data.fastMode
       if (data.linesAdded != null) updates.linesAdded = data.linesAdded
       if (data.linesRemoved != null) updates.linesRemoved = data.linesRemoved
       if (data.contextWindowSize != null) updates.contextWindowSize = data.contextWindowSize

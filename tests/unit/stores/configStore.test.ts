@@ -104,16 +104,6 @@ describe('configStore', () => {
   })
 
   describe('TerminalConfig new fields', () => {
-    it('supports flickerFree field', () => {
-      useConfigStore.getState().addConfig(makeConfig({ id: 'c1', flickerFree: true }))
-      expect(useConfigStore.getState().configs[0].flickerFree).toBe(true)
-    })
-
-    it('supports powershellTool field', () => {
-      useConfigStore.getState().addConfig(makeConfig({ id: 'c1', powershellTool: true }))
-      expect(useConfigStore.getState().configs[0].powershellTool).toBe(true)
-    })
-
     it('supports effortLevel field', () => {
       useConfigStore.getState().addConfig(makeConfig({ id: 'c1', effortLevel: 'low' }))
       expect(useConfigStore.getState().configs[0].effortLevel).toBe('low')
@@ -135,8 +125,6 @@ describe('configStore', () => {
     it('new fields default to undefined when not set', () => {
       useConfigStore.getState().addConfig(makeConfig({ id: 'c1' }))
       const config = useConfigStore.getState().configs[0]
-      expect(config.flickerFree).toBeUndefined()
-      expect(config.powershellTool).toBeUndefined()
       expect(config.effortLevel).toBeUndefined()
       expect(config.disableAutoMemory).toBeUndefined()
       expect(config.machineName).toBeUndefined()

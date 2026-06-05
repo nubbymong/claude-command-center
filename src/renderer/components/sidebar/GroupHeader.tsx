@@ -5,7 +5,7 @@ interface GroupHeaderProps {
   group: ConfigGroup
   isRenaming: boolean
   renameValue: string
-  renameRef: React.RefObject<HTMLInputElement | null>
+  renameRef: React.RefObject<HTMLInputElement>
   onRenameChange: (val: string) => void
   onRenameFinish: () => void
   onRenameCancel: () => void

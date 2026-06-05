@@ -821,10 +821,10 @@ async function main() {
     })
     await window.waitForTimeout(800)
     // v1.5.13: seed the dialog state so the captured screenshot actually
-    // shows the v1.5.11/12 controls (Opus 4.8 model, Ultracode effort,
-    // Fast Mode). The Edit dialog opened on a "shellOnly:true" config so
-    // the Claude options are hidden by default - we have to uncheck Shell
-    // only FIRST (the effort/fastMode controls are conditionally rendered).
+    // shows the Claude controls (Opus 4.8 model, Ultracode effort). The Edit
+    // dialog opened on a "shellOnly:true" config so the Claude options are
+    // hidden by default - we have to uncheck Shell only FIRST (the Claude
+    // controls are conditionally rendered).
     // All DOM mutation must live in a single inline anonymous arrow
     // because esbuild/tsx names const-assigned arrows which triggers
     // __name in the evaluate context.
@@ -860,19 +860,8 @@ async function main() {
         effortSel.dispatchEvent(new Event('change', { bubbles: true }))
       }
     })
-    await window.waitForTimeout(400)
-    await window.evaluate(() => {
-      const cbs = Array.from(document.querySelectorAll('input[type=checkbox]'))
-      for (const cb of cbs) {
-        const lbl = cb.closest('label')?.textContent || ''
-        if (lbl.includes('Fast mode')) {
-          if (!(cb as HTMLInputElement).checked) (cb as HTMLInputElement).click()
-          break
-        }
-      }
-    })
     await window.waitForTimeout(500)
-    await capture(window, 'step-session-options.jpg', 'Session config dialog (Opus 4.8 + Ultracode + Fast Mode)')
+    await capture(window, 'step-session-options.jpg', 'Session config dialog (Opus 4.8 + Ultracode)')
     // Close dialog — try multiple methods
     await window.keyboard.press('Escape')
     await window.waitForTimeout(300)
