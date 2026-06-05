@@ -15,6 +15,16 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '1.5.31',
+    date: '2026-06-05',
+    highlights: 'More accurate per-account cost tracking under the hood, plus a clearer warning in the account attribution tool.',
+    changes: [
+      { type: 'improvement', description: 'Per-account cost tracking is now anchored to a stable account id captured when each session starts, so your usage stays attributed to the right account even if you later rename that account or change its sign-in email.' },
+      { type: 'improvement', description: 'Daily cost totals now keep a per-account breakdown, so your per-account spending history stays correct over time even as older session details age out.' },
+      { type: 'fix', description: 'The account attribution tool now explains that its email suggestions come from a history that records one sign-in at a time, so they can be wrong for a setup that ran several accounts at once. Double-check each before applying, or mark a group as mixed.' },
+    ],
+  },
+  {
     version: '1.5.30',
     date: '2026-06-04',
     highlights: 'Critical multi-account stability: upgrades no longer disrupt a running session memory, and your last-used account survives a crash.',
