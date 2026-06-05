@@ -6,9 +6,11 @@ import type { StatuslineData } from '../../../src/shared/types'
 // module so the test controls what the reliable source returns, without
 // touching the live ~/.claude.json.
 const claudeAccountBySession = new Map<string, string>()
+const claudeProfileBySession = new Map<string, string>()
 vi.mock('../../../src/main/claude-account-identity', () => ({
   getClaudeAccount: (sessionId: string) => claudeAccountBySession.get(sessionId) ?? null,
   getClaudeAccountMap: () => claudeAccountBySession,
+  getClaudeProfileId: (sessionId: string) => claudeProfileBySession.get(sessionId),
 }))
 
 // eslint-disable-next-line import/first -- import after vi.mock so the mock is applied
@@ -27,6 +29,7 @@ describe('handleStatuslineUpdate -- live Claude attribution', () => {
   beforeEach(() => {
     __resetTokenomicsForTests()
     claudeAccountBySession.clear()
+    claudeProfileBySession.clear()
   })
 
   function tick(over: Partial<StatuslineData>): StatuslineData {
@@ -102,5 +105,30 @@ describe('handleStatuslineUpdate -- live Claude attribution', () => {
     claudeAccountBySession.set('s1', 'captured@example.com')
     handleStatuslineUpdate(tick({ accountEmail: 'drifty@example.com' }))
     expect(__seedTokenomicsForTests.read().sessions.s1.accountEmail).toBe('first@example.com')
+  })
+
+  // ── profileId stamp (stable account key, independent of email/name changes) ──
+
+  it('stamps profileId on the live session from the spawn capture', () => {
+    claudeProfileBySession.set('s1', 'prof-abc')
+    handleStatuslineUpdate(tick({ accountEmail: 'alice@example.com' }))
+    expect(__seedTokenomicsForTests.read().sessions.s1.profileId).toBe('prof-abc')
+  })
+
+  it('leaves profileId undefined for a default session (no capture)', () => {
+    handleStatuslineUpdate(tick({ accountEmail: 'alice@example.com' }))
+    expect(__seedTokenomicsForTests.read().sessions.s1.profileId).toBeUndefined()
+  })
+
+  it('never overwrites an existing profileId (first capture wins)', () => {
+    __seedTokenomicsForTests([
+      { sessionId: 's1', projectDir: '/p', model: 'sonnet', totalInputTokens: 0, totalOutputTokens: 0,
+        totalCacheReadTokens: 0, totalCacheWriteTokens: 0, totalCostUsd: 0, messageCount: 0,
+        firstTimestamp: '2026-01-01T00:00:00Z', lastTimestamp: '2026-01-01T00:00:00Z',
+        profileId: 'orig-prof' },
+    ])
+    claudeProfileBySession.set('s1', 'new-prof')
+    handleStatuslineUpdate(tick({}))
+    expect(__seedTokenomicsForTests.read().sessions.s1.profileId).toBe('orig-prof')
   })
 })

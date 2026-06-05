@@ -318,6 +318,8 @@ export interface TokenomicsSessionRecord {
   accountUuid?: string
   /** User-flagged via wizard: session spanned accounts. Excludes the record from per-account filter totals but keeps it in "All accounts". */
   attributionMixed?: boolean
+  /** Account profile the session spawned under (undefined => default/single-account). Stamped at run time from the drift-immune spawn capture. A stable per-account key that survives a friendly-name or login-email change. */
+  profileId?: string
   /** P8.14: config that owned the session at run time. Used by the back-fill wizard to group unattributed sessions. Optional -- legacy records may lack it. */
   configId?: string
   /** P8.14: human-readable label for `configId` (e.g. "This App Dev"). Mirrored at write time so the wizard doesn't have to cross-reference the configs store. */
@@ -333,6 +335,10 @@ export interface TokenomicsDailyAggregate {
   totalDurationMs: number
   avgCostPerHour: number
   byModel: Record<string, { costUsd: number; inputTokens: number; outputTokens: number }>
+  /** Per-account daily rollup, keyed by canonical accountEmail (unattributed sessions
+   *  fall under '__unattributed__' so the axis reconciles to the day total). Optional
+   *  for back-compat: rebuilt on load, so persisted pre-account aggregates lack it. */
+  byAccount?: Record<string, { costUsd: number; inputTokens: number; outputTokens: number }>
 }
 
 export interface TokenomicsData {

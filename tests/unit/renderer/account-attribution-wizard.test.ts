@@ -64,6 +64,15 @@ describe('AccountAttributionWizard', () => {
     expect(container.textContent).toContain('$12.34')
   })
 
+  it('warns that timeline suggestions can be wrong for concurrent accounts', async () => {
+    act(() => { root.render(createElement(AccountAttributionWizard, { onClose: () => {} })) })
+    await waitFor(() => (container.textContent ?? '').includes('This App Dev'))
+    // The suggestion is inferred from a single global-login timeline, so it cannot be
+    // correct for a config/session that ran multiple accounts at the same time. The
+    // wizard must surface that limitation so the user verifies before applying.
+    expect((container.textContent ?? '').toLowerCase()).toContain('concurrent')
+  })
+
   it('Confirm fires attributeSessions with the suggested email', async () => {
     const onClose = vi.fn()
     act(() => { root.render(createElement(AccountAttributionWizard, { onClose })) })
