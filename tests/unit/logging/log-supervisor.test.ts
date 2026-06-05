@@ -415,4 +415,41 @@ describe('LogSupervisor', () => {
       expect(secondReconciles).toHaveLength(0)
     })
   })
+
+  describe('manualRestart — recovery from permanent degrade', () => {
+    it('revives a permanently-degraded worker: respawns, resets counters, and goes listening on ready', () => {
+      const h = makeHarness({ maxRestarts: 1 })
+      h.sup.start()
+      // Exhaust restarts -> permanent degrade (there is NO in-process fallback).
+      for (let i = 0; i < 2; i++) { h.current().triggerExit(); vi.advanceTimersByTime(5000) }
+      expect(h.sup.getDiagnosticsSnapshot().services[0].state).toBe('degraded')
+      const forksAtDegrade = h.forkSpy.mock.calls.length
+
+      // Manual restart is the ONLY way back. It must respawn + reset counters.
+      const res = h.sup.manualRestart('logging')
+      expect(res).toEqual({ ok: true })
+      expect(h.forkSpy.mock.calls.length).toBe(forksAtDegrade + 1)
+      expect(h.current().posts).toContainEqual({ type: 'open', dbPath: '/tmp/fake-logs.db' })
+      expect(h.sup.getDiagnosticsSnapshot().services[0].restartCount).toBe(0)
+
+      // Crucially the terminal degraded flag was cleared: a fresh `ready` now flips
+      // back to listening (the permanent-degrade stickiness guard would otherwise
+      // swallow it).
+      h.current().emit({ type: 'ready' })
+      expect(h.sup.getDiagnosticsSnapshot().services[0].state).toBe('listening')
+    })
+
+    it('declines an unknown service id', () => {
+      const h = makeHarness()
+      h.sup.start()
+      expect(h.sup.manualRestart('hooks')).toEqual({ ok: false, reason: 'unknown-service' })
+    })
+
+    it('declines once shutting down', () => {
+      const h = makeHarness()
+      h.sup.start()
+      h.sup.shutdown()
+      expect(h.sup.manualRestart('logging')).toEqual({ ok: false, reason: 'shutting-down' })
+    })
+  })
 })

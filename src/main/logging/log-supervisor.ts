@@ -416,6 +416,34 @@ export class LogSupervisor {
   }
 
   // -------------------------------------------------------------------------
+  // Manual restart — recovery from permanent degrade
+  // -------------------------------------------------------------------------
+
+  /** User-requested restart of the logging worker. Unlike the hooks supervisor
+   *  there is NO in-process fallback, so once `degradePermanently` fires a manual
+   *  restart is the ONLY way back: clear the terminal `degradedPermanently` flag,
+   *  reset the restart/backoff counters, free any dead worker, and respawn (which
+   *  re-sends `open` so the worker reopens the DB). Mirrors
+   *  ServiceSupervisor.manualRestart. Declines during shutdown. */
+  manualRestart(serviceId: string): { ok: boolean; reason?: string } {
+    if (serviceId !== SERVICE_ID) return { ok: false, reason: 'unknown-service' }
+    if (this.shuttingDown) return { ok: false, reason: 'shutting-down' }
+    this.appendLog('info', 'manual-restart', 'manual restart requested')
+    if (this.restartTimer !== null) { clearTimeout(this.restartTimer); this.restartTimer = null }
+    this.restarts = 0
+    this.backoffIdx = 0
+    this.degradedPermanently = false
+    this.health = { ...this.health, restartCount: 0 }
+    // Free any lingering (dead/degraded) worker before respawning. The old worker's
+    // late exit is ignored by spawnWorker's onExit guard (`this.worker === w`).
+    try { this.worker?.kill() } catch { /* best-effort */ }
+    this.worker = null
+    this.spawnWorker()
+    this.pushHealth()
+    return { ok: true }
+  }
+
+  // -------------------------------------------------------------------------
   // Shutdown
   // -------------------------------------------------------------------------
 

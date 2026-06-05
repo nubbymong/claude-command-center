@@ -55,6 +55,11 @@ export const useMigrationStore = create<MigrationState>((set, get) => ({
   },
 
   run: async () => {
+    // Re-entry guard: both the Settings action and the one-time App prompt can call
+    // run(); a second concurrent call would register a duplicate progress listener
+    // whose unsub leaks (the main handler already rejects the duplicate IPC). Refuse
+    // if a run is already in flight.
+    if (get().phase === 'running') return
     set({ phase: 'running', progressDone: 0, progressTotal: get().sessionFolders, errorMessage: undefined, errorKind: undefined })
     const unsub = window.electronAPI.logMigration.onProgress(({ done, total }) => {
       set({ progressDone: done, progressTotal: total })
