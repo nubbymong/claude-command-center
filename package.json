@@ -22,7 +22,7 @@
     "postinstall": "electron-rebuild --only=node-pty,better-sqlite3",
     "rebuild": "electron-rebuild",
     "capture-training": "npx tsx scripts/capture-training-screenshots.ts",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.web.json --noEmit",
     "test:minimal": "electron test/minimal/main.js"
   },
   "dependencies": {

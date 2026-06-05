@@ -12,7 +12,7 @@ import type { ViewType } from '../types/views'
 export function useKeyboardShortcuts(
   activeSessionId: string | null,
   setSidebarOpen: React.Dispatch<React.SetStateAction<boolean>>,
-  setView: React.Dispatch<React.SetStateAction<ViewType>>
+  setView: (view: ViewType) => void
 ) {
   useEffect(() => {
     const handleKeyDown = async (e: KeyboardEvent) => {

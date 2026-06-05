@@ -25,6 +25,7 @@ export interface ElectronAPI {
     close: () => void
     forceClose: () => void
     allowClose: () => void
+    cancelClose: () => void
     isMaximized: () => Promise<boolean>
     onMaximizedChanged: (callback: (maximized: boolean) => void) => () => void
     onCloseRequested: (callback: () => void) => () => void
@@ -77,6 +78,9 @@ export interface ElectronAPI {
     kill: (sessionId: string) => void
     onData: (sessionId: string, callback: (data: string) => void) => () => void
     onExit: (sessionId: string, callback: (exitCode: number) => void) => () => void
+  }
+  ptyIntegrity: {
+    report: (report: import('../shared/service-health').PtyIntegrityReport) => void
   }
   ssh: {
     /** Manually trigger the post-connect command stage. */
@@ -141,8 +145,14 @@ export interface ElectronAPI {
   }
   update: {
     check: () => Promise<boolean>
+    getVersion: () => Promise<string>
     installAndRestart: () => Promise<boolean>
-    onAvailable: (callback: (available: boolean) => void) => () => void
+    hasSourcePath: () => Promise<boolean>
+    getSourcePath: () => Promise<string>
+    setSourcePath: (path: string) => Promise<boolean>
+    selectSourcePath: () => Promise<{ path?: string; error?: string } | null>
+    onAvailable: (callback: (available: boolean, version?: string) => void) => () => void
+    onSourceConfigured: (callback: (configured: boolean) => void) => () => void
     onServerConnected: (callback: (connected: boolean) => void) => () => void
   }
   screenshot: {
@@ -235,6 +245,93 @@ export interface ElectronAPI {
     onLedgerEvent: (cb: (r: unknown) => void) => () => void
     rendererReady: () => Promise<unknown>
     onAttention: (cb: (p: { sessionId: string; needsAttention: boolean }) => void) => () => void
+  }
+  setup: {
+    isComplete: () => Promise<boolean>
+    getDefaultDataDir: () => Promise<string>
+    selectDataDir: () => Promise<string | null>
+    setDataDir: (dir: string) => Promise<boolean>
+    getDataDir: () => Promise<string>
+    getResourcesDir: () => Promise<string>
+    selectResourcesDir: () => Promise<string | null>
+    setResourcesDir: (dir: string) => Promise<boolean>
+    isCliReady: () => Promise<boolean>
+    spawnCliSetup: (cols: number, rows: number) => Promise<string>
+    killCliSetup: () => Promise<boolean>
+  }
+  insights: {
+    run: (opts?: { profileId?: string }) => Promise<string>
+    getCatalogue: () => Promise<import('../shared/types').InsightsCatalogue>
+    getReport: (runId: string) => Promise<string | null>
+    getKpis: (runId: string) => Promise<import('../shared/types').KpiData | null>
+    getLatest: () => Promise<import('../shared/types').InsightsRun | null>
+    isRunning: () => Promise<boolean>
+    seed: () => Promise<string | null>
+    onStatusChanged: (callback: (run: unknown) => void) => () => void
+  }
+  vision: {
+    start: () => Promise<{ ok: boolean; error?: string }>
+    stop: () => Promise<{ ok: boolean }>
+    status: () => Promise<{ running: boolean; connected: boolean; browser: string; mcpPort: number }>
+    launch: (browser: string, debugPort: number, url?: string, headless?: boolean) => Promise<{ ok: boolean; pid?: number; command?: string; error?: string }>
+    saveConfig: (config: { enabled?: boolean; browser: 'chrome' | 'edge'; debugPort: number; mcpPort?: number; url?: string; headless?: boolean }) => Promise<{ ok: boolean }>
+    getConfig: () => Promise<{ enabled?: boolean; browser: 'chrome' | 'edge'; debugPort: number; mcpPort?: number; url?: string; headless?: boolean } | null>
+    onStatusChanged: (callback: (data: { connected: boolean; browser: string; mcpPort: number }) => void) => () => void
+  }
+  legacyVersion: {
+    fetchVersions: () => Promise<string[]>
+    isInstalled: (version: string) => Promise<boolean>
+    install: (version: string) => Promise<{ ok: boolean; error?: string }>
+    remove: (version: string) => Promise<boolean>
+    listInstalled: () => Promise<Array<{ version: string; sizeBytes: number }>>
+    onInstallProgress: (cb: (data: { version: string; message: string }) => void) => () => void
+  }
+  cloudAgent: {
+    dispatch: (agent: { name: string; description: string; projectPath: string; configId?: string; profileId?: string }) => Promise<import('../shared/types').CloudAgent>
+    cancel: (id: string) => Promise<boolean>
+    remove: (id: string) => Promise<boolean>
+    retry: (id: string) => Promise<import('../shared/types').CloudAgent | null>
+    list: () => Promise<import('../shared/types').CloudAgent[]>
+    getOutput: (id: string) => Promise<string>
+    clearCompleted: () => Promise<number>
+    onStatusChanged: (callback: (agent: import('../shared/types').CloudAgent) => void) => () => void
+    onOutputChunk: (callback: (data: { id: string; chunk: string }) => void) => () => void
+  }
+  team: {
+    list: () => Promise<import('../shared/types').TeamTemplate[]>
+    save: (team: import('../shared/types').TeamTemplate) => Promise<import('../shared/types').TeamTemplate>
+    delete: (id: string) => Promise<boolean>
+    run: (teamId: string, projectPath?: string) => Promise<import('../shared/types').TeamRun | null>
+    cancelRun: (runId: string) => Promise<boolean>
+    listRuns: () => Promise<import('../shared/types').TeamRun[]>
+    onRunStatusChanged: (callback: (run: import('../shared/types').TeamRun) => void) => () => void
+  }
+  serviceStatus: {
+    get: () => Promise<unknown>
+    onUpdate: (callback: (data: unknown) => void) => () => void
+  }
+  serviceHealth: {
+    get: () => Promise<import('../shared/service-health').DiagnosticsSnapshot>
+    restart: (serviceId: string) => Promise<{ ok: boolean; reason?: string }>
+    onUpdate: (callback: (snap: import('../shared/service-health').DiagnosticsSnapshot) => void) => () => void
+  }
+  cli: {
+    check: () => Promise<boolean>
+  }
+  tokenomics: {
+    getData: () => Promise<import('../shared/types').TokenomicsData>
+    seed: () => Promise<import('../shared/types').TokenomicsData>
+    sync: () => Promise<import('../shared/types').TokenomicsData>
+    onProgress: (callback: (data: import('../shared/types').TokenomicsSyncProgress) => void) => () => void
+    listUnattributed: () => Promise<import('../shared/types').UnattributedSessionGroup[]>
+    listKnownEmails: () => Promise<string[]>
+    attributeSessions: (payload: import('../shared/types').AttributionPayload) => Promise<{ ok: boolean; error?: string }>
+  }
+  memory: {
+    scan: () => Promise<import('../shared/types').MemoryScanResult>
+    read: (filePath: string) => Promise<string>
+    delete: (filePath: string) => Promise<void>
+    writeFrontmatter: (filePath: string, frontmatter: { name?: string; description?: string; type?: string }) => Promise<void>
   }
 }
 

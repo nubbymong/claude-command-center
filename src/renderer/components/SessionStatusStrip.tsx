@@ -310,7 +310,7 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
           {/* Divider -- sets Restart apart as the disruptive action. */}
           <span className="w-px self-stretch my-1.5 mx-0.5" style={{ background: 'var(--border-subtle)' }} aria-hidden />
           <button
-            onClick={restart}
+            onClick={() => restart()}
             className={CONTROL_PILL}
             style={{
               background: 'transparent',

@@ -549,7 +549,14 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
 
 /* ── Status Line Tab ─────────────────────────────────── */
 
-const STATUS_LINE_TOGGLES: { key: keyof StatusLineSettings; label: string; description: string }[] = [
+// Only the boolean-valued keys of StatusLineSettings are toggles (font/fontSize
+// are not). Narrowing the key type here lets sl[key] resolve to `boolean` for
+// the Toggle `on` prop instead of the full number | boolean | StatusLineFont union.
+type BooleanStatusLineKey = {
+  [K in keyof StatusLineSettings]: StatusLineSettings[K] extends boolean ? K : never
+}[keyof StatusLineSettings]
+
+const STATUS_LINE_TOGGLES: { key: BooleanStatusLineKey; label: string; description: string }[] = [
   { key: 'showModel', label: 'Model Name', description: 'Shows the active Claude model' },
   { key: 'showEffort', label: 'Effort Level', description: 'Active reasoning effort next to the model' },
   { key: 'showAccount', label: 'Account', description: 'Claude account this session runs as' },

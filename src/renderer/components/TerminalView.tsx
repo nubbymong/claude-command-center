@@ -319,7 +319,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       // dialogs keep their focus trap.
       if (isActive && !document.querySelector('[role="dialog"][aria-modal="true"]')) {
         requestAnimationFrame(() => {
-          try { term.focus() } catch { /* ignore */ }
+          try { term?.focus() } catch { /* ignore */ }
         })
       }
 

@@ -65,6 +65,23 @@ export type {
   ChannelRule, StandingApproval, FeatureState,
 } from '../../shared/channel-types'
 
+// Mirror of the main-process service-status payload (src/main/service-status.ts).
+// Declared locally so the renderer/web tsconfig doesn't pull a main-process
+// module (with its Node imports) into its type graph.
+export interface ServiceComponentStatus {
+  id: string
+  label: string
+  status: string
+  name: string
+}
+export interface ServiceStatusPayload {
+  fetchedAt: string
+  claudeCode: ServiceComponentStatus | null
+  claudeAi: ServiceComponentStatus | null
+  api: ServiceComponentStatus | null
+  worst: string
+}
+
 export interface ElectronAPI {
   config: {
     loadAll: () => Promise<{ data: Record<string, unknown>; needsMigration: boolean }>
@@ -342,8 +359,8 @@ export interface ElectronAPI {
     onRunStatusChanged: (callback: (run: TeamRun) => void) => () => void
   }
   serviceStatus: {
-    get: () => Promise<any>
-    onUpdate: (callback: (data: { status: string; description: string }) => void) => () => void
+    get: () => Promise<ServiceStatusPayload | null>
+    onUpdate: (callback: (data: ServiceStatusPayload) => void) => () => void
   }
   serviceHealth: {
     get: () => Promise<import('../../shared/service-health').DiagnosticsSnapshot>
