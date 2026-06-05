@@ -63,7 +63,7 @@ jobs:
           "
 
       - name: Typecheck
-        run: npx tsc --noEmit
+        run: npm run typecheck
 
       - name: Unit tests
         run: npx vitest run
