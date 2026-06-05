@@ -14,7 +14,7 @@ vi.mock('electron', () => ({
 vi.mock('../../src/main/account-color', () => ({ colourForEmail: () => 'mauve' }))
 
 import { _setRootsForTest, getProfileConfigDir as getProfileConfigDirForTest } from '../../src/main/account-profiles'
-import { captureClaudeAccount, getClaudeAccount, clearClaudeAccount, getAccountIdentity, pushAccountIdentity, _resetClaudeAccounts, getDefaultAccountEmail } from '../../src/main/claude-account-identity'
+import { captureClaudeAccount, getClaudeAccount, getClaudeProfileId, clearClaudeAccount, getAccountIdentity, pushAccountIdentity, _resetClaudeAccounts, getDefaultAccountEmail } from '../../src/main/claude-account-identity'
 
 let tmp: string
 beforeEach(() => {
@@ -50,6 +50,27 @@ describe('captureClaudeAccount', () => {
     fs.writeFileSync(path.join(tmp, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'a@me.com' } }))
     captureClaudeAccount('s1', undefined); clearClaudeAccount('s1')
     expect(getClaudeAccount('s1')).toBeNull()
+  })
+})
+
+describe('getClaudeProfileId', () => {
+  it('returns the profileId captured at spawn', () => {
+    captureClaudeAccount('s2', 'p1')
+    expect(getClaudeProfileId('s2')).toBe('p1')
+  })
+  it('returns undefined for a default (no-profile) session', () => {
+    fs.writeFileSync(path.join(tmp, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'a@me.com' } }))
+    captureClaudeAccount('s1', undefined)
+    expect(getClaudeProfileId('s1')).toBeUndefined()
+  })
+  it('is first-capture-wins (a later capture does not change it)', () => {
+    captureClaudeAccount('s3', 'p1')
+    captureClaudeAccount('s3', 'p2')
+    expect(getClaudeProfileId('s3')).toBe('p1')
+  })
+  it('clears on cleanup', () => {
+    captureClaudeAccount('s2', 'p1'); clearClaudeAccount('s2')
+    expect(getClaudeProfileId('s2')).toBeUndefined()
   })
 })
 

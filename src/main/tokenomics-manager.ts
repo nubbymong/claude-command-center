@@ -26,7 +26,7 @@ import { computeCodexCostUsd } from './providers/codex/pricing'
 import { getCodexHome } from './providers/codex/auth'
 import { canonicalEmail } from './account-attribution'
 import { getCodexSpawnIdentityMap } from './pty-manager'
-import { getClaudeAccount, getClaudeAccountMap } from './claude-account-identity'
+import { getClaudeAccount, getClaudeAccountMap, getClaudeProfileId } from './claude-account-identity'
 
 // ── Model Pricing (per 1M tokens) ──
 
@@ -558,6 +558,7 @@ export function mergeSessionRecordAttribution<T extends TokenomicsSessionRecord>
     accountEmail: existing.accountEmail ?? newFields.accountEmail,
     accountUuid: existing.accountUuid ?? newFields.accountUuid,
     attributionMixed: existing.attributionMixed ?? newFields.attributionMixed,
+    profileId: existing.profileId ?? newFields.profileId,
   }
 }
 
@@ -694,6 +695,7 @@ function rebuildAggregates(data: TokenomicsData): void {
         totalDurationMs: 0,
         avgCostPerHour: 0,
         byModel: {},
+        byAccount: {},
       }
       data.dailyAggregates[date] = agg
     }
@@ -712,6 +714,17 @@ function rebuildAggregates(data: TokenomicsData): void {
     agg.byModel[modelKey].costUsd += record.totalCostUsd
     agg.byModel[modelKey].inputTokens += record.totalInputTokens + record.totalCacheReadTokens + record.totalCacheWriteTokens
     agg.byModel[modelKey].outputTokens += record.totalOutputTokens
+
+    // Account axis: same accounting as byModel, keyed by canonical accountEmail.
+    // Unattributed records fall under a sentinel so the axis sums to the day total.
+    const accountKey = record.accountEmail || '__unattributed__'
+    if (!agg.byAccount) agg.byAccount = {}
+    if (!agg.byAccount[accountKey]) {
+      agg.byAccount[accountKey] = { costUsd: 0, inputTokens: 0, outputTokens: 0 }
+    }
+    agg.byAccount[accountKey].costUsd += record.totalCostUsd
+    agg.byAccount[accountKey].inputTokens += record.totalInputTokens + record.totalCacheReadTokens + record.totalCacheWriteTokens
+    agg.byAccount[accountKey].outputTokens += record.totalOutputTokens
   }
 
   // Calculate daily average burn rates
@@ -1015,6 +1028,14 @@ export function handleStatuslineUpdate(rawStatuslineData: StatuslineData): void 
     const reliable = getClaudeAccount(sessionId)
     const liveEmail = canonicalEmail(reliable ?? statuslineData.accountEmail)
     if (liveEmail) record.accountEmail = liveEmail
+  }
+
+  // Stamp the spawn-time profileId once (first-capture-wins, like accountEmail).
+  // Undefined for default/single-account sessions. A stable account key that does
+  // not drift when the user renames the account or changes its login email.
+  if (!record.profileId) {
+    const pid = getClaudeProfileId(sessionId)
+    if (pid) record.profileId = pid
   }
 
   rebuildAggregates(cachedData)

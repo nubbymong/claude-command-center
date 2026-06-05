@@ -46,4 +46,18 @@ describe('mergeSessionRecordAttribution', () => {
     const merged = mergeSessionRecordAttribution(existing, newFields)
     expect(merged.accountUuid).toBe('uuid-old')
   })
+
+  it('preserves profileId when existing has one (survives re-parse)', () => {
+    const existing = { ...base, profileId: 'prof-old' }
+    const newFields = { ...base, profileId: 'prof-new' }
+    const merged = mergeSessionRecordAttribution(existing, newFields)
+    expect(merged.profileId).toBe('prof-old')
+  })
+
+  it('uses newFields.profileId when existing is undefined', () => {
+    const existing = { ...base }
+    const newFields = { ...base, profileId: 'prof-new' }
+    const merged = mergeSessionRecordAttribution(existing, newFields)
+    expect(merged.profileId).toBe('prof-new')
+  })
 })

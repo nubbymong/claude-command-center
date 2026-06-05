@@ -12,6 +12,10 @@ import { canonicaliseEmail } from '../shared/account-chip-color'
 import type { IdentityColorKey } from '../shared/identity-colors'
 
 const bySession = new Map<string, string>()
+// sessionId -> the profileId the session spawned under (undefined => default/single-account).
+// Captured at spawn alongside the email, first-write-wins, so tokenomics can stamp a stable
+// account key that survives a friendly-name/email change.
+const profileBySession = new Map<string, string>()
 
 export function getDefaultAccountEmail(): string | null {
   try {
@@ -30,6 +34,9 @@ export function getDefaultAccountEmail(): string | null {
 /** Capture once at spawn. profileId undefined => single-account/default.
  *  Reads the account's shared PROFILE home (Bug 2: sessions of an account share it). */
 export function captureClaudeAccount(sessionId: string, profileId: string | undefined): void {
+  // Record the profileId first (before the email guard) so it is captured even on a
+  // retry tick where the email read failed the first time. First-write-wins.
+  if (profileId && !profileBySession.has(sessionId)) profileBySession.set(sessionId, profileId)
   if (bySession.has(sessionId)) return // drift-immune: first capture wins
   const email = profileId
     ? readProfileAccountEmail(profileId)
@@ -37,8 +44,10 @@ export function captureClaudeAccount(sessionId: string, profileId: string | unde
   if (email) bySession.set(sessionId, email)
 }
 export function getClaudeAccount(sessionId: string): string | null { return bySession.get(sessionId) ?? null }
+/** The profileId a session spawned under (undefined => default/single-account). */
+export function getClaudeProfileId(sessionId: string): string | undefined { return profileBySession.get(sessionId) }
 export function getClaudeAccountMap(): ReadonlyMap<string, string> { return bySession }
-export function clearClaudeAccount(sessionId: string): void { bySession.delete(sessionId) }
+export function clearClaudeAccount(sessionId: string): void { bySession.delete(sessionId); profileBySession.delete(sessionId) }
 
 export function getAccountIdentity(sessionId: string): { email: string; colourKey: IdentityColorKey } | null {
   const email = bySession.get(sessionId)
@@ -247,6 +256,7 @@ export function classifyIdentityChange(
 /** Test seam. */
 export function _resetClaudeAccounts(): void {
   bySession.clear()
+  profileBySession.clear()
   watched.clear()
   lastMtimeMs.clear()
   detectedByProfile.clear()

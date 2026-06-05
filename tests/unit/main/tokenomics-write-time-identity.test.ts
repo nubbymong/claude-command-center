@@ -8,6 +8,7 @@ const claudeAccountMap = new Map<string, string>()
 vi.mock('../../../src/main/claude-account-identity', () => ({
   getClaudeAccount: (sessionId: string) => claudeAccountMap.get(sessionId) ?? null,
   getClaudeAccountMap: () => claudeAccountMap,
+  getClaudeProfileId: () => undefined,
 }))
 
 // eslint-disable-next-line import/first -- import after vi.mock so the mock is hoisted/applied

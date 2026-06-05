@@ -98,8 +98,10 @@ export function AccountAttributionWizard({ onClose }: Props) {
     <div className="p-6 text-text">
       <h2 id="account-attribution-wizard-title" className="text-lg font-semibold mb-2">Sessions needing account attribution ({groups.length} groups)</h2>
       <p className="text-overlay1 text-sm mb-4">
-        Suggested emails are inferred from your Claude backup-file timeline. Confirm,
-        override, or mark mixed if a config spanned multiple accounts.
+        Suggested emails are inferred from your Claude backup-file timeline, which records
+        only one logged-in account at a time. They are a best guess and can be wrong for a
+        config that ran multiple accounts concurrently, so verify each before applying, or
+        mark mixed if a config spanned several accounts.
       </p>
       {error && (
         <div className="mb-3 px-3 py-2 bg-red/20 border border-red/40 rounded text-red text-sm" role="alert">
