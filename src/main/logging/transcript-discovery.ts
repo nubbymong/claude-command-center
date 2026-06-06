@@ -18,7 +18,10 @@
  *
  *   Formally: cwd.replace(/[^A-Za-z0-9]/g, '-')
  *
- * Real examples verified against the developer machine's ~/.claude/projects (2026-06-06):
+ * Real examples verified against the developer machine's ~/.claude/projects (2026-06-06).
+ * NOTE: all four verified pairs are ASCII-only inputs/outputs. The behaviour of
+ * `[^A-Za-z0-9]→'-'` for non-ASCII characters (e.g. accented letters, CJK) is an
+ * unverified assumption — Claude CLI's actual handling of non-ASCII cwds is unknown.
  *   F:\CLAUDE_MULTI_APP                              → F--CLAUDE-MULTI-APP
  *     (underscore → hyphen, colon → hyphen, backslash → hyphen)
  *   f:\platform_v9                                   → f--platform-v9
@@ -62,9 +65,12 @@ import { homedir } from 'node:os'
 export function canonicalizeTranscriptPath(p: string): string | null {
   if (!p) return null
 
-  // Normalize to forward-slash for uniform matching (lowercase for case-insensitive scan).
+  // Normalize to forward-slash for uniform matching.
+  // NOTE: we do NOT lowercase the string — toLowerCase() is NOT length-preserving
+  // for all Unicode code points (e.g. U+0130 İ expands to two code units when
+  // lowercased), which would corrupt slice indices.  The `i` flag on the regex
+  // provides case-insensitive matching without mutating the string.
   const forwardSlash = p.replace(/\\/g, '/')
-  const normalized = forwardSlash.toLowerCase()
 
   // Find the LAST occurrence of a segment-bounded `.claude/projects` pattern.
   // We iterate all matches with /g and keep the final one so that paths like
@@ -72,27 +78,26 @@ export function canonicalizeTranscriptPath(p: string): string | null {
   // resolve to `proj/conv.jsonl` (the part after the last segment), not
   // `inner/.claude/projects/proj/conv.jsonl` (after the first).
   //
-  // Pattern: `(?:^|\/)\.claude\/projects(?:\/|$)` — requires `/` or start-of-string
-  // before `.claude` and `/` or end-of-string after `projects` so a bare
-  // `.claudeprojects` directory name does not match.
-  const segmentPattern = /(?:^|\/)\.claude\/projects(?:\/|$)/g
+  // The trailing boundary uses a LOOKAHEAD `(?=\/|$)` rather than consuming
+  // `(?:\/|$)`.  This means `segEnd` always points to the character immediately
+  // after `projects` (before any `/`), so we add 1 to skip the separator.
+  // The lookahead also prevents adjacent-pair confusion:
+  //   .../.claude/projects/.claude/projects/proj/...
+  // is scanned correctly because the first match's lookahead `\/` is left for
+  // the second match's leading `(?:^|\/)` anchor.
+  const segmentPattern = /(?:^|\/)\.claude\/projects(?=\/|$)/gi
   let lastMatch: RegExpExecArray | null = null
   let m: RegExpExecArray | null
-  while ((m = segmentPattern.exec(normalized)) !== null) {
+  while ((m = segmentPattern.exec(forwardSlash)) !== null) {
     lastMatch = m
   }
   if (!lastMatch) return null
 
-  // Calculate where the "rest" (project-dir name + filename) begins in the
-  // original (case-preserved) forward-slash string.
-  //
-  // lastMatch[0] is e.g. `/.claude/projects/` or `/.claude/projects` (at end).
-  // `segEnd` points to the character after the full matched token.
-  // If the token ends with `/` that slash is already consumed, so `rest` starts
-  // at segEnd directly.  If the path ends exactly at `projects` (no trailing
-  // slash), rest is the empty string.
+  // `segEnd` is the index of the character immediately after `projects`.
+  // If the path ends exactly there (no trailing `/`), rest is empty.
+  // Otherwise we skip the separator at segEnd and take everything after it.
   const segEnd = lastMatch.index + lastMatch[0].length
-  const rest = lastMatch[0].endsWith('/') ? forwardSlash.slice(segEnd) : ''
+  const rest = segEnd < forwardSlash.length ? forwardSlash.slice(segEnd + 1) : ''
 
   // Reconstruct as canonical path under homedir, letting path.join handle
   // platform separator normalisation.
@@ -149,8 +154,6 @@ interface FsImpl {
 interface HeuristicBinderDeps {
   /** Override ~/.claude/projects root for testing */
   projectsRoot?: string
-  /** Override Date.now() for testing */
-  now?: () => number
   /** Override fs operations for testing */
   fsImpl?: FsImpl
 }
@@ -248,7 +251,9 @@ export function makeHeuristicBinder(deps?: HeuristicBinderDeps): HeuristicBinder
       // (path.normalize ensures consistent separators).
       const canonical = canonicalizeTranscriptPath(bestPath) ?? path.normalize(bestPath)
 
-      const binding: DiscoveryBinding = { path: canonical, confidence: 'heuristic' }
+      // Freeze before caching: guarantees identity (same reference) for BIND-ONCE
+      // and makes the cached object tamper-proof.
+      const binding: DiscoveryBinding = Object.freeze({ path: canonical, confidence: 'heuristic' })
 
       // Store the successful binding so future calls return the same value.
       successCache.set(sessionId, binding)

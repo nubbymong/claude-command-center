@@ -19,7 +19,7 @@
  *   becomes ONE hyphen. No run-collapsing. Input case preserved.
  */
 
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, afterEach } from 'vitest'
 import path from 'node:path'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -100,6 +100,52 @@ describe('canonicalizeTranscriptPath', () => {
     const expected = path.join(homedir, '.claude', 'projects', 'f--x', 'a.jsonl')
     expect(result).toBe(expected)
   })
+
+  // ── Pinned: unicode-prefix bug (fix verification) ──────────────────────────
+  it('Unicode character in prefix does not corrupt rest (İ in username)', () => {
+    // U+0130 'İ' (LATIN CAPITAL LETTER I WITH DOT ABOVE) downcases to two code
+    // units in some locales. The old toLowerCase()-then-slice approach would
+    // produce 'roj/a.jsonl' instead of 'proj/a.jsonl' for this input.
+    const input = 'C:\\Users\\İsmail\\.claude\\projects\\proj\\a.jsonl'
+    const result = canonicalizeTranscriptPath(input)
+    const expected = path.join(homedir, '.claude', 'projects', 'proj', 'a.jsonl')
+    expect(result).toBe(expected)
+  })
+
+  // ── Pinned: adjacent-pairs edge case ──────────────────────────────────────
+  it('adjacent .claude/projects pairs: rest is from the LAST pair only', () => {
+    // The first .claude/projects is the fake-home prefix; the second is canonical.
+    // rest must be 'proj/a.jsonl', not 'inner/.claude/projects/proj/a.jsonl'.
+    const input = 'F:/outer/.claude/projects/inner/.claude/projects/proj/a.jsonl'
+    const result = canonicalizeTranscriptPath(input)
+    const expected = path.join(homedir, '.claude', 'projects', 'proj', 'a.jsonl')
+    expect(result).toBe(expected)
+  })
+
+  // ── Pinned: exact-root inputs (path ends at .claude/projects) ─────────────
+  it('path ending exactly at .claude/projects (no trailing slash) → canonical root', () => {
+    const input = 'F:\\RES\\account-profiles\\p1\\.claude\\projects'
+    const result = canonicalizeTranscriptPath(input)
+    const expected = path.join(homedir, '.claude', 'projects')
+    expect(result).toBe(expected)
+  })
+
+  it('path ending at .claude/projects/ (trailing slash) → canonical root', () => {
+    const input = 'F:/RES/account-profiles/p1/.claude/projects/'
+    const result = canonicalizeTranscriptPath(input)
+    const expected = path.join(homedir, '.claude', 'projects')
+    expect(result).toBe(expected)
+  })
+
+  // ── Pinned: original casing in rest is preserved (segment match is case-insensitive) ──
+  it('preserves original casing of the rest portion despite case-insensitive segment match', () => {
+    // The segment `.CLAUDE/Projects` is matched case-insensitively; the rest
+    // `F--CLAUDE-MULTI-APP/Conv.jsonl` must keep its original case verbatim.
+    const input = 'F:\\RES\\p1\\.CLAUDE\\Projects\\F--CLAUDE-MULTI-APP\\Conv.jsonl'
+    const result = canonicalizeTranscriptPath(input)
+    const expected = path.join(homedir, '.claude', 'projects', 'F--CLAUDE-MULTI-APP', 'Conv.jsonl')
+    expect(result).toBe(expected)
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -167,8 +213,18 @@ describe('makeHeuristicBinder', () => {
    * and exercises the binder with injected fs and now() stubs.
    */
 
+  const tmpDirs: string[] = []
+
+  afterEach(() => {
+    for (const dir of tmpDirs.splice(0)) {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   function makeTmpProjectsRoot(): string {
-    return fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-disc-test-'))
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-disc-test-'))
+    tmpDirs.push(dir)
+    return dir
   }
 
   function writeJsonl(dir: string, name: string, mtimeMs: number): string {
@@ -231,6 +287,7 @@ describe('makeHeuristicBinder', () => {
     // Use a fake projectsRoot that itself contains .claude/projects so the
     // canonicalization logic has a segment to rewrite.
     const tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-disc-canon-'))
+    tmpDirs.push(tmpBase)
     const fakeRoot = path.join(tmpBase, '.claude', 'projects')
     const cwd = 'F:\\canonical-test'
     const mangled = mangleCwdToProjectDir(cwd)
