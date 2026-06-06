@@ -10,9 +10,6 @@ import * as path from 'path'
 import { IPC } from '../../shared/ipc-channels'
 import { getDataDirectory } from '../data-paths'
 import { getLogSupervisor } from '../logging/logging-service'
-import { parseLegacyLogs } from '../logging/legacy-log-parser'
-import { stripAnsi } from '../logging/ansi-strip'
-import { runImport } from '../logging/legacy-log-importer'
 import { snapshotLegacyLogs, isLegacyLogsFrozen, markLegacyImportComplete, reclaimLegacyLogs } from '../logging/log-snapshot'
 import { logInfo, logWarn } from '../debug-logger'
 
@@ -83,25 +80,17 @@ export function registerLogMigrationHandlers(getWindow: () => BrowserWindow | nu
       // so it is stable for the run) for the report's reconciliation line.
       const detectedFolders = countSessionFolders(dir)
       snapshotLegacyLogs()                                    // 1) one-time read-only snapshot/marker
-      const { sessions, unparseable, foldedPartnerDirs, noEventDirs } = parseLegacyLogs(dir)  // 2) pure parse off-DB
-      let chunkId = 1
-      const report = await runImport(                         // 3) chunked import through the SINGLE worker
-        sessions,
-        (chunk) => sup.migrate(
-          chunk.map((s) => ({
-            sessionId: s.sessionId,
-            configLabel: s.configLabel,
-            accountEmail: s.accountEmail,
-            profileId: s.profileId,
-            provider: s.provider,
-            startedAt: s.startedAt,
-            events: s.events.map((e) => ({ ts: e.ts, type: e.type, raw: new Uint8Array(Buffer.from(e.data ?? '', 'utf8')), text: stripAnsi(e.data ?? '') })),
-          })),
-          chunkId++,
-        ),
-        { onProgress: (done, total) => { try { getWindow()?.webContents.send(IPC.LOGS_MIGRATE_PROGRESS, { done, total }) } catch { /* window gone */ } } },
-      )
+      // 2) Worker-internal STREAMING migration (the 16 GB fix). The worker walks +
+      // parses + imports the tree itself in bounded batches — nothing heavy ever
+      // runs on this (main) thread and nothing huge crosses the process boundary.
+      // The old in-handler parseLegacyLogs(dir) call read the WHOLE tree
+      // synchronously here and froze the app on real-size data (AppHang, Windows
+      // closed the process) — never reintroduce main-thread parsing.
+      const report = await sup.migrateDir(dir, (done, total) => {
+        try { getWindow()?.webContents.send(IPC.LOGS_MIGRATE_PROGRESS, { done, total }) } catch { /* window gone */ }
+      })
       const dbAfter = dbSizeBytes()
+      const { unparseable, foldedPartnerDirs, noEventDirs } = report
       // A1 [SAFETY-CRITICAL]: record import completion (the marker reclaim is later
       // gated on) ONLY when every session either imported or was a benign
       // already-present skip. A FAILED session (importSession threw) means its data

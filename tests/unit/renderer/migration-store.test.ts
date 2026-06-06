@@ -106,3 +106,27 @@ describe('migrationStore', () => {
     expect(useMigrationStore.getState().failedFolders).toEqual(['C:/logs/APP/s3'])
   })
 })
+
+describe('migrationStore reportAcked (completion-notice gate)', () => {
+  it('run() resets reportAcked so a fresh completion surfaces the notice', async () => {
+    useMigrationStore.setState({ reportAcked: true })
+    api.run.mockResolvedValue({ totalSessions: 1, importedSessions: 1, skippedSessions: 0, failedSessions: 0, importedEvents: 1, unparseable: [], foldedPartnerDirs: 0, noEventDirs: 0, detectedFolders: 1, dbBytesBefore: 0, dbBytesAfter: 1 })
+    await useMigrationStore.getState().run()
+    expect(useMigrationStore.getState().reportAcked).toBe(false)
+    expect(useMigrationStore.getState().phase).toBe('done')
+  })
+
+  it('ackReport() marks the notice handled', () => {
+    useMigrationStore.setState({ reportAcked: false })
+    useMigrationStore.getState().ackReport()
+    expect(useMigrationStore.getState().reportAcked).toBe(true)
+  })
+
+  it('a failed run also resets reportAcked (the error notice must surface)', async () => {
+    useMigrationStore.setState({ reportAcked: true })
+    api.run.mockRejectedValue(new Error('worker down'))
+    await useMigrationStore.getState().run()
+    expect(useMigrationStore.getState().reportAcked).toBe(false)
+    expect(useMigrationStore.getState().phase).toBe('error')
+  })
+})
