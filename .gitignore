@@ -42,3 +42,4 @@ test-results/
 *.log
 process-snapshot-*.txt
 .tip-screenshots/
+.tmp-e2e/
