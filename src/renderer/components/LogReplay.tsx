@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback, useImperativeHandle, forwardRef } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
+import { ReplaySanitizer } from '../lib/replay-sanitizer'
 
 interface EventRow {
   id: number
@@ -80,6 +81,18 @@ const LogReplay = forwardRef<LogReplayHandle, Props>(function LogReplay(
   const loadedRef = useRef(0)
   const inFlightRef = useRef(false)      // serialize appendNew; no overlapping reads of loadedRef
   const initialDoneRef = useRef(false)   // tail must not run until the initial load owns offset 0
+  // History-preserving replay: strip alt-screen switches, turn /clear wipes into
+  // a visible divider (raw bytes played verbatim rendered the pane BLANK after
+  // /clear — the data was intact, the replay re-applied the wipe). Stateful pair
+  // (streaming UTF-8 decode + cross-chunk escape carry), reset per (re)load.
+  const sanitizerRef = useRef(new ReplaySanitizer())
+  const decoderRef = useRef(new TextDecoder())
+
+  const writeSanitized = useCallback((term: Terminal, raw: Uint8Array) => {
+    const u8 = raw instanceof Uint8Array ? raw : new Uint8Array(raw as ArrayLike<number>)
+    const safe = sanitizerRef.current.push(decoderRef.current.decode(u8, { stream: true }))
+    if (safe) term.write(safe)
+  }, [])
   const [loading, setLoading] = useState(true)
   const [isEmpty, setIsEmpty] = useState(false)
 
@@ -153,14 +166,16 @@ const LogReplay = forwardRef<LogReplayHandle, Props>(function LogReplay(
         setIsEmpty(true); setLoading(false); initialDoneRef.current = true; return
       }
       term?.clear()
-      for (const ev of rows) term?.write(ev.raw)
+      sanitizerRef.current = new ReplaySanitizer()
+      decoderRef.current = new TextDecoder()
+      if (term) for (const ev of rows) writeSanitized(term, ev.raw)
       loadedRef.current = startOffset + rows.length
       setLoading(false)
       initialDoneRef.current = true
     }
     run()
     return () => { cancelled = true }
-  }, [sessionId, deleted, seekToSeq, eventCount])
+  }, [sessionId, deleted, seekToSeq, eventCount, writeSanitized])
 
   const appendNew = useCallback(async () => {
     if (deleted || inFlightRef.current || !initialDoneRef.current) return
@@ -171,13 +186,13 @@ const LogReplay = forwardRef<LogReplayHandle, Props>(function LogReplay(
       const start = loadedRef.current
       const rows = (await window.electronAPI.logsdb.readEvents(sessionId, start, PAGE)) as EventRow[]
       if (rows.length === 0) return
-      for (const ev of rows) term.write(ev.raw)
+      for (const ev of rows) writeSanitized(term, ev.raw)
       loadedRef.current = start + rows.length
       if (isEmpty) setIsEmpty(false)
     } finally {
       inFlightRef.current = false
     }
-  }, [sessionId, deleted, isEmpty])
+  }, [sessionId, deleted, isEmpty, writeSanitized])
 
   useImperativeHandle(ref, () => ({ appendNew }), [appendNew])
 
