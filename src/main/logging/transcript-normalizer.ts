@@ -20,10 +20,15 @@ import type { NewMessage } from './transcripts-db'
 
 export const PARSER_VERSION = 1
 
+/** Message kind produced by the normalizer. transcripts-db keeps kind as string. */
+export type MessageKind = 'message' | 'tool_call' | 'sidechain' | 'unknown'
+
 export interface NormalizerStats {
   malformed: number
   skippedMeta: number
   unknown: number
+  /** Count of individual content parts that hit the unknown fall-through. */
+  unknownParts: number
 }
 
 export interface Normalizer {
@@ -31,13 +36,16 @@ export interface Normalizer {
   stats: NormalizerStats
 }
 
-export function makeNormalizer(opts?: { startIdx?: number }): Normalizer {
+export function makeNormalizer(opts?: { startIdx?: number; startTs?: number }): Normalizer {
   let nextIdx = opts?.startIdx ?? 0
-  let lastTs = 0
+  let lastTs = opts?.startTs ?? 0
 
-  const stats: NormalizerStats = { malformed: 0, skippedMeta: 0, unknown: 0 }
+  const stats: NormalizerStats = { malformed: 0, skippedMeta: 0, unknown: 0, unknownParts: 0 }
 
   function push(line: string): NewMessage[] {
+    // 0. Blank/whitespace-only line — not malformed, just empty (e.g. trailing newline)
+    if (!line.trim()) return []
+
     // 1. Parse JSON — malformed → silent empty
     let entry: unknown
     try {
@@ -71,7 +79,7 @@ export function makeNormalizer(opts?: { startIdx?: number }): Normalizer {
 
     // 4. Conversation entries: user / assistant
     if (entryType === 'user' || entryType === 'assistant') {
-      return processConversationEntry(obj, entryType)
+      return processConversationEntry(obj, entryType, line)
     }
 
     // 5. Unknown / novel type
@@ -81,7 +89,7 @@ export function makeNormalizer(opts?: { startIdx?: number }): Normalizer {
       idx: nextIdx++,
       ts: resolveTs(obj),
       role: 'system',
-      kind: 'unknown',
+      kind: 'unknown' as MessageKind,
       content: '',
       raw: rawCapped,
     }
@@ -110,19 +118,23 @@ export function makeNormalizer(opts?: { startIdx?: number }): Normalizer {
     return lastTs
   }
 
-  function processConversationEntry(obj: Record<string, unknown>, entryType: string): NewMessage[] {
+  function processConversationEntry(
+    obj: Record<string, unknown>,
+    entryType: string,
+    rawLine: string,
+  ): NewMessage[] {
     const messageField = obj['message']
     if (messageField === null || typeof messageField !== 'object' || Array.isArray(messageField)) {
-      // No message field or wrong shape → unknown
+      // No message field or wrong shape → unknown; preserve verbatim input line as raw
       stats.unknown++
       return [
         {
           idx: nextIdx++,
           ts: resolveTs(obj),
           role: 'system',
-          kind: 'unknown',
+          kind: 'unknown' as MessageKind,
           content: '',
-          raw: capRaw(safeStringify(obj)),
+          raw: capRaw(rawLine),
         },
       ]
     }
@@ -142,7 +154,7 @@ export function makeNormalizer(opts?: { startIdx?: number }): Normalizer {
           idx: nextIdx++,
           ts,
           role,
-          kind: isSidechain ? 'sidechain' : 'message',
+          kind: (isSidechain ? 'sidechain' : 'message') as MessageKind,
           content,
         },
       ]
@@ -153,16 +165,16 @@ export function makeNormalizer(opts?: { startIdx?: number }): Normalizer {
       return processContentArray(content, role, ts, isSidechain, obj)
     }
 
-    // --- Unrecognizable content shape ---
+    // --- Unrecognizable content shape — preserve verbatim input line as raw ---
     stats.unknown++
     return [
       {
         idx: nextIdx++,
         ts,
         role: 'system',
-        kind: 'unknown',
+        kind: 'unknown' as MessageKind,
         content: '',
-        raw: capRaw(safeStringify(obj)),
+        raw: capRaw(rawLine),
       },
     ]
   }
@@ -188,7 +200,7 @@ export function makeNormalizer(opts?: { startIdx?: number }): Normalizer {
             idx: nextIdx++,
             ts,
             role,
-            kind: isSidechain ? 'sidechain' : 'message',
+            kind: (isSidechain ? 'sidechain' : 'message') as MessageKind,
             content,
           })
         }
@@ -197,7 +209,11 @@ export function makeNormalizer(opts?: { startIdx?: number }): Normalizer {
     }
 
     for (const part of parts) {
-      if (part === null || typeof part !== 'object' || Array.isArray(part)) continue
+      if (part === null || typeof part !== 'object' || Array.isArray(part)) {
+        // Non-object part (null / primitive / array) — count in part-level drift telemetry
+        stats.unknownParts++
+        continue
+      }
 
       const p = part as Record<string, unknown>
       const partType = typeof p['type'] === 'string' ? p['type'] : undefined
@@ -235,7 +251,7 @@ export function makeNormalizer(opts?: { startIdx?: number }): Normalizer {
           idx: nextIdx++,
           ts,
           role,
-          kind: isSidechain ? 'sidechain' : 'tool_call',
+          kind: (isSidechain ? 'sidechain' : 'tool_call') as MessageKind,
           content: '',
           toolName,
           toolMeta,
@@ -243,7 +259,8 @@ export function makeNormalizer(opts?: { startIdx?: number }): Normalizer {
         continue
       }
 
-      // Unknown part type — ignore silently (part-level, not entry-level unknown)
+      // Unknown part type — count in part-level drift telemetry (not entry-level unknown)
+      stats.unknownParts++
     }
 
     flushMessage()
@@ -278,13 +295,19 @@ const SKIP_TYPES = new Set([
   'summary',
 ])
 
+/** UTF-16 char cap (32*1024 chars, not KiB — JS strings are UTF-16 code units). */
 const RAW_CAP = 32 * 1024
 const TRUNCATION_SUFFIX = '…[truncated]'
 
-/** Cap a raw string at 32 KiB with a truncation suffix. */
+/** Cap a raw string at RAW_CAP UTF-16 code units with a truncation suffix.
+ *  Guards against a lone high surrogate at the cut boundary. */
 function capRaw(s: string): string {
   if (s.length <= RAW_CAP) return s
-  return s.slice(0, RAW_CAP) + TRUNCATION_SUFFIX
+  let cut = RAW_CAP
+  // If the last char of the slice is a lone high surrogate, drop it
+  const lastCode = s.charCodeAt(cut - 1)
+  if (lastCode >= 0xd800 && lastCode <= 0xdbff) cut--
+  return s.slice(0, cut) + TRUNCATION_SUFFIX
 }
 
 /** Safely stringify any value without throwing. */
@@ -296,18 +319,29 @@ function safeStringify(v: unknown): string {
   }
 }
 
-/** Preview keys extracted for toolMeta. Order matters for field presence. */
+/** Preview keys extracted for toolMeta. Order matters: earlier keys survive cap longer. */
 const TOOL_META_KEYS = ['file_path', 'command', 'url', 'query', 'pattern', 'prompt', 'description'] as const
 
 const TOOL_META_VALUE_CAP = 200
 const TOOL_META_TOTAL_CAP = 2048
 
+/** Truncate a string value to TOOL_META_VALUE_CAP chars, guarding against a lone high surrogate. */
+function capMetaValue(s: string): string {
+  if (s.length <= TOOL_META_VALUE_CAP) return s
+  let cut = TOOL_META_VALUE_CAP
+  const lastCode = s.charCodeAt(cut - 1)
+  if (lastCode >= 0xd800 && lastCode <= 0xdbff) cut--
+  return s.slice(0, cut)
+}
+
 /**
  * Build a bounded JSON string of notable tool arguments.
  *
- * - Extracts only the TOOL_META_KEYS listed above.
- * - Truncates each string value to 200 chars.
- * - Truncates the total JSON to 2 KiB.
+ * - Extracts only TOOL_META_KEYS; ignores all other input fields.
+ * - Truncates each string value to 200 chars (surrogate-safe).
+ * - If the serialized JSON exceeds 2048 chars, drops trailing keys in reverse
+ *   TOOL_META_KEYS order until it fits. Falls back to '{"_truncated":true}'
+ *   only if even {file_path} alone would exceed the cap.
  */
 function buildToolMeta(input: unknown): string {
   if (input === null || typeof input !== 'object' || Array.isArray(input)) return '{}'
@@ -319,17 +353,21 @@ function buildToolMeta(input: unknown): string {
     const val = inp[key]
     if (val !== undefined) {
       const str = typeof val === 'string' ? val : safeStringify(val)
-      preview[key] = str.length > TOOL_META_VALUE_CAP ? str.slice(0, TOOL_META_VALUE_CAP) : str
+      preview[key] = capMetaValue(str)
     }
   }
 
   let json = safeStringify(preview)
-  if (json.length > TOOL_META_TOTAL_CAP) {
-    json = json.slice(0, TOOL_META_TOTAL_CAP)
-    // Ensure it's still valid JSON by replacing with a truncation marker object.
-    // Rather than mangling the JSON, cap the serialized string and note truncation.
-    json = '{"_truncated":true}'
+  if (json.length <= TOOL_META_TOTAL_CAP) return json
+
+  // Drop trailing preview keys (in reverse TOOL_META_KEYS order) until it fits
+  const keysInOrder = [...TOOL_META_KEYS] as string[]
+  for (let i = keysInOrder.length - 1; i >= 0; i--) {
+    delete preview[keysInOrder[i]]
+    json = safeStringify(preview)
+    if (json.length <= TOOL_META_TOTAL_CAP) return json
   }
 
-  return json
+  // Even {file_path} alone exceeded the cap — return sentinel
+  return '{"_truncated":true}'
 }

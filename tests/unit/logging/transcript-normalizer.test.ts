@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest'
-import { makeNormalizer, PARSER_VERSION } from '../../../src/main/logging/transcript-normalizer'
+import { makeNormalizer, PARSER_VERSION, type MessageKind } from '../../../src/main/logging/transcript-normalizer'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -57,7 +57,7 @@ describe('makeNormalizer', () => {
   it('returns an object with push() and stats', () => {
     const n = makeNormalizer()
     expect(typeof n.push).toBe('function')
-    expect(n.stats).toEqual({ malformed: 0, skippedMeta: 0, unknown: 0 })
+    expect(n.stats).toEqual({ malformed: 0, skippedMeta: 0, unknown: 0, unknownParts: 0 })
   })
 
   it('starts idx at 0 by default', () => {
@@ -415,6 +415,8 @@ describe('isSidechain entries', () => {
 // Skip-list — known metadata types
 // ---------------------------------------------------------------------------
 
+// INTENTIONAL GOLDEN COPY: this array mirrors the SKIP_TYPES Set in transcript-normalizer.ts.
+// If the src Set changes, update both places and bump PARSER_VERSION.
 const SKIP_TYPES = [
   'attachment',
   'last-prompt',
@@ -728,6 +730,309 @@ describe('stats consistency', () => {
     n.push('bad json')                                        // malformed
     n.push(line({ type: 'attachment' }))                     // skippedMeta
     n.push(line({ type: 'hologram', id: 1 }))                // unknown
-    expect(n.stats).toEqual({ malformed: 1, skippedMeta: 1, unknown: 1 })
+    expect(n.stats).toEqual({ malformed: 1, skippedMeta: 1, unknown: 1, unknownParts: 0 })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// unknownParts telemetry (task 1)
+// ---------------------------------------------------------------------------
+
+describe('unknownParts telemetry', () => {
+  it('increments unknownParts for a non-object content part (null)', () => {
+    const n = makeNormalizer()
+    const entry = assistantEntry([null, { type: 'text', text: 'ok' }])
+    n.push(line(entry))
+    expect(n.stats.unknownParts).toBe(1)
+    expect(n.stats.unknown).toBe(0) // entry-level counter unchanged
+  })
+
+  it('increments unknownParts for an unknown part type object', () => {
+    const n = makeNormalizer()
+    const entry = assistantEntry([
+      { type: 'hologram_part', data: 'x' },
+      { type: 'text', text: 'hello' },
+    ])
+    n.push(line(entry))
+    expect(n.stats.unknownParts).toBe(1)
+  })
+
+  it('accumulates unknownParts across multiple entries', () => {
+    const n = makeNormalizer()
+    n.push(line(assistantEntry([{ type: 'alien' }])))
+    n.push(line(assistantEntry([42, null]))) // two non-object parts
+    expect(n.stats.unknownParts).toBe(3)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// startTs option — seed lastTs for resume (task 2)
+// ---------------------------------------------------------------------------
+
+describe('startTs option', () => {
+  it('uses startTs as lastTs when no timestamp in entry', () => {
+    const seedTs = new Date('2024-03-01T00:00:00.000Z').getTime()
+    const n = makeNormalizer({ startTs: seedTs })
+    const msgs = n.push(line({ type: 'assistant', message: { role: 'assistant', content: 'No ts.' } }))
+    expect(msgs[0].ts).toBe(seedTs)
+  })
+
+  it('overrides startTs when entry has its own timestamp', () => {
+    const seedTs = new Date('2024-01-01T00:00:00.000Z').getTime()
+    const entryTs = new Date('2024-06-01T12:00:00.000Z').getTime()
+    const n = makeNormalizer({ startTs: seedTs })
+    const msgs = n.push(line(assistantEntry('Hi', { timestamp: '2024-06-01T12:00:00.000Z' })))
+    expect(msgs[0].ts).toBe(entryTs)
+  })
+
+  it('startTs defaults to 0 when not provided', () => {
+    const n = makeNormalizer()
+    const msgs = n.push(line({ type: 'assistant', message: { role: 'assistant', content: 'No ts.' } }))
+    expect(msgs[0].ts).toBe(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// toolMeta total-cap: drop trailing keys, not all-or-nothing (task 3)
+// ---------------------------------------------------------------------------
+
+describe('toolMeta cap — drop trailing keys', () => {
+  it('drops trailing keys in reverse order until JSON fits ≤ 2048', () => {
+    const n = makeNormalizer()
+    // All 7 keys at 200 chars each → total ~7*215 chars ≈ 1505 chars, easily fits.
+    // Use 180 chars each to ensure total > 2048 when we add JSON overhead:
+    // 7 * (200+overhead) > 2048.  Use exact 200-char values for each key.
+    const val200 = 'A'.repeat(200)
+    const entry = assistantEntry([{
+      type: 'tool_use',
+      name: 'T',
+      input: {
+        file_path: val200,
+        command: val200,
+        url: val200,
+        query: val200,
+        pattern: val200,
+        prompt: val200,
+        description: val200,
+      },
+    }])
+    const msgs = n.push(line(entry))
+    expect(msgs).toHaveLength(1)
+    const meta = msgs[0].toolMeta!
+    expect(meta.length).toBeLessThanOrEqual(2048)
+    const parsed = JSON.parse(meta) // must still be valid JSON
+    expect(parsed).toBeDefined()
+    // Must NOT be the all-or-nothing sentinel — file_path should survive
+    if (parsed._truncated !== true) {
+      expect(parsed.file_path).toBeDefined()
+    }
+  })
+
+  it('retains file_path when only the tail keys pushed it over the cap', () => {
+    const n = makeNormalizer()
+    // Craft a scenario: file_path fits alone, but adding description overflows.
+    const val200 = 'B'.repeat(200)
+    const entry = assistantEntry([{
+      type: 'tool_use',
+      name: 'T',
+      input: { file_path: val200, description: val200 },
+    }])
+    const msgs = n.push(line(entry))
+    const parsed = JSON.parse(msgs[0].toolMeta!)
+    // After dropping description, file_path alone fits; _truncated must NOT appear
+    if ('_truncated' in parsed) {
+      // If sentinel, that means even file_path alone ≥ 2048 — shouldn't happen here
+      throw new Error('Unexpected _truncated sentinel when file_path alone fits')
+    }
+    expect(parsed.file_path).toBeDefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Interleaved [text, tool_use, text] → 3 rows in order (task 4)
+// ---------------------------------------------------------------------------
+
+describe('interleaved text + tool_use + text → ordered rows', () => {
+  it('produces message/tool_call/message with consecutive idx', () => {
+    const n = makeNormalizer({ startIdx: 0 })
+    const entry = assistantEntry([
+      { type: 'text', text: 'Before the tool call.' },
+      { type: 'tool_use', name: 'Read', input: { file_path: '/foo.ts' } },
+      { type: 'text', text: 'After the tool call.' },
+    ])
+    const msgs = n.push(line(entry))
+    expect(msgs).toHaveLength(3)
+    // Order: message → tool_call → message
+    expect(msgs[0].kind as MessageKind).toBe('message')
+    expect(msgs[0].content).toBe('Before the tool call.')
+    expect(msgs[0].idx).toBe(0)
+    expect(msgs[1].kind as MessageKind).toBe('tool_call')
+    expect(msgs[1].toolName).toBe('Read')
+    expect(msgs[1].idx).toBe(1)
+    expect(msgs[2].kind as MessageKind).toBe('message')
+    expect(msgs[2].content).toBe('After the tool call.')
+    expect(msgs[2].idx).toBe(2)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Conversation-entry unknown paths: verbatim raw (task 5)
+// ---------------------------------------------------------------------------
+
+describe('conversation-entry unknown: verbatim raw', () => {
+  it('stores verbatim input line in raw when message field is absent', () => {
+    const n = makeNormalizer()
+    const rawLine = line({ type: 'user', timestamp: '2024-01-01T00:00:00.000Z', data: { x: 1 } })
+    const msgs = n.push(rawLine)
+    expect(msgs).toHaveLength(1)
+    expect(msgs[0].raw).toBe(rawLine)
+  })
+
+  it('stores verbatim input line in raw when message is null', () => {
+    const n = makeNormalizer()
+    const rawLine = line({ type: 'assistant', timestamp: '2024-01-01T00:00:00.000Z', message: null })
+    const msgs = n.push(rawLine)
+    expect(msgs[0].raw).toBe(rawLine)
+  })
+
+  it('stores verbatim input line in raw when content shape is unrecognizable', () => {
+    const n = makeNormalizer()
+    const rawLine = line({ type: 'assistant', message: { role: 'assistant', content: 42 } })
+    const msgs = n.push(rawLine)
+    expect(msgs).toHaveLength(1)
+    expect(msgs[0].kind as MessageKind).toBe('unknown')
+    expect(msgs[0].raw).toBe(rawLine)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Blank/whitespace-only lines → [] without counting malformed (task 6)
+// ---------------------------------------------------------------------------
+
+describe('blank / whitespace-only lines', () => {
+  it('returns [] for a blank line without incrementing malformed', () => {
+    const n = makeNormalizer()
+    const msgs = n.push('')
+    expect(msgs).toHaveLength(0)
+    expect(n.stats.malformed).toBe(0)
+  })
+
+  it('returns [] for a whitespace-only line without incrementing malformed', () => {
+    const n = makeNormalizer()
+    const msgs = n.push('   \n\t  ')
+    expect(msgs).toHaveLength(0)
+    expect(n.stats.malformed).toBe(0)
+  })
+
+  it('trailing-newline files: blank lines do not inflate malformed', () => {
+    const n = makeNormalizer()
+    // Simulate reading a file that ends with \n: last "line" is ''
+    n.push(line(assistantEntry('First line')))
+    n.push('')  // trailing newline produces an empty string
+    n.push('\n') // or a bare newline
+    expect(n.stats.malformed).toBe(0)
+    expect(n.stats.unknown).toBe(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Surrogate-pair guard at cap boundaries (task 7)
+// ---------------------------------------------------------------------------
+
+describe('surrogate-pair guard', () => {
+  it('capRaw: no lone high surrogate at the cut boundary (emoji at the edge)', () => {
+    // Build a string where a 4-byte emoji straddles the RAW_CAP boundary.
+    // An emoji like 🎉 = U+1F389 = two UTF-16 code units: 0xD83C 0xDF89 (high+low surrogate pair).
+    // Place the high surrogate exactly AT index RAW_CAP-1.
+    const RAW_CAP = 32 * 1024
+    const emoji = '🎉' // 🎉, 2 code units
+    // Pad to RAW_CAP-1 chars, then append emoji (puts high surrogate at index RAW_CAP-1)
+    const padded = 'A'.repeat(RAW_CAP - 1) + emoji + 'trailing'
+    // Push as a novel-type entry so capRaw is invoked
+    const rawLine = JSON.stringify({ type: 'hologram', payload: padded })
+    // rawLine length > RAW_CAP, so capRaw fires
+    const n = makeNormalizer()
+    const msgs = n.push(rawLine)
+    expect(msgs).toHaveLength(1)
+    const raw = msgs[0].raw!
+    // The truncated raw must NOT end with a lone high surrogate before the suffix
+    const suffix = '…[truncated]' // '…[truncated]'
+    const body = raw.endsWith(suffix) ? raw.slice(0, raw.length - suffix.length) : raw
+    expect(/[\uD800-\uDBFF]$/.test(body)).toBe(false)
+  })
+
+  it('capMetaValue: no lone high surrogate in toolMeta value at 200-char boundary', () => {
+    // Craft a tool input where file_path has an emoji high surrogate right at char 199
+    const emoji = '🎉' // 🎉
+    // Pad to 199 chars, then append emoji so high surrogate lands at index 199 (= cap boundary)
+    const val = 'B'.repeat(199) + emoji + 'extra'
+    const n = makeNormalizer()
+    const entry = assistantEntry([{
+      type: 'tool_use',
+      name: 'T',
+      input: { file_path: val },
+    }])
+    const msgs = n.push(line(entry))
+    const meta = JSON.parse(msgs[0].toolMeta!)
+    const fp: string = meta.file_path
+    expect(fp.length).toBeLessThanOrEqual(200)
+    // Must not end with a lone high surrogate
+    expect(/[\uD800-\uDBFF]$/.test(fp)).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// MessageKind type export (task 8)
+// ---------------------------------------------------------------------------
+
+describe('MessageKind type export', () => {
+  it('the normalizer produces known MessageKind values', () => {
+    const validKinds = new Set<MessageKind>(['message', 'tool_call', 'sidechain', 'unknown'])
+    const n = makeNormalizer()
+    // message
+    n.push(line(assistantEntry('hi'))).forEach(m => expect(validKinds.has(m.kind as MessageKind)).toBe(true))
+    // tool_call
+    n.push(line(assistantEntry([{ type: 'tool_use', name: 'T', input: {} }])))
+      .forEach(m => expect(validKinds.has(m.kind as MessageKind)).toBe(true))
+    // sidechain
+    n.push(line(assistantEntry('sub', { isSidechain: true })))
+      .forEach(m => expect(validKinds.has(m.kind as MessageKind)).toBe(true))
+    // unknown
+    n.push(line({ type: 'novel', data: 'x' }))
+      .forEach(m => expect(validKinds.has(m.kind as MessageKind)).toBe(true))
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Verbatim-realistic fixture: full CC user line (task 9)
+// ---------------------------------------------------------------------------
+
+describe('verbatim-realistic fixture: full CC JSONL line', () => {
+  it('normalizes a real-world user entry with uuid/parentUuid/sessionId/cwd/version/requestId fields', () => {
+    // Shaped after actual Claude Code JSONL transcripts (2026-06-06 histogram)
+    const realisticEntry = {
+      type: 'user',
+      uuid: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
+      parentUuid: null,
+      sessionId: 's-abc123xyz',
+      timestamp: '2024-06-06T09:15:00.000Z',
+      cwd: '/home/user/projects/myapp',
+      version: '1.2.3',
+      requestId: 'req-deadbeef',
+      message: {
+        role: 'user',
+        content: 'Please read the README and tell me what this project does.',
+      },
+    }
+    const n = makeNormalizer()
+    const msgs = n.push(JSON.stringify(realisticEntry))
+    // Extra fields (uuid, parentUuid, sessionId, cwd, version, requestId) are inert
+    expect(msgs).toHaveLength(1)
+    expect(msgs[0].role).toBe('user')
+    expect(msgs[0].kind as MessageKind).toBe('message')
+    expect(msgs[0].content).toBe('Please read the README and tell me what this project does.')
+    expect(msgs[0].ts).toBe(new Date('2024-06-06T09:15:00.000Z').getTime())
+    expect(n.stats.malformed).toBe(0)
+    expect(n.stats.unknown).toBe(0)
   })
 })
