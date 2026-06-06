@@ -680,4 +680,97 @@ describe('transcripts-db', () => {
     // db is still functional after checkpoint
     expect(() => db.insertRun(runMeta())).not.toThrow()
   })
+
+  // -------------------------------------------------------------------------
+  // appendBatch — rows + cursor in ONE transaction (tail-loop atomicity)
+  // -------------------------------------------------------------------------
+
+  it('appendBatch commits messages AND the cursor together', () => {
+    const r1 = db.insertRun(runMeta())
+    const t = db.bindTranscript(r1, 'C:/t/a.jsonl', { confidence: 'exact', parserVersion: 1 })
+
+    db.appendBatch(r1, t.transcriptId, [msg(0), msg(1)], 120)
+
+    expect(db.nextIdx(r1)).toBe(2)
+    const cur = inspect((raw) =>
+      raw.prepare('SELECT ingestCursor FROM transcripts WHERE id = ?').get(t.transcriptId),
+    ) as { ingestCursor: number }
+    expect(cur.ingestCursor).toBe(120)
+  })
+
+  it('appendBatch with an empty batch still advances the cursor (meta-only lines)', () => {
+    const r1 = db.insertRun(runMeta())
+    const t = db.bindTranscript(r1, 'C:/t/a.jsonl', { confidence: 'exact', parserVersion: 1 })
+    db.appendBatch(r1, t.transcriptId, [], 64)
+    expect(db.nextIdx(r1)).toBe(0)
+    const cur = inspect((raw) =>
+      raw.prepare('SELECT ingestCursor FROM transcripts WHERE id = ?').get(t.transcriptId),
+    ) as { ingestCursor: number }
+    expect(cur.ingestCursor).toBe(64)
+  })
+
+  it('a failing appendBatch rolls back BOTH messages and cursor (crash-window duplication impossible)', () => {
+    const r1 = db.insertRun(runMeta())
+    const t = db.bindTranscript(r1, 'C:/t/a.jsonl', { confidence: 'exact', parserVersion: 1 })
+    db.appendBatch(r1, t.transcriptId, [msg(0), msg(1)], 100)
+
+    // Second batch collides on idx 1 — the WHOLE transaction must roll back:
+    // neither msg(2) nor the cursor advance to 200 may survive.
+    expect(() => db.appendBatch(r1, t.transcriptId, [msg(1), msg(2)], 200)).toThrow(/UNIQUE/)
+
+    expect(db.nextIdx(r1)).toBe(2) // msg(2) was rolled back
+    const cur = inspect((raw) =>
+      raw.prepare('SELECT ingestCursor FROM transcripts WHERE id = ?').get(t.transcriptId),
+    ) as { ingestCursor: number }
+    expect(cur.ingestCursor).toBe(100) // cursor still matches what is stored
+  })
+
+  // -------------------------------------------------------------------------
+  // closeDanglingRuns / getRunScope / lastMessageTs / bind cursor
+  // -------------------------------------------------------------------------
+
+  it('closeDanglingRuns crashes every running run: endedAt = last message ts, else startedAt', () => {
+    const withMsgs = db.insertRun(runMeta({ sessionId: 'a', startedAt: 50 }))
+    db.appendMessages(withMsgs, [msg(0, { ts: 70 }), msg(1, { ts: 90 })])
+    db.insertRun(runMeta({ sessionId: 'b', startedAt: 60 }))
+    const closedBefore = db.insertRun(runMeta({ sessionId: 'c', startedAt: 10 }))
+    db.closeRun('c', 20, 'exited')
+    void closedBefore
+
+    expect(db.closeDanglingRuns()).toBe(2)
+    // Idempotent: nothing left running.
+    expect(db.closeDanglingRuns()).toBe(0)
+
+    const rows = inspect((raw) =>
+      raw.prepare('SELECT sessionId, status, endedAt FROM runs ORDER BY runId').all(),
+    ) as { sessionId: string; status: string; endedAt: number }[]
+    expect(rows.find((r) => r.sessionId === 'a')).toMatchObject({ status: 'crashed', endedAt: 90 })
+    expect(rows.find((r) => r.sessionId === 'b')).toMatchObject({ status: 'crashed', endedAt: 60 })
+    expect(rows.find((r) => r.sessionId === 'c')).toMatchObject({ status: 'exited', endedAt: 20 })
+  })
+
+  it('getRunScope returns sessionId + configId (null when absent); null for a missing run', () => {
+    const r1 = db.insertRun(runMeta({ configId: 'cfg9' }))
+    expect(db.getRunScope(r1)).toEqual({ sessionId: 's1', configId: 'cfg9' })
+    const r2 = db.insertRun(runMeta({ sessionId: 's2' }))
+    expect(db.getRunScope(r2)).toEqual({ sessionId: 's2', configId: null })
+    expect(db.getRunScope(99999)).toBeNull()
+  })
+
+  it('lastMessageTs returns max(ts) for the run, null when it has no messages', () => {
+    const r1 = db.insertRun(runMeta())
+    expect(db.lastMessageTs(r1)).toBeNull()
+    db.appendMessages(r1, [msg(0, { ts: 500 }), msg(1, { ts: 300 })])
+    expect(db.lastMessageTs(r1)).toBe(500)
+  })
+
+  it('bindTranscript reports the current ingestCursor (0 for new; persisted value on re-bind)', () => {
+    const r1 = db.insertRun(runMeta())
+    const fresh = db.bindTranscript(r1, 'C:/t/a.jsonl', { confidence: 'exact', parserVersion: 1 })
+    expect(fresh.cursor).toBe(0)
+    db.advanceCursor(fresh.transcriptId, 4242)
+    const rebound = db.bindTranscript(r1, 'C:/t/a.jsonl', { confidence: 'exact', parserVersion: 1 })
+    expect(rebound.isNew).toBe(false)
+    expect(rebound.cursor).toBe(4242)
+  })
 })

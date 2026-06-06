@@ -112,15 +112,31 @@ export interface TranscriptsDb {
   setRunAccount(sessionId: string, accountEmail: string): void
 
   /**
+   * Close EVERY dangling run (status='running') as crashed in one statement:
+   * endedAt = max(message ts for that run) falling back to startedAt. Called by
+   * the worker on open — a dangling run means the previous app session died.
+   * Returns the number of runs closed.
+   */
+  closeDanglingRuns(): number
+
+  /** sessionId + configId for a run (new-messages attribution on tail resume);
+   *  null when the run does not exist. */
+  getRunScope(runId: number): { sessionId: string; configId: string | null } | null
+
+  /** max(ts) over a run's messages, or null when it has none (normalizer startTs seed). */
+  lastMessageTs(runId: number): number | null
+
+  /**
    * Upsert a transcript binding by (runId, path). A new path for a run gets
-   * ord = max(ord)+1 (0 for the first). A re-bind keeps id + ord and refreshes
-   * confidence / sourceVersion / parserVersion.
+   * ord = max(ord)+1 (0 for the first). A re-bind keeps id + ord + cursor and
+   * refreshes confidence / sourceVersion / parserVersion. `cursor` is the
+   * current ingestCursor (0 for a new binding) so the caller can seed its tail.
    */
   bindTranscript(
     runId: number,
     path: string,
     opts: { confidence: 'exact' | 'heuristic'; sourceVersion?: string; parserVersion: number },
-  ): { transcriptId: number; ord: number; isNew: boolean }
+  ): { transcriptId: number; ord: number; isNew: boolean; cursor: number }
 
   setTranscriptStatus(transcriptId: number, status: 'pending' | 'tailing' | 'complete' | 'failed'): void
 
@@ -137,6 +153,15 @@ export interface TranscriptsDb {
    * deleteSlot — unlike clearAll, deleteSlot does NOT protect running runs).
    */
   appendMessages(runId: number, msgs: NewMessage[]): void
+
+  /**
+   * Append messages AND advance the transcript's ingest cursor in ONE
+   * transaction. This is the tail loop's only write path: because rows and
+   * cursor move together, a crash between batches can never duplicate or skip
+   * messages on resume (the cursor always reflects exactly what was stored).
+   * msgs may be empty (cursor-only advance past lines that produced no rows).
+   */
+  appendBatch(runId: number, transcriptId: number, msgs: NewMessage[], newCursor: number): void
 
   /** max(idx)+1 for the run, or 0 when it has no messages. */
   nextIdx(runId: number): number
@@ -433,6 +458,18 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
 
   const stmtGetRunStartedAt: Statement = sqlite.prepare(`SELECT startedAt FROM runs WHERE runId = ?`)
 
+  // Single-statement dangling-run closure: endedAt = last message ts, falling
+  // back to startedAt for runs that never produced a message.
+  const stmtCloseDangling: Statement = sqlite.prepare(`
+    UPDATE runs SET status = 'crashed',
+      endedAt = COALESCE((SELECT MAX(ts) FROM messages WHERE messages.runId = runs.runId), startedAt)
+    WHERE status = 'running'
+  `)
+
+  const stmtGetRunScope: Statement = sqlite.prepare(`SELECT sessionId, configId FROM runs WHERE runId = ?`)
+
+  const stmtLastMessageTs: Statement = sqlite.prepare(`SELECT MAX(ts) AS t FROM messages WHERE runId = ?`)
+
   // ---- transcripts ----
   const stmtGetTranscriptByRunPath: Statement = sqlite.prepare(
     `SELECT id, ord FROM transcripts WHERE runId = ? AND path = ?`,
@@ -460,12 +497,14 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
     FROM transcripts WHERE status = 'tailing' ORDER BY id
   `)
 
+  const stmtGetCursor: Statement = sqlite.prepare(`SELECT ingestCursor FROM transcripts WHERE id = ?`)
+
   const runBindTranscript = sqlite.transaction(
     (
       runId: number,
       path: string,
       opts: { confidence: 'exact' | 'heuristic'; sourceVersion?: string; parserVersion: number },
-    ): { transcriptId: number; ord: number; isNew: boolean } => {
+    ): { transcriptId: number; ord: number; isNew: boolean; cursor: number } => {
       const existing = stmtGetTranscriptByRunPath.get(runId, path) as { id: number; ord: number } | undefined
       if (existing) {
         stmtRebindTranscript.run({
@@ -474,7 +513,8 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
           sourceVersion: opts.sourceVersion ?? null,
           parserVersion: opts.parserVersion,
         })
-        return { transcriptId: existing.id, ord: existing.ord, isNew: false }
+        const { ingestCursor } = stmtGetCursor.get(existing.id) as { ingestCursor: number }
+        return { transcriptId: existing.id, ord: existing.ord, isNew: false, cursor: ingestCursor }
       }
       const { nextOrd } = stmtNextOrd.get(runId) as { nextOrd: number }
       const info = stmtInsertTranscript.run({
@@ -485,7 +525,7 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
         parserVersion: opts.parserVersion,
         confidence: opts.confidence,
       })
-      return { transcriptId: Number(info.lastInsertRowid), ord: nextOrd, isNew: true }
+      return { transcriptId: Number(info.lastInsertRowid), ord: nextOrd, isNew: true, cursor: 0 }
     },
   )
 
@@ -495,21 +535,32 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
     VALUES (@runId, @idx, @ts, @role, @kind, @content, @toolName, @toolMeta, @raw)
   `)
 
+  const insertMessageRow = (runId: number, m: NewMessage): void => {
+    stmtInsertMessage.run({
+      runId,
+      idx: m.idx,
+      ts: m.ts,
+      role: m.role,
+      kind: m.kind,
+      content: m.content,
+      toolName: m.toolName ?? null,
+      toolMeta: m.toolMeta ?? null,
+      raw: m.raw ?? null,
+    })
+  }
+
   const runAppendMessages = sqlite.transaction((runId: number, msgs: NewMessage[]) => {
-    for (const m of msgs) {
-      stmtInsertMessage.run({
-        runId,
-        idx: m.idx,
-        ts: m.ts,
-        role: m.role,
-        kind: m.kind,
-        content: m.content,
-        toolName: m.toolName ?? null,
-        toolMeta: m.toolMeta ?? null,
-        raw: m.raw ?? null,
-      })
-    }
+    for (const m of msgs) insertMessageRow(runId, m)
   })
+
+  // The tail loop's combined write: rows + cursor in ONE transaction so a crash
+  // window between "messages stored" and "cursor advanced" cannot exist.
+  const runAppendBatchWithCursor = sqlite.transaction(
+    (runId: number, transcriptId: number, msgs: NewMessage[], newCursor: number) => {
+      for (const m of msgs) insertMessageRow(runId, m)
+      stmtAdvanceCursor.run({ id: transcriptId, cursor: newCursor })
+    },
+  )
 
   const stmtNextIdx: Statement = sqlite.prepare(
     `SELECT COALESCE(MAX(idx) + 1, 0) AS nextIdx FROM messages WHERE runId = ?`,
@@ -681,6 +732,20 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
       stmtSetRunAccount.run({ sessionId, accountEmail })
     },
 
+    closeDanglingRuns() {
+      return stmtCloseDangling.run().changes
+    },
+
+    getRunScope(runId) {
+      const row = stmtGetRunScope.get(runId) as { sessionId: string; configId: string | null } | undefined
+      return row ?? null
+    },
+
+    lastMessageTs(runId) {
+      const row = stmtLastMessageTs.get(runId) as { t: number | null }
+      return row.t
+    },
+
     bindTranscript(runId, path, opts) {
       return runBindTranscript(runId, path, opts)
     },
@@ -700,6 +765,10 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
     appendMessages(runId, msgs) {
       if (msgs.length === 0) return
       runAppendMessages(runId, msgs)
+    },
+
+    appendBatch(runId, transcriptId, msgs, newCursor) {
+      runAppendBatchWithCursor(runId, transcriptId, msgs, newCursor)
     },
 
     nextIdx(runId) {
