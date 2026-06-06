@@ -41,6 +41,7 @@ interface Histogram {
   contentPartTypes: Record<string, number>
   isSidechainCount: number
   missingTimestampCount: number
+  peakHeapMB: number
   // concern flags — anything outside the expected normalizer surface
   concerns: string[]
   // summary of sampled file sizes
@@ -169,6 +170,7 @@ async function main(): Promise<void> {
     contentPartTypes: {},
     isSidechainCount: 0,
     missingTimestampCount: 0,
+    peakHeapMB: 0,
     concerns: [],
     sampleSizesBytes: [],
   }
@@ -184,65 +186,69 @@ async function main(): Promise<void> {
   const sample = pickSample(allFiles, 50)
   console.error(`[scan] sampling ${sample.length} files...`)
 
+  let peakHeapMB = 0
+  const heapTimer = setInterval(() => {
+    const heapBytes = process.memoryUsage().heapUsed
+    const heapMB = heapBytes / (1024 * 1024)
+    if (heapMB > peakHeapMB) peakHeapMB = heapMB
+  }, 200)
+
   for (const f of sample) {
     hist.sampledFiles++
     hist.sampleSizesBytes.push(f.sizeBytes)
-    let linesInFile = 0
 
-    await streamJsonl(
-      f.filePath,
-      (entry) => {
-        linesInFile++
-        hist.sampledLines++
+    try {
+      await streamJsonl(
+        f.filePath,
+        (entry) => {
+          hist.sampledLines++
 
-        // --- type field ---
-        const entryType = typeof entry.type === 'string' ? entry.type : '(missing)'
-        inc(hist.typeValues, entryType)
+          // --- type field ---
+          const entryType = typeof entry.type === 'string' ? entry.type : '(missing)'
+          inc(hist.typeValues, entryType)
 
-        // --- timestamp presence ---
-        if (!entry.timestamp) {
-          hist.missingTimestampCount++
-        }
-
-        // --- isSidechain ---
-        if (entry.isSidechain === true) {
-          hist.isSidechainCount++
-        }
-
-        // --- message role ---
-        if (entry.message && typeof entry.message === 'object') {
-          const msg = entry.message as Record<string, unknown>
-          if (typeof msg.role === 'string') {
-            inc(hist.messageRoles, msg.role)
-          } else {
-            inc(hist.messageRoles, '(missing)')
+          // --- timestamp presence ---
+          if (!entry.timestamp) {
+            hist.missingTimestampCount++
           }
 
-          // --- content parts ---
-          if (Array.isArray(msg.content)) {
-            for (const part of msg.content as unknown[]) {
-              if (part && typeof part === 'object') {
-                const p = part as Record<string, unknown>
-                const ptype = typeof p.type === 'string' ? p.type : '(missing)'
-                inc(hist.contentPartTypes, ptype)
+          // --- isSidechain ---
+          if (entry.isSidechain === true) {
+            hist.isSidechainCount++
+          }
 
-                // Concern: tool_result in user role
-                if (ptype === 'tool_result' && msg.role === 'user') {
-                  // expected; note the count but flag once
-                }
-              } else if (typeof part === 'string') {
-                inc(hist.contentPartTypes, '(raw-string)')
-              }
+          // --- message role ---
+          if (entry.message && typeof entry.message === 'object') {
+            const msg = entry.message as Record<string, unknown>
+            if (typeof msg.role === 'string') {
+              inc(hist.messageRoles, msg.role)
+            } else {
+              inc(hist.messageRoles, '(missing)')
             }
-          } else if (typeof msg.content === 'string') {
-            inc(hist.contentPartTypes, '(string-content)')
+
+            // --- content parts ---
+            if (Array.isArray(msg.content)) {
+              for (const part of msg.content as unknown[]) {
+                if (part && typeof part === 'object') {
+                  const p = part as Record<string, unknown>
+                  const ptype = typeof p.type === 'string' ? p.type : '(missing)'
+                  inc(hist.contentPartTypes, ptype)
+                } else if (typeof part === 'string') {
+                  inc(hist.contentPartTypes, '(raw-string)')
+                }
+              }
+            } else if (typeof msg.content === 'string') {
+              inc(hist.contentPartTypes, '(string-content)')
+            }
           }
-        }
-      },
-      (_raw) => {
-        hist.unparseableLines++
-      },
-    )
+        },
+        (_raw) => {
+          hist.unparseableLines++
+        },
+      )
+    } catch (err) {
+      hist.concerns.push(`FILE_READ_ERROR: ${f.filePath} — ${String(err)}`)
+    }
 
     if (hist.sampledFiles % 10 === 0 || hist.sampledFiles === sample.length) {
       const heapMB = (process.memoryUsage().heapUsed / (1024 * 1024)).toFixed(0)
@@ -252,6 +258,9 @@ async function main(): Promise<void> {
     }
   }
 
+  clearInterval(heapTimer)
+  hist.peakHeapMB = Math.round(peakHeapMB * 100) / 100
+
   // Phase 3: build concerns list
   if (hist.filesAbove100MB.length > 0) {
     hist.concerns.push(`FILES_ABOVE_100MB: ${hist.filesAbove100MB.length} file(s) exceed 100 MB — streaming is mandatory`)
@@ -260,7 +269,7 @@ async function main(): Promise<void> {
     hist.concerns.push(`UNPARSEABLE_LINES: ${hist.unparseableLines} lines could not be JSON-parsed`)
   }
   // Warn if we see type values outside the expected normalizer surface
-  const expectedTypes = new Set(['user', 'assistant', 'system', 'summary', 'progress', 'result', 'text'])
+  const expectedTypes = new Set(['user', 'assistant', 'system', 'summary', 'progress'])
   const unknownTypes = Object.keys(hist.typeValues).filter(
     (t) => !expectedTypes.has(t) && t !== '(missing)',
   )
@@ -296,10 +305,11 @@ async function main(): Promise<void> {
     contentPartTypes: hist.contentPartTypes,
     isSidechainCount: hist.isSidechainCount,
     missingTimestampCount: hist.missingTimestampCount,
+    peakHeapMB: hist.peakHeapMB,
     sampleFileSizeRange: hist.sampleSizesBytes.length
       ? {
-          minBytes: Math.min(...hist.sampleSizesBytes),
-          maxBytes: Math.max(...hist.sampleSizesBytes),
+          minBytes: hist.sampleSizesBytes.reduce((a, b) => Math.min(a, b)),
+          maxBytes: hist.sampleSizesBytes.reduce((a, b) => Math.max(a, b)),
           meanBytes: Math.round(hist.sampleSizesBytes.reduce((a, b) => a + b, 0) / hist.sampleSizesBytes.length),
         }
       : null,

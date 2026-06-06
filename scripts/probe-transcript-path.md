@@ -187,7 +187,7 @@ The Logs v2 normalizer was designed to map JSONL entries to:
 avoid crashing on unexpected types.**
 
 **isSidechain: 0 instances found in 605k sampled lines.** The `sidechain` normalizer
-branch will trigger rarely or never on this user's real data (may appear in other
+branch will trigger rarely or never on this user's real data in this store only; the 0/605k finding applies to THIS store only; the normalizer branch must stay. (may appear in other
 accounts or in files not sampled).
 
 **Missing timestamps: 115,519 / 605,343 = ~19% of entries lack a timestamp.** These
@@ -196,9 +196,9 @@ are predominantly the metadata entry types (attachment, pr-link, permission-mode
 timestamp presence; use entry index or file mtime as fallback.
 
 **Files above 100 MB: 3 files, largest is 1,251 MB.** Streaming via readline is
-non-negotiable — confirmed working in this probe at heap peak of 33 MB for 50 files.
+non-negotiable — confirmed working in this probe at heap at final checkpoint was 33 MB; continuous peak now tracked via peakHeapMB in the JSON output for 50 files.
 
-**No unparseable lines** in 605,343 sampled lines — the JSONL format is clean.
+**0 unparseable lines** in the 50 sampled files (un-sampled files incl. the 3 largest were not line-checked) — the JSONL format is clean.
 
 **image content parts: 404** — the normalizer should pass through or strip image blobs;
 they may be large if stored inline (check before ingesting).
