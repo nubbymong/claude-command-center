@@ -13,15 +13,23 @@
  *   <HOME>/.claude/projects/<mangled-cwd>/<conversation-uuid>.jsonl
  *
  * The mangling rule (verified 2026-06-06 against real ~/.claude/projects dirs):
- *   1. Replace every `:` with `-`
- *   2. Replace every run of one or more `\/` characters with a single `-`
- *   No case change; underscores are preserved verbatim.
+ *   Replace EVERY non-alphanumeric character (including `:`, `\`, `/`, `_`, `.`, space)
+ *   with a single `-`. No run-collapsing. No case change.
  *
- * Real examples observed on the dev machine:
- *   F:\CLAUDE-MULTI-APP   → F--CLAUDE-MULTI-APP
- *   C:\Users\nicho        → C--Users-nicho
- *   f:\platform_v9        → f--platform_v9   (lowercase f preserved; _ preserved)
- *   /home/jane/repos/app  → -home-jane-repos-app
+ *   Formally: cwd.replace(/[^A-Za-z0-9]/g, '-')
+ *
+ * Real examples verified against the developer machine's ~/.claude/projects (2026-06-06):
+ *   F:\CLAUDE_MULTI_APP                              → F--CLAUDE-MULTI-APP
+ *     (underscore → hyphen, colon → hyphen, backslash → hyphen)
+ *   f:\platform_v9                                   → f--platform-v9
+ *     (lowercase drive preserved, underscore → hyphen)
+ *   F:\platform_v9\.claude-worktrees\warm-toolchain  → F--platform-v9--claude-worktrees-warm-toolchain
+ *     (dot → hyphen, each non-alnum replaced individually — NO run-collapsing)
+ *   C:\Users\nicho                                   → C--Users-nicho
+ *
+ * NOTE: src/main/utils/claude-project-path.ts uses a DIFFERENT (older/looser) rule —
+ * it preserves underscores and collapses separator runs. That helper serves a separate
+ * feature and is intentionally NOT modified here, but the divergence is flagged.
  *
  * ─── Canonicalization ────────────────────────────────────────────────────────
  * In CCC, Claude sessions run under per-profile fake HOMEs:
@@ -79,22 +87,32 @@ export function canonicalizeTranscriptPath(p: string): string | null {
 // ---------------------------------------------------------------------------
 
 /**
- * Maps a filesystem cwd to Claude CLI's project-folder naming convention,
- * replicating the rule used by `src/main/utils/claude-project-path.ts`.
+ * Maps a filesystem cwd to Claude CLI's project-folder naming convention.
  *
- * Verified mangle rule (2026-06-06) against real ~/.claude/projects dirs:
- *   F:\CLAUDE-MULTI-APP → F--CLAUDE-MULTI-APP   (real dir observed)
- *   C:\Users\nicho      → C--Users-nicho          (real dir observed)
- *   f:\platform_v9      → f--platform_v9           (case + underscores preserved)
+ * Verified rule (2026-06-06) against real ~/.claude/projects on the dev machine:
  *
- * Steps:
- *   1. Replace every `:` with `-`
- *   2. Replace every run of one or more `\/` with a single `-`
+ *   Input                                            → Directory name
+ *   ──────────────────────────────────────────────────────────────────────────
+ *   F:\CLAUDE_MULTI_APP                              → F--CLAUDE-MULTI-APP
+ *   f:\platform_v9                                   → f--platform-v9
+ *   F:\platform_v9\.claude-worktrees\warm-toolchain  → F--platform-v9--claude-worktrees-warm-toolchain
+ *   C:\Users\nicho                                   → C--Users-nicho
+ *
+ * Rule: replace every non-alphanumeric character individually with `-`.
+ *   cwd.replace(/[^A-Za-z0-9]/g, '-')
+ *
+ * Key properties:
+ *   - Underscores, colons, backslashes, forward-slashes, dots, spaces → `-`
+ *   - No run-collapsing: `\\` → `--` (two consecutive separators = two hyphens)
+ *   - Input case is preserved verbatim (no lowercasing)
+ *
+ * NOTE: src/main/utils/claude-project-path.ts uses a DIFFERENT (older/looser) rule
+ * that preserves underscores and collapses separator runs. It serves a separate
+ * feature and is intentionally NOT modified here — but the divergence is flagged
+ * so callers do not conflate the two functions.
  */
 export function mangleCwdToProjectDir(cwd: string): string {
-  return cwd
-    .replace(/:/g, '-')
-    .replace(/[/\\]+/g, '-')
+  return cwd.replace(/[^A-Za-z0-9]/g, '-')
 }
 
 // ---------------------------------------------------------------------------

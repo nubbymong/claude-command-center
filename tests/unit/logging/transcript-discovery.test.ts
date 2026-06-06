@@ -7,12 +7,16 @@
  *
  * Mangle rule verified 2026-06-06 against real ~/.claude/projects dirs on
  * the dev machine:
- *   real dir observed → path that produced it
- *   F--CLAUDE-MULTI-APP   ← F:\CLAUDE_MULTI_APP  (colon→-, backslash→-)
- *   F--CLAUDE-RANDOM      ← F:\CLAUDE-RANDOM
- *   f--platform-v9        ← f:\platform_v9  (no case change — CC preserves case)
- *   C--Users-nicho        ← C:\Users\nicho
- * Rule: replace every `:` with `-`, then replace every run of `\/` with a single `-`.
+ *   Input cwd                                            → Real dir observed
+ *   ─────────────────────────────────────────────────────────────────────────
+ *   F:\CLAUDE_MULTI_APP                                  → F--CLAUDE-MULTI-APP
+ *   f:\platform_v9                                       → f--platform-v9
+ *   F:\platform_v9\.claude-worktrees\warm-toolchain      → F--platform-v9--claude-worktrees-warm-toolchain
+ *   C:\Users\nicho                                       → C--Users-nicho
+ *
+ * Rule: cwd.replace(/[^A-Za-z0-9]/g, '-')
+ *   Every non-alphanumeric char (colon, backslash, forward-slash, underscore, dot, space)
+ *   becomes ONE hyphen. No run-collapsing. Input case preserved.
  */
 
 import { describe, it, expect } from 'vitest'
@@ -92,70 +96,51 @@ describe('canonicalizeTranscriptPath', () => {
 
 describe('mangleCwdToProjectDir', () => {
   /**
-   * VERIFIED mangle rule (2026-06-06) against real ~/.claude/projects directories:
+   * All four pairs below are verified against the developer machine's real
+   * ~/.claude/projects directory listing (2026-06-06).
    *
-   *   Input path              → Expected directory name
-   *   ─────────────────────────────────────────────────
-   *   F:\CLAUDE_MULTI_APP     → F--CLAUDE_MULTI_APP
-   *   F:\CLAUDE-RANDOM        → F--CLAUDE-RANDOM
-   *   f:\platform_v9          → f--platform_v9         (case preserved — no lowercasing)
-   *   C:\Users\nicho          → C--Users-nicho
+   * Rule: cwd.replace(/[^A-Za-z0-9]/g, '-')
+   *   Every non-alphanumeric char → ONE hyphen. No run-collapsing. Case preserved.
    *
-   * Rule: replace every `:` with `-`; replace every run of one or more `\/` chars with a single `-`.
-   * Underscores are kept verbatim (NOT replaced). No case change.
-   *
-   * Real directory names observed on dev machine:
-   *   F--CLAUDE-MULTI-APP  (from F:\CLAUDE_MULTI_APP — wait, MULTI_APP has underscore...
-   *   but directory is MULTI-APP... let us re-examine)
-   *
-   * Actually observed:
-   *   F--CLAUDE-MULTI-APP   ← from  F:\CLAUDE MULTI APP? No...
-   *   F--CLAUDE-MULTI-APP   ← from  F:\CLAUDE-MULTI-APP (hyphens preserved, no \ to convert)
-   *   The working dir is F:\CLAUDE_MULTI_APP but the dir is F--CLAUDE-MULTI-APP?
-   *   Wait: the pathToClaudeProjectFolder does NOT replace underscores.
-   *   F:\CLAUDE_MULTI_APP → replace ':' → F-\CLAUDE_MULTI_APP → replace \/ runs → F--CLAUDE_MULTI_APP
-   *   But we see F--CLAUDE-MULTI-APP in real dirs...
-   *   That suggests the actual CWD passed was F:\CLAUDE-MULTI-APP (with hyphens, not underscores),
-   *   OR Claude CLI lowercases + replaces underscores separately.
-   *
-   * RESOLUTION: The pathToClaudeProjectFolder in this codebase exactly matches what CC uses.
-   * We replicate that rule: replace `:` → `-`, replace `\/` runs → `-`. No underscore replacement.
-   * Tests use the values the function actually produces (to verify it matches the impl).
+   * NOTE: src/main/utils/claude-project-path.ts uses an OLDER/LOOSER rule
+   * (preserves underscores, collapses separator runs). It is intentionally NOT
+   * changed here — the divergence is flagged in mangleCwdToProjectDir's doc comment.
    */
 
-  it('Windows path: F:\\CLAUDE-MULTI-APP → F--CLAUDE-MULTI-APP (real dir observed)', () => {
-    // Real dir seen: F--CLAUDE-MULTI-APP.
-    // The CWD used by CC was F:\CLAUDE-MULTI-APP (hyphen-separated, not underscore).
-    expect(mangleCwdToProjectDir('F:\\CLAUDE-MULTI-APP')).toBe('F--CLAUDE-MULTI-APP')
+  // ── Pair 1: verified against real store 2026-06-06 ──
+  it('F:\\CLAUDE_MULTI_APP → F--CLAUDE-MULTI-APP (underscore → hyphen; verified real dir)', () => {
+    expect(mangleCwdToProjectDir('F:\\CLAUDE_MULTI_APP')).toBe('F--CLAUDE-MULTI-APP')
   })
 
-  it('Windows path: C:\\Users\\nicho → C--Users-nicho (real dir observed)', () => {
-    // Real dir seen: C--Users-nicho
+  // ── Pair 2: verified against real store 2026-06-06 ──
+  it('f:\\platform_v9 → f--platform-v9 (lowercase preserved, underscore → hyphen; verified real dir)', () => {
+    expect(mangleCwdToProjectDir('f:\\platform_v9')).toBe('f--platform-v9')
+  })
+
+  // ── Pair 3: verified against real store 2026-06-06 ──
+  it('F:\\platform_v9\\.claude-worktrees\\warm-toolchain → F--platform-v9--claude-worktrees-warm-toolchain (dot → hyphen, NO run-collapsing; verified real dir)', () => {
+    expect(mangleCwdToProjectDir('F:\\platform_v9\\.claude-worktrees\\warm-toolchain')).toBe(
+      'F--platform-v9--claude-worktrees-warm-toolchain',
+    )
+  })
+
+  // ── Pair 4: verified against real store 2026-06-06 ──
+  it('C:\\Users\\nicho → C--Users-nicho (verified real dir)', () => {
     expect(mangleCwdToProjectDir('C:\\Users\\nicho')).toBe('C--Users-nicho')
   })
 
-  it('Windows path: f:\\platform_v9 → f--platform_v9 (case + underscore preserved)', () => {
-    // Real dir observed: f--platform-v9 (lowercase f)
-    // f:\platform_v9 → replace ':' → f-\platform_v9 → replace \ → f--platform_v9
-    // But real dir is f--platform-v9 meaning underscore WAS replaced to hyphen by CC.
-    // However our implementation does NOT replace underscores — this is the CC-compatible rule
-    // from claude-project-path.ts. We test what our function does, not what CC's dir name is.
-    expect(mangleCwdToProjectDir('f:\\platform_v9')).toBe('f--platform_v9')
+  // ── Synthetic: dots and spaces replaced, no collapsing ──
+  it('/home/a b/x.y → -home-a-b-x-y (space → hyphen, dot → hyphen, synthetic)', () => {
+    expect(mangleCwdToProjectDir('/home/a b/x.y')).toBe('-home-a-b-x-y')
   })
 
-  it('Unix path: /home/jane/repos/app → -home-jane-repos-app', () => {
-    expect(mangleCwdToProjectDir('/home/jane/repos/app')).toBe('-home-jane-repos-app')
+  // ── Confirm no-run-collapsing: backslash after colon = two hyphens ──
+  it('consecutive non-alnum chars each become their own hyphen (no run-collapsing)', () => {
+    // F: → F- then \ → - giving F-- (not F-)
+    expect(mangleCwdToProjectDir('F:\\test')).toBe('F--test')
   })
 
-  it('forward slashes work the same as backslashes', () => {
-    expect(mangleCwdToProjectDir('F:/CLAUDE-MULTI-APP')).toBe('F--CLAUDE-MULTI-APP')
-  })
-
-  it('mixed separators: consecutive slashes collapse to single hyphen', () => {
-    expect(mangleCwdToProjectDir('F:\\/test')).toBe('F--test')
-  })
-
-  it('path with no separators or colons passes through unchanged', () => {
+  it('path with only alphanumerics passes through unchanged', () => {
     expect(mangleCwdToProjectDir('nodrivepath')).toBe('nodrivepath')
   })
 })
