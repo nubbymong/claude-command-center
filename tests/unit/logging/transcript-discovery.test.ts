@@ -73,10 +73,22 @@ describe('canonicalizeTranscriptPath', () => {
     expect(canonicalizeTranscriptPath('')).toBeNull()
   })
 
-  it('uses the LAST .claude/projects segment when .claude appears twice', () => {
-    // A path where there is a directory literally named ".claude" in the prefix AND
-    // a second .claude/projects later — canonicalize must pick the last one.
+  it('.claude dir in prefix (no /projects) does not confuse the segment matcher', () => {
+    // A path where a leading directory is literally named ".claude" (no /projects
+    // after it) — the only valid segment is the second .claude/projects.
     const input = 'C:\\.claude\\some-dir\\.claude\\projects\\proj\\conv.jsonl'
+    const result = canonicalizeTranscriptPath(input)
+    const expected = path.join(homedir, '.claude', 'projects', 'proj', 'conv.jsonl')
+    expect(result).toBe(expected)
+  })
+
+  it('uses the LAST .claude/projects segment when TWO full .claude/projects pairs appear (degenerate / nested junction)', () => {
+    // Counter-example from the spec:
+    //   F:/outer/.claude/projects/inner/.claude/projects/proj/conv.jsonl
+    // The first .claude/projects segment is part of the fake-home prefix;
+    // the second is the canonical one — rest must be `proj/conv.jsonl`, not
+    // `inner/.claude/projects/proj/conv.jsonl`.
+    const input = 'F:/outer/.claude/projects/inner/.claude/projects/proj/conv.jsonl'
     const result = canonicalizeTranscriptPath(input)
     const expected = path.join(homedir, '.claude', 'projects', 'proj', 'conv.jsonl')
     expect(result).toBe(expected)

@@ -62,24 +62,41 @@ import { homedir } from 'node:os'
 export function canonicalizeTranscriptPath(p: string): string | null {
   if (!p) return null
 
-  // Normalize to forward-slash for uniform matching, then run the regex.
-  // We need the LAST occurrence, so we use a global match and take the last.
-  const normalized = p.replace(/\\/g, '/')
+  // Normalize to forward-slash for uniform matching (lowercase for case-insensitive scan).
+  const forwardSlash = p.replace(/\\/g, '/')
+  const normalized = forwardSlash.toLowerCase()
 
-  // Match `.claude/projects` case-insensitively, capturing the rest after it.
-  // We scan for ALL occurrences and take the last one.
-  const pattern = /\.claude\/projects(\/.*)?$/i
-  const match = normalized.match(pattern)
-  if (!match) return null
+  // Find the LAST occurrence of a segment-bounded `.claude/projects` pattern.
+  // We iterate all matches with /g and keep the final one so that paths like
+  //   /fake-home/.claude/projects/inner/.claude/projects/proj/conv.jsonl
+  // resolve to `proj/conv.jsonl` (the part after the last segment), not
+  // `inner/.claude/projects/proj/conv.jsonl` (after the first).
+  //
+  // Pattern: `(?:^|\/)\.claude\/projects(?:\/|$)` — requires `/` or start-of-string
+  // before `.claude` and `/` or end-of-string after `projects` so a bare
+  // `.claudeprojects` directory name does not match.
+  const segmentPattern = /(?:^|\/)\.claude\/projects(?:\/|$)/g
+  let lastMatch: RegExpExecArray | null = null
+  let m: RegExpExecArray | null
+  while ((m = segmentPattern.exec(normalized)) !== null) {
+    lastMatch = m
+  }
+  if (!lastMatch) return null
 
-  // Everything from `.claude/projects` onward (the "rest" after the prefix).
-  // match[1] is the part after `.claude/projects`, e.g. `/f--x/a.jsonl` or undefined.
-  const rest = match[1] ?? ''
+  // Calculate where the "rest" (project-dir name + filename) begins in the
+  // original (case-preserved) forward-slash string.
+  //
+  // lastMatch[0] is e.g. `/.claude/projects/` or `/.claude/projects` (at end).
+  // `segEnd` points to the character after the full matched token.
+  // If the token ends with `/` that slash is already consumed, so `rest` starts
+  // at segEnd directly.  If the path ends exactly at `projects` (no trailing
+  // slash), rest is the empty string.
+  const segEnd = lastMatch.index + lastMatch[0].length
+  const rest = lastMatch[0].endsWith('/') ? forwardSlash.slice(segEnd) : ''
 
-  // Reconstruct as canonical path under homedir.
-  // path.join normalizes separators for the current platform.
-  const canonical = path.join(homedir(), '.claude', 'projects') + (rest ? path.normalize(rest) : '')
-  return path.normalize(canonical)
+  // Reconstruct as canonical path under homedir, letting path.join handle
+  // platform separator normalisation.
+  return path.join(homedir(), '.claude', 'projects', ...(rest ? [rest] : []))
 }
 
 // ---------------------------------------------------------------------------
@@ -146,6 +163,11 @@ interface HeuristicBinder {
    * Returns `{ path: canonical absolute path, confidence: 'heuristic' }` or
    * `null` (no dir / no candidate).
    *
+   * The returned `path` is canonicalized (prefix rewritten to `os.homedir()`)
+   * when `projectsRoot` contains a `.claude/projects` segment; otherwise it
+   * falls back to the `path.normalize`'d raw path (test fixtures using a plain
+   * temp directory will hit the fallback).
+   *
    * BIND-ONCE: a given sessionId gets AT MOST one successful heuristic binding
    * ever (in-memory Map). Repeat calls for the same sessionId return the SAME
    * stored binding (or null if first call failed — failures may retry).
@@ -157,6 +179,13 @@ interface HeuristicBinder {
  * Creates a heuristic binder that locates transcript files by scanning the
  * project directory for the most-recently-modified `.jsonl` within the
  * session-start time window.
+ *
+ * Returned paths are canonicalized via {@link canonicalizeTranscriptPath}
+ * when possible (i.e. when `projectsRoot` itself contains a `.claude/projects`
+ * segment).  When `projectsRoot` has no such segment — as is the case for
+ * temporary directories used in test fixtures — canonicalization returns
+ * `null` and the binding falls back to the raw `path.normalize`'d path
+ * from the injected root.
  *
  * Deps are injectable for testing; production code uses default node:fs and
  * os.homedir().
