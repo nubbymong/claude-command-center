@@ -1,35 +1,40 @@
 /**
- * log-supervisor.ts — owns the logging utilityProcess worker.
+ * log-supervisor.ts — owns the logging utilityProcess worker (Logs v2: the
+ * transcript-indexing worker, transcripts-worker.ts).
  *
  * Mirrors src/main/services/service-supervisor.ts (the hooks supervisor):
  * injectable forkChild + clock, backoff [250,1000,4000,...], restart/maxRestarts,
  * createInitialHealth, appendLog, pushHealth via emit(SERVICE_HEALTH_UPDATE).
  *
  * KEY DIFFERENCE from the hooks supervisor: there is NO in-process DB fallback.
- * better-sqlite3 lives ONLY in the forked worker (out/main/log-worker.js); main
- * must never load it. So after maxRestarts the logging service degrades
- * permanently (drops + a visible log) rather than failing open. To keep the
- * worker module (and better-sqlite3) out of main's bundle this file imports the
- * worker ONLY by the transport types — never `./log-worker` or `./log-db`.
+ * better-sqlite3 lives ONLY in the forked worker (out/main/transcripts-worker.js);
+ * main must never load it. So after maxRestarts the logging service degrades
+ * permanently (a visible log) rather than failing open. To keep the worker
+ * module (and better-sqlite3) out of main's bundle this file imports the worker
+ * ONLY by the transport types — never `./transcripts-worker` or `./transcripts-db`.
  *
  * Two robustness layers on top of the base supervisor:
  *  - an id-keyed query() promise layer that rejects on error/worker-exit/timeout
  *    (a pending query never hangs);
- *  - a bounded, ORDERED while-down buffer for batch/session-start/session-end
- *    (drop-oldest + degrade on overflow; flushed in order on ready). Ordering of
- *    start -> batch -> end is preserved because all three share one queue.
+ *  - a bounded, ORDERED while-down buffer for run-start/run-end/run-account/
+ *    transcript-bind (drop-oldest + degrade on overflow; replayed in order on
+ *    ready). Ordering of start -> bind -> end is preserved because all four
+ *    share one queue.
+ *
+ * Crash reconciliation is now WORKER-SIDE: the worker closes dangling runs and
+ * resumes tails itself on every `open` — the supervisor no longer posts a
+ * reconcile message.
  *
  * No default export (project convention).
  */
 import { createInitialHealth } from '../../shared/service-health'
 import { IPC } from '../../shared/ipc-channels'
 import type { ServiceHealth, ServiceLogEntry, DiagnosticsSnapshot } from '../../shared/service-health'
-import type { ForkedLogWorker } from './fork-log-worker'
-import type { ToWorker, FromWorker, DirMigrationReport } from './log-worker-transport'
-import type { ChunkProgress } from './legacy-log-importer'
+import type { ForkedTranscriptsWorker } from './fork-transcripts-worker'
+import type { ToTranscriptsWorker, FromTranscriptsWorker, DirMigrationReport } from './log-worker-transport'
 
 export interface LogSupervisorOptions {
-  forkChild: () => ForkedLogWorker
+  forkChild: () => ForkedTranscriptsWorker
   dbPath: string
   emit: (channel: string, payload: unknown) => void
   now?: () => number          // injectable clock for tests
@@ -42,23 +47,22 @@ const LOG_CAP = 200
 const SERVICE_ID = 'logging'
 const DEFAULT_BUFFER_CAP_BYTES = 8 * 1024 * 1024
 const DEFAULT_QUERY_TIMEOUT_MS = 15_000
-// A rough byte estimate for tiny lifecycle posts (session-start/session-end) so
-// they count toward the buffer cap without an expensive serialize.
+// A rough byte estimate for the tiny lifecycle posts (run-start/run-end/
+// run-account/transcript-bind) so they count toward the buffer cap without an
+// expensive serialize. All buffered v2 messages are lifecycle-sized.
 const LIFECYCLE_EST_BYTES = 256
 
-type BatchMessage = Extract<ToWorker, { type: 'batch' }>
-type SessionStartMessage = Extract<ToWorker, { type: 'session-start' }>
-type MigrateMessage = Extract<ToWorker, { type: 'migrate' }>
-/** The per-chunk session list the migration importer hands migrate() (the `migrate`
- *  message's `sessions` field). */
-type MigrateSessions = MigrateMessage['sessions']
-/** The batch payload the rest of main hands us (the `batch` message minus its tag). */
-export type LogBatch = Omit<BatchMessage, 'type'>
+type RunStartMessage = Extract<ToTranscriptsWorker, { type: 'run-start' }>
+/** The run metadata pty-manager hands runStart() (the `run-start` message's meta). */
+export type RunStartMeta = RunStartMessage['meta']
+
+type NewMessagesEvent = Extract<FromTranscriptsWorker, { type: 'new-messages' }>
 
 type BufferedMessage =
-  | BatchMessage
-  | SessionStartMessage
-  | Extract<ToWorker, { type: 'session-end' }>
+  | RunStartMessage
+  | Extract<ToTranscriptsWorker, { type: 'run-end' }>
+  | Extract<ToTranscriptsWorker, { type: 'run-account' }>
+  | Extract<ToTranscriptsWorker, { type: 'transcript-bind' }>
 
 interface QueuedItem {
   msg: BufferedMessage
@@ -76,7 +80,7 @@ export class LogSupervisor {
   private now: () => number
   private health: ServiceHealth = createInitialHealth(SERVICE_ID, 'Session logging')
   private log: ServiceLogEntry[] = []
-  private worker: ForkedLogWorker | null = null
+  private worker: ForkedTranscriptsWorker | null = null
   private shuttingDown = false
   // Set once we degrade permanently (maxRestarts exhausted). Like the hooks
   // supervisor's fellOpen guard: stops a late/self-kill exit from re-entering the
@@ -89,9 +93,6 @@ export class LogSupervisor {
   private restartTimer: ReturnType<typeof setTimeout> | null = null
   private static BACKOFFS = [250, 1000, 4000, 4000, 4000]
 
-  // First-ready-only reconcile (crash reconciliation, spec §11).
-  private reconciledOnce = false
-
   // Ordered while-down buffer + its running byte total.
   private buffer: QueuedItem[] = []
   private bufferBytes = 0
@@ -100,23 +101,8 @@ export class LogSupervisor {
   private pending = new Map<number, PendingQuery>()
   private nextQueryId = 1
 
-  // id-keyed pending migration chunks (mirrors `pending` so a chunk's ack can
-  // never hang: resolved by migrate-progress, rejected by migrate-error / exit /
-  // shutdown / timeout). The id is supplied by the caller (one per chunk).
-  private pendingMigrations = new Map<number, { resolve: (p: ChunkProgress) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> | null }>()
-
-  // id-keyed pending DIRECTORY migrations (the long-running worker-internal
-  // streaming import). Unlike a chunk ack this runs for MINUTES on a real tree,
-  // so instead of a fixed deadline it uses an INACTIVITY guard: every
-  // migrate-dir-progress re-arms the timer; sustained silence rejects. Worker
-  // exit / shutdown reject via rejectAllPending like every other pending op.
-  private pendingDirMigrations = new Map<number, {
-    resolve: (r: DirMigrationReport) => void
-    reject: (e: Error) => void
-    onProgress: ((done: number, total: number) => void) | undefined
-    timer: ReturnType<typeof setTimeout> | null
-    arm: () => void
-  }>()
+  // new-messages fan-out subscribers.
+  private newMessagesSubs = new Set<(e: NewMessagesEvent) => void>()
 
   constructor(opts: LogSupervisorOptions) {
     this.opts = opts
@@ -157,25 +143,19 @@ export class LogSupervisor {
     w.transport.onMessage((m) => this.onWorkerMessage(m))
     this.health = { ...this.health, state: this.restarts > 0 ? 'restarting' : 'starting' }
     this.appendLog('info', 'worker-up', `logging worker forked (restart ${this.restarts})`)
-    // Tell the fresh worker to open (re-open) the DB. The worker posts `ready`
-    // once the DB is open; only then do we flush the buffer.
+    // Tell the fresh worker to open (re-open) the DB. The worker closes dangling
+    // runs + resumes tails itself, then posts `ready`; only then do we replay
+    // the while-down buffer.
     w.transport.post({ type: 'open', dbPath: this.opts.dbPath })
     this.pushHealth()
     w.onExit(() => { if (this.worker === w) this.onWorkerExit() })
-  }
-
-  /** Post a crash-reconciliation request. Idempotent on the worker side
-   *  (markRunningCrashed). Called once on first ready; Task 8 may also call it. */
-  reconcile(): void {
-    if (!this.worker) return
-    this.worker.transport.post({ type: 'reconcile' })
   }
 
   // -------------------------------------------------------------------------
   // Worker -> main messages
   // -------------------------------------------------------------------------
 
-  private onWorkerMessage(m: FromWorker): void {
+  private onWorkerMessage(m: FromTranscriptsWorker): void {
     // Once shutting down or permanently degraded the worker is dead/irrelevant;
     // ignore any messages still draining out of the pipe so a stale `ready`/`health`
     // can't flip the pill back to listening and clobber the degraded state.
@@ -189,8 +169,6 @@ export class LogSupervisor {
           startedAt: this.health.startedAt ?? this.now(),
         }
         this.appendLog('info', 'ready', 'logging worker ready (DB open)')
-        // Reconcile once across the supervisor's life (crash reconciliation).
-        if (!this.reconciledOnce) { this.reconciledOnce = true; this.reconcile() }
         this.flushBuffer()
         this.pushHealth()
         return
@@ -199,8 +177,9 @@ export class LogSupervisor {
         this.health = {
           ...this.health,
           inFlight: m.inFlight,
-          eventsTotal: m.eventsTotal,
-          dropsTotal: m.dropsTotal,
+          // v2 health shape: messagesTotal is the worker's ingest counter — it
+          // maps onto the pill's eventsTotal slot (same "work done" semantic).
+          eventsTotal: m.messagesTotal,
           dbBytes: m.dbBytes,
           lastHeartbeatAt: this.now(),
           lastFlushAt: this.now(),
@@ -222,6 +201,12 @@ export class LogSupervisor {
         }
         return
       }
+      case 'new-messages': {
+        for (const cb of this.newMessagesSubs) {
+          try { cb(m) } catch { /* never let a subscriber kill routing */ }
+        }
+        return
+      }
       case 'error': {
         if (m.id != null) {
           const p = this.pending.get(m.id)
@@ -238,51 +223,6 @@ export class LogSupervisor {
         this.pushHealth()
         return
       }
-      case 'migrate-progress': {
-        const p = this.pendingMigrations.get(m.id)
-        if (p) {
-          if (p.timer) clearTimeout(p.timer)
-          this.pendingMigrations.delete(m.id)
-          p.resolve({ importedSessions: m.importedSessions, skippedSessions: m.skippedSessions, failedSessions: m.failedSessions, importedEvents: m.importedEvents })
-        }
-        return
-      }
-      case 'migrate-dir-progress': {
-        const p = this.pendingDirMigrations.get(m.id)
-        if (p) {
-          p.arm() // liveness: progress refreshes the inactivity guard
-          try { p.onProgress?.(m.done, m.total) } catch { /* never let a UI callback kill routing */ }
-        }
-        return
-      }
-      case 'migrate-dir-done': {
-        const p = this.pendingDirMigrations.get(m.id)
-        if (p) {
-          if (p.timer) clearTimeout(p.timer)
-          this.pendingDirMigrations.delete(m.id)
-          p.resolve(m.report)
-        }
-        return
-      }
-      case 'migrate-error': {
-        // A migrate-error can correlate to a directory migration OR a legacy
-        // chunk ack — check the dir map first (ids never collide in practice;
-        // the handler drives exactly one mechanism per run).
-        const d = this.pendingDirMigrations.get(m.id)
-        if (d) {
-          if (d.timer) clearTimeout(d.timer)
-          this.pendingDirMigrations.delete(m.id)
-          d.reject(new Error(m.message))
-          return
-        }
-        const p = this.pendingMigrations.get(m.id)
-        if (p) {
-          if (p.timer) clearTimeout(p.timer)
-          this.pendingMigrations.delete(m.id)
-          p.reject(new Error(m.message))
-        }
-        return
-      }
       default: {
         const _exhaustive: never = m
         void _exhaustive
@@ -292,31 +232,46 @@ export class LogSupervisor {
   }
 
   // -------------------------------------------------------------------------
-  // Ingest (batch + lifecycle) — buffered while not listening, ordered
+  // Run lifecycle + binds — buffered while not listening, ordered
   // -------------------------------------------------------------------------
 
-  postBatch(batch: LogBatch): void {
-    this.enqueueOrSend({ type: 'batch', sessions: batch.sessions }, estimateBatchBytes(batch.sessions))
+  /** Record a new run (one per spawn). pty-manager calls this at PTY spawn. */
+  runStart(meta: RunStartMeta): void {
+    this.enqueueOrSend({ type: 'run-start', meta })
   }
 
-  startSession(meta: SessionStartMessage['meta']): void {
-    this.enqueueOrSend({ type: 'session-start', meta }, LIFECYCLE_EST_BYTES)
+  /** Close the latest open run for the session (PTY exit). */
+  runEnd(sessionId: string, ts: number, status: string): void {
+    this.enqueueOrSend({ type: 'run-end', sessionId, ts, status })
   }
 
-  endSession(sessionId: string, ts: number, status: string): void {
-    this.enqueueOrSend({ type: 'session-end', sessionId, ts, status }, LIFECYCLE_EST_BYTES)
+  /** Back-fill the account email on the latest open run (identity poll). */
+  runAccount(sessionId: string, accountEmail: string): void {
+    this.enqueueOrSend({ type: 'run-account', sessionId, accountEmail })
+  }
+
+  /** Bind a discovered transcript file to the session's current run; the worker
+   *  starts tailing it immediately. */
+  bindTranscript(sessionId: string, path: string, confidence: 'exact' | 'heuristic', sourceVersion?: string): void {
+    this.enqueueOrSend({ type: 'transcript-bind', sessionId, path, confidence, sourceVersion })
+  }
+
+  /** Subscribe to the worker's new-messages fan-out. Returns an unsubscribe. */
+  onNewMessages(cb: (e: { sessionId: string; configId: string | null; count: number }) => void): () => void {
+    this.newMessagesSubs.add(cb)
+    return () => { this.newMessagesSubs.delete(cb) }
   }
 
   /** Forward straight to the worker when listening; otherwise buffer (ordered),
    *  dropping the oldest + degrading if the cap would be exceeded. */
-  private enqueueOrSend(msg: BufferedMessage, bytes: number): void {
+  private enqueueOrSend(msg: BufferedMessage): void {
     if (this.isListening() && this.worker) {
       this.worker.transport.post(msg)
       return
     }
     const cap = this.opts.bufferCapBytes ?? DEFAULT_BUFFER_CAP_BYTES
-    this.buffer.push({ msg, bytes })
-    this.bufferBytes += bytes
+    this.buffer.push({ msg, bytes: LIFECYCLE_EST_BYTES })
+    this.bufferBytes += LIFECYCLE_EST_BYTES
     // Drop the OLDEST buffered item(s) until back under the cap. A single item
     // larger than the cap still drops everything before it then sits alone
     // (we never silently discard the just-arrived message without recording it).
@@ -324,7 +279,7 @@ export class LogSupervisor {
     while (this.bufferBytes > cap && this.buffer.length > 1) {
       const old = this.buffer.shift()!
       this.bufferBytes -= old.bytes
-      dropped += countEvents(old.msg)
+      dropped += 1
     }
     if (dropped > 0) {
       this.health = {
@@ -333,12 +288,12 @@ export class LogSupervisor {
         dropsTotal: this.health.dropsTotal + dropped,
       }
       this.appendLog('warn', 'buffer-overflow',
-        `while-down log buffer exceeded ${cap}B: dropped ${dropped} oldest event(s)`)
+        `while-down log buffer exceeded ${cap}B: dropped ${dropped} oldest message(s)`)
       this.pushHealth()
     }
   }
 
-  /** Flush the ordered buffer to the worker, then clear it. */
+  /** Replay the ordered buffer to the worker, then clear it. */
   private flushBuffer(): void {
     if (!this.worker || this.buffer.length === 0) {
       this.buffer = []
@@ -379,66 +334,16 @@ export class LogSupervisor {
     })
   }
 
-  /** Post a migration chunk and resolve on its ack. Rejects fast when the worker
-   *  is unavailable and on worker exit/shutdown — like query(), it can never hang.
-   *  `id` correlates the chunk to its ack; callers pass a unique id per chunk. */
-  migrate(sessions: MigrateSessions, id: number): Promise<ChunkProgress> {
-    if (this.shuttingDown) return Promise.reject(new Error('log supervisor is shutting down'))
-    if (!this.isListening() || !this.worker) {
-      return Promise.reject(new Error(`logging worker not available (state=${this.health.state})`))
-    }
-    return new Promise<ChunkProgress>((resolve, reject) => {
-      const timeoutMs = this.opts.queryTimeoutMs ?? DEFAULT_QUERY_TIMEOUT_MS
-      // 4x the query budget: a migrate chunk imports a whole chunk of sessions +
-      // their events (far heavier than a single read), so it needs more headroom --
-      // but it stays bounded so a wedged worker can never hang the import forever.
-      const timer = setTimeout(() => {
-        if (this.pendingMigrations.delete(id)) reject(new Error(`migrate chunk timed out after ${timeoutMs * 4}ms`))
-      }, timeoutMs * 4)
-      ;(timer as { unref?: () => void }).unref?.()
-      this.pendingMigrations.set(id, { resolve, reject, timer })
-      this.worker!.transport.post({ type: 'migrate', id, sessions })
-    })
-  }
-
   /**
-   * Start the worker-internal streaming directory migration (the 16 GB-scale
-   * legacy import). ONE op per run: the worker walks + parses + imports the tree
-   * itself, posting progress; this resolves with the final DirMigrationReport.
-   * Liveness: an inactivity guard re-armed by every progress message (a real run
-   * takes minutes, so a fixed deadline would be wrong) — sustained silence,
-   * worker exit, or shutdown all reject. It can never hang.
+   * TRANSITIONAL STUB (Task 10 rebuilds the migration on the transcripts
+   * stack). The v2 worker does not speak `migrate-dir`, so the legacy import is
+   * unavailable while the stacks swap over. Rejecting here keeps the IPC
+   * handler (log-migration-handlers.ts) compiling AND safe: the run handler
+   * surfaces the error and never writes the completion marker, so reclaim
+   * stays blocked — no legacy data can be deleted.
    */
-  migrateDir(logsDir: string, onProgress?: (done: number, total: number) => void): Promise<DirMigrationReport> {
-    if (this.shuttingDown) return Promise.reject(new Error('log supervisor is shutting down'))
-    if (!this.isListening() || !this.worker) {
-      return Promise.reject(new Error(`logging worker not available (state=${this.health.state})`))
-    }
-    const id = this.nextQueryId++
-    return new Promise<DirMigrationReport>((resolve, reject) => {
-      // 8x the query budget between progress posts (default 120 s). The worker
-      // posts at least every PROGRESS_INTERVAL_MS while alive, so this only fires
-      // on a genuinely wedged worker.
-      const inactivityMs = (this.opts.queryTimeoutMs ?? DEFAULT_QUERY_TIMEOUT_MS) * 8
-      const entry = {
-        resolve,
-        reject,
-        onProgress,
-        timer: null as ReturnType<typeof setTimeout> | null,
-        arm: () => {
-          if (entry.timer) clearTimeout(entry.timer)
-          entry.timer = setTimeout(() => {
-            if (this.pendingDirMigrations.delete(id)) {
-              reject(new Error(`directory migration made no progress for ${inactivityMs}ms`))
-            }
-          }, inactivityMs)
-          ;(entry.timer as { unref?: () => void }).unref?.()
-        },
-      }
-      entry.arm()
-      this.pendingDirMigrations.set(id, entry)
-      this.worker!.transport.post({ type: 'migrate-dir', id, logsDir })
-    })
+  migrateDir(_logsDir: string, _onProgress?: (done: number, total: number) => void): Promise<DirMigrationReport> {
+    return Promise.reject(new Error('legacy log migration is unavailable during the logs v2 transition'))
   }
 
   /** Reject + clear every pending query so none can hang (on exit/shutdown). */
@@ -448,16 +353,6 @@ export class LogSupervisor {
       p.reject(new Error(reason))
     }
     this.pending.clear()
-    for (const [, p] of this.pendingMigrations) {
-      if (p.timer) clearTimeout(p.timer)
-      p.reject(new Error(reason))
-    }
-    this.pendingMigrations.clear()
-    for (const [, p] of this.pendingDirMigrations) {
-      if (p.timer) clearTimeout(p.timer)
-      p.reject(new Error(reason))
-    }
-    this.pendingDirMigrations.clear()
   }
 
   // -------------------------------------------------------------------------
@@ -486,14 +381,14 @@ export class LogSupervisor {
   }
 
   /** Terminal state: no in-process DB fallback exists, so logging just degrades
-   *  (drops + a visible log). Host stays utility-process (not in-process-fallback)
-   *  because there IS no fallback — the worker is dead and events will be dropped.
-   *  Keeping utility-process means the renderer pill shows the honest label
-   *  "Degraded" rather than the misleading "Fallback". */
+   *  (a visible log; run lifecycle is lost while down). Host stays
+   *  utility-process (not in-process-fallback) because there IS no fallback —
+   *  the worker is dead. Keeping utility-process means the renderer pill shows
+   *  the honest label "Degraded" rather than the misleading "Fallback". */
   private degradePermanently(): void {
     this.degradedPermanently = true
     this.appendLog('error', 'degraded',
-      `logging worker failed to recover after ${this.restarts} restarts; logging degraded (events will be dropped)`)
+      `logging worker failed to recover after ${this.restarts} restarts; logging degraded (runs will not be recorded)`)
     this.health = { ...this.health, host: 'utility-process', state: 'degraded', restartCount: this.restarts }
     // Free the dead worker; there is nothing to fall back to.
     try { this.worker?.kill() } catch { /* best-effort */ }
@@ -508,7 +403,7 @@ export class LogSupervisor {
    *  there is NO in-process fallback, so once `degradePermanently` fires a manual
    *  restart is the ONLY way back: clear the terminal `degradedPermanently` flag,
    *  reset the restart/backoff counters, free any dead worker, and respawn (which
-   *  re-sends `open` so the worker reopens the DB). Mirrors
+   *  re-sends `open` so the worker reopens the DB + resumes tails). Mirrors
    *  ServiceSupervisor.manualRestart. Declines during shutdown. */
   manualRestart(serviceId: string): { ok: boolean; reason?: string } {
     if (serviceId !== SERVICE_ID) return { ok: false, reason: 'unknown-service' }
@@ -540,27 +435,4 @@ export class LogSupervisor {
     try { this.worker?.kill() } catch { /* already dead */ }
     this.rejectAllPending('log supervisor is shutting down')
   }
-}
-
-// ---------------------------------------------------------------------------
-// Byte estimation helpers (module-private)
-// ---------------------------------------------------------------------------
-
-/** Estimate a batch's payload size by summing the raw byteLengths of every chunk.
- *  Used to bound the while-down buffer (spec §5 — visible loss, never silent). */
-function estimateBatchBytes(sessions: Extract<ToWorker, { type: 'batch' }>['sessions']): number {
-  let total = 0
-  for (const s of sessions) {
-    for (const c of s.chunks) total += c.raw.byteLength
-  }
-  return total
-}
-
-/** How many log events a buffered message represents, for the dropsTotal counter
- *  (matches the worker's per-chunk eventsTotal accounting). */
-function countEvents(msg: BufferedMessage): number {
-  if (msg.type !== 'batch') return 1
-  let n = 0
-  for (const s of msg.sessions) n += s.chunks.length
-  return n
 }

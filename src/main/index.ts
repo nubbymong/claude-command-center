@@ -737,12 +737,16 @@ if (!gotTheLock) {
       // registerSession still mints secrets) but never binds; no child is forked.
       setGateway(new HooksGateway({ defaultPort: hooksPort, emit: emitWithMerge }))
     }
-    // Session logging: start the SQLite worker supervisor + capture (gated on
-    // loggingEnabled, default true; no-op + no fork when disabled). The supervisor
-    // reconciles dangling sessions on its first worker-ready. The native dep
-    // (better-sqlite3) lives ONLY in the forked worker — this call stays main-clean.
+    // Session logging (Logs v2): start the transcripts worker supervisor (gated
+    // on loggingEnabled, default true; no-op + no fork when disabled). The worker
+    // closes dangling runs + resumes transcript tails itself on open. The native
+    // dep (better-sqlite3) lives ONLY in the forked worker — this call stays
+    // main-clean.
+    // TODO(logs2 Phase 5): wipe the orphaned old byte-capture DB
+    // (<dataDir>/logs.db) when the old stack is deleted — it is no longer
+    // written or read by the live app.
     try {
-      initLogging({ emit: emitWithMerge, dbPath: join(getDataDirectory(), 'logs.db') })
+      initLogging({ emit: emitWithMerge, dbPath: join(getDataDirectory(), 'transcripts.db') })
     } catch (err) {
       logError(`[logs] initLogging failed; session logging disabled this run: ${(err as Error)?.message ?? err}`)
     }
