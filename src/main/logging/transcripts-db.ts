@@ -42,8 +42,49 @@ export interface StitchedMessage {
   role: string
   kind: string
   content: string
-  toolName?: string | null
-  toolMeta?: string | null
+  toolName: string | null
+  toolMeta: string | null
+}
+
+/** Shape returned by listResumableTranscripts(). */
+export interface ResumableTranscript {
+  transcriptId: number
+  runId: number
+  path: string
+  ingestCursor: number
+  parserVersion: number
+}
+
+/** Shape returned by listSlots(). */
+export interface SlotSummary {
+  slotKey: string
+  configId: string | null
+  configLabel: string
+  accountEmail: string | null
+  lastActive: number
+  runCount: number
+  messageCount: number
+}
+
+/** Shape returned by searchMessages(). */
+export interface TranscriptSearchHit {
+  runId: number
+  idx: number
+  configId: string | null
+  sessionId: string
+  snippet: string
+}
+
+/** One message passed to appendMessages(). */
+export interface NewMessage {
+  idx: number
+  ts: number
+  role: string
+  kind: string
+  content: string
+  toolName?: string
+  toolMeta?: string
+  raw?: string
 }
 
 export type TranscriptScope = { configId: string } | { sessionId: string }
@@ -86,31 +127,16 @@ export interface TranscriptsDb {
   advanceCursor(transcriptId: number, cursor: number): void
 
   /** All transcripts with status='tailing' (worker restart resume points). */
-  listResumableTranscripts(): {
-    transcriptId: number
-    runId: number
-    path: string
-    ingestCursor: number
-    parserVersion: number
-  }[]
+  listResumableTranscripts(): ResumableTranscript[]
 
   /**
    * Append messages to a run in a single transaction. A duplicate (runId, idx)
    * throws (UNIQUE violation) and rolls back the whole batch.
+   *
+   * Throws FOREIGN KEY constraint failed if the run does not exist (e.g. after
+   * deleteSlot — unlike clearAll, deleteSlot does NOT protect running runs).
    */
-  appendMessages(
-    runId: number,
-    msgs: {
-      idx: number
-      ts: number
-      role: string
-      kind: string
-      content: string
-      toolName?: string
-      toolMeta?: string
-      raw?: string
-    }[],
-  ): void
+  appendMessages(runId: number, msgs: NewMessage[]): void
 
   /** max(idx)+1 for the run, or 0 when it has no messages. */
   nextIdx(runId: number): number
@@ -137,34 +163,28 @@ export interface TranscriptsDb {
     role: string
     kind: string
     ts: number
-    toolName?: string
+    toolName: string | null
   }[]
 
   /**
    * FTS search over message content. Tokens are double-quoted (FTS5 phrase
    * rules) so operator words / syntax chars match literally and never throw.
    */
-  searchMessages(
-    query: string,
-    limit?: number,
-  ): { runId: number; idx: number; configId: string | null; sessionId: string; snippet: string }[]
+  searchMessages(query: string, limit?: number): TranscriptSearchHit[]
 
   /**
    * One row per configId; runs with configId NULL group per sessionId under
    * slotKey `orphan:<sessionId>`. Identity fields (configLabel, accountEmail)
    * come from the group's latest run.
    */
-  listSlots(): {
-    slotKey: string
-    configId: string | null
-    configLabel: string
-    accountEmail: string | null
-    lastActive: number
-    runCount: number
-    messageCount: number
-  }[]
+  listSlots(): SlotSummary[]
 
-  /** Delete every run in the scope; FK cascade removes messages + transcripts. */
+  /**
+   * Delete every run in the scope; FK cascade removes messages + transcripts.
+   * Note: unlike clearAll, deleteSlot does NOT protect running runs — a running
+   * run's runId becomes invalid after this call (appendMessages will throw
+   * FOREIGN KEY constraint failed if called with that runId).
+   */
   deleteSlot(scope: TranscriptScope): { deletedRuns: number; deletedMessages: number }
 
   /** Delete all runs EXCEPT status='running' (their messages/transcripts kept). */
@@ -177,6 +197,13 @@ export interface TranscriptsDb {
   ingestStats(
     sessionId: string,
   ): { transcripts: { path: string; status: string; ord: number }[]; messageCount: number } | null
+
+  /**
+   * Force a WAL checkpoint (TRUNCATE mode) so the WAL file is flushed back into
+   * the main database file. Call after large deletes so that the reported file
+   * size reflects the freed space (mirrors log-db.ts checkpoint()).
+   */
+  checkpoint(): void
 
   close(): void
 }
@@ -274,9 +301,38 @@ interface PageRow {
   runStartedAt: number
 }
 
+interface StitchOptions {
+  /**
+   * If set, a relaunch divider is prepended BEFORE the first row, using the
+   * provided ts value. Used when a page boundary coincides with a run boundary
+   * (the first returned row belongs to a different run than the anchor).
+   */
+  leadingDivider?: { runId: number; ts: number }
+  /**
+   * If set, a relaunch divider is appended AFTER the last row, using the
+   * provided runId and ts. Used when the last returned row belongs to a
+   * different run than the anchor (i.e. the anchor's run starts after the page).
+   */
+  trailingDivider?: { runId: number; ts: number }
+}
+
 /** Insert synthesized relaunch rows at run boundaries inside an ASC page. */
-function stitchRows(rows: PageRow[]): StitchedMessage[] {
+function stitchRows(rows: PageRow[], opts: StitchOptions = {}): StitchedMessage[] {
   const out: StitchedMessage[] = []
+
+  if (opts.leadingDivider && rows.length > 0) {
+    out.push({
+      runId: opts.leadingDivider.runId,
+      idx: -1,
+      ts: opts.leadingDivider.ts,
+      role: 'system',
+      kind: 'relaunch',
+      content: '',
+      toolName: null,
+      toolMeta: null,
+    })
+  }
+
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i]
     if (i > 0 && rows[i - 1].runId !== row.runId) {
@@ -302,6 +358,20 @@ function stitchRows(rows: PageRow[]): StitchedMessage[] {
       toolMeta: row.toolMeta,
     })
   }
+
+  if (opts.trailingDivider && rows.length > 0) {
+    out.push({
+      runId: opts.trailingDivider.runId,
+      idx: -1,
+      ts: opts.trailingDivider.ts,
+      role: 'system',
+      kind: 'relaunch',
+      content: '',
+      toolName: null,
+      toolMeta: null,
+    })
+  }
+
   return out
 }
 
@@ -425,35 +495,21 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
     VALUES (@runId, @idx, @ts, @role, @kind, @content, @toolName, @toolMeta, @raw)
   `)
 
-  const runAppendMessages = sqlite.transaction(
-    (
-      runId: number,
-      msgs: Array<{
-        idx: number
-        ts: number
-        role: string
-        kind: string
-        content: string
-        toolName?: string
-        toolMeta?: string
-        raw?: string
-      }>,
-    ) => {
-      for (const m of msgs) {
-        stmtInsertMessage.run({
-          runId,
-          idx: m.idx,
-          ts: m.ts,
-          role: m.role,
-          kind: m.kind,
-          content: m.content,
-          toolName: m.toolName ?? null,
-          toolMeta: m.toolMeta ?? null,
-          raw: m.raw ?? null,
-        })
-      }
-    },
-  )
+  const runAppendMessages = sqlite.transaction((runId: number, msgs: NewMessage[]) => {
+    for (const m of msgs) {
+      stmtInsertMessage.run({
+        runId,
+        idx: m.idx,
+        ts: m.ts,
+        role: m.role,
+        kind: m.kind,
+        content: m.content,
+        toolName: m.toolName ?? null,
+        toolMeta: m.toolMeta ?? null,
+        raw: m.raw ?? null,
+      })
+    }
+  })
 
   const stmtNextIdx: Statement = sqlite.prepare(
     `SELECT COALESCE(MAX(idx) + 1, 0) AS nextIdx FROM messages WHERE runId = ?`,
@@ -638,13 +694,7 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
     },
 
     listResumableTranscripts() {
-      return stmtListResumable.all() as {
-        transcriptId: number
-        runId: number
-        path: string
-        ingestCursor: number
-        parserVersion: number
-      }[]
+      return stmtListResumable.all() as ResumableTranscript[]
     },
 
     appendMessages(runId, msgs) {
@@ -669,30 +719,46 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
         if (page.dir === 'newer') return []
         rows = stmts.tail.all({ scope: scopeValue, limit: page.limit }) as PageRow[]
         rows.reverse()
-      } else {
-        const anchorRun = stmtGetRunStartedAt.get(page.anchor.runId) as { startedAt: number } | undefined
-        if (!anchorRun) return []
-        const params = {
-          scope: scopeValue,
-          aStartedAt: anchorRun.startedAt,
-          aRunId: page.anchor.runId,
-          aIdx: page.anchor.idx,
-          limit: page.limit,
+        return stitchRows(rows)
+      }
+
+      const anchorRun = stmtGetRunStartedAt.get(page.anchor.runId) as { startedAt: number } | undefined
+      if (!anchorRun) return []
+      const params = {
+        scope: scopeValue,
+        aStartedAt: anchorRun.startedAt,
+        aRunId: page.anchor.runId,
+        aIdx: page.anchor.idx,
+        limit: page.limit,
+      }
+
+      const stitchOpts: StitchOptions = {}
+
+      if (page.dir === 'older') {
+        rows = stmts.older.all(params) as PageRow[]
+        rows.reverse()
+        // Page-seam: if the last row belongs to a DIFFERENT run than the anchor
+        // and the anchor is not itself a divider (idx === -1), synthesize a
+        // trailing divider so consumers concatenating pages see the boundary.
+        if (rows.length > 0 && rows[rows.length - 1].runId !== page.anchor.runId && page.anchor.idx !== -1) {
+          stitchOpts.trailingDivider = { runId: page.anchor.runId, ts: anchorRun.startedAt }
         }
-        if (page.dir === 'older') {
-          rows = stmts.older.all(params) as PageRow[]
-          rows.reverse()
-        } else {
-          rows = stmts.newer.all(params) as PageRow[]
+      } else {
+        rows = stmts.newer.all(params) as PageRow[]
+        // Page-seam: if the first row belongs to a DIFFERENT run than the anchor,
+        // synthesize a leading divider before the first row.
+        if (rows.length > 0 && rows[0].runId !== page.anchor.runId) {
+          stitchOpts.leadingDivider = { runId: rows[0].runId, ts: rows[0].runStartedAt }
         }
       }
-      return stitchRows(rows)
+
+      return stitchRows(rows, stitchOpts)
     },
 
     turnSummary(scope) {
       const scopeCol = 'configId' in scope ? ('configId' as const) : ('sessionId' as const)
       const scopeValue = 'configId' in scope ? scope.configId : scope.sessionId
-      const rows = stmtTurnSummary[scopeCol].all(scopeValue) as {
+      return stmtTurnSummary[scopeCol].all(scopeValue) as {
         runId: number
         idx: number
         role: string
@@ -700,27 +766,13 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
         ts: number
         toolName: string | null
       }[]
-      return rows.map((r) => ({
-        runId: r.runId,
-        idx: r.idx,
-        role: r.role,
-        kind: r.kind,
-        ts: r.ts,
-        toolName: r.toolName ?? undefined,
-      }))
     },
 
     searchMessages(query, limit = 50) {
       const safeQuery = sanitizeFtsQuery(query)
       if (!safeQuery) return []
       try {
-        return stmtSearchMessages.all({ query: safeQuery, limit }) as {
-          runId: number
-          idx: number
-          configId: string | null
-          sessionId: string
-          snippet: string
-        }[]
+        return stmtSearchMessages.all({ query: safeQuery, limit }) as TranscriptSearchHit[]
       } catch {
         // If FTS still chokes on a malformed query, return empty rather than throwing
         return []
@@ -728,15 +780,7 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
     },
 
     listSlots() {
-      return stmtListSlots.all() as {
-        slotKey: string
-        configId: string | null
-        configLabel: string
-        accountEmail: string | null
-        lastActive: number
-        runCount: number
-        messageCount: number
-      }[]
+      return stmtListSlots.all() as SlotSummary[]
     },
 
     deleteSlot(scope) {
@@ -758,6 +802,10 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
       }[]
       const { c } = stmtCountMessagesForRun.get(run.runId) as { c: number }
       return { transcripts, messageCount: c }
+    },
+
+    checkpoint() {
+      sqlite.pragma('wal_checkpoint(TRUNCATE)')
     },
 
     close() {

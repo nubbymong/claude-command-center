@@ -231,6 +231,14 @@ describe('transcripts-db', () => {
     expect(db.nextIdx(r2)).toBe(0)
   })
 
+  it('appendMessages throws FOREIGN KEY constraint when the run has been deleted by deleteSlot', () => {
+    const r1 = db.insertRun(runMeta({ configId: 'cfgFK', startedAt: 100 }))
+    db.appendMessages(r1, [msg(0)])
+    db.deleteSlot({ configId: 'cfgFK' })
+    // The run no longer exists — FOREIGN KEY constraint must fire
+    expect(() => db.appendMessages(r1, [msg(1)])).toThrow()
+  })
+
   // -------------------------------------------------------------------------
   // 6. readMessagesPage — stitching
   // -------------------------------------------------------------------------
@@ -344,6 +352,96 @@ describe('transcripts-db', () => {
     expect(db.readMessagesPage({ configId: 'nope' }, { anchor: 'tail', dir: 'older', limit: 10 })).toEqual([])
   })
 
+  it('page-seam divider: older page ending exactly at a run boundary appends a trailing divider', () => {
+    // r1 has m0-m2; r2 has m0-m2. tail page with limit=3 returns all of r2.
+    // The NEXT older-anchored page (from r2,m0) returns all of r1 — and since
+    // that page ends exactly at the r1/r2 boundary it must include a trailing divider.
+    const r1 = db.insertRun(runMeta({ configId: 'cfgSeam', startedAt: 100 }))
+    db.appendMessages(r1, [msg(0), msg(1), msg(2)])
+    const r2 = db.insertRun(runMeta({ configId: 'cfgSeam', startedAt: 200 }))
+    db.appendMessages(r2, [msg(0), msg(1), msg(2)])
+
+    // tail page = exactly r2
+    const tailPage = db.readMessagesPage(
+      { configId: 'cfgSeam' },
+      { anchor: 'tail', dir: 'older', limit: 3 },
+    )
+    expect(tailPage.map((p) => [p.runId, p.idx])).toEqual([
+      [r2, 0],
+      [r2, 1],
+      [r2, 2],
+    ])
+
+    // older page anchored at r2,m0 — returns r1m0..r1m2, ends at r1 while anchor is in r2 → trailing divider
+    const olderPage = db.readMessagesPage(
+      { configId: 'cfgSeam' },
+      { anchor: { runId: r2, idx: 0 }, dir: 'older', limit: 3 },
+    )
+    expect(olderPage.map((p) => [p.runId, p.idx])).toEqual([
+      [r1, 0],
+      [r1, 1],
+      [r1, 2],
+      [r2, -1], // trailing seam divider
+    ])
+    expect(olderPage[3]).toMatchObject({ role: 'system', kind: 'relaunch', content: '' })
+  })
+
+  it('page-seam divider: newer page starting exactly at a new run prepends a leading divider', () => {
+    // r1 m0-m2; r2 m0-m2. Anchoring at r1,m2 with dir=newer + limit=3 returns
+    // all of r2 — a different run from the anchor → leading divider prepended.
+    const r1 = db.insertRun(runMeta({ configId: 'cfgSeam2', startedAt: 100 }))
+    db.appendMessages(r1, [msg(0), msg(1), msg(2)])
+    const r2 = db.insertRun(runMeta({ configId: 'cfgSeam2', startedAt: 200 }))
+    db.appendMessages(r2, [msg(0), msg(1), msg(2)])
+
+    const newerPage = db.readMessagesPage(
+      { configId: 'cfgSeam2' },
+      { anchor: { runId: r1, idx: 2 }, dir: 'newer', limit: 3 },
+    )
+    expect(newerPage.map((p) => [p.runId, p.idx])).toEqual([
+      [r2, -1], // leading seam divider
+      [r2, 0],
+      [r2, 1],
+      [r2, 2],
+    ])
+    expect(newerPage[0]).toMatchObject({ role: 'system', kind: 'relaunch', content: '' })
+  })
+
+  it('page-seam divider: anchoring ON a divider row (idx=-1) does not produce a duplicate', () => {
+    const r1 = db.insertRun(runMeta({ configId: 'cfgSeam3', startedAt: 100 }))
+    db.appendMessages(r1, [msg(0), msg(1)])
+    const r2 = db.insertRun(runMeta({ configId: 'cfgSeam3', startedAt: 200 }))
+    db.appendMessages(r2, [msg(0), msg(1)])
+
+    // Anchor on the divider row (idx=-1) that lives at r2; dir=older
+    // → page is all of r1; anchor.idx === -1, so NO trailing divider appended
+    const olderFromDivider = db.readMessagesPage(
+      { configId: 'cfgSeam3' },
+      { anchor: { runId: r2, idx: -1 }, dir: 'older', limit: 10 },
+    )
+    expect(olderFromDivider.filter((p) => p.kind === 'relaunch').length).toBe(0)
+    expect(olderFromDivider.map((p) => [p.runId, p.idx])).toEqual([
+      [r1, 0],
+      [r1, 1],
+    ])
+  })
+
+  it('empty middle run produces no divider of its own (A with msgs / B with none / C with msgs)', () => {
+    const rA = db.insertRun(runMeta({ configId: 'cfgABC', startedAt: 100 }))
+    db.appendMessages(rA, [msg(0), msg(1)])
+    // rB: zero messages
+    db.insertRun(runMeta({ configId: 'cfgABC', startedAt: 200 }))
+    const rC = db.insertRun(runMeta({ configId: 'cfgABC', startedAt: 300 }))
+    db.appendMessages(rC, [msg(0), msg(1)])
+
+    const page = db.readMessagesPage({ configId: 'cfgABC' }, { anchor: 'tail', dir: 'older', limit: 100 })
+    // rB contributes nothing → one divider between A and C
+    expect(page.filter((p) => p.kind === 'relaunch').length).toBe(1)
+    const kinds = page.map((p) => p.kind)
+    expect(kinds).toEqual(['message', 'message', 'relaunch', 'message', 'message'])
+    expect(page[2]).toMatchObject({ runId: rC, idx: -1, ts: 300, kind: 'relaunch' })
+  })
+
   // -------------------------------------------------------------------------
   // 7. turnSummary
   // -------------------------------------------------------------------------
@@ -364,7 +462,7 @@ describe('transcripts-db', () => {
       [r2, 0],
     ])
     expect(summ[1]).toMatchObject({ role: 'assistant', kind: 'tool_use', toolName: 'Bash', ts: 1001 })
-    expect(summ[0].toolName).toBeUndefined()
+    expect(summ[0].toolName).toBeNull()
     // no content payload in a summary row
     expect(Object.keys(summ[1])).not.toContain('content')
 
@@ -465,7 +563,17 @@ describe('transcripts-db', () => {
     const res = db.deleteSlot({ configId: 'cfgA' })
     expect(res).toEqual({ deletedRuns: 2, deletedMessages: 3 })
 
-    // FTS rows gone (delete triggers fired through the FK cascade)
+    // FTS rows gone (delete triggers fired through the FK cascade).
+    // Verify via direct FTS table query so a JOIN bug can't mask orphan rows.
+    const ftsDirect = inspect(
+      (raw) =>
+        (
+          raw
+            .prepare(`SELECT count(*) AS c FROM messages_fts WHERE messages_fts MATCH ?`)
+            .get('"cascadetoken"') as { c: number }
+        ).c,
+    )
+    expect(ftsDirect).toBe(0)
     expect(db.searchMessages('cascadetoken')).toEqual([])
     // transcripts cascaded
     const tCount = inspect(
@@ -558,5 +666,18 @@ describe('transcripts-db', () => {
     stats = db.ingestStats('s1')
     expect(stats!.messageCount).toBe(0)
     expect(stats!.transcripts).toEqual([{ path: 'C:/t/r2.jsonl', status: 'pending', ord: 0 }])
+  })
+
+  // -------------------------------------------------------------------------
+  // checkpoint
+  // -------------------------------------------------------------------------
+
+  it('checkpoint() runs without throwing and the db remains usable', () => {
+    const r1 = db.insertRun(runMeta())
+    db.appendMessages(r1, [msg(0)])
+    db.deleteSlot({ sessionId: 's1' })
+    expect(() => db.checkpoint()).not.toThrow()
+    // db is still functional after checkpoint
+    expect(() => db.insertRun(runMeta())).not.toThrow()
   })
 })
