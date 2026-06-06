@@ -15,6 +15,19 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '1.5.32',
+    date: '2026-06-06',
+    highlights: 'Critical fix: importing your existing logs no longer freezes the app. Tested against a real 16 GB log set, with live progress, a completion notice, and safe interruption.',
+    changes: [
+      { type: 'fix', description: 'Importing existing logs no longer freezes the app. The import now runs entirely in the background logging worker, streams the data in small pieces, keeps the app fully usable throughout, and shows live progress. Verified end to end against a real 16 GB, 990-session log set.' },
+      { type: 'fix', description: 'An interrupted log import is now safe by design: anything already imported stays, the interrupted session is automatically redone on the next run, re-runs skip completed sessions instantly, and the permanent space reclaim stays locked until an import completes 100% cleanly.' },
+      { type: 'feature', description: 'A notice now appears when the log import finishes, wherever you are in the app, with a View report shortcut to the reconciliation report. If anything failed it says so clearly, and nothing is deleted.' },
+      { type: 'feature', description: 'Closing the app while a log import runs now asks first. Quitting is safe: the import stops cleanly and continues from where it left off the next time you run it.' },
+      { type: 'feature', description: 'New startup choice for saved sessions: Resume or Don\'t open. You are no longer forced to resume your saved sessions on every launch.' },
+      { type: 'fix', description: 'The per-session Logs pane no longer goes blank after running /clear in a session. The replay now keeps the full history scrollable and marks where the screen was cleared with a divider. Your captured logs were never lost; this was purely a display issue.' },
+    ],
+  },
+  {
     version: '1.5.31',
     date: '2026-06-05',
     highlights: 'More accurate per-account cost tracking under the hood, plus a clearer warning in the account attribution tool.',
