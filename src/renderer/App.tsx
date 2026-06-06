@@ -56,6 +56,7 @@ import { setupChannelListeners } from './stores/channelStore'
 import PermissionToastStack from './components/channels/PermissionToastStack'
 import LoggingConsentPrompt from './components/LoggingConsentPrompt'
 import LogMigrationPrompt from './components/LogMigrationPrompt'
+import ResumeSessionsPrompt from './components/ResumeSessionsPrompt'
 // Side-effect import: registers window.__captureHarness for the
 // capture-training script. Renderer-local store mutations only, no
 // IPC surface widening (see capture-harness.ts header).
@@ -145,6 +146,9 @@ export default function App() {
   const [partnerActive, setPartnerActive] = useState<Set<string>>(new Set())
   const [showMachineNamePrompt, setShowMachineNamePrompt] = useState(false)
   const [machineNameInput, setMachineNameInput] = useState('')
+  // Saved sessions awaiting the user's Resume / Don't-open choice (startup gate —
+  // previously every boot force-resumed the whole saved set).
+  const [pendingRestore, setPendingRestore] = useState<SessionState | null>(null)
   const configs = useConfigStore((s) => s.configs)
   const launchConfig = useLaunchConfig()
   // onCreateConfigFromStage: App owns the GuidedConfigView toggle via showGuidedConfig.
@@ -302,7 +306,15 @@ export default function App() {
         }
       }
 
-      await restoreSavedSessions()
+      // Resume opt-out: LOAD the saved state but do not auto-restore — the
+      // ResumeSessionsPrompt lets the user decline ("Don't open") instead of
+      // being forced to resume every boot.
+      try {
+        const savedState = await window.electronAPI.session.load() as SessionState | null
+        if (savedState && savedState.sessions.length > 0) setPendingRestore(savedState)
+      } catch (err) {
+        console.error('[App] Failed to load saved sessions:', err)
+      }
 
       // Start cloud agent IPC listener early so status updates are
       // never missed (previously only started when CloudAgentsPage mounted)
@@ -416,11 +428,8 @@ export default function App() {
   }, [])
 
   // Restore saved sessions on startup
-  async function restoreSavedSessions() {
+  async function restoreSavedSessions(savedState: SessionState) {
     try {
-      const savedState = await window.electronAPI.session.load() as SessionState | null
-      if (!savedState || savedState.sessions.length === 0) return
-
       console.log(`[App] Restoring ${savedState.sessions.length} sessions...`)
 
       // Idempotent session colour migration (no guard). session.clear() below wipes
@@ -849,6 +858,23 @@ export default function App() {
         )}
 
         {configLoaded && loggingConsentSeen && <LogMigrationPrompt />}
+
+        {pendingRestore && (
+          <ResumeSessionsPrompt
+            count={pendingRestore.sessions.length}
+            onResume={() => {
+              const saved = pendingRestore
+              setPendingRestore(null)
+              void restoreSavedSessions(saved)
+            }}
+            onDontOpen={() => {
+              setPendingRestore(null)
+              // Discard the saved cards so the next boot doesn't re-prompt; the
+              // conversations themselves stay resumable from inside Claude.
+              void window.electronAPI.session.clear()
+            }}
+          />
+        )}
 
         {showMachineNamePrompt && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">

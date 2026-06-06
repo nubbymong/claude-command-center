@@ -20,7 +20,9 @@ import * as fs from 'fs'
 import { openLogDb } from './log-db'
 import type { LogDb } from './log-db'
 import { stripAnsi } from './ansi-strip'
-import type { ToWorker, FromWorker } from './log-worker-transport'
+import { planLegacyGroups, streamGroup } from './legacy-log-parser'
+import type { LegacyGroup } from './legacy-log-parser'
+import type { ToWorker, FromWorker, DirMigrationReport } from './log-worker-transport'
 
 // ---------------------------------------------------------------------------
 // Internal counters — shared across all handleWorkerMessage calls made against
@@ -246,6 +248,24 @@ function _handleWorkerMessage(
       return
     }
 
+    // ---- migrate-dir (worker-internal streaming legacy import) ----
+    case 'migrate-dir': {
+      // One directory migration at a time — a second request is refused with a
+      // correlated migrate-error rather than racing the first.
+      if (_dirMigrationRunning) {
+        post({ type: 'migrate-error', id: msg.id, message: 'a directory migration is already running' })
+        return
+      }
+      _dirMigrationRunning = true
+      // Fire-and-forget WITHIN the worker: results flow back via post() messages.
+      // runDirMigration never rejects (it posts migrate-error on fatal problems),
+      // but guard the flag reset in finally regardless.
+      void runDirMigration(db, msg, post).finally(() => {
+        _dirMigrationRunning = false
+      })
+      return
+    }
+
     // ---- reconcile ----
     case 'reconcile':
       db.markRunningCrashed()
@@ -257,6 +277,172 @@ function _handleWorkerMessage(
       void _exhaustive
       return
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// migrate-dir — worker-internal streaming legacy import (the 16 GB fix).
+//
+// The worker walks + parses the legacy tree ITSELF via the streaming parser
+// (readline — single legacy files reach ~500 MB) and imports group by group
+// through the partial-import primitives. Memory stays ~one event batch; the
+// async iteration yields to the worker's event loop between lines, so live
+// capture batches interleave naturally. A crash mid-session leaves that session
+// status='importing' (wiped + redone on re-run) and, because the run then never
+// reports failedSessions===0, the completion marker is never written and
+// reclaim stays blocked — the A1 safety chain is preserved end to end.
+// ---------------------------------------------------------------------------
+
+let _dirMigrationRunning = false
+
+/** Test seam: clear the one-at-a-time guard between native test cases. */
+export function __resetDirMigrationForTest(): void {
+  _dirMigrationRunning = false
+}
+
+const PROGRESS_INTERVAL_MS = 200
+
+/** Import ONE group via the streaming parser. Returns its contribution to the
+ *  report. Throws on a DB failure — the caller tallies the session as FAILED. */
+async function importGroup(
+  db: LogDb,
+  group: LegacyGroup,
+  batchBytes: number | undefined,
+): Promise<{
+  imported: boolean
+  events: number
+  unparseable: DirMigrationReport['unparseable']
+  foldedPartnerDirs: number
+  noEventDirs: number
+}> {
+  let established = false
+  let eventsImported = 0
+  let tallies: { unparseable: DirMigrationReport['unparseable']; foldedPartnerDirs: number; noEventDirs: number } = {
+    unparseable: [],
+    foldedPartnerDirs: 0,
+    noEventDirs: 0,
+  }
+  let imported = false
+
+  for await (const msg of streamGroup(group, batchBytes)) {
+    if (msg.kind === 'meta') {
+      const meta: Parameters<LogDb['beginPartialImport']>[0] = {
+        sessionId: msg.meta.sessionId,
+        configLabel: msg.meta.configLabel,
+        provider: msg.meta.provider,
+        startedAt: msg.firstTs,
+      }
+      if (msg.meta.accountEmail !== undefined) meta.accountEmail = msg.meta.accountEmail
+      if (msg.meta.profileId !== undefined) meta.profileId = msg.meta.profileId
+      db.beginPartialImport(meta)
+      established = true
+    } else if (msg.kind === 'events') {
+      db.appendBatch(
+        msg.events.map((e) => ({
+          sessionId: group.baseId,
+          ts: e.ts,
+          type: e.type,
+          raw: Buffer.from(e.data ?? '', 'utf8'),
+          text: stripAnsi(e.data ?? ''),
+        })),
+      )
+      eventsImported += msg.events.length
+    } else {
+      tallies = { unparseable: msg.unparseable, foldedPartnerDirs: msg.foldedPartnerDirs, noEventDirs: msg.noEventDirs }
+      if (msg.hadEvents && established) {
+        db.completePartialImport(group.baseId, { startedAt: msg.minTs, endedAt: msg.maxTs })
+        imported = true
+      }
+    }
+  }
+
+  return { imported, events: eventsImported, ...tallies }
+}
+
+/**
+ * Drive a full directory migration. NEVER rejects: fatal problems post
+ * migrate-error; per-session failures are tallied as failedSessions (their
+ * 'importing' marker survives for the re-run) and never abort the run.
+ * Exported for the native test, which awaits it directly for determinism.
+ */
+export async function runDirMigration(
+  db: LogDb,
+  msg: { id: number; logsDir: string; batchBytes?: number },
+  post: (m: FromWorker) => void,
+): Promise<void> {
+  try {
+    const groups = planLegacyGroups(msg.logsDir)
+    const total = groups.length
+    const report: DirMigrationReport = {
+      totalSessions: 0,
+      importedSessions: 0,
+      skippedSessions: 0,
+      failedSessions: 0,
+      importedEvents: 0,
+      unparseable: [],
+      foldedPartnerDirs: 0,
+      noEventDirs: 0,
+    }
+
+    let done = 0
+    let lastProgressAt = 0
+    for (const group of groups) {
+      try {
+        // Pre-skip WITHOUT parsing: a session already complete in the DB (re-run,
+        // or live-captured). A dead partial (status='importing') falls through to
+        // a full wipe + re-import.
+        const state = db.getSessionImportState(group.baseId)
+        if (state && state.eventCount > 0 && state.status !== 'importing') {
+          report.totalSessions += 1
+          report.skippedSessions += 1
+          // Reconciliation approximation for unparsed groups: every extra member
+          // dir is attributed as folded (cannot split folded/noEvent without
+          // parsing). Keeps detectedFolders === total + folded + noEvent exact.
+          report.foldedPartnerDirs += group.members.length - 1
+        } else {
+          const res = await importGroup(db, group, msg.batchBytes)
+          for (const u of res.unparseable) report.unparseable.push(u)
+          report.foldedPartnerDirs += res.foldedPartnerDirs
+          report.noEventDirs += res.noEventDirs
+          if (res.imported) {
+            report.totalSessions += 1
+            report.importedSessions += 1
+            report.importedEvents += res.events
+          }
+          // !res.imported && noEventDirs counted above — an all-malformed group
+          // contributes no session row and no totalSessions entry (old semantics).
+        }
+      } catch (err) {
+        // The session's data did NOT fully reach the DB (its row stays
+        // status='importing'). Tally as FAILED — the handler will refuse to write
+        // the completion marker, keeping reclaim blocked. Attribute the group's
+        // extra member dirs as folded so the report still reconciles.
+        report.totalSessions += 1
+        report.failedSessions += 1
+        report.foldedPartnerDirs += group.members.length - 1
+        post({
+          type: 'log',
+          entry: {
+            level: 'warn',
+            message: `[migrate-dir] session ${group.baseId} failed: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        })
+      }
+
+      done += 1
+      const now = Date.now()
+      if (now - lastProgressAt >= PROGRESS_INTERVAL_MS || done === total) {
+        post({ type: 'migrate-dir-progress', id: msg.id, done, total })
+        lastProgressAt = now
+      }
+      // Explicit yield between groups so queued live-capture messages are handled
+      // even when a group parsed entirely from cache without awaiting I/O.
+      await new Promise((resolve) => setImmediate(resolve))
+    }
+
+    post({ type: 'migrate-dir-done', id: msg.id, report })
+  } catch (err) {
+    post({ type: 'migrate-error', id: msg.id, message: err instanceof Error ? err.message : String(err) })
   }
 }
 

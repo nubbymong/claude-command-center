@@ -25,7 +25,7 @@ import { createInitialHealth } from '../../shared/service-health'
 import { IPC } from '../../shared/ipc-channels'
 import type { ServiceHealth, ServiceLogEntry, DiagnosticsSnapshot } from '../../shared/service-health'
 import type { ForkedLogWorker } from './fork-log-worker'
-import type { ToWorker, FromWorker } from './log-worker-transport'
+import type { ToWorker, FromWorker, DirMigrationReport } from './log-worker-transport'
 import type { ChunkProgress } from './legacy-log-importer'
 
 export interface LogSupervisorOptions {
@@ -104,6 +104,19 @@ export class LogSupervisor {
   // never hang: resolved by migrate-progress, rejected by migrate-error / exit /
   // shutdown / timeout). The id is supplied by the caller (one per chunk).
   private pendingMigrations = new Map<number, { resolve: (p: ChunkProgress) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> | null }>()
+
+  // id-keyed pending DIRECTORY migrations (the long-running worker-internal
+  // streaming import). Unlike a chunk ack this runs for MINUTES on a real tree,
+  // so instead of a fixed deadline it uses an INACTIVITY guard: every
+  // migrate-dir-progress re-arms the timer; sustained silence rejects. Worker
+  // exit / shutdown reject via rejectAllPending like every other pending op.
+  private pendingDirMigrations = new Map<number, {
+    resolve: (r: DirMigrationReport) => void
+    reject: (e: Error) => void
+    onProgress: ((done: number, total: number) => void) | undefined
+    timer: ReturnType<typeof setTimeout> | null
+    arm: () => void
+  }>()
 
   constructor(opts: LogSupervisorOptions) {
     this.opts = opts
@@ -234,7 +247,34 @@ export class LogSupervisor {
         }
         return
       }
+      case 'migrate-dir-progress': {
+        const p = this.pendingDirMigrations.get(m.id)
+        if (p) {
+          p.arm() // liveness: progress refreshes the inactivity guard
+          try { p.onProgress?.(m.done, m.total) } catch { /* never let a UI callback kill routing */ }
+        }
+        return
+      }
+      case 'migrate-dir-done': {
+        const p = this.pendingDirMigrations.get(m.id)
+        if (p) {
+          if (p.timer) clearTimeout(p.timer)
+          this.pendingDirMigrations.delete(m.id)
+          p.resolve(m.report)
+        }
+        return
+      }
       case 'migrate-error': {
+        // A migrate-error can correlate to a directory migration OR a legacy
+        // chunk ack — check the dir map first (ids never collide in practice;
+        // the handler drives exactly one mechanism per run).
+        const d = this.pendingDirMigrations.get(m.id)
+        if (d) {
+          if (d.timer) clearTimeout(d.timer)
+          this.pendingDirMigrations.delete(m.id)
+          d.reject(new Error(m.message))
+          return
+        }
         const p = this.pendingMigrations.get(m.id)
         if (p) {
           if (p.timer) clearTimeout(p.timer)
@@ -361,6 +401,46 @@ export class LogSupervisor {
     })
   }
 
+  /**
+   * Start the worker-internal streaming directory migration (the 16 GB-scale
+   * legacy import). ONE op per run: the worker walks + parses + imports the tree
+   * itself, posting progress; this resolves with the final DirMigrationReport.
+   * Liveness: an inactivity guard re-armed by every progress message (a real run
+   * takes minutes, so a fixed deadline would be wrong) — sustained silence,
+   * worker exit, or shutdown all reject. It can never hang.
+   */
+  migrateDir(logsDir: string, onProgress?: (done: number, total: number) => void): Promise<DirMigrationReport> {
+    if (this.shuttingDown) return Promise.reject(new Error('log supervisor is shutting down'))
+    if (!this.isListening() || !this.worker) {
+      return Promise.reject(new Error(`logging worker not available (state=${this.health.state})`))
+    }
+    const id = this.nextQueryId++
+    return new Promise<DirMigrationReport>((resolve, reject) => {
+      // 8x the query budget between progress posts (default 120 s). The worker
+      // posts at least every PROGRESS_INTERVAL_MS while alive, so this only fires
+      // on a genuinely wedged worker.
+      const inactivityMs = (this.opts.queryTimeoutMs ?? DEFAULT_QUERY_TIMEOUT_MS) * 8
+      const entry = {
+        resolve,
+        reject,
+        onProgress,
+        timer: null as ReturnType<typeof setTimeout> | null,
+        arm: () => {
+          if (entry.timer) clearTimeout(entry.timer)
+          entry.timer = setTimeout(() => {
+            if (this.pendingDirMigrations.delete(id)) {
+              reject(new Error(`directory migration made no progress for ${inactivityMs}ms`))
+            }
+          }, inactivityMs)
+          ;(entry.timer as { unref?: () => void }).unref?.()
+        },
+      }
+      entry.arm()
+      this.pendingDirMigrations.set(id, entry)
+      this.worker!.transport.post({ type: 'migrate-dir', id, logsDir })
+    })
+  }
+
   /** Reject + clear every pending query so none can hang (on exit/shutdown). */
   private rejectAllPending(reason: string): void {
     for (const [, p] of this.pending) {
@@ -373,6 +453,11 @@ export class LogSupervisor {
       p.reject(new Error(reason))
     }
     this.pendingMigrations.clear()
+    for (const [, p] of this.pendingDirMigrations) {
+      if (p.timer) clearTimeout(p.timer)
+      p.reject(new Error(reason))
+    }
+    this.pendingDirMigrations.clear()
   }
 
   // -------------------------------------------------------------------------

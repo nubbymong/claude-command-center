@@ -1,16 +1,30 @@
 /**
- * legacy-log-parser.ts — PURE, off-DB walker + parser for the legacy file logs.
+ * legacy-log-parser.ts — PURE, off-DB, STREAMING walker + parser for the legacy
+ * file logs.
  *
  * Reads <dataDir>/logs/<sanitizedLabel>/<sessionId>/session.jsonl(+.1-.10) and
- * the meta.json sidecar, producing plain ParsedSession data the importer hands
- * to the single logging worker. STRICTLY read-only. No better-sqlite3, no
- * electron import -> testable under plain vitest. No default export.
+ * the meta.json sidecar. STRICTLY read-only. No better-sqlite3, no electron
+ * import -> importable by BOTH the main process and the logging utilityProcess
+ * worker, and testable under plain vitest. No default export.
+ *
+ * SHAPE (the fix for the 16 GB main-thread freeze):
+ *  - `planLegacyGroups(dir)`  — cheap readdir-only pre-pass. Groups every session
+ *    dir by BASE session id (so `<id>-partner` dirs and cross-label duplicates
+ *    land in one group) in deterministic walk order.
+ *  - `streamGroup(group)`     — async generator that parses ONE group at a time,
+ *    line-streamed via readline (never readFileSync — single legacy files reach
+ *    ~500 MB), yielding bounded event batches. Memory stays ~one batch; the
+ *    event loop runs between lines, so a host process stays responsive.
+ *  - `parseLegacyLogs(dir)`   — compatibility wrapper that drains the stream into
+ *    the old ParseResult shape (tests + small trees only — NEVER call it on a
+ *    real-size tree from the main process).
  *
  * Determinism: directory entries are sorted lexicographically before walking, so
  * two runs over the same tree produce identical output and identical reports.
  */
 import * as fs from 'fs'
 import * as path from 'path'
+import * as readline from 'node:readline'
 
 export interface ParsedEvent {
   ts: number
@@ -47,96 +61,66 @@ export interface ParseResult {
   foldedPartnerDirs: number
   /** Count of session dirs that had zero valid events (all files malformed or
    *  unreadable). Incremented unconditionally so the report can reconcile:
-   *  detectedFolders === sessions + foldedPartnerDirs + noEventDirs.
-   *  (A dir-level 'no parseable events' unparseable entry may be suppressed to
-   *  avoid double-listing when file-level entries already explain the failure,
-   *  which is why this must be counted explicitly rather than inferred from
-   *  the unparseable array in the UI.) */
+   *  detectedFolders === sessions + foldedPartnerDirs + noEventDirs. */
   noEventDirs: number
 }
 
-/** Order one session dir's log files chronologically: oldest rotation first
- *  (.10 ... .2 .1) then the live session.jsonl last. Non-matching names ignored. */
-function orderedLogFiles(sessionDir: string): string[] {
-  let names: string[]
-  try {
-    names = fs.readdirSync(sessionDir)
-  } catch {
-    return []
-  }
-  const rotated: { n: number; name: string }[] = []
-  let live: string | null = null
-  for (const name of names) {
-    if (name === 'session.jsonl') {
-      live = name
-      continue
-    }
-    const m = /^session\.jsonl\.(\d+)$/.exec(name)
-    if (m) rotated.push({ n: Number(m[1]), name })
-  }
-  // Higher rotation number = older -> sort DESC so oldest is processed first.
-  rotated.sort((a, b) => b.n - a.n)
-  const ordered = rotated.map((r) => r.name)
-  if (live) ordered.push(live)
-  return ordered.map((name) => path.join(sessionDir, name))
+// ── Group plan (readdir-only pre-pass) ───────────────────────────────────────
+
+export interface LegacyGroupMember {
+  /** Absolute path of the session dir. */
+  dirPath: string
+  /** Sanitized label dir name (configLabel fallback when meta.json is absent). */
+  label: string
 }
 
-/** Parse one JSONL file. Pushes valid events onto `events`; returns the count of
- *  malformed lines skipped (so the caller can flag a partially-parsed file). */
-function parseFile(filePath: string, events: ParsedEvent[]): number {
-  let content: string
-  try {
-    content = fs.readFileSync(filePath, 'utf-8')
-  } catch {
-    return -1 // unreadable -> signal whole-file failure
-  }
-  let skipped = 0
-  for (const raw of content.split('\n')) {
-    const trimmed = raw.trim()
-    if (!trimmed) continue
-    try {
-      const obj = JSON.parse(trimmed)
-      if (obj && typeof obj.ts === 'number' && typeof obj.type === 'string') {
-        const ev: ParsedEvent = { ts: obj.ts, type: obj.type }
-        if (typeof obj.data === 'string') ev.data = obj.data
-        events.push(ev)
-      } else {
-        skipped++
-      }
-    } catch {
-      skipped++
-    }
-  }
-  return skipped
+/** All on-disk dirs that merge into ONE logical session (base + partner dirs +
+ *  cross-label duplicates), members in deterministic walk order. */
+export interface LegacyGroup {
+  baseId: string
+  members: LegacyGroupMember[]
 }
 
-function readMeta(sessionDir: string): { configLabel?: string; accountEmail?: string; profileId?: string } {
-  try {
-    const raw = fs.readFileSync(path.join(sessionDir, 'meta.json'), 'utf-8')
-    const parsed = JSON.parse(raw)
-    return parsed && typeof parsed === 'object' ? parsed : {}
-  } catch {
-    return {}
-  }
-}
+/** Messages yielded by streamGroup, in order:
+ *  zero-or-one 'meta' (absent when no member has a single valid event), then any
+ *  number of bounded 'events' batches, then exactly one terminal 'group-done'. */
+export type GroupStreamMsg =
+  | {
+      kind: 'meta'
+      meta: { sessionId: string; configLabel: string; accountEmail?: string; profileId?: string; provider: string }
+      /** ts of the first valid event — a begin-time startedAt for the DB row
+       *  (the authoritative min lands in group-done.minTs). */
+      firstTs: number
+    }
+  | { kind: 'events'; events: ParsedEvent[] }
+  | {
+      kind: 'group-done'
+      hadEvents: boolean
+      /** min/max event ts across the merged group (0 when hadEvents=false). */
+      minTs: number
+      maxTs: number
+      eventCount: number
+      unparseable: UnparseableFile[]
+      foldedPartnerDirs: number
+      noEventDirs: number
+    }
+
+const DEFAULT_BATCH_BYTES = 4 * 1024 * 1024
 
 /**
- * Walk the legacy logs tree and return parsed sessions + a list of any files that
- * could not be fully parsed (never dropped silently). `<id>-partner` dirs are
- * folded into their base session id, their events appended after the base events.
+ * Readdir-only pre-pass: group every session dir by base session id, walk-ordered
+ * within the group, groups sorted by baseId (matching the old parser's final
+ * lexicographic session ordering). Reads NO file contents — fast even on a
+ * thousand-session tree, safe to call from any process.
  */
-export function parseLegacyLogs(logsDir: string): ParseResult {
-  const unparseable: UnparseableFile[] = []
-  let foldedPartnerDirs = 0
-  let noEventDirs = 0
-  // Accumulate by BASE session id so partner dirs merge in.
-  const byBase = new Map<string, { configLabel: string; accountEmail?: string; profileId?: string; events: ParsedEvent[] }>()
+export function planLegacyGroups(logsDir: string): LegacyGroup[] {
+  const byBase = new Map<string, LegacyGroupMember[]>()
 
   let labelDirs: string[]
   try {
     labelDirs = fs.readdirSync(logsDir)
   } catch {
-    return { sessions: [], unparseable: [], foldedPartnerDirs: 0, noEventDirs: 0 }
+    return []
   }
   labelDirs.sort((a, b) => a.localeCompare(b))
 
@@ -165,79 +149,247 @@ export function parseLegacyLogs(logsDir: string): ParseResult {
       } catch {
         continue
       }
-
       const isPartner = sessionDirName.endsWith('-partner')
       const baseId = isPartner ? sessionDirName.slice(0, -'-partner'.length) : sessionDirName
-
-      const files = orderedLogFiles(sessionDir)
-      const events: ParsedEvent[] = []
-      let anyValid = false
-      let fileReported = false // a file-level unparseable entry already explains a failure
-      for (const filePath of files) {
-        const skipped = parseFile(filePath, events)
-        if (skipped < 0) {
-          unparseable.push({ path: filePath, reason: 'unreadable file', skippedLines: 0 })
-          fileReported = true
-        } else if (skipped > 0) {
-          unparseable.push({ path: filePath, reason: 'skipped malformed line(s)', skippedLines: skipped })
-          fileReported = true
-        }
-        if (events.length > 0) anyValid = true
+      let members = byBase.get(baseId)
+      if (!members) {
+        members = []
+        byBase.set(baseId, members)
       }
-
-      if (!anyValid) {
-        // No usable events at all -> do not synthesize a row. Report the session dir
-        // ONLY when no file-level entry already explained it (e.g. all lines were
-        // empty/whitespace, not malformed), so a single bad file is not double-listed.
-        noEventDirs += 1
-        if (!fileReported) {
-          unparseable.push({ path: sessionDir, reason: 'no parseable events', skippedLines: 0 })
-        }
-        continue
-      }
-
-      const meta = readMeta(sessionDir)
-      // configLabel precedence: meta.json (true label) > sanitized dir name.
-      const configLabel = meta.configLabel ?? label
-
-      const existing = byBase.get(baseId)
-      if (existing) {
-        // Partner (or a duplicate) folded into the base: append events; keep the
-        // first-seen meta (base dir sorts before its `-partner` sibling). Counted
-        // for reconciliation since this folder yields no separate imported row.
-        foldedPartnerDirs += 1
-        for (const ev of events) existing.events.push(ev)
-      } else {
-        byBase.set(baseId, {
-          configLabel,
-          accountEmail: meta.accountEmail,
-          profileId: meta.profileId,
-          events,
-        })
-      }
+      members.push({ dirPath: sessionDir, label })
     }
   }
 
+  return [...byBase.entries()]
+    .map(([baseId, members]) => ({ baseId, members }))
+    .sort((a, b) => a.baseId.localeCompare(b.baseId))
+}
+
+// ── Per-file streaming parse ─────────────────────────────────────────────────
+
+/** Order one session dir's log files chronologically: oldest rotation first
+ *  (.10 ... .2 .1) then the live session.jsonl last. Non-matching names ignored. */
+function orderedLogFiles(sessionDir: string): string[] {
+  let names: string[]
+  try {
+    names = fs.readdirSync(sessionDir)
+  } catch {
+    return []
+  }
+  const rotated: { n: number; name: string }[] = []
+  let live: string | null = null
+  for (const name of names) {
+    if (name === 'session.jsonl') {
+      live = name
+      continue
+    }
+    const m = /^session\.jsonl\.(\d+)$/.exec(name)
+    if (m) rotated.push({ n: Number(m[1]), name })
+  }
+  // Higher rotation number = older -> sort DESC so oldest is processed first.
+  rotated.sort((a, b) => b.n - a.n)
+  const ordered = rotated.map((r) => r.name)
+  if (live) ordered.push(live)
+  return ordered.map((name) => path.join(sessionDir, name))
+}
+
+/**
+ * Stream-parse one JSONL file, yielding valid events line by line. NEVER buffers
+ * the whole file (single legacy files reach ~500 MB). Mutates `out` with the
+ * malformed-line count / unreadable flag so the caller can build the same
+ * UnparseableFile entries the old whole-file parser produced.
+ */
+async function* parseFileStream(
+  filePath: string,
+  out: { skipped: number; unreadable: boolean },
+): AsyncGenerator<ParsedEvent> {
+  let stream: fs.ReadStream
+  let rl: readline.Interface
+  try {
+    stream = fs.createReadStream(filePath, { encoding: 'utf8' })
+    rl = readline.createInterface({ input: stream, crlfDelay: Infinity })
+  } catch {
+    out.unreadable = true
+    return
+  }
+  try {
+    for await (const raw of rl) {
+      const trimmed = raw.trim()
+      if (!trimmed) continue
+      try {
+        const obj = JSON.parse(trimmed)
+        if (obj && typeof obj.ts === 'number' && typeof obj.type === 'string') {
+          const ev: ParsedEvent = { ts: obj.ts, type: obj.type }
+          if (typeof obj.data === 'string') ev.data = obj.data
+          yield ev
+        } else {
+          out.skipped++
+        }
+      } catch {
+        out.skipped++
+      }
+    }
+  } catch {
+    // Stream error mid-read (vanished file, EACCES, ...) — same classification the
+    // old readFileSync failure produced. Events already yielded stay yielded (more
+    // data preserved, never less).
+    out.unreadable = true
+  } finally {
+    rl.close()
+    stream.destroy()
+  }
+}
+
+function readMeta(sessionDir: string): { configLabel?: string; accountEmail?: string; profileId?: string } {
+  try {
+    const raw = fs.readFileSync(path.join(sessionDir, 'meta.json'), 'utf-8')
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+// ── Group streaming ──────────────────────────────────────────────────────────
+
+/**
+ * Parse ONE group, yielding: 'meta' on the first valid event (taken from THAT
+ * member's meta.json — same "first dir with events wins" rule as the old
+ * parser), bounded 'events' batches (<= batchBytes of event data each), then a
+ * terminal 'group-done' carrying the group's reconciliation tallies.
+ *
+ * Folding semantics preserved exactly: a member with events that did NOT
+ * establish the session counts as foldedPartnerDirs; a member with zero valid
+ * events counts as noEventDirs (with a dir-level unparseable entry only when no
+ * file-level entry already explains it).
+ */
+export async function* streamGroup(
+  group: LegacyGroup,
+  batchBytes: number = DEFAULT_BATCH_BYTES,
+): AsyncGenerator<GroupStreamMsg> {
+  const unparseable: UnparseableFile[] = []
+  let foldedPartnerDirs = 0
+  let noEventDirs = 0
+  let established = false
+  let hadEvents = false
+  let minTs = Number.POSITIVE_INFINITY
+  let maxTs = Number.NEGATIVE_INFINITY
+  let eventCount = 0
+  let batch: ParsedEvent[] = []
+  let batchSize = 0
+
+  for (const member of group.members) {
+    const files = orderedLogFiles(member.dirPath)
+    let memberHadEvents = false
+    let fileReported = false
+    let establishedByThisMember = false
+
+    for (const filePath of files) {
+      const out = { skipped: 0, unreadable: false }
+      for await (const ev of parseFileStream(filePath, out)) {
+        if (!established) {
+          established = true
+          establishedByThisMember = true
+          const meta = readMeta(member.dirPath)
+          const m: Extract<GroupStreamMsg, { kind: 'meta' }>['meta'] = {
+            sessionId: group.baseId,
+            configLabel: meta.configLabel ?? member.label,
+            provider: 'claude',
+          }
+          if (meta.accountEmail !== undefined) m.accountEmail = meta.accountEmail
+          if (meta.profileId !== undefined) m.profileId = meta.profileId
+          yield { kind: 'meta', meta: m, firstTs: ev.ts }
+        }
+        memberHadEvents = true
+        hadEvents = true
+        if (ev.ts < minTs) minTs = ev.ts
+        if (ev.ts > maxTs) maxTs = ev.ts
+        eventCount += 1
+        batch.push(ev)
+        batchSize += ev.data ? Buffer.byteLength(ev.data, 'utf8') : 0
+        if (batchSize >= batchBytes) {
+          yield { kind: 'events', events: batch }
+          batch = []
+          batchSize = 0
+        }
+      }
+      if (out.unreadable) {
+        unparseable.push({ path: filePath, reason: 'unreadable file', skippedLines: 0 })
+        fileReported = true
+      } else if (out.skipped > 0) {
+        unparseable.push({ path: filePath, reason: 'skipped malformed line(s)', skippedLines: out.skipped })
+        fileReported = true
+      }
+    }
+
+    if (!memberHadEvents) {
+      // No usable events in this dir. Report the dir ONLY when no file-level entry
+      // already explained it, so a single bad file is not double-listed.
+      noEventDirs += 1
+      if (!fileReported) {
+        unparseable.push({ path: member.dirPath, reason: 'no parseable events', skippedLines: 0 })
+      }
+    } else if (!establishedByThisMember) {
+      // Partner (or duplicate) folded into the base: its events were appended
+      // after the base's; it yields no separate imported row.
+      foldedPartnerDirs += 1
+    }
+  }
+
+  if (batch.length > 0) yield { kind: 'events', events: batch }
+  yield {
+    kind: 'group-done',
+    hadEvents,
+    minTs: hadEvents ? minTs : 0,
+    maxTs: hadEvents ? maxTs : 0,
+    eventCount,
+    unparseable,
+    foldedPartnerDirs,
+    noEventDirs,
+  }
+}
+
+// ── Compatibility wrapper ────────────────────────────────────────────────────
+
+/**
+ * Drain the streaming API into the old ParseResult shape. Holds every event in
+ * memory — tests and small trees ONLY. Production migration goes through
+ * planLegacyGroups + streamGroup inside the logging worker.
+ */
+export async function parseLegacyLogs(logsDir: string): Promise<ParseResult> {
+  const groups = planLegacyGroups(logsDir)
   const sessions: ParsedSession[] = []
-  for (const [sessionId, acc] of byBase) {
-    // startedAt = earliest event ts (events are appended in chronological file
-    // order, so events[0].ts is the earliest for the base; min() is defensive
-    // in case a folded partner event predates it).
-    let startedAt = acc.events[0].ts
-    for (const ev of acc.events) if (ev.ts < startedAt) startedAt = ev.ts
-    const out: ParsedSession = {
-      sessionId,
-      configLabel: acc.configLabel,
-      provider: 'claude',
-      startedAt,
-      events: acc.events,
+  const unparseable: UnparseableFile[] = []
+  let foldedPartnerDirs = 0
+  let noEventDirs = 0
+
+  for (const group of groups) {
+    let meta: Extract<GroupStreamMsg, { kind: 'meta' }>['meta'] | null = null
+    const events: ParsedEvent[] = []
+    for await (const msg of streamGroup(group)) {
+      if (msg.kind === 'meta') {
+        meta = msg.meta
+      } else if (msg.kind === 'events') {
+        for (const e of msg.events) events.push(e)
+      } else {
+        for (const u of msg.unparseable) unparseable.push(u)
+        foldedPartnerDirs += msg.foldedPartnerDirs
+        noEventDirs += msg.noEventDirs
+        if (msg.hadEvents && meta) {
+          const out: ParsedSession = {
+            sessionId: meta.sessionId,
+            configLabel: meta.configLabel,
+            provider: meta.provider,
+            startedAt: msg.minTs,
+            events,
+          }
+          if (meta.accountEmail !== undefined) out.accountEmail = meta.accountEmail
+          if (meta.profileId !== undefined) out.profileId = meta.profileId
+          sessions.push(out)
+        }
+      }
     }
-    if (acc.accountEmail !== undefined) out.accountEmail = acc.accountEmail
-    if (acc.profileId !== undefined) out.profileId = acc.profileId
-    sessions.push(out)
   }
-  // Stable final ordering by sessionId for deterministic reports.
-  sessions.sort((a, b) => a.sessionId.localeCompare(b.sessionId))
 
   return { sessions, unparseable, foldedPartnerDirs, noEventDirs }
 }

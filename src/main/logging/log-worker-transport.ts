@@ -13,6 +13,28 @@
 // Message unions
 // ---------------------------------------------------------------------------
 
+/**
+ * Final report of a migrate-dir run (the worker-internal streaming legacy
+ * import). Field semantics match the old main-side ImportReport + parse tallies
+ * so the renderer's reconciliation contract is unchanged:
+ *   detectedFolders === totalSessions + foldedPartnerDirs + noEventDirs
+ * For groups that are SKIPPED without parsing (already complete in the DB) or
+ * that FAIL mid-stream, extra member dirs are attributed to foldedPartnerDirs —
+ * a documented approximation that keeps the identity exact without re-parsing.
+ */
+export interface DirMigrationReport {
+  totalSessions: number
+  importedSessions: number
+  skippedSessions: number
+  /** Sessions whose streamed import failed (data did NOT fully reach the DB; the
+   *  row stays status='importing'). Any failure blocks the completion marker. */
+  failedSessions: number
+  importedEvents: number
+  unparseable: { path: string; reason: string; skippedLines: number }[]
+  foldedPartnerDirs: number
+  noEventDirs: number
+}
+
 /** Main -> worker */
 export type ToWorker =
   | { type: 'open'; dbPath: string }
@@ -58,6 +80,16 @@ export type ToWorker =
         events: { ts: number; type: 'start' | 'data' | 'restart' | 'switch' | 'end'; raw: Uint8Array; text: string }[]
       }[]
     }
+  | {
+      /** Worker-internal streaming legacy import: the worker walks + parses the
+       *  legacy tree ITSELF (no 16 GB transits the process boundary) and imports
+       *  group by group with bounded memory, interleaving live capture. */
+      type: 'migrate-dir'
+      id: number
+      logsDir: string
+      /** Event-batch byte budget (default 4 MiB). Tests shrink it to force splits. */
+      batchBytes?: number
+    }
   | { type: 'reconcile' }
   | { type: 'shutdown' }
 
@@ -68,6 +100,8 @@ export type FromWorker =
   | { type: 'log'; entry: { level: 'info' | 'warn' | 'error'; message: string } }
   | { type: 'query-result'; id: number; rows: unknown[] }
   | { type: 'migrate-progress'; id: number; importedSessions: number; skippedSessions: number; failedSessions: number; importedEvents: number }
+  | { type: 'migrate-dir-progress'; id: number; done: number; total: number }
+  | { type: 'migrate-dir-done'; id: number; report: DirMigrationReport }
   | { type: 'migrate-error'; id: number; message: string }
   | { type: 'error'; id?: number; message: string }
 

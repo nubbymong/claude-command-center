@@ -112,6 +112,43 @@ export interface LogDb {
   getSessionEventCount(sessionId: string): number
 
   /**
+   * Import-state snapshot for the migrate-dir pre-skip: how many events a session
+   * already has and its status. null when the session row does not exist.
+   * status === 'importing' marks a DEAD partial import (worker crashed mid-stream)
+   * that a re-run must wipe and redo; eventCount > 0 with any OTHER status marks a
+   * complete/live session a re-run must skip.
+   */
+  getSessionImportState(sessionId: string): { eventCount: number; status: string } | null
+
+  /**
+   * Begin a STREAMED (multi-part) legacy import for one session. In one
+   * transaction: wipe a dead 'importing' row (cascade removes its partial events +
+   * FTS rows), upsert the session (configId forced NULL, ON CONFLICT DO NOTHING so
+   * an existing row's identity fields are never clobbered), then mark it
+   * status='importing' ONLY while it has zero events (a live session that already
+   * captured events keeps its status — mirrors the atomic path's event-grain skip).
+   * Parts are then streamed via the existing appendBatch (seq-continued), and
+   * completePartialImport seals the session.
+   */
+  beginPartialImport(meta: {
+    sessionId: string
+    configLabel: string
+    projectCwd?: string
+    accountEmail?: string
+    profileId?: string
+    provider: string
+    startedAt: number
+  }): void
+
+  /**
+   * Seal a streamed import: set the authoritative startedAt (min event ts across
+   * the merged group — begin-time value was an approximation) + endedAt, and flip
+   * status 'importing' -> 'ended'. No-op unless the session is status='importing',
+   * so it can never clobber a live or already-complete session.
+   */
+  completePartialImport(sessionId: string, opts: { startedAt: number; endedAt: number }): void
+
+  /**
    * Atomically import ONE legacy session: skip if it already has events; else,
    * in a single transaction, upsert the session (configId forced NULL) and insert
    * every event with explicit seq 0..n-1, updating byteSize/eventCount. FTS stays
@@ -281,6 +318,51 @@ export function openLogDb(path: string): LogDb {
   const stmtMarkRunningCrashed: Statement = sqlite.prepare(`
     UPDATE sessions SET status = @status WHERE status = 'running'
   `)
+
+  // ---- partial (streamed) import primitives ----
+  const stmtGetImportState: Statement = sqlite.prepare(
+    `SELECT eventCount, status FROM sessions WHERE sessionId = ?`,
+  )
+  // Wipe a DEAD partial import (worker crashed mid-stream). CASCADE + the events_ad
+  // trigger remove its events and FTS rows.
+  const stmtDeleteImporting: Statement = sqlite.prepare(
+    `DELETE FROM sessions WHERE sessionId = ? AND status = 'importing'`,
+  )
+  // Mark a session as a streaming-import target ONLY while it has zero events —
+  // a live session that already captured events keeps its status untouched.
+  const stmtMarkImporting: Statement = sqlite.prepare(
+    `UPDATE sessions SET status = 'importing' WHERE sessionId = ? AND eventCount = 0`,
+  )
+  const stmtCompletePartial: Statement = sqlite.prepare(
+    `UPDATE sessions
+     SET startedAt = @startedAt, endedAt = @endedAt, status = 'ended'
+     WHERE sessionId = @sessionId AND status = 'importing'`,
+  )
+
+  const runBeginPartialImport = sqlite.transaction(
+    (meta: {
+      sessionId: string
+      configLabel: string
+      projectCwd?: string
+      accountEmail?: string
+      profileId?: string
+      provider: string
+      startedAt: number
+    }) => {
+      stmtDeleteImporting.run(meta.sessionId)
+      stmtUpsertSession.run({
+        sessionId: meta.sessionId,
+        configId: null, // migrated rows are always orphan-classified
+        configLabel: meta.configLabel,
+        projectCwd: meta.projectCwd ?? null,
+        accountEmail: meta.accountEmail ?? null,
+        profileId: meta.profileId ?? null,
+        provider: meta.provider,
+        startedAt: meta.startedAt,
+      })
+      stmtMarkImporting.run(meta.sessionId)
+    },
+  )
 
   // Count events that WOULD be deleted for a set of non-running sessions, so a
   // delete can report an honest event count (CASCADE deletes them after).
@@ -534,6 +616,19 @@ export function openLogDb(path: string): LogDb {
     getSessionEventCount(sessionId) {
       const row = stmtGetEventCount.get(sessionId) as { eventCount: number } | undefined
       return row?.eventCount ?? 0
+    },
+
+    getSessionImportState(sessionId) {
+      const row = stmtGetImportState.get(sessionId) as { eventCount: number; status: string } | undefined
+      return row ? { eventCount: row.eventCount, status: row.status } : null
+    },
+
+    beginPartialImport(meta) {
+      runBeginPartialImport(meta)
+    },
+
+    completePartialImport(sessionId, opts) {
+      stmtCompletePartial.run({ sessionId, startedAt: opts.startedAt, endedAt: opts.endedAt })
     },
 
     importSession(meta, events) {
