@@ -107,6 +107,22 @@ describe('migrationStore', () => {
   })
 })
 
+describe('migrationStore persisted completion (post-restart reclaim)', () => {
+  it('detect() stores the on-disk completion marker so reclaim survives a restart', async () => {
+    const completion = { completedAt: 1780727619022, logsDir: 'C:/x/logs', totalSessions: 780, importedSessions: 780, skippedSessions: 0, importedEvents: 90249150, unparseableCount: 0 }
+    api.detect.mockResolvedValue({ present: true, sessionFolders: 990, frozen: true, completion })
+    await useMigrationStore.getState().detect()
+    expect(useMigrationStore.getState().completion).toEqual(completion)
+  })
+
+  it('detect() clears completion when the marker is absent', async () => {
+    useMigrationStore.setState({ completion: { completedAt: 1, logsDir: 'x', totalSessions: 1, importedSessions: 1, skippedSessions: 0, importedEvents: 1, unparseableCount: 0 } })
+    api.detect.mockResolvedValue({ present: true, sessionFolders: 5, frozen: false, completion: null })
+    await useMigrationStore.getState().detect()
+    expect(useMigrationStore.getState().completion).toBeNull()
+  })
+})
+
 describe('migrationStore reportAcked (completion-notice gate)', () => {
   it('run() resets reportAcked so a fresh completion surfaces the notice', async () => {
     useMigrationStore.setState({ reportAcked: true })

@@ -10,7 +10,7 @@ import * as path from 'path'
 import { IPC } from '../../shared/ipc-channels'
 import { getDataDirectory } from '../data-paths'
 import { getLogSupervisor } from '../logging/logging-service'
-import { snapshotLegacyLogs, isLegacyLogsFrozen, markLegacyImportComplete, reclaimLegacyLogs } from '../logging/log-snapshot'
+import { snapshotLegacyLogs, isLegacyLogsFrozen, markLegacyImportComplete, readLegacyImportCompletion, reclaimLegacyLogs } from '../logging/log-snapshot'
 import { logInfo, logWarn } from '../debug-logger'
 
 // A4: module-level reentrancy guard — a double-click must not spawn two runImport loops.
@@ -64,7 +64,17 @@ export function registerLogMigrationHandlers(getWindow: () => BrowserWindow | nu
     const dir = legacyLogsDir()
     const present = fs.existsSync(dir)
     const sessionFolders = present ? countSessionFolders(dir) : 0
-    return { present: present && sessionFolders > 0, sessionFolders, frozen: isLegacyLogsFrozen() }
+    // Persisted completion marker: lets Settings re-offer RECLAIM after an app
+    // restart (the post-run report is in-memory; the user hit a stranded,
+    // fully-armed reclaim with no UI door). Only meaningful for THIS logsDir —
+    // the reclaim gate re-checks server-side regardless.
+    const completion = readLegacyImportCompletion()
+    return {
+      present: present && sessionFolders > 0,
+      sessionFolders,
+      frozen: isLegacyLogsFrozen(),
+      completion: completion && completion.logsDir === dir ? completion : null,
+    }
   })
 
   ipcMain.handle(IPC.LOGS_MIGRATE_RUN, async () => {

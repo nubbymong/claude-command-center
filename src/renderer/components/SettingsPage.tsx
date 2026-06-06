@@ -17,6 +17,7 @@ import { useAddAccount } from '../hooks/useAddAccount'
 import AccountsPanel from './AccountsPanel'
 import { useMigrationStore } from '../stores/migrationStore'
 import { MigrationReport } from './MigrationReport'
+import ReclaimSpaceSection from './ReclaimSpaceSection'
 declare const __BUILD_TIME__: string
 
 export const SETTINGS_TAB_IDS = ['general', 'statusline', 'shortcuts', 'github', 'codex', 'hooks', 'about'] as const
@@ -73,6 +74,7 @@ function LogMigrationAction() {
   const reclaimedBytes = useMigrationStore((s) => s.reclaimedBytes)
   const failedFolders = useMigrationStore((s) => s.failedFolders)   // A5
   const errorKind = useMigrationStore((s) => s.errorKind)
+  const completion = useMigrationStore((s) => s.completion)
   const detect = useMigrationStore((s) => s.detect)
   const run = useMigrationStore((s) => s.run)
   const reclaim = useMigrationStore((s) => s.reclaim)
@@ -88,9 +90,14 @@ function LogMigrationAction() {
 
   const migrated = settings.legacyLogsMigrated === true
   const showRun = present && !migrated && (phase === 'idle' || (phase === 'error' && errorKind === 'run'))
+  // Persistent reclaim door: a clean import ran (PERSISTED marker — survives app
+  // restarts, unlike the in-memory post-run report) and the original folders are
+  // still on disk. Without this, restarting after an import stranded a fully-
+  // armed reclaim with no UI entry (user-hit after the real 16 GB import).
+  const showReclaimEntry = phase === 'idle' && present && migrated && completion !== null
 
   // Nothing actionable to show.
-  if (phase === 'idle' && (!present || migrated)) return null
+  if (phase === 'idle' && (!present || migrated) && !showReclaimEntry) return null
   if (phase === 'done' && dismissed) return null
 
   return (
@@ -103,6 +110,13 @@ function LogMigrationAction() {
             Migrate existing logs
           </button>
         </div>
+      )}
+      {showReclaimEntry && completion && (
+        <ReclaimSpaceSection
+          sessionFolders={sessionFolders}
+          completion={completion}
+          onReclaim={() => { void reclaim() }}
+        />
       )}
       {phase === 'running' && (
         <div className="text-[11px] text-overlay0">Importing {progressDone.toLocaleString()} of {progressTotal.toLocaleString()} ...</div>

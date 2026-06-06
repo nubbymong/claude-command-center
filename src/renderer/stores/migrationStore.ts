@@ -17,6 +17,18 @@ export interface MigrationReportData {
 
 type Phase = 'idle' | 'running' | 'done' | 'reclaiming' | 'error' | 'reclaimed'
 
+/** Persisted import-completion marker, mirrored from the detect IPC. Source of
+ *  truth for the post-restart reclaim entry (the post-run report is in-memory). */
+export interface LegacyImportCompletion {
+  completedAt: number
+  logsDir: string
+  totalSessions: number
+  importedSessions: number
+  skippedSessions: number
+  importedEvents: number
+  unparseableCount: number
+}
+
 interface MigrationState {
   phase: Phase
   present: boolean
@@ -32,6 +44,9 @@ interface MigrationState {
    *  user views the report or dismisses the corner notice. Starts true (nothing
    *  to acknowledge). */
   reportAcked: boolean
+  /** Persisted completion marker from detect() — non-null once a clean import
+   *  ran, even across app restarts. Drives the persistent reclaim entry. */
+  completion: LegacyImportCompletion | null
 
   detect: () => Promise<void>
   run: () => Promise<void>
@@ -50,13 +65,14 @@ export const useMigrationStore = create<MigrationState>((set, get) => ({
   reclaimedBytes: 0,
   failedFolders: [],               // A5
   reportAcked: true,
+  completion: null,
 
   detect: async () => {
     try {
       const r = await window.electronAPI.logMigration.detect()
-      set({ present: r.present, sessionFolders: r.sessionFolders })
+      set({ present: r.present, sessionFolders: r.sessionFolders, completion: r.completion ?? null })
     } catch {
-      set({ present: false, sessionFolders: 0 })
+      set({ present: false, sessionFolders: 0, completion: null })
     }
   },
 

@@ -232,7 +232,22 @@ export interface ElectronAPI {
     clearAll: () => Promise<{ deletedSessions: number; deletedEvents: number }>
   }
   logMigration: {
-    detect: () => Promise<{ present: boolean; sessionFolders: number; frozen: boolean }>
+    detect: () => Promise<{
+      present: boolean
+      sessionFolders: number
+      frozen: boolean
+      /** Persisted import-completion marker (null until a clean run) — lets the
+       *  reclaim entry survive app restarts. */
+      completion: {
+        completedAt: number
+        logsDir: string
+        totalSessions: number
+        importedSessions: number
+        skippedSessions: number
+        importedEvents: number
+        unparseableCount: number
+      } | null
+    }>
     run: () => Promise<{
       totalSessions: number
       importedSessions: number
