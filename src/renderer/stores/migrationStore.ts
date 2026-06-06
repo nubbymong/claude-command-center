@@ -28,10 +28,15 @@ interface MigrationState {
   failedFolders: string[]          // A5
   errorMessage?: string
   errorKind?: 'run' | 'reclaim'
+  /** Completion-notice gate: false after a run finishes (done OR error) until the
+   *  user views the report or dismisses the corner notice. Starts true (nothing
+   *  to acknowledge). */
+  reportAcked: boolean
 
   detect: () => Promise<void>
   run: () => Promise<void>
   reclaim: () => Promise<void>
+  ackReport: () => void
   shouldSurface: (args: { present: boolean; migrated: boolean; seen: boolean }) => boolean
 }
 
@@ -44,6 +49,7 @@ export const useMigrationStore = create<MigrationState>((set, get) => ({
   report: null,
   reclaimedBytes: 0,
   failedFolders: [],               // A5
+  reportAcked: true,
 
   detect: async () => {
     try {
@@ -60,7 +66,9 @@ export const useMigrationStore = create<MigrationState>((set, get) => ({
     // whose unsub leaks (the main handler already rejects the duplicate IPC). Refuse
     // if a run is already in flight.
     if (get().phase === 'running') return
-    set({ phase: 'running', progressDone: 0, progressTotal: get().sessionFolders, errorMessage: undefined, errorKind: undefined })
+    // reportAcked: false — this run WILL produce an outcome (report or error)
+    // that the corner notice must surface exactly once.
+    set({ phase: 'running', progressDone: 0, progressTotal: get().sessionFolders, errorMessage: undefined, errorKind: undefined, reportAcked: false })
     const unsub = window.electronAPI.logMigration.onProgress(({ done, total }) => {
       set({ progressDone: done, progressTotal: total })
     })
@@ -97,6 +105,8 @@ export const useMigrationStore = create<MigrationState>((set, get) => ({
       set({ phase: 'error', errorKind: 'reclaim', errorMessage: e instanceof Error ? e.message : String(e) })
     }
   },
+
+  ackReport: () => set({ reportAcked: true }),
 
   shouldSurface: ({ present, migrated, seen }) => present && !migrated && !seen,
 }))
