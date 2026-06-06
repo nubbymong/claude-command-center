@@ -102,6 +102,15 @@ describe('plain-string content', () => {
     expect(msgs[0].kind).toBe('message')
     expect(msgs[0].content).toBe('User says hi')
   })
+
+  it('yields empty array when content is whitespace-only', () => {
+    const n = makeNormalizer()
+    const cases = ['   ', '\n', '  \n  \t', '\t\t\n']
+    for (const content of cases) {
+      const msgs = n.push(line(assistantEntry(content)))
+      expect(msgs).toHaveLength(0)
+    }
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -233,6 +242,35 @@ describe('tool_use parts → tool_call', () => {
     expect(msgs).toHaveLength(1)
     expect(msgs[0].kind).toBe('tool_call')
     expect(msgs[0].toolMeta!.length).toBeLessThanOrEqual(2048)
+    // Verify the output is valid JSON
+    expect(() => JSON.parse(msgs[0].toolMeta!)).not.toThrow()
+  })
+
+  it('produces valid JSON ≤ 2KB for toolMeta even with extreme inputs on all 7 preview keys', () => {
+    const n = makeNormalizer()
+    // Craft inputs that stress all 7 keys with large values to trigger cap logic
+    const entry = assistantEntry([
+      {
+        type: 'tool_use',
+        name: 'MultiTool',
+        input: {
+          file_path: 'x'.repeat(300),
+          command: 'y'.repeat(300),
+          url: 'z'.repeat(300),
+          query: 'q'.repeat(300),
+          pattern: 'p'.repeat(300),
+          prompt: 'r'.repeat(300),
+          description: 'd'.repeat(300),
+        },
+      },
+    ])
+    const msgs = n.push(line(entry))
+    expect(msgs).toHaveLength(1)
+    const meta = msgs[0].toolMeta!
+    expect(meta.length).toBeLessThanOrEqual(2048)
+    // Verify the output is valid JSON (either the full preview or the truncation sentinel)
+    const parsed = JSON.parse(meta)
+    expect(parsed).toBeDefined()
   })
 
   it('produces one tool_call per tool_use part', () => {
@@ -344,6 +382,15 @@ describe('image parts → [image]', () => {
 // ---------------------------------------------------------------------------
 
 describe('isSidechain entries', () => {
+  it('sets kind to "sidechain" for a plain-string entry with isSidechain:true', () => {
+    const n = makeNormalizer()
+    const entry = assistantEntry('Plain text sidechain output.', { isSidechain: true })
+    const msgs = n.push(line(entry))
+    expect(msgs).toHaveLength(1)
+    expect(msgs[0].kind).toBe('sidechain')
+    expect(msgs[0].content).toBe('Plain text sidechain output.')
+  })
+
   it('sets kind to "sidechain" for a text-part entry with isSidechain:true', () => {
     const n = makeNormalizer()
     const entry = assistantEntry([{ type: 'text', text: 'Sub-agent output.' }], { isSidechain: true })
@@ -417,6 +464,27 @@ describe('skip-list metadata types', () => {
 // ---------------------------------------------------------------------------
 
 describe('unknown types', () => {
+  it('produces one unknown row for a user/assistant entry with message field absent', () => {
+    const n = makeNormalizer()
+    const entry = { type: 'user', timestamp: '2024-01-01T00:00:00.000Z', data: { foo: 'bar' } }
+    const msgs = n.push(line(entry))
+    expect(msgs).toHaveLength(1)
+    expect(msgs[0].role).toBe('system')
+    expect(msgs[0].kind).toBe('unknown')
+    expect(msgs[0].content).toBe('')
+    expect(n.stats.unknown).toBe(1)
+  })
+
+  it('produces one unknown row for a user/assistant entry with message: null', () => {
+    const n = makeNormalizer()
+    const entry = { type: 'assistant', timestamp: '2024-01-01T00:00:00.000Z', message: null }
+    const msgs = n.push(line(entry))
+    expect(msgs).toHaveLength(1)
+    expect(msgs[0].role).toBe('system')
+    expect(msgs[0].kind).toBe('unknown')
+    expect(n.stats.unknown).toBe(1)
+  })
+
   it('produces one unknown row for a genuinely novel type', () => {
     const n = makeNormalizer()
     const entry = { type: 'hologram', timestamp: '2024-01-01T00:00:00.000Z', data: { foo: 'bar' } }
@@ -476,6 +544,16 @@ describe('malformed JSON', () => {
     expect(() => n.push('null')).not.toThrow()
     expect(() => n.push('42')).not.toThrow()
     expect(() => n.push('"just a string"')).not.toThrow()
+  })
+
+  it('returns [] for bare JSON values (null, number, string, array) and increments malformed', () => {
+    const n = makeNormalizer()
+    const cases = ['null', '42', '"just a string"', '[1,2]']
+    for (const input of cases) {
+      const msgs = n.push(input)
+      expect(msgs).toHaveLength(0)
+    }
+    expect(n.stats.malformed).toBe(4)
   })
 
   it('counts multiple malformed lines in stats.malformed', () => {
