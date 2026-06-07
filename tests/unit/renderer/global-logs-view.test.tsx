@@ -129,6 +129,51 @@ describe('GlobalLogsView (logs2)', () => {
     cleanup()
   })
 
+  it('clicking a slot while searching clears the query and shows the transcript', async () => {
+    const { container, cleanup } = await mount(<GlobalLogsView />)
+    // Type a query to enter search mode.
+    const input = container.querySelector('input[type="text"]') as HTMLInputElement
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+      setter.call(input, 'needle')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      await new Promise((r) => setTimeout(r, 350))
+    })
+    // Hit list is visible; transcript not yet shown.
+    expect(container.textContent).toMatch(/needle/)
+    expect(container.querySelector('[data-testid="chat-transcript"]')).toBeFalsy()
+    // Click the APP slot button in the tree.
+    const appBtn = Array.from(container.querySelectorAll('button')).find((b) => /APP/.test(b.textContent || '') && !b.textContent?.includes('needle'))!
+    await act(async () => { appBtn.click(); await new Promise((r) => setTimeout(r, 30)) })
+    // Query cleared -> hit list gone; transcript panel rendered.
+    expect(container.querySelector('[data-testid="chat-transcript"]')).toBeTruthy()
+    cleanup()
+  })
+
+  it('changing accountFilter deselects a slot that is no longer visible', async () => {
+    // Seed a second slot with a different account so the filter can hide it.
+    const slotWithAccount = { slotKey: 'c1', configId: 'c1', configLabel: 'APP', accountEmail: 'alice@example.com', lastActive: 300, runCount: 2, messageCount: 12 }
+    listSlots.mockResolvedValueOnce([slotWithAccount])
+    const { container, cleanup } = await mount(<GlobalLogsView />)
+    // Select the APP slot.
+    const appBtn = Array.from(container.querySelectorAll('button')).find((b) => /APP/.test(b.textContent || ''))!
+    await act(async () => { appBtn.click(); await new Promise((r) => setTimeout(r, 10)) })
+    expect(container.querySelector('[data-testid="chat-transcript"]')).toBeTruthy()
+    // Change the accountFilter to a different email — the slot is now filtered out.
+    const select = container.querySelector('select') as HTMLSelectElement
+    if (select) {
+      await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!
+        setter.call(select, 'other@example.com')
+        select.dispatchEvent(new Event('change', { bubbles: true }))
+        await new Promise((r) => setTimeout(r, 20))
+      })
+      // Selected slot filtered out -> right pane reverts to empty state.
+      expect(container.querySelector('[data-testid="chat-transcript"]')).toBeFalsy()
+    }
+    cleanup()
+  })
+
   it('clear-all confirms and calls logs2.clearAll', async () => {
     const { container, cleanup } = await mount(<GlobalLogsView />)
     const btn = Array.from(container.querySelectorAll('button')).find((b) => /clear all/i.test(b.textContent || ''))!

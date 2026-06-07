@@ -42,10 +42,10 @@ export default function LogTree({
   accountFilter,
   onAccountFilter,
 }: Props) {
-  // Classify flat slots into live vs orphaned using the same predicate
-  // groupSessions.ts applies (configId present AND still live -> a group;
-  // otherwise -> Orphaned). Slots are already one-per-config, so there are no
-  // legacy label-match children to attach here.
+  // Classify flat slots into live vs orphaned applying the same live/orphan rule
+  // as groupSessions.ts (configId present AND still live -> live group; otherwise
+  // -> Orphaned). Deliberate inline reimplementation: the flat one-slot-per-config
+  // layout makes the legacy label-attach branch in groupSessions.ts inapplicable.
   const { live, orphaned } = useMemo(() => {
     const liveRows: SlotRow[] = []
     const orphanRows: SlotRow[] = []

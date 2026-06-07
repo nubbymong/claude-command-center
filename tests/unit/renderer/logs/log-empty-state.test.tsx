@@ -12,7 +12,7 @@ const render = async (el: React.ReactElement) => {
   document.body.appendChild(container)
   const root = createRoot(container)
   await act(async () => { root.render(el) })
-  return { container, cleanup: () => { root.unmount(); container.remove() } }
+  return { container, cleanup: () => { act(() => { root.unmount() }); container.remove() } }
 }
 
 const cases: { reason: LogEmptyReason; match: RegExp }[] = [

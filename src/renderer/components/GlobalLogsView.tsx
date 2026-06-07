@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import PageFrame from './PageFrame'
 import LogTree, { type SlotRow } from './LogTree'
 import LogEmptyState from './logs/LogEmptyState'
@@ -96,6 +96,7 @@ export default function GlobalLogsView() {
   const [jumpRequest, setJumpRequest] = useState<{ runId: number; idx: number; seq: number } | null>(null)
   const [accountFilter, setAccountFilter] = useState('all')
   const [busy, setBusy] = useState(false)
+  const seqRef = useRef(0)
 
   const refresh = useCallback(async () => {
     const rows = (await window.electronAPI.logs2.listSlots()) as SlotRow[]
@@ -115,6 +116,13 @@ export default function GlobalLogsView() {
     () => (accountFilter === 'all' ? slots : slots.filter((s) => s.accountEmail === accountFilter)),
     [slots, accountFilter],
   )
+
+  // Deselect the current slot if it is no longer visible after an accountFilter change.
+  useEffect(() => {
+    if (selected && !filteredSlots.some((s) => s.slotKey === selected.slotKey)) {
+      setSelected(null)
+    }
+  }, [filteredSlots, selected])
 
   const accounts = useMemo(() => {
     const seen = new Map<string, string>()
@@ -154,10 +162,11 @@ export default function GlobalLogsView() {
     const slot = slots.find((s) => (h.configId ? s.configId === h.configId : s.slotKey === h.sessionId))
     if (slot && slot.slotKey !== selected?.slotKey) setSelected(slot)
     setQuery('')
-    setJumpRequest({ runId: h.runId, idx: h.idx, seq: Date.now() })
+    setJumpRequest({ runId: h.runId, idx: h.idx, seq: ++seqRef.current })
   }, [slots, selected])
 
   const onSelectSlot = useCallback((s: SlotRow) => {
+    setQuery('')
     setSelected(s)
     setJumpRequest(null)
   }, [])
