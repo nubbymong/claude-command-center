@@ -264,6 +264,17 @@ describe('LogSupervisor', () => {
     expect(h.current().posts.some((m) => m.type === 'run-start')).toBe(true)
   })
 
+  it('runAccount when listening forwards a run-account message with the correct sessionId and email', () => {
+    const h = makeHarness()
+    h.sup.start()
+    h.current().emit({ type: 'ready' })
+    h.sup.runAccount('s1', 'user@example.com')
+    const msg = h.current().posts.find((m) => m.type === 'run-account') as Extract<ToTranscriptsWorker, { type: 'run-account' }> | undefined
+    expect(msg).toBeDefined()
+    expect(msg?.sessionId).toBe('s1')
+    expect(msg?.accountEmail).toBe('user@example.com')
+  })
+
   it('a runStart during a crash window is replayed to the NEXT worker on its ready', () => {
     const h = makeHarness({ maxRestarts: 5 })
     h.sup.start()
