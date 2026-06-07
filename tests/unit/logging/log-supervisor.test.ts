@@ -330,17 +330,6 @@ describe('LogSupervisor', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // Transitional migrateDir stub
-  // ---------------------------------------------------------------------------
-
-  it('migrateDir rejects (legacy migration unavailable during the v2 transition)', async () => {
-    const h = makeHarness()
-    h.sup.start()
-    h.current().emit({ type: 'ready' })
-    await expect(h.sup.migrateDir('C:/legacy/logs')).rejects.toThrow(/unavailable/i)
-  })
-
-  // ---------------------------------------------------------------------------
   // Shutdown
   // ---------------------------------------------------------------------------
 

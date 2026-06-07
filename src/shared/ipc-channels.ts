@@ -67,22 +67,11 @@ export const IPC = {
   USAGE_TOTAL: 'usage:total',
   USAGE_HISTORY: 'usage:history',
 
-  // Logs (SQLite worker-backed; Phase 2a). All go through getLogSupervisor().query.
-  LOGSDB_LIST_SESSIONS: 'logsdb:listSessions',
-  LOGSDB_READ_EVENTS: 'logsdb:readEvents',
-  LOGSDB_SEARCH: 'logsdb:search',
-  LOGSDB_PRUNE: 'logsdb:prune',
-  LOGSDB_CLEAR_ALL: 'logsdb:clearAll',
   // T8b (bug #5): the exact-conversation resume target for a session — {uuid,cwd}
   // read off the latest bound transcript, or null. Used at session-save time to
-  // persist resumeUuid/resumeCwd onto SavedSession for app-relaunch.
+  // persist resumeUuid/resumeCwd onto SavedSession for app-relaunch. Handled by
+  // resume-handlers.ts (routes through the transcript binder; no DB).
   LOGS_GET_RESUME_TARGET: 'logging:getResumeTarget',
-
-  // Logs — migration (Phase 2b)
-  LOGS_MIGRATE_DETECT: 'logs:migrate:detect',
-  LOGS_MIGRATE_RUN: 'logs:migrate:run',
-  LOGS_MIGRATE_PROGRESS: 'logs:migrate:progress',
-  LOGS_MIGRATE_RECLAIM: 'logs:migrate:reclaim',
 
   // Logs v2 — detection-driven warned wipe of the OLD log artifacts (first run).
   // DETECT reports the inventory (bytes + paths); CONFIRM performs the deletion

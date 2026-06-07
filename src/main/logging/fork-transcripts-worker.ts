@@ -3,8 +3,7 @@ import { join } from 'node:path'
 import type { TranscriptsWorkerTransport, ToTranscriptsWorker, FromTranscriptsWorker } from './log-worker-transport'
 
 /** A forked transcripts worker handle the supervisor drives.
- *  Mirrors ForkedLogWorker (fork-log-worker.ts) but speaks the v2
- *  TranscriptsWorkerTransport (post/onMessage/kill) message shapes. */
+ *  Speaks the v2 TranscriptsWorkerTransport (post/onMessage/kill) message shapes. */
 export interface ForkedTranscriptsWorker {
   transport: TranscriptsWorkerTransport
   kill: () => void

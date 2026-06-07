@@ -121,45 +121,8 @@ export interface ElectronAPI {
     getUsageHistory: (hours: number) => Promise<unknown>
   }
   logsdb: {
-    listSessions: (args?: { offset?: number; limit?: number }) => Promise<unknown[]>
-    readEvents: (sessionId: string, offset?: number, limit?: number) => Promise<unknown[]>
-    search: (query: string, limit?: number) => Promise<unknown[]>
-    prune: (ids: string[]) => Promise<{ deletedSessions: number; deletedEvents: number }>
-    clearAll: () => Promise<{ deletedSessions: number; deletedEvents: number }>
+    /** T8b (bug #5): exact-conversation resume target for a session, or null. */
     getResumeTarget: (sessionId: string) => Promise<{ uuid: string; cwd: string } | null>
-  }
-  logMigration: {
-    detect: () => Promise<{
-      present: boolean
-      sessionFolders: number
-      frozen: boolean
-      /** Persisted import-completion marker (null until a clean run) — lets the
-       *  reclaim entry survive app restarts. */
-      completion: {
-        completedAt: number
-        logsDir: string
-        totalSessions: number
-        importedSessions: number
-        skippedSessions: number
-        importedEvents: number
-        unparseableCount: number
-      } | null
-    }>
-    run: () => Promise<{
-      totalSessions: number
-      importedSessions: number
-      skippedSessions: number
-      failedSessions: number
-      importedEvents: number
-      unparseable: { path: string; reason: string; skippedLines: number }[]
-      foldedPartnerDirs: number
-      noEventDirs: number
-      detectedFolders: number
-      dbBytesBefore: number
-      dbBytesAfter: number
-    }>
-    reclaim: () => Promise<{ deletedFolders: number; reclaimedBytes: number; failedFolders: string[] }>
-    onProgress: (cb: (p: { done: number; total: number }) => void) => () => void
   }
   logsWipe: {
     detect: () => Promise<{ present: boolean; totalBytes: number; paths: string[]; settingsKeys: string[] }>
@@ -596,22 +559,7 @@ const electronAPI: ElectronAPI = {
     getUsageHistory: (hours) => ipcRenderer.invoke(IPC.USAGE_HISTORY, hours)
   },
   logsdb: {
-    listSessions: (args?: { offset?: number; limit?: number }) => ipcRenderer.invoke(IPC.LOGSDB_LIST_SESSIONS, args),
-    readEvents: (sessionId: string, offset?: number, limit?: number) => ipcRenderer.invoke(IPC.LOGSDB_READ_EVENTS, sessionId, offset, limit),
-    search: (query: string, limit?: number) => ipcRenderer.invoke(IPC.LOGSDB_SEARCH, query, limit),
-    prune: (ids: string[]) => ipcRenderer.invoke(IPC.LOGSDB_PRUNE, ids),
-    clearAll: () => ipcRenderer.invoke(IPC.LOGSDB_CLEAR_ALL),
     getResumeTarget: (sessionId: string) => ipcRenderer.invoke(IPC.LOGS_GET_RESUME_TARGET, sessionId),
-  },
-  logMigration: {
-    detect: () => ipcRenderer.invoke(IPC.LOGS_MIGRATE_DETECT),
-    run: () => ipcRenderer.invoke(IPC.LOGS_MIGRATE_RUN),
-    reclaim: () => ipcRenderer.invoke(IPC.LOGS_MIGRATE_RECLAIM),
-    onProgress: (cb: (p: { done: number; total: number }) => void) => {
-      const handler = (_e: unknown, p: { done: number; total: number }) => cb(p)
-      ipcRenderer.on(IPC.LOGS_MIGRATE_PROGRESS, handler)
-      return () => ipcRenderer.removeListener(IPC.LOGS_MIGRATE_PROGRESS, handler)
-    },
   },
   // Logs v2 — first-run warned wipe of the OLD log artifacts.
   logsWipe: {

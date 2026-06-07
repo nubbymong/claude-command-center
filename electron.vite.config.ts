@@ -14,9 +14,6 @@ export default defineConfig({
         input: {
           index: resolve(__dirname, 'src/main/index.ts'),
           'hooks-host': resolve(__dirname, 'src/main/services/hooks-host.ts'),
-          // Old byte-capture worker: no longer forked by the live app but kept
-          // bundling until the Phase-5 deletion sweep (its native tests still run).
-          'log-worker': resolve(__dirname, 'src/main/logging/log-worker.ts'),
           // Logs v2 transcript-indexing worker (forked by fork-transcripts-worker.ts).
           'transcripts-worker': resolve(__dirname, 'src/main/logging/transcripts-worker.ts')
         }

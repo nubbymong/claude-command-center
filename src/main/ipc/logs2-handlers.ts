@@ -76,7 +76,7 @@ const ingestStatusSchema = z.object({ sessionId: z.string().min(1).max(200) }).s
 // ---------------------------------------------------------------------------
 
 /** Route through the supervisor only. Rejects fast when it is absent so the
- *  renderer never hangs (mirrors logsdb-handlers.ts's q()). */
+ *  renderer never hangs. */
 async function q(kind: string, args: Record<string, unknown>): Promise<unknown[]> {
   const sup = getLogSupervisor()
   if (!sup) throw new Error('logging service not running')

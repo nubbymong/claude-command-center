@@ -31,7 +31,7 @@ import { createInitialHealth } from '../../shared/service-health'
 import { IPC } from '../../shared/ipc-channels'
 import type { ServiceHealth, ServiceLogEntry, DiagnosticsSnapshot } from '../../shared/service-health'
 import type { ForkedTranscriptsWorker } from './fork-transcripts-worker'
-import type { ToTranscriptsWorker, FromTranscriptsWorker, DirMigrationReport } from './log-worker-transport'
+import type { ToTranscriptsWorker, FromTranscriptsWorker } from './log-worker-transport'
 
 export interface LogSupervisorOptions {
   forkChild: () => ForkedTranscriptsWorker
@@ -332,18 +332,6 @@ export class LogSupervisor {
       this.pending.set(id, { resolve, reject, timer })
       this.worker!.transport.post({ type: 'query', id, kind, args })
     })
-  }
-
-  /**
-   * TRANSITIONAL STUB (Task 10 rebuilds the migration on the transcripts
-   * stack). The v2 worker does not speak `migrate-dir`, so the legacy import is
-   * unavailable while the stacks swap over. Rejecting here keeps the IPC
-   * handler (log-migration-handlers.ts) compiling AND safe: the run handler
-   * surfaces the error and never writes the completion marker, so reclaim
-   * stays blocked — no legacy data can be deleted.
-   */
-  migrateDir(_logsDir: string, _onProgress?: (done: number, total: number) => void): Promise<DirMigrationReport> {
-    return Promise.reject(new Error('legacy log migration is unavailable during the logs v2 transition'))
   }
 
   /** Reject + clear every pending query so none can hang (on exit/shutdown). */

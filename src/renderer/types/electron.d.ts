@@ -200,73 +200,8 @@ export interface ElectronAPI {
     getUsageHistory: (hours: number) => Promise<any>
   }
   logsdb: {
-    listSessions: (args?: { offset?: number; limit?: number }) => Promise<Array<{
-      sessionId: string
-      configId: string | null
-      configLabel: string
-      projectCwd: string | null
-      accountEmail: string | null
-      profileId: string | null
-      provider: string
-      startedAt: number
-      endedAt: number | null
-      status: string
-      byteSize: number
-      eventCount: number
-    }>>
-    readEvents: (sessionId: string, offset?: number, limit?: number) => Promise<Array<{
-      id: number
-      sessionId: string
-      seq: number
-      ts: number
-      type: string
-      raw: Uint8Array
-      text: string
-    }>>
-    search: (query: string, limit?: number) => Promise<Array<{
-      sessionId: string
-      eventId: number
-      seq: number
-      ts: number
-      snippet?: string
-    }>>
-    prune: (ids: string[]) => Promise<{ deletedSessions: number; deletedEvents: number }>
-    clearAll: () => Promise<{ deletedSessions: number; deletedEvents: number }>
     /** T8b (bug #5): exact-conversation resume target for a session, or null. */
     getResumeTarget: (sessionId: string) => Promise<{ uuid: string; cwd: string } | null>
-  }
-  logMigration: {
-    detect: () => Promise<{
-      present: boolean
-      sessionFolders: number
-      frozen: boolean
-      /** Persisted import-completion marker (null until a clean run) — lets the
-       *  reclaim entry survive app restarts. */
-      completion: {
-        completedAt: number
-        logsDir: string
-        totalSessions: number
-        importedSessions: number
-        skippedSessions: number
-        importedEvents: number
-        unparseableCount: number
-      } | null
-    }>
-    run: () => Promise<{
-      totalSessions: number
-      importedSessions: number
-      skippedSessions: number
-      failedSessions: number
-      importedEvents: number
-      unparseable: { path: string; reason: string; skippedLines: number }[]
-      foldedPartnerDirs: number
-      noEventDirs: number
-      detectedFolders: number
-      dbBytesBefore: number
-      dbBytesAfter: number
-    }>
-    reclaim: () => Promise<{ deletedFolders: number; reclaimedBytes: number; failedFolders: string[] }>
-    onProgress: (cb: (p: { done: number; total: number }) => void) => () => void
   }
   logsWipe: {
     /** Detect the OLD log artifacts (logs.db*, legacy logs/ tree, migration markers). */

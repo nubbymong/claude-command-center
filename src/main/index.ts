@@ -7,8 +7,7 @@ import { registerPtyHandlers } from './ipc/pty-handlers'
 import { registerUsageHandlers } from './ipc/usage-handlers'
 import { registerDiscoveryHandlers } from './ipc/discovery-handlers'
 import { killAllPty, gracefulExitAllPty } from './pty-manager'
-import { registerLogsdbHandlers } from './ipc/logsdb-handlers'
-import { registerLogMigrationHandlers } from './ipc/log-migration-handlers'
+import { registerResumeHandlers } from './ipc/resume-handlers'
 import { registerLogs2Handlers } from './ipc/logs2-handlers'
 
 import { startStatuslineWatcher, setTranscriptPathSink } from './statusline-watcher'
@@ -634,8 +633,7 @@ if (!gotTheLock) {
     registerPtyHandlers(getWindow)
     registerUsageHandlers()
     registerDiscoveryHandlers()
-    registerLogsdbHandlers()
-    registerLogMigrationHandlers(getWindow)
+    registerResumeHandlers()
     // Logs v2 — first-run warned wipe of the OLD log artifacts (orphaned ~21 GB
     // logs.db + ~16 GB legacy logs/ tree + migration markers). The renderer drives
     // a blocking confirm modal: it DETECTs at startup, and only on the user's

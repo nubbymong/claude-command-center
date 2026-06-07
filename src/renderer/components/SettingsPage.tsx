@@ -113,8 +113,8 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
   const handleClearAllLogs = async () => {
     if (!window.confirm('Permanently delete the CCC conversation index? This cannot be undone. Active sessions are kept. Your conversations remain in Claude\'s own files (~/.claude/projects).')) return
     try {
-      const res = await window.electronAPI.logsdb.clearAll()
-      window.alert(`Index cleared: ${res.deletedSessions} session(s), ${res.deletedEvents} event(s) removed. Active sessions are kept. Your conversations remain in Claude's own files.`)
+      const res = await window.electronAPI.logs2.clearAll()
+      window.alert(`Index cleared: ${res.deletedRuns} run(s), ${res.deletedMessages} message(s) removed. Active sessions are kept. Your conversations remain in Claude's own files.`)
     } catch {
       window.alert('Could not clear the index — the logging service may be unavailable.')
     }

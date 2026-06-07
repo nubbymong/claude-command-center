@@ -8,16 +8,14 @@
  * getLogSupervisor()?.runStart/runEnd per spawn/exit.
  *
  * The old byte-capture wiring (makeCapture/getLogCapture) is GONE — the worker
- * tails transcript files itself, so there is no hot-path capture in main. The
- * log-capture.ts module remains on disk (with the rest of the old stack) until
- * the Phase-5 deletion sweep, but nothing routes to it anymore.
+ * tails transcript files itself, so there is no hot-path capture in main (the
+ * old capture/log-db/log-worker stack was removed in the deletion sweep).
  *
  * IMPORTANT import-graph rule: this module imports ONLY the supervisor, the
  * worker FORK helper, and readConfig. It must NEVER import `./transcripts-db`
- * or `./transcripts-worker` (nor the old `./log-db`/`./log-worker`) — those
- * load better-sqlite3, which lives ONLY in the forked worker
- * (out/main/transcripts-worker.js). Pulling either in here would drag the
- * native dep into the main-process bundle.
+ * or `./transcripts-worker` — those load better-sqlite3, which lives ONLY in
+ * the forked worker (out/main/transcripts-worker.js). Pulling either in here
+ * would drag the native dep into the main-process bundle.
  *
  * No default export (project convention).
  */
