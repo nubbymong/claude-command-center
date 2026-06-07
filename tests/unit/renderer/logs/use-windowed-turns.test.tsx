@@ -62,11 +62,15 @@ function makeMsg(idx: number): Logs2Message {
 
 const ALL: Logs2Message[] = Array.from({ length: TOTAL }, (_, i) => makeMsg(i))
 
-// Serve a window of the synthetic transcript according to anchor/dir.
-//  - anchor 'tail'         → the last PAGE_SIZE messages
+// Serve a window of the synthetic transcript according to anchor/dir. This
+// MIRRORS the real backend's strict-exclusive tuple semantics (transcripts-db.ts
+// readMessagesPage): there is NO centered read. The worker (transcripts-worker.ts)
+// coerces any non-'newer' dir to 'older' and logs2-handlers defaults dir to
+// 'older', so a missing dir behaves like 'older'.
+//  - anchor 'tail'            → the last PAGE_SIZE messages
 //  - anchor {runId,idx} older → the PAGE_SIZE messages STRICTLY before idx
 //  - anchor {runId,idx} newer → the PAGE_SIZE messages STRICTLY after idx
-//  - anchor {runId,idx} (no dir / jump) → a centered window around idx
+//    (idx may be -1; the first row strictly after idx:-1 is idx:0)
 function serve(args: {
   scope: unknown
   anchor?: 'tail' | { runId: number; idx: number }
@@ -75,20 +79,19 @@ function serve(args: {
 }): Logs2Message[] {
   const limit = args.limit ?? PAGE_SIZE
   if (!args.anchor || args.anchor === 'tail') {
+    // 'tail' + 'newer' is empty in the backend (nothing after the tail); the
+    // hook never issues it, so this branch only needs the older/default case.
     return ALL.slice(Math.max(0, TOTAL - limit))
   }
   const { idx } = args.anchor
-  if (args.dir === 'older') {
-    const end = idx // strictly before
-    return ALL.slice(Math.max(0, end - limit), end)
-  }
   if (args.dir === 'newer') {
-    const start = idx + 1 // strictly after
-    return ALL.slice(start, start + limit)
+    // Strictly AFTER idx → first returned row is idx+1. For idx:-1 that's row 0.
+    const start = idx + 1
+    return ALL.slice(Math.max(0, start), Math.max(0, start) + limit)
   }
-  // Jump: centered window around idx.
-  const half = Math.floor(limit / 2)
-  return ALL.slice(Math.max(0, idx - half), Math.min(TOTAL, idx + half))
+  // 'older' (or no dir, which the backend coerces to 'older'): strictly BEFORE idx.
+  const end = idx
+  return ALL.slice(Math.max(0, end - limit), Math.max(0, end))
 }
 
 let readMessages: ReturnType<typeof vi.fn>
@@ -215,20 +218,47 @@ describe('useWindowedTurns', () => {
     expect(readMessages.mock.calls.length).toBe(callsBefore)
   })
 
-  it('jumpTo loads a window centered on the idx and turns follow OFF', async () => {
+  it('jumpTo loads a window that CONTAINS the target idx and turns follow OFF', async () => {
     const { result } = renderHook(() => useWindowedTurns(SCOPE))
     await flush()
+    const callsBefore = readMessages.mock.calls.length
     const target = 250
     await act(async () => {
       await result.current.jumpTo({ runId: RUN, idx: target })
     })
     await flush()
-    const jumpArgs = readMessages.mock.calls[readMessages.mock.calls.length - 1][0]
-    expect(jumpArgs.anchor).toEqual({ runId: RUN, idx: target })
+
+    // REGRESSION GUARD: the backend has NO centered read — 'older'/'newer' are
+    // STRICTLY exclusive of the anchor tuple. A forward page must therefore be
+    // anchored at idx-1 with dir:'newer' so its FIRST row is the target itself.
+    const jumpCalls = readMessages.mock.calls.slice(callsBefore).map((c) => c[0])
+    const newerCall = jumpCalls.find((a) => a.dir === 'newer')
+    expect(newerCall).toBeTruthy()
+    expect(newerCall.anchor).toEqual({ runId: RUN, idx: target - 1 })
+    // And an older page anchored strictly before the target.
+    const olderCall = jumpCalls.find((a) => a.dir === 'older')
+    expect(olderCall).toBeTruthy()
+    expect(olderCall.anchor).toEqual({ runId: RUN, idx: target })
+    // There must be NO redundant no-dir "center" read.
+    expect(jumpCalls.some((a) => a.dir === undefined)).toBe(false)
+
     expect(result.current.follow).toBe(false)
     const msgs = result.current.messages
-    // The window contains the target idx.
+    // The mounted window MUST contain the target idx (this fails against the old
+    // centerless backend, where a no-dir read returned [], dropping the target).
     expect(msgs.some((m) => m.idx === target)).toBe(true)
+  })
+
+  it('jumpTo to idx 0 still includes the target (idx-1 = -1 newer anchor)', async () => {
+    const { result } = renderHook(() => useWindowedTurns(SCOPE))
+    await flush()
+    await act(async () => {
+      await result.current.jumpTo({ runId: RUN, idx: 0 })
+    })
+    await flush()
+    const msgs = result.current.messages
+    expect(msgs.some((m) => m.idx === 0)).toBe(true)
+    expect(msgs[0].idx).toBe(0)
   })
 
   it('unsubscribes from onNewMessages on unmount', async () => {

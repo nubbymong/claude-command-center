@@ -1,10 +1,13 @@
 // @vitest-environment jsdom
 // tests/unit/renderer/logs/chat-transcript.test.tsx
 //
-// Light render test for ChatTranscript: role headers (you/claude), a tool row,
-// and dividers render from a canned window. The heavy windowing logic is covered
-// by use-windowed-turns.test.tsx; here we just assert the kind→component mapping
-// and the Layout C role headers.
+// Render tests for the split transcript:
+//   - ChatTranscriptView (PRESENTATIONAL): role headers (you/claude), a tool row,
+//     dividers and an unknown row render from injected props — NO hook, NO IPC.
+//   - ChatTranscript (CONTAINER): wires ONE useWindowedTurns to the view (we
+//     assert exactly one readMessages('tail') + one onNewMessages subscription,
+//     i.e. the hook is single-instanced, not double-mounted).
+// The heavy windowing logic is covered by use-windowed-turns.test.tsx.
 import React from 'react'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createRoot, type Root } from 'react-dom/client'
@@ -13,6 +16,7 @@ import { act } from 'react'
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
 
 import ChatTranscript from '../../../../src/renderer/components/logs/ChatTranscript'
+import ChatTranscriptView from '../../../../src/renderer/components/logs/ChatTranscriptView'
 import type { Logs2Message } from '../../../../src/renderer/hooks/useWindowedTurns'
 
 const YOU = String.fromCodePoint(0x276f)
@@ -39,18 +43,24 @@ const WINDOW: Logs2Message[] = [
   msg({ idx: 5, kind: 'unknown', role: 'system', content: '{"weird":true}' }),
 ]
 
+/** Default props for the presentational view (a settled, non-following window). */
+function viewProps(messages: Logs2Message[]) {
+  return {
+    messages,
+    follow: false,
+    setFollow: vi.fn(),
+    loading: false,
+    loadingOlder: false,
+    error: null,
+    loadOlder: vi.fn(async () => {}),
+    prependToken: 0,
+  }
+}
+
 let container: HTMLDivElement
 let root: Root
 
 beforeEach(() => {
-  // ChatTranscript instantiates useWindowedTurns internally → needs the IPC.
-  // We serve the whole canned window at the tail and a no-op subscription.
-  ;(globalThis as any).window.electronAPI = {
-    logs2: {
-      readMessages: vi.fn(async () => WINDOW),
-      onNewMessages: () => () => {},
-    },
-  }
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -68,10 +78,10 @@ async function flush() {
   })
 }
 
-describe('ChatTranscript', () => {
+describe('ChatTranscriptView (presentational)', () => {
   it('renders you/claude role headers, a tool row, dividers and an unknown row', async () => {
     await act(async () => {
-      root.render(React.createElement(ChatTranscript, { scope: { sessionId: 's1' } }))
+      root.render(React.createElement(ChatTranscriptView, viewProps(WINDOW)))
     })
     await flush()
 
@@ -95,12 +105,50 @@ describe('ChatTranscript', () => {
 
   it('blue tone for user header, mauve tone for claude header', async () => {
     await act(async () => {
-      root.render(React.createElement(ChatTranscript, { scope: { sessionId: 's1' } }))
+      root.render(React.createElement(ChatTranscriptView, viewProps(WINDOW)))
     })
     await flush()
     const userRow = container.querySelector('[data-role="user"]')
     const asstRow = container.querySelector('[data-role="assistant"]')
     expect(userRow?.querySelector('.text-\\[var\\(--color-blue\\)\\]')).toBeTruthy()
     expect(asstRow?.querySelector('.text-\\[var\\(--color-mauve\\)\\]')).toBeTruthy()
+  })
+
+  it('does NOT call useWindowedTurns — renders with no electronAPI present', async () => {
+    // Remove the IPC entirely: a presentational component must not touch it.
+    const saved = (globalThis as any).window.electronAPI
+    delete (globalThis as any).window.electronAPI
+    try {
+      await act(async () => {
+        root.render(React.createElement(ChatTranscriptView, viewProps(WINDOW)))
+      })
+      await flush()
+      expect(container.querySelector('[data-testid="chat-transcript"]')).toBeTruthy()
+    } finally {
+      ;(globalThis as any).window.electronAPI = saved
+    }
+  })
+})
+
+describe('ChatTranscript (container)', () => {
+  it('instantiates EXACTLY ONE windowing hook (one tail read, one subscription)', async () => {
+    const readMessages = vi.fn(async () => WINDOW)
+    const onNewMessages = vi.fn(() => () => {})
+    ;(globalThis as any).window.electronAPI = { logs2: { readMessages, onNewMessages } }
+
+    await act(async () => {
+      root.render(React.createElement(ChatTranscript, { scope: { sessionId: 's1' } }))
+    })
+    await flush()
+
+    // Single instance: exactly one initial tail read and one new-messages sub.
+    const tailReads = readMessages.mock.calls.filter((c: any[]) => c[0]?.anchor === 'tail')
+    expect(tailReads.length).toBe(1)
+    expect(onNewMessages).toHaveBeenCalledTimes(1)
+
+    // And it renders the view content from that one window.
+    const text = container.textContent || ''
+    expect(text).toContain('claude')
+    expect(container.querySelector('[data-divider="clear"]')).toBeTruthy()
   })
 })

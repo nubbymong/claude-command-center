@@ -225,7 +225,7 @@ export function useWindowedTurns(scope: Logs2Scope): WindowedTurns {
     }
   }, [read])
 
-  // ---- Rail jump: reload a window centered on a target ---------------------
+  // ---- Rail jump: reload a window that CONTAINS the target -----------------
   const jumpTo = useCallback(
     async (target: { runId: number; idx: number }) => {
       const myGen = ++genRef.current // invalidate any in-flight reads
@@ -234,19 +234,22 @@ export function useWindowedTurns(scope: Logs2Scope): WindowedTurns {
       setLoading(true)
       setError(null)
       try {
-        // Centered window: a full-page read anchored at the target (no dir), then
-        // one older + one newer page so the user has room to scroll either way.
-        const [center, older, newer] = await Promise.all([
-          read({ runId: target.runId, idx: target.idx }),
+        // The backend has NO centered read: 'older'/'newer' are STRICTLY exclusive
+        // of the anchor tuple (transcripts-db.ts readMessagesPage). To get a page
+        // that BEGINS AT the target we anchor the forward read at idx-1 with
+        // dir:'newer' — the first row strictly after (runId, idx-1) within the
+        // same run is exactly (runId, idx), the target. (idx-1 = -1 when idx===0
+        // is fine: the first row after idx:-1 is idx:0; the DB resolves the run's
+        // startedAt from runId for the tuple compare regardless of idx.)
+        const [forward, older] = await Promise.all([
+          read({ runId: target.runId, idx: target.idx - 1 }, 'newer'),
           read({ runId: target.runId, idx: target.idx }, 'older'),
-          read({ runId: target.runId, idx: target.idx }, 'newer'),
         ])
         if (genRef.current !== myGen) return
         const next = new Map<number, Logs2Message[]>()
-        // Center is page 0; older below it (-1), newer above it (+1).
-        next.set(0, center)
+        // The forward page (target-first) is page 0; the older page below it (-1).
+        next.set(0, forward)
         if (older.length > 0) next.set(-1, older)
-        if (newer.length > 0) next.set(1, newer)
         setPages(next)
       } catch (e) {
         if (genRef.current !== myGen) return
@@ -265,6 +268,16 @@ export function useWindowedTurns(scope: Logs2Scope): WindowedTurns {
 
   // ---- Flatten mounted pages in global order, deduped ----------------------
   const messages = useMemo(() => {
+    // Pages arrive PRE-ORDERED from the DB (stitched order = runs by
+    // (startedAt, runId), messages by idx) and are mounted by a monotonic page
+    // index (older = more negative, tail = 0, newer = positive). Mounted pages
+    // are contiguous and non-overlapping, so concatenating them in page-index
+    // order yields correct GLOBAL order — we must NOT re-sort by (runId, idx),
+    // which would disagree with the DB's (startedAt, runId, idx) key for
+    // backdated/imported runs. Dedup by (runId, idx) keeping the first occurrence
+    // guards the jump-window overlap case (a forward page anchored at idx-1 and
+    // an older page anchored at idx can share no rows, but live-follow + prepend
+    // boundaries can still touch).
     const indices = [...pages.keys()].sort((a, b) => a - b)
     const out: Logs2Message[] = []
     const seen = new Set<string>()
@@ -277,10 +290,6 @@ export function useWindowedTurns(scope: Logs2Scope): WindowedTurns {
         out.push(m)
       }
     }
-    // Pages are stored newest-index-highest and each page is already in (run,
-    // idx) order; the index sort above yields global order. A final sort by
-    // (runId, idx) is a cheap safety net against any boundary overlap.
-    out.sort((a, b) => (a.runId - b.runId) || (a.idx - b.idx))
     return out
   }, [pages])
 
