@@ -19,6 +19,7 @@
  */
 
 import * as nodePath from 'node:path'
+import { UUID_RE } from './logging/transcript-discovery'
 
 export interface BuildClaudeLaunchCommandOptions {
   /** 'win32' produces a PowerShell command; anything else produces a POSIX sh command. */
@@ -106,6 +107,12 @@ export function resolveResumeLaunch(
 ): { resumeUuid: string; claudeCwd: string } | null {
   try {
     if (!target || !target.uuid || !target.cwd) return null
+
+    // Defense-in-depth (FIX 4): re-validate the uuid against the canonical UUID
+    // format BEFORE it is interpolated UNQUOTED into the spawn shell command. The
+    // caller is expected to have validated already; this preserves the builder's
+    // "caller validated" invariant and the fail-open rule even if it didn't.
+    if (!UUID_RE.test(target.uuid)) return null
 
     const home = deps.homedir()
 

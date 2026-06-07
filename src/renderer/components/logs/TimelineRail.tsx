@@ -12,7 +12,7 @@
 // NOTE: `turnSummary` is a *separate* lightweight query from `readMessages`;
 // self-fetching here does NOT duplicate the transcript pager hook.
 
-import { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import type { Logs2Scope } from '../../hooks/useWindowedTurns'
 
 // ---------------------------------------------------------------------------
@@ -160,7 +160,7 @@ export interface TimelineRailProps {
 
 const MAX_CELLS = 2000
 
-export default function TimelineRail({
+function TimelineRail({
   scope,
   onJump,
   searchHits,
@@ -195,26 +195,35 @@ export default function TimelineRail({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scopeKey])
 
-  const buckets = decimateTurns(turns, MAX_CELLS)
+  // Decimation is O(turns) and allocates up to MAX_CELLS bucket objects (each a
+  // .slice()). Memoize on `turns` so a live-follow re-render (parent feeds a
+  // fresh viewportRange ~1×/sec) doesn't re-decimate the whole transcript.
+  const buckets = useMemo(() => decimateTurns(turns, MAX_CELLS), [turns])
   const numBuckets = buckets.length
 
   // --- Search hit markers (deduped by bucket index) ---
-  const hitBuckets = new Set<number>()
-  if (searchHits && numBuckets > 0) {
-    for (const hit of searchHits) {
-      const b = idxToBucket(hit.runId, hit.idx, turns, numBuckets)
-      if (b >= 0) hitBuckets.add(b)
+  // Each idxToBucket is an O(turns) findIndex; memoize so search-hit mapping
+  // doesn't recompute on every render (only when hits/turns/numBuckets change).
+  const hitBuckets = useMemo(() => {
+    const s = new Set<number>()
+    if (searchHits && numBuckets > 0) {
+      for (const hit of searchHits) {
+        const b = idxToBucket(hit.runId, hit.idx, turns, numBuckets)
+        if (b >= 0) s.add(b)
+      }
     }
-  }
+    return s
+  }, [searchHits, turns, numBuckets])
 
   // --- Viewport highlight (start/end bucket indices) ---
-  let vpStart = -1
-  let vpEnd = -1
-  if (viewportRange && numBuckets > 0) {
-    vpStart = idxToBucket(viewportRange.startRunId, viewportRange.startIdx, turns, numBuckets)
-    vpEnd = idxToBucket(viewportRange.endRunId, viewportRange.endIdx, turns, numBuckets)
-    // Graceful fallback: if an end isn't found (-1) keep the sentinel and skip rendering
-  }
+  // Graceful fallback: if an end isn't found (-1) the sentinel keeps it hidden.
+  const { vpStart, vpEnd } = useMemo(() => {
+    if (!viewportRange || numBuckets === 0) return { vpStart: -1, vpEnd: -1 }
+    return {
+      vpStart: idxToBucket(viewportRange.startRunId, viewportRange.startIdx, turns, numBuckets),
+      vpEnd: idxToBucket(viewportRange.endRunId, viewportRange.endIdx, turns, numBuckets),
+    }
+  }, [viewportRange, turns, numBuckets])
 
   if (error && numBuckets === 0) {
     // Graceful: render nothing on error
@@ -285,3 +294,7 @@ export default function TimelineRail({
     </div>
   )
 }
+
+// Memoize so a parent re-render with unchanged props (e.g. during live-follow,
+// when only sibling state churns) does not re-run the rail's render at all.
+export default React.memo(TimelineRail)

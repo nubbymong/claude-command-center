@@ -26,6 +26,14 @@ interface SearchHitRow {
 }
 
 /**
+ * Strip the "orphan:" prefix that listSlots synthesizes onto an orphan slot's
+ * slotKey, recovering the BARE sessionId the DB (runs.sessionId) and FTS hits
+ * (hit.sessionId) actually carry. Non-orphan slotKeys pass through unchanged.
+ */
+const orphanSessionId = (slotKey: string): string =>
+  slotKey.startsWith('orphan:') ? slotKey.slice('orphan:'.length) : slotKey
+
+/**
  * Right pane for a selected slot. Owns the SINGLE useWindowedTurns instance and
  * shares it across the transcript view + the timeline rail (so they drive one
  * window — never a double subscription). The rail's onJump is win.jumpTo; the
@@ -52,12 +60,18 @@ function SlotTranscriptPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jumpRequest?.seq])
 
+  // Derive the viewportRange from SCALAR deps (the first/last message's
+  // runId+idx and the array length) rather than `win.messages` identity. During
+  // live-follow the parent hook hands back a NEW messages array on every tail
+  // push, so depending on its identity would churn this object ~1×/sec and force
+  // the TimelineRail to re-decimate the whole transcript each second.
+  const first = win.messages[0]
+  const last = win.messages[win.messages.length - 1]
   const viewportRange: ViewportRange | undefined = useMemo(() => {
-    const first = win.messages[0]
-    const last = win.messages[win.messages.length - 1]
     if (!first || !last) return undefined
     return { startRunId: first.runId, startIdx: first.idx, endRunId: last.runId, endIdx: last.idx }
-  }, [win.messages])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [first?.runId, first?.idx, last?.runId, last?.idx, win.messages.length])
 
   return (
     <div className="flex-1 flex min-w-0 bg-[var(--surface-stage)]">
@@ -131,10 +145,12 @@ export default function GlobalLogsView() {
   }, [slots, nameForAccount])
 
   // Map a slot to a transcript scope. Prefer the configId; fall back to the
-  // slotKey-as-sessionId for an orphan slot with no configId (the worker keys
-  // orphan slots by their session-config identity).
+  // BARE sessionId for an orphan slot with no configId. listSlots synthesizes an
+  // orphan slotKey as "orphan:<sessionId>", but the DB matches the bare
+  // runs.sessionId column — so the "orphan:" prefix must be stripped before it is
+  // used as a sessionId scope (and at the hit↔slot comparison sites below).
   const scopeFor = useCallback((s: SlotRow): Logs2Scope => {
-    return s.configId ? { configId: s.configId } : { sessionId: s.slotKey }
+    return s.configId ? { configId: s.configId } : { sessionId: orphanSessionId(s.slotKey) }
   }, [])
 
   // Debounced FTS search.
@@ -153,13 +169,14 @@ export default function GlobalLogsView() {
   const scopedHits = useMemo<SearchHit[]>(() => {
     if (!selected) return []
     if (selected.configId) return hits.filter((h) => h.configId === selected.configId).map((h) => ({ runId: h.runId, idx: h.idx }))
-    return hits.filter((h) => h.sessionId === selected.slotKey).map((h) => ({ runId: h.runId, idx: h.idx }))
+    const bare = orphanSessionId(selected.slotKey)
+    return hits.filter((h) => h.sessionId === bare).map((h) => ({ runId: h.runId, idx: h.idx }))
   }, [hits, selected])
 
   // Clicking a search hit: select the owning slot (if not already), clear the
   // query so the transcript surface replaces the hit list, then jump to the hit.
   const onSelectHit = useCallback((h: SearchHitRow) => {
-    const slot = slots.find((s) => (h.configId ? s.configId === h.configId : s.slotKey === h.sessionId))
+    const slot = slots.find((s) => (h.configId ? s.configId === h.configId : orphanSessionId(s.slotKey) === h.sessionId))
     if (slot && slot.slotKey !== selected?.slotKey) setSelected(slot)
     setQuery('')
     setJumpRequest({ runId: h.runId, idx: h.idx, seq: ++seqRef.current })
@@ -258,7 +275,7 @@ export default function GlobalLogsView() {
                     >
                       <div className="flex items-center gap-2 text-[10px] text-overlay0">
                         <span className="text-text font-medium truncate">
-                          {slots.find((s) => (h.configId ? s.configId === h.configId : s.slotKey === h.sessionId))?.configLabel ?? h.sessionId.slice(0, 8)}
+                          {slots.find((s) => (h.configId ? s.configId === h.configId : orphanSessionId(s.slotKey) === h.sessionId))?.configLabel ?? h.sessionId.slice(0, 8)}
                         </span>
                       </div>
                       {h.snippet && <div className="text-[11px] text-subtext0 font-mono truncate mt-0.5">{h.snippet}</div>}

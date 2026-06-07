@@ -54,8 +54,11 @@ export const spawnOptionsSchema = z.object({
   disableAutoMemory: z.boolean().optional(),
   enableCodexReview: z.boolean().optional(),
   // T8b (bug #5): app-relaunch exact-conversation resume target.
+  // FIX 4: the uuid is interpolated UNQUOTED into the spawn shell command, so
+  // constrain it to the canonical UUID format (not just a bounded string) as a
+  // defense-in-depth guard against shell injection. cwd stays a bounded string.
   resume: z.object({
-    uuid: z.string().min(1).max(200),
+    uuid: z.string().regex(/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/),
     cwd: z.string().min(1).max(4096),
   }).optional(),
   model: z.string().optional(),

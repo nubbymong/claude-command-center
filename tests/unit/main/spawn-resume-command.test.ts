@@ -302,4 +302,23 @@ describe('resolveResumeLaunch — gate', () => {
     })
     expect(out).toBeNull()
   })
+
+  it('FIX 4 (defense-in-depth): a non-UUID uuid → null, builds no command', () => {
+    // Even with every path present, a uuid that is not the canonical UUID format
+    // must be rejected before it can be interpolated UNQUOTED into the spawn
+    // shell command. Belt-and-suspenders over the Zod schema; fail-open.
+    const malicious = '$(rm -rf /)'
+    const out = resolveResumeLaunch({ uuid: malicious, cwd: REAL_CWD }, makeDeps())
+    expect(out).toBeNull()
+  })
+
+  it('FIX 4: a partial/garbage uuid string → null', () => {
+    const out = resolveResumeLaunch({ uuid: 'not-a-uuid', cwd: REAL_CWD }, makeDeps())
+    expect(out).toBeNull()
+  })
+
+  it('FIX 4: a canonical uuid still passes the new guard (no regression)', () => {
+    const out = resolveResumeLaunch({ uuid: T_UUID, cwd: REAL_CWD }, makeDeps())
+    expect(out).toEqual({ resumeUuid: T_UUID, claudeCwd: path.resolve(REAL_CWD) })
+  })
 })

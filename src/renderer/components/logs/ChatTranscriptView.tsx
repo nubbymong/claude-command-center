@@ -138,6 +138,13 @@ export function ChatTranscriptView({
   // onScroll closure captures a stale prependToken).
   const prependTokenRef = useRef(prependToken)
   prependTokenRef.current = prependToken
+  // Synchronous in-flight guard. The `loadingOlder` prop lags React state, so two
+  // scroll events near the top can both pass its check before it flips; the 2nd
+  // (re-entrant) loadOlder returns an already-resolved promise whose .finally
+  // nulls prependAnchor before the 1st real fetch lands → the scroll-position
+  // preservation effect skips its correction → viewport jumps. This ref gates the
+  // coalesced 2nd event out entirely.
+  const inFlightOlderRef = useRef(false)
   // True until the first bottom-anchor has been applied for the current window.
   const didInitialAnchor = useRef(false)
 
@@ -186,7 +193,8 @@ export function ChatTranscriptView({
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
     const atBottom = distanceFromBottom <= BOTTOM_THRESHOLD
     if (atBottom !== follow) setFollow(atBottom)
-    if (el.scrollTop <= TOP_THRESHOLD && !loadingOlder) {
+    if (el.scrollTop <= TOP_THRESHOLD && !loadingOlder && !inFlightOlderRef.current) {
+      inFlightOlderRef.current = true
       // Snapshot the height so the prepend layout-effect can preserve position.
       const expectedToken = prependTokenRef.current + 1
       prependAnchor.current = { token: expectedToken, prevHeight: el.scrollHeight }
@@ -196,6 +204,7 @@ export function ChatTranscriptView({
       // never reached expectedToken AND our snapshot is still the latest pending
       // one, no older page landed for THIS request — drop the stale latch.
       void loadOlder().finally(() => {
+        inFlightOlderRef.current = false
         const pending = prependAnchor.current
         if (pending && pending.token === expectedToken && prependTokenRef.current < expectedToken) {
           prependAnchor.current = null

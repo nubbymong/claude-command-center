@@ -130,6 +130,40 @@ describe('ChatTranscriptView (presentational)', () => {
   })
 })
 
+describe('ChatTranscriptView — top-sentinel load-older dedup (race guard)', () => {
+  it('two rapid top-sentinel scroll events issue only ONE loadOlder call', async () => {
+    // A loadOlder that stays in-flight (never resolves during the test) so the
+    // lagging `loadingOlder` prop can't flip between the two scroll events — this
+    // is exactly the window the synchronous in-flight ref must close.
+    let resolveOlder: () => void = () => {}
+    const loadOlder = vi.fn(() => new Promise<void>((res) => { resolveOlder = res }))
+
+    const props = { ...viewProps(WINDOW), loadOlder, loadingOlder: false }
+    await act(async () => {
+      root.render(React.createElement(ChatTranscriptView, props))
+    })
+    await flush()
+
+    const scroller = container.querySelector('[data-testid="chat-transcript"]') as HTMLElement
+    // jsdom has no layout: force the geometry so onScroll's top-sentinel branch fires.
+    Object.defineProperty(scroller, 'scrollHeight', { value: 1000, configurable: true })
+    Object.defineProperty(scroller, 'clientHeight', { value: 200, configurable: true })
+    scroller.scrollTop = 0 // at the very top → under TOP_THRESHOLD
+
+    // Fire two scroll events back-to-back (coalesced before the prop can flip).
+    await act(async () => {
+      scroller.dispatchEvent(new Event('scroll', { bubbles: true }))
+      scroller.dispatchEvent(new Event('scroll', { bubbles: true }))
+    })
+
+    // The synchronous in-flight latch must gate the 2nd event out entirely.
+    expect(loadOlder).toHaveBeenCalledTimes(1)
+
+    // Cleanup: resolve the pending promise so React doesn't warn on unmount.
+    await act(async () => { resolveOlder(); await Promise.resolve() })
+  })
+})
+
 describe('ChatTranscript (container)', () => {
   it('instantiates EXACTLY ONE windowing hook (one tail read, one subscription)', async () => {
     const readMessages = vi.fn(async () => WINDOW)

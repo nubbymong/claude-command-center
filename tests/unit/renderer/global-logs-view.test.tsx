@@ -200,4 +200,51 @@ describe('GlobalLogsView (logs2)', () => {
     expect(container.textContent).toMatch(/Enable session logging in Settings/i)
     cleanup()
   })
+
+  it('orphan slot (configId:null, slotKey "orphan:s1") scopes by the BARE sessionId', async () => {
+    // Reproduces the seam mismatch: listSlots synthesizes an orphan slotKey as
+    // "orphan:<sessionId>", but the DB matches the BARE runs.sessionId column. The
+    // scope passed downstream must strip the "orphan:" prefix. The real (unmocked)
+    // TimelineRail self-fetches turnSummary({ scope }), so we observe the scope there.
+    listSlots.mockResolvedValueOnce([
+      { slotKey: 'orphan:s1', configId: null, configLabel: 'ORPH', accountEmail: null, lastActive: 200, runCount: 1, messageCount: 4 },
+    ])
+    const { container, cleanup } = await mount(<GlobalLogsView />)
+    const orphBtn = Array.from(container.querySelectorAll('button')).find((b) => /ORPH/.test(b.textContent || ''))!
+    await act(async () => { orphBtn.click(); await new Promise((r) => setTimeout(r, 30)) })
+    // The bare sessionId ('s1') must reach the transcript scope, not 'orphan:s1'.
+    expect(turnSummary).toHaveBeenCalledWith({ scope: { sessionId: 's1' } })
+    const scopes = turnSummary.mock.calls.map((c: any[]) => c[0]?.scope)
+    expect(scopes).not.toContainEqual({ sessionId: 'orphan:s1' })
+    cleanup()
+  })
+
+  it('a search hit for an orphan slot maps to that slot via the bare sessionId', async () => {
+    // The slot is keyed "orphan:s1"; the FTS hit carries the bare sessionId 's1'.
+    // The hit→slot mapping must compare against the stripped key.
+    listSlots.mockResolvedValueOnce([
+      { slotKey: 'orphan:s1', configId: null, configLabel: 'ORPH', accountEmail: null, lastActive: 200, runCount: 1, messageCount: 4 },
+    ])
+    search.mockResolvedValueOnce([
+      { runId: 3, idx: 9, configId: null, sessionId: 's1', snippet: 'has a [needle] here' },
+    ])
+    const { container, cleanup } = await mount(<GlobalLogsView />)
+    const input = container.querySelector('input[type="text"]') as HTMLInputElement
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+      setter.call(input, 'needle')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      await new Promise((r) => setTimeout(r, 350))
+    })
+    // The hit row's label should resolve to the orphan slot's label (proves the
+    // bare-sessionId hit mapped to the "orphan:s1" slot).
+    const hitBtn = Array.from(container.querySelectorAll('button')).find((b) => /needle/.test(b.textContent || ''))!
+    expect(hitBtn.textContent).toMatch(/ORPH/)
+    // Clicking it selects the orphan slot and jumps via the shared hook.
+    await act(async () => { hitBtn.click(); await new Promise((r) => setTimeout(r, 30)) })
+    expect(jumpToSpy).toHaveBeenCalledWith({ runId: 3, idx: 9 })
+    // And the selected orphan slot scopes the rail by the bare sessionId.
+    expect(turnSummary).toHaveBeenCalledWith({ scope: { sessionId: 's1' } })
+    cleanup()
+  })
 })

@@ -156,7 +156,9 @@ export function mangleCwdToProjectDir(cwd: string): string {
  *
  * `readFile` is injectable for testing; production uses `fs.readFileSync`.
  */
-const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/
+/** Canonical UUID format. Exported so resume-launch builders can re-validate a
+ *  uuid before it is interpolated into a spawn shell command (defense-in-depth). */
+export const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/
 
 export function resolveResumeTargetFromTranscript(
   transcriptPath: string,
