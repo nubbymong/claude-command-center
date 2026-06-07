@@ -6,30 +6,56 @@ import { act } from 'react'
 
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
 
-const sample = [
-  { sessionId: 'a', configId: 'c1', configLabel: 'APP', projectCwd: null, accountEmail: null, profileId: null, provider: 'claude', startedAt: 200, endedAt: 300, status: 'exited', byteSize: 1024, eventCount: 3 },
-  { sessionId: 'orph', configId: 'dead', configLabel: 'OLD', projectCwd: null, accountEmail: null, profileId: null, provider: 'claude', startedAt: 100, endedAt: 150, status: 'exited', byteSize: 512, eventCount: 1 },
-  { sessionId: 'live', configId: 'c1', configLabel: 'APP', projectCwd: null, accountEmail: null, profileId: null, provider: 'claude', startedAt: 250, endedAt: null, status: 'running', byteSize: 100, eventCount: 1 },
+// Flat slot summaries from logs2.listSlots. 'c1' is live (configStore mock has
+// it); 'dead' is not -> Orphaned bucket.
+const slots = [
+  { slotKey: 'c1', configId: 'c1', configLabel: 'APP', accountEmail: null, lastActive: 300, runCount: 2, messageCount: 12 },
+  { slotKey: 'orph', configId: 'dead', configLabel: 'OLD', accountEmail: null, lastActive: 100, runCount: 1, messageCount: 3 },
 ]
-const clearAll = vi.fn().mockResolvedValue({ deletedSessions: 2, deletedEvents: 4 })
-const prune = vi.fn().mockResolvedValue({ deletedSessions: 1, deletedEvents: 1 })
+
+const listSlots = vi.fn().mockResolvedValue(slots)
+const search = vi.fn().mockResolvedValue([
+  { runId: 7, idx: 4, configId: 'c1', sessionId: 'c1', snippet: 'a [needle] here' },
+])
+const deleteSlot = vi.fn().mockResolvedValue({ deletedRuns: 1, deletedMessages: 3 })
+const clearAll = vi.fn().mockResolvedValue({ deletedRuns: 3, deletedMessages: 30 })
+const turnSummary = vi.fn().mockResolvedValue([])
+const onNewMessages = vi.fn(() => () => {})
+
+// Capture jumpTo so we can assert a search-hit click forwards to the shared hook.
+const jumpToSpy = vi.fn().mockResolvedValue(undefined)
+
+// Mock the windowing hook so the transcript view renders without real reads and
+// we can observe the shared jumpTo being invoked by a hit click.
+vi.mock('../../../src/renderer/hooks/useWindowedTurns', () => ({
+  useWindowedTurns: () => ({
+    messages: [{ runId: 7, idx: 0, ts: 1, role: 'assistant', kind: 'message', content: 'hi', toolName: null, toolMeta: null }],
+    pageCount: 1,
+    follow: true,
+    loading: false,
+    loadingOlder: false,
+    error: null,
+    setFollow: vi.fn(),
+    loadOlder: vi.fn().mockResolvedValue(undefined),
+    jumpTo: jumpToSpy,
+    prependToken: 0,
+  }),
+}))
 
 let loggingEnabled = true
 
 beforeEach(() => {
   loggingEnabled = true
-  clearAll.mockClear(); prune.mockClear()
+  listSlots.mockClear(); search.mockClear(); deleteSlot.mockClear(); clearAll.mockClear()
+  turnSummary.mockClear(); jumpToSpy.mockClear()
   ;(globalThis as any).ResizeObserver = class { observe() {} disconnect() {} unobserve() {} }
+  // jsdom doesn't implement Element.scrollTo; the transcript view auto-sticks to
+  // the bottom while following, so stub it.
+  ;(HTMLElement.prototype as any).scrollTo = (HTMLElement.prototype as any).scrollTo ?? function () {}
   ;(globalThis as any).confirm = vi.fn(() => true)
   ;(globalThis as any).alert = vi.fn()
   ;(globalThis as any).window.electronAPI = {
-    logsdb: {
-      listSessions: vi.fn().mockResolvedValue(sample),
-      readEvents: vi.fn().mockResolvedValue([]),
-      search: vi.fn().mockResolvedValue([{ sessionId: 'a', eventId: 1, seq: 0, ts: 1, snippet: 'hit [needle]' }]),
-      prune,
-      clearAll,
-    },
+    logs2: { listSlots, search, deleteSlot, clearAll, turnSummary, onNewMessages },
   }
 })
 
@@ -54,34 +80,72 @@ const mount = async (el: React.ReactElement) => {
   return { container, cleanup: () => { root.unmount(); container.remove() } }
 }
 
-describe('GlobalLogsView', () => {
-  it('renders config groups and the Orphaned bucket from listSessions', async () => {
+describe('GlobalLogsView (logs2)', () => {
+  it('renders flat slots from listSlots and an Orphaned bucket', async () => {
     const { container, cleanup } = await mount(<GlobalLogsView />)
+    expect(listSlots).toHaveBeenCalled()
     expect(container.textContent).toMatch(/APP/)
+    expect(container.textContent).toMatch(/OLD/)
     expect(container.textContent).toMatch(/Orphaned/i)
     cleanup()
   })
 
-  it('clear-all confirms and calls logsdb.clearAll', async () => {
+  it('selecting a slot scopes the transcript (renders the chat surface)', async () => {
+    const { container, cleanup } = await mount(<GlobalLogsView />)
+    const appBtn = Array.from(container.querySelectorAll('button')).find((b) => /APP/.test(b.textContent || ''))!
+    await act(async () => { appBtn.click(); await new Promise((r) => setTimeout(r, 10)) })
+    // The presentational transcript scroller mounts once a slot is selected.
+    expect(container.querySelector('[data-testid="chat-transcript"]')).toBeTruthy()
+    cleanup()
+  })
+
+  it('typing a query calls logs2.search and shows the hit list', async () => {
+    const { container, cleanup } = await mount(<GlobalLogsView />)
+    const input = container.querySelector('input[type="text"]') as HTMLInputElement
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+      setter.call(input, 'needle')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      await new Promise((r) => setTimeout(r, 350))
+    })
+    expect(search).toHaveBeenCalledWith({ query: 'needle', limit: expect.any(Number) })
+    expect(container.textContent).toMatch(/needle/)
+    cleanup()
+  })
+
+  it('clicking a search hit forwards to the shared hook jumpTo', async () => {
+    const { container, cleanup } = await mount(<GlobalLogsView />)
+    const input = container.querySelector('input[type="text"]') as HTMLInputElement
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+      setter.call(input, 'needle')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      await new Promise((r) => setTimeout(r, 350))
+    })
+    const hitBtn = Array.from(container.querySelectorAll('button')).find((b) => /needle/.test(b.textContent || ''))!
+    // Clicking the hit clears the query (revealing the transcript) and jumps.
+    await act(async () => { hitBtn.click(); await new Promise((r) => setTimeout(r, 30)) })
+    expect(jumpToSpy).toHaveBeenCalledWith({ runId: 7, idx: 4 })
+    cleanup()
+  })
+
+  it('clear-all confirms and calls logs2.clearAll', async () => {
     const { container, cleanup } = await mount(<GlobalLogsView />)
     const btn = Array.from(container.querySelectorAll('button')).find((b) => /clear all/i.test(b.textContent || ''))!
-    await act(async () => { btn.click() })
+    await act(async () => { btn.click(); await new Promise((r) => setTimeout(r, 10)) })
     expect((globalThis as any).confirm).toHaveBeenCalled()
     expect(clearAll).toHaveBeenCalled()
     cleanup()
   })
 
-  it('typing a query switches the right pane to ranked search hits', async () => {
+  it('deleting a slot uses honest copy and calls logs2.deleteSlot', async () => {
     const { container, cleanup } = await mount(<GlobalLogsView />)
-    const search = container.querySelector('input[type="text"]') as HTMLInputElement
-    await act(async () => {
-      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
-      setter.call(search, 'needle')
-      search.dispatchEvent(new Event('input', { bubbles: true }))
-      await new Promise((r) => setTimeout(r, 350))
-    })
-    expect((window as any).electronAPI.logsdb.search).toHaveBeenCalledWith('needle', expect.any(Number))
-    expect(container.textContent).toMatch(/hit/)
+    const delBtn = Array.from(container.querySelectorAll('button')).find((b) => /Delete this slot/i.test(b.getAttribute('title') || ''))!
+    await act(async () => { delBtn.click(); await new Promise((r) => setTimeout(r, 10)) })
+    const msg = (globalThis as any).confirm.mock.calls.at(-1)?.[0] as string
+    expect(msg).toMatch(/indexed history/i)
+    expect(msg).toMatch(/~\/\.claude/)
+    expect(deleteSlot).toHaveBeenCalled()
     cleanup()
   })
 
@@ -89,39 +153,6 @@ describe('GlobalLogsView', () => {
     loggingEnabled = false
     const { container, cleanup } = await mount(<GlobalLogsView />)
     expect(container.textContent).toMatch(/Enable session logging in Settings/i)
-    cleanup()
-  })
-
-  it('clear-all broadcast excludes running sessions', async () => {
-    const { container, cleanup } = await mount(<GlobalLogsView />)
-    let broadcastIds: string[] | null = null
-    const onDel = (e: Event) => { broadcastIds = (e as CustomEvent<{ sessionIds: string[] }>).detail.sessionIds }
-    window.addEventListener('logs:sessionsDeleted', onDel as EventListener)
-    const btn = Array.from(container.querySelectorAll('button')).find((b) => /clear all/i.test(b.textContent || ''))!
-    await act(async () => { btn.click(); await new Promise((r) => setTimeout(r, 10)) })
-    window.removeEventListener('logs:sessionsDeleted', onDel as EventListener)
-    expect(broadcastIds).not.toBeNull()
-    expect(broadcastIds).not.toContain('live')   // running session must NOT be broadcast as deleted
-    expect(broadcastIds).toContain('a')          // a non-running session is broadcast
-    cleanup()
-  })
-
-  it('clears search hits after a destructive delete (no orphaned rows)', async () => {
-    const { container, cleanup } = await mount(<GlobalLogsView />)
-    // type a query -> hits appear
-    const search = container.querySelector('input[type="text"]') as HTMLInputElement
-    await act(async () => {
-      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
-      setter.call(search, 'needle')
-      search.dispatchEvent(new Event('input', { bubbles: true }))
-      await new Promise((r) => setTimeout(r, 350))
-    })
-    expect(container.textContent).toMatch(/hit/)
-    // clear all while the query is still active
-    const btn = Array.from(container.querySelectorAll('button')).find((b) => /clear all/i.test(b.textContent || ''))!
-    await act(async () => { btn.click(); await new Promise((r) => setTimeout(r, 10)) })
-    // hits cleared -> the search pane shows the empty state, not the stale 'hit' row
-    expect(container.textContent).toMatch(/No matches/i)
     cleanup()
   })
 })
