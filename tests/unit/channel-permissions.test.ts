@@ -3,11 +3,17 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 let hookCb!: (e: any) => void
 const pushMock = vi.fn()
 const readConfigMock = vi.fn(() => ({}))
+const logInfoMock = vi.fn()
+const logDebugMock = vi.fn()
 vi.mock('../../src/main/hooks/index', () => ({ getGateway: () => ({ subscribe: (cb: any) => { hookCb = cb; return () => {} } }) }))
 vi.mock('../../src/main/session-registry', () => ({ getSessionMeta: () => ({ label: 'api-server', provider: 'claude' }) }))
 vi.mock('../../src/main/channel-ledger', () => ({ appendLedger: vi.fn() }))
 vi.mock('../../src/main/ipc/channel-handlers', () => ({ pushPendingPermissions: (...a: any[]) => pushMock(...a) }))
 vi.mock('../../src/main/config-manager', () => ({ readConfig: (...a: any[]) => readConfigMock(...a) }))
+vi.mock('../../src/main/debug-logger', () => ({
+  logInfo: (...a: any[]) => logInfoMock(...a),
+  logDebug: (...a: any[]) => logDebugMock(...a),
+}))
 
 const mod = await import('../../src/main/channel-permissions')
 const { startPermissionTray, getPending, dismissPermission, _resetPending } = mod as any
@@ -25,7 +31,8 @@ const GRACE = 600
 describe('channel-permissions (genuine-only, grace-deferred)', () => {
   beforeEach(() => {
     vi.useFakeTimers()
-    _resetPending(); pushMock.mockClear(); readConfigMock.mockReturnValue({}); startPermissionTray()
+    _resetPending(); pushMock.mockClear(); logInfoMock.mockClear(); logDebugMock.mockClear()
+    readConfigMock.mockReturnValue({}); startPermissionTray()
   })
   afterEach(() => { vi.useRealTimers() })
 
@@ -180,5 +187,84 @@ describe('channel-permissions (genuine-only, grace-deferred)', () => {
     hookCb(notifQueued('s1', 1, ''))
     vi.advanceTimersByTime(GRACE)
     expect(getPending()).toHaveLength(0)
+  })
+
+  // ---- Bug #2: enrichment correctness + phantom auto-dismiss + diagnostics ----
+
+  it('B: enriches from a genuinely-pending tool, NOT an auto-approved one whose PostToolUse arrived', () => {
+    // Glob auto-approves and completes (PostToolUse arrives), THEN Bash is the
+    // genuinely-pending blocked tool when the notification fires.
+    hookCb(pre('s1', 'Glob', { query: '**/x' }, 't1', 1))
+    hookCb(post('s1', 't1', 2))               // Glob proceeded -> removed from in-flight
+    hookCb(pre('s1', 'Bash', { command: 'whoami' }, 't2', 3))
+    hookCb(notif('s1', 4))
+    vi.advanceTimersByTime(GRACE)
+    const card = getPending()[0]
+    expect(card.tool).toBe('Bash')             // never the auto-approved Glob
+    expect(card.payloadPreview).toBe('whoami')
+  })
+
+  it('B: shows the GENERIC message when NO tool is genuinely pending (all completed)', () => {
+    // The only in-flight tool already completed before the notification fires.
+    hookCb(pre('s1', 'Glob', { query: '**/x' }, 't1', 1))
+    hookCb(post('s1', 't1', 2))               // Glob done -> in-flight now empty
+    hookCb(notif('s1', 3))
+    vi.advanceTimersByTime(GRACE)
+    const card = getPending()[0]
+    expect(card.tool).toBe('Permission')
+    expect(card.payloadPreview).toBe('Claude needs your permission')
+    expect(card.highRisk).toBeUndefined()
+  })
+
+  it('C: phantom auto-dismiss -- card enriched from U is dismissed when PostToolUse(U) arrives', () => {
+    hookCb(pre('s1', 'Glob', { query: '/outside' }, 'u1', 1))
+    hookCb(notif('s1', 2))
+    vi.advanceTimersByTime(GRACE)              // surfaces enriched from u1
+    expect(getPending()).toHaveLength(1)
+    expect(getPending()[0].tool).toBe('Glob')
+    hookCb(post('s1', 'u1', 3))               // u1 actually proceeded -> phantom
+    expect(getPending()).toHaveLength(0)
+  })
+
+  it('SAFETY: a card whose tool is still pending is NEVER dismissed by a different tool PostToolUse', () => {
+    hookCb(pre('s1', 'Bash', { command: 'rm -rf /x' }, 'u1', 1))
+    hookCb(notif('s1', 2))
+    vi.advanceTimersByTime(GRACE)              // surfaces enriched from u1 (still blocked)
+    expect(getPending()).toHaveLength(1)
+    // A DIFFERENT tool completes -- must NOT dismiss the genuinely-pending card.
+    hookCb(pre('s1', 'Read', { file_path: '/b' }, 'u2', 3))
+    hookCb(post('s1', 'u2', 4))
+    expect(getPending()).toHaveLength(1)
+    expect(getPending()[0].tool).toBe('Bash')
+    // No PostToolUse(u1) ever arrives -> the real prompt stays surfaced forever.
+    vi.advanceTimersByTime(10_000)
+    expect(getPending()).toHaveLength(1)
+  })
+
+  it('A: notification log records session, in-flight set, and the enrichment choice', () => {
+    hookCb(pre('s1', 'Read', { file_path: '/a' }, 'u1', 1))
+    hookCb(pre('s1', 'Bash', { command: 'whoami' }, 'u2', 2))
+    hookCb(notif('s1', 3))
+    const line = logInfoMock.mock.calls.map((c) => String(c[0])).find((s) => s.includes('enrich'))
+    expect(line).toBeTruthy()
+    expect(line).toContain('s1')          // session_id
+    expect(line).toContain('u1')          // full in-flight set
+    expect(line).toContain('u2')
+    expect(line).toContain('Read')
+    expect(line).toContain('Bash')
+    // The chosen tool + its tool_use_id (most-recent = u2/Bash).
+    expect(line).toMatch(/enrich(ed)?=Bash/)
+    expect(line).toContain('u2')
+  })
+
+  it('A: a PostToolUse for the ENRICHED tool_use_id after the card shows logs a phantom note', () => {
+    hookCb(pre('s1', 'Glob', { query: '/outside' }, 'u1', 1))
+    hookCb(notif('s1', 2))
+    vi.advanceTimersByTime(GRACE)         // surfaces enriched from u1
+    logInfoMock.mockClear()
+    hookCb(post('s1', 'u1', 3))           // u1 proceeded -> phantom/mislabel
+    const line = logInfoMock.mock.calls.map((c) => String(c[0])).find((s) => /phantom|not actually blocked|NOT.*blocked/i.test(s))
+    expect(line).toBeTruthy()
+    expect(line).toContain('u1')
   })
 })

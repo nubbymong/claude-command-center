@@ -24,6 +24,19 @@ import type { HookEvent } from '../shared/hook-types'
 // grace window; if the enriched tool's PostToolUse arrives first (it proceeded),
 // the candidate is cancelled and no card ever appears. Genuinely-blocked tools
 // have no PostToolUse, so they surface after the grace window as before.
+//
+// Bug 2 (phantom/mislabelled cards, e.g. "Glob: needs permission" with no visible
+// prompt): the card is enriched ONLY from a GENUINELY-pending tool (in the
+// in-flight map => PreToolUse seen, no PostToolUse yet). Auto-approved/completed
+// tools are removed from that map in `track`, so they can never be picked; when
+// nothing is genuinely pending the card shows the generic message. After a card
+// surfaces, a PostToolUse for its enriched tool_use_id PROVES the tool was not
+// actually blocked (a blocked tool never emits PostToolUse) -> the card is
+// dismissed (phantom). SAFETY INVARIANT: a card whose enriched tool is still
+// pending (no matching PostToolUse) is NEVER auto-dismissed, so a real prompt is
+// never hidden. Diagnostic `[perm-tray]` logs record, at notification time, the
+// full in-flight set + the enrichment choice, and on dismissal flag the phantom,
+// so the next live occurrence is attributable (bg-shell vs mislabel vs spurious).
 const PENDING_CAP = 50
 // Grace window before a permission_prompt becomes a visible card. Long enough to
 // catch an auto-approved/proceeding tool's PostToolUse, short enough that a real
@@ -154,11 +167,23 @@ function surfaceCandidate(sessionId: string, candidateId: string): void {
 function captureNotification(e: HookEvent): void {
   if (!trayEnabled()) return
   const meta = getSessionMeta(e.sessionId)
-  // The blocked tool is whatever is still in-flight; pick the most recent.
+  // The blocked tool is whatever is still GENUINELY pending (in the in-flight map
+  // = PreToolUse seen, no PostToolUse yet). Auto-approved/completed tools have
+  // already been removed in `track`, so they can never be picked here. Pick the
+  // most recent of the genuinely-pending set; if none, show the generic message.
   const m = inflight.get(e.sessionId)
   const entries = m ? [...m.entries()] : []
   const [enrichTuid, enrich] = entries.length ? entries[entries.length - 1] : [undefined, undefined]
   const id = `${e.sessionId}-${e.ts}`
+  // Diagnostic (A, bug #2): record the EXACT enrichment decision at notification
+  // time -- session, the full set of genuinely-pending tool_use_ids + names, and
+  // which one (if any) was chosen + its id. This is what makes the next live
+  // occurrence definitively diagnosable (hypothesis 1 bg-shell vs 2 mislabel vs
+  // 3 spurious-notification). Ids/names/count only -- never tool_input contents.
+  const inflightDesc = entries.length
+    ? entries.map(([tuid, v]) => `${v.tool}#${tuid}`).join(',')
+    : '(none)'
+  logInfo(`[perm-tray] enrich session=${e.sessionId} inflight=${entries.length} [${inflightDesc}] enriched=${enrich?.tool ?? '(generic)'} enrichedTuid=${enrichTuid ?? '(none)'}`)
   const card: PendingPermission = {
     requestId: id,
     sessionId: e.sessionId,
@@ -217,7 +242,19 @@ function track(e: HookEvent): void {
     // by name only when unambiguous (exactly one in-flight tool of that name).
     const nameForCancel = tuid !== undefined ? undefined : (sameNameInflight <= 1 ? toolName : undefined)
     cancelCandidates(e.sessionId, tuid, nameForCancel)
-    if (tuid) dismissCardByTool(e.sessionId, tuid)
+    if (tuid) {
+      // Diagnostic (A, bug #2): if an ALREADY-SURFACED card was enriched from this
+      // tool_use_id, its arrival proves the tool was NOT actually blocked (a
+      // genuinely-blocked tool never emits PostToolUse) -- so the card was a
+      // phantom/mislabel. Log that BEFORE dismissing so the next live occurrence
+      // is attributable to hypothesis 2 (enrichment mislabel) vs others.
+      for (const [reqId, p] of pending) {
+        if (p.sessionId === e.sessionId && cardTool.get(reqId) === tuid) {
+          logInfo(`[perm-tray] phantom: enriched tool ${p.tool}#${tuid} completed (PostToolUse) after card shown -> was NOT actually blocked; dismissing card session=${e.sessionId}`)
+        }
+      }
+      dismissCardByTool(e.sessionId, tuid)
+    }
     return
   }
   if (e.event === 'Stop') {
