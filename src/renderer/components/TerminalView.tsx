@@ -13,7 +13,7 @@ import { hasSpawned, markSpawned, killSessionPty } from '../ptyTracker'
 import SshFlowOverlay from './SshFlowOverlay'
 import { shouldUseResumePicker } from '../utils/resumePicker'
 import { stripCursorSequences } from '../utils/terminalFormatting'
-import { isControlReportOnly } from '../utils/terminalInput'
+import { isControlReportOnly, decideContextMenuAction } from '../utils/terminalInput'
 import { getTerminalTheme } from './terminal/terminalTheme'
 import { useSettingsStore, DEFAULT_TERMINAL_SETTINGS } from '../stores/settingsStore'
 import { ScrollToBottomButton } from './terminal'
@@ -607,29 +607,22 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       }
       document.addEventListener('keydown', handleKeyDownCopy)
 
-      // Right-click: copy selection or paste from clipboard
+      // Right-click: ALWAYS paste from clipboard.
+      // CC's copy-on-select already copies selected text the moment the
+      // mouse button is released, so right-click must never re-copy —
+      // that would overwrite the clipboard with the selection instead of
+      // pasting what the user intended. decideContextMenuAction encodes
+      // and unit-tests this invariant (selection state is intentionally
+      // ignored). Route through xterm's paste() so bracketed-paste mode
+      // is respected (\x1b[200~...\x1b[201~ wrapping).
       handleContextMenu = async (e: MouseEvent) => {
         e.preventDefault()
         e.stopPropagation()
-        const sel = term?.getSelection()
-        if (sel) {
-          try {
-            await navigator.clipboard.writeText(sel)
-          } catch {
-            // clipboard access denied (insecure context / not focused)
-          }
-          return
-        }
+        const action = decideContextMenuAction(!!term?.getSelection())
+        if (action !== 'paste') return
         try {
           const text = await navigator.clipboard.readText()
           if (!text) return
-          // Route through xterm's paste() so bracketed-paste mode is
-          // respected. Writing the raw text straight to the PTY skipped
-          // the \x1b[200~...\x1b[201~ wrapping that apps like Claude
-          // Code CLI use to distinguish pastes from keystrokes, causing
-          // embedded \n to submit the first line and strand the rest
-          // in the input buffer. xterm emits the (possibly wrapped)
-          // payload via onData, which already forwards to pty.write.
           term?.paste(text)
         } catch {
           // clipboard access denied (insecure context / not focused)
@@ -677,6 +670,15 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         style={{
           minHeight: 0,
           padding: '8px 10px 8px 18px',
+          // content-box: FitAddon reads getComputedStyle(container).height,
+          // which under border-box (Tailwind global default) includes the
+          // 8px top + 8px bottom padding → FitAddon over-counts by ~1 row,
+          // causing the last terminal row to render over the status bar.
+          // With content-box, getComputedStyle returns only the content
+          // height (padding excluded), so FitAddon measures the exact
+          // usable area. Flex sizing is unaffected: flex-1 stretches the
+          // *total* element size regardless of box-sizing.
+          boxSizing: 'content-box',
           background: 'linear-gradient(90deg, var(--surface-stage-gutter) 0, var(--surface-stage-gutter) 12px, var(--surface-stage) 12px)',
           boxShadow: 'inset 16px 0 20px -16px rgba(0,0,0,.5)',
         }}

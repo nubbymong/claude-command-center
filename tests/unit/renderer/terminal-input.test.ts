@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isControlReportOnly } from '../../../src/renderer/utils/terminalInput'
+import { isControlReportOnly, decideContextMenuAction } from '../../../src/renderer/utils/terminalInput'
 
 describe('isControlReportOnly', () => {
   it('treats focus in/out reports as control-only (not input)', () => {
@@ -23,5 +23,17 @@ describe('isControlReportOnly', () => {
   })
   it('empty string is not input', () => {
     expect(isControlReportOnly('')).toBe(true)
+  })
+})
+
+describe('decideContextMenuAction', () => {
+  // Right-click must ALWAYS paste, never copy.
+  // CC's copy-on-select already copies selected text on mouse-up;
+  // re-copying on right-click would clobber the intended paste target.
+  it('returns paste when there is no selection', () => {
+    expect(decideContextMenuAction(false)).toBe('paste')
+  })
+  it('returns paste even when text is selected', () => {
+    expect(decideContextMenuAction(true)).toBe('paste')
   })
 })
