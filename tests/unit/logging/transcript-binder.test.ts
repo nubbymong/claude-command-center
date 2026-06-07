@@ -60,7 +60,7 @@ function makeHarness(overrides?: Partial<TranscriptBinderDeps>) {
   const deps: TranscriptBinderDeps = {
     supervisor: { bindTranscript: (sessionId, path, confidence) => { binds.push({ sessionId, path, confidence }) } },
     canonicalize,
-    heuristicBinder: { bindOnce: vi.fn(() => null) },
+    heuristicBinder: { bindOnce: vi.fn(() => null), forget: vi.fn() },
     setTimer: timers.setTimer,
     clearTimer: timers.clearTimer,
     debounceMs: 100,
@@ -133,7 +133,7 @@ describe('transcript-binder — exact path from a discovery source', () => {
 
 describe('transcript-binder — heuristic fallback', () => {
   it('binds heuristically when a registered run has no exact bind after the delay', () => {
-    const heuristicBinder = { bindOnce: vi.fn(() => ({ path: '/home/.claude/projects/proj/heur.jsonl', confidence: 'heuristic' as const })) }
+    const heuristicBinder = { bindOnce: vi.fn(() => ({ path: '/home/.claude/projects/proj/heur.jsonl', confidence: 'heuristic' as const })), forget: vi.fn() }
     const { binder, binds, timers } = makeHarness({ heuristicBinder })
     binder.registerRun('s1', 'F:\\proj', 1_000)
     expect(binds).toHaveLength(0)
@@ -145,7 +145,7 @@ describe('transcript-binder — heuristic fallback', () => {
   })
 
   it('does NOT fire the heuristic when an exact bind already arrived', () => {
-    const heuristicBinder = { bindOnce: vi.fn(() => ({ path: '/home/.claude/projects/proj/heur.jsonl', confidence: 'heuristic' as const })) }
+    const heuristicBinder = { bindOnce: vi.fn(() => ({ path: '/home/.claude/projects/proj/heur.jsonl', confidence: 'heuristic' as const })), forget: vi.fn() }
     const { binder, binds, timers } = makeHarness({ heuristicBinder })
     binder.registerRun('s1', 'F:\\proj', 1_000)
     binder.notifyTranscriptPath('s1', 'F:/junction/.claude/projects/proj/exact.jsonl')
@@ -158,7 +158,7 @@ describe('transcript-binder — heuristic fallback', () => {
   })
 
   it('does nothing on the heuristic timer when the binder returns null (allows later exact)', () => {
-    const heuristicBinder = { bindOnce: vi.fn(() => null) }
+    const heuristicBinder = { bindOnce: vi.fn(() => null), forget: vi.fn() }
     const { binder, binds, timers } = makeHarness({ heuristicBinder })
     binder.registerRun('s1', 'F:\\proj', 1_000)
     timers.advance(20_000)
@@ -172,7 +172,7 @@ describe('transcript-binder — heuristic fallback', () => {
   })
 
   it('endRun cancels a pending heuristic timer', () => {
-    const heuristicBinder = { bindOnce: vi.fn(() => ({ path: '/home/.claude/projects/proj/heur.jsonl', confidence: 'heuristic' as const })) }
+    const heuristicBinder = { bindOnce: vi.fn(() => ({ path: '/home/.claude/projects/proj/heur.jsonl', confidence: 'heuristic' as const })), forget: vi.fn() }
     const { binder, binds, timers } = makeHarness({ heuristicBinder })
     binder.registerRun('s1', 'F:\\proj', 1_000)
     binder.endRun('s1')
@@ -184,7 +184,7 @@ describe('transcript-binder — heuristic fallback', () => {
 
 describe('transcript-binder — exact supersedes heuristic', () => {
   it('a later exact bind replaces a session that only had a heuristic bind', () => {
-    const heuristicBinder = { bindOnce: vi.fn(() => ({ path: '/home/.claude/projects/proj/heur.jsonl', confidence: 'heuristic' as const })) }
+    const heuristicBinder = { bindOnce: vi.fn(() => ({ path: '/home/.claude/projects/proj/heur.jsonl', confidence: 'heuristic' as const })), forget: vi.fn() }
     const { binder, binds, timers } = makeHarness({ heuristicBinder })
     binder.registerRun('s1', 'F:\\proj', 1_000)
     timers.advance(20_000)   // heuristic binds
@@ -203,7 +203,7 @@ describe('transcript-binder — exact supersedes heuristic', () => {
 
   it('an exact bind matching the heuristic path still upgrades confidence to exact', () => {
     const samePath = '/home/.claude/projects/proj/conv.jsonl'
-    const heuristicBinder = { bindOnce: vi.fn(() => ({ path: samePath, confidence: 'heuristic' as const })) }
+    const heuristicBinder = { bindOnce: vi.fn(() => ({ path: samePath, confidence: 'heuristic' as const })), forget: vi.fn() }
     const canonicalize = vi.fn(() => samePath)
     const { binder, binds, timers } = makeHarness({ heuristicBinder, canonicalize })
     binder.registerRun('s1', 'F:\\proj', 1_000)
@@ -231,7 +231,7 @@ describe('transcript-binder — getLatestTranscriptPath (for T8b resume)', () =>
   })
 
   it('returns the heuristic path after a heuristic bind, then updates to exact', () => {
-    const heuristicBinder = { bindOnce: vi.fn(() => ({ path: '/home/.claude/projects/proj/heur.jsonl', confidence: 'heuristic' as const })) }
+    const heuristicBinder = { bindOnce: vi.fn(() => ({ path: '/home/.claude/projects/proj/heur.jsonl', confidence: 'heuristic' as const })), forget: vi.fn() }
     const { binder, timers } = makeHarness({ heuristicBinder })
     binder.registerRun('s1', 'F:\\proj', 1_000)
     timers.advance(20_000)
@@ -263,5 +263,39 @@ describe('transcript-binder — sessionId reuse across restarts', () => {
     binder.notifyTranscriptPath('s1', 'F:/junction/.claude/projects/proj/conv.jsonl')
     timers.advance(100)
     expect(binds).toHaveLength(2)
+  })
+
+  it('endRun forgets the heuristic cache so a restart rebinds the FRESH heuristic path', () => {
+    // Model the heuristic binder's permanent successCache: bindOnce returns
+    // path A until forget(sessionId) is called, after which it returns path B.
+    let forgotten = false
+    const forget = vi.fn((_sessionId: string) => { forgotten = true })
+    const bindOnce = vi.fn(() =>
+      forgotten
+        ? { path: '/home/.claude/projects/proj/run2.jsonl', confidence: 'heuristic' as const }
+        : { path: '/home/.claude/projects/proj/run1.jsonl', confidence: 'heuristic' as const },
+    )
+    const heuristicBinder = { bindOnce, forget }
+    const { binder, binds, timers } = makeHarness({ heuristicBinder })
+
+    // Run #1: register, heuristic fires, binds the stale run1 path.
+    binder.registerRun('s1', 'F:\\proj', 1_000)
+    timers.advance(20_000)
+    expect(binds).toEqual([
+      { sessionId: 's1', path: '/home/.claude/projects/proj/run1.jsonl', confidence: 'heuristic' },
+    ])
+
+    // Restart reuses the same sessionId. endRun MUST forget the heuristic cache.
+    binder.endRun('s1')
+    expect(forget).toHaveBeenCalledWith('s1')
+
+    // Run #2: same sessionId, heuristic fires again — must rescan and bind the
+    // FRESH run2 path, not the stale cached run1 path.
+    binder.registerRun('s1', 'F:\\proj', 2_000)
+    timers.advance(20_000)
+    expect(binds).toEqual([
+      { sessionId: 's1', path: '/home/.claude/projects/proj/run1.jsonl', confidence: 'heuristic' },
+      { sessionId: 's1', path: '/home/.claude/projects/proj/run2.jsonl', confidence: 'heuristic' },
+    ])
   })
 })

@@ -389,6 +389,41 @@ describe('makeHeuristicBinder', () => {
     })
   })
 
+  describe('forget(sessionId)', () => {
+    it('clears the success cache so a subsequent bindOnce rescans (returns the now-newest match)', () => {
+      const root = makeTmpProjectsRoot()
+      const cwd = 'F:\\forget-test'
+      const mangled = mangleCwdToProjectDir(cwd)
+      const projDir = path.join(root, mangled)
+      fs.mkdirSync(projDir, { recursive: true })
+
+      const startedAt = 7_000_000
+      const firstPath = writeJsonl(projDir, 'first.jsonl', startedAt + 1_000)
+
+      const binder = makeHeuristicBinder({ projectsRoot: root })
+      const binding1 = binder.bindOnce('sess-forget', cwd, startedAt)
+      expect(binding1).not.toBeNull()
+      expect(binding1!.path).toBe(path.normalize(firstPath))
+
+      // A newer file appears (simulating a fresh run #2 transcript).
+      const newerPath = writeJsonl(projDir, 'newer.jsonl', startedAt + 9_000)
+
+      // Without forget, bind-once would return the cached firstPath.
+      // After forget, bindOnce rescans and picks the now-newest file.
+      binder.forget('sess-forget')
+      const binding2 = binder.bindOnce('sess-forget', cwd, startedAt)
+      expect(binding2).not.toBeNull()
+      expect(binding2).not.toBe(binding1)
+      expect(binding2!.path).toBe(path.normalize(newerPath))
+    })
+
+    it('forget of an unknown sessionId is a no-op', () => {
+      const root = makeTmpProjectsRoot()
+      const binder = makeHeuristicBinder({ projectsRoot: root })
+      expect(() => binder.forget('never-seen')).not.toThrow()
+    })
+  })
+
   it('boundary: mtime exactly at startedAtMs - 60_000 is INCLUDED', () => {
     const root = makeTmpProjectsRoot()
     const cwd = 'F:\\boundary-test'

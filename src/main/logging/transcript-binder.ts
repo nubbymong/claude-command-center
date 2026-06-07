@@ -43,6 +43,12 @@ export interface TranscriptBinderSupervisor {
 /** The heuristic-binder surface (makeHeuristicBinder() satisfies it). */
 export interface TranscriptHeuristicBinder {
   bindOnce(sessionId: string, cwd: string, startedAtMs: number): DiscoveryBinding | null
+  /**
+   * Drop the heuristic binder's permanent per-sessionId success cache so the
+   * next bindOnce rescans. endRun calls this so a reused sessionId (in-session
+   * restart) binds fresh on the heuristic path, not the stale prior path.
+   */
+  forget(sessionId: string): void
 }
 
 export interface TranscriptBinderDeps {
@@ -173,12 +179,20 @@ export function makeTranscriptBinder(deps: TranscriptBinderDeps): TranscriptBind
     },
 
     endRun(sessionId: string): void {
+      // Forget the heuristic binder's permanent success cache REGARDLESS of
+      // whether we have local SessionState — the cache is keyed by sessionId and
+      // outlives this binder's per-session state. Without this, a reused
+      // sessionId (in-session restart) would get run #1's stale heuristic path
+      // back from the cache instead of rescanning. (Idempotent / no-op if unset.)
+      heuristicBinder.forget(sessionId)
       const s = sessions.get(sessionId)
       if (!s) return
       if (s.debounceHandle !== null) clearTimer(s.debounceHandle)
       cancelHeuristic(s)
       // Drop ALL per-session state so a reused sessionId (restart) binds fresh
-      // rather than being deduped against a stale prior bind.
+      // rather than being deduped against a stale prior bind. Combined with the
+      // heuristicBinder.forget above, "bind fresh on restart" now holds for both
+      // the exact and heuristic paths.
       sessions.delete(sessionId)
     },
 

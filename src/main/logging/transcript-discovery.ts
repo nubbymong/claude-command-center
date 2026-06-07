@@ -176,6 +176,17 @@ interface HeuristicBinder {
    * stored binding (or null if first call failed — failures may retry).
    */
   bindOnce(sessionId: string, cwd: string, startedAtMs: number): DiscoveryBinding | null
+
+  /**
+   * Drops the permanent success-cache entry for a sessionId so the NEXT
+   * `bindOnce(sessionId, …)` rescans from scratch instead of returning the
+   * stale cached binding.
+   *
+   * Needed for the in-session restart flow (pty-manager reuses the same
+   * sessionId): the binder's `endRun(sessionId)` calls this so "bind fresh on
+   * restart" holds for the heuristic path too. Unknown sessionIds are a no-op.
+   */
+  forget(sessionId: string): void
 }
 
 /**
@@ -258,6 +269,12 @@ export function makeHeuristicBinder(deps?: HeuristicBinderDeps): HeuristicBinder
       // Store the successful binding so future calls return the same value.
       successCache.set(sessionId, binding)
       return binding
+    },
+
+    forget(sessionId: string): void {
+      // Drop the permanent success-cache entry so the next bindOnce rescans.
+      // Unknown sessionIds: Map.delete is a harmless no-op.
+      successCache.delete(sessionId)
     },
   }
 }
