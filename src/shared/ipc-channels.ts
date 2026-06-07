@@ -90,6 +90,20 @@ export const IPC = {
   LOGS2_WIPE_DETECT: 'logs2:wipe:detect',
   LOGS2_WIPE_CONFIRM: 'logs2:wipe:confirm',
 
+  // Logs v2 — the transcript-chat read surface. All request/response channels
+  // route through getLogSupervisor().query(kind, args) (the forked transcripts
+  // worker). Args are Zod-validated in logs2-handlers.ts before the supervisor is
+  // ever called. LOGS2_NEW_MESSAGES is a PUSH (main -> renderer) forwarding the
+  // worker's new-messages fan-out so the open chat view can live-tail.
+  LOGS2_LIST_SLOTS: 'logs2:listSlots',
+  LOGS2_READ_MESSAGES: 'logs2:readMessages',
+  LOGS2_TURN_SUMMARY: 'logs2:turnSummary',
+  LOGS2_SEARCH: 'logs2:search',
+  LOGS2_DELETE_SLOT: 'logs2:deleteSlot',
+  LOGS2_CLEAR_ALL: 'logs2:clearAll',
+  LOGS2_INGEST_STATUS: 'logs2:ingestStatus',
+  LOGS2_NEW_MESSAGES: 'logs2:newMessages',   // push: main -> renderer
+
   // Discovery
   DISCOVERY_PROJECTS: 'discovery:projects',
   DISCOVERY_SESSIONS: 'discovery:sessions',

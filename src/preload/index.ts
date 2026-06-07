@@ -165,6 +165,25 @@ export interface ElectronAPI {
     detect: () => Promise<{ present: boolean; totalBytes: number; paths: string[]; settingsKeys: string[] }>
     confirm: () => Promise<{ deletedPaths: string[]; clearedKeys: string[]; freedBytes: number }>
   }
+  logs2: {
+    listSlots: () => Promise<unknown[]>
+    readMessages: (args: {
+      scope: { configId: string } | { sessionId: string }
+      anchor?: 'tail' | { runId: number; idx: number }
+      dir?: 'older' | 'newer'
+      limit?: number
+    }) => Promise<unknown[]>
+    turnSummary: (args: { scope: { configId: string } | { sessionId: string } }) => Promise<unknown[]>
+    search: (args: { query: string; limit?: number }) => Promise<unknown[]>
+    deleteSlot: (args: { scope: { configId: string } | { sessionId: string } }) =>
+      Promise<{ deletedRuns: number; deletedMessages: number }>
+    clearAll: () => Promise<{ deletedRuns: number; deletedMessages: number }>
+    ingestStatus: (args: { sessionId: string }) => Promise<{
+      transcripts: { path: string; status: string; ord: number }[]
+      messageCount: number
+    } | null>
+    onNewMessages: (cb: (e: { sessionId: string; configId: string | null; count: number }) => void) => () => void
+  }
   discovery: {
     getProjects: () => Promise<unknown>
     getSessionHistory: (projectPath: string) => Promise<unknown>
@@ -598,6 +617,29 @@ const electronAPI: ElectronAPI = {
   logsWipe: {
     detect: () => ipcRenderer.invoke(IPC.LOGS2_WIPE_DETECT),
     confirm: () => ipcRenderer.invoke(IPC.LOGS2_WIPE_CONFIRM),
+  },
+  // Logs v2 — the transcript-chat read surface (slots, paged messages, search,
+  // turn summary, deletes, ingest status) + a live new-messages push.
+  logs2: {
+    listSlots: () => ipcRenderer.invoke(IPC.LOGS2_LIST_SLOTS),
+    readMessages: (args: {
+      scope: { configId: string } | { sessionId: string }
+      anchor?: 'tail' | { runId: number; idx: number }
+      dir?: 'older' | 'newer'
+      limit?: number
+    }) => ipcRenderer.invoke(IPC.LOGS2_READ_MESSAGES, args),
+    turnSummary: (args: { scope: { configId: string } | { sessionId: string } }) =>
+      ipcRenderer.invoke(IPC.LOGS2_TURN_SUMMARY, args),
+    search: (args: { query: string; limit?: number }) => ipcRenderer.invoke(IPC.LOGS2_SEARCH, args),
+    deleteSlot: (args: { scope: { configId: string } | { sessionId: string } }) =>
+      ipcRenderer.invoke(IPC.LOGS2_DELETE_SLOT, args),
+    clearAll: () => ipcRenderer.invoke(IPC.LOGS2_CLEAR_ALL),
+    ingestStatus: (args: { sessionId: string }) => ipcRenderer.invoke(IPC.LOGS2_INGEST_STATUS, args),
+    onNewMessages: (cb: (e: { sessionId: string; configId: string | null; count: number }) => void) => {
+      const handler = (_e: unknown, e: { sessionId: string; configId: string | null; count: number }) => cb(e)
+      ipcRenderer.on(IPC.LOGS2_NEW_MESSAGES, handler)
+      return () => ipcRenderer.removeListener(IPC.LOGS2_NEW_MESSAGES, handler)
+    },
   },
   discovery: {
     getProjects: () => ipcRenderer.invoke(IPC.DISCOVERY_PROJECTS),

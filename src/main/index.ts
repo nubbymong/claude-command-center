@@ -9,6 +9,7 @@ import { registerDiscoveryHandlers } from './ipc/discovery-handlers'
 import { killAllPty, gracefulExitAllPty } from './pty-manager'
 import { registerLogsdbHandlers } from './ipc/logsdb-handlers'
 import { registerLogMigrationHandlers } from './ipc/log-migration-handlers'
+import { registerLogs2Handlers } from './ipc/logs2-handlers'
 
 import { startStatuslineWatcher, setTranscriptPathSink } from './statusline-watcher'
 import { registerProvider, getProvider } from './providers'
@@ -775,6 +776,11 @@ if (!gotTheLock) {
     } catch (err) {
       logError(`[logs] initLogging failed; session logging disabled this run: ${(err as Error)?.message ?? err}`)
     }
+    // Logs v2 read surface (the transcript-chat viewer). Registered AFTER
+    // initLogging so the new-messages push can subscribe to the live supervisor;
+    // the request/response handlers resolve the supervisor lazily per call and
+    // reject cleanly when logging is disabled.
+    registerLogs2Handlers(getWindow)
     startPermissionTray()
     startEffortTracker()
     startAttentionSource()

@@ -283,6 +283,57 @@ export interface ElectronAPI {
       freedBytes: number
     }>
   }
+  /** Logs v2 — the transcript-chat read surface (routes through the transcripts worker). */
+  logs2: {
+    listSlots: () => Promise<Array<{
+      slotKey: string
+      configId: string | null
+      configLabel: string
+      accountEmail: string | null
+      lastActive: number
+      runCount: number
+      messageCount: number
+    }>>
+    readMessages: (args: {
+      scope: { configId: string } | { sessionId: string }
+      anchor?: 'tail' | { runId: number; idx: number }
+      dir?: 'older' | 'newer'
+      limit?: number
+    }) => Promise<Array<{
+      runId: number
+      idx: number
+      ts: number
+      role: string
+      kind: string
+      content: string
+      toolName: string | null
+      toolMeta: string | null
+    }>>
+    turnSummary: (args: { scope: { configId: string } | { sessionId: string } }) => Promise<Array<{
+      runId: number
+      idx: number
+      role: string
+      kind: string
+      ts: number
+      toolName: string | null
+    }>>
+    search: (args: { query: string; limit?: number }) => Promise<Array<{
+      runId: number
+      idx: number
+      configId: string | null
+      sessionId: string
+      snippet: string
+    }>>
+    deleteSlot: (args: { scope: { configId: string } | { sessionId: string } }) =>
+      Promise<{ deletedRuns: number; deletedMessages: number }>
+    clearAll: () => Promise<{ deletedRuns: number; deletedMessages: number }>
+    ingestStatus: (args: { sessionId: string }) => Promise<{
+      transcripts: { path: string; status: string; ord: number }[]
+      messageCount: number
+    } | null>
+    /** Live push from the worker when a tailed transcript appends messages. */
+    onNewMessages: (cb: (e: { sessionId: string; configId: string | null; count: number }) => void) => () => void
+  }
   discovery: {
     getProjects: () => Promise<any>
     getSessionHistory: (projectPath: string) => Promise<any>
