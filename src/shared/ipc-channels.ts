@@ -73,6 +73,10 @@ export const IPC = {
   LOGSDB_SEARCH: 'logsdb:search',
   LOGSDB_PRUNE: 'logsdb:prune',
   LOGSDB_CLEAR_ALL: 'logsdb:clearAll',
+  // T8b (bug #5): the exact-conversation resume target for a session — {uuid,cwd}
+  // read off the latest bound transcript, or null. Used at session-save time to
+  // persist resumeUuid/resumeCwd onto SavedSession for app-relaunch.
+  LOGS_GET_RESUME_TARGET: 'logging:getResumeTarget',
 
   // Logs — migration (Phase 2b)
   LOGS_MIGRATE_DETECT: 'logs:migrate:detect',

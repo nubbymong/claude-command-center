@@ -27,6 +27,7 @@ import {
   canonicalizeTranscriptPath,
   mangleCwdToProjectDir,
   makeHeuristicBinder,
+  resolveResumeTargetFromTranscript,
 } from '../../../src/main/logging/transcript-discovery'
 
 // ---------------------------------------------------------------------------
@@ -437,5 +438,88 @@ describe('makeHeuristicBinder', () => {
     const binding = binder.bindOnce('sess-bnd', cwd, startedAt)
     expect(binding).not.toBeNull()
     void boundary
+  })
+})
+
+// ---------------------------------------------------------------------------
+// resolveResumeTargetFromTranscript (T8b — exact-conversation resume)
+// ---------------------------------------------------------------------------
+
+describe('resolveResumeTargetFromTranscript', () => {
+  const UUID = '11111111-2222-3333-4444-555555555555'
+
+  it('returns { uuid, cwd } from the first JSONL line carrying a cwd field', () => {
+    const transcriptPath = `C:\\home\\.claude\\projects\\F--proj\\${UUID}.jsonl`
+    const fakeRead = () =>
+      [
+        JSON.stringify({ type: 'user', message: { content: 'hi' }, cwd: 'F:\\real\\worktree' }),
+      ].join('\n')
+    const result = resolveResumeTargetFromTranscript(transcriptPath, fakeRead as any)
+    expect(result).toEqual({ uuid: UUID, cwd: 'F:\\real\\worktree' })
+  })
+
+  it('uuid is the basename stem (strips .jsonl)', () => {
+    const transcriptPath = `/home/user/.claude/projects/proj/${UUID}.jsonl`
+    const fakeRead = () => JSON.stringify({ cwd: '/work/dir' })
+    const result = resolveResumeTargetFromTranscript(transcriptPath, fakeRead as any)
+    expect(result?.uuid).toBe(UUID)
+  })
+
+  it('tolerates leading non-cwd lines and blank lines', () => {
+    const transcriptPath = `/home/user/.claude/projects/proj/${UUID}.jsonl`
+    const fakeRead = () =>
+      [
+        '',
+        JSON.stringify({ type: 'summary', summary: 'no cwd here' }),
+        '   ',
+        'not-json-garbage',
+        JSON.stringify({ type: 'user', cwd: '/the/real/cwd' }),
+        JSON.stringify({ type: 'assistant', cwd: '/a/later/cwd' }),
+      ].join('\n')
+    const result = resolveResumeTargetFromTranscript(transcriptPath, fakeRead as any)
+    expect(result).toEqual({ uuid: UUID, cwd: '/the/real/cwd' })
+  })
+
+  it('returns null when no line carries a non-empty cwd field', () => {
+    const transcriptPath = `/home/user/.claude/projects/proj/${UUID}.jsonl`
+    const fakeRead = () =>
+      [
+        JSON.stringify({ type: 'summary' }),
+        JSON.stringify({ type: 'user', cwd: '' }),
+        JSON.stringify({ type: 'user', cwd: '   ' }),
+        JSON.stringify({ type: 'user', cwd: 42 }),
+      ].join('\n')
+    expect(resolveResumeTargetFromTranscript(transcriptPath, fakeRead as any)).toBeNull()
+  })
+
+  it('returns null when the file is empty', () => {
+    const transcriptPath = `/home/user/.claude/projects/proj/${UUID}.jsonl`
+    const fakeRead = () => ''
+    expect(resolveResumeTargetFromTranscript(transcriptPath, fakeRead as any)).toBeNull()
+  })
+
+  it('returns null when readFile throws (unreadable / missing)', () => {
+    const transcriptPath = `/home/user/.claude/projects/proj/${UUID}.jsonl`
+    const fakeRead = () => {
+      throw new Error('ENOENT')
+    }
+    expect(resolveResumeTargetFromTranscript(transcriptPath, fakeRead as any)).toBeNull()
+  })
+
+  it('returns null when the basename does not look like a UUID', () => {
+    const transcriptPath = `/home/user/.claude/projects/proj/not-a-uuid.jsonl`
+    const fakeRead = () => JSON.stringify({ cwd: '/work/dir' })
+    expect(resolveResumeTargetFromTranscript(transcriptPath, fakeRead as any)).toBeNull()
+  })
+
+  it('returns null for an empty path', () => {
+    expect(resolveResumeTargetFromTranscript('', (() => '') as any)).toBeNull()
+  })
+
+  it('trims whitespace around the cwd value', () => {
+    const transcriptPath = `/home/user/.claude/projects/proj/${UUID}.jsonl`
+    const fakeRead = () => JSON.stringify({ cwd: '  /padded/cwd  ' })
+    const result = resolveResumeTargetFromTranscript(transcriptPath, fakeRead as any)
+    expect(result).toEqual({ uuid: UUID, cwd: '/padded/cwd' })
   })
 })

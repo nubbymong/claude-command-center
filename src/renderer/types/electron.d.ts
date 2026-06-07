@@ -150,6 +150,7 @@ export interface ElectronAPI {
       effortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode'
       disableAutoMemory?: boolean
       enableCodexReview?: boolean
+      resume?: { uuid: string; cwd: string }
       model?: string
       profileId?: string
       provider?: 'claude' | 'codex'
@@ -230,6 +231,8 @@ export interface ElectronAPI {
     }>>
     prune: (ids: string[]) => Promise<{ deletedSessions: number; deletedEvents: number }>
     clearAll: () => Promise<{ deletedSessions: number; deletedEvents: number }>
+    /** T8b (bug #5): exact-conversation resume target for a session, or null. */
+    getResumeTarget: (sessionId: string) => Promise<{ uuid: string; cwd: string } | null>
   }
   logMigration: {
     detect: () => Promise<{

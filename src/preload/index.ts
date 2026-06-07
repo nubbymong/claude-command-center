@@ -64,6 +64,7 @@ export interface ElectronAPI {
       effortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode'
       disableAutoMemory?: boolean
       enableCodexReview?: boolean
+      resume?: { uuid: string; cwd: string }
       model?: string
       profileId?: string
       provider?: 'claude' | 'codex'
@@ -124,6 +125,7 @@ export interface ElectronAPI {
     search: (query: string, limit?: number) => Promise<unknown[]>
     prune: (ids: string[]) => Promise<{ deletedSessions: number; deletedEvents: number }>
     clearAll: () => Promise<{ deletedSessions: number; deletedEvents: number }>
+    getResumeTarget: (sessionId: string) => Promise<{ uuid: string; cwd: string } | null>
   }
   logMigration: {
     detect: () => Promise<{
@@ -579,6 +581,7 @@ const electronAPI: ElectronAPI = {
     search: (query: string, limit?: number) => ipcRenderer.invoke(IPC.LOGSDB_SEARCH, query, limit),
     prune: (ids: string[]) => ipcRenderer.invoke(IPC.LOGSDB_PRUNE, ids),
     clearAll: () => ipcRenderer.invoke(IPC.LOGSDB_CLEAR_ALL),
+    getResumeTarget: (sessionId: string) => ipcRenderer.invoke(IPC.LOGS_GET_RESUME_TARGET, sessionId),
   },
   logMigration: {
     detect: () => ipcRenderer.invoke(IPC.LOGS_MIGRATE_DETECT),

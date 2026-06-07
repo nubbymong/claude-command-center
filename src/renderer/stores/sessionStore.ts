@@ -91,6 +91,12 @@ export interface Session {
   provider?: ProviderId
   /** v1.5.19: account profile this session runs under (CLAUDE_CONFIG_DIR). */
   profileId?: string
+  /** T8b (bug #5): exact conversation to resume on app-relaunch (uuid + the
+   *  cwd it ran in). Round-trips through SavedSession; passed as the `resume`
+   *  spawn option for a restored session. In-session restart/switch self-capture
+   *  in main and do NOT use these. */
+  resumeUuid?: string
+  resumeCwd?: string
   /** True only for an in-progress add-account login shell; drives the /login
    *  guidance banner. Cleared once the account is detected. */
   needsLogin?: boolean

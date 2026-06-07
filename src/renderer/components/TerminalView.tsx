@@ -366,7 +366,21 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
           // account gate leaves the session unspawned and re-gates on remount.
           const doSpawn = (resolvedProfileId: string | undefined) => {
             markSpawned(sessionId)
-            window.electronAPI.pty.spawn(sessionId, { cwd, cols, rows, ssh, shellOnly, elevated, configId, configLabel, useResumePicker, legacyVersion, agentsConfig, effortLevel, disableAutoMemory, enableCodexReview, model, provider, codexOptions, profileId: resolvedProfileId })
+            // T8b (bug #5): app-relaunch ONLY. A restored session carries the
+            // persisted exact-conversation target; pass it as `resume` so the
+            // first spawn resumes THAT conversation (cwd-overridden in main).
+            // In-session restart/switch leave `resume` undefined -- main
+            // self-captures the live conversation. Consume the persisted target
+            // after this spawn so a later in-session restart doesn't re-send a
+            // stale relaunch uuid that would shadow main's self-capture.
+            const resume =
+              !shellOnly && session?.resumeUuid && session?.resumeCwd
+                ? { uuid: session.resumeUuid, cwd: session.resumeCwd }
+                : undefined
+            if (resume) {
+              updateSession(sessionId, { resumeUuid: undefined, resumeCwd: undefined })
+            }
+            window.electronAPI.pty.spawn(sessionId, { cwd, cols, rows, ssh, shellOnly, elevated, configId, configLabel, useResumePicker, legacyVersion, agentsConfig, effortLevel, disableAutoMemory, enableCodexReview, model, provider, codexOptions, profileId: resolvedProfileId, resume })
           }
           // Pre-spawn account gate: on a session's first spawn this run, ask which
           // account to launch under (multi-account on + >=1 profile), unless a

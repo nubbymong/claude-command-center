@@ -138,6 +138,59 @@ export function mangleCwdToProjectDir(cwd: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// resolveResumeTargetFromTranscript (T8b — exact-conversation resume)
+// ---------------------------------------------------------------------------
+
+/**
+ * From a canonical transcript path `.../<uuid>.jsonl`, derive the resume target:
+ *   - `uuid`: the file's basename stem (validated UUID-ish).
+ *   - `cwd` : the first JSONL line that carries a non-empty string `cwd` field
+ *             (the directory the conversation actually ran in). The mangled
+ *             project-folder name is LOSSY, so the real cwd can only be read
+ *             back out of the transcript body — same scan used at
+ *             providers/claude/telemetry.ts:213-217.
+ *
+ * Fail-safe: returns `null` on ANY failure (unreadable file, empty file, no
+ * cwd field, non-UUID stem). Callers gate the whole resume override on a
+ * non-null result, so a null here means "fall back to existing behaviour".
+ *
+ * `readFile` is injectable for testing; production uses `fs.readFileSync`.
+ */
+const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/
+
+export function resolveResumeTargetFromTranscript(
+  transcriptPath: string,
+  readFile: (p: string, enc: 'utf-8') => string = (p, enc) => fs.readFileSync(p, enc),
+): { uuid: string; cwd: string } | null {
+  if (!transcriptPath) return null
+
+  const uuid = path.basename(transcriptPath, '.jsonl')
+  if (!uuid || !UUID_RE.test(uuid)) return null
+
+  let text: string
+  try {
+    text = readFile(transcriptPath, 'utf-8')
+  } catch {
+    return null
+  }
+  if (!text) return null
+
+  for (const raw of text.split('\n')) {
+    const line = raw.trim()
+    if (!line) continue
+    try {
+      const obj = JSON.parse(line)
+      if (obj && typeof obj.cwd === 'string' && obj.cwd.trim()) {
+        return { uuid, cwd: obj.cwd.trim() }
+      }
+    } catch {
+      // tolerate non-JSON / partial lines and keep scanning
+    }
+  }
+  return null
+}
+
+// ---------------------------------------------------------------------------
 // makeHeuristicBinder
 // ---------------------------------------------------------------------------
 

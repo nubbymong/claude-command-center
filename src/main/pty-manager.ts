@@ -6,6 +6,8 @@ import { execSync } from 'child_process'
 import { logPtyOutput, isDebugModeEnabled } from './debug-capture'
 import { shouldCapture } from './logging/should-capture'
 import { getLogSupervisor, getTranscriptBinder } from './logging/logging-service'
+import { resolveResumeTargetFromTranscript, canonicalizeTranscriptPath, mangleCwdToProjectDir } from './logging/transcript-discovery'
+import { buildClaudeLaunchCommand } from './spawn-claude-command'
 import { logInfo, logDebug, logError, logWarn } from './debug-logger'
 import { writeCliSetupPty, getResourcesDirectory } from './ipc/setup-handlers'
 import { isGlobalVisionRunning, getGlobalVisionConfig, teardownVisionSession } from './vision-manager'
@@ -148,6 +150,23 @@ const ptySessions = new Map<string, PtySession>()
 // Codex-provider telemetry sources: keyed by sessionId, stopped on PTY exit / kill.
 const codexTelemetrySources = new Map<string, TelemetrySource>()
 
+// T8b (bug #5): exact-conversation resume target captured at the TOP of a
+// respawn (in-session Restart / Switch-account), keyed by sessionId. Captured
+// BEFORE killPty so the live conversation's uuid + its real cwd are read off
+// the just-bound transcript before the old run's async endRun clears the
+// binder map. Consumed (and deleted) once in the Claude launch builder, and
+// deleted in killPty so a stale target can never leak into an unrelated future
+// spawn. Fail-open: a null/missing entry => unchanged existing resume behaviour.
+const lastResumeTarget = new Map<string, { uuid: string; cwd: string }>()
+
+function getLastResumeTarget(sessionId: string): { uuid: string; cwd: string } | undefined {
+  return lastResumeTarget.get(sessionId)
+}
+
+function clearLastResumeTarget(sessionId: string): void {
+  lastResumeTarget.delete(sessionId)
+}
+
 // === SSH OSC sentinel parser ===
 //
 // Remote SSH sessions can't write status files to the local host, so the
@@ -246,6 +265,14 @@ export function spawnPty(
     profileId?: string
     /** v1.5 P6: when true, register session into MCP server's codex_review opt-in set. */
     enableCodexReview?: boolean
+    /**
+     * T8b (bug #5): app-relaunch exact-conversation resume. The renderer passes
+     * the persisted {uuid,cwd} on a restored session so the respawn resumes the
+     * SAME conversation it was on at quit (not the newest in the cwd's folder).
+     * In-session Restart/Switch DO NOT set this — main self-captures via
+     * lastResumeTarget. Fail-open: ignored if the transcript/cwd no longer exist.
+     */
+    resume?: { uuid: string; cwd: string }
     provider?: 'claude' | 'codex'
     codexOptions?: {
       model?: string
@@ -255,7 +282,34 @@ export function spawnPty(
   }
 ): void {
   logInfo(`[pty] Spawning PTY for session ${sessionId} (ssh=${!!options?.ssh}, shellOnly=${!!options?.shellOnly}, cwd=${options?.cwd || 'default'})`)
+
+  // T8b (bug #5): in-session Restart / Switch-account REUSE this sessionId and
+  // call spawnPty synchronously after killing the old PTY. The old run's
+  // endRun() (which clears the binder's per-session bind) fires ASYNC, after we
+  // return — so READ the live conversation's resume target HERE, before
+  // killPty, while the binder still holds it. Only for Claude non-shell, non-SSH
+  // sessions (the binder only tracks Claude transcripts). Fail-open: any miss
+  // leaves no entry and the spawn falls back to existing behaviour.
+  // NOTE: stored into lastResumeTarget AFTER killPty (which clears the map), so
+  // a fresh capture survives its own kill instead of being wiped by it.
+  let capturedResumeTarget: { uuid: string; cwd: string } | null = null
+  if (!options?.ssh && !options?.shellOnly && (options?.provider ?? 'claude') === 'claude') {
+    try {
+      const latest = getTranscriptBinder()?.getLatestTranscriptPath(sessionId)
+      if (latest) {
+        capturedResumeTarget = resolveResumeTargetFromTranscript(latest)
+      }
+    } catch (err) {
+      logWarn(`[pty] T8b resume-target capture failed for ${sessionId}: ${(err as Error)?.message ?? err}`)
+    }
+  }
+
   killPty(sessionId)
+
+  if (capturedResumeTarget) {
+    lastResumeTarget.set(sessionId, capturedResumeTarget)
+    logInfo(`[pty] T8b captured resume target for ${sessionId}: uuid=${capturedResumeTarget.uuid} cwd=${capturedResumeTarget.cwd}`)
+  }
 
   const cols = options?.cols || 120
   const rows = options?.rows || 30
@@ -936,13 +990,69 @@ export function spawnPty(
       // Without the explicit cd, conversations get stored under the wrong project hash
       // and won't appear when the user tries to /resume.
       const { cmd } = resolveClaudeForPty(options?.legacyVersion)
-      logInfo(`[pty-manager] Launching Claude via shell in PTY: ${spawnCmd} -> ${cmd} cwd=${resolvedCwd} (resumePicker=${!!options?.useResumePicker})`)
+
+      // T8b (bug #5): EXACT-CONVERSATION RESUME.
+      //
+      // `claude --resume <uuid>` is cwd-SCOPED: it only resolves a conversation
+      // from the LAUNCH cwd's mangled ~/.claude/projects/<mangled> folder, and
+      // needs both <uuid>.jsonl and a same-name companion dir there. The default
+      // resume-picker / newest-in-folder behaviour can therefore pick a STALE
+      // conversation when the live one ran under a DIFFERENT cwd (e.g. a git
+      // worktree). So we must do BOTH: pass --resume <uuid> AND override the
+      // launch cwd to the directory the conversation actually ran in (read out
+      // of the JSONL — the mangled folder name is lossy and not reversible).
+      //
+      // Effective target precedence (all fail-open):
+      //   options.resume          (app-relaunch: persisted on the restored session)
+      //   lastResumeTarget        (in-session Restart / Switch-account: self-captured)
+      //
+      // The whole override is gated on existence checks (Step 6): transcript file
+      // present, companion dir present, and target cwd is a real directory. ANY
+      // miss → drop resume entirely and fall back to existing behaviour. We never
+      // launch --resume from os.homedir().
+      let resumeUuid: string | undefined = undefined
+      let claudeCwd = resolvedCwd
+      const effectiveTarget = options?.resume ?? getLastResumeTarget(sessionId)
+      // Consume the self-captured target unconditionally (used or not) so it can
+      // never apply to a later, unrelated spawn of this sessionId.
+      clearLastResumeTarget(sessionId)
+      if (effectiveTarget && (options?.provider ?? 'claude') === 'claude') {
+        try {
+          const canonical = canonicalizeTranscriptPath(
+            path.join(os.homedir(), '.claude', 'projects', mangleCwdToProjectDir(effectiveTarget.cwd), `${effectiveTarget.uuid}.jsonl`),
+          )
+          const transcriptPath = canonical ?? path.join(os.homedir(), '.claude', 'projects', mangleCwdToProjectDir(effectiveTarget.cwd), `${effectiveTarget.uuid}.jsonl`)
+          const companionDir = path.join(path.dirname(transcriptPath), effectiveTarget.uuid)
+          // logging/discovery must be on (the binder is the source of truth for
+          // captured targets); for the app-relaunch path options.resume is still
+          // gated on the same existence checks below.
+          const discoveryOn = !!getTranscriptBinder()
+          const targetCwdResolved = resolveCwd(effectiveTarget.cwd)
+          if (
+            discoveryOn &&
+            fs.existsSync(transcriptPath) &&
+            fs.existsSync(companionDir) &&
+            fs.existsSync(targetCwdResolved) &&
+            fs.statSync(targetCwdResolved).isDirectory()
+          ) {
+            resumeUuid = effectiveTarget.uuid
+            claudeCwd = targetCwdResolved
+            logInfo(`[pty] T8b exact resume for ${sessionId}: uuid=${resumeUuid} cwd=${claudeCwd} (was ${resolvedCwd})`)
+          } else {
+            logInfo(`[pty] T8b resume target dropped for ${sessionId} (fail-open existence check) — uuid=${effectiveTarget.uuid}`)
+          }
+        } catch (err) {
+          logWarn(`[pty] T8b resume gate error for ${sessionId}: ${(err as Error)?.message ?? err}`)
+        }
+      }
+
+      logInfo(`[pty-manager] Launching Claude via shell in PTY: ${spawnCmd} -> ${cmd} cwd=${claudeCwd} (resumePicker=${!!options?.useResumePicker}, resume=${resumeUuid ?? 'none'})`)
 
       ptyProcess = pty.spawn(spawnCmd, spawnArgs, {
         name: 'xterm-256color',
         cols,
         rows,
-        cwd: resolvedCwd,
+        cwd: claudeCwd,
         env: finalSpawnEnv,
         useConpty: true
       })
@@ -967,7 +1077,9 @@ export function spawnPty(
       // Explicitly cd to the project directory, then launch Claude.
       // The cd is critical — it ensures Claude sees the correct project directory
       // regardless of PowerShell profile scripts or PTY cwd propagation issues.
-      const escapedCwd = resolvedCwd.replace(/'/g, "''")
+      // The command string + cwd escaping is built by the pure
+      // buildClaudeLaunchCommand() helper below; it uses `claudeCwd` (the
+      // resume-target override when active, else resolvedCwd).
 
       // Build extra CLI flags (--effort, --settings). --name is deliberately
       // NOT passed: the current Claude CLI treats `--name "<label>"` as the
@@ -1041,29 +1153,26 @@ export function spawnPty(
         logInfo(`[pty] Agents flag for ${sessionId}: ${agentsFlag.slice(0, 200)}...`)
       }
 
-      // When useResumePicker is true, run the resume-picker script instead of Claude directly.
-      // The picker shows prior conversations and launches Claude with --resume or plain.
-      // Any claude flags we've already built up (notably --settings for hooks) must be
-      // forwarded through the picker so the child claude process sees them too.
-      let escapedCmd: string
-      if (options?.useResumePicker) {
-        const pickerScript = getResumePickerPath()
-        if (pickerScript && os.platform() === 'win32') {
-          const escapedScript = pickerScript.replace(/'/g, "''")
-          escapedCmd = `Set-Location '${escapedCwd}'; node '${escapedScript}'${extraFlags}; exit`
-        } else if (pickerScript) {
-          escapedCmd = `cd '${escapedCwd.replace(/'/g, "'\\''")}' && node '${pickerScript.replace(/'/g, "'\\''")}'${extraFlags}; exit`
-        } else {
-          // Fallback: no picker script found, launch Claude directly
-          escapedCmd = os.platform() === 'win32'
-            ? `Set-Location '${escapedCwd}'; & "${cmd}"${agentsFlag}${extraFlags}; exit`
-            : `cd '${escapedCwd.replace(/'/g, "'\\''")}' && "${cmd}"${agentsFlag}${extraFlags}; exit`
-        }
-      } else {
-        escapedCmd = os.platform() === 'win32'
-          ? `Set-Location '${escapedCwd}'; & "${cmd}"${agentsFlag}${extraFlags}; exit`
-          : `cd '${escapedCwd.replace(/'/g, "'\\''")}' && "${cmd}"${agentsFlag}${extraFlags}; exit`
-      }
+      // When useResumePicker is true, run the resume-picker script instead of
+      // Claude directly. The picker shows prior conversations and launches Claude
+      // with --resume or plain. Any claude flags we've already built up (notably
+      // --settings for hooks) must be forwarded through the picker so the child
+      // claude process sees them too.
+      //
+      // T8b: when an exact resume target resolved (resumeUuid set), the builder
+      // BYPASSES the picker and launches `claude --resume <uuid>` directly from
+      // claudeCwd (the conversation's real cwd). Otherwise the byte-identical
+      // golden behaviour (picker / direct) is preserved.
+      const escapedCmd = buildClaudeLaunchCommand({
+        platform: os.platform() === 'win32' ? 'win32' : 'posix',
+        cwd: claudeCwd,
+        claudeBin: cmd,
+        extraFlags,
+        agentsFlag,
+        useResumePicker: !!options?.useResumePicker,
+        pickerScript: getResumePickerPath(),
+        resumeUuid,
+      })
       setTimeout(() => {
         ptyProcess.write(escapedCmd + '\r')
       }, 300)
@@ -1343,6 +1452,10 @@ export function killPty(sessionId: string): void {
   pendingWrites.delete(sessionId)
   recentWrites.delete(sessionId)
   sshOscBuffers.delete(sessionId)
+  // T8b: drop any captured resume target so it can't leak into a future,
+  // unrelated spawn of the same sessionId. The respawn path captures fresh
+  // BEFORE calling killPty, so the just-captured target survives this clear.
+  clearLastResumeTarget(sessionId)
   // Stop Codex telemetry source if one was registered for this session.
   const codexTel = codexTelemetrySources.get(sessionId)
   if (codexTel) {

@@ -51,6 +51,11 @@ export const spawnOptionsSchema = z.object({
   effortLevel: z.enum(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode']).optional(),
   disableAutoMemory: z.boolean().optional(),
   enableCodexReview: z.boolean().optional(),
+  // T8b (bug #5): app-relaunch exact-conversation resume target.
+  resume: z.object({
+    uuid: z.string().min(1).max(200),
+    cwd: z.string().min(1).max(4096),
+  }).optional(),
   model: z.string().optional(),
   profileId: z.string().optional(),
   provider: z.enum(['claude', 'codex']).optional(),
@@ -86,6 +91,7 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     effortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode'
     disableAutoMemory?: boolean
     enableCodexReview?: boolean
+    resume?: { uuid: string; cwd: string }
     model?: string
     profileId?: string
     provider?: 'claude' | 'codex'

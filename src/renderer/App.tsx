@@ -71,7 +71,7 @@ import AutoDetectBanner from './components/github/AutoDetectBanner'
 import { handleAutoDetectAccept } from './utils/githubAutoDetectAccept'
 import RepoBreadcrumb from './components/RepoBreadcrumb'
 import type { SessionState, SavedSession } from './types/electron'
-import { buildSessionState } from './session-persistence'
+import { buildSessionState, buildSessionStateWithResumeTargets } from './session-persistence'
 
 // Re-export ViewType from its canonical location for backwards compatibility
 export type { ViewType } from './types/views'
@@ -495,6 +495,10 @@ export default function App() {
           createdAt: Date.now(),
           provider: saved.provider,
           profileId: saved.profileId,
+          // T8b (bug #5): carry the persisted exact-conversation resume target so
+          // TerminalView passes `resume:{uuid,cwd}` through pty.spawn on relaunch.
+          resumeUuid: saved.resumeUuid,
+          resumeCwd: saved.resumeCwd,
           codexOptions: saved.codexOptions,
         }
       })
@@ -503,7 +507,11 @@ export default function App() {
         // Both providers support a resume picker. For Codex, the picker script
         // may not be deployed yet on first boot -- buildCodexSpawn falls back
         // to direct codex spawn in that case (see src/main/providers/codex/spawn.ts).
-        if (!session.shellOnly && session.sessionType === 'local') {
+        // T8b (bug #5): when a persisted exact-conversation target exists, the
+        // spawn resumes THAT conversation directly (cwd-overridden) -- so the
+        // resume PICKER is only the fallback for sessions WITHOUT a persisted uuid.
+        const hasExactResume = !!(session.resumeUuid && session.resumeCwd)
+        if (!session.shellOnly && session.sessionType === 'local' && !hasExactResume) {
           markSessionForResumePicker(session.id)
         }
       }
@@ -530,7 +538,15 @@ export default function App() {
     setIsClosing(true)
     if (isUpdate) setIsUpdating(true)
     try {
-      const stateToSave = buildSessionState()
+      // T8b (bug #5): enrich each session with its exact-conversation resume
+      // target so this relaunch resumes the SAME conversation. Fail-safe: falls
+      // back to the plain (sync) state if enrichment throws.
+      let stateToSave: SessionState
+      try {
+        stateToSave = await buildSessionStateWithResumeTargets()
+      } catch {
+        stateToSave = buildSessionState()
+      }
       await window.electronAPI.session.save(stateToSave)
       console.log('[App] Session state saved')
       if (isUpdate) {

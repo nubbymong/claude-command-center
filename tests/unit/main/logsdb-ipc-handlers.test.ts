@@ -9,8 +9,16 @@ vi.mock('electron', () => ({
 
 // Mock the supervisor accessor; the spy records the (kind,args) pairs.
 const querySpy = vi.fn()
+const getLatestTranscriptPathSpy = vi.fn<(id: string) => string | null>()
 vi.mock('../../../src/main/logging/logging-service', () => ({
   getLogSupervisor: () => ({ query: querySpy }),
+  getTranscriptBinder: () => ({ getLatestTranscriptPath: getLatestTranscriptPathSpy }),
+}))
+
+// Stub the pure resolver so the handler test stays a pure IPC test.
+const resolveSpy = vi.fn<(p: string) => { uuid: string; cwd: string } | null>()
+vi.mock('../../../src/main/logging/transcript-discovery', () => ({
+  resolveResumeTargetFromTranscript: (p: string) => resolveSpy(p),
 }))
 
 import { registerLogsdbHandlers } from '../../../src/main/ipc/logsdb-handlers'
@@ -21,6 +29,8 @@ describe('logsdb IPC handlers', () => {
   beforeEach(() => {
     handlers.clear()
     querySpy.mockReset()
+    getLatestTranscriptPathSpy.mockReset()
+    resolveSpy.mockReset()
     registerLogsdbHandlers()
   })
 
@@ -60,5 +70,28 @@ describe('logsdb IPC handlers', () => {
   it('rejects-fast (rethrows) when the query rejects (worker down)', async () => {
     querySpy.mockRejectedValue(new Error('logging worker not available (state=down)'))
     await expect(invoke(IPC.LOGSDB_CLEAR_ALL)).rejects.toThrow(/not available/)
+  })
+
+  // T8b (bug #5): getResumeTarget --------------------------------------------
+
+  it('getResumeTarget resolves {uuid,cwd} from the latest bound transcript', async () => {
+    getLatestTranscriptPathSpy.mockReturnValue('/home/.claude/projects/p/u.jsonl')
+    resolveSpy.mockReturnValue({ uuid: 'u', cwd: 'F:/wt' })
+    const out = await invoke(IPC.LOGS_GET_RESUME_TARGET, 's1')
+    expect(getLatestTranscriptPathSpy).toHaveBeenCalledWith('s1')
+    expect(resolveSpy).toHaveBeenCalledWith('/home/.claude/projects/p/u.jsonl')
+    expect(out).toEqual({ uuid: 'u', cwd: 'F:/wt' })
+  })
+
+  it('getResumeTarget returns null when no transcript is bound', async () => {
+    getLatestTranscriptPathSpy.mockReturnValue(null)
+    const out = await invoke(IPC.LOGS_GET_RESUME_TARGET, 's1')
+    expect(out).toBeNull()
+    expect(resolveSpy).not.toHaveBeenCalled()
+  })
+
+  it('getResumeTarget is fail-safe (returns null) on an invalid sessionId', async () => {
+    const out = await invoke(IPC.LOGS_GET_RESUME_TARGET, '')
+    expect(out).toBeNull()
   })
 })

@@ -105,6 +105,16 @@ export interface SavedSession {
   provider: ProviderId
   /** v1.5.19: links a session to an account profile (multi-account). */
   profileId?: string
+  /**
+   * T8b (bug #5): the exact conversation this session was on at quit, so an
+   * app-relaunch resumes the SAME conversation rather than the newest in the
+   * cwd's mangled folder (which can be stale, e.g. a git worktree). `resumeCwd`
+   * is the directory the conversation actually ran in (read from the JSONL);
+   * the launcher must cd there for the cwd-scoped `claude --resume` to resolve.
+   * Best-effort enriched at save time; absent => fall back to existing behaviour.
+   */
+  resumeUuid?: string
+  resumeCwd?: string
   claudeOptions?: ClaudeOptions
   codexOptions?: CodexOptions
   // Legacy top-level fields -- kept for backward compat during migration; read from claudeOptions after P1.2
