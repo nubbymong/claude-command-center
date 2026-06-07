@@ -73,6 +73,10 @@ export interface ClaudeOptions {
    *  and the SessionDialog toggle is persisted. Tool description still appears to all
    *  Claude sessions (soft ACL); this flag controls authorisation server-side. */
   enableCodexReview?: boolean
+  /** T16: per-session CCC indexing opt-out. DEFAULT-TRUE (undefined / true = on).
+   *  When false, CCC does not index this session's transcript for the Logs viewer.
+   *  The conversation still lives in Claude's own files (~/.claude/projects). */
+  loggingEnabled?: boolean
 }
 
 export interface CodexOptions {

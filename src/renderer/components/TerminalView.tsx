@@ -53,6 +53,9 @@ interface Props {
    *  codex_review opt-in set in conductor-mcp-server. Mirrors
    *  disableAutoMemory's lifecycle (claudeOptions sparse boolean). */
   enableCodexReview?: boolean
+  /** T16: per-session CCC indexing opt-out. DEFAULT-TRUE (undefined = on).
+   *  Forwarded to the main process shouldRegisterRun predicate. */
+  loggingEnabled?: boolean
   /** Per-session model override (sonnet | opus | haiku | ''). Empty
    * string means "use whatever the CLI picks". Forwarded to claude as
    * `--model <name>` when set. */
@@ -63,7 +66,7 @@ interface Props {
   codexOptions?: CodexOptions
 }
 
-export default function TerminalView({ sessionId, configId, cwd, shellOnly, elevated, ssh, isActive = true, legacyVersion, agentIds, effortLevel, disableAutoMemory, enableCodexReview, model, provider, codexOptions }: Props) {
+export default function TerminalView({ sessionId, configId, cwd, shellOnly, elevated, ssh, isActive = true, legacyVersion, agentIds, effortLevel, disableAutoMemory, enableCodexReview, loggingEnabled, model, provider, codexOptions }: Props) {
   const xtermContainerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
@@ -380,7 +383,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
             if (resume) {
               updateSession(sessionId, { resumeUuid: undefined, resumeCwd: undefined })
             }
-            window.electronAPI.pty.spawn(sessionId, { cwd, cols, rows, ssh, shellOnly, elevated, configId, configLabel, useResumePicker, legacyVersion, agentsConfig, effortLevel, disableAutoMemory, enableCodexReview, model, provider, codexOptions, profileId: resolvedProfileId, resume })
+            window.electronAPI.pty.spawn(sessionId, { cwd, cols, rows, ssh, shellOnly, elevated, configId, configLabel, useResumePicker, legacyVersion, agentsConfig, effortLevel, disableAutoMemory, enableCodexReview, loggingEnabled, model, provider, codexOptions, profileId: resolvedProfileId, resume })
           }
           // Pre-spawn account gate: on a session's first spawn this run, ask which
           // account to launch under (multi-account on + >=1 profile), unless a

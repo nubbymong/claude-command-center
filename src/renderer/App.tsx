@@ -489,6 +489,7 @@ export default function App() {
           effortLevel: claude?.effortLevel ?? saved.effortLevel,
           disableAutoMemory: claude?.disableAutoMemory ?? saved.disableAutoMemory,
           enableCodexReview: claude?.enableCodexReview,
+          loggingEnabled: claude?.loggingEnabled,
           machineName: saved.machineName,
           githubIntegration: saved.githubIntegration,
           status: 'idle' as const,
@@ -753,6 +754,7 @@ export default function App() {
                       effortLevel={session.effortLevel}
                       disableAutoMemory={session.disableAutoMemory}
                       enableCodexReview={session.enableCodexReview}
+                      loggingEnabled={session.loggingEnabled}
                       model={session.model}
                       provider={session.provider}
                       codexOptions={session.codexOptions}
@@ -1031,6 +1033,7 @@ export default function App() {
                       effortLevel: newConfig.claudeOptions?.effortLevel,
                       disableAutoMemory: newConfig.claudeOptions?.disableAutoMemory,
                       enableCodexReview: newConfig.claudeOptions?.enableCodexReview,
+                      loggingEnabled: newConfig.claudeOptions?.loggingEnabled,
                       provider: newConfig.provider,
                       codexOptions: newConfig.codexOptions,
                     }

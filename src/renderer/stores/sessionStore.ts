@@ -85,6 +85,9 @@ export interface Session {
   /** P6: Claude opts in to the codex_review MCP tool for this session.
    *  Mirrors disableAutoMemory in shape (sparse boolean) and lifecycle. */
   enableCodexReview?: boolean
+  /** T16: per-session CCC indexing opt-out. DEFAULT-TRUE (undefined = on).
+   *  Mirrors the ClaudeOptions.loggingEnabled field at spawn time. */
+  loggingEnabled?: boolean
   machineName?: string
   // Provider discriminator + Codex sub-options (Claude options live in the
   // top-level legacy fields above for now; Codex spawns need this struct).

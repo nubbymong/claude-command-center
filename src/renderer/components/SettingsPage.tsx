@@ -212,12 +212,12 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
   }
 
   const handleClearAllLogs = async () => {
-    if (!window.confirm('Permanently delete ALL session logs? This cannot be undone. Active sessions are kept.')) return
+    if (!window.confirm('Permanently delete the CCC conversation index? This cannot be undone. Active sessions are kept. Your conversations remain in Claude\'s own files (~/.claude/projects).')) return
     try {
       const res = await window.electronAPI.logsdb.clearAll()
-      window.alert(`Deleted ${res.deletedSessions} session(s), ${res.deletedEvents} event(s). Active sessions are kept.`)
+      window.alert(`Index cleared: ${res.deletedSessions} session(s), ${res.deletedEvents} event(s) removed. Active sessions are kept. Your conversations remain in Claude's own files.`)
     } catch {
-      window.alert('Could not clear logs — the logging service may be unavailable.')
+      window.alert('Could not clear the index — the logging service may be unavailable.')
     }
   }
 
@@ -337,24 +337,26 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
                   Show permission tray
                   <span className="text-[10px] text-overlay0">(surfaces only prompts Claude is blocked on)</span>
                 </label>
-                <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
+                <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer">
                   <input
                     type="checkbox"
                     checked={settings.loggingEnabled !== false}
                     onChange={(e) => save({ loggingEnabled: e.target.checked })}
-                    className="rounded border-surface1"
+                    className="mt-0.5 rounded border-surface1"
                   />
-                  Session logging
-                  <span className="text-[10px] text-overlay0">(records terminal output locally for search; may include secrets)</span>
+                  <span>
+                    Index conversation logs
+                    <span className="block text-[10px] text-overlay0">CCC indexes Claude's own transcripts (~/.claude/projects) for browsing here. Turning this off only stops indexing — your conversations remain in Claude's own files and are not affected.</span>
+                  </span>
                 </label>
                 <div className="flex items-center gap-2 mt-1">
                   <button
                     onClick={handleClearAllLogs}
                     className="px-2.5 py-1 text-xs rounded border border-surface1 bg-surface0 text-overlay1 hover:bg-red/10 hover:text-red hover:border-red/40 transition-colors"
                   >
-                    Clear all session logs
+                    Clear index
                   </button>
-                  <span className="text-[10px] text-overlay0">(permanent; active sessions are kept)</span>
+                  <span className="text-[10px] text-overlay0">(removes CCC's index only; conversations remain in Claude's own files at ~/.claude/projects)</span>
                 </div>
                 <LogMigrationAction />
               </Section>

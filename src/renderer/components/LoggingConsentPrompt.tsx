@@ -104,15 +104,17 @@ export default function LoggingConsentPrompt() {
             id="logging-consent-heading"
             className="text-sm font-semibold text-text"
           >
-            Session logging is on
+            Conversation indexing is on
           </h2>
         </div>
 
         {/* Body */}
         <div className="px-5 py-4 space-y-3">
           <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-            CCC records each session's terminal output locally so you can search and review it.
-            Logs never leave your machine.
+            CCC indexes Claude's own conversation transcripts so you can browse and review them here.
+            Your conversations always live in Claude's own files (
+            <code className="text-xs font-mono">~/.claude/projects</code>
+            ) — CCC only reads them to build a local index.
           </p>
           <p
             className="text-xs leading-relaxed px-3 py-2.5 rounded-lg"
@@ -122,15 +124,15 @@ export default function LoggingConsentPrompt() {
               color: 'var(--text-secondary)',
             }}
           >
-            <strong className="text-text font-medium">Note:</strong> Logs capture full terminal
-            output, which may include secrets such as API keys or tokens printed to the terminal.
+            <strong className="text-text font-medium">Note:</strong> Transcripts may include
+            sensitive content such as API keys or tokens if you printed them in your session.
           </p>
           <p className="text-xs" style={{ color: 'var(--text-muted, var(--color-overlay0))' }}>
             You can change this at any time in{' '}
             <span className="font-medium" style={{ color: 'var(--text-secondary)' }}>
               Settings &rarr; Security
             </span>
-            .
+            . Turning it off only stops CCC from indexing; it does not delete or move your conversations.
           </p>
         </div>
 
@@ -147,7 +149,7 @@ export default function LoggingConsentPrompt() {
               color: 'var(--text-secondary)',
             }}
           >
-            Turn off
+            Skip indexing
           </button>
           <button
             onClick={handleKeepOn}
@@ -158,7 +160,7 @@ export default function LoggingConsentPrompt() {
               color: 'var(--color-crust)',
             }}
           >
-            Keep on
+            Keep indexing
           </button>
         </div>
       </div>
