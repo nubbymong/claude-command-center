@@ -112,12 +112,24 @@ function kindToColour(kind: TurnSummaryItem['kind']): string {
 // Marker computation helpers
 // ---------------------------------------------------------------------------
 
-/** Map a global turn idx to a bucket index in the decimated rail. */
-function idxToBucket(idx: number, turns: TurnSummaryItem[], numBuckets: number): number {
-  if (turns.length === 0 || numBuckets === 0) return 0
+/**
+ * Map a (runId, idx) pair to a bucket index in the decimated rail.
+ *
+ * Matches on BOTH runId AND idx so that, in a configId scope where turnSummary
+ * returns turns from multiple runs each starting at idx=0, a hit for
+ * {runId:2, idx:5} cannot collide with run-1's idx=5.
+ *
+ * Returns -1 when the turn is not found; callers should skip -1 markers.
+ */
+export function idxToBucket(
+  runId: number,
+  idx: number,
+  turns: TurnSummaryItem[],
+  numBuckets: number,
+): number {
+  if (turns.length === 0 || numBuckets === 0) return -1
   const bucketSize = Math.ceil(turns.length / numBuckets)
-  // Find the position of this idx in the sorted turns array
-  const pos = turns.findIndex((t) => t.idx === idx)
+  const pos = turns.findIndex((t) => t.runId === runId && t.idx === idx)
   if (pos < 0) return -1
   return Math.min(Math.floor(pos / bucketSize), numBuckets - 1)
 }
@@ -132,7 +144,9 @@ export interface SearchHit {
 }
 
 export interface ViewportRange {
+  startRunId: number
   startIdx: number
+  endRunId: number
   endIdx: number
 }
 
@@ -188,7 +202,7 @@ export default function TimelineRail({
   const hitBuckets = new Set<number>()
   if (searchHits && numBuckets > 0) {
     for (const hit of searchHits) {
-      const b = idxToBucket(hit.idx, turns, numBuckets)
+      const b = idxToBucket(hit.runId, hit.idx, turns, numBuckets)
       if (b >= 0) hitBuckets.add(b)
     }
   }
@@ -197,10 +211,9 @@ export default function TimelineRail({
   let vpStart = -1
   let vpEnd = -1
   if (viewportRange && numBuckets > 0) {
-    vpStart = idxToBucket(viewportRange.startIdx, turns, numBuckets)
-    vpEnd = idxToBucket(viewportRange.endIdx, turns, numBuckets)
-    if (vpStart < 0) vpStart = 0
-    if (vpEnd < 0) vpEnd = numBuckets - 1
+    vpStart = idxToBucket(viewportRange.startRunId, viewportRange.startIdx, turns, numBuckets)
+    vpEnd = idxToBucket(viewportRange.endRunId, viewportRange.endIdx, turns, numBuckets)
+    // Graceful fallback: if an end isn't found (-1) keep the sentinel and skip rendering
   }
 
   if (error && numBuckets === 0) {

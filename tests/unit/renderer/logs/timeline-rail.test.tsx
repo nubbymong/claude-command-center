@@ -5,6 +5,7 @@
 //   1. decimateTurns pure helper: math, dominant-kind, empty input.
 //   2. TimelineRail component: self-fetch, click → onJump, searchHits markers,
 //      viewportRange renders without crash.
+//   3. Multi-run regression: idxToBucket must match on (runId,idx), not idx alone.
 //
 // Mock window.electronAPI.logs2.turnSummary — no real IPC.
 
@@ -17,6 +18,7 @@ import { act } from 'react'
 
 import {
   decimateTurns,
+  idxToBucket,
   type TurnSummaryItem,
 } from '../../../../src/renderer/components/logs/TimelineRail'
 import TimelineRail from '../../../../src/renderer/components/logs/TimelineRail'
@@ -143,7 +145,63 @@ describe('decimateTurns (pure helper)', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 2. TimelineRail — component tests
+// 2. idxToBucket — multi-run regression tests
+// ---------------------------------------------------------------------------
+
+describe('idxToBucket (multi-run correctness)', () => {
+  // Build a flat turns array: run 1 has idx 0..4, run 2 has idx 0..4 (10 turns total).
+  // In the old single-idx implementation a searchHit {runId:2, idx:5} would match
+  // run-1's idx=5; with the fix it must only match the turn whose (runId,idx) pair
+  // matches exactly.
+  function makeMultiRunTurns(): TurnSummaryItem[] {
+    const turns: TurnSummaryItem[] = []
+    for (let i = 0; i < 6; i++) turns.push({ runId: 1, idx: i, role: 'assistant', kind: 'message', ts: 1000 + i, toolName: null })
+    for (let i = 0; i < 6; i++) turns.push({ runId: 2, idx: i, role: 'assistant', kind: 'message', ts: 2000 + i, toolName: null })
+    return turns
+  }
+
+  it('returns -1 for a (runId,idx) that is absent', () => {
+    const turns = makeMultiRunTurns() // 12 turns, 1 bucket each (< 2000)
+    const numBuckets = decimateTurns(turns).length
+    // runId=99 does not exist → should return -1
+    expect(idxToBucket(99, 5, turns, numBuckets)).toBe(-1)
+  })
+
+  it('regression: hit {runId:2,idx:5} maps to run-2 bucket, NOT run-1 idx=5', () => {
+    const turns = makeMultiRunTurns() // 12 turns, each its own cell
+    const numBuckets = decimateTurns(turns).length
+    expect(numBuckets).toBe(12)
+
+    // run-1 idx=5 is at position 5 in the array → bucket 5
+    const run1Bucket = idxToBucket(1, 5, turns, numBuckets)
+    // run-2 idx=5 is at position 11 in the array → bucket 11
+    const run2Bucket = idxToBucket(2, 5, turns, numBuckets)
+
+    // The two buckets must be DIFFERENT (this is the regression gate)
+    expect(run1Bucket).not.toBe(run2Bucket)
+    // run-1's idx=5 is bucket 5 (0-indexed position in the array)
+    expect(run1Bucket).toBe(5)
+    // run-2's idx=5 is bucket 11 (position 11)
+    expect(run2Bucket).toBe(11)
+  })
+
+  it('viewport: startRunId/endRunId across two runs spans correct bucket range', () => {
+    const turns = makeMultiRunTurns() // 12 buckets
+    const numBuckets = decimateTurns(turns).length
+
+    // Viewport: from run-1 idx=2 (bucket 2) to run-2 idx=3 (bucket 9)
+    const vpStart = idxToBucket(1, 2, turns, numBuckets)
+    const vpEnd   = idxToBucket(2, 3, turns, numBuckets)
+
+    expect(vpStart).toBe(2)
+    expect(vpEnd).toBe(9)
+    // The range must be non-empty and cross the run boundary
+    expect(vpEnd).toBeGreaterThan(vpStart)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 3. TimelineRail — component tests
 // ---------------------------------------------------------------------------
 
 describe('TimelineRail (component)', () => {
@@ -293,7 +351,7 @@ describe('TimelineRail (component)', () => {
         React.createElement(TimelineRail, {
           scope: { sessionId: 's1' },
           onJump: vi.fn(),
-          viewportRange: { startIdx: 5, endIdx: 15 },
+          viewportRange: { startRunId: 1, startIdx: 5, endRunId: 1, endIdx: 15 },
         }),
       )
     })
