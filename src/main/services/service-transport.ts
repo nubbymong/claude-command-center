@@ -19,6 +19,10 @@ export type FromChildMessage =
   | { type: 'permission-open'; requestId: string; sid: string }
   | { type: 'health'; inFlight: number; eventsTotal: number; dropsTotal: number; stallsLastMin: number }
   | { type: 'log'; entry: ServiceLogEntry }
+  // Logs v2 (Task 8): the child gateway lifts Claude Code's `transcript_path`
+  // (earliest + exact discovery source) and forwards it to main's transcript
+  // binder. sid = the CLAUDE_MULTI_SESSION_ID-correlated session id.
+  | { type: 'transcript-path'; sid: string; path: string }
 
 /** The transport the main-side proxy/supervisor use to talk to the child.
  *  NOTE: `onMessage` is SINGLE-HANDLER — the last registration wins. When both the

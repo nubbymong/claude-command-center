@@ -23,11 +23,17 @@
  */
 import { LogSupervisor } from './log-supervisor'
 import { forkTranscriptsWorker } from './fork-transcripts-worker'
+import { makeTranscriptBinder } from './transcript-binder'
+import type { TranscriptBinder } from './transcript-binder'
 import { readConfig } from '../config-manager'
 
 // Module-level singleton. Null until initLogging() runs, and stays null when
 // logging is disabled (no fork, no worker, no native dep loaded).
 let _supervisor: LogSupervisor | null = null
+// The transcript binder (Logs v2, Task 8): the single debounced sink both
+// discovery sources feed (hooks gateway + statusline watcher). Created alongside
+// the supervisor; null when logging is disabled.
+let _binder: TranscriptBinder | null = null
 
 /**
  * Boot the logging stack. Reads `loggingEnabled` from the 'settings' config with
@@ -52,11 +58,20 @@ export function initLogging(opts: {
   })
   sup.start()   // forks the worker; it reconciles dangling runs itself on open
   _supervisor = sup
+  // Bind discovery sources to this supervisor. Uses Task-3 canonicalize + the
+  // real ~/.claude/projects heuristic binder (defaults inside makeTranscriptBinder).
+  _binder = makeTranscriptBinder({ supervisor: sup })
 }
 
 /** The supervisor, for run lifecycle + diagnostics + the read path. Null when disabled. */
 export function getLogSupervisor(): LogSupervisor | null {
   return _supervisor
+}
+
+/** The transcript binder (discovery sink). Null when logging is disabled. T8b
+ *  reads `getTranscriptBinder()?.getLatestTranscriptPath(sessionId)` to resume. */
+export function getTranscriptBinder(): TranscriptBinder | null {
+  return _binder
 }
 
 /**
@@ -66,9 +81,11 @@ export function getLogSupervisor(): LogSupervisor | null {
 export function shutdownLogging(): void {
   _supervisor?.shutdown()
   _supervisor = null
+  _binder = null
 }
 
 /** Test seam: reset module state so each test starts clean. Not used in production. */
 export function _resetLoggingForTest(): void {
   _supervisor = null
+  _binder = null
 }

@@ -5,7 +5,7 @@ import * as os from 'os'
 import { execSync } from 'child_process'
 import { logPtyOutput, isDebugModeEnabled } from './debug-capture'
 import { shouldCapture } from './logging/should-capture'
-import { getLogSupervisor } from './logging/logging-service'
+import { getLogSupervisor, getTranscriptBinder } from './logging/logging-service'
 import { logInfo, logDebug, logError, logWarn } from './debug-logger'
 import { writeCliSetupPty, getResourcesDirectory } from './ipc/setup-handlers'
 import { isGlobalVisionRunning, getGlobalVisionConfig, teardownVisionSession } from './vision-manager'
@@ -1118,6 +1118,14 @@ export function spawnPty(
     provider: options?.provider ?? 'claude',
     startedAt: Date.now(),
   })
+  // Logs v2 (Task 8): arm the heuristic transcript-discovery fallback for this run.
+  // The exact sources (hooks + statusline) bind first; if neither has bound ~20s
+  // later, the binder scans ~/.claude/projects for the newest matching JSONL.
+  // Gated on logSup (same shouldCapture gate as the run) + a known cwd. Only for
+  // Claude sessions — the heuristic scans Claude's transcript dir.
+  if (logSup && resolvedCwd && (options?.provider ?? 'claude') === 'claude') {
+    getTranscriptBinder()?.registerRun(sessionId, resolvedCwd, Date.now())
+  }
 
   // Debug capture only — the transcripts worker tails Claude's own transcript
   // files, so PTY bytes are no longer recorded for logging.
@@ -1152,6 +1160,9 @@ export function spawnPty(
       // just-respawned session's run. No-op when logging is disabled / this
       // session was never recorded (logSup null).
       logSup?.runEnd(sessionId, Date.now(), exitCode === 0 ? 'exited' : 'crashed')
+      // Logs v2 (Task 8): cancel any pending heuristic timer + clear the binder's
+      // per-session bind state so a reused sessionId (restart) binds fresh.
+      getTranscriptBinder()?.endRun(sessionId)
       getPtyIntegrityMonitor()?.endSession(sessionId)
       try {
         const gwExit = getGateway()

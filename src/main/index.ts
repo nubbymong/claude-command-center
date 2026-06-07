@@ -10,7 +10,7 @@ import { killAllPty, gracefulExitAllPty } from './pty-manager'
 import { registerLogsdbHandlers } from './ipc/logsdb-handlers'
 import { registerLogMigrationHandlers } from './ipc/log-migration-handlers'
 
-import { startStatuslineWatcher } from './statusline-watcher'
+import { startStatuslineWatcher, setTranscriptPathSink } from './statusline-watcher'
 import { registerProvider, getProvider } from './providers'
 import { ClaudeProvider } from './providers/claude'
 import { CodexProvider } from './providers/codex'
@@ -52,7 +52,7 @@ import { HooksGateway } from './hooks/hooks-gateway'
 import { setGateway, getGateway } from './hooks'
 import { ServiceSupervisor } from './services/service-supervisor'
 import { forkHooksChild } from './services/fork-hooks-child'
-import { initLogging, shutdownLogging } from './logging/logging-service'
+import { initLogging, shutdownLogging, getTranscriptBinder } from './logging/logging-service'
 import { detectOldLogArtifacts, executeWipe } from './logging/logs-wipe'
 import { cleanupStaleHookEntries } from './hooks/boot-cleanup'
 import { DEFAULT_HOOKS_PORT } from './hooks/hooks-types'
@@ -745,10 +745,15 @@ if (!gotTheLock) {
     // (HOOKS_STATUS, HOOKS_EVENT, ...) the supervisor/gateway emit passes through.
     const emitWithMerge = (channel: string, payload: unknown) =>
       channel === IPC.SERVICE_HEALTH_UPDATE ? pushDiagnostics() : emitToWindow(channel, payload)
+    // Logs v2 (Task 8): route transcript paths the child gateway lifts from hook
+    // POSTs into the binder. Resolved lazily — the binder is created later by
+    // initLogging(), and is null when logging is disabled (then this is a no-op).
+    const routeTranscriptPath = (sessionId: string, path: string) =>
+      getTranscriptBinder()?.notifyTranscriptPath(sessionId, path)
     if (hooksEnabled) {
       // Supervised out-of-process gateway: a utilityProcess child runs the HooksGateway,
       // crash-isolated from the main thread, with restart/backoff + fail-open-to-in-process.
-      const hooksSupervisor = new ServiceSupervisor({ forkChild: forkHooksChild, defaultPort: hooksPort, emit: emitWithMerge })
+      const hooksSupervisor = new ServiceSupervisor({ forkChild: forkHooksChild, defaultPort: hooksPort, emit: emitWithMerge, onTranscriptPath: routeTranscriptPath })
       const hooksProxy = hooksSupervisor.start()   // forks the child + posts start (S1 replay-before-listen inside)
       setGateway(hooksProxy)                        // B1: consumers + handlers all use the proxy
       setHooksSupervisor(hooksSupervisor)           // module-scope ref for before-quit (S5)
@@ -832,7 +837,10 @@ if (!gotTheLock) {
       logInfo('[main] Production mode: updates via GitHub releases only')
     }
 
-    // Start watching for statusline updates
+    // Start watching for statusline updates. Logs v2 (Task 8): register the
+    // binder sink first so the continuous, exact transcript path carried by each
+    // status JSON feeds discovery (lazy getter — no-op when logging is disabled).
+    setTranscriptPathSink(routeTranscriptPath)
     startStatuslineWatcher(getWindow)
 
     // Start polling Anthropic service status

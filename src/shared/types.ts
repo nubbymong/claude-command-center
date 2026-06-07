@@ -167,6 +167,11 @@ export interface StatuslineData {
   /** Pre-computed by main process via `colourForEmail()` as an identity-palette KEY;
    *  the renderer resolves it to a theme hex via resolveIdentityColor(). */
   accountColour?: IdentityColorKey
+  /** Logs v2 (Task 8): Claude Code's live `transcript_path` for this session,
+   *  surfaced by the bridge script. Consumed in main (statusline-watcher fan-out
+   *  -> transcript binder) as a continuous, exact discovery source; the renderer
+   *  ignores it. */
+  transcriptPath?: string
 }
 
 // ── Agent Templates ──

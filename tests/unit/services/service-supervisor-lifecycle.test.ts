@@ -124,4 +124,17 @@ describe('ServiceSupervisor lifecycle', () => {
     sup.shutdown()
     expect(sup.manualRestart('hooks')).toEqual({ ok: false, reason: 'shutting-down' })
   })
+
+  it('routes a child transcript-path message to onTranscriptPath (Logs v2 T8)', () => {
+    let curT: FakeChildTransport | null = null
+    const fork = vi.fn(() => { curT = new FakeChildTransport(); return { transport: curT, kill: () => {}, onExit: () => {} } })
+    const got: Array<{ sid: string; path: string }> = []
+    sup = new ServiceSupervisor({
+      forkChild: fork, defaultPort: 0, emit: () => {},
+      onTranscriptPath: (sid, path) => got.push({ sid, path }),
+    })
+    sup.start()
+    curT!.emitToParent({ type: 'transcript-path', sid: 's1', path: '/home/.claude/projects/p/conv.jsonl' })
+    expect(got).toEqual([{ sid: 's1', path: '/home/.claude/projects/p/conv.jsonl' }])
+  })
 })

@@ -52,6 +52,17 @@ function getStatusDir(): string {
 // OSC sentinel parser and feeds it through the same pipeline as the file watcher.
 let sshDispatchWindow: (() => BrowserWindow | null) | null = null
 
+// Logs v2 (Task 8): the transcript binder sink. The statusline JSON carries
+// Claude Code's live `transcript_path` (continuous, exact discovery source);
+// every fan-out forwards it here so the binder can tail the file. Registered at
+// boot via setTranscriptPathSink(); null until then (and in unit tests).
+let transcriptPathSink: ((sessionId: string, path: string) => void) | null = null
+
+/** Register the transcript binder's notify sink (called once at boot). */
+export function setTranscriptPathSink(sink: (sessionId: string, path: string) => void): void {
+  transcriptPathSink = sink
+}
+
 /**
  * Common fan-out for any parsed StatuslineData payload — used by both the
  * file watcher and the SSH OSC sentinel dispatch path. Sends to the renderer,
@@ -72,6 +83,12 @@ function fanOutStatusline(data: StatuslineData, getWindow: (() => BrowserWindow 
   }
   handleStatuslineUpdate(decorated)
   notifyClaudeTelemetry(decorated)
+  // Logs v2 (Task 8): forward the live transcript path to the binder (continuous,
+  // exact discovery source). Guarded — the sink may not be registered yet (and
+  // isn't in unit tests). A throw here must not break the statusline pipeline.
+  if (data.transcriptPath && data.sessionId && transcriptPathSink) {
+    try { transcriptPathSink(data.sessionId, data.transcriptPath) } catch { /* sink must not break fan-out */ }
+  }
 }
 
 /**
