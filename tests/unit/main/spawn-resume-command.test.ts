@@ -14,7 +14,9 @@
  *      mirroring scripts/resume-picker.js:299 ordering, with the cwd overridden.
  */
 import { describe, it, expect } from 'vitest'
-import { buildClaudeLaunchCommand } from '../../../src/main/spawn-claude-command'
+import * as os from 'os'
+import * as path from 'path'
+import { buildClaudeLaunchCommand, resolveResumeLaunch } from '../../../src/main/spawn-claude-command'
 
 const CWD = 'F:\\proj\\worktree'
 const CLAUDE = 'C:\\bin\\claude.cmd'
@@ -153,5 +155,151 @@ describe('buildClaudeLaunchCommand — RESUME (resumeUuid present)', () => {
     })
     expect(withUuid).toContain(`--resume ${UUID}`)
     expect(withUuid).not.toContain('node ')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// resolveResumeLaunch — pure resume-launch decision (Fix 1 + Fix 2)
+// ---------------------------------------------------------------------------
+//
+// Encapsulates the cwd/path existence gate that used to live inline in
+// spawnPty. The CRITICAL contract (Fix 1) is the deleted-worktree case: when
+// the resume target's REAL cwd no longer exists as a directory, the helper
+// returns null (fall back to picker/direct) — it MUST NOT launch --resume from
+// the homedir. The provider / discoveryOn gating stays in spawnPty (Fix 3); the
+// helper is concerned only with paths.
+describe('resolveResumeLaunch — gate', () => {
+  const HOME = 'C:\\Users\\nicho'
+  const PROJECTS_ROOT = path.join(HOME, '.claude', 'projects')
+  const T_UUID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+  const REAL_CWD = 'F:\\proj\\worktree'
+
+  // Build the canonical transcript + companion paths the way the helper does.
+  const mangle = (cwd: string) => cwd.replace(/[^A-Za-z0-9]/g, '-')
+  const transcriptOf = (cwd: string, uuid: string) =>
+    path.join(PROJECTS_ROOT, mangle(cwd), `${uuid}.jsonl`)
+  const companionOf = (cwd: string, uuid: string) =>
+    path.join(PROJECTS_ROOT, mangle(cwd), uuid)
+
+  // A deps factory: by default every required path exists and is a directory
+  // where it must be. Tests override the predicate to simulate misses.
+  function makeDeps(opts: {
+    existsPaths?: Set<string>
+    dirPaths?: Set<string>
+    homedir?: string
+    projectsRoot?: string
+  } = {}) {
+    const exists = opts.existsPaths
+    const dirs = opts.dirPaths
+    return {
+      existsSync: (p: string) => (exists ? exists.has(p) : true),
+      statSync: (p: string) => ({ isDirectory: () => (dirs ? dirs.has(p) : true) }),
+      homedir: () => opts.homedir ?? HOME,
+      mangleCwdToProjectDir: mangle,
+      projectsRoot: opts.projectsRoot ?? PROJECTS_ROOT,
+    }
+  }
+
+  it('happy path: all paths present → returns { resumeUuid, claudeCwd }', () => {
+    const out = resolveResumeLaunch({ uuid: T_UUID, cwd: REAL_CWD }, makeDeps())
+    expect(out).toEqual({ resumeUuid: T_UUID, claudeCwd: path.resolve(REAL_CWD) })
+  })
+
+  it('REGRESSION (Fix 1): missing target cwd (deleted worktree) → null, never homedir', () => {
+    // The transcript + companion still exist on disk, but the worktree dir is
+    // GONE. The old inline gate let resolveCwd() collapse this to homedir and
+    // launched --resume there. The helper must return null instead.
+    const existsPaths = new Set<string>([
+      transcriptOf(REAL_CWD, T_UUID),
+      companionOf(REAL_CWD, T_UUID),
+      // REAL_CWD intentionally absent.
+    ])
+    const out = resolveResumeLaunch({ uuid: T_UUID, cwd: REAL_CWD }, makeDeps({ existsPaths, dirPaths: existsPaths }))
+    expect(out).toBeNull()
+  })
+
+  it('target cwd exists but is a FILE not a directory → null', () => {
+    const existsPaths = new Set<string>([
+      transcriptOf(REAL_CWD, T_UUID),
+      companionOf(REAL_CWD, T_UUID),
+      path.resolve(REAL_CWD),
+    ])
+    // present but NOT a directory
+    const dirPaths = new Set<string>([
+      transcriptOf(REAL_CWD, T_UUID),
+      companionOf(REAL_CWD, T_UUID),
+    ])
+    const out = resolveResumeLaunch({ uuid: T_UUID, cwd: REAL_CWD }, makeDeps({ existsPaths, dirPaths }))
+    expect(out).toBeNull()
+  })
+
+  it('missing transcript file → null', () => {
+    const existsPaths = new Set<string>([
+      companionOf(REAL_CWD, T_UUID),
+      path.resolve(REAL_CWD),
+    ])
+    const out = resolveResumeLaunch({ uuid: T_UUID, cwd: REAL_CWD }, makeDeps({ existsPaths, dirPaths: existsPaths }))
+    expect(out).toBeNull()
+  })
+
+  it('missing companion dir → null', () => {
+    const existsPaths = new Set<string>([
+      transcriptOf(REAL_CWD, T_UUID),
+      path.resolve(REAL_CWD),
+    ])
+    const out = resolveResumeLaunch({ uuid: T_UUID, cwd: REAL_CWD }, makeDeps({ existsPaths, dirPaths: existsPaths }))
+    expect(out).toBeNull()
+  })
+
+  it('undefined target → null', () => {
+    expect(resolveResumeLaunch(undefined, makeDeps())).toBeNull()
+  })
+
+  it('cwd === homedir is allowed when the home really is the captured cwd', () => {
+    const existsPaths = new Set<string>([
+      transcriptOf(HOME, T_UUID),
+      companionOf(HOME, T_UUID),
+      path.resolve(HOME),
+    ])
+    const out = resolveResumeLaunch({ uuid: T_UUID, cwd: HOME }, makeDeps({ existsPaths, dirPaths: existsPaths }))
+    expect(out).toEqual({ resumeUuid: T_UUID, claudeCwd: path.resolve(HOME) })
+  })
+
+  it('expands a leading ~ to homedir for the cwd', () => {
+    const home = os.homedir()
+    const expanded = path.join(home, 'work', 'wt')
+    const tildeCwd = '~/work/wt'
+    const deps = {
+      existsSync: () => true,
+      statSync: () => ({ isDirectory: () => true }),
+      homedir: () => home,
+      mangleCwdToProjectDir: mangle,
+      projectsRoot: path.join(home, '.claude', 'projects'),
+    }
+    const out = resolveResumeLaunch({ uuid: T_UUID, cwd: tildeCwd }, deps)
+    expect(out).toEqual({ resumeUuid: T_UUID, claudeCwd: expanded })
+  })
+
+  it('bare ~ expands to homedir', () => {
+    const home = os.homedir()
+    const out = resolveResumeLaunch({ uuid: T_UUID, cwd: '~' }, {
+      existsSync: () => true,
+      statSync: () => ({ isDirectory: () => true }),
+      homedir: () => home,
+      mangleCwdToProjectDir: mangle,
+      projectsRoot: path.join(home, '.claude', 'projects'),
+    })
+    expect(out).toEqual({ resumeUuid: T_UUID, claudeCwd: home })
+  })
+
+  it('fails open (returns null) if a dep throws', () => {
+    const out = resolveResumeLaunch({ uuid: T_UUID, cwd: REAL_CWD }, {
+      existsSync: () => { throw new Error('boom') },
+      statSync: () => ({ isDirectory: () => true }),
+      homedir: () => HOME,
+      mangleCwdToProjectDir: mangle,
+      projectsRoot: PROJECTS_ROOT,
+    })
+    expect(out).toBeNull()
   })
 })

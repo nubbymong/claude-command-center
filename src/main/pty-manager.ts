@@ -6,8 +6,8 @@ import { execSync } from 'child_process'
 import { logPtyOutput, isDebugModeEnabled } from './debug-capture'
 import { shouldCapture } from './logging/should-capture'
 import { getLogSupervisor, getTranscriptBinder } from './logging/logging-service'
-import { resolveResumeTargetFromTranscript, canonicalizeTranscriptPath, mangleCwdToProjectDir } from './logging/transcript-discovery'
-import { buildClaudeLaunchCommand } from './spawn-claude-command'
+import { resolveResumeTargetFromTranscript, mangleCwdToProjectDir } from './logging/transcript-discovery'
+import { buildClaudeLaunchCommand, resolveResumeLaunch } from './spawn-claude-command'
 import { logInfo, logDebug, logError, logWarn } from './debug-logger'
 import { writeCliSetupPty, getResourcesDirectory } from './ipc/setup-handlers'
 import { isGlobalVisionRunning, getGlobalVisionConfig, teardownVisionSession } from './vision-manager'
@@ -321,6 +321,12 @@ export function spawnPty(
   // previously declared inside the codex/claude branches and so were out of scope
   // at capture?.start() in the tail -> a latent ReferenceError on spawn-with-logging.
   const resolvedCwd = resolveCwd(options?.cwd)
+  // FIX 4: the directory Claude is ACTUALLY launched in. Defaults to the
+  // configured resolvedCwd, but the Claude branch overrides it to the resume
+  // target's real cwd (claudeCwd) when an exact-resume applies. runStart()'s
+  // projectCwd + the heuristic binder's registerRun() must use THIS so the run
+  // is stamped with — and the 20s fallback scans — the folder Claude ran in.
+  let effectiveLaunchCwd = resolvedCwd
   let resolvedProfileId: string | undefined = undefined
 
   if (options?.ssh) {
@@ -1006,43 +1012,50 @@ export function spawnPty(
       //   options.resume          (app-relaunch: persisted on the restored session)
       //   lastResumeTarget        (in-session Restart / Switch-account: self-captured)
       //
-      // The whole override is gated on existence checks (Step 6): transcript file
-      // present, companion dir present, and target cwd is a real directory. ANY
-      // miss → drop resume entirely and fall back to existing behaviour. We never
-      // launch --resume from os.homedir().
+      // The whole override is gated by the pure resolveResumeLaunch() helper:
+      // transcript file present, companion dir present, and the RAW target cwd
+      // is a real directory (stat'd directly — NOT via the homedir-fallback
+      // resolveCwd). ANY miss → drop resume entirely and fall back to existing
+      // behaviour. We never launch --resume from os.homedir() (a deleted
+      // worktree therefore falls back, it does not silently retarget home).
       let resumeUuid: string | undefined = undefined
       let claudeCwd = resolvedCwd
-      const effectiveTarget = options?.resume ?? getLastResumeTarget(sessionId)
-      // Consume the self-captured target unconditionally (used or not) so it can
-      // never apply to a later, unrelated spawn of this sessionId.
+      // Precedence: app-relaunch persisted target wins over the self-captured
+      // one. The self-captured target is consumed unconditionally below so it
+      // can never apply to a later, unrelated spawn of this sessionId.
+      const persistedTarget = options?.resume
+      const selfCapturedTarget = getLastResumeTarget(sessionId)
       clearLastResumeTarget(sessionId)
-      if (effectiveTarget && (options?.provider ?? 'claude') === 'claude') {
-        try {
-          const canonical = canonicalizeTranscriptPath(
-            path.join(os.homedir(), '.claude', 'projects', mangleCwdToProjectDir(effectiveTarget.cwd), `${effectiveTarget.uuid}.jsonl`),
-          )
-          const transcriptPath = canonical ?? path.join(os.homedir(), '.claude', 'projects', mangleCwdToProjectDir(effectiveTarget.cwd), `${effectiveTarget.uuid}.jsonl`)
-          const companionDir = path.join(path.dirname(transcriptPath), effectiveTarget.uuid)
-          // logging/discovery must be on (the binder is the source of truth for
-          // captured targets); for the app-relaunch path options.resume is still
-          // gated on the same existence checks below.
-          const discoveryOn = !!getTranscriptBinder()
-          const targetCwdResolved = resolveCwd(effectiveTarget.cwd)
-          if (
-            discoveryOn &&
-            fs.existsSync(transcriptPath) &&
-            fs.existsSync(companionDir) &&
-            fs.existsSync(targetCwdResolved) &&
-            fs.statSync(targetCwdResolved).isDirectory()
-          ) {
-            resumeUuid = effectiveTarget.uuid
-            claudeCwd = targetCwdResolved
-            logInfo(`[pty] T8b exact resume for ${sessionId}: uuid=${resumeUuid} cwd=${claudeCwd} (was ${resolvedCwd})`)
-          } else {
-            logInfo(`[pty] T8b resume target dropped for ${sessionId} (fail-open existence check) — uuid=${effectiveTarget.uuid}`)
-          }
-        } catch (err) {
-          logWarn(`[pty] T8b resume gate error for ${sessionId}: ${(err as Error)?.message ?? err}`)
+      const effectiveTarget = persistedTarget ?? selfCapturedTarget
+      // FIX 3: `discoveryOn` (binder present == logging on) gates ONLY the
+      // self-captured path — that path's target ORIGINATES from the binder, so
+      // without it there is nothing to capture. The app-relaunch path uses the
+      // PERSISTED options.resume + on-disk file checks and needs no binder, so
+      // logging-off users still get exact-resume on relaunch. (When the target
+      // is self-captured the binder is inherently present anyway.)
+      const usingPersisted = !!persistedTarget
+      const discoveryOn = usingPersisted || !!getTranscriptBinder()
+      if (effectiveTarget && (options?.provider ?? 'claude') === 'claude' && discoveryOn) {
+        // FIX 1 + FIX 2: the cwd/path existence gate lives in the pure, tested
+        // resolveResumeLaunch() helper. It stats the RAW captured cwd directly
+        // (no homedir-fallback resolver), so a DELETED worktree → null → fall
+        // back to picker/direct. We never launch --resume from os.homedir().
+        const launch = resolveResumeLaunch(effectiveTarget, {
+          existsSync: fs.existsSync,
+          statSync: (p) => fs.statSync(p),
+          homedir: os.homedir,
+          mangleCwdToProjectDir,
+          projectsRoot: path.join(os.homedir(), '.claude', 'projects'),
+        })
+        if (launch) {
+          resumeUuid = launch.resumeUuid
+          claudeCwd = launch.claudeCwd
+          // FIX 4: propagate the override to function scope so the subsequent
+          // runStart/registerRun stamp + scan the folder Claude actually ran in.
+          effectiveLaunchCwd = claudeCwd
+          logInfo(`[pty] T8b exact resume for ${sessionId}: uuid=${resumeUuid} cwd=${claudeCwd} (was ${resolvedCwd})`)
+        } else {
+          logInfo(`[pty] T8b resume target dropped for ${sessionId} (fail-open existence check) — uuid=${effectiveTarget.uuid}`)
         }
       }
 
@@ -1216,7 +1229,9 @@ export function spawnPty(
     sessionId,
     configId: options?.configId,
     configLabel,
-    projectCwd: resolvedCwd,
+    // FIX 4: the effective launch cwd (resume override when active, else the
+    // configured resolvedCwd) — not the bare resolvedCwd.
+    projectCwd: effectiveLaunchCwd,
     // accountEmail is typically undefined here: identity is captured asynchronously
     // AFTER spawn (recheckSessionIdentity / startWatchingAccountIdentity wired in
     // pty-manager). The run row therefore stamps a null email; configId and
@@ -1232,8 +1247,10 @@ export function spawnPty(
   // later, the binder scans ~/.claude/projects for the newest matching JSONL.
   // Gated on logSup (same shouldCapture gate as the run) + a known cwd. Only for
   // Claude sessions — the heuristic scans Claude's transcript dir.
-  if (logSup && resolvedCwd && (options?.provider ?? 'claude') === 'claude') {
-    getTranscriptBinder()?.registerRun(sessionId, resolvedCwd, Date.now())
+  if (logSup && effectiveLaunchCwd && (options?.provider ?? 'claude') === 'claude') {
+    // FIX 4: register with the effective launch cwd so the 20s heuristic
+    // fallback scans the folder Claude ran in (the resume override when active).
+    getTranscriptBinder()?.registerRun(sessionId, effectiveLaunchCwd, Date.now())
   }
 
   // Debug capture only — the transcripts worker tails Claude's own transcript

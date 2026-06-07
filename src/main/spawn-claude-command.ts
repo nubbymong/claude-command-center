@@ -18,6 +18,8 @@
  * "given a uuid (or not), produce the command".
  */
 
+import * as nodePath from 'node:path'
+
 export interface BuildClaudeLaunchCommandOptions {
   /** 'win32' produces a PowerShell command; anything else produces a POSIX sh command. */
   platform: 'win32' | 'posix' | string
@@ -48,6 +50,93 @@ export interface BuildClaudeLaunchCommandOptions {
  */
 function escapeForCwdQuote(p: string, isWin32: boolean): string {
   return isWin32 ? p.replace(/'/g, "''") : p.replace(/'/g, "'\\''")
+}
+
+// ---------------------------------------------------------------------------
+// resolveResumeLaunch — pure resume-launch decision (T8b, bug #5 review)
+// ---------------------------------------------------------------------------
+
+/** A captured resume target: the conversation uuid + the cwd it ran in. */
+export interface ResumeTarget {
+  uuid: string
+  cwd: string
+}
+
+/**
+ * Injectable deps for {@link resolveResumeLaunch}. Production passes thin
+ * wrappers over node fs/os; tests pass in-memory fakes. Keeping this pure makes
+ * the CRITICAL deleted-worktree gate fully unit-testable WITHOUT touching disk.
+ */
+export interface ResolveResumeLaunchDeps {
+  existsSync: (p: string) => boolean
+  /** Must throw (or be guarded by the caller) when the path does not exist. */
+  statSync: (p: string) => { isDirectory: () => boolean }
+  homedir: () => string
+  mangleCwdToProjectDir: (cwd: string) => string
+  /** Canonical `~/.claude/projects` root (homedir-based; per-account homes are junctions to it). */
+  projectsRoot: string
+}
+
+/**
+ * Decide whether to launch `claude --resume <uuid>` with an overridden cwd.
+ *
+ * Encapsulates the path/cwd existence gate (extracted from the old inline block
+ * in pty-manager.spawnPty). The provider / discoveryOn gating stays in the
+ * caller — this function is concerned ONLY with paths.
+ *
+ * CRITICAL (Fix 1 — deleted-worktree regression guard): the gate stats the
+ * RAW captured cwd directly (after `~` expansion). It NEVER routes through a
+ * homedir-fallback resolver, so when the worktree the conversation ran in has
+ * been deleted, the stat misses → this returns null → the caller falls back to
+ * the picker / direct launch. We never launch `--resume` from os.homedir()
+ * unless the captured cwd genuinely IS the homedir.
+ *
+ * Returns `{ resumeUuid, claudeCwd }` only when ALL hold:
+ *   - target present + has a uuid + a cwd;
+ *   - the raw cwd (with `~` expanded) exists AND is a directory;
+ *   - the transcript file `projectsRoot/<mangle(cwd)>/<uuid>.jsonl` exists;
+ *   - the companion dir `projectsRoot/<mangle(cwd)>/<uuid>` exists.
+ * Returns null on ANY miss or error (fail-open).
+ *
+ * `claudeCwd` is the resolved (absolute, `~`-expanded) launch directory.
+ */
+export function resolveResumeLaunch(
+  target: ResumeTarget | undefined,
+  deps: ResolveResumeLaunchDeps,
+): { resumeUuid: string; claudeCwd: string } | null {
+  try {
+    if (!target || !target.uuid || !target.cwd) return null
+
+    const home = deps.homedir()
+
+    // Expand a leading `~` ourselves (the OS does not on Windows). We do NOT
+    // use resolveCwd(): it silently collapses a missing path to homedir, which
+    // is exactly the bug this gate prevents.
+    let expanded: string
+    if (target.cwd === '~') {
+      expanded = home
+    } else if (target.cwd.startsWith('~/') || target.cwd.startsWith('~\\')) {
+      expanded = nodePath.join(home, target.cwd.slice(2))
+    } else {
+      expanded = nodePath.resolve(target.cwd)
+    }
+
+    // Stat the RAW (expanded) cwd directly — the regression guard. A deleted
+    // worktree misses here and we fall back; we never silently retarget homedir.
+    if (!deps.existsSync(expanded)) return null
+    if (!deps.statSync(expanded).isDirectory()) return null
+
+    const projDir = nodePath.join(deps.projectsRoot, deps.mangleCwdToProjectDir(target.cwd))
+    const transcriptPath = nodePath.join(projDir, `${target.uuid}.jsonl`)
+    const companionDir = nodePath.join(projDir, target.uuid)
+    if (!deps.existsSync(transcriptPath)) return null
+    if (!deps.existsSync(companionDir)) return null
+
+    return { resumeUuid: target.uuid, claudeCwd: expanded }
+  } catch {
+    // Fail-open: any unexpected error drops resume and falls back.
+    return null
+  }
 }
 
 export function buildClaudeLaunchCommand(opts: BuildClaudeLaunchCommandOptions): string {
