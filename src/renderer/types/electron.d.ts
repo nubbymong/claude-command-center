@@ -264,6 +264,21 @@ export interface ElectronAPI {
     reclaim: () => Promise<{ deletedFolders: number; reclaimedBytes: number; failedFolders: string[] }>
     onProgress: (cb: (p: { done: number; total: number }) => void) => () => void
   }
+  logsWipe: {
+    /** Detect the OLD log artifacts (logs.db*, legacy logs/ tree, migration markers). */
+    detect: () => Promise<{
+      present: boolean
+      totalBytes: number
+      paths: string[]
+      settingsKeys: string[]
+    }>
+    /** Delete the detected artifacts + clear the 2 legacy-migration settings keys. */
+    confirm: () => Promise<{
+      deletedPaths: string[]
+      clearedKeys: string[]
+      freedBytes: number
+    }>
+  }
   discovery: {
     getProjects: () => Promise<any>
     getSessionHistory: (projectPath: string) => Promise<any>

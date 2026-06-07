@@ -56,6 +56,7 @@ import { setupChannelListeners } from './stores/channelStore'
 import PermissionToastStack from './components/channels/PermissionToastStack'
 import LoggingConsentPrompt from './components/LoggingConsentPrompt'
 import LogMigrationPrompt from './components/LogMigrationPrompt'
+import LogsWipeModal from './components/LogsWipeModal'
 import ResumeSessionsPrompt from './components/ResumeSessionsPrompt'
 import MigrationDoneNotice from './components/MigrationDoneNotice'
 import { useMigrationStore } from './stores/migrationStore'
@@ -101,6 +102,9 @@ export default function App() {
   }
   const [setupComplete, setSetupComplete] = useState<boolean | null>(null)
   const [configLoaded, setConfigLoaded] = useState(false)
+  // Logs v2 first-run wipe gate: null = not yet detected, >0 = old artifacts
+  // present (show the blocking modal), 0 = nothing to wipe (or already wiped).
+  const [logsWipeBytes, setLogsWipeBytes] = useState<number | null>(null)
   const [needsCliSetup, setNeedsCliSetup] = useState(false)
   const [isClosing, setIsClosing] = useState(false)
   const [isUpdating, setIsUpdating] = useState(false)
@@ -287,6 +291,24 @@ export default function App() {
       setConfigLoaded(true)
     }
   }
+
+  // Logs v2 first-run wipe detection. Runs once after config loads: detect the
+  // OLD log artifacts and, if present, surface the blocking LogsWipeModal (which
+  // performs the deletion on confirm). Detection-driven + idempotent — once wiped
+  // nothing is detected, so this is a no-op on every subsequent launch.
+  useEffect(() => {
+    if (!configLoaded || logsWipeBytes !== null) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const inv = await window.electronAPI.logsWipe.detect()
+        if (!cancelled) setLogsWipeBytes(inv.present ? inv.totalBytes : 0)
+      } catch {
+        if (!cancelled) setLogsWipeBytes(0)   // fail-open: never block boot on a detect error
+      }
+    })()
+    return () => { cancelled = true }
+  }, [configLoaded, logsWipeBytes])
 
   // Post-config-load initialization
   useEffect(() => {
@@ -829,6 +851,9 @@ export default function App() {
     <ErrorBoundary>
       <div className="flex flex-col h-screen bg-base text-text">
         <PermissionToastStack />
+        {logsWipeBytes !== null && logsWipeBytes > 0 && (
+          <LogsWipeModal totalBytes={logsWipeBytes} onComplete={() => setLogsWipeBytes(0)} />
+        )}
         {showWhatsNew && <WhatsNewModal onClose={handleWhatsNewClose} />}
         {showTipModal && <TipModal onClose={() => setShowTipModal(false)} onNavigate={(v) => setView(v)} />}
         {showGitHubOnboarding && (

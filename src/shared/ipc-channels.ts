@@ -80,6 +80,12 @@ export const IPC = {
   LOGS_MIGRATE_PROGRESS: 'logs:migrate:progress',
   LOGS_MIGRATE_RECLAIM: 'logs:migrate:reclaim',
 
+  // Logs v2 — detection-driven warned wipe of the OLD log artifacts (first run).
+  // DETECT reports the inventory (bytes + paths); CONFIRM performs the deletion
+  // after the renderer's blocking modal proceeds.
+  LOGS2_WIPE_DETECT: 'logs2:wipe:detect',
+  LOGS2_WIPE_CONFIRM: 'logs2:wipe:confirm',
+
   // Discovery
   DISCOVERY_PROJECTS: 'discovery:projects',
   DISCOVERY_SESSIONS: 'discovery:sessions',

@@ -158,6 +158,10 @@ export interface ElectronAPI {
     reclaim: () => Promise<{ deletedFolders: number; reclaimedBytes: number; failedFolders: string[] }>
     onProgress: (cb: (p: { done: number; total: number }) => void) => () => void
   }
+  logsWipe: {
+    detect: () => Promise<{ present: boolean; totalBytes: number; paths: string[]; settingsKeys: string[] }>
+    confirm: () => Promise<{ deletedPaths: string[]; clearedKeys: string[]; freedBytes: number }>
+  }
   discovery: {
     getProjects: () => Promise<unknown>
     getSessionHistory: (projectPath: string) => Promise<unknown>
@@ -585,6 +589,11 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.on(IPC.LOGS_MIGRATE_PROGRESS, handler)
       return () => ipcRenderer.removeListener(IPC.LOGS_MIGRATE_PROGRESS, handler)
     },
+  },
+  // Logs v2 — first-run warned wipe of the OLD log artifacts.
+  logsWipe: {
+    detect: () => ipcRenderer.invoke(IPC.LOGS2_WIPE_DETECT),
+    confirm: () => ipcRenderer.invoke(IPC.LOGS2_WIPE_CONFIRM),
   },
   discovery: {
     getProjects: () => ipcRenderer.invoke(IPC.DISCOVERY_PROJECTS),
