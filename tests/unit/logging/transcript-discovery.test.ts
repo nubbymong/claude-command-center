@@ -449,7 +449,11 @@ describe('resolveResumeTargetFromTranscript', () => {
   const UUID = '11111111-2222-3333-4444-555555555555'
 
   it('returns { uuid, cwd } from the first JSONL line carrying a cwd field', () => {
-    const transcriptPath = `C:\\home\\.claude\\projects\\F--proj\\${UUID}.jsonl`
+    // Forward slashes so path.basename extracts the uuid stem on every OS
+    // (win32 basename handles both separators; posix only handles '/').
+    // The cwd value stays a Windows literal: it is returned verbatim from the
+    // JSONL, never parsed, so it still proves cwd is read from the file.
+    const transcriptPath = `/home/.claude/projects/F--proj/${UUID}.jsonl`
     const fakeRead = () =>
       [
         JSON.stringify({ type: 'user', message: { content: 'hi' }, cwd: 'F:\\real\\worktree' }),
