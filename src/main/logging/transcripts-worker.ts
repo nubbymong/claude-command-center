@@ -101,11 +101,15 @@ export function createTranscriptsWorker(
   const fsi: TranscriptsWorkerFs = fsImpl ?? nodeFs
   let db: TranscriptsDb | undefined
   let dbPath: string | undefined
+  /** Messages ingested since THIS worker instance started (resets on restart;
+   *  NOT the cumulative DB total). Surfaced as the health beat's messagesTotal. */
   let messagesTotal = 0
   /** sessionId -> LATEST runId (run-start overwrites; run-end deletes). */
   const sessionToRun = new Map<string, number>()
   /** transcriptId -> live tail state. */
   const tails = new Map<number, TailState>()
+  /** transcriptIds that have already emitted the "shrank below cursor" warn (once each). */
+  const shrinkWarned = new Set<number>()
   let tailTimer: ReturnType<typeof setInterval> | null = null
   let healthTimer: ReturnType<typeof setInterval> | null = null
   let ticking = false
@@ -130,16 +134,37 @@ export function createTranscriptsWorker(
 
   /**
    * Drain appended bytes for one tailed transcript. Synchronous (bounded by
-   * MAX_TICK_BYTES). Returns false when the file is gone (caller marks failed).
+   * MAX_TICK_BYTES). Returns:
+   *  - 'ok'      — drained (or nothing new); keep tailing.
+   *  - 'missing' — the file is gone; caller marks failed + drops the tail.
+   *  - 'shrank'  — the file shrank below the cursor (unexpected: Claude transcripts
+   *    are APPEND-ONLY, and rotation is a NEW file handled by re-bind). This drain
+   *    already marked the transcript 'failed' + dropped it; caller just stops.
    */
-  function drainTail(tail: TailState): boolean {
+  function drainTail(tail: TailState): 'ok' | 'missing' | 'shrank' {
     let size: number
     try {
       size = fsi.statSync(tail.path).size
     } catch {
-      return false // missing file
+      return 'missing' // missing file
     }
-    if (size <= tail.cursor) return true
+    // Append-only assumption: the file only ever grows; a strict shrink means an
+    // unexpected in-place truncation. Rather than silently stalling forever (the
+    // cursor would never catch up), warn ONCE and fail the tail.
+    if (size < tail.cursor) {
+      if (!shrinkWarned.has(tail.transcriptId)) {
+        shrinkWarned.add(tail.transcriptId)
+        log('warn', `[tail] transcript shrank below cursor — unexpected for append-only transcripts; halting tail: ${tail.path}`)
+      }
+      try {
+        db!.setTranscriptStatus(tail.transcriptId, 'failed')
+      } catch {
+        /* db gone mid-shutdown */
+      }
+      tails.delete(tail.transcriptId)
+      return 'shrank'
+    }
+    if (size === tail.cursor) return 'ok' // normal no-op: nothing new appended
 
     const end = Math.min(size, tail.cursor + MAX_TICK_BYTES)
     const fd = fsi.openSync(tail.path, 'r')
@@ -190,7 +215,7 @@ export function createTranscriptsWorker(
       }
       // The partial trailing line (carry) is intentionally NOT consumed: the
       // cursor stays at the last '\n', so the completed line is read next tick.
-      return true
+      return 'ok'
     } finally {
       try {
         fsi.closeSync(fd)
@@ -207,8 +232,8 @@ export function createTranscriptsWorker(
     try {
       for (const tail of [...tails.values()]) {
         try {
-          const ok = drainTail(tail)
-          if (!ok) {
+          const res = drainTail(tail)
+          if (res === 'missing') {
             // Missing file: mark failed, KEEP its messages, stop tailing it.
             log('warn', `[tail] transcript file missing, marking failed: ${tail.path}`)
             try {
@@ -218,6 +243,7 @@ export function createTranscriptsWorker(
             }
             tails.delete(tail.transcriptId)
           }
+          // 'shrank' already marked failed + dropped the tail inside drainTail.
         } catch (err) {
           // A DB/read error on this transcript must never kill the loop. Mark it
           // failed (a deterministic error would otherwise re-fire every tick).
@@ -300,9 +326,21 @@ export function createTranscriptsWorker(
     if (closed > 0) log('info', `[open] closed ${closed} dangling run(s) as crashed`)
 
     // 2. Resume tails left 'tailing' by the previous worker instance.
+    //    Step 1 just marked every dangling run 'crashed'. A run with a resumable
+    //    transcript is actually still live (worker-only restart while Claude keeps
+    //    appending), so REOPEN it to 'running' before tailing — otherwise we would
+    //    keep appending into a 'crashed' run with a frozen endedAt. A dangling run
+    //    with NO resumable transcript correctly stays 'crashed'.
+    //    NOTE: sessionToRun is intentionally NOT repopulated here. Resumed tails are
+    //    keyed by transcriptId in `tails`, so the tick loop drains them fine. But a
+    //    run-account / run-end / transcript-bind that arrives for a resumed-but-not-
+    //    yet-respawned session looks up sessionToRun and would miss — the supervisor's
+    //    ordered while-down buffer must replay run-start FIRST so the map is seeded
+    //    before any such message is processed.
     for (const r of db.listResumableTranscripts()) {
       const scope = db.getRunScope(r.runId)
       if (!scope) continue
+      db.reopenRun(r.runId)
       startTail({
         transcriptId: r.transcriptId,
         runId: r.runId,
@@ -340,6 +378,7 @@ export function createTranscriptsWorker(
     dbPath = undefined
     tails.clear()
     sessionToRun.clear()
+    shrinkWarned.clear()
   }
 
   // -------------------------------------------------------------------------

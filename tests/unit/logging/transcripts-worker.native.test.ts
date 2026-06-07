@@ -7,7 +7,7 @@
  * the test handle's tickNow() — fully deterministic, no fake timers. Fresh tmp
  * dir per test (mkdtempSync) — NEVER touches real paths.
  */
-import { mkdtempSync, rmSync, writeFileSync, appendFileSync } from 'fs'
+import { mkdtempSync, rmSync, writeFileSync, appendFileSync, statSync, openSync, readSync, closeSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import Database from 'better-sqlite3'
@@ -273,6 +273,69 @@ describe('transcripts-worker', () => {
     expect(h2.newMessages()).toEqual([{ type: 'new-messages', sessionId: 's1', configId: 'cfg1', count: 1 }])
   })
 
+  it('resume re-opens a dangling run to running (worker-only restart) and keeps ingesting into the same run', () => {
+    // Worker 1: a live session 's1' with a tailing transcript + some messages.
+    const h1 = makeWorker()
+    bootWithRun(h1)
+    const tPath = join(dir, 't1.jsonl')
+    writeFileSync(tPath, jl('user', 'alpha') + jl('assistant', 'beta'))
+    h1.send({ type: 'transcript-bind', sessionId: 's1', path: tPath, confidence: 'exact' })
+    h1.worker.tickNow()
+    const runId = inspect((raw) => raw.prepare('SELECT runId FROM runs').get()) as { runId: number }
+    h1.worker.stop() // worker-only death — Claude is still alive, no run-end
+
+    // Worker 2 opens the same db: (a) closeDanglingRuns first marks the run crashed.
+    // We can't observe the intermediate state directly, but the resume loop reopens
+    // it — verify the END state is 'running' with endedAt NULL.
+    const h2 = makeWorker()
+    h2.send({ type: 'open', dbPath })
+    expect(h2.out.some((m) => m.type === 'ready')).toBe(true)
+
+    let run = inspect((raw) => raw.prepare('SELECT status, endedAt FROM runs').get()) as {
+      status: string
+      endedAt: number | null
+    }
+    expect(run).toEqual({ status: 'running', endedAt: null })
+
+    // (c) Claude appends a new line; a tick ingests it into the SAME run, no dup idx.
+    appendFileSync(tPath, jl('user', 'gamma'))
+    h2.worker.tickNow()
+
+    const rows = inspect((raw) => raw.prepare('SELECT runId, idx, content FROM messages ORDER BY idx').all()) as {
+      runId: number
+      idx: number
+      content: string
+    }[]
+    expect(rows).toEqual([
+      { runId: runId.runId, idx: 0, content: 'alpha' },
+      { runId: runId.runId, idx: 1, content: 'beta' },
+      { runId: runId.runId, idx: 2, content: 'gamma' },
+    ])
+    run = inspect((raw) => raw.prepare('SELECT status FROM runs').get()) as { status: string }
+    expect(run.status).toBe('running') // still running, NOT crashed
+  })
+
+  it('a dangling run with NO tailing transcript stays crashed on resume', () => {
+    // Pre-seed a run that died 'running' but its transcript was already 'complete'
+    // (no resumable tail) — closeDanglingRuns crashes it and resume must NOT reopen it.
+    const seed = openTranscriptsDb(dbPath)
+    const r = seed.insertRun({ sessionId: 'dead', configLabel: 'D', provider: 'claude', startedAt: 100 })
+    const t = seed.bindTranscript(r, join(dir, 'done.jsonl'), { confidence: 'exact', parserVersion: 1 })
+    seed.setTranscriptStatus(t.transcriptId, 'complete') // not 'tailing' → not resumable
+    seed.appendMessages(r, [{ idx: 0, ts: 120, role: 'user', kind: 'message', content: 'x' }])
+    seed.close()
+
+    const h = makeWorker()
+    h.send({ type: 'open', dbPath })
+    expect(h.out.some((m) => m.type === 'ready')).toBe(true)
+
+    const run = inspect((raw) => raw.prepare('SELECT status, endedAt FROM runs').get()) as {
+      status: string
+      endedAt: number
+    }
+    expect(run).toMatchObject({ status: 'crashed', endedAt: 120 })
+  })
+
   // -------------------------------------------------------------------------
   // failure modes
   // -------------------------------------------------------------------------
@@ -318,6 +381,35 @@ describe('transcripts-worker', () => {
     expect(cur.ingestCursor).toBeGreaterThan(0)
   })
 
+  it('a transcript that shrinks below the cursor is marked failed with a single warn (no crash)', () => {
+    const h = makeWorker()
+    bootWithRun(h)
+    const tPath = join(dir, 't1.jsonl')
+    writeFileSync(tPath, jl('user', 'line-one') + jl('assistant', 'line-two'))
+    h.send({ type: 'transcript-bind', sessionId: 's1', path: tPath, confidence: 'exact' })
+    h.worker.tickNow() // cursor advances past both lines
+
+    const before = inspect((raw) => raw.prepare('SELECT ingestCursor, status FROM transcripts').get()) as {
+      ingestCursor: number
+      status: string
+    }
+    expect(before.ingestCursor).toBeGreaterThan(0)
+    expect(before.status).toBe('tailing')
+
+    // Truncate the file shorter than the cursor (in-place truncation — unexpected
+    // for append-only transcripts).
+    writeFileSync(tPath, jl('user', 'x'))
+    h.worker.tickNow()
+    h.worker.tickNow() // a further tick must not re-warn / crash (tail already dropped)
+
+    const after = inspect((raw) => raw.prepare('SELECT status FROM transcripts').get()) as { status: string }
+    expect(after.status).toBe('failed')
+    const warns = h.out.filter(
+      (m) => m.type === 'log' && m.entry.level === 'warn' && /shrank below cursor/.test(m.entry.message),
+    )
+    expect(warns).toHaveLength(1)
+  })
+
   it('a transcript-bind for an unknown session is dropped with a warn', () => {
     const h = makeWorker()
     h.send({ type: 'open', dbPath })
@@ -350,6 +442,49 @@ describe('transcripts-worker', () => {
     expect(t.status).toBe('complete')
     const msg = inspect((raw) => raw.prepare('SELECT content FROM messages').get()) as { content: string }
     expect(msg.content).toBe('written-just-before-exit')
+  })
+
+  it('two run-starts for one session without a run-end: bind + run-end target the LATEST run', () => {
+    const h = makeWorker()
+    h.send({ type: 'open', dbPath })
+    expect(h.out.some((m) => m.type === 'ready')).toBe(true)
+
+    // First run-start for 's1' (runId A).
+    h.send({
+      type: 'run-start',
+      meta: { sessionId: 's1', configId: 'cfg1', configLabel: 'APP', provider: 'claude', startedAt: 100 },
+    })
+    // Second run-start for the SAME session, NO run-end between (runId B).
+    h.send({
+      type: 'run-start',
+      meta: { sessionId: 's1', configId: 'cfg1', configLabel: 'APP', provider: 'claude', startedAt: 200 },
+    })
+
+    const runIds = inspect((raw) =>
+      raw.prepare('SELECT runId, startedAt FROM runs ORDER BY runId').all(),
+    ) as { runId: number; startedAt: number }[]
+    expect(runIds).toHaveLength(2)
+    const runB = runIds[1].runId // the latest run-start
+
+    // transcript-bind must attach to runId B (the in-memory sessionToRun map's latest).
+    const tPath = join(dir, 't1.jsonl')
+    writeFileSync(tPath, jl('user', 'on-latest-run'))
+    h.send({ type: 'transcript-bind', sessionId: 's1', path: tPath, confidence: 'exact' })
+    h.worker.tickNow()
+
+    const boundRunId = inspect((raw) => raw.prepare('SELECT runId FROM transcripts').get()) as { runId: number }
+    expect(boundRunId.runId).toBe(runB)
+    const msgRunId = inspect((raw) => raw.prepare('SELECT runId FROM messages').get()) as { runId: number }
+    expect(msgRunId.runId).toBe(runB)
+
+    // run-end closes runId B (the latest open run); runId A stays running.
+    h.send({ type: 'run-end', sessionId: 's1', ts: 999, status: 'exited' })
+    const rows = inspect((raw) => raw.prepare('SELECT runId, status FROM runs ORDER BY runId').all()) as {
+      runId: number
+      status: string
+    }[]
+    expect(rows.find((r) => r.runId === runB)!.status).toBe('exited')
+    expect(rows.find((r) => r.runId === runIds[0].runId)!.status).toBe('running')
   })
 
   it('run-account sets accountEmail on the open run', () => {
@@ -386,6 +521,63 @@ describe('transcripts-worker', () => {
     h.send({ type: 'query', id: 3, kind: 'search', args: { query: 'uniqueXYZneedle' } })
     const hits = h.out.find((m) => m.type === 'query-result' && m.id === 3) as { rows: unknown[] }
     expect(hits.rows).toHaveLength(1)
+  })
+
+  it('the re-entrancy guard clears in finally even when a drain throws (next tick still runs)', () => {
+    // fsImpl that throws on the FIRST readSync only, then delegates to real fs.
+    // The throw escapes drainTail -> tickNow's per-tail catch marks that tail
+    // failed and the outer finally clears `ticking`, so the NEXT tick is not wedged.
+    let firstRead = true
+    const fsImpl = {
+      statSync: (p: string) => statSync(p),
+      openSync: (p: string, flags: string) => openSync(p, flags),
+      readSync: (fd: number, buffer: Buffer, offset: number, length: number, position: number) => {
+        if (firstRead) {
+          firstRead = false
+          throw new Error('synthetic read failure')
+        }
+        return readSync(fd, buffer, offset, length, position)
+      },
+      closeSync: (fd: number) => closeSync(fd),
+    }
+    const fake = new FakeTranscriptsWorkerTransport()
+    const out: FromTranscriptsWorker[] = []
+    fake.onMessage((m) => out.push(m))
+    const worker = createTranscriptsWorker(fake.asWorkerSide(), fsImpl)
+    liveWorkers.push(worker)
+    const send = (m: ToTranscriptsWorker) => fake.post(m)
+
+    send({ type: 'open', dbPath })
+    send({
+      type: 'run-start',
+      meta: { sessionId: 'bad', configId: 'cfgBad', configLabel: 'BAD', provider: 'claude', startedAt: 100 },
+    })
+    send({
+      type: 'run-start',
+      meta: { sessionId: 'good', configId: 'cfgGood', configLabel: 'GOOD', provider: 'claude', startedAt: 100 },
+    })
+    const pBad = join(dir, 'bad.jsonl')
+    const pGood = join(dir, 'good.jsonl')
+    writeFileSync(pBad, jl('user', 'will-fail'))
+    writeFileSync(pGood, jl('user', 'healthy'))
+    send({ type: 'transcript-bind', sessionId: 'bad', path: pBad, confidence: 'exact' })
+
+    // First tick: the bad tail's read throws -> caught, marked failed, ticking cleared.
+    worker.tickNow()
+    const badStatus = inspect((raw) =>
+      raw.prepare("SELECT status FROM transcripts WHERE path = ?").get(pBad),
+    ) as { status: string }
+    expect(badStatus.status).toBe('failed')
+    expect(out.some((m) => m.type === 'error')).toBe(false) // never crashes the worker
+
+    // Bind a healthy transcript and tick again: if `ticking` were stuck true this
+    // would be a silent no-op. It ingests, proving the guard cleared in finally.
+    send({ type: 'transcript-bind', sessionId: 'good', path: pGood, confidence: 'exact' })
+    worker.tickNow()
+    const goodMsg = inspect((raw) =>
+      raw.prepare("SELECT content FROM messages m JOIN runs r ON r.runId = m.runId WHERE r.sessionId = 'good'").get(),
+    ) as { content: string } | undefined
+    expect(goodMsg?.content).toBe('healthy')
   })
 
   it('an unknown query kind posts a correlated error, not a crash (poison guard)', () => {

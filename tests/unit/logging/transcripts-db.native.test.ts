@@ -749,6 +749,30 @@ describe('transcripts-db', () => {
     expect(rows.find((r) => r.sessionId === 'c')).toMatchObject({ status: 'exited', endedAt: 20 })
   })
 
+  it('reopenRun restores a crashed run to running and clears endedAt', () => {
+    const r1 = db.insertRun(runMeta({ sessionId: 'reopen', startedAt: 100 }))
+    db.appendMessages(r1, [msg(0, { ts: 150 })])
+    // closeDanglingRuns marks it crashed with endedAt = last message ts
+    expect(db.closeDanglingRuns()).toBe(1)
+    let row = inspect((raw) =>
+      raw.prepare('SELECT status, endedAt FROM runs WHERE runId = ?').get(r1),
+    ) as { status: string; endedAt: number | null }
+    expect(row).toMatchObject({ status: 'crashed', endedAt: 150 })
+
+    db.reopenRun(r1)
+    row = inspect((raw) =>
+      raw.prepare('SELECT status, endedAt FROM runs WHERE runId = ?').get(r1),
+    ) as { status: string; endedAt: number | null }
+    expect(row).toEqual({ status: 'running', endedAt: null })
+
+    // A reopened run is once again the latest OPEN run for closeRun/setRunAccount.
+    db.closeRun('reopen', 999, 'exited')
+    row = inspect((raw) =>
+      raw.prepare('SELECT status, endedAt FROM runs WHERE runId = ?').get(r1),
+    ) as { status: string; endedAt: number | null }
+    expect(row).toMatchObject({ status: 'exited', endedAt: 999 })
+  })
+
   it('getRunScope returns sessionId + configId (null when absent); null for a missing run', () => {
     const r1 = db.insertRun(runMeta({ configId: 'cfg9' }))
     expect(db.getRunScope(r1)).toEqual({ sessionId: 's1', configId: 'cfg9' })

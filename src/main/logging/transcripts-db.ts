@@ -119,6 +119,14 @@ export interface TranscriptsDb {
    */
   closeDanglingRuns(): number
 
+  /**
+   * Re-open a run to status='running' (clearing endedAt). Called by the worker's
+   * resume loop after closeDanglingRuns(): a run with a resumable ('tailing')
+   * transcript is genuinely still live (worker-only restart while Claude keeps
+   * appending), so it must not stay 'crashed'.
+   */
+  reopenRun(runId: number): void
+
   /** sessionId + configId for a run (new-messages attribution on tail resume);
    *  null when the run does not exist. */
   getRunScope(runId: number): { sessionId: string; configId: string | null } | null
@@ -466,6 +474,11 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
     WHERE status = 'running'
   `)
 
+  // Re-open a dangling run that turned out to have a live (resumable) transcript.
+  const stmtReopenRun: Statement = sqlite.prepare(
+    `UPDATE runs SET status = 'running', endedAt = NULL WHERE runId = ?`,
+  )
+
   const stmtGetRunScope: Statement = sqlite.prepare(`SELECT sessionId, configId FROM runs WHERE runId = ?`)
 
   const stmtLastMessageTs: Statement = sqlite.prepare(`SELECT MAX(ts) AS t FROM messages WHERE runId = ?`)
@@ -734,6 +747,10 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
 
     closeDanglingRuns() {
       return stmtCloseDangling.run().changes
+    },
+
+    reopenRun(runId) {
+      stmtReopenRun.run(runId)
     },
 
     getRunScope(runId) {
