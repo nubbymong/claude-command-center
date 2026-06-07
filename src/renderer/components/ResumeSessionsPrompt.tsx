@@ -8,7 +8,7 @@ import React, { useEffect, useState } from 'react'
  * does (Resume applies the restore; Don't open discards the saved cards; the
  * underlying Claude conversations remain resumable from inside Claude itself).
  * Mouse-driven; it does not autofocus or trap keys (so it never interrupts
- * typing in a terminal). Mirrors the LogMigrationPrompt house pattern.
+ * typing in a terminal).
  */
 export default function ResumeSessionsPrompt({
   count,

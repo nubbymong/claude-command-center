@@ -55,11 +55,8 @@ import { setupGitHubListener, useGitHubStore } from './stores/githubStore'
 import { setupChannelListeners } from './stores/channelStore'
 import PermissionToastStack from './components/channels/PermissionToastStack'
 import LoggingConsentPrompt from './components/LoggingConsentPrompt'
-import LogMigrationPrompt from './components/LogMigrationPrompt'
 import LogsWipeModal from './components/LogsWipeModal'
 import ResumeSessionsPrompt from './components/ResumeSessionsPrompt'
-import MigrationDoneNotice from './components/MigrationDoneNotice'
-import { useMigrationStore } from './stores/migrationStore'
 // Side-effect import: registers window.__captureHarness for the
 // capture-training script. Renderer-local store mutations only, no
 // IPC surface widening (see capture-harness.ts header).
@@ -155,8 +152,6 @@ export default function App() {
   // Saved sessions awaiting the user's Resume / Don't-open choice (startup gate —
   // previously every boot force-resumed the whole saved set).
   const [pendingRestore, setPendingRestore] = useState<SessionState | null>(null)
-  // Live migration phase: drives the quit-confirm warning in CloseDialog.
-  const migrationPhase = useMigrationStore((s) => s.phase)
   const configs = useConfigStore((s) => s.configs)
   const launchConfig = useLaunchConfig()
   // onCreateConfigFromStage: App owns the GuidedConfigView toggle via showGuidedConfig.
@@ -589,10 +584,7 @@ export default function App() {
     const handleCloseRequested = () => {
       if (isClosing) return
       const state = useSessionStore.getState()
-      // Quit-confirm guard: a running log import must never be abandoned
-      // silently (it stops safely + resumes, but the user chose to be asked).
-      const migrationRunning = useMigrationStore.getState().phase === 'running'
-      if (state.sessions.length === 0 && !migrationRunning) {
+      if (state.sessions.length === 0) {
         window.electronAPI.window.allowClose()
         return
       }
@@ -907,8 +899,6 @@ export default function App() {
           <LoggingConsentPrompt />
         )}
 
-        {configLoaded && loggingConsentSeen && <LogMigrationPrompt />}
-
         {pendingRestore && (
           <ResumeSessionsPrompt
             count={pendingRestore.sessions.length}
@@ -971,14 +961,11 @@ export default function App() {
           <CloseDialog
             mode={closeDialog}
             sessionCount={sessions.length}
-            migrationRunning={migrationPhase === 'running'}
             onSaveAndClose={handleSaveAndClose}
             onCloseWithoutSaving={handleCloseWithoutSaving}
             onCancel={() => { setCloseDialog(null); window.electronAPI.window.cancelClose() }}
           />
         )}
-
-        <MigrationDoneNotice onViewReport={() => setView('settings')} />
 
         {isClosing && (
           <div className="absolute inset-0 bg-base/90 z-50 flex items-center justify-center">

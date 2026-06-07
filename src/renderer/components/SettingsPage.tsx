@@ -15,9 +15,6 @@ import { SectionLabel } from './ui/SectionLabel'
 import { Kbd } from './ui/Kbd'
 import { useAddAccount } from '../hooks/useAddAccount'
 import AccountsPanel from './AccountsPanel'
-import { useMigrationStore } from '../stores/migrationStore'
-import { MigrationReport } from './MigrationReport'
-import ReclaimSpaceSection from './ReclaimSpaceSection'
 declare const __BUILD_TIME__: string
 
 export const SETTINGS_TAB_IDS = ['general', 'statusline', 'shortcuts', 'github', 'codex', 'hooks', 'about'] as const
@@ -52,104 +49,6 @@ function formatBuildTime(iso: string): string {
   } catch {
     return iso
   }
-}
-
-function fmtBytesLocal(n: number): string {
-  if (n < 1024) return `${n} B`
-  const units = ['KB', 'MB', 'GB', 'TB']
-  let v = n / 1024
-  let i = 0
-  while (v >= 1024 && i < units.length - 1) { v /= 1024; i += 1 }
-  return `${v.toFixed(1)} ${units[i]}`
-}
-
-function LogMigrationAction() {
-  const settings = useSettingsStore((s) => s.settings)
-  const present = useMigrationStore((s) => s.present)
-  const sessionFolders = useMigrationStore((s) => s.sessionFolders)
-  const phase = useMigrationStore((s) => s.phase)
-  const progressDone = useMigrationStore((s) => s.progressDone)
-  const progressTotal = useMigrationStore((s) => s.progressTotal)
-  const report = useMigrationStore((s) => s.report)
-  const reclaimedBytes = useMigrationStore((s) => s.reclaimedBytes)
-  const failedFolders = useMigrationStore((s) => s.failedFolders)   // A5
-  const errorKind = useMigrationStore((s) => s.errorKind)
-  const completion = useMigrationStore((s) => s.completion)
-  const detect = useMigrationStore((s) => s.detect)
-  const run = useMigrationStore((s) => s.run)
-  const reclaim = useMigrationStore((s) => s.reclaim)
-
-  const [dismissed, setDismissed] = useState(false)
-
-  useEffect(() => { void detect() }, [detect])   // A6: named import, not React.useEffect
-
-  // NOTE: marking legacyLogsMigrated on run success now lives centrally in
-  // migrationStore.run(), so BOTH this Settings path and the one-time App prompt
-  // record completion. (Previously a local effect here did it, missing the prompt
-  // path when the user never opened Settings.)
-
-  const migrated = settings.legacyLogsMigrated === true
-  const showRun = present && !migrated && (phase === 'idle' || (phase === 'error' && errorKind === 'run'))
-  // Persistent reclaim door: a clean import ran (PERSISTED marker — survives app
-  // restarts, unlike the in-memory post-run report) and the original folders are
-  // still on disk. Without this, restarting after an import stranded a fully-
-  // armed reclaim with no UI entry (user-hit after the real 16 GB import).
-  const showReclaimEntry = phase === 'idle' && present && migrated && completion !== null
-
-  // Nothing actionable to show.
-  if (phase === 'idle' && (!present || migrated) && !showReclaimEntry) return null
-  if (phase === 'done' && dismissed) return null
-
-  return (
-    <div className="mt-3 pt-3" style={{ borderTop: '1px solid var(--border-subtle)' }}>
-      <div className="text-sm text-subtext0 mb-1">Existing logs</div>
-      {showRun && (
-        <div className="flex items-center gap-3">
-          <span className="text-[11px] text-overlay0">{sessionFolders.toLocaleString()} legacy session folder(s) found</span>
-          <button onClick={() => void run()} className="px-3 py-1.5 rounded-lg text-sm font-medium transition-colors" style={{ background: 'var(--color-blue)', color: 'var(--color-crust)' }}>
-            Migrate existing logs
-          </button>
-        </div>
-      )}
-      {showReclaimEntry && completion && (
-        <ReclaimSpaceSection
-          sessionFolders={sessionFolders}
-          completion={completion}
-          onReclaim={() => { void reclaim() }}
-        />
-      )}
-      {phase === 'running' && (
-        <div className="text-[11px] text-overlay0">Importing {progressDone.toLocaleString()} of {progressTotal.toLocaleString()} ...</div>
-      )}
-      {phase === 'reclaiming' && (
-        <div className="text-[11px] text-overlay0">Removing old log files ...</div>
-      )}
-      {phase === 'done' && report && !dismissed && (
-        // `reclaiming` is always false here: the instant reclaim() runs, phase flips
-        // to 'reclaiming' and this report unmounts (the 'reclaiming' branch above
-        // renders instead), so the in-button disabled state never applies. Double-
-        // delete is prevented by the re-entry guards in migrationStore.reclaim() and
-        // the LOGS_MIGRATE_RECLAIM handler, not by this prop.
-        <MigrationReport report={report} reclaiming={false}
-          onReclaim={() => { void reclaim() }}
-          onDismiss={() => { setDismissed(true) }} />
-      )}
-      {phase === 'reclaimed' && (
-        <div className="text-[11px] text-overlay0">
-          Old log files removed.{failedFolders.length > 0
-            ? ` ${failedFolders.length.toLocaleString()} folder(s) could not be removed.`
-            : ` ${fmtBytesLocal(reclaimedBytes)} freed.`}
-        </div>
-      )}
-      {phase === 'error' && (
-        <div className="text-[11px]" style={{ color: 'var(--color-red, #f38ba8)' }}>
-          {errorKind === 'reclaim'
-            ? 'Could not delete the old log files. Your imported logs are safe and the original files were left in place.'
-            : 'Migration failed. You can retry. Your original logs were not modified.'}
-        </div>
-      )}
-    </div>
-  )
 }
 
 interface SettingsPageProps {
@@ -358,7 +257,6 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
                   </button>
                   <span className="text-[10px] text-overlay0">(removes CCC's index only; conversations remain in Claude's own files at ~/.claude/projects)</span>
                 </div>
-                <LogMigrationAction />
               </Section>
 
               <AccountsPanel onAdd={handleAddAccount} />
