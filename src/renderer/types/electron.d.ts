@@ -138,6 +138,7 @@ export interface ElectronAPI {
       elevated?: boolean
       configId?: string
       configLabel?: string
+      loggingEnabled?: boolean
       useResumePicker?: boolean
       legacyVersion?: {
         enabled: boolean

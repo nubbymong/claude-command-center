@@ -4,7 +4,7 @@ import { PasteQueue } from './paste-queue'
 import * as os from 'os'
 import { execSync } from 'child_process'
 import { logPtyOutput, isDebugModeEnabled } from './debug-capture'
-import { shouldCapture } from './logging/should-capture'
+import { shouldRegisterRun } from './logging/should-register-run'
 import { getLogSupervisor, getTranscriptBinder } from './logging/logging-service'
 import { resolveResumeTargetFromTranscript, mangleCwdToProjectDir } from './logging/transcript-discovery'
 import { buildClaudeLaunchCommand, resolveResumeLaunch } from './spawn-claude-command'
@@ -255,6 +255,13 @@ export function spawnPty(
     configLabel?: string
     /** Config id that owns the session. Stamped onto the session-log row for per-config filtering. */
     configId?: string
+    /**
+     * Task 9: per-config logging opt-out. DEFAULT-TRUE — only an explicit `false`
+     * disables run registration for this session (the global settings flag and
+     * shellOnly/ssh/provider gates still apply). The SessionDialog UI toggle that
+     * binds this is a later task (T16); this field is plumbed end-to-end now.
+     */
+    loggingEnabled?: boolean
     useResumePicker?: boolean
     legacyVersion?: { enabled: boolean; version: string }
     agentsConfig?: Array<{ name: string; description: string; prompt: string; model?: string; tools?: string[] }>
@@ -1224,7 +1231,12 @@ export function spawnPty(
   // logging was DISABLED at boot there is no supervisor, so a mid-run enable
   // needs a restart.
   const settings = readConfig<{ loggingEnabled?: boolean }>('settings') ?? {}
-  const logSup = shouldCapture(options ?? {}, settings) ? getLogSupervisor() : null
+  // Single source of truth for the run-registration decision (Task 9):
+  // claude-local-only (not codex/other), not shell-only, not SSH, per-config
+  // loggingEnabled !== false, global loggingEnabled !== false. The matching
+  // runEnd/endRun on exit are gated on this same `logSup` being non-null, so a
+  // run is only ended if it was registered.
+  const logSup = shouldRegisterRun(options ?? {}, settings) ? getLogSupervisor() : null
   logSup?.runStart({
     sessionId,
     configId: options?.configId,
@@ -1245,9 +1257,9 @@ export function spawnPty(
   // Logs v2 (Task 8): arm the heuristic transcript-discovery fallback for this run.
   // The exact sources (hooks + statusline) bind first; if neither has bound ~20s
   // later, the binder scans ~/.claude/projects for the newest matching JSONL.
-  // Gated on logSup (same shouldCapture gate as the run) + a known cwd. Only for
-  // Claude sessions — the heuristic scans Claude's transcript dir.
-  if (logSup && effectiveLaunchCwd && (options?.provider ?? 'claude') === 'claude') {
+  // Gated on logSup (the consolidated shouldRegisterRun decision — already
+  // claude-local-only, so no separate provider re-check) + a known cwd.
+  if (logSup && effectiveLaunchCwd) {
     // FIX 4: register with the effective launch cwd so the 20s heuristic
     // fallback scans the folder Claude ran in (the resume override when active).
     getTranscriptBinder()?.registerRun(sessionId, effectiveLaunchCwd, Date.now())

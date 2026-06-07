@@ -34,6 +34,8 @@ export const spawnOptionsSchema = z.object({
   shellOnly: z.boolean().optional(),
   configId: z.string().optional(),
   configLabel: z.string().max(100).optional(),
+  // Task 9: per-config logging opt-out (DEFAULT-TRUE; only false disables).
+  loggingEnabled: z.boolean().optional(),
   useResumePicker: z.boolean().optional(),
   legacyVersion: z.object({
     enabled: z.boolean(),
@@ -85,6 +87,7 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     shellOnly?: boolean
     configId?: string
     configLabel?: string
+    loggingEnabled?: boolean
     useResumePicker?: boolean
     legacyVersion?: { enabled: boolean; version: string }
     agentsConfig?: Array<{ name: string; description: string; prompt: string; model?: string; tools?: string[] }>

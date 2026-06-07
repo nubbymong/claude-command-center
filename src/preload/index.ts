@@ -56,6 +56,7 @@ export interface ElectronAPI {
       }
       configId?: string
       configLabel?: string
+      loggingEnabled?: boolean
       useResumePicker?: boolean
       agentsConfig?: Array<{
         name: string; description: string; prompt: string
