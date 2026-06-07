@@ -40,18 +40,14 @@ const ALLOWED_TAGS = [
 const ALLOWED_ATTR = ['href', 'title']
 
 /**
- * Sanitizes a GitHub markdown comment body for render.
+ * The single hardened sanitize pipeline shared by every markdown render site.
  *
  * Link scheme policy: `https:` only on `<a href>`. `http:`, `mailto:`, bare
  * fragment `#`, `javascript:`, and everything else is stripped. The renderer
  * blocks `will-navigate` and `window.open`, so the only navigation that
  * actually works is `shell.openExternal(https://...)` invoked from main.
- *
- * Callers MUST pass the output through the single audited render site
- * `SanitizedMarkdown` — see spec §9 for the `dangerouslySetInnerHTML`
- * carve-out and delegated anchor click handler.
  */
-export function renderCommentMarkdown(md: string): string {
+function sanitizeMarkdown(md: string): string {
   if (typeof md !== 'string') return ''
   const raw = marked.parse(md) as string
   return DOMPurify.sanitize(raw, {
@@ -60,4 +56,27 @@ export function renderCommentMarkdown(md: string): string {
     ALLOWED_URI_REGEXP: /^https:/i,
     FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover'],
   })
+}
+
+/**
+ * Sanitizes a GitHub markdown comment body for render.
+ *
+ * Callers MUST pass the output through the single audited render site
+ * `SanitizedMarkdown` — see spec §9 for the `dangerouslySetInnerHTML`
+ * carve-out and delegated anchor click handler.
+ */
+export function renderCommentMarkdown(md: string): string {
+  return sanitizeMarkdown(md)
+}
+
+/**
+ * Sanitizes a Claude Code transcript message body for render (Logs v2).
+ *
+ * Uses the EXACT same pipeline + allowlist as `renderCommentMarkdown` — the
+ * allowlist is not loosened because transcript content is equally untrusted
+ * (it is whatever the model and the user typed). Same single audited render
+ * site `SanitizedMarkdown`.
+ */
+export function renderTranscriptMarkdown(md: string): string {
+  return sanitizeMarkdown(md)
 }
