@@ -9,11 +9,26 @@
  *
  * SSH and shell-only sessions are handled separately (SSH goes through a
  * different path; shell-only receives no CLAUDE env vars in buildClaudeLocalSpawn).
+ *
+ * Note: we clear CLAUDE_CODE_DISABLE_MOUSE from process.env before each test
+ * because the developer machine (and CI) may run with this var set, which would
+ * bleed through the `{ ...process.env }` spread into the "should be absent"
+ * assertions and produce false failures.
  */
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { buildClaudeLocalSpawn } from '../../../../src/main/providers/claude/spawn'
 
 const BASE_OPTS = { sessionId: 'ses-1', cwd: '/work', cols: 80, rows: 24 }
+
+beforeEach(() => {
+  delete process.env.CLAUDE_CODE_DISABLE_MOUSE
+  delete process.env.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN
+})
+
+afterEach(() => {
+  delete process.env.CLAUDE_CODE_DISABLE_MOUSE
+  delete process.env.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN
+})
 
 describe('buildClaudeLocalSpawn — CLAUDE_CODE_DISABLE_MOUSE', () => {
   it('sets CLAUDE_CODE_DISABLE_MOUSE=1 when classicTerminalCopyPaste is true', () => {

@@ -413,3 +413,93 @@ describe('transcript-binder — sessionId reuse across restarts', () => {
     ])
   })
 })
+
+describe('transcript-binder — registerRun re-bind on restart (no endRun)', () => {
+  /**
+   * The confirmed live bug: a session restarts into the same transcript path.
+   * pty-manager's `weAreCurrent` guard means endRun never fires on the restart
+   * exit, so SessionState persists across runs. When the new run's resume-bind
+   * calls notifyTranscriptPath(samePath), commitExact deduped it against the
+   * still-set boundPath from run 1 and skipped bindTranscript → nt=0, no logs.
+   *
+   * Fix: registerRun resets boundPath + boundConfidence (+ clears any stale
+   * debounce) so the next notify is treated as a fresh bind.
+   */
+
+  it('registerRun resets bind state so a restart into the same path re-binds', () => {
+    const { binder, binds, timers } = makeHarness()
+
+    // Run 1: exact bind settles.
+    binder.registerRun('s1', 'F:\\proj', 1_000)
+    binder.notifyTranscriptPath('s1', 'F:/junction/.claude/projects/proj/conv.jsonl')
+    timers.advance(100)
+    expect(binds).toHaveLength(1)
+    expect(binder.getLatestTranscriptPath('s1')).toBe('/home/.claude/projects/proj/conv.jsonl')
+
+    // Simulate restart: registerRun again (no endRun), same sessionId.
+    binder.registerRun('s1', 'F:\\proj', 2_000)
+
+    // After registerRun the latest path is null (state was reset).
+    expect(binder.getLatestTranscriptPath('s1')).toBeNull()
+
+    // Resume-bind sends the SAME path for run 2 → must NOT be deduped.
+    binder.notifyTranscriptPath('s1', 'F:/junction/.claude/projects/proj/conv.jsonl')
+    timers.advance(100)
+    expect(binds).toHaveLength(2)   // <-- was 1 (deduped) before the fix
+    expect(binds[1]).toEqual({
+      sessionId: 's1',
+      path: '/home/.claude/projects/proj/conv.jsonl',
+      confidence: 'exact',
+    })
+  })
+
+  it('within-run dedupe is intact: a second notify of the same path in the SAME run does NOT re-bind', () => {
+    const { binder, binds, timers } = makeHarness()
+
+    binder.registerRun('s1', 'F:\\proj', 1_000)
+    // First notify in run 1 → binds.
+    binder.notifyTranscriptPath('s1', 'F:/junction/.claude/projects/proj/conv.jsonl')
+    timers.advance(100)
+    expect(binds).toHaveLength(1)
+
+    // Second notify in the SAME run with the same path → deduped.
+    binder.notifyTranscriptPath('s1', 'F:/junction/.claude/projects/proj/conv.jsonl')
+    timers.advance(100)
+    expect(binds).toHaveLength(1)   // still 1 — within-run dedupe intact
+  })
+
+  it('getLatestTranscriptPath returns null immediately after registerRun (before re-bind)', () => {
+    const { binder, timers } = makeHarness()
+
+    // Bind in run 1.
+    binder.registerRun('s1', 'F:\\proj', 1_000)
+    binder.notifyTranscriptPath('s1', 'F:/junction/.claude/projects/proj/conv.jsonl')
+    timers.advance(100)
+    expect(binder.getLatestTranscriptPath('s1')).toBe('/home/.claude/projects/proj/conv.jsonl')
+
+    // Restart (no endRun): registerRun must clear the latest path immediately.
+    binder.registerRun('s1', 'F:\\proj', 2_000)
+    expect(binder.getLatestTranscriptPath('s1')).toBeNull()
+
+    // Re-bind restores it.
+    binder.notifyTranscriptPath('s1', 'F:/junction/.claude/projects/proj/conv.jsonl')
+    timers.advance(100)
+    expect(binder.getLatestTranscriptPath('s1')).toBe('/home/.claude/projects/proj/conv.jsonl')
+  })
+
+  it('a pending debounce from run 1 is cleared by registerRun so it cannot pollute run 2', () => {
+    const { binder, binds, timers } = makeHarness()
+
+    binder.registerRun('s1', 'F:\\proj', 1_000)
+    // Notify but do NOT advance timers — debounce is still pending.
+    binder.notifyTranscriptPath('s1', 'F:/junction/.claude/projects/proj/conv.jsonl')
+    expect(binds).toHaveLength(0)
+
+    // registerRun fires before the debounce settles.
+    binder.registerRun('s1', 'F:\\proj', 2_000)
+
+    // Now advance: the stale debounce must NOT fire.
+    timers.advance(100)
+    expect(binds).toHaveLength(0)  // cleared by registerRun, nothing to commit
+  })
+})

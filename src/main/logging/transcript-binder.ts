@@ -226,6 +226,19 @@ export function makeTranscriptBinder(deps: TranscriptBinderDeps): TranscriptBind
 
     registerRun(sessionId: string, cwd: string, startedAtMs: number): void {
       const s = getOrCreate(sessionId)
+      // A new run for the same sessionId (restart / respawn into the same transcript)
+      // must bind its OWN transcript row — dedupe must NOT carry across runs. Reset the
+      // bind state so the next notifyTranscriptPath / heuristic fires commitExact /
+      // bindTranscript again even for the identical path.
+      s.boundPath = null
+      s.boundConfidence = null
+      // Also clear any pending debounce: a leftover debounce from the previous run
+      // would commit stale state and block the fresh bind.
+      if (s.debounceHandle !== null) {
+        clearTimer(s.debounceHandle)
+        s.debounceHandle = null
+        s.pendingRaw = null
+      }
       // Re-arm a fresh heuristic fallback timer (clear any stale one first).
       cancelHeuristic(s)
       s.heuristicCwd = cwd
