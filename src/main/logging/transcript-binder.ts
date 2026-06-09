@@ -65,10 +65,26 @@ export interface TranscriptBinderDeps {
   debounceMs?: number
   /** Heuristic fallback delay after registerRun with no exact bind. Default 20 000 ms. */
   heuristicDelayMs?: number
+  /**
+   * How many ADDITIONAL heuristic attempts to schedule after the first one
+   * comes back empty (the transcript file may not exist yet for a freshly
+   * spawned / slow-starting session). The first fire happens at
+   * `heuristicDelayMs`; each empty result re-arms the same timer up to this
+   * many more times (default 3 → ~80 s total coverage). Stops once bound or
+   * the cap is reached. 0 disables retries (single-shot, legacy behaviour).
+   */
+  heuristicRetryCap?: number
+  /**
+   * Concise diagnostics sink (paths only, no message content). Injected so the
+   * binder stays pure / Electron-free: production wires the real `logInfo` when
+   * constructing the binder; tests pass a spy. Defaults to a no-op.
+   */
+  log?: (msg: string) => void
 }
 
 const DEFAULT_DEBOUNCE_MS = 250
 const DEFAULT_HEURISTIC_DELAY_MS = 20_000
+const DEFAULT_HEURISTIC_RETRY_CAP = 3
 
 /** Per-session binder state. */
 interface SessionState {
@@ -81,6 +97,11 @@ interface SessionState {
   pendingRaw: string | null
   /** Heuristic fallback timer (cleared once an exact bind lands or the run ends). */
   heuristicHandle: unknown | null
+  /** How many MORE heuristic attempts remain (re-armed on an empty result). */
+  heuristicRetriesLeft: number
+  /** The cwd + startedAt captured at registerRun, reused by heuristic retries. */
+  heuristicCwd: string | null
+  heuristicStartedAtMs: number
 }
 
 export interface TranscriptBinder {
@@ -102,24 +123,65 @@ export function makeTranscriptBinder(deps: TranscriptBinderDeps): TranscriptBind
   const clearTimer = deps.clearTimer ?? ((h: unknown) => clearTimeout(h as ReturnType<typeof setTimeout>))
   const debounceMs = deps.debounceMs ?? DEFAULT_DEBOUNCE_MS
   const heuristicDelayMs = deps.heuristicDelayMs ?? DEFAULT_HEURISTIC_DELAY_MS
+  const heuristicRetryCap = deps.heuristicRetryCap ?? DEFAULT_HEURISTIC_RETRY_CAP
+  const log = deps.log ?? (() => { /* no-op */ })
 
   const sessions = new Map<string, SessionState>()
 
   function getOrCreate(sessionId: string): SessionState {
     let s = sessions.get(sessionId)
     if (!s) {
-      s = { boundPath: null, boundConfidence: null, debounceHandle: null, pendingRaw: null, heuristicHandle: null }
+      s = {
+        boundPath: null, boundConfidence: null, debounceHandle: null, pendingRaw: null,
+        heuristicHandle: null, heuristicRetriesLeft: 0, heuristicCwd: null, heuristicStartedAtMs: 0,
+      }
       sessions.set(sessionId, s)
     }
     return s
   }
 
-  /** Cancel a pending heuristic fallback timer for the session (idempotent). */
+  /** Cancel a pending heuristic fallback timer for the session + stop retries
+   *  (idempotent). */
   function cancelHeuristic(s: SessionState): void {
     if (s.heuristicHandle !== null) {
       clearTimer(s.heuristicHandle)
       s.heuristicHandle = null
     }
+    s.heuristicRetriesLeft = 0
+  }
+
+  /** One heuristic attempt for the session. Re-arms itself (up to the retry cap)
+   *  when the scan comes back empty so a slow-starting / freshly-spawned session
+   *  whose transcript file does not exist at the first ~20s fire still binds on a
+   *  later sweep. Never downgrades an exact bind. */
+  function fireHeuristic(sessionId: string): void {
+    const cur = sessions.get(sessionId)
+    if (!cur) return
+    cur.heuristicHandle = null
+    // An exact bind may have arrived during the window — never downgrade.
+    if (cur.boundConfidence === 'exact') return
+    const cwd = cur.heuristicCwd
+    if (cwd === null) return
+    const binding = heuristicBinder.bindOnce(sessionId, cwd, cur.heuristicStartedAtMs)
+    if (!binding) {
+      // Nothing found yet. Re-arm another attempt if retries remain; a later exact
+      // notification can still bind in the meantime.
+      log(`[binder] heuristic fired sid=${sessionId} result=null retriesLeft=${cur.heuristicRetriesLeft}`)
+      if (cur.heuristicRetriesLeft > 0) {
+        cur.heuristicRetriesLeft -= 1
+        cur.heuristicHandle = setTimer(() => fireHeuristic(sessionId), heuristicDelayMs)
+      }
+      return
+    }
+    // Don't re-emit an identical heuristic bind.
+    if (cur.boundPath === binding.path && cur.boundConfidence === 'heuristic') {
+      log(`[binder] heuristic fired sid=${sessionId} result=found(dedup) path=${binding.path}`)
+      return
+    }
+    cur.boundPath = binding.path
+    cur.boundConfidence = 'heuristic'
+    supervisor.bindTranscript(sessionId, binding.path, 'heuristic')
+    log(`[binder] heuristic fired sid=${sessionId} result=found path=${binding.path}`)
   }
 
   /** Apply an exact bind for a session once the debounce settles. */
@@ -132,10 +194,13 @@ export function makeTranscriptBinder(deps: TranscriptBinderDeps): TranscriptBind
     if (!raw) return
 
     const canonical = canonicalize(raw)
-    if (!canonical) return   // non-transcript path — ignore
+    if (!canonical) {
+      log(`[binder] canonicalize-null sid=${sessionId} rawPath=${raw}`)
+      return   // non-transcript path — ignore
+    }
 
-    // An exact source always wins. Cancel any still-pending heuristic fallback so
-    // it can't later re-bind on top of the exact path.
+    // An exact source always wins. Cancel any still-pending heuristic fallback (and
+    // its retries) so it can't later re-bind on top of the exact path.
     cancelHeuristic(s)
 
     // Dedupe: identical path already bound at the SAME confidence -> no churn.
@@ -146,6 +211,7 @@ export function makeTranscriptBinder(deps: TranscriptBinderDeps): TranscriptBind
     s.boundPath = canonical
     s.boundConfidence = 'exact'
     supervisor.bindTranscript(sessionId, canonical, 'exact')
+    log(`[binder] exact bind committed sid=${sessionId} path=${canonical}`)
   }
 
   return {
@@ -162,20 +228,11 @@ export function makeTranscriptBinder(deps: TranscriptBinderDeps): TranscriptBind
       const s = getOrCreate(sessionId)
       // Re-arm a fresh heuristic fallback timer (clear any stale one first).
       cancelHeuristic(s)
-      s.heuristicHandle = setTimer(() => {
-        const cur = sessions.get(sessionId)
-        if (!cur) return
-        cur.heuristicHandle = null
-        // An exact bind may have arrived during the window — never downgrade.
-        if (cur.boundConfidence === 'exact') return
-        const binding = heuristicBinder.bindOnce(sessionId, cwd, startedAtMs)
-        if (!binding) return   // nothing found; a later exact notification can still bind
-        // Don't re-emit an identical heuristic bind.
-        if (cur.boundPath === binding.path && cur.boundConfidence === 'heuristic') return
-        cur.boundPath = binding.path
-        cur.boundConfidence = 'heuristic'
-        supervisor.bindTranscript(sessionId, binding.path, 'heuristic')
-      }, heuristicDelayMs)
+      s.heuristicCwd = cwd
+      s.heuristicStartedAtMs = startedAtMs
+      s.heuristicRetriesLeft = heuristicRetryCap
+      s.heuristicHandle = setTimer(() => fireHeuristic(sessionId), heuristicDelayMs)
+      log(`[binder] registerRun sid=${sessionId} cwd=${cwd}`)
     },
 
     endRun(sessionId: string): void {

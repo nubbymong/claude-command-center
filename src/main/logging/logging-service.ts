@@ -24,6 +24,7 @@ import { forkTranscriptsWorker } from './fork-transcripts-worker'
 import { makeTranscriptBinder } from './transcript-binder'
 import type { TranscriptBinder } from './transcript-binder'
 import { readConfig } from '../config-manager'
+import { logInfo } from '../debug-logger'
 
 // Module-level singleton. Null until initLogging() runs, and stays null when
 // logging is disabled (no fork, no worker, no native dep loaded).
@@ -58,7 +59,9 @@ export function initLogging(opts: {
   _supervisor = sup
   // Bind discovery sources to this supervisor. Uses Task-3 canonicalize + the
   // real ~/.claude/projects heuristic binder (defaults inside makeTranscriptBinder).
-  _binder = makeTranscriptBinder({ supervisor: sup })
+  // Diagnostics flow to the main app.log via the injected logInfo (paths only) so
+  // first-/resumed-session bind failures are visible after the fact.
+  _binder = makeTranscriptBinder({ supervisor: sup, log: logInfo })
 }
 
 /** The supervisor, for run lifecycle + diagnostics + the read path. Null when disabled. */

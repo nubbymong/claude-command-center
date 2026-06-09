@@ -182,6 +182,120 @@ describe('transcript-binder — heuristic fallback', () => {
   })
 })
 
+describe('transcript-binder — heuristic retry safety net', () => {
+  it('re-arms the heuristic when bindOnce returns null, then binds on a later attempt', () => {
+    // bindOnce returns null on the first two fires, then finds the transcript.
+    let calls = 0
+    const bindOnce = vi.fn(() => {
+      calls += 1
+      return calls >= 3
+        ? { path: '/home/.claude/projects/proj/late.jsonl', confidence: 'heuristic' as const }
+        : null
+    })
+    const heuristicBinder = { bindOnce, forget: vi.fn() }
+    const { binder, binds, timers } = makeHarness({ heuristicBinder })
+    binder.registerRun('s1', 'F:\\proj', 1_000)
+
+    // First fire: null -> re-arm, nothing bound.
+    timers.advance(20_000)
+    expect(binds).toHaveLength(0)
+    expect(bindOnce).toHaveBeenCalledTimes(1)
+    expect(timers.pending()).toBeGreaterThan(0)   // a retry timer is armed
+
+    // Second fire: still null -> re-arm.
+    timers.advance(20_000)
+    expect(binds).toHaveLength(0)
+    expect(bindOnce).toHaveBeenCalledTimes(2)
+
+    // Third fire: found -> binds heuristic.
+    timers.advance(20_000)
+    expect(bindOnce).toHaveBeenCalledTimes(3)
+    expect(binds).toEqual([
+      { sessionId: 's1', path: '/home/.claude/projects/proj/late.jsonl', confidence: 'heuristic' },
+    ])
+  })
+
+  it('stops retrying after the cap (initial fire + retryCap attempts)', () => {
+    const bindOnce = vi.fn(() => null)
+    const heuristicBinder = { bindOnce, forget: vi.fn() }
+    // retryCap=3 -> 1 initial + 3 retries = 4 total bindOnce calls.
+    const { binder, binds, timers } = makeHarness({ heuristicBinder, heuristicRetryCap: 3 })
+    binder.registerRun('s1', 'F:\\proj', 1_000)
+    for (let i = 0; i < 10; i++) timers.advance(20_000)
+    expect(bindOnce).toHaveBeenCalledTimes(4)
+    expect(binds).toHaveLength(0)
+    expect(timers.pending()).toBe(0)   // no more timers armed after the cap
+  })
+
+  it('an exact bind that arrives during retries supersedes and stops re-arming', () => {
+    const bindOnce = vi.fn(() => null)
+    const heuristicBinder = { bindOnce, forget: vi.fn() }
+    const { binder, binds, timers } = makeHarness({ heuristicBinder, heuristicRetryCap: 5 })
+    binder.registerRun('s1', 'F:\\proj', 1_000)
+    timers.advance(20_000)   // first heuristic fire -> null -> re-arm
+    expect(bindOnce).toHaveBeenCalledTimes(1)
+    // Exact bind arrives now -> cancels the pending retry timer.
+    binder.notifyTranscriptPath('s1', 'F:/junction/.claude/projects/proj/exact.jsonl')
+    timers.advance(100)
+    expect(binds).toEqual([
+      { sessionId: 's1', path: '/home/.claude/projects/proj/exact.jsonl', confidence: 'exact' },
+    ])
+    // No further heuristic attempts after the exact bind.
+    timers.advance(20_000)
+    timers.advance(20_000)
+    expect(bindOnce).toHaveBeenCalledTimes(1)
+  })
+
+  it('endRun cancels a pending retry timer (no further bindOnce calls)', () => {
+    const bindOnce = vi.fn(() => null)
+    const heuristicBinder = { bindOnce, forget: vi.fn() }
+    const { binder, timers } = makeHarness({ heuristicBinder, heuristicRetryCap: 5 })
+    binder.registerRun('s1', 'F:\\proj', 1_000)
+    timers.advance(20_000)   // first fire -> null -> re-arm
+    expect(bindOnce).toHaveBeenCalledTimes(1)
+    binder.endRun('s1')
+    timers.advance(20_000)
+    timers.advance(20_000)
+    expect(bindOnce).toHaveBeenCalledTimes(1)   // endRun cancelled the retry
+  })
+})
+
+describe('transcript-binder — diagnostics (injected log)', () => {
+  it('logs registerRun, exact bind committed, and a canonicalize-null', () => {
+    const log = vi.fn()
+    const { binder, timers } = makeHarness({ log })
+    binder.registerRun('s1', 'F:\\proj', 1_000)
+    expect(log.mock.calls.flat().some((m) => /registerRun/.test(String(m)) && String(m).includes('s1'))).toBe(true)
+
+    binder.notifyTranscriptPath('s1', 'F:/junction/.claude/projects/proj/conv.jsonl')
+    timers.advance(100)
+    expect(log.mock.calls.flat().some((m) => /exact bind/i.test(String(m)) && String(m).includes('/home/.claude/projects/proj/conv.jsonl'))).toBe(true)
+
+    log.mockClear()
+    binder.notifyTranscriptPath('s2', 'C:/some/other/file.txt')
+    timers.advance(100)
+    expect(log.mock.calls.flat().some((m) => /canonicalize/i.test(String(m)))).toBe(true)
+  })
+
+  it('logs the heuristic fire and its result (found|null)', () => {
+    const log = vi.fn()
+    const heuristicBinder = { bindOnce: vi.fn(() => ({ path: '/home/.claude/projects/proj/heur.jsonl', confidence: 'heuristic' as const })), forget: vi.fn() }
+    const { binder, timers } = makeHarness({ log, heuristicBinder })
+    binder.registerRun('s1', 'F:\\proj', 1_000)
+    timers.advance(20_000)
+    expect(log.mock.calls.flat().some((m) => /heuristic/i.test(String(m)))).toBe(true)
+  })
+
+  it('defaults to a no-op log (no throw when log is not injected)', () => {
+    const { binder, timers } = makeHarness({ log: undefined })
+    expect(() => {
+      binder.registerRun('s1', 'F:\\proj', 1_000)
+      binder.notifyTranscriptPath('s1', 'F:/junction/.claude/projects/proj/conv.jsonl')
+      timers.advance(100)
+    }).not.toThrow()
+  })
+})
+
 describe('transcript-binder — exact supersedes heuristic', () => {
   it('a later exact bind replaces a session that only had a heuristic bind', () => {
     const heuristicBinder = { bindOnce: vi.fn(() => ({ path: '/home/.claude/projects/proj/heur.jsonl', confidence: 'heuristic' as const })), forget: vi.fn() }

@@ -19,7 +19,8 @@
  */
 
 import * as nodePath from 'node:path'
-import { UUID_RE } from './logging/transcript-discovery'
+import * as nodeOs from 'node:os'
+import { UUID_RE, mangleCwdToProjectDir } from './logging/transcript-discovery'
 
 export interface BuildClaudeLaunchCommandOptions {
   /** 'win32' produces a PowerShell command; anything else produces a POSIX sh command. */
@@ -144,6 +145,35 @@ export function resolveResumeLaunch(
     // Fail-open: any unexpected error drops resume and falls back.
     return null
   }
+}
+
+// ---------------------------------------------------------------------------
+// buildResumeTranscriptPath — deterministic resume-bind path (Part A)
+// ---------------------------------------------------------------------------
+
+/**
+ * Construct the canonical transcript path for a KNOWN resume target so the
+ * caller (pty-manager) can bind it IMMEDIATELY at spawn, without waiting for the
+ * exact sources (hooks / statusline) or the heuristic fallback. This closes the
+ * boot-time race that left the FIRST resumed session unbound (`nt=0`).
+ *
+ *   <homedir>/.claude/projects/<mangle(launchCwd)>/<uuid>.jsonl
+ *
+ * `launchCwd` must be the cwd the conversation ACTUALLY runs in (the
+ * resolveResumeLaunch `claudeCwd`), since that is what Claude CLI mangles into
+ * the project-folder name. The uuid is re-validated against the canonical UUID
+ * format (defense-in-depth) — a non-UUID stem or empty cwd returns null so the
+ * caller simply skips the deterministic bind (the heuristic still covers it).
+ *
+ * `homedir` is injectable for testing; production passes os.homedir.
+ */
+export function buildResumeTranscriptPath(
+  launchCwd: string,
+  uuid: string,
+  homedir: () => string = () => nodeOs.homedir(),
+): string | null {
+  if (!launchCwd || !uuid || !UUID_RE.test(uuid)) return null
+  return nodePath.join(homedir(), '.claude', 'projects', mangleCwdToProjectDir(launchCwd), `${uuid}.jsonl`)
 }
 
 export function buildClaudeLaunchCommand(opts: BuildClaudeLaunchCommandOptions): string {

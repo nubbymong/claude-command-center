@@ -7,7 +7,7 @@ import { logPtyOutput, isDebugModeEnabled } from './debug-capture'
 import { shouldRegisterRun } from './logging/should-register-run'
 import { getLogSupervisor, getTranscriptBinder } from './logging/logging-service'
 import { resolveResumeTargetFromTranscript, mangleCwdToProjectDir } from './logging/transcript-discovery'
-import { buildClaudeLaunchCommand, resolveResumeLaunch } from './spawn-claude-command'
+import { buildClaudeLaunchCommand, resolveResumeLaunch, buildResumeTranscriptPath } from './spawn-claude-command'
 import { logInfo, logDebug, logError, logWarn } from './debug-logger'
 import { writeCliSetupPty, getResourcesDirectory } from './ipc/setup-handlers'
 import { isGlobalVisionRunning, getGlobalVisionConfig, teardownVisionSession } from './vision-manager'
@@ -334,6 +334,10 @@ export function spawnPty(
   // projectCwd + the heuristic binder's registerRun() must use THIS so the run
   // is stamped with — and the 20s fallback scans — the folder Claude ran in.
   let effectiveLaunchCwd = resolvedCwd
+  // Part A: the resume uuid an exact-resume applied (function-scoped so the
+  // deterministic resume-bind at the registerRun site below can see it). Null
+  // unless the Claude branch resolved an exact-resume launch.
+  let resumeUuidForBind: string | null = null
   let resolvedProfileId: string | undefined = undefined
 
   if (options?.ssh) {
@@ -1060,6 +1064,10 @@ export function spawnPty(
           // FIX 4: propagate the override to function scope so the subsequent
           // runStart/registerRun stamp + scan the folder Claude actually ran in.
           effectiveLaunchCwd = claudeCwd
+          // Part A: capture the resume uuid at function scope so the registerRun
+          // site can bind the exact transcript IMMEDIATELY (deterministic
+          // resume-bind), independent of the hooks/statusline/heuristic race.
+          resumeUuidForBind = launch.resumeUuid
           logInfo(`[pty] T8b exact resume for ${sessionId}: uuid=${resumeUuid} cwd=${claudeCwd} (was ${resolvedCwd})`)
         } else {
           logInfo(`[pty] T8b resume target dropped for ${sessionId} (fail-open existence check) — uuid=${effectiveTarget.uuid}`)
@@ -1262,7 +1270,22 @@ export function spawnPty(
   if (logSup && effectiveLaunchCwd) {
     // FIX 4: register with the effective launch cwd so the 20s heuristic
     // fallback scans the folder Claude ran in (the resume override when active).
-    getTranscriptBinder()?.registerRun(sessionId, effectiveLaunchCwd, Date.now())
+    const binder = getTranscriptBinder()
+    binder?.registerRun(sessionId, effectiveLaunchCwd, Date.now())
+    // Part A: DETERMINISTIC RESUME-BIND. When an exact-resume applied we already
+    // know the conversation's uuid + the real launch cwd, so we can bind that
+    // exact transcript IMMEDIATELY — no waiting for the hooks/statusline exact
+    // sources or the 20s heuristic. This fixes the observed first-/resumed-session
+    // `nt=0` race at boot (the exact sources lose to boot wiring; the heuristic's
+    // one-shot didn't recover it). Routed through notifyTranscriptPath so the
+    // existing debounce + idempotent canonicalize apply; a stale path just no-ops.
+    if (binder && resumeUuidForBind) {
+      const resumePath = buildResumeTranscriptPath(effectiveLaunchCwd, resumeUuidForBind)
+      if (resumePath) {
+        logInfo(`[binder] resume-bind sid=${sessionId} path=${resumePath}`)
+        binder.notifyTranscriptPath(sessionId, resumePath)
+      }
+    }
   }
 
   // Debug capture only — the transcripts worker tails Claude's own transcript

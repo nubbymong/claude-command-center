@@ -16,7 +16,7 @@
 import { describe, it, expect } from 'vitest'
 import * as os from 'os'
 import * as path from 'path'
-import { buildClaudeLaunchCommand, resolveResumeLaunch } from '../../../src/main/spawn-claude-command'
+import { buildClaudeLaunchCommand, resolveResumeLaunch, buildResumeTranscriptPath } from '../../../src/main/spawn-claude-command'
 
 const CWD = 'F:\\proj\\worktree'
 const CLAUDE = 'C:\\bin\\claude.cmd'
@@ -320,5 +320,36 @@ describe('resolveResumeLaunch — gate', () => {
   it('FIX 4: a canonical uuid still passes the new guard (no regression)', () => {
     const out = resolveResumeLaunch({ uuid: T_UUID, cwd: REAL_CWD }, makeDeps())
     expect(out).toEqual({ resumeUuid: T_UUID, claudeCwd: path.resolve(REAL_CWD) })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// buildResumeTranscriptPath — deterministic resume-bind path (Part A)
+// ---------------------------------------------------------------------------
+//
+// When pty-manager applies a resume with a KNOWN uuid + the conversation's real
+// launch cwd, it binds that exact transcript IMMEDIATELY (no waiting for hooks /
+// statusline / heuristic). This pure helper constructs the canonical transcript
+// path it hands to binder.notifyTranscriptPath.
+describe('buildResumeTranscriptPath — canonical ~/.claude/projects path', () => {
+  const HOME = 'C:\\Users\\nicho'
+  const UUID2 = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+
+  it('joins homedir/.claude/projects/<mangle(cwd)>/<uuid>.jsonl', () => {
+    const out = buildResumeTranscriptPath('F:\\proj\\worktree', UUID2, () => HOME)
+    expect(out).toBe(path.join(HOME, '.claude', 'projects', 'F--proj-worktree', `${UUID2}.jsonl`))
+  })
+
+  it('mangles every non-alphanumeric char individually (no run-collapse)', () => {
+    const out = buildResumeTranscriptPath('F:\\CLAUDE_MULTI_APP', UUID2, () => HOME)
+    expect(out).toBe(path.join(HOME, '.claude', 'projects', 'F--CLAUDE-MULTI-APP', `${UUID2}.jsonl`))
+  })
+
+  it('returns null for a non-UUID stem (never builds a path from garbage)', () => {
+    expect(buildResumeTranscriptPath('F:\\proj', 'not-a-uuid', () => HOME)).toBeNull()
+  })
+
+  it('returns null for an empty cwd', () => {
+    expect(buildResumeTranscriptPath('', UUID2, () => HOME)).toBeNull()
   })
 })

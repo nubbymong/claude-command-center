@@ -256,6 +256,24 @@ describe('LogSupervisor', () => {
     expect(forwarded.map((m) => m.type)).toEqual(['run-start', 'transcript-bind', 'run-account', 'run-end'])
   })
 
+  it('a transcript-bind sent BEFORE worker-ready is buffered and replayed on ready (boot race)', () => {
+    // Regression lock: the deterministic resume-bind (pty-manager Part A) and the
+    // exact discovery sources can fire while the worker is still booting. A bind
+    // dropped in that window would leave the first/resumed session with nt=0. The
+    // supervisor must buffer it and replay it once the worker posts `ready`.
+    const h = makeHarness()
+    h.sup.start()                                    // starting, not ready
+    h.sup.bindTranscript('s1', 'C:/proj/conv.jsonl', 'exact', 'v1')
+    // Not forwarded yet — only the `open` reached the booting worker.
+    expect(h.current().posts.some((m) => m.type === 'transcript-bind')).toBe(false)
+    h.current().emit({ type: 'ready' })
+    const bind = h.current().posts.find((m) => m.type === 'transcript-bind') as Extract<ToTranscriptsWorker, { type: 'transcript-bind' }>
+    expect(bind).toBeDefined()
+    expect(bind.sessionId).toBe('s1')
+    expect(bind.path).toBe('C:/proj/conv.jsonl')
+    expect(bind.confidence).toBe('exact')
+  })
+
   it('runStart when listening forwards straight to the worker', () => {
     const h = makeHarness()
     h.sup.start()
