@@ -397,14 +397,13 @@ export class HooksGateway {
       }
     }
 
-    // The held-open responder is keyed by `permissionRequestId`. Downstream, the
-    // pending tray card derives its own id from `payload.requestId` (falling back
-    // to `${sessionId}-${entry.ts}`). Claude Code's real PreToolUse hook sends NO
-    // requestId, so without this both sides would invent DIFFERENT synthetic ids
-    // (two separate Date.now() reads) and Allow/Deny would target a responder that
-    // does not exist -> the request silently stalls until the 120s timeout. Inject
-    // the resolved id into the already-parsed body so ingest -> normalizePermission
-    // key the card on the SAME value we registered the responder under.
+    // The held-open responder is keyed by `permissionRequestId`. Claude Code's
+    // real PreToolUse hook sends NO requestId, so without this the responder
+    // registration and any downstream consumer would invent DIFFERENT synthetic
+    // ids (two separate Date.now() reads) and Allow/Deny would target a responder
+    // that does not exist -> the request silently stalls until the 120s timeout.
+    // Inject the resolved id into the already-parsed body so both sides key on
+    // the SAME value we registered the responder under.
     if (isPermissionRequest && permissionRequestId && parsedBody) {
       const pl = (parsedBody.payload && typeof parsedBody.payload === 'object')
         ? (parsedBody.payload as Record<string, unknown>)

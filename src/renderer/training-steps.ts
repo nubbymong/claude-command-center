@@ -408,9 +408,9 @@ export const trainingSteps: TrainingStep[] = [
       { label: 'What\'s new', value: 'About → View What\'s New' },
     ],
     proTip:
-      'v1.5.10 adds a Permission Attention Tray — high-risk Bash commands (rm -rf, dd, force-push, etc.) now stack as toasts top-right so you can approve or reject without scrolling back through the terminal.',
+      'Settings is also where you pick Stable or Beta updates, rebind every shortcut, choose which statusline metrics show, and toggle local log indexing — all without leaving the app.',
     bullets: [
-      '**Permission Attention Tray** stacks high-risk prompts as toasts (v1.5.10)',
+      '**Disable dynamic workflows** globally, or skip permission prompts for headless agents',
       '**Sandbox enabled** — renderer runs in a sandboxed process',
       'Choose **Stable or Beta** update channel for app updates',
       'Customize **keyboard shortcuts**, terminal font size, and status line metrics',
@@ -446,35 +446,6 @@ export const trainingSteps: TrainingStep[] = [
     screenshotFilename: 'step-tips.jpg',
   },
   {
-    id: 'permission-tray',
-    title: 'Permission Attention Tray',
-    sinceVersion: '1.5.12',
-    section: 'admin',
-    summary:
-      'High-risk Bash commands -- rm -rf, sudo, force-push, dd, mkfs, chmod 777, fork bombs -- stack as toasts in the top-right corner. Approve or reject without scrolling back through the terminal. Everything else auto-allows so the tray only fires when it should.',
-    highlights: [
-      'Toast stack tops out at 50 entries; overflow auto-denies',
-      'Detection runs on Claude Code\'s PreToolUse hook -- the gateway intercepts before Claude executes',
-      'Auto-allow path handles non-Bash tools (Read, Edit, Grep, Write) silently',
-      'High-risk patterns: rm -rf / rm -fr, sudo, dd if=, chmod 777, --force / --force-with-lease, fork bombs',
-      'Toast survives session focus changes -- you can approve from any view',
-    ],
-    howToTrigger: [
-      { label: 'Spawn a Claude session', value: 'Saved Configs → +' },
-      { label: 'Trigger', value: 'Ask Claude to delete files, force-push, sudo, etc.' },
-      { label: 'Approve / reject', value: 'Top-right toast → click or keyboard' },
-    ],
-    proTip:
-      'The tray catches commands that come from dynamic-workflow subagents too -- if a 1000-agent run tries to rm -rf something, the high-risk detection still gates it.',
-    bullets: [
-      '**Toast stack** for high-risk Bash; everything else auto-allows',
-      'Hooks into **PreToolUse** so it fires before Claude actually runs the command',
-      'Patterns: **rm -rf, sudo, force-push, dd, mkfs, chmod 777, fork bombs**',
-      'Overflow (>50) auto-denies so a runaway agent can\'t bury you in prompts',
-    ],
-    screenshotFilename: 'step-permission-tray.jpg',
-  },
-  {
     id: 'dynamic-workflows',
     title: 'Dynamic Workflows',
     sinceVersion: '1.5.12',
@@ -494,7 +465,7 @@ export const trainingSteps: TrainingStep[] = [
       { label: 'Disable globally', value: 'Settings → General → Security → Disable Claude Code dynamic workflows' },
     ],
     proTip:
-      'Workflows can burn 1000-agent tokens fast. CCC\'s tokenomics still tracks the spend per session and the permission tray still catches any high-risk Bash a subagent tries.',
+      'Workflows can burn 1000-agent tokens fast. CCC\'s tokenomics still tracks the spend per session so you can see exactly what a run cost.',
     bullets: [
       '**Background orchestration** -- subagents run in parallel while your session stays free',
       '**Ultracode** in the effort dropdown enables it automatically for every task',

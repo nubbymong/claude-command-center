@@ -48,24 +48,6 @@ export interface LedgerRecord {
   attachmentPath?: string
 }
 
-export type PermissionTransport = 'hook' | 'mcp'
-export type TierLabel = 'channel-relay' | 'hooks' | null
-
-export interface PendingPermission {
-  requestId: string
-  sessionId: string
-  sessionLabel: string
-  identityColorKey?: string
-  provider?: string
-  tool: string
-  payloadPreview: string
-  reason?: string
-  capturedAt: number
-  transport: PermissionTransport
-  tierLabel: TierLabel
-  highRisk?: { matched: string }          // present when payload matches a destructive pattern
-}
-
 export interface RuleTrigger {
   event: string                            // CC hook kind or CCC-internal event name
   branch?: string

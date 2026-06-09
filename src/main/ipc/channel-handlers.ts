@@ -5,14 +5,10 @@ import { send, retract } from '../channel-bus'
 import { loadRules, saveRule, deleteRule } from '../channel-rules-store'
 import { loadApprovals, addApproval, removeApproval } from '../standing-approvals-store'
 import { getFeatureState, setKillSwitch, markIntroShown } from '../channel-feature-state'
-import { dismissPermission } from '../channel-permissions'
 import { getCapabilityDiagnostics, forceTier } from '../channel-capability'
-import type { LedgerRecord, PendingPermission } from '../../shared/channel-types'
+import type { LedgerRecord } from '../../shared/channel-types'
 
 // main -> renderer push helpers (broadcast to all windows)
-export function pushPendingPermissions(list: PendingPermission[]): void {
-  for (const w of BrowserWindow.getAllWindows()) w.webContents.send(IPC.CHANNELS_PENDING_PERMISSIONS, list)
-}
 export function pushAttention(sessionId: string, needsAttention: boolean): void {
   for (const w of BrowserWindow.getAllWindows()) {
     try { w.webContents.send(IPC.CHANNELS_ATTENTION, { sessionId, needsAttention }) } catch { /* destroyed */ }
@@ -31,7 +27,6 @@ export function registerChannelHandlers(): void {
     if (!p?.targetSessionId) return { ok: false, reason: 'bad request' }
     return retract(p.targetSessionId, p.targetLabel)
   })
-  ipcMain.handle(IPC.CHANNELS_DISMISS_PERMISSION, (_e, p) => dismissPermission(p))
   ipcMain.handle(IPC.CHANNELS_FORCE_TIER, (_e, p) => forceTier(p.sessionId, p.tier))
   ipcMain.handle(IPC.CHANNELS_RULE_CRUD, (_e, p) => {
     if (p.op === 'list') return loadRules()

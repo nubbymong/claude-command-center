@@ -80,6 +80,17 @@ export function withProfileHome(env: Record<string, string>, home: string | null
     npm_config_userconfig: path.join(realHome, '.npmrc'),
   }
   if (process.platform !== 'win32') next.HOME = home
+  // Claude's native install lives at `$HOME/.local/bin`. With the home redirected,
+  // CC computes that as `<home>/.local/bin` (a junction to the real ~/.local) but
+  // PATH still carries the *real* home's `.local/bin`, so `/doctor` falsely warns
+  // "Native installation ... is not in your PATH". Add the redirected bin dir
+  // (deduped, under the env's existing path key) so the self-check passes. The
+  // real entry stays first, so which `claude` actually resolves is unchanged.
+  const localBin = path.join(home, '.local', 'bin')
+  const pathKey = Object.keys(next).find((k) => k.toLowerCase() === 'path') ?? 'PATH'
+  const curPath = next[pathKey] ?? ''
+  const already = curPath.split(path.delimiter).some((p) => p.toLowerCase() === localBin.toLowerCase())
+  if (!already) next[pathKey] = curPath ? `${curPath}${path.delimiter}${localBin}` : localBin
   return next
 }
 
@@ -1141,13 +1152,11 @@ export function spawnPty(
         const appSettings = readConfig<{ disableClaudeWorkflows?: boolean }>('settings')
         const disableWorkflows = !!appSettings?.disableClaudeWorkflows
         const sesPath = writeLocalSessionSettings(sessionId, { disableWorkflows })
-        // Re-enabled in v1.5.11: the permission tray (CC P7-P9, shipped in
-        // v1.5.10) is the consumer that was missing when the original
-        // disable comment was written. injectHooks rewrites the per-session
-        // settings file to point Claude's PreToolUse hook at our local
-        // gateway, which then drives the tray. Skipped only when the
-        // gateway is down (port-bind failure, etc.) so Claude still spawns
-        // cleanly without permission interception.
+        // injectHooks rewrites the per-session settings file to point Claude's
+        // hook events at our local gateway, which drives the session attention
+        // pulse, statusline ingest, and conversation logging. Skipped only when
+        // the gateway is down (port-bind failure, etc.) so Claude still spawns
+        // cleanly.
         const gw = getGateway()
         const gwStatus = gw?.status()
         if (gw && gwStatus?.listening && gwStatus.port) {

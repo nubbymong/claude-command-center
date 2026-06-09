@@ -24,7 +24,7 @@ Conduct dozens of Claude and Codex sessions in parallel. Orchestrate up to **1,0
 
 <br/>
 
-<img src="docs/screenshots/v2-shell-hero.jpg" alt="Claude Command Center v2.0 -- multi-session shell with Opus 4.8 and the permission tray" width="100%" />
+<img src="docs/screenshots/v2-shell-hero.jpg" alt="Claude Command Center v2.0 -- multi-session shell with Opus 4.8 and dynamic workflows" width="100%" />
 
 </div>
 
@@ -43,16 +43,6 @@ Four releases of V2 work, condensed.
 New sessions land on **Opus 4.8**. The full effort ladder is in the dropdown: Low, Medium, High, **Extra high**, **Max**, and **Ultracode** &mdash; the last setting hands Claude the keys to plan dynamic workflows automatically for every substantive task in the session. A **Fast mode** checkbox surfaces the cheaper $10 / $50 per million tokens 2.5&times; speed lane.
 
 When you flip the global **Disable Claude Code dynamic workflows** toggle in Settings, CCC writes `disableWorkflows: true` into each new session&apos;s per-session Claude config. Existing sessions keep their boot-time setting; the next spawn picks it up.
-
-<br/>
-
-### Permission Attention Tray
-
-<img src="docs/screenshots/permission-tray.jpg" alt="Permission tray surfaces high-risk Bash commands as a top-right toast with Allow / Deny / Allow once buttons" width="100%" />
-
-CCC opens a local hooks gateway and rewrites the per-session Claude settings file so every `PreToolUse` event lands on the gateway before Claude executes the tool. A classifier inside CCC checks the Bash payload against destructive patterns &mdash; `rm -rf`, `sudo`, `dd if=`, `chmod 777`, `--force` / `--force-with-lease`, fork bombs &mdash; and surfaces matching prompts as toasts stacked in the top-right corner. Everything else auto-allows in microseconds so the tray stays quiet until it has something to say.
-
-It catches commands invoked from **dynamic-workflow subagents** too. The same hook fires whether the call comes from your prompt or from agent number 743 of an Opus 4.8 orchestration. Tray caps at 50 entries; overflow auto-denies so a runaway agent can&apos;t bury you in prompts.
 
 <br/>
 
@@ -151,7 +141,7 @@ Region or window capture from any screen, encoded at 1920px / JPEG 85 to stay un
 
 Claude Code is a remarkable CLI. But the moment you have more than one project, more than one account, more than one machine, the experience fragments. You lose track of which terminal is which, which sessions are paused, what they&apos;ve spent, where their attention is going. You hand-edit `~/.claude/settings.json` to tune behaviour. You guess about cost. And when Opus 4.8 spins up a thousand-subagent workflow in the background, you have no idea what it&apos;s about to do at the OS level.
 
-CCC wraps Claude Code and Codex in a desktop app that treats the session as the first-class object. Every session has a colour, a name, an account, a working directory, a saved config. Every spawn surfaces its tokens, its model, its rate-limit window, and its identity. Every high-risk command stops at the tray before Claude runs it. Every cent is captured and pivotable.
+CCC wraps Claude Code and Codex in a desktop app that treats the session as the first-class object. Every session has a colour, a name, an account, a working directory, a saved config. Every spawn surfaces its tokens, its model, its rate-limit window, and its identity. Every cent is captured and pivotable.
 
 It doesn&apos;t replace Claude Code. It conducts it.
 
@@ -208,7 +198,7 @@ npm run package:mac  # macOS DMG (Apple credentials required for signing)
 | MCP | `@modelcontextprotocol/sdk` (Conductor MCP server: vision + codex review) |
 | Tests | Vitest unit (1338) + Playwright E2E |
 
-The main process owns config persistence, the PTY pool, the hooks HTTP gateway (drives the permission tray), the tokenomics aggregator, the statusline ingest, the Conductor MCP server, and cloud-agent dispatch. The renderer is a React SPA that hydrates from disk and talks to main exclusively through typed IPC channels. SSH sessions get a per-session settings file, a per-session MCP config, and a reverse tunnel injected automatically.
+The main process owns config persistence, the PTY pool, the hooks HTTP gateway (drives the session attention pulse), the tokenomics aggregator, the statusline ingest, the Conductor MCP server, and cloud-agent dispatch. The renderer is a React SPA that hydrates from disk and talks to main exclusively through typed IPC channels. SSH sessions get a per-session settings file, a per-session MCP config, and a reverse tunnel injected automatically.
 
 ---
 
@@ -217,7 +207,7 @@ The main process owns config persistence, the PTY pool, the hooks HTTP gateway (
 | Layer | What we do |
 |:------|:-----------|
 | **Credentials** | SSH passwords, sudo passwords, and encrypted notes stored as encrypted blobs via OS keystore (DPAPI on Windows, Keychain on macOS, libsecret on Linux). Machine-bound, never plaintext. |
-| **Permissions** | High-risk Bash gates through the local hooks gateway before Claude executes. Overflow auto-denies. The PreToolUse path means a 1000-subagent workflow can&apos;t silently run `rm -rf` on you. |
+| **Permissions** | CCC honors Claude Code&apos;s own permission prompts and settings &mdash; it is not a gate and never auto-approves or intercepts tool calls on your behalf. |
 | **Telemetry** | None of our own. The Claude API goes through the Claude CLI directly. Outbound is limited to: GitHub Releases (update check), `status.claude.com` (Code/Claude.ai status pills), GitHub API (opt-in GitHub sidebar after sign-in), LiteLLM open-pricing JSON (24h cached). |
 | **Data integrity** | Atomic config writes (`.tmp` + rename). Daily snapshots of `CONFIG/*.json` to `CONFIG/_backups/YYYY-MM-DD/`, 7-day retention. Capture-script locks. Sandboxed renderer; zod-validated IPC at every boundary. |
 | **Releases** | VirusTotal scan in CI across 70+ engines on every Windows and macOS build. macOS DMG signed and notarised. |

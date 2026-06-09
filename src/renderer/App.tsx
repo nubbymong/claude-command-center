@@ -53,14 +53,9 @@ import { setupTokenomicsListener } from './stores/tokenomicsStore'
 import { setupConductorMcpListener, useConductorMcpStore } from './stores/conductorMcpStore'
 import { setupGitHubListener, useGitHubStore } from './stores/githubStore'
 import { setupChannelListeners } from './stores/channelStore'
-import PermissionToastStack from './components/channels/PermissionToastStack'
 import LoggingConsentPrompt from './components/LoggingConsentPrompt'
 import LogsWipeModal from './components/LogsWipeModal'
 import ResumeSessionsPrompt from './components/ResumeSessionsPrompt'
-// Side-effect import: registers window.__captureHarness for the
-// capture-training script. Renderer-local store mutations only, no
-// IPC surface widening (see capture-harness.ts header).
-import './utils/capture-harness'
 import { useCodexAccountStore } from './stores/codexAccountStore'
 import GitHubPanel from './components/github/GitHubPanel'
 import OnboardingModal from './components/github/onboarding/OnboardingModal'
@@ -860,7 +855,6 @@ export default function App() {
   return (
     <ErrorBoundary>
       <div className="flex flex-col h-screen bg-base text-text">
-        <PermissionToastStack />
         {logsWipeBytes !== null && logsWipeBytes > 0 && (
           <LogsWipeModal totalBytes={logsWipeBytes} onComplete={() => setLogsWipeBytes(0)} />
         )}

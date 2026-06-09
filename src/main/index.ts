@@ -43,7 +43,6 @@ import { registerCodexHandlers } from './ipc/codex-handlers'
 import { registerCodexReviewHandlers } from './ipc/codex-review-handlers'
 import { registerChannelHandlers } from './ipc/channel-handlers'
 import { startRulesEngine } from './channel-rules'
-import { startPermissionTray } from './channel-permissions'
 import { startEffortTracker } from './effort-tracker'
 import { startAttentionSource } from './attention-source'
 import { startJankDetector } from './jank-detector'
@@ -779,7 +778,6 @@ if (!gotTheLock) {
     // the request/response handlers resolve the supervisor lazily per call and
     // reject cleanly when logging is disabled.
     registerLogs2Handlers(getWindow)
-    startPermissionTray()
     startEffortTracker()
     startAttentionSource()
     startJankDetector()

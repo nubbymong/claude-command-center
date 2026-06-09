@@ -226,16 +226,6 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
                   Disable Claude Code dynamic workflows
                   <span className="text-[10px] text-overlay0">(applies to new sessions; CC fans out up to 1000 subagents per workflow)</span>
                 </label>
-                <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={settings.permissionTrayEnabled !== false}
-                    onChange={(e) => save({ permissionTrayEnabled: e.target.checked })}
-                    className="rounded border-surface1"
-                  />
-                  Show permission tray
-                  <span className="text-[10px] text-overlay0">(surfaces only prompts Claude is blocked on)</span>
-                </label>
                 <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer">
                   <input
                     type="checkbox"

@@ -242,14 +242,12 @@ export interface ElectronAPI {
   channels: {
     send: (req: unknown) => Promise<unknown>
     retract: (p: unknown) => Promise<unknown>
-    dismissPermission: (p: unknown) => Promise<unknown>
     forceTier: (p: unknown) => Promise<unknown>
     ruleCRUD: (p: unknown) => Promise<unknown>
     standingApprovalCRUD: (p: unknown) => Promise<unknown>
     capabilityDiagnostics: () => Promise<unknown>
     introDismissed: () => Promise<unknown>
     killSwitch: (p: unknown) => Promise<unknown>
-    onPendingPermissions: (cb: (list: unknown) => void) => () => void
     onLedgerEvent: (cb: (r: unknown) => void) => () => void
     rendererReady: () => Promise<unknown>
     onAttention: (cb: (p: { sessionId: string; needsAttention: boolean }) => void) => () => void
@@ -888,18 +886,12 @@ const electronAPI: ElectronAPI = {
   channels: {
     send: (req: unknown) => ipcRenderer.invoke(IPC.CHANNELS_SEND, req),
     retract: (p: unknown) => ipcRenderer.invoke(IPC.CHANNELS_RETRACT, p),
-    dismissPermission: (p: unknown) => ipcRenderer.invoke(IPC.CHANNELS_DISMISS_PERMISSION, p),
     forceTier: (p: unknown) => ipcRenderer.invoke(IPC.CHANNELS_FORCE_TIER, p),
     ruleCRUD: (p: unknown) => ipcRenderer.invoke(IPC.CHANNELS_RULE_CRUD, p),
     standingApprovalCRUD: (p: unknown) => ipcRenderer.invoke(IPC.CHANNELS_STANDING_APPROVAL_CRUD, p),
     capabilityDiagnostics: () => ipcRenderer.invoke(IPC.CHANNELS_CAPABILITY_DIAGNOSTICS),
     introDismissed: () => ipcRenderer.invoke(IPC.CHANNELS_INTRO_DISMISSED),
     killSwitch: (p: unknown) => ipcRenderer.invoke(IPC.CHANNELS_KILL_SWITCH, p),
-    onPendingPermissions: (cb: (list: unknown) => void) => {
-      const fn = (_e: unknown, list: unknown) => cb(list)
-      ipcRenderer.on(IPC.CHANNELS_PENDING_PERMISSIONS, fn)
-      return () => ipcRenderer.removeListener(IPC.CHANNELS_PENDING_PERMISSIONS, fn)
-    },
     onLedgerEvent: (cb: (r: unknown) => void) => {
       const fn = (_e: unknown, r: unknown) => cb(r)
       ipcRenderer.on(IPC.CHANNELS_LEDGER_EVENT, fn)

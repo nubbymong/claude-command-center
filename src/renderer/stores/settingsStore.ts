@@ -98,9 +98,6 @@ export interface AppSettings {
    *  only -- in-flight sessions keep whatever setting they started with.
    *  Off by default; CC's own /config toggle still wins per-session. */
   disableClaudeWorkflows?: boolean
-  /** v1.5.17: show the genuine-only permission tray (cards for prompts Claude is
-   *  blocked on). Default on; set false to hide the tray and skip capture. */
-  permissionTrayEnabled?: boolean
   /** v1.5.31: record each session's terminal output locally for search and
    *  review. Logs never leave the machine. Default on; set false to disable
    *  capture. The main process capture gate reads this key from the shared
@@ -149,7 +146,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   hooksEnabled: true,
   hooksPort: 19334,
   theme: 'dark',
-  permissionTrayEnabled: true,
   loggingEnabled: true,
   classicTerminalCopyPaste: true,
 }
