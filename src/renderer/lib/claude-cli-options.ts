@@ -14,6 +14,7 @@ export interface OptionItem {
 export const MODELS: OptionItem[] = [
   { label: 'Opus', value: 'opus', hint: 'Latest Opus (200k context)' },
   { label: 'Opus 1M', value: 'opus[1m]', hint: 'Latest Opus (1M context)' },
+  { label: 'Fable 5', value: 'fable', hint: 'Most capable · ~2x faster than Opus' },
   { label: 'Sonnet', value: 'sonnet', hint: 'Latest Sonnet' },
   { label: 'Haiku', value: 'haiku', hint: 'Latest Haiku' },
 ]
@@ -24,7 +25,7 @@ export const EFFORTS: OptionItem[] = [
   { label: 'High', value: 'high' },
   { label: 'Extra high', value: 'xhigh' },
   { label: 'Max', value: 'max' },
-  { label: 'Ultracode', value: 'ultracode', hint: 'xhigh + automatic dynamic workflows (Opus 4.8)' },
+  { label: 'Ultracode', value: 'ultracode', hint: 'xhigh + automatic dynamic workflows (Opus 4.8 / Fable 5)' },
 ]
 
 export const PERMISSION_MODES: OptionItem[] = [
@@ -53,14 +54,15 @@ export function shortModelName(name?: string): string {
   if (/^[A-Z]/.test(name)) return name
 
   const lower = name.toLowerCase()
-  const familyMatch = lower.match(/(opus|sonnet|haiku)/)
+  const familyMatch = lower.match(/(opus|sonnet|haiku|fable)/)
   if (!familyMatch) {
     return name.replace(/^claude-/, '').replace(/-/g, ' ')
   }
   const family = familyMatch[1]
   const familyCap = family.charAt(0).toUpperCase() + family.slice(1)
-  const versionMatch = lower.match(/-(\d+)-(\d+)/)
-  const version = versionMatch ? `${versionMatch[1]}.${versionMatch[2]}` : ''
+  // Two-part versions (opus-4-8 -> "4.8") and single-part families (fable-5 -> "5").
+  const versionMatch = lower.match(/-(\d+)(?:-(\d+))?/)
+  const version = versionMatch ? (versionMatch[2] ? `${versionMatch[1]}.${versionMatch[2]}` : versionMatch[1]) : ''
   const contextHint = /\[1m\]|1m context/i.test(lower) ? '1M' : ''
   return [familyCap, version, contextHint].filter(Boolean).join(' ')
 }
@@ -80,5 +82,6 @@ export function isModelActive(optionValue: string, activeModel: string): boolean
   }
   if (optionValue === 'sonnet') return active.includes('sonnet')
   if (optionValue === 'haiku') return active.includes('haiku')
+  if (optionValue === 'fable') return active.includes('fable')
   return false
 }

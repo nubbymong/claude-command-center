@@ -190,7 +190,7 @@ export interface StatuslineData {
 
 // ── Agent Templates ──
 
-export type AgentModelOverride = 'sonnet' | 'opus' | 'haiku' | 'inherit'
+export type AgentModelOverride = 'fable' | 'sonnet' | 'opus' | 'haiku' | 'inherit'
 
 export interface AgentTemplate {
   id: string

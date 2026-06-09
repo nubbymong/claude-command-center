@@ -14,6 +14,7 @@ import { useAppMetaStore } from '../stores/appMetaStore'
 // ONLY, desaturated via --chart-opus so it does not dominate; never a status.
 export function getModelColor(model: string): string {
   const m = model.toLowerCase()
+  if (m.includes('fable')) return 'var(--chart-fable)'
   if (m.includes('opus')) return 'var(--chart-opus)'
   if (m.includes('sonnet')) return 'var(--chart-sonnet)'
   if (m.startsWith('gpt-') || m.includes('codex') || m.startsWith('o')) return 'var(--chart-codex)'
@@ -34,7 +35,7 @@ export function getModelColor(model: string): string {
  * every Claude variant to "claude" and lost Sonnet/Opus/Haiku categorization.
  */
 export function getModelShort(model: string): string {
-  const family = model.match(/sonnet|opus|haiku/i)
+  const family = model.match(/sonnet|opus|haiku|fable/i)
   if (family) return family[0].toLowerCase()
   if (model.startsWith('gpt-')) return model.slice(4)
   return model

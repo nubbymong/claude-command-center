@@ -43,6 +43,10 @@ const FALLBACK_PRICING: Record<string, ModelPricing> = {
   // `<model>-fast` pricing row exists for the 2.5x-speed/2x-cost variant and
   // is keyed by model name when reported by the CLI; there is no per-session
   // toggle that selects it.
+  // Fable 5 (2026-06): flagship tier above Opus, ~2x faster. $10/$50 per 1M
+  // (same headline as the Opus -fast variant); cacheRead/Write at the standard
+  // 0.1x / 1.25x of input. LiteLLM live pricing still wins when reachable.
+  'claude-fable-5': { input: 10, output: 50, cacheRead: 1.0, cacheWrite: 12.5 },
   'claude-opus-4-8': { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
   'claude-opus-4-8-fast': { input: 10, output: 50, cacheRead: 1.0, cacheWrite: 12.5 },
   'claude-opus-4-7': { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
