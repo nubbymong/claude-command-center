@@ -925,6 +925,9 @@ export function spawnPty(
     // bare shell + env comes from the provider.
     const shellOnly = options?.shellOnly
     const provider = getProvider('claude')
+    // Read classicTerminalCopyPaste fresh on every spawn (default true when absent).
+    const claudeSpawnSettings = readConfig<{ classicTerminalCopyPaste?: boolean }>('settings')
+    const classicTerminalCopyPaste = claudeSpawnSettings?.classicTerminalCopyPaste !== false
     const { cmd: spawnCmd, args: spawnArgs, env: spawnEnv } = provider.buildSpawnCommand({
       sessionId,
       cwd: options?.cwd,
@@ -938,6 +941,7 @@ export function spawnPty(
       model: options?.model,
       useResumePicker: options?.useResumePicker,
       agentsConfig: options?.agentsConfig,
+      classicTerminalCopyPaste,
     })
     const wantProfileId = options?.profileId
     if (wantProfileId && fs.existsSync(getProfileConfigDir(wantProfileId))) {

@@ -13,12 +13,20 @@ export function isControlReportOnly(data: string): boolean {
 
 // Decides what a right-click contextmenu event should do in a terminal.
 //
-// With CC's copy-on-select enabled, text selection is already copied the
-// moment the user releases the mouse. Right-click must therefore ALWAYS
-// paste — re-copying the selection on right-click would overwrite whatever
-// the user actually wanted to paste with text they already have. The
-// _hasSelection parameter is intentionally ignored; it is kept in the
-// signature to make the locked intent explicit and unit-testable.
-export function decideContextMenuAction(_hasSelection: boolean): 'paste' {
+// classicMode (classicTerminalCopyPaste === true, the default):
+//   CC's mouse tracking is disabled (CLAUDE_CODE_DISABLE_MOUSE=1), so xterm
+//   owns the mouse and copy-on-select is OFF. Right-click should therefore:
+//     - COPY  when text is selected (the user just selected something to copy)
+//     - PASTE when nothing is selected (the user wants to paste from clipboard)
+//
+// non-classic mode (classicTerminalCopyPaste === false):
+//   CC's copy-on-select is active — text is already copied the moment the
+//   mouse button is released. Right-click must therefore ALWAYS paste;
+//   re-copying on right-click would overwrite whatever the user wanted to
+//   paste with text they already have.
+export function decideContextMenuAction(hasSelection: boolean, classicMode: boolean): 'copy' | 'paste' {
+  if (classicMode) {
+    return hasSelection ? 'copy' : 'paste'
+  }
   return 'paste'
 }

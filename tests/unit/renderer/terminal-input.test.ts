@@ -27,13 +27,23 @@ describe('isControlReportOnly', () => {
 })
 
 describe('decideContextMenuAction', () => {
-  // Right-click must ALWAYS paste, never copy.
-  // CC's copy-on-select already copies selected text on mouse-up;
-  // re-copying on right-click would clobber the intended paste target.
-  it('returns paste when there is no selection', () => {
-    expect(decideContextMenuAction(false)).toBe('paste')
+  describe('classic mode (classicTerminalCopyPaste: true)', () => {
+    it('returns copy when text is selected', () => {
+      expect(decideContextMenuAction(true, true)).toBe('copy')
+    })
+    it('returns paste when nothing is selected', () => {
+      expect(decideContextMenuAction(false, true)).toBe('paste')
+    })
   })
-  it('returns paste even when text is selected', () => {
-    expect(decideContextMenuAction(true)).toBe('paste')
+
+  describe('non-classic mode (CC mouse on / copy-on-select active)', () => {
+    // CC already copies on mouse-up; right-click must always paste regardless
+    // of selection state so it never overwrites the intended paste target.
+    it('returns paste when nothing is selected', () => {
+      expect(decideContextMenuAction(false, false)).toBe('paste')
+    })
+    it('returns paste even when text is selected', () => {
+      expect(decideContextMenuAction(true, false)).toBe('paste')
+    })
   })
 })

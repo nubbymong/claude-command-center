@@ -115,6 +115,14 @@ export interface AppSettings {
   legacyLogsMigrated?: boolean
   /** True once the one-time "legacy logs detected" surfacing has been shown. */
   legacyLogsSurfacingSeen?: boolean
+  /** v1.5.32: when true (or absent = default), CLAUDE_CODE_DISABLE_MOUSE=1 is set
+   *  in the Claude spawn env so xterm owns the mouse and classic terminal selection
+   *  + right-click copy/paste work. Right-click copies selected text or pastes when
+   *  nothing is selected. Trade-off: CC's click-to-expand / click-to-position /
+   *  scroll-inside-Claude are disabled; xterm scrollback + native selection take over.
+   *  Set false to restore CC's mouse mode (copy-on-select active; right-click pastes).
+   *  Changes apply to newly-launched sessions only. */
+  classicTerminalCopyPaste?: boolean
 }
 
 interface SettingsState {
@@ -143,6 +151,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   theme: 'dark',
   permissionTrayEnabled: true,
   loggingEnabled: true,
+  classicTerminalCopyPaste: true,
 }
 
 // V2 changed the bundled terminal default from Cascadia Code @14 to JetBrains

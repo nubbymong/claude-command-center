@@ -326,6 +326,18 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
                     label="Cursor Blink"
                   />
                 </Field>
+                <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer mt-2">
+                  <input
+                    type="checkbox"
+                    checked={settings.classicTerminalCopyPaste !== false}
+                    onChange={(e) => save({ classicTerminalCopyPaste: e.target.checked })}
+                    className="mt-0.5 rounded border-surface1"
+                  />
+                  <span>
+                    Classic terminal copy/paste
+                    <span className="block text-[10px] text-overlay0">Disables Claude&apos;s mouse mode so selection + right-click copy/paste work the classic way: select text then right-click to copy; right-click with nothing selected to paste. Trade-off: you lose Claude&apos;s click-to-expand and scroll-inside-Claude; xterm scrollback + native selection take over. Changes apply to newly-launched sessions.</span>
+                  </span>
+                </label>
                 <p className="text-[11px] text-overlay0 mt-2 leading-relaxed">
                   Terminal settings apply to new terminals. Restart sessions for changes to take effect.
                 </p>

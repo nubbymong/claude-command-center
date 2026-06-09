@@ -56,6 +56,14 @@ export function buildClaudeLocalSpawn(opts: SpawnOptions): { cmd: string; args: 
     return { cmd: shell, args: [], env }
   }
 
+  // Claude session: disable CC's mouse mode when classic copy/paste is on (default true).
+  // This lets xterm own the mouse → classic text selection + right-click copy/paste work
+  // the standard terminal way. When the user opts out (classicTerminalCopyPaste === false),
+  // CC's mouse tracking is restored and copy-on-select becomes active again.
+  if (opts.classicTerminalCopyPaste !== false) {
+    env.CLAUDE_CODE_DISABLE_MOUSE = '1'
+  }
+
   // Claude session: spawn shell only; pty-manager writes the cd+claude command into the shell post-spawn.
   return { cmd: shell, args: [], env }
 }

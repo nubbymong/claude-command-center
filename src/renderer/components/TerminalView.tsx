@@ -624,19 +624,34 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       }
       document.addEventListener('keydown', handleKeyDownCopy)
 
-      // Right-click: ALWAYS paste from clipboard.
-      // CC's copy-on-select already copies selected text the moment the
-      // mouse button is released, so right-click must never re-copy —
-      // that would overwrite the clipboard with the selection instead of
-      // pasting what the user intended. decideContextMenuAction encodes
-      // and unit-tests this invariant (selection state is intentionally
-      // ignored). Route through xterm's paste() so bracketed-paste mode
-      // is respected (\x1b[200~...\x1b[201~ wrapping).
+      // Right-click: context-aware copy or paste depending on mode.
+      //
+      // Classic mode (classicTerminalCopyPaste, the default): CC's mouse
+      // tracking is disabled so xterm owns selection. Right-click copies
+      // the current selection when text is selected, or pastes from the
+      // clipboard when nothing is selected. Route paste through xterm's
+      // paste() so bracketed-paste mode (\x1b[200~...\x1b[201~) is respected.
+      //
+      // Non-classic mode: CC's copy-on-select already copied text on
+      // mouse-up, so right-click always pastes (never re-copies).
       handleContextMenu = async (e: MouseEvent) => {
         e.preventDefault()
         e.stopPropagation()
-        const action = decideContextMenuAction(!!term?.getSelection())
-        if (action !== 'paste') return
+        const classicMode = useSettingsStore.getState().settings.classicTerminalCopyPaste !== false
+        const action = decideContextMenuAction(!!term?.getSelection(), classicMode)
+        if (action === 'copy') {
+          const sel = term?.getSelection()
+          if (sel) {
+            try {
+              await navigator.clipboard.writeText(sel)
+              term?.clearSelection()
+            } catch {
+              // clipboard write denied (insecure context / not focused)
+            }
+          }
+          return
+        }
+        // action === 'paste'
         try {
           const text = await navigator.clipboard.readText()
           if (!text) return
