@@ -1,6 +1,16 @@
 import Database from 'better-sqlite3'
 import type { TkEvent } from './tk-types'
 
+function dayOf(ts: number): string {
+  const d = new Date(ts)
+  const y = d.getFullYear(); const m = String(d.getMonth() + 1).padStart(2, '0'); const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+function bucketOf(ts: number): number {
+  const d = new Date(ts)
+  return d.getDay() * 24 + d.getHours()
+}
+
 const DDL = `
 PRAGMA journal_mode=WAL;
 PRAGMA synchronous=NORMAL;
@@ -124,6 +134,64 @@ export function openTkDb(dbPath: string): TkDb {
     ON CONFLICT(path) DO UPDATE SET size=excluded.size,mtime=excluded.mtime,lastOffset=excluded.lastOffset,lastIngestedAt=excluded.lastIngestedAt`)
   const countStmt = sqlite.prepare('SELECT COUNT(*) AS n FROM tk_events')
 
+  const insEvent = sqlite.prepare(`INSERT OR IGNORE INTO tk_events
+    (dedupKey,sessionId,provider,model,priceModel,ts,day,configId,projectDir,inTok,outTok,cacheReadTok,cacheCreateTok)
+    VALUES (@dedupKey,@sessionId,@provider,@model,@priceModel,@ts,@day,@configId,@projectDir,@inTok,@outTok,@cacheReadTok,@cacheCreateTok)`)
+
+  const upDaily = sqlite.prepare(`INSERT INTO tk_daily(day,model,priceModel,provider,configId,inTok,outTok,cacheReadTok,cacheCreateTok,msgCount)
+    VALUES(@day,@model,@priceModel,@provider,@configId,@inTok,@outTok,@cacheReadTok,@cacheCreateTok,1)
+    ON CONFLICT(day,model,provider,configId) DO UPDATE SET
+      inTok=inTok+excluded.inTok, outTok=outTok+excluded.outTok,
+      cacheReadTok=cacheReadTok+excluded.cacheReadTok, cacheCreateTok=cacheCreateTok+excluded.cacheCreateTok,
+      msgCount=msgCount+1`)
+
+  const upSessionModel = sqlite.prepare(`INSERT INTO tk_session_models(sessionId,model,priceModel,inTok,outTok,cacheReadTok,cacheCreateTok,msgCount)
+    VALUES(@sessionId,@model,@priceModel,@inTok,@outTok,@cacheReadTok,@cacheCreateTok,1)
+    ON CONFLICT(sessionId,model) DO UPDATE SET
+      inTok=inTok+excluded.inTok, outTok=outTok+excluded.outTok,
+      cacheReadTok=cacheReadTok+excluded.cacheReadTok, cacheCreateTok=cacheCreateTok+excluded.cacheCreateTok,
+      msgCount=msgCount+1`)
+
+  const upHeat = sqlite.prepare(`INSERT INTO tk_heatmap(bucket,model,priceModel,configId,inTok,outTok,cacheReadTok,cacheCreateTok)
+    VALUES(@bucket,@model,@priceModel,@configId,@inTok,@outTok,@cacheReadTok,@cacheCreateTok)
+    ON CONFLICT(bucket,model,configId) DO UPDATE SET
+      inTok=inTok+excluded.inTok, outTok=outTok+excluded.outTok,
+      cacheReadTok=cacheReadTok+excluded.cacheReadTok, cacheCreateTok=cacheCreateTok+excluded.cacheCreateTok`)
+
+  const upSession = sqlite.prepare(`INSERT INTO tk_sessions(sessionId,provider,configId,projectDir,firstTs,lastTs,lastModel,inTok,outTok,cacheReadTok,cacheCreateTok,msgCount)
+    VALUES(@sessionId,@provider,@configId,@projectDir,@ts,@ts,@model,@inTok,@outTok,@cacheReadTok,@cacheCreateTok,1)
+    ON CONFLICT(sessionId) DO UPDATE SET
+      inTok=inTok+excluded.inTok, outTok=outTok+excluded.outTok,
+      cacheReadTok=cacheReadTok+excluded.cacheReadTok, cacheCreateTok=cacheCreateTok+excluded.cacheCreateTok,
+      msgCount=msgCount+1,
+      firstTs=MIN(firstTs, excluded.firstTs),
+      lastTs=MAX(lastTs, excluded.lastTs),
+      lastModel=CASE WHEN excluded.lastTs >= lastTs THEN excluded.lastModel ELSE lastModel END,
+      configId=CASE WHEN tk_sessions.configId='' THEN excluded.configId ELSE tk_sessions.configId END,
+      projectDir=CASE WHEN tk_sessions.projectDir='' THEN excluded.projectDir ELSE tk_sessions.projectDir END`)
+
+  const upConfig = sqlite.prepare(`INSERT INTO tk_configs(configId,label,workingDirectory) VALUES(@configId,@label,@workingDirectory)
+    ON CONFLICT(configId) DO UPDATE SET label=excluded.label, workingDirectory=excluded.workingDirectory`)
+  const getCwd = sqlite.prepare('SELECT projectDir FROM tk_sessions WHERE sessionId = ?')
+
+  const insertEventsTxn = sqlite.transaction((events: Array<TkEvent & { configId?: string | null }>) => {
+    let inserted = 0
+    for (const e of events) {
+      // '' = no-config sentinel (see KEY DESIGN). MUST be non-NULL for rollup PK aggregation.
+      const configId = e.configId ?? ''
+      const day = dayOf(e.ts)
+      const bucket = bucketOf(e.ts)
+      const info = insEvent.run({ ...e, day, configId, projectDir: e.cwd })
+      if (info.changes === 0) continue   // dedup hit -> do NOT touch rollups
+      inserted++
+      upSession.run({ ...e, configId, projectDir: e.cwd })
+      upSessionModel.run(e)
+      upDaily.run({ ...e, day, configId })
+      upHeat.run({ ...e, bucket, configId })
+    }
+    return inserted
+  })
+
   return {
     raw: sqlite,
     getMeta: (key) => (getMetaStmt.get(key) as { value: string } | undefined)?.value ?? null,
@@ -131,9 +199,9 @@ export function openTkDb(dbPath: string): TkDb {
     getFileCursor: (path) => (getCursorStmt.get(path) as TkFileCursor | undefined) ?? null,
     setFileCursor: (c) => { setCursorStmt.run(c) },
     eventCount: () => (countStmt.get() as { n: number }).n,
-    insertEvents: () => { throw new Error('implemented in Task 6') },
-    upsertConfigs: () => { throw new Error('implemented in Task 6') },
-    getSessionCwd: () => { throw new Error('implemented in Task 6') },
+    insertEvents: (events) => insertEventsTxn(events as any),
+    upsertConfigs: (configs) => { const txn = sqlite.transaction((cs: any[]) => { for (const c of cs) upConfig.run(c) }); txn(configs) },
+    getSessionCwd: (sessionId) => { const r = getCwd.get(sessionId) as { projectDir: string } | undefined; return r?.projectDir || null },
     checkpoint: () => { sqlite.pragma('wal_checkpoint(TRUNCATE)') },
     close: () => { sqlite.close() },
   }
