@@ -13,6 +13,10 @@ export function priceForModel(model: string): ModelPricing | null {
   return pricing[model] ?? null
 }
 
+export function codexPricingKeys(): string[] {
+  return Object.keys(pricing)
+}
+
 export function computeCodexCostUsd(
   model: string,
   tokens: { inputTokens: number; cachedInputTokens: number; outputTokens: number; reasoningOutputTokens: number },
