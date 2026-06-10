@@ -15,7 +15,9 @@ export default defineConfig({
           index: resolve(__dirname, 'src/main/index.ts'),
           'hooks-host': resolve(__dirname, 'src/main/services/hooks-host.ts'),
           // Logs v2 transcript-indexing worker (forked by fork-transcripts-worker.ts).
-          'transcripts-worker': resolve(__dirname, 'src/main/logging/transcripts-worker.ts')
+          'transcripts-worker': resolve(__dirname, 'src/main/logging/transcripts-worker.ts'),
+          // Tokenomics rebuild: better-sqlite3 indexing worker (forked by fork-tokenomics-worker.ts).
+          'tokenomics-worker': resolve(__dirname, 'src/main/tokenomics/tokenomics-worker.ts')
         }
       }
     }

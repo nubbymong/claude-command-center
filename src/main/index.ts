@@ -33,8 +33,8 @@ import { registerCloudAgentHandlers } from './ipc/cloud-agent-handlers'
 import { registerTeamHandlers } from './ipc/team-handlers'
 import { registerLegacyVersionHandlers } from './ipc/legacy-version-handlers'
 import { registerMemoryHandlers } from './ipc/memory-handlers'
-import { registerTokenomicsHandlers } from './ipc/tokenomics-handlers'
-import { registerAccountAttributionHandlers } from './ipc/account-attribution-handlers'
+import { initTokenomics, shutdownTokenomics } from './tokenomics/tokenomics-service'
+import { registerTokenomics2Handlers } from './ipc/tokenomics2-handlers'
 import { registerGitHubHandlers } from './ipc/github-handlers'
 import { registerHooksHandlers } from './ipc/hooks-handlers'
 import { registerServiceHealthHandlers, getMergedDiagnostics } from './ipc/service-health-handlers'
@@ -55,7 +55,7 @@ import { initLogging, shutdownLogging, getTranscriptBinder } from './logging/log
 import { detectOldLogArtifacts, executeWipe } from './logging/logs-wipe'
 import { cleanupStaleHookEntries } from './hooks/boot-cleanup'
 import { DEFAULT_HOOKS_PORT } from './hooks/hooks-types'
-import { fetchModelPricing } from './tokenomics-manager'
+import { fetchModelPricing } from './tokenomics/tk-pricing'
 import { killAllAgents } from './cloud-agent-manager'
 import { startServiceStatusPoller, stopServiceStatusPoller, getLastServiceStatus } from './service-status'
 import { initUpdateWatcher, stopUpdateWatcher, getProjectRootPath, isPackagedApp } from './update-watcher'
@@ -699,8 +699,6 @@ if (!gotTheLock) {
     registerCloudAgentHandlers(getWindow)
     registerTeamHandlers(getWindow)
     registerLegacyVersionHandlers(getWindow)
-    registerTokenomicsHandlers(getWindow)
-    registerAccountAttributionHandlers()
     registerMemoryHandlers()
     // GitHub sidebar — reads/writes github-config.json + encrypted auth profiles
     // under the CONFIG dir alongside other app config. Session-level integration
@@ -778,6 +776,13 @@ if (!gotTheLock) {
     // the request/response handlers resolve the supervisor lazily per call and
     // reject cleanly when logging is disabled.
     registerLogs2Handlers(getWindow)
+    // Tokenomics rebuild: start the better-sqlite3 indexing worker supervisor
+    // (forked; native dep lives ONLY in the worker — this stays main-clean) and
+    // register the new read-surface handlers. The worker ingests from raw
+    // transcripts on its own timer/fs-watch — the statusline tick no longer
+    // feeds tokenomics (that path drove the ~30s UI freeze).
+    try { initTokenomics({ emit: emitWithMerge }) } catch (err) { logError(`[tokenomics] init failed: ${(err as Error)?.message ?? err}`) }
+    registerTokenomics2Handlers(getWindow)
     startEffortTracker()
     startAttentionSource()
     startJankDetector()
@@ -862,6 +867,8 @@ if (!gotTheLock) {
     // Flush + tear down session logging BEFORE killAllPty so a final batch is
     // written and the worker shuts down cleanly. No-op when never init / disabled.
     try { shutdownLogging() } catch { /* never init / disabled */ }
+    // Tear down the tokenomics indexing worker. No-op when never init.
+    try { shutdownTokenomics() } catch { /* never init */ }
     stopServiceStatusPoller()
     stopUpdateWatcher()
     stopUpdateServer()

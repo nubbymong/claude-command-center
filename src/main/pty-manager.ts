@@ -19,7 +19,7 @@ import { isSshCapable } from './providers/types'
 import type { TelemetrySource } from './providers/types'
 import { resolveCwd } from './path-utils'
 import { dispatchSSHStatuslineUpdate } from './statusline-watcher'
-import { handleStatuslineUpdate, decorateStatuslineWithColour } from './tokenomics-manager'
+import { decorateStatuslineWithColour } from './account-color'
 import { getGateway } from './hooks'
 import { injectHooks } from './hooks/session-hooks-writer'
 import {
@@ -910,8 +910,9 @@ export function spawnPty(
         win.webContents.send(`pty:data:${sessionId}`, data)
       })
       // Start rollout watch-and-claim telemetry. Updates are dispatched to the
-      // renderer (statusline:update) and tokenomics-manager identically to how
-      // Claude statusline updates flow through statusline-watcher.ts.
+      // renderer (statusline:update) identically to how Claude statusline
+      // updates flow through statusline-watcher.ts. (Tokenomics is no longer fed
+      // from telemetry ticks — the indexing worker reads raw transcripts.)
       const codexTelSrc = provider.ingestSessionTelemetry(
         sessionId,
         { cwd: resolvedCwd, spawnTimestamp: codexSpawnTimestamp },
@@ -920,9 +921,11 @@ export function spawnPty(
           // the renderer receives accountColour. decorateStatuslineWithColour
           // is a no-op when the payload carries no accountEmail (Codex
           // telemetry currently does not), so this is safe + future-proof.
+          // Tokenomics no longer ingests from telemetry ticks (the worker
+          // indexes raw transcripts on its own timer); only the renderer send
+          // remains.
           const decorated = decorateStatuslineWithColour(data)
           if (!win.isDestroyed()) win.webContents.send('statusline:update', decorated)
-          handleStatuslineUpdate(decorated)
         },
       )
       codexTelemetrySources.set(sessionId, codexTelSrc)

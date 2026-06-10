@@ -9,9 +9,10 @@
  * 2. startStatuslineWatcher() runs an fs.watch + poll-fallback over that
  *    directory and on each change:
  *      a. sends `statusline:update` to the renderer
- *      b. feeds tokenomics-manager
- *      c. fans out to per-session subscribers registered via the Claude
+ *      b. fans out to per-session subscribers registered via the Claude
  *         provider's ingestSessionTelemetry()
+ *    (Tokenomics no longer ingests here — the indexing worker reads raw
+ *    transcripts on its own timer/fs-watch.)
  *
  * SSH sessions can't write status files locally, so a remote shim emits OSC
  * sentinels through the PTY stream (see pty-manager.ts:extractSshOscSentinels).
@@ -28,7 +29,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 
 import { getResourcesDirectory } from './ipc/setup-handlers'
-import { handleStatuslineUpdate, decorateStatuslineWithColour } from './tokenomics-manager'
+import { decorateStatuslineWithColour } from './account-color'
 import { notifyClaudeTelemetry } from './providers/claude/telemetry'
 
 // Re-export from shared types for backward compatibility
@@ -65,14 +66,17 @@ export function setTranscriptPathSink(sink: (sessionId: string, path: string) =>
 
 /**
  * Common fan-out for any parsed StatuslineData payload — used by both the
- * file watcher and the SSH OSC sentinel dispatch path. Sends to the renderer,
- * tokenomics, and per-session telemetry subscribers.
+ * file watcher and the SSH OSC sentinel dispatch path. Sends to the renderer
+ * and per-session telemetry subscribers.
+ *
+ * Tokenomics no longer ingests from the statusline tick (the old
+ * tokenomics-manager.handleStatuslineUpdate ran a full ~37k-session aggregate
+ * rebuild on EVERY tick — the ~30s UI freeze). The tokenomics worker now
+ * indexes from raw transcripts on its own fs-watch/timer.
  */
 function fanOutStatusline(data: StatuslineData, getWindow: (() => BrowserWindow | null) | null): void {
   // Copilot review on PR #31 (p9.17): decorate with accountColour HERE,
-  // at the renderer-send site. The previous code decorated only inside
-  // handleStatuslineUpdate (on a local copy), so the renderer received
-  // the raw payload and the ContextBar never saw accountColour. Decorate
+  // at the renderer-send site, so the ContextBar sees accountColour. Decorate
   // once and forward the enriched object to every consumer.
   const decorated = decorateStatuslineWithColour(data)
   if (getWindow) {
@@ -81,7 +85,6 @@ function fanOutStatusline(data: StatuslineData, getWindow: (() => BrowserWindow 
       win.webContents.send('statusline:update', decorated)
     }
   }
-  handleStatuslineUpdate(decorated)
   notifyClaudeTelemetry(decorated)
   // Logs v2 (Task 8): forward the live transcript path to the binder (continuous,
   // exact discovery source). Guarded — the sink may not be registered yet (and
