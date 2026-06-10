@@ -57,4 +57,21 @@ describe('tk-db querySummary', () => {
     expect(typeof s.kpis.last7dCostUsd).toBe('number')
     expect(typeof s.kpis.prev7dCostUsd).toBe('number')
   })
+
+  it('counts sessions PER config (not the grand total on one arbitrary config)', () => {
+    const db = openTkDb(':memory:')
+    db.upsertConfigs([
+      { configId: 'a', label: 'App', workingDirectory: 'F:\\proj' },
+      { configId: 'b', label: 'Other', workingDirectory: 'F:\\o' },
+    ])
+    db.insertEvents([
+      ev({ dedupKey: 'c:1:1', sessionId: 's1', configId: 'a' }),
+      ev({ dedupKey: 'c:2:2', sessionId: 's2', configId: 'b', cwd: 'F:\\o' }),
+      ev({ dedupKey: 'c:3:3', sessionId: 's3', configId: 'b', cwd: 'F:\\o' }),
+    ])
+    const s = db.querySummary(PRICING, {})
+    const byId = Object.fromEntries(s.costByConfig.map((c) => [c.configId, c.sessions]))
+    expect(byId['a']).toBe(1)
+    expect(byId['b']).toBe(2)
+  })
 })

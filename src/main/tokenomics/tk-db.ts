@@ -270,7 +270,7 @@ export function openTkDb(dbPath: string): TkDb {
       const cbcRaw = sqlite.prepare(`WITH ${cte} SELECT d.configId AS configId, SUM(${COST('d')}) AS costUsd FROM ${dailyJoin} WHERE 1=1 ${frag('d','model',true)} GROUP BY d.configId`).all(binds) as any[]
 
       // Sessions count per config (config+model scope only; lastModel is the model col)
-      const sessCounts = sqlite.prepare(`SELECT configId, COUNT(*) AS sessions FROM tk_sessions s WHERE 1=1 ${frag('s','lastModel',false)}`).all(binds) as any[]
+      const sessCounts = sqlite.prepare(`SELECT configId, COUNT(*) AS sessions FROM tk_sessions s WHERE 1=1 ${frag('s','lastModel',false)} GROUP BY configId`).all(binds) as any[]
 
       // Heatmap (config+model scope; no range — heatmap has no day col)
       const heat = sqlite.prepare(`SELECT bucket, SUM(inTok+outTok+cacheReadTok+cacheCreateTok) AS tokens FROM tk_heatmap h WHERE 1=1 ${frag('h','model',false)} GROUP BY bucket`).all(binds) as any[]
