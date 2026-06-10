@@ -30,4 +30,16 @@ describe('SidebarNav rail', () => {
     expect(dot).toBeTruthy()
     expect(dot.getAttribute('title') || dot.getAttribute('aria-label')).toMatch(/conductor|mcp|server/i)
   })
+
+  it('shows the tokenomics index dot when tokenomicsIndexComplete is true', () => {
+    act(() => root.render(React.createElement(SidebarNav, { ...props, tokenomicsIndexComplete: true } as any)))
+    const dot = container.querySelector('[data-testid="tokenomics-index-dot"]')
+    expect(dot).toBeTruthy()
+  })
+
+  it('does not show the tokenomics index dot when tokenomicsIndexComplete is false', () => {
+    act(() => root.render(React.createElement(SidebarNav, { ...props, tokenomicsIndexComplete: false } as any)))
+    const dot = container.querySelector('[data-testid="tokenomics-index-dot"]')
+    expect(dot).toBeNull()
+  })
 })

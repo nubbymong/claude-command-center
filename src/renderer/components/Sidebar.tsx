@@ -28,6 +28,7 @@ import ColourMigrationNotice from './ColourMigrationNotice'
 import { useAppMetaStore } from '../stores/appMetaStore'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { useSwitchAccount } from '../hooks/useSwitchAccount'
+import { useTokenomicsStore } from '../stores/tokenomicsStore'
 
 // Inject keyframes for attention pulse animation (shared with TabBar)
 const ATTENTION_STYLES_ID = 'attention-pulse-styles'
@@ -76,6 +77,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
   const showFirstRunCard = configs.length === 0 && !appMeta.hasCreatedFirstConfig && !appMeta.firstRunCardDismissed && !tourActive
   const insightsStatus = useInsightsStore((s) => s.status)
   const insightsMessage = useInsightsStore((s) => s.statusMessage)
+  const tokenomicsIndexComplete = useTokenomicsStore((s) => s.indexJustCompleted)
   const cloudAgentRunning = useCloudAgentStore((s) => s.agents.filter(a => a.status === 'running' || a.status === 'pending').length)
   const visionRunning = useConductorMcpStore((s) => s.browserRunning)
   // P7.7: sidebar dot now reflects MCP server health (the per-task reviewer
@@ -474,6 +476,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
           cloudAgentRunning={cloudAgentRunning}
           visionRunning={visionRunning}
           serverRunning={serverRunning}
+          tokenomicsIndexComplete={tokenomicsIndexComplete}
           collapsed
           onShowHelp={onShowHelp}
         />
@@ -537,6 +540,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
         cloudAgentRunning={cloudAgentRunning}
         visionRunning={visionRunning}
         serverRunning={serverRunning}
+        tokenomicsIndexComplete={tokenomicsIndexComplete}
         onShowHelp={onShowHelp}
       />
 
