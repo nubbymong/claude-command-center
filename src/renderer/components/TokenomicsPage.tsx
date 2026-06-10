@@ -14,6 +14,10 @@ import { FilterBar as NewFilterBar } from './tokenomics/FilterBar'
 import { KpiRow } from './tokenomics/KpiRow'
 import { CostOverTimeChart } from './tokenomics/CostOverTimeChart'
 import { ModelCacheDonut } from './tokenomics/ModelCacheDonut'
+import { CostByConfig } from './tokenomics/CostByConfig'
+import { SessionsTable as NewSessionsTable } from './tokenomics/SessionsTable'
+import { SessionDetailDrawer } from './tokenomics/SessionDetailDrawer'
+import { ActivityHeatmap } from './tokenomics/ActivityHeatmap'
 
 // Chart series bound to semantic tokens (theme-aware). Spec section 5: copper = Opus
 // ONLY, desaturated via --chart-opus so it does not dominate; never a status.
@@ -879,7 +883,15 @@ export default function TokenomicsPage() {
               </>
             ) : null}
 
-            {/* cost-by-config + sessions table + heatmap added in the next task */}
+            {/* Cost-by-config + sessions table + activity heatmap */}
+            {summary && (
+              <>
+                <CostByConfig data={summary.costByConfig} />
+                <NewSessionsTable />
+                <ActivityHeatmap data={summary.heatmap} />
+              </>
+            )}
+            <SessionDetailDrawer />
           </>
         )}
       </div>
