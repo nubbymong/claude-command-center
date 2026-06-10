@@ -313,38 +313,6 @@ export interface TeamRun {
 
 // ── Tokenomics ──
 
-export interface TokenomicsSessionRecord {
-  sessionId: string
-  projectDir: string
-  model: string
-  totalInputTokens: number
-  totalOutputTokens: number
-  totalCacheReadTokens: number
-  totalCacheWriteTokens: number
-  totalCostUsd: number
-  messageCount: number
-  firstTimestamp: string
-  lastTimestamp: string
-  durationMs?: number
-  costPerHour?: number
-  tokensPerMinute?: number
-  // v1.5: provider discriminator. Optional on read for back-compat -- the
-  // tokenomics-manager back-fills 'claude' on legacy records during load.
-  provider?: ProviderId
-  /** Canonicalised account email at write time. Lowercased + trimmed. Undefined for unattributed records. */
-  accountEmail?: string
-  /** Stability hint (account uuid from oauthAccount or Codex JWT). Never the primary key. */
-  accountUuid?: string
-  /** User-flagged via wizard: session spanned accounts. Excludes the record from per-account filter totals but keeps it in "All accounts". */
-  attributionMixed?: boolean
-  /** Account profile the session spawned under (undefined => default/single-account). Stamped at run time from the drift-immune spawn capture. A stable per-account key that survives a friendly-name or login-email change. */
-  profileId?: string
-  /** P8.14: config that owned the session at run time. Used by the back-fill wizard to group unattributed sessions. Optional -- legacy records may lack it. */
-  configId?: string
-  /** P8.14: human-readable label for `configId` (e.g. "This App Dev"). Mirrored at write time so the wizard doesn't have to cross-reference the configs store. */
-  configLabel?: string
-}
-
 // -- Codex Review (P6) --
 
 export interface CodexReviewRateLimitWindow {

@@ -20,13 +20,18 @@ vi.mock('../../../src/renderer/stores/insightsStore', () => ({
   }),
 }))
 
-// tokenomicsStore exposes sessions via s.data?.sessions.
-// The selector in InsightsPage is: useTokenomicsStore((s) => s.data?.sessions ?? {})
-// We mock the store by passing a state object with shape { data: { sessions: mockSessions } }.
-let mockSessions: Record<string, { provider?: 'claude' | 'codex' }> = {}
-vi.mock('../../../src/renderer/stores/tokenomicsStore', () => ({
-  useTokenomicsStore: (sel: any) => sel({ data: { sessions: mockSessions } }),
-}))
+// Minimal TkSummary shape used by the mock.
+const minimalSummary = (modelSplit: Array<{ model: string; costUsd: number; tokens: number }>) => ({
+  kpis: { lifeToDateCostUsd: 0, last7dCostUsd: 0, prev7dCostUsd: 0, cacheEfficiencyPct: 0, cacheSavingsUsd: 0 },
+  dailySeries: [],
+  modelSplit,
+  cacheSplit: { inputUsd: 0, outputUsd: 0, cacheReadUsd: 0, cacheCreateUsd: 0 },
+  costByConfig: [],
+  heatmap: [],
+})
+
+// mockSummary is mutated per-test before rendering.
+let mockModelSplit: Array<{ model: string; costUsd: number; tokens: number }> = []
 
 import InsightsPage from '../../../src/renderer/components/InsightsPage'
 
@@ -38,28 +43,54 @@ describe('InsightsPage Codex-only empty state', () => {
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)
-    mockSessions = {}
+    mockModelSplit = []
+
+    // Set up window.electronAPI with tokenomics.summary resolving from mockModelSplit.
+    ;(globalThis as any).window = (globalThis as any).window ?? {}
+    ;(globalThis as any).window.electronAPI = {
+      tokenomics: {
+        summary: vi.fn().mockImplementation(() => Promise.resolve(minimalSummary(mockModelSplit))),
+      },
+      insights: {
+        getReport: vi.fn().mockResolvedValue(null),
+        getKpis: vi.fn().mockResolvedValue(null),
+      },
+      shell: { openExternal: vi.fn() },
+    }
   })
   afterEach(() => {
     act(() => { root.unmount() })
     container.remove()
   })
 
-  it('shows the Codex-only empty state when only Codex sessions exist', () => {
-    mockSessions = { 's-1': { provider: 'codex' }, 's-2': { provider: 'codex' } }
-    act(() => { root.render(React.createElement(InsightsPage)) })
+  it('shows the Codex-only empty state when only Codex sessions exist', async () => {
+    mockModelSplit = [{ model: 'gpt-5.5', costUsd: 1, tokens: 1 }]
+    ;(globalThis as any).window.electronAPI.tokenomics.summary = vi.fn().mockResolvedValue(minimalSummary(mockModelSplit))
+
+    await act(async () => { root.render(React.createElement(InsightsPage)) })
+    // Allow the summary promise microtask to settle and trigger a re-render.
+    await act(async () => { await new Promise(r => setTimeout(r, 0)) })
+
     expect(container.textContent).toContain('Insights aggregate from your Claude sessions')
   })
 
-  it('does NOT show the Codex-only empty state when at least one Claude session exists', () => {
-    mockSessions = { 's-1': { provider: 'codex' }, 's-2': { provider: 'claude' } }
-    act(() => { root.render(React.createElement(InsightsPage)) })
+  it('does NOT show the Codex-only empty state when at least one Claude session exists', async () => {
+    mockModelSplit = [{ model: 'gpt-5.5', costUsd: 1, tokens: 1 }, { model: 'claude-3-5-sonnet', costUsd: 1, tokens: 1 }]
+    ;(globalThis as any).window.electronAPI.tokenomics.summary = vi.fn().mockResolvedValue(minimalSummary(mockModelSplit))
+
+    await act(async () => { root.render(React.createElement(InsightsPage)) })
+    await act(async () => { await new Promise(r => setTimeout(r, 0)) })
+
     expect(container.textContent ?? '').not.toContain('Insights aggregate from your Claude sessions')
   })
 
-  it('does NOT show the Codex-only empty state for first-run users (no sessions)', () => {
-    mockSessions = {}
-    act(() => { root.render(React.createElement(InsightsPage)) })
+  it('does NOT show the Codex-only empty state for first-run users (no sessions)', async () => {
+    mockModelSplit = []
+    ;(globalThis as any).window.electronAPI.tokenomics.summary = vi.fn().mockResolvedValue(minimalSummary(mockModelSplit))
+
+    await act(async () => { root.render(React.createElement(InsightsPage)) })
+    await act(async () => { await new Promise(r => setTimeout(r, 0)) })
+
     expect(container.textContent ?? '').not.toContain('Insights aggregate from your Claude sessions')
   })
 })

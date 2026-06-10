@@ -23,7 +23,6 @@ export type {
   TeamStepMode,
   TeamRunStep,
   TeamRunStatus,
-  TokenomicsSessionRecord,
   MemoryFile,
   MemoryProject,
   MemoryScanResult,
