@@ -95,7 +95,7 @@ function fanOutStatusline(data: StatuslineData, getWindow: (() => BrowserWindow 
 }
 
 /**
- * Dispatch a parsed SSH statusline payload to the renderer + tokenomics.
+ * Dispatch a parsed SSH statusline payload to the renderer.
  * Called from pty-manager when an OSC sentinel is extracted from an SSH PTY stream.
  */
 export function dispatchSSHStatuslineUpdate(json: string): void {

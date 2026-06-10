@@ -453,6 +453,64 @@ export interface CodexReviewDailyShard {
   lastUpdated: number  // unix ms
 }
 
+// ── Tokenomics v2 (worker-backed) cross-process contract ──
+export type TkProvider = 'claude' | 'codex'
+
+export interface TkSummary {
+  kpis: {
+    lifeToDateCostUsd: number
+    last7dCostUsd: number
+    prev7dCostUsd: number
+    cacheEfficiencyPct: number
+    cacheSavingsUsd: number
+  }
+  dailySeries: Array<{ day: string; costUsd: number }>
+  modelSplit: Array<{ model: string; costUsd: number; tokens: number }>
+  cacheSplit: { inputUsd: number; outputUsd: number; cacheReadUsd: number; cacheCreateUsd: number }
+  costByConfig: Array<{ configId: string | null; label: string; costUsd: number; sessions: number }>
+  heatmap: Array<{ bucket: number; tokens: number }>
+}
+
+export interface TkSessionRow {
+  sessionId: string
+  provider: TkProvider
+  configId: string | null
+  configLabel: string
+  model: string
+  costUsd: number
+  inTok: number
+  outTok: number
+  cacheReadTok: number
+  cacheCreateTok: number
+  msgCount: number
+  lastTs: number
+}
+
+export interface TkSessionsPage {
+  rows: TkSessionRow[]
+  nextCursor: { lastTs: number; sessionId: string } | null
+}
+
+export interface TkSessionDetail extends TkSessionRow {
+  firstTs: number
+  projectDir: string
+  byModel: Array<{ model: string; costUsd: number; inTok: number; outTok: number; cacheReadTok: number; cacheCreateTok: number; msgCount: number }>
+}
+
+export interface TkIndexStatus {
+  firstIndexComplete: boolean
+  indexing: boolean
+  filesDone: number
+  filesTotal: number
+  eventsTotal: number
+  lastIndexAt: number | null
+}
+
+export interface TkSummaryFilter { configId?: string | null; from?: number; to?: number; model?: string }
+export interface TkSessionsQuery extends TkSummaryFilter { search?: string; cursor?: { lastTs: number; sessionId: string } | null; limit?: number }
+export interface TkIndexProgress { filesDone: number; filesTotal: number; eventsIngested: number; phase: string }
+export interface TkIndexCompleteEvent { firstIndex: boolean; eventsTotal: number }
+
 // ── Notes ──
 
 export interface NoteMetadata {

@@ -332,6 +332,12 @@ export interface ElectronAPI {
     listUnattributed: () => Promise<import('../shared/types').UnattributedSessionGroup[]>
     listKnownEmails: () => Promise<string[]>
     attributeSessions: (payload: import('../shared/types').AttributionPayload) => Promise<{ ok: boolean; error?: string }>
+    summary: (filter?: import('../shared/types').TkSummaryFilter) => Promise<import('../shared/types').TkSummary | null>
+    sessions: (query?: import('../shared/types').TkSessionsQuery) => Promise<import('../shared/types').TkSessionsPage>
+    sessionDetail: (sessionId: string) => Promise<import('../shared/types').TkSessionDetail | null>
+    indexStatus: () => Promise<import('../shared/types').TkIndexStatus>
+    onIndexProgress: (cb: (p: import('../shared/types').TkIndexProgress) => void) => () => void
+    onIndexComplete: (cb: (c: import('../shared/types').TkIndexCompleteEvent) => void) => () => void
   }
   memory: {
     scan: () => Promise<import('../shared/types').MemoryScanResult>
@@ -779,6 +785,12 @@ const electronAPI: ElectronAPI = {
     listKnownEmails: (): Promise<string[]> => ipcRenderer.invoke(IPC.TOKENOMICS_LIST_KNOWN_EMAILS),
     attributeSessions: (payload: import('../shared/types').AttributionPayload) =>
       ipcRenderer.invoke(IPC.TOKENOMICS_ATTRIBUTE_SESSIONS, payload),
+    summary: (filter?: import('../shared/types').TkSummaryFilter) => ipcRenderer.invoke(IPC.TOKENOMICS2_SUMMARY, filter ?? {}),
+    sessions: (query?: import('../shared/types').TkSessionsQuery) => ipcRenderer.invoke(IPC.TOKENOMICS2_SESSIONS, query ?? {}),
+    sessionDetail: (sessionId: string) => ipcRenderer.invoke(IPC.TOKENOMICS2_SESSION_DETAIL, { sessionId }),
+    indexStatus: () => ipcRenderer.invoke(IPC.TOKENOMICS2_INDEX_STATUS),
+    onIndexProgress: (cb: (p: import('../shared/types').TkIndexProgress) => void) => { const h = (_: unknown, p: import('../shared/types').TkIndexProgress) => cb(p); ipcRenderer.on(IPC.TOKENOMICS2_INDEX_PROGRESS, h); return () => ipcRenderer.removeListener(IPC.TOKENOMICS2_INDEX_PROGRESS, h) },
+    onIndexComplete: (cb: (c: import('../shared/types').TkIndexCompleteEvent) => void) => { const h = (_: unknown, c: import('../shared/types').TkIndexCompleteEvent) => cb(c); ipcRenderer.on(IPC.TOKENOMICS2_INDEX_COMPLETE, h); return () => ipcRenderer.removeListener(IPC.TOKENOMICS2_INDEX_COMPLETE, h) },
   },
   memory: {
     scan: () => ipcRenderer.invoke('memory:scan'),
