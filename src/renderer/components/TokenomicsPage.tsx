@@ -9,6 +9,11 @@ import { AccountFilter, type AccountFilterValue } from './tokenomics/AccountFilt
 import { WizardTrigger } from './tokenomics/WizardTrigger'
 import { EditAttributionMenu } from './tokenomics/EditAttributionMenu'
 import { useAppMetaStore } from '../stores/appMetaStore'
+import { IndexingState } from './tokenomics/IndexingState'
+import { FilterBar as NewFilterBar } from './tokenomics/FilterBar'
+import { KpiRow } from './tokenomics/KpiRow'
+import { CostOverTimeChart } from './tokenomics/CostOverTimeChart'
+import { ModelCacheDonut } from './tokenomics/ModelCacheDonut'
 
 // Chart series bound to semantic tokens (theme-aware). Spec section 5: copper = Opus
 // ONLY, desaturated via --chart-opus so it does not dominate; never a status.
@@ -330,7 +335,7 @@ export function DailyChart({ selectedDate, onSelectDate, accountSessions }: {
           {selectedDate && (
             <span className="ml-2 text-blue normal-case">
               {formatDateFull(selectedDate)}
-              <button onClick={() => onSelectDate(null)} className="ml-1 text-overlay0 hover:text-text">{'\u2715'}</button>
+              <button onClick={() => onSelectDate(null)} className="ml-1 text-overlay0 hover:text-text">{'✕'}</button>
             </span>
           )}
         </div>
@@ -452,7 +457,7 @@ export function BreakdownPanel({ sessions, groupBy, labelForAccount }: { session
   )
 }
 
-// ── Filter Bar ──
+// ── Old Filter Bar (kept for legacy export compatibility) ──
 
 export function FilterBar({
   dateFilter, spendFilter, providerFilter,
@@ -522,7 +527,7 @@ export function FilterBar({
         {selectedDate && (
           <span className="px-2 py-0.5 text-xs rounded bg-blue/20 text-blue">
             {formatDateFull(selectedDate)}
-            <button onClick={() => onDateFilter('all')} className="ml-1 hover:text-text">{'\u2715'}</button>
+            <button onClick={() => onDateFilter('all')} className="ml-1 hover:text-text">{'✕'}</button>
           </span>
         )}
       </div>
@@ -694,7 +699,7 @@ export function SessionsTable({ sessions, title, observedEmails, onRefresh, grou
     >
       {label}
       {sortBy === sortKey && (
-        <span className="ml-1 text-blue">{sortDir === 'asc' ? '\u25B2' : '\u25BC'}</span>
+        <span className="ml-1 text-blue">{sortDir === 'asc' ? '▲' : '▼'}</span>
       )}
     </th>
   )
@@ -779,418 +784,104 @@ export function SessionsTable({ sessions, title, observedEmails, onRefresh, grou
   )
 }
 
-// ── Seed Progress Bar ──
+// ── Shimmer / loading state ──
 
-function SeedProgressBar() {
-  const progress = useTokenomicsStore(s => s.progress)
-  const seeding = useTokenomicsStore(s => s.seeding)
-
-  if (!seeding || !progress) return null
-
-  const pct = progress.totalFiles > 0
-    ? Math.round((progress.processedFiles / progress.totalFiles) * 100)
-    : 0
-
+function SummaryShimmer() {
   return (
-    <div className="bg-surface0 rounded-xl p-4 mb-6">
-      <div className="flex items-center justify-between mb-2">
-        <div className="text-sm text-text">
-          {progress.phase === 'scanning' ? 'Scanning transcript files...' :
-           progress.phase === 'complete' ? 'Seeding complete!' :
-           `Processing transcripts... (${progress.processedFiles}/${progress.totalFiles})`}
-        </div>
-        <div className="text-xs text-overlay0 font-mono">{pct}%</div>
+    <div className="space-y-4">
+      <div className="grid grid-cols-3 gap-3 mb-5">
+        {[0, 1, 2].map((i) => (
+          <div
+            key={i}
+            className="rounded-xl p-4 animate-pulse"
+            style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)', minHeight: 80 }}
+          />
+        ))}
       </div>
-      <div className="h-2 bg-surface1 rounded-full overflow-hidden">
+      <div className="grid grid-cols-2 gap-3">
         <div
-          className="h-full bg-peach rounded-full transition-all duration-300"
-          style={{ width: `${pct}%` }}
+          className="rounded-xl animate-pulse"
+          style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)', minHeight: 160 }}
+        />
+        <div
+          className="rounded-xl animate-pulse"
+          style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)', minHeight: 160 }}
         />
       </div>
     </div>
   )
 }
 
-// ── Usage Anomaly Alert ──
+// ── Main Page (new design — Task 17+18) ──
 
-function UsageAlert({ sessions, data }: { sessions: TokenomicsSessionRecord[]; data: any }) {
-  const alert = useMemo(() => {
-    if (!data?.extraSpend?.enabled) return null
-
-    // Check if rate limit is high but our tracked usage is low
-    const { fiveHourStart, sevenDayStart } = getRateLimitPeriod()
-
-    const weekSessions = sessions.filter(s => s.firstTimestamp >= sevenDayStart)
-    const weekCost = weekSessions.reduce((sum, s) => sum + s.totalCostUsd, 0)
-    const weekMessages = weekSessions.reduce((sum, s) => sum + s.messageCount, 0)
-
-    // If extra spend is non-zero but we tracked very few messages, flag it
-    if (data.extraSpend.usedUsd > 0 && weekMessages < 50) {
-      return {
-        type: 'warning' as const,
-        message: `Extra spend of $${data.extraSpend.usedUsd.toFixed(2)} detected but only ${weekMessages} messages tracked this week. Usage may be coming from outside the Conductor (web, API, other CLI instances).`,
-      }
-    }
-
-    return null
-  }, [sessions, data])
-
-  if (!alert) return null
-
-  return (
-    <div className="bg-yellow/10 border border-yellow/30 rounded-xl p-4 mb-6">
-      <div className="flex items-start gap-2">
-        <span className="text-yellow text-lg shrink-0">!</span>
-        <div>
-          <div className="text-sm font-medium text-yellow mb-1">Usage Anomaly</div>
-          <div className="text-xs text-overlay1">{alert.message}</div>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ── Main Page ──
+const dollarIcon = (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+    <line x1="12" y1="1" x2="12" y2="23" />
+    <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
+  </svg>
+)
 
 export default function TokenomicsPage() {
-  const { data, loading, seeding, syncing, loadData, startSeed, startSync } = useTokenomicsStore()
-  const [dateFilter, setDateFilter] = useState<DateFilter>('all')
-  const [spendFilter, setSpendFilter] = useState<SpendFilter>('all')
-  const [providerFilter, setProviderFilter] = useState<ProviderFilter>('all')
-  const [selectedDate, setSelectedDate] = useState<string | null>(null)
-  const [projectFilter, setProjectFilter] = useState<string>('all')
-  const [groupBy, setGroupBy] = useState<GroupByLens>('project')
-
-  // Account filter -- persisted via settings store (no local useState)
-  const tokenomicsAccountFilter = useSettingsStore((s) => s.settings.tokenomicsAccountFilter ?? 'all')
-  const updateSettings = useSettingsStore((s) => s.updateSettings)
-
-  // Friendly account names for the filter dropdown (raw email stays the value).
-  const accountProfiles = useAccountProfilesStore((s) => s.profiles)
-  const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
-  const nameForAccount = useCallback(
-    (email: string) => resolveAccountNameByEmail(email, accountProfiles, accountAliases),
-    [accountProfiles, accountAliases],
-  )
-
-  // Account attribution wizard banner -- dismissible via appMeta
-  const wizardDismissed = useAppMetaStore((s) => s.meta.accountWizardDismissed ?? false)
-  const updateAppMeta = useAppMetaStore((s) => s.update)
-  const setAccountFilter = (next: AccountFilterValue) => updateSettings({ tokenomicsAccountFilter: next })
-
-  // When chart bar is clicked, set date filter to that specific date
-  const handleDateSelect = useCallback((date: string | null) => {
-    setSelectedDate(date)
-    if (date) setDateFilter(date)
-    else setDateFilter('all')
-  }, [])
-
-  // All sessions flat
-  const allSessions = useMemo(() => {
-    if (!data) return []
-    return Object.values(data.sessions)
-  }, [data])
-
-  // Rate limit periods
-  const periods = useMemo(() => getRateLimitPeriod(), [])
-
-  // Unique project directories
-  const projects = useMemo(() => {
-    const dirs = new Set<string>()
-    for (const s of allSessions) {
-      if (s.projectDir) dirs.add(s.projectDir)
-    }
-    return [...dirs].sort()
-  }, [allSessions])
-
-  // Observed account emails (for AccountFilter dropdown).
-  // Copilot review on PR #31 (p9.16): exclude emails that appear ONLY on
-  // mixed sessions -- the per-email filter is
-  // `s.accountEmail === accountFilter && !s.attributionMixed`, so offering
-  // such an email would yield zero results and confuse the user. Mixed
-  // sessions are reached via the '(Mixed)' sentinel instead.
-  const observedEmails = useMemo(() => {
-    const set = new Set<string>()
-    for (const s of allSessions) {
-      if (s.accountEmail && !s.attributionMixed) set.add(s.accountEmail)
-    }
-    return Array.from(set).sort()
-  }, [allSessions])
-
-  // Copilot review on PR #31 (p9.15): the persisted accountFilter can
-  // become stale when its email is no longer present in observedEmails
-  // (user cleared attribution, deleted records, etc.). Clamp to 'all'
-  // in that case so the <select> never renders without a matching
-  // <option> (which silently strands the user on a blank filter).
-  const accountFilter = useMemo<AccountFilterValue>(() => {
-    const persisted = tokenomicsAccountFilter as AccountFilterValue
-    if (persisted === 'all' || persisted === '__mixed__' || persisted === '__unknown__') return persisted
-    if (observedEmails.includes(persisted)) return persisted
-    return 'all'
-  }, [tokenomicsAccountFilter, observedEmails])
-
-  // Copilot review on PR #31 (p9.17.1): persist the clamp back to settings
-  // so a stale email filter is cleared permanently (otherwise it silently
-  // re-activates if that email ever reappears, and can never be cleared).
-  // Guard on `data` so we never overwrite the user's real choice during the
-  // initial load window when observedEmails is still empty.
-  useEffect(() => {
-    if (!data) return
-    const persisted = tokenomicsAccountFilter as AccountFilterValue
-    if (persisted === 'all' || persisted === '__mixed__' || persisted === '__unknown__') return
-    if (!observedEmails.includes(persisted)) {
-      updateSettings({ tokenomicsAccountFilter: 'all' })
-    }
-  }, [data, tokenomicsAccountFilter, observedEmails, updateSettings])
-
-  // Account-scoped sessions: the same per-account predicate the table/breakdown
-  // use, but WITHOUT date/project/spend/provider filters — the summary cards and
-  // chart each apply their own time windows. `null` signals the 'all accounts'
-  // fast path (precomputed daily aggregates). Derived from sessions so it covers
-  // every filter mode (email, mixed, unknown) and works on existing data with no
-  // reseed (the persisted aggregates are global-only).
-  const accountScopedSessions = useMemo<TokenomicsSessionRecord[] | null>(() => {
-    if (accountFilter === 'all') return null
-    if (accountFilter === '__mixed__') return allSessions.filter(s => s.attributionMixed === true)
-    if (accountFilter === '__unknown__') return allSessions.filter(s => !s.accountEmail && !s.attributionMixed)
-    return allSessions.filter(s => s.accountEmail === accountFilter && !s.attributionMixed)
-  }, [allSessions, accountFilter])
-
-  // Burn rate from recent activity (last 5h window) — account-scoped when a
-  // specific account is selected so the card matches the rest of the view.
-  const burnRate = useMemo(() => {
-    const scope = accountScopedSessions ?? allSessions
-    const recent = scope.filter(s => s.firstTimestamp >= periods.fiveHourStart && s.costPerHour)
-    if (recent.length === 0) return undefined
-    // Weight by duration
-    let totalCost = 0, totalMs = 0, totalTokens = 0
-    for (const s of recent) {
-      if (s.durationMs && s.durationMs > 60000) {
-        totalCost += s.totalCostUsd
-        totalMs += s.durationMs
-        totalTokens += s.totalInputTokens + s.totalOutputTokens + s.totalCacheReadTokens + s.totalCacheWriteTokens
-      }
-    }
-    if (totalMs <= 0) return undefined
-    return {
-      costPerHour: (totalCost / totalMs) * 3_600_000,
-      tokensPerMinute: (totalTokens / totalMs) * 60_000,
-    }
-  }, [allSessions, accountScopedSessions, periods])
-
-  // Filtered sessions based on date + spend + provider + project + account filters
-  const filteredSessions = useMemo(() => {
-    let list = allSessions
-
-    // Account filter (P8.12) -- mixed sessions are excluded from per-email views
-    if (accountFilter === '__mixed__') {
-      list = list.filter(s => s.attributionMixed === true)
-    } else if (accountFilter === '__unknown__') {
-      list = list.filter(s => !s.accountEmail && !s.attributionMixed)
-    } else if (accountFilter !== 'all') {
-      list = list.filter(s => s.accountEmail === accountFilter && !s.attributionMixed)
-    }
-
-    // Provider filter (P3.2) -- applies to both session list and model breakdown
-    // back-filled provider='claude' on legacy records, so this is always safe
-    if (providerFilter === 'claude') {
-      list = list.filter(s => (s.provider ?? 'claude') === 'claude')
-    } else if (providerFilter === 'codex') {
-      list = list.filter(s => s.provider === 'codex')
-    }
-
-    // Project filter
-    if (projectFilter !== 'all') {
-      list = list.filter(s => s.projectDir === projectFilter)
-    }
-
-    // Date filter
-    if (selectedDate) {
-      list = list.filter(s => s.firstTimestamp.slice(0, 10) === selectedDate)
-    } else {
-      const today = new Date().toISOString().slice(0, 10)
-      switch (dateFilter) {
-        case 'today':
-          list = list.filter(s => s.firstTimestamp.slice(0, 10) === today)
-          break
-        case '5h':
-          list = list.filter(s => s.firstTimestamp >= periods.fiveHourStart)
-          break
-        case '7d':
-        case 'week':
-          list = list.filter(s => s.firstTimestamp >= periods.sevenDayStart)
-          break
-      }
-    }
-
-    // Spend filter - extra spend sessions are those with costUsd from statusline (no message-level tracking)
-    // Plan sessions have full message-level token data from JSONL parsing
-    if (spendFilter === 'plan') {
-      list = list.filter(s => s.messageCount > 0)
-    } else if (spendFilter === 'extra') {
-      list = list.filter(s => s.messageCount === 0)
-    }
-
-    return list
-  }, [allSessions, dateFilter, spendFilter, providerFilter, projectFilter, accountFilter, selectedDate, periods])
-
-  // Summary costs — honour the account filter. When a specific account/sentinel
-  // is selected, every window is derived from the account-scoped sessions so the
-  // cards agree with the table/breakdown; otherwise the precomputed global daily
-  // aggregates are used (fast path, unchanged behaviour).
-  const { todayCost, weekCost, fiveHourCost, allTimeCost } = useMemo(() => {
-    if (!data) return { todayCost: 0, weekCost: 0, fiveHourCost: 0, allTimeCost: 0 }
-    const today = new Date().toISOString().slice(0, 10)
-
-    if (accountScopedSessions) {
-      return computeAccountSummaryCosts(accountScopedSessions, new Date(), periods.fiveHourStart)
-    }
-
-    const todayCost = data.dailyAggregates[today]?.totalCostUsd || 0
-
-    let weekCost = 0
-    const now = new Date()
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(now)
-      d.setDate(d.getDate() - i)
-      const key = d.toISOString().slice(0, 10)
-      weekCost += data.dailyAggregates[key]?.totalCostUsd || 0
-    }
-
-    const fiveHourCost = allSessions
-      .filter(s => s.firstTimestamp >= periods.fiveHourStart)
-      .reduce((sum, s) => sum + s.totalCostUsd, 0)
-
-    return { todayCost, weekCost, fiveHourCost, allTimeCost: data.totalCostUsd || 0 }
-  }, [data, allSessions, accountScopedSessions, periods])
-
-  const rateLimits = useMemo(() => ({
-    current: data?.rateLimits?.fiveHour,
-    weekly: data?.rateLimits?.sevenDay,
-  }), [data])
+  const indexStatus = useTokenomicsStore((s) => s.indexStatus)
+  const summary = useTokenomicsStore((s) => s.summary)
+  const loadingSummary = useTokenomicsStore((s) => s.loadingSummary)
 
   useEffect(() => {
-    loadData()
+    const s = useTokenomicsStore.getState()
+    s.init()
+    return () => s.dispose()
   }, [])
 
-  if (loading && !data) {
-    return (
-      <div className="flex-1 flex items-center justify-center">
-        <div className="text-overlay1 animate-pulse">Loading tokenomics data...</div>
-      </div>
-    )
-  }
-
-  const dollarIcon = (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-      <line x1="12" y1="1" x2="12" y2="23" />
-      <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
-    </svg>
-  )
-
-  const tokenomicsActions = (
-    <>
-      <button
-        onClick={() => startSeed()}
-        disabled={seeding}
-        className="px-2.5 py-0.5 text-xs rounded border border-surface1 bg-surface0 text-overlay1 hover:bg-surface1 hover:text-text disabled:opacity-50 transition-colors"
-      >
-        {seeding ? 'Seeding…' : 'Reseed'}
-      </button>
-      <button
-        onClick={() => startSync()}
-        disabled={syncing || seeding}
-        className="px-2.5 py-0.5 text-xs rounded border border-surface1 bg-surface0 text-overlay1 hover:bg-surface1 hover:text-text disabled:opacity-50 transition-colors"
-      >
-        {syncing ? 'Syncing…' : 'Sync now'}
-      </button>
-    </>
-  )
-
-  const tokenomicsContext = (
-    <>All-time {formatCost(allTimeCost)} · 5h {formatCost(fiveHourCost)}</>
-  )
+  const contextText = summary
+    ? `$${summary.kpis.lifeToDateCostUsd.toFixed(2)} life-to-date`
+    : undefined
 
   return (
     <PageFrame
       icon={dollarIcon}
       iconAccent="teal"
       title="Tokenomics"
-      context={tokenomicsContext}
-      actions={tokenomicsActions}
+      context={contextText}
     >
-      <div className="p-6">
-        <SeedProgressBar />
+      <div className="p-5">
+        {/* Indexing / first-load gate */}
+        {(indexStatus === null || !indexStatus.firstIndexComplete) ? (
+          <IndexingState status={indexStatus} />
+        ) : (
+          <>
+            {/* Page heading */}
+            <div className="flex items-baseline gap-2 mb-4">
+              <h2 className="text-sm font-semibold text-text">Usage dashboard</h2>
+              <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                API-equivalent estimate
+              </span>
+            </div>
 
-        <WizardTrigger
-          dismissed={wizardDismissed}
-          onDismiss={() => updateAppMeta({ accountWizardDismissed: true })}
-        />
+            {/* Filter bar */}
+            <NewFilterBar />
 
-        <UsageAlert sessions={allSessions} data={data} />
+            {/* KPI row + charts — shimmer while loading */}
+            {loadingSummary && !summary ? (
+              <SummaryShimmer />
+            ) : summary ? (
+              <>
+                {/* KPI row */}
+                <KpiRow kpis={summary.kpis} />
 
-        <SummaryCards
-          today={todayCost}
-          week={weekCost}
-          fiveHour={fiveHourCost}
-          allTime={allTimeCost}
-          extraSpend={data?.extraSpend}
-          rateLimitCurrent={rateLimits.current}
-          rateLimitWeekly={rateLimits.weekly}
-          burnRate={burnRate}
-        />
+                {/* Charts row */}
+                <div className="grid grid-cols-2 gap-3 mb-5">
+                  <CostOverTimeChart data={summary.dailySeries} />
+                  <ModelCacheDonut
+                    modelSplit={summary.modelSplit}
+                    cacheSplit={summary.cacheSplit}
+                  />
+                </div>
+              </>
+            ) : null}
 
-        {/* Charts row */}
-        <div className="grid grid-cols-3 gap-4 mb-6">
-          <div className="col-span-2">
-            <DailyChart selectedDate={selectedDate} onSelectDate={handleDateSelect} accountSessions={accountScopedSessions} />
-          </div>
-          <BreakdownPanel sessions={filteredSessions} groupBy={groupBy} labelForAccount={nameForAccount} />
-        </div>
-
-        {selectedDate && data?.codexReviewByDay?.[selectedDate] && data.codexReviewByDay[selectedDate].reviewCount > 0 && (
-          <div className="bg-surface0 rounded-xl p-3 mb-6 text-xs text-subtext0">
-            <span className="text-overlay1 uppercase tracking-wider">Codex review (Claude-driven)</span>
-            <span className="ml-3 text-text">
-              {data.codexReviewByDay[selectedDate].reviewCount} {data.codexReviewByDay[selectedDate].reviewCount === 1 ? 'call' : 'calls'}
-            </span>
-            <span className="ml-3">
-              {formatTokens(data.codexReviewByDay[selectedDate].totalInputTokens)} in
-              {' / '}
-              {formatTokens(data.codexReviewByDay[selectedDate].totalOutputTokens)} out
-            </span>
-          </div>
+            {/* cost-by-config + sessions table + heatmap added in the next task */}
+          </>
         )}
-
-        {/* Filter bar */}
-        <FilterBar
-          dateFilter={dateFilter}
-          spendFilter={spendFilter}
-          providerFilter={providerFilter}
-          onDateFilter={(f) => { setDateFilter(f); setSelectedDate(null) }}
-          onSpendFilter={setSpendFilter}
-          onProviderFilter={setProviderFilter}
-          selectedDate={selectedDate}
-          projects={projects}
-          projectFilter={projectFilter}
-          onProjectFilter={setProjectFilter}
-          accountEmails={observedEmails}
-          accountFilter={accountFilter}
-          onAccountFilter={setAccountFilter}
-          accountLabelFor={nameForAccount}
-          groupBy={groupBy}
-          onGroupBy={setGroupBy}
-        />
-
-        {/* Sessions table */}
-        <SessionsTable
-          sessions={filteredSessions}
-          title={selectedDate ? `Sessions on ${formatDateFull(selectedDate)}` : undefined}
-          observedEmails={observedEmails}
-          onRefresh={loadData}
-          groupBy={groupBy}
-          labelForAccount={nameForAccount}
-        />
       </div>
     </PageFrame>
   )
