@@ -15,6 +15,7 @@ const MAX_TICK_BYTES = 16 * 1024 * 1024
 export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWorkerDeps = {}): TokenomicsWorker {
   const fs = deps.fs ?? nodeFs
   const maxTickBytes = deps.maxTickBytes ?? MAX_TICK_BYTES
+  const watchDebounceMs = deps.watchDebounceMs ?? 750
   let db: TkDb | undefined
   let pricing: Record<string, TkPricing> = {}
   let priceKeys: string[] = []
@@ -24,6 +25,9 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
   let sweeping = false
   let firstSweepDone = false
   let lastProgress = { filesDone: 0, filesTotal: 0, eventsIngested: 0 }
+  const watchers: Array<{ close(): void }> = []
+  let watchTimer: ReturnType<typeof setTimeout> | null = null
+  let tailTimer: ReturnType<typeof setInterval> | null = null
 
   const post = (m: FromTkWorker): void => host.post(m)
   const logw = (level: 'info' | 'warn' | 'error', message: string): void => post({ type: 'log', entry: { level, message } })
@@ -190,6 +194,26 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
     } catch (err) { post({ type: 'error', id, message: `query ${kind} failed: ${err instanceof Error ? err.message : String(err)}` }) }
   }
 
+  function scheduleIncremental(): void {
+    if (watchTimer) clearTimeout(watchTimer)
+    watchTimer = setTimeout(() => { watchTimer = null; ingestAll('incremental') }, watchDebounceMs)
+    ;(watchTimer as unknown as { unref?: () => void }).unref?.()
+  }
+
+  function startWatching(): void {
+    for (const dir of [claudeDir, codexDir]) {
+      try {
+        if (!fs.existsSync(dir)) continue
+        const wch = fs.watch(dir, { recursive: true }, () => scheduleIncremental())
+        watchers.push(wch)
+      } catch (err) { logw('warn', `fs.watch failed for ${dir}: ${String(err)}`) }
+    }
+    // Safety tail: recursive watch can miss newly-created nested session files on
+    // some platforms; a slow periodic incremental sweep guarantees eventual pickup.
+    tailTimer = setInterval(() => { if (!sweeping) ingestAll('incremental') }, 5000)
+    ;(tailTimer as unknown as { unref?: () => void }).unref?.()
+  }
+
   function open(msg: Extract<ToTkWorker, { type: 'open' }>): void {
     db = openTkDb(msg.dbPath)
     setPricing(msg.pricing)
@@ -200,6 +224,7 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
     firstSweepDone = db.getMeta('firstIndexComplete') === '1'
     post({ type: 'ready' }) // ready BEFORE the sweep so queries work during indexing
     setTimeout(() => ingestAll('initial'), 0)
+    startWatching()
   }
 
   function handle(msg: ToTkWorker): void {
@@ -230,7 +255,14 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
     const filesTracked = (db.raw.prepare('SELECT COUNT(*) AS n FROM tk_files').get() as { n: number }).n
     post({ type: 'health', eventsTotal: db.eventCount(), filesTracked, dbBytes: 0 })
   }
-  function stop(): void { try { db?.close() } catch { /* ignore */ } db = undefined }
+  function stop(): void {
+    for (const wch of watchers) { try { wch.close() } catch { /* ignore */ } }
+    watchers.length = 0
+    if (watchTimer) { clearTimeout(watchTimer); watchTimer = null }
+    if (tailTimer) { clearInterval(tailTimer); tailTimer = null }
+    try { db?.close() } catch { /* ignore */ }
+    db = undefined
+  }
 
   return { tickNow, healthNow, stop }
 }

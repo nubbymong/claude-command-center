@@ -128,4 +128,36 @@ describe('tokenomics worker ingest', () => {
     }
     expect(last).toBeCloseTo(25, 5)  // all 5 lines * $5 ingested, no loss, no double-count
   })
+
+  it('fs-watch debounce triggers incremental ingest on append (no explicit tickNow)', async () => {
+    const claudeDir = path.join(tmp, 'claude')
+    const file = path.join(claudeDir, 'F--proj', 's1.jsonl')
+    writeClaudeFile(claudeDir, 'F--proj', 's1.jsonl', [
+      { type: 'assistant', timestamp: '2026-06-01T10:00:00Z', sessionId: 's1', requestId: 'r1', message: { id: 'm1', model: 'claude-opus-4-8', usage: { input_tokens: 1_000_000, output_tokens: 0 } } },
+    ])
+    const fake = new FakeTkWorkerTransport(); const msgs: FromTkWorker[] = []
+    fake.onMessage((m) => msgs.push(m))
+    const w = createTokenomicsWorker(fake.asWorkerSide(), { watchDebounceMs: 30 })
+    fake.post({ type: 'open', dbPath: ':memory:', pricing: PRICING, configs: [], claudeProjectsDir: claudeDir, codexSessionsDir: path.join(tmp, 'codex') })
+    await new Promise((r) => setTimeout(r, 60))
+    fs.appendFileSync(file, JSON.stringify({ type: 'assistant', timestamp: '2026-06-01T11:00:00Z', sessionId: 's1', requestId: 'r2', message: { id: 'm2', model: 'claude-opus-4-8', usage: { input_tokens: 1_000_000, output_tokens: 0 } } }) + '\n')
+    await new Promise((r) => setTimeout(r, 350))   // allow fs.watch event + debounce + ingest
+    fake.post({ type: 'query', id: 7, kind: 'summary', args: {} })
+    await new Promise((r) => setTimeout(r, 10))
+    const res = msgs.find((m) => m.type === 'query-result' && (m as any).id === 7) as any
+    expect(res.rows[0].kpis.lifeToDateCostUsd).toBeCloseTo(10, 5)
+    w.stop()
+  })
+
+  it('stop() closes watchers + timers without throwing and is safe to call twice', async () => {
+    const claudeDir = path.join(tmp, 'claude')
+    writeClaudeFile(claudeDir, 'F--proj', 's1.jsonl', [
+      { type: 'assistant', timestamp: '2026-06-01T10:00:00Z', sessionId: 's1', requestId: 'r1', message: { id: 'm1', model: 'claude-opus-4-8', usage: { input_tokens: 10, output_tokens: 0 } } },
+    ])
+    const fake = new FakeTkWorkerTransport()
+    const w = createTokenomicsWorker(fake.asWorkerSide(), {})
+    fake.post({ type: 'open', dbPath: ':memory:', pricing: PRICING, configs: [], claudeProjectsDir: claudeDir, codexSessionsDir: path.join(tmp, 'codex') })
+    await new Promise((r) => setTimeout(r, 60))
+    expect(() => { w.stop(); w.stop() }).not.toThrow()
+  })
 })
