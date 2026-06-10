@@ -64,6 +64,7 @@ import { handleAutoDetectAccept } from './utils/githubAutoDetectAccept'
 import RepoBreadcrumb from './components/RepoBreadcrumb'
 import type { SessionState, SavedSession } from './types/electron'
 import { buildSessionState, buildSessionStateWithResumeTargets } from './session-persistence'
+import { useSessionAutosave } from './hooks/useSessionAutosave'
 
 // Re-export ViewType from its canonical location for backwards compatibility
 export type { ViewType } from './types/views'
@@ -149,6 +150,10 @@ export default function App() {
   const [pendingRestore, setPendingRestore] = useState<SessionState | null>(null)
   const configs = useConfigStore((s) => s.configs)
   const launchConfig = useLaunchConfig()
+  // Keep session-state.json in sync with the live session set so a non-graceful
+  // termination (crash / external-installer force-close) never re-offers phantom
+  // sessions the user already closed. Resume still reads pendingRestore in-memory.
+  useSessionAutosave()
   // onCreateConfigFromStage: App owns the GuidedConfigView toggle via showGuidedConfig.
   // Sidebar receives onShowFirstRun={() => setShowGuidedConfig(true)}, so we use the
   // same setter here to open the real create dialog from the stage empty state.
