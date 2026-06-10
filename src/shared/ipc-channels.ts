@@ -202,15 +202,6 @@ export const IPC = {
   // CLI
   CLI_CHECK: 'cli:check',
 
-  // Tokenomics
-  TOKENOMICS_GET_DATA: 'tokenomics:getData',
-  TOKENOMICS_SEED: 'tokenomics:seed',
-  TOKENOMICS_SYNC: 'tokenomics:sync',
-  TOKENOMICS_PROGRESS: 'tokenomics:progress',
-  TOKENOMICS_LIST_UNATTRIBUTED: 'tokenomics:listUnattributed',
-  TOKENOMICS_LIST_KNOWN_EMAILS: 'tokenomics:listKnownEmails',
-  TOKENOMICS_ATTRIBUTE_SESSIONS: 'tokenomics:attributeSessions',
-
   // Tokenomics v2 — SQLite-backed summary/sessions/detail + index push
   TOKENOMICS2_SUMMARY: 'tokenomics2:summary',
   TOKENOMICS2_SESSIONS: 'tokenomics2:sessions',

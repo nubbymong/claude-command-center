@@ -1,22 +1,6 @@
 import React, { useMemo } from 'react'
 import type { TkSummary } from '../../../shared/types'
-
-// Reuse the same colour-by-model logic the old page uses
-function getModelColor(model: string): string {
-  const m = model.toLowerCase()
-  if (m.includes('fable')) return 'var(--chart-fable)'
-  if (m.includes('opus')) return 'var(--chart-opus)'
-  if (m.includes('sonnet')) return 'var(--chart-sonnet)'
-  if (m.startsWith('gpt-') || m.includes('codex') || m.startsWith('o')) return 'var(--chart-codex)'
-  return 'var(--chart-other)'
-}
-
-function getModelShort(model: string): string {
-  const family = model.match(/sonnet|opus|haiku|fable/i)
-  if (family) return family[0].toLowerCase()
-  if (model.startsWith('gpt-')) return model.slice(4)
-  return model
-}
+import { getModelColor, getModelShort } from './modelColors'
 
 function formatCostShort(usd: number): string {
   if (usd >= 100) return `$${usd.toFixed(0)}`

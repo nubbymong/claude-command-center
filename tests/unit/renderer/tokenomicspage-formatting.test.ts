@@ -1,27 +1,13 @@
-// @vitest-environment jsdom
 /**
- * Regression tests for TokenomicsPage formatting helpers. Targets the
+ * Regression tests for the tokenomics model-label helper. Targets the
  * Copilot-flagged bug (2026-05-07) where getModelShort collapsed every Claude
  * variant to "claude" because it stripped non-alpha then sliced the first 6
  * characters of "claudesonnet" / "claudeopus" / "claudehaiku".
  *
  * The fix returns the family name directly via regex match.
  */
-import { describe, it, expect, vi } from 'vitest'
-
-// TokenomicsPage imports useTokenomicsStore at module load -- mock it so the
-// component file can be imported in a unit test without standing up Zustand.
-vi.mock('../../../src/renderer/stores/tokenomicsStore', () => ({
-  useTokenomicsStore: () => ({
-    sessions: {},
-    dailyAggregates: {},
-    seedComplete: false,
-    extraSpend: undefined,
-    rateLimits: undefined,
-  }),
-}))
-
-const { getModelShort } = await import('../../../src/renderer/components/TokenomicsPage')
+import { describe, it, expect } from 'vitest'
+import { getModelShort } from '../../../src/renderer/components/tokenomics/modelColors'
 
 describe('getModelShort', () => {
   it('returns the Claude family name for sonnet variants', () => {

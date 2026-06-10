@@ -163,10 +163,3 @@ export const useTokenomicsStore = create<TokenomicsState>((set, get) => ({
     set({ _unsubs: [] })
   },
 }))
-
-// Legacy export — kept so App.tsx compiles while TokenomicsPage is still on the
-// old store shape. The old onProgress listener is a no-op now since the
-// old tokenomics.onProgress IPC is replaced by onIndexProgress.
-export function setupTokenomicsListener(): void {
-  // no-op — listeners are now managed per-instance via init()/dispose()
-}

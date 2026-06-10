@@ -1,6 +1,7 @@
 import React from 'react'
 import { useTokenomicsStore } from '../../stores/tokenomicsStore'
 import type { TkSessionDetail } from '../../../shared/types'
+import { getModelColor, getModelShort } from './modelColors'
 
 // ── Format helpers ─────────────────────────────────────────────────────────────
 
@@ -29,22 +30,6 @@ function formatTs(ts: number): string {
   } catch {
     return '-'
   }
-}
-
-function getModelColor(model: string): string {
-  const m = model.toLowerCase()
-  if (m.includes('fable')) return 'var(--chart-fable)'
-  if (m.includes('opus')) return 'var(--chart-opus)'
-  if (m.includes('sonnet')) return 'var(--chart-sonnet)'
-  if (m.startsWith('gpt-') || m.includes('codex') || m.startsWith('o')) return 'var(--chart-codex)'
-  return 'var(--chart-other)'
-}
-
-function getModelShort(model: string): string {
-  const family = model.match(/sonnet|opus|haiku|fable/i)
-  if (family) return family[0].toLowerCase()
-  if (model.startsWith('gpt-')) return model.slice(4)
-  return model
 }
 
 // ── Drawer panel ───────────────────────────────────────────────────────────────

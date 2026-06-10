@@ -23,10 +23,7 @@ export type {
   TeamStepMode,
   TeamRunStep,
   TeamRunStatus,
-  TokenomicsData,
-  TokenomicsSyncProgress,
   TokenomicsSessionRecord,
-  TokenomicsDailyAggregate,
   MemoryFile,
   MemoryProject,
   MemoryScanResult,
@@ -44,8 +41,6 @@ import type {
   CloudAgent,
   TeamTemplate,
   TeamRun,
-  TokenomicsData,
-  TokenomicsSyncProgress,
 } from '../../shared/types'
 import type { HookEvent, HooksGatewayStatus } from '../../shared/hook-types'
 export type { HookEvent, HookEventKind, HooksGatewayStatus } from '../../shared/hook-types'
@@ -391,13 +386,12 @@ export interface ElectronAPI {
     check: () => Promise<boolean>
   }
   tokenomics: {
-    getData: () => Promise<TokenomicsData>
-    seed: () => Promise<TokenomicsData>
-    sync: () => Promise<TokenomicsData>
-    onProgress: (callback: (data: TokenomicsSyncProgress) => void) => () => void
-    listUnattributed: () => Promise<import('../../shared/types').UnattributedSessionGroup[]>
-    listKnownEmails: () => Promise<string[]>
-    attributeSessions: (payload: import('../../shared/types').AttributionPayload) => Promise<{ ok: boolean; error?: string }>
+    summary: (filter?: import('../../shared/types').TkSummaryFilter) => Promise<import('../../shared/types').TkSummary | null>
+    sessions: (query?: import('../../shared/types').TkSessionsQuery) => Promise<import('../../shared/types').TkSessionsPage>
+    sessionDetail: (sessionId: string) => Promise<import('../../shared/types').TkSessionDetail | null>
+    indexStatus: () => Promise<import('../../shared/types').TkIndexStatus>
+    onIndexProgress: (cb: (p: import('../../shared/types').TkIndexProgress) => void) => () => void
+    onIndexComplete: (cb: (c: import('../../shared/types').TkIndexCompleteEvent) => void) => () => void
   }
   memory: {
     scan: () => Promise<import('../../shared/types').MemoryScanResult>

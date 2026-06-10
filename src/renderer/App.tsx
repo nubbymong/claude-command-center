@@ -49,7 +49,6 @@ import { migrateColorRecords } from './utils/migrateIdentityColors'
 import { gatherLocalStorageData, hydrateStores, applyConfigColourMigration } from './utils/configHydration'
 import { isGitHubOnboardingDue as isGitHubOnboardingDuePredicate } from './utils/githubOnboarding'
 import { setupCloudAgentListener } from './stores/cloudAgentStore'
-import { setupTokenomicsListener } from './stores/tokenomicsStore'
 import { setupConductorMcpListener, useConductorMcpStore } from './stores/conductorMcpStore'
 import { setupGitHubListener, useGitHubStore } from './stores/githubStore'
 import { setupChannelListeners } from './stores/channelStore'
@@ -340,7 +339,6 @@ export default function App() {
       // Start cloud agent IPC listener early so status updates are
       // never missed (previously only started when CloudAgentsPage mounted)
       setupCloudAgentListener()
-      setupTokenomicsListener()
       setupConductorMcpListener()
       setupGitHubListener()
       setupChannelListeners()

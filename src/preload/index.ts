@@ -325,13 +325,6 @@ export interface ElectronAPI {
     check: () => Promise<boolean>
   }
   tokenomics: {
-    getData: () => Promise<import('../shared/types').TokenomicsData>
-    seed: () => Promise<import('../shared/types').TokenomicsData>
-    sync: () => Promise<import('../shared/types').TokenomicsData>
-    onProgress: (callback: (data: import('../shared/types').TokenomicsSyncProgress) => void) => () => void
-    listUnattributed: () => Promise<import('../shared/types').UnattributedSessionGroup[]>
-    listKnownEmails: () => Promise<string[]>
-    attributeSessions: (payload: import('../shared/types').AttributionPayload) => Promise<{ ok: boolean; error?: string }>
     summary: (filter?: import('../shared/types').TkSummaryFilter) => Promise<import('../shared/types').TkSummary | null>
     sessions: (query?: import('../shared/types').TkSessionsQuery) => Promise<import('../shared/types').TkSessionsPage>
     sessionDetail: (sessionId: string) => Promise<import('../shared/types').TkSessionDetail | null>
@@ -771,20 +764,6 @@ const electronAPI: ElectronAPI = {
     check: () => ipcRenderer.invoke(IPC.CLI_CHECK)
   },
   tokenomics: {
-    getData: () => ipcRenderer.invoke(IPC.TOKENOMICS_GET_DATA),
-    seed: () => ipcRenderer.invoke(IPC.TOKENOMICS_SEED),
-    sync: () => ipcRenderer.invoke(IPC.TOKENOMICS_SYNC),
-    onProgress: (callback: (data: any) => void) => {
-      const handler = (_: unknown, data: any) => callback(data)
-      ipcRenderer.on(IPC.TOKENOMICS_PROGRESS, handler)
-      return () => ipcRenderer.removeListener(IPC.TOKENOMICS_PROGRESS, handler)
-    },
-    // Copilot review on PR #31 (p9.9): route through IPC.* constants so
-    // shared/preload/main can't drift on a string-literal rename.
-    listUnattributed: () => ipcRenderer.invoke(IPC.TOKENOMICS_LIST_UNATTRIBUTED),
-    listKnownEmails: (): Promise<string[]> => ipcRenderer.invoke(IPC.TOKENOMICS_LIST_KNOWN_EMAILS),
-    attributeSessions: (payload: import('../shared/types').AttributionPayload) =>
-      ipcRenderer.invoke(IPC.TOKENOMICS_ATTRIBUTE_SESSIONS, payload),
     summary: (filter?: import('../shared/types').TkSummaryFilter) => ipcRenderer.invoke(IPC.TOKENOMICS2_SUMMARY, filter ?? {}),
     sessions: (query?: import('../shared/types').TkSessionsQuery) => ipcRenderer.invoke(IPC.TOKENOMICS2_SESSIONS, query ?? {}),
     sessionDetail: (sessionId: string) => ipcRenderer.invoke(IPC.TOKENOMICS2_SESSION_DETAIL, { sessionId }),
