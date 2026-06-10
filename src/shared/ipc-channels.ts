@@ -211,6 +211,14 @@ export const IPC = {
   TOKENOMICS_LIST_KNOWN_EMAILS: 'tokenomics:listKnownEmails',
   TOKENOMICS_ATTRIBUTE_SESSIONS: 'tokenomics:attributeSessions',
 
+  // Tokenomics v2 — SQLite-backed summary/sessions/detail + index push
+  TOKENOMICS2_SUMMARY: 'tokenomics2:summary',
+  TOKENOMICS2_SESSIONS: 'tokenomics2:sessions',
+  TOKENOMICS2_SESSION_DETAIL: 'tokenomics2:sessionDetail',
+  TOKENOMICS2_INDEX_STATUS: 'tokenomics2:indexStatus',
+  TOKENOMICS2_INDEX_PROGRESS: 'tokenomics2:indexProgress',
+  TOKENOMICS2_INDEX_COMPLETE: 'tokenomics2:indexComplete',
+
   // Codex (OpenAI)
   CODEX_STATUS: 'codex:status',
   CODEX_LOGIN: 'codex:login',
