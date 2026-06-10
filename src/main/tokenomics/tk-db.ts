@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3'
-import type { TkEvent } from './tk-types'
+import type { TkEvent, TkPricing, TkSummary, TkSummaryFilter } from './tk-types'
 
 function dayOf(ts: number): string {
   const d = new Date(ts)
@@ -10,6 +10,20 @@ function bucketOf(ts: number): number {
   const d = new Date(ts)
   return d.getDay() * 24 + d.getHours()
 }
+
+function pricingCte(pricing: Record<string, TkPricing>): { cte: string; binds: Record<string, unknown> } {
+  const entries = Object.entries(pricing)
+  if (entries.length === 0) return { cte: `pricing(pm,pin,pout,pcr,pcw) AS (SELECT NULL,0,0,0,0 WHERE 0)`, binds: {} }
+  const rows: string[] = []
+  const binds: Record<string, unknown> = {}
+  entries.forEach(([model, p], i) => {
+    rows.push(`(@pm${i},@pin${i},@pout${i},@pcr${i},@pcw${i})`)
+    binds[`pm${i}`] = model; binds[`pin${i}`] = p.input; binds[`pout${i}`] = p.output
+    binds[`pcr${i}`] = p.cacheRead; binds[`pcw${i}`] = p.cacheWrite
+  })
+  return { cte: `pricing(pm,pin,pout,pcr,pcw) AS (VALUES ${rows.join(',')})`, binds }
+}
+const COST = (a: string) => `((${a}.inTok*COALESCE(p.pin,0)+${a}.outTok*COALESCE(p.pout,0)+${a}.cacheReadTok*COALESCE(p.pcr,0)+${a}.cacheCreateTok*COALESCE(p.pcw,0))/1000000.0)`
 
 const DDL = `
 PRAGMA journal_mode=WAL;
@@ -119,6 +133,7 @@ export interface TkDb {
   insertEvents(events: TkEvent[]): number
   upsertConfigs(configs: Array<{ configId: string; label: string; workingDirectory: string }>): void
   getSessionCwd(sessionId: string): string | null
+  querySummary(pricing: Record<string, TkPricing>, filter?: TkSummaryFilter, nowMs?: number): TkSummary
   checkpoint(): void
   close(): void
 }
@@ -202,6 +217,91 @@ export function openTkDb(dbPath: string): TkDb {
     insertEvents: (events) => insertEventsTxn(events as any),
     upsertConfigs: (configs) => { const txn = sqlite.transaction((cs: any[]) => { for (const c of cs) upConfig.run(c) }); txn(configs) },
     getSessionCwd: (sessionId) => { const r = getCwd.get(sessionId) as { projectDir: string } | undefined; return r?.projectDir || null },
+    querySummary(pricing, filter = {}, nowMs) {
+      const now = nowMs ?? Date.now()
+      const { cte, binds: pb } = pricingCte(pricing)
+      const cfg = filter.configId   // undefined=all, null=External(''), string=that id
+      const cfgVal = cfg === undefined ? undefined : (cfg === null ? '' : cfg)
+
+      // Build a WHERE fragment for a given table alias.
+      // modelCol differs per table; withRange (day) only valid on tk_daily.
+      const frag = (alias: string, modelCol: string, withRange: boolean): string => {
+        let s = ''
+        if (cfg !== undefined) s += ` AND ${alias}.configId = @cfg`
+        if (filter.model !== undefined) s += ` AND ${alias}.${modelCol} = @model`
+        if (withRange && filter.from !== undefined) s += ` AND ${alias}.day >= @fromDay`
+        if (withRange && filter.to !== undefined) s += ` AND ${alias}.day <= @toDay`
+        return s
+      }
+
+      const last7Cut = dayOf(now - 7 * 86_400_000)
+      const prev7Cut = dayOf(now - 14 * 86_400_000)
+      const binds: Record<string, unknown> = {
+        ...pb,
+        ...(cfgVal !== undefined ? { cfg: cfgVal } : {}),
+        ...(filter.model !== undefined ? { model: filter.model } : {}),
+        ...(filter.from !== undefined ? { fromDay: dayOf(filter.from) } : {}),
+        ...(filter.to !== undefined ? { toDay: dayOf(filter.to) } : {}),
+        last7Cut, prev7Cut,
+      }
+
+      const dailyJoin = `tk_daily d LEFT JOIN pricing p ON d.priceModel = p.pm`
+
+      // KPIs: config+model scope, NO range (life-to-date / cache are all-time)
+      const life = sqlite.prepare(`WITH ${cte} SELECT
+          COALESCE(SUM(${COST('d')}),0) AS cost,
+          COALESCE(SUM(d.cacheReadTok),0) AS cr,
+          COALESCE(SUM(d.inTok),0) AS inp,
+          COALESCE(SUM(d.cacheReadTok*(COALESCE(p.pin,0)-COALESCE(p.pcr,0))/1000000.0),0) AS savings
+        FROM ${dailyJoin} WHERE 1=1 ${frag('d','model',false)}`).get(binds) as any
+
+      const l7 = (sqlite.prepare(`WITH ${cte} SELECT COALESCE(SUM(${COST('d')}),0) AS c FROM ${dailyJoin} WHERE d.day > @last7Cut ${frag('d','model',false)}`).get(binds) as any).c
+      const p7 = (sqlite.prepare(`WITH ${cte} SELECT COALESCE(SUM(${COST('d')}),0) AS c FROM ${dailyJoin} WHERE d.day > @prev7Cut AND d.day <= @last7Cut ${frag('d','model',false)}`).get(binds) as any).c
+
+      // Charts: config+model+range scope
+      const daily = sqlite.prepare(`WITH ${cte} SELECT d.day AS day, SUM(${COST('d')}) AS costUsd FROM ${dailyJoin} WHERE 1=1 ${frag('d','model',true)} GROUP BY d.day ORDER BY d.day`).all(binds) as any[]
+      const models = sqlite.prepare(`WITH ${cte} SELECT d.model AS model, SUM(${COST('d')}) AS costUsd, SUM(d.inTok+d.outTok+d.cacheReadTok+d.cacheCreateTok) AS tokens FROM ${dailyJoin} WHERE 1=1 ${frag('d','model',true)} GROUP BY d.model ORDER BY costUsd DESC`).all(binds) as any[]
+      const cache = sqlite.prepare(`WITH ${cte} SELECT
+          COALESCE(SUM(d.inTok*COALESCE(p.pin,0)/1000000.0),0) AS inputUsd,
+          COALESCE(SUM(d.outTok*COALESCE(p.pout,0)/1000000.0),0) AS outputUsd,
+          COALESCE(SUM(d.cacheReadTok*COALESCE(p.pcr,0)/1000000.0),0) AS cacheReadUsd,
+          COALESCE(SUM(d.cacheCreateTok*COALESCE(p.pcw,0)/1000000.0),0) AS cacheCreateUsd
+        FROM ${dailyJoin} WHERE 1=1 ${frag('d','model',true)}`).get(binds) as any
+      const cbcRaw = sqlite.prepare(`WITH ${cte} SELECT d.configId AS configId, SUM(${COST('d')}) AS costUsd FROM ${dailyJoin} WHERE 1=1 ${frag('d','model',true)} GROUP BY d.configId`).all(binds) as any[]
+
+      // Sessions count per config (config+model scope only; lastModel is the model col)
+      const sessCounts = sqlite.prepare(`SELECT configId, COUNT(*) AS sessions FROM tk_sessions s WHERE 1=1 ${frag('s','lastModel',false)}`).all(binds) as any[]
+
+      // Heatmap (config+model scope; no range — heatmap has no day col)
+      const heat = sqlite.prepare(`SELECT bucket, SUM(inTok+outTok+cacheReadTok+cacheCreateTok) AS tokens FROM tk_heatmap h WHERE 1=1 ${frag('h','model',false)} GROUP BY bucket`).all(binds) as any[]
+
+      const cfgRows = sqlite.prepare(`SELECT configId, label FROM tk_configs`).all() as any[]
+      const labelOf = new Map(cfgRows.map((r: any) => [r.configId, r.label]))
+      const sessByCfg = new Map(sessCounts.map((r: any) => [r.configId, r.sessions]))
+
+      const costByConfig = cbcRaw.map((r: any) => ({
+        configId: r.configId === '' ? null : r.configId,
+        label: (r.configId === '' ? '' : (labelOf.get(r.configId) || '')) || 'External / no config',
+        costUsd: r.costUsd ?? 0,
+        sessions: sessByCfg.get(r.configId) ?? 0,
+      })).sort((a: any, b: any) => b.costUsd - a.costUsd)
+
+      const cr = life.cr ?? 0, inp = life.inp ?? 0
+      return {
+        kpis: {
+          lifeToDateCostUsd: life.cost ?? 0,
+          last7dCostUsd: l7 ?? 0,
+          prev7dCostUsd: p7 ?? 0,
+          cacheEfficiencyPct: (cr + inp) > 0 ? (cr / (cr + inp)) * 100 : 0,
+          cacheSavingsUsd: life.savings ?? 0,
+        },
+        dailySeries: daily.map((d: any) => ({ day: d.day, costUsd: d.costUsd ?? 0 })),
+        modelSplit: models.map((m: any) => ({ model: m.model, costUsd: m.costUsd ?? 0, tokens: m.tokens ?? 0 })),
+        cacheSplit: { inputUsd: cache.inputUsd ?? 0, outputUsd: cache.outputUsd ?? 0, cacheReadUsd: cache.cacheReadUsd ?? 0, cacheCreateUsd: cache.cacheCreateUsd ?? 0 },
+        costByConfig,
+        heatmap: heat.map((h: any) => ({ bucket: h.bucket, tokens: h.tokens ?? 0 })),
+      }
+    },
     checkpoint: () => { sqlite.pragma('wal_checkpoint(TRUNCATE)') },
     close: () => { sqlite.close() },
   }
