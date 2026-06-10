@@ -6,7 +6,7 @@ import { findConfigForCwd, isJunkCwd } from './tk-config-match'
 import type { TkConfigDim, TkEvent, TkPricing } from './tk-types'
 import type { ToTkWorker, FromTkWorker, TkWorkerHostTransport } from './tk-worker-transport'
 
-export interface TkWorkerDeps { fs?: typeof nodeFs; watchDebounceMs?: number; configs?: TkConfigDim[] }
+export interface TkWorkerDeps { fs?: typeof nodeFs; watchDebounceMs?: number; configs?: TkConfigDim[]; maxTickBytes?: number }
 export interface TokenomicsWorker { tickNow(): void; healthNow(): void; stop(): void }
 
 const READ_BUF = 256 * 1024
@@ -14,6 +14,7 @@ const MAX_TICK_BYTES = 16 * 1024 * 1024
 
 export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWorkerDeps = {}): TokenomicsWorker {
   const fs = deps.fs ?? nodeFs
+  const maxTickBytes = deps.maxTickBytes ?? MAX_TICK_BYTES
   let db: TkDb | undefined
   let pricing: Record<string, TkPricing> = {}
   let priceKeys: string[] = []
@@ -74,10 +75,10 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
     const cursor = db!.getFileCursor(file)
     let offset = cursor ? cursor.lastOffset : 0
     if (cursor && st.size < cursor.lastOffset) offset = 0 // truncated/rotated -> re-read
-    if (cursor && st.size === cursor.size && st.mtimeMs === cursor.mtime && offset === cursor.lastOffset) return 0
+    if (cursor && st.size === cursor.size && st.mtimeMs === cursor.mtime && offset === cursor.lastOffset && offset >= st.size) return 0
     if (st.size <= offset) { db!.setFileCursor({ path: file, size: st.size, mtime: st.mtimeMs, lastOffset: offset, lastIngestedAt: Date.now() }); return 0 }
 
-    const end = Math.min(st.size, offset + MAX_TICK_BYTES)
+    const end = Math.min(st.size, offset + maxTickBytes)
     const fd = fs.openSync(file, 'r')
     let inserted = 0
     let fileCwd = ''

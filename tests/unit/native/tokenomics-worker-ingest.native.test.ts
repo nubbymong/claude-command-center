@@ -100,4 +100,32 @@ describe('tokenomics worker ingest', () => {
     expect(res.rows[0].firstIndexComplete).toBe(true)
     expect(res.rows[0].eventsTotal).toBe(1)
   })
+
+  it('fully drains a file larger than the per-tick cap across successive ticks', async () => {
+    const claudeDir = path.join(tmp, 'claude')
+    // 5 assistant lines, each 1M input tokens ($5). Tiny cap forces multi-tick draining.
+    const lines = Array.from({ length: 5 }, (_, i) => ({
+      type: 'assistant', timestamp: `2026-06-01T10:0${i}:00Z`, sessionId: 's1', requestId: `r${i}`,
+      message: { id: `m${i}`, model: 'claude-opus-4-8', usage: { input_tokens: 1_000_000, output_tokens: 0 } },
+    }))
+    writeClaudeFile(claudeDir, 'F--proj', 's1.jsonl', lines)
+    const fake = new FakeTkWorkerTransport(); const msgs: FromTkWorker[] = []
+    fake.onMessage((m) => msgs.push(m))
+    const w = createTokenomicsWorker(fake.asWorkerSide(), { maxTickBytes: 200 })  // far smaller than the file
+    fake.post({ type: 'open', dbPath: ':memory:', pricing: PRICING, configs: [], claudeProjectsDir: claudeDir, codexSessionsDir: path.join(tmp, 'codex') })
+    await new Promise((r) => setTimeout(r, 60))
+    // Drive successive ticks until the cost stops growing (capped at a generous loop bound).
+    let last = -1
+    for (let k = 0; k < 20; k++) {
+      fake.post({ type: 'query', id: 100 + k, kind: 'summary', args: {} })
+      await new Promise((r) => setTimeout(r, 5))
+      const res = msgs.find((m) => m.type === 'query-result' && (m as any).id === 100 + k) as any
+      const cost = res.rows[0].kpis.lifeToDateCostUsd
+      if (cost === last) break
+      last = cost
+      w.tickNow()
+      await new Promise((r) => setTimeout(r, 5))
+    }
+    expect(last).toBeCloseTo(25, 5)  // all 5 lines * $5 ingested, no loss, no double-count
+  })
 })
