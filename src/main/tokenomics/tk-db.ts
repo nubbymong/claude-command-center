@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3'
-import type { TkEvent, TkPricing, TkSummary, TkSummaryFilter } from './tk-types'
+import type { TkEvent, TkPricing, TkSummary, TkSummaryFilter, TkSessionsQuery, TkSessionsPage, TkSessionDetail } from './tk-types'
 
 function dayOf(ts: number): string {
   const d = new Date(ts)
@@ -134,6 +134,8 @@ export interface TkDb {
   upsertConfigs(configs: Array<{ configId: string; label: string; workingDirectory: string }>): void
   getSessionCwd(sessionId: string): string | null
   querySummary(pricing: Record<string, TkPricing>, filter?: TkSummaryFilter, nowMs?: number): TkSummary
+  querySessions(pricing: Record<string, TkPricing>, query?: TkSessionsQuery): TkSessionsPage
+  querySessionDetail(pricing: Record<string, TkPricing>, sessionId: string): TkSessionDetail | null
   checkpoint(): void
   close(): void
 }
@@ -302,6 +304,98 @@ export function openTkDb(dbPath: string): TkDb {
         heatmap: heat.map((h: any) => ({ bucket: h.bucket, tokens: h.tokens ?? 0 })),
       }
     },
+    querySessions(pricing, query = {}) {
+      const { cte, binds: pb } = pricingCte(pricing)
+      const cfg = query.configId
+      const cfgVal = cfg === undefined ? undefined : (cfg === null ? '' : cfg)
+      let where = ''
+      const fb: Record<string, unknown> = {}
+      if (cfg !== undefined) { where += ` AND s.configId = @cfg`; fb.cfg = cfgVal }
+      if (query.from !== undefined) { where += ` AND s.lastTs >= @from`; fb.from = query.from }
+      if (query.to !== undefined) { where += ` AND s.lastTs <= @to`; fb.to = query.to }
+      if (query.model !== undefined) { where += ` AND s.lastModel = @model`; fb.model = query.model }
+      if (query.search) { where += ` AND s.sessionId LIKE @search`; fb.search = `%${query.search}%` }
+      if (query.cursor) { where += ` AND (s.lastTs < @ct OR (s.lastTs = @ct AND s.sessionId < @cs))`; fb.ct = query.cursor.lastTs; fb.cs = query.cursor.sessionId }
+      const lim = Math.min(Math.max(query.limit ?? 50, 1), 200)
+      const binds = { ...pb, ...fb, lim: lim + 1 }
+
+      const sql = `WITH ${cte},
+        page AS (
+          SELECT s.* FROM tk_sessions s WHERE 1=1 ${where}
+          ORDER BY s.lastTs DESC, s.sessionId DESC LIMIT @lim
+        )
+        SELECT page.sessionId AS sessionId, page.provider AS provider, page.configId AS configId,
+          page.lastModel AS model, page.inTok AS inTok, page.outTok AS outTok,
+          page.cacheReadTok AS cacheReadTok, page.cacheCreateTok AS cacheCreateTok,
+          page.msgCount AS msgCount, page.lastTs AS lastTs,
+          COALESCE((SELECT SUM(${COST('sm')}) FROM tk_session_models sm LEFT JOIN pricing p ON sm.priceModel=p.pm WHERE sm.sessionId = page.sessionId), 0) AS costUsd,
+          c.label AS cfgLabel
+        FROM page LEFT JOIN tk_configs c ON page.configId = c.configId
+        ORDER BY page.lastTs DESC, page.sessionId DESC`
+      const raw = sqlite.prepare(sql).all(binds) as any[]
+      const hasMore = raw.length > lim
+      const pageRows = hasMore ? raw.slice(0, lim) : raw
+      const rows = pageRows.map((r: any) => ({
+        sessionId: r.sessionId as string,
+        provider: r.provider as string,
+        configId: (r.configId === '' ? null : r.configId) as string | null,
+        configLabel: (r.cfgLabel && r.cfgLabel !== '') ? r.cfgLabel as string : 'External / no config',
+        model: r.model as string,
+        costUsd: (r.costUsd ?? 0) as number,
+        inTok: r.inTok as number,
+        outTok: r.outTok as number,
+        cacheReadTok: r.cacheReadTok as number,
+        cacheCreateTok: r.cacheCreateTok as number,
+        msgCount: r.msgCount as number,
+        lastTs: r.lastTs as number,
+      }))
+      const nextCursor = hasMore
+        ? { lastTs: pageRows[lim - 1].lastTs as number, sessionId: pageRows[lim - 1].sessionId as string }
+        : null
+      return { rows, nextCursor }
+    },
+
+    querySessionDetail(pricing, sessionId) {
+      const { cte, binds: pb } = pricingCte(pricing)
+      const s = sqlite.prepare(
+        `SELECT s.*, c.label AS cfgLabel FROM tk_sessions s LEFT JOIN tk_configs c ON s.configId=c.configId WHERE s.sessionId=@sid`
+      ).get({ sid: sessionId }) as any
+      if (!s) return null
+      const byModel = sqlite.prepare(
+        `WITH ${cte} SELECT sm.model AS model, ${COST('sm')} AS costUsd,
+          sm.inTok AS inTok, sm.outTok AS outTok, sm.cacheReadTok AS cacheReadTok,
+          sm.cacheCreateTok AS cacheCreateTok, sm.msgCount AS msgCount
+        FROM tk_session_models sm LEFT JOIN pricing p ON sm.priceModel=p.pm
+        WHERE sm.sessionId=@sid ORDER BY costUsd DESC`
+      ).all({ ...pb, sid: sessionId }) as any[]
+      const costUsd = byModel.reduce((a: number, m: any) => a + ((m.costUsd as number) ?? 0), 0)
+      return {
+        sessionId: s.sessionId as string,
+        provider: s.provider as string,
+        configId: (s.configId === '' ? null : s.configId) as string | null,
+        configLabel: (s.cfgLabel && s.cfgLabel !== '') ? s.cfgLabel as string : 'External / no config',
+        model: s.lastModel as string,
+        costUsd,
+        inTok: s.inTok as number,
+        outTok: s.outTok as number,
+        cacheReadTok: s.cacheReadTok as number,
+        cacheCreateTok: s.cacheCreateTok as number,
+        msgCount: s.msgCount as number,
+        lastTs: s.lastTs as number,
+        firstTs: s.firstTs as number,
+        projectDir: s.projectDir as string,
+        byModel: byModel.map((m: any) => ({
+          model: m.model as string,
+          costUsd: (m.costUsd ?? 0) as number,
+          inTok: m.inTok as number,
+          outTok: m.outTok as number,
+          cacheReadTok: m.cacheReadTok as number,
+          cacheCreateTok: m.cacheCreateTok as number,
+          msgCount: m.msgCount as number,
+        })),
+      }
+    },
+
     checkpoint: () => { sqlite.pragma('wal_checkpoint(TRUNCATE)') },
     close: () => { sqlite.close() },
   }
