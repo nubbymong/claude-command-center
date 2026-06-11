@@ -128,9 +128,12 @@ function matchEntry(registry: ModelRegistry, modelId: string): ModelEntry | null
   const lower = raw.toLowerCase()
   for (const m of registry.models) {
     for (const p of m.patterns) {
-      const hit = p.startsWith('^') || p.endsWith('$')
-        ? new RegExp(p, 'i').test(lower)
-        : lower.includes(p.toLowerCase())
+      let hit = false
+      try {
+        hit = p.startsWith('^') || p.endsWith('$')
+          ? new RegExp(p, 'i').test(lower)
+          : lower.includes(p.toLowerCase())
+      } catch { /* malformed pattern in a hand-edited overlay: skip, never crash a render */ }
       if (hit) return m
     }
   }

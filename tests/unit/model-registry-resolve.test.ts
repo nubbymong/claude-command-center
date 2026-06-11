@@ -33,6 +33,13 @@ describe('resolveModelInfo — behaviour-identity snapshots (pin today)', () => 
     expect(resolveModelInfo(reg, 'claude-opus-4-8-fast').label).toBe('Opus 4.8 Fast')
     expect(resolveModelInfo(reg, 'claude-opus-4-7-20260101').label).toBe('Opus 4.7')
   })
+  it('substring pattern order is load-bearing: generic opus text lands on the first opus entry', () => {
+    expect(resolveModelInfo(reg, 'foo-opus-bar').id).toBe('claude-opus-4-8')
+  })
+  it('codex family groups under the "codex" chart label (intended change vs old verbatim labels)', () => {
+    expect(resolveModelInfo(reg, 'gpt-5.5').chartLabel).toBe('codex')
+    expect(resolveModelInfo(reg, 'o3-codex').chartLabel).toBe('codex')
+  })
 })
 
 describe('resolveModelInfo — graceful defaults for unknowns', () => {
