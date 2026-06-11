@@ -48,9 +48,11 @@ export const spawnOptionsSchema = z.object({
     model: z.string().optional(),
     tools: z.array(z.string()).optional(),
   })).optional(),
-  // All 6 live effort levels (set via /effort, persisted, restored at spawn).
-  // Capping at low/medium/high made a restored xhigh/max/ultracode session throw here.
-  effortLevel: z.enum(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode']).optional(),
+  // PERMISSIVE by design (spec 2026-06-11 §4): a registry-validated enum here
+  // re-creates the restore crash — capping at low/medium/high made a restored
+  // xhigh/max/ultracode session throw. Unknown levels flow through to the
+  // Sentinel observe seam in effort-tracker instead of being rejected at spawn.
+  effortLevel: z.string().min(1).max(32).optional(),
   disableAutoMemory: z.boolean().optional(),
   enableCodexReview: z.boolean().optional(),
   // T8b (bug #5): app-relaunch exact-conversation resume target.

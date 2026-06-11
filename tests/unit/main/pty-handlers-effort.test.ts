@@ -5,6 +5,10 @@
  * and is persisted (session-persistence.ts); restoring such a session passes its
  * effortLevel to pty.spawn. If the schema only allowed low/medium/high, parse()
  * would throw "Invalid parameters" and the session would fail to respawn.
+ *
+ * PERMISSIVE contract (spec 2026-06-11 §4): the schema is now a bounded string,
+ * not an enum. Unknown future effort levels are accepted and flow to the Sentinel
+ * observe seam in effort-tracker rather than being rejected at spawn.
  */
 import { describe, it, expect } from 'vitest'
 import { spawnOptionsSchema } from '../../../src/main/ipc/pty-handlers'
@@ -24,10 +28,9 @@ describe('pty-handlers spawnOptionsSchema -- effortLevel (all 6 levels)', () => 
     expect(parsed?.effortLevel).toBeUndefined()
   })
 
-  it('rejects an unknown effort level', () => {
-    expect(() =>
-      spawnOptionsSchema.parse({ cwd: 'C:/work', effortLevel: 'turbo' as never }),
-    ).toThrow()
+  it('accepts an unknown effort level (permissive: flows to Sentinel observe, not rejected at spawn)', () => {
+    const parsed = spawnOptionsSchema.parse({ cwd: 'C:/work', effortLevel: 'turbo' as never })
+    expect(parsed?.effortLevel).toBe('turbo')
   })
 })
 
