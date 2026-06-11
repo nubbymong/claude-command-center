@@ -42,8 +42,13 @@ export const useSentinelStore = create<SentinelUiState>((set, get) => ({
   hydrate: async () => {
     // Subscribe before get (registryStore pattern); listener is process-lifetime.
     window.electronAPI.sentinel.onUpdate((snap) => get().applyUpdate(snap))
-    const snap = await window.electronAPI.sentinel.getState()
-    if (snap) set({ snap })
+    try {
+      const snap = await window.electronAPI.sentinel.getState()
+      if (snap) set({ snap })
+    } catch {
+      // Sentinel disabled: handlers never registered, so the invoke rejects.
+      // Disabled is a first-class state (snap stays null, dot hidden), not an error.
+    }
   },
 
   setPanelOpen: (open) => set({ panelOpen: open }),
