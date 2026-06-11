@@ -9,6 +9,7 @@ import { getGateway } from './hooks/index'
 import { IPC } from '../shared/ipc-channels'
 import type { HookEvent } from '../shared/hook-types'
 import { getRegistry } from './model-registry-service'
+import { sentinelObserve } from './sentinel/index'
 
 // DELIBERATE behaviour change (spec 2026-06-11 §3/§4): unknown effort levels
 // now display verbatim instead of being silently dropped. A hardcoded VALID set
@@ -59,6 +60,9 @@ export function _resetEffort(): void { lastBySession.clear() }
 export function startEffortTracker(): void {
   if (started) return
   started = true
+  // Wire Sentinel Trigger A: unknown effort levels are reported for registry
+  // proposals. sentinelObserve is a no-op before initSentinel (fail-open).
+  setEffortObserver((v) => { try { sentinelObserve({ kind: 'effort', value: v, source: 'hooks' }) } catch { /* must not break tracking */ } })
   const gw = getGateway()
   if (gw) gw.subscribe(track)
 }

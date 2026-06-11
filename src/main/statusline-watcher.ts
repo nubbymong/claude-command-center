@@ -31,6 +31,7 @@ import * as path from 'path'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import { decorateStatuslineWithColour } from './account-color'
 import { notifyClaudeTelemetry } from './providers/claude/telemetry'
+import { sentinelObserve } from './sentinel/index'
 
 // Re-export from shared types for backward compatibility
 export type { StatuslineData } from '../shared/types'
@@ -91,6 +92,13 @@ function fanOutStatusline(data: StatuslineData, getWindow: (() => BrowserWindow 
   // isn't in unit tests). A throw here must not break the statusline pipeline.
   if (data.transcriptPath && data.sessionId && transcriptPathSink) {
     try { transcriptPathSink(data.sessionId, data.transcriptPath) } catch { /* sink must not break fan-out */ }
+  }
+  // Sentinel Trigger A: observe the raw model id (modelId preferred; fall back to
+  // model which may be a display name — the resolver handles both). Safe before
+  // initSentinel: sentinelObserve is a no-op when the observer is not yet set.
+  const rawModel = data.modelId ?? data.model
+  if (typeof rawModel === 'string' && rawModel) {
+    try { sentinelObserve({ kind: 'model', value: rawModel, source: 'statusline' }) } catch { /* must not break fan-out */ }
   }
 }
 

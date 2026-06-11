@@ -186,6 +186,10 @@ export interface StatuslineData {
    *  -> transcript binder) as a continuous, exact discovery source; the renderer
    *  ignores it. */
   transcriptPath?: string
+  /** Sentinel Trigger A: raw model id (data.model?.id) from the bridge script.
+   *  `model` above is display-name-preferring; this field is id-first for
+   *  accurate registry matching. The renderer ignores it. */
+  modelId?: string
 }
 
 // ── Agent Templates ──
