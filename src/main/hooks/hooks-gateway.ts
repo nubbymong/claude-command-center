@@ -36,11 +36,6 @@ let hooksInFlight = 0
 // is loopback-only and token-gated, so the DoS surface is already small.
 const MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024
 
-// One-time-per-session 413 logging so oversized payloads are visible in app.log
-// (the feed gap was previously silent), without flooding when a session edits
-// the same large file repeatedly.
-const oversizeLoggedSessions = new Set<string>()
-
 export interface HooksGatewayOptions {
   defaultPort?: number
   emit: (channel: string, payload: unknown) => void
@@ -94,6 +89,11 @@ export class HooksGateway {
   private secrets = new Map<string, string>()
   private buffers = new Map<string, RingBufferEntry[]>()
   private overflowLatched = new Set<string>()
+  // One-time-per-session 413 logging so oversized payloads are visible in
+  // app.log (the feed gap was previously silent) without flooding when a
+  // session edits the same large file repeatedly. Per-session state: cleared on
+  // unregister + stop like the other latches, so a reused sid re-logs.
+  private oversizeLoggedSessions = new Set<string>()
   private subscribers = new Set<(e: HookEvent) => void>()
   private gateActive = false
 
@@ -169,6 +169,7 @@ export class HooksGateway {
     this.secrets.clear()
     this.buffers.clear()
     this.overflowLatched.clear()
+    this.oversizeLoggedSessions.clear()
   }
 
   registerSession(sessionId: string): string {
@@ -200,6 +201,7 @@ export class HooksGateway {
     this.secrets.delete(sessionId)
     this.buffers.delete(sessionId)
     this.overflowLatched.delete(sessionId)
+    this.oversizeLoggedSessions.delete(sessionId)
     try {
       this.emit(IPC.HOOKS_SESSION_ENDED, sessionId)
     } catch {
@@ -308,8 +310,8 @@ export class HooksGateway {
           // Log once per session so a recurring oversized payload (e.g. repeated
           // edits to one huge file) is visible without flooding app.log.
           const sid413 = parseSidFromUrl(req.url) ?? 'unknown'
-          if (!oversizeLoggedSessions.has(sid413)) {
-            oversizeLoggedSessions.add(sid413)
+          if (!this.oversizeLoggedSessions.has(sid413)) {
+            this.oversizeLoggedSessions.add(sid413)
             logWarn(`[hooks] 413 payload too large sid=${sid413} bytes>${MAX_REQUEST_BODY_BYTES} -- event dropped from feed (further 413s for this session suppressed)`)
           }
           // Destroy the socket only after the 413 body has flushed, else

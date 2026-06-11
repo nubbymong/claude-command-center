@@ -37,7 +37,12 @@ function applyAsyncFsMocks(m: FsMocks): void {
       return s
     }),
     readdir: vi.fn(async (p: string, _opts?: any) => m.readdir(p)),
-    readFile: vi.fn(async (p: string) => m.readFile(p)),
+    // Resolve with jittered, deliberately out-of-order timing so the
+    // concurrency-order test genuinely exercises completion-order != input-order
+    // (a `results.push()` bug would surface; `results[i] = ` survives).
+    readFile: vi.fn((p: string) => new Promise<string>((resolve) => {
+      setTimeout(() => resolve(m.readFile(p)), (p.length * 7) % 13)
+    })),
   }
 }
 
