@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { useSentinelStore } from '../../stores/sentinelStore'
-import type { SentinelFinding } from '../../../../shared/sentinel-types'
+import type { SentinelFinding } from '../../../shared/sentinel-types'
 
 // ── Per-row apply error state ─────────────────────────────────────────────────
 
@@ -163,7 +163,8 @@ export default function SentinelPanel() {
           <div className="flex items-center gap-2 shrink-0">
             <button
               onClick={() => void window.electronAPI.sentinel.rerun()}
-              className="px-2.5 py-1 text-[11px] rounded border border-surface1 bg-surface0 text-overlay1 hover:bg-surface1 transition-colors"
+              disabled={!!snap?.analyzing}
+              className="px-2.5 py-1 text-[11px] rounded border border-surface1 bg-surface0 text-overlay1 hover:bg-surface1 transition-colors disabled:opacity-50 disabled:pointer-events-none"
               title="Re-run analysis now"
             >
               Re-run

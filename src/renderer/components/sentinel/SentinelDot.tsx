@@ -1,7 +1,7 @@
 import React from 'react'
 import { useSentinelStore } from '../../stores/sentinelStore'
 import { useSettingsStore } from '../../stores/settingsStore'
-import type { SentinelStateSnapshot } from '../../../../shared/sentinel-types'
+import type { SentinelStateSnapshot } from '../../../shared/sentinel-types'
 
 // ── Pure helper (exported for unit tests) ────────────────────────────────────
 

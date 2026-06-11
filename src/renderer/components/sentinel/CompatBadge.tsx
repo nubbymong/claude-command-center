@@ -13,7 +13,7 @@ export default function CompatBadge({ feature }: Props) {
   if (!sentinelEnabled || !snap) return null
 
   const matching = snap.findings.filter(
-    (f) => f.status === 'open' && (f.kind === 'compat' || f.kind === 'info') && f.affectedFeature === feature,
+    (f) => f.status === 'open' && f.kind === 'compat' && f.affectedFeature === feature,
   )
 
   if (matching.length === 0) return null
