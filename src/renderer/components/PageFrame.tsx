@@ -27,6 +27,9 @@ interface Props {
   context?: React.ReactNode
   /** Right-aligned page-specific buttons / selectors. */
   actions?: React.ReactNode
+  /** When provided, render a close (X) button at the far right of the header
+   * strip that returns to the sessions view. */
+  onClose?: () => void
   /** Optional left rail (sub-nav). When present, body sits to its right. */
   leftRail?: React.ReactNode
   /** When true (default), the body wraps its content in `overflow-y-auto`
@@ -57,6 +60,7 @@ export default function PageFrame({
   title,
   context,
   actions,
+  onClose,
   leftRail,
   scrollable = true,
   children,
@@ -82,6 +86,18 @@ export default function PageFrame({
         </div>
         <div className="flex-1" />
         {actions && <div className="flex items-center gap-1 shrink-0">{actions}</div>}
+        {onClose && (
+          <button
+            onClick={onClose}
+            aria-label="Close"
+            title="Close (back to sessions)"
+            className="ml-1 w-6 h-6 flex items-center justify-center rounded shrink-0 text-overlay0 hover:text-text hover:bg-surface0 transition-colors"
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        )}
       </div>
       {leftRail ? (
         <div className="flex-1 flex flex-row min-h-0">

@@ -55,7 +55,12 @@ export interface MemoryScanResult {
 // ---------------------------------------------------------------------------
 
 const VALID_TYPES = new Set(['user', 'feedback', 'project', 'reference', 'snapshot'])
-const KNOWN_FRONTMATTER_FIELDS = new Set(['name', 'description', 'type', 'originSessionId'])
+// `metadata` is the standard nested block in the auto-memory frontmatter
+// (`metadata:` with an indented `type:`). The flat line parser surfaces it as a
+// top-level key with an empty value, so without it here every standard memory
+// file raised a spurious "Unknown frontmatter field: metadata" info warning
+// (~630 of them on a large memory store).
+const KNOWN_FRONTMATTER_FIELDS = new Set(['name', 'description', 'type', 'originSessionId', 'metadata'])
 
 /**
  * Clean a raw project directory name into a human-friendly project name.
@@ -171,6 +176,45 @@ function generateId(projectDir: string, filename: string): string {
     .substring(0, 16)
 }
 
+/** stat that resolves to null instead of throwing on a missing/inaccessible path. */
+async function statSafe(p: string): Promise<fs.Stats | null> {
+  try {
+    return await fs.promises.stat(p)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Map over items with a bounded number of concurrent async workers, preserving
+ * input order in the result. Keeps the memory scan non-blocking (async I/O) and
+ * reasonably fast (parallel reads) without opening 700+ file descriptors at once.
+ */
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results = new Array<R>(items.length)
+  let next = 0
+  const worker = async (): Promise<void> => {
+    while (true) {
+      const i = next++
+      if (i >= items.length) return
+      results[i] = await fn(items[i], i)
+    }
+  }
+  const pool = Array.from({ length: Math.min(limit, items.length) }, () => worker())
+  await Promise.all(pool)
+  return results
+}
+
+interface ScannedFile {
+  filename: string
+  stat: fs.Stats
+  content: string
+}
+
 // ---------------------------------------------------------------------------
 // Core scan
 // ---------------------------------------------------------------------------
@@ -186,16 +230,17 @@ export async function scanLocalMemory(): Promise<MemoryScanResult> {
     scannedAt: Date.now()
   }
 
-  // Check if the projects root exists
-  if (!fs.existsSync(projectsRoot)) {
+  // Check if the projects root exists. Async stat (not existsSync) so the scan
+  // never blocks the main thread — at 700+ files this loop used to freeze every
+  // IPC/PTY pump for the scan's duration on each page open.
+  if (!(await statSafe(projectsRoot))) {
     logInfo('[memory-scanner] No projects directory found at', projectsRoot)
     return result
   }
 
   let projectDirs: string[]
   try {
-    projectDirs = fs
-      .readdirSync(projectsRoot, { withFileTypes: true })
+    projectDirs = (await fs.promises.readdir(projectsRoot, { withFileTypes: true }))
       .filter((d) => d.isDirectory())
       .map((d) => d.name)
   } catch (err) {
@@ -207,13 +252,14 @@ export async function scanLocalMemory(): Promise<MemoryScanResult> {
     const memoryDir = path.join(projectsRoot, projectDir, 'memory')
 
     // Skip projects without a memory directory
-    if (!fs.existsSync(memoryDir) || !fs.statSync(memoryDir).isDirectory()) {
+    const memoryDirStat = await statSafe(memoryDir)
+    if (!memoryDirStat || !memoryDirStat.isDirectory()) {
       continue
     }
 
     let mdFiles: string[]
     try {
-      mdFiles = fs.readdirSync(memoryDir).filter((f) => f.endsWith('.md'))
+      mdFiles = (await fs.promises.readdir(memoryDir)).filter((f) => f.endsWith('.md'))
     } catch (err) {
       logError('[memory-scanner] Failed to read memory dir for', projectDir, err)
       result.warnings.push({
@@ -238,23 +284,35 @@ export async function scanLocalMemory(): Promise<MemoryScanResult> {
 
     let hasMemoryMd = false
 
-    for (const filename of mdFiles) {
+    // Read all of this project's files with bounded concurrency, preserving
+    // mdFiles order so the aggregation below (memories[] order, warning order)
+    // is identical to the old sequential-sync scan. Unreadable files -> null,
+    // skipped in the aggregation loop.
+    const scanned = await mapWithConcurrency<string, ScannedFile | null>(
+      mdFiles,
+      16,
+      async (filename) => {
+        const filePath = path.join(memoryDir, filename)
+        let stat: fs.Stats
+        try {
+          stat = await fs.promises.stat(filePath)
+        } catch {
+          return null
+        }
+        try {
+          const content = await fs.promises.readFile(filePath, 'utf-8')
+          return { filename, stat, content }
+        } catch (err) {
+          logError('[memory-scanner] Failed to read file:', filePath, err)
+          return null
+        }
+      }
+    )
+
+    for (const entry of scanned) {
+      if (!entry) continue
+      const { filename, stat, content } = entry
       const filePath = path.join(memoryDir, filename)
-
-      let stat: fs.Stats
-      try {
-        stat = fs.statSync(filePath)
-      } catch {
-        continue
-      }
-
-      let content: string
-      try {
-        content = fs.readFileSync(filePath, 'utf-8')
-      } catch (err) {
-        logError('[memory-scanner] Failed to read file:', filePath, err)
-        continue
-      }
 
       const { fields, body, hasFrontmatter } = parseFrontmatter(content)
 

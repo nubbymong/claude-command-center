@@ -341,7 +341,7 @@ function DetailPanel({ memory, content, onClose, onDelete, onWriteFrontmatter }:
 }
 
 // ── Main Page ──
-export default function MemoryPage() {
+export default function MemoryPage({ onClose }: { onClose?: () => void }) {
   const {
     projects, memories, warnings, totalSize, loading, error,
     selectedProject, selectedMemoryId, searchQuery, collapsedGroups, selectedContent,
@@ -430,6 +430,7 @@ export default function MemoryPage() {
       title="Memory"
       context={memoryContext}
       actions={memoryActions}
+      onClose={onClose}
       scrollable={false}
     >
 
