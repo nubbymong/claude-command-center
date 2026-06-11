@@ -61,6 +61,14 @@ const mockElectronAPI = {
     get: vi.fn(() => Promise.resolve({ models: [], families: {}, effortLevels: [], dropdown: [] })),
     onUpdate: vi.fn(() => () => {}),
   },
+  sentinel: {
+    getState: vi.fn(() => Promise.resolve(null)),
+    apply: vi.fn(() => Promise.resolve({ ok: true })),
+    revert: vi.fn(() => Promise.resolve()),
+    setStatus: vi.fn(() => Promise.resolve()),
+    rerun: vi.fn(() => Promise.resolve()),
+    onUpdate: vi.fn(() => () => {}),
+  },
   config: {
     loadAll: vi.fn(() => Promise.resolve({ data: {}, needsMigration: false })),
     save: vi.fn(() => Promise.resolve(true)),

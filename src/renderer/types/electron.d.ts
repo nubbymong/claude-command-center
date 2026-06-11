@@ -45,6 +45,8 @@ import type { HookEvent, HooksGatewayStatus } from '../../shared/hook-types'
 export type { HookEvent, HookEventKind, HooksGatewayStatus } from '../../shared/hook-types'
 import type { ModelRegistry } from '../../shared/model-registry'
 export type { ModelRegistry } from '../../shared/model-registry'
+import type { SentinelStateSnapshot } from '../../shared/sentinel-types'
+export type { SentinelStateSnapshot, SentinelFinding, FindingKind, FindingSeverity, FindingStatus } from '../../shared/sentinel-types'
 import type {
   ChannelPayload,
   ChannelEnvelopeMeta,
@@ -181,6 +183,14 @@ export interface ElectronAPI {
   registry: {
     get(): Promise<ModelRegistry>
     onUpdate(cb: (reg: ModelRegistry) => void): () => void
+  }
+  sentinel: {
+    getState(): Promise<SentinelStateSnapshot | null>
+    apply(id: string): Promise<{ ok: boolean; error?: string }>
+    revert(id: string): Promise<void>
+    setStatus(id: string, status: 'dismissed' | 'muted'): Promise<void>
+    rerun(): Promise<void>
+    onUpdate(cb: (snap: SentinelStateSnapshot) => void): () => void
   }
   accountIdentity: {
     get: (sessionId: string) => Promise<{ email: string; colourKey: string } | null>

@@ -3,6 +3,7 @@ import { IPC, ptyDataChannel, ptyExitChannel } from '../shared/ipc-channels'
 import type { HookEvent, HooksGatewayStatus } from '../shared/hook-types'
 import type { StatuslineData } from '../shared/types'
 import type { ModelRegistry } from '../shared/model-registry'
+import type { SentinelStateSnapshot } from '../shared/sentinel-types'
 
 export interface ElectronAPI {
   config: {
@@ -108,6 +109,14 @@ export interface ElectronAPI {
   registry: {
     get: () => Promise<ModelRegistry>
     onUpdate: (callback: (reg: ModelRegistry) => void) => () => void
+  }
+  sentinel: {
+    getState(): Promise<SentinelStateSnapshot | null>
+    apply(id: string): Promise<{ ok: boolean; error?: string }>
+    revert(id: string): Promise<void>
+    setStatus(id: string, status: 'dismissed' | 'muted'): Promise<void>
+    rerun(): Promise<void>
+    onUpdate(cb: (snap: SentinelStateSnapshot) => void): () => void
   }
   accountIdentity: {
     get: (sessionId: string) => Promise<{ email: string; colourKey: string } | null>
@@ -541,6 +550,18 @@ const electronAPI: ElectronAPI = {
       const handler = (_: unknown, reg: unknown) => callback(reg as ModelRegistry)
       ipcRenderer.on(IPC.REGISTRY_UPDATE, handler)
       return () => ipcRenderer.removeListener(IPC.REGISTRY_UPDATE, handler)
+    },
+  },
+  sentinel: {
+    getState: () => ipcRenderer.invoke(IPC.SENTINEL_GET_STATE),
+    apply: (findingId: string) => ipcRenderer.invoke(IPC.SENTINEL_APPLY, findingId),
+    revert: (findingId: string) => ipcRenderer.invoke(IPC.SENTINEL_REVERT, findingId),
+    setStatus: (findingId: string, status: 'dismissed' | 'muted') => ipcRenderer.invoke(IPC.SENTINEL_SET_STATUS, findingId, status),
+    rerun: () => ipcRenderer.invoke(IPC.SENTINEL_RERUN),
+    onUpdate: (callback) => {
+      const handler = (_: unknown, snap: unknown) => callback(snap as SentinelStateSnapshot)
+      ipcRenderer.on(IPC.SENTINEL_STATE_UPDATE, handler)
+      return () => ipcRenderer.removeListener(IPC.SENTINEL_STATE_UPDATE, handler)
     },
   },
   accountIdentity: {

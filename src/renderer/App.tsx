@@ -41,6 +41,7 @@ import { useAppMetaStore } from './stores/appMetaStore'
 import { useSettingsStore } from './stores/settingsStore'
 import { useAccountProfilesStore } from './stores/accountProfilesStore'
 import { useRegistryStore } from './stores/registryStore'
+import { useSentinelStore } from './stores/sentinelStore'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 import { useThemeController } from './hooks/useThemeController'
 import { useLaunchConfig } from './hooks/useLaunchConfig'
@@ -349,6 +350,7 @@ export default function App() {
       useCodexAccountStore.getState().refresh()
       useAccountProfilesStore.getState().hydrate()
       useRegistryStore.getState().hydrate().catch((err) => console.warn('[registry] hydrate failed:', err))
+      useSentinelStore.getState().hydrate().catch((err) => console.warn('[sentinel] hydrate failed:', err))
 
       const magicSettings = useMagicButtonStore.getState().settings
       if (magicSettings.autoDeleteDays != null && magicSettings.autoDeleteDays > 0) {
