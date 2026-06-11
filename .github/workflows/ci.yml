@@ -54,6 +54,15 @@ jobs:
       - name: Install Electron binary
         run: node node_modules/electron/install.js
 
+      # GitHub's 2026 Windows images ship only Visual Studio 2026 ("18"), which
+      # @electron/node-gyp's find-visualstudio cannot parse (fork frozen at
+      # 10.2.0-electron.2, Oct 2024). Initializing the VS developer environment
+      # sets VCINSTALLDIR/PATH, which flips node-gyp into its "VS Command
+      # Prompt" mode and bypasses version discovery entirely.
+      - name: Initialize VS developer environment (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
       - name: Rebuild native modules
         shell: bash
         run: |

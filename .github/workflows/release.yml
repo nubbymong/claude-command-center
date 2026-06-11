@@ -50,6 +50,11 @@ jobs:
       - name: Install Electron binary
         run: node node_modules/electron/install.js
 
+      # VS 2026-only runner images break @electron/node-gyp's VS discovery;
+      # the VS dev environment (VCINSTALLDIR set) bypasses it. See ci.yml.
+      - name: Initialize VS developer environment
+        uses: ilammy/msvc-dev-cmd@v1
+
       - name: Rebuild native modules
         shell: bash
         run: |
