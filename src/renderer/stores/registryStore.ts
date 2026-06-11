@@ -16,9 +16,13 @@ interface RegistryState {
 export const useRegistryStore = create<RegistryState>((set, get) => ({
   registry: baselineJson as unknown as ModelRegistry,
   hydrate: async () => {
+    // Subscribe BEFORE the initial get so a reload firing in between is never
+    // missed (every push is a full snapshot, so orderings self-correct).
+    // Listener is deliberately process-lifetime: this store is a singleton and
+    // App.tsx hydrates it at most once per renderer lifetime.
+    window.electronAPI.registry.onUpdate((updated) => set({ registry: updated }))
     const reg = await window.electronAPI.registry.get()
     set({ registry: reg })
-    window.electronAPI.registry.onUpdate((updated) => set({ registry: updated }))
   },
   resolve: (modelId) => resolveModelInfo(get().registry, modelId),
 }))
