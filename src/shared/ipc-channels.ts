@@ -55,6 +55,10 @@ export const IPC = {
   // Live reasoning effort pushed from the hooks gateway (main -> renderer).
   HOOKS_EFFORT_UPDATE: 'hooks:effortUpdate',
 
+  // Model/effort registry (spec 2026-06-11): hydrate + hot-reload push (main -> renderer).
+  REGISTRY_GET: 'registry:get',
+  REGISTRY_UPDATE: 'registry:update',
+
   // Debug
   DEBUG_ON_DEBUG: 'claude:debug',
   DEBUG_ENABLE: 'debug:enable',

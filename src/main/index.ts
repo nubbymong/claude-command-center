@@ -41,6 +41,7 @@ import { registerServiceHealthHandlers, getMergedDiagnostics } from './ipc/servi
 import { PtyIntegrityMonitor, setPtyIntegrityMonitor, getPtyIntegrityMonitor } from './services/pty-integrity-monitor'
 import { registerCodexHandlers } from './ipc/codex-handlers'
 import { registerCodexReviewHandlers } from './ipc/codex-review-handlers'
+import { registerRegistryHandlers } from './ipc/registry-handlers'
 import { registerChannelHandlers } from './ipc/channel-handlers'
 import { startRulesEngine } from './channel-rules'
 import { startEffortTracker } from './effort-tracker'
@@ -655,6 +656,7 @@ if (!gotTheLock) {
     registerDebugHandlers()
     registerUpdateHandlers()
     registerSetupHandlers()
+    registerRegistryHandlers(getResourcesDirectory())
     registerConfigHandlers()
     // Beta builds default to verbose logging (lightweight async DEBUG lines ->
     // app.log) so field issues are captured. NEVER on stable. This enables only

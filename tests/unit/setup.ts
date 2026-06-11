@@ -57,6 +57,10 @@ vi.mock('../../src/main/ipc/setup-handlers', () => ({
 
 // Mock window.electronAPI for renderer store tests
 const mockElectronAPI = {
+  registry: {
+    get: vi.fn(() => Promise.resolve({ models: [], families: {}, effortLevels: [], dropdown: [] })),
+    onUpdate: vi.fn(() => () => {}),
+  },
   config: {
     loadAll: vi.fn(() => Promise.resolve({ data: {}, needsMigration: false })),
     save: vi.fn(() => Promise.resolve(true)),

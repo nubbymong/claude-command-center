@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import { IPC, ptyDataChannel, ptyExitChannel } from '../shared/ipc-channels'
 import type { HookEvent, HooksGatewayStatus } from '../shared/hook-types'
 import type { StatuslineData } from '../shared/types'
+import type { ModelRegistry } from '../shared/model-registry'
 
 export interface ElectronAPI {
   config: {
@@ -103,6 +104,10 @@ export interface ElectronAPI {
   }
   effort: {
     onUpdate: (callback: (data: { sessionId: string; effortLevel: string }) => void) => () => void
+  }
+  registry: {
+    get: () => Promise<ModelRegistry>
+    onUpdate: (callback: (reg: ModelRegistry) => void) => () => void
   }
   accountIdentity: {
     get: (sessionId: string) => Promise<{ email: string; colourKey: string } | null>
@@ -528,6 +533,14 @@ const electronAPI: ElectronAPI = {
       const handler = (_: unknown, data: unknown) => callback(data as { sessionId: string; effortLevel: string })
       ipcRenderer.on(IPC.HOOKS_EFFORT_UPDATE, handler)
       return () => ipcRenderer.removeListener(IPC.HOOKS_EFFORT_UPDATE, handler)
+    },
+  },
+  registry: {
+    get: () => ipcRenderer.invoke(IPC.REGISTRY_GET),
+    onUpdate: (callback) => {
+      const handler = (_: unknown, reg: unknown) => callback(reg as ModelRegistry)
+      ipcRenderer.on(IPC.REGISTRY_UPDATE, handler)
+      return () => ipcRenderer.removeListener(IPC.REGISTRY_UPDATE, handler)
     },
   },
   accountIdentity: {
