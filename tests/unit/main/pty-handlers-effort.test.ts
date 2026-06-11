@@ -73,6 +73,14 @@ describe('pty-handlers spawnOptionsSchema -- model charset guard (shell-injectio
     expect(parsed?.model).toBeUndefined()
   })
 
+  it('accepts model: "" — the default "no override" every session without an explicit model sends', () => {
+    // Regression (re-review blocker): sessionStore.model is non-optional and defaults
+    // to ''; TerminalView passes it verbatim to pty.spawn. Rejecting '' bricks every
+    // default-model spawn/restore. Emission already skips empty (if (options?.model)).
+    const parsed = spawnOptionsSchema.parse({ cwd: 'C:/work', model: '' })
+    expect(parsed?.model).toBe('')
+  })
+
   it('rejects a semicolon-injected model value', () => {
     expect(() =>
       spawnOptionsSchema.parse({ cwd: 'C:/work', model: 'opus; calc.exe' }),

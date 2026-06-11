@@ -67,7 +67,9 @@ export const spawnOptionsSchema = z.object({
   }).optional(),
   // Shell-interpolated UNQUOTED at spawn (pty-manager.ts:1140 local, :567 SSH) → charset-guarded.
   // Legit values: 'opus', 'opus[1m]', 'fable', 'sonnet', 'haiku', or versioned ids like 'claude-opus-4-8'.
-  model: z.string().max(64).regex(/^[a-zA-Z0-9._[\]-]+$/).optional(),
+  // '' is the DEFAULT for "no override" (sessionStore.model is non-optional; TerminalView
+  // passes it verbatim) and must stay accepted — emission already skips empty (`if (options?.model)`).
+  model: z.string().max(64).regex(/^[a-zA-Z0-9._[\]-]+$/).optional().or(z.literal('')),
   profileId: z.string().optional(),
   provider: z.enum(['claude', 'codex']).optional(),
   codexOptions: z.object({
