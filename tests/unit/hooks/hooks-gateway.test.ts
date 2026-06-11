@@ -174,6 +174,42 @@ describe('HooksGateway.request validation', () => {
   })
 })
 
+describe('HooksGateway body-size cap (413)', () => {
+  let gw: HooksGateway | null = null
+  afterEach(async () => {
+    await gw?.stop()
+    gw = null
+  })
+
+  it('accepts a ~300 KiB payload (over the old 256 KiB cap, under the new 4 MiB cap)', async () => {
+    // Regression: PostToolUse on a large file produces a body the old 256 KiB
+    // cap rejected with 413, silently dropping the edit from CCC's feed.
+    gw = new HooksGateway({ emit: vi.fn(), defaultPort: 0 })
+    const status = await gw.start()
+    const secret = gw.registerSession('sid-big')
+    const body = JSON.stringify({ event: 'PostToolUse', tool_name: 'Edit', payload: { big: 'x'.repeat(300 * 1024) } })
+    const res = await fetch(`http://127.0.0.1:${status.port}/hook/sid-big`, {
+      method: 'POST',
+      headers: { 'x-ccc-hook-token': secret, 'content-type': 'application/json' },
+      body,
+    })
+    expect(res.status).toBe(200)
+  })
+
+  it('still rejects a payload over the 4 MiB cap with 413', async () => {
+    gw = new HooksGateway({ emit: vi.fn(), defaultPort: 0 })
+    const status = await gw.start()
+    const secret = gw.registerSession('sid-huge')
+    const body = JSON.stringify({ event: 'PostToolUse', tool_name: 'Edit', payload: { big: 'x'.repeat(4 * 1024 * 1024 + 1024) } })
+    const res = await fetch(`http://127.0.0.1:${status.port}/hook/sid-huge`, {
+      method: 'POST',
+      headers: { 'x-ccc-hook-token': secret, 'content-type': 'application/json' },
+      body,
+    })
+    expect(res.status).toBe(413)
+  })
+})
+
 describe('HooksGateway.ingest', () => {
   let gw: HooksGateway | null = null
   let emitted: Array<{ channel: string; payload: unknown }> = []

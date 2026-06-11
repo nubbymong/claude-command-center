@@ -27,11 +27,19 @@ import { logTrace, logWarn, logError } from '../debug-logger'
 // Metadata only -- never reflects payload contents.
 let hooksInFlight = 0
 
-// Cap the incoming HTTP body at 256 KiB. Claude Code hook payloads top out
-// around a few KB; anything beyond this is either a misbehaving client or
-// a local-process attack attempt. 413 back before buffering avoids memory
-// pressure from a single fat request tying up the main process.
-const MAX_REQUEST_BODY_BYTES = 256 * 1024
+// Cap the incoming HTTP body at 4 MiB. The old 256 KiB cap assumed hook
+// payloads "top out around a few KB" -- false for PostToolUse on a large file
+// (Claude Code includes the tool input/response, so an Edit against a ~390 KB
+// file produced a body over 256 KiB and got 413'd, silently dropping that
+// edit from CCC's activity feed). 4 MiB gives ~10x headroom over a single
+// big-file edit while still bounding a misbehaving local client; the gateway
+// is loopback-only and token-gated, so the DoS surface is already small.
+const MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024
+
+// One-time-per-session 413 logging so oversized payloads are visible in app.log
+// (the feed gap was previously silent), without flooding when a session edits
+// the same large file repeatedly.
+const oversizeLoggedSessions = new Set<string>()
 
 export interface HooksGatewayOptions {
   defaultPort?: number
@@ -296,6 +304,14 @@ export class HooksGateway {
         if (total > MAX_REQUEST_BODY_BYTES) {
           res.statusCode = 413
           res.setHeader('content-type', 'application/json')
+          // Surface the gap: a 413 means CCC's feed silently misses this event.
+          // Log once per session so a recurring oversized payload (e.g. repeated
+          // edits to one huge file) is visible without flooding app.log.
+          const sid413 = parseSidFromUrl(req.url) ?? 'unknown'
+          if (!oversizeLoggedSessions.has(sid413)) {
+            oversizeLoggedSessions.add(sid413)
+            logWarn(`[hooks] 413 payload too large sid=${sid413} bytes>${MAX_REQUEST_BODY_BYTES} -- event dropped from feed (further 413s for this session suppressed)`)
+          }
           // Destroy the socket only after the 413 body has flushed, else
           // a fast client may see a reset instead of a clean 413.
           res.end('{}', () => { req.destroy() })
