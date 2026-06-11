@@ -26,6 +26,7 @@ import SetupDialog from './components/SetupDialog'
 import WhatsNewModal, { shouldShowWhatsNew, markWhatsNewSeen } from './components/WhatsNewModal'
 import AccountLaunchGate from './components/AccountLaunchGate'
 import NewAccountPrompt from './components/NewAccountPrompt'
+import SentinelPanel from './components/sentinel/SentinelPanel'
 import { useAddAccount } from './hooks/useAddAccount'
 import TrainingWalkthrough, { shouldShowTraining, isFirstInstall } from './components/TrainingWalkthrough'
 import GuidedConfigView from './components/GuidedConfigView'
@@ -1075,6 +1076,8 @@ export default function App() {
             under on its first spawn (multi-account only). App-root so it
             overlays every view. */}
         <AccountLaunchGate />
+        {/* Sentinel findings panel: global overlay, driven by sentinelStore. */}
+        <SentinelPanel />
       </div>
     </ErrorBoundary>
   )

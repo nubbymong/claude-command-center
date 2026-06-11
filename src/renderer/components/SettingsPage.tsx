@@ -251,6 +251,31 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
 
               <AccountsPanel onAdd={handleAddAccount} />
 
+              <Section title="CCC Sentinel" icon={<path d="M8 2L3 5v4c0 3.5 2.1 6.4 5 7.5 2.9-1.1 5-4 5-7.5V5L8 2z" stroke="currentColor" strokeWidth="1.2" fill="none" />}>
+                <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.sentinelEnabled !== false}
+                    onChange={(e) => save({ sentinelEnabled: e.target.checked })}
+                    className="mt-0.5 rounded border-surface1"
+                  />
+                  <span>
+                    Enable Sentinel
+                    <span className="block text-[10px] text-overlay0">Detects Claude Code updates and proposes registry fixes. Takes effect after restart.</span>
+                  </span>
+                </label>
+                <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.sentinelAutoOpen !== false}
+                    onChange={(e) => save({ sentinelAutoOpen: e.target.checked })}
+                    className="rounded border-surface1"
+                  />
+                  Auto-open findings panel
+                  <span className="text-[10px] text-overlay0">(When an analysis completes with open findings)</span>
+                </label>
+              </Section>
+
               <Section title="Terminal" icon={<><rect x="2" y="3" width="12" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.2" fill="none" /><path d="M5 7l2 2-2 2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" /><line x1="9" y1="11" x2="11" y2="11" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" /></>}>
                 <Field label="Font Family">
                   <select

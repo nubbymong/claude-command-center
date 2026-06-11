@@ -9,6 +9,7 @@ import { useConfigStore } from '../stores/configStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { resolveAccountNameByEmail } from '../../shared/account-chip-color'
+import CompatBadge from './sentinel/CompatBadge'
 
 const logsIcon = (
   <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round">
@@ -234,6 +235,7 @@ export default function GlobalLogsView() {
 
   const headerActions = (
     <div className="flex items-center gap-2">
+      <CompatBadge feature="logs" />
       <div className="flex items-center gap-2 bg-surface0/40 rounded-lg border border-surface0/80 px-2.5 py-1 focus-within:border-blue/40 transition-all">
         <svg width="13" height="13" viewBox="0 0 14 14" fill="none" className="text-overlay0 shrink-0"><circle cx="6" cy="6" r="4.5" stroke="currentColor" strokeWidth="1.2" /><line x1="9.5" y1="9.5" x2="12.5" y2="12.5" stroke="currentColor" strokeWidth="1.2" /></svg>
         <input type="text" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search all conversations" className="bg-transparent text-text text-xs outline-none border-none placeholder:text-overlay0 font-mono w-48" />

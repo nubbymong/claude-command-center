@@ -3,6 +3,7 @@ import { useSettingsStore } from '../stores/settingsStore'
 import ThemeToggle from './ThemeToggle'
 import ConductorHealthPill from './ConductorHealthPill'
 import ConductorServicesPanel from './ConductorServicesPanel'
+import SentinelDot from './sentinel/SentinelDot'
 
 interface Props {
   sidebarOpen: boolean
@@ -219,6 +220,7 @@ export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
             )}
           </div>
         )}
+        <SentinelDot />
         <ThemeToggle />
         <button
           onClick={() => window.electronAPI.window.minimize()}
