@@ -42,6 +42,23 @@ describe('mergeRegistry', () => {
   it('null/empty overlay returns baseline equivalent', () => {
     expect(mergeRegistry(baseline, null).models).toHaveLength(1)
   })
+  it('duplicate ids within one overlay: last entry wins', () => {
+    const first: OverlayModelEntry = {
+      id: 'claude-fable-6', patterns: ['fable-6'], family: 'fable', label: 'Fable 6 First',
+      provenance: { addedBy: 'sentinel', date: '2026-06-11' },
+    }
+    const second: OverlayModelEntry = {
+      ...first, label: 'Fable 6 Second',
+    }
+    const merged = mergeRegistry(baseline, { models: [first, second] })
+    expect(merged.models.filter((m) => m.id === 'claude-fable-6')).toHaveLength(1)
+    expect(merged.models.find((m) => m.id === 'claude-fable-6')!.label).toBe('Fable 6 Second')
+  })
+  it('effortLevels and dropdown pass through merge unchanged', () => {
+    const merged = mergeRegistry(baseline, { models: [sentinelEntry] })
+    expect(merged.effortLevels).toEqual(baseline.effortLevels)
+    expect(merged.dropdown).toEqual(baseline.dropdown)
+  })
 })
 
 describe('reconcileOverlay', () => {

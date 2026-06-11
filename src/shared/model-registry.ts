@@ -46,6 +46,11 @@ export interface RegistryOverlay {
   families?: Record<string, FamilySpec>
 }
 
+/**
+ * Merge an overlay (sentinel/user additions) into the static baseline registry.
+ * Merged snapshots are READ-ONLY: nested arrays/objects alias the static baseline
+ * import; mutating a snapshot would corrupt the baseline for all later merges.
+ */
 export function mergeRegistry(baseline: ModelRegistry, overlay: RegistryOverlay | null): ModelRegistry {
   if (!overlay) return { ...baseline, models: [...baseline.models], families: { ...baseline.families } }
   const byId = new Map<string, ModelEntry>(baseline.models.map((m) => [m.id, m]))
@@ -63,7 +68,10 @@ export interface ReconcileResult {
   retireProposals: OverlayModelEntry[]       // user entries the new baseline now covers (never auto-removed)
 }
 
-/** First launch after a CCC update: a new baseline "rectifies" overlay entries it now covers (spec §4). */
+/**
+ * First launch after a CCC update: a new baseline "rectifies" overlay entries it now covers (spec §4).
+ * Callers must pass a loaded (possibly-empty) overlay, never null.
+ */
 export function reconcileOverlay(baseline: ModelRegistry, overlay: RegistryOverlay): ReconcileResult {
   const baseIds = new Set(baseline.models.map((m) => m.id))
   const kept: OverlayModelEntry[] = []
