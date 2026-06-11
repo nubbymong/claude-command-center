@@ -120,6 +120,13 @@ export interface AppSettings {
    *  Set false to restore CC's mouse mode (copy-on-select active; right-click pastes).
    *  Changes apply to newly-launched sessions only. */
   classicTerminalCopyPaste?: boolean
+  /** Sentinel service (spec 2026-06-11): when false, the Sentinel service is not
+   *  initialised at all — no startup check, no dot, zero overhead.
+   *  Absent or true = enabled (default-on). */
+  sentinelEnabled?: boolean
+  /** When true (default), the Sentinel panel auto-opens once when a completed
+   *  analysis finds open findings. Set false to suppress all automatic opens. */
+  sentinelAutoOpen?: boolean
 }
 
 interface SettingsState {
@@ -148,6 +155,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   theme: 'dark',
   loggingEnabled: true,
   classicTerminalCopyPaste: true,
+  sentinelEnabled: true,
+  sentinelAutoOpen: true,
 }
 
 // V2 changed the bundled terminal default from Cascadia Code @14 to JetBrains

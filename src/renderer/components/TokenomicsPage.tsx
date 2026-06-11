@@ -1,6 +1,7 @@
-import { useEffect } from 'react'
+import React, { useEffect } from 'react'
 import { useTokenomicsStore } from '../stores/tokenomicsStore'
 import PageFrame from './PageFrame'
+import CompatBadge from './sentinel/CompatBadge'
 import { IndexingState } from './tokenomics/IndexingState'
 import { FilterBar as NewFilterBar } from './tokenomics/FilterBar'
 import { KpiRow } from './tokenomics/KpiRow'
@@ -69,6 +70,7 @@ export default function TokenomicsPage() {
       iconAccent="teal"
       title="Tokenomics"
       context={contextText}
+      actions={<CompatBadge feature="tokenomics" />}
     >
       <div className="p-5">
         {/* Indexing / first-load gate */}

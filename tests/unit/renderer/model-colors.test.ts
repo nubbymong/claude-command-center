@@ -12,7 +12,7 @@ describe('getModelColor (chart colour rule, spec section 5)', () => {
     expect(getModelColor('gpt-5.5')).toBe('var(--chart-codex)')
     expect(getModelColor('gpt-5.3-codex')).toBe('var(--chart-codex)')
   })
-  it('unknown -> other token', () => {
-    expect(getModelColor('mystery-model')).toBe('var(--chart-other)')
+  it('unknown -> deterministic hashed hex (not chart-other; registry-backed spec §4)', () => {
+    expect(getModelColor('mystery-model')).toMatch(/^#/)
   })
 })

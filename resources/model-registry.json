@@ -1,0 +1,48 @@
+{
+  "models": [
+    { "id": "claude-fable-5", "patterns": ["fable"], "aliases": ["fable"], "family": "fable", "label": "Fable 5",
+      "efforts": ["low", "medium", "high", "xhigh", "max", "ultracode"],
+      "fallbackPricing": { "input": 10, "output": 50, "cacheRead": 1.0, "cacheWrite": 12.5 } },
+    { "id": "claude-opus-4-8-fast", "patterns": ["opus-4-8-fast"], "family": "opus", "label": "Opus 4.8 Fast",
+      "efforts": ["low", "medium", "high", "xhigh", "max", "ultracode"],
+      "fallbackPricing": { "input": 10, "output": 50, "cacheRead": 1.0, "cacheWrite": 12.5 } },
+    { "id": "claude-opus-4-8", "patterns": ["opus"], "aliases": ["opus", "opus[1m]"], "family": "opus", "label": "Opus 4.8",
+      "efforts": ["low", "medium", "high", "xhigh", "max", "ultracode"],
+      "fallbackPricing": { "input": 5, "output": 25, "cacheRead": 0.5, "cacheWrite": 6.25 } },
+    { "id": "claude-opus-4-7", "patterns": ["opus-4-7"], "family": "opus", "label": "Opus 4.7",
+      "efforts": ["low", "medium", "high", "xhigh", "max", "ultracode"],
+      "fallbackPricing": { "input": 5, "output": 25, "cacheRead": 0.5, "cacheWrite": 6.25 } },
+    { "id": "claude-opus-4-6", "patterns": ["opus-4-6"], "family": "opus", "label": "Opus 4.6",
+      "efforts": ["low", "medium", "high", "xhigh", "max"],
+      "fallbackPricing": { "input": 15, "output": 75, "cacheRead": 1.5, "cacheWrite": 18.75 } },
+    { "id": "claude-sonnet-4-6", "patterns": ["sonnet"], "aliases": ["sonnet"], "family": "sonnet", "label": "Sonnet 4.6",
+      "efforts": ["low", "medium", "high", "xhigh", "max"],
+      "fallbackPricing": { "input": 3, "output": 15, "cacheRead": 0.3, "cacheWrite": 3.75 } },
+    { "id": "claude-haiku-4-5", "patterns": ["haiku"], "aliases": ["haiku"], "family": "haiku", "label": "Haiku 4.5",
+      "efforts": ["low", "medium", "high"],
+      "fallbackPricing": { "input": 0.8, "output": 4, "cacheRead": 0.08, "cacheWrite": 1 } },
+    { "id": "codex-family", "patterns": ["^gpt-", "codex", "^o"], "family": "codex", "label": "Codex" }
+  ],
+  "families": {
+    "fable":  { "label": "fable",  "color": "var(--chart-fable)" },
+    "opus":   { "label": "opus",   "color": "var(--chart-opus)" },
+    "sonnet": { "label": "sonnet", "color": "var(--chart-sonnet)" },
+    "haiku":  { "label": "haiku",  "color": "var(--chart-other)", "colorOverrides": { "agentPill": "var(--status-success)" } },
+    "codex":  { "label": "codex",  "color": "var(--chart-codex)" }
+  },
+  "effortLevels": [
+    { "value": "low", "label": "Low" },
+    { "value": "medium", "label": "Medium" },
+    { "value": "high", "label": "High" },
+    { "value": "xhigh", "label": "Extra high" },
+    { "value": "max", "label": "Max" },
+    { "value": "ultracode", "label": "Ultracode", "hint": "xhigh + automatic dynamic workflows (Opus 4.8 / Fable 5)" }
+  ],
+  "dropdown": [
+    { "value": "opus", "label": "Opus", "hint": "Latest Opus (200k context)" },
+    { "value": "opus[1m]", "label": "Opus 1M", "hint": "Latest Opus (1M context)" },
+    { "value": "fable", "label": "Fable 5", "hint": "Most capable · ~2x faster than Opus" },
+    { "value": "sonnet", "label": "Sonnet", "hint": "Latest Sonnet" },
+    { "value": "haiku", "label": "Haiku", "hint": "Latest Haiku" }
+  ]
+}

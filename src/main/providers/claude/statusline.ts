@@ -147,6 +147,7 @@ process.stdin.on('end', async () => {
     const status = {
       sessionId,
       model: data.model?.display_name || data.model?.id,
+      modelId: data.model?.id,
       effortLevel: data.effort && data.effort.level,
       fastMode: data.fast_mode,
       contextUsedPercent: data.context_window?.used_percentage,

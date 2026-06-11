@@ -41,6 +41,9 @@ import { registerServiceHealthHandlers, getMergedDiagnostics } from './ipc/servi
 import { PtyIntegrityMonitor, setPtyIntegrityMonitor, getPtyIntegrityMonitor } from './services/pty-integrity-monitor'
 import { registerCodexHandlers } from './ipc/codex-handlers'
 import { registerCodexReviewHandlers } from './ipc/codex-review-handlers'
+import { registerRegistryHandlers } from './ipc/registry-handlers'
+import { initSentinel, reconcileOnUpdate, sentinelStartupCheck } from './sentinel/index'
+import { registerSentinelHandlers } from './ipc/sentinel-handlers'
 import { registerChannelHandlers } from './ipc/channel-handlers'
 import { startRulesEngine } from './channel-rules'
 import { startEffortTracker } from './effort-tracker'
@@ -655,6 +658,18 @@ if (!gotTheLock) {
     registerDebugHandlers()
     registerUpdateHandlers()
     registerSetupHandlers()
+    registerRegistryHandlers(getResourcesDirectory())
+    // Sentinel (spec 2026-06-11): optional service; OFF = no init, dot hidden, zero impact.
+    // readConfig('settings') is available here (same pattern as the beta-channel read below).
+    {
+      const sentinelSettings = readConfig<{ sentinelEnabled?: boolean }>('settings')
+      if (sentinelSettings?.sentinelEnabled !== false) {
+        initSentinel(getResourcesDirectory())
+        registerSentinelHandlers()
+        reconcileOnUpdate()
+        void sentinelStartupCheck()
+      }
+    }
     registerConfigHandlers()
     // Beta builds default to verbose logging (lightweight async DEBUG lines ->
     // app.log) so field issues are captured. NEVER on stable. This enables only

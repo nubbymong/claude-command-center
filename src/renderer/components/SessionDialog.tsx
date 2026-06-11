@@ -5,6 +5,8 @@ import { ProviderSegmentedControl } from './SessionDialog/ProviderSegmentedContr
 import { CodexFormFields } from './SessionDialog/CodexFormFields'
 import { IDENTITY_COLOR_KEYS, resolveIdentityColor, bucketLegacyColorToKey, type IdentityColorKey } from '../../shared/identity-colors'
 import { useResolvedTheme } from '../hooks/useThemeController'
+import { useRegistryStore } from '../stores/registryStore'
+import { modelsFromRegistry } from '../lib/claude-cli-options'
 
 export type SessionType = 'local' | 'ssh'
 
@@ -48,6 +50,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
   const addGroup = useConfigStore((s) => s.addGroup)
   const sections = useConfigStore((s) => s.sections)
   const addSection = useConfigStore((s) => s.addSection)
+  const registry = useRegistryStore((s) => s.registry)
   // Read legacy + claudeOptions fields with claudeOptions taking precedence (P1.4 migration)
   const initialClaude = initial?.claudeOptions
   const [provider, setProvider] = useState<ProviderId>(initial?.provider ?? 'claude')
@@ -600,9 +603,9 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                 className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-blue"
               >
                 <option value="">Default (no override)</option>
-                <option value="sonnet">Sonnet</option>
-                <option value="opus">Opus</option>
-                <option value="haiku">Haiku</option>
+                {modelsFromRegistry(registry).map((m) => (
+                  <option key={m.value} value={m.value}>{m.label}</option>
+                ))}
               </select>
             </div>
 

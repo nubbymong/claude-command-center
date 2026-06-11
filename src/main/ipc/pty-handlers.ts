@@ -48,9 +48,13 @@ export const spawnOptionsSchema = z.object({
     model: z.string().optional(),
     tools: z.array(z.string()).optional(),
   })).optional(),
-  // All 6 live effort levels (set via /effort, persisted, restored at spawn).
-  // Capping at low/medium/high made a restored xhigh/max/ultracode session throw here.
-  effortLevel: z.enum(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode']).optional(),
+  // PERMISSIVE by design (spec 2026-06-11 §4): a registry-validated enum here
+  // re-creates the restore crash — capping at low/medium/high made a restored
+  // xhigh/max/ultracode session throw. Unknown levels flow through to the
+  // Sentinel observe seam in effort-tracker instead of being rejected at spawn.
+  // Charset guard = injection defense: value is shell-interpolated UNQUOTED at
+  // spawn (pty-manager.ts:1137 local, :563 SSH) — mirrors the resume.uuid guard.
+  effortLevel: z.string().min(1).max(32).regex(/^[a-zA-Z0-9_-]+$/).optional(),
   disableAutoMemory: z.boolean().optional(),
   enableCodexReview: z.boolean().optional(),
   // T8b (bug #5): app-relaunch exact-conversation resume target.
@@ -61,7 +65,11 @@ export const spawnOptionsSchema = z.object({
     uuid: z.string().regex(/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/),
     cwd: z.string().min(1).max(4096),
   }).optional(),
-  model: z.string().optional(),
+  // Shell-interpolated UNQUOTED at spawn (pty-manager.ts:1140 local, :567 SSH) → charset-guarded.
+  // Legit values: 'opus', 'opus[1m]', 'fable', 'sonnet', 'haiku', or versioned ids like 'claude-opus-4-8'.
+  // '' is the DEFAULT for "no override" (sessionStore.model is non-optional; TerminalView
+  // passes it verbatim) and must stay accepted — emission already skips empty (`if (options?.model)`).
+  model: z.string().max(64).regex(/^[a-zA-Z0-9._[\]-]+$/).optional().or(z.literal('')),
   profileId: z.string().optional(),
   provider: z.enum(['claude', 'codex']).optional(),
   codexOptions: z.object({
@@ -94,7 +102,8 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     useResumePicker?: boolean
     legacyVersion?: { enabled: boolean; version: string }
     agentsConfig?: Array<{ name: string; description: string; prompt: string; model?: string; tools?: string[] }>
-    effortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode'
+    // Widened to string — the Zod schema's charset guard is the real contract.
+    effortLevel?: string
     disableAutoMemory?: boolean
     enableCodexReview?: boolean
     resume?: { uuid: string; cwd: string }

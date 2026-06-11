@@ -276,7 +276,8 @@ export function spawnPty(
     useResumePicker?: boolean
     legacyVersion?: { enabled: boolean; version: string }
     agentsConfig?: Array<{ name: string; description: string; prompt: string; model?: string; tools?: string[] }>
-    effortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode'
+    // Widened to string — the IPC schema's charset guard (/^[a-zA-Z0-9_-]+$/) is the real contract.
+    effortLevel?: string
     disableAutoMemory?: boolean
     model?: string
     /** Per-session account isolation: spawn claude under this profile's CLAUDE_CONFIG_DIR. */

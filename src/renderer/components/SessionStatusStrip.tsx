@@ -12,11 +12,12 @@ import { resolveAccountName, resolveAccountNameByEmail, resolveAccountColourKey,
 import { resolveIdentityColor } from '../../shared/identity-colors'
 import ToolbarPopup from './ToolbarPopup'
 import {
-  MODELS,
-  EFFORTS,
+  modelsFromRegistry,
+  effortsFromRegistry,
   shortModelName,
   isModelActive,
 } from '../lib/claude-cli-options'
+import { useRegistryStore } from '../stores/registryStore'
 
 interface SessionStatusStripProps {
   /** The PTY/session id for THIS terminal. Telemetry is read for this
@@ -56,6 +57,7 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
   // profiles (need a real choice). Selector form on every read so the strip
   // never re-renders on unrelated store churn.
   const canSwitchAccount = profiles.length >= 2
+  const registry = useRegistryStore((s) => s.registry)
 
   const [openPicker, setOpenPicker] = useState<'model' | 'account' | null>(null)
   const [lastEffort, setLastEffort] = useState<string | null>(null)
@@ -281,11 +283,11 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
                 sections={[
                   {
                     title: 'Models',
-                    items: MODELS.map((m) => ({ ...m, active: isModelActive(m.value, session.modelName || session.model || '') })),
+                    items: modelsFromRegistry(registry).map((m) => ({ ...m, active: isModelActive(m.value, session.modelName || session.model || '') })),
                   },
                   {
                     title: 'Effort',
-                    items: EFFORTS.map((e) => ({ ...e, active: e.value === lastEffort })),
+                    items: effortsFromRegistry(registry).map((e) => ({ ...e, active: e.value === lastEffort })),
                   },
                 ]}
                 onSelect={onModel}

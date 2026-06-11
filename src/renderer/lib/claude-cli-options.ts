@@ -5,28 +5,23 @@
 // family. Using aliases here means the dropdown never goes stale when
 // Anthropic ships a new model.
 
+import type { ModelRegistry, EffortLevelSpec, DropdownOptionSpec } from '../../shared/model-registry'
+
 export interface OptionItem {
   label: string
   value: string
   hint?: string
 }
 
-export const MODELS: OptionItem[] = [
-  { label: 'Opus', value: 'opus', hint: 'Latest Opus (200k context)' },
-  { label: 'Opus 1M', value: 'opus[1m]', hint: 'Latest Opus (1M context)' },
-  { label: 'Fable 5', value: 'fable', hint: 'Most capable · ~2x faster than Opus' },
-  { label: 'Sonnet', value: 'sonnet', hint: 'Latest Sonnet' },
-  { label: 'Haiku', value: 'haiku', hint: 'Latest Haiku' },
-]
+// Registry-derived model and effort lists. Components should derive these via
+// useRegistryStore((s) => s.registry) so dropdowns hot-reload on registry updates.
+export function modelsFromRegistry(reg: ModelRegistry): OptionItem[] {
+  return reg.dropdown.map((d: DropdownOptionSpec) => ({ label: d.label, value: d.value, hint: d.hint }))
+}
 
-export const EFFORTS: OptionItem[] = [
-  { label: 'Low', value: 'low' },
-  { label: 'Medium', value: 'medium' },
-  { label: 'High', value: 'high' },
-  { label: 'Extra high', value: 'xhigh' },
-  { label: 'Max', value: 'max' },
-  { label: 'Ultracode', value: 'ultracode', hint: 'xhigh + automatic dynamic workflows (Opus 4.8 / Fable 5)' },
-]
+export function effortsFromRegistry(reg: ModelRegistry): OptionItem[] {
+  return reg.effortLevels.map((e: EffortLevelSpec) => ({ label: e.label, value: e.value, hint: e.hint }))
+}
 
 export const PERMISSION_MODES: OptionItem[] = [
   { label: 'Ask permissions', value: 'default', hint: 'Claude asks before most actions' },

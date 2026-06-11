@@ -186,11 +186,18 @@ export interface StatuslineData {
    *  -> transcript binder) as a continuous, exact discovery source; the renderer
    *  ignores it. */
   transcriptPath?: string
+  /** Sentinel Trigger A: raw model id (data.model?.id) from the bridge script.
+   *  `model` above is display-name-preferring; this field is id-first for
+   *  accurate registry matching. The renderer ignores it. */
+  modelId?: string
 }
 
 // ── Agent Templates ──
 
-export type AgentModelOverride = 'fable' | 'sonnet' | 'opus' | 'haiku' | 'inherit'
+// Valid values are registry dropdown entries (e.g. 'opus', 'opus[1m]', 'fable', 'sonnet', 'haiku')
+// plus the special sentinel 'inherit' (use the parent session model). Widened to string so the
+// type does not hard-code the set of models — the registry is the authority.
+export type AgentModelOverride = string
 
 export interface AgentTemplate {
   id: string

@@ -2,9 +2,10 @@
  * tk-pricing.ts — Unified pricing map for the tokenomics indexer.
  *
  * Exports:
- *  - FALLBACK_PRICING: static Claude pricing (per 1M tokens)
+ *  - registryFallbackPricing(): registry-derived Claude pricing (per 1M tokens)
  *  - fetchModelPricing(): fetches/caches live pricing from LiteLLM
  *  - getPricing(model): resolves per-model pricing at runtime
+ *  - getPricingWithSource(model): resolves pricing with a source tag
  *  - normalizeModelForPricing(model, keys): longest-prefix key match
  *  - getAllPricing(): merged Claude + Codex map for query-time cost CTE
  */
@@ -14,6 +15,7 @@ import * as path from 'path'
 import { getConfigDir, ensureConfigDir } from '../config-manager'
 import { logInfo } from '../debug-logger'
 import { codexPricingKeys, priceForModel } from '../providers/codex/pricing'
+import { getRegistry } from '../model-registry-service'
 import type { TkPricing } from './tk-types'
 
 // ── Types ──
@@ -25,24 +27,20 @@ export interface ModelPricing {
   cacheWrite: number
 }
 
-// ── Hardcoded fallback pricing (per 1M tokens) ──
-// Moved verbatim from tokenomics-manager.ts
+export type PricingSource = 'live' | 'fallback' | 'prefix' | 'guess'
 
-export const FALLBACK_PRICING: Record<string, ModelPricing> = {
-  // v1.5.11: Opus 4.8 (released 2026-05-28) keeps the 4.7 base pricing. A
-  // `<model>-fast` pricing row exists for the 2.5x-speed/2x-cost variant and
-  // is keyed by model name when reported by the CLI; there is no per-session
-  // toggle that selects it.
-  // Fable 5 (2026-06): flagship tier above Opus, ~2x faster. $10/$50 per 1M
-  // (same headline as the Opus -fast variant); cacheRead/Write at the standard
-  // 0.1x / 1.25x of input. LiteLLM live pricing still wins when reachable.
-  'claude-fable-5': { input: 10, output: 50, cacheRead: 1.0, cacheWrite: 12.5 },
-  'claude-opus-4-8': { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
-  'claude-opus-4-8-fast': { input: 10, output: 50, cacheRead: 1.0, cacheWrite: 12.5 },
-  'claude-opus-4-7': { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
-  'claude-opus-4-6': { input: 15, output: 75, cacheRead: 1.5, cacheWrite: 18.75 },
-  'claude-sonnet-4-6': { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
-  'claude-haiku-4-5': { input: 0.80, output: 4, cacheRead: 0.08, cacheWrite: 1 },
+// ── Registry-derived fallback pricing (per 1M tokens) ──
+// Replaces the old hardcoded FALLBACK_PRICING literal. Derived from the
+// model registry so that overlay additions (e.g. Sentinel-proposed entries)
+// automatically flow into tokenomics without a code change.
+
+/** Registry-derived replacement for the old FALLBACK_PRICING literal. Keyed by entry id. */
+export function registryFallbackPricing(): Record<string, ModelPricing> {
+  const out: Record<string, ModelPricing> = {}
+  for (const m of getRegistry().models) {
+    if (m.fallbackPricing) out[m.id] = m.fallbackPricing
+  }
+  return out
 }
 
 // ── Dynamic pricing from LiteLLM (static JSON of model prices, cached 24h) ──
@@ -117,17 +115,33 @@ export async function fetchModelPricing(): Promise<void> {
   }
 }
 
-export function getPricing(model: string): ModelPricing {
-  const sources = livePricing ? [livePricing, FALLBACK_PRICING] : [FALLBACK_PRICING]
-  for (const db of sources) {
-    if (db[model]) return db[model]
+// Safe terminal default for the guess branch: sonnet-tier rates. Literal, not a
+// registry lookup, so a future baseline rename can never make costs NaN.
+const GUESS_DEFAULT: ModelPricing = { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 }
+
+const guessedModels = new Set<string>()
+
+export function getPricingWithSource(model: string): { pricing: ModelPricing; source: PricingSource } {
+  const fallback = registryFallbackPricing()
+  const sources: Array<[Record<string, ModelPricing>, PricingSource]> =
+    livePricing ? [[livePricing, 'live'], [fallback, 'fallback']] : [[fallback, 'fallback']]
+  for (const [db, src] of sources) {
+    if (db[model]) return { pricing: db[model], source: src }
     for (const key of Object.keys(db)) {
       const base = key.replace(/-\d+[-\d]*$/, '')
-      if (model.startsWith(base)) return db[key]
+      if (model.startsWith(base)) return { pricing: db[key], source: 'prefix' }
     }
   }
-  return FALLBACK_PRICING['claude-sonnet-4-6']
+  // Novel family: WARN + guess (spec §4) — same terminal numbers as before
+  // (sonnet rates) so totals don't shift, but tagged + logged, never silent.
+  if (!guessedModels.has(model)) {
+    guessedModels.add(model)
+    logInfo(`[tokenomics] no pricing for "${model}" — using guess (sonnet rates); Sentinel will propose a registry entry`)
+  }
+  return { pricing: fallback['claude-sonnet-4-6'] ?? GUESS_DEFAULT, source: 'guess' }
 }
+
+export function getPricing(model: string): ModelPricing { return getPricingWithSource(model).pricing }
 
 // ── normalizeModelForPricing ──
 
@@ -149,7 +163,7 @@ export function normalizeModelForPricing(model: string, keys: string[]): string 
 
 /**
  * Returns a complete Record<priceModelKey, TkPricing> merging:
- *  - Claude: FALLBACK_PRICING overridden by livePricing (if fetched)
+ *  - Claude: registryFallbackPricing() overridden by livePricing (if fetched)
  *  - Codex: all static codex pricing entries mapped to TkPricing (cacheWrite=0)
  *
  * Used by the indexer worker to build a pricing CTE for query-time cost
@@ -159,7 +173,7 @@ export function getAllPricing(): Record<string, TkPricing> {
   const out: Record<string, TkPricing> = {}
 
   // Claude entries: live pricing takes precedence over fallback
-  const claude = { ...FALLBACK_PRICING, ...(livePricing ?? {}) }
+  const claude = { ...registryFallbackPricing(), ...(livePricing ?? {}) }
   for (const [k, v] of Object.entries(claude)) {
     out[k] = { input: v.input, output: v.output, cacheRead: v.cacheRead, cacheWrite: v.cacheWrite }
   }

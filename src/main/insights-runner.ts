@@ -9,11 +9,11 @@ import {
   readdirSync,
   statSync
 } from 'fs'
-import { spawn } from 'child_process'
 import * as pty from 'node-pty'
 import { BrowserWindow } from 'electron'
 import { logInfo, logWarn, logError } from './debug-logger'
 import { resolveClaudeForPty, withProfileHome } from './pty-manager'
+import { spawnClaudeHeadless } from './claude-headless'
 import { getProfileConfigDir, getPrimaryProfileId, setupProfileLinks, listProfiles } from './account-profiles'
 import { getProjectRootPath, getInstallPath } from './update-watcher'
 import { getResourcesDirectory } from './ipc/setup-handlers'
@@ -348,58 +348,6 @@ function spawnClaudeInsights(home: string | null, timeoutMs = 600000): Promise<{
   })
 }
 
-function spawnClaude(args: string[], timeoutMs = 600000, stdinData?: string, home: string | null = null): Promise<{ code: number; stdout: string; stderr: string }> {
-  return new Promise((resolve) => {
-    // Use native CLI (claude.exe) or npm wrapper (claude.cmd) — 'claude' with shell:true finds either
-    logInfo(`[insights] Spawning: claude ${args.join(' ')}${stdinData ? ' (with stdin)' : ''}${home ? ' (account home)' : ''}`)
-
-    const proc = spawn('claude', args, {
-      shell: true,
-      windowsHide: true,
-      env: withProfileHome({ ...process.env } as Record<string, string>, home)
-    })
-
-    // Pipe prompt via stdin if provided
-    if (stdinData && proc.stdin) {
-      proc.stdin.write(stdinData)
-      proc.stdin.end()
-    }
-
-    let stdout = ''
-    let stderr = ''
-    let resolved = false
-
-    const timeout = setTimeout(() => {
-      if (!resolved) {
-        resolved = true
-        logError(`[insights] Timed out after ${timeoutMs / 1000}s`)
-        proc.kill()
-        resolve({ code: 1, stdout, stderr: stderr + '\nTimed out after ' + (timeoutMs / 1000) + 's' })
-      }
-    }, timeoutMs)
-
-    proc.stdout?.on('data', (data) => { stdout += data.toString() })
-    proc.stderr?.on('data', (data) => { stderr += data.toString() })
-
-    proc.on('error', (err) => {
-      if (!resolved) {
-        resolved = true
-        clearTimeout(timeout)
-        logError('[insights] Spawn error:', err.message)
-        resolve({ code: 1, stdout, stderr: stderr + '\n' + err.message })
-      }
-    })
-
-    proc.on('close', (code) => {
-      if (!resolved) {
-        resolved = true
-        clearTimeout(timeout)
-        logInfo(`[insights] Process exited with code ${code}`)
-        resolve({ code: code ?? 1, stdout, stderr })
-      }
-    })
-  })
-}
 
 const KPI_EXTRACTION_PROMPT = `Read the HTML file at {reportPath}. Extract ALL quantifiable metrics and produce an analysis.
 
@@ -486,7 +434,7 @@ async function extractKpis(archiveDir: string, runId: string, home: string | nul
 
   // Pipe the prompt via stdin — passing multi-KB prompts with embedded JSON
   // as shell arguments is unreliable on Windows (quoting/escaping breaks).
-  const result = await spawnClaude(spawnArgs, 600000, prompt, home)
+  const result = await spawnClaudeHeadless(spawnArgs, 600000, prompt, home)
 
   if (result.code !== 0) {
     logError('[insights] KPI extraction failed (code ' + result.code + '):', result.stderr)
