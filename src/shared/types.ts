@@ -190,7 +190,10 @@ export interface StatuslineData {
 
 // ── Agent Templates ──
 
-export type AgentModelOverride = 'fable' | 'sonnet' | 'opus' | 'haiku' | 'inherit'
+// Valid values are registry dropdown entries (e.g. 'opus', 'opus[1m]', 'fable', 'sonnet', 'haiku')
+// plus the special sentinel 'inherit' (use the parent session model). Widened to string so the
+// type does not hard-code the set of models — the registry is the authority.
+export type AgentModelOverride = string
 
 export interface AgentTemplate {
   id: string

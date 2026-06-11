@@ -3,6 +3,8 @@ import { TerminalConfig } from '../stores/configStore'
 import { IDENTITY_SWATCHES } from './SessionDialog'
 import { resolveIdentityColor, bucketLegacyColorToKey, type IdentityColorKey } from '../../shared/identity-colors'
 import { useResolvedTheme } from '../hooks/useThemeController'
+import { useRegistryStore } from '../stores/registryStore'
+import { modelsFromRegistry } from '../lib/claude-cli-options'
 
 type SessionType = 'local' | 'ssh'
 type SectionKey = 'identity' | 'directory' | 'connection' | 'claude' | 'advanced'
@@ -17,6 +19,7 @@ interface Props {
  * and contextual help on the right that reacts to focused field.
  */
 export default function GuidedConfigView({ onConfirm, onSkip }: Props) {
+  const registry = useRegistryStore((s) => s.registry)
   // Form state
   const [label, setLabel] = useState('')
   const [workingDir, setWorkingDir] = useState('')
@@ -269,10 +272,9 @@ export default function GuidedConfigView({ onConfirm, onSkip }: Props) {
                     className="w-full px-3 py-2 bg-surface0 border border-surface1 rounded text-text text-sm focus:outline-none focus:border-mauve"
                   >
                     <option value="">Default (uses subscription plan)</option>
-                    <option value="opus">Opus (deep thinking)</option>
-                    <option value="fable">Fable 5 (most capable)</option>
-                    <option value="sonnet">Sonnet (balanced)</option>
-                    <option value="haiku">Haiku (fast, cheap)</option>
+                    {modelsFromRegistry(registry).map((m) => (
+                      <option key={m.value} value={m.value} title={m.hint}>{m.label}</option>
+                    ))}
                   </select>
                 </div>
               </div>

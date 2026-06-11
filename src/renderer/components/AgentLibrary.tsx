@@ -2,15 +2,8 @@ import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { useAgentLibraryStore, BUILTIN_TEMPLATES } from '../stores/agentLibraryStore'
 import type { AgentTemplate } from '../types/electron'
 import AgentTemplateDialog from './AgentTemplateDialog'
-
-// Semantic tokens (light/dark-aware) instead of dark-only Catppuccin hex.
-const MODEL_COLORS: Record<string, string> = {
-  inherit: 'var(--text-secondary)',
-  fable: 'var(--chart-fable)',
-  sonnet: 'var(--chart-sonnet)',
-  opus: 'var(--chart-opus)',
-  haiku: 'var(--status-success)',
-}
+import { useRegistryStore } from '../stores/registryStore'
+import { resolveModelInfo } from '../../shared/model-registry'
 
 interface ContextMenuState {
   x: number
@@ -24,7 +17,11 @@ function TemplateCard({ template, onClick, onContextMenu }: {
   onClick: () => void
   onContextMenu: (e: React.MouseEvent) => void
 }) {
-  const modelColor = MODEL_COLORS[template.model] || MODEL_COLORS.inherit
+  // Subscribe to registry so pills hot-reload when the registry updates.
+  const registry = useRegistryStore((s) => s.registry)
+  const modelColor = template.model === 'inherit'
+    ? 'var(--text-secondary)'
+    : resolveModelInfo(registry, template.model).colors.agentPill
 
   return (
     <button
