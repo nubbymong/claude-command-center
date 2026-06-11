@@ -55,13 +55,14 @@ jobs:
         run: node node_modules/electron/install.js
 
       # GitHub's 2026 Windows images ship only Visual Studio 2026 ("18"), which
-      # @electron/node-gyp's find-visualstudio cannot parse (fork frozen at
-      # 10.2.0-electron.2, Oct 2024). Initializing the VS developer environment
-      # sets VCINSTALLDIR/PATH, which flips node-gyp into its "VS Command
-      # Prompt" mode and bypasses version discovery entirely.
-      - name: Initialize VS developer environment (Windows)
+      # @electron/node-gyp (fork frozen at 10.2.0-electron.2, Oct 2024) cannot
+      # use: VS18 is absent from its version table, so discovery fails even in
+      # VS-Command-Prompt mode. Install VS2022 Build Tools (the toolchain CI was
+      # green on) until the electron toolchain learns VS 2026. ~6-8 min.
+      - name: Install VS2022 Build Tools (Windows)
         if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@v1
+        shell: pwsh
+        run: choco install visualstudio2022buildtools --no-progress -y --package-parameters "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --quiet --norestart"
 
       - name: Rebuild native modules
         shell: bash
