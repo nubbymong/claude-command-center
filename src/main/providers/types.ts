@@ -14,7 +14,8 @@ export interface SpawnOptions {
   useResumePicker?: boolean
   legacyVersion?: LegacyVersion
   agentsConfig?: Array<{ name: string; description: string; prompt: string; model?: string; tools?: string[] }>
-  effortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode'
+  // Widened to string — the IPC schema's charset guard is the real contract.
+  effortLevel?: string
   disableAutoMemory?: boolean
   model?: string
   /** v1.5.32: when true (or undefined = default), sets CLAUDE_CODE_DISABLE_MOUSE=1

@@ -9,6 +9,11 @@
  * PERMISSIVE contract (spec 2026-06-11 §4): the schema is now a bounded string,
  * not an enum. Unknown future effort levels are accepted and flow to the Sentinel
  * observe seam in effort-tracker rather than being rejected at spawn.
+ *
+ * SECURITY (code-review finding): effortLevel and model are both shell-interpolated
+ * UNQUOTED into the PTY spawn command. The charset guard (/^[a-zA-Z0-9_-]+$/ for
+ * effort, /^[a-zA-Z0-9._[\]-]+$/ for model) rejects shell metacharacters while
+ * keeping every legitimate value accepted. Mirror of the resume.uuid UUID guard.
  */
 import { describe, it, expect } from 'vitest'
 import { spawnOptionsSchema } from '../../../src/main/ipc/pty-handlers'
@@ -31,6 +36,53 @@ describe('pty-handlers spawnOptionsSchema -- effortLevel (all 6 levels)', () => 
   it('accepts an unknown effort level (permissive: flows to Sentinel observe, not rejected at spawn)', () => {
     const parsed = spawnOptionsSchema.parse({ cwd: 'C:/work', effortLevel: 'turbo' as never })
     expect(parsed?.effortLevel).toBe('turbo')
+  })
+})
+
+describe('pty-handlers spawnOptionsSchema -- effortLevel charset guard (shell-injection defense)', () => {
+  it('rejects a semicolon-injected effort level', () => {
+    expect(() =>
+      spawnOptionsSchema.parse({ cwd: 'C:/work', effortLevel: 'high; calc.exe' }),
+    ).toThrow()
+  })
+
+  it('rejects a backtick-injected effort level', () => {
+    expect(() =>
+      spawnOptionsSchema.parse({ cwd: 'C:/work', effortLevel: 'high`calc`' }),
+    ).toThrow()
+  })
+
+  it('rejects a dollar-sign subshell effort level', () => {
+    expect(() =>
+      spawnOptionsSchema.parse({ cwd: 'C:/work', effortLevel: '$(calc.exe)' }),
+    ).toThrow()
+  })
+})
+
+describe('pty-handlers spawnOptionsSchema -- model charset guard (shell-injection defense)', () => {
+  it('accepts the standard model aliases', () => {
+    const VALID_MODELS = ['opus', 'opus[1m]', 'fable', 'sonnet', 'haiku', 'claude-opus-4-8']
+    for (const m of VALID_MODELS) {
+      const parsed = spawnOptionsSchema.parse({ cwd: 'C:/work', model: m })
+      expect(parsed?.model).toBe(m)
+    }
+  })
+
+  it('parses cleanly when model is omitted', () => {
+    const parsed = spawnOptionsSchema.parse({ cwd: 'C:/work' })
+    expect(parsed?.model).toBeUndefined()
+  })
+
+  it('rejects a semicolon-injected model value', () => {
+    expect(() =>
+      spawnOptionsSchema.parse({ cwd: 'C:/work', model: 'opus; calc.exe' }),
+    ).toThrow()
+  })
+
+  it('rejects a shell-subshell model value', () => {
+    expect(() =>
+      spawnOptionsSchema.parse({ cwd: 'C:/work', model: '$(rm -rf /)' }),
+    ).toThrow()
   })
 })
 
