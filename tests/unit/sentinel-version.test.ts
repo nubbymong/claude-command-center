@@ -45,4 +45,7 @@ describe('shipped manifest', () => {
     const ids = (manifestJson as Array<{ id: string }>).map((e) => e.id)
     expect(new Set(ids).size).toBe(ids.length)
   })
+  it('shipped manifest currently carries no minCcVersion gates', () => {
+    expect(minVersionFindings('0.0.1', manifestJson as never)).toHaveLength(0)
+  })
 })

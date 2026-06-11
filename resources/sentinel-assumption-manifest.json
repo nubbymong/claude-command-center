@@ -26,7 +26,7 @@
   {
     "id": "content-block-types",
     "area": "logs",
-    "contract": "Assistant messages carry a message.content array whose items have a 'type' field; known block types are 'text', 'tool_use', 'tool_result', 'thinking', 'redacted_thinking'. Usage tokens live at entry.message.usage (input_tokens, output_tokens, cache_read_input_tokens, cache_creation_input_tokens). Model id lives at entry.message.model.",
+    "contract": "Assistant messages carry a message.content array whose items have a 'type' field; the normalizer special-cases 'text', 'image', 'thinking' (skipped), 'tool_result' (skipped), and 'tool_use' (rendered as tool_call row). All other types — including 'redacted_thinking' — fall into the unknown-part bucket and are not rendered. Usage tokens live at entry.message.usage (input_tokens, output_tokens, cache_read_input_tokens, cache_creation_input_tokens). Model id lives at entry.message.model.",
     "files": [
       "src/main/logging/transcript-normalizer.ts",
       "src/main/providers/claude/telemetry.ts"
@@ -63,7 +63,7 @@
   {
     "id": "hooks-settings-schema",
     "area": "hooks",
-    "contract": "Hooks are registered under a 'hooks' key in settings.json as a matcher-wrapped map: { hooks: { PreToolUse: [{ matcher: '...', hooks: [{ type: 'command', command: '...' }] }], ... } }. CCC uses per-session settings files seeded via --settings; mcpServers in --settings are ignored by Claude CLI (must use --mcp-config).",
+    "contract": "Hooks are registered under a 'hooks' key in settings.json as a matcher-wrapped map: { hooks: { PreToolUse: [{ matcher: '', hooks: [{ type: 'http', url: 'http://localhost:<port>/hook/<sessionId>', headers: { 'X-CCC-Hook-Token': '<secret>' } }] }], ... } }. Each event maps to an array of matcher-wrapped entries; the inner hook entry uses type 'http' with a per-session URL and auth header. CCC uses per-session settings files seeded via --settings; mcpServers in --settings are ignored by Claude CLI (must use --mcp-config).",
     "files": [
       "src/main/hooks/session-hooks-writer.ts",
       "src/main/hooks/per-session-settings.ts"
@@ -79,7 +79,8 @@
     "contract": "Hook HTTP POST bodies use field names: hook_event_name (not 'event') for the event kind, tool_name (not 'toolName') for the tool, tool_use_id for tool correlation, and notification_type (values: idle_prompt, permission_prompt) for Notification events. effort.level carries the current effort in hook payloads.",
     "files": [
       "src/shared/hook-types.ts",
-      "src/main/attention-source.ts"
+      "src/main/attention-source.ts",
+      "src/main/hooks/hooks-gateway.ts"
     ],
     "failureMode": "Field renames cause silent total hook loss (historical: hook_event_name incident dropped the entire logging pipeline); notification_type rename breaks attention detection",
     "severity": "high",
@@ -114,7 +115,7 @@
   {
     "id": "cli-flags",
     "area": "sessions",
-    "contract": "CCC passes CLI flags to claude in this order: --resume <uuid> (must come first for cwd-scoped resume to work), --settings <path> (per-session settings file), --mcp-config <path> (conductor MCP entry; --settings ignores mcpServers), --effort <level>, --model <id>, --agents '<json>'. Flags are shell-escaped for the platform shell (PowerShell on Windows, sh on POSIX).",
+    "contract": "CCC passes CLI flags to claude with --resume <uuid> FIRST (must come first for cwd-scoped resume to work); the remaining named flags (--agents, --effort, --model, --settings, --mcp-config) are order-independent. Flags are shell-escaped for the platform shell (PowerShell on Windows, sh on POSIX).",
     "files": [
       "src/main/pty-manager.ts"
     ],
@@ -178,7 +179,8 @@
     "contract": "Known Claude models and their pricing, colours, families, and dropdown labels are maintained in CCC's model-registry.json + optional user overlay. Unknown model IDs observed at runtime become Sentinel registry-proposal findings. Pricing falls back through: live LiteLLM → registry fallbackPricing (exact) → longest-prefix family match → flagged guess.",
     "files": [
       "resources/model-registry.json",
-      "src/main/model-registry-service.ts"
+      "src/main/model-registry-service.ts",
+      "src/main/tokenomics/tk-pricing.ts"
     ],
     "failureMode": "New model families not in the registry cause silent misprice (guessed family rates), grey/unknown colour, and raw model ID shown in UI until a Sentinel apply or CCC update",
     "severity": "warn",
