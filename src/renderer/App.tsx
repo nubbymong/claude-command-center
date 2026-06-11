@@ -601,7 +601,7 @@ export default function App() {
     if (view === 'cloud-agents') return <CloudAgentsPage />
     if (view === 'tokenomics') return <TokenomicsPage />
     if (view === 'vision') return <ConductorMcpPage />
-    if (view === 'memory') return <MemoryPage />
+    if (view === 'memory') return <MemoryPage onClose={() => setView('sessions')} />
     return null
   }
 
