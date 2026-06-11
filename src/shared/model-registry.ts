@@ -84,3 +84,79 @@ export function reconcileOverlay(baseline: ModelRegistry, overlay: RegistryOverl
   }
   return { overlay: { ...overlay, models: kept }, autoRetired, retireProposals }
 }
+
+// ── Resolution ──
+
+export interface ResolvedModelInfo {
+  known: boolean
+  id: string                                 // matched entry id, or the raw input when unknown
+  family: string | null
+  label: string                              // entry label, or verbatim input when unknown
+  chartLabel: string                         // families[family].label, or verbatim input
+  colors: { default: string; chart: string; agentPill: string }
+  efforts: string[] | null                   // null = unknown → callers assume all valid (spec §3)
+  fallbackPricing?: ModelPricingSpec
+}
+
+// Dedicated unknown-model palette (spec §3): hex hues distinct from the 5 chart
+// tokens — copper stays Opus-only (modelColors.ts:4-5). Hash pattern mirrors
+// identity-colors.ts (stable key, deterministic pick).
+const UNKNOWN_MODEL_PALETTE = ['#9a8cf0', '#3ba8d4', '#34b39a', '#9bbf4e', '#e8794a', '#ef5f7e'] as const
+
+export function hashUnknownModelColor(modelId: string): string {
+  let h = 0
+  for (let i = 0; i < modelId.length; i++) h = (h * 31 + modelId.charCodeAt(i)) >>> 0
+  return UNKNOWN_MODEL_PALETTE[h % UNKNOWN_MODEL_PALETTE.length]
+}
+
+function matchEntry(registry: ModelRegistry, modelId: string): ModelEntry | null {
+  const raw = modelId.trim()
+  if (!raw) return null
+  // 1. exact id
+  const exact = registry.models.find((m) => m.id === raw)
+  if (exact) return exact
+  // 2. exact alias (CLI alias values like 'opus', 'opus[1m]')
+  const alias = registry.models.find((m) => m.aliases?.includes(raw))
+  if (alias) return alias
+  // 3. longest id-prefix (date-suffixed ids: claude-opus-4-7-20260101)
+  let prefix: ModelEntry | null = null
+  for (const m of registry.models) {
+    if (raw.startsWith(m.id) && (!prefix || m.id.length > prefix.id.length)) prefix = m
+  }
+  if (prefix) return prefix
+  // 4. first pattern match in registry order (substring unless anchored regex)
+  const lower = raw.toLowerCase()
+  for (const m of registry.models) {
+    for (const p of m.patterns) {
+      const hit = p.startsWith('^') || p.endsWith('$')
+        ? new RegExp(p, 'i').test(lower)
+        : lower.includes(p.toLowerCase())
+      if (hit) return m
+    }
+  }
+  return null
+}
+
+export function resolveModelInfo(registry: ModelRegistry, modelId: string): ResolvedModelInfo {
+  const entry = matchEntry(registry, modelId)
+  if (!entry) {
+    const hashed = hashUnknownModelColor(modelId)
+    return {
+      known: false, id: modelId, family: null, label: modelId, chartLabel: modelId,
+      colors: { default: hashed, chart: hashed, agentPill: hashed },
+      efforts: null,
+    }
+  }
+  const fam = registry.families[entry.family]
+  const base = entry.color ?? fam?.color ?? hashUnknownModelColor(modelId)
+  const colors = {
+    default: base,
+    chart: fam?.colorOverrides?.chart ?? base,
+    agentPill: fam?.colorOverrides?.agentPill ?? base,
+  }
+  return {
+    known: true, id: entry.id, family: entry.family, label: entry.label,
+    chartLabel: fam?.label ?? entry.family, colors,
+    efforts: entry.efforts ?? null, fallbackPricing: entry.fallbackPricing,
+  }
+}
