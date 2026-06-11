@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3'
-import type { TkEvent, TkPricing, TkSummary, TkSummaryFilter, TkSessionsQuery, TkSessionsPage, TkSessionDetail } from './tk-types'
+import type { TkEvent, TkPricing, TkProvider, TkSummary, TkSummaryFilter, TkSessionsQuery, TkSessionsPage, TkSessionDetail } from './tk-types'
 
 function dayOf(ts: number): string {
   const d = new Date(ts)
@@ -337,7 +337,7 @@ export function openTkDb(dbPath: string): TkDb {
       const pageRows = hasMore ? raw.slice(0, lim) : raw
       const rows = pageRows.map((r: any) => ({
         sessionId: r.sessionId as string,
-        provider: r.provider as string,
+        provider: r.provider as TkProvider,
         configId: (r.configId === '' ? null : r.configId) as string | null,
         configLabel: (r.cfgLabel && r.cfgLabel !== '') ? r.cfgLabel as string : 'External / no config',
         model: r.model as string,
@@ -371,7 +371,7 @@ export function openTkDb(dbPath: string): TkDb {
       const costUsd = byModel.reduce((a: number, m: any) => a + ((m.costUsd as number) ?? 0), 0)
       return {
         sessionId: s.sessionId as string,
-        provider: s.provider as string,
+        provider: s.provider as TkProvider,
         configId: (s.configId === '' ? null : s.configId) as string | null,
         configLabel: (s.cfgLabel && s.cfgLabel !== '') ? s.cfgLabel as string : 'External / no config',
         model: s.lastModel as string,

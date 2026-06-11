@@ -11,6 +11,7 @@ export interface TokenomicsWorker { tickNow(): void; healthNow(): void; stop(): 
 
 const READ_BUF = 256 * 1024
 const MAX_TICK_BYTES = 16 * 1024 * 1024
+const YIELD_EVERY = 16 // files between event-loop yields during a sweep
 
 export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWorkerDeps = {}): TokenomicsWorker {
   const fs = deps.fs ?? nodeFs
@@ -34,19 +35,25 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
   const setPricing = (p: Record<string, TkPricing>): void => { pricing = p; priceKeys = Object.keys(p) }
 
   function enumerateClaude(): string[] {
+    // Recurse the whole tree (spec: `~/.claude/projects/**`). Session transcripts
+    // live one level deep (`<proj>/<sid>.jsonl`) but subagent/sidechain transcripts
+    // are nested (`<proj>/<sid>/subagents/agent-*.jsonl`) and carry real billed
+    // usage — a one-level scan silently undercounts cost. Skip symlinks/junctions
+    // so account-isolation reparse points can't introduce traversal cycles.
     const out: string[] = []
-    try {
-      if (!fs.existsSync(claudeDir)) return out
-      for (const proj of fs.readdirSync(claudeDir)) {
-        const pdir = path.join(claudeDir, proj)
-        let st: nodeFs.Stats
-        try { st = fs.statSync(pdir) } catch { continue }
-        if (!st.isDirectory()) continue
-        let entries: string[]
-        try { entries = fs.readdirSync(pdir) } catch { continue }
-        for (const e of entries) if (e.endsWith('.jsonl')) out.push(path.join(pdir, e))
+    const walk = (dir: string, depth: number): void => {
+      if (depth > 12) return
+      let entries: nodeFs.Dirent[]
+      try { entries = fs.readdirSync(dir, { withFileTypes: true }) } catch { return }
+      for (const e of entries) {
+        if (e.isSymbolicLink()) continue
+        const full = path.join(dir, e.name)
+        if (e.isDirectory()) walk(full, depth + 1)
+        else if (e.isFile() && e.name.endsWith('.jsonl')) out.push(full)
       }
-    } catch (err) { logw('warn', `enumerateClaude failed: ${String(err)}`) }
+    }
+    try { if (fs.existsSync(claudeDir)) walk(claudeDir, 0) }
+    catch (err) { logw('warn', `enumerateClaude failed: ${String(err)}`) }
     return out
   }
 
@@ -143,7 +150,7 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
     return inserted
   }
 
-  function ingestAll(phase: 'initial' | 'incremental'): void {
+  async function ingestAll(phase: 'initial' | 'incremental'): Promise<void> {
     if (!db || sweeping) return
     sweeping = true
     try {
@@ -152,8 +159,17 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
       const total = claude.length + codex.length
       let done = 0
       let events = 0
-      for (const f of claude) { events += ingestClaudeFile(f); done++; if (done % 50 === 0) post({ type: 'index-progress', filesDone: done, filesTotal: total, eventsIngested: events, phase }) }
-      for (const f of codex) { events += ingestCodexFile(f); done++; if (done % 50 === 0) post({ type: 'index-progress', filesDone: done, filesTotal: total, eventsIngested: events, phase }) }
+      // Yield to the worker event loop periodically so pending queries (summary /
+      // index-status) are answered DURING a large first index instead of stalling
+      // behind a synchronous multi-thousand-file sweep.
+      const tick = (): void => {
+        if (done % 50 === 0) { lastProgress = { filesDone: done, filesTotal: total, eventsIngested: events }; post({ type: 'index-progress', filesDone: done, filesTotal: total, eventsIngested: events, phase }) }
+      }
+      // After each yield, bail if stop() closed the db while we were suspended
+      // (the resumed continuation would otherwise deref a now-undefined db).
+      for (const f of claude) { events += ingestClaudeFile(f); done++; tick(); if (done % YIELD_EVERY === 0) { await new Promise<void>((r) => setImmediate(r)); if (!db) return } }
+      for (const f of codex) { events += ingestCodexFile(f); done++; tick(); if (done % YIELD_EVERY === 0) { await new Promise<void>((r) => setImmediate(r)); if (!db) return } }
+      if (!db) return
       lastProgress = { filesDone: done, filesTotal: total, eventsIngested: events }
       post({ type: 'index-progress', filesDone: done, filesTotal: total, eventsIngested: events, phase })
       db.setMeta('lastIndexAt', String(Date.now()))
@@ -196,7 +212,7 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
 
   function scheduleIncremental(): void {
     if (watchTimer) clearTimeout(watchTimer)
-    watchTimer = setTimeout(() => { watchTimer = null; ingestAll('incremental') }, watchDebounceMs)
+    watchTimer = setTimeout(() => { watchTimer = null; void ingestAll('incremental') }, watchDebounceMs)
     ;(watchTimer as unknown as { unref?: () => void }).unref?.()
   }
 
@@ -210,7 +226,7 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
     }
     // Safety tail: recursive watch can miss newly-created nested session files on
     // some platforms; a slow periodic incremental sweep guarantees eventual pickup.
-    tailTimer = setInterval(() => { if (!sweeping) ingestAll('incremental') }, 5000)
+    tailTimer = setInterval(() => { if (!sweeping) void ingestAll('incremental') }, 5000)
     ;(tailTimer as unknown as { unref?: () => void }).unref?.()
   }
 
@@ -223,7 +239,7 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
     codexDir = msg.codexSessionsDir
     firstSweepDone = db.getMeta('firstIndexComplete') === '1'
     post({ type: 'ready' }) // ready BEFORE the sweep so queries work during indexing
-    setTimeout(() => ingestAll('initial'), 0)
+    setTimeout(() => { void ingestAll('initial') }, 0)
     startWatching()
   }
 
@@ -236,7 +252,7 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
     switch (msg.type) {
       case 'set-pricing': setPricing(msg.pricing); return
       case 'set-configs': configs = msg.configs; db.upsertConfigs(configs); return
-      case 'reindex': ingestAll('incremental'); return
+      case 'reindex': void ingestAll('incremental'); return
       case 'query': handleQuery(msg.id, msg.kind, msg.args); return
       default: { const _x: never = msg; void _x }
     }
@@ -249,7 +265,7 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
     }
   })
 
-  function tickNow(): void { ingestAll('incremental') }
+  function tickNow(): void { void ingestAll('incremental') }
   function healthNow(): void {
     if (!db) return
     const filesTracked = (db.raw.prepare('SELECT COUNT(*) AS n FROM tk_files').get() as { n: number }).n

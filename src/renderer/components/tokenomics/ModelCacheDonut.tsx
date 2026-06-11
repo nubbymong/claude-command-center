@@ -127,7 +127,7 @@ export function ModelCacheDonut({ modelSplit, cacheSplit }: Props) {
       <div className="flex gap-4">
         {/* Donut */}
         {slices.length > 0 && (
-          <svg width={104} height={104} viewBox="0 0 104 104" style={{ shrink: 0 }} className="shrink-0">
+          <svg width={104} height={104} viewBox="0 0 104 104" className="shrink-0">
             {paths.map((p, i) => (
               <path key={i} d={p.d} fill={p.color} opacity={0.9}>
                 <title>{`${p.label}: ${p.pct.toFixed(1)}%`}</title>

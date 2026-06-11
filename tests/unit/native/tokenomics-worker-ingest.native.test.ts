@@ -42,6 +42,33 @@ describe('tokenomics worker ingest', () => {
     expect(res.rows[0].costByConfig[0]).toMatchObject({ configId: 'a', label: 'App' })
   })
 
+  it('initial sweep ingests NESTED subagent/sidechain transcripts (recursive enumeration)', async () => {
+    const claudeDir = path.join(tmp, 'claude')
+    // Top-level main session transcript ($5)
+    writeClaudeFile(claudeDir, 'F--proj', 's1.jsonl', [
+      { type: 'assistant', timestamp: '2026-06-01T10:00:00Z', sessionId: 's1', requestId: 'r1',
+        message: { id: 'm1', model: 'claude-opus-4-8', usage: { input_tokens: 1_000_000, output_tokens: 0 } } },
+    ])
+    // Subagent transcript nested under <project>/<session>/subagents/ ($5) — the
+    // real on-disk layout for Task/workflow subagents. Must be enumerated too.
+    const subDir = path.join(claudeDir, 'F--proj', 's1', 'subagents')
+    fs.mkdirSync(subDir, { recursive: true })
+    fs.writeFileSync(path.join(subDir, 'agent-aaa.jsonl'),
+      JSON.stringify({ type: 'assistant', isSidechain: true, agentId: 'aaa', timestamp: '2026-06-01T10:05:00Z', sessionId: 's1-sub', requestId: 'r2',
+        message: { id: 'm2', model: 'claude-opus-4-8', usage: { input_tokens: 1_000_000, output_tokens: 0 } } }) + '\n')
+    const fake = new FakeTkWorkerTransport()
+    const msgs: FromTkWorker[] = []
+    fake.onMessage((m) => msgs.push(m))
+    createTokenomicsWorker(fake.asWorkerSide(), {})
+    fake.post({ type: 'open', dbPath: ':memory:', pricing: PRICING, configs: [], claudeProjectsDir: claudeDir, codexSessionsDir: path.join(tmp, 'codex') })
+    await new Promise((r) => setTimeout(r, 80))
+    fake.post({ type: 'query', id: 1, kind: 'summary', args: {} })
+    await new Promise((r) => setTimeout(r, 10))
+    const res = msgs.find((m) => m.type === 'query-result' && (m as any).id === 1) as any
+    // Main $5 + nested subagent $5 = $10. Pre-fix (one-level enumeration) this is only $5.
+    expect(res.rows[0].kpis.lifeToDateCostUsd).toBeCloseTo(10, 5)
+  })
+
   it('is idempotent: re-open + re-sweep does not double-count (dedup + cursor)', async () => {
     const claudeDir = path.join(tmp, 'claude')
     writeClaudeFile(claudeDir, 'F--proj', 's1.jsonl', [

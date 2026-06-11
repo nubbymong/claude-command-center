@@ -5,15 +5,19 @@ import { forkTokenomicsWorker } from './fork-tokenomics-worker'
 import { getAllPricing, fetchModelPricing } from './tk-pricing'
 import { readConfig } from '../config-manager'
 import { getDataDirectory } from '../data-paths'
-import type { TerminalConfig } from '../../shared/types'
 import type { TkConfigDim } from './tk-types'
 
 let _sup: TokenomicsSupervisor | null = null
 
+// Minimal shape of a saved config we attribute usage to. Defined locally rather
+// than importing the renderer-store `TerminalConfig` (main must not import from
+// the renderer; only these three fields are needed here).
+interface SavedConfigRecord { id: string; label: string; workingDirectory?: string }
+
 function loadConfigDims(): TkConfigDim[] {
-  const configs = readConfig<TerminalConfig[]>('configs') ?? []
+  const configs = readConfig<SavedConfigRecord[]>('configs') ?? []
   return configs
-    .filter((c) => c.workingDirectory)
+    .filter((c): c is SavedConfigRecord & { workingDirectory: string } => !!c.workingDirectory)
     .map((c) => ({ configId: c.id, label: c.label, workingDirectory: c.workingDirectory }))
 }
 
