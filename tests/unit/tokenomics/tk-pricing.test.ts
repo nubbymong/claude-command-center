@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { getAllPricing, normalizeModelForPricing, FALLBACK_PRICING } from '../../../src/main/tokenomics/tk-pricing'
+import { getAllPricing, normalizeModelForPricing, registryFallbackPricing } from '../../../src/main/tokenomics/tk-pricing'
 
 describe('getAllPricing', () => {
   it('includes claude-fable-5 and opus-4-8 with per-1M rates', () => {
@@ -17,12 +17,12 @@ describe('getAllPricing', () => {
 
 describe('normalizeModelForPricing', () => {
   it('exact match wins', () => {
-    expect(normalizeModelForPricing('claude-opus-4-8', Object.keys(FALLBACK_PRICING))).toBe('claude-opus-4-8')
+    expect(normalizeModelForPricing('claude-opus-4-8', Object.keys(registryFallbackPricing()))).toBe('claude-opus-4-8')
   })
   it('longest prefix match for dated models', () => {
-    expect(normalizeModelForPricing('claude-opus-4-8-20260101', Object.keys(FALLBACK_PRICING))).toBe('claude-opus-4-8')
+    expect(normalizeModelForPricing('claude-opus-4-8-20260101', Object.keys(registryFallbackPricing()))).toBe('claude-opus-4-8')
   })
   it('returns raw model when nothing matches', () => {
-    expect(normalizeModelForPricing('mystery-model', Object.keys(FALLBACK_PRICING))).toBe('mystery-model')
+    expect(normalizeModelForPricing('mystery-model', Object.keys(registryFallbackPricing()))).toBe('mystery-model')
   })
 })

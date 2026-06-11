@@ -4,6 +4,7 @@ import { TokenomicsSupervisor } from './tk-supervisor'
 import { forkTokenomicsWorker } from './fork-tokenomics-worker'
 import { getAllPricing, fetchModelPricing } from './tk-pricing'
 import { readConfig } from '../config-manager'
+import { onRegistryReload } from '../model-registry-service'
 import { getDataDirectory } from '../data-paths'
 import type { TkConfigDim } from './tk-types'
 
@@ -38,6 +39,8 @@ export function initTokenomics(opts: { emit: (channel: string, payload: unknown)
   _sup = sup
   // Once the LiteLLM fetch settles, push refreshed pricing into the worker.
   void fetchModelPricing().then(() => { _sup?.setPricing(getAllPricing()) }).catch(() => {})
+  // Registry hot-reload must reach the worker's pricing CTE (spec §4 consumer 2).
+  onRegistryReload(() => { _sup?.setPricing(getAllPricing()) })
 }
 
 export function getTokenomicsSupervisor(): TokenomicsSupervisor | null { return _sup }
