@@ -8,7 +8,6 @@ import { runAnalysis } from './sentinel-analysis'
 import { validateProposal } from './sentinel-apply'
 import { getRegistry, getBaseline, applyOverlayEntry, removeOverlayEntry, loadOverlay, setOverlay } from '../model-registry-service'
 import { reconcileOverlay } from '../../shared/model-registry'
-import { spawnClaudeHeadless } from '../claude-headless'
 import manifestJson from '../../../resources/sentinel-assumption-manifest.json'
 import { logInfo } from '../debug-logger'
 
@@ -47,10 +46,18 @@ export function reconcileOnUpdate(): void {
   })
 }
 
+// Lazy: claude-headless imports the pty-manager graph (which reaches electron.app
+// via update-watcher). Trigger A consumers (effort-tracker, statusline-watcher)
+// import THIS module at load — keep their import chains free of that weight.
+async function headlessRunner(): Promise<typeof import('../claude-headless')> {
+  return import('../claude-headless')
+}
+
 /** Trigger B startup check (spec §5). Non-blocking — call fire-and-forget from bootstrap. */
 export async function sentinelStartupCheck(): Promise<void> {
   if (!state) return
   try {
+    const { spawnClaudeHeadless } = await headlessRunner()
     const res = await spawnClaudeHeadless(['--version'], 15000)
     const version = res.code === 0 ? parseClaudeVersion(res.stdout) : null
     if (!version) { logInfo('[sentinel] claude --version unavailable; skipping (fail-open)'); return }
@@ -78,6 +85,7 @@ async function analyzeVersionChange(last: string, version: string): Promise<void
     })
     return
   }
+  const { spawnClaudeHeadless } = await headlessRunner()
   const result = await runAnalysis({
     runner: (args, t, stdin) => spawnClaudeHeadless(args, t, stdin),
     changelog: sliceChangelog(md, last, version),
@@ -103,6 +111,7 @@ async function analyzeVersionChange(last: string, version: string): Promise<void
 export async function sentinelRerun(): Promise<void> {
   if (!state) return
   try {
+    const { spawnClaudeHeadless } = await headlessRunner()
     const res = await spawnClaudeHeadless(['--version'], 15000)
     const version = res.code === 0 ? parseClaudeVersion(res.stdout) : null
     if (!version) { state.setAnalyzing(false, 'claude --version unavailable'); return }
