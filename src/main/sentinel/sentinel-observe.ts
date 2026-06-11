@@ -49,8 +49,11 @@ export function makeObserver(state: SentinelState, getRegistry: () => ModelRegis
         })
       } else {
         if (registry.effortLevels.some((l) => l.value === obs.value)) return
+        // 'info' (not registry-proposal): RegistryOverlay has no effort schema,
+        // so there's nothing to Apply. Render it in the Compatibility report,
+        // not under "Proposed fixes" with a dead Apply button.
         state.upsertFinding({
-          id: `obs:effort:${obs.value}`, kind: 'registry-proposal', severity: 'info',
+          id: `obs:effort:${obs.value}`, kind: 'info', severity: 'info',
           title: `Unknown effort level: ${obs.value}`,
           evidence: `Observed via ${obs.source}; not in the registry's effortLevels.`,
           status: 'open', createdAt: Date.now(),

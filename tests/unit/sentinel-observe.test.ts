@@ -35,9 +35,11 @@ describe('sentinel observe (Trigger A)', () => {
     observe({ kind: 'model', value: 'claude-vision-2', source: 'statusline' })
     expect(state.snapshot().findings).toHaveLength(1)
   })
-  it('unknown effort -> info-severity proposal naming the level', () => {
+  it('unknown effort -> info finding (no dead Apply: overlay has no effort schema)', () => {
     observe({ kind: 'effort', value: 'theoretical', source: 'hooks' })
     const f = state.snapshot().findings[0]
     expect(f.title).toContain('theoretical')
+    expect(f.kind).toBe('info')
+    expect(f.proposedPatch).toBeUndefined()
   })
 })
