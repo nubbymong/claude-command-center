@@ -1,24 +1,16 @@
 import React, { useEffect, useState } from 'react'
 import { useInsightsStore } from '../stores/insightsStore'
-import { useTokenomicsStore } from '../stores/tokenomicsStore'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { resolveAccountNameByEmail, resolveAccountName } from '../../shared/account-chip-color'
 import KpiSidebar from './KpiSidebar'
 import type { InsightsData } from '../types/electron'
-import type { TokenomicsSessionRecord } from '../../shared/types'
 import PageFrame from './PageFrame'
 import { parseInsightsReport, type ParsedInsights } from './insights/parseInsightsReport'
 import { InsightsSections } from './insights/InsightsSections'
 
 export default function InsightsPage() {
   // All hooks called unconditionally -- early returns appear after all hook calls.
-  // Select the stable store slice, then default in render. Returning `?? {}`
-  // directly from the selector yields a NEW object every call, which Zustand v5
-  // (useSyncExternalStore + Object.is) treats as a perpetual change -> infinite
-  // re-render loop ("Maximum update depth") when sessions is empty/unloaded.
-  const tokenomicsData = useTokenomicsStore((s) => s.data)
-  const tokenomicsSessions = tokenomicsData?.sessions ?? {}
   const catalogue = useInsightsStore((s) => s.catalogue)
   const selectedRunId = useInsightsStore((s) => s.selectedRunId)
   const selectRun = useInsightsStore((s) => s.selectRun)
@@ -31,6 +23,20 @@ export default function InsightsPage() {
   const [currentKpis, setCurrentKpis] = useState<InsightsData | null>(null)
   const [previousKpis, setPreviousKpis] = useState<InsightsData | null>(null)
   const [loading, setLoading] = useState(false)
+
+  // Provider presence: fetched once on mount from the new worker-backed tokenomics
+  // summary. Used to detect Codex-only users and show a tailored empty state.
+  const [providerPresence, setProviderPresence] = useState<{ claude: boolean; codex: boolean }>({ claude: false, codex: false })
+  useEffect(() => {
+    let alive = true
+    window.electronAPI.tokenomics.summary({}).then((s) => {
+      if (!alive || !s) return
+      const claude = s.modelSplit.some((m) => m.model.startsWith('claude'))
+      const codex = s.modelSplit.some((m) => m.model.startsWith('gpt'))
+      setProviderPresence({ claude, codex })
+    }).catch(() => {})
+    return () => { alive = false }
+  }, [])
 
   // Account selection: which account a new run executes under. Defaults to the
   // captured primary; only surfaced when more than one account profile exists.
@@ -84,13 +90,9 @@ export default function InsightsPage() {
   // Codex-only empty state: user has Codex sessions but no Claude sessions.
   // Insights are Claude-only -- show an explanatory message rather than the
   // generic first-run UI, which would be confusing for Codex-only users.
-  const sessionValues = Object.values(tokenomicsSessions) as TokenomicsSessionRecord[]
-  const hasAnyClaude = sessionValues.some(
-    (rec) => (rec?.provider ?? 'claude') === 'claude',
-  )
-  const hasAnyCodex = sessionValues.some(
-    (rec) => rec?.provider === 'codex',
-  )
+  // Sourced from the new worker-backed tokenomics summary (modelSplit).
+  const hasAnyClaude = providerPresence.claude
+  const hasAnyCodex = providerPresence.codex
   if (!hasAnyClaude && hasAnyCodex) {
     return (
       <PageFrame title="Insights">

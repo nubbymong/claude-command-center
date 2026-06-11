@@ -67,18 +67,31 @@ export const IPC = {
   USAGE_TOTAL: 'usage:total',
   USAGE_HISTORY: 'usage:history',
 
-  // Logs (SQLite worker-backed; Phase 2a). All go through getLogSupervisor().query.
-  LOGSDB_LIST_SESSIONS: 'logsdb:listSessions',
-  LOGSDB_READ_EVENTS: 'logsdb:readEvents',
-  LOGSDB_SEARCH: 'logsdb:search',
-  LOGSDB_PRUNE: 'logsdb:prune',
-  LOGSDB_CLEAR_ALL: 'logsdb:clearAll',
+  // T8b (bug #5): the exact-conversation resume target for a session — {uuid,cwd}
+  // read off the latest bound transcript, or null. Used at session-save time to
+  // persist resumeUuid/resumeCwd onto SavedSession for app-relaunch. Handled by
+  // resume-handlers.ts (routes through the transcript binder; no DB).
+  LOGS_GET_RESUME_TARGET: 'logging:getResumeTarget',
 
-  // Logs — migration (Phase 2b)
-  LOGS_MIGRATE_DETECT: 'logs:migrate:detect',
-  LOGS_MIGRATE_RUN: 'logs:migrate:run',
-  LOGS_MIGRATE_PROGRESS: 'logs:migrate:progress',
-  LOGS_MIGRATE_RECLAIM: 'logs:migrate:reclaim',
+  // Logs v2 — detection-driven warned wipe of the OLD log artifacts (first run).
+  // DETECT reports the inventory (bytes + paths); CONFIRM performs the deletion
+  // after the renderer's blocking modal proceeds.
+  LOGS2_WIPE_DETECT: 'logs2:wipe:detect',
+  LOGS2_WIPE_CONFIRM: 'logs2:wipe:confirm',
+
+  // Logs v2 — the transcript-chat read surface. All request/response channels
+  // route through getLogSupervisor().query(kind, args) (the forked transcripts
+  // worker). Args are Zod-validated in logs2-handlers.ts before the supervisor is
+  // ever called. LOGS2_NEW_MESSAGES is a PUSH (main -> renderer) forwarding the
+  // worker's new-messages fan-out so the open chat view can live-tail.
+  LOGS2_LIST_SLOTS: 'logs2:listSlots',
+  LOGS2_READ_MESSAGES: 'logs2:readMessages',
+  LOGS2_TURN_SUMMARY: 'logs2:turnSummary',
+  LOGS2_SEARCH: 'logs2:search',
+  LOGS2_DELETE_SLOT: 'logs2:deleteSlot',
+  LOGS2_CLEAR_ALL: 'logs2:clearAll',
+  LOGS2_INGEST_STATUS: 'logs2:ingestStatus',
+  LOGS2_NEW_MESSAGES: 'logs2:newMessages',   // push: main -> renderer
 
   // Discovery
   DISCOVERY_PROJECTS: 'discovery:projects',
@@ -189,14 +202,13 @@ export const IPC = {
   // CLI
   CLI_CHECK: 'cli:check',
 
-  // Tokenomics
-  TOKENOMICS_GET_DATA: 'tokenomics:getData',
-  TOKENOMICS_SEED: 'tokenomics:seed',
-  TOKENOMICS_SYNC: 'tokenomics:sync',
-  TOKENOMICS_PROGRESS: 'tokenomics:progress',
-  TOKENOMICS_LIST_UNATTRIBUTED: 'tokenomics:listUnattributed',
-  TOKENOMICS_LIST_KNOWN_EMAILS: 'tokenomics:listKnownEmails',
-  TOKENOMICS_ATTRIBUTE_SESSIONS: 'tokenomics:attributeSessions',
+  // Tokenomics v2 — SQLite-backed summary/sessions/detail + index push
+  TOKENOMICS2_SUMMARY: 'tokenomics2:summary',
+  TOKENOMICS2_SESSIONS: 'tokenomics2:sessions',
+  TOKENOMICS2_SESSION_DETAIL: 'tokenomics2:sessionDetail',
+  TOKENOMICS2_INDEX_STATUS: 'tokenomics2:indexStatus',
+  TOKENOMICS2_INDEX_PROGRESS: 'tokenomics2:indexProgress',
+  TOKENOMICS2_INDEX_COMPLETE: 'tokenomics2:indexComplete',
 
   // Codex (OpenAI)
   CODEX_STATUS: 'codex:status',
@@ -271,9 +283,7 @@ export const IPC = {
   // Conductor Channels (v1.5.10)
   CHANNELS_SEND: 'channels:send',                                   // renderer -> main: dispatch a payload
   CHANNELS_RETRACT: 'channels:retract',                             // renderer -> main: send retraction follow-up
-  CHANNELS_DISMISS_PERMISSION: 'channels:dismissPermission',        // renderer -> main: dismiss ("Ignore") a tray card; does NOT answer Claude
   CHANNELS_FORCE_TIER: 'channels:forceTier',                        // renderer -> main: per-session tier override
-  CHANNELS_PENDING_PERMISSIONS: 'channels:pendingPermissions',      // main -> renderer: pending tray updates
   CHANNELS_LEDGER_EVENT: 'channels:ledgerEvent',                    // main -> renderer: live ledger row
   CHANNELS_RULE_CRUD: 'channels:ruleCRUD',                          // renderer -> main: payload { op: 'list'|'save'|'delete', ... }
   CHANNELS_STANDING_APPROVAL_CRUD: 'channels:standingApprovalCRUD', // renderer -> main: payload { op: 'list'|'add'|'remove', ... }

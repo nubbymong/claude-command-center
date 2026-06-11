@@ -85,12 +85,21 @@ export interface Session {
   /** P6: Claude opts in to the codex_review MCP tool for this session.
    *  Mirrors disableAutoMemory in shape (sparse boolean) and lifecycle. */
   enableCodexReview?: boolean
+  /** T16: per-session CCC indexing opt-out. DEFAULT-TRUE (undefined = on).
+   *  Mirrors the ClaudeOptions.loggingEnabled field at spawn time. */
+  loggingEnabled?: boolean
   machineName?: string
   // Provider discriminator + Codex sub-options (Claude options live in the
   // top-level legacy fields above for now; Codex spawns need this struct).
   provider?: ProviderId
   /** v1.5.19: account profile this session runs under (CLAUDE_CONFIG_DIR). */
   profileId?: string
+  /** T8b (bug #5): exact conversation to resume on app-relaunch (uuid + the
+   *  cwd it ran in). Round-trips through SavedSession; passed as the `resume`
+   *  spawn option for a restored session. In-session restart/switch self-capture
+   *  in main and do NOT use these. */
+  resumeUuid?: string
+  resumeCwd?: string
   /** True only for an in-progress add-account login shell; drives the /login
    *  guidance banner. Cleared once the account is detected. */
   needsLogin?: boolean

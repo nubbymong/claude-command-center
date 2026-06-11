@@ -49,20 +49,12 @@ import { migrateColorRecords } from './utils/migrateIdentityColors'
 import { gatherLocalStorageData, hydrateStores, applyConfigColourMigration } from './utils/configHydration'
 import { isGitHubOnboardingDue as isGitHubOnboardingDuePredicate } from './utils/githubOnboarding'
 import { setupCloudAgentListener } from './stores/cloudAgentStore'
-import { setupTokenomicsListener } from './stores/tokenomicsStore'
 import { setupConductorMcpListener, useConductorMcpStore } from './stores/conductorMcpStore'
 import { setupGitHubListener, useGitHubStore } from './stores/githubStore'
 import { setupChannelListeners } from './stores/channelStore'
-import PermissionToastStack from './components/channels/PermissionToastStack'
 import LoggingConsentPrompt from './components/LoggingConsentPrompt'
-import LogMigrationPrompt from './components/LogMigrationPrompt'
+import LogsWipeModal from './components/LogsWipeModal'
 import ResumeSessionsPrompt from './components/ResumeSessionsPrompt'
-import MigrationDoneNotice from './components/MigrationDoneNotice'
-import { useMigrationStore } from './stores/migrationStore'
-// Side-effect import: registers window.__captureHarness for the
-// capture-training script. Renderer-local store mutations only, no
-// IPC surface widening (see capture-harness.ts header).
-import './utils/capture-harness'
 import { useCodexAccountStore } from './stores/codexAccountStore'
 import GitHubPanel from './components/github/GitHubPanel'
 import OnboardingModal from './components/github/onboarding/OnboardingModal'
@@ -70,7 +62,8 @@ import AutoDetectBanner from './components/github/AutoDetectBanner'
 import { handleAutoDetectAccept } from './utils/githubAutoDetectAccept'
 import RepoBreadcrumb from './components/RepoBreadcrumb'
 import type { SessionState, SavedSession } from './types/electron'
-import { buildSessionState } from './session-persistence'
+import { buildSessionState, buildSessionStateWithResumeTargets } from './session-persistence'
+import { useSessionAutosave } from './hooks/useSessionAutosave'
 
 // Re-export ViewType from its canonical location for backwards compatibility
 export type { ViewType } from './types/views'
@@ -101,6 +94,9 @@ export default function App() {
   }
   const [setupComplete, setSetupComplete] = useState<boolean | null>(null)
   const [configLoaded, setConfigLoaded] = useState(false)
+  // Logs v2 first-run wipe gate: null = not yet detected, >0 = old artifacts
+  // present (show the blocking modal), 0 = nothing to wipe (or already wiped).
+  const [logsWipeBytes, setLogsWipeBytes] = useState<number | null>(null)
   const [needsCliSetup, setNeedsCliSetup] = useState(false)
   const [isClosing, setIsClosing] = useState(false)
   const [isUpdating, setIsUpdating] = useState(false)
@@ -151,10 +147,12 @@ export default function App() {
   // Saved sessions awaiting the user's Resume / Don't-open choice (startup gate —
   // previously every boot force-resumed the whole saved set).
   const [pendingRestore, setPendingRestore] = useState<SessionState | null>(null)
-  // Live migration phase: drives the quit-confirm warning in CloseDialog.
-  const migrationPhase = useMigrationStore((s) => s.phase)
   const configs = useConfigStore((s) => s.configs)
   const launchConfig = useLaunchConfig()
+  // Keep session-state.json in sync with the live session set so a non-graceful
+  // termination (crash / external-installer force-close) never re-offers phantom
+  // sessions the user already closed. Resume still reads pendingRestore in-memory.
+  useSessionAutosave()
   // onCreateConfigFromStage: App owns the GuidedConfigView toggle via showGuidedConfig.
   // Sidebar receives onShowFirstRun={() => setShowGuidedConfig(true)}, so we use the
   // same setter here to open the real create dialog from the stage empty state.
@@ -288,6 +286,24 @@ export default function App() {
     }
   }
 
+  // Logs v2 first-run wipe detection. Runs once after config loads: detect the
+  // OLD log artifacts and, if present, surface the blocking LogsWipeModal (which
+  // performs the deletion on confirm). Detection-driven + idempotent — once wiped
+  // nothing is detected, so this is a no-op on every subsequent launch.
+  useEffect(() => {
+    if (!configLoaded || logsWipeBytes !== null) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const inv = await window.electronAPI.logsWipe.detect()
+        if (!cancelled) setLogsWipeBytes(inv.present ? inv.totalBytes : 0)
+      } catch {
+        if (!cancelled) setLogsWipeBytes(0)   // fail-open: never block boot on a detect error
+      }
+    })()
+    return () => { cancelled = true }
+  }, [configLoaded, logsWipeBytes])
+
   // Post-config-load initialization
   useEffect(() => {
     if (!configLoaded || hasRestoredRef.current) return
@@ -323,7 +339,6 @@ export default function App() {
       // Start cloud agent IPC listener early so status updates are
       // never missed (previously only started when CloudAgentsPage mounted)
       setupCloudAgentListener()
-      setupTokenomicsListener()
       setupConductorMcpListener()
       setupGitHubListener()
       setupChannelListeners()
@@ -467,12 +482,17 @@ export default function App() {
           effortLevel: claude?.effortLevel ?? saved.effortLevel,
           disableAutoMemory: claude?.disableAutoMemory ?? saved.disableAutoMemory,
           enableCodexReview: claude?.enableCodexReview,
+          loggingEnabled: claude?.loggingEnabled,
           machineName: saved.machineName,
           githubIntegration: saved.githubIntegration,
           status: 'idle' as const,
           createdAt: Date.now(),
           provider: saved.provider,
           profileId: saved.profileId,
+          // T8b (bug #5): carry the persisted exact-conversation resume target so
+          // TerminalView passes `resume:{uuid,cwd}` through pty.spawn on relaunch.
+          resumeUuid: saved.resumeUuid,
+          resumeCwd: saved.resumeCwd,
           codexOptions: saved.codexOptions,
         }
       })
@@ -481,7 +501,11 @@ export default function App() {
         // Both providers support a resume picker. For Codex, the picker script
         // may not be deployed yet on first boot -- buildCodexSpawn falls back
         // to direct codex spawn in that case (see src/main/providers/codex/spawn.ts).
-        if (!session.shellOnly && session.sessionType === 'local') {
+        // T8b (bug #5): when a persisted exact-conversation target exists, the
+        // spawn resumes THAT conversation directly (cwd-overridden) -- so the
+        // resume PICKER is only the fallback for sessions WITHOUT a persisted uuid.
+        const hasExactResume = !!(session.resumeUuid && session.resumeCwd)
+        if (!session.shellOnly && session.sessionType === 'local' && !hasExactResume) {
           markSessionForResumePicker(session.id)
         }
       }
@@ -508,7 +532,15 @@ export default function App() {
     setIsClosing(true)
     if (isUpdate) setIsUpdating(true)
     try {
-      const stateToSave = buildSessionState()
+      // T8b (bug #5): enrich each session with its exact-conversation resume
+      // target so this relaunch resumes the SAME conversation. Fail-safe: falls
+      // back to the plain (sync) state if enrichment throws.
+      let stateToSave: SessionState
+      try {
+        stateToSave = await buildSessionStateWithResumeTargets()
+      } catch {
+        stateToSave = buildSessionState()
+      }
       await window.electronAPI.session.save(stateToSave)
       console.log('[App] Session state saved')
       if (isUpdate) {
@@ -550,10 +582,7 @@ export default function App() {
     const handleCloseRequested = () => {
       if (isClosing) return
       const state = useSessionStore.getState()
-      // Quit-confirm guard: a running log import must never be abandoned
-      // silently (it stops safely + resumes, but the user chose to be asked).
-      const migrationRunning = useMigrationStore.getState().phase === 'running'
-      if (state.sessions.length === 0 && !migrationRunning) {
+      if (state.sessions.length === 0) {
         window.electronAPI.window.allowClose()
         return
       }
@@ -715,6 +744,7 @@ export default function App() {
                       effortLevel={session.effortLevel}
                       disableAutoMemory={session.disableAutoMemory}
                       enableCodexReview={session.enableCodexReview}
+                      loggingEnabled={session.loggingEnabled}
                       model={session.model}
                       provider={session.provider}
                       codexOptions={session.codexOptions}
@@ -828,7 +858,9 @@ export default function App() {
   return (
     <ErrorBoundary>
       <div className="flex flex-col h-screen bg-base text-text">
-        <PermissionToastStack />
+        {logsWipeBytes !== null && logsWipeBytes > 0 && (
+          <LogsWipeModal totalBytes={logsWipeBytes} onComplete={() => setLogsWipeBytes(0)} />
+        )}
         {showWhatsNew && <WhatsNewModal onClose={handleWhatsNewClose} />}
         {showTipModal && <TipModal onClose={() => setShowTipModal(false)} onNavigate={(v) => setView(v)} />}
         {showGitHubOnboarding && (
@@ -863,8 +895,6 @@ export default function App() {
         {configLoaded && !loggingConsentSeen && (
           <LoggingConsentPrompt />
         )}
-
-        {configLoaded && loggingConsentSeen && <LogMigrationPrompt />}
 
         {pendingRestore && (
           <ResumeSessionsPrompt
@@ -928,14 +958,11 @@ export default function App() {
           <CloseDialog
             mode={closeDialog}
             sessionCount={sessions.length}
-            migrationRunning={migrationPhase === 'running'}
             onSaveAndClose={handleSaveAndClose}
             onCloseWithoutSaving={handleCloseWithoutSaving}
             onCancel={() => { setCloseDialog(null); window.electronAPI.window.cancelClose() }}
           />
         )}
-
-        <MigrationDoneNotice onViewReport={() => setView('settings')} />
 
         {isClosing && (
           <div className="absolute inset-0 bg-base/90 z-50 flex items-center justify-center">
@@ -990,6 +1017,7 @@ export default function App() {
                       effortLevel: newConfig.claudeOptions?.effortLevel,
                       disableAutoMemory: newConfig.claudeOptions?.disableAutoMemory,
                       enableCodexReview: newConfig.claudeOptions?.enableCodexReview,
+                      loggingEnabled: newConfig.claudeOptions?.loggingEnabled,
                       provider: newConfig.provider,
                       codexOptions: newConfig.codexOptions,
                     }

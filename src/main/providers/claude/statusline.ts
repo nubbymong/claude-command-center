@@ -159,6 +159,9 @@ process.stdin.on('end', async () => {
       linesAdded: data.cost?.total_lines_added,
       linesRemoved: data.cost?.total_lines_removed,
       accountEmail,
+      // Logs v2 (Task 8): forward Claude Code's transcript_path so the watcher
+      // fan-out can bind it (continuous, exact discovery source).
+      transcriptPath: typeof data.transcript_path === 'string' ? data.transcript_path : undefined,
       timestamp: Date.now()
     };
 

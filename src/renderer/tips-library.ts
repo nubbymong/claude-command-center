@@ -621,21 +621,6 @@ export const TIPS_LIBRARY: Tip[] = [
   },
 
   {
-    id: 'tip.permission-tray',
-    category: 'security',
-    complexity: 'simple',
-    priority: 70,
-    variants: {
-      primary: {
-        shortText: 'High-risk Bash now stacks as a toast',
-        title: 'Permission Attention Tray',
-        body: 'When Claude tries to run a high-risk Bash command -- **rm -rf**, **sudo**, **dd if=**, **chmod 777**, **--force / --force-with-lease**, fork bombs -- it surfaces as a toast in the top-right corner so you can approve or reject without scrolling back through the terminal.\n\nEverything else (Read, Edit, Grep, ls, git status) **auto-allows** so the tray only fires when it matters. Catches commands from dynamic-workflow subagents too.\n\nTray caps at 50 entries; overflow auto-denies so a runaway agent cannot bury you in prompts.',
-        focusHint: 'Top-right corner of the window',
-      },
-    },
-  },
-
-  {
     id: 'tip.dynamic-workflows',
     category: 'productivity',
     complexity: 'advanced',

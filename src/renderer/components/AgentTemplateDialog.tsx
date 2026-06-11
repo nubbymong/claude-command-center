@@ -125,6 +125,7 @@ export default function AgentTemplateDialog({ initial, onSave, onCancel }: Props
               <option value="inherit">Inherit (use session model)</option>
               <option value="sonnet">Sonnet</option>
               <option value="opus">Opus</option>
+              <option value="fable">Fable 5</option>
               <option value="haiku">Haiku</option>
             </select>
           </div>

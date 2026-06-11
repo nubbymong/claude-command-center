@@ -6,6 +6,7 @@ import AgentTemplateDialog from './AgentTemplateDialog'
 // Semantic tokens (light/dark-aware) instead of dark-only Catppuccin hex.
 const MODEL_COLORS: Record<string, string> = {
   inherit: 'var(--text-secondary)',
+  fable: 'var(--chart-fable)',
   sonnet: 'var(--chart-sonnet)',
   opus: 'var(--chart-opus)',
   haiku: 'var(--status-success)',

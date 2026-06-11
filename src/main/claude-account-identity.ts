@@ -10,6 +10,7 @@ import { IPC } from '../shared/ipc-channels'
 import { colourForEmail } from './account-color'
 import { canonicaliseEmail } from '../shared/account-chip-color'
 import type { IdentityColorKey } from '../shared/identity-colors'
+import { getLogSupervisor } from './logging/logging-service'
 
 const bySession = new Map<string, string>()
 // sessionId -> the profileId the session spawned under (undefined => default/single-account).
@@ -61,6 +62,12 @@ export function pushAccountIdentity(sessionId: string): void {
   for (const w of BrowserWindow.getAllWindows()) {
     try { w.webContents.send(IPC.ACCOUNT_IDENTITY_UPDATE, { sessionId, email: id.email, colourKey: id.colourKey }) } catch { /* window destroyed */ }
   }
+  // T11: backfill the account email on the session's latest open run so the logs
+  // can be filtered and labelled by account. Identity may be null at spawn (the
+  // account file isn't always written before PTY starts), so this wires the resolved
+  // email into the log row the first time it becomes known — and again on any
+  // subsequent /login change (recheckAll calls pushAccountIdentity on a change).
+  if (id.email) getLogSupervisor()?.runAccount(sessionId, id.email)
 }
 
 // ---- mid-session account watch ---------------------------------------------

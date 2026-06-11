@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isControlReportOnly } from '../../../src/renderer/utils/terminalInput'
+import { isControlReportOnly, decideContextMenuAction } from '../../../src/renderer/utils/terminalInput'
 
 describe('isControlReportOnly', () => {
   it('treats focus in/out reports as control-only (not input)', () => {
@@ -23,5 +23,27 @@ describe('isControlReportOnly', () => {
   })
   it('empty string is not input', () => {
     expect(isControlReportOnly('')).toBe(true)
+  })
+})
+
+describe('decideContextMenuAction', () => {
+  describe('classic mode (classicTerminalCopyPaste: true)', () => {
+    it('returns copy when text is selected', () => {
+      expect(decideContextMenuAction(true, true)).toBe('copy')
+    })
+    it('returns paste when nothing is selected', () => {
+      expect(decideContextMenuAction(false, true)).toBe('paste')
+    })
+  })
+
+  describe('non-classic mode (CC mouse on / copy-on-select active)', () => {
+    // CC already copies on mouse-up; right-click must always paste regardless
+    // of selection state so it never overwrites the intended paste target.
+    it('returns paste when nothing is selected', () => {
+      expect(decideContextMenuAction(false, false)).toBe('paste')
+    })
+    it('returns paste even when text is selected', () => {
+      expect(decideContextMenuAction(true, false)).toBe('paste')
+    })
   })
 })

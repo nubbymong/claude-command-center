@@ -13,7 +13,7 @@ import { hasSpawned, markSpawned, killSessionPty } from '../ptyTracker'
 import SshFlowOverlay from './SshFlowOverlay'
 import { shouldUseResumePicker } from '../utils/resumePicker'
 import { stripCursorSequences } from '../utils/terminalFormatting'
-import { isControlReportOnly } from '../utils/terminalInput'
+import { isControlReportOnly, decideContextMenuAction } from '../utils/terminalInput'
 import { getTerminalTheme } from './terminal/terminalTheme'
 import { useSettingsStore, DEFAULT_TERMINAL_SETTINGS } from '../stores/settingsStore'
 import { ScrollToBottomButton } from './terminal'
@@ -53,6 +53,9 @@ interface Props {
    *  codex_review opt-in set in conductor-mcp-server. Mirrors
    *  disableAutoMemory's lifecycle (claudeOptions sparse boolean). */
   enableCodexReview?: boolean
+  /** T16: per-session CCC indexing opt-out. DEFAULT-TRUE (undefined = on).
+   *  Forwarded to the main process shouldRegisterRun predicate. */
+  loggingEnabled?: boolean
   /** Per-session model override (sonnet | opus | haiku | ''). Empty
    * string means "use whatever the CLI picks". Forwarded to claude as
    * `--model <name>` when set. */
@@ -63,7 +66,7 @@ interface Props {
   codexOptions?: CodexOptions
 }
 
-export default function TerminalView({ sessionId, configId, cwd, shellOnly, elevated, ssh, isActive = true, legacyVersion, agentIds, effortLevel, disableAutoMemory, enableCodexReview, model, provider, codexOptions }: Props) {
+export default function TerminalView({ sessionId, configId, cwd, shellOnly, elevated, ssh, isActive = true, legacyVersion, agentIds, effortLevel, disableAutoMemory, enableCodexReview, loggingEnabled, model, provider, codexOptions }: Props) {
   const xtermContainerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
@@ -366,7 +369,21 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
           // account gate leaves the session unspawned and re-gates on remount.
           const doSpawn = (resolvedProfileId: string | undefined) => {
             markSpawned(sessionId)
-            window.electronAPI.pty.spawn(sessionId, { cwd, cols, rows, ssh, shellOnly, elevated, configId, configLabel, useResumePicker, legacyVersion, agentsConfig, effortLevel, disableAutoMemory, enableCodexReview, model, provider, codexOptions, profileId: resolvedProfileId })
+            // T8b (bug #5): app-relaunch ONLY. A restored session carries the
+            // persisted exact-conversation target; pass it as `resume` so the
+            // first spawn resumes THAT conversation (cwd-overridden in main).
+            // In-session restart/switch leave `resume` undefined -- main
+            // self-captures the live conversation. Consume the persisted target
+            // after this spawn so a later in-session restart doesn't re-send a
+            // stale relaunch uuid that would shadow main's self-capture.
+            const resume =
+              !shellOnly && session?.resumeUuid && session?.resumeCwd
+                ? { uuid: session.resumeUuid, cwd: session.resumeCwd }
+                : undefined
+            if (resume) {
+              updateSession(sessionId, { resumeUuid: undefined, resumeCwd: undefined })
+            }
+            window.electronAPI.pty.spawn(sessionId, { cwd, cols, rows, ssh, shellOnly, elevated, configId, configLabel, useResumePicker, legacyVersion, agentsConfig, effortLevel, disableAutoMemory, enableCodexReview, loggingEnabled, model, provider, codexOptions, profileId: resolvedProfileId, resume })
           }
           // Pre-spawn account gate: on a session's first spawn this run, ask which
           // account to launch under (multi-account on + >=1 profile), unless a
@@ -607,29 +624,37 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       }
       document.addEventListener('keydown', handleKeyDownCopy)
 
-      // Right-click: copy selection or paste from clipboard
+      // Right-click: context-aware copy or paste depending on mode.
+      //
+      // Classic mode (classicTerminalCopyPaste, the default): CC's mouse
+      // tracking is disabled so xterm owns selection. Right-click copies
+      // the current selection when text is selected, or pastes from the
+      // clipboard when nothing is selected. Route paste through xterm's
+      // paste() so bracketed-paste mode (\x1b[200~...\x1b[201~) is respected.
+      //
+      // Non-classic mode: CC's copy-on-select already copied text on
+      // mouse-up, so right-click always pastes (never re-copies).
       handleContextMenu = async (e: MouseEvent) => {
         e.preventDefault()
         e.stopPropagation()
-        const sel = term?.getSelection()
-        if (sel) {
-          try {
-            await navigator.clipboard.writeText(sel)
-          } catch {
-            // clipboard access denied (insecure context / not focused)
+        const classicMode = useSettingsStore.getState().settings.classicTerminalCopyPaste !== false
+        const action = decideContextMenuAction(!!term?.getSelection(), classicMode)
+        if (action === 'copy') {
+          const sel = term?.getSelection()
+          if (sel) {
+            try {
+              await navigator.clipboard.writeText(sel)
+              term?.clearSelection()
+            } catch {
+              // clipboard write denied (insecure context / not focused)
+            }
           }
           return
         }
+        // action === 'paste'
         try {
           const text = await navigator.clipboard.readText()
           if (!text) return
-          // Route through xterm's paste() so bracketed-paste mode is
-          // respected. Writing the raw text straight to the PTY skipped
-          // the \x1b[200~...\x1b[201~ wrapping that apps like Claude
-          // Code CLI use to distinguish pastes from keystrokes, causing
-          // embedded \n to submit the first line and strand the rest
-          // in the input buffer. xterm emits the (possibly wrapped)
-          // payload via onData, which already forwards to pty.write.
           term?.paste(text)
         } catch {
           // clipboard access denied (insecure context / not focused)
@@ -677,6 +702,15 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         style={{
           minHeight: 0,
           padding: '8px 10px 8px 18px',
+          // content-box: FitAddon reads getComputedStyle(container).height,
+          // which under border-box (Tailwind global default) includes the
+          // 8px top + 8px bottom padding → FitAddon over-counts by ~1 row,
+          // causing the last terminal row to render over the status bar.
+          // With content-box, getComputedStyle returns only the content
+          // height (padding excluded), so FitAddon measures the exact
+          // usable area. Flex sizing is unaffected: flex-1 stretches the
+          // *total* element size regardless of box-sizing.
+          boxSizing: 'content-box',
           background: 'linear-gradient(90deg, var(--surface-stage-gutter) 0, var(--surface-stage-gutter) 12px, var(--surface-stage) 12px)',
           boxShadow: 'inset 16px 0 20px -16px rgba(0,0,0,.5)',
         }}

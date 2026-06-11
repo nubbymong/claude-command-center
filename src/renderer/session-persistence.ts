@@ -39,6 +39,11 @@ export function buildSessionState(): SessionState {
     // top-level fields packed into claudeOptions below.
     provider: s.provider ?? 'claude',
     profileId: s.profileId,
+    // T8b (bug #5): persist the exact conversation so app-relaunch resumes it.
+    // Sync pass-through of whatever is on the store record; enrichWithResumeTargets
+    // (the async caller) refreshes these from the live binder before save.
+    resumeUuid: s.resumeUuid,
+    resumeCwd: s.resumeCwd,
     claudeOptions: (s.provider ?? 'claude') === 'claude' ? {
       model: s.model || undefined,
       legacyVersion: s.legacyVersion,
@@ -54,6 +59,40 @@ export function buildSessionState(): SessionState {
     activeSessionId: state.activeSessionId,
     savedAt: Date.now(),
   }
+}
+
+/**
+ * T8b (bug #5): build the persisted session state AND enrich each live Claude
+ * session with its exact-conversation resume target (resumeUuid/resumeCwd) so an
+ * app-relaunch resumes the SAME conversation, not the newest in the cwd's folder.
+ *
+ * buildSessionState() is sync (used by several call sites); this async wrapper is
+ * the choke point for the save-and-quit / autosave paths where we can afford one
+ * IPC round-trip per session. Fully fail-safe: any session whose target can't be
+ * resolved keeps whatever was already on the record (typically undefined), so the
+ * fallback is exactly today's behaviour. Non-Claude / shell-only sessions are
+ * skipped (the binder only tracks Claude transcripts).
+ */
+export async function buildSessionStateWithResumeTargets(): Promise<SessionState> {
+  const state = buildSessionState()
+  const api = window.electronAPI?.logsdb
+  if (!api?.getResumeTarget) return state
+  await Promise.all(
+    state.sessions.map(async (saved) => {
+      if (saved.shellOnly) return
+      if ((saved.provider ?? 'claude') !== 'claude') return
+      try {
+        const target = await api.getResumeTarget(saved.id)
+        if (target && target.uuid && target.cwd) {
+          saved.resumeUuid = target.uuid
+          saved.resumeCwd = target.cwd
+        }
+      } catch {
+        // best-effort: leave whatever was already on the record
+      }
+    }),
+  )
+  return state
 }
 
 /**

@@ -146,3 +146,79 @@ describe('hold-open gating', () => {
     expect(buf[0].toolName).toBe('Read')
   })
 })
+
+// Logs v2 (Task 8): the gateway is the earliest + exact transcript discovery
+// source. Claude Code's real hook POSTs carry `transcript_path` on every event
+// (incl. SessionStart). The gateway lifts it BEFORE redaction and forwards it via
+// an injectable onTranscriptPath callback so the binder can tail the file.
+describe('hooks gateway transcript discovery', () => {
+  let gw: HooksGateway
+  afterEach(async () => { await gw?.stop(); _resetResponders() })
+
+  it('fires onTranscriptPath with the session id + transcript_path on a real-shape POST', async () => {
+    const calls: Array<{ sid: string; path: string }> = []
+    gw = new HooksGateway({
+      emit: () => {},
+      defaultPort: 0,
+      onTranscriptPath: (sid, path) => calls.push({ sid, path }),
+    })
+    const { port } = await gw.start()
+    const secret = gw.registerSession('t1')
+    const res = await post(port!, 't1', secret, {
+      session_id: 't1', hook_event_name: 'SessionStart',
+      transcript_path: 'C:/Users/me/.claude/projects/F--proj/abc-uuid.jsonl',
+    })
+    expect(res.status).toBe(200)
+    expect(calls).toEqual([{ sid: 't1', path: 'C:/Users/me/.claude/projects/F--proj/abc-uuid.jsonl' }])
+  })
+
+  it('lifts the RAW transcript_path before redaction while still redacting other secrets', async () => {
+    const calls: Array<{ sid: string; path: string }> = []
+    let emitted: { payload?: Record<string, unknown> } = {}
+    gw = new HooksGateway({
+      emit: (_ch, payload) => { emitted = { payload: (payload as { payload?: Record<string, unknown> }).payload } },
+      defaultPort: 0,
+      onTranscriptPath: (sid, path) => calls.push({ sid, path }),
+    })
+    const { port } = await gw.start()
+    const secret = gw.registerSession('t2')
+    const res = await post(port!, 't2', secret, {
+      session_id: 't2', hook_event_name: 'PreToolUse', tool_name: 'Bash',
+      transcript_path: 'C:/Users/me/.claude/projects/F--proj/xyz.jsonl',
+      tool_input: { command: 'curl -H "api_key: sk-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' },
+    })
+    expect(res.status).toBe(200)
+    // The path is forwarded raw (un-redacted, un-mutated).
+    expect(calls).toEqual([{ sid: 't2', path: 'C:/Users/me/.claude/projects/F--proj/xyz.jsonl' }])
+    // The stored/emitted payload still has secrets scrubbed (redaction untouched).
+    const cmd = (emitted.payload?.tool_input as { command?: string } | undefined)?.command ?? ''
+    expect(cmd).toContain('[REDACTED]')
+    expect(cmd).not.toContain('sk-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')
+  })
+
+  it('does not fire onTranscriptPath when transcript_path is absent', async () => {
+    const calls: Array<{ sid: string; path: string }> = []
+    gw = new HooksGateway({
+      emit: () => {},
+      defaultPort: 0,
+      onTranscriptPath: (sid, path) => calls.push({ sid, path }),
+    })
+    const { port } = await gw.start()
+    const secret = gw.registerSession('t3')
+    await post(port!, 't3', secret, { session_id: 't3', hook_event_name: 'PostToolUse', tool_name: 'Read' })
+    expect(calls).toHaveLength(0)
+  })
+
+  it('does not fire onTranscriptPath when transcript_path is a non-string', async () => {
+    const calls: Array<{ sid: string; path: string }> = []
+    gw = new HooksGateway({
+      emit: () => {},
+      defaultPort: 0,
+      onTranscriptPath: (sid, path) => calls.push({ sid, path }),
+    })
+    const { port } = await gw.start()
+    const secret = gw.registerSession('t4')
+    await post(port!, 't4', secret, { session_id: 't4', hook_event_name: 'PostToolUse', transcript_path: 123 })
+    expect(calls).toHaveLength(0)
+  })
+})

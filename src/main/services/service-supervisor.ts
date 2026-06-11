@@ -16,6 +16,10 @@ export interface ServiceSupervisorOptions {
   emit: (channel: string, payload: unknown) => void
   now?: () => number   // injectable clock for tests
   maxRestarts?: number // fail open to in-process after this many failed restarts (default 5)
+  // Logs v2 (Task 8): sink for transcript paths the child gateway lifts from hook
+  // POSTs (earliest + exact discovery source). Routed to main's transcript binder.
+  // Also handed to the in-process gateway on fail-open so discovery survives.
+  onTranscriptPath?: (sessionId: string, path: string) => void
 }
 
 const LOG_CAP = 200
@@ -106,6 +110,11 @@ export class ServiceSupervisor {
       // Do NOT forward bind-failed to the proxy.
       try { this.child?.kill() } catch { /* best-effort */ }
       return
+    } else if (m.type === 'transcript-path') {
+      // Logs v2 (Task 8): hand the lifted transcript path to the binder. A throw
+      // in the sink must not break child-message routing.
+      try { this.opts.onTranscriptPath?.(m.sid, m.path) } catch { /* sink must not break routing */ }
+      return
     }
     // Forward `bound` to the proxy too so its status/HOOKS_STATUS broadcast and
     // start()-await-bound resolve in the production (supervisor-driven) path, not
@@ -152,6 +161,7 @@ export class ServiceSupervisor {
         defaultPort: this.opts.defaultPort,
         emit: this.opts.emit,
         selfSubscribe: false,
+        onTranscriptPath: this.opts.onTranscriptPath,
       })
     } else {
       this.proxy.rebindTransport(c.transport)   // point the long-lived proxy at the NEW child

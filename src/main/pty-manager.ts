@@ -4,8 +4,10 @@ import { PasteQueue } from './paste-queue'
 import * as os from 'os'
 import { execSync } from 'child_process'
 import { logPtyOutput, isDebugModeEnabled } from './debug-capture'
-import { shouldCapture } from './logging/should-capture'
-import { getLogCapture } from './logging/logging-service'
+import { shouldRegisterRun } from './logging/should-register-run'
+import { getLogSupervisor, getTranscriptBinder } from './logging/logging-service'
+import { resolveResumeTargetFromTranscript, mangleCwdToProjectDir } from './logging/transcript-discovery'
+import { buildClaudeLaunchCommand, resolveResumeLaunch, buildResumeTranscriptPath } from './spawn-claude-command'
 import { logInfo, logDebug, logError, logWarn } from './debug-logger'
 import { writeCliSetupPty, getResourcesDirectory } from './ipc/setup-handlers'
 import { isGlobalVisionRunning, getGlobalVisionConfig, teardownVisionSession } from './vision-manager'
@@ -17,7 +19,7 @@ import { isSshCapable } from './providers/types'
 import type { TelemetrySource } from './providers/types'
 import { resolveCwd } from './path-utils'
 import { dispatchSSHStatuslineUpdate } from './statusline-watcher'
-import { handleStatuslineUpdate, decorateStatuslineWithColour } from './tokenomics-manager'
+import { decorateStatuslineWithColour } from './account-color'
 import { getGateway } from './hooks'
 import { injectHooks } from './hooks/session-hooks-writer'
 import {
@@ -78,6 +80,17 @@ export function withProfileHome(env: Record<string, string>, home: string | null
     npm_config_userconfig: path.join(realHome, '.npmrc'),
   }
   if (process.platform !== 'win32') next.HOME = home
+  // Claude's native install lives at `$HOME/.local/bin`. With the home redirected,
+  // CC computes that as `<home>/.local/bin` (a junction to the real ~/.local) but
+  // PATH still carries the *real* home's `.local/bin`, so `/doctor` falsely warns
+  // "Native installation ... is not in your PATH". Add the redirected bin dir
+  // (deduped, under the env's existing path key) so the self-check passes. The
+  // real entry stays first, so which `claude` actually resolves is unchanged.
+  const localBin = path.join(home, '.local', 'bin')
+  const pathKey = Object.keys(next).find((k) => k.toLowerCase() === 'path') ?? 'PATH'
+  const curPath = next[pathKey] ?? ''
+  const already = curPath.split(path.delimiter).some((p) => p.toLowerCase() === localBin.toLowerCase())
+  if (!already) next[pathKey] = curPath ? `${curPath}${path.delimiter}${localBin}` : localBin
   return next
 }
 
@@ -147,6 +160,23 @@ const ptySessions = new Map<string, PtySession>()
 
 // Codex-provider telemetry sources: keyed by sessionId, stopped on PTY exit / kill.
 const codexTelemetrySources = new Map<string, TelemetrySource>()
+
+// T8b (bug #5): exact-conversation resume target captured at the TOP of a
+// respawn (in-session Restart / Switch-account), keyed by sessionId. Captured
+// BEFORE killPty so the live conversation's uuid + its real cwd are read off
+// the just-bound transcript before the old run's async endRun clears the
+// binder map. Consumed (and deleted) once in the Claude launch builder, and
+// deleted in killPty so a stale target can never leak into an unrelated future
+// spawn. Fail-open: a null/missing entry => unchanged existing resume behaviour.
+const lastResumeTarget = new Map<string, { uuid: string; cwd: string }>()
+
+function getLastResumeTarget(sessionId: string): { uuid: string; cwd: string } | undefined {
+  return lastResumeTarget.get(sessionId)
+}
+
+function clearLastResumeTarget(sessionId: string): void {
+  lastResumeTarget.delete(sessionId)
+}
 
 // === SSH OSC sentinel parser ===
 //
@@ -236,6 +266,13 @@ export function spawnPty(
     configLabel?: string
     /** Config id that owns the session. Stamped onto the session-log row for per-config filtering. */
     configId?: string
+    /**
+     * Task 9: per-config logging opt-out. DEFAULT-TRUE — only an explicit `false`
+     * disables run registration for this session (the global settings flag and
+     * shellOnly/ssh/provider gates still apply). The SessionDialog UI toggle that
+     * binds this is a later task (T16); this field is plumbed end-to-end now.
+     */
+    loggingEnabled?: boolean
     useResumePicker?: boolean
     legacyVersion?: { enabled: boolean; version: string }
     agentsConfig?: Array<{ name: string; description: string; prompt: string; model?: string; tools?: string[] }>
@@ -246,6 +283,14 @@ export function spawnPty(
     profileId?: string
     /** v1.5 P6: when true, register session into MCP server's codex_review opt-in set. */
     enableCodexReview?: boolean
+    /**
+     * T8b (bug #5): app-relaunch exact-conversation resume. The renderer passes
+     * the persisted {uuid,cwd} on a restored session so the respawn resumes the
+     * SAME conversation it was on at quit (not the newest in the cwd's folder).
+     * In-session Restart/Switch DO NOT set this — main self-captures via
+     * lastResumeTarget. Fail-open: ignored if the transcript/cwd no longer exist.
+     */
+    resume?: { uuid: string; cwd: string }
     provider?: 'claude' | 'codex'
     codexOptions?: {
       model?: string
@@ -255,7 +300,34 @@ export function spawnPty(
   }
 ): void {
   logInfo(`[pty] Spawning PTY for session ${sessionId} (ssh=${!!options?.ssh}, shellOnly=${!!options?.shellOnly}, cwd=${options?.cwd || 'default'})`)
+
+  // T8b (bug #5): in-session Restart / Switch-account REUSE this sessionId and
+  // call spawnPty synchronously after killing the old PTY. The old run's
+  // endRun() (which clears the binder's per-session bind) fires ASYNC, after we
+  // return — so READ the live conversation's resume target HERE, before
+  // killPty, while the binder still holds it. Only for Claude non-shell, non-SSH
+  // sessions (the binder only tracks Claude transcripts). Fail-open: any miss
+  // leaves no entry and the spawn falls back to existing behaviour.
+  // NOTE: stored into lastResumeTarget AFTER killPty (which clears the map), so
+  // a fresh capture survives its own kill instead of being wiped by it.
+  let capturedResumeTarget: { uuid: string; cwd: string } | null = null
+  if (!options?.ssh && !options?.shellOnly && (options?.provider ?? 'claude') === 'claude') {
+    try {
+      const latest = getTranscriptBinder()?.getLatestTranscriptPath(sessionId)
+      if (latest) {
+        capturedResumeTarget = resolveResumeTargetFromTranscript(latest)
+      }
+    } catch (err) {
+      logWarn(`[pty] T8b resume-target capture failed for ${sessionId}: ${(err as Error)?.message ?? err}`)
+    }
+  }
+
   killPty(sessionId)
+
+  if (capturedResumeTarget) {
+    lastResumeTarget.set(sessionId, capturedResumeTarget)
+    logInfo(`[pty] T8b captured resume target for ${sessionId}: uuid=${capturedResumeTarget.uuid} cwd=${capturedResumeTarget.cwd}`)
+  }
 
   const cols = options?.cols || 120
   const rows = options?.rows || 30
@@ -267,6 +339,16 @@ export function spawnPty(
   // previously declared inside the codex/claude branches and so were out of scope
   // at capture?.start() in the tail -> a latent ReferenceError on spawn-with-logging.
   const resolvedCwd = resolveCwd(options?.cwd)
+  // FIX 4: the directory Claude is ACTUALLY launched in. Defaults to the
+  // configured resolvedCwd, but the Claude branch overrides it to the resume
+  // target's real cwd (claudeCwd) when an exact-resume applies. runStart()'s
+  // projectCwd + the heuristic binder's registerRun() must use THIS so the run
+  // is stamped with — and the 20s fallback scans — the folder Claude ran in.
+  let effectiveLaunchCwd = resolvedCwd
+  // Part A: the resume uuid an exact-resume applied (function-scoped so the
+  // deterministic resume-bind at the registerRun site below can see it). Null
+  // unless the Claude branch resolved an exact-resume launch.
+  let resumeUuidForBind: string | null = null
   let resolvedProfileId: string | undefined = undefined
 
   if (options?.ssh) {
@@ -828,8 +910,9 @@ export function spawnPty(
         win.webContents.send(`pty:data:${sessionId}`, data)
       })
       // Start rollout watch-and-claim telemetry. Updates are dispatched to the
-      // renderer (statusline:update) and tokenomics-manager identically to how
-      // Claude statusline updates flow through statusline-watcher.ts.
+      // renderer (statusline:update) identically to how Claude statusline
+      // updates flow through statusline-watcher.ts. (Tokenomics is no longer fed
+      // from telemetry ticks — the indexing worker reads raw transcripts.)
       const codexTelSrc = provider.ingestSessionTelemetry(
         sessionId,
         { cwd: resolvedCwd, spawnTimestamp: codexSpawnTimestamp },
@@ -838,9 +921,11 @@ export function spawnPty(
           // the renderer receives accountColour. decorateStatuslineWithColour
           // is a no-op when the payload carries no accountEmail (Codex
           // telemetry currently does not), so this is safe + future-proof.
+          // Tokenomics no longer ingests from telemetry ticks (the worker
+          // indexes raw transcripts on its own timer); only the renderer send
+          // remains.
           const decorated = decorateStatuslineWithColour(data)
           if (!win.isDestroyed()) win.webContents.send('statusline:update', decorated)
-          handleStatuslineUpdate(decorated)
         },
       )
       codexTelemetrySources.set(sessionId, codexTelSrc)
@@ -854,6 +939,9 @@ export function spawnPty(
     // bare shell + env comes from the provider.
     const shellOnly = options?.shellOnly
     const provider = getProvider('claude')
+    // Read classicTerminalCopyPaste fresh on every spawn (default true when absent).
+    const claudeSpawnSettings = readConfig<{ classicTerminalCopyPaste?: boolean }>('settings')
+    const classicTerminalCopyPaste = claudeSpawnSettings?.classicTerminalCopyPaste !== false
     const { cmd: spawnCmd, args: spawnArgs, env: spawnEnv } = provider.buildSpawnCommand({
       sessionId,
       cwd: options?.cwd,
@@ -867,6 +955,7 @@ export function spawnPty(
       model: options?.model,
       useResumePicker: options?.useResumePicker,
       agentsConfig: options?.agentsConfig,
+      classicTerminalCopyPaste,
     })
     const wantProfileId = options?.profileId
     if (wantProfileId && fs.existsSync(getProfileConfigDir(wantProfileId))) {
@@ -936,13 +1025,80 @@ export function spawnPty(
       // Without the explicit cd, conversations get stored under the wrong project hash
       // and won't appear when the user tries to /resume.
       const { cmd } = resolveClaudeForPty(options?.legacyVersion)
-      logInfo(`[pty-manager] Launching Claude via shell in PTY: ${spawnCmd} -> ${cmd} cwd=${resolvedCwd} (resumePicker=${!!options?.useResumePicker})`)
+
+      // T8b (bug #5): EXACT-CONVERSATION RESUME.
+      //
+      // `claude --resume <uuid>` is cwd-SCOPED: it only resolves a conversation
+      // from the LAUNCH cwd's mangled ~/.claude/projects/<mangled> folder, and
+      // needs both <uuid>.jsonl and a same-name companion dir there. The default
+      // resume-picker / newest-in-folder behaviour can therefore pick a STALE
+      // conversation when the live one ran under a DIFFERENT cwd (e.g. a git
+      // worktree). So we must do BOTH: pass --resume <uuid> AND override the
+      // launch cwd to the directory the conversation actually ran in (read out
+      // of the JSONL — the mangled folder name is lossy and not reversible).
+      //
+      // Effective target precedence (all fail-open):
+      //   options.resume          (app-relaunch: persisted on the restored session)
+      //   lastResumeTarget        (in-session Restart / Switch-account: self-captured)
+      //
+      // The whole override is gated by the pure resolveResumeLaunch() helper:
+      // transcript file present, companion dir present, and the RAW target cwd
+      // is a real directory (stat'd directly — NOT via the homedir-fallback
+      // resolveCwd). ANY miss → drop resume entirely and fall back to existing
+      // behaviour. We never launch --resume from os.homedir() (a deleted
+      // worktree therefore falls back, it does not silently retarget home).
+      let resumeUuid: string | undefined = undefined
+      let claudeCwd = resolvedCwd
+      // Precedence: app-relaunch persisted target wins over the self-captured
+      // one. The self-captured target is consumed unconditionally below so it
+      // can never apply to a later, unrelated spawn of this sessionId.
+      const persistedTarget = options?.resume
+      const selfCapturedTarget = getLastResumeTarget(sessionId)
+      clearLastResumeTarget(sessionId)
+      const effectiveTarget = persistedTarget ?? selfCapturedTarget
+      // FIX 3: `discoveryOn` (binder present == logging on) gates ONLY the
+      // self-captured path — that path's target ORIGINATES from the binder, so
+      // without it there is nothing to capture. The app-relaunch path uses the
+      // PERSISTED options.resume + on-disk file checks and needs no binder, so
+      // logging-off users still get exact-resume on relaunch. (When the target
+      // is self-captured the binder is inherently present anyway.)
+      const usingPersisted = !!persistedTarget
+      const discoveryOn = usingPersisted || !!getTranscriptBinder()
+      if (effectiveTarget && (options?.provider ?? 'claude') === 'claude' && discoveryOn) {
+        // FIX 1 + FIX 2: the cwd/path existence gate lives in the pure, tested
+        // resolveResumeLaunch() helper. It stats the RAW captured cwd directly
+        // (no homedir-fallback resolver), so a DELETED worktree → null → fall
+        // back to picker/direct. We never launch --resume from os.homedir().
+        const launch = resolveResumeLaunch(effectiveTarget, {
+          existsSync: fs.existsSync,
+          statSync: (p) => fs.statSync(p),
+          homedir: os.homedir,
+          mangleCwdToProjectDir,
+          projectsRoot: path.join(os.homedir(), '.claude', 'projects'),
+        })
+        if (launch) {
+          resumeUuid = launch.resumeUuid
+          claudeCwd = launch.claudeCwd
+          // FIX 4: propagate the override to function scope so the subsequent
+          // runStart/registerRun stamp + scan the folder Claude actually ran in.
+          effectiveLaunchCwd = claudeCwd
+          // Part A: capture the resume uuid at function scope so the registerRun
+          // site can bind the exact transcript IMMEDIATELY (deterministic
+          // resume-bind), independent of the hooks/statusline/heuristic race.
+          resumeUuidForBind = launch.resumeUuid
+          logInfo(`[pty] T8b exact resume for ${sessionId}: uuid=${resumeUuid} cwd=${claudeCwd} (was ${resolvedCwd})`)
+        } else {
+          logInfo(`[pty] T8b resume target dropped for ${sessionId} (fail-open existence check) — uuid=${effectiveTarget.uuid}`)
+        }
+      }
+
+      logInfo(`[pty-manager] Launching Claude via shell in PTY: ${spawnCmd} -> ${cmd} cwd=${claudeCwd} (resumePicker=${!!options?.useResumePicker}, resume=${resumeUuid ?? 'none'})`)
 
       ptyProcess = pty.spawn(spawnCmd, spawnArgs, {
         name: 'xterm-256color',
         cols,
         rows,
-        cwd: resolvedCwd,
+        cwd: claudeCwd,
         env: finalSpawnEnv,
         useConpty: true
       })
@@ -967,7 +1123,9 @@ export function spawnPty(
       // Explicitly cd to the project directory, then launch Claude.
       // The cd is critical — it ensures Claude sees the correct project directory
       // regardless of PowerShell profile scripts or PTY cwd propagation issues.
-      const escapedCwd = resolvedCwd.replace(/'/g, "''")
+      // The command string + cwd escaping is built by the pure
+      // buildClaudeLaunchCommand() helper below; it uses `claudeCwd` (the
+      // resume-target override when active, else resolvedCwd).
 
       // Build extra CLI flags (--effort, --settings). --name is deliberately
       // NOT passed: the current Claude CLI treats `--name "<label>"` as the
@@ -997,13 +1155,11 @@ export function spawnPty(
         const appSettings = readConfig<{ disableClaudeWorkflows?: boolean }>('settings')
         const disableWorkflows = !!appSettings?.disableClaudeWorkflows
         const sesPath = writeLocalSessionSettings(sessionId, { disableWorkflows })
-        // Re-enabled in v1.5.11: the permission tray (CC P7-P9, shipped in
-        // v1.5.10) is the consumer that was missing when the original
-        // disable comment was written. injectHooks rewrites the per-session
-        // settings file to point Claude's PreToolUse hook at our local
-        // gateway, which then drives the tray. Skipped only when the
-        // gateway is down (port-bind failure, etc.) so Claude still spawns
-        // cleanly without permission interception.
+        // injectHooks rewrites the per-session settings file to point Claude's
+        // hook events at our local gateway, which drives the session attention
+        // pulse, statusline ingest, and conversation logging. Skipped only when
+        // the gateway is down (port-bind failure, etc.) so Claude still spawns
+        // cleanly.
         const gw = getGateway()
         const gwStatus = gw?.status()
         if (gw && gwStatus?.listening && gwStatus.port) {
@@ -1041,29 +1197,26 @@ export function spawnPty(
         logInfo(`[pty] Agents flag for ${sessionId}: ${agentsFlag.slice(0, 200)}...`)
       }
 
-      // When useResumePicker is true, run the resume-picker script instead of Claude directly.
-      // The picker shows prior conversations and launches Claude with --resume or plain.
-      // Any claude flags we've already built up (notably --settings for hooks) must be
-      // forwarded through the picker so the child claude process sees them too.
-      let escapedCmd: string
-      if (options?.useResumePicker) {
-        const pickerScript = getResumePickerPath()
-        if (pickerScript && os.platform() === 'win32') {
-          const escapedScript = pickerScript.replace(/'/g, "''")
-          escapedCmd = `Set-Location '${escapedCwd}'; node '${escapedScript}'${extraFlags}; exit`
-        } else if (pickerScript) {
-          escapedCmd = `cd '${escapedCwd.replace(/'/g, "'\\''")}' && node '${pickerScript.replace(/'/g, "'\\''")}'${extraFlags}; exit`
-        } else {
-          // Fallback: no picker script found, launch Claude directly
-          escapedCmd = os.platform() === 'win32'
-            ? `Set-Location '${escapedCwd}'; & "${cmd}"${agentsFlag}${extraFlags}; exit`
-            : `cd '${escapedCwd.replace(/'/g, "'\\''")}' && "${cmd}"${agentsFlag}${extraFlags}; exit`
-        }
-      } else {
-        escapedCmd = os.platform() === 'win32'
-          ? `Set-Location '${escapedCwd}'; & "${cmd}"${agentsFlag}${extraFlags}; exit`
-          : `cd '${escapedCwd.replace(/'/g, "'\\''")}' && "${cmd}"${agentsFlag}${extraFlags}; exit`
-      }
+      // When useResumePicker is true, run the resume-picker script instead of
+      // Claude directly. The picker shows prior conversations and launches Claude
+      // with --resume or plain. Any claude flags we've already built up (notably
+      // --settings for hooks) must be forwarded through the picker so the child
+      // claude process sees them too.
+      //
+      // T8b: when an exact resume target resolved (resumeUuid set), the builder
+      // BYPASSES the picker and launches `claude --resume <uuid>` directly from
+      // claudeCwd (the conversation's real cwd). Otherwise the byte-identical
+      // golden behaviour (picker / direct) is preserved.
+      const escapedCmd = buildClaudeLaunchCommand({
+        platform: os.platform() === 'win32' ? 'win32' : 'posix',
+        cwd: claudeCwd,
+        claudeBin: cmd,
+        extraFlags,
+        agentsFlag,
+        useResumePicker: !!options?.useResumePicker,
+        pickerScript: getResumePickerPath(),
+        resumeUuid,
+      })
       setTimeout(() => {
         ptyProcess.write(escapedCmd + '\r')
       }, 300)
@@ -1089,35 +1242,71 @@ export function spawnPty(
     pendingWrites.delete(sessionId)
   }
 
-  // Start session logging via the SQLite worker pipeline. Gated on the live
-  // `loggingEnabled` setting (default-true) and never for shell-only sessions.
-  // The captured account (set at line ~950 for non-shell Claude sessions) +
-  // configId/profileId are stamped so logs can be filtered by config/account.
+  // Record the run via the transcripts worker pipeline (Logs v2). Gated on the
+  // live `loggingEnabled` setting (default-true) and never for shell-only
+  // sessions (full gating refinement = Task 9). The captured account (set at
+  // line ~950 for non-shell Claude sessions) + configId/profileId are stamped
+  // so runs can be filtered by config/account.
   const configLabel = options?.configLabel || 'default'
-  // Reading settings here (rather than relying solely on getLogCapture()) gives
-  // a LIVE disable: if logging was enabled at boot (so the supervisor is running)
-  // but the user later turns it off in Settings, new session captures are skipped
-  // immediately — the worker keeps running idle. Asymmetry: if logging was
-  // DISABLED at boot there is no supervisor, so a mid-run enable needs a restart.
+  // Reading settings here (rather than relying solely on the supervisor's
+  // existence) gives a LIVE disable: if logging was enabled at boot (so the
+  // supervisor is running) but the user later turns it off in Settings, new
+  // runs are skipped immediately — the worker keeps running idle. Asymmetry: if
+  // logging was DISABLED at boot there is no supervisor, so a mid-run enable
+  // needs a restart.
   const settings = readConfig<{ loggingEnabled?: boolean }>('settings') ?? {}
-  const capture = shouldCapture(options ?? {}, settings) ? getLogCapture() : null
-  capture?.start(sessionId, {
+  // Single source of truth for the run-registration decision (Task 9):
+  // claude-local-only (not codex/other), not shell-only, not SSH, per-config
+  // loggingEnabled !== false, global loggingEnabled !== false. The matching
+  // runEnd/endRun on exit are gated on this same `logSup` being non-null, so a
+  // run is only ended if it was registered.
+  const logSup = shouldRegisterRun(options ?? {}, settings) ? getLogSupervisor() : null
+  logSup?.runStart({
+    sessionId,
     configId: options?.configId,
     configLabel,
-    projectCwd: resolvedCwd,
+    // FIX 4: the effective launch cwd (resume override when active, else the
+    // configured resolvedCwd) — not the bare resolvedCwd.
+    projectCwd: effectiveLaunchCwd,
     // accountEmail is typically undefined here: identity is captured asynchronously
     // AFTER spawn (recheckSessionIdentity / startWatchingAccountIdentity wired in
-    // pty-manager). The Phase-1 session row therefore stamps a null email; configId
-    // and profileId ARE stamped correctly at spawn. A Phase-2 enrichment can join
-    // on profileId to back-fill the email once the identity poll resolves.
+    // pty-manager). The run row therefore stamps a null email; configId and
+    // profileId ARE stamped correctly at spawn. runAccount() back-fills the email
+    // once the identity poll resolves (wired in a later task).
     accountEmail: getAccountIdentity(sessionId)?.email,
     profileId: resolvedProfileId,
     provider: options?.provider ?? 'claude',
+    startedAt: Date.now(),
   })
+  // Logs v2 (Task 8): arm the heuristic transcript-discovery fallback for this run.
+  // The exact sources (hooks + statusline) bind first; if neither has bound ~20s
+  // later, the binder scans ~/.claude/projects for the newest matching JSONL.
+  // Gated on logSup (the consolidated shouldRegisterRun decision — already
+  // claude-local-only, so no separate provider re-check) + a known cwd.
+  if (logSup && effectiveLaunchCwd) {
+    // FIX 4: register with the effective launch cwd so the 20s heuristic
+    // fallback scans the folder Claude ran in (the resume override when active).
+    const binder = getTranscriptBinder()
+    binder?.registerRun(sessionId, effectiveLaunchCwd, Date.now())
+    // Part A: DETERMINISTIC RESUME-BIND. When an exact-resume applied we already
+    // know the conversation's uuid + the real launch cwd, so we can bind that
+    // exact transcript IMMEDIATELY — no waiting for the hooks/statusline exact
+    // sources or the 20s heuristic. This fixes the observed first-/resumed-session
+    // `nt=0` race at boot (the exact sources lose to boot wiring; the heuristic's
+    // one-shot didn't recover it). Routed through notifyTranscriptPath so the
+    // existing debounce + idempotent canonicalize apply; a stale path just no-ops.
+    if (binder && resumeUuidForBind) {
+      const resumePath = buildResumeTranscriptPath(effectiveLaunchCwd, resumeUuidForBind)
+      if (resumePath) {
+        logInfo(`[binder] resume-bind sid=${sessionId} path=${resumePath}`)
+        binder.notifyTranscriptPath(sessionId, resumePath)
+      }
+    }
+  }
 
-  // Pipe PTY output to the logging capture (O(1) record) and debug capture.
+  // Debug capture only — the transcripts worker tails Claude's own transcript
+  // files, so PTY bytes are no longer recorded for logging.
   ptyProcess.onData((data) => {
-    capture?.record(sessionId, data)
     if (isDebugModeEnabled()) {
       logPtyOutput(sessionId, data)
     }
@@ -1143,10 +1332,14 @@ export function spawnPty(
     if (weAreCurrent) {
       ptySessions.delete(sessionId)
       clearSessionMeta(sessionId)
-      // End session logging (flush + mark ended). Gated on weAreCurrent so the
-      // restart-race stale exit can't end the just-respawned session's capture.
-      // No-op when logging is disabled / never captured this session.
-      capture?.end(sessionId, exitCode === 0 ? 'exited' : 'crashed')
+      // Close the run (the worker final-drains + retires its transcript tails).
+      // Gated on weAreCurrent so the restart-race stale exit can't end the
+      // just-respawned session's run. No-op when logging is disabled / this
+      // session was never recorded (logSup null).
+      logSup?.runEnd(sessionId, Date.now(), exitCode === 0 ? 'exited' : 'crashed')
+      // Logs v2 (Task 8): cancel any pending heuristic timer + clear the binder's
+      // per-session bind state so a reused sessionId (restart) binds fresh.
+      getTranscriptBinder()?.endRun(sessionId)
       getPtyIntegrityMonitor()?.endSession(sessionId)
       try {
         const gwExit = getGateway()
@@ -1327,6 +1520,10 @@ export function killPty(sessionId: string): void {
   pendingWrites.delete(sessionId)
   recentWrites.delete(sessionId)
   sshOscBuffers.delete(sessionId)
+  // T8b: drop any captured resume target so it can't leak into a future,
+  // unrelated spawn of the same sessionId. The respawn path captures fresh
+  // BEFORE calling killPty, so the just-captured target survives this clear.
+  clearLastResumeTarget(sessionId)
   // Stop Codex telemetry source if one was registered for this session.
   const codexTel = codexTelemetrySources.get(sessionId)
   if (codexTel) {

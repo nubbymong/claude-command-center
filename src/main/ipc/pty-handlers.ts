@@ -34,6 +34,8 @@ export const spawnOptionsSchema = z.object({
   shellOnly: z.boolean().optional(),
   configId: z.string().optional(),
   configLabel: z.string().max(100).optional(),
+  // Task 9: per-config logging opt-out (DEFAULT-TRUE; only false disables).
+  loggingEnabled: z.boolean().optional(),
   useResumePicker: z.boolean().optional(),
   legacyVersion: z.object({
     enabled: z.boolean(),
@@ -51,6 +53,14 @@ export const spawnOptionsSchema = z.object({
   effortLevel: z.enum(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode']).optional(),
   disableAutoMemory: z.boolean().optional(),
   enableCodexReview: z.boolean().optional(),
+  // T8b (bug #5): app-relaunch exact-conversation resume target.
+  // FIX 4: the uuid is interpolated UNQUOTED into the spawn shell command, so
+  // constrain it to the canonical UUID format (not just a bounded string) as a
+  // defense-in-depth guard against shell injection. cwd stays a bounded string.
+  resume: z.object({
+    uuid: z.string().regex(/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/),
+    cwd: z.string().min(1).max(4096),
+  }).optional(),
   model: z.string().optional(),
   profileId: z.string().optional(),
   provider: z.enum(['claude', 'codex']).optional(),
@@ -80,12 +90,14 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     shellOnly?: boolean
     configId?: string
     configLabel?: string
+    loggingEnabled?: boolean
     useResumePicker?: boolean
     legacyVersion?: { enabled: boolean; version: string }
     agentsConfig?: Array<{ name: string; description: string; prompt: string; model?: string; tools?: string[] }>
     effortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode'
     disableAutoMemory?: boolean
     enableCodexReview?: boolean
+    resume?: { uuid: string; cwd: string }
     model?: string
     profileId?: string
     provider?: 'claude' | 'codex'

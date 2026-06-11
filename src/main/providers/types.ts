@@ -17,6 +17,11 @@ export interface SpawnOptions {
   effortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode'
   disableAutoMemory?: boolean
   model?: string
+  /** v1.5.32: when true (or undefined = default), sets CLAUDE_CODE_DISABLE_MOUSE=1
+   *  in the Claude spawn env so xterm owns the mouse (classic selection, right-click
+   *  copy/paste). When false, CC's mouse mode is preserved. Shell-only sessions
+   *  are never affected regardless of this flag. */
+  classicTerminalCopyPaste?: boolean
   // Codex-specific (only present when provider === 'codex')
   codexOptions?: CodexOptions
 }

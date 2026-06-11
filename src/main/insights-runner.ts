@@ -134,7 +134,7 @@ function copyReportToArchive(archiveDir: string, home: string | null): boolean {
  * Strip ANSI escape sequences for reliable text detection.
  * Handles CSI (including private mode ?), OSC, charset selection, and other sequences.
  */
-function stripAnsi(str: string): string {
+function stripAnsiCodes(str: string): string {
   return str
     .replace(/\x1b\[[\x20-\x3f]*[0-9;]*[\x20-\x7e]/g, '')  // CSI sequences (including ?...)
     .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')       // OSC sequences
@@ -239,7 +239,7 @@ function spawnClaudeInsights(home: string | null, timeoutMs = 600000): Promise<{
         resolved = true
         cleanup()
         logError(`[insights] PTY timed out after ${timeoutMs / 1000}s`)
-        logError(`[insights] Last output: ${stripAnsi(output).slice(-500)}`)
+        logError(`[insights] Last output: ${stripAnsiCodes(output).slice(-500)}`)
         try { proc.kill() } catch { /* ignore */ }
         resolve({ code: 1, output: output + '\nTimed out after ' + (timeoutMs / 1000) + 's' })
       }
@@ -293,7 +293,7 @@ function spawnClaudeInsights(home: string | null, timeoutMs = 600000): Promise<{
     proc.onData((data) => {
       output += data
       dataChunks++
-      const clean = stripAnsi(data)
+      const clean = stripAnsiCodes(data)
       fullClean += clean
 
       // Log first 20 chunks and then every 50th for diagnostics
@@ -565,7 +565,7 @@ export async function runInsights(getWindow: () => BrowserWindow | null, opts?: 
 
     if (result.code !== 0) {
       run.status = 'failed'
-      run.error = 'claude /insights failed: ' + stripAnsi(result.output).slice(-200)
+      run.error = 'claude /insights failed: ' + stripAnsiCodes(result.output).slice(-200)
       saveCatalogue(catalogue)
       notifyRenderer(getWindow, run)
       running = false

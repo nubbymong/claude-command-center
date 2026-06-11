@@ -270,6 +270,7 @@ export default function GuidedConfigView({ onConfirm, onSkip }: Props) {
                   >
                     <option value="">Default (uses subscription plan)</option>
                     <option value="opus">Opus (deep thinking)</option>
+                    <option value="fable">Fable 5 (most capable)</option>
                     <option value="sonnet">Sonnet (balanced)</option>
                     <option value="haiku">Haiku (fast, cheap)</option>
                   </select>

@@ -12,6 +12,10 @@ export interface HooksGatewayProxyOptions {
   defaultPort: number
   emit?: (channel: string, payload: unknown) => void   // to renderer
   selfSubscribe?: boolean   // default true; supervisor passes false and drives handleChildMessage
+  // Logs v2 (Task 8): handed to the in-process gateway on fail-open so transcript
+  // discovery via hooks keeps working when the child path is gone. In utility-process
+  // mode the child gateway forwards the path over the transport instead.
+  onTranscriptPath?: (sessionId: string, path: string) => void
 }
 
 // `implements HooksGatewayLike` enforces the drop-in contract at compile time: if a
@@ -20,6 +24,7 @@ export class HooksGatewayProxy implements HooksGatewayLike {
   private transport: ChildTransport
   private port: number
   private emit: (channel: string, payload: unknown) => void
+  private onTranscriptPath?: (sessionId: string, path: string) => void
   private secrets = new Map<string, string>()
   private buffers = new Map<string, RingBufferEntry[]>()
   private subscribers = new Set<(e: HookEvent) => void>()
@@ -47,6 +52,7 @@ export class HooksGatewayProxy implements HooksGatewayLike {
     this.transport = opts.transport
     this.port = opts.defaultPort
     this.emit = opts.emit ?? (() => {})
+    this.onTranscriptPath = opts.onTranscriptPath
     if (opts.selfSubscribe !== false) this.transport.onMessage((m) => this.onChildMessage(m))
   }
 
@@ -128,6 +134,12 @@ export class HooksGatewayProxy implements HooksGatewayLike {
         // is meaningful (we route the decision back to the child).
         this.openPermissionRequests.add(m.requestId)
         break
+      case 'transcript-path':
+        // Logs v2 (Task 8): only reached on the self-subscribe path. In production
+        // the supervisor owns the subscription and routes this itself; this keeps
+        // a self-subscribing proxy (tests / non-supervised) feeding the binder too.
+        try { this.onTranscriptPath?.(m.sid, m.path) } catch { /* sink must not break routing */ }
+        break
       default: break
     }
   }
@@ -177,7 +189,7 @@ export class HooksGatewayProxy implements HooksGatewayLike {
    *  PRECONDITION: the supervisor has already killed the child (no double bind). */
   failOpen(): void {
     if (this.inProcess) return
-    const gw = new HooksGateway({ defaultPort: this.port, emit: this.emit })
+    const gw = new HooksGateway({ defaultPort: this.port, emit: this.emit, onTranscriptPath: this.onTranscriptPath })
     for (const [sid, secret] of this.secrets) gw.registerSessionWithSecret(sid, secret)
     for (const cb of this.subscribers) gw.subscribe(cb)
     this.inProcess = gw

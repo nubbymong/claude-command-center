@@ -585,9 +585,8 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
   // this value as the focused-session resolver so SYNC_FOCUSED_NOW resolves
   // correctly without needing a separate session-state round-trip.
   ipcMain.on(IPC.GITHUB_FOCUS_CHANGED, (_e, sessionId: string | null) => {
-    // Mirror the viewed-session id into the shared tracker so non-github
-    // diagnostics (e.g. permission-tray suppression logging) can tell whether
-    // an event is for the session the user is currently looking at.
+    // Mirror the viewed-session id into the shared tracker so focus-aware
+    // main-side features can tell which session the user is currently viewing.
     setActiveSessionId(sessionId)
     const prev = focusedSessionResolver()
     focusedSessionResolver = () => sessionId

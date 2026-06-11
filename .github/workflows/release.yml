@@ -22,7 +22,9 @@ permissions:
 jobs:
   # ── Build Windows installer ──
   build-windows:
-    runs-on: windows-latest
+    # Pinned off windows-latest: the new vs2026 image breaks @electron/node-gyp
+    # (no supported Visual Studio). Same pin as ci.yml — unpin together.
+    runs-on: windows-2025
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
@@ -47,6 +49,13 @@ jobs:
 
       - name: Install Electron binary
         run: node node_modules/electron/install.js
+
+      # VS 2026-only runner images break @electron/node-gyp's VS discovery
+      # (VS18 absent from its version table). Install VS2022 Build Tools —
+      # also covers electron-builder's internal rebuild. See ci.yml.
+      - name: Install VS2022 Build Tools
+        shell: pwsh
+        run: choco install visualstudio2022buildtools --no-progress -y --package-parameters "--add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.VC.Runtimes.x86.x64.Spectre --includeRecommended --quiet --norestart"
 
       - name: Rebuild native modules
         shell: bash

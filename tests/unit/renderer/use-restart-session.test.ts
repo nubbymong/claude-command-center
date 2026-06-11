@@ -181,6 +181,27 @@ describe('useRestartSession (P4 Task A)', () => {
     expect(markSessionForResumePickerMock).not.toHaveBeenCalled()
   })
 
+  // 2b. T8b: persisted resumeUuid/resumeCwd survive the forceRemount merge -----
+
+  it('restart() preserves a persisted resumeUuid/resumeCwd through the remount merge', () => {
+    const session = makeSession({
+      sessionType: 'local',
+      shellOnly: false,
+      resumeUuid: 'persisted-uuid',
+      resumeCwd: 'F:/wt',
+    })
+    useSessionStore.getState().addSession(session)
+
+    renderHarness(session)
+    act(() => { capturedActions!.restart() })
+
+    const stored = useSessionStore.getState().sessions.find((s) => s.id === session.id)
+    expect(stored).toBeDefined()
+    // The fields round-trip through removeSession + addSession (...session merge).
+    expect(stored!.resumeUuid).toBe('persisted-uuid')
+    expect(stored!.resumeCwd).toBe('F:/wt')
+  })
+
   // 3. no-op when session is null ---------------------------------------------
 
   it('restart() is a no-op (no throws, no side-effects) when session is null', () => {

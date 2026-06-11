@@ -30,3 +30,25 @@ describe('pty-handlers spawnOptionsSchema -- effortLevel (all 6 levels)', () => 
     ).toThrow()
   })
 })
+
+describe('pty-handlers spawnOptionsSchema -- resume.uuid format (FIX 4)', () => {
+  const VALID_UUID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+  const CWD = 'C:/work'
+
+  it('accepts a canonical UUID resume target', () => {
+    const parsed = spawnOptionsSchema.parse({ cwd: CWD, resume: { uuid: VALID_UUID, cwd: CWD } })
+    expect(parsed?.resume?.uuid).toBe(VALID_UUID)
+  })
+
+  it('rejects a non-UUID resume.uuid (shell-injection shaped string)', () => {
+    expect(() =>
+      spawnOptionsSchema.parse({ cwd: CWD, resume: { uuid: '$(rm -rf /)', cwd: CWD } }),
+    ).toThrow()
+  })
+
+  it('rejects a plausible-but-malformed resume.uuid', () => {
+    expect(() =>
+      spawnOptionsSchema.parse({ cwd: CWD, resume: { uuid: 'not-a-uuid', cwd: CWD } }),
+    ).toThrow()
+  })
+})

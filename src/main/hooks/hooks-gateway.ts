@@ -40,6 +40,15 @@ export interface HooksGatewayOptions {
     register: (id: string, cb: (decision: string) => void) => void
     deregister: (id: string) => void
   }
+  /**
+   * Logs v2 (Task 8): the earliest + exact transcript discovery source. Claude
+   * Code's hook POSTs carry `transcript_path` on every event (incl. SessionStart).
+   * ingest() lifts it BEFORE redaction and invokes this with (sessionId, rawPath)
+   * so the transcript binder can tail the file. Optional + injectable to keep the
+   * gateway decoupled (the production wiring forwards it across the child
+   * transport to main's binder).
+   */
+  onTranscriptPath?: (sessionId: string, path: string) => void
 }
 
 interface HandleArgs {
@@ -70,6 +79,7 @@ export class HooksGateway {
 
   public readonly permissionRegister: (id: string, cb: (decision: string) => void) => void
   public readonly permissionDeregister: (id: string) => void
+  private onTranscriptPath?: (sessionId: string, path: string) => void
   private _eventsTotal = 0
   private _dropsTotal = 0
 
@@ -84,6 +94,7 @@ export class HooksGateway {
     this.emit = opts.emit
     this.permissionRegister = opts.permissionResponders?.register ?? defaultRegister
     this.permissionDeregister = opts.permissionResponders?.deregister ?? defaultDeregister
+    this.onTranscriptPath = opts.onTranscriptPath
   }
 
   subscribe(cb: (e: HookEvent) => void): () => void {
@@ -386,14 +397,13 @@ export class HooksGateway {
       }
     }
 
-    // The held-open responder is keyed by `permissionRequestId`. Downstream, the
-    // pending tray card derives its own id from `payload.requestId` (falling back
-    // to `${sessionId}-${entry.ts}`). Claude Code's real PreToolUse hook sends NO
-    // requestId, so without this both sides would invent DIFFERENT synthetic ids
-    // (two separate Date.now() reads) and Allow/Deny would target a responder that
-    // does not exist -> the request silently stalls until the 120s timeout. Inject
-    // the resolved id into the already-parsed body so ingest -> normalizePermission
-    // key the card on the SAME value we registered the responder under.
+    // The held-open responder is keyed by `permissionRequestId`. Claude Code's
+    // real PreToolUse hook sends NO requestId, so without this the responder
+    // registration and any downstream consumer would invent DIFFERENT synthetic
+    // ids (two separate Date.now() reads) and Allow/Deny would target a responder
+    // that does not exist -> the request silently stalls until the 120s timeout.
+    // Inject the resolved id into the already-parsed body so both sides key on
+    // the SAME value we registered the responder under.
     if (isPermissionRequest && permissionRequestId && parsedBody) {
       const pl = (parsedBody.payload && typeof parsedBody.payload === 'object')
         ? (parsedBody.payload as Record<string, unknown>)
@@ -472,6 +482,15 @@ export class HooksGateway {
     // tests cannot, and is the fastest way to confirm the gateway parses CC's
     // real PreToolUse during the dev-demo permission round-trip.
     logTrace(`[hooks] ingest sid=${sid} keys=[${Object.keys(parsed).join(',')}] event=${String(parsed.event)} hook_event_name=${String((parsed as Record<string, unknown>).hook_event_name)} tool_name=${String(parsed.tool_name)}`)
+    // Logs v2 (Task 8): lift the transcript path BEFORE redaction. Claude Code
+    // sends `transcript_path` on every hook POST (incl. SessionStart) — the
+    // earliest + exact discovery source. Done here (not in the redactor walk) so
+    // the redactor stays a pure value-pattern scrubber and the raw path reaches
+    // the binder un-mutated. A bad subscriber must never break ingestion.
+    const tp = typeof parsed.transcript_path === 'string' ? (parsed.transcript_path as string) : undefined
+    if (tp) {
+      try { this.onTranscriptPath?.(sid, tp) } catch { /* discovery sink must not break the hook path */ }
+    }
     // Reject payloads with a missing/non-string event field rather than
     // forging an 'Unknown' sentinel: the shared HookEventKind union
     // doesn't include it, so forging would propagate a type-contract

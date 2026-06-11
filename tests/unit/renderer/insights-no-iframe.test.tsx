@@ -4,8 +4,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 // Stable object references prevent useEffect([..., catalogue]) from
 // firing on every render (same issue the component comment describes for sessions).
 const STABLE_CATALOGUE = { runs: [{ id: 'r1', status: 'complete', timestamp: 1716000000000 }] }
-const STABLE_SESSIONS = { x: { provider: 'claude' } }
 const noop = () => {}
+
+// Minimal TkSummary with a claude model so the Codex-only gate never fires.
+const STABLE_SUMMARY = {
+  kpis: { lifeToDateCostUsd: 0, last7dCostUsd: 0, prev7dCostUsd: 0, cacheEfficiencyPct: 0, cacheSavingsUsd: 0 },
+  dailySeries: [],
+  modelSplit: [{ model: 'claude-3-5-sonnet', costUsd: 1, tokens: 1 }],
+  cacheSplit: { inputUsd: 0, outputUsd: 0, cacheReadUsd: 0, cacheCreateUsd: 0 },
+  costByConfig: [],
+  heatmap: [],
+}
 
 vi.mock('../../../src/renderer/stores/insightsStore', () => ({
   useInsightsStore: (sel: any) => sel({
@@ -15,15 +24,15 @@ vi.mock('../../../src/renderer/stores/insightsStore', () => ({
     startInsights: noop, loadCatalogue: noop,
   }),
 }))
-vi.mock('../../../src/renderer/stores/tokenomicsStore', () => ({
-  useTokenomicsStore: (sel: any) => sel({ data: { sessions: STABLE_SESSIONS } }),
-}))
 
 beforeEach(() => {
   ;(globalThis as any).window.electronAPI = {
     insights: {
       getReport: vi.fn().mockResolvedValue('<html><body><h1>R</h1></body></html>'),
       getKpis: vi.fn().mockResolvedValue(null),
+    },
+    tokenomics: {
+      summary: vi.fn().mockResolvedValue(STABLE_SUMMARY),
     },
     shell: { openExternal: vi.fn() },
   }

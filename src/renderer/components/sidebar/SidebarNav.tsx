@@ -1,6 +1,7 @@
 import React from 'react'
 import { ViewType } from '../../types/views'
 import { useSettingsStore } from '../../stores/settingsStore'
+import { useTokenomicsStore } from '../../stores/tokenomicsStore'
 
 interface SidebarNavProps {
   currentView: ViewType
@@ -14,6 +15,7 @@ interface SidebarNavProps {
   // matching the P7.4 spec ("Red only if the MCP HTTP listener actually
   // died"). visionConnected was removed because it was the only consumer.
   serverRunning?: boolean
+  tokenomicsIndexComplete?: boolean
   collapsed?: boolean
   onShowHelp?: () => void
 }
@@ -95,7 +97,7 @@ const navItems: { view: ViewType; icon: React.ReactNode; label: string }[] = [
   },
 ]
 
-function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMessage, cloudAgentRunning, visionRunning, serverRunning, isCollapsed, loggingEnabled }: {
+function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMessage, cloudAgentRunning, visionRunning, serverRunning, tokenomicsIndexComplete, isCollapsed, loggingEnabled }: {
   item: typeof navItems[0]
   currentView: ViewType
   onViewChange: (view: ViewType) => void
@@ -104,6 +106,7 @@ function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMe
   cloudAgentRunning: number
   visionRunning?: boolean
   serverRunning?: boolean
+  tokenomicsIndexComplete?: boolean
   isCollapsed: boolean
   loggingEnabled?: boolean
 }) {
@@ -140,9 +143,16 @@ function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMe
     ? (insightsMessage || 'Insights running...')
     : item.label
 
+  const isTokenomicsBadge = item.view === 'tokenomics' && !!tokenomicsIndexComplete
+
   return (
     <button
-      onClick={isLogsDisabled ? undefined : () => onViewChange(item.view)}
+      onClick={isLogsDisabled ? undefined : () => {
+        if (item.view === 'tokenomics') {
+          useTokenomicsStore.getState().clearIndexBadge()
+        }
+        onViewChange(item.view)
+      }}
       title={title}
       aria-label={title}
       aria-disabled={isLogsDisabled || undefined}
@@ -203,11 +213,23 @@ function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMe
           }}
         />
       )}
+      {isTokenomicsBadge && (
+        <span
+          data-testid="tokenomics-index-dot"
+          role="img"
+          aria-label="Tokenomics index complete"
+          className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full"
+          style={{
+            backgroundColor: 'var(--status-success)',
+            boxShadow: '0 0 6px 2px color-mix(in srgb, var(--status-success) 38%, transparent)',
+          }}
+        />
+      )}
     </button>
   )
 }
 
-export default function SidebarNav({ currentView, onViewChange, insightsStatus, insightsMessage, cloudAgentRunning, visionRunning, serverRunning, collapsed, onShowHelp }: SidebarNavProps) {
+export default function SidebarNav({ currentView, onViewChange, insightsStatus, insightsMessage, cloudAgentRunning, visionRunning, serverRunning, tokenomicsIndexComplete, collapsed, onShowHelp }: SidebarNavProps) {
   const loggingEnabled = useSettingsStore((s) => s.settings.loggingEnabled)
 
   const helpButton = onShowHelp ? (
@@ -238,8 +260,8 @@ export default function SidebarNav({ currentView, onViewChange, insightsStatus, 
   const renderItem = (item: typeof navItems[0]) => (
     <NavButton key={item.view} item={item} currentView={currentView} onViewChange={onViewChange}
       insightsStatus={insightsStatus} insightsMessage={insightsMessage} cloudAgentRunning={cloudAgentRunning}
-      visionRunning={visionRunning} serverRunning={serverRunning} isCollapsed={false}
-      loggingEnabled={loggingEnabled} />
+      visionRunning={visionRunning} serverRunning={serverRunning} tokenomicsIndexComplete={tokenomicsIndexComplete}
+      isCollapsed={false} loggingEnabled={loggingEnabled} />
   )
 
   if (collapsed) {
@@ -251,15 +273,15 @@ export default function SidebarNav({ currentView, onViewChange, insightsStatus, 
         {navItems.filter(i => ['cloud-agents', 'insights', 'tokenomics'].includes(i.view)).map(item => (
           <NavButton key={item.view} item={item} currentView={currentView} onViewChange={onViewChange}
             insightsStatus={insightsStatus} insightsMessage={insightsMessage} cloudAgentRunning={cloudAgentRunning}
-            visionRunning={visionRunning} serverRunning={serverRunning} isCollapsed
-            loggingEnabled={loggingEnabled} />
+            visionRunning={visionRunning} serverRunning={serverRunning} tokenomicsIndexComplete={tokenomicsIndexComplete}
+            isCollapsed loggingEnabled={loggingEnabled} />
         ))}
         <span className="h-px w-6 my-1 bg-surface1" aria-hidden />
         {navItems.filter(i => !['cloud-agents', 'insights', 'tokenomics'].includes(i.view)).map(item => (
           <NavButton key={item.view} item={item} currentView={currentView} onViewChange={onViewChange}
             insightsStatus={insightsStatus} insightsMessage={insightsMessage} cloudAgentRunning={cloudAgentRunning}
-            visionRunning={visionRunning} serverRunning={serverRunning} isCollapsed
-            loggingEnabled={loggingEnabled} />
+            visionRunning={visionRunning} serverRunning={serverRunning} tokenomicsIndexComplete={tokenomicsIndexComplete}
+            isCollapsed loggingEnabled={loggingEnabled} />
         ))}
         {helpButton}
       </div>

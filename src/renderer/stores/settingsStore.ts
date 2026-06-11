@@ -98,9 +98,6 @@ export interface AppSettings {
    *  only -- in-flight sessions keep whatever setting they started with.
    *  Off by default; CC's own /config toggle still wins per-session. */
   disableClaudeWorkflows?: boolean
-  /** v1.5.17: show the genuine-only permission tray (cards for prompts Claude is
-   *  blocked on). Default on; set false to hide the tray and skip capture. */
-  permissionTrayEnabled?: boolean
   /** v1.5.31: record each session's terminal output locally for search and
    *  review. Logs never leave the machine. Default on; set false to disable
    *  capture. The main process capture gate reads this key from the shared
@@ -115,6 +112,14 @@ export interface AppSettings {
   legacyLogsMigrated?: boolean
   /** True once the one-time "legacy logs detected" surfacing has been shown. */
   legacyLogsSurfacingSeen?: boolean
+  /** v1.5.32: when true (or absent = default), CLAUDE_CODE_DISABLE_MOUSE=1 is set
+   *  in the Claude spawn env so xterm owns the mouse and classic terminal selection
+   *  + right-click copy/paste work. Right-click copies selected text or pastes when
+   *  nothing is selected. Trade-off: CC's click-to-expand / click-to-position /
+   *  scroll-inside-Claude are disabled; xterm scrollback + native selection take over.
+   *  Set false to restore CC's mouse mode (copy-on-select active; right-click pastes).
+   *  Changes apply to newly-launched sessions only. */
+  classicTerminalCopyPaste?: boolean
 }
 
 interface SettingsState {
@@ -141,8 +146,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   hooksEnabled: true,
   hooksPort: 19334,
   theme: 'dark',
-  permissionTrayEnabled: true,
   loggingEnabled: true,
+  classicTerminalCopyPaste: true,
 }
 
 // V2 changed the bundled terminal default from Cascadia Code @14 to JetBrains

@@ -36,6 +36,19 @@ describe('createHooksHost', () => {
     expect(t.parentMessages.some((m) => m.type === 'event')).toBe(true)
   })
 
+  it('posts a transcript-path message to the parent when a hook POST carries transcript_path (Logs v2 T8)', async () => {
+    const t = new FakeChildTransport()
+    const host = createHooksHost(t.asHostTransport(), { healthBeat: false })
+    t.post({ type: 'register', sid: 's1', secret: 'sekret' })
+    await host._ingestForTest('s1', 'sekret', {
+      session_id: 's1', hook_event_name: 'SessionStart',
+      transcript_path: 'C:/Users/me/.claude/projects/F--proj/conv.jsonl',
+    })
+    expect(t.parentMessages).toContainEqual({
+      type: 'transcript-path', sid: 's1', path: 'C:/Users/me/.claude/projects/F--proj/conv.jsonl',
+    })
+  })
+
   it('routes a held-open permission registration to the parent (B2)', () => {
     const t = new FakeChildTransport()
     const host = createHooksHost(t.asHostTransport(), { healthBeat: false })

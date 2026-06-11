@@ -714,10 +714,9 @@ const DOCS_COPY_MAP: Record<string, string> = {
   'step-vision.jpg': 'vision.jpg',
   'step-security.jpg': 'settings.jpg',
   'step-tips.jpg': 'shortcuts.jpg',
-  // v1.5.13 README hero block - new dedicated assets so the in-app tour
-  // for permission-tray + dynamic-workflows can point at the right surface
-  // rather than aliasing step-security.jpg / step-agent-hub.jpg.
-  'step-permission-tray.jpg': 'permission-tray.jpg',
+  // v1.5.13 README hero block - dedicated asset so the in-app tour for
+  // dynamic-workflows can point at the right surface rather than aliasing
+  // step-agent-hub.jpg.
   'step-dynamic-workflows.jpg': 'dynamic-workflows.jpg',
   'v2-shell-hero.jpg': 'v2-shell-hero.jpg',
 }
@@ -751,52 +750,6 @@ async function main() {
     console.log('[capture] Waiting for app to load...')
     await window.waitForTimeout(6000)
     await dismissModals(window)
-
-    // Step 0 (v1.5.13): Permission Attention Tray, via the renderer
-    // capture harness (src/renderer/utils/capture-harness.ts). The
-    // harness wraps useChannelStore.setPending in flushSync so React
-    // commits the toast mount synchronously inside this call -- two
-    // prior runs that mutated the store without flushSync crashed with
-    // insertBefore NotFoundError, because React 18's automatic batching
-    // deferred the commit to a microtask where the sibling fiber chain
-    // had been touched by other automatic renders. flushSync removes
-    // the race.
-    await window.evaluate(() => {
-      const w = window as any
-      const fake = {
-        requestId: 'capture-demo-1',
-        sessionId: 'demo-sess',
-        sessionLabel: 'Web App - main',
-        identityColorKey: 'peach',
-        provider: 'claude',
-        tool: 'Bash',
-        payloadPreview: 'rm -rf /tmp/old-builds',
-        reason: 'Cleanup before release build',
-        capturedAt: Date.now(),
-        transport: 'hook',
-        tierLabel: 'hooks',
-        highRisk: { matched: 'rm -rf' },
-      }
-      if (w.__captureHarness?.showPermissionToast) {
-        w.__captureHarness.showPermissionToast(fake)
-      }
-    })
-    await window.waitForTimeout(500)
-    // Blur whatever Deny button auto-focused so the screenshot is not
-    // dominated by a focus ring.
-    await window.evaluate(() => {
-      const ae = document.activeElement
-      if (ae && (ae as HTMLElement).blur) (ae as HTMLElement).blur()
-    })
-    await window.waitForTimeout(200)
-    await capture(window, 'step-permission-tray.jpg', 'Permission Attention Tray with high-risk Bash toast')
-    await window.evaluate(() => {
-      const w = window as any
-      if (w.__captureHarness?.clearPermissionToasts) {
-        w.__captureHarness.clearPermissionToasts()
-      }
-    })
-    await window.waitForTimeout(300)
 
     // Step 1: Session Options — open edit dialog on first config
     await window.evaluate(() => {

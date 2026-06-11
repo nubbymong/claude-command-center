@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { getModelColor } from '../../../src/renderer/components/TokenomicsPage'
+import { getModelColor } from '../../../src/renderer/components/tokenomics/modelColors'
 
 describe('getModelColor (chart colour rule, spec section 5)', () => {
   it('Opus -> copper chart token', () => {

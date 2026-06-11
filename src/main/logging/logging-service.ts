@@ -1,37 +1,45 @@
 /**
- * logging-service.ts — module-level lifecycle owner for the SQLite logging stack.
+ * logging-service.ts — module-level lifecycle owner for the SQLite logging stack
+ * (Logs v2: the transcript-indexing worker).
  *
- * Encapsulates the LogSupervisor (owns the forked worker) + the LogCapture (the
- * hot-path per-session buffer) so neither index.ts nor pty-manager.ts constructs
- * them directly. index.ts calls initLogging() once at boot and shutdownLogging()
- * on quit; pty-manager calls getLogCapture() per spawn.
+ * Encapsulates the LogSupervisor (owns the forked transcripts worker) so neither
+ * index.ts nor pty-manager.ts constructs it directly. index.ts calls
+ * initLogging() once at boot and shutdownLogging() on quit; pty-manager calls
+ * getLogSupervisor()?.runStart/runEnd per spawn/exit.
+ *
+ * The old byte-capture wiring (makeCapture/getLogCapture) is GONE — the worker
+ * tails transcript files itself, so there is no hot-path capture in main (the
+ * old capture/log-db/log-worker stack was removed in the deletion sweep).
  *
  * IMPORTANT import-graph rule: this module imports ONLY the supervisor, the
- * capture factory, the worker FORK helper, and readConfig. It must NEVER import
- * `./log-db` or `./log-worker` — those load better-sqlite3, which lives ONLY in
- * the forked worker (out/main/log-worker.js). Pulling either in here would drag
- * the native dep into the main-process bundle. (The supervisor + capture + fork
- * helper are all native-free by the same rule.)
+ * worker FORK helper, and readConfig. It must NEVER import `./transcripts-db`
+ * or `./transcripts-worker` — those load better-sqlite3, which lives ONLY in
+ * the forked worker (out/main/transcripts-worker.js). Pulling either in here
+ * would drag the native dep into the main-process bundle.
  *
  * No default export (project convention).
  */
 import { LogSupervisor } from './log-supervisor'
-import { makeCapture } from './log-capture'
-import type { LogCapture } from './log-capture'
-import { forkLogWorker } from './fork-log-worker'
+import { forkTranscriptsWorker } from './fork-transcripts-worker'
+import { makeTranscriptBinder } from './transcript-binder'
+import type { TranscriptBinder } from './transcript-binder'
 import { readConfig } from '../config-manager'
+import { logInfo } from '../debug-logger'
 
-// Module-level singletons. Both null until initLogging() runs, and both stay
-// null when logging is disabled (no fork, no worker, no native dep loaded).
+// Module-level singleton. Null until initLogging() runs, and stays null when
+// logging is disabled (no fork, no worker, no native dep loaded).
 let _supervisor: LogSupervisor | null = null
-let _capture: LogCapture | null = null
+// The transcript binder (Logs v2, Task 8): the single debounced sink both
+// discovery sources feed (hooks gateway + statusline watcher). Created alongside
+// the supervisor; null when logging is disabled.
+let _binder: TranscriptBinder | null = null
 
 /**
  * Boot the logging stack. Reads `loggingEnabled` from the 'settings' config with
  * default-true semantics (off only when explicitly false). When DISABLED this is
- * a no-op: capture stays null, no worker is forked, and the native dep is never
- * loaded. When ENABLED it forks the worker, starts the supervisor (which
- * reconciles dangling sessions on its first ready), and wires the capture.
+ * a no-op: no worker is forked and the native dep is never loaded. When ENABLED
+ * it forks the transcripts worker and starts the supervisor (the worker closes
+ * dangling runs + resumes transcript tails itself on open).
  *
  * Idempotent-safe: a second call while already initialised is a no-op.
  */
@@ -43,41 +51,42 @@ export function initLogging(opts: {
   const settings = readConfig<{ loggingEnabled?: boolean }>('settings') ?? {}
   if (settings.loggingEnabled === false) return   // explicitly disabled → stay dark
   const sup = new LogSupervisor({
-    forkChild: forkLogWorker,
+    forkChild: forkTranscriptsWorker,
     dbPath: opts.dbPath,
     emit: opts.emit,
   })
-  sup.start()                       // forks the worker; reconcile() auto-fires on first ready
-  const cap = makeCapture(sup)
+  sup.start()   // forks the worker; it reconciles dangling runs itself on open
   _supervisor = sup
-  _capture = cap
+  // Bind discovery sources to this supervisor. Uses Task-3 canonicalize + the
+  // real ~/.claude/projects heuristic binder (defaults inside makeTranscriptBinder).
+  // Diagnostics flow to the main app.log via the injected logInfo (paths only) so
+  // first-/resumed-session bind failures are visible after the fact.
+  _binder = makeTranscriptBinder({ supervisor: sup, log: logInfo })
 }
 
-/** The hot-path capture (null when disabled / not initialised). pty-manager uses this. */
-export function getLogCapture(): LogCapture | null {
-  return _capture
-}
-
-/** The supervisor, for diagnostics / the Phase 2 read path. Null when disabled. */
+/** The supervisor, for run lifecycle + diagnostics + the read path. Null when disabled. */
 export function getLogSupervisor(): LogSupervisor | null {
   return _supervisor
 }
 
+/** The transcript binder (discovery sink). Null when logging is disabled. T8b
+ *  reads `getTranscriptBinder()?.getLatestTranscriptPath(sessionId)` to resume. */
+export function getTranscriptBinder(): TranscriptBinder | null {
+  return _binder
+}
+
 /**
- * Flush + tear down on quit. Stops the capture timer (a final flushNow is driven
- * by the capture's own end-of-life path; we stop the periodic timer here) and
- * shuts the supervisor down (best-effort graceful worker close + kill). Safe to
- * call when never initialised / disabled — both refs are null.
+ * Tear down on quit: best-effort graceful worker close + kill. Safe to call
+ * when never initialised / disabled — the ref is null.
  */
 export function shutdownLogging(): void {
-  _capture?.stop()
   _supervisor?.shutdown()
-  _capture = null
   _supervisor = null
+  _binder = null
 }
 
 /** Test seam: reset module state so each test starts clean. Not used in production. */
 export function _resetLoggingForTest(): void {
-  _capture = null
   _supervisor = null
+  _binder = null
 }

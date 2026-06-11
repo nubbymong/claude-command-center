@@ -6,7 +6,9 @@ import type { HookEvent, HooksGatewayStatus } from '../../shared/hook-types'
 
 export interface HooksHost {
   _gatewayHasSecret(sid: string): boolean
-  _ingestForTest(sid: string, secret: string): Promise<void>
+  /** Drive a single ingest through the real gateway. `body` defaults to a minimal
+   *  PostToolUse; pass a custom body to exercise e.g. transcript_path forwarding. */
+  _ingestForTest(sid: string, secret: string, body?: Record<string, unknown>): Promise<void>
   _registerResponderForTest(id: string, cb: (decision: string) => void): void
 }
 
@@ -59,6 +61,12 @@ export function createHooksHost(transport: HostTransport, opts?: CreateHooksHost
       },
       deregister: (id) => { localResponders.delete(id) },
     },
+    // Logs v2 (Task 8): forward the lifted transcript path to main's binder. The
+    // gateway lives in this child process, so the path travels over the transport
+    // (like events) rather than calling the binder directly.
+    onTranscriptPath: (sid, path) => {
+      transport.post({ type: 'transcript-path', sid, path })
+    },
   })
 
   // Forward a small set of operationally-useful child events to the diagnostics
@@ -101,11 +109,11 @@ export function createHooksHost(transport: HostTransport, opts?: CreateHooksHost
 
   return {
     _gatewayHasSecret: (sid) => gateway.hasSecret(sid),
-    _ingestForTest: (sid, secret) => gateway._handleRequestForTest({
+    _ingestForTest: (sid, secret, body) => gateway._handleRequestForTest({
       remoteAddress: '127.0.0.1',
       url: '/hook/' + sid,
       headers: { 'x-ccc-hook-token': secret },
-      body: JSON.stringify({ hook_event_name: 'PostToolUse', tool_name: 'Glob' }),
+      body: JSON.stringify(body ?? { hook_event_name: 'PostToolUse', tool_name: 'Glob' }),
     }).then(() => undefined),
     _registerResponderForTest: (id, cb) => gateway.permissionRegister(id, cb),
   }

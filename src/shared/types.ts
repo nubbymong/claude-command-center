@@ -73,6 +73,10 @@ export interface ClaudeOptions {
    *  and the SessionDialog toggle is persisted. Tool description still appears to all
    *  Claude sessions (soft ACL); this flag controls authorisation server-side. */
   enableCodexReview?: boolean
+  /** T16: per-session CCC indexing opt-out. DEFAULT-TRUE (undefined / true = on).
+   *  When false, CCC does not index this session's transcript for the Logs viewer.
+   *  The conversation still lives in Claude's own files (~/.claude/projects). */
+  loggingEnabled?: boolean
 }
 
 export interface CodexOptions {
@@ -105,6 +109,16 @@ export interface SavedSession {
   provider: ProviderId
   /** v1.5.19: links a session to an account profile (multi-account). */
   profileId?: string
+  /**
+   * T8b (bug #5): the exact conversation this session was on at quit, so an
+   * app-relaunch resumes the SAME conversation rather than the newest in the
+   * cwd's mangled folder (which can be stale, e.g. a git worktree). `resumeCwd`
+   * is the directory the conversation actually ran in (read from the JSONL);
+   * the launcher must cd there for the cwd-scoped `claude --resume` to resolve.
+   * Best-effort enriched at save time; absent => fall back to existing behaviour.
+   */
+  resumeUuid?: string
+  resumeCwd?: string
   claudeOptions?: ClaudeOptions
   codexOptions?: CodexOptions
   // Legacy top-level fields -- kept for backward compat during migration; read from claudeOptions after P1.2
@@ -167,11 +181,16 @@ export interface StatuslineData {
   /** Pre-computed by main process via `colourForEmail()` as an identity-palette KEY;
    *  the renderer resolves it to a theme hex via resolveIdentityColor(). */
   accountColour?: IdentityColorKey
+  /** Logs v2 (Task 8): Claude Code's live `transcript_path` for this session,
+   *  surfaced by the bridge script. Consumed in main (statusline-watcher fan-out
+   *  -> transcript binder) as a continuous, exact discovery source; the renderer
+   *  ignores it. */
+  transcriptPath?: string
 }
 
 // ── Agent Templates ──
 
-export type AgentModelOverride = 'sonnet' | 'opus' | 'haiku' | 'inherit'
+export type AgentModelOverride = 'fable' | 'sonnet' | 'opus' | 'haiku' | 'inherit'
 
 export interface AgentTemplate {
   id: string
@@ -294,107 +313,6 @@ export interface TeamRun {
 
 // ── Tokenomics ──
 
-export interface TokenomicsSessionRecord {
-  sessionId: string
-  projectDir: string
-  model: string
-  totalInputTokens: number
-  totalOutputTokens: number
-  totalCacheReadTokens: number
-  totalCacheWriteTokens: number
-  totalCostUsd: number
-  messageCount: number
-  firstTimestamp: string
-  lastTimestamp: string
-  durationMs?: number
-  costPerHour?: number
-  tokensPerMinute?: number
-  // v1.5: provider discriminator. Optional on read for back-compat -- the
-  // tokenomics-manager back-fills 'claude' on legacy records during load.
-  provider?: ProviderId
-  /** Canonicalised account email at write time. Lowercased + trimmed. Undefined for unattributed records. */
-  accountEmail?: string
-  /** Stability hint (account uuid from oauthAccount or Codex JWT). Never the primary key. */
-  accountUuid?: string
-  /** User-flagged via wizard: session spanned accounts. Excludes the record from per-account filter totals but keeps it in "All accounts". */
-  attributionMixed?: boolean
-  /** Account profile the session spawned under (undefined => default/single-account). Stamped at run time from the drift-immune spawn capture. A stable per-account key that survives a friendly-name or login-email change. */
-  profileId?: string
-  /** P8.14: config that owned the session at run time. Used by the back-fill wizard to group unattributed sessions. Optional -- legacy records may lack it. */
-  configId?: string
-  /** P8.14: human-readable label for `configId` (e.g. "This App Dev"). Mirrored at write time so the wizard doesn't have to cross-reference the configs store. */
-  configLabel?: string
-}
-
-export interface TokenomicsDailyAggregate {
-  date: string
-  totalCostUsd: number
-  totalTokens: number
-  messageCount: number
-  sessionCount: number
-  totalDurationMs: number
-  avgCostPerHour: number
-  byModel: Record<string, { costUsd: number; inputTokens: number; outputTokens: number }>
-  /** Per-account daily rollup, keyed by canonical accountEmail (unattributed sessions
-   *  fall under '__unattributed__' so the axis reconciles to the day total). Optional
-   *  for back-compat: rebuilt on load, so persisted pre-account aggregates lack it. */
-  byAccount?: Record<string, { costUsd: number; inputTokens: number; outputTokens: number }>
-}
-
-export interface TokenomicsData {
-  sessions: Record<string, TokenomicsSessionRecord>
-  dailyAggregates: Record<string, TokenomicsDailyAggregate>
-  lastSyncTimestamp: number
-  totalCostUsd: number
-  seedComplete: boolean
-  // Extra spend tracking (from Anthropic API via statusline)
-  extraSpend?: {
-    enabled: boolean
-    usedUsd: number
-    limitUsd: number
-    lastUpdated: number // epoch ms
-  }
-  // Rate limit tracking (from Anthropic API via statusline)
-  rateLimits?: {
-    fiveHour?: number    // utilization percentage
-    sevenDay?: number    // utilization percentage
-    lastUpdated: number
-  }
-  // P6: Codex review (Claude-driven) -- per-day aggregates from
-  // <resourcesDir>/tokenomics/codex-review-by-day.json. Distinct from
-  // interactive Codex usage already in dailyAggregates.
-  codexReviewByDay?: Record<string, {
-    reviewCount: number
-    totalInputTokens: number
-    totalOutputTokens: number
-  }>
-}
-
-export interface TokenomicsSyncProgress {
-  phase: 'scanning' | 'processing' | 'complete'
-  totalFiles: number
-  processedFiles: number
-  currentFile?: string
-}
-
-// -- P8: Attribution wizard --
-
-export type AttributionPayload = {
-  sessionIds: string[]
-  assignment:
-    | { type: 'email'; email: string }
-    | { type: 'mixed' }
-    | { type: 'clear' }
-}
-
-export interface UnattributedSessionGroup {
-  groupId: string                     // configId or '__no-config__'
-  groupLabel: string                  // e.g. "This App Dev" or "(no config)"
-  sessionIds: string[]
-  totalCostUsd: number
-  suggestedEmail: string | null       // null when before earliest backup
-}
-
 // -- Codex Review (P6) --
 
 export interface CodexReviewRateLimitWindow {
@@ -433,6 +351,64 @@ export interface CodexReviewDailyShard {
   }>
   lastUpdated: number  // unix ms
 }
+
+// ── Tokenomics v2 (worker-backed) cross-process contract ──
+export type TkProvider = 'claude' | 'codex'
+
+export interface TkSummary {
+  kpis: {
+    lifeToDateCostUsd: number
+    last7dCostUsd: number
+    prev7dCostUsd: number
+    cacheEfficiencyPct: number
+    cacheSavingsUsd: number
+  }
+  dailySeries: Array<{ day: string; costUsd: number }>
+  modelSplit: Array<{ model: string; costUsd: number; tokens: number }>
+  cacheSplit: { inputUsd: number; outputUsd: number; cacheReadUsd: number; cacheCreateUsd: number }
+  costByConfig: Array<{ configId: string | null; label: string; costUsd: number; sessions: number }>
+  heatmap: Array<{ bucket: number; tokens: number }>
+}
+
+export interface TkSessionRow {
+  sessionId: string
+  provider: TkProvider
+  configId: string | null
+  configLabel: string
+  model: string
+  costUsd: number
+  inTok: number
+  outTok: number
+  cacheReadTok: number
+  cacheCreateTok: number
+  msgCount: number
+  lastTs: number
+}
+
+export interface TkSessionsPage {
+  rows: TkSessionRow[]
+  nextCursor: { lastTs: number; sessionId: string } | null
+}
+
+export interface TkSessionDetail extends TkSessionRow {
+  firstTs: number
+  projectDir: string
+  byModel: Array<{ model: string; costUsd: number; inTok: number; outTok: number; cacheReadTok: number; cacheCreateTok: number; msgCount: number }>
+}
+
+export interface TkIndexStatus {
+  firstIndexComplete: boolean
+  indexing: boolean
+  filesDone: number
+  filesTotal: number
+  eventsTotal: number
+  lastIndexAt: number | null
+}
+
+export interface TkSummaryFilter { configId?: string | null; from?: number; to?: number; model?: string }
+export interface TkSessionsQuery extends TkSummaryFilter { search?: string; cursor?: { lastTs: number; sessionId: string } | null; limit?: number }
+export interface TkIndexProgress { filesDone: number; filesTotal: number; eventsIngested: number; phase: string }
+export interface TkIndexCompleteEvent { firstIndex: boolean; eventsTotal: number }
 
 // ── Notes ──
 

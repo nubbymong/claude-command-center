@@ -102,6 +102,9 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
   const [selectedAgentIds, setSelectedAgentIds] = useState<Set<string>>(new Set(initialClaude?.agentIds ?? initial?.agentIds ?? []))
   const [disableAutoMemory, setDisableAutoMemory] = useState(initialClaude?.disableAutoMemory ?? initial?.disableAutoMemory ?? false)
   const [enableCodexReview, setEnableCodexReview] = useState(initialClaude?.enableCodexReview ?? false)
+  // T16: per-session indexing toggle. DEFAULT-TRUE: undefined / true → checked.
+  // Storing only false avoids writing an explicit true to every new config.
+  const [loggingEnabled, setLoggingEnabled] = useState(initialClaude?.loggingEnabled !== false)
   const [machineName, setMachineName] = useState(initial?.machineName ?? '')
 
   // Fetch available versions when legacy checkbox enabled
@@ -244,6 +247,9 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
       agentIds: !shellOnly && selectedAgentIds.size > 0 ? Array.from(selectedAgentIds) : undefined,
       disableAutoMemory: !shellOnly && disableAutoMemory ? true : undefined,
       enableCodexReview: !shellOnly && enableCodexReview ? true : undefined,
+      // DEFAULT-TRUE: only write false when the user has turned the toggle off.
+      // Omitting the field (undefined) is equivalent to on, keeps configs clean.
+      loggingEnabled: !shellOnly && !loggingEnabled ? false : undefined,
     } : undefined
 
     const codexOptions: CodexOptions | undefined = provider === 'codex' ? {
@@ -626,6 +632,22 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                 <span>
                   Enable Codex code review
                   <span className="block text-[10px] text-overlay0">Lets Claude call the codex_review MCP tool. Each call counts against your gpt-5.5 5h budget.</span>
+                </span>
+              </label>
+            )}
+
+            {/* T16: Index conversation logs toggle */}
+            {!shellOnly && (
+              <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={loggingEnabled}
+                  onChange={(e) => setLoggingEnabled(e.target.checked)}
+                  className="mt-0.5 rounded border-surface1"
+                />
+                <span>
+                  Index conversation logs
+                  <span className="block text-[10px] text-overlay0">CCC indexes Claude's own transcripts so you can browse them here. Your conversation always lives in Claude's files (~/.claude/projects) — turning this off only stops CCC from indexing it.</span>
                 </span>
               </label>
             )}

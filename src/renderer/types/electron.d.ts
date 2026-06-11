@@ -23,10 +23,6 @@ export type {
   TeamStepMode,
   TeamRunStep,
   TeamRunStatus,
-  TokenomicsData,
-  TokenomicsSyncProgress,
-  TokenomicsSessionRecord,
-  TokenomicsDailyAggregate,
   MemoryFile,
   MemoryProject,
   MemoryScanResult,
@@ -44,8 +40,6 @@ import type {
   CloudAgent,
   TeamTemplate,
   TeamRun,
-  TokenomicsData,
-  TokenomicsSyncProgress,
 } from '../../shared/types'
 import type { HookEvent, HooksGatewayStatus } from '../../shared/hook-types'
 export type { HookEvent, HookEventKind, HooksGatewayStatus } from '../../shared/hook-types'
@@ -53,7 +47,6 @@ import type {
   ChannelPayload,
   ChannelEnvelopeMeta,
   LedgerRecord,
-  PendingPermission,
   ChannelRule,
   StandingApproval,
   FeatureState,
@@ -61,7 +54,7 @@ import type {
   StandingApprovalTtl,
 } from '../../shared/channel-types'
 export type {
-  ChannelPayload, ChannelEnvelopeMeta, LedgerRecord, PendingPermission,
+  ChannelPayload, ChannelEnvelopeMeta, LedgerRecord,
   ChannelRule, StandingApproval, FeatureState,
 } from '../../shared/channel-types'
 
@@ -138,6 +131,7 @@ export interface ElectronAPI {
       elevated?: boolean
       configId?: string
       configLabel?: string
+      loggingEnabled?: boolean
       useResumePicker?: boolean
       legacyVersion?: {
         enabled: boolean
@@ -150,6 +144,7 @@ export interface ElectronAPI {
       effortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode'
       disableAutoMemory?: boolean
       enableCodexReview?: boolean
+      resume?: { uuid: string; cwd: string }
       model?: string
       profileId?: string
       provider?: 'claude' | 'codex'
@@ -198,56 +193,74 @@ export interface ElectronAPI {
     getUsageHistory: (hours: number) => Promise<any>
   }
   logsdb: {
-    listSessions: (args?: { offset?: number; limit?: number }) => Promise<Array<{
-      sessionId: string
+    /** T8b (bug #5): exact-conversation resume target for a session, or null. */
+    getResumeTarget: (sessionId: string) => Promise<{ uuid: string; cwd: string } | null>
+  }
+  logsWipe: {
+    /** Detect the OLD log artifacts (logs.db*, legacy logs/ tree, migration markers). */
+    detect: () => Promise<{
+      present: boolean
+      totalBytes: number
+      paths: string[]
+      settingsKeys: string[]
+    }>
+    /** Delete the detected artifacts + clear the 2 legacy-migration settings keys. */
+    confirm: () => Promise<{
+      deletedPaths: string[]
+      clearedKeys: string[]
+      freedBytes: number
+    }>
+  }
+  /** Logs v2 — the transcript-chat read surface (routes through the transcripts worker). */
+  logs2: {
+    listSlots: () => Promise<Array<{
+      slotKey: string
       configId: string | null
       configLabel: string
-      projectCwd: string | null
       accountEmail: string | null
-      profileId: string | null
-      provider: string
-      startedAt: number
-      endedAt: number | null
-      status: string
-      byteSize: number
-      eventCount: number
+      lastActive: number
+      runCount: number
+      messageCount: number
     }>>
-    readEvents: (sessionId: string, offset?: number, limit?: number) => Promise<Array<{
-      id: number
-      sessionId: string
-      seq: number
+    readMessages: (args: {
+      scope: { configId: string } | { sessionId: string }
+      anchor?: 'tail' | { runId: number; idx: number }
+      dir?: 'older' | 'newer'
+      limit?: number
+    }) => Promise<Array<{
+      runId: number
+      idx: number
       ts: number
-      type: string
-      raw: Uint8Array
-      text: string
+      role: string
+      kind: string
+      content: string
+      toolName: string | null
+      toolMeta: string | null
     }>>
-    search: (query: string, limit?: number) => Promise<Array<{
-      sessionId: string
-      eventId: number
-      seq: number
+    turnSummary: (args: { scope: { configId: string } | { sessionId: string } }) => Promise<Array<{
+      runId: number
+      idx: number
+      role: string
+      kind: string
       ts: number
-      snippet?: string
+      toolName: string | null
     }>>
-    prune: (ids: string[]) => Promise<{ deletedSessions: number; deletedEvents: number }>
-    clearAll: () => Promise<{ deletedSessions: number; deletedEvents: number }>
-  }
-  logMigration: {
-    detect: () => Promise<{ present: boolean; sessionFolders: number; frozen: boolean }>
-    run: () => Promise<{
-      totalSessions: number
-      importedSessions: number
-      skippedSessions: number
-      failedSessions: number
-      importedEvents: number
-      unparseable: { path: string; reason: string; skippedLines: number }[]
-      foldedPartnerDirs: number
-      noEventDirs: number
-      detectedFolders: number
-      dbBytesBefore: number
-      dbBytesAfter: number
-    }>
-    reclaim: () => Promise<{ deletedFolders: number; reclaimedBytes: number; failedFolders: string[] }>
-    onProgress: (cb: (p: { done: number; total: number }) => void) => () => void
+    search: (args: { query: string; limit?: number }) => Promise<Array<{
+      runId: number
+      idx: number
+      configId: string | null
+      sessionId: string
+      snippet: string
+    }>>
+    deleteSlot: (args: { scope: { configId: string } | { sessionId: string } }) =>
+      Promise<{ deletedRuns: number; deletedMessages: number }>
+    clearAll: () => Promise<{ deletedRuns: number; deletedMessages: number }>
+    ingestStatus: (args: { sessionId: string }) => Promise<{
+      transcripts: { path: string; status: string; ord: number }[]
+      messageCount: number
+    } | null>
+    /** Live push from the worker when a tailed transcript appends messages. */
+    onNewMessages: (cb: (e: { sessionId: string; configId: string | null; count: number }) => void) => () => void
   }
   discovery: {
     getProjects: () => Promise<any>
@@ -372,13 +385,12 @@ export interface ElectronAPI {
     check: () => Promise<boolean>
   }
   tokenomics: {
-    getData: () => Promise<TokenomicsData>
-    seed: () => Promise<TokenomicsData>
-    sync: () => Promise<TokenomicsData>
-    onProgress: (callback: (data: TokenomicsSyncProgress) => void) => () => void
-    listUnattributed: () => Promise<import('../../shared/types').UnattributedSessionGroup[]>
-    listKnownEmails: () => Promise<string[]>
-    attributeSessions: (payload: import('../../shared/types').AttributionPayload) => Promise<{ ok: boolean; error?: string }>
+    summary: (filter?: import('../../shared/types').TkSummaryFilter) => Promise<import('../../shared/types').TkSummary | null>
+    sessions: (query?: import('../../shared/types').TkSessionsQuery) => Promise<import('../../shared/types').TkSessionsPage>
+    sessionDetail: (sessionId: string) => Promise<import('../../shared/types').TkSessionDetail | null>
+    indexStatus: () => Promise<import('../../shared/types').TkIndexStatus>
+    onIndexProgress: (cb: (p: import('../../shared/types').TkIndexProgress) => void) => () => void
+    onIndexComplete: (cb: (c: import('../../shared/types').TkIndexCompleteEvent) => void) => () => void
   }
   memory: {
     scan: () => Promise<import('../../shared/types').MemoryScanResult>
@@ -502,14 +514,12 @@ export interface ElectronAPI {
   channels: {
     send: (req: { targetSessionId: string; targetLabel?: string; payload: ChannelPayload; meta: ChannelEnvelopeMeta }) => Promise<{ ok: boolean; reason?: string; transport?: 'pty' | 'mcp'; ledgerId?: string }>
     retract: (p: { targetSessionId: string; targetLabel?: string }) => Promise<{ ok: boolean; reason?: string; transport?: 'pty' | 'mcp'; ledgerId?: string }>
-    dismissPermission: (p: { requestId: string }) => Promise<{ ok: boolean }>
     forceTier: (p: { sessionId: string; tier: 'auto' | 'tier-1' | 'tier-2' }) => Promise<{ ok: boolean }>
     ruleCRUD: (p: { op: 'list' } | { op: 'save'; rule: ChannelRule } | { op: 'delete'; id: string }) => Promise<ChannelRule[] | { ok: boolean; rules: ChannelRule[] }>
     standingApprovalCRUD: (p: { op: 'add'; tool: StandingApprovalTool; ttl: StandingApprovalTtl } | { op: 'remove'; id: string } | { op: 'list' }) => Promise<StandingApproval[]>
     capabilityDiagnostics: () => Promise<{ descriptor: unknown; handshakes: unknown[]; sessions: unknown[]; protocolRange: string }>
     introDismissed: () => Promise<FeatureState>
     killSwitch: (p: { disabled: boolean }) => Promise<FeatureState>
-    onPendingPermissions: (cb: (list: PendingPermission[]) => void) => () => void
     onLedgerEvent: (cb: (r: LedgerRecord) => void) => () => void
     rendererReady: () => Promise<unknown>
     onAttention: (cb: (p: { sessionId: string; needsAttention: boolean }) => void) => () => void

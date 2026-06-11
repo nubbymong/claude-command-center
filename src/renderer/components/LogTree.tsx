@@ -1,76 +1,107 @@
-import React, { useState, useEffect, useRef } from 'react'
-import type { ConfigGroup, GroupedSession } from '../lib/groupSessions'
+import React, { useMemo } from 'react'
 
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return bytes + 'B'
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + 'KB'
-  return (bytes / (1024 * 1024)).toFixed(1) + 'MB'
+/** One flat slot row (mirrors logs2.listSlots item). */
+export interface SlotRow {
+  slotKey: string
+  configId: string | null
+  configLabel: string
+  accountEmail: string | null
+  lastActive: number
+  runCount: number
+  messageCount: number
 }
 
 interface Props {
-  groups: ConfigGroup[]
-  orphaned: GroupedSession[]
-  selectedId: string | null
-  onSelect: (s: GroupedSession) => void
-  onDeleteGroup: (group: ConfigGroup) => void
-  onDeleteOrphaned: () => void
+  slots: SlotRow[]
+  /** Live config ids — a slot whose configId is absent here is "orphaned". */
+  liveConfigIds: Set<string>
+  selectedKey: string | null
+  onSelect: (slot: SlotRow) => void
+  onDeleteSlot: (slot: SlotRow) => void
   nameForAccount: (email: string | null) => string | null
   accounts: { email: string; name: string }[]
   accountFilter: string
   onAccountFilter: (v: string) => void
 }
 
+/**
+ * Flat Logs tree (Logs v2): exactly ONE row per config slot — never per-run
+ * children (spec decision 4). A header groups live slots; slots with no live
+ * config (configId null OR a dead/removed configId) collect under "Orphaned",
+ * matching groupSessions.ts's orphan-bucket rule (configId not in the live set).
+ * Selecting a row scopes the right-pane transcript to that slot's configId.
+ */
 export default function LogTree({
-  groups, orphaned, selectedId, onSelect, onDeleteGroup, onDeleteOrphaned,
-  nameForAccount, accounts, accountFilter, onAccountFilter,
+  slots,
+  liveConfigIds,
+  selectedKey,
+  onSelect,
+  onDeleteSlot,
+  nameForAccount,
+  accounts,
+  accountFilter,
+  onAccountFilter,
 }: Props) {
-  const [expanded, setExpanded] = useState<Set<string>>(new Set())
-  const initedRef = useRef(false)
-  useEffect(() => {
-    if (!initedRef.current && groups.length > 0) {
-      initedRef.current = true
-      setExpanded(new Set([...groups.map((g) => g.configId), '__orphaned__']))
+  // Classify flat slots into live vs orphaned applying the same live/orphan rule
+  // as groupSessions.ts (configId present AND still live -> live group; otherwise
+  // -> Orphaned). Deliberate inline reimplementation: the flat one-slot-per-config
+  // layout makes the legacy label-attach branch in groupSessions.ts inapplicable.
+  const { live, orphaned } = useMemo(() => {
+    const liveRows: SlotRow[] = []
+    const orphanRows: SlotRow[] = []
+    for (const s of slots) {
+      if (s.configId && liveConfigIds.has(s.configId)) liveRows.push(s)
+      else orphanRows.push(s)
     }
-  }, [groups])
-  const toggle = (k: string) =>
-    setExpanded((prev) => { const n = new Set(prev); n.has(k) ? n.delete(k) : n.add(k); return n })
+    const newestFirst = (a: SlotRow, b: SlotRow) => b.lastActive - a.lastActive
+    liveRows.sort(newestFirst)
+    orphanRows.sort(newestFirst)
+    return { live: liveRows, orphaned: orphanRows }
+  }, [slots, liveConfigIds])
 
-  const sessionRow = (s: GroupedSession) => {
-    const active = selectedId === s.sessionId
+  const slotRow = (s: SlotRow) => {
+    const active = selectedKey === s.slotKey
+    const accountName = nameForAccount(s.accountEmail)
     return (
-      <button
-        key={s.sessionId}
-        onClick={() => onSelect(s)}
-        className={`w-full text-left rounded-md px-2.5 py-2 transition-all ${active ? 'bg-surface0/70 border-l-2 border-l-mauve' : 'hover:bg-surface0/30 border-l-2 border-l-transparent'}`}
+      <div
+        key={s.slotKey}
+        className={`group/row w-full flex items-stretch rounded-md transition-all ${active ? 'bg-surface0/70 border-l-2 border-l-mauve' : 'hover:bg-surface0/30 border-l-2 border-l-transparent'}`}
       >
-        <div className="flex items-center gap-1.5">
-          <span className="text-[11px] text-text truncate font-medium">{s.configLabel}</span>
-          {s.legacy && <span className="text-[9px] uppercase tracking-wide text-overlay0 bg-surface0/70 rounded px-1 shrink-0">legacy</span>}
-        </div>
-        {nameForAccount(s.accountEmail) && (
-          <div className="text-[10px] text-overlay1 truncate mt-0.5" title={s.accountEmail ?? undefined}>{nameForAccount(s.accountEmail)}</div>
-        )}
-        <div className="flex items-center gap-1.5 mt-0.5 text-[10px] text-overlay0">
-          <span>{new Date(s.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-          <span className="text-overlay0/30">{String.fromCodePoint(0x00B7)}</span>
-          <span>{formatSize(s.byteSize)}</span>
-          <span className="text-overlay0/30">{String.fromCodePoint(0x00B7)}</span>
-          <span className="font-mono">{s.sessionId.slice(0, 6)}</span>
-        </div>
-      </button>
+        <button onClick={() => onSelect(s)} className="flex-1 min-w-0 text-left px-2.5 py-2">
+          <div className="flex items-center gap-1.5">
+            <span className="text-[11px] text-text truncate font-medium">{s.configLabel}</span>
+            {!s.configId && <span className="text-[9px] uppercase tracking-wide text-overlay0 bg-surface0/70 rounded px-1 shrink-0">orphan</span>}
+          </div>
+          {accountName && (
+            <div className="text-[10px] text-overlay1 truncate mt-0.5" title={s.accountEmail ?? undefined}>{accountName}</div>
+          )}
+          <div className="flex items-center gap-1.5 mt-0.5 text-[10px] text-overlay0">
+            <span>{new Date(s.lastActive).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+            <span className="text-overlay0/30">{String.fromCodePoint(0x00B7)}</span>
+            <span className="tabular-nums">{s.messageCount} msg</span>
+            {s.runCount > 1 && (
+              <>
+                <span className="text-overlay0/30">{String.fromCodePoint(0x00B7)}</span>
+                <span className="tabular-nums">{s.runCount} runs</span>
+              </>
+            )}
+          </div>
+        </button>
+        <button
+          onClick={() => onDeleteSlot(s)}
+          title="Delete this slot's indexed history (permanent)"
+          className="px-2 text-overlay0 opacity-0 group-hover/row:opacity-100 hover:text-red transition-all shrink-0"
+        >
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"><path d="M3 4h10M6 4V3h4v1M5 4l.5 9h5L11 4" /></svg>
+        </button>
+      </div>
     )
   }
 
-  const groupHeader = (key: string, label: string, count: number, onDelete: () => void) => (
+  const sectionHeader = (label: string, count: number) => (
     <div className="w-full flex items-center gap-1.5 px-3 py-1.5">
-      <button onClick={() => toggle(key)} className="flex items-center gap-1.5 flex-1 min-w-0 text-[10px] font-semibold text-overlay0 uppercase tracking-wider hover:text-overlay1 transition-colors">
-        <svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor" className={`transition-transform shrink-0 ${expanded.has(key) ? 'rotate-90' : ''}`}><polygon points="2,0 7,4 2,8" /></svg>
-        <span className="truncate">{label}</span>
-        <span className="ml-auto text-overlay0/50 shrink-0">{count}</span>
-      </button>
-      <button onClick={onDelete} title="Delete this group's logs (permanent)" className="text-overlay0 hover:text-red transition-colors shrink-0">
-        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"><path d="M3 4h10M6 4V3h4v1M5 4l.5 9h5L11 4" /></svg>
-      </button>
+      <span className="flex-1 min-w-0 text-[10px] font-semibold text-overlay0 uppercase tracking-wider truncate">{label}</span>
+      <span className="text-overlay0/50 shrink-0 text-[10px]">{count}</span>
     </div>
   )
 
@@ -85,22 +116,22 @@ export default function LogTree({
         </div>
       )}
       <div className="flex-1 overflow-y-auto py-1">
-        {groups.map((g) => (
-          <div key={g.configId}>
-            {groupHeader(g.configId, g.configLabel, g.sessions.length, () => onDeleteGroup(g))}
-            {expanded.has(g.configId) && <div className="space-y-0.5 px-1.5 mb-1">{g.sessions.map(sessionRow)}</div>}
-          </div>
-        ))}
-        {orphaned.length > 0 && (
+        {live.length > 0 && (
           <div>
-            {groupHeader('__orphaned__', 'Orphaned', orphaned.length, onDeleteOrphaned)}
-            {expanded.has('__orphaned__') && <div className="space-y-0.5 px-1.5 mb-1">{orphaned.map(sessionRow)}</div>}
+            {sectionHeader('Sessions', live.length)}
+            <div className="space-y-0.5 px-1.5 mb-1">{live.map(slotRow)}</div>
           </div>
         )}
-        {groups.length === 0 && orphaned.length === 0 && (
+        {orphaned.length > 0 && (
+          <div>
+            {sectionHeader('Orphaned', orphaned.length)}
+            <div className="space-y-0.5 px-1.5 mb-1">{orphaned.map(slotRow)}</div>
+          </div>
+        )}
+        {live.length === 0 && orphaned.length === 0 && (
           <div className="px-4 py-10 text-center">
-            <p className="text-[11px] text-overlay0">No session logs yet</p>
-            <p className="text-[10px] text-overlay0/60 mt-1">Logs appear after running sessions</p>
+            <p className="text-[11px] text-overlay0">No conversations yet</p>
+            <p className="text-[10px] text-overlay0/60 mt-1">Slots appear as Claude sessions run</p>
           </div>
         )}
       </div>

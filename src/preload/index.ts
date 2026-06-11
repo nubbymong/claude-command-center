@@ -56,6 +56,7 @@ export interface ElectronAPI {
       }
       configId?: string
       configLabel?: string
+      loggingEnabled?: boolean
       useResumePicker?: boolean
       agentsConfig?: Array<{
         name: string; description: string; prompt: string
@@ -64,6 +65,7 @@ export interface ElectronAPI {
       effortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode'
       disableAutoMemory?: boolean
       enableCodexReview?: boolean
+      resume?: { uuid: string; cwd: string }
       model?: string
       profileId?: string
       provider?: 'claude' | 'codex'
@@ -119,29 +121,31 @@ export interface ElectronAPI {
     getUsageHistory: (hours: number) => Promise<unknown>
   }
   logsdb: {
-    listSessions: (args?: { offset?: number; limit?: number }) => Promise<unknown[]>
-    readEvents: (sessionId: string, offset?: number, limit?: number) => Promise<unknown[]>
-    search: (query: string, limit?: number) => Promise<unknown[]>
-    prune: (ids: string[]) => Promise<{ deletedSessions: number; deletedEvents: number }>
-    clearAll: () => Promise<{ deletedSessions: number; deletedEvents: number }>
+    /** T8b (bug #5): exact-conversation resume target for a session, or null. */
+    getResumeTarget: (sessionId: string) => Promise<{ uuid: string; cwd: string } | null>
   }
-  logMigration: {
-    detect: () => Promise<{ present: boolean; sessionFolders: number; frozen: boolean }>
-    run: () => Promise<{
-      totalSessions: number
-      importedSessions: number
-      skippedSessions: number
-      failedSessions: number
-      importedEvents: number
-      unparseable: { path: string; reason: string; skippedLines: number }[]
-      foldedPartnerDirs: number
-      noEventDirs: number
-      detectedFolders: number
-      dbBytesBefore: number
-      dbBytesAfter: number
-    }>
-    reclaim: () => Promise<{ deletedFolders: number; reclaimedBytes: number; failedFolders: string[] }>
-    onProgress: (cb: (p: { done: number; total: number }) => void) => () => void
+  logsWipe: {
+    detect: () => Promise<{ present: boolean; totalBytes: number; paths: string[]; settingsKeys: string[] }>
+    confirm: () => Promise<{ deletedPaths: string[]; clearedKeys: string[]; freedBytes: number }>
+  }
+  logs2: {
+    listSlots: () => Promise<unknown[]>
+    readMessages: (args: {
+      scope: { configId: string } | { sessionId: string }
+      anchor?: 'tail' | { runId: number; idx: number }
+      dir?: 'older' | 'newer'
+      limit?: number
+    }) => Promise<unknown[]>
+    turnSummary: (args: { scope: { configId: string } | { sessionId: string } }) => Promise<unknown[]>
+    search: (args: { query: string; limit?: number }) => Promise<unknown[]>
+    deleteSlot: (args: { scope: { configId: string } | { sessionId: string } }) =>
+      Promise<{ deletedRuns: number; deletedMessages: number }>
+    clearAll: () => Promise<{ deletedRuns: number; deletedMessages: number }>
+    ingestStatus: (args: { sessionId: string }) => Promise<{
+      transcripts: { path: string; status: string; ord: number }[]
+      messageCount: number
+    } | null>
+    onNewMessages: (cb: (e: { sessionId: string; configId: string | null; count: number }) => void) => () => void
   }
   discovery: {
     getProjects: () => Promise<unknown>
@@ -238,14 +242,12 @@ export interface ElectronAPI {
   channels: {
     send: (req: unknown) => Promise<unknown>
     retract: (p: unknown) => Promise<unknown>
-    dismissPermission: (p: unknown) => Promise<unknown>
     forceTier: (p: unknown) => Promise<unknown>
     ruleCRUD: (p: unknown) => Promise<unknown>
     standingApprovalCRUD: (p: unknown) => Promise<unknown>
     capabilityDiagnostics: () => Promise<unknown>
     introDismissed: () => Promise<unknown>
     killSwitch: (p: unknown) => Promise<unknown>
-    onPendingPermissions: (cb: (list: unknown) => void) => () => void
     onLedgerEvent: (cb: (r: unknown) => void) => () => void
     rendererReady: () => Promise<unknown>
     onAttention: (cb: (p: { sessionId: string; needsAttention: boolean }) => void) => () => void
@@ -323,13 +325,12 @@ export interface ElectronAPI {
     check: () => Promise<boolean>
   }
   tokenomics: {
-    getData: () => Promise<import('../shared/types').TokenomicsData>
-    seed: () => Promise<import('../shared/types').TokenomicsData>
-    sync: () => Promise<import('../shared/types').TokenomicsData>
-    onProgress: (callback: (data: import('../shared/types').TokenomicsSyncProgress) => void) => () => void
-    listUnattributed: () => Promise<import('../shared/types').UnattributedSessionGroup[]>
-    listKnownEmails: () => Promise<string[]>
-    attributeSessions: (payload: import('../shared/types').AttributionPayload) => Promise<{ ok: boolean; error?: string }>
+    summary: (filter?: import('../shared/types').TkSummaryFilter) => Promise<import('../shared/types').TkSummary | null>
+    sessions: (query?: import('../shared/types').TkSessionsQuery) => Promise<import('../shared/types').TkSessionsPage>
+    sessionDetail: (sessionId: string) => Promise<import('../shared/types').TkSessionDetail | null>
+    indexStatus: () => Promise<import('../shared/types').TkIndexStatus>
+    onIndexProgress: (cb: (p: import('../shared/types').TkIndexProgress) => void) => () => void
+    onIndexComplete: (cb: (c: import('../shared/types').TkIndexCompleteEvent) => void) => () => void
   }
   memory: {
     scan: () => Promise<import('../shared/types').MemoryScanResult>
@@ -555,20 +556,34 @@ const electronAPI: ElectronAPI = {
     getUsageHistory: (hours) => ipcRenderer.invoke(IPC.USAGE_HISTORY, hours)
   },
   logsdb: {
-    listSessions: (args?: { offset?: number; limit?: number }) => ipcRenderer.invoke(IPC.LOGSDB_LIST_SESSIONS, args),
-    readEvents: (sessionId: string, offset?: number, limit?: number) => ipcRenderer.invoke(IPC.LOGSDB_READ_EVENTS, sessionId, offset, limit),
-    search: (query: string, limit?: number) => ipcRenderer.invoke(IPC.LOGSDB_SEARCH, query, limit),
-    prune: (ids: string[]) => ipcRenderer.invoke(IPC.LOGSDB_PRUNE, ids),
-    clearAll: () => ipcRenderer.invoke(IPC.LOGSDB_CLEAR_ALL),
+    getResumeTarget: (sessionId: string) => ipcRenderer.invoke(IPC.LOGS_GET_RESUME_TARGET, sessionId),
   },
-  logMigration: {
-    detect: () => ipcRenderer.invoke(IPC.LOGS_MIGRATE_DETECT),
-    run: () => ipcRenderer.invoke(IPC.LOGS_MIGRATE_RUN),
-    reclaim: () => ipcRenderer.invoke(IPC.LOGS_MIGRATE_RECLAIM),
-    onProgress: (cb: (p: { done: number; total: number }) => void) => {
-      const handler = (_e: unknown, p: { done: number; total: number }) => cb(p)
-      ipcRenderer.on(IPC.LOGS_MIGRATE_PROGRESS, handler)
-      return () => ipcRenderer.removeListener(IPC.LOGS_MIGRATE_PROGRESS, handler)
+  // Logs v2 — first-run warned wipe of the OLD log artifacts.
+  logsWipe: {
+    detect: () => ipcRenderer.invoke(IPC.LOGS2_WIPE_DETECT),
+    confirm: () => ipcRenderer.invoke(IPC.LOGS2_WIPE_CONFIRM),
+  },
+  // Logs v2 — the transcript-chat read surface (slots, paged messages, search,
+  // turn summary, deletes, ingest status) + a live new-messages push.
+  logs2: {
+    listSlots: () => ipcRenderer.invoke(IPC.LOGS2_LIST_SLOTS),
+    readMessages: (args: {
+      scope: { configId: string } | { sessionId: string }
+      anchor?: 'tail' | { runId: number; idx: number }
+      dir?: 'older' | 'newer'
+      limit?: number
+    }) => ipcRenderer.invoke(IPC.LOGS2_READ_MESSAGES, args),
+    turnSummary: (args: { scope: { configId: string } | { sessionId: string } }) =>
+      ipcRenderer.invoke(IPC.LOGS2_TURN_SUMMARY, args),
+    search: (args: { query: string; limit?: number }) => ipcRenderer.invoke(IPC.LOGS2_SEARCH, args),
+    deleteSlot: (args: { scope: { configId: string } | { sessionId: string } }) =>
+      ipcRenderer.invoke(IPC.LOGS2_DELETE_SLOT, args),
+    clearAll: () => ipcRenderer.invoke(IPC.LOGS2_CLEAR_ALL),
+    ingestStatus: (args: { sessionId: string }) => ipcRenderer.invoke(IPC.LOGS2_INGEST_STATUS, args),
+    onNewMessages: (cb: (e: { sessionId: string; configId: string | null; count: number }) => void) => {
+      const handler = (_e: unknown, e: { sessionId: string; configId: string | null; count: number }) => cb(e)
+      ipcRenderer.on(IPC.LOGS2_NEW_MESSAGES, handler)
+      return () => ipcRenderer.removeListener(IPC.LOGS2_NEW_MESSAGES, handler)
     },
   },
   discovery: {
@@ -749,20 +764,12 @@ const electronAPI: ElectronAPI = {
     check: () => ipcRenderer.invoke(IPC.CLI_CHECK)
   },
   tokenomics: {
-    getData: () => ipcRenderer.invoke(IPC.TOKENOMICS_GET_DATA),
-    seed: () => ipcRenderer.invoke(IPC.TOKENOMICS_SEED),
-    sync: () => ipcRenderer.invoke(IPC.TOKENOMICS_SYNC),
-    onProgress: (callback: (data: any) => void) => {
-      const handler = (_: unknown, data: any) => callback(data)
-      ipcRenderer.on(IPC.TOKENOMICS_PROGRESS, handler)
-      return () => ipcRenderer.removeListener(IPC.TOKENOMICS_PROGRESS, handler)
-    },
-    // Copilot review on PR #31 (p9.9): route through IPC.* constants so
-    // shared/preload/main can't drift on a string-literal rename.
-    listUnattributed: () => ipcRenderer.invoke(IPC.TOKENOMICS_LIST_UNATTRIBUTED),
-    listKnownEmails: (): Promise<string[]> => ipcRenderer.invoke(IPC.TOKENOMICS_LIST_KNOWN_EMAILS),
-    attributeSessions: (payload: import('../shared/types').AttributionPayload) =>
-      ipcRenderer.invoke(IPC.TOKENOMICS_ATTRIBUTE_SESSIONS, payload),
+    summary: (filter?: import('../shared/types').TkSummaryFilter) => ipcRenderer.invoke(IPC.TOKENOMICS2_SUMMARY, filter ?? {}),
+    sessions: (query?: import('../shared/types').TkSessionsQuery) => ipcRenderer.invoke(IPC.TOKENOMICS2_SESSIONS, query ?? {}),
+    sessionDetail: (sessionId: string) => ipcRenderer.invoke(IPC.TOKENOMICS2_SESSION_DETAIL, { sessionId }),
+    indexStatus: () => ipcRenderer.invoke(IPC.TOKENOMICS2_INDEX_STATUS),
+    onIndexProgress: (cb: (p: import('../shared/types').TkIndexProgress) => void) => { const h = (_: unknown, p: import('../shared/types').TkIndexProgress) => cb(p); ipcRenderer.on(IPC.TOKENOMICS2_INDEX_PROGRESS, h); return () => ipcRenderer.removeListener(IPC.TOKENOMICS2_INDEX_PROGRESS, h) },
+    onIndexComplete: (cb: (c: import('../shared/types').TkIndexCompleteEvent) => void) => { const h = (_: unknown, c: import('../shared/types').TkIndexCompleteEvent) => cb(c); ipcRenderer.on(IPC.TOKENOMICS2_INDEX_COMPLETE, h); return () => ipcRenderer.removeListener(IPC.TOKENOMICS2_INDEX_COMPLETE, h) },
   },
   memory: {
     scan: () => ipcRenderer.invoke('memory:scan'),
@@ -870,18 +877,12 @@ const electronAPI: ElectronAPI = {
   channels: {
     send: (req: unknown) => ipcRenderer.invoke(IPC.CHANNELS_SEND, req),
     retract: (p: unknown) => ipcRenderer.invoke(IPC.CHANNELS_RETRACT, p),
-    dismissPermission: (p: unknown) => ipcRenderer.invoke(IPC.CHANNELS_DISMISS_PERMISSION, p),
     forceTier: (p: unknown) => ipcRenderer.invoke(IPC.CHANNELS_FORCE_TIER, p),
     ruleCRUD: (p: unknown) => ipcRenderer.invoke(IPC.CHANNELS_RULE_CRUD, p),
     standingApprovalCRUD: (p: unknown) => ipcRenderer.invoke(IPC.CHANNELS_STANDING_APPROVAL_CRUD, p),
     capabilityDiagnostics: () => ipcRenderer.invoke(IPC.CHANNELS_CAPABILITY_DIAGNOSTICS),
     introDismissed: () => ipcRenderer.invoke(IPC.CHANNELS_INTRO_DISMISSED),
     killSwitch: (p: unknown) => ipcRenderer.invoke(IPC.CHANNELS_KILL_SWITCH, p),
-    onPendingPermissions: (cb: (list: unknown) => void) => {
-      const fn = (_e: unknown, list: unknown) => cb(list)
-      ipcRenderer.on(IPC.CHANNELS_PENDING_PERMISSIONS, fn)
-      return () => ipcRenderer.removeListener(IPC.CHANNELS_PENDING_PERMISSIONS, fn)
-    },
     onLedgerEvent: (cb: (r: unknown) => void) => {
       const fn = (_e: unknown, r: unknown) => cb(r)
       ipcRenderer.on(IPC.CHANNELS_LEDGER_EVENT, fn)

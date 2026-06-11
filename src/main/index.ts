@@ -7,10 +7,10 @@ import { registerPtyHandlers } from './ipc/pty-handlers'
 import { registerUsageHandlers } from './ipc/usage-handlers'
 import { registerDiscoveryHandlers } from './ipc/discovery-handlers'
 import { killAllPty, gracefulExitAllPty } from './pty-manager'
-import { registerLogsdbHandlers } from './ipc/logsdb-handlers'
-import { registerLogMigrationHandlers } from './ipc/log-migration-handlers'
+import { registerResumeHandlers } from './ipc/resume-handlers'
+import { registerLogs2Handlers } from './ipc/logs2-handlers'
 
-import { startStatuslineWatcher } from './statusline-watcher'
+import { startStatuslineWatcher, setTranscriptPathSink } from './statusline-watcher'
 import { registerProvider, getProvider } from './providers'
 import { ClaudeProvider } from './providers/claude'
 import { CodexProvider } from './providers/codex'
@@ -33,8 +33,8 @@ import { registerCloudAgentHandlers } from './ipc/cloud-agent-handlers'
 import { registerTeamHandlers } from './ipc/team-handlers'
 import { registerLegacyVersionHandlers } from './ipc/legacy-version-handlers'
 import { registerMemoryHandlers } from './ipc/memory-handlers'
-import { registerTokenomicsHandlers } from './ipc/tokenomics-handlers'
-import { registerAccountAttributionHandlers } from './ipc/account-attribution-handlers'
+import { initTokenomics, shutdownTokenomics } from './tokenomics/tokenomics-service'
+import { registerTokenomics2Handlers } from './ipc/tokenomics2-handlers'
 import { registerGitHubHandlers } from './ipc/github-handlers'
 import { registerHooksHandlers } from './ipc/hooks-handlers'
 import { registerServiceHealthHandlers, getMergedDiagnostics } from './ipc/service-health-handlers'
@@ -43,7 +43,6 @@ import { registerCodexHandlers } from './ipc/codex-handlers'
 import { registerCodexReviewHandlers } from './ipc/codex-review-handlers'
 import { registerChannelHandlers } from './ipc/channel-handlers'
 import { startRulesEngine } from './channel-rules'
-import { startPermissionTray } from './channel-permissions'
 import { startEffortTracker } from './effort-tracker'
 import { startAttentionSource } from './attention-source'
 import { startJankDetector } from './jank-detector'
@@ -52,10 +51,11 @@ import { HooksGateway } from './hooks/hooks-gateway'
 import { setGateway, getGateway } from './hooks'
 import { ServiceSupervisor } from './services/service-supervisor'
 import { forkHooksChild } from './services/fork-hooks-child'
-import { initLogging, shutdownLogging } from './logging/logging-service'
+import { initLogging, shutdownLogging, getTranscriptBinder } from './logging/logging-service'
+import { detectOldLogArtifacts, executeWipe } from './logging/logs-wipe'
 import { cleanupStaleHookEntries } from './hooks/boot-cleanup'
 import { DEFAULT_HOOKS_PORT } from './hooks/hooks-types'
-import { fetchModelPricing } from './tokenomics-manager'
+import { fetchModelPricing } from './tokenomics/tk-pricing'
 import { killAllAgents } from './cloud-agent-manager'
 import { startServiceStatusPoller, stopServiceStatusPoller, getLastServiceStatus } from './service-status'
 import { initUpdateWatcher, stopUpdateWatcher, getProjectRootPath, isPackagedApp } from './update-watcher'
@@ -632,8 +632,26 @@ if (!gotTheLock) {
     registerPtyHandlers(getWindow)
     registerUsageHandlers()
     registerDiscoveryHandlers()
-    registerLogsdbHandlers()
-    registerLogMigrationHandlers(getWindow)
+    registerResumeHandlers()
+    // Logs v2 — first-run warned wipe of the OLD log artifacts (orphaned ~21 GB
+    // logs.db + ~16 GB legacy logs/ tree + migration markers). The renderer drives
+    // a blocking confirm modal: it DETECTs at startup, and only on the user's
+    // confirm does CONFIRM actually delete. Detection-driven + idempotent (no
+    // marker file — once deleted nothing is detected). executeWipe NEVER touches
+    // ~/.claude / the safety backup / the logging settings (see logs-wipe.ts).
+    ipcMain.handle(IPC.LOGS2_WIPE_DETECT, async () => {
+      try {
+        return detectOldLogArtifacts()
+      } catch (err) {
+        logError(`[logs2] wipe detect failed: ${(err as Error)?.message ?? err}`)
+        return { present: false, totalBytes: 0, paths: [], settingsKeys: [] }
+      }
+    })
+    ipcMain.handle(IPC.LOGS2_WIPE_CONFIRM, async () => {
+      const res = executeWipe()
+      logInfo(`[logs2] wiped ${res.deletedPaths.length} old log artifact(s), freed ${res.freedBytes} bytes, cleared keys: ${res.clearedKeys.join(', ') || '(none)'}`)
+      return res
+    })
     registerDebugHandlers()
     registerUpdateHandlers()
     registerSetupHandlers()
@@ -681,8 +699,6 @@ if (!gotTheLock) {
     registerCloudAgentHandlers(getWindow)
     registerTeamHandlers(getWindow)
     registerLegacyVersionHandlers(getWindow)
-    registerTokenomicsHandlers(getWindow)
-    registerAccountAttributionHandlers()
     registerMemoryHandlers()
     // GitHub sidebar — reads/writes github-config.json + encrypted auth profiles
     // under the CONFIG dir alongside other app config. Session-level integration
@@ -725,10 +741,15 @@ if (!gotTheLock) {
     // (HOOKS_STATUS, HOOKS_EVENT, ...) the supervisor/gateway emit passes through.
     const emitWithMerge = (channel: string, payload: unknown) =>
       channel === IPC.SERVICE_HEALTH_UPDATE ? pushDiagnostics() : emitToWindow(channel, payload)
+    // Logs v2 (Task 8): route transcript paths the child gateway lifts from hook
+    // POSTs into the binder. Resolved lazily — the binder is created later by
+    // initLogging(), and is null when logging is disabled (then this is a no-op).
+    const routeTranscriptPath = (sessionId: string, path: string) =>
+      getTranscriptBinder()?.notifyTranscriptPath(sessionId, path)
     if (hooksEnabled) {
       // Supervised out-of-process gateway: a utilityProcess child runs the HooksGateway,
       // crash-isolated from the main thread, with restart/backoff + fail-open-to-in-process.
-      const hooksSupervisor = new ServiceSupervisor({ forkChild: forkHooksChild, defaultPort: hooksPort, emit: emitWithMerge })
+      const hooksSupervisor = new ServiceSupervisor({ forkChild: forkHooksChild, defaultPort: hooksPort, emit: emitWithMerge, onTranscriptPath: routeTranscriptPath })
       const hooksProxy = hooksSupervisor.start()   // forks the child + posts start (S1 replay-before-listen inside)
       setGateway(hooksProxy)                        // B1: consumers + handlers all use the proxy
       setHooksSupervisor(hooksSupervisor)           // module-scope ref for before-quit (S5)
@@ -737,16 +758,31 @@ if (!gotTheLock) {
       // registerSession still mints secrets) but never binds; no child is forked.
       setGateway(new HooksGateway({ defaultPort: hooksPort, emit: emitWithMerge }))
     }
-    // Session logging: start the SQLite worker supervisor + capture (gated on
-    // loggingEnabled, default true; no-op + no fork when disabled). The supervisor
-    // reconciles dangling sessions on its first worker-ready. The native dep
-    // (better-sqlite3) lives ONLY in the forked worker — this call stays main-clean.
+    // Session logging (Logs v2): start the transcripts worker supervisor (gated
+    // on loggingEnabled, default true; no-op + no fork when disabled). The worker
+    // closes dangling runs + resumes transcript tails itself on open. The native
+    // dep (better-sqlite3) lives ONLY in the forked worker — this call stays
+    // main-clean.
+    // TODO(logs2 Phase 5): wipe the orphaned old byte-capture DB
+    // (<dataDir>/logs.db) when the old stack is deleted — it is no longer
+    // written or read by the live app.
     try {
-      initLogging({ emit: emitWithMerge, dbPath: join(getDataDirectory(), 'logs.db') })
+      initLogging({ emit: emitWithMerge, dbPath: join(getDataDirectory(), 'transcripts.db') })
     } catch (err) {
       logError(`[logs] initLogging failed; session logging disabled this run: ${(err as Error)?.message ?? err}`)
     }
-    startPermissionTray()
+    // Logs v2 read surface (the transcript-chat viewer). Registered AFTER
+    // initLogging so the new-messages push can subscribe to the live supervisor;
+    // the request/response handlers resolve the supervisor lazily per call and
+    // reject cleanly when logging is disabled.
+    registerLogs2Handlers(getWindow)
+    // Tokenomics rebuild: start the better-sqlite3 indexing worker supervisor
+    // (forked; native dep lives ONLY in the worker — this stays main-clean) and
+    // register the new read-surface handlers. The worker ingests from raw
+    // transcripts on its own timer/fs-watch — the statusline tick no longer
+    // feeds tokenomics (that path drove the ~30s UI freeze).
+    try { initTokenomics({ emit: emitWithMerge }) } catch (err) { logError(`[tokenomics] init failed: ${(err as Error)?.message ?? err}`) }
+    registerTokenomics2Handlers(getWindow)
     startEffortTracker()
     startAttentionSource()
     startJankDetector()
@@ -808,7 +844,10 @@ if (!gotTheLock) {
       logInfo('[main] Production mode: updates via GitHub releases only')
     }
 
-    // Start watching for statusline updates
+    // Start watching for statusline updates. Logs v2 (Task 8): register the
+    // binder sink first so the continuous, exact transcript path carried by each
+    // status JSON feeds discovery (lazy getter — no-op when logging is disabled).
+    setTranscriptPathSink(routeTranscriptPath)
     startStatuslineWatcher(getWindow)
 
     // Start polling Anthropic service status
@@ -828,6 +867,8 @@ if (!gotTheLock) {
     // Flush + tear down session logging BEFORE killAllPty so a final batch is
     // written and the worker shuts down cleanly. No-op when never init / disabled.
     try { shutdownLogging() } catch { /* never init / disabled */ }
+    // Tear down the tokenomics indexing worker. No-op when never init.
+    try { shutdownTokenomics() } catch { /* never init */ }
     stopServiceStatusPoller()
     stopUpdateWatcher()
     stopUpdateServer()

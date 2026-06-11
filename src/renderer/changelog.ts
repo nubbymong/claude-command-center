@@ -15,6 +15,23 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '1.5.34',
+    date: '2026-06-09',
+    highlights: 'Fix: closing all your sessions now reliably means no resume prompt on the next launch — even when you update via the installer.',
+    changes: [
+      { type: 'fix', description: 'The "Resume previous sessions?" prompt no longer offers sessions you already closed. Your open sessions are now saved continuously as you open and close them, so the next launch always reflects what was actually open — even if the app was force-closed by an external installer or a crash (which previously left a stale list and re-offered phantom sessions). Close everything, and there is nothing to resume.' },
+    ],
+  },
+  {
+    version: '1.5.33',
+    date: '2026-06-09',
+    highlights: 'Fable 5 support — Anthropic\'s new flagship model (the tier above Opus) is now a first-class choice across the app.',
+    changes: [
+      { type: 'feature', description: 'Fable 5 is now selectable in the session model dropdown and the agent/config model pickers. It is Anthropic\'s most capable model (the tier above Opus) and runs roughly 2x faster than Opus.' },
+      { type: 'feature', description: 'Tokenomics now prices Fable 5 correctly out of the box ($10/$50 per 1M tokens) and gives it its own colour in the model breakdown, so Fable spend is tracked and shown distinctly. LiteLLM live pricing still wins when reachable.' },
+    ],
+  },
+  {
     version: '1.5.32',
     date: '2026-06-06',
     highlights: 'Critical fix: importing your existing logs no longer freezes the app. Tested against a real 16 GB log set, with live progress, a completion notice, and safe interruption.',
