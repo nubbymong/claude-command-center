@@ -55,7 +55,12 @@ export interface MemoryScanResult {
 // ---------------------------------------------------------------------------
 
 const VALID_TYPES = new Set(['user', 'feedback', 'project', 'reference', 'snapshot'])
-const KNOWN_FRONTMATTER_FIELDS = new Set(['name', 'description', 'type', 'originSessionId'])
+// `metadata` is the standard nested block in the auto-memory frontmatter
+// (`metadata:` with an indented `type:`). The flat line parser surfaces it as a
+// top-level key with an empty value, so without it here every standard memory
+// file raised a spurious "Unknown frontmatter field: metadata" info warning
+// (~630 of them on a large memory store).
+const KNOWN_FRONTMATTER_FIELDS = new Set(['name', 'description', 'type', 'originSessionId', 'metadata'])
 
 /**
  * Clean a raw project directory name into a human-friendly project name.

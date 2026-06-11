@@ -194,6 +194,17 @@ describe('memory-scanner', () => {
       expect(warning!.message).toContain('author')
     })
 
+    it('does NOT warn on the standard nested metadata: frontmatter block', async () => {
+      // Real auto-memory frontmatter: name + description + a nested metadata.type.
+      // The flat parser flattens `metadata:` to an empty top-level key + `type`,
+      // both of which must be recognised (no spurious "Unknown field" warning).
+      oneProject('F--TEST', ['feedback_x.md'], () =>
+        '---\nname: x\ndescription: d\nmetadata:\n  type: feedback\n---\n\nBody', 120)
+      const result = await scanLocalMemory()
+      expect(result.warnings.find(w => w.message.includes('Unknown frontmatter field'))).toBeUndefined()
+      expect(result.memories[0].type).toBe('feedback')
+    })
+
     it('reads multiple files within a project concurrently, preserving order', async () => {
       // Bounded-concurrency read must keep memories[] in readdir order so the UI
       // and warning ordering match the old sequential scan.
