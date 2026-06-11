@@ -1,6 +1,6 @@
 {
   "name": "claude-conductor",
-  "version": "1.5.36",
+  "version": "1.5.37",
   "description": "Multi-session Claude Code terminal orchestrator",
   "author": "Nicholas Moger",
   "main": "./out/main/index.js",
