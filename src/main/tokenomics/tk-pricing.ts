@@ -115,6 +115,12 @@ export async function fetchModelPricing(): Promise<void> {
   }
 }
 
+// Safe terminal default for the guess branch: sonnet-tier rates. Literal, not a
+// registry lookup, so a future baseline rename can never make costs NaN.
+const GUESS_DEFAULT: ModelPricing = { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 }
+
+const guessedModels = new Set<string>()
+
 export function getPricingWithSource(model: string): { pricing: ModelPricing; source: PricingSource } {
   const fallback = registryFallbackPricing()
   const sources: Array<[Record<string, ModelPricing>, PricingSource]> =
@@ -128,8 +134,11 @@ export function getPricingWithSource(model: string): { pricing: ModelPricing; so
   }
   // Novel family: WARN + guess (spec §4) — same terminal numbers as before
   // (sonnet rates) so totals don't shift, but tagged + logged, never silent.
-  logInfo(`[tokenomics] no pricing for "${model}" — using guess (sonnet rates); Sentinel will propose a registry entry`)
-  return { pricing: fallback['claude-sonnet-4-6'], source: 'guess' }
+  if (!guessedModels.has(model)) {
+    guessedModels.add(model)
+    logInfo(`[tokenomics] no pricing for "${model}" — using guess (sonnet rates); Sentinel will propose a registry entry`)
+  }
+  return { pricing: fallback['claude-sonnet-4-6'] ?? GUESS_DEFAULT, source: 'guess' }
 }
 
 export function getPricing(model: string): ModelPricing { return getPricingWithSource(model).pricing }

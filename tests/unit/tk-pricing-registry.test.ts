@@ -39,10 +39,11 @@ describe('getPricingWithSource', () => {
   //
   // For date-suffixed ids the first key whose BASE is a prefix wins:
   //   opus-4-8-fast has NO numeric suffix to strip → base stays 'claude-opus-4-8-fast'
-  //                 → startsWith check FAILS for all three cases below
+  //                 → startsWith check FAILS for all three NON-FAST cases below
   //   opus-4-8      base → 'claude-opus' → matches all claude-opus-* → SAME first hit
   //
-  // Therefore old and new produce identical numbers for all three cases:
+  // Therefore old and new produce identical numbers for the three NON-FAST cases.
+  // The -fast date-suffixed case is intentionally DIFFERENT — see pinned test below.
   it('claude-opus-4-8-20260601 -> prefix hit on opus-4-8 key -> 5/25 (old & new identical)', () => {
     const r = getPricingWithSource('claude-opus-4-8-20260601')
     expect(r.source).toBe('prefix')
@@ -66,5 +67,11 @@ describe('getPricingWithSource', () => {
     expect(r.source).toBe('prefix')
     expect(r.pricing.input).toBe(5)
     expect(r.pricing.output).toBe(25)
+  })
+
+  it('date-suffixed -fast id now correctly gets fast pricing (intentional change: old key order made it $5)', () => {
+    const r = getPricingWithSource('claude-opus-4-8-fast-20260601')
+    expect(r.source).toBe('prefix')
+    expect(r.pricing.input).toBe(10)
   })
 })
