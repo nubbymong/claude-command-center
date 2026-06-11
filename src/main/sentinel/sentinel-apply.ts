@@ -20,6 +20,14 @@ export function validateProposal(registry: ModelRegistry, entry: OverlayModelEnt
   if (registry.models.some((m) => m.id === entry.id)) {
     return { ok: false, error: `id "${entry.id}" already exists in the registry — edit/revert that entry instead` }
   }
+  // Alias-hijack guard (defense-in-depth): aliases resolve at priority 2 in
+  // matchEntry, ahead of prefix/patterns. Merge order + the AI schema stripping
+  // aliases already protect builtins, but manual overlay edits bypass both —
+  // make collision impossible by construction.
+  for (const a of entry.aliases ?? []) {
+    const clash = registry.models.find((m) => m.id !== entry.id && (m.id === a || m.aliases?.includes(a)))
+    if (clash) return { ok: false, error: `alias "${a}" collides with already-known model ${clash.id}` }
+  }
   if (!entry.patterns?.length) return { ok: false, error: 'at least one pattern required' }
   for (const p of entry.patterns) {
     if (p.startsWith('^') || p.endsWith('$')) {

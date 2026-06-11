@@ -41,6 +41,11 @@ describe('validateProposal (spec §7)', () => {
   it('HIJACK GUARD: anchored pattern matching a known id -> rejected', () => {
     expect(validateProposal(getRegistry(), { ...base, patterns: ['^claude-sonnet'] }).ok).toBe(false)
   })
+  it('ALIAS GUARD: alias colliding with a known alias or id -> rejected; fresh alias accepted', () => {
+    expect(validateProposal(getRegistry(), { ...base, aliases: ['opus'] }).ok).toBe(false)
+    expect(validateProposal(getRegistry(), { ...base, aliases: ['claude-haiku-4-5'] }).ok).toBe(false)
+    expect(validateProposal(getRegistry(), { ...base, aliases: ['new1'] }).ok).toBe(true)
+  })
   it('duplicate id vs existing registry entry -> rejected', () => {
     expect(validateProposal(getRegistry(), { ...base, id: 'claude-opus-4-8' }).ok).toBe(false)
   })
