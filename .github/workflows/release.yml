@@ -22,7 +22,9 @@ permissions:
 jobs:
   # ── Build Windows installer ──
   build-windows:
-    runs-on: windows-latest
+    # Pinned off windows-latest: the new vs2026 image breaks @electron/node-gyp
+    # (no supported Visual Studio). Same pin as ci.yml — unpin together.
+    runs-on: windows-2025
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}

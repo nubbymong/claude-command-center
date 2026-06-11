@@ -27,7 +27,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest]
+        # windows-2025 pinned (not -latest): the windows-2025-vs2026 image that
+        # windows-latest now redirects to ships ONLY Visual Studio 2026 ("18"),
+        # which @electron/node-gyp cannot use yet -> better-sqlite3 rebuild fails.
+        # Unpin once the electron toolchain supports VS 2026.
+        os: [windows-2025, macos-latest]
 
     steps:
       - uses: actions/checkout@v4

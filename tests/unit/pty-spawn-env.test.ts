@@ -3,7 +3,10 @@ import os from 'node:os'
 import path from 'node:path'
 import { withProfileHome } from '../../src/main/pty-manager'
 
-const HOME = 'C:/r/account-profiles/p1'
+// Platform-native fake home. A hardcoded Windows drive path breaks on POSIX
+// CI: its `:` collides with the POSIX PATH delimiter, so the PATH-dedup split
+// can never match it (prod never sees that mix — homes are platform-native).
+const HOME = path.resolve('/r/account-profiles/p1')
 const LOCAL_BIN = path.join(HOME, '.local', 'bin')
 
 describe('withProfileHome', () => {
