@@ -2,6 +2,10 @@
 // Registry-backed (spec 2026-06-11 §4): family/colour comes from the model
 // registry; unknown models get a deterministic hashed palette colour instead
 // of vanishing into chart-other. Copper stays Opus-only via the registry.
+//
+// getState() here is non-reactive BY DESIGN: a registry hot-reload (rare,
+// user-initiated Sentinel apply) repaints on the next tokenomics data render
+// rather than immediately. Cosmetic-only staleness; do not "fix" with hooks.
 import { resolveModelInfo, type ModelRegistry } from '../../../shared/model-registry'
 import { useRegistryStore } from '../../stores/registryStore'
 

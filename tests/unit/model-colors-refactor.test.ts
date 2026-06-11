@@ -16,6 +16,7 @@ describe('getModelColor parity (registry-backed)', () => {
   ])('%s', (m, c) => expect(getModelColor(m, reg)).toBe(c))
   it('unknown model gets a deterministic hashed hex, not chart-other', () => {
     expect(getModelColor('zz-mystery-9', reg)).toMatch(/^#/)
+    expect(getModelColor('zz-mystery-9', reg)).toBe(getModelColor('zz-mystery-9', reg))
   })
 })
 
