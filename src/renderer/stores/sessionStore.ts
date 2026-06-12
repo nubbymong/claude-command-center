@@ -149,9 +149,28 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   setActiveSession: (id) => set({ activeSessionId: id }),
 
   updateSession: (id, updates) =>
-    set((state) => ({
-      sessions: state.sessions.map((s) => (s.id === id ? { ...s, ...updates } : s))
-    })),
+    set((state) => {
+      // Skip no-op updates: the statusline bridge ticks ~1-3×/s per working
+      // session and frequently re-sends value-identical telemetry. Without this
+      // guard every such tick replaced the sessions array (new identity) and
+      // re-rendered every subscriber — including the root shell. Bail out when
+      // the patch changes nothing on the target session so the array identity
+      // (and the matched session object) is preserved.
+      const idx = state.sessions.findIndex((s) => s.id === id)
+      if (idx === -1) return state
+      const current = state.sessions[idx]
+      let changed = false
+      for (const k in updates) {
+        if ((current as Record<string, unknown>)[k] !== (updates as Record<string, unknown>)[k]) {
+          changed = true
+          break
+        }
+      }
+      if (!changed) return state
+      const sessions = state.sessions.slice()
+      sessions[idx] = { ...current, ...updates }
+      return { sessions }
+    }),
 
   getSession: (id) => get().sessions.find((s) => s.id === id),
 
@@ -166,3 +185,45 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       isRestoring: false
     })
 }))
+
+/**
+ * The session fields the app shell's RENDER path actually reads (App.tsx's
+ * `sessions.map` over the terminal wrappers + the `activeSession` passed to the
+ * header / breadcrumb / command bar / GitHub panel). Deliberately EXCLUDES the
+ * high-frequency telemetry fields the statusline bridge ticks (contextPercent,
+ * costUsd, tokens, rate limits, effortLive, fastMode, status, needsAttention,
+ * …) — those are consumed by self-subscribing leaf components (SessionStatusStrip,
+ * the sidebar card), never by the shell render itself.
+ *
+ * Used by `structuralSessionsEqual` so the root subscription can ignore
+ * telemetry-only ticks and stop the full-tree re-render cascade.
+ */
+export const STRUCTURAL_SESSION_FIELDS = [
+  'id', 'createdAt', 'configId', 'label', 'workingDirectory', 'sessionType',
+  'shellOnly', 'sshConfig', 'partnerTerminalPath', 'partnerElevated',
+  'legacyVersion', 'agentIds', 'effortLevel', 'disableAutoMemory',
+  'enableCodexReview', 'loggingEnabled', 'model', 'provider', 'codexOptions',
+  'identityColorKey', 'color', 'githubIntegration',
+] as const
+
+/**
+ * Equality function over the sessions array that compares only the structural
+ * fields the shell renders. Returns true (i.e. "no change → skip re-render")
+ * when only telemetry changed. Object/array-valued fields (sshConfig,
+ * githubIntegration, agentIds, …) are compared by reference, which is correct
+ * because updateSession spreads a fresh session object only when a field's
+ * VALUE changed — a telemetry-only patch leaves these references intact.
+ */
+export function structuralSessionsEqual(a: Session[], b: Session[]): boolean {
+  if (a === b) return true
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) {
+    const sa = a[i] as Record<string, unknown>
+    const sb = b[i] as Record<string, unknown>
+    if (sa === sb) continue
+    for (const f of STRUCTURAL_SESSION_FIELDS) {
+      if (sa[f] !== sb[f]) return false
+    }
+  }
+  return true
+}

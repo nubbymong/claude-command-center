@@ -125,6 +125,35 @@ describe('cloudAgentStore', () => {
       useCloudAgentStore.getState().handleOutputChunk({ id: 'unknown', chunk: 'data' })
       expect(useCloudAgentStore.getState().agents).toHaveLength(0)
     })
+
+    it('caps output to a 500KB tail with a leading truncation marker', () => {
+      useCloudAgentStore.setState({ agents: [makeAgent({ id: 'a1', output: '' })] })
+      const big = 'x'.repeat(600 * 1024)
+      useCloudAgentStore.getState().handleOutputChunk({ id: 'a1', chunk: big + 'TAIL-END' })
+      const out = useCloudAgentStore.getState().agents[0].output
+      // Bounded: marker + 500KB tail (not the full ~600KB).
+      expect(out.length).toBeLessThanOrEqual(512 * 1024 + 64)
+      expect(out.startsWith('[earlier output truncated')).toBe(true)
+      // Keeps the TAIL (the most recent bytes), not the head.
+      expect(out.endsWith('TAIL-END')).toBe(true)
+    })
+  })
+
+  describe('config persistence strips output', () => {
+    it('persists the agents list WITHOUT output (main owns capped output on disk)', async () => {
+      const saveSpy = (window as any).electronAPI.config.save as ReturnType<typeof vi.fn>
+      saveSpy.mockClear()
+      useCloudAgentStore.setState({
+        agents: [makeAgent({ id: 'a1', output: 'lots of streamed output' }), makeAgent({ id: 'a2', output: 'more' })],
+      })
+      // remove() calls saveConfigNow synchronously.
+      await useCloudAgentStore.getState().remove('a2')
+      expect(saveSpy).toHaveBeenCalledWith('cloudAgents', expect.any(Array))
+      const persisted = saveSpy.mock.calls.at(-1)![1] as Array<{ output: string }>
+      persisted.forEach((a) => expect(a.output).toBe(''))
+      // The in-memory store keeps the real output for display.
+      expect(useCloudAgentStore.getState().agents[0].output).toBe('lots of streamed output')
+    })
   })
 
   describe('getFilteredAgents', () => {

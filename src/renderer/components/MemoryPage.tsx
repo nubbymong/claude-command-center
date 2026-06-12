@@ -2,6 +2,7 @@ import React, { useEffect, useState, useMemo } from 'react'
 import { useMemoryStore } from '../stores/memoryStore'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { useSessionStore } from '../stores/sessionStore'
+import type { LiveSessionLite } from './memory/live-sessions'
 import PageFrame from './PageFrame'
 import MemoryKpiRow from './memory/MemoryKpiRow'
 import MemoryActivityChart from './memory/MemoryActivityChart'
@@ -39,7 +40,26 @@ export default function MemoryPage({ onClose, onOpenSessionLogs, onJumpToSession
     setScopeFilter, setTypeFilter, setSort,
   } = useMemoryStore()
 
-  const sessions = useSessionStore((s) => s.sessions)
+  // Subscribe to a STABLE STRING KEY of only the structural fields
+  // liveSessionsForProject reads (id / workingDirectory / sessionType). A plain
+  // string compares by value (Object.is), so the statusline bridge's ~1-3×/s
+  // telemetry ticks — which never touch these fields — don't re-render the page
+  // (the old raw `s.sessions` selector re-rendered on every tick via array
+  // identity churn). The lite-session array is reconstructed from the key, so it
+  // only changes when the key does.
+  const sessionsKey = useSessionStore((s) =>
+    s.sessions.map((x) => `${x.id}\t${x.workingDirectory ?? ''}\t${x.sessionType}`).join('\n'),
+  )
+  const sessions = useMemo<LiveSessionLite[]>(
+    () =>
+      sessionsKey
+        ? sessionsKey.split('\n').map((line) => {
+            const [id, workingDirectory, sessionType] = line.split('\t')
+            return { id, label: '', workingDirectory, sessionType }
+          })
+        : [],
+    [sessionsKey],
+  )
   const [searchInput, setSearchInput] = useState('')
 
   // Memory lives in ~/.claude/projects (junctioned into every account home), so
@@ -75,6 +95,15 @@ export default function MemoryPage({ onClose, onOpenSessionLogs, onJumpToSession
       projects.map(p => [p.projectDir, liveSessionsForProject(sessions, p.projectDir).length])
     ),
     [sessions, projects],
+  )
+
+  // Ranked/filtered project list. `now` is captured once per data change (not per
+  // render): the old inline filterProjects(..., Date.now()) produced a fresh array
+  // every render, defeating ProjectsRankedList's memo and re-rendering it on every
+  // statusline tick. Minute-granularity scope buckets don't need per-render `now`.
+  const rankedProjects = useMemo(
+    () => filterProjects(projects, memories, scopeFilter, Date.now()),
+    [projects, memories, scopeFilter],
   )
 
   // Breadcrumb
@@ -229,7 +258,7 @@ export default function MemoryPage({ onClose, onOpenSessionLogs, onJumpToSession
               <MemoryTypeDonut types={types} />
             </div>
             <ProjectsRankedList
-              projects={filterProjects(projects, memories, scopeFilter, Date.now())}
+              projects={rankedProjects}
               liveCounts={liveCounts}
               onSelect={selectProject}
             />

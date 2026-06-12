@@ -112,8 +112,15 @@ export default function GlobalLogsView({ initialSessionId, onInitialSessionConsu
   const seqRef = useRef(0)
 
   const refresh = useCallback(async () => {
-    const rows = (await window.electronAPI.logs2.listSlots()) as SlotRow[]
-    setSlots(rows)
+    // The logs worker can crash / be in restart-backoff; an uncaught reject here
+    // raised an unhandled rejection and could wedge the view. Catch, log, and
+    // leave the existing slots in place (the empty state already covers no-data).
+    try {
+      const rows = (await window.electronAPI.logs2.listSlots()) as SlotRow[]
+      setSlots(rows)
+    } catch (err) {
+      console.error('[GlobalLogsView] listSlots failed', err)
+    }
   }, [])
 
   useEffect(() => { if (loggingEnabled !== false) void refresh() }, [loggingEnabled, refresh])
@@ -158,8 +165,13 @@ export default function GlobalLogsView({ initialSessionId, onInitialSessionConsu
     if (!q) { setHits([]); return }
     let active = true
     const t = setTimeout(async () => {
-      const rows = (await window.electronAPI.logs2.search({ query: q, limit: 100 })) as SearchHitRow[]
-      if (active) setHits(rows)
+      try {
+        const rows = (await window.electronAPI.logs2.search({ query: q, limit: 100 })) as SearchHitRow[]
+        if (active) setHits(rows)
+      } catch (err) {
+        console.error('[GlobalLogsView] search failed', err)
+        if (active) setHits([])
+      }
     }, 300)
     return () => { active = false; clearTimeout(t) }
   }, [query])

@@ -53,6 +53,7 @@ export default function TokenomicsPage() {
   const indexStatus = useTokenomicsStore((s) => s.indexStatus)
   const summary = useTokenomicsStore((s) => s.summary)
   const loadingSummary = useTokenomicsStore((s) => s.loadingSummary)
+  const error = useTokenomicsStore((s) => s.error)
 
   useEffect(() => {
     const s = useTokenomicsStore.getState()
@@ -89,8 +90,24 @@ export default function TokenomicsPage() {
             {/* Filter bar */}
             <NewFilterBar />
 
-            {/* KPI row + charts — shimmer while loading */}
-            {loadingSummary && !summary ? (
+            {/* KPI row + charts — shimmer while loading, error banner on fault */}
+            {error && !summary ? (
+              <div
+                className="rounded-xl p-4 text-sm flex items-center justify-between gap-3"
+                style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
+                role="alert"
+              >
+                <span>Couldn’t load tokenomics data: {error}</span>
+                <button
+                  type="button"
+                  className="px-2 py-1 rounded-md text-xs"
+                  style={{ background: 'var(--surface-panel)', border: '1px solid var(--border-subtle)', color: 'var(--text)' }}
+                  onClick={() => useTokenomicsStore.getState().refresh()}
+                >
+                  Retry
+                </button>
+              </div>
+            ) : loadingSummary && !summary ? (
               <SummaryShimmer />
             ) : summary ? (
               <>

@@ -34,7 +34,8 @@ import TipModal from './components/TipModal'
 import { useTipsStore, trackUsage } from './stores/tipsStore'
 import ErrorBoundary from './components/ErrorBoundary'
 import CloseDialog from './components/CloseDialog'
-import { useSessionStore, Session } from './stores/sessionStore'
+import { useSessionStore, structuralSessionsEqual, Session } from './stores/sessionStore'
+import { useStoreWithEqualityFn } from 'zustand/traditional'
 import { useConfigStore } from './stores/configStore'
 import { useCommandStore } from './stores/commandStore'
 import { useMagicButtonStore } from './stores/magicButtonStore'
@@ -175,7 +176,18 @@ export default function App() {
   const onCreateConfigFromStage = () => setShowGuidedConfig(true)
   const loggingConsentSeen = useSettingsStore((s) => s.settings.loggingConsentSeen)
   const activeSessionId = useSessionStore((s) => s.activeSessionId)
-  const sessions = useSessionStore((s) => s.sessions)
+  // Subscribe to sessions through a STRUCTURAL equality so the root shell does
+  // NOT re-render on the statusline bridge's ~1-3×/s telemetry ticks (which only
+  // touch contextPercent / cost / tokens / rate-limit / status). Telemetry is
+  // read by self-subscribing leaves (SessionStatusStrip, the sidebar card), so
+  // the shell only needs to re-render on structural changes (add/remove/reorder,
+  // configId, cwd, github state, …). This is the one cut that stops the whole
+  // tree re-rendering per tick — see structuralSessionsEqual.
+  const sessions = useStoreWithEqualityFn(
+    useSessionStore,
+    (s) => s.sessions,
+    structuralSessionsEqual,
+  )
   const webviewBySession = useWebviewStore((s) => s.bySessionId)
   const excalidrawBySession = useExcalidrawStore((s) => s.bySessionId)
   const logsBySession = useLogsStore((s) => s.bySessionId)

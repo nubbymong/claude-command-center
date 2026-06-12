@@ -92,4 +92,35 @@ describe('useSessionAutosave', () => {
     vi.advanceTimersByTime(1000)
     expect(save).not.toHaveBeenCalled()
   })
+
+  it('does NOT flush on a per-session telemetry tick (structural key unchanged)', () => {
+    useSessionStore.getState().addSession(makeSession('a'))
+    vi.advanceTimersByTime(1000)
+    save.mockClear()
+
+    // A statusline tick replaces the sessions array but not the session SET.
+    // The hook keys on session ids, so this must not (re)arm the autosave timer.
+    useSessionStore.getState().updateSession('a', { contextPercent: 77 })
+    useSessionStore.getState().updateSession('a', { contextPercent: 78 })
+    vi.advanceTimersByTime(1000)
+    expect(save).not.toHaveBeenCalled()
+  })
+
+  it('does not let sustained telemetry ticks starve a real add/remove flush', () => {
+    useSessionStore.getState().addSession(makeSession('a'))
+    vi.advanceTimersByTime(1000)
+    save.mockClear()
+
+    // A real structural change arms the timer...
+    useSessionStore.getState().addSession(makeSession('b'))
+    // ...and telemetry churn that follows must NOT keep resetting it.
+    for (let i = 0; i < 5; i++) {
+      useSessionStore.getState().updateSession('a', { contextPercent: i })
+      vi.advanceTimersByTime(300)
+    }
+    vi.advanceTimersByTime(1000)
+    expect(save).toHaveBeenCalledTimes(1)
+    const state = save.mock.calls.at(-1)![0]
+    expect(state.sessions.map((s: { id: string }) => s.id)).toEqual(['a', 'b'])
+  })
 })

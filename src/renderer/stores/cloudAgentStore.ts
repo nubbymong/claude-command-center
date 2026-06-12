@@ -30,16 +30,40 @@ interface CloudAgentState {
 
 let saveTimeout: ReturnType<typeof setTimeout> | null = null
 
+// Cap the renderer's in-memory copy of an agent's streamed output. We keep the
+// TAIL (the most recent bytes — the tail of a `claude -p` stream carries the
+// result + cost summary that matters) with a leading marker. Mirrors the main
+// process's 500KB cap (cloud-agent-manager.ts MAX_OUTPUT_BYTES) so neither side
+// grows unbounded; main keeps the head, the renderer keeps the tail, and neither
+// is persisted from here (see stripOutput).
+const MAX_OUTPUT_BYTES = 512 * 1024 // 500KB
+const OUTPUT_TRUNCATED_MARKER = '[earlier output truncated — exceeded 500KB]\n\n'
+
+function capOutputTail(output: string): string {
+  if (output.length <= MAX_OUTPUT_BYTES) return output
+  return OUTPUT_TRUNCATED_MARKER + output.slice(output.length - MAX_OUTPUT_BYTES)
+}
+
+// Persist the agents LIST without the (potentially multi-MB) streamed output.
+// The main process owns capped-output persistence — it writes cloud-agents.json
+// with its 500KB-capped output on every status change / completion and reads it
+// back at boot. Shipping the renderer's copy of `output` here (uncapped, every
+// 2s) overwrote main's capped copy and amplified IPC + disk writes for no gain.
+function stripOutput(agents: CloudAgent[]): CloudAgent[] {
+  return agents.map((a) => (a.output ? { ...a, output: '' } : a))
+}
+
 function saveConfigDebounced(agents: CloudAgent[]): void {
   if (saveTimeout) clearTimeout(saveTimeout)
+  const payload = stripOutput(agents)
   saveTimeout = setTimeout(() => {
-    window.electronAPI.config.save('cloudAgents', agents)
+    window.electronAPI.config.save('cloudAgents', payload)
   }, 2000)
 }
 
 function saveConfigNow(agents: CloudAgent[]): void {
   if (saveTimeout) clearTimeout(saveTimeout)
-  window.electronAPI.config.save('cloudAgents', agents)
+  window.electronAPI.config.save('cloudAgents', stripOutput(agents))
 }
 
 export const useCloudAgentStore = create<CloudAgentState>((set, get) => ({
@@ -121,7 +145,10 @@ export const useCloudAgentStore = create<CloudAgentState>((set, get) => ({
       const agents = [...state.agents]
       const idx = agents.findIndex(a => a.id === data.id)
       if (idx >= 0) {
-        agents[idx] = { ...agents[idx], output: agents[idx].output + data.chunk }
+        agents[idx] = { ...agents[idx], output: capOutputTail(agents[idx].output + data.chunk) }
+        // Persists the agents LIST only (output stripped) — main owns capped
+        // output on disk. Keeps the per-chunk store update cheap and avoids the
+        // 2s multi-MB config write the uncapped path produced.
         saveConfigDebounced(agents)
         return { agents }
       }

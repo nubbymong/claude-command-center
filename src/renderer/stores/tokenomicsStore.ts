@@ -14,6 +14,10 @@ interface TokenomicsState {
   loadingSummary: boolean
   loadingSessions: boolean
   indexJustCompleted: boolean
+  /** Set when a read-surface IPC call rejects (worker crash/restart-backoff or
+   *  the 15s query timeout). Surfaced by TokenomicsPage so a fault clears the
+   *  spinner and shows a retryable error instead of spinning forever. */
+  error: string | null
   _unsubs: Array<() => void>
 
   init: () => Promise<void>
@@ -44,13 +48,21 @@ export const useTokenomicsStore = create<TokenomicsState>((set, get) => ({
   loadingSummary: false,
   loadingSessions: false,
   indexJustCompleted: false,
+  error: null,
   _unsubs: [],
 
   init: async () => {
     const tk = window.electronAPI.tokenomics
 
     // Fetch initial index status
-    const status = await tk.indexStatus()
+    let status: TkIndexStatus
+    try {
+      status = await tk.indexStatus()
+    } catch (err) {
+      console.error('[tokenomicsStore] init: indexStatus failed', err)
+      set({ error: err instanceof Error ? err.message : String(err) })
+      return
+    }
     set({ indexStatus: status })
 
     // Subscribe to progress events — update filesDone/filesTotal
@@ -92,20 +104,32 @@ export const useTokenomicsStore = create<TokenomicsState>((set, get) => ({
       ...rangeToWindow(filter.range, Date.now()),
     }
 
-    set({ loadingSummary: true, loadingSessions: true })
+    set({ loadingSummary: true, loadingSessions: true, error: null })
 
-    const [summary, page] = await Promise.all([
-      tk.summary(base),
-      tk.sessions({ ...base, search: filter.search, limit: 50 }),
-    ])
+    try {
+      const [summary, page] = await Promise.all([
+        tk.summary(base),
+        tk.sessions({ ...base, search: filter.search, limit: 50 }),
+      ])
 
-    set({
-      summary,
-      sessions: page.rows,
-      nextCursor: page.nextCursor,
-      loadingSummary: false,
-      loadingSessions: false,
-    })
+      set({
+        summary,
+        sessions: page.rows,
+        nextCursor: page.nextCursor,
+        loadingSummary: false,
+        loadingSessions: false,
+      })
+    } catch (err) {
+      // Worker crash / restart-backoff / 15s timeout: clear the loading flags so
+      // the page leaves its spinner and surfaces a retryable error instead of
+      // hanging forever (and never raising an unhandled rejection).
+      console.error('[tokenomicsStore] refresh failed', err)
+      set({
+        loadingSummary: false,
+        loadingSessions: false,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
   },
 
   setConfig: (configId) => {
@@ -135,22 +159,32 @@ export const useTokenomicsStore = create<TokenomicsState>((set, get) => ({
       ...rangeToWindow(filter.range, Date.now()),
     }
 
-    const page = await tk.sessions({
-      ...base,
-      search: filter.search,
-      cursor: nextCursor,
-      limit: 50,
-    })
+    try {
+      const page = await tk.sessions({
+        ...base,
+        search: filter.search,
+        cursor: nextCursor,
+        limit: 50,
+      })
 
-    set((s) => ({
-      sessions: [...s.sessions, ...page.rows],
-      nextCursor: page.nextCursor,
-    }))
+      set((s) => ({
+        sessions: [...s.sessions, ...page.rows],
+        nextCursor: page.nextCursor,
+      }))
+    } catch (err) {
+      console.error('[tokenomicsStore] loadMore failed', err)
+      set({ error: err instanceof Error ? err.message : String(err) })
+    }
   },
 
   selectSession: async (id) => {
-    const detail = await window.electronAPI.tokenomics.sessionDetail(id)
-    set({ selected: detail })
+    try {
+      const detail = await window.electronAPI.tokenomics.sessionDetail(id)
+      set({ selected: detail })
+    } catch (err) {
+      console.error('[tokenomicsStore] selectSession failed', err)
+      set({ error: err instanceof Error ? err.message : String(err) })
+    }
   },
 
   clearSelected: () => set({ selected: null }),

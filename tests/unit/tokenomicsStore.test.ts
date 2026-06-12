@@ -58,6 +58,7 @@ function resetStore() {
     loadingSummary: false,
     loadingSessions: false,
     indexJustCompleted: false,
+    error: null,
     _unsubs: [],
   })
 }
@@ -264,6 +265,39 @@ describe('tokenomicsStore', () => {
       useTokenomicsStore.setState({ selected: { sessionId: 'x', byModel: [] } as any })
       useTokenomicsStore.getState().clearSelected()
       expect(useTokenomicsStore.getState().selected).toBeNull()
+    })
+  })
+
+  // ── rejection handling (no unhandled rejection, no stuck spinner) ─────────
+  describe('rejection handling', () => {
+    it('refresh() catches a worker reject, clears loading flags, sets error', async () => {
+      tk.summary.mockRejectedValueOnce(new Error('tokenomics service not running'))
+      useTokenomicsStore.setState({ filter: { range: 'all' } })
+      await useTokenomicsStore.getState().refresh()
+      const s = useTokenomicsStore.getState()
+      // Spinner cleared (TokenomicsPage gates on loadingSummary && !summary).
+      expect(s.loadingSummary).toBe(false)
+      expect(s.loadingSessions).toBe(false)
+      expect(s.error).toBe('tokenomics service not running')
+    })
+
+    it('refresh() clears a prior error on a subsequent success', async () => {
+      useTokenomicsStore.setState({ error: 'old error' })
+      await useTokenomicsStore.getState().refresh()
+      expect(useTokenomicsStore.getState().error).toBeNull()
+      expect(useTokenomicsStore.getState().summary).not.toBeNull()
+    })
+
+    it('init() catches an indexStatus reject and records the error without throwing', async () => {
+      tk.indexStatus.mockRejectedValueOnce(new Error('boom'))
+      await expect(useTokenomicsStore.getState().init()).resolves.toBeUndefined()
+      expect(useTokenomicsStore.getState().error).toBe('boom')
+    })
+
+    it('selectSession() catches a reject and sets error instead of rejecting', async () => {
+      tk.sessionDetail.mockRejectedValueOnce(new Error('detail timeout'))
+      await expect(useTokenomicsStore.getState().selectSession('x')).resolves.toBeUndefined()
+      expect(useTokenomicsStore.getState().error).toBe('detail timeout')
     })
   })
 

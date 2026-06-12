@@ -3,6 +3,16 @@ import { createRoot } from 'react-dom/client'
 import App from './App'
 import './styles.css'
 
+// Renderer-wide backstop for unhandled promise rejections. IPC read surfaces
+// (tokenomics / logs handlers) reject by design on worker crash / restart-backoff
+// / query timeout; a store path that forgets to catch would otherwise raise a
+// silent unhandled rejection. This SURFACES it to the console (recorded by the
+// debug capture) — it does not swallow it (the rejection still logs), so a stuck
+// loading state stays diagnosable. Store-level try/catch remains the primary fix.
+window.addEventListener('unhandledrejection', (e) => {
+  console.error('[renderer] unhandled promise rejection:', e.reason)
+})
+
 // Renderer event-loop jank detector. A self-rescheduling 250ms timer measures
 // how late each tick lands vs its scheduled interval; a gap above 4x (~1s) means
 // the renderer's main thread was blocked (a freeze). Kept inline rather than
