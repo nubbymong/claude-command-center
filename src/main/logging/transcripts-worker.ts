@@ -503,7 +503,11 @@ export function createTranscriptsWorker(
         // they aren't left 'tailing' and resurrected next boot.
         finalizeOpenRunsForShutdown()
         stop()
-        // Let the process exit naturally; the supervisor awaits/kills it.
+        // Let the process exit naturally. The supervisor posts 'shutdown' and
+        // kills WITHOUT awaiting, so this message can be dropped on a fast
+        // quit — benign: boot-time closeDanglingRuns + the run-start retire
+        // heal any runs left open (status shows 'crashed' instead of 'exited'
+        // until then).
         return
     }
 

@@ -19,7 +19,7 @@ import { getProvider } from './providers'
 import { isSshCapable } from './providers/types'
 import type { TelemetrySource } from './providers/types'
 import { resolveCwd } from './path-utils'
-import { dispatchSSHStatuslineUpdate } from './statusline-watcher'
+import { dispatchSSHStatuslineUpdate, cleanupStatusFile } from './statusline-watcher'
 import { decorateStatuslineWithColour } from './account-color'
 import { getGateway } from './hooks'
 import { injectHooks } from './hooks/session-hooks-writer'
@@ -1537,6 +1537,10 @@ function cleanupSessionResources(sessionId: string): void {
   recentWrites.delete(sessionId)
   sshOscBuffers.delete(sessionId)
   pasteQueues.delete(sessionId)
+  // Delete the per-session statusline status file so the watcher's poll
+  // fan-out stays bounded between boot sweeps (the reaper only unlinks
+  // files older than 3 days).
+  cleanupStatusFile(sessionId)
   // T8b: drop any captured resume target so it can't leak into a future,
   // unrelated spawn of the same sessionId. The respawn path captures fresh
   // BEFORE calling killPty, so the just-captured target survives this clear.
