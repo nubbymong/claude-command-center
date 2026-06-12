@@ -52,9 +52,15 @@ export default function SentinelDot() {
       className="flex items-center gap-1.5 px-1.5 py-0.5 rounded border border-surface0/60 bg-surface0/40 hover:bg-surface1/60 transition-colors focus-ring"
     >
       <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${dotColor}`} />
-      {state === 'analyzing' && (
-        <span className="text-[10px] text-yellow font-medium leading-none">Sentinel analyzing CC update…</span>
-      )}
+      {/* Persistent label (spec §6 discoverability): an unlabelled 8px dot was
+          invisible as a brand-new feature. States/colours/click unchanged. */}
+      <span
+        className={`text-[10px] font-medium leading-none ${
+          state === 'analyzing' ? 'text-yellow' : state === 'high' ? 'text-red' : 'text-overlay1'
+        }`}
+      >
+        {state === 'analyzing' ? 'Sentinel · analyzing…' : 'Sentinel'}
+      </span>
     </button>
   )
 }

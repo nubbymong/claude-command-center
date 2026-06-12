@@ -32,7 +32,7 @@ export default function MemoryPage({ onClose, onOpenSessionLogs, onJumpToSession
   onJumpToSession?: (sessionId: string) => void
 }) {
   const {
-    projects, memories, totalSize: _totalSize, loading, error,
+    projects, memories, loading, error,
     selectedProject, selectedMemoryId, searchQuery, selectedContent,
     scopeFilter, typeFilter, sortBy, sortDir, recentSessions,
     scan, selectProject, selectMemory, setSearch, deleteMemory, writeFrontmatter,
