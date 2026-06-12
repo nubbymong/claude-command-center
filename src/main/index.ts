@@ -872,6 +872,19 @@ if (!gotTheLock) {
     // status pills were blank until the next poll because the immediate poll
     // fired before the renderer subscribed, behind the startup splash).
     ipcMain.handle(IPC.SERVICE_STATUS_GET, () => getLastServiceStatus())
+  }).catch((err) => {
+    // A throw anywhere in the boot sequence above abandons every subsequent
+    // subsystem registration (handlers, logging, hooks gateway, statusline,
+    // service pollers) -- the window may still appear but be half-wired. Don't
+    // ghost the user: log loudly and surface a dialog so a partial boot is
+    // diagnosable rather than reported as random missing features.
+    logError('[boot] startup failed -- the app may be partially initialised:', err)
+    try {
+      dialog.showErrorBox(
+        'Claude Command Center failed to start cleanly',
+        `Startup hit an error and some features may not work. Please restart the app.\n\n${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
+      )
+    } catch { /* dialog unavailable (very early failure) */ }
   })
 
   app.on('before-quit', () => {

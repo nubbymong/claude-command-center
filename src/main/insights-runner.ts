@@ -5,6 +5,7 @@ import {
   mkdirSync,
   readFileSync,
   writeFileSync,
+  renameSync,
   copyFileSync,
   readdirSync,
   statSync
@@ -92,7 +93,25 @@ function loadCatalogue(): InsightsCatalogue {
 
 function saveCatalogue(catalogue: InsightsCatalogue): void {
   ensureDir(getInsightsDir())
-  writeFileSync(getCatalogueFile(), JSON.stringify(catalogue, null, 2))
+  // Atomic: write a tmp then rename over the target so a crash mid-write can't
+  // truncate catalogue.json (which loadCatalogue would then read as an empty
+  // catalogue, hiding every run).
+  const file = getCatalogueFile()
+  const tmp = file + '.tmp'
+  writeFileSync(tmp, JSON.stringify(catalogue, null, 2))
+  renameSync(tmp, file)
+}
+
+/** Read-modify-write a single run into the CURRENT on-disk catalogue (replace by
+ *  id, else append). Avoids persisting a stale whole-catalogue snapshot held
+ *  across long awaits (extractKpis runs a headless claude for up to 10 min), so a
+ *  concurrent mutation (another run, a delete, cleanupStuckRuns) is never erased. */
+function upsertRun(run: InsightsRun): void {
+  const catalogue = loadCatalogue()
+  const idx = catalogue.runs.findIndex((r) => r.id === run.id)
+  if (idx >= 0) catalogue.runs[idx] = run
+  else catalogue.runs.push(run)
+  saveCatalogue(catalogue)
 }
 
 function notifyRenderer(getWindow: () => BrowserWindow | null, run: InsightsRun): void {
@@ -496,17 +515,15 @@ export async function runInsights(getWindow: () => BrowserWindow | null, opts?: 
   const archiveDir = join(getInsightsDir(), id)
   ensureDir(archiveDir)
 
-  const catalogue = loadCatalogue()
   const run: InsightsRun = { id, timestamp: Date.now(), status: 'running', accountEmail: account.accountEmail, profileId: account.profileId }
-  catalogue.runs.push(run)
-  saveCatalogue(catalogue)
+  upsertRun(run)
   notifyRenderer(getWindow, run)
   logInfo(`[insights] Run ${id} account=${account.accountEmail ?? '(default)'} home=${account.home ?? 'global'}`)
 
   try {
     // Step 1: Run /insights via interactive PTY
     run.statusMessage = 'Step 1/3: Generating report...'
-    saveCatalogue(catalogue)
+    upsertRun(run)
     notifyRenderer(getWindow, run)
     logInfo('[insights] Running /insights via PTY...')
     const result = await spawnClaudeInsights(account.home)
@@ -514,7 +531,7 @@ export async function runInsights(getWindow: () => BrowserWindow | null, opts?: 
     if (result.code !== 0) {
       run.status = 'failed'
       run.error = 'claude /insights failed: ' + stripAnsiCodes(result.output).slice(-200)
-      saveCatalogue(catalogue)
+      upsertRun(run)
       notifyRenderer(getWindow, run)
       running = false
       return id
@@ -522,12 +539,12 @@ export async function runInsights(getWindow: () => BrowserWindow | null, opts?: 
 
     // Step 2: Copy report to archive
     run.statusMessage = 'Step 2/3: Archiving report...'
-    saveCatalogue(catalogue)
+    upsertRun(run)
     notifyRenderer(getWindow, run)
     if (!copyReportToArchive(archiveDir, account.home)) {
       run.status = 'failed'
       run.error = 'Failed to copy report files'
-      saveCatalogue(catalogue)
+      upsertRun(run)
       notifyRenderer(getWindow, run)
       running = false
       return id
@@ -536,7 +553,7 @@ export async function runInsights(getWindow: () => BrowserWindow | null, opts?: 
     // Step 3: Extract KPIs
     run.status = 'extracting_kpis'
     run.statusMessage = 'Step 3/3: Extracting KPIs...'
-    saveCatalogue(catalogue)
+    upsertRun(run)
     notifyRenderer(getWindow, run)
 
     const kpiSuccess = await extractKpis(archiveDir, id, account.home)
@@ -546,12 +563,12 @@ export async function runInsights(getWindow: () => BrowserWindow | null, opts?: 
     }
 
     run.status = 'complete'
-    saveCatalogue(catalogue)
+    upsertRun(run)
     notifyRenderer(getWindow, run)
   } catch (err: any) {
     run.status = 'failed'
     run.error = err.message || 'Unknown error'
-    saveCatalogue(catalogue)
+    upsertRun(run)
     notifyRenderer(getWindow, run)
   } finally {
     running = false
@@ -567,34 +584,43 @@ export async function seedFromExisting(getWindow: () => BrowserWindow | null): P
   // global ~/.claude (pre-isolation); it is not account-attributed.
   if (!existsSync(claudeReportPath(null))) return null
 
-  const id = generateRunId()
-  const archiveDir = join(getInsightsDir(), id)
-  ensureDir(archiveDir)
+  // Take the SAME mutex runInsights uses. Seed's KPI extraction runs a headless
+  // claude for up to 10 min; without this a real run could start in that window
+  // and the two whole-catalogue writes would interleave from divergent snapshots
+  // (each erasing the other's run). Bail quietly if anything is already running.
+  if (running) return null
+  running = true
 
-  if (!copyReportToArchive(archiveDir, null)) {
-    logError('[insights] seedFromExisting: failed to copy report')
-    return null
+  try {
+    const id = generateRunId()
+    const archiveDir = join(getInsightsDir(), id)
+    ensureDir(archiveDir)
+
+    if (!copyReportToArchive(archiveDir, null)) {
+      logError('[insights] seedFromExisting: failed to copy report')
+      return null
+    }
+
+    const run: InsightsRun = { id, timestamp: Date.now(), status: 'extracting_kpis' }
+    upsertRun(run)
+    notifyRenderer(getWindow, run)
+
+    logInfo('[insights] Seeded archive from existing report, extracting KPIs...')
+
+    // Extract KPIs (cheap — just reads the HTML file)
+    const kpiSuccess = await extractKpis(archiveDir, id)
+    if (!kpiSuccess) {
+      logError('[insights] Seed KPI extraction failed, report still viewable')
+    }
+
+    run.status = 'complete'
+    upsertRun(run)
+    notifyRenderer(getWindow, run)
+
+    return id
+  } finally {
+    running = false
   }
-
-  const catalogue = loadCatalogue()
-  const run: InsightsRun = { id, timestamp: Date.now(), status: 'extracting_kpis' }
-  catalogue.runs.push(run)
-  saveCatalogue(catalogue)
-  notifyRenderer(getWindow, run)
-
-  logInfo('[insights] Seeded archive from existing report, extracting KPIs...')
-
-  // Extract KPIs (cheap — just reads the HTML file)
-  const kpiSuccess = await extractKpis(archiveDir, id)
-  if (!kpiSuccess) {
-    logError('[insights] Seed KPI extraction failed, report still viewable')
-  }
-
-  run.status = 'complete'
-  saveCatalogue(catalogue)
-  notifyRenderer(getWindow, run)
-
-  return id
 }
 
 export function getCatalogue(): InsightsCatalogue {

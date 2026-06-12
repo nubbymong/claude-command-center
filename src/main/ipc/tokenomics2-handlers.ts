@@ -90,7 +90,11 @@ export function registerTokenomics2Handlers(getWindow: () => BrowserWindow | nul
       const rows = await sup.query('index-status', {})
       return rows[0] ?? { ...DEFAULT_STATUS, indexing: true }
     } catch {
-      return { ...DEFAULT_STATUS, indexing: true }   // worker not ready yet -> still indexing
+      // Worker query rejected. Prefer the supervisor's own status: it carries a
+      // fatal `error` (and indexing:false) when the worker hit an uncorrelated
+      // fault like a failed DB open, so the page leaves its spinner. If there's
+      // no fatal error, the worker is just not ready yet -> still indexing.
+      return sup.getIndexStatus()
     }
   })
 
@@ -109,6 +113,16 @@ export function registerTokenomics2Handlers(getWindow: () => BrowserWindow | nul
     const w = getWindow()
     if (w && !w.isDestroyed()) {
       try { w.webContents.send(IPC.TOKENOMICS2_INDEX_COMPLETE, c) } catch { /* window gone */ }
+    }
+  })
+  // PUSH a refreshed status on an uncorrelated worker fault (e.g. failed DB open)
+  // so the renderer can stop showing 'indexing' the moment the fault occurs
+  // rather than only on its next manual status fetch. Reuses the existing
+  // INDEX_STATUS channel (request/reply + push share one shape).
+  sup?.onIndexError((s) => {
+    const w = getWindow()
+    if (w && !w.isDestroyed()) {
+      try { w.webContents.send(IPC.TOKENOMICS2_INDEX_STATUS, s) } catch { /* window gone */ }
     }
   })
 }

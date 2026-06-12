@@ -1,3 +1,4 @@
+import { logError, logWarn, logInfo } from '../debug-logger'
 import type { ForkedTkWorker } from './fork-tokenomics-worker'
 import type { ToTkWorker, FromTkWorker } from './tk-worker-transport'
 import type { TkConfigDim, TkPricing, TkIndexStatus } from './tk-types'
@@ -34,10 +35,16 @@ export class TokenomicsSupervisor {
   private buffer: ToTkWorker[] = []
   private progressSubs = new Set<(p: TkIndexProgress) => void>()
   private completeSubs = new Set<(c: TkIndexCompleteEvent) => void>()
+  private errorSubs = new Set<(s: TkIndexStatus) => void>()
   private lastProgress: TkIndexProgress = { filesDone: 0, filesTotal: 0, eventsIngested: 0, phase: 'initial' }
   private firstIndexComplete = false
   private lastEventsTotal = 0
   private lastIndexAt: number | null = null
+  // Set when the worker reports an UNCORRELATED error (e.g. a failed DB open,
+  // which leaves the worker alive but never `ready` — no exit, no restart). The
+  // renderer consumes this so the tokenomics page can stop showing 'indexing'
+  // forever and surface a fault instead of a perpetual spinner.
+  private lastError: { message: string; ts: number } | null = null
 
   constructor(private opts: TokenomicsSupervisorOptions) {}
   private now(): number { return this.opts.now ? this.opts.now() : Date.now() }
@@ -91,10 +98,25 @@ export class TokenomicsSupervisor {
         if (m.id !== undefined) {
           const p = this.pending.get(m.id)
           if (p) { this.pending.delete(m.id); clearTimeout(p.timer); p.reject(new Error(m.message)) }
+          return
         }
+        // Uncorrelated error: the worker stays alive (e.g. a failed DB open never
+        // posts `ready`, so onExit/restart never fires and queries reject forever).
+        // Mirror LogSupervisor: log it loudly and record a fatal state so the UI
+        // can stop showing 'indexing' instead of spinning silently forever.
+        this.lastError = { message: m.message, ts: this.now() }
+        logError('[tokenomics] worker error:', m.message)
+        const status = this.getIndexStatus()
+        for (const cb of this.errorSubs) { try { cb(status) } catch { /* ignore */ } }
         return
       }
-      case 'log': return
+      case 'log': {
+        // Forward the worker's own logs to the main debug log (were discarded).
+        const lvl = m.entry.level
+        const fn = lvl === 'error' ? logError : lvl === 'warn' ? logWarn : logInfo
+        fn('[tokenomics worker]', m.entry.message)
+        return
+      }
     }
   }
 
@@ -122,15 +144,22 @@ export class TokenomicsSupervisor {
 
   onIndexProgress(cb: (p: TkIndexProgress) => void): () => void { this.progressSubs.add(cb); return () => { this.progressSubs.delete(cb) } }
   onIndexComplete(cb: (c: TkIndexCompleteEvent) => void): () => void { this.completeSubs.add(cb); return () => { this.completeSubs.delete(cb) } }
+  /** Fires with the fault status when the worker reports an uncorrelated error
+   *  (e.g. a failed DB open). The handler layer forwards it to the renderer. */
+  onIndexError(cb: (s: TkIndexStatus) => void): () => void { this.errorSubs.add(cb); return () => { this.errorSubs.delete(cb) } }
 
   getIndexStatus(): TkIndexStatus {
+    const error = this.lastError?.message ?? null
     return {
       firstIndexComplete: this.firstIndexComplete,
-      indexing: !this.firstIndexComplete,
+      // A fatal error means the index will never complete on its own; stop
+      // reporting 'indexing' so the page leaves its perpetual spinner.
+      indexing: !this.firstIndexComplete && error === null,
       filesDone: this.lastProgress.filesDone,
       filesTotal: this.lastProgress.filesTotal,
       eventsTotal: this.lastEventsTotal,
       lastIndexAt: this.lastIndexAt,
+      error,
     }
   }
 

@@ -27,14 +27,19 @@ export function registerChannelHandlers(): void {
     if (!p?.targetSessionId) return { ok: false, reason: 'bad request' }
     return retract(p.targetSessionId, p.targetLabel)
   })
-  ipcMain.handle(IPC.CHANNELS_FORCE_TIER, (_e, p) => forceTier(p.sessionId, p.tier))
+  ipcMain.handle(IPC.CHANNELS_FORCE_TIER, (_e, p) => {
+    if (!p?.sessionId) return { ok: false, reason: 'bad request' }
+    return forceTier(p.sessionId, p.tier)
+  })
   ipcMain.handle(IPC.CHANNELS_RULE_CRUD, (_e, p) => {
+    if (!p?.op) return { ok: false, reason: 'bad request' }
     if (p.op === 'list') return loadRules()
     if (p.op === 'save') { saveRule(p.rule); return loadRules() }
     if (p.op === 'delete') { const ok = deleteRule(p.id); return { ok, rules: loadRules() } }
     return loadRules()
   })
   ipcMain.handle(IPC.CHANNELS_STANDING_APPROVAL_CRUD, (_e, p) => {
+    if (!p?.op) return { ok: false, reason: 'bad request' }
     if (p.op === 'add') { addApproval(p.tool, p.ttl); return loadApprovals() }
     if (p.op === 'remove') { removeApproval(p.id); return loadApprovals() }
     return loadApprovals()

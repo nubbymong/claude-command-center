@@ -118,7 +118,10 @@ function isPortFree(port: number): Promise<boolean> {
   return new Promise((resolve) => {
     const tester = createServer()
     tester.once('error', () => { resolve(false) })
-    tester.listen(port, '0.0.0.0', () => {
+    // Loopback only: the dev update-server must not be reachable from the LAN
+    // (it exposes a source-hash health endpoint + live source-change WS). The
+    // prod update-watcher connects to localhost anyway.
+    tester.listen(port, '127.0.0.1', () => {
       tester.close(() => resolve(true))
     })
   })
@@ -189,8 +192,10 @@ export async function startUpdateServer(projectRoot: string): Promise<{ port: nu
   // Start watching source files
   watchSourceDirectory(srcDir)
 
-  // Start the server
-  httpServer.listen(port, '0.0.0.0', () => {
+  // Start the server. Loopback only (127.0.0.1): dev-only server that exposes a
+  // source-hash health endpoint + a live source-change WebSocket -- must never
+  // be reachable from the LAN. The prod update-watcher connects to localhost.
+  httpServer.listen(port, '127.0.0.1', () => {
     logInfo(`[update-server] Update server running on port ${port}`)
   })
 

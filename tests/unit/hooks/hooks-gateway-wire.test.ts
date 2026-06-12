@@ -64,6 +64,30 @@ describe('hooks gateway permission wire value', () => {
   })
 })
 
+describe('pre-buffer auth', () => {
+  let gw: HooksGateway
+  afterEach(async () => { await gw?.stop(); _resetResponders() })
+
+  // The token rides in a header, so auth is verified BEFORE the body is buffered:
+  // a wrong token returns 404 and the (large) body is never ingested.
+  it('rejects a wrong token with 404 and never ingests the body', async () => {
+    gw = new HooksGateway({ emit: () => {}, defaultPort: 0 })
+    const { port } = await gw.start()
+    gw.registerSession('auth1')
+    const big = { session_id: 'auth1', hook_event_name: 'PostToolUse', tool_name: 'Read', filler: 'x'.repeat(100_000) }
+    const res = await post(port!, 'auth1', 'WRONG-TOKEN', big)
+    expect(res.status).toBe(404)
+    expect(gw.getBuffer('auth1')).toHaveLength(0)   // body never reached ingest
+  })
+
+  it('rejects an unknown session id with 404 before buffering', async () => {
+    gw = new HooksGateway({ emit: () => {}, defaultPort: 0 })
+    const { port } = await gw.start()
+    const res = await post(port!, 'never-registered', 'any', { hook_event_name: 'PostToolUse', tool_name: 'Read' })
+    expect(res.status).toBe(404)
+  })
+})
+
 describe('hold-open gating', () => {
   let gw: HooksGateway
   afterEach(async () => { await gw?.stop(); _resetResponders() })

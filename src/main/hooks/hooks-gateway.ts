@@ -36,6 +36,15 @@ let hooksInFlight = 0
 // is loopback-only and token-gated, so the DoS surface is already small.
 const MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024
 
+// Cap how many request bodies may be buffering at once. The gateway is
+// loopback-only and token-gated, but a buggy/hostile LOCAL process could still
+// open many concurrent uploads and, at 4 MiB each, drive the hooks
+// utilityProcess into memory pressure / OOM (its supervisor then restarts it,
+// dropping the live feed). 32 concurrent 4 MiB bodies = ~128 MiB worst case,
+// far above any real hook fan-out. Excess requests are rejected with 503 before
+// a single byte is buffered.
+const MAX_CONCURRENT_BUFFERING = 32
+
 export interface HooksGatewayOptions {
   defaultPort?: number
   emit: (channel: string, payload: unknown) => void
@@ -96,6 +105,9 @@ export class HooksGateway {
   private oversizeLoggedSessions = new Set<string>()
   private subscribers = new Set<(e: HookEvent) => void>()
   private gateActive = false
+  // Count of request bodies currently being buffered (post-auth). Enforces
+  // MAX_CONCURRENT_BUFFERING so concurrent uploads can't exhaust memory.
+  private bufferingCount = 0
 
   constructor(opts: HooksGatewayOptions) {
     this.defaultPort = opts.defaultPort ?? DEFAULT_HOOKS_PORT
@@ -294,38 +306,77 @@ export class HooksGateway {
     // between calls. Hook events are low-frequency enough that the
     // per-request handshake cost is negligible.
     res.setHeader('Connection', 'close')
+
+    // Authenticate BEFORE buffering a single byte. The token rides in the
+    // `x-ccc-hook-token` header (not the body), so loopback origin + enabled +
+    // known sid + token can all be verified up front. A non-loopback or
+    // unauthenticated caller is rejected here and never makes the gateway buffer
+    // up to 4 MiB. (The held-open responder + ingest run only for authed
+    // requests below, after the body is read.)
+    const authFail = this.preBufferAuth({
+      remoteAddress: req.socket.remoteAddress,
+      url: req.url,
+      headers: req.headers as Record<string, string | string[] | undefined>,
+    })
+    if (authFail) {
+      res.statusCode = authFail.status
+      res.setHeader('content-type', 'application/json')
+      res.end(authFail.body)
+      return
+    }
+
+    // Concurrency cap: never let too many authed bodies buffer at once (memory
+    // guard). Reject early with 503 + destroy the socket; the caller (Claude's
+    // hook) falls back to its own flow and the event is simply absent from the
+    // feed, far better than OOMing the worker.
+    if (this.bufferingCount >= MAX_CONCURRENT_BUFFERING) {
+      logWarn(`[hooks] 503 too many concurrent hook bodies (>=${MAX_CONCURRENT_BUFFERING}) -- request rejected before buffering`)
+      res.statusCode = 503
+      res.setHeader('content-type', 'application/json')
+      res.end('{}', () => { req.destroy() })
+      return
+    }
+
     // Body-size cap: stream chunks into a running total, bail with 413
     // and destroy the socket as soon as the cap is exceeded. Avoids the
     // previous unbounded buffering path that a local process could abuse.
     const chunks: Buffer[] = []
     let total = 0
+    // bufferingCount is held for exactly the duration of the read so the
+    // concurrency cap reflects bodies in memory right now; the finally
+    // guarantees the decrement on every exit (success, 413, parse error).
+    this.bufferingCount++
     try {
-      for await (const c of req) {
-        const buf = c as Buffer
-        total += buf.length
-        if (total > MAX_REQUEST_BODY_BYTES) {
-          res.statusCode = 413
-          res.setHeader('content-type', 'application/json')
-          // Surface the gap: a 413 means CCC's feed silently misses this event.
-          // Log once per session so a recurring oversized payload (e.g. repeated
-          // edits to one huge file) is visible without flooding app.log.
-          const sid413 = parseSidFromUrl(req.url) ?? 'unknown'
-          if (!this.oversizeLoggedSessions.has(sid413)) {
-            this.oversizeLoggedSessions.add(sid413)
-            logWarn(`[hooks] 413 payload too large sid=${sid413} bytes>${MAX_REQUEST_BODY_BYTES} -- event dropped from feed (further 413s for this session suppressed)`)
+      try {
+        for await (const c of req) {
+          const buf = c as Buffer
+          total += buf.length
+          if (total > MAX_REQUEST_BODY_BYTES) {
+            res.statusCode = 413
+            res.setHeader('content-type', 'application/json')
+            // Surface the gap: a 413 means CCC's feed silently misses this event.
+            // Log once per session so a recurring oversized payload (e.g. repeated
+            // edits to one huge file) is visible without flooding app.log.
+            const sid413 = parseSidFromUrl(req.url) ?? 'unknown'
+            if (!this.oversizeLoggedSessions.has(sid413)) {
+              this.oversizeLoggedSessions.add(sid413)
+              logWarn(`[hooks] 413 payload too large sid=${sid413} bytes>${MAX_REQUEST_BODY_BYTES} -- event dropped from feed (further 413s for this session suppressed)`)
+            }
+            // Destroy the socket only after the 413 body has flushed, else
+            // a fast client may see a reset instead of a clean 413.
+            res.end('{}', () => { req.destroy() })
+            return
           }
-          // Destroy the socket only after the 413 body has flushed, else
-          // a fast client may see a reset instead of a clean 413.
-          res.end('{}', () => { req.destroy() })
-          return
+          chunks.push(buf)
         }
-        chunks.push(buf)
+      } catch {
+        res.statusCode = 400
+        res.setHeader('content-type', 'application/json')
+        res.end('{}')
+        return
       }
-    } catch {
-      res.statusCode = 400
-      res.setHeader('content-type', 'application/json')
-      res.end('{}')
-      return
+    } finally {
+      this.bufferingCount--
     }
     const body = Buffer.concat(chunks).toString('utf-8')
 
@@ -465,17 +516,31 @@ export class HooksGateway {
    * Public for unit tests only. Named with _test suffix so it doesn't
    * look like intended public API.
    */
-  async _handleRequestForTest(args: HandleArgs): Promise<HandleResult> {
+  /**
+   * Body-INDEPENDENT auth/routing gate: loopback origin, gateway enabled, a
+   * known session id, and a matching `x-ccc-hook-token` header. None of this
+   * needs the request body, so the live HTTP path runs it BEFORE buffering the
+   * body — an unauthenticated/non-loopback caller can never make the gateway
+   * buffer up to 4 MiB. Returns null when the request passes (proceed), else the
+   * exact HandleResult to send back.
+   */
+  private preBufferAuth(args: { remoteAddress: string | undefined; url: string | undefined; headers: Record<string, string | string[] | undefined> }): HandleResult | null {
     if (!isLoopback(args.remoteAddress)) return { status: 403, body: '{}' }
     if (!this._status.enabled) return { status: 503, body: '{}' }
-
     const sid = parseSidFromUrl(args.url)
     if (!sid) return { status: 404, body: '{}' }
     const expected = this.secrets.get(sid)
     if (!expected) return { status: 404, body: '{}' }
-
     const token = headerValue(args.headers, 'x-ccc-hook-token')
     if (token !== expected) return { status: 404, body: '{}' }
+    return null
+  }
+
+  async _handleRequestForTest(args: HandleArgs): Promise<HandleResult> {
+    const authFail = this.preBufferAuth(args)
+    if (authFail) return authFail
+
+    const sid = parseSidFromUrl(args.url)!   // preBufferAuth proved it's present
 
     // Reuse the body parsed once by the live HTTP path; only parse here when the
     // caller is the unit-test entrypoint (parsedBody undefined).

@@ -19,6 +19,15 @@ function getNotesDir(): string {
   return dir
 }
 
+// Note ids are renderer-supplied (generateId() => base36) and used as a filename
+// component (`${id}.enc`). Reject anything outside a strict charset so a crafted
+// id like `../../foo` can never escape secret_notes into an arbitrary fs path
+// (write/delete/decrypt-read primitive). Mirrors the intent of validateMemoryPath.
+const NOTE_ID_RE = /^[A-Za-z0-9_-]+$/
+function isValidNoteId(id: unknown): id is string {
+  return typeof id === 'string' && id.length > 0 && id.length <= 128 && NOTE_ID_RE.test(id)
+}
+
 function getIndexPath(): string {
   return join(getNotesDir(), 'index.json')
 }
@@ -46,6 +55,7 @@ export function registerNotesHandlers(): void {
   // Load and decrypt a single note's content
   ipcMain.handle('notes:load', async (_event, id: string) => {
     if (!safeStorage.isEncryptionAvailable()) return null
+    if (!isValidNoteId(id)) return null
     try {
       const filePath = join(getNotesDir(), `${id}.enc`)
       if (!existsSync(filePath)) return null
@@ -59,6 +69,7 @@ export function registerNotesHandlers(): void {
   // Save (create or update) a note — encrypts content
   ipcMain.handle('notes:save', async (_event, id: string, label: string, content: string, color: string, configId?: string) => {
     if (!safeStorage.isEncryptionAvailable()) return false
+    if (!isValidNoteId(id)) return false
     try {
       const notesDir = getNotesDir()
 
@@ -85,6 +96,7 @@ export function registerNotesHandlers(): void {
 
   // Delete a note
   ipcMain.handle('notes:delete', async (_event, id: string) => {
+    if (!isValidNoteId(id)) return false
     try {
       const filePath = join(getNotesDir(), `${id}.enc`)
       if (existsSync(filePath)) unlinkSync(filePath)

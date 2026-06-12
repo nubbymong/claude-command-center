@@ -37,6 +37,42 @@ export function sharedRoot(): string { return rootsOverride?.sharedRoot ?? path.
 export function getProfilesRoot(): string { return path.join(resourcesDir(), 'account-profiles') }
 export function getProfileConfigDir(id: string): string { return path.join(getProfilesRoot(), id) }
 
+// ── Credential file permissions (POSIX hardening) ──────────────────────────
+// `.credentials.json` holds live OAuth access/refresh tokens. Claude Code's own
+// copy is 0o600; CCC re-writes/copies it into the canonical identity dir, each
+// per-account home, and back to global. With the default umask (0o022) on macOS/
+// Linux those copies would land 0o644 (world-readable), letting any other local
+// user read the tokens. We chmod them to 0o600 (and credential dirs to 0o700).
+// On Windows fs mode bits are ignored, so these are cheap no-ops there.
+const IS_POSIX = process.platform !== 'win32'
+const CRED_FILE_MODE = 0o600
+const CRED_DIR_MODE = 0o700
+
+/** chmod a just-written/copied credential FILE to 0o600 on POSIX (no-op on Win). */
+function hardenCredentialFile(file: string): void {
+  if (!IS_POSIX) return
+  try { fs.chmodSync(file, CRED_FILE_MODE) } catch { /* best-effort */ }
+}
+/** chmod a credential-containing dir (a `.claude/`) to 0o700 on POSIX. */
+function hardenCredentialDir(dir: string): void {
+  if (!IS_POSIX) return
+  try { fs.chmodSync(dir, CRED_DIR_MODE) } catch { /* best-effort */ }
+}
+/** Atomic write of a credential file with a restrictive 0o600 mode (POSIX),
+ *  creating parent dirs (subsumes the old plain atomicWriteFile). */
+function writeCredentialFile(file: string, data: string): void {
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  const tmp = file + '.tmp'
+  fs.writeFileSync(tmp, data, IS_POSIX ? { mode: CRED_FILE_MODE } : undefined)
+  fs.renameSync(tmp, file)
+  hardenCredentialFile(file)   // rename preserves the tmp's mode; re-assert to be safe
+}
+/** copyFileSync + chmod 0o600 (copy clones the source mode only loosely). */
+function copyCredentialFile(src: string, dest: string): void {
+  fs.copyFileSync(src, dest)
+  hardenCredentialFile(dest)
+}
+
 function profilesMetaFile(): string { return path.join(getProfilesRoot(), 'profiles.json') }
 
 export function listProfiles(): AccountProfile[] {
@@ -343,7 +379,7 @@ export function cleanupSessionHomes(): void {
     const home = getProfileConfigDir(profileId)
     try { fs.writeFileSync(path.join(home, '.claude.json'), cand.claudeJson) } catch { /* best-effort */ }
     if (cand.credentials != null) {
-      try { const cd = path.join(home, '.claude'); fs.mkdirSync(cd, { recursive: true }); fs.writeFileSync(path.join(cd, '.credentials.json'), cand.credentials) } catch { /* best-effort */ }
+      try { const cd = path.join(home, '.claude'); fs.mkdirSync(cd, { recursive: true }); hardenCredentialDir(cd); writeCredentialFile(path.join(cd, '.credentials.json'), cand.credentials) } catch { /* best-effort */ }
     }
   }
 
@@ -399,9 +435,7 @@ export function writeCanonicalIdentity(
     fs.renameSync(f + '.tmp', f)
   }
   if (files.credentials != null) {
-    const f = path.join(dir, '.credentials.json')
-    fs.writeFileSync(f + '.tmp', files.credentials)
-    fs.renameSync(f + '.tmp', f)
+    writeCredentialFile(path.join(dir, '.credentials.json'), files.credentials)
   }
 }
 
@@ -429,7 +463,8 @@ export function captureGlobalLogin(name?: string): AccountProfile | null {
     if (credentials != null) {
       const claudeDir = path.join(home, '.claude')
       fs.mkdirSync(claudeDir, { recursive: true })
-      fs.writeFileSync(path.join(claudeDir, '.credentials.json'), credentials)
+      hardenCredentialDir(claudeDir)
+      writeCredentialFile(path.join(claudeDir, '.credentials.json'), credentials)
     }
     const updated: AccountProfile = { ...profile, accountEmail: email, name: name?.trim() || '' }
     upsertProfile(updated)
@@ -501,7 +536,8 @@ export function restoreProfileHomeFromCanonical(id: string): boolean {
   if (fs.existsSync(srcCred)) {
     const claudeDir = path.join(home, '.claude')
     fs.mkdirSync(claudeDir, { recursive: true })
-    fs.copyFileSync(srcCred, path.join(claudeDir, '.credentials.json'))
+    hardenCredentialDir(claudeDir)
+    copyCredentialFile(srcCred, path.join(claudeDir, '.credentials.json'))
   }
   return true
 }
@@ -532,14 +568,6 @@ export function backupProfileHomeToCanonical(id: string): void {
 }
 
 export type PrimaryCredentialSyncResult = 'none' | 'profile->global' | 'global->profile'
-
-/** Atomic file write (tmp + rename), creating parent dirs. */
-function atomicWriteFile(file: string, data: string): void {
-  fs.mkdirSync(path.dirname(file), { recursive: true })
-  const tmp = file + '.tmp'
-  fs.writeFileSync(tmp, data)
-  fs.renameSync(tmp, file)
-}
 
 function readFileMaybe(file: string): string | undefined {
   try { return fs.readFileSync(file, 'utf8') } catch { return undefined }
@@ -591,11 +619,11 @@ export function syncPrimaryCredentialsWithGlobal(): PrimaryCredentialSyncResult 
     const globalExp = credentialExpiry(globalCred)
 
     if (profCred != null && profExp > globalExp) {
-      atomicWriteFile(globalCredPath, profCred)
+      writeCredentialFile(globalCredPath, profCred)
       return 'profile->global'
     }
     if (globalCred != null && globalExp > profExp) {
-      atomicWriteFile(profCredPath, globalCred)
+      writeCredentialFile(profCredPath, globalCred)
       // Keep canonical in lockstep with the externally-refreshed token.
       try { writeCanonicalIdentity(primaryId, { credentials: globalCred }) } catch { /* best-effort */ }
       return 'global->profile'
@@ -625,7 +653,8 @@ export function captureDetectedAccount(profileId: string, name?: string): Accoun
     fs.writeFileSync(path.join(npHome, '.claude.json'), claudeJson)
     if (credentials != null) {
       const cd = path.join(npHome, '.claude'); fs.mkdirSync(cd, { recursive: true })
-      fs.writeFileSync(path.join(cd, '.credentials.json'), credentials)
+      hardenCredentialDir(cd)
+      writeCredentialFile(path.join(cd, '.credentials.json'), credentials)
     }
     const updated: AccountProfile = { ...np, accountEmail: email }
     upsertProfile(updated)

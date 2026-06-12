@@ -125,4 +125,35 @@ describe('backupRealClaudeOnce', () => {
     expect(fs.existsSync(path.join(dest, '.claude.json'))).toBe(true)
     expect(fs.existsSync(path.join(dest, '.claude'))).toBe(false)
   })
+
+  it('writes a completion marker recording what was captured', () => {
+    const dest = backupRealClaudeOnce({ homeDir, resourcesDir })!
+    const marker = path.join(dest, '.backup-complete.json')
+    expect(fs.existsSync(marker)).toBe(true)
+    const m = JSON.parse(fs.readFileSync(marker, 'utf8'))
+    expect(m.present).toContain('.claude.json')
+    expect(m.present).toContain('.claude/.credentials.json')
+    expect(typeof m.capturedAt).toBe('number')
+  })
+
+  it('only publishes the snapshot via the atomic initial/ dir (no bare half-written dir)', () => {
+    backupRealClaudeOnce({ homeDir, resourcesDir })
+    // staging dir must be gone after a successful publish
+    expect(fs.existsSync(path.join(resourcesDir, 'claude-config-backups', 'initial.tmp'))).toBe(false)
+    expect(fs.existsSync(path.join(resourcesDir, 'claude-config-backups', 'initial'))).toBe(true)
+  })
+
+  it('clears a stale initial.tmp from a prior crashed attempt and still succeeds', () => {
+    // Simulate a half-written staging dir left by a crash before the rename.
+    const staging = path.join(resourcesDir, 'claude-config-backups', 'initial.tmp')
+    fs.mkdirSync(staging, { recursive: true })
+    fs.writeFileSync(path.join(staging, 'garbage'), 'leftover')
+
+    const dest = backupRealClaudeOnce({ homeDir, resourcesDir })!
+    expect(dest).toBeTruthy()
+    // The garbage from the stale attempt must NOT survive into the snapshot.
+    expect(fs.existsSync(path.join(dest, 'garbage'))).toBe(false)
+    expect(fs.existsSync(path.join(dest, '.claude.json'))).toBe(true)
+    expect(fs.existsSync(staging)).toBe(false)
+  })
 })

@@ -410,6 +410,9 @@ export interface TkIndexStatus {
   filesTotal: number
   eventsTotal: number
   lastIndexAt: number | null
+  /** Non-null when the worker reported a fatal/uncorrelated error (e.g. a failed
+   *  DB open). The renderer surfaces this instead of an endless 'indexing' state. */
+  error?: string | null
 }
 
 export interface TkSummaryFilter { configId?: string | null; from?: number; to?: number; model?: string }

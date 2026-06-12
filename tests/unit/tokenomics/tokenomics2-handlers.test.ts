@@ -14,7 +14,8 @@ const win = { isDestroyed: () => false, webContents: { send: vi.fn() } }
 describe('tokenomics2 handlers', () => {
   beforeEach(() => {
     handlers.clear()
-    const progressSubs: any[] = []; const completeSubs: any[] = []
+    const progressSubs: any[] = []; const completeSubs: any[] = []; const errorSubs: any[] = []
+    win.webContents.send.mockClear()
     stubSup = {
       query: vi.fn(async (kind: string) => {
         if (kind === 'summary') return [{ kpis: {} }]
@@ -23,9 +24,11 @@ describe('tokenomics2 handlers', () => {
         if (kind === 'index-status') return [{ firstIndexComplete: true, indexing: false, filesDone: 1, filesTotal: 1, eventsTotal: 5, lastIndexAt: 1 }]
         return []
       }),
+      getIndexStatus: vi.fn(() => ({ firstIndexComplete: false, indexing: false, filesDone: 0, filesTotal: 0, eventsTotal: 0, lastIndexAt: null, error: 'open failed' })),
       onIndexProgress: (cb: any) => { progressSubs.push(cb); return () => {} },
       onIndexComplete: (cb: any) => { completeSubs.push(cb); return () => {} },
-      _progressSubs: progressSubs, _completeSubs: completeSubs,
+      onIndexError: (cb: any) => { errorSubs.push(cb); return () => {} },
+      _progressSubs: progressSubs, _completeSubs: completeSubs, _errorSubs: errorSubs,
     }
     registerTokenomics2Handlers(() => win as any)
   })
@@ -62,5 +65,17 @@ describe('tokenomics2 handlers', () => {
     stubSup._completeSubs[0]({ firstIndex: true, eventsTotal: 5 })
     expect(win.webContents.send).toHaveBeenCalledWith(IPC.TOKENOMICS2_INDEX_PROGRESS, expect.anything())
     expect(win.webContents.send).toHaveBeenCalledWith(IPC.TOKENOMICS2_INDEX_COMPLETE, expect.anything())
+  })
+
+  it('forwards an uncorrelated worker fault on the INDEX_STATUS channel', () => {
+    stubSup._errorSubs[0]({ firstIndexComplete: false, indexing: false, error: 'open failed', filesDone: 0, filesTotal: 0, eventsTotal: 0, lastIndexAt: null })
+    expect(win.webContents.send).toHaveBeenCalledWith(IPC.TOKENOMICS2_INDEX_STATUS, expect.objectContaining({ error: 'open failed', indexing: false }))
+  })
+
+  it('indexStatus falls back to the supervisor status (with error) when the worker query rejects', async () => {
+    stubSup.query = vi.fn(async () => { throw new Error('worker not ready') })
+    const r = await handlers.get(IPC.TOKENOMICS2_INDEX_STATUS)!({}, undefined)
+    expect(r.error).toBe('open failed')
+    expect(r.indexing).toBe(false)
   })
 })

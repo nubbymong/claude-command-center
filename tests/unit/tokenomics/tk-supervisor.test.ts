@@ -58,6 +58,38 @@ describe('TokenomicsSupervisor', () => {
     await expect(sup.query('summary', {})).rejects.toThrow(/timed out/)
   })
 
+  it('surfaces an uncorrelated worker error as a fatal index status (stops indexing)', () => {
+    const t = new FakeTkWorkerTransport()
+    // Emulate a failed DB open: worker stays alive, never posts `ready`, and
+    // posts an UNcorrelated error (no id).
+    t.onWorker((m) => { if (m.type === 'open') t.emitToMain({ type: 'error', message: 'open failed: disk I/O error' }) })
+    const sup = new TokenomicsSupervisor({ forkChild: (() => ({ transport: t, kill: () => {}, onExit: () => {} })) as any, ...baseOpts() })
+    const errs: any[] = []
+    sup.onIndexError((s) => errs.push(s))
+    sup.start()
+    expect(errs).toHaveLength(1)
+    expect(errs[0].error).toMatch(/open failed/)
+    const status = sup.getIndexStatus()
+    expect(status.error).toMatch(/open failed/)
+    expect(status.indexing).toBe(false)          // no perpetual spinner
+    expect(status.firstIndexComplete).toBe(false)
+  })
+
+  it('a correlated error still rejects its query and is NOT treated as fatal', async () => {
+    const t = new FakeTkWorkerTransport()
+    t.onWorker((m) => {
+      if (m.type === 'open') t.emitToMain({ type: 'ready' })
+      if (m.type === 'query') t.emitToMain({ type: 'error', id: m.id, message: 'bad query' })
+    })
+    const sup = new TokenomicsSupervisor({ forkChild: (() => ({ transport: t, kill: () => {}, onExit: () => {} })) as any, ...baseOpts() })
+    const errs: any[] = []
+    sup.onIndexError((s) => errs.push(s))
+    sup.start()
+    await expect(sup.query('summary', {})).rejects.toThrow(/bad query/)
+    expect(errs).toHaveLength(0)
+    expect(sup.getIndexStatus().error ?? null).toBe(null)
+  })
+
   it('shutdown rejects pending queries and is safe', async () => {
     const t = new FakeTkWorkerTransport()
     t.onWorker((m) => { if (m.type === 'open') t.emitToMain({ type: 'ready' }) })

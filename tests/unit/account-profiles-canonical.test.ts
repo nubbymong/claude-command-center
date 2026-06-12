@@ -26,4 +26,18 @@ describe('canonical identity store', () => {
     expect(fs.existsSync(path.join(dir, '.credentials.json'))).toBe(true)
     expect(readCanonicalIdentityEmail(p.id)).toBe('a@work.com')
   })
+
+  // POSIX: the credential file must be 0o600 (not world-readable). Mode bits are
+  // ignored on Windows, so this only runs off-Win32.
+  const posixIt = process.platform === 'win32' ? it.skip : it
+  posixIt('writes .credentials.json with restrictive 0o600 mode on POSIX', () => {
+    const p = createProfile('Sec')
+    writeCanonicalIdentity(p.id, {
+      claudeJson: JSON.stringify({ oauthAccount: { emailAddress: 's@sec.com' } }),
+      credentials: '{"token":"secret"}',
+    })
+    const credFile = path.join(getAccountIdentityDir(p.id), '.credentials.json')
+    const mode = fs.statSync(credFile).mode & 0o777
+    expect(mode).toBe(0o600)
+  })
 })
