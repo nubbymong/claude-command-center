@@ -238,6 +238,21 @@ export interface TranscriptsDb {
    */
   checkpoint(): void
 
+  /**
+   * One row per sessionId: lastActive = MAX(COALESCE(endedAt, startedAt)) across
+   * all runs for the session; projectCwd comes from the session's LATEST run
+   * (same no-bare-column-with-MAX discipline as listSlots). Ordered by lastActive
+   * DESC. Used by the Memory page to show recent sessions for a project.
+   */
+  sessionActivity(): Array<{ sessionId: string; lastActive: number; projectCwd: string | null }>
+
+  /**
+   * Returns the configId of the latest run for sessionId, or null when the
+   * session exists but has no configId. Returns null (not a wrapped object) when
+   * no run for sessionId exists at all.
+   */
+  sessionConfig(sessionId: string): { configId: string | null } | null
+
   close(): void
 }
 
@@ -666,6 +681,26 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
     ORDER BY g.lastActive DESC
   `)
 
+  // ---- session activity (Memory page: recent sessions per project) ----
+  // Grouped per sessionId; lastActive mirrors listSlots' MAX(COALESCE(endedAt,
+  // startedAt)); projectCwd comes from the session's LATEST run (explicit
+  // subquery — same no-bare-column-with-MAX discipline as listSlots).
+  const stmtSessionActivity: Statement = sqlite.prepare(`
+    WITH grouped AS (
+      SELECT sessionId, MAX(COALESCE(endedAt, startedAt)) AS lastActive
+      FROM runs GROUP BY sessionId
+    )
+    SELECT g.sessionId AS sessionId, g.lastActive AS lastActive, lr.projectCwd AS projectCwd
+    FROM grouped g
+    JOIN runs lr ON lr.runId = (
+      SELECT runId FROM runs WHERE sessionId = g.sessionId ORDER BY startedAt DESC, runId DESC LIMIT 1
+    )
+    ORDER BY g.lastActive DESC
+  `)
+  const stmtSessionConfig: Statement = sqlite.prepare(
+    `SELECT configId FROM runs WHERE sessionId = ? ORDER BY startedAt DESC, runId DESC LIMIT 1`,
+  )
+
   // ---- deletes ----
   const stmtCountMessagesByConfig: Statement = sqlite.prepare(
     `SELECT COUNT(*) AS c FROM messages m JOIN runs r ON r.runId = m.runId WHERE r.configId = ?`,
@@ -892,6 +927,15 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
 
     checkpoint() {
       sqlite.pragma('wal_checkpoint(TRUNCATE)')
+    },
+
+    sessionActivity() {
+      return stmtSessionActivity.all() as Array<{ sessionId: string; lastActive: number; projectCwd: string | null }>
+    },
+
+    sessionConfig(sessionId: string) {
+      const row = stmtSessionConfig.get(sessionId) as { configId: string | null } | undefined
+      return row ?? null
     },
 
     close() {
