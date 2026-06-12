@@ -7,6 +7,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 // ── Mock electronAPI.tokenomics ──────────────────────────────────────────────
 const progressCbs: any[] = []
 const completeCbs: any[] = []
+const statusCbs: any[] = []
 
 const tk = {
   indexStatus: vi.fn(async () => ({
@@ -31,6 +32,7 @@ const tk = {
       : { rows: [{ sessionId: 's1' }], nextCursor: { lastTs: 10, sessionId: 's1' } }
   ),
   sessionDetail: vi.fn(async (id: string) => ({ sessionId: id, byModel: [] })),
+  onIndexStatus: vi.fn((cb: any) => { statusCbs.push(cb); return () => {} }),
   onIndexProgress: vi.fn((_cb: any) => () => {}),
   onIndexComplete: vi.fn((cb: any) => { completeCbs.push(cb); return () => {} }),
 }
@@ -70,6 +72,7 @@ describe('tokenomicsStore', () => {
     vi.clearAllMocks()
     progressCbs.length = 0
     completeCbs.length = 0
+    statusCbs.length = 0
   })
 
   // ── init ──────────────────────────────────────────────────────────────────
@@ -110,6 +113,35 @@ describe('tokenomicsStore', () => {
       await useTokenomicsStore.getState().init()
       expect(tk.onIndexProgress).toHaveBeenCalledTimes(1)
       expect(tk.onIndexComplete).toHaveBeenCalledTimes(1)
+    })
+
+    it('mirrors a pushed fatal index error into store error state', async () => {
+      await useTokenomicsStore.getState().init()
+      expect(tk.onIndexStatus).toHaveBeenCalledTimes(1)
+      statusCbs.at(-1)!({
+        firstIndexComplete: false, indexing: false, filesDone: 0, filesTotal: 0,
+        eventsTotal: 0, lastIndexAt: null, error: 'db open failed',
+      })
+      const s = useTokenomicsStore.getState()
+      expect(s.error).toBe('db open failed')
+      expect(s.indexStatus?.error).toBe('db open failed')
+    })
+
+    it('mirrors error from the INITIAL indexStatus fetch', async () => {
+      tk.indexStatus.mockResolvedValueOnce({
+        firstIndexComplete: false, indexing: false, filesDone: 0, filesTotal: 0,
+        eventsTotal: 0, lastIndexAt: null, error: 'boot fail',
+      } as any)
+      await useTokenomicsStore.getState().init()
+      expect(useTokenomicsStore.getState().error).toBe('boot fail')
+    })
+
+    it('refreshIndexStatus re-fetches and clears a stale error on healthy status', async () => {
+      useTokenomicsStore.setState({ error: 'old failure' })
+      await useTokenomicsStore.getState().refreshIndexStatus()
+      const s = useTokenomicsStore.getState()
+      expect(s.error).toBeNull()
+      expect(s.indexStatus?.firstIndexComplete).toBe(true)
     })
 
     it('stores unsub fns in _unsubs', async () => {
