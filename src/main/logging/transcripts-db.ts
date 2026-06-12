@@ -108,6 +108,17 @@ export interface TranscriptsDb {
   /** Close the LATEST OPEN run (status='running') for sessionId; no-op if none. */
   closeRun(sessionId: string, endedAt: number, status: string): void
 
+  /** runId of the LATEST OPEN run (status='running') for sessionId, or null when
+   *  none. Lets run-start find a prior un-closed run (live-restart race OR a
+   *  boot-resurrected orphan whose in-memory sessionToRun entry is empty) so it
+   *  can retire it before opening the new one. */
+  getOpenRunId(sessionId: string): number | null
+
+  /** Close EVERY open run (status='running') with the given endedAt + status,
+   *  returning their runIds. Called by the worker on a clean shutdown so live
+   *  runs are finalized (not left 'running' to be resurrected next boot). */
+  closeAllOpenRuns(endedAt: number, status: string): number[]
+
   /** Set accountEmail on the latest open run for sessionId; no-op if none. */
   setRunAccount(sessionId: string, accountEmail: string): void
 
@@ -494,6 +505,18 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
     `UPDATE runs SET status = 'running', endedAt = NULL WHERE runId = ?`,
   )
 
+  // Latest open run id for a session (run-start uses this to retire a prior
+  // un-closed run; identical ordering to latestOpenRunSubquery).
+  const stmtGetOpenRunId: Statement = sqlite.prepare(`
+    SELECT runId FROM runs WHERE sessionId = ? AND status = 'running'
+    ORDER BY startedAt DESC, runId DESC LIMIT 1
+  `)
+  // All currently open run ids (clean-shutdown finalization).
+  const stmtListOpenRunIds: Statement = sqlite.prepare(`SELECT runId FROM runs WHERE status = 'running'`)
+  const stmtCloseRunById: Statement = sqlite.prepare(
+    `UPDATE runs SET endedAt = @endedAt, status = @status WHERE runId = @runId`,
+  )
+
   const stmtGetRunScope: Statement = sqlite.prepare(`SELECT sessionId, configId FROM runs WHERE runId = ?`)
 
   const stmtLastMessageTs: Statement = sqlite.prepare(`SELECT MAX(ts) AS t FROM messages WHERE runId = ?`)
@@ -774,6 +797,17 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
 
     closeRun(sessionId, endedAt, status) {
       stmtCloseRun.run({ sessionId, endedAt, status })
+    },
+
+    getOpenRunId(sessionId) {
+      const row = stmtGetOpenRunId.get(sessionId) as { runId: number } | undefined
+      return row ? row.runId : null
+    },
+
+    closeAllOpenRuns(endedAt, status) {
+      const rows = stmtListOpenRunIds.all() as { runId: number }[]
+      for (const r of rows) stmtCloseRunById.run({ runId: r.runId, endedAt, status })
+      return rows.map((r) => r.runId)
     },
 
     setRunAccount(sessionId, accountEmail) {

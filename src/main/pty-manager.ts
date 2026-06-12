@@ -1,6 +1,7 @@
 import { BrowserWindow } from 'electron'
 import * as pty from 'node-pty'
 import { PasteQueue } from './paste-queue'
+import { runChunkedWrite, WRITE_CHUNK_SIZE, WRITE_CHUNK_DELAY } from './pty-chunked-write'
 import * as os from 'os'
 import { execSync } from 'child_process'
 import { logPtyOutput, isDebugModeEnabled } from './debug-capture'
@@ -1014,7 +1015,12 @@ export function spawnPty(
         ? `Set-Location '${escapedShellCwd}'`
         : `cd '${resolvedCwd.replace(/'/g, "'\\''")}' 2>/dev/null; clear`
       setTimeout(() => {
-        ptyProcess.write(cdCmd + '\r')
+        // Liveness guard: a kill / Restart / app-quit can land inside this 300ms
+        // window — writing to a dead or already-replaced PTY here would throw
+        // inside the timer (uncaught in main). Only write when our PTY is still
+        // the registered one.
+        if (ptySessions.get(sessionId)?.ptyProcess !== ptyProcess) return
+        try { ptyProcess.write(cdCmd + '\r') } catch { /* session died mid-launch */ }
       }, 300)
     } else {
       // Launch Claude Code interactive mode.
@@ -1219,7 +1225,11 @@ export function spawnPty(
         resumeUuid,
       })
       setTimeout(() => {
-        ptyProcess.write(escapedCmd + '\r')
+        // Liveness guard (see shell-only branch): the 300ms launch-write can race
+        // a kill / Restart / app-quit; writing to a dead/replaced PTY from this
+        // timer would crash main. Only write when our PTY is still registered.
+        if (ptySessions.get(sessionId)?.ptyProcess !== ptyProcess) return
+        try { ptyProcess.write(escapedCmd + '\r') } catch { /* session died mid-launch */ }
       }, 300)
     }
 
@@ -1351,6 +1361,13 @@ export function spawnPty(
       // P6: clear opt-in registration and per-session usage record.
       unregisterCodexReviewSession(sessionId)
       disposeCodexReviewUsage(sessionId)
+      // Locality fix: stop the Codex telemetry tail poller + drop the four
+      // per-session write buffers (pasteQueues / pendingWrites / recentWrites /
+      // sshOscBuffers) and the SSH flow on NATURAL exit too — previously only
+      // killPty did this, so a session whose process exited on its own (Codex
+      // exit/quit, crash) leaked the 2Hz full-file telemetry read + its maps
+      // until the tab was closed.
+      cleanupSessionResources(sessionId)
       // P8.8: clear spawn-time identity capture. Safe no-op for non-codex sessions.
       clearCodexSpawnIdentity(sessionId)
       // Phase R: clear spawn-time Claude account capture so the map can't grow unbounded.
@@ -1383,22 +1400,18 @@ export function spawnPty(
 }
 
 // Large writes to WinPTY/ConPTY can overflow the console input buffer,
-// causing truncation. Only chunk large writes (pastes); keystrokes go straight through.
-const WRITE_CHUNK_SIZE = 256
-const WRITE_CHUNK_DELAY = 12
-
-function writeChunked(ptyProcess: pty.IPty, data: string): void {
-  let offset = 0
-  const writeNext = () => {
-    if (offset >= data.length) return
-    const end = Math.min(offset + WRITE_CHUNK_SIZE, data.length)
-    ptyProcess.write(data.slice(offset, end))
-    offset = end
-    if (offset < data.length) {
-      setTimeout(writeNext, WRITE_CHUNK_DELAY)
-    }
-  }
-  writeNext()
+// causing truncation. Only chunk large writes (pastes); keystrokes go straight
+// through. Constants + the crash-safe loop live in pty-chunked-write.ts (pure,
+// unit-tested without the pty-manager dependency graph).
+function writeChunked(sessionId: string, ptyProcess: pty.IPty, data: string): void {
+  // R-010: re-check liveness each chunk (a respawn replaces the PTY under the
+  // same sessionId) and try/catch the write inside the helper, so a write to a
+  // killed/replaced PTY from the timer can never throw an uncaught exception in
+  // main. Mirrors writeEnvelopeChunked.
+  runChunkedWrite(data, {
+    write: (slice) => ptyProcess.write(slice),
+    isAlive: () => ptySessions.get(sessionId)?.ptyProcess === ptyProcess,
+  })
 }
 
 // Per-session FIFO paste queues for channel envelopes (P3.1).
@@ -1473,7 +1486,7 @@ export function writePty(sessionId: string, data: string): void {
     const session = ptySessions.get(sessionId)
     if (session) {
       if (data.length > WRITE_CHUNK_SIZE) {
-        writeChunked(session.ptyProcess, data)
+        writeChunked(sessionId, session.ptyProcess, data)
       } else {
         session.ptyProcess.write(data)
       }
@@ -1509,23 +1522,29 @@ export function resizePty(sessionId: string, cols: number, rows: number): void {
   }
 }
 
-export function killPty(sessionId: string): void {
-  const entry = ptySessions.get(sessionId)
-  if (entry) {
-    logInfo(`[pty] Killing PTY for session ${sessionId}`)
-    try { entry.ptyProcess.kill() } catch (err) {
-      logError(`[pty] Error killing PTY ${sessionId}:`, err)
-    }
-    ptySessions.delete(sessionId)
-  }
+/**
+ * Per-session resource + map hygiene shared by killPty (explicit kill) and the
+ * natural-exit onExit cleanup block. Idempotent — every step is a no-op when the
+ * entry is already absent — so it is safe to run on both paths (a user-kill fires
+ * killPty AND later the async onExit with weAreCurrent, and a natural exit fires
+ * only onExit). Consolidating here is what fixes the locality minors: codex
+ * telemetry + the four per-session buffers (pendingWrites / recentWrites /
+ * sshOscBuffers / pasteQueues) used to be cleaned only by killPty, leaking on
+ * naturally-exiting sessions.
+ */
+function cleanupSessionResources(sessionId: string): void {
   pendingWrites.delete(sessionId)
   recentWrites.delete(sessionId)
   sshOscBuffers.delete(sessionId)
+  pasteQueues.delete(sessionId)
   // T8b: drop any captured resume target so it can't leak into a future,
   // unrelated spawn of the same sessionId. The respawn path captures fresh
   // BEFORE calling killPty, so the just-captured target survives this clear.
   clearLastResumeTarget(sessionId)
-  // Stop Codex telemetry source if one was registered for this session.
+  // Stop Codex telemetry source if one was registered for this session. On a
+  // natural Codex exit (user typed exit/quit, Ctrl+D, crash) this is the ONLY
+  // place that stops the 500ms full-file-read tail poller — killPty isn't hit
+  // until the tab is closed, so without this the poller ran for the dead tab.
   const codexTel = codexTelemetrySources.get(sessionId)
   if (codexTel) {
     try { codexTel.stop() } catch { /* noop */ }
@@ -1537,7 +1556,20 @@ export function killPty(sessionId: string): void {
   const flow = sshFlows.get(sessionId)
   if (flow) {
     try { flow.destroy() } catch { /* noop */ }
+    sshFlows.delete(sessionId)
   }
+}
+
+export function killPty(sessionId: string): void {
+  const entry = ptySessions.get(sessionId)
+  if (entry) {
+    logInfo(`[pty] Killing PTY for session ${sessionId}`)
+    try { entry.ptyProcess.kill() } catch (err) {
+      logError(`[pty] Error killing PTY ${sessionId}:`, err)
+    }
+    ptySessions.delete(sessionId)
+  }
+  cleanupSessionResources(sessionId)
 }
 
 export function killAllPty(): void {

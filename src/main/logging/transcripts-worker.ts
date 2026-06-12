@@ -361,6 +361,27 @@ export function createTranscriptsWorker(
     post({ type: 'ready' })
   }
 
+  /**
+   * R-003: clean-shutdown finalization. Called ONLY from the 'shutdown' message
+   * handler (a genuine app quit), NOT from stop() — a worker-only restart kills
+   * the process WITHOUT a shutdown handshake, so those open runs must stay
+   * 'running' to be reopened by the next open(). Here we close every still-open
+   * run as 'exited' and final-drain + retire its tails, so PTY exits whose
+   * run-end the async before-quit ordering never delivered don't leave
+   * transcripts 'tailing' (which closeDanglingRuns→reopenRun would resurrect and
+   * double-tail on every subsequent boot).
+   */
+  function finalizeOpenRunsForShutdown(): void {
+    if (!db) return
+    try {
+      for (const runId of db.closeAllOpenRuns(Date.now(), 'exited')) {
+        stopTailsForRun(runId, 'complete')
+      }
+    } catch {
+      /* best-effort — never block shutdown */
+    }
+  }
+
   function stop(): void {
     if (tailTimer) {
       clearInterval(tailTimer)
@@ -477,6 +498,10 @@ export function createTranscriptsWorker(
         return
 
       case 'shutdown':
+        // R-003: a genuine app quit (distinct from a worker-only kill, which
+        // never sends 'shutdown') — finalize live runs BEFORE closing the DB so
+        // they aren't left 'tailing' and resurrected next boot.
+        finalizeOpenRunsForShutdown()
         stop()
         // Let the process exit naturally; the supervisor awaits/kills it.
         return
@@ -494,6 +519,22 @@ export function createTranscriptsWorker(
 
     switch (msg.type) {
       case 'run-start': {
+        // Authoritative run-start: a prior run for this sessionId that never got
+        // a run-end (the in-session Restart / Switch-account race where the
+        // respawn IPC beat the old PTY's async exit — R-002 — OR a boot-
+        // resurrected orphan whose sessionToRun entry was intentionally not
+        // repopulated — R-003) must be retired BEFORE the new run opens, or the
+        // old transcript stays 'tailing' and the same file is ingested twice.
+        // Look the prior run up in the in-memory map first (live restart), then
+        // fall back to the DB (resurrected orphan). closeRun targets the latest
+        // open run for the session, which is exactly this prior run (the new run
+        // is not inserted yet).
+        const priorRunId = sessionToRun.get(msg.meta.sessionId) ?? db.getOpenRunId(msg.meta.sessionId)
+        if (priorRunId !== undefined && priorRunId !== null) {
+          stopTailsForRun(priorRunId, 'complete')
+          db.closeRun(msg.meta.sessionId, msg.meta.startedAt, 'exited')
+          sessionToRun.delete(msg.meta.sessionId)
+        }
         const runId = db.insertRun(msg.meta)
         sessionToRun.set(msg.meta.sessionId, runId)
         return

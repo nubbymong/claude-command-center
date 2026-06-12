@@ -154,6 +154,26 @@ describe('transcripts-db', () => {
     expect(rows.find((r) => r.runId === r2)).toMatchObject({ status: 'exited', endedAt: 999 })
   })
 
+  it('getOpenRunId returns the latest open run (null when none); closeAllOpenRuns closes every open run', () => {
+    const r1 = db.insertRun(runMeta({ startedAt: 100 }))
+    const r2 = db.insertRun(runMeta({ startedAt: 200 }))
+    // Latest open run for s1 is r2.
+    expect(db.getOpenRunId('s1')).toBe(r2)
+    expect(db.getOpenRunId('nobody')).toBeNull()
+
+    // closeAllOpenRuns finalizes both and returns their ids.
+    const closed = db.closeAllOpenRuns(777, 'exited').sort((a, b) => a - b)
+    expect(closed).toEqual([r1, r2].sort((a, b) => a - b))
+    const rows = inspect((raw) =>
+      raw.prepare(`SELECT runId, status, endedAt FROM runs ORDER BY runId`).all(),
+    ) as { runId: number; status: string; endedAt: number }[]
+    expect(rows.every((r) => r.status === 'exited' && r.endedAt === 777)).toBe(true)
+
+    // No open runs left → getOpenRunId null, closeAllOpenRuns a no-op (empty).
+    expect(db.getOpenRunId('s1')).toBeNull()
+    expect(db.closeAllOpenRuns(888, 'exited')).toEqual([])
+  })
+
   // -------------------------------------------------------------------------
   // 4. bindTranscript upsert + ord assignment
   // -------------------------------------------------------------------------

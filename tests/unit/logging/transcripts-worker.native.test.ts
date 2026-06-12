@@ -444,17 +444,26 @@ describe('transcripts-worker', () => {
     expect(msg.content).toBe('written-just-before-exit')
   })
 
-  it('two run-starts for one session without a run-end: bind + run-end target the LATEST run', () => {
+  it('R-002: a second run-start for one session AUTHORITATIVELY closes the prior open run (no double-tail)', () => {
+    // In-session Restart / Switch-account reuses the sessionId: the respawn's
+    // run-start can land before the old PTY's async exit delivers run-end. The
+    // new run-start must retire the prior run (status='exited') so its transcript
+    // does not stay 'tailing' and get ingested a second time.
     const h = makeWorker()
     h.send({ type: 'open', dbPath })
     expect(h.out.some((m) => m.type === 'ready')).toBe(true)
 
-    // First run-start for 's1' (runId A).
+    // First run-start for 's1' (runId A) + bind a live transcript that is tailing.
     h.send({
       type: 'run-start',
       meta: { sessionId: 's1', configId: 'cfg1', configLabel: 'APP', provider: 'claude', startedAt: 100 },
     })
-    // Second run-start for the SAME session, NO run-end between (runId B).
+    const tPath = join(dir, 't1.jsonl')
+    writeFileSync(tPath, jl('user', 'on-run-a'))
+    h.send({ type: 'transcript-bind', sessionId: 's1', path: tPath, confidence: 'exact' })
+    h.worker.tickNow()
+
+    // Second run-start for the SAME session, NO run-end between (the race, runId B).
     h.send({
       type: 'run-start',
       meta: { sessionId: 's1', configId: 'cfg1', configLabel: 'APP', provider: 'claude', startedAt: 200 },
@@ -464,27 +473,114 @@ describe('transcripts-worker', () => {
       raw.prepare('SELECT runId, startedAt FROM runs ORDER BY runId').all(),
     ) as { runId: number; startedAt: number }[]
     expect(runIds).toHaveLength(2)
-    const runB = runIds[1].runId // the latest run-start
+    const runA = runIds[0].runId
+    const runB = runIds[1].runId
 
-    // transcript-bind must attach to runId B (the in-memory sessionToRun map's latest).
-    const tPath = join(dir, 't1.jsonl')
-    writeFileSync(tPath, jl('user', 'on-latest-run'))
+    // Prior run A is now CLOSED ('exited'), not left 'running'.
+    const aStatus = inspect((raw) => raw.prepare('SELECT status FROM runs WHERE runId = ?').get(runA)) as {
+      status: string
+    }
+    expect(aStatus.status).toBe('exited')
+    // Run A's transcript is retired ('complete'), so the worker no longer tails it.
+    const aTranscript = inspect((raw) =>
+      raw.prepare('SELECT status FROM transcripts WHERE runId = ?').get(runA),
+    ) as { status: string }
+    expect(aTranscript.status).toBe('complete')
+
+    // The respawn binds the SAME file to run B; further appends ingest ONCE (run B
+    // only), not twice. Before the fix, run A's stale tail would also ingest them.
+    appendFileSync(tPath, jl('assistant', 'after-restart'))
     h.send({ type: 'transcript-bind', sessionId: 's1', path: tPath, confidence: 'exact' })
     h.worker.tickNow()
 
-    const boundRunId = inspect((raw) => raw.prepare('SELECT runId FROM transcripts').get()) as { runId: number }
-    expect(boundRunId.runId).toBe(runB)
-    const msgRunId = inspect((raw) => raw.prepare('SELECT runId FROM messages').get()) as { runId: number }
-    expect(msgRunId.runId).toBe(runB)
+    const afterRows = inspect((raw) =>
+      raw.prepare("SELECT runId FROM messages WHERE content = 'after-restart'").all(),
+    ) as { runId: number }[]
+    expect(afterRows).toHaveLength(1)
+    expect(afterRows[0].runId).toBe(runB)
+  })
 
-    // run-end closes runId B (the latest open run); runId A stays running.
-    h.send({ type: 'run-end', sessionId: 's1', ts: 999, status: 'exited' })
+  it('R-003: the shutdown MESSAGE finalizes still-open runs as exited and retires their tails (clean quit)', () => {
+    // On a clean app quit the worker receives the `shutdown` message. Any run
+    // whose PTY exit never delivered a run-end (async before-quit ordering) must
+    // be closed here, not left 'running' to be resurrected + double-tailed next
+    // boot. (A worker-only kill does NOT send shutdown — see the resume tests.)
+    const h = makeWorker()
+    bootWithRun(h) // opens DB + run-start for s1
+    const tPath = join(dir, 't1.jsonl')
+    writeFileSync(tPath, jl('user', 'live-at-quit'))
+    h.send({ type: 'transcript-bind', sessionId: 's1', path: tPath, confidence: 'exact' })
+    h.worker.tickNow()
+
+    // Clean app quit.
+    h.send({ type: 'shutdown' })
+
+    const run = inspect((raw) => raw.prepare('SELECT status, endedAt FROM runs').get()) as {
+      status: string
+      endedAt: number | null
+    }
+    expect(run.status).toBe('exited')
+    expect(run.endedAt).not.toBeNull()
+    const t = inspect((raw) => raw.prepare('SELECT status FROM transcripts').get()) as { status: string }
+    expect(t.status).toBe('complete')
+  })
+
+  it('R-003: a worker-only kill (stop(), no shutdown message) leaves open runs RUNNING for resume', () => {
+    // Guards the app-quit vs worker-restart distinction: stop() alone must NOT
+    // finalize runs, or a worker crash/restart would wrongly mark live runs
+    // exited (and the resume loop would not reopen them).
+    const h = makeWorker()
+    bootWithRun(h)
+    const tPath = join(dir, 't1.jsonl')
+    writeFileSync(tPath, jl('user', 'still-live'))
+    h.send({ type: 'transcript-bind', sessionId: 's1', path: tPath, confidence: 'exact' })
+    h.worker.tickNow()
+
+    h.worker.stop() // worker-only death — NO shutdown message
+
+    const run = inspect((raw) => raw.prepare('SELECT status, endedAt FROM runs').get()) as {
+      status: string
+      endedAt: number | null
+    }
+    expect(run).toEqual({ status: 'running', endedAt: null })
+  })
+
+  it('R-003: a boot-resurrected orphan (resumed tail, no sessionToRun entry) is closed by the next run-start', () => {
+    // closeDanglingRuns marks a crashed run, then the resume loop reopens it to
+    // 'running' + re-tails — but sessionToRun is intentionally NOT repopulated.
+    // The next run-start for that session must STILL close the orphan (DB lookup),
+    // or the resumed orphan and the new run both tail the same file.
+    const seed = openTranscriptsDb(dbPath)
+    const orphan = seed.insertRun({ sessionId: 's1', configId: 'cfg1', configLabel: 'APP', provider: 'claude', startedAt: 50 })
+    const tPath = join(dir, 't1.jsonl')
+    writeFileSync(tPath, jl('user', 'pre-crash'))
+    const bound = seed.bindTranscript(orphan, tPath, { confidence: 'exact', parserVersion: 1 })
+    seed.setTranscriptStatus(bound.transcriptId, 'tailing') // resumable on next open
+    seed.close()
+
+    const h = makeWorker()
+    h.send({ type: 'open', dbPath }) // closeDanglingRuns -> reopenRun resurrects the orphan tail
+    expect(h.out.some((m) => m.type === 'ready')).toBe(true)
+
+    // The respawn's run-start arrives (sessionToRun is empty for s1 here).
+    h.send({
+      type: 'run-start',
+      meta: { sessionId: 's1', configId: 'cfg1', configLabel: 'APP', provider: 'claude', startedAt: 200 },
+    })
+
     const rows = inspect((raw) => raw.prepare('SELECT runId, status FROM runs ORDER BY runId').all()) as {
       runId: number
       status: string
     }[]
-    expect(rows.find((r) => r.runId === runB)!.status).toBe('exited')
-    expect(rows.find((r) => r.runId === runIds[0].runId)!.status).toBe('running')
+    expect(rows).toHaveLength(2)
+    // The orphan (runId = orphan) is closed; only the new run stays running.
+    expect(rows.find((r) => r.runId === orphan)!.status).toBe('exited')
+    expect(rows.find((r) => r.runId !== orphan)!.status).toBe('running')
+    // Its transcript is retired so the worker stops double-tailing it.
+    const t = inspect((raw) => raw.prepare('SELECT status FROM transcripts WHERE runId = ?').get(orphan)) as {
+      status: string
+    }
+    expect(t.status).toBe('complete')
   })
 
   it('run-account sets accountEmail on the open run', () => {
