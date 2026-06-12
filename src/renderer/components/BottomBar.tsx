@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { useSettingsStore } from '../stores/settingsStore'
+import { useConfigHealthStore } from '../stores/configHealthStore'
+import { retryFailedConfigSaves } from '../utils/config-saver'
 import { ViewType } from '../types/views'
 import MultiAccountStatusline from './MultiAccountStatusline'
 
@@ -26,6 +28,7 @@ interface BottomBarProps {
 export default function BottomBar({ currentView, onViewChange, onUpdateRequested }: BottomBarProps) {
   void currentView
   const channel = useSettingsStore((s) => s.settings.updateChannel)
+  const failedSaveKeys = useConfigHealthStore((s) => s.failedKeys)
 
   const [cliAvailable, setCliAvailable] = useState<boolean | null>(null)
   const [updateAvailable, setUpdateAvailable] = useState(false)
@@ -106,6 +109,16 @@ export default function BottomBar({ currentView, onViewChange, onUpdateRequested
             title="Update available -- click to install and restart"
           >
             Update
+          </button>
+        )}
+        {failedSaveKeys.length > 0 && (
+          <button
+            onClick={() => { void retryFailedConfigSaves() }}
+            className="px-1.5 py-px rounded-full text-[10px] font-medium focus-ring"
+            style={{ color: 'var(--status-danger)', background: 'color-mix(in srgb, var(--status-danger) 15%, transparent)' }}
+            title={`Could not save to disk: ${failedSaveKeys.join(', ')} -- recent changes are not persisted. Click to retry.`}
+          >
+            Save failed
           </button>
         )}
       </div>

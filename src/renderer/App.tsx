@@ -48,6 +48,7 @@ import { useThemeController } from './hooks/useThemeController'
 import { useLaunchConfig } from './hooks/useLaunchConfig'
 import StageEmptyState from './components/StageEmptyState'
 import { markSessionForResumePicker } from './utils/resumePicker'
+import { flushPendingConfigSaves } from './utils/config-saver'
 import { migrateColorRecords } from './utils/migrateIdentityColors'
 import { gatherLocalStorageData, hydrateStores, applyConfigColourMigration } from './utils/configHydration'
 import { isGitHubOnboardingDue as isGitHubOnboardingDuePredicate } from './utils/githubOnboarding'
@@ -549,6 +550,9 @@ export default function App() {
     setIsClosing(true)
     if (isUpdate) setIsUpdating(true)
     try {
+      // Drain debounced config saves (DnD reorders, collapse toggles) made in
+      // the last ~300ms so they aren't lost with the renderer.
+      await flushPendingConfigSaves()
       // T8b (bug #5): enrich each session with its exact-conversation resume
       // target so this relaunch resumes the SAME conversation. Fail-safe: falls
       // back to the plain (sync) state if enrichment throws.
@@ -580,6 +584,7 @@ export default function App() {
     setIsClosing(true)
     if (isUpdate) setIsUpdating(true)
     try {
+      await flushPendingConfigSaves()
       await window.electronAPI.session.clear()
       console.log('[App] Session state cleared')
       if (isUpdate) {
@@ -600,7 +605,11 @@ export default function App() {
       if (isClosing) return
       const state = useSessionStore.getState()
       if (state.sessions.length === 0) {
-        window.electronAPI.window.allowClose()
+        // No dialog on the zero-session path, so drain pending debounced
+        // config saves here before letting the window die.
+        void flushPendingConfigSaves().finally(() => {
+          window.electronAPI.window.allowClose()
+        })
         return
       }
       setCloseDialog('close')
