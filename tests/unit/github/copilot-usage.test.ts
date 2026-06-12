@@ -208,6 +208,18 @@ describe('fetchAiUsage', () => {
     expect(logFn).toHaveBeenCalled() // one-time 404 log
   })
 
+  it('treats a 403 like 404 with the scope hint (fine-grained PATs lacking Plan: read return 403)', async () => {
+    const logFn = vi.fn()
+    const fetchImpl = vi.fn(async (url: unknown) =>
+      String(url).includes('/ai_credit/')
+        ? makeResp({}, 403)
+        : makeResp(PREMIUM_REQUEST_BILLED),
+    ) as unknown as typeof fetch
+    const report = await fetchAiUsage('octocat', { tokenFn, fetchImpl, logFn })
+    expect(report!.source).toBe('premium_request') // fallback still attempted
+    expect(String(logFn.mock.calls[0]?.[0] ?? '')).toContain('Plan: read')
+  })
+
   it('returns null when BOTH endpoints 404 (unscoped token, fail open)', async () => {
     const logFn = vi.fn()
     const fetchImpl = vi.fn(async () => makeResp({}, 404)) as unknown as typeof fetch

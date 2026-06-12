@@ -22,9 +22,9 @@ import { redactTokens } from './security/token-redactor'
  * Auth notes (consumed by the later UI batch, see registerAiUsage below):
  *   - classic tokens need the `user` scope
  *   - fine-grained PATs need Account permissions "Plan: read"
- *   - an unauthorized / unscoped token gets 404 here (NOT 403). We treat 404 as
- *     "scope missing or no access" and fail open (return null) rather than
- *     surfacing it as an error — the meter is best-effort.
+ *   - an unscoped CLASSIC token gets 404 here; an unscoped FINE-GRAINED PAT
+ *     gets 403. Both are treated as "scope missing or no access" and fail
+ *     open (return null) rather than surfacing an error — best-effort meter.
  *
  * Plan name / included-credit cap / budgets are NOT exposed for personal
  * accounts (org-only API), so the cap is a user setting (copilotIncludedCredits).
@@ -204,11 +204,13 @@ async function fetchEndpoint(
     return { kind: 'fail' }
   }
 
-  // 404 = unauthorized/unscoped token, or no access. Non-fatal: treat as
-  // "nothing here, try the fallback endpoint".
-  if (resp.status === 404) {
+  // Scope-missing comes back as 404 for CLASSIC tokens but 403 for
+  // FINE-GRAINED PATs lacking "Plan: read" (review catch on adad712) — the
+  // fine-grained path is the one our Settings copy recommends, so both must
+  // carry the scope hint. Non-fatal either way: try the fallback endpoint.
+  if (resp.status === 404 || resp.status === 403) {
     logOnce(
-      `${segment} usage returned 404 (token likely missing 'user' scope / 'Plan: read')`,
+      `${segment} usage returned ${resp.status} (token likely missing the 'user' scope (classic) / Account permission 'Plan: read' (fine-grained))`,
       opts.logFn,
     )
     return { kind: 'empty' }

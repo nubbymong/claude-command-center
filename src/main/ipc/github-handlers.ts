@@ -255,9 +255,12 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
   // --- AI-credits (Copilot) usage meter -------------------------------------
   // Best-effort, default-off. The scheduler refreshes the billed-usage report
   // every 60 min while enabled and pushes it over GITHUB_AI_USAGE_UPDATE. The
-  // login is resolved from the first available auth profile's token (the usage
+  // login is resolved from the FIRST available auth profile's token (the usage
   // endpoint is /users/{login}/... so we need the authenticated user's login);
   // the resolved login is cached per token so we don't re-hit /user each poll.
+  // KNOWN LIMITATION (review note on adad712): multi-GitHub-account users get
+  // the first profile's usage, not an "active" one — billing has no active-
+  // profile concept. Revisit if/when the meter grows an account picker.
   let aiUsageLoginCache: { token: string; login: string } | null = null
   async function resolveAiUsageTarget(): Promise<
     { login: string; tokenFn: () => Promise<string> } | null
