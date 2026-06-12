@@ -8,7 +8,7 @@ import { installWebglWithRecovery } from './terminal/terminalWebgl'
 import { useSessionStore } from '../stores/sessionStore'
 import { persistLastUsedAccount } from '../session-persistence'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
-import { useAccountGateStore } from '../stores/accountGateStore'
+import { useAccountGateStore, GATE_CANCELLED } from '../stores/accountGateStore'
 import { hasSpawned, markSpawned, killSessionPty } from '../ptyTracker'
 import SshFlowOverlay from './SshFlowOverlay'
 import { shouldUseResumePicker } from '../utils/resumePicker'
@@ -406,6 +406,12 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
             gate
               .requestChoice(sessionId, session?.label || '', session?.profileId)
               .then((chosen) => {
+                if (chosen === GATE_CANCELLED) {
+                  // User aborted the launch: no PTY exists yet (the gate blocks
+                  // before doSpawn), so closing is just removing the tab.
+                  useSessionStore.getState().removeSession(sessionId)
+                  return
+                }
                 // Persist the chosen account eagerly so a crash can't lose it
                 // (the gate pre-selects session.profileId on the next launch).
                 void persistLastUsedAccount(sessionId, chosen)

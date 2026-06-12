@@ -127,6 +127,11 @@ export interface AppSettings {
   /** When true (default), the Sentinel panel auto-opens once when a completed
    *  analysis finds open findings. Set false to suppress all automatic opens. */
   sentinelAutoOpen?: boolean
+  /** Account profile Sentinel's headless analysis runs under. null/absent =
+   *  the captured primary (never the bare global login when profiles exist —
+   *  the frozen global hangs at auth or carries stale usage limits). Switchable
+   *  in Settings when the chosen account hits its usage limit. */
+  sentinelAccountProfileId?: string | null
 }
 
 interface SettingsState {

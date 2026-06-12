@@ -109,6 +109,31 @@ export function setPrimaryProfile(id: string): void {
   saveProfiles(all)
 }
 
+/**
+ * Resolve the home dir for a HEADLESS claude spawn (Sentinel analysis, insights):
+ * preferred profile (when its dir exists) → captured primary → null (bare global,
+ * single-account installs only). Under capture-all the bare global login is
+ * frozen at capture time and never refreshes, so headless runs against it hang
+ * at auth / hit stale rate-limit state — the same "never bare-global when
+ * profiles exist" rule PTY spawns follow. Refreshes the profile's shared links
+ * before returning, like the PTY/cloud-agent paths.
+ */
+export function resolveHeadlessProfileHome(preferredProfileId?: string | null): {
+  home: string | null
+  profileId: string | null
+} {
+  let id: string | null = null
+  if (preferredProfileId && fs.existsSync(getProfileConfigDir(preferredProfileId))) {
+    id = preferredProfileId
+  } else {
+    const primary = getPrimaryProfileId()
+    if (primary && fs.existsSync(getProfileConfigDir(primary))) id = primary
+  }
+  if (!id) return { home: null, profileId: null }
+  try { setupProfileLinks(id) } catch { /* stale links are non-fatal; spawn proceeds */ }
+  return { home: getProfileConfigDir(id), profileId: id }
+}
+
 /** Create a fresh, EMPTY profile dir + shared junctions + metadata. The account
  *  email is filled in later by readProfileAccountEmail once the user runs /login
  *  under this profile's CLAUDE_CONFIG_DIR. Never copies credentials; never

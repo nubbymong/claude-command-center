@@ -189,9 +189,21 @@ export default function SentinelPanel() {
           </div>
         )}
 
-        {/* Body */}
+        {/* Body. Three honest empty states: in-progress, failed, clean. The old
+            single "looks compatible" line rendered DURING analysis and next to
+            a failure banner — both read as a finished green verdict. */}
         <div className="flex-1 overflow-y-auto px-5 py-3 space-y-4">
-          {!hasAny && (
+          {!hasAny && snap?.analyzing && (
+            <p className="text-xs text-overlay0 py-4 text-center">
+              Analyzing the Claude Code update… this can take a few minutes.
+            </p>
+          )}
+          {!hasAny && !snap?.analyzing && snap?.lastAnalysisError && (
+            <p className="text-xs text-overlay0 py-4 text-center">
+              The last analysis did not complete — no verdict yet. Use Re-run to try again.
+            </p>
+          )}
+          {!hasAny && !snap?.analyzing && !snap?.lastAnalysisError && (
             <p className="text-xs text-overlay0 py-4 text-center">
               No findings — Claude Code and CCC look compatible.
             </p>

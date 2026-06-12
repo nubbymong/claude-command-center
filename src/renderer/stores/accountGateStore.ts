@@ -6,6 +6,11 @@ import { create } from 'zustand'
 // when <AccountLaunchGate> calls `resolveChoice`. Restart / switch mark the
 // session `predetermined` so the gate is skipped (they already chose).
 
+/** Sentinel resolution meaning "the user cancelled the launch" — the awaiting
+ *  spawn must NOT proceed (TerminalView closes the pending tab instead). */
+export const GATE_CANCELLED = '__account-gate-cancelled__' as const
+export type GateChoice = string | undefined | typeof GATE_CANCELLED
+
 export interface PendingAccountGate {
   sessionId: string
   /** Friendly label shown in the modal ("Choose the account for X"). */
@@ -13,7 +18,7 @@ export interface PendingAccountGate {
   /** Pre-selected profile id. Always a real profile id in the multi-account UI. */
   currentProfileId: string | undefined
   /** Resolves the awaiting spawn with the chosen profile id (undefined = Default). */
-  resolve: (profileId: string | undefined) => void
+  resolve: (profileId: GateChoice) => void
 }
 
 interface AccountGateState {
@@ -27,9 +32,11 @@ interface AccountGateState {
     sessionId: string,
     sessionLabel: string,
     currentProfileId: string | undefined,
-  ) => Promise<string | undefined>
+  ) => Promise<GateChoice>
   /** Answer the head request with the chosen profile id (undefined = Default). */
   resolveChoice: (profileId: string | undefined) => void
+  /** Cancel the head request: the awaiting spawn aborts and the tab closes. */
+  cancelChoice: () => void
   /** Re-entry guard: is a gate already queued for this session? */
   isPending: (sessionId: string) => boolean
   /** Mark the session's next spawn as predetermined (skip the gate once). */
@@ -43,7 +50,7 @@ export const useAccountGateStore = create<AccountGateState>((set, get) => ({
   predetermined: [],
 
   requestChoice: (sessionId, sessionLabel, currentProfileId) =>
-    new Promise<string | undefined>((resolve) => {
+    new Promise<GateChoice>((resolve) => {
       set((s) => ({
         queue: [...s.queue, { sessionId, sessionLabel, currentProfileId, resolve }],
       }))
@@ -54,6 +61,12 @@ export const useAccountGateStore = create<AccountGateState>((set, get) => ({
     set((s) => ({ queue: s.queue.slice(1) }))
     // Resolve AFTER the state update so the awaiting spawn sees a settled queue.
     head?.resolve(profileId)
+  },
+
+  cancelChoice: () => {
+    const head = get().queue[0]
+    set((s) => ({ queue: s.queue.slice(1) }))
+    head?.resolve(GATE_CANCELLED)
   },
 
   isPending: (sessionId) => get().queue.some((p) => p.sessionId === sessionId),

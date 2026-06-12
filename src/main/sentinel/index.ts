@@ -53,12 +53,31 @@ async function headlessRunner(): Promise<typeof import('../claude-headless')> {
   return import('../claude-headless')
 }
 
+/**
+ * Home for Sentinel's headless spawns, resolved FRESH per run so a Settings
+ * change applies to the next analysis. User-selected analysis account
+ * (sentinelAccountProfileId) → captured primary → bare global (single-account
+ * installs). Never bare-global when profiles exist: the frozen global login
+ * hangs at auth / carries stale rate-limit state (live repro: both analysis
+ * attempts timed out at 180s on 2026-06-12).
+ */
+async function analysisHome(): Promise<string | null> {
+  try {
+    const { readConfig } = await import('../config-manager')
+    const { resolveHeadlessProfileHome } = await import('../account-profiles')
+    const settings = readConfig<{ sentinelAccountProfileId?: string | null }>('settings')
+    return resolveHeadlessProfileHome(settings?.sentinelAccountProfileId).home
+  } catch {
+    return null // fail-open: bare global is still better than no analysis
+  }
+}
+
 /** Trigger B startup check (spec §5). Non-blocking — call fire-and-forget from bootstrap. */
 export async function sentinelStartupCheck(): Promise<void> {
   if (!state) return
   try {
     const { spawnClaudeHeadless } = await headlessRunner()
-    const res = await spawnClaudeHeadless(['--version'], 15000)
+    const res = await spawnClaudeHeadless(['--version'], 15000, undefined, await analysisHome())
     const version = res.code === 0 ? parseClaudeVersion(res.stdout) : null
     if (!version) { logInfo('[sentinel] claude --version unavailable; skipping (fail-open)'); return }
     for (const f of minVersionFindings(version, manifest)) state.upsertFinding(f)
@@ -86,8 +105,9 @@ async function analyzeVersionChange(last: string, version: string): Promise<void
     return
   }
   const { spawnClaudeHeadless } = await headlessRunner()
+  const home = await analysisHome()
   const result = await runAnalysis({
-    runner: (args, t, stdin) => spawnClaudeHeadless(args, t, stdin),
+    runner: (args, t, stdin) => spawnClaudeHeadless(args, t, stdin, home),
     changelog: sliceChangelog(md, last, version),
     manifestJson: JSON.stringify(manifest), registryJson: JSON.stringify(getRegistry()),
     from: last, to: version,
@@ -112,7 +132,7 @@ export async function sentinelRerun(): Promise<void> {
   if (!state) return
   try {
     const { spawnClaudeHeadless } = await headlessRunner()
-    const res = await spawnClaudeHeadless(['--version'], 15000)
+    const res = await spawnClaudeHeadless(['--version'], 15000, undefined, await analysisHome())
     const version = res.code === 0 ? parseClaudeVersion(res.stdout) : null
     if (!version) { state.setAnalyzing(false, 'claude --version unavailable'); return }
     const last = state.snapshot().lastSeenCcVersion ?? version

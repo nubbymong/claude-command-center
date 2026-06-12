@@ -6,6 +6,7 @@ import { useSettingsStore, DEFAULT_STATUS_LINE, DEFAULT_TERMINAL_SETTINGS, Updat
 import type { StatusLineSettings, TerminalSettings, CursorStyle, ThemeMode } from '../stores/settingsStore'
 import { useSessionStore } from '../stores/sessionStore'
 import { useAppMetaStore } from '../stores/appMetaStore'
+import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { eventToShortcutString, DEFAULT_SHORTCUTS, SHORTCUT_LABELS } from '../utils/shortcuts'
 import GitHubConfigTab from './github/config/GitHubConfigTab'
 import { CodexSettingsTab } from './codex/CodexSettingsTab'
@@ -66,6 +67,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
   const settings = useSettingsStore((s) => s.settings)
   const updateSettings = useSettingsStore((s) => s.updateSettings)
   const updateAppMeta = useAppMetaStore((s) => s.update)
+  const sentinelAccountProfiles = useAccountProfilesStore((s) => s.profiles)
   const [showWhatsNew, setShowWhatsNew] = useState(false)
   const [showTraining, setShowTraining] = useState(false)
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab ?? 'general')
@@ -273,6 +275,23 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
                   Auto-open findings panel
                   <span className="text-[10px] text-overlay0">(When an analysis completes with open findings)</span>
                 </label>
+                <Field label="Analysis account">
+                  <select
+                    value={settings.sentinelAccountProfileId ?? ''}
+                    onChange={(e) => save({ sentinelAccountProfileId: e.target.value || null })}
+                    className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-64 focus:outline-none focus:border-blue/50 transition-colors"
+                  >
+                    <option value="">Primary account (default)</option>
+                    {sentinelAccountProfiles.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name || p.accountEmail || p.id}{p.accountEmail && p.name ? ` (${p.accountEmail})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="block text-[10px] text-overlay0 mt-1">
+                    The account Sentinel's background analysis runs under. Switch it if that account hits its usage limit. Applies to the next analysis or Re-run.
+                  </span>
+                </Field>
               </Section>
 
               <Section title="Terminal" icon={<><rect x="2" y="3" width="12" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.2" fill="none" /><path d="M5 7l2 2-2 2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" /><line x1="9" y1="11" x2="11" y2="11" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" /></>}>

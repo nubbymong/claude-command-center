@@ -44,7 +44,9 @@ export const useSentinelStore = create<SentinelUiState>((set, get) => ({
     window.electronAPI.sentinel.onUpdate((snap) => get().applyUpdate(snap))
     try {
       const snap = await window.electronAPI.sentinel.getState()
-      if (snap) set({ snap })
+      // A push may have raced the invoke; never overwrite a fresher snapshot
+      // with the stale request/reply result (could re-latch analyzing=true).
+      if (snap && !get().snap) set({ snap })
     } catch {
       // Sentinel disabled: handlers never registered, so the invoke rejects.
       // Disabled is a first-class state (snap stays null, dot hidden), not an error.

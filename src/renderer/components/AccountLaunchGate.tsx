@@ -15,6 +15,7 @@ import { resolveIdentityColor } from '../../shared/identity-colors'
 export default function AccountLaunchGate() {
   const pending = useAccountGateStore((s) => s.queue[0] ?? null)
   const resolveChoice = useAccountGateStore((s) => s.resolveChoice)
+  const cancelChoice = useAccountGateStore((s) => s.cancelChoice)
   const profiles = useAccountProfilesStore((s) => s.profiles)
   const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
   const accountColourOverrides = useSettingsStore((s) => s.settings.accountColourOverrides)
@@ -71,6 +72,10 @@ export default function AccountLaunchGate() {
                 e.preventDefault()
                 launch()
               }
+              if (e.key === 'Escape') {
+                e.preventDefault()
+                cancelChoice()
+              }
             }}
             data-testid="account-launch-select"
             className="flex-1 bg-base border border-surface1 rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-blue"
@@ -91,7 +96,15 @@ export default function AccountLaunchGate() {
           </select>
         </div>
 
-        <div className="flex justify-end">
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={cancelChoice}
+            data-testid="account-launch-cancel"
+            className="px-4 py-1.5 rounded text-sm border border-surface1 text-overlay1 hover:text-text hover:bg-surface1 transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-blue/50"
+            title="Don't launch; close this session tab"
+          >
+            Cancel
+          </button>
           <button
             onClick={launch}
             data-testid="account-launch-confirm"

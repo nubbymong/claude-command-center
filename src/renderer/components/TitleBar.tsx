@@ -193,16 +193,19 @@ export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
         )}
       </div>
 
-      <div className="titlebar-no-drag flex items-center gap-1">
+      {/* One uniform gap between every status chip (Services, Code, Claude.ai,
+          API, Sentinel, theme): the container gap is the ONLY spacing — no
+          per-chip margins, which produced alternating 4px/12px gaps. */}
+      <div className="titlebar-no-drag flex items-center gap-1.5">
         {/* Conductor services health pill + anchored diagnostics console (D1b) */}
-        <div className="relative mr-2">
+        <div className="relative">
           <ConductorHealthPill open={panelOpen} onOpen={() => (panelOpen ? closePanel() : openPanel())} />
           {panelMounted && <ConductorServicesPanel open={panelOpen} onClose={closePanel} />}
         </div>
         {/* Claude service status — two pills (Claude Code + Claude.ai) with API in tooltip */}
         {serviceStatus && (
           <div
-            className="flex items-center gap-1 mr-2"
+            className="flex items-center gap-1.5"
             title={tooltip}
           >
             <StatusPill
