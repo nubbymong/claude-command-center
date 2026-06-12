@@ -125,6 +125,18 @@ export default function App() {
     }
   }, [view, pendingSettingsTab])
 
+  // Deep-link from the Memory page: navigate to Logs and pre-select the slot
+  // for a specific sessionId. Consumed once by GlobalLogsView's initialSessionId prop.
+  const [pendingLogsSessionId, setPendingLogsSessionId] = useState<string | null>(null)
+
+  // Clear the pending sessionId when navigating away from Logs (mirror of the
+  // pendingSettingsTab pattern above).
+  useEffect(() => {
+    if (view !== 'logs' && pendingLogsSessionId) {
+      setPendingLogsSessionId(null)
+    }
+  }, [view, pendingLogsSessionId])
+
   // Listen for app:openSettings dispatched by CodexFormFields "Open Settings" links.
   // Switches the active view to Settings and deep-links to the requested tab.
   // Validates the tab against the allow-list -- a malformed CustomEvent
@@ -600,13 +612,17 @@ export default function App() {
 
   // Render non-session views (shown on top of sessions)
   const renderOverlayView = () => {
-    if (view === 'logs') return <GlobalLogsView />
+    if (view === 'logs') return <GlobalLogsView initialSessionId={pendingLogsSessionId} onInitialSessionConsumed={() => setPendingLogsSessionId(null)} />
     if (view === 'settings') return <SettingsPage initialTab={pendingSettingsTab ?? undefined} onNavigateToSessions={() => setView('sessions')} />
     if (view === 'insights') return <InsightsPage />
     if (view === 'cloud-agents') return <CloudAgentsPage />
     if (view === 'tokenomics') return <TokenomicsPage />
     if (view === 'vision') return <ConductorMcpPage />
-    if (view === 'memory') return <MemoryPage onClose={() => setView('sessions')} />
+    if (view === 'memory') return <MemoryPage
+      onClose={() => setView('sessions')}
+      onOpenSessionLogs={(sessionId) => { setPendingLogsSessionId(sessionId); setView('logs') }}
+      onJumpToSession={(sessionId) => { useSessionStore.getState().setActiveSession(sessionId); setView('sessions') }}
+    />
     return null
   }
 

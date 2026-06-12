@@ -341,7 +341,11 @@ function DetailPanel({ memory, content, onClose, onDelete, onWriteFrontmatter }:
 }
 
 // ── Main Page ──
-export default function MemoryPage({ onClose }: { onClose?: () => void }) {
+export default function MemoryPage({ onClose, onOpenSessionLogs, onJumpToSession }: {
+  onClose?: () => void
+  onOpenSessionLogs?: (sessionId: string) => void
+  onJumpToSession?: (sessionId: string) => void
+}) {
   const {
     projects, memories, warnings, totalSize, loading, error,
     selectedProject, selectedMemoryId, searchQuery, collapsedGroups, selectedContent,
