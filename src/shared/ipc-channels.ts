@@ -104,6 +104,7 @@ export const IPC = {
   LOGS2_CLEAR_ALL: 'logs2:clearAll',
   LOGS2_INGEST_STATUS: 'logs2:ingestStatus',
   LOGS2_NEW_MESSAGES: 'logs2:newMessages',   // push: main -> renderer
+  LOGS2_SESSION_CONFIG: 'logs2:sessionConfig',
 
   // Discovery
   DISCOVERY_PROJECTS: 'discovery:projects',
@@ -230,6 +231,7 @@ export const IPC = {
 
   // Memory
   MEMORY_SCAN: 'memory:scan',
+  MEMORY_RECENT_SESSIONS: 'memory:recentSessions',
   MEMORY_READ: 'memory:read',
   MEMORY_DELETE: 'memory:delete',
   MEMORY_WRITE_FRONTMATTER: 'memory:writeFrontmatter',

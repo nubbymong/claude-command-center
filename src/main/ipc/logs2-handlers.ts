@@ -71,6 +71,8 @@ const deleteSlotSchema = z.object({ scope: scopeSchema }).strict()
 
 const ingestStatusSchema = z.object({ sessionId: z.string().min(1).max(200) }).strict()
 
+const sessionConfigSchema = z.object({ sessionId: z.string().min(1).max(200) }).strict()
+
 // ---------------------------------------------------------------------------
 // Supervisor query helper
 // ---------------------------------------------------------------------------
@@ -127,6 +129,12 @@ export function registerLogs2Handlers(getWindow: () => BrowserWindow | null): vo
     const { sessionId } = ingestStatusSchema.parse(args)
     const rows = await q('ingest-stats', { sessionId })
     return rows[0] ?? null
+  })
+
+  ipcMain.handle(IPC.LOGS2_SESSION_CONFIG, async (_e, args: unknown) => {
+    const { sessionId } = sessionConfigSchema.parse(args)
+    const rows = await q('session-config', { sessionId })
+    return rows[0] ?? null     // { configId: string | null } | null
   })
 
   // PUSH: forward the worker's new-messages fan-out to the renderer so the open

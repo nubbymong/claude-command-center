@@ -155,6 +155,18 @@ const mockElectronAPI = {
     read: vi.fn((path: string) => Promise.resolve('# Mock content')),
     delete: vi.fn(() => Promise.resolve()),
     writeFrontmatter: vi.fn(() => Promise.resolve()),
+    recentSessions: vi.fn(() => Promise.resolve([])),
+  },
+  logs2: {
+    listSlots: vi.fn(() => Promise.resolve([])),
+    readMessages: vi.fn(() => Promise.resolve([])),
+    turnSummary: vi.fn(() => Promise.resolve([])),
+    search: vi.fn(() => Promise.resolve([])),
+    deleteSlot: vi.fn(() => Promise.resolve({ deletedRuns: 0, deletedMessages: 0 })),
+    clearAll: vi.fn(() => Promise.resolve({ deletedRuns: 0, deletedMessages: 0 })),
+    ingestStatus: vi.fn(() => Promise.resolve(null)),
+    sessionConfig: vi.fn(() => Promise.resolve(null)),
+    onNewMessages: vi.fn(() => () => {}),
   },
   webview: {
     check: vi.fn(() => Promise.resolve({ reachable: false })),
