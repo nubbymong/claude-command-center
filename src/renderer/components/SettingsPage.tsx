@@ -277,7 +277,12 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
                 </label>
                 <Field label="Analysis account">
                   <select
-                    value={settings.sentinelAccountProfileId ?? ''}
+                    // A stored id whose profile was deleted would render the
+                    // select blank; show the default instead (runtime already
+                    // falls back to primary via resolveHeadlessProfileHome).
+                    value={sentinelAccountProfiles.some((p) => p.id === settings.sentinelAccountProfileId)
+                      ? settings.sentinelAccountProfileId ?? ''
+                      : ''}
                     onChange={(e) => save({ sentinelAccountProfileId: e.target.value || null })}
                     className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-64 focus:outline-none focus:border-blue/50 transition-colors"
                   >

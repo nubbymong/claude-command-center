@@ -43,6 +43,12 @@ function Metric({ label, value }: { label: string; value: React.ReactNode }) {
   )
 }
 
+// dropsTotal counts RING-BUFFER EVICTIONS: a busy session's activity-feed
+// history holds the last 200 events, and each new event past that trims the
+// oldest scroll-back entry. No live event is lost (all are counted, fanned
+// out, and pushed to the UI) — so the panel says "Trimmed", not "Drops",
+// which read as lost ingest and alarmed users.
+
 function ServiceCard({ s }: { s: ServiceHealth }) {
   return (
     <div className="rounded border border-surface0 bg-crust/50 p-2.5">
@@ -61,7 +67,7 @@ function ServiceCard({ s }: { s: ServiceHealth }) {
         <Metric label="In-flight" value={s.inFlight} />
         <Metric label="Restarts" value={s.restartCount} />
         <Metric label="Events" value={s.eventsTotal} />
-        <Metric label="Drops" value={s.dropsTotal} />
+        <Metric label="Trimmed" value={s.dropsTotal} />
         {/* throughputPerSec + mainLoopStallsLastMin are not yet instrumented in the
             backbone (always 0) -> show '-' rather than a dishonest 0. Child-loop
             jank IS live. Wire these in a follow-up when the supervisor computes them. */}
