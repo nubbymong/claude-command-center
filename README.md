@@ -239,7 +239,7 @@ The main process owns config persistence, the PTY pool, the hooks HTTP gateway (
 | **Account isolation** | Each session runs under its own isolated home so signing in to one account never touches another or your default login. The original global login is snapshotted read-only on first run. |
 | **Permissions** | CCC honors Claude Code's own permission prompts and settings. It is not a gate and never auto-approves or intercepts tool calls on your behalf. |
 | **Telemetry** | None of our own. The Claude API goes through the Claude CLI directly. Outbound is limited to: GitHub Releases (update check), `status.claude.com` (status pills), the GitHub API (opt-in GitHub sidebar after sign-in), and LiteLLM open-pricing JSON (cached 24 hours). |
-| **Data integrity** | Atomic config writes (`.tmp` + rename). Daily snapshots of `CONFIG/*.json` to `CONFIG/_backups/YYYY-MM-DD/`, 7-day retention. Sandboxed renderer; zod-validated IPC at every boundary. |
+| **Data integrity** | Atomic config writes (`.tmp` + rename). Daily snapshots of `CONFIG/*.json` to `CONFIG/_backups/YYYY-MM-DD/`, 7-day retention. Sandboxed renderer; typed IPC with schema validation on data-bearing channels. |
 | **Releases** | Installers are unsigned (see [Install](#install)). Releases built by the CI pipeline are scanned through VirusTotal across 70+ engines; verify the SHA-256 from the release page before running any installer. |
 
 Report vulnerabilities privately via [GitHub Security Advisories](../../security/advisories/new). See [SECURITY.md](SECURITY.md) for scope.
