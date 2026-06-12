@@ -32,6 +32,17 @@ describe('getMergedDiagnostics', () => {
     expect(out.log).toHaveLength(1)
   })
 
+  it('stamps the main-loop stall count onto every service (both delivery paths funnel here)', () => {
+    // The loop-stall monitor singleton is never started in unit tests, so it
+    // reports 0 — but the field must be PRESENT + stamped on every service, which
+    // is what wires up the "Jank m/c" main half.
+    const out = getMergedDiagnostics(() => ({ getDiagnosticsSnapshot: () => supSnap, manualRestart: () => ({ ok: true }) }) as any, () => ({ snapshot: ptySnap, logs: [] }))
+    for (const s of out.services) {
+      expect(s.mainLoopStallsLastMin).toBe(0)
+    }
+    expect(out.pty).toBe(ptySnap)
+  })
+
   it('caps the merged log at 200, keeping the newest by ts', () => {
     // 150 hooks logs (ts 0..149) + 150 pty logs (ts 1000..1149) = 300 -> capped to 200.
     const hooksLog: ServiceLogEntry[] = Array.from({ length: 150 }, (_, i) => ({ ts: i, serviceId: 'hooks', level: 'info', code: 'h', message: `h${i}` }))

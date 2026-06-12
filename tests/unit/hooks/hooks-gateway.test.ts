@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { HooksGateway } from '../../../src/main/hooks/hooks-gateway'
+import { RING_BUFFER_CAP } from '../../../src/main/hooks/hooks-types'
 
 describe('HooksGateway.start/stop', () => {
   let gw: HooksGateway | null = null
@@ -272,11 +273,12 @@ describe('HooksGateway.ingest', () => {
     expect(cmd).not.toContain('sk-ant-abcdefghij')
   })
 
-  it('caps ring buffer at 200 per session, emits dropped once', async () => {
+  it('caps ring buffer at RING_BUFFER_CAP per session, emits dropped once', async () => {
     gw = makeGw()
     await gw.start()
     const secret = gw.registerSession('sid-a')
-    for (let i = 0; i < 250; i++) {
+    // Drive 50 past the cap so exactly the eviction path is exercised.
+    for (let i = 0; i < RING_BUFFER_CAP + 50; i++) {
       await gw._handleRequestForTest({
         remoteAddress: '127.0.0.1',
         url: '/hook/sid-a',
@@ -284,7 +286,7 @@ describe('HooksGateway.ingest', () => {
         body: JSON.stringify({ event: 'PreToolUse', tool_name: 'Read', payload: { i } }),
       })
     }
-    expect(gw.getBuffer('sid-a').length).toBe(200)
+    expect(gw.getBuffer('sid-a').length).toBe(RING_BUFFER_CAP)
     const dropped = emitted.filter((e) => e.channel === 'hooks:dropped')
     expect(dropped.length).toBe(1)
   })

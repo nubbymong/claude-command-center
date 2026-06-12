@@ -28,6 +28,32 @@ describe('ServiceSupervisor health', () => {
     expect(h.inFlight).toBe(2); expect(h.eventsTotal).toBe(10)
     expect(h.lastHeartbeatAt).toBeGreaterThan(0)
   })
+  it('child stallsLastMin is recorded as childLoopStallsLastMin; throughput starts at 0', () => {
+    const { sup, t } = makeSup()
+    sup.start()
+    t.emitToParent({ type: 'health', inFlight: 0, eventsTotal: 5, dropsTotal: 0, stallsLastMin: 3 })
+    const h = sup.getDiagnosticsSnapshot().services[0]
+    expect(h.childLoopStallsLastMin).toBe(3)
+    // First beat has no prior sample -> honest 0, never a spike.
+    expect(h.throughputPerSec).toBe(0)
+  })
+  it('computes throughputPerSec across successive health beats with an injected clock', () => {
+    let clock = 1000
+    const t = new FakeChildTransport()
+    const sup = new ServiceSupervisor({
+      forkChild: () => ({ transport: t, kill: () => t.kill(), onExit: () => {} }),
+      defaultPort: 19430,
+      emit: () => {},
+      now: () => clock,
+    })
+    sup.start()
+    t.emitToParent({ type: 'health', inFlight: 0, eventsTotal: 0, dropsTotal: 0, stallsLastMin: 0 })
+    expect(sup.getDiagnosticsSnapshot().services[0].throughputPerSec).toBe(0)
+    clock += 2000
+    t.emitToParent({ type: 'health', inFlight: 0, eventsTotal: 10, dropsTotal: 0, stallsLastMin: 0 })
+    // +10 events over 2s -> 5/s.
+    expect(sup.getDiagnosticsSnapshot().services[0].throughputPerSec).toBe(5)
+  })
   it('a bound message flips state to listening with a port + pid', () => {
     const { sup, t } = makeSup()
     sup.start()

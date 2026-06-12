@@ -1,7 +1,7 @@
 import { HooksGatewayProxy } from './hooks-gateway-proxy'
-import { createInitialHealth } from '../../shared/service-health'
+import { createInitialHealth, computeThroughput } from '../../shared/service-health'
 import { IPC } from '../../shared/ipc-channels'
-import type { ServiceHealth, ServiceLogEntry, DiagnosticsSnapshot } from '../../shared/service-health'
+import type { ServiceHealth, ServiceLogEntry, DiagnosticsSnapshot, ThroughputSample } from '../../shared/service-health'
 import type { ChildTransport, FromChildMessage } from './service-transport'
 
 export interface ForkedChild {
@@ -28,6 +28,10 @@ export class ServiceSupervisor {
   private opts: ServiceSupervisorOptions
   private now: () => number
   private health: ServiceHealth = createInitialHealth('hooks', 'Hooks gateway')
+  // Last (eventsTotal, ts) sample throughput was computed against — see
+  // computeThroughput. Reset to null on respawn so a restart's counter reset
+  // can't read as a negative/huge rate.
+  private prevThroughput: ThroughputSample | null = null
   private log: ServiceLogEntry[] = []
   private child: ForkedChild | null = null
   private proxy: HooksGatewayProxy | null = null
@@ -88,13 +92,18 @@ export class ServiceSupervisor {
       this.appendLog('info', 'bound', `bound :${m.port} pid=${m.pid}`)
       this.pushHealth()
     } else if (m.type === 'health') {
+      const ts = this.now()
+      const sample: ThroughputSample = { eventsTotal: m.eventsTotal, ts }
+      const throughputPerSec = computeThroughput(this.prevThroughput, sample)
+      this.prevThroughput = sample
       this.health = {
         ...this.health,
         inFlight: m.inFlight,
         eventsTotal: m.eventsTotal,
         dropsTotal: m.dropsTotal,
+        throughputPerSec,
         childLoopStallsLastMin: m.stallsLastMin,
-        lastHeartbeatAt: this.now(),
+        lastHeartbeatAt: ts,
       }
       this.pushHealth()
     } else if (m.type === 'log') {
@@ -172,6 +181,9 @@ export class ServiceSupervisor {
     // populated secret map. The child applies `register` synchronously on receipt and
     // only binds on `start`, so the ordering holds.
     this.proxy.replaySecretsTo(c.transport)
+    // Fresh child = fresh per-instance counters; forget the prior throughput
+    // sample so the next health beat starts a clean interval (no negative rate).
+    this.prevThroughput = null
     this.health = { ...this.health, state: this.restarts > 0 ? 'restarting' : 'starting' }
     this.appendLog('info', 'child-up', `hooks child forked (restart ${this.restarts})`)
     this.pushHealth()

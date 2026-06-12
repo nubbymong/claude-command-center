@@ -24,6 +24,7 @@ function makeFakeWorker(): {
     transport,
     kill: () => transport.kill(),
     onExit: (cb: () => void) => { exitCb = cb },
+    pid: 4242,
   }
   return {
     worker,
@@ -92,6 +93,31 @@ describe('LogSupervisor', () => {
     expect(h.forkSpy).toHaveBeenCalledTimes(1)
     expect(h.current().posts).toContainEqual({ type: 'open', dbPath: '/tmp/fake-transcripts.db' })
     expect(h.sup.getDiagnosticsSnapshot().services[0].state).toBe('starting')
+  })
+
+  it('surfaces the forked worker pid onto the diagnostics pill at fork', () => {
+    const h = makeHarness()
+    h.sup.start()
+    // The fake worker reports pid 4242 (makeFakeWorker); it should appear without
+    // waiting for ready (logging has no bound message — we read the fork pid).
+    expect(h.sup.getDiagnosticsSnapshot().services[0].pid).toBe(4242)
+  })
+
+  it('computes throughputPerSec from successive health beats (0 on the first)', () => {
+    const h = makeHarness()
+    h.sup.start()
+    h.current().emit({ type: 'ready' })
+    // First beat: no prior sample -> 0.
+    h.current().emit({ type: 'health', inFlight: 0, tailing: 0, messagesTotal: 0, dbBytes: 0 })
+    expect(h.sup.getDiagnosticsSnapshot().services[0].throughputPerSec).toBe(0)
+    // Second beat 1s later, +10 messages -> 10/s.
+    h.tick(1000)
+    h.current().emit({ type: 'health', inFlight: 0, tailing: 0, messagesTotal: 10, dbBytes: 0 })
+    expect(h.sup.getDiagnosticsSnapshot().services[0].throughputPerSec).toBe(10)
+    // Idle beat 1s later, counter unchanged -> 0.
+    h.tick(1000)
+    h.current().emit({ type: 'health', inFlight: 0, tailing: 0, messagesTotal: 10, dbBytes: 0 })
+    expect(h.sup.getDiagnosticsSnapshot().services[0].throughputPerSec).toBe(0)
   })
 
   it('on ready -> state listening, host utility-process, startedAt set, health emitted', () => {

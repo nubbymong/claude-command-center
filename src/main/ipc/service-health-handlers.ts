@@ -4,6 +4,7 @@ import { createInitialHealth } from '../../shared/service-health'
 import type { DiagnosticsSnapshot, PtyIntegritySnapshot, ServiceLogEntry } from '../../shared/service-health'
 import type { ServiceSupervisor } from '../services/service-supervisor'
 import { getLogSupervisor } from '../logging/logging-service'
+import { stallsLastMin as mainLoopStallsLastMin } from '../services/loop-stall-monitor'
 
 type SupGetter = () => Pick<ServiceSupervisor, 'getDiagnosticsSnapshot' | 'manualRestart'> | null
 type PtyGetter = () => { snapshot: PtyIntegritySnapshot; logs: ServiceLogEntry[] } | null
@@ -36,10 +37,24 @@ export function getMergedDiagnostics(getSup: SupGetter, getPty: PtyGetter): Diag
   }
 
   const pd = getPty()
-  if (!pd) return merged
-  const log = [...merged.log, ...pd.logs].sort((a, b) => a.ts - b.ts)
-  if (log.length > LOG_CAP) log.splice(0, log.length - LOG_CAP)
-  return { ...merged, log, pty: pd.snapshot }
+  let withPty: DiagnosticsSnapshot
+  if (!pd) {
+    withPty = merged
+  } else {
+    const log = [...merged.log, ...pd.logs].sort((a, b) => a.ts - b.ts)
+    if (log.length > LOG_CAP) log.splice(0, log.length - LOG_CAP)
+    withPty = { ...merged, log, pty: pd.snapshot }
+  }
+
+  // Stamp the MAIN-process event-loop jank onto EVERY service (both delivery
+  // paths — pushDiagnostics in index.ts and the GET handler — funnel through
+  // here, so this single stamp covers both). The child loop's own jank arrives
+  // per-service over the heartbeat; this is the missing main half of "Jank m/c".
+  const mainStalls = mainLoopStallsLastMin()
+  return {
+    ...withPty,
+    services: withPty.services.map((s) => ({ ...s, mainLoopStallsLastMin: mainStalls })),
+  }
 }
 
 export function buildRestart(getSup: SupGetter): (serviceId: string) => { ok: boolean; reason?: string } {

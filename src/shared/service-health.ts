@@ -88,3 +88,32 @@ export function createInitialHealth(id: string, label: string): ServiceHealth {
     mainLoopStallsLastMin: 0, childLoopStallsLastMin: 0, lastHeartbeatAt: 0,
   }
 }
+
+/** A single throughput sample: the cumulative event counter at a wall-clock ts.
+ *  Each supervisor keeps the LAST sample it computed throughput against. */
+export interface ThroughputSample {
+  eventsTotal: number
+  ts: number
+}
+
+/**
+ * Pure: events/sec between two successive counter samples, rounded to 1 decimal.
+ *
+ * Returns 0 when there is no prior sample (first beat — we cannot know a rate
+ * yet), when no measurable time has elapsed (ts non-increasing — avoids div-by-0
+ * and bogus spikes from same-tick beats), or when the counter went backwards
+ * (a restart reset eventsTotal — clamp to 0 rather than report a negative rate).
+ * An idle service whose counter does not move honestly reports 0.
+ *
+ * Kept PURE (no module state, no clock) so it is trivially table-tested and so
+ * no main-process import leaks into this shared module.
+ */
+export function computeThroughput(prev: ThroughputSample | null, next: ThroughputSample): number {
+  if (!prev) return 0
+  const dtMs = next.ts - prev.ts
+  if (dtMs <= 0) return 0
+  const dEvents = next.eventsTotal - prev.eventsTotal
+  if (dEvents <= 0) return 0
+  const perSec = (dEvents / dtMs) * 1000
+  return Math.round(perSec * 10) / 10
+}

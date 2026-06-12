@@ -54,6 +54,7 @@ import { HooksGateway } from './hooks/hooks-gateway'
 import { setGateway, getGateway } from './hooks'
 import { ServiceSupervisor } from './services/service-supervisor'
 import { forkHooksChild } from './services/fork-hooks-child'
+import { start as startLoopStallMonitor, stop as stopLoopStallMonitor } from './services/loop-stall-monitor'
 import { initLogging, shutdownLogging, getTranscriptBinder } from './logging/logging-service'
 import { detectOldLogArtifacts, executeWipe } from './logging/logs-wipe'
 import { cleanupStaleHookEntries } from './hooks/boot-cleanup'
@@ -801,6 +802,10 @@ if (!gotTheLock) {
     startEffortTracker()
     startAttentionSource()
     startJankDetector()
+    // Main-process event-loop jank monitor: feeds the "Jank m/c" main half on the
+    // Conductor services pill (getMergedDiagnostics stamps stallsLastMin() onto
+    // every service). Stopped in before-quit.
+    startLoopStallMonitor()
     registerHooksHandlers(getGateway()!)   // B1: handlers get whatever gateway backs the singleton
     // D1b: diagnostics IPC. The getter returns null in the hooks-disabled branch
     // (supervisor never set) -> the handler serves an honest synthetic "hooks off" snapshot.
@@ -898,6 +903,7 @@ if (!gotTheLock) {
     // Tear down the tokenomics indexing worker. No-op when never init.
     try { shutdownTokenomics() } catch { /* never init */ }
     stopServiceStatusPoller()
+    stopLoopStallMonitor()
     stopUpdateWatcher()
     stopUpdateServer()
     disableDebugMode()

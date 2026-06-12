@@ -1,4 +1,5 @@
 import { HooksGateway } from '../hooks/hooks-gateway'
+import { LoopStallMonitor } from './loop-stall-monitor'
 import { IPC } from '../../shared/ipc-channels'
 import type { HooksGatewayOptions } from '../hooks/hooks-gateway'
 import type { HostTransport } from './service-transport'
@@ -97,11 +98,17 @@ export function createHooksHost(transport: HostTransport, opts?: CreateHooksHost
   })
 
   if (opts?.healthBeat !== false) {
+    // Measure THIS child's event-loop jank with the same monitor + thresholds the
+    // main process uses (500ms tick, >250ms late = one stall, 60s window), so the
+    // "Jank m/c" pill's child half is real rather than a hardcoded 0.
+    const loopMonitor = new LoopStallMonitor()
+    loopMonitor.start()
     const beat = setInterval(() => {
       const m = gateway.metrics()
       transport.post({
         type: 'health',
-        inFlight: m.inFlight, eventsTotal: m.eventsTotal, dropsTotal: m.dropsTotal, stallsLastMin: 0,
+        inFlight: m.inFlight, eventsTotal: m.eventsTotal, dropsTotal: m.dropsTotal,
+        stallsLastMin: loopMonitor.stallsLastMin(),
       })
     }, 1000)
     if (typeof (beat as { unref?: () => void }).unref === 'function') (beat as { unref: () => void }).unref()

@@ -8,6 +8,7 @@ import {
   type RingBufferEntry,
 } from './hooks-types'
 import { redactHookPayload } from './hook-payload-redactor'
+import { boundPayloadForFeed } from './bound-feed-payload'
 import { IPC } from '../../shared/ipc-channels'
 import type {
   HookEvent,
@@ -612,8 +613,11 @@ export class HooksGateway {
       sessionId: sid,
       event,
       toolName,
+      // Summary is built from the FULL redacted payload (so it stays accurate),
+      // THEN the stored/emitted payload is bounded to ~8 KiB so feed history can't
+      // grow unbounded (RING_BUFFER_CAP entries * ~8 KiB = hard memory ceiling).
       summary: buildSummary(event, toolName, redacted),
-      payload: redacted,
+      payload: boundPayloadForFeed(redacted),
       ts: Date.now(),
     }
     this._eventsTotal++

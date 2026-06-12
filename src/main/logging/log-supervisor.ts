@@ -27,9 +27,9 @@
  *
  * No default export (project convention).
  */
-import { createInitialHealth } from '../../shared/service-health'
+import { createInitialHealth, computeThroughput } from '../../shared/service-health'
 import { IPC } from '../../shared/ipc-channels'
-import type { ServiceHealth, ServiceLogEntry, DiagnosticsSnapshot } from '../../shared/service-health'
+import type { ServiceHealth, ServiceLogEntry, DiagnosticsSnapshot, ThroughputSample } from '../../shared/service-health'
 import type { ForkedTranscriptsWorker } from './fork-transcripts-worker'
 import type { ToTranscriptsWorker, FromTranscriptsWorker } from './log-worker-transport'
 
@@ -79,6 +79,9 @@ export class LogSupervisor {
   private opts: LogSupervisorOptions
   private now: () => number
   private health: ServiceHealth = createInitialHealth(SERVICE_ID, 'Session logging')
+  // Last (eventsTotal, ts) sample throughput was computed against. eventsTotal
+  // here maps onto the worker's messagesTotal ingest counter. Reset on respawn.
+  private prevThroughput: ThroughputSample | null = null
   private log: ServiceLogEntry[] = []
   private worker: ForkedTranscriptsWorker | null = null
   private shuttingDown = false
@@ -141,7 +144,17 @@ export class LogSupervisor {
     const w = this.opts.forkChild()
     this.worker = w
     w.transport.onMessage((m) => this.onWorkerMessage(m))
-    this.health = { ...this.health, state: this.restarts > 0 ? 'restarting' : 'starting' }
+    // Fresh worker = fresh messagesTotal counter; forget the prior throughput
+    // sample so the next health beat starts a clean interval (no negative rate).
+    this.prevThroughput = null
+    // Surface the forked worker's OS pid on the diagnostics pill (hooks does this
+    // via its `bound` message; the transcripts worker has no bind, so we read the
+    // utilityProcess pid directly at fork — covers initial start AND each restart).
+    this.health = {
+      ...this.health,
+      pid: w.pid,
+      state: this.restarts > 0 ? 'restarting' : 'starting',
+    }
     this.appendLog('info', 'worker-up', `logging worker forked (restart ${this.restarts})`)
     // Tell the fresh worker to open (re-open) the DB. The worker closes dangling
     // runs + resumes tails itself, then posts `ready`; only then do we replay
@@ -174,15 +187,20 @@ export class LogSupervisor {
         return
       }
       case 'health': {
+        const ts = this.now()
+        const sample: ThroughputSample = { eventsTotal: m.messagesTotal, ts }
+        const throughputPerSec = computeThroughput(this.prevThroughput, sample)
+        this.prevThroughput = sample
         this.health = {
           ...this.health,
           inFlight: m.inFlight,
           // v2 health shape: messagesTotal is the worker's ingest counter — it
           // maps onto the pill's eventsTotal slot (same "work done" semantic).
           eventsTotal: m.messagesTotal,
+          throughputPerSec,
           dbBytes: m.dbBytes,
-          lastHeartbeatAt: this.now(),
-          lastFlushAt: this.now(),
+          lastHeartbeatAt: ts,
+          lastFlushAt: ts,
         }
         this.pushHealth()
         return

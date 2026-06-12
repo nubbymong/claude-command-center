@@ -68,11 +68,11 @@ function ServiceCard({ s }: { s: ServiceHealth }) {
         <Metric label="Restarts" value={s.restartCount} />
         <Metric label="Events" value={s.eventsTotal} />
         <Metric label="Trimmed" value={s.dropsTotal} />
-        {/* throughputPerSec + mainLoopStallsLastMin are not yet instrumented in the
-            backbone (always 0) -> show '-' rather than a dishonest 0. Child-loop
-            jank IS live. Wire these in a follow-up when the supervisor computes them. */}
-        <Metric label="Thrput/s" value={'-'} />
-        <Metric label="Jank m/c" value={`-/${s.childLoopStallsLastMin}`} />
+        {/* throughputPerSec is events/sec computed from successive health beats
+            (0 when idle — honest, not '-'); Jank m/c = main-loop / child-loop
+            stall samples in the last 60s. Both are now instrumented end to end. */}
+        <Metric label="Thrput/s" value={s.throughputPerSec.toFixed(1)} />
+        <Metric label="Jank m/c" value={`${s.mainLoopStallsLastMin}/${s.childLoopStallsLastMin}`} />
       </div>
       {s.lastError && (
         <div className="mt-2 text-[10px] text-red break-words">
