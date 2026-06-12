@@ -106,7 +106,11 @@ describe('GitHubConfigStore', () => {
     const storeDir = path.join(sandbox, 'a', 'b')
     await fs.mkdir(storeDir, { recursive: true })
     const trapStore = new GitHubConfigStore(storeDir)
-    const hostile = JSON.stringify({ schemaVersion: '../../pwn', data: 'x' })
+    // Three `..` needed for a real escape: the filename template prefixes the
+    // value with `github-config.json.v`, so the FIRST `..` merges into that
+    // segment and only the rest traverse. With two, an unsanitized name would
+    // normalize to a file INSIDE storeDir and the escape assertion proves nothing.
+    const hostile = JSON.stringify({ schemaVersion: '../../../pwn', data: 'x' })
     await fs.writeFile(path.join(storeDir, 'github-config.json'), hostile, 'utf8')
     expect(await trapStore.read()).toBeNull()
     // Outside the store dir, the sandbox must contain exactly the directory
@@ -115,10 +119,12 @@ describe('GitHubConfigStore', () => {
       .map(String)
       .filter((e) => !e.startsWith(path.join('a', 'b') + path.sep))
     expect(outside.sort()).toEqual(['a', path.join('a', 'b')])
-    // Inside the store dir the backup name must be sanitized.
+    // Inside the store dir the backup name must be the SANITIZED form — a
+    // non-integer schemaVersion maps to 'unknown', never to attacker text.
     const entries = await fs.readdir(storeDir)
     const backup = entries.find((e) => e.includes('.bak'))
     expect(backup).toBeDefined()
+    expect(backup!.startsWith('github-config.json.vunknown.')).toBe(true)
     expect(backup).not.toMatch(/\.\./)
     expect(backup).not.toMatch(/[\\/]/)
   })
