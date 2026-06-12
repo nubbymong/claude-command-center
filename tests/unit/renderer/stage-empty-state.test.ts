@@ -31,11 +31,11 @@ describe('StageEmptyState', () => {
     expect(Array.from(container.querySelectorAll('button')).some(b => /show all configs/i.test(b.textContent || ''))).toBe(true)
   })
 
-  it('no configs -> "Create a terminal config" primary action', () => {
+  it('no configs -> "Create a saved config" primary action', () => {
     const onLaunch = vi.fn(); const onShowAll = vi.fn(); const onCreate = vi.fn()
     act(() => root.render(React.createElement(StageEmptyState, { configs: [] as any, onLaunch, onShowAllConfigs: onShowAll, onCreateConfig: onCreate })))
-    expect(container.textContent).toContain('Create a terminal config')
-    const create = Array.from(container.querySelectorAll('button')).find(b => /create a terminal config/i.test(b.textContent || ''))
+    expect(container.textContent).toContain('Create a saved config')
+    const create = Array.from(container.querySelectorAll('button')).find(b => /create a saved config/i.test(b.textContent || ''))
     expect(create).toBeTruthy()
     act(() => create!.dispatchEvent(new MouseEvent('click', { bubbles: true })))
     expect(onCreate).toHaveBeenCalledTimes(1)

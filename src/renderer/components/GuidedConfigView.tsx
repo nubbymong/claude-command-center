@@ -96,7 +96,7 @@ export default function GuidedConfigView({ onConfirm, onSkip }: Props) {
         <div>
           <h1 className="text-xl font-bold text-text">Create Your First Config</h1>
           <p className="text-xs text-overlay0 mt-0.5">
-            A terminal config is a reusable template for launching Claude Code sessions
+            A saved config is a reusable template for launching Claude Code sessions
           </p>
         </div>
         <button

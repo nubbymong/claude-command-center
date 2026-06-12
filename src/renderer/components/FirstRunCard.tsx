@@ -30,7 +30,7 @@ export default function FirstRunCard({ onGetStarted, onDismiss }: Props) {
         <div className="flex-1 min-w-0">
           <div className="text-xs font-semibold text-text">Get Started</div>
           <div className="text-[11px] text-subtext0 leading-snug mt-0.5">
-            Create your first terminal config
+            Create your first saved config
           </div>
         </div>
       </div>

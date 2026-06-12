@@ -302,7 +302,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
         className="bg-surface0 rounded-lg p-6 w-[760px] max-h-[90vh] overflow-y-auto shadow-2xl border border-surface1"
       >
         <h3 className="text-base font-semibold text-text mb-4">
-          {initial ? 'Edit Config' : 'New Terminal Config'}
+          {initial ? 'Edit Config' : 'New Saved Config'}
         </h3>
 
         {/* Session type toggle */}

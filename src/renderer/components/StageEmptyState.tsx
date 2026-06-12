@@ -27,7 +27,7 @@ export default function StageEmptyState({ configs, onLaunch, onShowAllConfigs, o
           {hasConfigs ? 'Start a saved config' : 'Claude Command Center'}
         </h2>
         <p className="text-sm text-subtext0 mb-5">
-          {hasConfigs ? 'Pick a config to launch a new session.' : 'Create a terminal config to get started.'}
+          {hasConfigs ? 'Pick a saved config to launch a new session.' : 'Create a saved config to get started.'}
         </p>
 
         {hasConfigs ? (
@@ -60,7 +60,7 @@ export default function StageEmptyState({ configs, onLaunch, onShowAllConfigs, o
             onClick={onCreateConfig}
             className="px-4 py-2 rounded-lg bg-mauve hover:bg-pink text-base text-xs font-medium transition-colors focus-ring"
           >
-            Create a terminal config
+            Create a saved config
           </button>
         )}
         <p className="text-xs text-overlay0 mt-4">Ctrl+T to create, Ctrl+Tab to switch</p>
