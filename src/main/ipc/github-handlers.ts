@@ -519,6 +519,19 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
           rawToken: r.access_token,
           expiryObservable: false,
         })
+        // Re-authing the SAME GitHub account must replace, not duplicate
+        // (review catch on 8026a72): the AI-usage re-auth flow would otherwise
+        // leave the old narrow-scope token in the store, and first-profile
+        // consumers could pick it on next launch, silently reverting the
+        // meter to scope-missing. ProfilePatch can't carry a token, so dedupe
+        // by removing every OTHER oauth profile with this username.
+        cachedConfig = undefined
+        const afterAdd = await getCachedConfig()
+        for (const [pid, p] of Object.entries(afterAdd?.authProfiles ?? {})) {
+          if (pid !== id && p.kind === 'oauth' && p.username === v.username) {
+            await profileStore.removeProfile(pid)
+          }
+        }
         activeFlows.delete(flowId)
         cachedConfig = undefined
         void syncNotificationsPollerToConfig()
