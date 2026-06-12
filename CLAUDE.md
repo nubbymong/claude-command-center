@@ -1,6 +1,6 @@
 # Claude Command Center
 
-Multi-session Claude Code terminal orchestrator built with Electron 33 + React 18 + TypeScript.
+Multi-session Claude Code terminal orchestrator built with Electron 39 + React 18 + TypeScript.
 
 ## Build & Run
 
