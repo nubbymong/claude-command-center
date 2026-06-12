@@ -98,17 +98,25 @@ describe('GitHubConfigStore', () => {
 
   it('backup filename is NOT influenced by attacker-controlled schemaVersion (path traversal)', async () => {
     // Attacker writes a config with schemaVersion containing path separators.
-    // Must NOT land outside the store's directory.
+    // Must NOT land outside the store's directory. The store lives two levels
+    // inside a dedicated sandbox so a successful `../../` traversal would land
+    // INSIDE the sandbox — never scan the shared OS temp dir, where unrelated
+    // random-suffix filenames can collide with the probe string.
+    const sandbox = await fs.mkdtemp(path.join(os.tmpdir(), 'ghcfg-trav-'))
+    const storeDir = path.join(sandbox, 'a', 'b')
+    await fs.mkdir(storeDir, { recursive: true })
+    const trapStore = new GitHubConfigStore(storeDir)
     const hostile = JSON.stringify({ schemaVersion: '../../pwn', data: 'x' })
-    await fs.writeFile(path.join(tmp, 'github-config.json'), hostile, 'utf8')
-    expect(await store.read()).toBeNull()
-    // Scan the parent of tmp — no file should have been created there.
-    const parent = path.dirname(tmp)
-    const parentEntries = await fs.readdir(parent)
-    // Parent shouldn't have a 'pwn' backup file.
-    expect(parentEntries.some((e) => e.includes('pwn'))).toBe(false)
-    // Inside tmp the backup name must be sanitized (contain 'unknown' or digits only).
-    const entries = await fs.readdir(tmp)
+    await fs.writeFile(path.join(storeDir, 'github-config.json'), hostile, 'utf8')
+    expect(await trapStore.read()).toBeNull()
+    // Outside the store dir, the sandbox must contain exactly the directory
+    // skeleton we created — nothing escaped.
+    const outside = (await fs.readdir(sandbox, { recursive: true }))
+      .map(String)
+      .filter((e) => !e.startsWith(path.join('a', 'b') + path.sep))
+    expect(outside.sort()).toEqual(['a', path.join('a', 'b')])
+    // Inside the store dir the backup name must be sanitized.
+    const entries = await fs.readdir(storeDir)
     const backup = entries.find((e) => e.includes('.bak'))
     expect(backup).toBeDefined()
     expect(backup).not.toMatch(/\.\./)
