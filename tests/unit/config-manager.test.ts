@@ -9,6 +9,7 @@ vi.mock('fs', () => ({
   renameSync: vi.fn(),
   unlinkSync: vi.fn(),
   readdirSync: vi.fn(),
+  copyFileSync: vi.fn(),
   join: vi.fn(),
 }))
 
@@ -110,10 +111,12 @@ describe('config-manager', () => {
       expect(mockedFs.renameSync).toHaveBeenCalled()
     })
 
-    it('unlinks existing file before rename', () => {
+    it('overwrites an existing file via rename — never the truncating copyFileSync path', () => {
       mockedFs.existsSync.mockReturnValue(true)
-      writeConfig('settings', { x: 1 })
-      expect(mockedFs.unlinkSync).toHaveBeenCalled()
+      const result = writeConfig('settings', { x: 1 })
+      expect(result).toBe(true)
+      expect(mockedFs.renameSync).toHaveBeenCalled()
+      expect(mockedFs.copyFileSync).not.toHaveBeenCalled()
     })
 
     it('returns false on write error', () => {

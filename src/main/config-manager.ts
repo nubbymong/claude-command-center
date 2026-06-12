@@ -144,24 +144,21 @@ export function readConfig<T = unknown>(key: ConfigKey): T | null {
 }
 
 /**
- * Write a config file atomically (write .tmp then rename).
+ * Write a config file atomically (write per-pid .tmp then rename over the
+ * destination). renameSync is an atomic replace on POSIX (rename(2)) and on
+ * Windows (MoveFileExW + REPLACE_EXISTING) whether or not the destination
+ * exists — a crash mid-write leaves the previous file intact, never a torn
+ * one. The previous copyFileSync-when-target-exists branch truncated the
+ * destination in place (same bug fixed in session-state.ts, P7.7.16).
  */
 export function writeConfig(key: ConfigKey, data: unknown): boolean {
   ensureConfigDir()
   const filePath = join(getConfigDir(), CONFIG_FILES[key])
-  const tmpPath = filePath + '.tmp'
+  const tmpPath = `${filePath}.tmp.${process.pid}`
   try {
     const json = JSON.stringify(data, null, 2)
     writeFileSync(tmpPath, json, 'utf-8')
-    // On Windows, renameSync fails if target exists. Use copyFileSync (which overwrites
-    // atomically) then clean up tmp. This avoids the unlink+rename window where neither
-    // file exists.
-    if (existsSync(filePath)) {
-      copyFileSync(tmpPath, filePath)
-      try { unlinkSync(tmpPath) } catch { /* ignore */ }
-    } else {
-      renameSync(tmpPath, filePath)
-    }
+    renameSync(tmpPath, filePath)
     return true
   } catch (err) {
     logError(`[config-manager] Failed to write ${key}: ${err}`)
