@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react'
 import type { TkSummary } from '../../../shared/types'
+import type { ModelRegistry } from '../../../shared/model-registry'
 import { getModelColor, getModelShort } from './modelColors'
 
 function formatCostShort(usd: number): string {
@@ -59,6 +60,44 @@ function buildDonutPaths(
   return paths
 }
 
+/**
+ * Cost slices for the donut + legend. This is a COST split, so zero-cost
+ * rows are dropped — notably "<synthetic>" (CLI-fabricated transcript
+ * messages, never priced), which otherwise lands in the legend because the
+ * modelSplit GROUP BY passes every model id through (VM finding #2).
+ */
+export function buildCostSlices(
+  modelSplit: TkSummary['modelSplit'],
+  registry?: ModelRegistry,
+): DonutSlice[] {
+  if (!modelSplit || modelSplit.length === 0) return []
+
+  const sorted = modelSplit.filter((m) => m.costUsd > 0).sort((a, b) => b.costUsd - a.costUsd)
+  const total = sorted.reduce((s, x) => s + x.costUsd, 0)
+
+  // Collapse tail into "Other"
+  const top = sorted.slice(0, MAX_SLICES)
+  const restCost = sorted.slice(MAX_SLICES).reduce((s, x) => s + x.costUsd, 0)
+
+  const slices: DonutSlice[] = top.map((m) => ({
+    label: getModelShort(m.model, registry),
+    value: m.costUsd,
+    color: getModelColor(m.model, registry),
+    pct: total > 0 ? (m.costUsd / total) * 100 : 0,
+  }))
+
+  if (restCost > 0) {
+    slices.push({
+      label: 'Other',
+      value: restCost,
+      color: 'var(--text-muted)',
+      pct: total > 0 ? (restCost / total) * 100 : 0,
+    })
+  }
+
+  return slices
+}
+
 interface Props {
   modelSplit: TkSummary['modelSplit']
   cacheSplit: TkSummary['cacheSplit']
@@ -66,33 +105,8 @@ interface Props {
 
 export function ModelCacheDonut({ modelSplit, cacheSplit }: Props) {
   const { slices, paths, totalModelCost } = useMemo(() => {
-    if (!modelSplit || modelSplit.length === 0) {
-      return { slices: [] as DonutSlice[], paths: [], totalModelCost: 0 }
-    }
-
-    const sorted = [...modelSplit].sort((a, b) => b.costUsd - a.costUsd)
-    const total = sorted.reduce((s, x) => s + x.costUsd, 0)
-
-    // Collapse tail into "Other"
-    const top = sorted.slice(0, MAX_SLICES)
-    const restCost = sorted.slice(MAX_SLICES).reduce((s, x) => s + x.costUsd, 0)
-
-    const raw: DonutSlice[] = top.map((m) => ({
-      label: getModelShort(m.model),
-      value: m.costUsd,
-      color: getModelColor(m.model),
-      pct: total > 0 ? (m.costUsd / total) * 100 : 0,
-    }))
-
-    if (restCost > 0) {
-      raw.push({
-        label: 'Other',
-        value: restCost,
-        color: 'var(--text-muted)',
-        pct: total > 0 ? (restCost / total) * 100 : 0,
-      })
-    }
-
+    const raw = buildCostSlices(modelSplit)
+    const total = raw.reduce((s, x) => s + x.value, 0)
     const p = buildDonutPaths(raw, 52, 52, 42, 26)
     return { slices: raw, paths: p, totalModelCost: total }
   }, [modelSplit])

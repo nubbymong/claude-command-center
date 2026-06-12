@@ -33,6 +33,9 @@ describe('getModelShort: versioned registry labels (user report 2026-06-12)', ()
     ['gpt-5.5', '5.5'],
     ['o3-codex', 'o3-codex'],
     ['mystery-model', 'mystery-model'],
+    // CLI-fabricated transcript messages (errors, interruptions) carry the
+    // literal model id "<synthetic>" — never show that raw to users.
+    ['<synthetic>', 'System'],
   ])('%s -> %s', (m, s) => expect(getModelShort(m, reg)).toBe(s))
 
   it('distinct opus versions get DISTINCT labels', () => {

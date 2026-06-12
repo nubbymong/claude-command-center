@@ -23,6 +23,10 @@ export function getModelColor(model: string, registry?: ModelRegistry): string {
 // would otherwise claim the wrong version. Colour still collapses to the
 // family (all opus = copper). codex/GPT keep their OLD verbatim/slice forms.
 export function getModelShort(model: string, registry?: ModelRegistry): string {
+  // Claude Code writes the literal id "<synthetic>" on CLI-fabricated
+  // transcript messages (errors, interruptions) — not a real model, never
+  // show it raw (user report 2026-06-13).
+  if (model === '<synthetic>') return 'System'
   const reg = registry ?? useRegistryStore.getState().registry
   const r = resolveModelInfo(reg, model)
   if (r.known && r.family === 'codex') return model.startsWith('gpt-') ? model.slice(4) : model
