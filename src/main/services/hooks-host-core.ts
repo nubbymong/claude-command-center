@@ -76,6 +76,12 @@ export function createHooksHost(transport: HostTransport, opts?: CreateHooksHost
   const postLog = (level: 'info' | 'warn' | 'error', code: string, message: string) =>
     transport.post({ type: 'log', entry: { ts: Date.now(), serviceId: 'hooks', level, code, message } })
 
+  // Declared ahead of the message handler so the 'stop' case can tear them
+  // down explicitly (review nit on 3bddbaa: unref alone leaves the monitor
+  // ticking until process exit).
+  let loopMonitor: LoopStallMonitor | null = null
+  let beat: ReturnType<typeof setInterval> | null = null
+
   transport.onMessage((msg) => {
     switch (msg.type) {
       case 'register': gateway.registerSessionWithSecret(msg.sid, msg.secret); break
@@ -90,7 +96,12 @@ export function createHooksHost(transport: HostTransport, opts?: CreateHooksHost
           }
         })
         break
-      case 'stop': postLog('info', 'child-stop', 'gateway stop requested'); void gateway.stop(); break
+      case 'stop':
+        postLog('info', 'child-stop', 'gateway stop requested')
+        loopMonitor?.stop()
+        if (beat) clearInterval(beat)
+        void gateway.stop()
+        break
       case 'setGate': gateway.setPermissionGateActive(msg.active); break
       case 'permission-respond': localResponders.get(msg.requestId)?.(msg.decision); break
       default: break
@@ -101,14 +112,14 @@ export function createHooksHost(transport: HostTransport, opts?: CreateHooksHost
     // Measure THIS child's event-loop jank with the same monitor + thresholds the
     // main process uses (500ms tick, >250ms late = one stall, 60s window), so the
     // "Jank m/c" pill's child half is real rather than a hardcoded 0.
-    const loopMonitor = new LoopStallMonitor()
+    loopMonitor = new LoopStallMonitor()
     loopMonitor.start()
-    const beat = setInterval(() => {
+    beat = setInterval(() => {
       const m = gateway.metrics()
       transport.post({
         type: 'health',
         inFlight: m.inFlight, eventsTotal: m.eventsTotal, dropsTotal: m.dropsTotal,
-        stallsLastMin: loopMonitor.stallsLastMin(),
+        stallsLastMin: loopMonitor!.stallsLastMin(),
       })
     }, 1000)
     if (typeof (beat as { unref?: () => void }).unref === 'function') (beat as { unref: () => void }).unref()

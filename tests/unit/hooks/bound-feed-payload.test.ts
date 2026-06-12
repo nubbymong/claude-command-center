@@ -56,7 +56,7 @@ describe('boundPayloadForFeed', () => {
     let out: Record<string, unknown> = {}
     expect(() => { out = boundPayloadForFeed(cyclic) }).not.toThrow()
     expect(isStub(out)).toBe(true)
-    expect(out.originalBytes).toBe(0) // unserializable original -> 0, not Infinity
+    expect(out.originalBytes).toBeNull() // unmeasurable original -> null, not a misleading 0
   })
 
   it('always returns a valid Record (renderer indexing a missing field sees undefined, not a crash)', () => {

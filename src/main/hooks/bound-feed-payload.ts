@@ -29,7 +29,9 @@ const MAX_STRING_CHARS = 2048
 
 export interface OversizePayloadStub {
   note: string
-  originalBytes: number
+  /** Serialized size of the original payload; null when it could not be
+   *  measured at all (cyclic/unserializable), not a misleading 0. */
+  originalBytes: number | null
 }
 
 function truncateString(s: string): string {
@@ -82,7 +84,7 @@ export function boundPayloadForFeed(
   } catch { /* fall through to the stub */ }
   const stub: OversizePayloadStub = {
     note: 'payload too large for feed history — full detail in Logs',
-    originalBytes: Number.isFinite(originalBytes) ? originalBytes : 0,
+    originalBytes: Number.isFinite(originalBytes) ? originalBytes : null,
   }
   return stub as unknown as Record<string, unknown>
 }
