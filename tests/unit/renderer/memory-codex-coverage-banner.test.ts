@@ -30,6 +30,12 @@ const mockMemoryState = {
   searchQuery: '',
   collapsedGroups: new Set<string>(),
   selectedContent: null,
+  // Drilldown filter/sort state (added in dashboard recomposition)
+  scopeFilter: 'all' as const,
+  typeFilter: null,
+  sortBy: 'modified' as const,
+  sortDir: 'desc' as const,
+  recentSessions: {} as Record<string, Array<{ sessionId: string; lastActive: number }>>,
   scan: vi.fn().mockResolvedValue(undefined),
   selectProject: vi.fn(),
   selectMemory: vi.fn().mockResolvedValue(undefined),
@@ -38,10 +44,21 @@ const mockMemoryState = {
   deleteMemory: vi.fn().mockResolvedValue(undefined),
   writeFrontmatter: vi.fn().mockResolvedValue(undefined),
   dismissWarnings: vi.fn(),
+  setScopeFilter: vi.fn(),
+  setTypeFilter: vi.fn(),
+  setSort: vi.fn(),
 }
 
 vi.mock('../../../src/renderer/stores/memoryStore', () => ({
   useMemoryStore: (sel?: any) => (sel ? sel(mockMemoryState) : mockMemoryState),
+}))
+
+vi.mock('../../../src/renderer/stores/accountProfilesStore', () => ({
+  useAccountProfilesStore: (sel?: any) => sel ? sel({ profiles: [] }) : { profiles: [] },
+}))
+
+vi.mock('../../../src/renderer/stores/sessionStore', () => ({
+  useSessionStore: (sel?: any) => sel ? sel({ sessions: [] }) : { sessions: [] },
 }))
 
 // Import after mock is registered

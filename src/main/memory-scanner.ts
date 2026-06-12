@@ -55,12 +55,6 @@ export interface MemoryScanResult {
 // ---------------------------------------------------------------------------
 
 const VALID_TYPES = new Set(['user', 'feedback', 'project', 'reference', 'snapshot'])
-// `metadata` is the standard nested block in the auto-memory frontmatter
-// (`metadata:` with an indented `type:`). The flat line parser surfaces it as a
-// top-level key with an empty value, so without it here every standard memory
-// file raised a spurious "Unknown frontmatter field: metadata" info warning
-// (~630 of them on a large memory store).
-const KNOWN_FRONTMATTER_FIELDS = new Set(['name', 'description', 'type', 'originSessionId', 'metadata'])
 
 /**
  * Clean a raw project directory name into a human-friendly project name.
@@ -323,30 +317,12 @@ export async function scanLocalMemory(): Promise<MemoryScanResult> {
         if (VALID_TYPES.has(fmType)) {
           memType = fmType as MemoryFile['type']
         } else {
-          result.warnings.push({
-            level: 'warn',
-            message: `Unknown frontmatter type: "${fields.type}"`,
-            project: projectName,
-            file: filename
-          })
+          // Unknown type values silently fall back to filename inference.
+          // Custom metadata is legitimate — no warning.
           memType = inferTypeFromFilename(filename)
         }
       } else {
         memType = inferTypeFromFilename(filename)
-      }
-
-      // Check for unknown frontmatter fields
-      if (hasFrontmatter) {
-        for (const key of Object.keys(fields)) {
-          if (!KNOWN_FRONTMATTER_FIELDS.has(key)) {
-            result.warnings.push({
-              level: 'info',
-              message: `Unknown frontmatter field: "${key}"`,
-              project: projectName,
-              file: filename
-            })
-          }
-        }
       }
 
       // Name: from frontmatter or filename without .md

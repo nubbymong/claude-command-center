@@ -37,6 +37,7 @@ import * as nodeFs from 'fs'
 import { openTranscriptsDb } from './transcripts-db'
 import type { TranscriptsDb, NewMessage, TranscriptScope } from './transcripts-db'
 import { makeNormalizer, PARSER_VERSION } from './transcript-normalizer'
+import { mangleCwdToProjectDir } from '../../shared/project-key'
 import type { Normalizer } from './transcript-normalizer'
 import type {
   ToTranscriptsWorker,
@@ -436,6 +437,21 @@ export function createTranscriptsWorker(
         const res = db!.clearAll()
         db!.checkpoint()
         rows = [res]
+        break
+      }
+      case 'recent-sessions': {
+        const projectDir = typeof args.projectDir === 'string' ? args.projectDir : ''
+        const limit = typeof args.limit === 'number' ? args.limit : 5
+        rows = db!.sessionActivity()
+          .filter((r) => r.projectCwd !== null && mangleCwdToProjectDir(r.projectCwd) === projectDir)
+          .slice(0, limit)
+          .map((r) => ({ sessionId: r.sessionId, lastActive: r.lastActive }))
+        break
+      }
+      case 'session-config': {
+        const sessionId = typeof args.sessionId === 'string' ? args.sessionId : ''
+        const res = db!.sessionConfig(sessionId)
+        rows = res ? [res] : []
         break
       }
       default:

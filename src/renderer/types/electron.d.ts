@@ -275,6 +275,7 @@ export interface ElectronAPI {
       transcripts: { path: string; status: string; ord: number }[]
       messageCount: number
     } | null>
+    sessionConfig: (args: { sessionId: string }) => Promise<{ configId: string | null } | null>
     /** Live push from the worker when a tailed transcript appends messages. */
     onNewMessages: (cb: (e: { sessionId: string; configId: string | null; count: number }) => void) => () => void
   }
@@ -413,6 +414,7 @@ export interface ElectronAPI {
     read: (filePath: string) => Promise<string>
     delete: (filePath: string) => Promise<void>
     writeFrontmatter: (filePath: string, frontmatter: { name?: string; description?: string; type?: string }) => Promise<void>
+    recentSessions: (projectDir: string) => Promise<Array<{ sessionId: string; lastActive: number }>>
   }
   shell: {
     openExternal: (url: string) => Promise<void>

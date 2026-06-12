@@ -10,6 +10,7 @@ import { useSettingsStore } from '../stores/settingsStore'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { resolveAccountNameByEmail } from '../../shared/account-chip-color'
 import CompatBadge from './sentinel/CompatBadge'
+import { orphanSessionId, slotKeyForSession } from './logs/slot-key'
 
 const logsIcon = (
   <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round">
@@ -25,14 +26,6 @@ interface SearchHitRow {
   sessionId: string
   snippet: string
 }
-
-/**
- * Strip the "orphan:" prefix that listSlots synthesizes onto an orphan slot's
- * slotKey, recovering the BARE sessionId the DB (runs.sessionId) and FTS hits
- * (hit.sessionId) actually carry. Non-orphan slotKeys pass through unchanged.
- */
-const orphanSessionId = (slotKey: string): string =>
-  slotKey.startsWith('orphan:') ? slotKey.slice('orphan:'.length) : slotKey
 
 /**
  * Right pane for a selected slot. Owns the SINGLE useWindowedTurns instance and
@@ -98,7 +91,12 @@ function SlotTranscriptPanel({
   )
 }
 
-export default function GlobalLogsView() {
+interface Props {
+  initialSessionId?: string | null
+  onInitialSessionConsumed?: () => void
+}
+
+export default function GlobalLogsView({ initialSessionId, onInitialSessionConsumed }: Props = {}) {
   const loggingEnabled = useSettingsStore((s) => s.settings.loggingEnabled)
   const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
   const profiles = useAccountProfilesStore((s) => s.profiles)
@@ -188,6 +186,26 @@ export default function GlobalLogsView() {
     setSelected(s)
     setJumpRequest(null)
   }, [])
+
+  // Deep-link from the Memory page: resolve the owning slot for a bare
+  // sessionId (the search-hit resolution can't be reused — SlotRow hides member
+  // sessionIds) via the logs2 session-config query, then select it. Fail-open:
+  // unknown/unindexed id -> stay unselected (spec §3.4).
+  useEffect(() => {
+    if (!initialSessionId || slots.length === 0) return
+    let active = true
+    void (async () => {
+      try {
+        const res = await window.electronAPI.logs2.sessionConfig({ sessionId: initialSessionId })
+        if (!active) return
+        const key = slotKeyForSession(initialSessionId, res?.configId ?? null)
+        const slot = slots.find((s) => s.slotKey === key)
+        if (slot) onSelectSlot(slot)
+      } catch { /* fail-open */ }
+      onInitialSessionConsumed?.()
+    })()
+    return () => { active = false }
+  }, [initialSessionId, slots]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const deleteSlot = useCallback(async (s: SlotRow) => {
     if (busy) return

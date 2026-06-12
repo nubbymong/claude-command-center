@@ -627,4 +627,79 @@ describe('transcripts-worker', () => {
     const err = h.out.find((m) => m.type === 'error' && m.id === 6)
     expect((err as { message: string }).message).toMatch(/before open/)
   })
+
+  // -------------------------------------------------------------------------
+  // recent-sessions + session-config queries
+  // -------------------------------------------------------------------------
+
+  it('recent-sessions returns sessions matching projectDir, ordered by lastActive DESC, respects limit', () => {
+    // seed directly via openTranscriptsDb so we can set projectCwd
+    const seed = openTranscriptsDb(dbPath)
+    // s1 in our project, closed at 1500
+    seed.insertRun({
+      sessionId: 's1', configId: 'cfg1', configLabel: 'APP', provider: 'claude',
+      startedAt: 1000, projectCwd: 'F:\\CLAUDE_MULTI_APP',
+    })
+    seed.closeRun('s1', 1500, 'exited')
+    // s2 in our project, open (startedAt=2000, no endedAt) — lastActive=2000
+    seed.insertRun({
+      sessionId: 's2', configId: 'cfg2', configLabel: 'APP', provider: 'claude',
+      startedAt: 2000, projectCwd: 'F:\\CLAUDE_MULTI_APP',
+    })
+    // s3 in a DIFFERENT project — must be excluded
+    seed.insertRun({
+      sessionId: 's3', configId: 'cfg3', configLabel: 'OTHER', provider: 'claude',
+      startedAt: 3000, projectCwd: 'C:\\OtherProject',
+    })
+    seed.close()
+
+    const h = makeWorker()
+    h.send({ type: 'open', dbPath })
+
+    // mangleCwdToProjectDir('F:\\CLAUDE_MULTI_APP') = 'F--CLAUDE-MULTI-APP'
+    h.send({ type: 'query', id: 10, kind: 'recent-sessions', args: { projectDir: 'F--CLAUDE-MULTI-APP', limit: 5 } })
+    const res = h.out.find((m) => m.type === 'query-result' && m.id === 10) as { rows: { sessionId: string; lastActive: number }[] }
+    expect(res).toBeDefined()
+    // s2 (lastActive=2000) before s1 (lastActive=1500); s3 excluded
+    expect(res.rows.map((r) => r.sessionId)).toEqual(['s2', 's1'])
+    expect(res.rows[0].lastActive).toBe(2000)
+    expect(res.rows[1].lastActive).toBe(1500)
+
+    // limit=1 returns only the most recent
+    h.send({ type: 'query', id: 11, kind: 'recent-sessions', args: { projectDir: 'F--CLAUDE-MULTI-APP', limit: 1 } })
+    const res1 = h.out.find((m) => m.type === 'query-result' && m.id === 11) as { rows: { sessionId: string }[] }
+    expect(res1.rows.map((r) => r.sessionId)).toEqual(['s2'])
+
+    // wrong projectDir → empty
+    h.send({ type: 'query', id: 12, kind: 'recent-sessions', args: { projectDir: 'X--NOPE', limit: 5 } })
+    const resNone = h.out.find((m) => m.type === 'query-result' && m.id === 12) as { rows: unknown[] }
+    expect(resNone.rows).toHaveLength(0)
+  })
+
+  it('session-config returns [{configId}] for known session and [] for unknown', () => {
+    const seed = openTranscriptsDb(dbPath)
+    seed.insertRun({
+      sessionId: 'sA', configId: 'cfgA', configLabel: 'A', provider: 'claude', startedAt: 100,
+    })
+    // sB has no configId (orphan)
+    seed.insertRun({
+      sessionId: 'sB', configLabel: 'B', provider: 'claude', startedAt: 200,
+    })
+    seed.close()
+
+    const h = makeWorker()
+    h.send({ type: 'open', dbPath })
+
+    h.send({ type: 'query', id: 20, kind: 'session-config', args: { sessionId: 'sA' } })
+    const resA = h.out.find((m) => m.type === 'query-result' && m.id === 20) as { rows: { configId: string | null }[] }
+    expect(resA.rows).toEqual([{ configId: 'cfgA' }])
+
+    h.send({ type: 'query', id: 21, kind: 'session-config', args: { sessionId: 'sB' } })
+    const resB = h.out.find((m) => m.type === 'query-result' && m.id === 21) as { rows: { configId: string | null }[] }
+    expect(resB.rows).toEqual([{ configId: null }])
+
+    h.send({ type: 'query', id: 22, kind: 'session-config', args: { sessionId: 'nobody' } })
+    const resNone = h.out.find((m) => m.type === 'query-result' && m.id === 22) as { rows: unknown[] }
+    expect(resNone.rows).toHaveLength(0)
+  })
 })

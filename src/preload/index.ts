@@ -159,6 +159,7 @@ export interface ElectronAPI {
       transcripts: { path: string; status: string; ord: number }[]
       messageCount: number
     } | null>
+    sessionConfig: (args: { sessionId: string }) => Promise<{ configId: string | null } | null>
     onNewMessages: (cb: (e: { sessionId: string; configId: string | null; count: number }) => void) => () => void
   }
   discovery: {
@@ -351,6 +352,7 @@ export interface ElectronAPI {
     read: (filePath: string) => Promise<string>
     delete: (filePath: string) => Promise<void>
     writeFrontmatter: (filePath: string, frontmatter: { name?: string; description?: string; type?: string }) => Promise<void>
+    recentSessions: (projectDir: string) => Promise<Array<{ sessionId: string; lastActive: number }>>
   }
 }
 
@@ -614,6 +616,7 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.invoke(IPC.LOGS2_DELETE_SLOT, args),
     clearAll: () => ipcRenderer.invoke(IPC.LOGS2_CLEAR_ALL),
     ingestStatus: (args: { sessionId: string }) => ipcRenderer.invoke(IPC.LOGS2_INGEST_STATUS, args),
+    sessionConfig: (args: { sessionId: string }) => ipcRenderer.invoke(IPC.LOGS2_SESSION_CONFIG, args),
     onNewMessages: (cb: (e: { sessionId: string; configId: string | null; count: number }) => void) => {
       const handler = (_e: unknown, e: { sessionId: string; configId: string | null; count: number }) => cb(e)
       ipcRenderer.on(IPC.LOGS2_NEW_MESSAGES, handler)
@@ -811,6 +814,7 @@ const electronAPI: ElectronAPI = {
     delete: (filePath: string) => ipcRenderer.invoke('memory:delete', filePath),
     writeFrontmatter: (filePath: string, frontmatter: { name?: string; description?: string; type?: string }) =>
       ipcRenderer.invoke('memory:writeFrontmatter', filePath, frontmatter),
+    recentSessions: (projectDir: string) => ipcRenderer.invoke(IPC.MEMORY_RECENT_SESSIONS, projectDir),
   },
   shell: {
     openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),

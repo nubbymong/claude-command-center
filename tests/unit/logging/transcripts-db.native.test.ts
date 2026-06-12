@@ -797,4 +797,50 @@ describe('transcripts-db', () => {
     expect(rebound.isNew).toBe(false)
     expect(rebound.cursor).toBe(4242)
   })
+
+  // -------------------------------------------------------------------------
+  // sessionActivity + sessionConfig
+  // -------------------------------------------------------------------------
+
+  describe('sessionActivity + sessionConfig', () => {
+    it('sessionActivity groups by sessionId with lastActive = MAX(COALESCE(endedAt, startedAt)) and latest-run projectCwd', () => {
+      // s1: two runs — first closed (endedAt=1500), second open (startedAt=2000, no endedAt)
+      // lastActive for s1 = MAX(COALESCE(1500,1000), COALESCE(null,2000)) = MAX(1500, 2000) = 2000
+      // projectCwd for s1 comes from the LATEST run (second run = /project/s1-v2)
+      const r1 = db.insertRun(runMeta({ sessionId: 's1', startedAt: 1000, projectCwd: '/project/s1-v1' }))
+      db.closeRun('s1', 1500, 'exited')
+      db.insertRun(runMeta({ sessionId: 's1', startedAt: 2000, projectCwd: '/project/s1-v2' }))
+      void r1
+
+      // s2: single run, closed at 800
+      db.insertRun(runMeta({ sessionId: 's2', startedAt: 700, projectCwd: '/project/s2' }))
+      db.closeRun('s2', 800, 'exited')
+
+      const rows = db.sessionActivity()
+      // ordered by lastActive DESC: s1 (2000) first, s2 (800) second
+      expect(rows.length).toBe(2)
+      const s1 = rows.find((r) => r.sessionId === 's1')!
+      expect(s1.lastActive).toBe(2000)
+      expect(s1.projectCwd).toBe('/project/s1-v2')
+
+      const s2 = rows.find((r) => r.sessionId === 's2')!
+      expect(s2.lastActive).toBe(800)
+      expect(s2.projectCwd).toBe('/project/s2')
+
+      // s1 appears before s2 (DESC lastActive)
+      expect(rows[0].sessionId).toBe('s1')
+      expect(rows[1].sessionId).toBe('s2')
+    })
+
+    it('sessionConfig returns latest configId, null configId for orphans, null for unknown session', () => {
+      // s1 with configId 'cfg-a'
+      db.insertRun(runMeta({ sessionId: 's1', configId: 'cfg-a', startedAt: 100 }))
+      // s2 with configId null (orphan)
+      db.insertRun(runMeta({ sessionId: 's2', startedAt: 200 }))
+
+      expect(db.sessionConfig('s1')).toEqual({ configId: 'cfg-a' })
+      expect(db.sessionConfig('s2')).toEqual({ configId: null })
+      expect(db.sessionConfig('nope')).toBeNull()
+    })
+  })
 })

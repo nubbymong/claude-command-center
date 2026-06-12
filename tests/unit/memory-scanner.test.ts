@@ -183,20 +183,26 @@ describe('memory-scanner', () => {
       expect(warning!.level).toBe('warn')
     })
 
-    it('warns about unknown frontmatter type', async () => {
-      oneProject('F--TEST', ['test.md'], () => '---\ntype: banana\n---\n\nContent')
+    it('custom frontmatter fields and types produce ZERO warnings (warning class deleted)', async () => {
+      // Use MEMORY.md so the missing-MEMORY.md info doesn't appear — only testing
+      // that custom type/fields no longer produce any warnings.
+      oneProject('F--TEST', ['MEMORY.md'], () =>
+        '---\nname: t\nnode_type: lineage\ntype: banana\nauthor: someone\n---\n\nContent')
       const result = await scanLocalMemory()
-      const warning = result.warnings.find(w => w.message.includes('Unknown frontmatter type'))
-      expect(warning).toBeDefined()
-      expect(warning!.message).toContain('banana')
+      expect(result.warnings).toEqual([])
+      // unknown type still silently infers from filename
+      expect(result.memories[0].type).toBe('reference')
     })
 
-    it('warns about unknown frontmatter fields', async () => {
-      oneProject('F--TEST', ['test.md'], () => '---\nname: Test\nauthor: Someone\n---\n\nContent')
-      const result = await scanLocalMemory()
-      const warning = result.warnings.find(w => w.message.includes('Unknown frontmatter field'))
-      expect(warning).toBeDefined()
-      expect(warning!.message).toContain('author')
+    it('real signals still warn: MEMORY.md over 200 lines and missing MEMORY.md', async () => {
+      const big = Array(250).fill('line').join('\n')
+      oneProject('F--TEST', ['MEMORY.md'], () => big, 5000)
+      const r1 = await scanLocalMemory()
+      expect(r1.warnings.some(w => w.message.includes('250 lines'))).toBe(true)
+
+      oneProject('F--TEST', ['feedback_x.md'], () => 'Body')
+      const r2 = await scanLocalMemory()
+      expect(r2.warnings.some(w => w.message.includes('No MEMORY.md'))).toBe(true)
     })
 
     it('does NOT warn on the standard nested metadata: frontmatter block', async () => {
