@@ -49,6 +49,8 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { homedir } from 'node:os'
+import { mangleCwdToProjectDir } from '../../shared/project-key'
+export { mangleCwdToProjectDir }
 
 // ---------------------------------------------------------------------------
 // canonicalizeTranscriptPath
@@ -105,38 +107,8 @@ export function canonicalizeTranscriptPath(p: string): string | null {
 }
 
 // ---------------------------------------------------------------------------
-// mangleCwdToProjectDir
-// ---------------------------------------------------------------------------
-
-/**
- * Maps a filesystem cwd to Claude CLI's project-folder naming convention.
- *
- * Verified rule (2026-06-06) against real ~/.claude/projects on the dev machine:
- *
- *   Input                                            → Directory name
- *   ──────────────────────────────────────────────────────────────────────────
- *   F:\CLAUDE_MULTI_APP                              → F--CLAUDE-MULTI-APP
- *   f:\platform_v9                                   → f--platform-v9
- *   F:\platform_v9\.claude-worktrees\warm-toolchain  → F--platform-v9--claude-worktrees-warm-toolchain
- *   C:\Users\nicho                                   → C--Users-nicho
- *
- * Rule: replace every non-alphanumeric character individually with `-`.
- *   cwd.replace(/[^A-Za-z0-9]/g, '-')
- *
- * Key properties:
- *   - Underscores, colons, backslashes, forward-slashes, dots, spaces → `-`
- *   - No run-collapsing: `\\` → `--` (two consecutive separators = two hyphens)
- *   - Input case is preserved verbatim (no lowercasing)
- *
- * NOTE: src/main/utils/claude-project-path.ts uses a DIFFERENT (older/looser) rule
- * that preserves underscores and collapses separator runs. It serves a separate
- * feature and is intentionally NOT modified here — but the divergence is flagged
- * so callers do not conflate the two functions.
- */
-export function mangleCwdToProjectDir(cwd: string): string {
-  return cwd.replace(/[^A-Za-z0-9]/g, '-')
-}
-
+// mangleCwdToProjectDir — canonical impl in src/shared/project-key.ts;
+// imported + re-exported above so existing importers compile unchanged.
 // ---------------------------------------------------------------------------
 // resolveResumeTargetFromTranscript (T8b — exact-conversation resume)
 // ---------------------------------------------------------------------------
