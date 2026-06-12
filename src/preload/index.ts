@@ -344,6 +344,7 @@ export interface ElectronAPI {
     sessions: (query?: import('../shared/types').TkSessionsQuery) => Promise<import('../shared/types').TkSessionsPage>
     sessionDetail: (sessionId: string) => Promise<import('../shared/types').TkSessionDetail | null>
     indexStatus: () => Promise<import('../shared/types').TkIndexStatus>
+    onIndexStatus: (cb: (s: import('../shared/types').TkIndexStatus) => void) => () => void
     onIndexProgress: (cb: (p: import('../shared/types').TkIndexProgress) => void) => () => void
     onIndexComplete: (cb: (c: import('../shared/types').TkIndexCompleteEvent) => void) => () => void
   }
@@ -805,6 +806,7 @@ const electronAPI: ElectronAPI = {
     sessions: (query?: import('../shared/types').TkSessionsQuery) => ipcRenderer.invoke(IPC.TOKENOMICS2_SESSIONS, query ?? {}),
     sessionDetail: (sessionId: string) => ipcRenderer.invoke(IPC.TOKENOMICS2_SESSION_DETAIL, { sessionId }),
     indexStatus: () => ipcRenderer.invoke(IPC.TOKENOMICS2_INDEX_STATUS),
+    onIndexStatus: (cb: (s: import('../shared/types').TkIndexStatus) => void) => { const h = (_: unknown, s: import('../shared/types').TkIndexStatus) => cb(s); ipcRenderer.on(IPC.TOKENOMICS2_INDEX_STATUS, h); return () => ipcRenderer.removeListener(IPC.TOKENOMICS2_INDEX_STATUS, h) },
     onIndexProgress: (cb: (p: import('../shared/types').TkIndexProgress) => void) => { const h = (_: unknown, p: import('../shared/types').TkIndexProgress) => cb(p); ipcRenderer.on(IPC.TOKENOMICS2_INDEX_PROGRESS, h); return () => ipcRenderer.removeListener(IPC.TOKENOMICS2_INDEX_PROGRESS, h) },
     onIndexComplete: (cb: (c: import('../shared/types').TkIndexCompleteEvent) => void) => { const h = (_: unknown, c: import('../shared/types').TkIndexCompleteEvent) => cb(c); ipcRenderer.on(IPC.TOKENOMICS2_INDEX_COMPLETE, h); return () => ipcRenderer.removeListener(IPC.TOKENOMICS2_INDEX_COMPLETE, h) },
   },

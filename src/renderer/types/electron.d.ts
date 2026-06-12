@@ -406,6 +406,7 @@ export interface ElectronAPI {
     sessions: (query?: import('../../shared/types').TkSessionsQuery) => Promise<import('../../shared/types').TkSessionsPage>
     sessionDetail: (sessionId: string) => Promise<import('../../shared/types').TkSessionDetail | null>
     indexStatus: () => Promise<import('../../shared/types').TkIndexStatus>
+    onIndexStatus: (cb: (s: import('../../shared/types').TkIndexStatus) => void) => () => void
     onIndexProgress: (cb: (p: import('../../shared/types').TkIndexProgress) => void) => () => void
     onIndexComplete: (cb: (c: import('../../shared/types').TkIndexCompleteEvent) => void) => () => void
   }

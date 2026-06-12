@@ -74,9 +74,29 @@ export default function TokenomicsPage() {
       actions={<CompatBadge feature="tokenomics" />}
     >
       <div className="p-5">
-        {/* Indexing / first-load gate */}
+        {/* Indexing / first-load gate. A fatal worker error (failed DB open)
+            must surface here too — otherwise the gate spins on 'indexing'
+            forever with zero diagnostics. */}
         {(indexStatus === null || !indexStatus.firstIndexComplete) ? (
-          <IndexingState status={indexStatus} />
+          indexStatus?.error ? (
+            <div
+              className="rounded-xl p-4 text-sm flex items-center justify-between gap-3"
+              style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
+              role="alert"
+            >
+              <span>Tokenomics indexing failed: {indexStatus.error}</span>
+              <button
+                type="button"
+                className="px-2 py-1 rounded-md text-xs"
+                style={{ background: 'var(--surface-panel)', border: '1px solid var(--border-subtle)', color: 'var(--text)' }}
+                onClick={() => useTokenomicsStore.getState().refreshIndexStatus()}
+              >
+                Retry
+              </button>
+            </div>
+          ) : (
+            <IndexingState status={indexStatus} />
+          )
         ) : (
           <>
             {/* Page heading */}

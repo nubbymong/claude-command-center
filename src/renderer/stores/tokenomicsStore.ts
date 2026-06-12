@@ -22,6 +22,7 @@ interface TokenomicsState {
 
   init: () => Promise<void>
   refresh: () => Promise<void>
+  refreshIndexStatus: () => Promise<void>
   setConfig: (configId: string | null | undefined) => void
   setRange: (range: TkRange) => void
   setSearch: (search: string) => void
@@ -63,7 +64,14 @@ export const useTokenomicsStore = create<TokenomicsState>((set, get) => ({
       set({ error: err instanceof Error ? err.message : String(err) })
       return
     }
-    set({ indexStatus: status })
+    set({ indexStatus: status, error: status.error ?? null })
+
+    // Subscribe to pushed status updates — carries the worker's fatal `error`
+    // (e.g. a failed DB open) so the page leaves the 'indexing' gate instead
+    // of spinning forever with zero diagnostics.
+    const unsubStatus = tk.onIndexStatus((st) => {
+      set({ indexStatus: st, error: st.error ?? null })
+    })
 
     // Subscribe to progress events — update filesDone/filesTotal
     const unsubProgress = tk.onIndexProgress((p) => {
@@ -86,11 +94,23 @@ export const useTokenomicsStore = create<TokenomicsState>((set, get) => ({
       get().refresh()
     })
 
-    set((s) => ({ _unsubs: [...s._unsubs, unsubProgress, unsubComplete] }))
+    set((s) => ({ _unsubs: [...s._unsubs, unsubStatus, unsubProgress, unsubComplete] }))
 
     // If the first index is already done, load data now
     if (status.firstIndexComplete) {
       await get().refresh()
+    }
+  },
+
+  refreshIndexStatus: async () => {
+    // Idempotent re-fetch for the indexing-gate Retry button (no resubscribe).
+    const tk = window.electronAPI.tokenomics
+    try {
+      const status = await tk.indexStatus()
+      set({ indexStatus: status, error: status.error ?? null })
+    } catch (err) {
+      console.error('[tokenomicsStore] refreshIndexStatus failed', err)
+      set({ error: err instanceof Error ? err.message : String(err) })
     }
   },
 
