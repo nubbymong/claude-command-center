@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import type { MemoryFile } from '../../../shared/types'
-import { TypeBadge, fmt, fmtRel, renderMarkdown, TYPE_COLORS } from './memory-ui'
+import { TypeBadge, fmt, fmtRel, renderMarkdown } from './memory-ui'
 
 interface Props {
   memory: MemoryFile
@@ -12,8 +12,6 @@ interface Props {
 
 export default function MemoryReadingDrawer({ memory, content, onClose, onDelete, onWriteFrontmatter }: Props) {
   const [confirmDelete, setConfirmDelete] = useState(false)
-  // TYPE_COLORS lookup kept for future use (matches DetailPanel pattern)
-  const _tc = TYPE_COLORS[memory.type] || TYPE_COLORS.uncategorized
 
   return (
     <div

@@ -1,6 +1,6 @@
 import React from 'react'
 import type { MemoryFile } from '../../../shared/types'
-import { TypeBadge, fmt, fmtRel, TYPE_COLORS } from './memory-ui'
+import { TypeBadge, fmt, fmtRel } from './memory-ui'
 
 interface Props {
   memories: MemoryFile[]
@@ -45,7 +45,6 @@ export default function MemorySearchResults({ memories, query, selectedId, onSel
           style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
         >
           {results.map(m => {
-            const _tc = TYPE_COLORS[m.type] || TYPE_COLORS.uncategorized
             const isSelected = selectedId === m.id
             return (
               <div
