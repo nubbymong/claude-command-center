@@ -14,7 +14,7 @@ dist/
 .superpowers/
 docs/superpowers/
 USER/
-memory/
+/memory/
 .pr30-body.md
 .pr*-body.md
 
