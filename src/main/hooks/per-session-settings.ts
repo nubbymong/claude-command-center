@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
-import { getConductorMcpPort } from '../conductor-mcp-server'
+import { getConductorMcpPort, getConductorMcpSecret } from '../conductor-mcp-server'
 
 /**
  * Path to the local-session settings file. Mirrors the SSH remote layout
@@ -109,9 +109,12 @@ export function writeLocalSessionMcpConfig(sessionId: string): string {
   const mcpServers: Record<string, unknown> = {}
   if (mcpPort > 0) {
     const encodedSid = encodeURIComponent(sessionId)
+    // R-DEC-3: &token=<secret> authenticates this session against the gated
+    // MCP server. The SSE transport preserves the query on its /messages
+    // endpoint, so follow-up POSTs carry it too.
     mcpServers['conductor'] = {
       type: 'sse',
-      url: `http://localhost:${mcpPort}/sse?cccSessionId=${encodedSid}`,
+      url: `http://localhost:${mcpPort}/sse?cccSessionId=${encodedSid}&token=${getConductorMcpSecret()}`,
     }
   }
   const cfg = { mcpServers }

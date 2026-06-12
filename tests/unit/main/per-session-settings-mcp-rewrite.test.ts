@@ -18,8 +18,10 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 // writer picks up the mocked port. Mutable via the exported setter below
 // so individual tests can exercise the port=0 edge case.
 let mockedPort = 19433
+const MOCK_SECRET = 'a'.repeat(64)
 vi.mock('../../../src/main/conductor-mcp-server', () => ({
   getConductorMcpPort: () => mockedPort,
+  getConductorMcpSecret: () => MOCK_SECRET,
 }))
 
 const {
@@ -47,15 +49,23 @@ describe('per-session MCP config writer (P7.7.3)', () => {
     fs.rmSync(tmpHome, { recursive: true, force: true })
   })
 
-  it('writes conductor with canonical schema (type: "sse", url) including cccSessionId query', () => {
+  it('writes conductor with canonical schema (type: "sse", url) including cccSessionId + token query', () => {
     // P7.7.10: URL bakes ?cccSessionId=<sid> so the server can resolve the
     // CCC session from the SSE transport instead of trusting an LLM arg.
+    // R-DEC-3: URL also carries &token=<secret> so the request authenticates
+    // against the per-launch MCP secret.
     const cfgPath = writeLocalSessionMcpConfig('sid-1')
     const written = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'))
     expect(written.mcpServers['conductor']).toEqual({
       type: 'sse',
-      url: 'http://localhost:19433/sse?cccSessionId=sid-1',
+      url: `http://localhost:19433/sse?cccSessionId=sid-1&token=${MOCK_SECRET}`,
     })
+  })
+
+  it('embeds the per-launch MCP secret as a token query param (R-DEC-3)', () => {
+    const cfgPath = writeLocalSessionMcpConfig('sid-tok')
+    const written = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'))
+    expect(written.mcpServers['conductor'].url).toContain(`token=${MOCK_SECRET}`)
   })
 
   it('URL-encodes special characters in the sessionId (P7.7.10)', () => {
@@ -63,7 +73,7 @@ describe('per-session MCP config writer (P7.7.3)', () => {
     const written = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'))
     // encodeURIComponent maps "+" -> "%2B" and " " -> "%20"
     expect(written.mcpServers['conductor'].url).toBe(
-      'http://localhost:19433/sse?cccSessionId=sess%2Bone%20space',
+      `http://localhost:19433/sse?cccSessionId=sess%2Bone%20space&token=${MOCK_SECRET}`,
     )
   })
 

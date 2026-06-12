@@ -1,4 +1,4 @@
-import { getConductorMcpPort } from '../../conductor-mcp-server'
+import { getConductorMcpPort, getConductorMcpSecret } from '../../conductor-mcp-server'
 import { buildHooksBlock } from '../../hooks/session-hooks-writer'
 
 /**
@@ -120,12 +120,15 @@ export function generateRemoteSetupScript(
   // server resolves the CCC session from the SSE transport rather than
   // trusting an LLM-supplied tool arg. parseCccSessionIdFromUrl on the
   // host side picks this up and gates codex_review by it.
+  // R-DEC-3: bake &token=<secret> into the reverse-tunneled MCP URL so the SSH
+  // session authenticates against the gated host MCP server. The tunnel forwards
+  // localhost:<mcpPort> to the host, where the auth gate validates the token.
   const mcpConfigLiteral = hasVision
     ? JSON.stringify({
         mcpServers: {
           'conductor': {
             type: 'sse',
-            url: `http://localhost:${mcpPort}/sse?cccSessionId=${encodeURIComponent(sessionId)}`,
+            url: `http://localhost:${mcpPort}/sse?cccSessionId=${encodeURIComponent(sessionId)}&token=${getConductorMcpSecret()}`,
           },
         },
       })

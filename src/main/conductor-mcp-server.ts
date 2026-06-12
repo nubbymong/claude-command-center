@@ -24,6 +24,7 @@
  */
 
 import * as http from 'http'
+import * as crypto from 'crypto'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
@@ -78,6 +79,63 @@ export function parseCccSessionIdFromUrl(reqUrl: string): string | null {
   } catch {
     return null
   }
+}
+
+// === R-DEC-3: per-launch auth secret ===
+//
+// The MCP server listens on a loopback port and exposes vision_* tools --
+// including vision_eval (arbitrary JS in the embedded browser) -- plus
+// cross-session actions. Loopback is NOT an authorisation boundary: any
+// local process (or a malicious page in a browser the user opened) could
+// drive it. We mint a 32-byte random secret once per app launch and require
+// it on EVERY request. The secret never persists to disk on its own; it is
+// embedded into the MCP registration URLs CCC writes for Claude/Codex
+// (?token=<secret>) so legitimate sessions authenticate transparently.
+const conductorMcpSecret = crypto.randomBytes(32).toString('hex')
+
+/** The per-launch MCP auth secret. Stable for the process lifetime. Consumed
+ *  by every MCP-URL writer (global ~/.claude.json, per-session --mcp-config,
+ *  SSH shim, Codex TOML) so registered sessions carry the token. */
+export function getConductorMcpSecret(): string {
+  return conductorMcpSecret
+}
+
+/** Extract the presented token from either an `Authorization: Bearer <token>`
+ *  header or a `?token=<token>` query param, then compare against the expected
+ *  secret in constant time. The header is checked first (cheaper, and the
+ *  cleaner channel); the query param is the fallback because the registration
+ *  formats can only emit a URL. Returns false for any malformed input rather
+ *  than throwing. Pure -- no I/O, no http types -- so the auth contract is
+ *  unit-testable directly (see conductor-mcp-auth.test.ts). */
+export function isAuthorizedMcpRequest(
+  reqUrl: string | undefined,
+  authHeader: string | undefined,
+  expectedSecret: string,
+): boolean {
+  let presented: string | null = null
+  if (authHeader) {
+    const m = /^bearer\s+(.+)$/i.exec(authHeader.trim())
+    if (m) presented = m[1]
+  }
+  if (presented === null && reqUrl) {
+    try {
+      presented = new URL(reqUrl, 'http://localhost').searchParams.get('token')
+    } catch {
+      presented = null
+    }
+  }
+  if (presented === null) return false
+  return tokensMatch(presented, expectedSecret)
+}
+
+/** Length-checked, constant-time token comparison. timingSafeEqual throws on
+ *  unequal-length buffers, so the length guard runs first (and also short-
+ *  circuits the obvious mismatch). */
+function tokensMatch(presented: string, expected: string): boolean {
+  const a = Buffer.from(presented, 'utf8')
+  const b = Buffer.from(expected, 'utf8')
+  if (a.length !== b.length) return false
+  return crypto.timingSafeEqual(a, b)
 }
 
 /** #435: diagnostic payload for the /messages 404 branch.
@@ -185,6 +243,11 @@ type GetVisionManager = () => VisionManagerInterface | null
 let httpServer: http.Server | null = null
 let mcpPort: number = 0
 const transports = new Map<string, any>()
+
+// R-DEC-3: latch so an unauthenticated request logs at most ONE warning per
+// process lifetime per bound port. Without this a probing/misconfigured client
+// could spam the log. Keyed by port so a port-change restart re-arms the warn.
+const authWarnedForPort = new Set<number>()
 
 // P6: per-session opt-in for codex_review tool. Populated by pty-manager on
 // Claude spawn; cleared on dispose. Soft ACL (the LLM passes its own session
@@ -500,11 +563,31 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
       // CORS headers for cross-origin MCP clients
       res.setHeader('Access-Control-Allow-Origin', `http://localhost:${port}`)
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS')
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+      // R-DEC-3: allow Authorization so a browser-origin caller could present
+      // the Bearer token across a preflight. Non-browser MCP clients (Claude
+      // CLI, Codex rmcp, SSH tunnel) use the ?token= query param and skip CORS.
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
 
       if (req.method === 'OPTIONS') {
         res.writeHead(204)
         res.end()
+        return
+      }
+
+      // R-DEC-3: gate EVERY request (tool calls, SSE/streams, /messages, /mcp,
+      // /health) on the per-launch secret. The CORS preflight above is the only
+      // unauthenticated path -- it carries no data and the spec forbids custom
+      // headers on it. We deliberately gate /health too: it leaks vision
+      // connection state + browser name + session count, none of which an
+      // unauthenticated caller should see.
+      if (!isAuthorizedMcpRequest(req.url, req.headers['authorization'], conductorMcpSecret)) {
+        if (!authWarnedForPort.has(port)) {
+          authWarnedForPort.add(port)
+          const ua = req.headers['user-agent']
+          logWarn(`[vision-mcp] Rejected unauthenticated request on port ${port} (method=${req.method} ua="${typeof ua === 'string' ? ua.slice(0, UA_MAX_LEN) : 'unknown'}"); suppressing further auth warnings for this port.`)
+        }
+        res.writeHead(401, { 'Content-Type': 'text/plain; charset=utf-8' })
+        res.end('Unauthorized')
         return
       }
 
@@ -513,7 +596,12 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
         const boundSessionId = parseCccSessionIdFromUrl(req.url)
         logInfo(`[vision-mcp] New SSE connection (source=${source}, sid=${boundSessionId ?? 'none'})`)
         const server = createServer(source, boundSessionId, 'sse')
-        const transport = new SSEServerTransport('/messages', res)
+        // R-DEC-3: bake the token into the /messages endpoint the SDK advertises
+        // to the client via the SSE `endpoint` event. SSEServerTransport.start()
+        // does `new URL(endpoint).searchParams.set('sessionId', ...)`, which
+        // PRESERVES our token param, so the client's follow-up POSTs arrive as
+        // /messages?token=<secret>&sessionId=<sid> and clear the auth gate.
+        const transport = new SSEServerTransport(`/messages?token=${conductorMcpSecret}`, res)
         transports.set(transport.sessionId, transport)
 
         res.on('close', () => {
@@ -694,10 +782,12 @@ function strictAtomicWriteJson(filePath: string, data: unknown): boolean {
   }
 }
 
-function injectMcpSettings(mcpPort: number): void {
+export function injectMcpSettings(mcpPort: number): void {
   const entry = {
     type: 'sse',
-    url: `http://localhost:${mcpPort}/sse`,
+    // R-DEC-3: embed the per-launch secret so `claude` invocations outside CCC
+    // authenticate against the now-gated server with zero user-visible change.
+    url: `http://localhost:${mcpPort}/sse?token=${conductorMcpSecret}`,
   }
 
   // Defensive merge into ~/.claude.json: preserve every other top-level key
@@ -833,7 +923,8 @@ export async function startConductorMcpServer(
   // Codex sessions read MCP config from ~/.codex/config.toml; mirror the
   // entry there so they reach the same vision MCP endpoint Claude does.
   // Gated on ~/.codex existing -- skips silently for users without Codex.
-  injectConductorVisionInCodexConfig(port)
+  // R-DEC-3: pass the per-launch secret so Codex's URL carries the token too.
+  injectConductorVisionInCodexConfig(port, conductorMcpSecret)
   logInfo(`[mcp] Conductor MCP server started on port ${port} (vision: ${getGlobalManager() ? 'connected' : 'idle'})`)
 }
 

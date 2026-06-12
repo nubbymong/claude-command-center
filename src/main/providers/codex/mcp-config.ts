@@ -88,7 +88,7 @@ function stripManagedBlock(content: string): string {
  * first so the new port takes effect and the legacy block is cleaned up.
  * This mirrors Claude's `injectMcpSettings` JSON overwrite semantics.
  */
-export function injectConductorVisionInCodexConfig(port: number): void {
+export function injectConductorVisionInCodexConfig(port: number, token: string): void {
   const codexHome = getCodexHome()
   if (!existsSync(codexHome)) {
     logInfo('[codex-mcp] ~/.codex not present; skipping conductor injection')
@@ -120,9 +120,13 @@ export function injectConductorVisionInCodexConfig(port: number): void {
   // codex_review gate (`if source !== 'codex'`) still hides that tool
   // from Codex sessions (no recursive Codex-self-review).
   //
+  // R-DEC-3: append &token=<secret> so Codex authenticates against the gated
+  // MCP server. Codex's rmcp client POSTs to this exact URL (query string
+  // included), so the token reaches the server.
+  //
   // Leading newline ensures we start on a fresh line even if the file
   // lacks a trailing newline. Trailing newline keeps the file POSIX-clean.
-  const block = `\n${MARKER_COMMENT}\n${MARKER_SECTION}\nurl = "http://localhost:${port}/mcp?source=codex"\nenabled = true\n`
+  const block = `\n${MARKER_COMMENT}\n${MARKER_SECTION}\nurl = "http://localhost:${port}/mcp?source=codex&token=${token}"\nenabled = true\n`
 
   try {
     writeFileSync(tomlPath, existing + block, 'utf-8')

@@ -35,13 +35,14 @@ describe('Codex MCP TOML injection (P5 sub-item #8)', () => {
   describe('injectConductorVisionInCodexConfig', () => {
     it('appends a managed conductor block when config.toml does not exist', async () => {
       const mod = await importFresh()
-      mod.injectConductorVisionInCodexConfig(19333)
+      mod.injectConductorVisionInCodexConfig(19333, 'tok123')
 
       const tomlPath = join(codexHome, 'config.toml')
       expect(existsSync(tomlPath)).toBe(true)
       const written = readFileSync(tomlPath, 'utf-8')
       expect(written).toContain('[mcp_servers.conductor]')
-      expect(written).toContain('url = "http://localhost:19333/mcp?source=codex"')
+      // R-DEC-3: URL carries &token=<secret> so the request authenticates.
+      expect(written).toContain('url = "http://localhost:19333/mcp?source=codex&token=tok123"')
       expect(written).toContain('enabled = true')
       expect(written).toContain('# Managed by Claude Command Center')
     })
@@ -52,7 +53,7 @@ describe('Codex MCP TOML injection (P5 sub-item #8)', () => {
       writeFileSync(tomlPath, userContent, 'utf-8')
 
       const mod = await importFresh()
-      mod.injectConductorVisionInCodexConfig(19333)
+      mod.injectConductorVisionInCodexConfig(19333, 'tok123')
 
       const written = readFileSync(tomlPath, 'utf-8')
       // User content preserved
@@ -64,8 +65,8 @@ describe('Codex MCP TOML injection (P5 sub-item #8)', () => {
 
     it('is idempotent -- a second call does not duplicate the entry', async () => {
       const mod = await importFresh()
-      mod.injectConductorVisionInCodexConfig(19333)
-      mod.injectConductorVisionInCodexConfig(19333)
+      mod.injectConductorVisionInCodexConfig(19333, 'tok123')
+      mod.injectConductorVisionInCodexConfig(19333, 'tok123')
 
       const written = readFileSync(join(codexHome, 'config.toml'), 'utf-8')
       const occurrences = (written.match(/\[mcp_servers\.conductor\]/g) ?? []).length
@@ -76,7 +77,7 @@ describe('Codex MCP TOML injection (P5 sub-item #8)', () => {
       // beforeEach sets CODEX_HOME to a mkdtempSync path; this test confirms
       // the inject targets that path by inspecting where the file landed.
       const mod = await importFresh()
-      mod.injectConductorVisionInCodexConfig(19333)
+      mod.injectConductorVisionInCodexConfig(19333, 'tok123')
 
       expect(existsSync(join(codexHome, 'config.toml'))).toBe(true)
     })
@@ -87,7 +88,7 @@ describe('Codex MCP TOML injection (P5 sub-item #8)', () => {
       expect(existsSync(codexHome)).toBe(false)
 
       const mod = await importFresh()
-      mod.injectConductorVisionInCodexConfig(19333)
+      mod.injectConductorVisionInCodexConfig(19333, 'tok123')
 
       // Should NOT have created the directory or written the file.
       expect(existsSync(codexHome)).toBe(false)
@@ -95,10 +96,10 @@ describe('Codex MCP TOML injection (P5 sub-item #8)', () => {
 
     it('uses the port argument (caller-controlled, not hardcoded)', async () => {
       const mod = await importFresh()
-      mod.injectConductorVisionInCodexConfig(20999)
+      mod.injectConductorVisionInCodexConfig(20999, 'tok123')
 
       const written = readFileSync(join(codexHome, 'config.toml'), 'utf-8')
-      expect(written).toContain('url = "http://localhost:20999/mcp?source=codex"')
+      expect(written).toContain('url = "http://localhost:20999/mcp?source=codex&token=tok123"')
     })
 
     it('refreshes the URL when the port changes between calls (mirrors Claude JSON overwrite semantics)', async () => {
@@ -107,12 +108,12 @@ describe('Codex MCP TOML injection (P5 sub-item #8)', () => {
       // we re-inject on 20999. Claude's settings.json gets the new value
       // via JSON overwrite; Codex TOML must too -- otherwise sessions
       // would call the stale port.
-      mod.injectConductorVisionInCodexConfig(19333)
-      mod.injectConductorVisionInCodexConfig(20999)
+      mod.injectConductorVisionInCodexConfig(19333, 'tok123')
+      mod.injectConductorVisionInCodexConfig(20999, 'tok123')
 
       const written = readFileSync(join(codexHome, 'config.toml'), 'utf-8')
-      expect(written).toContain('url = "http://localhost:20999/mcp?source=codex"')
-      expect(written).not.toContain('url = "http://localhost:19333/mcp?source=codex"')
+      expect(written).toContain('url = "http://localhost:20999/mcp?source=codex&token=tok123"')
+      expect(written).not.toContain('url = "http://localhost:19333/mcp?source=codex&token=tok123"')
       const occurrences = (written.match(/\[mcp_servers\.conductor\]/g) ?? []).length
       expect(occurrences).toBe(1)
     })
@@ -131,12 +132,12 @@ describe('Codex MCP TOML injection (P5 sub-item #8)', () => {
       writeFileSync(tomlPath, before, 'utf-8')
 
       const mod = await importFresh()
-      mod.injectConductorVisionInCodexConfig(19433)
+      mod.injectConductorVisionInCodexConfig(19433, 'tok123')
 
       const after = readFileSync(tomlPath, 'utf-8')
       expect(after).not.toContain('[mcp_servers.conductor-vision]')
       expect(after).toContain('[mcp_servers.conductor]')
-      expect(after).toContain('url = "http://localhost:19433/mcp?source=codex"')
+      expect(after).toContain('url = "http://localhost:19433/mcp?source=codex&token=tok123"')
     })
   })
 
@@ -198,7 +199,7 @@ describe('Codex MCP TOML injection (P5 sub-item #8)', () => {
 
     it('round-trips: inject then remove leaves the file empty (or close to it)', async () => {
       const mod = await importFresh()
-      mod.injectConductorVisionInCodexConfig(19333)
+      mod.injectConductorVisionInCodexConfig(19333, 'tok123')
       mod.removeConductorVisionFromCodexConfig()
 
       const after = readFileSync(join(codexHome, 'config.toml'), 'utf-8')

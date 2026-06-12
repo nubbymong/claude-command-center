@@ -6,8 +6,10 @@ import { describe, it, expect, vi } from 'vitest'
 // canonical SSE schema + cccSessionId URL bake). One test below
 // explicitly flips to 0 to cover the empty-mcpServers branch.
 let mockedConductorMcpPort = 19333
+const MOCK_SECRET = 'b'.repeat(64)
 vi.mock('../../../../src/main/conductor-mcp-server', () => ({
   getConductorMcpPort: () => mockedConductorMcpPort,
+  getConductorMcpSecret: () => MOCK_SECRET,
 }))
 
 import { ClaudeProvider } from '../../../../src/main/providers/claude'
@@ -109,6 +111,11 @@ describe('SSH remote setup script (P7.8 -- --mcp-config migration)', () => {
     const script = generateRemoteSetupScript('sid+with space', null)
     // encodeURIComponent maps "+" -> "%2B" and " " -> "%20"
     expect(script).toContain('?cccSessionId=sid%2Bwith%20space')
+  })
+
+  it('bakes the per-launch MCP secret as &token=<secret> into the remote MCP URL (R-DEC-3)', () => {
+    const script = generateRemoteSetupScript('sid-x', null)
+    expect(script).toContain(`&token=${MOCK_SECRET}`)
   })
 
   it('strips BOTH legacy conductor-vision AND conductor entries from shared settings + ~/.claude.json', () => {
