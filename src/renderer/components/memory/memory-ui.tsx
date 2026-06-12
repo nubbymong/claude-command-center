@@ -31,18 +31,6 @@ export function staleShadow(ts: number) {
   return d < 7 ? '0 0 4px rgba(166,227,161,0.4)' : d < 30 ? '0 0 4px rgba(249,226,175,0.3)' : '0 0 4px rgba(243,139,168,0.3)'
 }
 
-export function TypeBar({ types, total }: { types: Record<string, number>; total: number }) {
-  return (
-    <div className="flex h-1 rounded-sm overflow-hidden bg-surface0">
-      {TYPE_ORDER.map(t => {
-        const pct = ((types[t] || 0) / (total || 1)) * 100
-        if (pct === 0) return null
-        return <div key={t} style={{ width: pct + '%', background: TYPE_COLORS[t]?.fg }} />
-      })}
-    </div>
-  )
-}
-
 export function TypeBadge({ type }: { type: string }) {
   const tc = TYPE_COLORS[type] || TYPE_COLORS.uncategorized
   return (

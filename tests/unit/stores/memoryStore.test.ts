@@ -40,7 +40,6 @@ describe('memoryStore', () => {
     useMemoryStore.setState({
       projects: [],
       memories: [],
-      warnings: [],
       totalSize: 0,
       scannedAt: 0,
       loading: false,
@@ -48,7 +47,6 @@ describe('memoryStore', () => {
       selectedProject: null,
       selectedMemoryId: null,
       searchQuery: '',
-      collapsedGroups: new Set(),
       selectedContent: null,
       scopeFilter: 'all',
       typeFilter: null,
@@ -73,10 +71,6 @@ describe('memoryStore', () => {
       expect(state.error).toBeNull()
     })
 
-    it('has empty warnings', () => {
-      expect(useMemoryStore.getState().warnings).toEqual([])
-    })
-
     it('has no selection state', () => {
       const state = useMemoryStore.getState()
       expect(state.selectedProject).toBeNull()
@@ -84,10 +78,8 @@ describe('memoryStore', () => {
       expect(state.selectedContent).toBeNull()
     })
 
-    it('has empty search and collapsed groups', () => {
-      const state = useMemoryStore.getState()
-      expect(state.searchQuery).toBe('')
-      expect(state.collapsedGroups.size).toBe(0)
+    it('has empty search', () => {
+      expect(useMemoryStore.getState().searchQuery).toBe('')
     })
   })
 
@@ -108,7 +100,6 @@ describe('memoryStore', () => {
       const state = useMemoryStore.getState()
       expect(state.projects).toHaveLength(1)
       expect(state.memories).toHaveLength(1)
-      expect(state.warnings).toHaveLength(1)
       expect(state.totalSize).toBe(4096)
       expect(state.scannedAt).toBe(1234567890)
       expect(state.loading).toBe(false)
@@ -224,35 +215,6 @@ describe('memoryStore', () => {
     })
   })
 
-  describe('toggleGroup', () => {
-    it('adds type to collapsedGroups', () => {
-      useMemoryStore.getState().toggleGroup('feedback')
-
-      expect(useMemoryStore.getState().collapsedGroups.has('feedback')).toBe(true)
-    })
-
-    it('removes type from collapsedGroups on second toggle', () => {
-      useMemoryStore.getState().toggleGroup('feedback')
-      useMemoryStore.getState().toggleGroup('feedback')
-
-      expect(useMemoryStore.getState().collapsedGroups.has('feedback')).toBe(false)
-    })
-
-    it('handles multiple groups independently', () => {
-      useMemoryStore.getState().toggleGroup('feedback')
-      useMemoryStore.getState().toggleGroup('reference')
-
-      const groups = useMemoryStore.getState().collapsedGroups
-      expect(groups.has('feedback')).toBe(true)
-      expect(groups.has('reference')).toBe(true)
-
-      useMemoryStore.getState().toggleGroup('feedback')
-      const updated = useMemoryStore.getState().collapsedGroups
-      expect(updated.has('feedback')).toBe(false)
-      expect(updated.has('reference')).toBe(true)
-    })
-  })
-
   describe('deleteMemory', () => {
     it('calls electronAPI.memory.delete and triggers rescan', async () => {
       const mem = makeMemory({ id: 'mem-del', path: '/test/del.md' })
@@ -277,21 +239,6 @@ describe('memoryStore', () => {
       await useMemoryStore.getState().deleteMemory('nonexistent')
 
       expect(getMockMemoryAPI().delete).not.toHaveBeenCalled()
-    })
-  })
-
-  describe('dismissWarnings', () => {
-    it('clears warnings', () => {
-      useMemoryStore.setState({
-        warnings: [
-          { level: 'warn', message: 'Warning 1' },
-          { level: 'info', message: 'Info 1' },
-        ],
-      })
-
-      useMemoryStore.getState().dismissWarnings()
-
-      expect(useMemoryStore.getState().warnings).toEqual([])
     })
   })
 

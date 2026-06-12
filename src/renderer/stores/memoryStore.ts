@@ -1,11 +1,14 @@
 import { create } from 'zustand'
-import type { MemoryFile, MemoryProject, SchemaWarning, MemoryScanResult } from '../../shared/types'
+import type { MemoryFile, MemoryProject, MemoryScanResult } from '../../shared/types'
+
+// NOTE: the scanner still emits `warnings` in MemoryScanResult (oversized /
+// missing MEMORY.md), but the rebuilt page derives index health from
+// projects[].memoryMdLines instead — so the store no longer holds them.
 
 interface MemoryState {
   // Data
   projects: MemoryProject[]
   memories: MemoryFile[]
-  warnings: SchemaWarning[]
   totalSize: number
   scannedAt: number
 
@@ -15,7 +18,6 @@ interface MemoryState {
   selectedProject: string | null // projectDir or null for all
   selectedMemoryId: string | null
   searchQuery: string
-  collapsedGroups: Set<string>
   selectedContent: string | null // content of selected memory
 
   // Drilldown filter/sort state
@@ -32,10 +34,8 @@ interface MemoryState {
   selectProject: (dir: string | null) => void
   selectMemory: (id: string | null) => Promise<void>
   setSearch: (query: string) => void
-  toggleGroup: (type: string) => void
   deleteMemory: (id: string) => Promise<void>
   writeFrontmatter: (id: string, frontmatter: { name?: string; description?: string; type?: string }) => Promise<void>
-  dismissWarnings: () => void
   setScopeFilter: (f: 'all' | 'active30d' | 'stale') => void
   setTypeFilter: (t: string | null) => void
   setSort: (k: 'modified' | 'size' | 'name') => void
@@ -44,7 +44,6 @@ interface MemoryState {
 export const useMemoryStore = create<MemoryState>((set, get) => ({
   projects: [],
   memories: [],
-  warnings: [],
   totalSize: 0,
   scannedAt: 0,
 
@@ -53,7 +52,6 @@ export const useMemoryStore = create<MemoryState>((set, get) => ({
   selectedProject: null,
   selectedMemoryId: null,
   searchQuery: '',
-  collapsedGroups: new Set(),
   selectedContent: null,
 
   scopeFilter: 'all',
@@ -69,7 +67,6 @@ export const useMemoryStore = create<MemoryState>((set, get) => ({
       set({
         projects: result.projects,
         memories: result.memories,
-        warnings: result.warnings,
         totalSize: result.totalSize,
         scannedAt: result.scannedAt,
         loading: false,
@@ -110,13 +107,6 @@ export const useMemoryStore = create<MemoryState>((set, get) => ({
 
   setSearch: (query) => set({ searchQuery: query }),
 
-  toggleGroup: (type) => {
-    const groups = new Set(get().collapsedGroups)
-    if (groups.has(type)) groups.delete(type)
-    else groups.add(type)
-    set({ collapsedGroups: groups })
-  },
-
   deleteMemory: async (id) => {
     const mem = get().memories.find(m => m.id === id)
     if (!mem) return
@@ -140,8 +130,6 @@ export const useMemoryStore = create<MemoryState>((set, get) => ({
       console.error('[memoryStore] Write frontmatter failed:', err)
     }
   },
-
-  dismissWarnings: () => set({ warnings: [] }),
 
   setScopeFilter: (f) => set({ scopeFilter: f }),
 
