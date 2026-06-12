@@ -84,7 +84,7 @@ function renderMarkdown(content: string): string {
 }
 
 // ── Project Cards View ──
-function ProjectsView({ projects, memories, onSelect }: { projects: MemoryProject[]; memories: MemoryFile[]; onSelect: (name: string) => void }) {
+function ProjectsView({ projects, memories, onSelect }: { projects: MemoryProject[]; memories: MemoryFile[]; onSelect: (projectDir: string) => void }) {
   return (
     <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-2.5">
       {projects.map(p => {
@@ -92,7 +92,7 @@ function ProjectsView({ projects, memories, onSelect }: { projects: MemoryProjec
         return (
           <div
             key={p.name}
-            onClick={() => onSelect(p.name)}
+            onClick={() => onSelect(p.projectDir)}
             className="bg-mantle border border-surface0 rounded-md p-4 cursor-pointer transition-all hover:border-surface1 hover:bg-[rgba(137,180,250,0.03)]"
           >
             <div className="flex items-center gap-2.5 mb-2.5">
@@ -138,7 +138,7 @@ function ProjectDetailView({ project, memories, selectedId, onSelect, collapsedG
   onToggle: (type: string) => void
   onBack: () => void
 }) {
-  const projectMems = memories.filter(m => m.project === project)
+  const projectMems = memories.filter(m => m.projectDir === project)
   const grouped: Record<string, MemoryFile[]> = {}
   TYPE_ORDER.forEach(t => grouped[t] = [])
   projectMems.forEach(m => {
@@ -369,7 +369,7 @@ export default function MemoryPage({ onClose }: { onClose?: () => void }) {
   const breadcrumb = searchQuery
     ? [{ label: 'All Projects', action: () => { setSearchInput(''); setSearch(''); selectProject(null) } }, { label: `Search: "${searchQuery}"` }]
     : selectedProject
-    ? [{ label: 'All Projects', action: () => selectProject(null) }, { label: selectedProject }]
+    ? [{ label: 'All Projects', action: () => selectProject(null) }, { label: memories.find(m => m.projectDir === selectedProject)?.project ?? selectedProject }]
     : [{ label: 'All Projects' }]
 
   const memoryIcon = (

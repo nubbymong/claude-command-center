@@ -50,7 +50,12 @@ describe('memoryStore', () => {
       searchQuery: '',
       collapsedGroups: new Set(),
       selectedContent: null,
-    })
+      scopeFilter: 'all',
+      typeFilter: null,
+      sortBy: 'modified',
+      sortDir: 'desc',
+      recentSessions: {},
+    } as never)
     // Reset mocks
     vi.clearAllMocks()
   })
@@ -287,6 +292,44 @@ describe('memoryStore', () => {
       useMemoryStore.getState().dismissWarnings()
 
       expect(useMemoryStore.getState().warnings).toEqual([])
+    })
+  })
+
+  describe('filter/sort state', () => {
+    it('drilldown filters/sort defaults + setters', () => {
+      const s = useMemoryStore.getState()
+      expect(s.scopeFilter).toBe('all'); expect(s.typeFilter).toBeNull()
+      expect(s.sortBy).toBe('modified'); expect(s.sortDir).toBe('desc')
+      s.setScopeFilter('stale'); s.setTypeFilter('feedback'); s.setSort('size')
+      const after = useMemoryStore.getState()
+      expect(after.scopeFilter).toBe('stale'); expect(after.typeFilter).toBe('feedback')
+      expect(after.sortBy).toBe('size'); expect(after.sortDir).toBe('desc')
+      after.setSort('size')
+      expect(useMemoryStore.getState().sortDir).toBe('asc')
+    })
+    it('selectProject(projectDir) resets typeFilter and fetches recent sessions once (cached)', async () => {
+      const spy = vi.fn().mockResolvedValue([{ sessionId: 's1', lastActive: 123 }])
+      ;(window.electronAPI.memory as any).recentSessions = spy
+      useMemoryStore.getState().setTypeFilter('feedback')
+      useMemoryStore.getState().selectProject('F--X')
+      await new Promise((r) => setTimeout(r, 0))
+      expect(useMemoryStore.getState().typeFilter).toBeNull()
+      expect(spy).toHaveBeenCalledWith('F--X')
+      expect(useMemoryStore.getState().recentSessions['F--X']).toEqual([{ sessionId: 's1', lastActive: 123 }])
+      useMemoryStore.getState().selectProject(null)
+      useMemoryStore.getState().selectProject('F--X')
+      expect(spy).toHaveBeenCalledTimes(1)
+    })
+    it('recentSessions fetch failure stores [] (fail-open)', async () => {
+      ;(window.electronAPI.memory as any).recentSessions = vi.fn().mockRejectedValue(new Error('x'))
+      useMemoryStore.getState().selectProject('F--Y')
+      await new Promise((r) => setTimeout(r, 0))
+      expect(useMemoryStore.getState().recentSessions['F--Y']).toEqual([])
+    })
+    it('scan() clears the recentSessions cache', async () => {
+      useMemoryStore.setState({ recentSessions: { 'F--X': [] } } as never)
+      await useMemoryStore.getState().scan()
+      expect(useMemoryStore.getState().recentSessions).toEqual({})
     })
   })
 })
