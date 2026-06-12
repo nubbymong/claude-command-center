@@ -86,7 +86,7 @@ function watchSourceDirectory(srcDir: string) {
 
   // Use recursive watching
   try {
-    fileWatcher = fs.watch(srcDir, { recursive: true }, (eventType, filename) => {
+    const w = fs.watch(srcDir, { recursive: true }, (eventType, filename) => {
       if (!filename) return
 
       // Only care about source files
@@ -99,6 +99,14 @@ function watchSourceDirectory(srcDir: string) {
         broadcastUpdate(srcDir, [filename])
       }, 500)
     })
+    // An FSWatcher 'error' with no listener throws -> uncaughtException. Log + close
+    // the broken watcher (dev-only server, so just stop watching rather than crash).
+    w.on('error', (err) => {
+      logError('[update-server] Source watcher error; stopping watch:', err)
+      try { w.close() } catch { /* already closed */ }
+      if (fileWatcher === w) fileWatcher = null
+    })
+    fileWatcher = w
 
     logInfo(`[update-server] Watching source directory: ${srcDir}`)
   } catch (err) {

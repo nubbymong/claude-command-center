@@ -113,6 +113,7 @@ function ProfileRow({ profile }: { profile: AccountProfile }) {
   const theme = useResolvedTheme()
   const accountColourOverrides = useSettingsStore((s) => s.settings.accountColourOverrides)
   const updateSettings = useSettingsStore((s) => s.updateSettings)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
   const commitName = async (raw: string) => {
     const name = raw.trim()
@@ -125,7 +126,20 @@ function ProfileRow({ profile }: { profile: AccountProfile }) {
       'Remove this account from CCC? Your Claude login is not affected.'
     )
     if (!confirmed) return
-    await window.electronAPI.accountProfiles.delete(profile.id)
+    setDeleteError(null)
+    // Surface a failed delete instead of swallowing it: the main process refuses
+    // to delete a profile that a live session is running under, and a teardown can
+    // throw on a Windows file lock. Both come back as { ok:false, error }.
+    try {
+      const res = await window.electronAPI.accountProfiles.delete(profile.id)
+      if (!res?.ok) {
+        setDeleteError(res?.error || 'Could not remove this account. Please try again.')
+        return
+      }
+    } catch {
+      setDeleteError('Could not remove this account. Please try again.')
+      return
+    }
     await useAccountProfilesStore.getState().hydrate()
   }
 
@@ -193,6 +207,15 @@ function ProfileRow({ profile }: { profile: AccountProfile }) {
             currentKey={activeColourKey}
             onPick={handlePickColour}
           />
+        )}
+        {deleteError && (
+          <p
+            className="text-[11px] text-red mt-1.5"
+            role="alert"
+            data-testid={`delete-error-${profile.id}`}
+          >
+            {deleteError}
+          </p>
         )}
       </div>
     </div>

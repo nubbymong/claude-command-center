@@ -15,7 +15,7 @@ export interface ElectronAPI {
     list: () => Promise<import('../shared/account-types').AccountProfile[]>
     create: (name?: string) => Promise<import('../shared/account-types').AccountProfile>
     rename: (id: string, name: string) => Promise<{ ok: boolean }>
-    delete: (id: string) => Promise<{ ok: boolean }>
+    delete: (id: string) => Promise<{ ok: boolean; error?: string }>
     refreshIdentity: (id: string) => Promise<{ ok: boolean; email: string | null; configDir?: string }>
     globalEmail: () => Promise<string | null>
     captureDetected: (sessionId: string, name?: string) => Promise<import('../shared/account-types').AccountProfile | null>

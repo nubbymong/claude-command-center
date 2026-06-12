@@ -24,7 +24,7 @@ import type { AccountProfile } from '../../../src/shared/account-types'
 // Electron API mock
 
 const listMock = vi.fn<[], Promise<AccountProfile[]>>()
-const deleteMock = vi.fn<[string], Promise<{ ok: boolean }>>()
+const deleteMock = vi.fn<[string], Promise<{ ok: boolean; error?: string }>>()
 const renameMock = vi.fn<[string, string], Promise<{ ok: boolean }>>()
 const globalEmailMock = vi.fn<[], Promise<string | null>>()
 const refreshIdentityMock = vi.fn<[string], Promise<{ ok: boolean; email: string; configDir: string } | null>>()
@@ -215,6 +215,31 @@ describe('AccountsPanel', () => {
     await act(async () => { btn.click() })
 
     expect(deleteMock).toHaveBeenCalledWith(profileWithEmail.id)
+  })
+
+  it('surfaces a failed delete (in-use session) instead of swallowing it', async () => {
+    useAccountProfilesStore.setState({ profiles: [profileWithEmail] })
+    const hydrateSpy = vi.spyOn(useAccountProfilesStore.getState(), 'hydrate')
+    deleteMock.mockResolvedValue({
+      ok: false,
+      error: 'This account is in use by an open session. Close its sessions and try again.',
+    })
+
+    const { container, unmount: u } = renderComponent(
+      React.createElement(AccountsPanel, { onAdd: vi.fn() })
+    )
+    unmount = u
+
+    const btn = container.querySelector(`[data-testid="delete-profile-${profileWithEmail.id}"]`) as HTMLButtonElement
+    await act(async () => { btn.click() })
+
+    const err = container.querySelector(`[data-testid="delete-error-${profileWithEmail.id}"]`)
+    expect(err).toBeTruthy()
+    expect(err!.textContent).toContain('in use by an open session')
+    // The row is NOT removed (no hydrate on failure).
+    expect(hydrateSpy).not.toHaveBeenCalled()
+    expect(container.querySelector(`[data-testid="profile-row-${profileWithEmail.id}"]`)).toBeTruthy()
+    hydrateSpy.mockRestore()
   })
 
   it('clicking a colour swatch calls updateSettings with accountColourOverrides keyed by canonical email', async () => {

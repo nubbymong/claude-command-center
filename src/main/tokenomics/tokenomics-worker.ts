@@ -221,6 +221,13 @@ export function createTokenomicsWorker(host: TkWorkerHostTransport, deps: TkWork
       try {
         if (!fs.existsSync(dir)) continue
         const wch = fs.watch(dir, { recursive: true }, () => scheduleIncremental())
+        // An FSWatcher 'error' with no listener throws -> uncaughtException -> the
+        // worker dies and burns a restart toward permanent degrade. Log + close the
+        // broken watcher; the 5s tailTimer sweep below keeps indexing alive.
+        ;(wch as { on?: (ev: string, cb: (e: unknown) => void) => void }).on?.('error', (err) => {
+          logw('warn', `fs.watch error for ${dir}; relying on periodic sweep: ${String(err)}`)
+          try { wch.close() } catch { /* already closed */ }
+        })
         watchers.push(wch)
       } catch (err) { logw('warn', `fs.watch failed for ${dir}: ${String(err)}`) }
     }

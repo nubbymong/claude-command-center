@@ -6,7 +6,8 @@ import {
   readProfileAccountEmail, getProfileConfigDir, isValidProfileId, createProfile,
   captureDetectedAccount, backupProfileHomeToCanonical, restoreProfileHomeFromCanonical,
 } from '../account-profiles'
-import { getAccountIdentity, getDefaultAccountEmail, getWatchedProfileId } from '../claude-account-identity'
+import { getAccountIdentity, getDefaultAccountEmail, getWatchedProfileId, isProfileInUseByLiveSession } from '../claude-account-identity'
+import { logError } from '../debug-logger'
 
 export function registerAccountProfilesHandlers(): void {
   ipcMain.handle(IPC.ACCOUNT_PROFILES_LIST, () => listProfiles())
@@ -25,8 +26,23 @@ export function registerAccountProfilesHandlers(): void {
   ipcMain.handle(IPC.ACCOUNT_PROFILES_DELETE, (_e, p: { id: string }) => {
     // safeTeardownProfile validates the id + asserts path containment + refuses a
     // reparse-point root; it throws on an invalid/escaping id.
-    if (!p || !isValidProfileId(p.id)) return { ok: false }
-    safeTeardownProfile(p.id)
+    if (!p || !isValidProfileId(p.id)) return { ok: false, error: 'invalid profile id' }
+    // R-006: refuse to delete a profile that a live session is running under -- the
+    // profile dir is that session's active USERPROFILE/credential store, so a teardown
+    // mid-recursion would half-destroy its creds (auth breaks, token refresh fails) and
+    // leave the metadata pointing at a gutted dir. Ask the user to close it first.
+    if (isProfileInUseByLiveSession(p.id)) {
+      return { ok: false, error: 'This account is in use by an open session. Close its sessions and try again.' }
+    }
+    // safeTeardownProfile can throw on a Windows file lock (e.g. an actively-rewritten
+    // .claude.json) mid-recursion -- return a structured failure instead of rejecting
+    // the invoke, so the renderer can surface it rather than swallowing the rejection.
+    try {
+      safeTeardownProfile(p.id)
+    } catch (err) {
+      logError(`[account-profiles] delete failed for ${p.id}:`, err)
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
     return { ok: true }
   })
 

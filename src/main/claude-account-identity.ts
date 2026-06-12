@@ -161,6 +161,18 @@ export function getWatchedProfileId(sessionId: string): string | undefined {
   return watched.get(sessionId)
 }
 
+/** True when any LIVE session is running under `profileId` -- i.e. that profile's
+ *  home is the active USERPROFILE/credential store of an open session. Used to
+ *  refuse a profile delete that would half-destroy a live account's creds (R-006).
+ *  Checks both the active-watcher map (added at spawn, removed at exit) and the
+ *  spawn-captured map (cleared on exit) for defense in depth. */
+export function isProfileInUseByLiveSession(profileId: string): boolean {
+  if (!profileId) return false
+  for (const pid of watched.values()) if (pid === profileId) return true
+  for (const pid of profileBySession.values()) if (pid === profileId) return true
+  return false
+}
+
 /**
  * Async variant of recheckSessionIdentity. Uses fsp.stat (async) for the
  * per-tick mtime check so the Electron main event loop is not blocked.

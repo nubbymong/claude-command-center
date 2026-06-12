@@ -13,6 +13,9 @@ import {
   captureClaudeAccount,
   getClaudeAccount,
   recheckSessionIdentity,
+  startWatchingAccountIdentity,
+  stopWatchingAccountIdentity,
+  isProfileInUseByLiveSession,
   _resetClaudeAccounts,
 } from '../../../src/main/claude-account-identity'
 
@@ -88,5 +91,34 @@ describe('recheckSessionIdentity (mid-session /login account change, shared prof
     writeProfileEmail(pid, 'same@x.com', 3_000_000)
     expect(recheckSessionIdentity(sid, pid)).toBeNull()
     expect(getClaudeAccount(sid)).toBe('same@x.com')
+  })
+})
+
+describe('isProfileInUseByLiveSession (R-006: refuse delete of an in-use profile)', () => {
+  beforeEach(() => { _resetClaudeAccounts() })
+  afterEach(() => { _resetClaudeAccounts() })
+
+  it('is false when no session is live', () => {
+    expect(isProfileInUseByLiveSession('p1')).toBe(false)
+  })
+
+  it('is true while a session is watching that profile, false after it stops', () => {
+    startWatchingAccountIdentity('s1', 'p1')
+    expect(isProfileInUseByLiveSession('p1')).toBe(true)
+    // a different profile is not affected
+    expect(isProfileInUseByLiveSession('p2')).toBe(false)
+    stopWatchingAccountIdentity('s1')
+    expect(isProfileInUseByLiveSession('p1')).toBe(false)
+  })
+
+  it('detects a profile captured at spawn even without an active watcher', () => {
+    captureClaudeAccount('s2', 'p9')
+    expect(isProfileInUseByLiveSession('p9')).toBe(true)
+  })
+
+  it('returns false for a falsy/empty profile id', () => {
+    startWatchingAccountIdentity('s3', undefined) // default/single-account session
+    expect(isProfileInUseByLiveSession('')).toBe(false)
+    expect(isProfileInUseByLiveSession(undefined as unknown as string)).toBe(false)
   })
 })

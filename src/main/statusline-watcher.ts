@@ -32,6 +32,7 @@ import { getResourcesDirectory } from './ipc/setup-handlers'
 import { decorateStatuslineWithColour } from './account-color'
 import { notifyClaudeTelemetry } from './providers/claude/telemetry'
 import { sentinelObserve } from './sentinel/index'
+import { logWarn } from './debug-logger'
 
 // Re-export from shared types for backward compatibility
 export type { StatuslineData } from '../shared/types'
@@ -154,37 +155,97 @@ export function startStatuslineWatcher(getWindow: () => BrowserWindow | null): (
     } catch { /* ignore read errors during writes */ }
   }
 
-  // fs.watch: instant for local writes (fire-and-forget; errors swallowed inside)
-  const watcher = fs.watch(statusDir, (_eventType, filename) => {
-    if (!filename || !filename.endsWith('.json')) return
-    void processFile(filename)
-  })
+  // Boot-time reaper: drop status files from sessions that ended long ago so the
+  // poll fan-out (a readdir + per-file stat every 5s) and the lastMtime map can't
+  // grow unbounded for the life of the install. Session ids are unique per run and
+  // the resources dir survives reinstalls, so without this they accumulate forever.
+  sweepStaleStatusFiles()
 
-  // Polling fallback: catches remote/SMB writes that fs.watch misses. Local
-  // writes are caught instantly by fs.watch above, so this only needs to be a
-  // slow safety net -- 5s (was 3s) cuts the periodic readdir + stat fan-out.
+  // fs.watch: instant for local writes. Must attach an 'error' listener -- without
+  // one, an FSWatcher 'error' (EPERM/UNKNOWN on a network-drive disconnect, the dir
+  // being deleted, or a ReadDirectoryChangesW failure) is an uncaughtException, and
+  // the global handler re-throws everything except EPIPE/EIO -> whole-app crash with
+  // all live PTYs lost. On error we close the broken watcher and lean on the 5s poll
+  // fallback below, which already covers exactly this (remote/SMB/missed-event) case.
+  let watcher: fs.FSWatcher | null = null
+  function startWatcher(): void {
+    try {
+      const w = fs.watch(statusDir, (_eventType, filename) => {
+        if (!filename || !filename.endsWith('.json')) return
+        void processFile(filename)
+      })
+      w.on('error', (err) => {
+        logWarn('[statusline-watcher] fs.watch error; falling back to polling:', err)
+        try { w.close() } catch { /* already closed */ }
+        if (watcher === w) watcher = null
+      })
+      watcher = w
+    } catch (err) {
+      // fs.watch itself can throw synchronously (e.g. dir vanished). Poll covers it.
+      logWarn('[statusline-watcher] fs.watch could not start; relying on polling:', err)
+      watcher = null
+    }
+  }
+  startWatcher()
+
+  // Polling fallback: catches remote/SMB writes that fs.watch misses, AND is the
+  // sole notification path after a watcher error closes the FSWatcher. Local writes
+  // are caught instantly by fs.watch above, so this only needs to be a slow safety
+  // net -- 5s (was 3s) cuts the periodic readdir + stat fan-out.
   const POLL_INTERVAL = 5000
   const pollTimer = setInterval(() => {
     void (async () => {
       try {
+        const present = new Set<string>()
         const files = (await fs.promises.readdir(statusDir)).filter(f => f.endsWith('.json'))
+        for (const f of files) present.add(f)
         await Promise.all(files.map(f => processFile(f)))
+        // Evict lastMtime entries for files that have gone (cleaned-up sessions),
+        // so the map tracks only live status files rather than every file ever seen.
+        for (const known of lastMtime.keys()) if (!present.has(known)) lastMtime.delete(known)
       } catch { /* ignore */ }
     })()
   }, POLL_INTERVAL)
 
   return () => {
-    watcher.close()
+    if (watcher) { try { watcher.close() } catch { /* ignore */ } watcher = null }
     clearInterval(pollTimer)
   }
 }
 
 /**
- * Clean up status files for a given session.
+ * Clean up the status file for a given session. Intended to be wired into the
+ * per-session PTY exit teardown so the poll fan-out doesn't grow for the life of
+ * the install. Safe to call when the file is already gone.
  */
 export function cleanupStatusFile(sessionId: string): void {
   const filePath = path.join(getStatusDir(), `${sessionId}.json`)
   try {
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath)
   } catch { /* ignore */ }
+}
+
+const STALE_STATUS_MS = 1000 * 60 * 60 * 24 * 3 // 3 days
+
+/**
+ * Boot-time reaper: unlink status files whose mtime is older than `maxAgeMs`.
+ * Session ids are unique per run and the resources dir survives reinstalls, so
+ * without this each session ever run leaves a status JSON behind forever and the
+ * 5s poll degrades into a readdir + thousands of stats. Returns the count removed.
+ */
+export function sweepStaleStatusFiles(maxAgeMs: number = STALE_STATUS_MS): number {
+  const dir = getStatusDir()
+  const cutoff = Date.now() - maxAgeMs
+  let removed = 0
+  let files: string[]
+  try {
+    files = fs.readdirSync(dir).filter(f => f.endsWith('.json'))
+  } catch { return 0 } // dir missing -> nothing to sweep
+  for (const f of files) {
+    const filePath = path.join(dir, f)
+    try {
+      if (fs.statSync(filePath).mtimeMs < cutoff) { fs.unlinkSync(filePath); removed++ }
+    } catch { /* concurrent write/remove; ignore */ }
+  }
+  return removed
 }
