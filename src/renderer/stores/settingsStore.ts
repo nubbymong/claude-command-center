@@ -127,6 +127,15 @@ export interface AppSettings {
   /** When true (default), the Sentinel panel auto-opens once when a completed
    *  analysis finds open findings. Set false to suppress all automatic opens. */
   sentinelAutoOpen?: boolean
+  /** v2: when true, the GitHub AI-credits (Copilot) usage meter polls the
+   *  billed-usage endpoint every 60 min and surfaces the result. Default off —
+   *  it requires extra token scope ('user' for classic PATs / 'Plan: read' for
+   *  fine-grained PATs) and makes its own GitHub requests. */
+  githubAiUsageEnabled?: boolean
+  /** v2: the user's plan included-credit cap, in USD. GitHub does not expose
+   *  this for personal accounts via API, so the user enters it from their plan
+   *  page. null/absent = unknown (the meter shows billed usage without a cap). */
+  copilotIncludedCredits?: number | null
   /** Account profile Sentinel's headless analysis runs under. null/absent =
    *  the captured primary (never the bare global login when profiles exist —
    *  the frozen global hangs at auth or carries stale usage limits). Switchable
@@ -162,6 +171,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   classicTerminalCopyPaste: true,
   sentinelEnabled: true,
   sentinelAutoOpen: true,
+  githubAiUsageEnabled: false,
 }
 
 // V2 changed the bundled terminal default from Cascadia Code @14 to JetBrains

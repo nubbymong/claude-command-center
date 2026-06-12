@@ -266,6 +266,9 @@ export const IPC = {
   GITHUB_REVIEW_REPLY: 'github:review:reply',
   GITHUB_NOTIF_MARK_READ: 'github:notif:markRead',
   GITHUB_NOTIFICATIONS_UPDATE: 'github:notifications:update',
+  // AI-credits (Copilot) usage meter
+  GITHUB_AI_USAGE_GET: 'github:aiUsage:get',
+  GITHUB_AI_USAGE_UPDATE: 'github:aiUsage:update',
 
   // Webview pane (per-session WebContentsView)
   WEBVIEW_CHECK: 'webview:check',                 // HEAD probe (CORS-bypass)

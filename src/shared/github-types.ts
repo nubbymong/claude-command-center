@@ -191,6 +191,43 @@ export interface GitHubCache {
   lru: string[]
 }
 
+// --- GitHub AI-credits (Copilot) usage meter -------------------------------
+//
+// Normalized shape produced by fetchAiUsage(login). GitHub's raw billing rows
+// use `discount*`/`net*` field names; we rename them to the words the UI uses:
+//   discountQuantity/discountAmount -> coveredQuantity/coveredAmount
+//     (the portion absorbed by the plan's included allowance)
+//   netQuantity/netAmount           -> billedQuantity/billedAmount
+//     (the overage the user actually pays for; billedAmount > 0 = the headline
+//      "you are being billed beyond your included credits" signal)
+//
+// `source` records which endpoint the data came from: 'ai_credit' (new-plan
+// primary endpoint) or 'premium_request' (old-plan fallback).
+export interface AiUsageItem {
+  product: string
+  sku: string
+  model: string
+  unitType: string
+  grossQuantity: number
+  grossAmount: number
+  coveredQuantity: number
+  coveredAmount: number
+  billedQuantity: number
+  billedAmount: number
+}
+
+export interface AiUsageReport {
+  fetchedAt: number
+  source: 'ai_credit' | 'premium_request'
+  timePeriod: { year: number; month: number }
+  items: AiUsageItem[]
+  totals: {
+    grossAmount: number
+    coveredAmount: number
+    billedAmount: number
+  }
+}
+
 export interface ToolCallFileSignal {
   filePath: string
   at: number

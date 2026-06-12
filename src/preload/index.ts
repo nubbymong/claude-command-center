@@ -439,6 +439,8 @@ interface GitHubBridge {
     body: string,
   ) => Promise<{ ok: boolean; error?: string }>
   markNotifRead: (profileId: string, notifId: string) => Promise<{ ok: boolean; error?: string }>
+  getAiUsage: () => Promise<unknown>
+  onAiUsageUpdate: (cb: (report: unknown) => void) => () => void
 }
 
 const electronAPI: ElectronAPI = {
@@ -879,6 +881,13 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.invoke(IPC.GITHUB_REVIEW_REPLY, slug, threadId, body),
     markNotifRead: (profileId, notifId) =>
       ipcRenderer.invoke(IPC.GITHUB_NOTIF_MARK_READ, profileId, notifId),
+    getAiUsage: () => ipcRenderer.invoke(IPC.GITHUB_AI_USAGE_GET),
+    onAiUsageUpdate: (cb) => {
+      const l = (_e: Electron.IpcRendererEvent, p: unknown) =>
+        cb(p as Parameters<typeof cb>[0])
+      ipcRenderer.on(IPC.GITHUB_AI_USAGE_UPDATE, l)
+      return () => ipcRenderer.removeListener(IPC.GITHUB_AI_USAGE_UPDATE, l)
+    },
   },
   hooks: {
     toggle: (enabled) => ipcRenderer.invoke(IPC.HOOKS_TOGGLE, { enabled }),

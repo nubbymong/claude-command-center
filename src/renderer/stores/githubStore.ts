@@ -4,6 +4,7 @@ import type {
   AuthProfile,
   RepoCache,
   NotificationSummary,
+  AiUsageReport,
 } from '../../shared/github-types'
 import {
   DEFAULT_FEATURE_TOGGLES,
@@ -44,6 +45,9 @@ interface GitHubStoreState {
   sessionStates: Record<string, SessionPanelState>
   syncStatus: Record<string, SyncStatus>
   notificationsByProfile: Record<string, NotificationSummary[]>
+  // AI-credits (Copilot) usage meter. null until the first fetch resolves or
+  // the meter is disabled. Consumed by the (later) usage-meter UI batch.
+  aiUsage: AiUsageReport | null
 
   loadConfig: () => Promise<void>
   updateConfig: (patch: Partial<GitHubConfig>) => Promise<void>
@@ -63,6 +67,8 @@ interface GitHubStoreState {
     profileId: string
     items: NotificationSummary[]
   }) => void
+  loadAiUsage: () => Promise<void>
+  handleAiUsageUpdate: (report: AiUsageReport | null) => void
 }
 
 const DEFAULT_PANEL_WIDTH = 340
@@ -75,6 +81,7 @@ export const useGitHubStore = create<GitHubStoreState>((set, get) => ({
   sessionStates: {},
   syncStatus: {},
   notificationsByProfile: {},
+  aiUsage: null,
 
   loadConfig: async () => {
     const config = await window.electronAPI.github.getConfig()
@@ -144,6 +151,16 @@ export const useGitHubStore = create<GitHubStoreState>((set, get) => ({
     set((s) => ({
       notificationsByProfile: { ...s.notificationsByProfile, [profileId]: items },
     })),
+
+  loadAiUsage: async () => {
+    // Drives a main-side fetch (or returns the cached report). Returns null
+    // when the meter is disabled; we still set it so the UI reflects the
+    // cleared state rather than a stale report.
+    const report = await window.electronAPI.github.getAiUsage()
+    set({ aiUsage: report })
+  },
+
+  handleAiUsageUpdate: (report) => set({ aiUsage: report }),
 }))
 
 // Module-local unsubscribes so setupGitHubListener is idempotent — calling it
@@ -151,6 +168,7 @@ export const useGitHubStore = create<GitHubStoreState>((set, get) => ({
 let unsubData: (() => void) | null = null
 let unsubSync: (() => void) | null = null
 let unsubNotif: (() => void) | null = null
+let unsubAiUsage: (() => void) | null = null
 
 export function setupGitHubListener(): void {
   if (unsubData) return
@@ -163,13 +181,18 @@ export function setupGitHubListener(): void {
   unsubNotif = window.electronAPI.github.onNotificationsUpdate((p) =>
     useGitHubStore.getState().handleNotificationsUpdate(p),
   )
+  unsubAiUsage = window.electronAPI.github.onAiUsageUpdate((report) =>
+    useGitHubStore.getState().handleAiUsageUpdate(report),
+  )
 }
 
 export function teardownGitHubListener(): void {
   unsubData?.()
   unsubSync?.()
   unsubNotif?.()
+  unsubAiUsage?.()
   unsubData = null
   unsubSync = null
   unsubNotif = null
+  unsubAiUsage = null
 }

@@ -516,6 +516,10 @@ export interface ElectronAPI {
       body: string,
     ) => Promise<{ ok: boolean; error?: string }>
     markNotifRead: (profileId: string, notifId: string) => Promise<{ ok: boolean; error?: string }>
+    getAiUsage: () => Promise<import('../../shared/github-types').AiUsageReport | null>
+    onAiUsageUpdate: (
+      cb: (report: import('../../shared/github-types').AiUsageReport | null) => void,
+    ) => () => void
   }
   hooks: {
     toggle: (enabled: boolean) => Promise<HooksGatewayStatus>

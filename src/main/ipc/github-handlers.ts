@@ -39,6 +39,9 @@ import {
 } from '../../shared/github-constants'
 import { updateSessionMeta } from '../session-registry'
 import { emitPrMerged } from '../channel-emitters'
+import { AiUsageScheduler } from '../github/copilot-usage'
+import { readConfig } from '../config-manager'
+import { logWarn } from '../debug-logger'
 
 // Binds repo + branch into the session registry without touching the label
 // that pty-manager set at spawn time. updateSessionMeta's patch type makes
@@ -247,6 +250,64 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
           etags,
         }),
     },
+  })
+
+  // --- AI-credits (Copilot) usage meter -------------------------------------
+  // Best-effort, default-off. The scheduler refreshes the billed-usage report
+  // every 60 min while enabled and pushes it over GITHUB_AI_USAGE_UPDATE. The
+  // login is resolved from the first available auth profile's token (the usage
+  // endpoint is /users/{login}/... so we need the authenticated user's login);
+  // the resolved login is cached per token so we don't re-hit /user each poll.
+  let aiUsageLoginCache: { token: string; login: string } | null = null
+  async function resolveAiUsageTarget(): Promise<
+    { login: string; tokenFn: () => Promise<string> } | null
+  > {
+    const cfg = await getCachedConfig()
+    for (const profile of Object.values(cfg?.authProfiles ?? {})) {
+      const token = await profileStore.getToken(profile.id)
+      if (!token) continue
+      // Prefer the profile's known username; fall back to a /user probe when
+      // absent (e.g. gh-cli profiles). Cache the login per token so the poll
+      // loop doesn't verify on every tick.
+      let login = profile.username
+      if (!login) {
+        if (aiUsageLoginCache?.token === token) {
+          login = aiUsageLoginCache.login
+        } else {
+          const v = await verifyToken(token).catch(() => null)
+          if (v?.username) {
+            login = v.username
+            aiUsageLoginCache = { token, login }
+          }
+        }
+      }
+      if (login) return { login, tokenFn: async () => token }
+    }
+    return null
+  }
+
+  const aiUsageScheduler = new AiUsageScheduler({
+    resolve: resolveAiUsageTarget,
+    // Default OFF: only enabled when the user opts in via Settings, which
+    // persists githubAiUsageEnabled into the shared 'settings' config file.
+    isEnabled: () =>
+      readConfig<{ githubAiUsageEnabled?: boolean }>('settings')?.githubAiUsageEnabled === true,
+    emit: (report) =>
+      deps.getWindow()?.webContents.send(IPC.GITHUB_AI_USAGE_UPDATE, report),
+    logFn: (line) => logWarn(line),
+  })
+  // Arm the loop if the meter was already enabled at boot. start() is a no-op
+  // (and clears any cache) when disabled, so this is safe unconditionally.
+  aiUsageScheduler.start()
+
+  ipcMain.handle(IPC.GITHUB_AI_USAGE_GET, async () => {
+    // Return the cached report if present, else drive a fresh fetch. refresh()
+    // honors the disabled state (returns null without a network call) and
+    // re-arms the loop if the user just enabled the meter.
+    const cached = aiUsageScheduler.getLatest()
+    if (cached) return cached
+    aiUsageScheduler.start()
+    return aiUsageScheduler.refresh()
   })
 
   ipcMain.handle(IPC.GITHUB_CONFIG_GET, async () => {
