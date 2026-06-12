@@ -55,10 +55,13 @@ export async function fetchAvailableVersions(): Promise<string[]> {
   try {
     // execFile (async) instead of execSync so the network round-trip to the npm
     // registry never blocks the main thread. The handler is already async.
+    // shell on win32: Node's CVE-2024-27980 hardening makes execFile of a
+    // .cmd shim throw EINVAL without it. Args are literal constants, so the
+    // shell adds no injection surface here.
     const { stdout } = await execFileAsync(
       NPM_BIN,
       ['view', '@anthropic-ai/claude-code', 'versions', '--json'],
-      { encoding: 'utf-8', timeout: 15000, windowsHide: true },
+      { encoding: 'utf-8', timeout: 15000, windowsHide: true, shell: process.platform === 'win32' },
     )
 
     const versions: string[] = JSON.parse(stdout)
