@@ -540,6 +540,38 @@ export const trainingSteps: TrainingStep[] = [
     screenshotFilename: 'step-dynamic-workflows.jpg',
   },
   {
+    id: 'ai-usage-meter',
+    title: 'AI Usage Meter',
+    sinceVersion: '2.0.0',
+    section: 'integrations',
+    summary:
+      'A unified usage meter for your AI spend. A compact chip in the repo strip shows GitHub Copilot AI-credit usage at a glance; click it for a popover that breaks down GitHub usage per model and shows the Claude and Codex rate-limit windows side by side. It turns a warning colour the moment GitHub bills you past your included credits.',
+    highlights: [
+      'A compact chip in the **repo strip** shows credits used (and your cap, when set) without opening anything',
+      'When GitHub bills past your included credits the chip shifts to a **warning** and shows the billed amount (for example +$11.69)',
+      'Click the chip for a **popover** with per-model GitHub rows, covered and billed totals, plus Claude and Codex 5h / 7d windows',
+      'Read-only and best-effort -- it never changes anything, and it fails quietly when a token lacks billing scope',
+      'Set your **included-credit cap** in Settings, GitHub so the chip can show a used-of-cap ratio',
+    ],
+    howToTrigger: [
+      { label: 'Enable', value: 'Settings -> GitHub -> AI usage meter' },
+      { label: 'Open the breakdown', value: 'Click the AI chip in the repo strip' },
+      { label: 'Set the cap', value: 'Settings -> GitHub -> Included-credit cap' },
+    ],
+    proTip:
+      'The billed number is the headline signal. As long as the chip stays neutral you are inside your plan; the moment it goes amber with a +$ amount, GitHub is charging you past your included AI credits.',
+    bullets: [
+      'Compact **AI-usage chip** in the repo strip -- credits used, and your cap when set',
+      'Goes to a **warning** with the billed amount once GitHub bills past your included credits',
+      'Click for a popover: **per-model GitHub rows** plus **Claude and Codex** 5h / 7d windows',
+      'Enable it and set your cap in **Settings, GitHub**; it is read-only and best-effort',
+    ],
+    // No dedicated AI-usage capture exists yet; the GitHub panel shot stands in
+    // until the meter is captured. (Future capture: step-ai-usage.jpg / the
+    // repo-strip chip + the unified usage popover.)
+    screenshotFilename: 'github-panel.jpg',
+  },
+  {
     id: 'github-sidebar',
     title: 'GitHub Sidebar',
     sinceVersion: '1.4.0',

@@ -8,10 +8,11 @@ import {
 
 describe('training-steps', () => {
   describe('trainingSteps array', () => {
-    it('has exactly 18 steps', () => {
+    it('has exactly 19 steps', () => {
       // v1.5.12 added dynamic-workflows; permission-tray step removed with the
-      // feature; v2-readiness added multi-account + sentinel steps (16 -> 18).
-      expect(trainingSteps).toHaveLength(18)
+      // feature; v2-readiness added multi-account + sentinel steps (16 -> 18);
+      // v2.0.0 added the ai-usage-meter step (18 -> 19).
+      expect(trainingSteps).toHaveLength(19)
     })
 
     it('every step has required fields', () => {

@@ -605,6 +605,24 @@ export const TIPS_LIBRARY: Tip[] = [
   },
 
   {
+    id: 'tip.github.ai-usage-meter',
+    category: 'github',
+    complexity: 'simple',
+    priority: 42,
+    excludes: ['github.ai-usage-enabled'],
+    variants: {
+      primary: {
+        shortText: '📊 Track your GitHub Copilot AI-credit spend in the repo strip',
+        title: 'AI Usage Meter',
+        body: 'Turn on the **AI usage meter** to watch your GitHub Copilot AI-credit spend without leaving the terminal.\n\nA compact chip sits in the **repo strip** above the session. It shows credits used (and your cap, once you set one). The instant GitHub bills you past your included credits the chip turns **amber** and shows the billed amount, for example +$11.69.\n\nClick the chip for a read-only popover: a **per-model GitHub breakdown** (credits, covered, billed) plus the **Claude and Codex** 5h / 7d rate-limit windows side by side.\n\nEnable it and set your included-credit cap under **Settings, GitHub**. It is best-effort and never changes anything.',
+        actionLabel: 'Open GitHub settings',
+        actionTarget: 'settings',
+        focusHint: 'Repo strip -- the AI chip beside the connection state',
+      },
+    },
+  },
+
+  {
     id: 'tip.github.session-context',
     category: 'github',
     complexity: 'intermediate',
