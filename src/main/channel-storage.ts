@@ -1,5 +1,5 @@
 // src/main/channel-storage.ts
-import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, unlinkSync, readdirSync } from 'fs'
+import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, renameSync, unlinkSync, readdirSync } from 'fs'
 import { join } from 'path'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import { logInfo, logError } from './debug-logger'
@@ -50,12 +50,15 @@ export function readJsonFile<T>(name: string, seedDefaults: () => T): T {
 }
 
 // Append one line to a daily JSONL file. Used by the ledger (Task P2.4).
+// True O(1) append (no read+rewrite of the whole day-file): the JSONL format is
+// newline-delimited records, so appending one line preserves it and stays back-
+// compatible with files written by the previous read+rewrite implementation. It
+// is also crash-safe for prior records (a torn write only affects the last line).
 export function appendLine(name: string, line: string): void {
   ensureDir()
   const fp = filePath(name)
   try {
-    const existing = existsSync(fp) ? readFileSync(fp, 'utf-8') : ''
-    writeFileSync(fp, existing + line + '\n', 'utf-8')
+    appendFileSync(fp, line + '\n', 'utf-8')
   } catch (err) {
     logError(`[channels] append ${name} failed: ${String(err)}`)
   }

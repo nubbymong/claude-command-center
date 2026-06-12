@@ -5,13 +5,21 @@
  * using npm install, then the binary is resolved for PTY spawning.
  */
 
-import { spawn, execSync } from 'child_process'
+import { spawn, execFile } from 'child_process'
+import { promisify } from 'util'
 import * as path from 'path'
 import * as fs from 'fs'
 import * as os from 'os'
 import { BrowserWindow } from 'electron'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import { logInfo, logError } from './debug-logger'
+
+const execFileAsync = promisify(execFile)
+
+// On Windows the npm CLI is a .cmd shim, which execFile (no shell) cannot launch
+// directly; resolve it per platform. Mirrors the install path's reliance on the
+// shell to map `npm` -> `npm.cmd` (doInstall uses spawn with shell:true).
+const NPM_BIN = os.platform() === 'win32' ? 'npm.cmd' : 'npm'
 
 // Cache fetched versions for 10 minutes
 let cachedVersions: string[] | null = null
@@ -45,13 +53,15 @@ export async function fetchAvailableVersions(): Promise<string[]> {
   }
 
   try {
-    const output = execSync('npm view @anthropic-ai/claude-code versions --json', {
-      encoding: 'utf-8',
-      timeout: 15000,
-      windowsHide: true,
-    })
+    // execFile (async) instead of execSync so the network round-trip to the npm
+    // registry never blocks the main thread. The handler is already async.
+    const { stdout } = await execFileAsync(
+      NPM_BIN,
+      ['view', '@anthropic-ai/claude-code', 'versions', '--json'],
+      { encoding: 'utf-8', timeout: 15000, windowsHide: true },
+    )
 
-    const versions: string[] = JSON.parse(output)
+    const versions: string[] = JSON.parse(stdout)
     // Newest first
     cachedVersions = versions.reverse()
     cachedVersionsAt = Date.now()

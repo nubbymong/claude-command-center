@@ -19,7 +19,7 @@ import * as http from 'http'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
-import { spawn } from 'child_process'
+import { spawn, execSync } from 'child_process'
 import { BrowserWindow, nativeImage } from 'electron'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import { logInfo, logError } from './debug-logger'
@@ -563,6 +563,9 @@ export async function stopGlobalVision(): Promise<void> {
     logInfo('[vision] Browser automation stopped (MCP server continues running)')
   }
   globalConfig = null
+  // Deterministic teardown of the headless browser CCC spawned, so it never
+  // survives stop/app-quit (called from before-quit's stopGlobalVision()).
+  killSpawnedBrowser()
 }
 
 /** Tear down a session's pinned browser target/context (called on PTY exit). */
@@ -603,7 +606,43 @@ function getBrowserPaths(browser: 'chrome' | 'edge'): string[] {
   ]
 }
 
+// The headless browser CCC itself spawns is detached + unref'd, so without an
+// explicit kill it survives app quit forever (orphan process tree + an open CDP
+// debug port with no owner). Track the pid of the CCC-spawned HEADLESS browser
+// only — user-launched headed browsers are theirs to keep — and tear it down on
+// stop/quit (killSpawnedBrowser) and before any relaunch.
+let spawnedBrowserPid: number | null = null
+
+/**
+ * Kill the headless browser process tree CCC spawned, if any. Best-effort with a
+ * hard fallback: taskkill /T /F (whole tree) on Windows, process.kill(-pid) on
+ * POSIX. No-op when CCC didn't spawn one (e.g. user launched a headed browser).
+ * Safe to call repeatedly; clears the tracked pid.
+ */
+export function killSpawnedBrowser(): void {
+  const pid = spawnedBrowserPid
+  spawnedBrowserPid = null
+  if (!pid) return
+  try {
+    if (process.platform === 'win32') {
+      // /T kills the whole Chrome process tree (renderers/gpu), /F forces it.
+      execSync(`taskkill /pid ${pid} /T /F`, { windowsHide: true, timeout: 5000 })
+    } else {
+      // Negative pid targets the detached process group (spawn was detached).
+      try { process.kill(-pid, 'SIGTERM') } catch { process.kill(pid, 'SIGTERM') }
+    }
+    logInfo(`[vision] Killed CCC-spawned headless browser (pid ${pid})`)
+  } catch {
+    // Already exited / not found — nothing to clean up.
+  }
+}
+
 export function launchBrowser(browser: 'chrome' | 'edge', debugPort: number, url?: string, headless: boolean = true): { pid: number; command: string } {
+  // Relaunch path: kill the previous CCC-spawned headless browser first so we
+  // never stack orphans (the --user-data-dir singleton means a stale one would
+  // also reject the new debug port).
+  killSpawnedBrowser()
+
   const tmpDir = process.env.TEMP || process.env.TMP || os.tmpdir()
   const profileDir = path.join(tmpDir, `${browser}-debug-${debugPort}`)
   const other: 'chrome' | 'edge' = browser === 'edge' ? 'chrome' : 'edge'
@@ -626,5 +665,8 @@ export function launchBrowser(browser: 'chrome' | 'edge', debugPort: number, url
     logInfo(`[vision] Browser launch failed; vision disabled (non-fatal): ${err instanceof Error ? err.message : String(err)}`)
   })
   child.unref()
+  // Only track headless browsers WE spawned for teardown; leave user-launched
+  // headed browsers running on stop/quit.
+  if (headless && child.pid) spawnedBrowserPid = child.pid
   return { pid: child.pid || 0, command }
 }

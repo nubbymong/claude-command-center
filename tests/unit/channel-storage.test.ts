@@ -6,6 +6,7 @@ vi.mock('fs', () => ({
   existsSync: (p: string) => files.has(p),
   readFileSync: (p: string) => { if (!files.has(p)) throw new Error('ENOENT'); return files.get(p)! },
   writeFileSync: (p: string, d: string) => { files.set(p, d) },
+  appendFileSync: (p: string, d: string) => { files.set(p, (files.get(p) ?? '') + d) },
   mkdirSync: vi.fn(),
   renameSync: (a: string, b: string) => { files.set(b, files.get(a)!); files.delete(a) },
   copyFileSync: (a: string, b: string) => { files.set(b, files.get(a)!) },
@@ -16,7 +17,7 @@ vi.mock('path', () => ({ join: (...p: string[]) => p.join('/') }))
 vi.mock('../../src/main/ipc/setup-handlers', () => ({ getResourcesDirectory: () => '/res' }))
 vi.mock('../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logError: vi.fn() }))
 
-const { readJsonFile, writeJsonFile } = await import('../../src/main/channel-storage')
+const { readJsonFile, writeJsonFile, appendLine } = await import('../../src/main/channel-storage')
 
 describe('channel-storage', () => {
   beforeEach(() => files.clear())
@@ -39,5 +40,19 @@ describe('channel-storage', () => {
   it('on missing file: returns seeded defaults without writing', () => {
     const result = readJsonFile('standing-approvals.json', () => ({ schemaVersion: 1, approvals: [] }))
     expect(result).toEqual({ schemaVersion: 1, approvals: [] })
+  })
+
+  it('appendLine appends newline-delimited records (true append, preserves prior lines)', () => {
+    appendLine('2026-06-12.jsonl', '{"a":1}')
+    appendLine('2026-06-12.jsonl', '{"b":2}')
+    appendLine('2026-06-12.jsonl', '{"c":3}')
+    expect(files.get('/res/conductor-channels/2026-06-12.jsonl')).toBe('{"a":1}\n{"b":2}\n{"c":3}\n')
+  })
+
+  it('appendLine is back-compatible with a file written by the old read+rewrite path', () => {
+    // Simulate an existing day-file from the previous implementation.
+    files.set('/res/conductor-channels/2026-06-12.jsonl', '{"old":1}\n')
+    appendLine('2026-06-12.jsonl', '{"new":2}')
+    expect(files.get('/res/conductor-channels/2026-06-12.jsonl')).toBe('{"old":1}\n{"new":2}\n')
   })
 })

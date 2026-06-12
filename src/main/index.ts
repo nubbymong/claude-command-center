@@ -65,7 +65,7 @@ import { initUpdateWatcher, stopUpdateWatcher, getProjectRootPath, isPackagedApp
 import { startUpdateServer, stopUpdateServer } from './update-server'
 import { saveSessionState, loadSessionState, clearSessionState, hasSavedSessionState, SessionState } from './session-state'
 import { getConfigDir, ensureConfigDir, snapshotConfig } from './config-manager'
-import { stopGlobalVision, cleanupLegacyVisionMarkers } from './vision-manager'
+import { stopGlobalVision, killSpawnedBrowser, cleanupLegacyVisionMarkers } from './vision-manager'
 import { startConductorMcpServer, stopConductorMcpServer, startBrowserAtBoot } from './conductor-mcp-server'
 import { readConfig } from './config-manager'
 import { loadCredential, saveCredential, deleteCredential } from './credential-store'
@@ -487,29 +487,29 @@ function createWindow(): void {
   // Windows: tries native .exe then npm .cmd via 'where'
   // macOS/Linux: uses 'which' to find 'claude' in PATH
   ipcMain.handle('cli:check', async () => {
+    // Async execFile (not execSync): this runs every 30s for the app's lifetime
+    // from BottomBar, so a synchronous probe would stall PTY data delivery to
+    // every terminal in lockstep. Same boolean result shape as before.
+    const { execFile } = require('child_process')
+    const { promisify } = require('util')
+    const execFileAsync = promisify(execFile)
     try {
-      const { execSync } = require('child_process')
       if (process.platform === 'win32') {
-        // stdio pipe on stderr suppresses the "INFO: Could not find files..."
-        // line that `where` writes to stderr on a miss; default execSync
-        // inherits stderr, leaking noise into the parent's terminal between
+        // windowsHide + piped stderr suppresses the "INFO: Could not find
+        // files..." line `where` writes to stderr on a miss; execFile pipes
+        // by default so the noise never reaches the parent's terminal between
         // the .exe and .cmd probes.
-        const opts = {
-          encoding: 'utf-8',
-          timeout: 5000,
-          windowsHide: true,
-          stdio: ['ignore', 'pipe', 'pipe'] as const,
-        }
+        const opts = { encoding: 'utf-8' as const, timeout: 5000, windowsHide: true }
         try {
-          execSync('where claude.exe', opts as any)
+          await execFileAsync('where', ['claude.exe'], opts)
           return true
         } catch { /* try .cmd */ }
-        execSync('where claude.cmd', opts as any)
+        await execFileAsync('where', ['claude.cmd'], opts)
         return true
       } else {
         // Use login shell to pick up Homebrew/nvm PATH entries
         const shell = process.env.SHELL || '/bin/zsh'
-        execSync(`${shell} -l -c "which claude"`, { encoding: 'utf-8', timeout: 5000 })
+        await execFileAsync(shell, ['-l', '-c', 'which claude'], { encoding: 'utf-8', timeout: 5000 })
         return true
       }
     } catch {
@@ -889,6 +889,10 @@ if (!gotTheLock) {
     stopUpdateServer()
     disableDebugMode()
     stopGlobalVision()
+    // stopGlobalVision is async + fire-and-forget here, so its trailing browser
+    // teardown may not run before the process exits. killSpawnedBrowser is sync
+    // + idempotent — call it directly so the headless Chrome tree dies on quit.
+    killSpawnedBrowser()
     stopConductorMcpServer()
     killAllAgents()
     killAllPty()
