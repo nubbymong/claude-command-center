@@ -59,6 +59,7 @@ import { setupGitHubListener, useGitHubStore } from './stores/githubStore'
 import { setupChannelListeners } from './stores/channelStore'
 import LoggingConsentPrompt from './components/LoggingConsentPrompt'
 import LogsWipeModal from './components/LogsWipeModal'
+import { pickBootGate } from './utils/bootGates'
 import ResumeSessionsPrompt from './components/ResumeSessionsPrompt'
 import { useCodexAccountStore } from './stores/codexAccountStore'
 import GitHubPanel from './components/github/GitHubPanel'
@@ -448,11 +449,15 @@ export default function App() {
   // change before it fires.
   useEffect(() => {
     if (!isGitHubOnboardingDue()) return
+    if (logsWipeBytes !== 0) return
     if (showWhatsNew || showTraining || showTrainingAll) return
+    // The machine-name prompt is below onboarding in the boot-gate priority,
+    // so opening onboarding while it's visible would unmount it mid-typing.
+    if (showMachineNamePrompt) return
     if (isFirstInstall() || shouldShowWhatsNew() || shouldShowTraining()) return
     const t = setTimeout(() => setShowGitHubOnboarding(true), 120)
     return () => clearTimeout(t)
-  }, [githubConfig, showWhatsNew, showTraining, showTrainingAll, needsCliSetup])
+  }, [githubConfig, logsWipeBytes, showWhatsNew, showTraining, showTrainingAll, showMachineNamePrompt, needsCliSetup])
 
   // useCallback: passed to OnboardingModal as `onClose`, which forwards it
   // to useFocusTrap. Without stable identity, the focus-trap effect re-runs
@@ -900,15 +905,33 @@ export default function App() {
     // here.
   }
 
+  // First-launch gates each have an independent trigger (wipe detection IPC,
+  // version compare, settings flags, staggered boot timers); without a shared
+  // priority they mount simultaneously and stack, with DOM order deciding who
+  // paints on top. Exactly one gate renders at a time — see pickBootGate.
+  const bootGate = pickBootGate({
+    configLoaded,
+    logsWipeBytes,
+    showWhatsNew,
+    showTraining,
+    showTrainingAll,
+    showGitHubOnboarding,
+    showMachineNamePrompt,
+    loggingConsentSeen: Boolean(loggingConsentSeen),
+    whatsNewDue: shouldShowWhatsNew(),
+    trainingDue: shouldShowTraining() || isFirstInstall(),
+    githubOnboardingDue: isGitHubOnboardingDue(),
+  })
+
   return (
     <ErrorBoundary>
       <div className="flex flex-col h-screen bg-base text-text">
-        {logsWipeBytes !== null && logsWipeBytes > 0 && (
+        {bootGate === 'logsWipe' && logsWipeBytes !== null && (
           <LogsWipeModal totalBytes={logsWipeBytes} onComplete={() => setLogsWipeBytes(0)} />
         )}
-        {showWhatsNew && <WhatsNewModal onClose={handleWhatsNewClose} />}
+        {bootGate === 'whatsNew' && <WhatsNewModal onClose={handleWhatsNewClose} />}
         {showTipModal && <TipModal onClose={() => setShowTipModal(false)} onNavigate={(v) => setView(v)} />}
-        {showGitHubOnboarding && (
+        {bootGate === 'githubOnboarding' && (
           <OnboardingModal
             onClose={dismissGitHubOnboarding}
             onSetup={() => {
@@ -937,7 +960,7 @@ export default function App() {
           />
         )}
 
-        {configLoaded && !loggingConsentSeen && (
+        {bootGate === 'loggingConsent' && (
           <LoggingConsentPrompt />
         )}
 
@@ -958,7 +981,7 @@ export default function App() {
           />
         )}
 
-        {showMachineNamePrompt && (
+        {bootGate === 'machineName' && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
             <div className="bg-surface0 rounded-lg p-5 w-[360px] shadow-2xl border border-surface1">
               <h3 className="text-sm font-semibold text-text mb-2">Name this machine</h3>
@@ -1105,7 +1128,7 @@ export default function App() {
             }
           }} />
         </div>
-        {showTraining && (
+        {bootGate === 'training' && (
           <TrainingWalkthrough
             onClose={handleTrainingClose}
             showAll={showTrainingAll}
