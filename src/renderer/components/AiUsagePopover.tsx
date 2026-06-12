@@ -86,6 +86,7 @@ function AiUsagePopoverBody({
   onOpenSettings?: () => void
 }) {
   const aiUsage = useGitHubStore((s) => s.aiUsage)
+  const aiUsageStatus = useGitHubStore((s) => s.aiUsageStatus)
   const loadAiUsage = useGitHubStore((s) => s.loadAiUsage)
   const cap = useSettingsStore((s) => s.settings.copilotIncludedCredits)
   const sessions = useSessionStore((s) => s.sessions)
@@ -165,7 +166,32 @@ function AiUsagePopoverBody({
         />
         {!aiUsage ? (
           <div className="text-[11px] text-overlay1">
-            No data yet. Usage refreshes hourly once a token with billing scope is configured.
+            {aiUsageStatus === 'no-auth' ? (
+              <>
+                Connect a GitHub account in Settings, then this meter reads your billed
+                AI-credit usage.
+              </>
+            ) : aiUsageStatus === 'scope-missing' ? (
+              <>
+                The GitHub token is missing the billing permission. Add the{' '}
+                <code className="text-overlay0">user</code> scope (classic) or Account
+                permissions <span className="text-overlay0">Plan: read</span> (fine-grained)
+                in Settings.
+              </>
+            ) : aiUsageStatus === 'error' ? (
+              <>Couldn&apos;t reach GitHub for your usage. It will retry on the next refresh.</>
+            ) : (
+              <>
+                No data yet. Usage refreshes hourly once a token with billing scope is
+                configured.
+              </>
+            )}
+            <button
+              onClick={onOpenSettings}
+              className="mt-1.5 block self-start text-[10px] text-overlay1 underline decoration-dotted hover:text-text transition-colors focus-ring"
+            >
+              Open Settings
+            </button>
           </div>
         ) : aiUsage.items.length === 0 ? (
           <div className="text-[11px] text-overlay1">No AI-credit usage this period.</div>

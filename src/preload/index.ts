@@ -391,7 +391,10 @@ interface GitHubBridge {
     expiresAt?: number
     error?: string
   }>
-  oauthStart: (mode: 'public' | 'private') => Promise<{
+  oauthStart: (
+    mode: 'public' | 'private',
+    opts?: { includeUserScope?: boolean },
+  ) => Promise<{
     flowId: string
     userCode: string
     verificationUri: string
@@ -440,7 +443,7 @@ interface GitHubBridge {
   ) => Promise<{ ok: boolean; error?: string }>
   markNotifRead: (profileId: string, notifId: string) => Promise<{ ok: boolean; error?: string }>
   getAiUsage: () => Promise<unknown>
-  onAiUsageUpdate: (cb: (report: unknown) => void) => () => void
+  onAiUsageUpdate: (cb: (payload: unknown) => void) => () => void
 }
 
 const electronAPI: ElectronAPI = {
@@ -837,7 +840,7 @@ const electronAPI: ElectronAPI = {
     removeProfile: (id) => ipcRenderer.invoke(IPC.GITHUB_PROFILE_REMOVE, id),
     renameProfile: (id, label) => ipcRenderer.invoke(IPC.GITHUB_PROFILE_RENAME, id, label),
     testProfile: (id) => ipcRenderer.invoke(IPC.GITHUB_PROFILE_TEST, id),
-    oauthStart: (mode) => ipcRenderer.invoke(IPC.GITHUB_OAUTH_START, mode),
+    oauthStart: (mode, opts) => ipcRenderer.invoke(IPC.GITHUB_OAUTH_START, mode, opts),
     oauthPoll: (flowId) => ipcRenderer.invoke(IPC.GITHUB_OAUTH_POLL, flowId),
     oauthCancel: (flowId) => ipcRenderer.invoke(IPC.GITHUB_OAUTH_CANCEL, flowId),
     ghcliDetect: () => ipcRenderer.invoke(IPC.GITHUB_GHCLI_DETECT),

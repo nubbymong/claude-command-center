@@ -228,6 +228,26 @@ export interface AiUsageReport {
   }
 }
 
+// Structured status that travels ALONGSIDE the (possibly null) cached report so
+// the UI can tell apart "no data because we never fetched" from "no data because
+// the token is missing the billing scope" from "no GitHub auth at all". The
+// report stays the source of numbers; this is the source of state copy.
+//   - 'pending'       no fetch has resolved yet (first boot / just enabled)
+//   - 'no-auth'       no usable GitHub auth profile to fetch with
+//   - 'scope-missing' authed, but BOTH endpoints returned 403/404 (token lacks
+//                     the `user` scope (classic) / Account "Plan: read" (fine))
+//   - 'error'         network / non-403/404 HTTP / parse failure (transient)
+//   - 'ok'            a report was fetched successfully (may have zero items)
+export type AiUsageStatus = 'ok' | 'no-auth' | 'scope-missing' | 'error' | 'pending'
+
+// The payload pushed over GITHUB_AI_USAGE_UPDATE and returned by
+// GITHUB_AI_USAGE_GET. Additive: the report is still the headline, but it now
+// carries a status so the renderer renders accurate empty/action states.
+export interface AiUsagePayload {
+  report: AiUsageReport | null
+  status: AiUsageStatus
+}
+
 export interface ToolCallFileSignal {
   filePath: string
   at: number

@@ -62,7 +62,7 @@ beforeEach(() => {
   root = createRoot(container)
   // Reset stores to a known baseline.
   useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS } })
-  useGitHubStore.setState({ aiUsage: null })
+  useGitHubStore.setState({ aiUsage: null, aiUsageStatus: 'pending' })
 })
 
 afterEach(() => {
@@ -88,12 +88,29 @@ describe('AI-usage chip gating', () => {
     // Review nit on cd96a71: hiding the chip made the popover's "no data +
     // scope hint" state unreachable, so an enabled meter failed silently.
     useSettingsStore.setState((s) => ({ settings: { ...s.settings, githubAiUsageEnabled: true } }))
-    useGitHubStore.setState({ aiUsage: null })
+    useGitHubStore.setState({ aiUsage: null, aiUsageStatus: 'scope-missing' })
     await render()
     const chip = container.querySelector('[data-ai-usage-chip]') as HTMLElement
     expect(chip).not.toBeNull()
     expect(chip.textContent).toBe('AI')
     expect(chip.getAttribute('title')).toContain('Plan: read')
+  })
+
+  it('placeholder tooltip varies by status: no-auth says connect GitHub first', async () => {
+    useSettingsStore.setState((s) => ({ settings: { ...s.settings, githubAiUsageEnabled: true } }))
+    useGitHubStore.setState({ aiUsage: null, aiUsageStatus: 'no-auth' })
+    await render()
+    const chip = container.querySelector('[data-ai-usage-chip]') as HTMLElement
+    expect(chip.getAttribute('title')).toContain('Connect a GitHub account')
+    expect(chip.getAttribute('title')).not.toContain('Plan: read')
+  })
+
+  it('placeholder tooltip varies by status: error says could not reach GitHub', async () => {
+    useSettingsStore.setState((s) => ({ settings: { ...s.settings, githubAiUsageEnabled: true } }))
+    useGitHubStore.setState({ aiUsage: null, aiUsageStatus: 'error' })
+    await render()
+    const chip = container.querySelector('[data-ai-usage-chip]') as HTMLElement
+    expect(chip.getAttribute('title')).toContain("Couldn't reach GitHub")
   })
 })
 

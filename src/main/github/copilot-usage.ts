@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { GITHUB_API_BASE } from '../../shared/github-constants'
-import type { AiUsageReport, AiUsageItem } from '../../shared/github-types'
+import type { AiUsageReport, AiUsageItem, AiUsageStatus } from '../../shared/github-types'
 import { redactTokens } from './security/token-redactor'
 
 /**
@@ -172,9 +172,16 @@ export interface FetchAiUsageOptions {
 }
 
 type EndpointResult =
+  // 200 with usage rows.
   | { kind: 'ok'; body: unknown }
-  | { kind: 'empty' } // 200 but no usage rows, OR a 404 (try fallback)
-  | { kind: 'fail' } // network / non-404 error (fail open, stop)
+  // 200 but no usage rows: old-plan account on this endpoint. Try the fallback.
+  | { kind: 'empty' }
+  // 403/404: the token can't read this endpoint (missing the billing scope).
+  // Still try the fallback, but remember it so a both-endpoints-blocked result
+  // can be reported as 'scope-missing' rather than a generic error.
+  | { kind: 'scope-missing' }
+  // network / non-403/404 HTTP / parse error (fail open, stop).
+  | { kind: 'fail' }
 
 async function fetchEndpoint(
   login: string,
@@ -213,7 +220,7 @@ async function fetchEndpoint(
       `${segment} usage returned ${resp.status} (token likely missing the 'user' scope (classic) / Account permission 'Plan: read' (fine-grained))`,
       opts.logFn,
     )
-    return { kind: 'empty' }
+    return { kind: 'scope-missing' }
   }
   if (!resp.ok) {
     logOnce(`${segment} usage returned HTTP ${resp.status}`, opts.logFn)
@@ -242,18 +249,27 @@ async function fetchEndpoint(
 }
 
 /**
- * Fetches the AI-credits usage report for a personal account.
+ * fetchAiUsage + a structured status describing WHY the report is what it is.
  *
- * Tries the primary `ai_credit` endpoint; if it returns no rows (or a 404),
- * falls back to `premium_request`. Returns null on total failure (network,
- * non-404 HTTP, both endpoints empty) — the meter is best-effort and fails
- * open. Failures log ONCE per process via the redacting logger.
+ * The status is derived from the two endpoint results:
+ *   - either endpoint produced rows               -> 'ok'   (report set)
+ *   - BOTH endpoints returned 403/404             -> 'scope-missing' (report null)
+ *   - both endpoints empty (old plan, no usage)   -> 'ok'   (empty report? no —
+ *       both-empty yields no `ok` body, so this collapses to null/'scope-missing'
+ *       only when 403/404; a genuine 200-empty pair is rare and maps to 'error')
+ *   - anything else (network / 5xx / parse / one
+ *       scope-missing + one fail)                 -> 'error' (report null)
+ *
+ * Concretely: a populated endpoint wins and yields 'ok'. If neither endpoint
+ * returns rows, we report 'scope-missing' only when EVERY non-ok endpoint we saw
+ * was a 403/404; any 'fail' (or a 200-empty that isn't a scope problem) downgrades
+ * to 'error' so the UI doesn't tell the user to fix scopes for a network blip.
  */
-export async function fetchAiUsage(
+export async function fetchAiUsageWithStatus(
   login: string,
   options: FetchAiUsageOptions,
-): Promise<AiUsageReport | null> {
-  if (!login || typeof login !== 'string') return null
+): Promise<{ report: AiUsageReport | null; status: AiUsageStatus }> {
+  if (!login || typeof login !== 'string') return { report: null, status: 'error' }
   const now = options.now ?? Date.now
   const epOpts = {
     tokenFn: options.tokenFn,
@@ -265,16 +281,39 @@ export async function fetchAiUsage(
   // Primary endpoint (new plans). A populated list short-circuits the fallback.
   const primary = await fetchEndpoint(login, 'ai_credit', epOpts)
   if (primary.kind === 'ok') {
-    return normalizeAiUsage(primary.body, 'ai_credit', now())
+    return { report: normalizeAiUsage(primary.body, 'ai_credit', now()), status: 'ok' }
   }
-  // primary 'empty' (old-plan account or 404) -> try the fallback endpoint.
-  // primary 'fail' (network/5xx) usually means connectivity is down, but we
-  // still try the fallback once; its own failure collapses to null below.
+  // primary not 'ok' (empty / scope-missing / fail) -> try the fallback once.
   const fallback = await fetchEndpoint(login, 'premium_request', epOpts)
   if (fallback.kind === 'ok') {
-    return normalizeAiUsage(fallback.body, 'premium_request', now())
+    return { report: normalizeAiUsage(fallback.body, 'premium_request', now()), status: 'ok' }
   }
-  return null
+
+  // No rows from either endpoint. Scope-missing requires BOTH to be 403/404;
+  // any other combination (network fail, 200-empty, mixed) is a transient error.
+  const status: AiUsageStatus =
+    primary.kind === 'scope-missing' && fallback.kind === 'scope-missing'
+      ? 'scope-missing'
+      : 'error'
+  return { report: null, status }
+}
+
+/**
+ * Fetches the AI-credits usage report for a personal account.
+ *
+ * Tries the primary `ai_credit` endpoint; if it returns no rows (or a 404),
+ * falls back to `premium_request`. Returns null on total failure (network,
+ * non-404 HTTP, both endpoints empty) — the meter is best-effort and fails
+ * open. Failures log ONCE per process via the redacting logger.
+ *
+ * Null-based by design (the historical surface). Callers that need the reason
+ * for a null use {@link fetchAiUsageWithStatus}.
+ */
+export async function fetchAiUsage(
+  login: string,
+  options: FetchAiUsageOptions,
+): Promise<AiUsageReport | null> {
+  return (await fetchAiUsageWithStatus(login, options)).report
 }
 
 // --- Polling scheduler ------------------------------------------------------
@@ -291,8 +330,8 @@ export interface AiUsageSchedulerDeps {
   resolve: () => Promise<{ login: string; tokenFn: () => Promise<string> } | null>
   /** True while the meter is enabled (githubAiUsageEnabled). Re-read each tick. */
   isEnabled: () => boolean
-  /** Push a fresh (or cleared) report to the renderer. */
-  emit: (report: AiUsageReport | null) => void
+  /** Push the latest report + status to the renderer. */
+  emit: (payload: { report: AiUsageReport | null; status: AiUsageStatus }) => void
   /** Refresh cadence; defaults to AI_USAGE_REFRESH_MS. */
   refreshIntervalMs?: number
   /** Injectable fetch for tests. */
@@ -305,6 +344,11 @@ export class AiUsageScheduler {
   private timer: NodeJS.Timeout | undefined
   private stopped = false
   private latest: AiUsageReport | null = null
+  // Travels alongside `latest`. 'pending' until the first fetch resolves; then
+  // tracks the last fetch outcome. A transient 'error' that follows a good
+  // report keeps `latest` intact but updates the status so the UI can show a
+  // stale-but-still-displayed report with an accurate "couldn't refresh" hint.
+  private latestStatus: AiUsageStatus = 'pending'
   private inFlight: Promise<AiUsageReport | null> | null = null
 
   constructor(private deps: AiUsageSchedulerDeps) {}
@@ -312,6 +356,11 @@ export class AiUsageScheduler {
   /** Latest cached report (or null if never fetched / disabled). */
   getLatest(): AiUsageReport | null {
     return this.latest
+  }
+
+  /** Status describing the latest fetch outcome (see AiUsageStatus). */
+  getStatus(): AiUsageStatus {
+    return this.latestStatus
   }
 
   /**
@@ -325,6 +374,7 @@ export class AiUsageScheduler {
       // never shows stale numbers after the user turns the meter off.
       this.clearTimer()
       this.latest = null
+      this.latestStatus = 'pending'
       return
     }
     // Immediate first refresh so the panel populates without waiting a full
@@ -351,6 +401,7 @@ export class AiUsageScheduler {
   async refresh(): Promise<AiUsageReport | null> {
     if (this.stopped || !this.deps.isEnabled()) {
       this.latest = null
+      this.latestStatus = 'pending'
       return null
     }
     if (this.inFlight) return this.inFlight
@@ -364,20 +415,26 @@ export class AiUsageScheduler {
     const target = await this.deps.resolve().catch(() => null)
     if (!target) {
       // No usable auth profile/login yet. Don't clobber a previously good
-      // report — leave the cache intact and try again next tick.
+      // report — leave the cache intact and try again next tick — but record
+      // 'no-auth' (unless we already have a good report to keep showing) and
+      // push it so the UI can prompt the user to connect GitHub.
+      if (!this.latest) {
+        this.latestStatus = 'no-auth'
+        this.deps.emit({ report: null, status: 'no-auth' })
+      }
       return this.latest
     }
-    const report = await fetchAiUsage(target.login, {
+    const { report, status } = await fetchAiUsageWithStatus(target.login, {
       tokenFn: target.tokenFn,
       fetchImpl: this.deps.fetchImpl,
       logFn: this.deps.logFn,
     })
-    // A null result (404/network) preserves the prior cached report rather
-    // than wiping the meter on a transient failure.
-    if (report) {
-      this.latest = report
-      this.deps.emit(report)
-    }
+    this.latestStatus = status
+    // A null result (scope-missing / network) preserves the prior cached report
+    // rather than wiping the meter on a transient failure. We still emit so the
+    // status reaches the renderer (e.g. 'scope-missing' action guidance).
+    if (report) this.latest = report
+    this.deps.emit({ report: this.latest, status })
     return report ?? this.latest
   }
 

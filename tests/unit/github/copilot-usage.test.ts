@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import {
   normalizeAiUsage,
   fetchAiUsage,
+  fetchAiUsageWithStatus,
   aiUsageReportSchema,
   AiUsageScheduler,
   __resetUsageLogGuard,
@@ -245,6 +246,90 @@ describe('fetchAiUsage', () => {
   })
 })
 
+// --- fetchAiUsageWithStatus (status derivation table) -----------------------
+
+describe('fetchAiUsageWithStatus', () => {
+  it('ok + report when the primary returns rows', async () => {
+    const fetchImpl = vi.fn(async () => makeResp(AI_CREDIT_BILLED)) as unknown as typeof fetch
+    const r = await fetchAiUsageWithStatus('octocat', { tokenFn, fetchImpl })
+    expect(r.status).toBe('ok')
+    expect(r.report!.totals.billedAmount).toBe(8)
+  })
+
+  it('ok + report when only the fallback returns rows', async () => {
+    const fetchImpl = vi.fn(async (url: unknown) =>
+      String(url).includes('/ai_credit/')
+        ? makeResp(EMPTY_RESPONSE)
+        : makeResp(PREMIUM_REQUEST_BILLED),
+    ) as unknown as typeof fetch
+    const r = await fetchAiUsageWithStatus('octocat', { tokenFn, fetchImpl })
+    expect(r.status).toBe('ok')
+    expect(r.report!.source).toBe('premium_request')
+  })
+
+  it('scope-missing when BOTH endpoints return 404 (unscoped classic token)', async () => {
+    const logFn = vi.fn()
+    const fetchImpl = vi.fn(async () => makeResp({}, 404)) as unknown as typeof fetch
+    const r = await fetchAiUsageWithStatus('octocat', { tokenFn, fetchImpl, logFn })
+    expect(r.report).toBeNull()
+    expect(r.status).toBe('scope-missing')
+  })
+
+  it('scope-missing when BOTH endpoints return 403 (fine-grained PAT lacking Plan: read)', async () => {
+    const logFn = vi.fn()
+    const fetchImpl = vi.fn(async () => makeResp({}, 403)) as unknown as typeof fetch
+    const r = await fetchAiUsageWithStatus('octocat', { tokenFn, fetchImpl, logFn })
+    expect(r.report).toBeNull()
+    expect(r.status).toBe('scope-missing')
+  })
+
+  it('scope-missing when one endpoint 404s and the other 403s', async () => {
+    const fetchImpl = vi.fn(async (url: unknown) =>
+      String(url).includes('/ai_credit/') ? makeResp({}, 404) : makeResp({}, 403),
+    ) as unknown as typeof fetch
+    const r = await fetchAiUsageWithStatus('octocat', { tokenFn, fetchImpl })
+    expect(r.status).toBe('scope-missing')
+  })
+
+  it('error (not scope-missing) on a network failure', async () => {
+    const logFn = vi.fn()
+    const fetchImpl = vi.fn(async () => {
+      throw new Error('ECONNREFUSED')
+    }) as unknown as typeof fetch
+    const r = await fetchAiUsageWithStatus('octocat', { tokenFn, fetchImpl, logFn })
+    expect(r.report).toBeNull()
+    expect(r.status).toBe('error')
+  })
+
+  it('error when one endpoint is scope-missing but the other is a network fail (not a scope problem)', async () => {
+    const fetchImpl = vi.fn(async (url: unknown) => {
+      if (String(url).includes('/ai_credit/')) return makeResp({}, 404)
+      throw new Error('ECONNRESET')
+    }) as unknown as typeof fetch
+    const r = await fetchAiUsageWithStatus('octocat', { tokenFn, fetchImpl })
+    expect(r.status).toBe('error')
+  })
+
+  it('error when both endpoints are 200-empty (no scope problem, no rows)', async () => {
+    const fetchImpl = vi.fn(async () => makeResp(EMPTY_RESPONSE)) as unknown as typeof fetch
+    const r = await fetchAiUsageWithStatus('octocat', { tokenFn, fetchImpl })
+    expect(r.report).toBeNull()
+    expect(r.status).toBe('error')
+  })
+
+  it('error for an empty login', async () => {
+    const fetchImpl = vi.fn() as unknown as typeof fetch
+    const r = await fetchAiUsageWithStatus('', { tokenFn, fetchImpl })
+    expect(r.status).toBe('error')
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('fetchAiUsage still returns the null-based report surface (unchanged)', async () => {
+    const fetchImpl = vi.fn(async () => makeResp({}, 404)) as unknown as typeof fetch
+    expect(await fetchAiUsage('octocat', { tokenFn, fetchImpl })).toBeNull()
+  })
+})
+
 // --- scheduler --------------------------------------------------------------
 
 describe('AiUsageScheduler', () => {
@@ -293,13 +378,61 @@ describe('AiUsageScheduler', () => {
     expect(fetchImpl).not.toHaveBeenCalled()
   })
 
-  it('fetches immediately on start and emits the report', async () => {
+  it('fetches immediately on start and emits the report + ok status', async () => {
     const { deps, emit } = makeDeps()
     const s = new AiUsageScheduler(deps)
     s.start()
     await vi.advanceTimersByTimeAsync(0)
     expect(emit).toHaveBeenCalledTimes(1)
+    expect(emit.mock.calls[0][0]).toMatchObject({ status: 'ok' })
+    expect(emit.mock.calls[0][0].report!.totals.billedAmount).toBe(8)
     expect(s.getLatest()!.totals.billedAmount).toBe(8)
+    expect(s.getStatus()).toBe('ok')
+    s.dispose()
+  })
+
+  it('emits no-auth (with a null report) when no profile resolves and nothing is cached', async () => {
+    const resolve = vi.fn(async () => null)
+    const { deps, emit } = makeDeps({ resolve })
+    const s = new AiUsageScheduler(deps)
+    s.start()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(emit).toHaveBeenCalledWith({ report: null, status: 'no-auth' })
+    expect(s.getStatus()).toBe('no-auth')
+    s.dispose()
+  })
+
+  it('emits scope-missing (preserving the prior report) on a blocked refresh', async () => {
+    let firstCall = true
+    const fetchImpl = vi.fn(async () => {
+      if (firstCall) {
+        firstCall = false
+        return makeResp(AI_CREDIT_BILLED)
+      }
+      return makeResp({}, 404)
+    }) as unknown as typeof fetch
+    const { deps, emit } = makeDeps({ fetchImpl })
+    const s = new AiUsageScheduler(deps)
+    s.start()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(s.getStatus()).toBe('ok')
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(s.getStatus()).toBe('scope-missing')
+    // The cached report survives the blocked refresh; status updates anyway.
+    expect(s.getLatest()!.totals.billedAmount).toBe(8)
+    expect(emit).toHaveBeenLastCalledWith({
+      report: expect.objectContaining({ source: 'ai_credit' }),
+      status: 'scope-missing',
+    })
+    s.dispose()
+  })
+
+  it('resets status to pending while disabled', async () => {
+    const { deps } = makeDeps({ isEnabled: () => false })
+    const s = new AiUsageScheduler(deps)
+    s.start()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(s.getStatus()).toBe('pending')
     s.dispose()
   })
 
@@ -346,13 +479,24 @@ describe('AiUsageScheduler', () => {
     s.dispose()
   })
 
-  it('does not clobber the cache when no auth profile resolves', async () => {
-    const resolve = vi.fn(async () => null)
-    const { deps, emit } = makeDeps({ resolve })
+  it('does not clobber a cached report when no auth profile resolves on a later tick', async () => {
+    let firstCall = true
+    const fetchImpl = vi.fn(async () => makeResp(AI_CREDIT_BILLED)) as unknown as typeof fetch
+    const resolve = vi.fn(async () => {
+      if (firstCall) {
+        firstCall = false
+        return { login: 'octocat', tokenFn }
+      }
+      return null
+    })
+    const { deps } = makeDeps({ resolve, fetchImpl })
     const s = new AiUsageScheduler(deps)
-    const r = await s.refresh()
-    expect(r).toBeNull()
-    expect(emit).not.toHaveBeenCalled()
+    s.start()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(s.getLatest()!.totals.billedAmount).toBe(8)
+    // Next tick: resolve() yields null, but the good report must survive.
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(s.getLatest()!.totals.billedAmount).toBe(8)
     s.dispose()
   })
 })

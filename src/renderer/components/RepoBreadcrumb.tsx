@@ -29,15 +29,31 @@ function buildAiTooltip(
 // idiom ("X / Y AI credits" + billed budget) condensed to fit the strip. Shown
 // only when the meter is enabled and a report has arrived. Clicking it toggles
 // the unified usage popover.
+// Placeholder-chip tooltip copy, varied by why there is no report yet. Keeps
+// the enabled-but-empty chip honest instead of always blaming the token scope.
+function placeholderTooltip(status: import('../../shared/github-types').AiUsageStatus): string {
+  switch (status) {
+    case 'no-auth':
+      return 'Connect a GitHub account first, then this meter reads your billed AI-credit usage. Click for details.'
+    case 'error':
+      return "Couldn't reach GitHub for your AI-credit usage. It will retry. Click for details."
+    case 'scope-missing':
+      return 'No usage data yet. The GitHub token needs the user scope (classic) or the Plan: read permission (fine-grained). Click for details.'
+    default:
+      return 'Loading your AI-credit usage from GitHub. Click for details.'
+  }
+}
+
 function AiUsageChip({ onOpenSettings }: { onOpenSettings?: () => void }) {
   const enabled = useSettingsStore((s) => s.settings.githubAiUsageEnabled)
   const aiUsage = useGitHubStore((s) => s.aiUsage)
+  const aiUsageStatus = useGitHubStore((s) => s.aiUsageStatus)
   const cap = useSettingsStore((s) => s.settings.copilotIncludedCredits)
   const [popoverOpen, setPopoverOpen] = useState(false)
 
-  // Feature off = invisible. Enabled with NO data yet (scope missing, first
-  // fetch pending) renders a muted placeholder chip instead of vanishing —
-  // otherwise the popover's "no data + scope hint" state is unreachable and
+  // Feature off = invisible. Enabled with NO data yet (scope missing, no auth,
+  // first fetch pending) renders a muted placeholder chip instead of vanishing
+  // — otherwise the popover's "no data + scope hint" state is unreachable and
   // an enabled meter fails silently (review nit on cd96a71).
   if (!enabled) return null
 
@@ -51,9 +67,7 @@ function AiUsageChip({ onOpenSettings }: { onOpenSettings?: () => void }) {
         type="button"
         data-ai-usage-chip
         aria-label={chip?.ariaLabel ?? 'AI usage: no data yet'}
-        title={chip
-          ? buildAiTooltip(aiUsage!)
-          : 'No usage data yet. The GitHub token needs the user scope (classic) or the Plan: read permission (fine-grained). Click for details.'}
+        title={chip ? buildAiTooltip(aiUsage!) : placeholderTooltip(aiUsageStatus)}
         onClick={() => setPopoverOpen((v) => !v)}
         className="flex items-center gap-1 rounded px-1.5 py-0.5 tabular-nums transition-colors duration-150 focus-ring"
         style={{

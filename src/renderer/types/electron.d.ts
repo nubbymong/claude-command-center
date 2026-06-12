@@ -441,7 +441,10 @@ export interface ElectronAPI {
       expiresAt?: number
       error?: string
     }>
-    oauthStart: (mode: 'public' | 'private') => Promise<{
+    oauthStart: (
+      mode: 'public' | 'private',
+      opts?: { includeUserScope?: boolean },
+    ) => Promise<{
       flowId: string
       userCode: string
       verificationUri: string
@@ -516,9 +519,9 @@ export interface ElectronAPI {
       body: string,
     ) => Promise<{ ok: boolean; error?: string }>
     markNotifRead: (profileId: string, notifId: string) => Promise<{ ok: boolean; error?: string }>
-    getAiUsage: () => Promise<import('../../shared/github-types').AiUsageReport | null>
+    getAiUsage: () => Promise<import('../../shared/github-types').AiUsagePayload>
     onAiUsageUpdate: (
-      cb: (report: import('../../shared/github-types').AiUsageReport | null) => void,
+      cb: (payload: import('../../shared/github-types').AiUsagePayload) => void,
     ) => () => void
   }
   hooks: {

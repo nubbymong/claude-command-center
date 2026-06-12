@@ -5,6 +5,8 @@ import type {
   RepoCache,
   NotificationSummary,
   AiUsageReport,
+  AiUsageStatus,
+  AiUsagePayload,
 } from '../../shared/github-types'
 import {
   DEFAULT_FEATURE_TOGGLES,
@@ -46,8 +48,13 @@ interface GitHubStoreState {
   syncStatus: Record<string, SyncStatus>
   notificationsByProfile: Record<string, NotificationSummary[]>
   // AI-credits (Copilot) usage meter. null until the first fetch resolves or
-  // the meter is disabled. Consumed by the (later) usage-meter UI batch.
+  // the meter is disabled. Consumed by the usage-meter UI (chip, popover,
+  // Settings action row, Tokenomics card).
   aiUsage: AiUsageReport | null
+  // Structured reason that travels alongside aiUsage so the UI can tell apart
+  // "no data yet" from "token lacks the billing scope" from "no GitHub auth".
+  // 'pending' until the first fetch resolves.
+  aiUsageStatus: AiUsageStatus
 
   loadConfig: () => Promise<void>
   updateConfig: (patch: Partial<GitHubConfig>) => Promise<void>
@@ -68,7 +75,7 @@ interface GitHubStoreState {
     items: NotificationSummary[]
   }) => void
   loadAiUsage: () => Promise<void>
-  handleAiUsageUpdate: (report: AiUsageReport | null) => void
+  handleAiUsageUpdate: (payload: AiUsagePayload) => void
 }
 
 const DEFAULT_PANEL_WIDTH = 340
@@ -82,6 +89,7 @@ export const useGitHubStore = create<GitHubStoreState>((set, get) => ({
   syncStatus: {},
   notificationsByProfile: {},
   aiUsage: null,
+  aiUsageStatus: 'pending',
 
   loadConfig: async () => {
     const config = await window.electronAPI.github.getConfig()
@@ -153,14 +161,16 @@ export const useGitHubStore = create<GitHubStoreState>((set, get) => ({
     })),
 
   loadAiUsage: async () => {
-    // Drives a main-side fetch (or returns the cached report). Returns null
-    // when the meter is disabled; we still set it so the UI reflects the
-    // cleared state rather than a stale report.
-    const report = await window.electronAPI.github.getAiUsage()
-    set({ aiUsage: report })
+    // Drives a main-side fetch (or returns the cached report + status). Returns
+    // a null report when the meter is disabled / unauthed; we still set it so
+    // the UI reflects the cleared state rather than a stale report. The status
+    // tells the UI WHY the report is null (scope-missing / no-auth / pending).
+    const payload = await window.electronAPI.github.getAiUsage()
+    set({ aiUsage: payload?.report ?? null, aiUsageStatus: payload?.status ?? 'pending' })
   },
 
-  handleAiUsageUpdate: (report) => set({ aiUsage: report }),
+  handleAiUsageUpdate: (payload) =>
+    set({ aiUsage: payload?.report ?? null, aiUsageStatus: payload?.status ?? 'pending' }),
 }))
 
 // Module-local unsubscribes so setupGitHubListener is idempotent — calling it
@@ -181,8 +191,8 @@ export function setupGitHubListener(): void {
   unsubNotif = window.electronAPI.github.onNotificationsUpdate((p) =>
     useGitHubStore.getState().handleNotificationsUpdate(p),
   )
-  unsubAiUsage = window.electronAPI.github.onAiUsageUpdate((report) =>
-    useGitHubStore.getState().handleAiUsageUpdate(report),
+  unsubAiUsage = window.electronAPI.github.onAiUsageUpdate((payload) =>
+    useGitHubStore.getState().handleAiUsageUpdate(payload),
   )
 }
 

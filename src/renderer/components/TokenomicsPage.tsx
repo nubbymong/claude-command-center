@@ -1,5 +1,7 @@
 import React, { useEffect } from 'react'
 import { useTokenomicsStore } from '../stores/tokenomicsStore'
+import { useGitHubStore } from '../stores/githubStore'
+import { useSettingsStore } from '../stores/settingsStore'
 import PageFrame from './PageFrame'
 import CompatBadge from './sentinel/CompatBadge'
 import { IndexingState } from './tokenomics/IndexingState'
@@ -11,6 +13,7 @@ import { CostByConfig } from './tokenomics/CostByConfig'
 import { SessionsTable as NewSessionsTable } from './tokenomics/SessionsTable'
 import { SessionDetailDrawer } from './tokenomics/SessionDetailDrawer'
 import { ActivityHeatmap } from './tokenomics/ActivityHeatmap'
+import { GitHubCopilotCard } from './tokenomics/GitHubCopilotCard'
 
 // ── Shimmer / loading state ──
 
@@ -55,11 +58,28 @@ export default function TokenomicsPage() {
   const loadingSummary = useTokenomicsStore((s) => s.loadingSummary)
   const error = useTokenomicsStore((s) => s.error)
 
+  // GitHub Copilot billing card (ACTUAL billing credits, distinct from the
+  // estimates above). Shown only when the meter is on and there is something to
+  // render: a fetched report, or a scope-missing state worth guiding out of.
+  const githubAiUsageEnabled = useSettingsStore((s) => s.settings.githubAiUsageEnabled)
+  const aiUsage = useGitHubStore((s) => s.aiUsage)
+  const aiUsageStatus = useGitHubStore((s) => s.aiUsageStatus)
+  const showCopilotCard =
+    githubAiUsageEnabled === true && (aiUsage != null || aiUsageStatus === 'scope-missing')
+
   useEffect(() => {
     const s = useTokenomicsStore.getState()
     s.init()
     return () => s.dispose()
   }, [])
+
+  // Pull the latest Copilot usage when the meter is enabled so the card
+  // populates on page open without waiting for the 60-minute poll.
+  useEffect(() => {
+    if (githubAiUsageEnabled === true) {
+      void useGitHubStore.getState().loadAiUsage().catch(() => {})
+    }
+  }, [githubAiUsageEnabled])
 
   const contextText = summary
     ? `$${summary.kpis.lifeToDateCostUsd.toFixed(2)} life-to-date`
@@ -153,6 +173,15 @@ export default function TokenomicsPage() {
                 <ActivityHeatmap data={summary.heatmap} />
               </>
             )}
+
+            {/* GitHub Copilot billing — ACTUAL credits, after the estimate
+                dashboard and visually set apart from it. */}
+            {showCopilotCard && (
+              <div className="mt-6">
+                <GitHubCopilotCard />
+              </div>
+            )}
+
             <SessionDetailDrawer />
           </>
         )}

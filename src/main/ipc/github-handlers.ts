@@ -295,8 +295,8 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
     // persists githubAiUsageEnabled into the shared 'settings' config file.
     isEnabled: () =>
       readConfig<{ githubAiUsageEnabled?: boolean }>('settings')?.githubAiUsageEnabled === true,
-    emit: (report) =>
-      deps.getWindow()?.webContents.send(IPC.GITHUB_AI_USAGE_UPDATE, report),
+    emit: (payload) =>
+      deps.getWindow()?.webContents.send(IPC.GITHUB_AI_USAGE_UPDATE, payload),
     logFn: (line) => logWarn(line),
   })
   // Arm the loop if the meter was already enabled at boot. start() is a no-op
@@ -304,13 +304,20 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
   aiUsageScheduler.start()
 
   ipcMain.handle(IPC.GITHUB_AI_USAGE_GET, async () => {
-    // Return the cached report if present, else drive a fresh fetch. refresh()
-    // honors the disabled state (returns null without a network call) and
-    // re-arms the loop if the user just enabled the meter.
+    // Return the cached report + status if present, else drive a fresh fetch.
+    // refresh() honors the disabled state (returns null without a network call)
+    // and re-arms the loop if the user just enabled the meter. The status rides
+    // alongside the report so the renderer can render accurate empty/action
+    // states (scope-missing / no-auth) rather than a generic "no data".
     const cached = aiUsageScheduler.getLatest()
-    if (cached) return cached
-    aiUsageScheduler.start()
-    return aiUsageScheduler.refresh()
+    if (!cached) {
+      aiUsageScheduler.start()
+      await aiUsageScheduler.refresh()
+    }
+    return {
+      report: aiUsageScheduler.getLatest(),
+      status: aiUsageScheduler.getStatus(),
+    }
   })
 
   ipcMain.handle(IPC.GITHUB_CONFIG_GET, async () => {
@@ -456,8 +463,18 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
     }
   })
 
-  ipcMain.handle(IPC.GITHUB_OAUTH_START, async (_e, mode: 'public' | 'private') => {
-    const scope = mode === 'private' ? OAUTH_SCOPES_PRIVATE : OAUTH_SCOPES_PUBLIC
+  ipcMain.handle(
+    IPC.GITHUB_OAUTH_START,
+    async (_e, mode: 'public' | 'private', opts?: { includeUserScope?: boolean }) => {
+    const base = mode === 'private' ? OAUTH_SCOPES_PRIVATE : OAUTH_SCOPES_PUBLIC
+    // Default sign-in scopes are UNCHANGED. The AI-usage re-auth path passes
+    // includeUserScope so the broadened `user` scope (which unlocks the billing
+    // /ai_credit endpoint) is requested only when the user explicitly clicks
+    // "Re-authorize GitHub" from the meter's action row. Dedupe in case `user`
+    // is ever folded into the defaults later.
+    const scope = opts?.includeUserScope
+      ? Array.from(new Set([...base.split(/\s+/), 'user'])).join(' ')
+      : base
     const resp = await requestDeviceCode(scope)
     activeFlows.set(resp.device_code, {
       deviceCode: resp.device_code,
@@ -472,7 +489,8 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
       expiresIn: resp.expires_in,
       interval: resp.interval,
     }
-  })
+    },
+  )
 
   ipcMain.handle(IPC.GITHUB_OAUTH_POLL, async (_e, flowId: string) => {
     const flow = activeFlows.get(flowId)
