@@ -14,13 +14,18 @@ export function getModelColor(model: string, registry?: ModelRegistry): string {
   return resolveModelInfo(reg, model).colors.chart
 }
 
-// Claude families collapse to the family label for chart grouping; codex/GPT
-// keep their OLD verbatim/slice forms — display reshaping is graceful-default
-// code, not registry data (plan: v1 simplification 2).
+// Claude models keep their VERSIONED registry label ("Opus 4.8", "Opus 4.7"):
+// the split rows are per model id, so the old family chartLabel ("opus")
+// produced several identically-named categories — user report 2026-06-12.
+// ONLY version-faithful matches (exact id / alias / id-prefix) get the entry
+// label; a fuzzy PATTERN hit falls back to the family label, because an old
+// claude-opus-4-5 matches the catch-all "opus" pattern on the 4.8 entry and
+// would otherwise claim the wrong version. Colour still collapses to the
+// family (all opus = copper). codex/GPT keep their OLD verbatim/slice forms.
 export function getModelShort(model: string, registry?: ModelRegistry): string {
   const reg = registry ?? useRegistryStore.getState().registry
   const r = resolveModelInfo(reg, model)
   if (r.known && r.family === 'codex') return model.startsWith('gpt-') ? model.slice(4) : model
-  if (r.known) return r.chartLabel
+  if (r.known) return r.matchKind === 'pattern' ? r.chartLabel : r.label
   return model
 }

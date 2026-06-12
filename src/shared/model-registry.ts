@@ -93,6 +93,11 @@ export interface ResolvedModelInfo {
   family: string | null
   label: string                              // entry label, or verbatim input when unknown
   chartLabel: string                         // families[family].label, or verbatim input
+  /** HOW the entry matched. exact/alias/prefix are version-faithful (safe to
+   *  show the entry's versioned label); pattern is a fuzzy family catch-all
+   *  (an old claude-opus-4-5 hits the "opus" pattern on the 4.8 entry — its
+   *  label would claim the wrong version). null when unknown. */
+  matchKind: ModelMatchKind | null
   colors: { default: string; chart: string; agentPill: string }
   efforts: string[] | null                   // null = unknown → callers assume all valid (spec §3)
   fallbackPricing?: ModelPricingSpec
@@ -109,21 +114,26 @@ export function hashUnknownModelColor(modelId: string): string {
   return UNKNOWN_MODEL_PALETTE[h % UNKNOWN_MODEL_PALETTE.length]
 }
 
-function matchEntry(registry: ModelRegistry, modelId: string): ModelEntry | null {
+export type ModelMatchKind = 'exact' | 'alias' | 'prefix' | 'pattern'
+
+function matchEntry(
+  registry: ModelRegistry,
+  modelId: string,
+): { entry: ModelEntry; kind: ModelMatchKind } | null {
   const raw = modelId.trim()
   if (!raw) return null
   // 1. exact id
   const exact = registry.models.find((m) => m.id === raw)
-  if (exact) return exact
+  if (exact) return { entry: exact, kind: 'exact' }
   // 2. exact alias (CLI alias values like 'opus', 'opus[1m]')
   const alias = registry.models.find((m) => m.aliases?.includes(raw))
-  if (alias) return alias
+  if (alias) return { entry: alias, kind: 'alias' }
   // 3. longest id-prefix (date-suffixed ids: claude-opus-4-7-20260101)
   let prefix: ModelEntry | null = null
   for (const m of registry.models) {
     if (raw.startsWith(m.id) && (!prefix || m.id.length > prefix.id.length)) prefix = m
   }
-  if (prefix) return prefix
+  if (prefix) return { entry: prefix, kind: 'prefix' }
   // 4. first pattern match in registry order (substring unless anchored regex)
   const lower = raw.toLowerCase()
   for (const m of registry.models) {
@@ -134,22 +144,24 @@ function matchEntry(registry: ModelRegistry, modelId: string): ModelEntry | null
           ? new RegExp(p, 'i').test(lower)
           : lower.includes(p.toLowerCase())
       } catch { /* malformed pattern in a hand-edited overlay: skip, never crash a render */ }
-      if (hit) return m
+      if (hit) return { entry: m, kind: 'pattern' }
     }
   }
   return null
 }
 
 export function resolveModelInfo(registry: ModelRegistry, modelId: string): ResolvedModelInfo {
-  const entry = matchEntry(registry, modelId)
-  if (!entry) {
+  const match = matchEntry(registry, modelId)
+  if (!match) {
     const hashed = hashUnknownModelColor(modelId)
     return {
       known: false, id: modelId, family: null, label: modelId, chartLabel: modelId,
+      matchKind: null,
       colors: { default: hashed, chart: hashed, agentPill: hashed },
       efforts: null,
     }
   }
+  const entry = match.entry
   const fam = registry.families[entry.family]
   const base = entry.color ?? fam?.color ?? hashUnknownModelColor(modelId)
   const colors = {
@@ -159,7 +171,7 @@ export function resolveModelInfo(registry: ModelRegistry, modelId: string): Reso
   }
   return {
     known: true, id: entry.id, family: entry.family, label: entry.label,
-    chartLabel: fam?.label ?? entry.family, colors,
+    chartLabel: fam?.label ?? entry.family, matchKind: match.kind, colors,
     efforts: entry.efforts ?? null, fallbackPricing: entry.fallbackPricing,
   }
 }

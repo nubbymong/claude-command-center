@@ -10,19 +10,23 @@ import { describe, it, expect } from 'vitest'
 import { getModelShort } from '../../../src/renderer/components/tokenomics/modelColors'
 
 describe('getModelShort', () => {
-  it('returns the Claude family name for sonnet variants', () => {
-    expect(getModelShort('claude-sonnet-4-6')).toBe('sonnet')
+  // Versioned labels for version-faithful matches (exact id / prefix);
+  // family fallback ONLY for fuzzy pattern hits (user report 2026-06-12:
+  // several per-version categories all rendered as lowercase "opus").
+  it('returns the VERSIONED label for exact registry ids', () => {
+    expect(getModelShort('claude-sonnet-4-6')).toBe('Sonnet 4.6')
+    expect(getModelShort('claude-opus-4-6')).toBe('Opus 4.6')
+    expect(getModelShort('claude-haiku-4-5')).toBe('Haiku 4.5')
+  })
+
+  it('returns the versioned label for date-suffixed ids (prefix match)', () => {
+    expect(getModelShort('claude-opus-4-7-20260101')).toBe('Opus 4.7')
+  })
+
+  it('falls back to the family name for fuzzy pattern matches (never claims a wrong version)', () => {
     expect(getModelShort('claude-sonnet-3-5')).toBe('sonnet')
     expect(getModelShort('claude-3-5-sonnet-20241022')).toBe('sonnet')
-  })
-
-  it('returns the Claude family name for opus variants', () => {
-    expect(getModelShort('claude-opus-4-6')).toBe('opus')
     expect(getModelShort('claude-opus-4-5')).toBe('opus')
-  })
-
-  it('returns the Claude family name for haiku variants', () => {
-    expect(getModelShort('claude-haiku-4-5')).toBe('haiku')
     expect(getModelShort('claude-3-haiku-20240307')).toBe('haiku')
   })
 
@@ -37,8 +41,7 @@ describe('getModelShort', () => {
     expect(getModelShort('')).toBe('')
   })
 
-  it('case-insensitively matches Claude family names', () => {
-    expect(getModelShort('Claude-Sonnet-4-6')).toBe('sonnet')
+  it('case-insensitive ids still resolve (pattern tier) without claiming a version', () => {
     expect(getModelShort('CLAUDE-OPUS-4-6')).toBe('opus')
   })
 })

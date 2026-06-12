@@ -20,12 +20,23 @@ describe('getModelColor parity (registry-backed)', () => {
   })
 })
 
-describe('getModelShort parity', () => {
+describe('getModelShort: versioned registry labels (user report 2026-06-12)', () => {
+  // Per-model labels, NOT the family chartLabel: the split rows are per model
+  // id, so the family label rendered several categories all named "opus".
   it.each([
-    ['claude-sonnet-4-6', 'sonnet'], ['Claude-Opus-4-8', 'opus'],
-    ['claude-haiku-4-5', 'haiku'], ['claude-fable-5', 'fable'],
+    ['claude-sonnet-4-6', 'Sonnet 4.6'], ['claude-opus-4-8', 'Opus 4.8'],
+    ['claude-opus-4-7', 'Opus 4.7'], ['claude-opus-4-6', 'Opus 4.6'],
+    ['claude-haiku-4-5', 'Haiku 4.5'], ['claude-fable-5', 'Fable 5'],
+    // Mixed case misses the case-sensitive exact/prefix tiers and lands on the
+    // fuzzy pattern tier -> family label (never a wrongly-claimed version).
+    ['Claude-Opus-4-8', 'opus'],
     ['gpt-5.5', '5.5'],
     ['o3-codex', 'o3-codex'],
     ['mystery-model', 'mystery-model'],
   ])('%s -> %s', (m, s) => expect(getModelShort(m, reg)).toBe(s))
+
+  it('distinct opus versions get DISTINCT labels', () => {
+    const labels = ['claude-opus-4-8', 'claude-opus-4-7', 'claude-opus-4-6'].map((m) => getModelShort(m, reg))
+    expect(new Set(labels).size).toBe(3)
+  })
 })
