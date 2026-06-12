@@ -27,11 +27,14 @@ export default function SubToolCard({
   title, icon, statusLabel, statusColor, description, toolList, actions, children,
 }: SubToolCardProps) {
   return (
-    <div className="rounded-md border border-surface0 bg-base p-4 space-y-3">
+    <div
+      className="rounded-xl p-4 space-y-3 transition-colors duration-200"
+      style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
+    >
       <div className="flex items-center gap-3">
         <div className="text-text">{icon}</div>
-        <div className="text-text font-medium">{title}</div>
-        <span className={`text-xs px-2 py-0.5 rounded ${COLOR_CLASSES[statusColor]}`}>
+        <div className="text-text font-medium text-sm">{title}</div>
+        <span className={`text-xs px-2 py-0.5 rounded-full transition-colors duration-200 ${COLOR_CLASSES[statusColor]}`}>
           {statusLabel}
         </span>
         <div className="flex-1" />

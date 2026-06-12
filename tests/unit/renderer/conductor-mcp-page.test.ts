@@ -27,8 +27,13 @@ const mockState = {
   handleStatusChanged: vi.fn(),
 }
 
+// Selector-aware mock: the page now reads via `useConductorMcpStore((s) => s.x)`
+// (Zustand selector form), while child sub-tools still call it with no
+// selector. Support both: apply the selector when given, else return the
+// whole state object (real Zustand behaviour).
 vi.mock('../../../src/renderer/stores/conductorMcpStore', () => ({
-  useConductorMcpStore: () => mockState,
+  useConductorMcpStore: (sel?: (s: typeof mockState) => unknown) =>
+    sel ? sel(mockState) : mockState,
 }))
 
 const { default: ConductorMcpPage } = await import('../../../src/renderer/components/ConductorMcpPage')
