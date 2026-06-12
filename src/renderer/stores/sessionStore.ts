@@ -161,7 +161,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       const current = state.sessions[idx]
       let changed = false
       for (const k in updates) {
-        if ((current as Record<string, unknown>)[k] !== (updates as Record<string, unknown>)[k]) {
+        if ((current as unknown as Record<string, unknown>)[k] !== (updates as unknown as Record<string, unknown>)[k]) {
           changed = true
           break
         }
@@ -218,8 +218,8 @@ export function structuralSessionsEqual(a: Session[], b: Session[]): boolean {
   if (a === b) return true
   if (a.length !== b.length) return false
   for (let i = 0; i < a.length; i++) {
-    const sa = a[i] as Record<string, unknown>
-    const sb = b[i] as Record<string, unknown>
+    const sa = a[i] as unknown as Record<string, unknown>
+    const sb = b[i] as unknown as Record<string, unknown>
     if (sa === sb) continue
     for (const f of STRUCTURAL_SESSION_FIELDS) {
       if (sa[f] !== sb[f]) return false
