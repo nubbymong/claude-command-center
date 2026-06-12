@@ -873,9 +873,10 @@ async function main() {
     await window.waitForTimeout(500)
     await capture(window, 'step-agent-hub.jpg', 'Agent Hub with detail')
 
-    // Step 3: Vision
-    await clickNav(window, 'Vision')
-    await capture(window, 'step-vision.jpg', 'Vision page')
+    // Step 3: Conductor MCP (nav label is "Conductor MCP"; the asset/step id
+    // stays 'vision' for back-compat with saved view state)
+    await clickNav(window, 'Conductor MCP')
+    await capture(window, 'step-vision.jpg', 'Conductor MCP page')
 
     // Step 4: Tokenomics
     await clickNav(window, 'Tokenomics')

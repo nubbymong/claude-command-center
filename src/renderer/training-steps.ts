@@ -46,11 +46,10 @@ export const trainingSteps: TrainingStep[] = [
     sinceVersion: '1.5.11',
     section: 'getting-started',
     summary:
-      'Every workspace starts as a saved config -- label, colour, working directory, model, effort level, and any agents you want pre-loaded. v1.5.11 defaults new sessions to Opus 4.8 and adds the Extra high / Max effort levels plus a Fast mode toggle for 2.5x speed at 2x cost.',
+      'Every workspace starts as a saved config -- label, colour, working directory, model, and any agents you want pre-loaded. New sessions default to Opus 4.8. Effort is a live setting you change in Claude with /effort (it shows in the statusline and on the session card), not a config field.',
     highlights: [
       'Model defaults to **Opus 4.8** (Anthropic`s newest, released 2026-05-28)',
-      'Effort level pins thinking depth -- Low / Medium / High / Extra high / Max / Auto',
-      '**Fast mode** toggle (Opus 4.8): 2.5x speed at 2x cost; tokenomics tracks Fast spend separately',
+      'Effort is **live** -- set it in Claude with `/effort` (low, medium, high, xhigh, max, ultracode); the card shows the current level',
       'Local or SSH -- one config form, full Claude support either way',
       'Bundle agent templates from your Library into the session at spawn',
     ],
@@ -62,12 +61,44 @@ export const trainingSteps: TrainingStep[] = [
     proTip:
       'Drag a folder onto the sidebar to create a working-directory config in one drop — fastest way to bootstrap a new project session.',
     bullets: [
-      'Create **terminal configs** with custom working directories and models',
-      'Set **effort level** (Low/Medium/High) to control thinking depth and cost',
+      'Create **saved configs** with custom working directories and models',
+      'Effort is **live** -- run `/effort` in Claude to change it; the level shows on the card and in the statusline',
       '**Bundle agent templates** from your Library into the spawned session',
       'Connect to remote machines via **SSH** with full Claude support',
     ],
     screenshotFilename: 'step-session-options.jpg',
+  },
+  {
+    id: 'multi-account',
+    title: 'Multiple Accounts',
+    sinceVersion: '1.5.26',
+    section: 'getting-started',
+    summary:
+      'Run more than one Claude account side by side. Your existing login is captured into a protected primary account on first run, and every session runs under a saved, isolated account, so signing in to one never disturbs another or your default login.',
+    highlights: [
+      'Pick the account at **launch time** -- the first time a session spawns this run, a small dialog asks which account to use (pre-set to the last one you used)',
+      'Add an account by running **`/login`** in a session: CCC detects the new login and offers to save it as a separate named account',
+      '**Per-session isolation** -- each session gets its own private home, so two sessions on different accounts never cross over',
+      'Your **primary** account (the one captured on first run) is protected and can never be deleted',
+      'Memory, settings, and history stay **shared** across all accounts',
+    ],
+    howToTrigger: [
+      { label: 'Choose at launch', value: 'Start a session → account dialog' },
+      { label: 'Add an account', value: 'run /login in a session, or Settings → Accounts → Add' },
+      { label: 'Manage', value: 'Settings → Accounts (name + colour each one)' },
+    ],
+    proTip:
+      'Give each account a friendly name and a distinct colour in Settings, Accounts. The colour follows the account onto the session card, the statusline, and the launch picker so you always know which login a session is on.',
+    bullets: [
+      'Run **multiple Claude accounts**; pick which one a session uses when it launches',
+      'Add accounts by running **/login** in a session, or from Settings, Accounts',
+      'Each session is **isolated** -- signing in to one never touches the others or your default',
+      'Name and colour each account in **Settings, Accounts**; memory and history stay shared',
+    ],
+    // No dedicated account-picker capture exists yet; the Settings shot shows
+    // where accounts are managed. (Future capture: step-accounts.jpg / the
+    // launch-time account picker.)
+    screenshotFilename: 'step-security.jpg',
   },
   {
     id: 'codex-provider',
@@ -129,7 +160,7 @@ export const trainingSteps: TrainingStep[] = [
   },
   {
     id: 'vision',
-    title: 'Vision System',
+    title: 'Conductor MCP',
     sinceVersion: '1.2.144',
     section: 'integrations',
     summary:
@@ -142,9 +173,9 @@ export const trainingSteps: TrainingStep[] = [
       'Headless or visible browser — toggled per-config in Settings',
     ],
     howToTrigger: [
-      { label: 'Open', value: 'Click  👁  in the sidebar nav' },
-      { label: 'Start', value: 'Vision page → Start' },
-      { label: 'Launch browser', value: 'Vision page → Launch Chrome' },
+      { label: 'Open', value: 'Click  Conductor MCP  in the sidebar nav' },
+      { label: 'Start', value: 'Conductor MCP page → Start' },
+      { label: 'Launch browser', value: 'Conductor MCP page → Launch Chrome' },
     ],
     proTip:
       'Ask Claude "open the dev server in the browser and click around to verify the layout" — it\'ll drive vision tools to do exactly that and report back.',
@@ -183,7 +214,10 @@ export const trainingSteps: TrainingStep[] = [
       'Status indicator turns **green when reachable, red when broken**',
       'Closes with **Esc** or the toolbar button toggle',
     ],
-    screenshotFilename: 'step-webview.jpg',
+    // No dedicated webview capture exists yet; the Excalidraw shot shows the
+    // same in-pane swap of the terminal, so it reads correctly until a real
+    // webview screenshot is captured. (Future capture: step-webview.jpg.)
+    screenshotFilename: 'step-excalidraw.jpg',
   },
   {
     id: 'excalidraw',
@@ -278,55 +312,55 @@ export const trainingSteps: TrainingStep[] = [
     sinceVersion: '1.5.10',
     section: 'admin',
     summary:
-      'Track every dollar Claude costs you across every session. Tokenomics parses JSONL transcripts into daily aggregates, per-model breakdowns, burn rate, and rate-limit progress. v1.5.10 adds a group-by lens — pivot the same data between Project, Account, and Model.',
+      'Track every dollar Claude and Codex cost you across every session. A background indexer reads all of your transcripts (including subagent and sidechain files), dedups globally, and computes cost at query time from live pricing, so the dashboard opens instantly with a KPI row, charts, and a sessions table you can filter.',
     highlights: [
-      'Group by **Project / Account / Model** — same data, three lenses (v1.5.10)',
-      'Daily cost chart — click any bar to filter the table to that day',
-      '5-hour and 7-day rate-limit progress bars',
-      'Burn rate (tokens/min) and anomaly alerts for unusual spend',
-      'Extra-spend card when you have an Anthropic API key configured',
+      '**KPI row** -- total spend, tokens, sessions, and daily burn at the top',
+      '**Charts** for daily spend and a per-model breakdown',
+      '**Sessions table** with cost, model, and config attribution per session',
+      '**Filters** -- slice by date, model, account, or project',
+      'Pricing from BerriAI`s LiteLLM (cached 24h); a green nav badge shows when the index is fresh',
     ],
     howToTrigger: [
       { label: 'Open', value: 'Click  $  in the sidebar nav' },
-      { label: 'Group by', value: 'Header → Project / Account / Model' },
-      { label: 'Reseed', value: 'Header → Reseed (rebuilds from transcripts)' },
+      { label: 'Filter', value: 'Header → date / model / account / project' },
+      { label: 'Reindex', value: 'Header → Reindex (rebuilds from transcripts)' },
     ],
     proTip:
-      'Switch the group-by lens to Account when you want to see which login is burning the budget; Model is the right lens when you want to compare Opus vs Sonnet vs Haiku spend across the same projects.',
+      'Filter by account to see which login is burning the budget, or by model to compare Opus vs Sonnet vs Haiku spend across the same projects. Life-to-date may read lower than the old page -- the rebuild dedups and prices at current rates.',
     bullets: [
-      'Pivot between **Project / Account / Model** with one click (v1.5.10)',
-      'Track **token usage and costs** across all your Claude Code sessions',
-      'See **daily aggregates**, burn rate, and cost breakdown',
-      'Monitor **rate limits** and extra spend from the Anthropic API',
+      'Instant-open dashboard: **KPI row**, **charts**, and a filterable **sessions table**',
+      'Track **token usage and costs** across all your Claude and Codex sessions',
+      '**Filter** by date, model, account, or project',
+      'Cost computed at query time from **live pricing** over a deduped index of every transcript',
     ],
     screenshotFilename: 'step-tokenomics.jpg',
   },
   {
     id: 'memory-visualiser',
-    title: 'Memory Visualiser',
-    sinceVersion: '1.2.152',
+    title: 'Memory',
+    sinceVersion: '1.5.38',
     section: 'admin',
     summary:
-      'Browse Claude\'s auto-memory across every project. Project cards roll up size and recency; drill in for type groups (User / Feedback / Project / Reference) with full-text search across the whole library.',
+      'A dashboard over Claude\'s auto-memory across every project. A KPI strip and charts summarise the whole store; a ranked project list shows staleness and live-session activity; drill into any project for a sortable memory table, and open a memory in the reading drawer to read it cleanly.',
     highlights: [
-      'Project grid — one card per ~/.claude/projects/* with size + memory count',
-      'Type groups colour-coded: User, Feedback, Project, Reference, Snapshot',
-      'Full-text search across every memory file with highlighted matches',
-      'Rendered markdown preview in the right detail pane',
-      'Stale-warning banner flags MEMORY.md files over 200 lines (Claude\'s soft cap)',
+      '**KPI strip** -- memories, projects, total size, stale over 30 days, and index health',
+      '**Activity chart** + **type donut** for the whole store',
+      '**Ranked projects** with staleness dots, index warnings, and live-session chips',
+      'Drilldown: sortable memory table + sessions rail (live sessions jump to the terminal; recent sessions deep-link into Logs)',
+      '**Reading drawer** to read a memory, write missing frontmatter, or delete it; full-text search across everything',
     ],
     howToTrigger: [
-      { label: 'Open', value: 'Click  💡  in the sidebar nav' },
+      { label: 'Open', value: 'Click the Memory icon in the sidebar nav' },
       { label: 'Search', value: 'Header → search input or  Ctrl+F' },
-      { label: 'Delete', value: 'Right detail pane → Delete' },
+      { label: 'Read / delete', value: 'Click a memory → reading drawer' },
     ],
     proTip:
-      'Use the type groups as a feedback loop: if you have a lot of "Snapshot" memories piling up in a project, that\'s a sign auto-memory is grabbing things you don\'t need — prune them in bulk from the project view.',
+      'Watch the index-health KPI and the per-project staleness dots: a project that has gone red is a sign its memory has drifted out of date or grown past Claude\'s soft cap, so it is worth a prune.',
     bullets: [
-      'Browse Claude Code **auto-memory** files across all your projects',
-      'Click the **brain icon** in the sidebar to explore memory',
-      'Drill down: **project cards** > **type groups** > individual memories',
-      '**Search** across all memories, view rendered markdown, delete stale entries',
+      'Dashboard over Claude Code **auto-memory** across all your projects',
+      'Click the **Memory icon** in the sidebar to open it',
+      '**KPI strip**, activity chart, type donut, and a **ranked project list** with live-session chips',
+      'Drill into a project, then **read, write frontmatter, or delete** any memory from the reading drawer',
     ],
     screenshotFilename: 'step-memory.jpg',
   },
@@ -418,6 +452,37 @@ export const trainingSteps: TrainingStep[] = [
     screenshotFilename: 'step-security.jpg',
   },
   {
+    id: 'sentinel',
+    title: 'CCC Sentinel',
+    sinceVersion: '1.5.37',
+    section: 'admin',
+    summary:
+      'An opt-in watcher that notices when Claude Code updates and checks whether the new version might affect CCC. It surfaces findings in a labelled "Sentinel" chip and a panel, proposes registry fixes you apply yourself, and never changes anything automatically.',
+    highlights: [
+      'Runs on startup when Claude Code\'s version changes; **fail-open** so it never blocks the app',
+      'Checks the CC changelog against CCC\'s compatibility assumptions',
+      'Proposes **model and effort registry** fixes you **Apply** (or Dismiss) -- never automatic',
+      'A hot-reloadable registry means unknown or brand-new models still get a colour, label, and pricing',
+      'Opt-in -- turn it on or off in **Settings → CCC Sentinel**',
+    ],
+    howToTrigger: [
+      { label: 'Open', value: 'Click the Sentinel chip in the title bar' },
+      { label: 'Enable', value: 'Settings → CCC Sentinel → Enable' },
+      { label: 'Apply a fix', value: 'Sentinel panel → Apply on a proposal' },
+    ],
+    proTip:
+      'When a finding offers an Apply button it is a safe registry change you can take in one click; everything else is a compatibility report so you know what to watch after a Claude Code update.',
+    bullets: [
+      'Opt-in watcher that flags when a **Claude Code update** might affect CCC',
+      'Findings show in a labelled **Sentinel chip** and a panel',
+      'Proposes **registry fixes you apply yourself** -- nothing changes automatically',
+      'Toggle it in **Settings → CCC Sentinel**',
+    ],
+    // No dedicated Sentinel capture exists yet; the Settings shot shows where
+    // it is enabled. (Future capture: step-sentinel.jpg / the Sentinel panel.)
+    screenshotFilename: 'step-security.jpg',
+  },
+  {
     id: 'tips',
     title: 'Tips & Shortcuts',
     sinceVersion: '1.0.0',
@@ -451,24 +516,24 @@ export const trainingSteps: TrainingStep[] = [
     sinceVersion: '1.5.12',
     section: 'productivity',
     summary:
-      'Opus 4.8\'s dynamic workflows orchestrate tens to hundreds of parallel subagents from a JavaScript script Claude writes for you. Run `workflow` in your prompt, set effort to `ultracode`, or use the bundled `/deep-research`. Watch progress via `/workflows`. Caps: 16 concurrent agents, 1000 total per run.',
+      'Opus 4.8\'s dynamic workflows orchestrate tens to hundreds of parallel subagents from a JavaScript script Claude writes for you. Run `workflow` in your prompt, run `/effort ultracode`, or use the bundled `/deep-research`. Watch progress via `/workflows`. Caps: 16 concurrent agents, 1000 total per run.',
     highlights: [
       'Ask in the prompt: include the word **workflow** and Claude writes one for the task',
-      'Auto-mode: **Ultracode** effort in Session Config + `/effort ultracode` enables auto-orchestration',
+      'Auto-mode: run **`/effort ultracode`** in Claude to enable auto-orchestration for every task',
       'Bundled: **`/deep-research <question>`** is the headline preview workflow',
       'Watch with **`/workflows`** -- per-phase agent counts, token totals, drill-down per agent',
       'Save with **`s`** in the `/workflows` view -- becomes `/<name>` in future sessions',
     ],
     howToTrigger: [
       { label: 'One-off', value: "include 'workflow' in your prompt" },
-      { label: 'Auto every task', value: 'Session Config → Effort → Ultracode' },
+      { label: 'Auto every task', value: 'run /effort ultracode in Claude' },
       { label: 'Disable globally', value: 'Settings → General → Security → Disable Claude Code dynamic workflows' },
     ],
     proTip:
       'Workflows can burn 1000-agent tokens fast. CCC\'s tokenomics still tracks the spend per session so you can see exactly what a run cost.',
     bullets: [
       '**Background orchestration** -- subagents run in parallel while your session stays free',
-      '**Ultracode** in the effort dropdown enables it automatically for every task',
+      '**/effort ultracode** in Claude enables it automatically for every task',
       '**/deep-research** is the bundled example; **/workflows** lists active runs',
       'CCC: **Disable Claude Code dynamic workflows** in Settings -> Security if you want it off',
     ],
@@ -501,7 +566,7 @@ export const trainingSteps: TrainingStep[] = [
       '**Local git state** — ahead/behind, dirty/clean, staged/unstaged — always visible',
       'Sign in via **OAuth**, PAT, or adopt your existing **gh CLI** auth. Per-session opt-in',
     ],
-    screenshotFilename: 'step-github-sidebar.jpg',
+    screenshotFilename: 'github-panel.jpg',
   },
 ]
 

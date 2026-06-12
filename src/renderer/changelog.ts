@@ -15,6 +15,41 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '1.5.38',
+    date: '2026-06-12',
+    highlights: 'Memory is now a full dashboard -- KPIs, charts, ranked projects, drilldown, and a reading drawer -- and the Sentinel status dot is now a labelled chip.',
+    changes: [
+      { type: 'feature', description: 'The Memory page is rebuilt as a dashboard: a KPI strip (memories, projects, total size, stale over 30 days, and an index-health KPI that replaces the old warning banner), an activity area-chart, and a type donut for the whole store.' },
+      { type: 'feature', description: 'Ranked project list with staleness dots, index warnings, and live-session chips. Click a project to drill in: a sortable memory table plus a sessions rail where live sessions jump straight to the terminal and recent sessions deep-link into the Logs viewer.' },
+      { type: 'feature', description: 'New reading drawer for distraction-free memory reading, and the search view restyled to match.' },
+      { type: 'improvement', description: 'The Sentinel status dot is now a persistent labelled "Sentinel" chip, so the compatibility watcher is easier to find.' },
+      { type: 'fix', description: 'The memory scanner no longer warns about custom frontmatter fields or types, silencing hundreds of spurious warnings on stores with custom metadata while keeping real signals.' },
+    ],
+  },
+  {
+    version: '1.5.37',
+    date: '2026-06-11',
+    highlights: 'New: CCC Sentinel -- an opt-in watcher that flags when a Claude Code update might affect the app, plus Memory and Hooks fixes.',
+    changes: [
+      { type: 'feature', description: 'CCC Sentinel (opt-in, fail-open) detects Claude Code version changes on startup, checks the CC changelog against CCC\'s compatibility assumptions, and surfaces findings in a status dot plus a panel. It proposes model and effort registry fixes you apply yourself (never automatically) and reports compatibility for everything else. Toggle it in Settings, CCC Sentinel.' },
+      { type: 'improvement', description: 'A new hot-reloadable model and effort registry replaces around ten hardcoded model-identity sites, so an unknown or brand-new model now gets a colour, a label, and flagged pricing instead of vanishing.' },
+      { type: 'improvement', description: 'Memory scanning now runs off the main thread, so opening Memory on a large store no longer stalls the UI. Spurious "unknown frontmatter field" warnings for the standard metadata block are gone, and the close button is back on sessions.' },
+      { type: 'fix', description: 'Raised the hooks request body cap from 256 KiB to 4 MiB so large file-edit events are no longer dropped from the activity feed; the first oversized payload per session is now logged.' },
+    ],
+  },
+  {
+    version: '1.5.36',
+    date: '2026-06-11',
+    highlights: 'Three big workstreams land: Logs v2 (a chat-transcript viewer), a ground-up Tokenomics rebuild, and the removal of the permission tray.',
+    changes: [
+      { type: 'feature', description: 'Logs v2: a clean-slate transcript system. CCC indexes Claude\'s own conversation transcripts and renders them back as a readable chat with a timeline rail and full-text search. Restart and relaunch now resume the conversation you were actually in, worktree-aware. The old logging stack is removed.' },
+      { type: 'improvement', description: 'Tokenomics is rebuilt on its own background indexer that reads ALL transcripts including subagent and sidechain files (the old scan missed around half the events), dedups globally, computes cost at query time from live pricing, attributes by config, and opens instantly with an indexing state and a green nav badge.' },
+      { type: 'improvement', description: 'Heads up: life-to-date spend will read LOWER than the old page. The old ledger priced Opus at a stale 3x tier and double-counted statusline costs. The new number is the deduped API-equivalent at current pricing.' },
+      { type: 'fix', description: 'The permission tray has been removed. Claude\'s permission notifications are generic and fire for auto-approved subagent tools, producing phantom cards no heuristic could filter. The session attention pulse is kept.' },
+      { type: 'improvement', description: 'Security: dependency updates (vitest, ws, hono, tmp). The Electron 38 to 39 upgrade is deferred to a dedicated task.' },
+    ],
+  },
+  {
     version: '1.5.34',
     date: '2026-06-09',
     highlights: 'Fix: closing all your sessions now reliably means no resume prompt on the next launch — even when you update via the installer.',

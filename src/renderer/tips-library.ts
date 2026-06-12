@@ -114,11 +114,11 @@ export const TIPS_LIBRARY: Tip[] = [
     variants: {
       primary: {
         shortText: '🧠 Browse what Claude remembers about your projects',
-        title: 'Memory Visualiser',
-        body: 'Claude Code writes **auto-memory** files to `~/.claude/projects/*/memory/` to remember things across sessions — your preferences, past feedback, project context, references to external systems.\n\nClick the **brain icon** in the sidebar to browse them visually. Drill down: all projects → project card → type groups (user / feedback / project / reference) → individual memories with rendered markdown.\n\nYou can search across all memories, edit frontmatter, and delete stale entries.',
+        title: 'Memory',
+        body: 'Claude Code writes **auto-memory** files to remember things across sessions: your preferences, past feedback, project context, references to external systems.\n\nClick the **Memory icon** in the sidebar to open the dashboard: a **KPI strip** (memories, projects, total size, stale entries, index health), an **activity chart** and **type donut** for the whole store, and a **ranked project list** with staleness dots and live-session chips.\n\nClick a project to drill in: a sortable memory table plus a sessions rail (live sessions jump straight to the terminal; recent sessions deep-link into Logs). Open any memory in the **reading drawer** to read it cleanly, write missing frontmatter, or delete it. Full-text search spans the whole store.',
         actionLabel: 'Open Memory',
         actionTarget: 'memory',
-        focusHint: 'Sidebar — brain icon (between Vision and Logs)',
+        focusHint: 'Sidebar -- Memory icon (between Conductor MCP and Logs)',
       },
     },
   },
@@ -228,9 +228,9 @@ export const TIPS_LIBRARY: Tip[] = [
     excludes: ['sessions.effort-level'],
     variants: {
       primary: {
-        shortText: '🧠 Dial Claude\'s thinking depth per config',
+        shortText: '🧠 Dial Claude\'s thinking depth with /effort',
         title: 'Effort Level',
-        body: '**Effort level** passes `--effort` to Claude Code, controlling how hard Claude thinks before responding:\n\n• **Low** — Quick responses, less reasoning, cheapest\n• **Medium** — Balanced (close to default)\n• **High** — Deep thinking, slower, most expensive\n\nSet it per-config. A common pattern is to have two configs for the same project: "Quick" (low effort) for refactors and docs, "Deep" (high effort) for architecture and debugging.',
+        body: '**Effort** controls how hard Claude thinks before responding. It is a **live** setting you change inside Claude with **`/effort`**, not a saved-config field.\n\nLevels, lightest to heaviest: **low**, **medium**, **high**, **xhigh**, **max**, **ultracode** (ultracode also turns on dynamic workflows). Higher effort means deeper thinking, slower replies, and more cost.\n\nCCC shows the current level as a colour-coded pill on the session card and in the statusline, tinted green through red as effort rises, so you can read it at a glance without opening the session.',
       },
     },
   },
@@ -282,8 +282,8 @@ export const TIPS_LIBRARY: Tip[] = [
     variants: {
       primary: {
         shortText: '👁 Give Claude a browser to drive',
-        title: 'Vision System',
-        body: '**Vision** gives Claude a real browser it can control: screenshot, navigate, click, type, scroll, evaluate JS. Perfect for testing web apps, scraping docs, or just showing Claude what\'s on screen.\n\nOpen the **Conductor MCP** entry in the sidebar and click **Start Browser** under the Vision sub-tool card. The Conductor MCP server itself is always running, so the button just launches a headless Chrome/Edge that Claude can drive via CDP.\n\nThe MCP server is registered in `~/.claude.json` under `mcpServers.conductor`. CCC-spawned sessions also get a per-session override written to `~/.claude/mcp-<sid>.json` and passed via `--mcp-config`. When you stop the browser, the MCP server stays up so the other sub-tools (codex_review, host transfer) remain available.',
+        title: 'Conductor MCP',
+        body: '**Conductor MCP** gives Claude a real browser it can control: screenshot, navigate, click, type, scroll, evaluate JS. Perfect for testing web apps, scraping docs, or just showing Claude what\'s on screen.\n\nOpen the **Conductor MCP** entry in the sidebar and click **Start Browser** under the Vision sub-tool card. The Conductor MCP server itself is always running, so the button just launches a headless Chrome/Edge that Claude can drive via CDP.\n\nThe MCP server is registered in `~/.claude.json` under `mcpServers.conductor`. CCC-spawned sessions also get a per-session override written to `~/.claude/mcp-<sid>.json` and passed via `--mcp-config`. When you stop the browser, the MCP server stays up so the other sub-tools (codex_review, host transfer) remain available.',
         actionLabel: 'Open Conductor MCP',
         actionTarget: 'vision',
         focusHint: 'Sidebar -- Conductor MCP',
@@ -303,7 +303,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: '💰 See where your Claude money is going',
         title: 'Tokenomics',
-        body: 'The **Tokenomics** page tracks your token usage and costs across every Claude session — today, this week, all time.\n\nIt parses your Claude CLI JSONL transcripts to give you historical data going back months, and syncs live as you work. You get:\n\n• Cost breakdown by model\n• Daily spend charts\n• Rate limit utilization (5-hour & 7-day)\n• Per-session burn rate\n\nModel pricing is fetched from BerriAI\'s LiteLLM repo on GitHub (cached for 24h) so costs stay accurate.',
+        body: 'The **Tokenomics** page is a spend dashboard for every Claude and Codex session: today, this week, all time.\n\nA background indexer reads all of your transcripts (including subagent and sidechain files), dedups globally, and computes cost at query time from live pricing, so the page opens instantly. You get:\n\n• A **KPI row** with total spend, tokens, sessions, and daily burn\n• **Charts** for daily spend and per-model breakdown\n• A **sessions table** with cost, model, and config attribution\n• **Filters** to slice by date, model, account, or project\n\nModel pricing is fetched from BerriAI\'s LiteLLM repo on GitHub (cached for 24h) so costs stay accurate.',
         actionLabel: 'Open Tokenomics',
         actionTarget: 'tokenomics',
       },
@@ -413,8 +413,8 @@ export const TIPS_LIBRARY: Tip[] = [
     variants: {
       primary: {
         shortText: '☁ Dispatch Claude to work in the background',
-        title: 'Cloud Agents',
-        body: '**Cloud agents** run headless Claude sessions in the background. You give them a task, they run, you come back later for the result.\n\nPerfect for:\n• Running tests across a large codebase\n• Generating documentation for every file\n• Security audits\n• Long refactors\n\nClick the **cloud icon** in the sidebar and press "New Agent". Monitor progress from the dashboard — see status, elapsed time, token usage, and output for each.',
+        title: 'Agent Hub',
+        body: '**Agent Hub** runs headless Claude sessions in the background. You give them a task, they run, you come back later for the result.\n\nPerfect for:\n• Running tests across a large codebase\n• Generating documentation for every file\n• Security audits\n• Long refactors\n\nClick the **Agent Hub icon** in the sidebar and press "New Agent". Monitor progress from the dashboard: status, elapsed time, token usage, and output for each.',
         actionLabel: 'Open Agent Hub',
         actionTarget: 'cloud-agents',
       },

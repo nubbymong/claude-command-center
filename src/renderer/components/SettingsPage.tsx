@@ -17,11 +17,12 @@ import { useAddAccount } from '../hooks/useAddAccount'
 import AccountsPanel from './AccountsPanel'
 declare const __BUILD_TIME__: string
 
-export const SETTINGS_TAB_IDS = ['general', 'statusline', 'shortcuts', 'github', 'codex', 'hooks', 'about'] as const
+export const SETTINGS_TAB_IDS = ['general', 'accounts', 'statusline', 'shortcuts', 'github', 'codex', 'hooks', 'about'] as const
 export type SettingsTab = typeof SETTINGS_TAB_IDS[number]
 
 const TABS: { id: SettingsTab; label: string }[] = [
   { id: 'general', label: 'General' },
+  { id: 'accounts', label: 'Accounts' },
   { id: 'statusline', label: 'Status Line' },
   { id: 'shortcuts', label: 'Shortcuts' },
   { id: 'github', label: 'GitHub' },
@@ -249,8 +250,6 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
                 </div>
               </Section>
 
-              <AccountsPanel onAdd={handleAddAccount} />
-
               <Section title="CCC Sentinel" icon={<path d="M8 2L3 5v4c0 3.5 2.1 6.4 5 7.5 2.9-1.1 5-4 5-7.5V5L8 2z" stroke="currentColor" strokeWidth="1.2" fill="none" />}>
                 <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer">
                   <input
@@ -394,6 +393,10 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
                 </button>
               </Section>
             </>
+          )}
+
+          {activeTab === 'accounts' && (
+            <AccountsPanel onAdd={handleAddAccount} />
           )}
 
           {activeTab === 'statusline' && (
