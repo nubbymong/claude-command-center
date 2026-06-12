@@ -3,7 +3,9 @@
 // usable local cwd.
 import { mangleCwdToProjectDir } from '../../../shared/project-key'
 
-export interface LiveSessionLite { id: string; name: string; workingDirectory: string; sessionType: string }
+// Field names mirror the REAL Session interface (sessionStore.ts:23,24,33 —
+// `label` is the display name) so callers pass sessions straight through.
+export interface LiveSessionLite { id: string; label: string; workingDirectory: string; sessionType: string }
 
 export function liveSessionsForProject<T extends LiveSessionLite>(sessions: T[], projectDir: string): T[] {
   return sessions.filter(
