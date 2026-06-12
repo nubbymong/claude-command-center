@@ -55,6 +55,9 @@ export class TokenomicsSupervisor {
   }
 
   private spawn(): void {
+    // Fresh worker, clean slate: a fatal error from a previous worker must not
+    // keep the renderer's error banner latched after a successful restart.
+    this.lastError = null
     const w = this.opts.forkChild()
     this.worker = w
     this.listening = false
