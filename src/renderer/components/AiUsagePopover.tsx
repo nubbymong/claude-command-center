@@ -62,7 +62,21 @@ function SectionHeader({ title, note }: { title: string; note?: string }) {
  * A Refresh button re-pulls GitHub usage. No settings live here; a quiet link
  * points at Settings for the cap.
  */
-export default function AiUsagePopover({
+// Thin gate with NO hooks: while closed, the body (and its session-store
+// subscription, which ticks with telemetry ~1-3x/s) is fully unmounted — the
+// chip subtree must not undo App.tsx's structuralSessionsEqual isolation just
+// by existing (review nit on cd96a71). Costs the leave animation nothing:
+// the previous inline `if (!open) return null` already skipped it.
+export default function AiUsagePopover(props: {
+  open: boolean
+  onClose: () => void
+  onOpenSettings?: () => void
+}) {
+  if (!props.open) return null
+  return <AiUsagePopoverBody {...props} />
+}
+
+function AiUsagePopoverBody({
   open,
   onClose,
   onOpenSettings,
@@ -103,8 +117,6 @@ export default function AiUsagePopover({
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
   }, [open, onClose])
-
-  if (!open) return null
 
   // Provider session sourcing. Claude = the active session when it is a Claude
   // session, else the most-recent Claude session. Codex = the active session

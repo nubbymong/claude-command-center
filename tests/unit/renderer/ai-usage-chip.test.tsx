@@ -84,11 +84,16 @@ describe('AI-usage chip gating', () => {
     expect(container.querySelector('[data-ai-usage-chip]')).toBeNull()
   })
 
-  it('does not render when enabled but no report has arrived', async () => {
+  it('enabled with NO report renders the muted placeholder with the scope hint (never silent)', async () => {
+    // Review nit on cd96a71: hiding the chip made the popover's "no data +
+    // scope hint" state unreachable, so an enabled meter failed silently.
     useSettingsStore.setState((s) => ({ settings: { ...s.settings, githubAiUsageEnabled: true } }))
     useGitHubStore.setState({ aiUsage: null })
     await render()
-    expect(container.querySelector('[data-ai-usage-chip]')).toBeNull()
+    const chip = container.querySelector('[data-ai-usage-chip]') as HTMLElement
+    expect(chip).not.toBeNull()
+    expect(chip.textContent).toBe('AI')
+    expect(chip.getAttribute('title')).toContain('Plan: read')
   })
 })
 

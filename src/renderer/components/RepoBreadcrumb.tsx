@@ -35,11 +35,14 @@ function AiUsageChip({ onOpenSettings }: { onOpenSettings?: () => void }) {
   const cap = useSettingsStore((s) => s.settings.copilotIncludedCredits)
   const [popoverOpen, setPopoverOpen] = useState(false)
 
-  // Honest gate: only render with the feature on AND a real report present.
-  if (!enabled || !aiUsage) return null
+  // Feature off = invisible. Enabled with NO data yet (scope missing, first
+  // fetch pending) renders a muted placeholder chip instead of vanishing —
+  // otherwise the popover's "no data + scope hint" state is unreachable and
+  // an enabled meter fails silently (review nit on cd96a71).
+  if (!enabled) return null
 
-  const chip = selectAiChip(aiUsage, cap)
-  const warning = chip.tone === 'warning'
+  const chip = aiUsage ? selectAiChip(aiUsage, cap) : null
+  const warning = chip?.tone === 'warning'
   const color = warning ? 'var(--status-warning)' : 'var(--text-muted)'
 
   return (
@@ -47,17 +50,20 @@ function AiUsageChip({ onOpenSettings }: { onOpenSettings?: () => void }) {
       <button
         type="button"
         data-ai-usage-chip
-        aria-label={chip.ariaLabel}
-        title={buildAiTooltip(aiUsage)}
+        aria-label={chip?.ariaLabel ?? 'AI usage: no data yet'}
+        title={chip
+          ? buildAiTooltip(aiUsage!)
+          : 'No usage data yet. The GitHub token needs the user scope (classic) or the Plan: read permission (fine-grained). Click for details.'}
         onClick={() => setPopoverOpen((v) => !v)}
         className="flex items-center gap-1 rounded px-1.5 py-0.5 tabular-nums transition-colors duration-150 focus-ring"
         style={{
           color,
+          opacity: chip ? 1 : 0.6,
           border: `1px solid ${warning ? 'color-mix(in srgb, var(--status-warning) 50%, transparent)' : 'var(--border-subtle)'}`,
           background: warning ? 'color-mix(in srgb, var(--status-warning) 12%, transparent)' : 'transparent',
         }}
       >
-        {chip.label}
+        {chip?.label ?? 'AI'}
       </button>
       <AiUsagePopover
         open={popoverOpen}
