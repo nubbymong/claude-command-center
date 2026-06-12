@@ -216,7 +216,13 @@ export async function dispatchAgent(params: {
       if (agentRef.output.length < MAX_OUTPUT_BYTES) {
         agentRef.output += chunk
         if (agentRef.output.length > MAX_OUTPUT_BYTES) {
-          agentRef.output = agentRef.output.slice(0, MAX_OUTPUT_BYTES) + '\n\n[output truncated — exceeded 500KB]'
+          let cut = MAX_OUTPUT_BYTES
+          // Don't end mid-surrogate-pair: a trailing lone high surrogate
+          // renders as U+FFFD and is invalid JSON-string content for some
+          // consumers.
+          const c = agentRef.output.charCodeAt(cut - 1)
+          if (c >= 0xd800 && c <= 0xdbff) cut--
+          agentRef.output = agentRef.output.slice(0, cut) + '\n\n[output truncated — exceeded 500KB]'
         }
       }
       broadcastOutputChunk(agent.id, chunk)

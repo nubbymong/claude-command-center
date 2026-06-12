@@ -139,20 +139,22 @@ describe('cloudAgentStore', () => {
     })
   })
 
-  describe('config persistence strips output', () => {
-    it('persists the agents list WITHOUT output (main owns capped output on disk)', async () => {
+  describe('renderer never persists cloudAgents', () => {
+    it('store mutations do not write the config key — main owns cloud-agents.json outright', async () => {
+      // Regression for the review finding on 8389ed9: the renderer's stripped
+      // save raced main's capped-output write on the SAME file; landing last,
+      // it erased every completed agent's persisted output across restarts.
       const saveSpy = (window as any).electronAPI.config.save as ReturnType<typeof vi.fn>
       saveSpy.mockClear()
       useCloudAgentStore.setState({
         agents: [makeAgent({ id: 'a1', output: 'lots of streamed output' }), makeAgent({ id: 'a2', output: 'more' })],
       })
-      // remove() calls saveConfigNow synchronously.
       await useCloudAgentStore.getState().remove('a2')
-      expect(saveSpy).toHaveBeenCalledWith('cloudAgents', expect.any(Array))
-      const persisted = saveSpy.mock.calls.at(-1)![1] as Array<{ output: string }>
-      persisted.forEach((a) => expect(a.output).toBe(''))
+      useCloudAgentStore.getState().handleStatusChanged(makeAgent({ id: 'a1', status: 'completed' }))
+      useCloudAgentStore.getState().handleOutputChunk({ id: 'a1', chunk: 'tail' })
+      expect(saveSpy).not.toHaveBeenCalled()
       // The in-memory store keeps the real output for display.
-      expect(useCloudAgentStore.getState().agents[0].output).toBe('lots of streamed output')
+      expect(useCloudAgentStore.getState().agents[0].output).toContain('tail')
     })
   })
 
