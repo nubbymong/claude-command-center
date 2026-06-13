@@ -14,27 +14,20 @@ export interface ChangelogEntry {
 }
 
 export const changelog: ChangelogEntry[] = [
-  // v2.0.0 What's New DRAFT - intentionally commented out, NOT live.
-  // WhatsNewModal gates on changelog[0].version (shouldShowWhatsNew /
-  // markWhatsNewSeen), so a live 2.0.0 entry here would surface "v2.0.0" on the
-  // current 1.5.38 build (including the VM RC) before the user-gated bump and
-  // would consume the real release's modal by marking 2.0.0 as already seen.
-  // UNCOMMENT this block (and set `date`) only once package.json is bumped to
-  // 2.0.0. Keeping it here means changelog[0] stays 1.5.38 until release.
-  // {
-  //   version: '2.0.0',
-  //   date: 'YYYY-MM-DD',
-  //   highlights: 'GitHub settings rebuilt around your accounts: per-account feature toggles, an all-accounts master section, honest "needs re-auth" surfacing, and a clear scope reference.',
-  //   changes: [
-  //     { type: 'feature', description: 'GitHub settings are rebuilt around accounts. Each connected account gets its own panel with a Status and permissions tab and a Features tab, so you can see and control each account on its own terms instead of one flat list.' },
-  //     { type: 'feature', description: 'A new all-accounts master section sits above the per-account panels: each feature shows a tri-state (on, off, or mixed across your accounts) with an "apply to all accounts" action to set it everywhere at once.' },
-  //     { type: 'feature', description: 'Per-account feature toggles. Turn features like active PR, CI, reviews, linked issues, notifications, and AI credits on or off for each account independently, with the toggle state held per account.' },
-  //     { type: 'improvement', description: 'Honest re-auth surfacing. When a feature is switched on for an account whose token cannot power it yet, the account now shows a clear "switched on but needs re-auth" state instead of silently doing nothing, so it is obvious which account to re-authorize.' },
-  //     { type: 'improvement', description: 'A collapsible "what each feature needs" scope reference shows which GitHub scopes and permissions the features you have enabled require, so it is clear what to add when you re-auth.' },
-  //   ],
-  // },
-  // NOTE: this is a draft of the SETTINGS UI redesign only. Review and expand it
-  // at release time to cover the full v2.0.0 scope before uncommenting.
+  {
+    version: '1.5.39',
+    date: '2026-06-13',
+    highlights: 'GitHub settings are rebuilt around your accounts, plus a batch of fixes: first-launch prompts no longer stack, the Sentinel watcher no longer hangs, and the Tokenomics cost donut is cleaner.',
+    changes: [
+      { type: 'feature', description: 'GitHub settings are rebuilt around accounts. Each connected account gets its own panel with a Status and permissions tab and a Features tab, so you can see and control each account on its own terms instead of one flat list.' },
+      { type: 'feature', description: 'A new "Features for all accounts" master section sits above the per-account panels: each feature shows a tri-state (on, off, or mixed across your accounts) with an "apply to all accounts" action to set it everywhere at once.' },
+      { type: 'feature', description: 'Per-account feature toggles. Turn features like active PR, CI, reviews, linked issues, notifications, and AI credits on or off for each account independently, with the state held per account.' },
+      { type: 'improvement', description: 'Honest re-auth surfacing. When a feature is switched on for an account whose token cannot power it yet, the account now shows a clear "switched on but needs re-auth" state instead of silently doing nothing, and a collapsible "what each feature needs" reference shows which scopes the features you enabled require.' },
+      { type: 'fix', description: 'First-launch prompts (logging consent, What\'s New, setup steps) now appear one at a time in priority order instead of stacking on top of each other.' },
+      { type: 'fix', description: 'CCC Sentinel\'s background compatibility analysis no longer hangs on a shared login or leaves stray claude processes behind: it now runs against one of your signed-in accounts and tears the whole process tree down on timeout.' },
+      { type: 'fix', description: 'The Tokenomics cost donut no longer shows a "<synthetic>" slice; those system rows are labelled and excluded from the cost breakdown.' },
+    ],
+  },
   {
     version: '1.5.38',
     date: '2026-06-12',
