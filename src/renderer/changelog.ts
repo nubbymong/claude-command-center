@@ -30,7 +30,7 @@ export const changelog: ChangelogEntry[] = [
   //     { type: 'feature', description: 'A new all-accounts master section sits above the per-account panels: each feature shows a tri-state (on, off, or mixed across your accounts) with an "apply to all accounts" action to set it everywhere at once.' },
   //     { type: 'feature', description: 'Per-account feature toggles. Turn features like active PR, CI, reviews, linked issues, notifications, and AI credits on or off for each account independently, with the toggle state held per account.' },
   //     { type: 'improvement', description: 'Honest re-auth surfacing. When a feature is switched on for an account whose token cannot power it yet, the account now shows a clear "switched on but needs re-auth" state instead of silently doing nothing, so it is obvious which account to re-authorize.' },
-  //     { type: 'improvement', description: 'A collapsible "what each feature needs" scope reference explains which GitHub scopes and permissions each feature requires, derived from each account\'s current grant, so it is clear what to add when you re-auth.' },
+  //     { type: 'improvement', description: 'A collapsible "what each feature needs" scope reference shows which GitHub scopes and permissions the features you have enabled require, so it is clear what to add when you re-auth.' },
   //   ],
   // },
   // NOTE: this is a draft of the SETTINGS UI redesign only. Review and expand it
