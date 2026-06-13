@@ -5,6 +5,7 @@ import {
   FEATURE_CAPABILITIES,
   profileCoversFeature,
   effectiveToggle,
+  effectiveToggleMap,
   pendingReauth,
   masterState,
 } from '../../src/shared/github-features'
@@ -69,6 +70,30 @@ describe('effectiveToggle', () => {
   })
   it('absent map and absent defaults mean off', () => {
     expect(effectiveToggle(profile({}), 'activePR')).toBe(false)
+  })
+})
+
+describe('effectiveToggleMap', () => {
+  const defaults = { activePR: false, ci: true, reviews: false, linkedIssues: false, notifications: false, aiCredits: false }
+  it('returns a full map over every auth feature key', () => {
+    expect(Object.keys(effectiveToggleMap(profile({}), defaults)).sort())
+      .toEqual([...AUTH_FEATURE_KEYS].sort())
+  })
+  it('own map wins, missing keys fall through to defaults, else off', () => {
+    const p = profile({ featureToggles: { activePR: true } as unknown as AuthProfile['featureToggles'] })
+    expect(effectiveToggleMap(p, defaults)).toEqual({
+      activePR: true, // own map
+      ci: true, // from defaults
+      reviews: false, // from defaults
+      linkedIssues: false,
+      notifications: false,
+      aiCredits: false,
+    })
+  })
+  it('no map and no defaults means every key off', () => {
+    expect(effectiveToggleMap(profile({}))).toEqual({
+      activePR: false, ci: false, reviews: false, linkedIssues: false, notifications: false, aiCredits: false,
+    })
   })
 })
 

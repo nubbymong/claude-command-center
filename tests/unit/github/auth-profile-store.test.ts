@@ -1,7 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { AuthProfileStore } from '../../../src/main/github/auth/auth-profile-store'
+import {
+  AuthProfileStore,
+  pickRendererProfilePatch,
+} from '../../../src/main/github/auth/auth-profile-store'
 import { emptyGitHubConfig } from '../../../src/shared/github-constants'
-import type { GitHubConfig } from '../../../src/shared/github-types'
+import type { GitHubAuthFeatureKey, GitHubConfig } from '../../../src/shared/github-types'
 
 const { mockSafeStorage } = vi.hoisted(() => ({
   mockSafeStorage: {
@@ -317,5 +320,116 @@ describe('AuthProfileStore', () => {
     )
     await Promise.all(adds)
     expect(Object.keys(mem.config!.authProfiles).length).toBe(10)
+  })
+
+  describe('replaceSameAccountOAuth — re-auth dedupe preserves per-account toggles', () => {
+    const customToggles: Record<GitHubAuthFeatureKey, boolean> = {
+      activePR: true,
+      ci: false, // <-- the user's per-account intent that must survive re-auth
+      reviews: true,
+      linkedIssues: true,
+      notifications: false,
+      aiCredits: true,
+    }
+
+    it('carries the OLD profile featureToggles onto the fresh one, then removes the old', async () => {
+      // Old profile: the user previously turned ci OFF and aiCredits ON for this
+      // account. The fresh re-auth profile is seeded from featureDefaults (the
+      // GLOBAL intent), which would silently revert those choices.
+      const oldId = await store.addProfile({
+        kind: 'oauth',
+        label: 'octocat',
+        username: 'octocat',
+        scopes: ['repo'],
+        capabilities: ['pulls'],
+        rawToken: 'gho_old_narrow',
+        expiryObservable: false,
+      })
+      await store.updateProfile(oldId, { featureToggles: customToggles })
+
+      // Fresh re-auth profile for the SAME account (broader scope/token).
+      const newId = await store.addProfile({
+        kind: 'oauth',
+        label: 'octocat',
+        username: 'octocat',
+        scopes: ['repo', 'user'],
+        capabilities: ['pulls', 'plan'],
+        rawToken: 'gho_new_broad',
+        expiryObservable: false,
+      })
+
+      await store.replaceSameAccountOAuth(newId, 'octocat')
+
+      // Old gone, new survives, and the survivor carries the user's intent.
+      expect(mem.config!.authProfiles[oldId]).toBeUndefined()
+      const survivor = mem.config!.authProfiles[newId]
+      expect(survivor).toBeDefined()
+      expect(survivor.featureToggles).toEqual(customToggles)
+      expect(survivor.featureToggles).not.toBe(customToggles) // cloned, not shared
+      // The fresh broad scopes/capabilities are NOT clobbered by the carry.
+      expect(survivor.scopes).toEqual(['repo', 'user'])
+      expect(survivor.capabilities).toEqual(['pulls', 'plan'])
+    })
+
+    it('clears defaultAuthProfileId when it pointed at the removed old profile', async () => {
+      const oldId = await store.addProfile({
+        kind: 'oauth', label: 'a', username: 'a', scopes: [], capabilities: [],
+        rawToken: 'gho_old', expiryObservable: false,
+      })
+      mem.config!.defaultAuthProfileId = oldId
+      const newId = await store.addProfile({
+        kind: 'oauth', label: 'a', username: 'a', scopes: [], capabilities: [],
+        rawToken: 'gho_new', expiryObservable: false,
+      })
+      await store.replaceSameAccountOAuth(newId, 'a')
+      expect(mem.config!.defaultAuthProfileId).toBeUndefined()
+      expect(mem.config!.authProfiles[oldId]).toBeUndefined()
+      expect(mem.config!.authProfiles[newId]).toBeDefined()
+    })
+
+    it('leaves a DIFFERENT account untouched', async () => {
+      const other = await store.addProfile({
+        kind: 'oauth', label: 'other', username: 'other', scopes: [], capabilities: [],
+        rawToken: 'gho_other', expiryObservable: false,
+      })
+      const newId = await store.addProfile({
+        kind: 'oauth', label: 'me', username: 'me', scopes: [], capabilities: [],
+        rawToken: 'gho_me', expiryObservable: false,
+      })
+      await store.replaceSameAccountOAuth(newId, 'me')
+      expect(mem.config!.authProfiles[other]).toBeDefined()
+      expect(mem.config!.authProfiles[newId]).toBeDefined()
+    })
+  })
+
+  describe('pickRendererProfilePatch — IPC boundary narrowing', () => {
+    it('keeps ONLY label + featureToggles, dropping auth-system + immutable fields', () => {
+      const featureToggles: Record<GitHubAuthFeatureKey, boolean> = {
+        activePR: true, ci: false, reviews: true, linkedIssues: true,
+        notifications: false, aiCredits: false,
+      }
+      const out = pickRendererProfilePatch({
+        label: 'x',
+        featureToggles,
+        // Everything below is an auth-system / immutable field the renderer must
+        // NOT be able to assert — they are cast in to simulate a hostile/buggy
+        // renderer bypassing the compile-time type at the IPC boundary.
+        ...({
+          capabilities: ['plan'],
+          scopes: ['repo'],
+          tokenCiphertext: 'evil',
+          expiresAt: 0,
+          lastVerifiedAt: 0,
+          id: 'hijack',
+        } as object),
+      })
+      expect(out).toEqual({ label: 'x', featureToggles })
+      expect(Object.keys(out).sort()).toEqual(['featureToggles', 'label'])
+    })
+
+    it('drops undefined keys (never overwrites an existing value with undefined)', () => {
+      expect(pickRendererProfilePatch({})).toEqual({})
+      expect(pickRendererProfilePatch({ label: 'only' })).toEqual({ label: 'only' })
+    })
   })
 })

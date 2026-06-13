@@ -1,11 +1,16 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { IPC } from '../../shared/ipc-channels'
 import { setActiveSessionId } from '../active-session'
-import type { GitHubConfig, RepoCache, SessionGitHubIntegration } from '../../shared/github-types'
+import type {
+  GitHubConfig,
+  RepoCache,
+  RendererProfilePatch,
+  SessionGitHubIntegration,
+} from '../../shared/github-types'
 import type { SavedSession } from '../../shared/types'
 import { GitHubConfigStore } from '../github/github-config-store'
 import { migrateGitHubConfig } from '../github/github-config-migrate'
-import { AuthProfileStore, type ProfilePatch } from '../github/auth/auth-profile-store'
+import { AuthProfileStore, pickRendererProfilePatch } from '../github/auth/auth-profile-store'
 import { ghAuthStatus, ghAuthToken, defaultGhRun } from '../github/auth/gh-cli-delegate'
 import { requestDeviceCode, pollForAccessToken } from '../github/auth/oauth-device-flow'
 import { verifyToken, probeRepoAccess } from '../github/auth/pat-verifier'
@@ -468,14 +473,22 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
   // ROUTING-RULE path: per-profile toggle writes go here, NEVER through
   // GITHUB_CONFIG_UPDATE (a wholesale authProfiles write there would shallow-
   // merge and could drop tokenCiphertext).
-  ipcMain.handle(IPC.GITHUB_PROFILE_UPDATE, async (_e, id: string, patch: ProfilePatch) => {
-    await profileStore.updateProfile(id, patch)
+  //
+  // Boundary narrowing (review F1): the renderer may ONLY assert label +
+  // featureToggles. Auth-system fields (scopes/capabilities/expiry/verification
+  // timestamps) are derived from token verification in main; pickRendererProfilePatch
+  // drops everything else so a compromised/buggy renderer can't forge them here.
+  ipcMain.handle(
+    IPC.GITHUB_PROFILE_UPDATE,
+    async (_e, id: string, patch: RendererProfilePatch) => {
+    await profileStore.updateProfile(id, pickRendererProfilePatch(patch ?? {}))
     // The cached config snapshot now holds a stale profile; force a re-read on
     // the next consumer so feature-gating sees the new toggles immediately.
     cachedConfig = undefined
     void syncNotificationsPollerToConfig()
     return { ok: true }
-  })
+    },
+  )
 
   ipcMain.handle(IPC.GITHUB_PROFILE_TEST, async (_e, id: string) => {
     const token = await profileStore.getToken(id)
@@ -548,15 +561,12 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
         // (review catch on 8026a72): the AI-usage re-auth flow would otherwise
         // leave the old narrow-scope token in the store, and first-profile
         // consumers could pick it on next launch, silently reverting the
-        // meter to scope-missing. ProfilePatch can't carry a token, so dedupe
-        // by removing every OTHER oauth profile with this username.
-        cachedConfig = undefined
-        const afterAdd = await getCachedConfig()
-        for (const [pid, p] of Object.entries(afterAdd?.authProfiles ?? {})) {
-          if (pid !== id && p.kind === 'oauth' && p.username === v.username) {
-            await profileStore.removeProfile(pid)
-          }
-        }
+        // meter to scope-missing. ProfilePatch can't carry a token, so the
+        // store atomically carries the old account's per-account featureToggles
+        // onto the fresh profile (review F5 — a re-auth must NOT reset toggles
+        // to the master defaults the fresh profile was seeded with) and removes
+        // every OTHER oauth profile with this username, in one transaction.
+        await profileStore.replaceSameAccountOAuth(id, v.username)
         activeFlows.delete(flowId)
         cachedConfig = undefined
         void syncNotificationsPollerToConfig()

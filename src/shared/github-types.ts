@@ -25,6 +25,15 @@ export type GitHubAuthFeatureKey =
 
 export type GitHubAppWideFeatureKey = 'localGit' | 'sessionContext'
 
+/** The only profile fields the renderer may patch via GITHUB_PROFILE_UPDATE.
+ * Auth-system fields (scopes, capabilities, expiry, verification timestamps)
+ * are main-process-only: they are derived from token verification and the
+ * renderer must never be able to assert them. */
+export interface RendererProfilePatch {
+  label?: string
+  featureToggles?: Record<GitHubAuthFeatureKey, boolean>
+}
+
 // Legacy union, still used by the (unmigrated until Plan 2) settings UI and
 // by the legacy global featureToggles field. Do not delete, and do not add
 // new keys: new auth features go in GitHubAuthFeatureKey only (this union

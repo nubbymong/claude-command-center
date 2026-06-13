@@ -10,8 +10,8 @@ import type {
   GitHubAuthFeatureKey,
   GitHubAppWideFeatureKey,
 } from '../../shared/github-types'
-import { emptyGitHubConfig } from '../../shared/github-constants'
-import { AUTH_FEATURE_KEYS, effectiveToggle } from '../../shared/github-features'
+import { DEFAULT_AUTH_FEATURE_TOGGLES, emptyGitHubConfig } from '../../shared/github-constants'
+import { effectiveToggleMap } from '../../shared/github-features'
 
 export interface SessionPanelState {
   panelWidth: number
@@ -78,6 +78,16 @@ interface GitHubStoreState {
 
 const DEFAULT_PANEL_WIDTH = 340
 
+// Serializes toggle writes: each action re-reads state AFTER the previous
+// write's loadConfig() so rapid UI clicks cannot read-modify-write from the
+// same stale snapshot and silently undo each other.
+let toggleWriteQueue: Promise<void> = Promise.resolve()
+function enqueueToggleWrite(work: () => Promise<void>): Promise<void> {
+  const run = toggleWriteQueue.then(work, work)
+  toggleWriteQueue = run.catch(() => {})
+  return run
+}
+
 export const useGitHubStore = create<GitHubStoreState>((set, get) => ({
   config: null,
   profiles: [],
@@ -118,70 +128,95 @@ export const useGitHubStore = create<GitHubStoreState>((set, get) => ({
   // Toggle one feature on a single account. Reads the account's effective map
   // (own toggles, falling back to featureDefaults), flips the one key, and
   // writes the WHOLE map back through the profile-patch IPC — never updateConfig.
-  setProfileFeature: async (profileId, key, on) => {
-    const cfg = get().config
-    const p = cfg?.authProfiles[profileId]
-    if (!cfg || !p) return
-    const next = Object.fromEntries(
-      AUTH_FEATURE_KEYS.map((k) => [k, effectiveToggle(p, k, cfg.featureDefaults)]),
-    ) as Record<GitHubAuthFeatureKey, boolean>
-    next[key] = on
-    await window.electronAPI.github.updateProfile(profileId, { featureToggles: next })
-    await get().loadConfig()
-  },
+  // Serialized (enqueueToggleWrite) so the snapshot is re-read INSIDE the thunk,
+  // after any prior write's loadConfig() — rapid clicks can't RMW a stale map.
+  setProfileFeature: (profileId, key, on) =>
+    enqueueToggleWrite(async () => {
+      const cfg = get().config
+      const p = cfg?.authProfiles[profileId]
+      if (!cfg || !p) return
+      const next = effectiveToggleMap(p, cfg.featureDefaults)
+      next[key] = on
+      await window.electronAPI.github.updateProfile(profileId, { featureToggles: next })
+      await get().loadConfig()
+    }),
 
   // Master toggle: flip one feature on EVERY account (each via its own profile
   // patch) AND persist featureDefaults so the intent survives zero accounts and
   // seeds newly added ones. Profiles go through the profile IPC; featureDefaults
-  // (a root field) goes through updateConfig.
-  setMasterFeature: async (key, on) => {
-    const cfg = get().config
-    if (!cfg) return
-    for (const p of Object.values(cfg.authProfiles)) {
-      const next = Object.fromEntries(
-        AUTH_FEATURE_KEYS.map((k) => [k, effectiveToggle(p, k, cfg.featureDefaults)]),
-      ) as Record<GitHubAuthFeatureKey, boolean>
-      next[key] = on
-      await window.electronAPI.github.updateProfile(p.id, { featureToggles: next })
-    }
-    await window.electronAPI.github.updateConfig({
-      featureDefaults: { ...(cfg.featureDefaults ?? {}), [key]: on } as Record<
-        GitHubAuthFeatureKey,
-        boolean
-      >,
-    })
-    await get().loadConfig()
-  },
+  // (a root field) goes through updateConfig. Serialized + snapshot re-read
+  // inside the thunk (F2). Per-profile failures are isolated (F4): a rejected
+  // write is logged and skipped, the remaining profiles + featureDefaults still
+  // write, and loadConfig() always runs in the finally.
+  setMasterFeature: (key, on) =>
+    enqueueToggleWrite(async () => {
+      const cfg = get().config
+      if (!cfg) return
+      try {
+        for (const p of Object.values(cfg.authProfiles)) {
+          const next = effectiveToggleMap(p, cfg.featureDefaults)
+          next[key] = on
+          try {
+            await window.electronAPI.github.updateProfile(p.id, { featureToggles: next })
+          } catch (err) {
+            console.warn('[github] toggle write failed for profile', p.id, err)
+          }
+        }
+        // Sparse pre-migration configs may carry a partial (or absent)
+        // featureDefaults; layer DEFAULT_AUTH_FEATURE_TOGGLES underneath so the
+        // persisted map is always complete for every auth feature key (F3).
+        await window.electronAPI.github.updateConfig({
+          featureDefaults: {
+            ...DEFAULT_AUTH_FEATURE_TOGGLES,
+            ...(cfg.featureDefaults ?? {}),
+            [key]: on,
+          } as Record<GitHubAuthFeatureKey, boolean>,
+        })
+      } finally {
+        await get().loadConfig()
+      }
+    }),
 
   // Copy a source account's effective toggle map onto every OTHER account.
   // Each target is patched via the profile IPC; the source is left untouched.
-  applyProfileToAll: async (sourceId) => {
-    const cfg = get().config
-    const src = cfg?.authProfiles[sourceId]
-    if (!cfg || !src) return
-    const map = Object.fromEntries(
-      AUTH_FEATURE_KEYS.map((k) => [k, effectiveToggle(src, k, cfg.featureDefaults)]),
-    ) as Record<GitHubAuthFeatureKey, boolean>
-    for (const p of Object.values(cfg.authProfiles)) {
-      if (p.id === sourceId) continue
-      await window.electronAPI.github.updateProfile(p.id, { featureToggles: map })
-    }
-    await get().loadConfig()
-  },
+  // Serialized + snapshot re-read inside the thunk (F2). A failed per-target
+  // write is logged and skipped so one bad write doesn't abort the rest (F4);
+  // loadConfig() always runs in the finally.
+  applyProfileToAll: (sourceId) =>
+    enqueueToggleWrite(async () => {
+      const cfg = get().config
+      const src = cfg?.authProfiles[sourceId]
+      if (!cfg || !src) return
+      const map = effectiveToggleMap(src, cfg.featureDefaults)
+      try {
+        for (const p of Object.values(cfg.authProfiles)) {
+          if (p.id === sourceId) continue
+          try {
+            await window.electronAPI.github.updateProfile(p.id, { featureToggles: map })
+          } catch (err) {
+            console.warn('[github] toggle write failed for profile', p.id, err)
+          }
+        }
+      } finally {
+        await get().loadConfig()
+      }
+    }),
 
   // App-wide (no-auth) toggle. Root-level field → updateConfig, never a profile
-  // patch. No account is touched.
-  setAppWideToggle: async (key, on) => {
-    const cfg = get().config
-    if (!cfg) return
-    await window.electronAPI.github.updateConfig({
-      appWideToggles: { ...(cfg.appWideToggles ?? {}), [key]: on } as Record<
-        GitHubAppWideFeatureKey,
-        boolean
-      >,
-    })
-    await get().loadConfig()
-  },
+  // patch. No account is touched. Serialized + snapshot re-read inside the thunk
+  // (F2) so it can't RMW a stale appWideToggles map against a concurrent write.
+  setAppWideToggle: (key, on) =>
+    enqueueToggleWrite(async () => {
+      const cfg = get().config
+      if (!cfg) return
+      await window.electronAPI.github.updateConfig({
+        appWideToggles: { ...(cfg.appWideToggles ?? {}), [key]: on } as Record<
+          GitHubAppWideFeatureKey,
+          boolean
+        >,
+      })
+      await get().loadConfig()
+    }),
 
   togglePanel: () => set((s) => ({ panelVisible: !s.panelVisible })),
 

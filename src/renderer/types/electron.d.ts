@@ -434,28 +434,14 @@ export interface ElectronAPI {
     adoptGhCli: (username: string) => Promise<{ ok: boolean; id?: string; error?: string }>
     removeProfile: (id: string) => Promise<{ ok: boolean }>
     renameProfile: (id: string, label: string) => Promise<{ ok: boolean }>
-    // Generic profile patch. Mirrors the main-side ProfilePatch whitelist
-    // (kept inline so the renderer d.ts doesn't reach into src/main). The
-    // settings UI uses this to write per-account featureToggles.
+    // Generic profile patch. The renderer may ONLY assert label + featureToggles
+    // (RendererProfilePatch). Auth-system fields (scopes/capabilities/expiry/
+    // verification timestamps) are derived from token verification in main and
+    // are NOT renderer-patchable; the GITHUB_PROFILE_UPDATE handler narrows the
+    // incoming patch to this shape before it reaches the store (review F1).
     updateProfile: (
       id: string,
-      patch: Partial<
-        Pick<
-          import('../../shared/github-types').AuthProfile,
-          | 'label'
-          | 'username'
-          | 'avatarUrl'
-          | 'scopes'
-          | 'capabilities'
-          | 'allowedRepos'
-          | 'lastVerifiedAt'
-          | 'lastAuthErrorAt'
-          | 'expiresAt'
-          | 'expiryObservable'
-          | 'rateLimits'
-          | 'featureToggles'
-        >
-      >,
+      patch: import('../../shared/github-types').RendererProfilePatch,
     ) => Promise<{ ok: boolean }>
     testProfile: (id: string) => Promise<{
       ok: boolean

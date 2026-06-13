@@ -36,6 +36,17 @@ export function effectiveToggle(
   return p.featureToggles?.[key] ?? defaults?.[key] ?? false
 }
 
+/** Full effective per-account map (every auth feature key), for
+ * read-modify-write call sites that must write complete maps. */
+export function effectiveToggleMap(
+  p: AuthProfile,
+  defaults?: Partial<Record<GitHubAuthFeatureKey, boolean>>,
+): Record<GitHubAuthFeatureKey, boolean> {
+  return Object.fromEntries(
+    AUTH_FEATURE_KEYS.map((k) => [k, effectiveToggle(p, k, defaults)]),
+  ) as Record<GitHubAuthFeatureKey, boolean>
+}
+
 /** Features switched on for this account that its scopes cannot power yet.
  * Derived, never stored: self-clears when a re-auth updates capabilities. */
 export function pendingReauth(
