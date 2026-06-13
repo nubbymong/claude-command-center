@@ -19,16 +19,17 @@ vi.mock('electron', () => ({
 }))
 
 describe('AuthProfileStore', () => {
-  let mem: { config: GitHubConfig | null }
+  let mem: { config: GitHubConfig | null; writes: number }
   let store: AuthProfileStore
 
   beforeEach(() => {
-    mem = { config: null }
+    mem = { config: null, writes: 0 }
     mockSafeStorage.isEncryptionAvailable.mockReturnValue(true)
     store = new AuthProfileStore({
       readConfig: async () => mem.config,
       writeConfig: async (c) => {
         mem.config = c
+        mem.writes++
       },
     })
   })
@@ -398,6 +399,17 @@ describe('AuthProfileStore', () => {
       })
       await store.replaceSameAccountOAuth(newId, 'me')
       expect(mem.config!.authProfiles[other]).toBeDefined()
+      expect(mem.config!.authProfiles[newId]).toBeDefined()
+    })
+
+    it('first-ever auth (no old profile to replace) is a no-op write', async () => {
+      const newId = await store.addProfile({
+        kind: 'oauth', label: 'solo', username: 'solo', scopes: [], capabilities: [],
+        rawToken: 'gho_solo', expiryObservable: false,
+      })
+      const writesBefore = mem.writes
+      await store.replaceSameAccountOAuth(newId, 'solo')
+      expect(mem.writes).toBe(writesBefore) // nothing replaced, nothing written
       expect(mem.config!.authProfiles[newId]).toBeDefined()
     })
   })

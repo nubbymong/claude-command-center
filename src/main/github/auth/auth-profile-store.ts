@@ -182,6 +182,7 @@ export class AuthProfileStore {
       const fresh = config.authProfiles[newId]
       if (!fresh) return
       let carried: AuthProfile['featureToggles']
+      let removedAny = false
       for (const [pid, p] of Object.entries(config.authProfiles)) {
         if (pid === newId || p.kind !== 'oauth' || p.username !== username) continue
         // Newest old profile wins if there were somehow several; the loop order
@@ -189,7 +190,10 @@ export class AuthProfileStore {
         if (p.featureToggles) carried = p.featureToggles
         delete config.authProfiles[pid]
         if (config.defaultAuthProfileId === pid) config.defaultAuthProfileId = undefined
+        removedAny = true
       }
+      // First-ever auth for this account: nothing replaced, nothing to write.
+      if (!removedAny) return
       if (carried) {
         config.authProfiles[newId] = { ...fresh, featureToggles: { ...carried } }
       }
