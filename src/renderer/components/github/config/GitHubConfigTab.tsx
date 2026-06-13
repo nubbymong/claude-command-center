@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { useGitHubStore } from '../../../stores/githubStore'
-import AuthProfilesList from './AuthProfilesList'
-import FeatureTogglesList from './FeatureTogglesList'
+import MasterFeaturesSection from './MasterFeaturesSection'
+import AccountsSection from './AccountsSection'
 import PermissionsSummary from './PermissionsSummary'
 import PrivacySettings from './PrivacySettings'
 import SyncSettings from './SyncSettings'
@@ -32,8 +32,8 @@ export default function GitHubConfigTab() {
           <span>Enable by default for new sessions</span>
         </label>
       </div>
-      <AuthProfilesList />
-      <FeatureTogglesList />
+      <MasterFeaturesSection />
+      <AccountsSection />
       <PermissionsSummary />
       <PrivacySettings />
       <SyncSettings />

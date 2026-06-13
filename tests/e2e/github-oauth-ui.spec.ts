@@ -82,10 +82,10 @@ test.describe('GitHub OAuth UI', () => {
     expect(tabClicked).toBe(true)
     await page.waitForTimeout(400)
 
-    // AuthProfilesList empty-state copy is stable — if this changes, the
+    // AccountsSection header copy is stable — if this changes, the
     // test fails and we update together with the UI copy.
     const bodyText = await page.locator('body').innerText()
-    expect(bodyText).toContain('Auth profiles')
+    expect(bodyText).toContain('Accounts')
   })
 
   test('"Sign in with GitHub" entry point is clickable', async () => {
