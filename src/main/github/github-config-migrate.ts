@@ -24,6 +24,10 @@ export function migrateGitHubConfig(
   // Shape detection: featureDefaults is written last below, so its presence
   // means a previous run completed. Profile-level maps may exist without it
   // (interrupted run, or a future build wrote them); those are preserved.
+  // A config with only ONE of the two root fields re-enters and has BOTH
+  // recomputed from the legacy values — deliberate: the single atomic write
+  // below means that state can only come from a hand-edited file, and
+  // recomputing beats trusting half a migration.
   if (cfg.featureDefaults && cfg.appWideToggles) return { config: cfg, changed: false }
 
   const legacy = cfg.featureToggles ?? {}
@@ -56,7 +60,10 @@ export function migrateGitHubConfig(
     },
     featureDefaults: {
       ...authBase,
-      // zero profiles: park the intent so the first added account inherits it
+      // aiCredits never existed in the legacy schema, so any authBase
+      // derivation for it is meaningless — this expression intentionally
+      // replaces it. Zero profiles: park the intent so the first added
+      // account inherits it.
       aiCredits: opts.aiUsageEnabled && profileIds.length === 0,
     },
   }

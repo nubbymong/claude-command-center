@@ -69,4 +69,20 @@ describe('migrateGitHubConfig', () => {
     expect(config.authProfiles['a'].featureToggles?.aiCredits).toBe(true) // preserved
     expect(config.featureDefaults).toBeDefined()
   })
+  it('one root field present without the other re-enters and recomputes BOTH from legacy values', () => {
+    // Only reachable via a hand-edited file (the real write is atomic).
+    // Deliberate semantics: recompute beats trusting half a migration —
+    // the pre-existing featureDefaults is replaced, not preserved.
+    const cfg = legacyConfig(['a'])
+    cfg.featureDefaults = {
+      activePR: false, ci: false, reviews: false, linkedIssues: false, notifications: false, aiCredits: true,
+    }
+    const { config, changed } = migrateGitHubConfig(cfg, { aiUsageEnabled: false })
+    expect(changed).toBe(true)
+    expect(config.appWideToggles).toEqual({ localGit: true, sessionContext: false })
+    expect(config.featureDefaults).toEqual({
+      activePR: true, ci: false, reviews: true, linkedIssues: true,
+      notifications: false, aiCredits: false, // recomputed from legacy + flag, hand-edit discarded
+    })
+  })
 })

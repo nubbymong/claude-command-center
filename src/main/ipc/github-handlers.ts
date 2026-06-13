@@ -104,6 +104,11 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
 
   // One-shot per boot: migrate to the per-account toggle shape (spec
   // 2026-06-13 s2). Shape-detected and additive, so re-running is a no-op.
+  // Fire-and-forget: the renderer's first hydrate can race this write and
+  // observe the PRE-migration shape (it is not re-notified). Benign while
+  // nothing renders featureDefaults/appWideToggles; the Plan 2 settings UI
+  // must either tolerate the legacy shape for one frame or re-pull after
+  // boot rather than assume loadConfig() always returns the migrated shape.
   void (async () => {
     try {
       const cur = await configStore.read()
