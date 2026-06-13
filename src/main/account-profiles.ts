@@ -111,23 +111,36 @@ export function setPrimaryProfile(id: string): void {
 
 /**
  * Resolve the home dir for a HEADLESS claude spawn (Sentinel analysis, insights):
- * preferred profile (when its dir exists) → captured primary → null (bare global,
- * single-account installs only). Under capture-all the bare global login is
- * frozen at capture time and never refreshes, so headless runs against it hang
- * at auth / hit stale rate-limit state — the same "never bare-global when
- * profiles exist" rule PTY spawns follow. Refreshes the profile's shared links
- * before returning, like the PTY/cloud-agent paths.
+ * preferred profile (when its dir exists) → captured primary → first signed-in
+ * profile (else first profile whose dir exists) → null (bare global, single-
+ * account installs only). Under capture-all the bare global login is frozen at
+ * capture time and never refreshes, so headless runs against it hang at auth /
+ * hit stale rate-limit state — hence "never bare-global when profiles exist",
+ * the same rule PTY spawns follow. Picking a per-account home when no primary is
+ * set is what keeps Sentinel from hanging on a fresh multi-account install where
+ * the user never marked a primary. Refreshes the profile's shared links before
+ * returning, like the PTY/cloud-agent paths.
  */
 export function resolveHeadlessProfileHome(preferredProfileId?: string | null): {
   home: string | null
   profileId: string | null
 } {
+  const homeExists = (pid: string): boolean => fs.existsSync(getProfileConfigDir(pid))
   let id: string | null = null
-  if (preferredProfileId && fs.existsSync(getProfileConfigDir(preferredProfileId))) {
+  if (preferredProfileId && homeExists(preferredProfileId)) {
     id = preferredProfileId
   } else {
     const primary = getPrimaryProfileId()
-    if (primary && fs.existsSync(getProfileConfigDir(primary))) id = primary
+    if (primary && homeExists(primary)) {
+      id = primary
+    } else {
+      // No chosen/primary account: never fall through to the frozen bare global
+      // login when profiles exist. Prefer a signed-in profile (has accountEmail,
+      // so it can actually authenticate headlessly), else the first profile that
+      // still has a home on disk.
+      const existing = listProfiles().filter((p) => homeExists(p.id))
+      id = (existing.find((p) => p.accountEmail) ?? existing[0])?.id ?? null
+    }
   }
   if (!id) return { home: null, profileId: null }
   try { setupProfileLinks(id) } catch { /* stale links are non-fatal; spawn proceeds */ }

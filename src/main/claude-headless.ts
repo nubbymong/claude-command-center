@@ -1,8 +1,25 @@
 // claude-headless.ts — Reusable headless `claude` process spawner.
 // Used by insights-runner and the Sentinel AI analysis runner.
-import { spawn } from 'child_process'
+import { spawn, execSync } from 'child_process'
 import { logInfo, logError } from './debug-logger'
 import { withProfileHome } from './pty-manager'
+
+// shell:true means the spawn is `cmd.exe -> claude` on Windows, so proc.kill()
+// kills only the shell and orphans the real claude process (it keeps running and
+// a retry / next launch spawns yet another). taskkill /T /F tears down the whole
+// tree by pid -- same pattern as vision-manager / cloud-agent teardown. POSIX
+// keeps proc.kill() (no shell-orphan problem for our spawns).
+function killHeadlessTree(proc: ReturnType<typeof spawn>): void {
+  try {
+    if (process.platform === 'win32' && proc.pid) {
+      execSync(`taskkill /pid ${proc.pid} /T /F`, { windowsHide: true, timeout: 5000 })
+    } else {
+      proc.kill()
+    }
+  } catch {
+    // process may have already exited
+  }
+}
 
 /**
  * Spawn `claude` as a headless child process (shell:true so both claude.exe and
@@ -42,7 +59,7 @@ export function spawnClaudeHeadless(
       if (!resolved) {
         resolved = true
         logError(`[claude-headless] Timed out after ${timeoutMs / 1000}s`)
-        proc.kill()
+        killHeadlessTree(proc)
         resolve({ code: 1, stdout, stderr: stderr + '\nTimed out after ' + (timeoutMs / 1000) + 's' })
       }
     }, timeoutMs)
