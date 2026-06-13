@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { AuthProfileStore } from '../../../src/main/github/auth/auth-profile-store'
+import { emptyGitHubConfig } from '../../../src/shared/github-constants'
 import type { GitHubConfig } from '../../../src/shared/github-types'
 
 const { mockSafeStorage } = vi.hoisted(() => ({
@@ -42,6 +43,64 @@ describe('AuthProfileStore', () => {
     const p = mem.config!.authProfiles[id]
     expect(p.tokenCiphertext).toBeTruthy()
     expect(p.tokenCiphertext).not.toBe('github_pat_ABC')
+  })
+
+  it('seeds featureToggles from config.featureDefaults on a new profile', async () => {
+    // First-launch config (emptyGitHubConfig) carries featureDefaults =
+    // DEFAULT_AUTH_FEATURE_TOGGLES, so a newly added account inherits the
+    // master intent (spec 2026-06-13 s2). notifications/aiCredits default off.
+    const id = await store.addProfile({
+      kind: 'oauth',
+      label: 'seed',
+      username: 'seed',
+      scopes: [],
+      capabilities: [],
+      rawToken: 'gho_seed',
+      expiryObservable: false,
+    })
+    const p = mem.config!.authProfiles[id]
+    expect(p.featureToggles).toEqual({
+      activePR: true,
+      ci: true,
+      reviews: true,
+      linkedIssues: true,
+      notifications: false,
+      aiCredits: false,
+    })
+    // Cloned, not shared by reference with the config-level defaults.
+    expect(p.featureToggles).not.toBe(mem.config!.featureDefaults)
+  })
+
+  it('seeds featureToggles from a user-customized featureDefaults', async () => {
+    // Pre-existing config whose master intent differs from the constant —
+    // the new account must inherit the user's choices, not the hardcoded
+    // defaults.
+    mem.config = emptyGitHubConfig()
+    mem.config.featureDefaults = {
+      activePR: false,
+      ci: true,
+      reviews: false,
+      linkedIssues: true,
+      notifications: true,
+      aiCredits: true,
+    }
+    const id = await store.addProfile({
+      kind: 'oauth',
+      label: 'custom',
+      username: 'custom',
+      scopes: [],
+      capabilities: [],
+      rawToken: 'gho_custom',
+      expiryObservable: false,
+    })
+    expect(mem.config!.authProfiles[id].featureToggles).toEqual({
+      activePR: false,
+      ci: true,
+      reviews: false,
+      linkedIssues: true,
+      notifications: true,
+      aiCredits: true,
+    })
   })
 
   it('decrypts on getToken', async () => {

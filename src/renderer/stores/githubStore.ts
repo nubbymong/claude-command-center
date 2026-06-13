@@ -7,8 +7,11 @@ import type {
   AiUsageReport,
   AiUsageStatus,
   AiUsagePayload,
+  GitHubAuthFeatureKey,
+  GitHubAppWideFeatureKey,
 } from '../../shared/github-types'
 import { emptyGitHubConfig } from '../../shared/github-constants'
+import { AUTH_FEATURE_KEYS, effectiveToggle } from '../../shared/github-features'
 
 export interface SessionPanelState {
   panelWidth: number
@@ -42,6 +45,19 @@ interface GitHubStoreState {
   updateConfig: (patch: Partial<GitHubConfig>) => Promise<void>
   removeProfile: (id: string) => Promise<void>
   renameProfile: (id: string, label: string) => Promise<void>
+  // Per-account feature toggle writes. ROUTING RULE: these patch each profile
+  // through the profile-update IPC (patch semantics), never a wholesale
+  // authProfiles write through updateConfig. Each write sends the FULL toggle
+  // map (read-modify-write via effectiveToggle) so partial maps inherit
+  // featureDefaults at write time.
+  setProfileFeature: (
+    profileId: string,
+    key: GitHubAuthFeatureKey,
+    on: boolean,
+  ) => Promise<void>
+  setMasterFeature: (key: GitHubAuthFeatureKey, on: boolean) => Promise<void>
+  applyProfileToAll: (sourceId: string) => Promise<void>
+  setAppWideToggle: (key: GitHubAppWideFeatureKey, on: boolean) => Promise<void>
   togglePanel: () => void
   setSectionCollapsed: (sessionId: string, section: string, collapsed: boolean) => void
   setPanelWidth: (sessionId: string, w: number) => void
@@ -96,6 +112,74 @@ export const useGitHubStore = create<GitHubStoreState>((set, get) => ({
 
   renameProfile: async (id, label) => {
     await window.electronAPI.github.renameProfile(id, label)
+    await get().loadConfig()
+  },
+
+  // Toggle one feature on a single account. Reads the account's effective map
+  // (own toggles, falling back to featureDefaults), flips the one key, and
+  // writes the WHOLE map back through the profile-patch IPC — never updateConfig.
+  setProfileFeature: async (profileId, key, on) => {
+    const cfg = get().config
+    const p = cfg?.authProfiles[profileId]
+    if (!cfg || !p) return
+    const next = Object.fromEntries(
+      AUTH_FEATURE_KEYS.map((k) => [k, effectiveToggle(p, k, cfg.featureDefaults)]),
+    ) as Record<GitHubAuthFeatureKey, boolean>
+    next[key] = on
+    await window.electronAPI.github.updateProfile(profileId, { featureToggles: next })
+    await get().loadConfig()
+  },
+
+  // Master toggle: flip one feature on EVERY account (each via its own profile
+  // patch) AND persist featureDefaults so the intent survives zero accounts and
+  // seeds newly added ones. Profiles go through the profile IPC; featureDefaults
+  // (a root field) goes through updateConfig.
+  setMasterFeature: async (key, on) => {
+    const cfg = get().config
+    if (!cfg) return
+    for (const p of Object.values(cfg.authProfiles)) {
+      const next = Object.fromEntries(
+        AUTH_FEATURE_KEYS.map((k) => [k, effectiveToggle(p, k, cfg.featureDefaults)]),
+      ) as Record<GitHubAuthFeatureKey, boolean>
+      next[key] = on
+      await window.electronAPI.github.updateProfile(p.id, { featureToggles: next })
+    }
+    await window.electronAPI.github.updateConfig({
+      featureDefaults: { ...(cfg.featureDefaults ?? {}), [key]: on } as Record<
+        GitHubAuthFeatureKey,
+        boolean
+      >,
+    })
+    await get().loadConfig()
+  },
+
+  // Copy a source account's effective toggle map onto every OTHER account.
+  // Each target is patched via the profile IPC; the source is left untouched.
+  applyProfileToAll: async (sourceId) => {
+    const cfg = get().config
+    const src = cfg?.authProfiles[sourceId]
+    if (!cfg || !src) return
+    const map = Object.fromEntries(
+      AUTH_FEATURE_KEYS.map((k) => [k, effectiveToggle(src, k, cfg.featureDefaults)]),
+    ) as Record<GitHubAuthFeatureKey, boolean>
+    for (const p of Object.values(cfg.authProfiles)) {
+      if (p.id === sourceId) continue
+      await window.electronAPI.github.updateProfile(p.id, { featureToggles: map })
+    }
+    await get().loadConfig()
+  },
+
+  // App-wide (no-auth) toggle. Root-level field → updateConfig, never a profile
+  // patch. No account is touched.
+  setAppWideToggle: async (key, on) => {
+    const cfg = get().config
+    if (!cfg) return
+    await window.electronAPI.github.updateConfig({
+      appWideToggles: { ...(cfg.appWideToggles ?? {}), [key]: on } as Record<
+        GitHubAppWideFeatureKey,
+        boolean
+      >,
+    })
     await get().loadConfig()
   },
 

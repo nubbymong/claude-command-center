@@ -434,6 +434,29 @@ export interface ElectronAPI {
     adoptGhCli: (username: string) => Promise<{ ok: boolean; id?: string; error?: string }>
     removeProfile: (id: string) => Promise<{ ok: boolean }>
     renameProfile: (id: string, label: string) => Promise<{ ok: boolean }>
+    // Generic profile patch. Mirrors the main-side ProfilePatch whitelist
+    // (kept inline so the renderer d.ts doesn't reach into src/main). The
+    // settings UI uses this to write per-account featureToggles.
+    updateProfile: (
+      id: string,
+      patch: Partial<
+        Pick<
+          import('../../shared/github-types').AuthProfile,
+          | 'label'
+          | 'username'
+          | 'avatarUrl'
+          | 'scopes'
+          | 'capabilities'
+          | 'allowedRepos'
+          | 'lastVerifiedAt'
+          | 'lastAuthErrorAt'
+          | 'expiresAt'
+          | 'expiryObservable'
+          | 'rateLimits'
+          | 'featureToggles'
+        >
+      >,
+    ) => Promise<{ ok: boolean }>
     testProfile: (id: string) => Promise<{
       ok: boolean
       username?: string

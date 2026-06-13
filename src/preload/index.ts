@@ -384,6 +384,7 @@ interface GitHubBridge {
   adoptGhCli: (username: string) => Promise<{ ok: boolean; id?: string; error?: string }>
   removeProfile: (id: string) => Promise<{ ok: boolean }>
   renameProfile: (id: string, label: string) => Promise<{ ok: boolean }>
+  updateProfile: (id: string, patch: unknown) => Promise<{ ok: boolean }>
   testProfile: (id: string) => Promise<{
     ok: boolean
     username?: string
@@ -839,6 +840,7 @@ const electronAPI: ElectronAPI = {
     adoptGhCli: (username) => ipcRenderer.invoke(IPC.GITHUB_PROFILE_ADOPT_GHCLI, username),
     removeProfile: (id) => ipcRenderer.invoke(IPC.GITHUB_PROFILE_REMOVE, id),
     renameProfile: (id, label) => ipcRenderer.invoke(IPC.GITHUB_PROFILE_RENAME, id, label),
+    updateProfile: (id, patch) => ipcRenderer.invoke(IPC.GITHUB_PROFILE_UPDATE, id, patch),
     testProfile: (id) => ipcRenderer.invoke(IPC.GITHUB_PROFILE_TEST, id),
     oauthStart: (mode, opts) => ipcRenderer.invoke(IPC.GITHUB_OAUTH_START, mode, opts),
     oauthPoll: (flowId) => ipcRenderer.invoke(IPC.GITHUB_OAUTH_POLL, flowId),

@@ -1,7 +1,7 @@
 import { safeStorage } from 'electron'
 import { randomUUID } from 'node:crypto'
 import type { AuthProfile, GitHubConfig } from '../../../shared/github-types'
-import { emptyGitHubConfig } from '../../../shared/github-constants'
+import { DEFAULT_AUTH_FEATURE_TOGGLES, emptyGitHubConfig } from '../../../shared/github-constants'
 import { AsyncMutex } from '../async-mutex'
 
 export interface AuthProfileStoreIO {
@@ -56,6 +56,11 @@ export type ProfilePatch = Partial<
     | 'expiresAt'
     | 'expiryObservable'
     | 'rateLimits'
+    // Per-account feature enablement. The map is replaced WHOLE, not
+    // deep-merged — callers send the full toggle set they want persisted
+    // (see githubStore feature actions, which read-modify-write via
+    // effectiveToggle so partial maps inherit defaults at write time).
+    | 'featureToggles'
   >
 >
 
@@ -105,6 +110,12 @@ export class AuthProfileStore {
         lastVerifiedAt: Date.now(),
         expiresAt: input.expiresAt,
         expiryObservable: input.expiryObservable,
+        // spec 2026-06-13 s2: featureDefaults seeds every newly added account
+        // so a fresh profile inherits the user's master intent. Cloned (spread)
+        // so the new profile doesn't share the config's defaults object by
+        // reference. config carries featureDefaults post-migration; fall back
+        // to the constant for pre-migration / first-launch configs.
+        featureToggles: { ...(config.featureDefaults ?? DEFAULT_AUTH_FEATURE_TOGGLES) },
       }
       await this.io.writeConfig(config)
       return id

@@ -243,6 +243,7 @@ export const IPC = {
   GITHUB_PROFILE_ADOPT_GHCLI: 'github:profile:adoptGhCli',
   GITHUB_PROFILE_REMOVE: 'github:profile:remove',
   GITHUB_PROFILE_RENAME: 'github:profile:rename',
+  GITHUB_PROFILE_UPDATE: 'github:profile:update',
   GITHUB_PROFILE_TEST: 'github:profile:test',
   GITHUB_OAUTH_START: 'github:oauth:start',
   GITHUB_OAUTH_POLL: 'github:oauth:poll',

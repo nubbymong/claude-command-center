@@ -5,7 +5,7 @@ import type { GitHubConfig, RepoCache, SessionGitHubIntegration } from '../../sh
 import type { SavedSession } from '../../shared/types'
 import { GitHubConfigStore } from '../github/github-config-store'
 import { migrateGitHubConfig } from '../github/github-config-migrate'
-import { AuthProfileStore } from '../github/auth/auth-profile-store'
+import { AuthProfileStore, type ProfilePatch } from '../github/auth/auth-profile-store'
 import { ghAuthStatus, ghAuthToken, defaultGhRun } from '../github/auth/gh-cli-delegate'
 import { requestDeviceCode, pollForAccessToken } from '../github/auth/oauth-device-flow'
 import { verifyToken, probeRepoAccess } from '../github/auth/pat-verifier'
@@ -458,6 +458,22 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
 
   ipcMain.handle(IPC.GITHUB_PROFILE_RENAME, async (_e, id: string, label: string) => {
     await profileStore.updateProfile(id, { label })
+    return { ok: true }
+  })
+
+  // Generic profile patch — the safe write path for per-account fields (e.g.
+  // featureToggles). Routes through profileStore.updateProfile, which whitelists
+  // patchable fields and strips immutable ones (id, kind, tokenCiphertext,
+  // createdAt, ghCliUsername) even if a caller bypasses the type. This is the
+  // ROUTING-RULE path: per-profile toggle writes go here, NEVER through
+  // GITHUB_CONFIG_UPDATE (a wholesale authProfiles write there would shallow-
+  // merge and could drop tokenCiphertext).
+  ipcMain.handle(IPC.GITHUB_PROFILE_UPDATE, async (_e, id: string, patch: ProfilePatch) => {
+    await profileStore.updateProfile(id, patch)
+    // The cached config snapshot now holds a stale profile; force a re-read on
+    // the next consumer so feature-gating sees the new toggles immediately.
+    cachedConfig = undefined
+    void syncNotificationsPollerToConfig()
     return { ok: true }
   })
 
