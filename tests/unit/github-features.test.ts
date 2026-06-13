@@ -12,6 +12,7 @@ import {
   additiveScopesForPendingFeatures,
   repoModeForProfile,
   resolveAiUsageTargetId,
+  missingScopeForFeature,
 } from '../../src/shared/github-features'
 
 function profile(over: Partial<AuthProfile>): AuthProfile {
@@ -162,5 +163,18 @@ describe('resolveAiUsageTargetId', () => {
   })
   it('returns the FIRST profile id (mirrors AiUsageSettings profiles[0])', () => {
     expect(resolveAiUsageTargetId([profile({ id: 'a' }), profile({ id: 'b' })])).toBe('a')
+  })
+})
+
+describe('missingScopeForFeature', () => {
+  it('returns the scope granting the missing capability (aiCredits without plan -> user)', () => {
+    const p = profile({ capabilities: ['pulls', 'issues', 'actions', 'notifications'] })
+    expect(missingScopeForFeature(p, 'aiCredits')).toBe('user')
+  })
+  it('returns null when the feature is already covered', () => {
+    const p = profile({ capabilities: ['plan'] })
+    expect(missingScopeForFeature(p, 'aiCredits')).toBeNull()
+    const q = profile({ capabilities: ['pulls'] })
+    expect(missingScopeForFeature(q, 'activePR')).toBeNull()
   })
 })

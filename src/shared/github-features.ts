@@ -107,6 +107,19 @@ export function additiveScopesForPendingFeatures(
   return Array.from(want)
 }
 
+/** The scope a re-auth would request to cover this single feature on this
+ *  profile — the scope granting its first MISSING capability — or null if the
+ *  feature is already covered (or no scope maps). Drives the per-row coverage
+ *  hint in the account card ("needs `user`"). */
+export function missingScopeForFeature(p: AuthProfile, key: GitHubAuthFeatureKey): string | null {
+  for (const cap of FEATURE_CAPABILITIES[key]) {
+    if (p.capabilities.includes(cap)) continue
+    const scope = CAPABILITY_TO_SCOPE[cap]
+    if (scope) return scope
+  }
+  return null
+}
+
 /** Re-auth must preserve repo reach: private if the profile already holds `repo`. */
 export function repoModeForProfile(p: AuthProfile): 'public' | 'private' {
   return p.scopes.includes('repo') ? 'private' : 'public'
