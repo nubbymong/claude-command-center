@@ -13,7 +13,7 @@
  *      `--resume <uuid>` is emitted FIRST (before --settings/--mcp-config/etc.),
  *      mirroring scripts/resume-picker.js:299 ordering, with the cwd overridden.
  */
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import * as os from 'os'
 import * as path from 'path'
 import { buildClaudeLaunchCommand, resolveResumeLaunch, buildResumeTranscriptPath } from '../../../src/main/spawn-claude-command'
@@ -188,6 +188,7 @@ describe('resolveResumeLaunch — gate', () => {
     dirPaths?: Set<string>
     homedir?: string
     projectsRoot?: string
+    ensureCompanionDir?: (projectDir: string, uuid: string) => void
   } = {}) {
     const exists = opts.existsPaths
     const dirs = opts.dirPaths
@@ -197,8 +198,11 @@ describe('resolveResumeLaunch — gate', () => {
       homedir: () => opts.homedir ?? HOME,
       mangleCwdToProjectDir: mangle,
       projectsRoot: opts.projectsRoot ?? PROJECTS_ROOT,
+      ensureCompanionDir: opts.ensureCompanionDir ?? vi.fn(),
     }
   }
+
+  const projDirOf = (cwd: string) => path.join(PROJECTS_ROOT, mangle(cwd))
 
   it('happy path: all paths present → returns { resumeUuid, claudeCwd }', () => {
     const out = resolveResumeLaunch({ uuid: T_UUID, cwd: REAL_CWD }, makeDeps())
@@ -242,13 +246,49 @@ describe('resolveResumeLaunch — gate', () => {
     expect(out).toBeNull()
   })
 
-  it('missing companion dir → null', () => {
+  it('missing companion dir → ENSURES it and still returns the launch (no longer a precondition)', () => {
+    // THE FIX: a direct-work conversation (transcript present, companion dir
+    // never created by the CLI) must still be resumable. The gate no longer
+    // drops it — it ensures the companion dir and proceeds.
     const existsPaths = new Set<string>([
       transcriptOf(REAL_CWD, T_UUID),
       path.resolve(REAL_CWD),
+      // companion dir intentionally absent
     ])
-    const out = resolveResumeLaunch({ uuid: T_UUID, cwd: REAL_CWD }, makeDeps({ existsPaths, dirPaths: existsPaths }))
+    const ensureCompanionDir = vi.fn()
+    const out = resolveResumeLaunch(
+      { uuid: T_UUID, cwd: REAL_CWD },
+      makeDeps({ existsPaths, dirPaths: existsPaths, ensureCompanionDir }),
+    )
+    expect(out).toEqual({ resumeUuid: T_UUID, claudeCwd: path.resolve(REAL_CWD) })
+    expect(ensureCompanionDir).toHaveBeenCalledWith(projDirOf(REAL_CWD), T_UUID)
+  })
+
+  it('happy path ensures the companion dir with the project dir + uuid', () => {
+    const ensureCompanionDir = vi.fn()
+    const out = resolveResumeLaunch({ uuid: T_UUID, cwd: REAL_CWD }, makeDeps({ ensureCompanionDir }))
+    expect(out).toEqual({ resumeUuid: T_UUID, claudeCwd: path.resolve(REAL_CWD) })
+    expect(ensureCompanionDir).toHaveBeenCalledTimes(1)
+    expect(ensureCompanionDir).toHaveBeenCalledWith(projDirOf(REAL_CWD), T_UUID)
+  })
+
+  it('a throwing ensureCompanionDir still returns the launch (best-effort ensure, never drops resume)', () => {
+    const ensureCompanionDir = vi.fn(() => { throw new Error('EACCES') })
+    const out = resolveResumeLaunch({ uuid: T_UUID, cwd: REAL_CWD }, makeDeps({ ensureCompanionDir }))
+    expect(out).toEqual({ resumeUuid: T_UUID, claudeCwd: path.resolve(REAL_CWD) })
+  })
+
+  it('a MISSING transcript still drops resume (we never resume a conversation with no transcript)', () => {
+    // Guard against over-correction: ungating the companion dir must NOT also
+    // ungate the transcript. No transcript => no conversation => fall back.
+    const existsPaths = new Set<string>([path.resolve(REAL_CWD)])
+    const ensureCompanionDir = vi.fn()
+    const out = resolveResumeLaunch(
+      { uuid: T_UUID, cwd: REAL_CWD },
+      makeDeps({ existsPaths, dirPaths: existsPaths, ensureCompanionDir }),
+    )
     expect(out).toBeNull()
+    expect(ensureCompanionDir).not.toHaveBeenCalled()
   })
 
   it('undefined target → null', () => {
@@ -275,6 +315,7 @@ describe('resolveResumeLaunch — gate', () => {
       homedir: () => home,
       mangleCwdToProjectDir: mangle,
       projectsRoot: path.join(home, '.claude', 'projects'),
+      ensureCompanionDir: () => {},
     }
     const out = resolveResumeLaunch({ uuid: T_UUID, cwd: tildeCwd }, deps)
     expect(out).toEqual({ resumeUuid: T_UUID, claudeCwd: expanded })
@@ -288,6 +329,7 @@ describe('resolveResumeLaunch — gate', () => {
       homedir: () => home,
       mangleCwdToProjectDir: mangle,
       projectsRoot: path.join(home, '.claude', 'projects'),
+      ensureCompanionDir: () => {},
     })
     expect(out).toEqual({ resumeUuid: T_UUID, claudeCwd: home })
   })
@@ -299,6 +341,7 @@ describe('resolveResumeLaunch — gate', () => {
       homedir: () => HOME,
       mangleCwdToProjectDir: mangle,
       projectsRoot: PROJECTS_ROOT,
+      ensureCompanionDir: () => {},
     })
     expect(out).toBeNull()
   })

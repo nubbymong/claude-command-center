@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, statSync, existsSync, rmSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 
@@ -20,6 +20,7 @@ const picker = require('../../../scripts/resume-picker.js') as {
     conversationsBySource: Array<Array<{ mtime: number; filePath: string }>>,
     cap?: number,
   ) => Array<{ mtime: number; filePath: string }>
+  ensureCompanionDir: (projectDir: string, uuid: string) => boolean
 }
 
 // ── encodeProjectPath ──────────────────────────────────────────────
@@ -154,12 +155,19 @@ describe('resume-picker scanWorktreeConversations', () => {
 
   // Build one valid (>20480 byte) transcript with a companion dir under the
   // mangled folder for the given worktree path.
-  function seedConversation(worktreePath: string, uuid: string, firstMsg: string, mtimeMs?: number) {
+  function seedConversation(
+    worktreePath: string,
+    uuid: string,
+    firstMsg: string,
+    mtimeMs?: number,
+    withCompanionDir = true,
+  ) {
     const mangled = picker.encodeProjectPath(worktreePath)
     const dir = join(projectsDir, mangled)
     mkdirSync(dir, { recursive: true })
-    // companion dir (current Claude CLI format requirement)
-    mkdirSync(join(dir, uuid), { recursive: true })
+    // companion dir — present for conversations that spawned a subagent/workflow,
+    // ABSENT for direct-work conversations (the bug: those used to be hidden).
+    if (withCompanionDir) mkdirSync(join(dir, uuid), { recursive: true })
     const head = JSON.stringify({ type: 'user', message: { content: firstMsg } })
     // Pad past the 20480-byte ghost filter.
     const padLine = JSON.stringify({ type: 'system', message: 'x'.repeat(200) })
@@ -211,6 +219,78 @@ describe('resume-picker scanWorktreeConversations', () => {
       projectsDir,
     )
     expect(out).toEqual([])
+  })
+
+  it('THE FIX: lists a direct-work transcript that has NO companion dir', () => {
+    // The root-cause bug: a conversation that never spawned a subagent/workflow
+    // has no companion dir, so the old companion-dir gate hid it from the picker
+    // (and the user lost it). It must now appear in the list.
+    const wtPath = join(projectsDir, '..', 'direct-repo')
+    seedConversation(wtPath, 'dddddddd-dddd-dddd-dddd-dddddddddddd', 'direct work, no subagents', undefined, false)
+    const out = picker.scanWorktreeConversations({ path: wtPath, branch: 'main', isMain: true }, projectsDir)
+    expect(out).toHaveLength(1)
+    expect(out[0].sessionId).toBe('dddddddd-dddd-dddd-dddd-dddddddddddd')
+    expect(out[0].firstMessage).toBe('direct work, no subagents')
+  })
+
+  it('lists BOTH dir-less and dir-having transcripts together', () => {
+    const wtPath = join(projectsDir, '..', 'mixed-repo')
+    seedConversation(wtPath, 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'has companion', undefined, true)
+    seedConversation(wtPath, 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee', 'no companion', undefined, false)
+    const out = picker.scanWorktreeConversations({ path: wtPath, branch: 'main', isMain: true }, projectsDir)
+    expect(out.map((c) => c.sessionId).sort()).toEqual([
+      'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+      'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee',
+    ])
+  })
+})
+
+// ── ensureCompanionDir (inline, mirrors src/main/logging/companion-dir.ts) ──
+describe('resume-picker ensureCompanionDir', () => {
+  let projectDir: string
+  const UUID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+
+  beforeEach(() => { projectDir = mkdtempSync(join(tmpdir(), 'ccc-rp-companion-')) })
+  afterEach(() => { try { rmSync(projectDir, { recursive: true, force: true }) } catch {} })
+
+  function seedTranscript(uuid: string) {
+    writeFileSync(join(projectDir, `${uuid}.jsonl`), '{}\n')
+  }
+
+  it('creates <uuid>/ with subagents/ and workflows/ when the transcript exists', () => {
+    seedTranscript(UUID)
+    expect(picker.ensureCompanionDir(projectDir, UUID)).toBe(true)
+    expect(statSync(join(projectDir, UUID)).isDirectory()).toBe(true)
+    expect(statSync(join(projectDir, UUID, 'subagents')).isDirectory()).toBe(true)
+    expect(statSync(join(projectDir, UUID, 'workflows')).isDirectory()).toBe(true)
+  })
+
+  it('is idempotent and never deletes existing contents', () => {
+    seedTranscript(UUID)
+    mkdirSync(join(projectDir, UUID, 'subagents'), { recursive: true })
+    writeFileSync(join(projectDir, UUID, 'subagents', 'keep.jsonl'), 'real')
+    expect(picker.ensureCompanionDir(projectDir, UUID)).toBe(true)
+    expect(readFileSync(join(projectDir, UUID, 'subagents', 'keep.jsonl'), 'utf-8')).toBe('real')
+  })
+
+  it('refuses to create an orphan dir when no transcript exists', () => {
+    expect(picker.ensureCompanionDir(projectDir, UUID)).toBe(false)
+    expect(existsSync(join(projectDir, UUID))).toBe(false)
+  })
+
+  it('heals a partially-created companion dir (adds a missing subdir)', () => {
+    seedTranscript(UUID)
+    mkdirSync(join(projectDir, UUID, 'subagents'), { recursive: true }) // workflows missing
+    expect(picker.ensureCompanionDir(projectDir, UUID)).toBe(true)
+    expect(statSync(join(projectDir, UUID, 'workflows')).isDirectory()).toBe(true)
+  })
+
+  it('returns false and never clobbers a stray same-named FILE', () => {
+    seedTranscript(UUID)
+    writeFileSync(join(projectDir, UUID), 'real file')
+    expect(picker.ensureCompanionDir(projectDir, UUID)).toBe(false)
+    expect(statSync(join(projectDir, UUID)).isFile()).toBe(true)
+    expect(readFileSync(join(projectDir, UUID), 'utf-8')).toBe('real file')
   })
 })
 

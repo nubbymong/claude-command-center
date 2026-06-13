@@ -9,6 +9,7 @@ import { shouldRegisterRun } from './logging/should-register-run'
 import { getLogSupervisor, getTranscriptBinder } from './logging/logging-service'
 import { resolveResumeTargetFromTranscript, mangleCwdToProjectDir } from './logging/transcript-discovery'
 import { buildClaudeLaunchCommand, resolveResumeLaunch, buildResumeTranscriptPath } from './spawn-claude-command'
+import { ensureCompanionDir, nodeFsCompanionDeps } from './logging/companion-dir'
 import { logInfo, logDebug, logError, logWarn } from './debug-logger'
 import { writeCliSetupPty, getResourcesDirectory } from './ipc/setup-handlers'
 import { isGlobalVisionRunning, getGlobalVisionConfig, teardownVisionSession } from './vision-manager'
@@ -1082,6 +1083,9 @@ export function spawnPty(
           homedir: os.homedir,
           mangleCwdToProjectDir,
           projectsRoot: path.join(os.homedir(), '.claude', 'projects'),
+          // Best-effort: ensure a direct-work conversation (no subagent/workflow,
+          // hence no companion dir from the CLI) is resumable. Never throws.
+          ensureCompanionDir: (projectDir, uuid) => { ensureCompanionDir(projectDir, uuid, nodeFsCompanionDeps) },
         })
         if (launch) {
           resumeUuid = launch.resumeUuid

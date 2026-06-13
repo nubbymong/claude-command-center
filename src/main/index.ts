@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, dialog, Menu, session, shell } from 'electron'
 import { join } from 'path'
-import { tmpdir } from 'os'
+import { tmpdir, homedir } from 'os'
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
 import { randomBytes } from 'crypto'
 import { registerPtyHandlers } from './ipc/pty-handlers'
@@ -57,6 +57,7 @@ import { forkHooksChild } from './services/fork-hooks-child'
 import { start as startLoopStallMonitor, stop as stopLoopStallMonitor } from './services/loop-stall-monitor'
 import { initLogging, shutdownLogging, getTranscriptBinder } from './logging/logging-service'
 import { detectOldLogArtifacts, executeWipe } from './logging/logs-wipe'
+import { backfillCompanionDirs, nodeFsCompanionDeps } from './logging/companion-dir'
 import { cleanupStaleHookEntries } from './hooks/boot-cleanup'
 import { DEFAULT_HOOKS_PORT } from './hooks/hooks-types'
 import { fetchModelPricing } from './tokenomics/tk-pricing'
@@ -616,6 +617,26 @@ if (!gotTheLock) {
       .then(() => getProvider('claude').deployResumePickerScript?.(getResourcesDirectory()))
       .then(() => getProvider('codex').deployResumePickerScript?.(getResourcesDirectory()))
       .catch((err) => console.warn('[main] Failed to deploy provider scripts:', err))
+      // Resume-picker bug fix: backfill companion dirs so DIRECT-WORK
+      // conversations (no subagent/workflow → no companion dir from the CLI) are
+      // visible in the picker AND resumable via `claude --resume`. Idempotent,
+      // additive, NEVER deletes. One sweep of the canonical projects store covers
+      // every account (per-account .claude/projects are junctions to it). Runs
+      // after the .catch so a deploy failure never skips it; off the synchronous
+      // boot path (microtask) so it never delays window creation. Each session's
+      // own resume path also ensures its companion dir, so this is a bulk
+      // visibility pass, not a per-resume requirement.
+      .then(() => {
+        try {
+          const projectsRoot = join(homedir(), '.claude', 'projects')
+          const res = backfillCompanionDirs(projectsRoot, nodeFsCompanionDeps)
+          if (res.created > 0) {
+            console.log(`[main] companion-dir backfill: created ${res.created} companion dir(s) (scanned ${res.scanned} transcripts across ${res.projectFolders} project folders)`)
+          }
+        } catch (err) {
+          console.warn('[main] companion-dir backfill failed:', err)
+        }
+      })
 
     // Content Security Policy
     session.defaultSession.webRequest.onHeadersReceived((details, callback) => {

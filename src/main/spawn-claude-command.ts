@@ -77,6 +77,15 @@ export interface ResolveResumeLaunchDeps {
   mangleCwdToProjectDir: (cwd: string) => string
   /** Canonical `~/.claude/projects` root (homedir-based; per-account homes are junctions to it). */
   projectsRoot: string
+  /**
+   * Best-effort: ensure the `<projectDir>/<uuid>/` companion dir exists so the
+   * CLI can resume a DIRECT-WORK conversation that never spawned a
+   * subagent/workflow (and therefore has no companion dir of its own). Called
+   * AFTER the transcript gate passes; its failure must NOT drop the resume (the
+   * transcript is real — we still launch `--resume`). Side-effecting; injected so
+   * the decision logic stays unit-testable. Production wraps companion-dir.ts.
+   */
+  ensureCompanionDir: (projectDir: string, uuid: string) => void
 }
 
 /**
@@ -96,9 +105,13 @@ export interface ResolveResumeLaunchDeps {
  * Returns `{ resumeUuid, claudeCwd }` only when ALL hold:
  *   - target present + has a uuid + a cwd;
  *   - the raw cwd (with `~` expanded) exists AND is a directory;
- *   - the transcript file `projectsRoot/<mangle(cwd)>/<uuid>.jsonl` exists;
- *   - the companion dir `projectsRoot/<mangle(cwd)>/<uuid>` exists.
+ *   - the transcript file `projectsRoot/<mangle(cwd)>/<uuid>.jsonl` exists.
  * Returns null on ANY miss or error (fail-open).
+ *
+ * The companion dir `projectsRoot/<mangle(cwd)>/<uuid>` is NO LONGER a
+ * precondition: a direct-work conversation never got one from the CLI but is
+ * still resumable, so we ENSURE it (best-effort, via deps.ensureCompanionDir)
+ * after the transcript gate rather than gating on it.
  *
  * `claudeCwd` is the resolved (absolute, `~`-expanded) launch directory.
  */
@@ -136,9 +149,15 @@ export function resolveResumeLaunch(
 
     const projDir = nodePath.join(deps.projectsRoot, deps.mangleCwdToProjectDir(target.cwd))
     const transcriptPath = nodePath.join(projDir, `${target.uuid}.jsonl`)
-    const companionDir = nodePath.join(projDir, target.uuid)
+    // The transcript MUST exist — without it there is no conversation to resume.
     if (!deps.existsSync(transcriptPath)) return null
-    if (!deps.existsSync(companionDir)) return null
+
+    // The companion dir is NO LONGER a precondition. A conversation worked on
+    // directly (no subagent/workflow) never got one from the CLI, yet it is a
+    // real, resumable conversation. Ensure it exists (best-effort) so
+    // `claude --resume` can find it. A failure here must NOT drop the resume —
+    // the transcript is real; we still launch and let the CLI/fresh-fallback cope.
+    try { deps.ensureCompanionDir(projDir, target.uuid) } catch { /* best-effort */ }
 
     return { resumeUuid: target.uuid, claudeCwd: expanded }
   } catch {

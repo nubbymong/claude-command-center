@@ -50,6 +50,56 @@ function encodeProjectPath(p) {
   return String(p).replace(/[^A-Za-z0-9]/g, '-')
 }
 
+// ── Project-dir resolution ──────────────────────────────────────────
+// Mangle a cwd and case-insensitively match it against the on-disk
+// ~/.claude/projects folders (belt-and-braces on top of the now-correct
+// mangle). Returns the matched absolute folder path or null. FAIL-SAFE.
+function resolveProjectDir(claudeProjectsDir, cwd) {
+  try {
+    const encoded = encodeProjectPath(cwd)
+    let dirs
+    try { dirs = fs.readdirSync(claudeProjectsDir) } catch { return null }
+    for (const d of dirs) {
+      if (d.toLowerCase() === encoded.toLowerCase()) return path.join(claudeProjectsDir, d)
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+// ── Companion-dir ensure ────────────────────────────────────────────
+// Mirror of src/main/logging/companion-dir.ts (this CJS script cannot import
+// the TS module). The Claude CLI only creates a `<uuid>/` companion dir beside a
+// transcript LAZILY (first subagent/workflow/large-tool-result). A direct-work
+// conversation has the `.jsonl` but no companion dir, and `claude --resume`
+// needs one — so before resuming the chosen conversation we ensure it exists.
+//
+// Creates `<projectDir>/<uuid>/subagents/` + `/workflows/` (a recursive mkdir of
+// each subdir creates the `<uuid>/` parent too). ORPHAN-SAFE: only acts when the
+// `<uuid>.jsonl` transcript exists. IDEMPOTENT: a no-op when the dir is already
+// present; never deletes. FAIL-SAFE: any fs error returns false, never throws.
+function ensureCompanionDir(projectDir, uuid) {
+  try {
+    if (!projectDir || !uuid) return false
+    const transcript = path.join(projectDir, `${uuid}.jsonl`)
+    if (!fs.existsSync(transcript)) return false // never create an orphan dir
+    const companion = path.join(projectDir, uuid)
+    if (fs.existsSync(companion)) {
+      // A stray same-named FILE must never be mkdir'd over — refuse it.
+      let isDir
+      try { isDir = fs.statSync(companion).isDirectory() } catch { return false }
+      if (!isDir) return false
+      // Otherwise fall through: recursive mkdir HEALS a partially-created dir.
+    }
+    fs.mkdirSync(path.join(companion, 'subagents'), { recursive: true })
+    fs.mkdirSync(path.join(companion, 'workflows'), { recursive: true })
+    return true
+  } catch {
+    return false
+  }
+}
+
 // ── Worktree enumeration ────────────────────────────────────────────
 // Parse `git worktree list --porcelain` output into worktree records.
 //
@@ -229,42 +279,28 @@ function parseConversation(filePath) {
 
 // ── Scan one worktree's project dir ─────────────────────────────────
 // Mangle the worktree path → case-insensitive match in ~/.claude/projects →
-// filter .jsonl that have a companion dir (current Claude CLI format) →
-// parseConversation. Each returned conversation is tagged with `sourceCwd` (the
-// worktree path) and `worktreeLabel` (null for the main worktree). FAIL-SAFE:
-// any error → [].
+// list EVERY .jsonl → parseConversation. Each returned conversation is tagged
+// with `sourceCwd` (the worktree path) and `worktreeLabel` (null for the main
+// worktree). FAIL-SAFE: any error → [].
+//
+// We deliberately do NOT gate on a companion directory. The CLI only creates a
+// `<uuid>/` companion dir LAZILY (first subagent/workflow/large-tool-result), so
+// a conversation worked on directly never gets one — and the old gate hid those
+// from the picker entirely, which is exactly how the user lost real work. We
+// list them all here; launchClaude() ensures the companion dir for the chosen
+// conversation just before `claude --resume`.
 //
 // `claudeProjectsDir` and the worktree record are injectable for testing.
 function scanWorktreeConversations(worktree, claudeProjectsDir) {
   try {
-    const encoded = encodeProjectPath(worktree.path)
-
-    // Find matching project directory (case-insensitive; belt-and-braces on top
-    // of the now-correct mangle).
-    let projectDir = null
-    let dirs
-    try {
-      dirs = fs.readdirSync(claudeProjectsDir)
-    } catch {
-      return []
-    }
-    for (const d of dirs) {
-      if (d.toLowerCase() === encoded.toLowerCase()) {
-        projectDir = path.join(claudeProjectsDir, d)
-        break
-      }
-    }
+    const projectDir = resolveProjectDir(claudeProjectsDir, worktree.path)
     if (!projectDir || !fs.existsSync(projectDir)) return []
 
-    // .jsonl files that have a companion directory (current Claude CLI format).
+    // List EVERY .jsonl (no companion-dir gate — see header above).
     let files
     try {
-      const entries = fs.readdirSync(projectDir)
-      const dirSet = new Set(entries.filter(e => {
-        try { return fs.statSync(path.join(projectDir, e)).isDirectory() } catch { return false }
-      }))
-      files = entries
-        .filter(f => f.endsWith('.jsonl') && dirSet.has(f.replace('.jsonl', '')))
+      files = fs.readdirSync(projectDir)
+        .filter(f => f.endsWith('.jsonl'))
         .map(f => path.join(projectDir, f))
     } catch {
       return []
@@ -490,6 +526,19 @@ function launchClaude(resumeId, sourceCwd) {
   const args = resumeId ? ['--resume', resumeId, ...forwarded] : [...forwarded]
   const cmd = resolveClaudeCmd()
 
+  // Ensure the chosen conversation's companion dir exists so a direct-work
+  // conversation (no subagent/workflow → no companion dir from the CLI) can be
+  // resumed. Best-effort: any failure must NOT block the launch.
+  if (resumeId) {
+    try {
+      const projectDir = resolveProjectDir(
+        path.join(os.homedir(), '.claude', 'projects'),
+        sourceCwd || process.cwd(),
+      )
+      if (projectDir) ensureCompanionDir(projectDir, resumeId)
+    } catch { /* best-effort */ }
+  }
+
   // Only override cwd for an actual resume into a different directory. Be
   // FAIL-SAFE: an unresolvable/missing sourceCwd silently falls back to inherit.
   const spawnOpts = {
@@ -529,6 +578,8 @@ function launchClaude(resumeId, sourceCwd) {
 // a sanity `node -e "require('./scripts/resume-picker.js')"`) does NOT run main.
 module.exports = {
   encodeProjectPath,
+  resolveProjectDir,
+  ensureCompanionDir,
   parseWorktrees,
   listWorktrees,
   worktreeLabelFor,
