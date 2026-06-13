@@ -11,7 +11,8 @@ import type {
   GitHubAppWideFeatureKey,
 } from '../../shared/github-types'
 import { DEFAULT_AUTH_FEATURE_TOGGLES, emptyGitHubConfig } from '../../shared/github-constants'
-import { effectiveToggleMap } from '../../shared/github-features'
+import { effectiveToggleMap, resolveAiUsageTargetId } from '../../shared/github-features'
+import { useSettingsStore } from './settingsStore'
 
 export interface SessionPanelState {
   panelWidth: number
@@ -150,6 +151,23 @@ export const useGitHubStore = create<GitHubStoreState>((set, get) => ({
       const next = effectiveToggleMap(p, layeredDefaults(cfg))
       next[key] = on
       await window.electronAPI.github.updateProfile(profileId, { featureToggles: next })
+      // 3.2: with MasterFeaturesSection deleted, a SINGLE-account user's per-account
+      // toggle is now the seed for future accounts — persist featureDefaults too.
+      if (Object.keys(cfg.authProfiles).length === 1) {
+        await window.electronAPI.github.updateConfig({
+          featureDefaults: { ...layeredDefaults(cfg), [key]: on },
+        })
+      }
+      // 3.1: aiCredits on the AI-usage TARGET profile is the single user-facing
+      // enable for the meter. settings.githubAiUsageEnabled stays the persisted
+      // source of truth (it also gates the main scheduler, boot migration, and the
+      // Tokenomics card), so write through to it.
+      if (
+        key === 'aiCredits' &&
+        profileId === resolveAiUsageTargetId(Object.values(cfg.authProfiles))
+      ) {
+        await useSettingsStore.getState().updateSettings({ githubAiUsageEnabled: on })
+      }
       await get().loadConfig()
     }),
 
@@ -206,6 +224,9 @@ export const useGitHubStore = create<GitHubStoreState>((set, get) => ({
             console.warn('[github] toggle write failed for profile', p.id, err)
           }
         }
+        // 3.2: persist the applied map as the seed for future accounts (replaces the
+        // deleted MasterFeaturesSection's featureDefaults-write responsibility).
+        await window.electronAPI.github.updateConfig({ featureDefaults: map })
       } finally {
         await get().loadConfig()
       }

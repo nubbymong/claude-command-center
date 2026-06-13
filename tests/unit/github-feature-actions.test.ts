@@ -5,8 +5,9 @@
 // writes MUST go through the profile-patch IPC (updateProfile), never a
 // wholesale authProfiles write through updateConfig (which shallow-merges and
 // could drop tokenCiphertext).
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { useGitHubStore } from '../../src/renderer/stores/githubStore'
+import { useSettingsStore } from '../../src/renderer/stores/settingsStore'
 import type {
   AuthProfile,
   GitHubAuthFeatureKey,
@@ -288,5 +289,74 @@ describe('per-account feature actions', () => {
     }
     expect(secondPayload.featureToggles.ci).toBe(false)
     expect(secondPayload.featureToggles.reviews).toBe(false)
+  })
+})
+
+// 3.1 + 3.2 — write-through behaviours. The per-account aiCredits toggle on the
+// AI-usage TARGET profile (profiles[0]) drives the global githubAiUsageEnabled
+// meter gate; the single-account user's per-account toggle (and applyProfileToAll)
+// keep featureDefaults a live seed now that MasterFeaturesSection is deleted.
+describe('feature write-through (gating + featureDefaults seed)', () => {
+  let updateSettingsSpy: ReturnType<typeof vi.spyOn>
+
+  beforeEach(() => {
+    updateSettingsSpy = vi
+      .spyOn(useSettingsStore.getState(), 'updateSettings')
+      .mockResolvedValue(undefined)
+  })
+  afterEach(() => {
+    updateSettingsSpy.mockRestore()
+  })
+
+  // 3.1 — gating ON: aiCredits enabled on the target profile (profiles[0]) flips
+  // the global githubAiUsageEnabled flag on.
+  it('aiCredits ON for the target profile enables the global meter gate', async () => {
+    seed([{ id: 'a', toggles: allOff }, { id: 'b', toggles: allOff }])
+    await useGitHubStore.getState().setProfileFeature('a', 'aiCredits', true)
+    expect(updateProfileMock).toHaveBeenCalledWith('a', {
+      featureToggles: { ...allOff, aiCredits: true },
+    })
+    expect(updateSettingsSpy).toHaveBeenCalledWith({ githubAiUsageEnabled: true })
+  })
+
+  // 3.1 — gating OFF: disabling aiCredits on the target flips the flag off.
+  it('aiCredits OFF for the target profile disables the global meter gate', async () => {
+    seed([{ id: 'a', toggles: allOn }, { id: 'b', toggles: allOn }])
+    await useGitHubStore.getState().setProfileFeature('a', 'aiCredits', false)
+    expect(updateSettingsSpy).toHaveBeenCalledWith({ githubAiUsageEnabled: false })
+  })
+
+  // 3.1 — a NON-target profile's aiCredits must NOT touch the global flag
+  // (the meter only ever reads profiles[0]).
+  it('aiCredits on a non-target profile does not touch the global flag', async () => {
+    seed([{ id: 'a', toggles: allOff }, { id: 'b', toggles: allOff }])
+    await useGitHubStore.getState().setProfileFeature('b', 'aiCredits', true)
+    expect(updateSettingsSpy).not.toHaveBeenCalled()
+  })
+
+  // 3.1 — a non-aiCredits key on the target profile must NOT touch the flag.
+  it('a non-aiCredits key on the target profile does not touch the global flag', async () => {
+    seed([{ id: 'a', toggles: allOn }, { id: 'b', toggles: allOn }])
+    await useGitHubStore.getState().setProfileFeature('a', 'ci', false)
+    expect(updateSettingsSpy).not.toHaveBeenCalled()
+  })
+
+  // 3.2 — single-account user: the per-account toggle is now the seed for future
+  // accounts, so setProfileFeature ALSO persists featureDefaults.
+  it('single-account setProfileFeature also persists featureDefaults', async () => {
+    seed([{ id: 'a', toggles: allOn }])
+    await useGitHubStore.getState().setProfileFeature('a', 'ci', false)
+    expect(updateConfigMock).toHaveBeenCalledWith(
+      expect.objectContaining({ featureDefaults: expect.objectContaining({ ci: false }) }))
+  })
+
+  // 3.2 — applyProfileToAll persists the applied (source) map into featureDefaults
+  // as the seed for future accounts, AND still patches every other profile.
+  it('applyProfileToAll persists the applied map into featureDefaults', async () => {
+    seed([{ id: 'a', toggles: allOn }, { id: 'b', toggles: allOff }])
+    await useGitHubStore.getState().applyProfileToAll('a')
+    expect(updateConfigMock).toHaveBeenCalledWith(
+      expect.objectContaining({ featureDefaults: allOn }))
+    expect(updateProfileMock).toHaveBeenCalledWith('b', { featureToggles: allOn })
   })
 })

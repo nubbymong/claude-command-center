@@ -111,3 +111,10 @@ export function additiveScopesForPendingFeatures(
 export function repoModeForProfile(p: AuthProfile): 'public' | 'private' {
   return p.scopes.includes('repo') ? 'private' : 'public'
 }
+
+/** The profile the AI-usage (Copilot) meter targets: the first auth profile.
+ *  (The main-process scheduler resolves the first profile holding a token; the
+ *  renderer can't see tokens, so it mirrors the convention with profiles[0].) */
+export function resolveAiUsageTargetId(profiles: AuthProfile[]): string | null {
+  return profiles[0]?.id ?? null
+}

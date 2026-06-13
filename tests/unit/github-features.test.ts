@@ -11,6 +11,7 @@ import {
   masterState,
   additiveScopesForPendingFeatures,
   repoModeForProfile,
+  resolveAiUsageTargetId,
 } from '../../src/shared/github-features'
 
 function profile(over: Partial<AuthProfile>): AuthProfile {
@@ -152,5 +153,14 @@ describe('repoModeForProfile', () => {
   })
   it('public otherwise', () => {
     expect(repoModeForProfile(profile({ scopes: ['public_repo'] }))).toBe('public')
+  })
+})
+
+describe('resolveAiUsageTargetId', () => {
+  it('returns null for an empty profile list', () => {
+    expect(resolveAiUsageTargetId([])).toBeNull()
+  })
+  it('returns the FIRST profile id (mirrors AiUsageSettings profiles[0])', () => {
+    expect(resolveAiUsageTargetId([profile({ id: 'a' }), profile({ id: 'b' })])).toBe('a')
   })
 })
