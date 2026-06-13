@@ -4,6 +4,7 @@ import { setActiveSessionId } from '../active-session'
 import type { GitHubConfig, RepoCache, SessionGitHubIntegration } from '../../shared/github-types'
 import type { SavedSession } from '../../shared/types'
 import { GitHubConfigStore } from '../github/github-config-store'
+import { migrateGitHubConfig } from '../github/github-config-migrate'
 import { AuthProfileStore } from '../github/auth/auth-profile-store'
 import { ghAuthStatus, ghAuthToken, defaultGhRun } from '../github/auth/gh-cli-delegate'
 import { requestDeviceCode, pollForAccessToken } from '../github/auth/oauth-device-flow'
@@ -100,6 +101,22 @@ export interface GitHubHandlersHandle {
 
 export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle {
   const configStore = new GitHubConfigStore(deps.resourcesDir)
+
+  // One-shot per boot: migrate to the per-account toggle shape (spec
+  // 2026-06-13 s2). Shape-detected and additive, so re-running is a no-op.
+  void (async () => {
+    try {
+      const cur = await configStore.read()
+      if (!cur) return // no config yet; emptyGitHubConfig() is born migrated
+      const aiUsageEnabled =
+        readConfig<{ githubAiUsageEnabled?: boolean }>('settings')?.githubAiUsageEnabled === true
+      const { config, changed } = migrateGitHubConfig(cur, { aiUsageEnabled })
+      if (changed) await configStore.write(config)
+    } catch (err) {
+      console.warn('[github] toggle migration failed (will retry next boot):', err)
+    }
+  })()
+
   const profileStore = new AuthProfileStore({
     readConfig: () => configStore.read(),
     writeConfig: (c) => configStore.write(c),
