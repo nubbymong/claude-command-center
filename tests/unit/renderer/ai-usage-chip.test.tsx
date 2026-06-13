@@ -123,7 +123,7 @@ describe('AI-usage chip content', () => {
     await render()
     const chip = container.querySelector('[data-ai-usage-chip]')
     expect(chip).not.toBeNull()
-    expect(chip!.textContent).toBe('AI 8.1k')
+    expect(chip!.textContent).toBe('Copilot 8.1k')
   })
 
   it('shows used / cap when the cap is set', async () => {
@@ -133,7 +133,7 @@ describe('AI-usage chip content', () => {
     useGitHubStore.setState({ aiUsage: makeReport() })
     await render()
     const chip = container.querySelector('[data-ai-usage-chip]')
-    expect(chip!.textContent).toBe('AI 8.1k/20k')
+    expect(chip!.textContent).toBe('Copilot 8.1k/20k')
   })
 
   it('switches to the billed warning idiom when billedAmount > 0', async () => {
@@ -145,6 +145,6 @@ describe('AI-usage chip content', () => {
     })
     await render()
     const chip = container.querySelector('[data-ai-usage-chip]')
-    expect(chip!.textContent).toBe('AI +$11.69')
+    expect(chip!.textContent).toBe('Copilot +$11.69')
   })
 })

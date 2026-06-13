@@ -72,7 +72,7 @@ describe('selectAiChip', () => {
     const r = report([item({ grossQuantity: 8120 })])
     const chip = selectAiChip(r, null)
     expect(chip.tone).toBe('normal')
-    expect(chip.label).toBe('AI 8.1k')
+    expect(chip.label).toBe('Copilot 8.1k')
     expect(chip.creditsUsed).toBe(8120)
   })
 
@@ -80,7 +80,7 @@ describe('selectAiChip', () => {
     const r = report([item({ grossQuantity: 8120 })])
     const chip = selectAiChip(r, 20000)
     expect(chip.tone).toBe('normal')
-    expect(chip.label).toBe('AI 8.1k/20k')
+    expect(chip.label).toBe('Copilot 8.1k/20k')
   })
 
   it('sums grossQuantity across multiple model rows', () => {
@@ -90,17 +90,17 @@ describe('selectAiChip', () => {
     ])
     const chip = selectAiChip(r, 20000)
     expect(chip.creditsUsed).toBe(8120)
-    expect(chip.label).toBe('AI 8.1k/20k')
+    expect(chip.label).toBe('Copilot 8.1k/20k')
   })
 
   it('overage: switches to the billed warning idiom regardless of cap', () => {
     const r = report([item({ grossQuantity: 22000, billedAmount: 11.69 })], 11.69)
     const chipNoCap = selectAiChip(r, null)
     expect(chipNoCap.tone).toBe('warning')
-    expect(chipNoCap.label).toBe('AI +$11.69')
+    expect(chipNoCap.label).toBe('Copilot +$11.69')
     const chipCap = selectAiChip(r, 20000)
     expect(chipCap.tone).toBe('warning')
-    expect(chipCap.label).toBe('AI +$11.69')
+    expect(chipCap.label).toBe('Copilot +$11.69')
   })
 
   it('zero billed is NOT a warning even with usage present', () => {
@@ -110,7 +110,17 @@ describe('selectAiChip', () => {
 
   it('cap of 0 or negative is treated as unset', () => {
     const r = report([item({ grossQuantity: 100 })])
-    expect(selectAiChip(r, 0).label).toBe('AI 100')
-    expect(selectAiChip(r, -5).label).toBe('AI 100')
+    expect(selectAiChip(r, 0).label).toBe('Copilot 100')
+    expect(selectAiChip(r, -5).label).toBe('Copilot 100')
+  })
+
+  it('every label is prefixed "Copilot" (the renamed meter, not the bare "AI")', () => {
+    const noCap = selectAiChip(report([item({ grossQuantity: 8120 })]), null)
+    const withCap = selectAiChip(report([item({ grossQuantity: 8120 })]), 20000)
+    const overage = selectAiChip(report([item({ billedAmount: 11.69 })], 11.69), null)
+    for (const chip of [noCap, withCap, overage]) {
+      expect(chip.label.startsWith('Copilot ')).toBe(true)
+      expect(chip.label).not.toMatch(/\bAI\b/)
+    }
   })
 })
