@@ -36,11 +36,8 @@ import { buildSessionContext } from '../github/session/session-context-service'
 import { extractFileSignals } from '../github/session/tool-call-inspector'
 import { scanTranscriptMessages } from '../github/session/transcript-scanner'
 import { loadTranscriptEvents } from '../github/session/transcript-loader'
-import {
-  emptyGitHubConfig,
-  OAUTH_SCOPES_PRIVATE,
-  OAUTH_SCOPES_PUBLIC,
-} from '../../shared/github-constants'
+import { emptyGitHubConfig } from '../../shared/github-constants'
+import { buildOAuthScopeString } from '../github/auth/oauth-scope'
 import { updateSessionMeta } from '../session-registry'
 import { emitPrMerged } from '../channel-emitters'
 import { AiUsageScheduler } from '../github/copilot-usage'
@@ -503,16 +500,19 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
 
   ipcMain.handle(
     IPC.GITHUB_OAUTH_START,
-    async (_e, mode: 'public' | 'private', opts?: { includeUserScope?: boolean }) => {
-    const base = mode === 'private' ? OAUTH_SCOPES_PRIVATE : OAUTH_SCOPES_PUBLIC
-    // Default sign-in scopes are UNCHANGED. The AI-usage re-auth path passes
-    // includeUserScope so the broadened `user` scope (which unlocks the billing
-    // /ai_credit endpoint) is requested only when the user explicitly clicks
-    // "Re-authorize GitHub" from the meter's action row. Dedupe in case `user`
-    // is ever folded into the defaults later.
-    const scope = opts?.includeUserScope
-      ? Array.from(new Set([...base.split(/\s+/), 'user'])).join(' ')
-      : base
+    async (
+      _e,
+      mode: 'public' | 'private',
+      opts?: { extraScopes?: string[]; includeUserScope?: boolean },
+    ) => {
+    // Default sign-in scopes are UNCHANGED. `extraScopes` is the general path —
+    // the per-profile re-auth flow passes a computed scope union (e.g. `user`,
+    // which unlocks the billing /ai_credit endpoint) so the broadened scopes are
+    // requested only when the user explicitly re-authorizes. `includeUserScope`
+    // is the preserved back-compat alias mapping to `['user']`. The pure
+    // buildOAuthScopeString unions + dedupes against the mode's base.
+    const extras = opts?.extraScopes ?? (opts?.includeUserScope ? ['user'] : [])
+    const scope = buildOAuthScopeString(mode, extras)
     const resp = await requestDeviceCode(scope)
     activeFlows.set(resp.device_code, {
       deviceCode: resp.device_code,
