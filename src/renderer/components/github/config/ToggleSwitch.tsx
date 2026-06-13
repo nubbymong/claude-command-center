@@ -31,7 +31,7 @@ export default function ToggleSwitch({ state, onToggle, label, disabled, title }
       title={title}
       disabled={disabled}
       onClick={() => { if (!disabled) onToggle() }}
-      className={`relative w-[34px] h-[19px] rounded-full shrink-0 transition-colors duration-200 ${track} ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+      className={`relative w-[34px] h-[19px] rounded-full shrink-0 transition-colors duration-200 focus:outline-none focus-visible:ring-1 focus-visible:ring-blue/50 ${track} ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
     >
       <span
         className={`absolute top-[2px] left-[2px] w-[15px] h-[15px] rounded-full transition-transform duration-200 ${knob}`}
