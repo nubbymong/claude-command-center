@@ -200,7 +200,7 @@ function AiUsageActionRow({
       >
         <div className="text-text font-medium mb-0.5">Action needed</div>
         <div>
-          Connect a GitHub account in <strong>Auth profiles</strong> above, then this meter
+          Connect a GitHub account in <strong>Accounts</strong> above, then this meter
           will read your billed AI-credit usage.
         </div>
       </div>

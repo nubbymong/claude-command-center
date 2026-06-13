@@ -135,15 +135,20 @@ describe('GitHubConfigTab', () => {
     // their own checkboxes (transcriptScanningOptIn / githubAiUsageEnabled), so
     // we don't assert a raw checkbox count; we assert no featureToggles input
     // exists by confirming the switch mechanism is what carries features.
-    const checkboxes = Array.from(
+    // The legacy FeatureTogglesList associated each feature checkbox with its
+    // label via aria-label (not a wrapping <label>), so assert no
+    // input[type=checkbox] carries those per-feature aria-labels: a revert to
+    // the checkbox list would reintroduce them and fail here.
+    const checkboxLabels = Array.from(
       r.container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'),
-    )
-    // None of the checkboxes is labelled with a per-feature master label that
-    // the legacy FeatureTogglesList used (e.g. "Active PR card"): those rows are
-    // now switch rows.
-    const checkboxLabels = checkboxes.map((c) => (c.closest('label')?.textContent ?? ''))
-    expect(checkboxLabels.some((t) => t.includes('Active PR card'))).toBe(false)
-    expect(checkboxLabels.some((t) => t.includes('Notifications inbox'))).toBe(false)
+    ).map((c) => c.getAttribute('aria-label') ?? '')
+    expect(checkboxLabels).not.toContain('Active PR card')
+    expect(checkboxLabels).not.toContain('Notifications inbox')
+    // And confirm those feature labels DO render (as switches, which carry the
+    // aria-label), so the negative assertion above can't pass on a blank tab.
+    const switchLabels = Array.from(switches).map((s) => s.getAttribute('aria-label') ?? '')
+    expect(switchLabels).toContain('Active PR card')
+    expect(switchLabels).toContain('Notifications inbox')
     r.unmount()
   })
 
