@@ -5,6 +5,7 @@ import type {
   GitHubConfig,
   RepoCache,
   RendererProfilePatch,
+  ReauthResult,
   SessionGitHubIntegration,
 } from '../../shared/github-types'
 import type { SavedSession } from '../../shared/types'
@@ -36,8 +37,9 @@ import { buildSessionContext } from '../github/session/session-context-service'
 import { extractFileSignals } from '../github/session/tool-call-inspector'
 import { scanTranscriptMessages } from '../github/session/transcript-scanner'
 import { loadTranscriptEvents } from '../github/session/transcript-loader'
-import { emptyGitHubConfig } from '../../shared/github-constants'
+import { emptyGitHubConfig, DEFAULT_AUTH_FEATURE_TOGGLES } from '../../shared/github-constants'
 import { buildOAuthScopeString } from '../github/auth/oauth-scope'
+import { reauthPlanForProfile } from '../github/auth/reauth-plan'
 import { updateSessionMeta } from '../session-registry'
 import { emitPrMerged } from '../channel-emitters'
 import { AiUsageScheduler } from '../github/copilot-usage'
@@ -587,6 +589,38 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
     if (f) f.cancelled = true
     activeFlows.delete(flowId)
     return { ok: true }
+  })
+
+  ipcMain.handle(IPC.GITHUB_REAUTH_PROFILE, async (_e, profileId: string): Promise<ReauthResult> => {
+    const cfg = await getCachedConfig()
+    const profile = cfg?.authProfiles?.[profileId]
+    if (!profile) return { ok: false, error: 'not-found' }
+    // featureDefaults may be sparse on hand-edited/old configs — layer the
+    // constant underneath (same pattern the store's setMasterFeature uses).
+    const defaults = { ...DEFAULT_AUTH_FEATURE_TOGGLES, ...(cfg?.featureDefaults ?? {}) }
+    const plan = reauthPlanForProfile(profile, defaults)
+    if (plan.kind === 'oauth') {
+      const scope = buildOAuthScopeString(plan.mode, plan.scopes)
+      const resp = await requestDeviceCode(scope)
+      activeFlows.set(resp.device_code, {
+        deviceCode: resp.device_code,
+        intervalSec: resp.interval,
+        scope,
+        cancelled: false,
+      })
+      return {
+        ok: true,
+        plan,
+        flow: {
+          flowId: resp.device_code,
+          userCode: resp.user_code,
+          verificationUri: resp.verification_uri,
+          expiresIn: resp.expires_in,
+          interval: resp.interval,
+        },
+      }
+    }
+    return { ok: true, plan }
   })
 
   ipcMain.handle(IPC.GITHUB_GHCLI_DETECT, async () => {

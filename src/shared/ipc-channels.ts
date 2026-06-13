@@ -248,6 +248,7 @@ export const IPC = {
   GITHUB_OAUTH_START: 'github:oauth:start',
   GITHUB_OAUTH_POLL: 'github:oauth:poll',
   GITHUB_OAUTH_CANCEL: 'github:oauth:cancel',
+  GITHUB_REAUTH_PROFILE: 'github:reauth:profile',
   GITHUB_GHCLI_DETECT: 'github:ghcli:detect',
   GITHUB_REPO_DETECT: 'github:repo:detect',
   GITHUB_SESSION_CONFIG_UPDATE: 'github:session:updateConfig',
