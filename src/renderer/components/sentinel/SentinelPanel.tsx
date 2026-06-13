@@ -1,6 +1,48 @@
 import React, { useState } from 'react'
 import { useSentinelStore } from '../../stores/sentinelStore'
 import type { SentinelFinding } from '../../../shared/sentinel-types'
+import { selectSentinelSections, formatFindingText, formatSentinelReportText } from './sentinel-report-text'
+
+// ── Copy-to-clipboard button ──────────────────────────────────────────────────
+// The report modal previously had no way to get its text out. getText is a thunk
+// so the (possibly large) report string is only built on click. Clipboard access
+// can reject when the window isn't focused or OS policy blocks it — swallow so
+// the click never surfaces as an unhandled rejection; the user can still read it.
+
+function CopyButton({
+  getText,
+  label = 'Copy',
+  title,
+  className,
+}: {
+  getText: () => string
+  label?: string
+  title?: string
+  className?: string
+}) {
+  const [copied, setCopied] = useState(false)
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(getText())
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch {
+      /* clipboard blocked — swallow */
+    }
+  }
+  return (
+    <button
+      onClick={handleCopy}
+      title={title ?? 'Copy to clipboard'}
+      className={
+        className ??
+        'px-2 py-0.5 text-[11px] rounded bg-surface1/60 text-overlay1 hover:bg-surface2/60 transition-colors shrink-0'
+      }
+    >
+      {copied ? 'Copied' : label}
+    </button>
+  )
+}
 
 // ── Per-row apply error state ─────────────────────────────────────────────────
 
@@ -42,6 +84,7 @@ function ProposalRow({ finding }: { finding: SentinelFinding }) {
       <div className="flex items-start justify-between gap-2">
         <span className="text-xs font-medium text-text">{finding.title}</span>
         <div className="flex gap-1.5 shrink-0">
+          <CopyButton getText={() => formatFindingText(finding)} title="Copy this finding" />
           <button
             onClick={handleApply}
             disabled={applying}
@@ -82,12 +125,15 @@ function CompatRow({ finding }: { finding: SentinelFinding }) {
           <SeverityChip severity={finding.severity} />
           <span className="text-xs font-medium text-text truncate">{finding.title}</span>
         </div>
-        <button
-          onClick={handleMute}
-          className="px-2 py-0.5 text-[11px] rounded bg-surface1/60 text-overlay1 hover:bg-surface2/60 transition-colors shrink-0"
-        >
-          Mute
-        </button>
+        <div className="flex gap-1.5 shrink-0">
+          <CopyButton getText={() => formatFindingText(finding)} title="Copy this finding" />
+          <button
+            onClick={handleMute}
+            className="px-2 py-0.5 text-[11px] rounded bg-surface1/60 text-overlay1 hover:bg-surface2/60 transition-colors"
+          >
+            Mute
+          </button>
+        </div>
       </div>
       {finding.affectedFeature && (
         <span className="inline-block mt-0.5 text-[10px] px-1.5 py-px rounded bg-surface1/60 text-overlay1">
@@ -128,13 +174,7 @@ export default function SentinelPanel() {
 
   if (!panelOpen) return null
 
-  const proposals = snap
-    ? snap.findings.filter((f) => f.kind === 'registry-proposal' && f.status === 'open')
-    : []
-  const compatFindings = snap
-    ? snap.findings.filter((f) => (f.kind === 'compat' || f.kind === 'info') && f.status === 'open')
-    : []
-  const applied = snap ? snap.findings.filter((f) => f.status === 'applied') : []
+  const { proposals, compatFindings, applied } = selectSentinelSections(snap)
   const hasAny = proposals.length > 0 || compatFindings.length > 0 || applied.length > 0
 
   const subtitleDate = snap?.lastAnalysisAt
@@ -161,6 +201,14 @@ export default function SentinelPanel() {
             <p className="text-[11px] text-overlay0 mt-0.5">{subtitle}</p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
+            {hasAny && (
+              <CopyButton
+                getText={() => formatSentinelReportText(snap)}
+                label="Copy"
+                title="Copy the full report to the clipboard"
+                className="px-2.5 py-1 text-[11px] rounded border border-surface1 bg-surface0 text-overlay1 hover:bg-surface1 transition-colors"
+              />
+            )}
             <button
               onClick={() => void window.electronAPI.sentinel.rerun()}
               disabled={!!snap?.analyzing}
