@@ -1,10 +1,13 @@
 // src/renderer/components/github/config/AccountPanel.tsx
 // One collapsible per-account panel: header (avatar, identity, connected /
-// pending chips, Re-auth / Test / Rename / Remove), a Status & permissions tab
-// and a Features tab. Replaces AuthProfilesList's per-profile role; the
-// Test/Rename/Remove handlers are moved over faithfully from that component.
+// pending chips, Test / Rename / Remove) over a single-source body (no tabs):
+// the informational "powers N of 6" line, one per-feature toggle list with a
+// coverage hint per row, and a pending footer with ONE kind-aware re-auth
+// action. The re-auth calls github.reauthProfile (which for oauth requests the
+// computed scope union INCLUDING `user`), fixing the legacy bug where re-auth
+// ran a generic OAuth flow without `user` so aiCredits never activated.
 import React, { useRef, useState } from 'react'
-import type { AuthProfile, Capability, GitHubAuthFeatureKey } from '../../../../shared/github-types'
+import type { AuthProfile, ReauthPlan } from '../../../../shared/github-types'
 import { useGitHubStore } from '../../../stores/githubStore'
 import { useSessionStore } from '../../../stores/sessionStore'
 import {
@@ -12,22 +15,34 @@ import {
   FEATURE_CAPABILITIES,
   effectiveToggle,
   masterState,
+  missingScopeForFeature,
   pendingReauth,
   profileCoversFeature,
 } from '../../../../shared/github-features'
 import { DEFAULT_AUTH_FEATURE_TOGGLES } from '../../../../shared/github-constants'
 import ToggleSwitch from './ToggleSwitch'
-import { Chip, AUTH_FEATURE_META } from './MasterFeaturesSection'
+import { Chip, AUTH_FEATURE_META } from './github-feature-meta'
 import AddProfileModal from './AddProfileModal'
+import OAuthDeviceFlow from './OAuthDeviceFlow'
 import ExpiryBanner from '../ExpiryBanner'
 
 const CHECK = String.fromCodePoint(0x2713) // ✓
 const CROSS = String.fromCodePoint(0x2717) // ✗
 const WARN = String.fromCodePoint(0x26a0) // ⚠
-const EMDASH = String.fromCodePoint(0x2014) // em dash glyph (never a literal em dash in JSX)
+
+// GitHub's token settings page (where the `user` scope / Plan permission is added).
+const GH_TOKENS_URL = 'https://github.com/settings/tokens'
 
 const ghostBtn = 'text-xs bg-surface0 hover:bg-surface1 px-2 py-1 rounded transition-colors'
 const primaryBtn = 'bg-blue text-base px-2 py-1 rounded text-xs font-medium hover:bg-blue/80 transition-colors'
+
+interface OAuthFlowStart {
+  flowId: string
+  userCode: string
+  verificationUri: string
+  interval: number
+  expiresIn: number
+}
 
 interface Props {
   profile: AuthProfile
@@ -42,9 +57,12 @@ export default function AccountPanel({ profile, index }: Props) {
   const applyProfileToAll = useGitHubStore((s) => s.applyProfileToAll)
   const removeProfile = useGitHubStore((s) => s.removeProfile)
   const renameProfile = useGitHubStore((s) => s.renameProfile)
+  const loadConfig = useGitHubStore((s) => s.loadConfig)
+  const loadAiUsage = useGitHubStore((s) => s.loadAiUsage)
 
   const [open, setOpen] = useState(index === 0)
-  const [tab, setTab] = useState<'status' | 'features'>('status')
+  // Orthogonal token-EXPIRY re-sign-in path (AddProfileModal), NOT the scope
+  // re-auth below. ExpiryBanner.onRenew drives this.
   const [adding, setAdding] = useState(false)
 
   // Moved verbatim from AuthProfilesList: inline rename + its double-fire guard.
@@ -59,6 +77,13 @@ export default function AccountPanel({ profile, index }: Props) {
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null)
 
+  // Kind-aware re-auth state. For oauth we mount OAuthDeviceFlow; for PAT/gh-cli
+  // we render the plan's inline instructions.
+  const [oauthFlow, setOauthFlow] = useState<OAuthFlowStart | null>(null)
+  const [reauthPlan, setReauthPlan] = useState<ReauthPlan | null>(null)
+  const [reauthError, setReauthError] = useState<string | null>(null)
+  const [reauthBusy, setReauthBusy] = useState(false)
+
   if (!config) return null
 
   // masterState/pendingReauth require a COMPLETE defaults map; the renderer's
@@ -71,6 +96,7 @@ export default function AccountPanel({ profile, index }: Props) {
   const pending = pendingReauth(profile, layeredDefaults)
   const coveredCount = AUTH_FEATURE_KEYS.filter((k) => profileCoversFeature(profile, k)).length
   const liveSessions = sessions.filter((s) => s.githubIntegration?.authProfileId === profile.id)
+  const multipleAccounts = profiles.length >= 2
 
   const doTest = async () => {
     setTesting(true)
@@ -111,9 +137,28 @@ export default function AccountPanel({ profile, index }: Props) {
     }
   }
 
-  const openReauth = (e?: React.MouseEvent) => {
-    e?.stopPropagation()
-    setAdding(true)
+  // The core fix: per-profile, kind-aware re-auth. For oauth, reauthProfile
+  // returns a device flow whose scope set already includes `user` (computed
+  // from the pending features), so completing it grants the `plan` capability
+  // and the pending state self-clears. For PAT/gh-cli it returns inline
+  // instructions.
+  const startReauth = async () => {
+    setReauthBusy(true)
+    setReauthError(null)
+    setReauthPlan(null)
+    try {
+      const r = await window.electronAPI.github.reauthProfile(profile.id)
+      if (!r.ok) {
+        setReauthError(r.error)
+        return
+      }
+      if (r.plan.kind === 'oauth' && r.flow) setOauthFlow(r.flow)
+      else setReauthPlan(r.plan)
+    } catch (e) {
+      setReauthError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setReauthBusy(false)
+    }
   }
 
   const initials = (profile.label || profile.username).trim().slice(0, 2).toUpperCase()
@@ -162,13 +207,6 @@ export default function AccountPanel({ profile, index }: Props) {
           </div>
         </div>
         <div className="flex gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
-          <button
-            type="button"
-            onClick={openReauth}
-            className={pending.length > 0 ? primaryBtn : ghostBtn}
-          >
-            Re-auth
-          </button>
           <button type="button" onClick={doTest} disabled={testing} className={ghostBtn}>
             {testing ? 'Testing' : 'Test'}
           </button>
@@ -197,186 +235,151 @@ export default function AccountPanel({ profile, index }: Props) {
 
       {/* Body mounts/unmounts under a 200ms transition (app convention). */}
       {open && (
-        <div className="border-t border-surface0 transition-opacity duration-200 ease-out">
-          {/* Tab strip */}
-          <div className="flex gap-4 px-3 pt-2 text-sm">
-            <button
-              type="button"
-              onClick={() => setTab('status')}
-              className={`pb-1.5 transition-colors ${
-                tab === 'status' ? 'text-text border-b-2 border-blue' : 'text-overlay0 hover:text-subtext1'
-              }`}
-            >
-              Status &amp; permissions
-            </button>
-            <button
-              type="button"
-              onClick={() => setTab('features')}
-              className={`pb-1.5 transition-colors ${
-                tab === 'features' ? 'text-text border-b-2 border-blue' : 'text-overlay0 hover:text-subtext1'
-              }`}
-            >
-              Features{pending.length > 0 ? ' ' + WARN : ''}
-            </button>
+        <div className="border-t border-surface0 transition-opacity duration-200 ease-out p-3 space-y-2">
+          {/* Informational line (moved from the old Status tab). */}
+          <div className="text-xs text-subtext0">
+            Powers {coveredCount} of {AUTH_FEATURE_KEYS.length} auth features ·{' '}
+            {liveSessions.length > 0
+              ? `${liveSessions.length} live session${liveSessions.length === 1 ? '' : 's'}: ${liveSessions
+                  .map((s) => s.label)
+                  .join(', ')}`
+              : 'no live sessions right now'}
+            <span className="text-overlay0"> (sessions link via their repo; informational)</span>
           </div>
 
-          {tab === 'status' ? (
-            <StatusTab
-              profile={profile}
-              coveredCount={coveredCount}
-              liveSessions={liveSessions.map((s) => s.label)}
-              pending={pending}
-              onReauth={() => setAdding(true)}
-            />
-          ) : (
-            <FeaturesTab
-              profile={profile}
-              profiles={profiles}
-              layeredDefaults={layeredDefaults}
-              multipleAccounts={profiles.length >= 2}
-              onToggle={(k, on) => void setProfileFeature(profile.id, k, on)}
-              onApplyToAll={() => void applyProfileToAll(profile.id)}
-              onReauth={() => setAdding(true)}
-            />
+          {/* Single feature list with per-row coverage hint. */}
+          {AUTH_FEATURE_KEYS.map((key) => {
+            const meta = AUTH_FEATURE_META[key]
+            const on = effectiveToggle(profile, key, layeredDefaults)
+            const covered = profileCoversFeature(profile, key)
+            const differs = masterState(profiles, layeredDefaults, key) === 'mixed'
+            const needScope = missingScopeForFeature(profile, key) ?? FEATURE_CAPABILITIES[key][0]
+
+            return (
+              <div
+                key={key}
+                className={`bg-base p-2 rounded flex items-center gap-2 ${differs ? 'border border-mauve/40' : ''}`}
+              >
+                <ToggleSwitch
+                  state={on ? 'on' : 'off'}
+                  label={meta.label}
+                  onToggle={() => void setProfileFeature(profile.id, key, !on)}
+                />
+                <div className="flex-1 text-text text-sm">{meta.label}</div>
+                {differs && <Chip tone="custom">differs across accounts</Chip>}
+                {covered ? (
+                  <Chip tone="ok">covered {CHECK}</Chip>
+                ) : (
+                  <Chip tone="warn">
+                    {WARN} needs {needScope}
+                  </Chip>
+                )}
+              </div>
+            )
+          })}
+
+          {/* Pending footer: ONE kind-aware re-auth action. */}
+          {pending.length > 0 && (
+            <div className="bg-yellow/10 border border-yellow/25 rounded p-2.5 text-xs space-y-2">
+              <div className="text-text">
+                {pending.length} feature{pending.length === 1 ? '' : 's'} need re-authorization
+              </div>
+              <button
+                type="button"
+                onClick={() => void startReauth()}
+                disabled={reauthBusy}
+                className={`${primaryBtn} disabled:opacity-60`}
+              >
+                {reauthBusy ? 'Starting' : 'Re-authorize this account'}
+              </button>
+              {reauthError && (
+                <div className="text-[11px] text-red" role="alert">
+                  {reauthError}
+                </div>
+              )}
+              {reauthPlan && reauthPlan.kind !== 'oauth' && (
+                <ReauthInstructions plan={reauthPlan} />
+              )}
+            </div>
+          )}
+
+          {/* Apply-to-all (only with 2+ accounts). */}
+          {multipleAccounts && (
+            <div className="flex items-center justify-between pt-1">
+              <span className="text-xs text-subtext0">
+                Toggles here affect {profile.label} only.
+              </span>
+              <button
+                type="button"
+                onClick={() => void applyProfileToAll(profile.id)}
+                className={ghostBtn}
+              >
+                Apply to all accounts
+              </button>
+            </div>
           )}
         </div>
       )}
 
       {adding && <AddProfileModal onClose={() => setAdding(false)} />}
+
+      {oauthFlow && (
+        <OAuthDeviceFlow
+          flow={oauthFlow}
+          onDone={async () => {
+            setOauthFlow(null)
+            // loadConfig re-derives capabilities so the pending state self-clears;
+            // loadAiUsage repopulates the meter.
+            await loadConfig().catch(() => {})
+            await loadAiUsage().catch(() => {})
+          }}
+          onCancel={() => setOauthFlow(null)}
+        />
+      )}
     </div>
   )
 }
 
-function StatusTab({
-  profile,
-  coveredCount,
-  liveSessions,
-  pending,
-  onReauth,
-}: {
-  profile: AuthProfile
-  coveredCount: number
-  liveSessions: string[]
-  pending: GitHubAuthFeatureKey[]
-  onReauth: () => void
-}) {
-  // Missing capability chips, deduped by capability across uncovered features.
-  const seen = new Set<Capability>()
-  const missing: Array<{ cap: Capability; label: string }> = []
-  for (const k of AUTH_FEATURE_KEYS) {
-    if (profileCoversFeature(profile, k)) continue
-    for (const cap of FEATURE_CAPABILITIES[k]) {
-      if (seen.has(cap)) continue
-      seen.add(cap)
-      missing.push({ cap, label: AUTH_FEATURE_META[k].label })
-    }
+/**
+ * Inline instructions for a non-oauth re-auth plan. Text is driven by the
+ * plan's instruction/command (computed by the main process from the missing
+ * scopes), NOT hardcoded, so it reflects the exact scope union re-auth requests.
+ * The per-kind chrome (token-settings link / code block) is lifted from the old
+ * AiUsageActionRow.
+ */
+function ReauthInstructions({ plan }: { plan: ReauthPlan }) {
+  const openTokens = () => void window.electronAPI.shell.openExternal(GH_TOKENS_URL)
+
+  if (plan.kind === 'pat-classic' || plan.kind === 'pat-fine-grained') {
+    return (
+      <div className="text-subtext0">
+        {plan.instruction} Open{' '}
+        <button
+          type="button"
+          onClick={openTokens}
+          className="underline decoration-dotted text-blue hover:text-text transition-colors"
+        >
+          github.com/settings/tokens
+        </button>
+        .
+      </div>
+    )
   }
 
-  return (
-    <div className="p-3 space-y-2">
-      <div className="text-xs text-subtext0">
-        Powers {coveredCount} of {AUTH_FEATURE_KEYS.length} auth features ·{' '}
-        {liveSessions.length > 0
-          ? `${liveSessions.length} live session${liveSessions.length === 1 ? '' : 's'}: ${liveSessions.join(', ')}`
-          : 'no live sessions right now'}
-        <span className="text-overlay0"> (sessions link via their repo; informational)</span>
+  // gh-cli: show the exact command to run. (oauth never reaches here — the
+  // caller mounts OAuthDeviceFlow for it — but the type union still includes it,
+  // so guard explicitly.)
+  if (plan.kind === 'gh-cli') {
+    return (
+      <div className="text-subtext0">
+        Refresh your <code>gh</code> CLI auth to add the missing scope, then this account will pick
+        it up:
+        <code className="block mt-1.5 bg-surface0 px-2 py-1 rounded font-mono text-[11px] text-text">
+          {plan.command}
+        </code>
       </div>
-      <div className="flex flex-wrap gap-1.5">
-        {profile.scopes.map((s, i) => (
-          // Index-suffixed key: GitHub can report a scope string more than once;
-          // a bare key={s} would collide and drop a chip.
-          <Chip key={`${s}-${i}`} tone="ok">
-            {s} {CHECK}
-          </Chip>
-        ))}
-        {missing.map((m) => (
-          <Chip key={m.cap} tone="warn">
-            {m.cap} {CROSS} {EMDASH} {m.label}
-          </Chip>
-        ))}
-      </div>
-      {pending.length > 0 && (
-        <div className="bg-yellow/10 border border-yellow/25 rounded p-2 text-xs flex items-center justify-between gap-2">
-          <span>
-            {pending.map((k) => AUTH_FEATURE_META[k].label).join(', ')} switched on but waiting for
-            permission.
-          </span>
-          <button type="button" onClick={onReauth} className={primaryBtn}>
-            Re-auth to activate
-          </button>
-        </div>
-      )}
-    </div>
-  )
-}
+    )
+  }
 
-function FeaturesTab({
-  profile,
-  profiles,
-  layeredDefaults,
-  multipleAccounts,
-  onToggle,
-  onApplyToAll,
-  onReauth,
-}: {
-  profile: AuthProfile
-  profiles: AuthProfile[]
-  layeredDefaults: Record<GitHubAuthFeatureKey, boolean>
-  multipleAccounts: boolean
-  onToggle: (key: GitHubAuthFeatureKey, on: boolean) => void
-  onApplyToAll: () => void
-  onReauth: () => void
-}) {
-  return (
-    <div className="p-3 space-y-2">
-      {AUTH_FEATURE_KEYS.map((key) => {
-        const meta = AUTH_FEATURE_META[key]
-        const on = effectiveToggle(profile, key, layeredDefaults)
-        const covered = profileCoversFeature(profile, key)
-        const differs = masterState(profiles, layeredDefaults, key) === 'mixed'
-        const cap = FEATURE_CAPABILITIES[key][0]
-
-        let chip: React.ReactNode
-        if (on && covered) chip = <Chip tone="ok">active {CHECK}</Chip>
-        else if (on && !covered) chip = <Chip tone="warn">{WARN} activates after re-auth</Chip>
-        else if (!on && !covered) chip = <Chip tone="warn">needs {cap}</Chip>
-        else chip = <Chip tone="muted">off</Chip>
-
-        return (
-          <div
-            key={key}
-            className={`bg-base p-2 rounded flex items-center gap-2 ${differs ? 'border border-mauve/40' : ''}`}
-          >
-            <div className="flex-1 text-text text-sm">{meta.label}</div>
-            {differs && <Chip tone="custom">differs across accounts</Chip>}
-            {chip}
-            {!covered && (
-              <button
-                type="button"
-                onClick={onReauth}
-                className="text-blue underline text-xs"
-              >
-                Re-auth
-              </button>
-            )}
-            <ToggleSwitch
-              state={on ? 'on' : 'off'}
-              label={meta.label}
-              onToggle={() => onToggle(key, !on)}
-            />
-          </div>
-        )
-      })}
-      {multipleAccounts && (
-        <div className="flex items-center justify-between pt-1">
-          <span className="text-xs text-subtext0">
-            Toggles here affect {profile.label} only.
-          </span>
-          <button type="button" onClick={onApplyToAll} className={ghostBtn}>
-            Apply to all accounts
-          </button>
-        </div>
-      )}
-    </div>
-  )
+  return null
 }

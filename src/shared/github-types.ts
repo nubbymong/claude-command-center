@@ -322,6 +322,30 @@ export interface LocalGitState {
   recentCommits: Array<{ sha: string; subject: string; at: number }>
 }
 
+/** Per-profile re-auth plan, derived from the profile's kind + pending features. */
+export type ReauthPlan =
+  | { kind: 'oauth'; mode: 'public' | 'private'; scopes: string[] }
+  | { kind: 'pat-classic'; instruction: string; scopes: string[] }
+  | { kind: 'pat-fine-grained'; instruction: string; scopes: string[] }
+  | { kind: 'gh-cli'; command: string; scopes: string[] }
+
+/** Shape returned by the github.reauthProfile IPC. For oauth a device `flow`
+ *  rides alongside the plan (the renderer polls it via the existing oauthPoll);
+ *  non-oauth kinds carry only the plan (inline instructions). */
+export type ReauthResult =
+  | { ok: false; error: string }
+  | {
+      ok: true
+      plan: ReauthPlan
+      flow?: {
+        flowId: string
+        userCode: string
+        verificationUri: string
+        expiresIn: number
+        interval: number
+      }
+    }
+
 export interface DeviceCodeResponse {
   device_code: string
   user_code: string

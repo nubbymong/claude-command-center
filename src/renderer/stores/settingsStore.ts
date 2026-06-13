@@ -15,6 +15,7 @@ export interface StatusLineSettings {
   showDuration: boolean
   showRateLimits: boolean
   showResetTime: boolean
+  showCopilot: boolean
   font: StatusLineFont
   fontSize: number
 }
@@ -30,6 +31,7 @@ export const DEFAULT_STATUS_LINE: StatusLineSettings = {
   showDuration: true,
   showRateLimits: true,
   showResetTime: true,
+  showCopilot: true,
   font: 'sans',
   fontSize: 12
 }

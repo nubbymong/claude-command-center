@@ -539,7 +539,8 @@ const STATUS_LINE_TOGGLES: { key: BooleanStatusLineKey; label: string; descripti
   { key: 'showLinesChanged', label: 'Lines Changed', description: 'Lines added and removed' },
   { key: 'showDuration', label: 'Duration', description: 'Total session duration' },
   { key: 'showRateLimits', label: 'Rate Limits', description: '5h and 7d usage dot bars' },
-  { key: 'showResetTime', label: 'Reset Time', description: 'Time until rate limit resets' }
+  { key: 'showResetTime', label: 'Reset Time', description: 'Time until rate limit resets' },
+  { key: 'showCopilot', label: 'Copilot Usage', description: 'GitHub Copilot AI-credit meter' }
 ]
 
 function StatusLineTab({

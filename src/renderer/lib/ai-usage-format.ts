@@ -40,7 +40,7 @@ export function formatBilledUsd(n: number): string {
 export type AiChipTone = 'normal' | 'warning'
 
 export interface AiChipModel {
-  /** Short label, e.g. "AI 8.1k/20k" or "AI +$11.69" or "AI 8.1k". */
+  /** Short label, e.g. "Copilot 8.1k/20k" or "Copilot +$11.69" or "Copilot 8.1k". */
   label: string
   /** Full a11y/title-less aria label, same text expanded for screen readers. */
   ariaLabel: string
@@ -57,11 +57,11 @@ export interface AiChipModel {
  *
  * Idiom (mirrors github.com's AI-usage card in a condensed strip form):
  *   - no overage (billedAmount <= 0): show credits used, with the cap when set
- *       cap set:   "AI 8.1k/20k"
- *       no cap:    "AI 8.1k"
+ *       cap set:   "Copilot 8.1k/20k"
+ *       no cap:    "Copilot 8.1k"
  *   - overage (billedAmount > 0): the headline warning signal. Show the billed
  *     amount instead of the credit count (that is the number the user pays):
- *       "AI +$11.69"   tone: warning
+ *       "Copilot +$11.69"   tone: warning
  *
  * `cap` is the user-entered included-credit denominator (copilotIncludedCredits),
  * or null/undefined when unknown.
@@ -76,8 +76,8 @@ export function selectAiChip(
   if (billedAmount > 0) {
     const usd = formatBilledUsd(billedAmount)
     return {
-      label: `AI ${usd}`,
-      ariaLabel: `AI usage billed over plan: ${usd}`,
+      label: `Copilot ${usd}`,
+      ariaLabel: `Copilot usage billed over plan: ${usd}`,
       tone: 'warning',
       creditsUsed,
       billedAmount,
@@ -88,16 +88,16 @@ export function selectAiChip(
   if (cap != null && cap > 0) {
     const capLabel = formatCredits(cap)
     return {
-      label: `AI ${used}/${capLabel}`,
-      ariaLabel: `AI credits used: ${used} of ${capLabel}`,
+      label: `Copilot ${used}/${capLabel}`,
+      ariaLabel: `Copilot credits used: ${used} of ${capLabel}`,
       tone: 'normal',
       creditsUsed,
       billedAmount,
     }
   }
   return {
-    label: `AI ${used}`,
-    ariaLabel: `AI credits used: ${used}`,
+    label: `Copilot ${used}`,
+    ariaLabel: `Copilot credits used: ${used}`,
     tone: 'normal',
     creditsUsed,
     billedAmount,

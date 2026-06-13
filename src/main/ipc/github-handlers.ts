@@ -5,6 +5,7 @@ import type {
   GitHubConfig,
   RepoCache,
   RendererProfilePatch,
+  ReauthResult,
   SessionGitHubIntegration,
 } from '../../shared/github-types'
 import type { SavedSession } from '../../shared/types'
@@ -36,11 +37,9 @@ import { buildSessionContext } from '../github/session/session-context-service'
 import { extractFileSignals } from '../github/session/tool-call-inspector'
 import { scanTranscriptMessages } from '../github/session/transcript-scanner'
 import { loadTranscriptEvents } from '../github/session/transcript-loader'
-import {
-  emptyGitHubConfig,
-  OAUTH_SCOPES_PRIVATE,
-  OAUTH_SCOPES_PUBLIC,
-} from '../../shared/github-constants'
+import { emptyGitHubConfig, DEFAULT_AUTH_FEATURE_TOGGLES } from '../../shared/github-constants'
+import { buildOAuthScopeString } from '../github/auth/oauth-scope'
+import { reauthPlanForProfile } from '../github/auth/reauth-plan'
 import { updateSessionMeta } from '../session-registry'
 import { emitPrMerged } from '../channel-emitters'
 import { AiUsageScheduler } from '../github/copilot-usage'
@@ -503,16 +502,19 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
 
   ipcMain.handle(
     IPC.GITHUB_OAUTH_START,
-    async (_e, mode: 'public' | 'private', opts?: { includeUserScope?: boolean }) => {
-    const base = mode === 'private' ? OAUTH_SCOPES_PRIVATE : OAUTH_SCOPES_PUBLIC
-    // Default sign-in scopes are UNCHANGED. The AI-usage re-auth path passes
-    // includeUserScope so the broadened `user` scope (which unlocks the billing
-    // /ai_credit endpoint) is requested only when the user explicitly clicks
-    // "Re-authorize GitHub" from the meter's action row. Dedupe in case `user`
-    // is ever folded into the defaults later.
-    const scope = opts?.includeUserScope
-      ? Array.from(new Set([...base.split(/\s+/), 'user'])).join(' ')
-      : base
+    async (
+      _e,
+      mode: 'public' | 'private',
+      opts?: { extraScopes?: string[]; includeUserScope?: boolean },
+    ) => {
+    // Default sign-in scopes are UNCHANGED. `extraScopes` is the general path —
+    // the per-profile re-auth flow passes a computed scope union (e.g. `user`,
+    // which unlocks the billing /ai_credit endpoint) so the broadened scopes are
+    // requested only when the user explicitly re-authorizes. `includeUserScope`
+    // is the preserved back-compat alias mapping to `['user']`. The pure
+    // buildOAuthScopeString unions + dedupes against the mode's base.
+    const extras = opts?.extraScopes ?? (opts?.includeUserScope ? ['user'] : [])
+    const scope = buildOAuthScopeString(mode, extras)
     const resp = await requestDeviceCode(scope)
     activeFlows.set(resp.device_code, {
       deviceCode: resp.device_code,
@@ -587,6 +589,38 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
     if (f) f.cancelled = true
     activeFlows.delete(flowId)
     return { ok: true }
+  })
+
+  ipcMain.handle(IPC.GITHUB_REAUTH_PROFILE, async (_e, profileId: string): Promise<ReauthResult> => {
+    const cfg = await getCachedConfig()
+    const profile = cfg?.authProfiles?.[profileId]
+    if (!profile) return { ok: false, error: 'not-found' }
+    // featureDefaults may be sparse on hand-edited/old configs — layer the
+    // constant underneath (same layering the store's feature-toggle writes use).
+    const defaults = { ...DEFAULT_AUTH_FEATURE_TOGGLES, ...(cfg?.featureDefaults ?? {}) }
+    const plan = reauthPlanForProfile(profile, defaults)
+    if (plan.kind === 'oauth') {
+      const scope = buildOAuthScopeString(plan.mode, plan.scopes)
+      const resp = await requestDeviceCode(scope)
+      activeFlows.set(resp.device_code, {
+        deviceCode: resp.device_code,
+        intervalSec: resp.interval,
+        scope,
+        cancelled: false,
+      })
+      return {
+        ok: true,
+        plan,
+        flow: {
+          flowId: resp.device_code,
+          userCode: resp.user_code,
+          verificationUri: resp.verification_uri,
+          expiresIn: resp.expires_in,
+          interval: resp.interval,
+        },
+      }
+    }
+    return { ok: true, plan }
   })
 
   ipcMain.handle(IPC.GITHUB_GHCLI_DETECT, async () => {

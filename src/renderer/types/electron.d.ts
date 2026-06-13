@@ -466,6 +466,7 @@ export interface ElectronAPI {
       error?: string
     }>
     oauthCancel: (flowId: string) => Promise<{ ok: boolean }>
+    reauthProfile: (profileId: string) => Promise<import('../../shared/github-types').ReauthResult>
     ghcliDetect: () => Promise<{ ok: boolean; users: string[] }>
     repoDetect: (cwd: string) => Promise<{ ok: boolean; slug: string | null }>
     updateSessionConfig: (

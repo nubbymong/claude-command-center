@@ -404,6 +404,7 @@ interface GitHubBridge {
   }>
   oauthPoll: (flowId: string) => Promise<{ ok: boolean; profileId?: string; error?: string }>
   oauthCancel: (flowId: string) => Promise<{ ok: boolean }>
+  reauthProfile: (profileId: string) => Promise<import('../shared/github-types').ReauthResult>
   ghcliDetect: () => Promise<{ ok: boolean; users: string[] }>
   repoDetect: (cwd: string) => Promise<{ ok: boolean; slug: string | null }>
   updateSessionConfig: (
@@ -845,6 +846,7 @@ const electronAPI: ElectronAPI = {
     oauthStart: (mode, opts) => ipcRenderer.invoke(IPC.GITHUB_OAUTH_START, mode, opts),
     oauthPoll: (flowId) => ipcRenderer.invoke(IPC.GITHUB_OAUTH_POLL, flowId),
     oauthCancel: (flowId) => ipcRenderer.invoke(IPC.GITHUB_OAUTH_CANCEL, flowId),
+    reauthProfile: (profileId) => ipcRenderer.invoke(IPC.GITHUB_REAUTH_PROFILE, profileId),
     ghcliDetect: () => ipcRenderer.invoke(IPC.GITHUB_GHCLI_DETECT),
     repoDetect: (cwd) => ipcRenderer.invoke(IPC.GITHUB_REPO_DETECT, cwd),
     updateSessionConfig: (sessionId, patch) =>

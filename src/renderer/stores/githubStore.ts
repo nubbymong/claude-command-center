@@ -11,7 +11,8 @@ import type {
   GitHubAppWideFeatureKey,
 } from '../../shared/github-types'
 import { DEFAULT_AUTH_FEATURE_TOGGLES, emptyGitHubConfig } from '../../shared/github-constants'
-import { effectiveToggleMap } from '../../shared/github-features'
+import { effectiveToggleMap, resolveAiUsageTargetId } from '../../shared/github-features'
+import { useSettingsStore } from './settingsStore'
 
 export interface SessionPanelState {
   panelWidth: number
@@ -55,7 +56,6 @@ interface GitHubStoreState {
     key: GitHubAuthFeatureKey,
     on: boolean,
   ) => Promise<void>
-  setMasterFeature: (key: GitHubAuthFeatureKey, on: boolean) => Promise<void>
   applyProfileToAll: (sourceId: string) => Promise<void>
   setAppWideToggle: (key: GitHubAppWideFeatureKey, on: boolean) => Promise<void>
   togglePanel: () => void
@@ -150,40 +150,28 @@ export const useGitHubStore = create<GitHubStoreState>((set, get) => ({
       const next = effectiveToggleMap(p, layeredDefaults(cfg))
       next[key] = on
       await window.electronAPI.github.updateProfile(profileId, { featureToggles: next })
-      await get().loadConfig()
-    }),
-
-  // Master toggle: flip one feature on EVERY account (each via its own profile
-  // patch) AND persist featureDefaults so the intent survives zero accounts and
-  // seeds newly added ones. Profiles go through the profile IPC; featureDefaults
-  // (a root field) goes through updateConfig. Serialized + snapshot re-read
-  // inside the thunk (F2). Per-profile failures are isolated (F4): a rejected
-  // write is logged and skipped, the remaining profiles + featureDefaults still
-  // write, and loadConfig() always runs in the finally.
-  setMasterFeature: (key, on) =>
-    enqueueToggleWrite(async () => {
-      const cfg = get().config
-      if (!cfg) return
-      // One complete defaults map for both the per-profile writes and the
-      // persisted featureDefaults — sparse/absent featureDefaults is layered
-      // under DEFAULT_AUTH_FEATURE_TOGGLES so every write is full (F3).
-      const layered = layeredDefaults(cfg)
-      try {
-        for (const p of Object.values(cfg.authProfiles)) {
-          const next = effectiveToggleMap(p, layered)
-          next[key] = on
-          try {
-            await window.electronAPI.github.updateProfile(p.id, { featureToggles: next })
-          } catch (err) {
-            console.warn('[github] toggle write failed for profile', p.id, err)
-          }
-        }
+      // 3.2: with MasterFeaturesSection deleted, a SINGLE-account user's per-account
+      // toggle is now the seed for future accounts — persist featureDefaults too.
+      if (Object.keys(cfg.authProfiles).length === 1) {
         await window.electronAPI.github.updateConfig({
-          featureDefaults: { ...layered, [key]: on },
+          featureDefaults: { ...layeredDefaults(cfg), [key]: on },
         })
-      } finally {
-        await get().loadConfig()
       }
+      // 3.1: aiCredits on the AI-usage TARGET profile is the single user-facing
+      // enable for the meter. settings.githubAiUsageEnabled stays the persisted
+      // source of truth (it also gates the main scheduler, boot migration, and the
+      // Tokenomics card), so write through to it.
+      if (
+        key === 'aiCredits' &&
+        profileId === resolveAiUsageTargetId(Object.values(cfg.authProfiles))
+      ) {
+        await useSettingsStore.getState().updateSettings({ githubAiUsageEnabled: on })
+        // Populate (or clear) the meter immediately, mirroring the old
+        // AiUsageSettings enable — otherwise the relocated statusline chip would
+        // sit on its placeholder until the ~60-min scheduler tick.
+        await get().loadAiUsage().catch(() => {})
+      }
+      await get().loadConfig()
     }),
 
   // Copy a source account's effective toggle map onto every OTHER account.
@@ -206,6 +194,9 @@ export const useGitHubStore = create<GitHubStoreState>((set, get) => ({
             console.warn('[github] toggle write failed for profile', p.id, err)
           }
         }
+        // 3.2: persist the applied map as the seed for future accounts (replaces the
+        // deleted MasterFeaturesSection's featureDefaults-write responsibility).
+        await window.electronAPI.github.updateConfig({ featureDefaults: map })
       } finally {
         await get().loadConfig()
       }

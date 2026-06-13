@@ -95,60 +95,56 @@ beforeEach(() => {
 })
 
 describe('GitHubConfigTab', () => {
-  it('renders sections in the per-account order with the drawer between Accounts and Privacy', () => {
+  it('renders sections account-first with the permissions drawer at the bottom', () => {
     seed(makeConfig(), vi.fn())
     const r = render(<GitHubConfigTab />)
 
     const headings = h3Texts(r.container)
-    expect(headings.slice(0, 4)).toEqual(['Features for all accounts', 'Accounts', 'Privacy', 'Sync'])
+    expect(headings.slice(0, 4)).toEqual(['Accounts', 'App-wide (no auth)', 'Privacy', 'Sync'])
 
-    // The PermissionsSummary drawer's collapsed header is a <button>, not an
-    // <h3>, so verify its document position relative to the Accounts/Privacy
-    // headings via compareDocumentPosition.
+    // The PermissionsSummary drawer now sits at the BOTTOM as the collapsed
+    // reference. Its collapsed header is a <button>, not an <h3>, so verify its
+    // document position relative to the last real heading via
+    // compareDocumentPosition: the drawer button comes AFTER Sync (and after AI
+    // credits usage), not between Accounts and Privacy.
     const btn = drawerButton(r.container)
-    const accounts = h3ByText(r.container, 'Accounts')
-    const privacy = h3ByText(r.container, 'Privacy')
+    const sync = h3ByText(r.container, 'Sync')
+    const ai = h3ByText(r.container, 'AI credits usage')
     expect(btn).toBeTruthy()
-    // Accounts comes before the drawer button.
+    // Sync comes before the drawer button.
     expect(
-      accounts.compareDocumentPosition(btn) & Node.DOCUMENT_POSITION_FOLLOWING,
+      sync.compareDocumentPosition(btn) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy()
-    // The drawer button comes before Privacy.
+    // AI credits usage comes before the drawer button.
     expect(
-      btn.compareDocumentPosition(privacy) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ai.compareDocumentPosition(btn) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy()
     r.unmount()
   })
 
-  it('feature mechanism is role="switch" toggles, not legacy featureToggles checkboxes', () => {
+  it('app-wide toggles are the only role="switch" controls at the tab level (zero profiles)', () => {
     seed(makeConfig(), vi.fn())
     const r = render(<GitHubConfigTab />)
 
-    // MasterFeaturesSection renders one ToggleSwitch per auth feature (6) plus
-    // the two app-wide rows = 8 role="switch" buttons minimum.
+    // With ZERO authProfiles there is no AccountPanel and no MasterFeaturesSection,
+    // so the ONLY switches at the tab level are AppWideFeatures' two app-wide rows.
     const switches = r.container.querySelectorAll('[role="switch"]')
-    expect(switches.length).toBeGreaterThanOrEqual(8)
+    const switchLabels = Array.from(switches).map((s) => s.getAttribute('aria-label') ?? '')
+    expect(switchLabels).toEqual(['Local git state', 'Session context'])
 
-    // The legacy global-toggle checkboxes are gone. No checkbox in the document
-    // drives a featureToggles write: the only checkbox wired to updateConfig is
-    // the enabledByDefault one, asserted in the next case. Privacy/AiUsage own
-    // their own checkboxes (transcriptScanningOptIn / githubAiUsageEnabled), so
-    // we don't assert a raw checkbox count; we assert no featureToggles input
-    // exists by confirming the switch mechanism is what carries features.
-    // The legacy FeatureTogglesList associated each feature checkbox with its
-    // label via aria-label (not a wrapping <label>), so assert no
-    // input[type=checkbox] carries those per-feature aria-labels: a revert to
-    // the checkbox list would reintroduce them and fail here.
+    // The per-account auth features live in AccountPanel, which isn't mounted
+    // with zero profiles. They must NOT appear as switches at the tab level.
+    expect(switchLabels).not.toContain('Active PR card')
+    expect(switchLabels).not.toContain('Notifications inbox')
+
+    // And the legacy FeatureTogglesList checkbox mechanism is gone: no
+    // input[type=checkbox] carries those per-feature aria-labels (a revert to
+    // the checkbox list would reintroduce them and fail here).
     const checkboxLabels = Array.from(
       r.container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'),
     ).map((c) => c.getAttribute('aria-label') ?? '')
     expect(checkboxLabels).not.toContain('Active PR card')
     expect(checkboxLabels).not.toContain('Notifications inbox')
-    // And confirm those feature labels DO render (as switches, which carry the
-    // aria-label), so the negative assertion above can't pass on a blank tab.
-    const switchLabels = Array.from(switches).map((s) => s.getAttribute('aria-label') ?? '')
-    expect(switchLabels).toContain('Active PR card')
-    expect(switchLabels).toContain('Notifications inbox')
     r.unmount()
   })
 

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { AuthProfile } from '../../src/shared/github-types'
+import { DEFAULT_AUTH_FEATURE_TOGGLES } from '../../src/shared/github-constants'
 import {
   AUTH_FEATURE_KEYS,
   FEATURE_CAPABILITIES,
@@ -8,6 +9,10 @@ import {
   effectiveToggleMap,
   pendingReauth,
   masterState,
+  additiveScopesForPendingFeatures,
+  repoModeForProfile,
+  resolveAiUsageTargetId,
+  missingScopeForFeature,
 } from '../../src/shared/github-features'
 
 function profile(over: Partial<AuthProfile>): AuthProfile {
@@ -117,5 +122,59 @@ describe('masterState', () => {
   })
   it('profiles missing the map inherit defaults for the comparison', () => {
     expect(masterState([profile({}), on], defaults, 'ci')).toBe('on')
+  })
+})
+
+describe('additiveScopesForPendingFeatures', () => {
+  const defs = { ...DEFAULT_AUTH_FEATURE_TOGGLES, aiCredits: true }
+  it('returns [user] when aiCredits is enabled but plan capability is missing', () => {
+    const p = profile({ capabilities: ['pulls', 'issues', 'actions', 'notifications'], featureToggles: { ...defs } })
+    expect(additiveScopesForPendingFeatures(p, defs)).toEqual(['user'])
+  })
+  it('returns [] when every enabled feature is already covered', () => {
+    const p = profile({ capabilities: ['pulls', 'issues', 'actions', 'notifications', 'plan'], featureToggles: { ...defs } })
+    expect(additiveScopesForPendingFeatures(p, defs)).toEqual([])
+  })
+  it('never returns a scope the profile already holds', () => {
+    // aiCredits is still PENDING (no `plan` capability), so `user` is a genuine
+    // candidate scope — but the profile already holds it, so the dedup guard
+    // (`!have.has(scope)`) must drop it: nothing additive.
+    const p = profile({
+      scopes: ['user'],
+      capabilities: ['pulls', 'issues', 'actions', 'notifications'],
+      featureToggles: { ...defs },
+    })
+    expect(additiveScopesForPendingFeatures(p, defs)).toEqual([])
+  })
+})
+
+describe('repoModeForProfile', () => {
+  it('private when the profile holds repo', () => {
+    expect(repoModeForProfile(profile({ scopes: ['repo'] }))).toBe('private')
+  })
+  it('public otherwise', () => {
+    expect(repoModeForProfile(profile({ scopes: ['public_repo'] }))).toBe('public')
+  })
+})
+
+describe('resolveAiUsageTargetId', () => {
+  it('returns null for an empty profile list', () => {
+    expect(resolveAiUsageTargetId([])).toBeNull()
+  })
+  it('returns the FIRST profile id (mirrors AiUsageSettings profiles[0])', () => {
+    expect(resolveAiUsageTargetId([profile({ id: 'a' }), profile({ id: 'b' })])).toBe('a')
+  })
+})
+
+describe('missingScopeForFeature', () => {
+  it('returns the scope granting the missing capability (aiCredits without plan -> user)', () => {
+    const p = profile({ capabilities: ['pulls', 'issues', 'actions', 'notifications'] })
+    expect(missingScopeForFeature(p, 'aiCredits')).toBe('user')
+  })
+  it('returns null when the feature is already covered', () => {
+    const p = profile({ capabilities: ['plan'] })
+    expect(missingScopeForFeature(p, 'aiCredits')).toBeNull()
+    const q = profile({ capabilities: ['pulls'] })
+    expect(missingScopeForFeature(q, 'activePR')).toBeNull()
   })
 })

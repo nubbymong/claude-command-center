@@ -5,8 +5,9 @@
 // writes MUST go through the profile-patch IPC (updateProfile), never a
 // wholesale authProfiles write through updateConfig (which shallow-merges and
 // could drop tokenCiphertext).
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { useGitHubStore } from '../../src/renderer/stores/githubStore'
+import { useSettingsStore } from '../../src/renderer/stores/settingsStore'
 import type {
   AuthProfile,
   GitHubAuthFeatureKey,
@@ -114,26 +115,12 @@ describe('per-account feature actions', () => {
     expect(updateProfileMock).toHaveBeenCalledWith('a', { featureToggles: { ...allOn, ci: false } })
     expect(updateConfigMock).not.toHaveBeenCalled()
   })
-  it('setMasterFeature patches every profile AND persists featureDefaults', async () => {
-    seed([{ id: 'a', toggles: allOn }, { id: 'b', toggles: allOff }])
-    await useGitHubStore.getState().setMasterFeature('notifications', true)
-    expect(updateProfileMock).toHaveBeenCalledTimes(2)
-    expect(updateConfigMock).toHaveBeenCalledWith(
-      expect.objectContaining({ featureDefaults: expect.objectContaining({ notifications: true }) }))
-  })
   it('applyProfileToAll copies the source map to every other profile', async () => {
     seed([{ id: 'a', toggles: allOn }, { id: 'b', toggles: allOff }, { id: 'c', toggles: allOff }])
     await useGitHubStore.getState().applyProfileToAll('a')
     expect(updateProfileMock).toHaveBeenCalledTimes(2) // b and c, not a
     expect(updateProfileMock).toHaveBeenCalledWith('b', { featureToggles: allOn })
     expect(updateProfileMock).toHaveBeenCalledWith('c', { featureToggles: allOn })
-  })
-  it('setMasterFeature with zero profiles writes featureDefaults only', async () => {
-    seed([])
-    await useGitHubStore.getState().setMasterFeature('aiCredits', true)
-    expect(updateProfileMock).not.toHaveBeenCalled()
-    expect(updateConfigMock).toHaveBeenCalledWith(
-      expect.objectContaining({ featureDefaults: expect.objectContaining({ aiCredits: true }) }))
   })
   it('setAppWideToggle writes appWideToggles via config update', async () => {
     seed([{ id: 'a', toggles: allOn }])
@@ -143,48 +130,8 @@ describe('per-account feature actions', () => {
     expect(updateProfileMock).not.toHaveBeenCalled()
   })
 
-  // F3 — sparse featureDefaults on a pre-migration config. The config predates
-  // featureDefaults entirely; the persisted map must still come out complete
-  // (all six auth keys) so downstream readers never see a partial defaults map.
-  it('setMasterFeature backfills a complete featureDefaults from a config missing it', async () => {
-    seed([], undefined)
-    // Strip featureDefaults to simulate a pre-migration config.
-    useGitHubStore.setState((s) => ({
-      config: { ...(s.config as GitHubConfig), featureDefaults: undefined },
-    }))
-    await useGitHubStore.getState().setMasterFeature('notifications', true)
-    const patch = updateConfigMock.mock.calls.at(-1)![0] as { featureDefaults: Record<string, boolean> }
-    expect(Object.keys(patch.featureDefaults).sort()).toEqual([...fullKeys].sort())
-    expect(patch.featureDefaults).toEqual({
-      activePR: true, ci: true, reviews: true, linkedIssues: true,
-      notifications: true, // the toggled key
-      aiCredits: false, // default
-    })
-  })
-
   // F4 — error isolation in the multi-profile loop. A rejected write for the
-  // MIDDLE profile must not abort the loop: later profiles still get patched
-  // and featureDefaults is still written.
-  it('setMasterFeature isolates a failing per-profile write and still patches the rest', async () => {
-    seed([{ id: 'a', toggles: allOn }, { id: 'b', toggles: allOn }, { id: 'c', toggles: allOn }])
-    updateProfileMock.mockImplementation(async (id: string) => {
-      if (id === 'b') throw new Error('write failed for b')
-      return { ok: true }
-    })
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    try {
-      await useGitHubStore.getState().setMasterFeature('notifications', false)
-    } finally {
-      warnSpy.mockRestore()
-    }
-    // All three were attempted; c (after the failing b) still got patched.
-    expect(updateProfileMock).toHaveBeenCalledTimes(3)
-    expect(updateProfileMock).toHaveBeenCalledWith('c', expect.anything())
-    // featureDefaults still persisted despite the mid-loop failure.
-    expect(updateConfigMock).toHaveBeenCalledWith(
-      expect.objectContaining({ featureDefaults: expect.objectContaining({ notifications: false }) }))
-  })
-
+  // MIDDLE profile must not abort the loop: later profiles still get patched.
   it('applyProfileToAll isolates a failing per-target write and still patches the rest', async () => {
     seed([{ id: 'a', toggles: allOn }, { id: 'b', toggles: allOff }, { id: 'c', toggles: allOff }])
     updateProfileMock.mockImplementation(async (id: string) => {
@@ -213,14 +160,6 @@ describe('per-account feature actions', () => {
   it('setProfileFeature layers DEFAULT under a sparse featureDefaults for a map-less profile', async () => {
     seed([{ id: 'a', toggles: undefined }], sparseDefaults)
     await useGitHubStore.getState().setProfileFeature('a', 'notifications', true)
-    expect(updateProfileMock).toHaveBeenCalledWith('a', {
-      featureToggles: { ...layeredFromSparse, notifications: true },
-    })
-  })
-
-  it('setMasterFeature layers DEFAULT under a sparse featureDefaults for a map-less profile', async () => {
-    seed([{ id: 'a', toggles: undefined }], sparseDefaults)
-    await useGitHubStore.getState().setMasterFeature('notifications', true)
     expect(updateProfileMock).toHaveBeenCalledWith('a', {
       featureToggles: { ...layeredFromSparse, notifications: true },
     })
@@ -288,5 +227,74 @@ describe('per-account feature actions', () => {
     }
     expect(secondPayload.featureToggles.ci).toBe(false)
     expect(secondPayload.featureToggles.reviews).toBe(false)
+  })
+})
+
+// 3.1 + 3.2 — write-through behaviours. The per-account aiCredits toggle on the
+// AI-usage TARGET profile (profiles[0]) drives the global githubAiUsageEnabled
+// meter gate; the single-account user's per-account toggle (and applyProfileToAll)
+// keep featureDefaults a live seed now that MasterFeaturesSection is deleted.
+describe('feature write-through (gating + featureDefaults seed)', () => {
+  let updateSettingsSpy: ReturnType<typeof vi.spyOn>
+
+  beforeEach(() => {
+    updateSettingsSpy = vi
+      .spyOn(useSettingsStore.getState(), 'updateSettings')
+      .mockResolvedValue(undefined)
+  })
+  afterEach(() => {
+    updateSettingsSpy.mockRestore()
+  })
+
+  // 3.1 — gating ON: aiCredits enabled on the target profile (profiles[0]) flips
+  // the global githubAiUsageEnabled flag on.
+  it('aiCredits ON for the target profile enables the global meter gate', async () => {
+    seed([{ id: 'a', toggles: allOff }, { id: 'b', toggles: allOff }])
+    await useGitHubStore.getState().setProfileFeature('a', 'aiCredits', true)
+    expect(updateProfileMock).toHaveBeenCalledWith('a', {
+      featureToggles: { ...allOff, aiCredits: true },
+    })
+    expect(updateSettingsSpy).toHaveBeenCalledWith({ githubAiUsageEnabled: true })
+  })
+
+  // 3.1 — gating OFF: disabling aiCredits on the target flips the flag off.
+  it('aiCredits OFF for the target profile disables the global meter gate', async () => {
+    seed([{ id: 'a', toggles: allOn }, { id: 'b', toggles: allOn }])
+    await useGitHubStore.getState().setProfileFeature('a', 'aiCredits', false)
+    expect(updateSettingsSpy).toHaveBeenCalledWith({ githubAiUsageEnabled: false })
+  })
+
+  // 3.1 — a NON-target profile's aiCredits must NOT touch the global flag
+  // (the meter only ever reads profiles[0]).
+  it('aiCredits on a non-target profile does not touch the global flag', async () => {
+    seed([{ id: 'a', toggles: allOff }, { id: 'b', toggles: allOff }])
+    await useGitHubStore.getState().setProfileFeature('b', 'aiCredits', true)
+    expect(updateSettingsSpy).not.toHaveBeenCalled()
+  })
+
+  // 3.1 — a non-aiCredits key on the target profile must NOT touch the flag.
+  it('a non-aiCredits key on the target profile does not touch the global flag', async () => {
+    seed([{ id: 'a', toggles: allOn }, { id: 'b', toggles: allOn }])
+    await useGitHubStore.getState().setProfileFeature('a', 'ci', false)
+    expect(updateSettingsSpy).not.toHaveBeenCalled()
+  })
+
+  // 3.2 — single-account user: the per-account toggle is now the seed for future
+  // accounts, so setProfileFeature ALSO persists featureDefaults.
+  it('single-account setProfileFeature also persists featureDefaults', async () => {
+    seed([{ id: 'a', toggles: allOn }])
+    await useGitHubStore.getState().setProfileFeature('a', 'ci', false)
+    expect(updateConfigMock).toHaveBeenCalledWith(
+      expect.objectContaining({ featureDefaults: expect.objectContaining({ ci: false }) }))
+  })
+
+  // 3.2 — applyProfileToAll persists the applied (source) map into featureDefaults
+  // as the seed for future accounts, AND still patches every other profile.
+  it('applyProfileToAll persists the applied map into featureDefaults', async () => {
+    seed([{ id: 'a', toggles: allOn }, { id: 'b', toggles: allOff }])
+    await useGitHubStore.getState().applyProfileToAll('a')
+    expect(updateConfigMock).toHaveBeenCalledWith(
+      expect.objectContaining({ featureDefaults: allOn }))
+    expect(updateProfileMock).toHaveBeenCalledWith('b', { featureToggles: allOn })
   })
 })

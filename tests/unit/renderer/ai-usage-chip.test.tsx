@@ -1,9 +1,12 @@
 // @vitest-environment jsdom
 /**
- * Repo-strip AI-usage chip render states (v2 unified AI-usage meter).
- * The chip lives in RepoBreadcrumb and is gated on githubAiUsageEnabled +
- * aiUsage != null. This exercises the gate, the credits/cap idiom, and the
- * billed-overage warning idiom end to end through the real Zustand stores.
+ * Shared AI-usage chip render states (v2 unified AI-usage meter).
+ * The chip now lives in its own component (components/github/AiUsageChip) so it
+ * can be rendered in both the repo strip and the per-session status strip. It is
+ * gated on githubAiUsageEnabled + aiUsage != null. This exercises the gate, the
+ * credits/cap idiom, the billed-overage warning idiom, and the no-report
+ * placeholder states (needs-auth vs loading/error) through the real Zustand
+ * stores.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import React from 'react'
@@ -13,24 +16,14 @@ import type { AiUsageReport } from '../../../src/shared/github-types'
 
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
 
-const { default: RepoBreadcrumb } = await import('../../../src/renderer/components/RepoBreadcrumb')
+const { default: AiUsageChip } = await import('../../../src/renderer/components/github/AiUsageChip')
 const { useGitHubStore } = await import('../../../src/renderer/stores/githubStore')
 const { useSettingsStore, DEFAULT_SETTINGS } = await import('../../../src/renderer/stores/settingsStore')
 
+const WARN = String.fromCodePoint(0x26a0)
+
 let container: HTMLDivElement
 let root: Root
-
-const baseSession = {
-  id: 'sess-1',
-  label: 'web',
-  workingDirectory: '/home/me/projects/web',
-  model: 'sonnet',
-  color: '#ff0000',
-  configId: 'cfg-1',
-  shellOnly: false,
-  sessionType: 'local' as const,
-  githubIntegration: { enabled: true, repoSlug: 'nubbymong/web', autoDetected: true },
-}
 
 function makeReport(over: Partial<AiUsageReport> = {}): AiUsageReport {
   return {
@@ -72,7 +65,7 @@ afterEach(() => {
 
 async function render() {
   await act(async () => {
-    root.render(React.createElement(RepoBreadcrumb, { session: baseSession }))
+    root.render(React.createElement(AiUsageChip))
   })
 }
 
@@ -84,7 +77,7 @@ describe('AI-usage chip gating', () => {
     expect(container.querySelector('[data-ai-usage-chip]')).toBeNull()
   })
 
-  it('enabled with NO report renders the muted placeholder with the scope hint (never silent)', async () => {
+  it('enabled with NO report + scope-missing renders the actionable "Fix auth" placeholder', async () => {
     // Review nit on cd96a71: hiding the chip made the popover's "no data +
     // scope hint" state unreachable, so an enabled meter failed silently.
     useSettingsStore.setState((s) => ({ settings: { ...s.settings, githubAiUsageEnabled: true } }))
@@ -92,25 +85,41 @@ describe('AI-usage chip gating', () => {
     await render()
     const chip = container.querySelector('[data-ai-usage-chip]') as HTMLElement
     expect(chip).not.toBeNull()
-    expect(chip.textContent).toBe('AI')
+    expect(chip.textContent).toContain('Copilot')
+    expect(chip.textContent).toContain('Fix auth')
+    expect(chip.textContent).toContain(WARN)
     expect(chip.getAttribute('title')).toContain('Plan: read')
   })
 
-  it('placeholder tooltip varies by status: no-auth says connect GitHub first', async () => {
+  it('placeholder varies by status: no-auth shows "Fix auth" + connect-GitHub tooltip', async () => {
     useSettingsStore.setState((s) => ({ settings: { ...s.settings, githubAiUsageEnabled: true } }))
     useGitHubStore.setState({ aiUsage: null, aiUsageStatus: 'no-auth' })
     await render()
     const chip = container.querySelector('[data-ai-usage-chip]') as HTMLElement
+    expect(chip.textContent).toContain('Fix auth')
     expect(chip.getAttribute('title')).toContain('Connect a GitHub account')
     expect(chip.getAttribute('title')).not.toContain('Plan: read')
   })
 
-  it('placeholder tooltip varies by status: error says could not reach GitHub', async () => {
+  it('error is a muted placeholder (not "Fix auth") with the could-not-reach tooltip', async () => {
     useSettingsStore.setState((s) => ({ settings: { ...s.settings, githubAiUsageEnabled: true } }))
     useGitHubStore.setState({ aiUsage: null, aiUsageStatus: 'error' })
     await render()
     const chip = container.querySelector('[data-ai-usage-chip]') as HTMLElement
+    expect(chip).not.toBeNull()
+    expect(chip.textContent).not.toContain('Fix auth')
+    expect(chip.textContent).toContain('Copilot')
     expect(chip.getAttribute('title')).toContain("Couldn't reach GitHub")
+  })
+
+  it('pending (loading) is a muted placeholder, not "Fix auth"', async () => {
+    useSettingsStore.setState((s) => ({ settings: { ...s.settings, githubAiUsageEnabled: true } }))
+    useGitHubStore.setState({ aiUsage: null, aiUsageStatus: 'pending' })
+    await render()
+    const chip = container.querySelector('[data-ai-usage-chip]') as HTMLElement
+    expect(chip).not.toBeNull()
+    expect(chip.textContent).not.toContain('Fix auth')
+    expect(chip.textContent).toContain('Copilot')
   })
 })
 
@@ -123,7 +132,7 @@ describe('AI-usage chip content', () => {
     await render()
     const chip = container.querySelector('[data-ai-usage-chip]')
     expect(chip).not.toBeNull()
-    expect(chip!.textContent).toBe('AI 8.1k')
+    expect(chip!.textContent).toBe('Copilot 8.1k')
   })
 
   it('shows used / cap when the cap is set', async () => {
@@ -133,7 +142,7 @@ describe('AI-usage chip content', () => {
     useGitHubStore.setState({ aiUsage: makeReport() })
     await render()
     const chip = container.querySelector('[data-ai-usage-chip]')
-    expect(chip!.textContent).toBe('AI 8.1k/20k')
+    expect(chip!.textContent).toBe('Copilot 8.1k/20k')
   })
 
   it('switches to the billed warning idiom when billedAmount > 0', async () => {
@@ -145,6 +154,6 @@ describe('AI-usage chip content', () => {
     })
     await render()
     const chip = container.querySelector('[data-ai-usage-chip]')
-    expect(chip!.textContent).toBe('AI +$11.69')
+    expect(chip!.textContent).toBe('Copilot +$11.69')
   })
 })

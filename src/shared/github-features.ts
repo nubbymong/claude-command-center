@@ -3,7 +3,7 @@
 // derivations the settings UI, badge sources, and runtime gating build on
 // (spec 2026-06-13 sections 2, 4). Pure module: no stores, no IPC.
 import type { AuthProfile, Capability, GitHubAuthFeatureKey } from './github-types'
-import { DEFAULT_AUTH_FEATURE_TOGGLES } from './github-constants'
+import { DEFAULT_AUTH_FEATURE_TOGGLES, CLASSIC_PAT_SCOPE_CAPABILITIES } from './github-constants'
 
 // Order follows DEFAULT_AUTH_FEATURE_TOGGLES declaration order and is part
 // of the contract: pendingReauth output (and any UI listing built on this)
@@ -65,7 +65,7 @@ export type MasterToggleState = 'on' | 'off' | 'mixed'
  * migration or hand-edited file may carry a sparse featureDefaults — layer
  * DEFAULT_AUTH_FEATURE_TOGGLES underneath before calling
  * (`{ ...DEFAULT_AUTH_FEATURE_TOGGLES, ...(cfg.featureDefaults ?? {}) }`),
- * the same pattern the store's setMasterFeature uses on its write path. */
+ * the same layering the store's feature-toggle writes use. */
 
 export function masterState(
   profiles: AuthProfile[],
@@ -77,4 +77,57 @@ export function masterState(
   if (vals.every(Boolean)) return 'on'
   if (vals.every((v) => !v)) return 'off'
   return 'mixed'
+}
+
+// Inverse of the classic/OAuth scope table: capability -> the scope that grants it.
+// Used to turn a missing capability into the scope re-auth must request.
+const CAPABILITY_TO_SCOPE: Partial<Record<Capability, string>> = (() => {
+  const out: Partial<Record<Capability, string>> = {}
+  for (const [scope, caps] of Object.entries(CLASSIC_PAT_SCOPE_CAPABILITIES)) {
+    for (const c of caps) if (!(c in out)) out[c] = scope
+  }
+  return out
+})()
+
+/** ADDITIVE scopes a re-auth must request: for each enabled feature this profile
+ *  cannot yet power, the scope granting the first missing capability — minus any
+ *  scope the profile already holds. Never a full set; union over a preserved base. */
+export function additiveScopesForPendingFeatures(
+  p: AuthProfile,
+  defaults?: Partial<Record<GitHubAuthFeatureKey, boolean>>,
+): string[] {
+  const have = new Set(p.scopes)
+  const want = new Set<string>()
+  for (const k of pendingReauth(p, defaults)) {
+    for (const cap of FEATURE_CAPABILITIES[k]) {
+      const scope = CAPABILITY_TO_SCOPE[cap]
+      if (scope && !have.has(scope)) want.add(scope)
+    }
+  }
+  return Array.from(want)
+}
+
+/** The scope a re-auth would request to cover this single feature on this
+ *  profile — the scope granting its first MISSING capability — or null if the
+ *  feature is already covered (or no scope maps). Drives the per-row coverage
+ *  hint in the account card ("needs `user`"). */
+export function missingScopeForFeature(p: AuthProfile, key: GitHubAuthFeatureKey): string | null {
+  for (const cap of FEATURE_CAPABILITIES[key]) {
+    if (p.capabilities.includes(cap)) continue
+    const scope = CAPABILITY_TO_SCOPE[cap]
+    if (scope) return scope
+  }
+  return null
+}
+
+/** Re-auth must preserve repo reach: private if the profile already holds `repo`. */
+export function repoModeForProfile(p: AuthProfile): 'public' | 'private' {
+  return p.scopes.includes('repo') ? 'private' : 'public'
+}
+
+/** The profile the AI-usage (Copilot) meter targets: the first auth profile.
+ *  (The main-process scheduler resolves the first profile holding a token; the
+ *  renderer can't see tokens, so it mirrors the convention with profiles[0].) */
+export function resolveAiUsageTargetId(profiles: AuthProfile[]): string | null {
+  return profiles[0]?.id ?? null
 }

@@ -12,18 +12,33 @@ import type {
   Capability,
   GitHubAuthFeatureKey,
   GitHubConfig,
+  ReauthResult,
 } from '../../../src/shared/github-types'
 
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
 
-// Minimal electronAPI surface used by the panel's Test button (doTest).
+// electronAPI surface used by the panel: Test button (testProfile), the
+// kind-aware re-auth (reauthProfile), the device-flow poll (oauthPoll), the
+// cancel path (oauthCancel), and the external-link opener (shell.openExternal).
 const testProfileMock = vi.fn().mockResolvedValue({ ok: true, username: 'work-user' })
+const reauthProfileMock = vi.fn<(id: string) => Promise<ReauthResult>>()
+// Never-resolving by default so the device-flow modal stays mounted on "Waiting".
+const oauthPollMock = vi.fn(() => new Promise<{ ok: boolean }>(() => {}))
+const oauthCancelMock = vi.fn().mockResolvedValue({ ok: true })
+const openExternalMock = vi.fn().mockResolvedValue(undefined)
 ;(globalThis as any).window = (globalThis as any).window ?? {}
 ;(globalThis as any).window.electronAPI = {
   ...((globalThis as any).window?.electronAPI ?? {}),
   github: {
     ...((globalThis as any).window?.electronAPI?.github ?? {}),
     testProfile: testProfileMock,
+    reauthProfile: reauthProfileMock,
+    oauthPoll: oauthPollMock,
+    oauthCancel: oauthCancelMock,
+  },
+  shell: {
+    ...((globalThis as any).window?.electronAPI?.shell ?? {}),
+    openExternal: openExternalMock,
   },
 }
 
@@ -64,10 +79,11 @@ function makeProfile(
   id: string,
   caps: Capability[],
   toggles?: Record<GitHubAuthFeatureKey, boolean>,
+  kind: AuthProfile['kind'] = 'oauth',
 ): AuthProfile {
   return {
     id,
-    kind: 'oauth',
+    kind,
     label: id === 'a' ? 'Work' : 'Personal',
     username: id === 'a' ? 'work-user' : 'personal-user',
     scopes: ['repo', 'workflow'],
@@ -121,6 +137,8 @@ function seedGitHub(
     applyProfileToAll?: ReturnType<typeof vi.fn>
     removeProfile?: ReturnType<typeof vi.fn>
     renameProfile?: ReturnType<typeof vi.fn>
+    loadConfig?: ReturnType<typeof vi.fn>
+    loadAiUsage?: ReturnType<typeof vi.fn>
   },
 ) {
   useGitHubStore.setState({
@@ -130,6 +148,8 @@ function seedGitHub(
     applyProfileToAll: actions?.applyProfileToAll ?? vi.fn(),
     removeProfile: actions?.removeProfile ?? vi.fn(),
     renameProfile: actions?.renameProfile ?? vi.fn(),
+    loadConfig: actions?.loadConfig ?? vi.fn().mockResolvedValue(undefined),
+    loadAiUsage: actions?.loadAiUsage ?? vi.fn().mockResolvedValue(undefined),
   } as never)
 }
 
@@ -147,46 +167,64 @@ function buttonByText(container: HTMLElement, text: string): HTMLButtonElement |
   ) as HTMLButtonElement | undefined
 }
 
-function featuresTabButton(container: HTMLElement): HTMLButtonElement {
-  // The Features tab label gains a trailing warning glyph when pending, so match
-  // by includes rather than exact text.
-  return Array.from(container.querySelectorAll('button')).find((b) =>
-    b.textContent?.includes('Features'),
-  ) as HTMLButtonElement
-}
-
 beforeEach(() => {
   useGitHubStore.setState({ config: null, profiles: [] } as never)
   useSessionStore.setState({ sessions: [] } as never)
   vi.restoreAllMocks()
+  testProfileMock.mockClear().mockResolvedValue({ ok: true, username: 'work-user' })
+  reauthProfileMock.mockReset()
+  oauthPollMock.mockClear().mockImplementation(() => new Promise<{ ok: boolean }>(() => {}))
+  oauthCancelMock.mockClear().mockResolvedValue({ ok: true })
+  openExternalMock.mockClear().mockResolvedValue(undefined)
 })
 
 describe('AccountPanel', () => {
-  it('header shows pending chip + primary Re-auth for an uncovered profile, plain Re-auth for a covered one', () => {
-    // profile b: missing `plan`, aiCredits ON -> pending
+  it('single body, no Status/Features tabs: every feature row renders directly', () => {
+    const b = makeProfile('b', CAPS_NO_PLAN, allOn)
+    seedGitHub(makeConfig([b]))
+    const r = render(<AccountPanel profile={b} index={0} />)
+    // No tab strip buttons.
+    expect(buttonByText(r.container, 'Status & permissions')).toBeUndefined()
+    expect(buttonByText(r.container, 'Features')).toBeUndefined()
+    // All six feature labels render in one body with no tab click.
+    for (const label of [
+      'Active PR card', 'CI / Actions', 'Reviews & comments',
+      'Linked issues', 'Notifications inbox', 'AI credits usage',
+    ]) {
+      expect(r.container.textContent).toContain(label)
+    }
+    r.unmount()
+  })
+
+  it('header shows the pending chip for an uncovered profile and not for a covered one', () => {
     const b = makeProfile('b', CAPS_NO_PLAN, allOn)
     seedGitHub(makeConfig([b]))
     const rb = render(<AccountPanel profile={b} index={0} />)
     expect(rb.container.textContent).toContain('re-auth needed')
     expect(rb.container.textContent).toContain('AI credits usage')
-    // primary Re-auth button uses the blue primary style
-    const reauthB = buttonByText(rb.container, 'Re-auth')
-    expect(reauthB).toBeTruthy()
-    expect(reauthB!.className).toContain('bg-blue')
     rb.unmount()
 
-    // profile a: fully covered, all on -> NOT pending
     const a = makeProfile('a', FULL_CAPS, allOn)
     seedGitHub(makeConfig([a]))
     const ra = render(<AccountPanel profile={a} index={0} />)
     expect(ra.container.textContent).not.toContain('re-auth needed')
-    const reauthA = buttonByText(ra.container, 'Re-auth')
-    expect(reauthA).toBeTruthy()
-    expect(reauthA!.className).not.toContain('bg-blue')
     ra.unmount()
   })
 
-  it('status tab shows "Powers 5 of 6" and the bound live session for the missing-plan profile', () => {
+  it('coverage hint per row: uncovered aiCredits shows "needs user", covered rows show "covered"', () => {
+    const b = makeProfile('b', CAPS_NO_PLAN, allOn)
+    seedGitHub(makeConfig([b]))
+    const r = render(<AccountPanel profile={b} index={0} />)
+    const text = r.container.textContent ?? ''
+    // aiCredits is uncovered (missingScopeForFeature -> 'user').
+    expect(text).toContain('needs')
+    expect(text).toContain('user')
+    // The five covered features show the "covered" marker.
+    expect(text).toContain('covered')
+    r.unmount()
+  })
+
+  it('"Powers 5 of 6" and the bound live session show in the single body', () => {
     const b = makeProfile('b', CAPS_NO_PLAN, allOn)
     seedGitHub(makeConfig([b]))
     seedSessions([
@@ -199,7 +237,7 @@ describe('AccountPanel', () => {
     r.unmount()
   })
 
-  it('status tab shows "no live sessions right now" when none are bound', () => {
+  it('"no live sessions right now" when none are bound', () => {
     const a = makeProfile('a', FULL_CAPS, allOn)
     seedGitHub(makeConfig([a]))
     seedSessions([makeSession('s1', 'something', undefined)])
@@ -208,17 +246,11 @@ describe('AccountPanel', () => {
     r.unmount()
   })
 
-  it('features tab: uncovered+on row shows "activates after re-auth" with switch ON; toggling calls setProfileFeature with the inverse', () => {
+  it('toggling a feature calls setProfileFeature with the inverse', () => {
     const setProfileFeature = vi.fn()
     const b = makeProfile('b', CAPS_NO_PLAN, allOn)
     seedGitHub(makeConfig([b]), { setProfileFeature })
     const r = render(<AccountPanel profile={b} index={0} />)
-    // switch to the Features tab
-    const featuresTab = featuresTabButton(r.container)
-    act(() => {
-      featuresTab.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    })
-    expect(r.container.textContent).toContain('activates after re-auth')
     const sw = switchFor(r.container, 'AI credits usage')
     expect(sw.getAttribute('aria-checked')).toBe('true')
     act(() => {
@@ -228,16 +260,96 @@ describe('AccountPanel', () => {
     r.unmount()
   })
 
+  it('pending footer + oauth re-auth: ONE button calls reauthProfile and renders the device flow', async () => {
+    const b = makeProfile('b', CAPS_NO_PLAN, allOn)
+    seedGitHub(makeConfig([b]))
+    reauthProfileMock.mockResolvedValue({
+      ok: true,
+      plan: { kind: 'oauth', mode: 'private', scopes: ['user'] },
+      flow: {
+        flowId: 'f1',
+        userCode: 'AB-CD',
+        verificationUri: 'https://github.com/login/device',
+        expiresIn: 900,
+        interval: 5,
+      },
+    })
+    const r = render(<AccountPanel profile={b} index={0} />)
+    // Footer announces the re-auth count and offers exactly one re-auth button.
+    const footerText = r.container.textContent ?? ''
+    expect(footerText).toContain('need')
+    expect(/re-authoriz/i.test(footerText)).toBe(true)
+    const reauthBtn = buttonByText(r.container, 'Re-authorize this account')
+    expect(reauthBtn).toBeTruthy()
+    act(() => {
+      reauthBtn!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await flush()
+    expect(reauthProfileMock).toHaveBeenCalledWith('b')
+    // Device-flow modal mounted.
+    const after = r.container.textContent ?? ''
+    expect(after.includes('AB-CD') || after.includes('Sign in with GitHub')).toBe(true)
+    r.unmount()
+  })
+
+  it('pat-classic re-auth shows inline instructions and NO device flow', async () => {
+    const b = makeProfile('b', CAPS_NO_PLAN, allOn, 'pat-classic')
+    seedGitHub(makeConfig([b]))
+    reauthProfileMock.mockResolvedValue({
+      ok: true,
+      plan: {
+        kind: 'pat-classic',
+        instruction: 'Edit this classic token and add the `user` scope, then re-save it here.',
+        scopes: ['user'],
+      },
+    })
+    const r = render(<AccountPanel profile={b} index={0} />)
+    act(() => {
+      buttonByText(r.container, 'Re-authorize this account')!.dispatchEvent(
+        new MouseEvent('click', { bubbles: true }),
+      )
+    })
+    await flush()
+    const text = r.container.textContent ?? ''
+    // Driven by plan.instruction (contains 'user' + 'scope').
+    expect(text).toContain('user')
+    expect(text).toContain('scope')
+    // No device flow.
+    expect(text).not.toContain('Sign in with GitHub')
+    r.unmount()
+  })
+
+  it('gh-cli re-auth renders the computed refresh command and NO device flow', async () => {
+    const b = makeProfile('b', CAPS_NO_PLAN, allOn, 'gh-cli')
+    seedGitHub(makeConfig([b]))
+    reauthProfileMock.mockResolvedValue({
+      ok: true,
+      plan: {
+        kind: 'gh-cli',
+        command: 'gh auth refresh -h github.com -s user',
+        scopes: ['user'],
+      },
+    })
+    const r = render(<AccountPanel profile={b} index={0} />)
+    act(() => {
+      buttonByText(r.container, 'Re-authorize this account')!.dispatchEvent(
+        new MouseEvent('click', { bubbles: true }),
+      )
+    })
+    await flush()
+    const text = r.container.textContent ?? ''
+    // Driven by plan.command (the exact gh auth refresh line), no device flow.
+    expect(text).toContain('gh auth refresh -h github.com -s user')
+    expect(text).not.toContain('Sign in with GitHub')
+    r.unmount()
+  })
+
   it('"Apply to all accounts" calls applyProfileToAll and is absent with a single profile', () => {
     const applyProfileToAll = vi.fn()
     const a = makeProfile('a', FULL_CAPS, allOn)
     const b = makeProfile('b', CAPS_NO_PLAN, allOn)
     seedGitHub(makeConfig([a, b]), { applyProfileToAll })
     const r = render(<AccountPanel profile={a} index={0} />)
-    const featuresTab = featuresTabButton(r.container)
-    act(() => {
-      featuresTab.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    })
     const applyBtn = buttonByText(r.container, 'Apply to all accounts')
     expect(applyBtn).toBeTruthy()
     act(() => {
@@ -249,60 +361,24 @@ describe('AccountPanel', () => {
     // single profile -> no Apply button
     seedGitHub(makeConfig([a]), { applyProfileToAll })
     const r2 = render(<AccountPanel profile={a} index={0} />)
-    const featuresTab2 = featuresTabButton(r2.container)
-    act(() => {
-      featuresTab2.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    })
     expect(buttonByText(r2.container, 'Apply to all accounts')).toBeUndefined()
     r2.unmount()
   })
 
-  it('Features tab label carries the warning glyph only when pending', () => {
-    const warn = String.fromCodePoint(0x26a0)
-    // pending profile -> glyph present
-    const b = makeProfile('b', CAPS_NO_PLAN, allOn)
-    seedGitHub(makeConfig([b]))
-    const rb = render(<AccountPanel profile={b} index={0} />)
-    const featTabB = Array.from(rb.container.querySelectorAll('button')).find((x) =>
-      x.textContent?.includes('Features'),
-    )!
-    expect(featTabB.textContent).toContain(warn)
-    rb.unmount()
-
-    // covered profile -> no glyph
-    const a = makeProfile('a', FULL_CAPS, allOn)
-    seedGitHub(makeConfig([a]))
-    const ra = render(<AccountPanel profile={a} index={0} />)
-    const featTabA = Array.from(ra.container.querySelectorAll('button')).find((x) =>
-      x.textContent?.includes('Features'),
-    )!
-    expect(featTabA.textContent).not.toContain(warn)
-    ra.unmount()
-  })
-
-  it('features tab marks a feature that differs across accounts and leaves agreeing ones unmarked', () => {
+  it('marks a feature that differs across accounts and leaves agreeing ones unmarked', () => {
     // a: aiCredits ON; b: aiCredits OFF -> masterState('aiCredits') === 'mixed'.
-    // Every other feature agrees (both allOn except b.aiCredits).
     const a = makeProfile('a', FULL_CAPS, allOn)
     const b = makeProfile('b', FULL_CAPS, { ...allOn, aiCredits: false })
     seedGitHub(makeConfig([a, b]))
     const r = render(<AccountPanel profile={a} index={0} />)
-    act(() => {
-      featuresTabButton(r.container).dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    })
-    // Exactly one "differs across accounts" chip (the aiCredits row).
     const differs = Array.from(r.container.querySelectorAll('*')).filter(
       (el) => el.childElementCount === 0 && el.textContent === 'differs across accounts',
     )
     expect(differs).toHaveLength(1)
     r.unmount()
 
-    // All-agree config -> no "differs" chip anywhere.
     seedGitHub(makeConfig([makeProfile('a', FULL_CAPS, allOn), makeProfile('b', FULL_CAPS, allOn)]))
     const r2 = render(<AccountPanel profile={makeProfile('a', FULL_CAPS, allOn)} index={0} />)
-    act(() => {
-      featuresTabButton(r2.container).dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    })
     expect(r2.container.textContent).not.toContain('differs across accounts')
     r2.unmount()
   })

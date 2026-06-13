@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { useGitHubStore } from '../../../stores/githubStore'
-import MasterFeaturesSection from './MasterFeaturesSection'
 import AccountsSection from './AccountsSection'
+import AppWideFeatures from './AppWideFeatures'
 import PermissionsSummary from './PermissionsSummary'
 import PrivacySettings from './PrivacySettings'
 import SyncSettings from './SyncSettings'
@@ -32,12 +32,12 @@ export default function GitHubConfigTab() {
           <span>Enable by default for new sessions</span>
         </label>
       </div>
-      <MasterFeaturesSection />
       <AccountsSection />
-      <PermissionsSummary />
+      <AppWideFeatures />
       <PrivacySettings />
       <SyncSettings />
       <AiUsageSettings />
+      <PermissionsSummary />
       <div className="text-xs text-overlay0 pt-4 border-t border-surface0">
         <strong>No telemetry.</strong> This feature sends no usage data to Anthropic
         or third parties. All requests go to github.com using your configured auth.
