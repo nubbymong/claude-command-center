@@ -158,22 +158,46 @@ const SAMPLE_CLOUD_AGENTS = [
   },
 ]
 
-// Fake GitHub config + auth profile for the Settings > GitHub screenshot.
-// The "token" entry here is a label only — the real token lives in OS
-// credential storage and is not captured in the JSON file. These fields
-// populate the AuthProfilesList render so the screenshot shows a realistic
-// signed-in state instead of the empty "No auth profiles yet" placeholder.
+// Fake GitHub config + two auth profiles for the Settings > GitHub screenshot.
+// The "token" entries here are labels only - the real tokens live in OS
+// credential storage and are not captured in the JSON file. These fields
+// populate the Accounts panels and the all-accounts master section so the
+// screenshot shows a realistic multi-account state instead of the empty
+// "No accounts yet" placeholder.
 // Importantly: no real usernames, repo owners, or tokens in this demo.
+//
+// Two profiles are engineered so the captured screenshots demonstrate the
+// redesigned surfaces:
+//   - Profile A (demo-github-profile): fully covered, every feature on, so it
+//     reads as a clean signed-in account with no warnings.
+//   - Profile B (demo-personal-profile): aiCredits is switched ON but its
+//     capabilities lack the `plan` cap, so it surfaces a "needs re-auth" chip;
+//     it also has notifications OFF while A has it ON, so the all-accounts
+//     master row for notifications renders as MIXED (tri-state).
+// Cap math: FEATURE_CAPABILITIES maps activePR->[pulls], ci->[actions],
+// reviews->[pulls], linkedIssues->[issues], notifications->[notifications],
+// aiCredits->[plan]. A feature is "covered" when the profile's capabilities
+// include every cap that feature needs; a toggled-on-but-uncovered feature is
+// what surfaces as pending re-auth.
 const SAMPLE_GITHUB_CONFIG = {
   schemaVersion: 1,
   authProfiles: {
+    // Fully covered: all eight capabilities, every auth feature on and powered.
     'demo-github-profile': {
       id: 'demo-github-profile',
       kind: 'oauth' as const,
       label: 'developer',
       username: 'developer',
-      scopes: ['repo', 'notifications'],
-      capabilities: ['pulls', 'issues', 'contents', 'statuses', 'checks', 'actions', 'notifications'],
+      scopes: ['repo', 'notifications', 'user'],
+      capabilities: ['pulls', 'issues', 'contents', 'statuses', 'checks', 'actions', 'notifications', 'plan'],
+      featureToggles: {
+        activePR: true,
+        ci: true,
+        reviews: true,
+        linkedIssues: true,
+        notifications: true,
+        aiCredits: true,
+      },
       createdAt: Date.now() - 86_400_000,
       lastVerifiedAt: Date.now() - 3_600_000,
       expiryObservable: false,
@@ -181,8 +205,33 @@ const SAMPLE_GITHUB_CONFIG = {
         core: { limit: 5000, remaining: 4732, resetAt: Date.now() + 1800_000, capturedAt: Date.now() },
       },
     },
+    // Partial coverage: a fine-grained PAT with no `notifications` or `plan`
+    // cap. aiCredits is on but uncovered -> pending re-auth chip. notifications
+    // is off here while A has it on -> the master notifications row is mixed.
+    'demo-personal-profile': {
+      id: 'demo-personal-profile',
+      kind: 'pat-fine-grained' as const,
+      label: 'personal',
+      username: 'dev-personal',
+      scopes: ['public_repo'],
+      capabilities: ['pulls', 'issues', 'contents', 'actions'],
+      featureToggles: {
+        activePR: true,
+        ci: true,
+        reviews: true,
+        linkedIssues: true,
+        notifications: false,
+        aiCredits: true,
+      },
+      createdAt: Date.now() - 43_200_000,
+      lastVerifiedAt: Date.now() - 1_800_000,
+      expiryObservable: false,
+    },
   },
   defaultAuthProfileId: 'demo-github-profile',
+  // Legacy 7-key global map - kept for downgrade safety so an older build that
+  // still reads featureToggles renders sensibly. New auth-feature intent lives
+  // in featureDefaults; app-wide no-auth features live in appWideToggles.
   featureToggles: {
     sessionContext: true,
     activePR: true,
@@ -192,6 +241,15 @@ const SAMPLE_GITHUB_CONFIG = {
     notifications: true,
     localGit: true,
   },
+  featureDefaults: {
+    activePR: true,
+    ci: true,
+    reviews: true,
+    linkedIssues: true,
+    notifications: true,
+    aiCredits: false,
+  },
+  appWideToggles: { localGit: true, sessionContext: true },
   syncIntervals: { activeSessionSec: 60, backgroundSec: 300, notificationsSec: 300 },
   enabledByDefault: false,
   transcriptScanningOptIn: false,
