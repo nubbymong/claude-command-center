@@ -5,6 +5,10 @@
 import type { AuthProfile, Capability, GitHubAuthFeatureKey } from './github-types'
 import { DEFAULT_AUTH_FEATURE_TOGGLES } from './github-constants'
 
+// Order follows DEFAULT_AUTH_FEATURE_TOGGLES declaration order and is part
+// of the contract: pendingReauth output (and any UI listing built on this)
+// renders in this order. Reordering the constant reorders consumers; the
+// registry test locks the expected sequence.
 export const AUTH_FEATURE_KEYS = Object.keys(
   DEFAULT_AUTH_FEATURE_TOGGLES,
 ) as GitHubAuthFeatureKey[]

@@ -4,6 +4,7 @@ import {
   AUTH_FEATURE_KEYS,
   FEATURE_CAPABILITIES,
   profileCoversFeature,
+  effectiveToggle,
   pendingReauth,
   masterState,
 } from '../../src/shared/github-features'
@@ -48,6 +49,26 @@ describe('profileCoversFeature / pendingReauth', () => {
   })
   it('no toggles map and no defaults means nothing pending', () => {
     expect(pendingReauth(profile({}))).toEqual([])
+  })
+})
+
+describe('effectiveToggle', () => {
+  const defaults = { activePR: false, ci: true, reviews: false, linkedIssues: false, notifications: false, aiCredits: false }
+  it('own map wins over defaults', () => {
+    const p = profile({ featureToggles: { activePR: true, ci: false, reviews: false, linkedIssues: false, notifications: false, aiCredits: false } })
+    expect(effectiveToggle(p, 'activePR', defaults)).toBe(true)
+    expect(effectiveToggle(p, 'ci', defaults)).toBe(false)
+  })
+  it('a partially populated map falls through to defaults for missing keys', () => {
+    // Runtime reality after a partial migration or manual config edit: the
+    // type says full Record, the file may disagree. The ?? chain handles it.
+    const p = profile({ featureToggles: { activePR: true } as unknown as AuthProfile['featureToggles'] })
+    expect(effectiveToggle(p, 'activePR', defaults)).toBe(true)
+    expect(effectiveToggle(p, 'ci', defaults)).toBe(true) // from defaults
+    expect(effectiveToggle(p, 'reviews', defaults)).toBe(false)
+  })
+  it('absent map and absent defaults mean off', () => {
+    expect(effectiveToggle(profile({}), 'activePR')).toBe(false)
   })
 })
 
