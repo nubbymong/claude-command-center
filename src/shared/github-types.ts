@@ -11,7 +11,22 @@ export type Capability =
   | 'checks'
   | 'actions'
   | 'notifications'
+  | 'plan'
 
+// Feature keys that require auth, per spec section 2. localGit and
+// sessionContext are app-wide and never appear on a profile.
+export type GitHubAuthFeatureKey =
+  | 'activePR'
+  | 'ci'
+  | 'reviews'
+  | 'linkedIssues'
+  | 'notifications'
+  | 'aiCredits'
+
+export type GitHubAppWideFeatureKey = 'localGit' | 'sessionContext'
+
+// Legacy union, still used by the (unmigrated until Plan 2) settings UI and
+// by the legacy global featureToggles field. Do not delete.
 export type GitHubFeatureKey =
   | 'activePR'
   | 'ci'
@@ -36,6 +51,10 @@ export interface AuthProfile {
   avatarUrl?: string
   scopes: string[]
   capabilities: Capability[]
+  /** Per-account feature enablement (spec 2026-06-13 section 2). Absent on
+   * profiles created before the migration ran; readers fall back to
+   * GitHubConfig.featureDefaults. */
+  featureToggles?: Record<GitHubAuthFeatureKey, boolean>
   allowedRepos?: string[]
   tokenCiphertext?: string
   ghCliUsername?: string
@@ -62,6 +81,12 @@ export interface GitHubConfig {
   authProfiles: Record<string, AuthProfile>
   defaultAuthProfileId?: string
   featureToggles: Record<GitHubFeatureKey, boolean>
+  /** App-wide no-auth features. Replaces the localGit/sessionContext keys of
+   * the legacy global featureToggles. */
+  appWideToggles?: Record<GitHubAppWideFeatureKey, boolean>
+  /** Persisted auth-feature intent: seeds every newly added account and is
+   * the only holder of toggles while zero accounts exist. */
+  featureDefaults?: Record<GitHubAuthFeatureKey, boolean>
   syncIntervals: GitHubSyncIntervals
   enabledByDefault: boolean
   transcriptScanningOptIn: boolean
