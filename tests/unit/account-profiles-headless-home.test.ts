@@ -69,4 +69,13 @@ describe('resolveHeadlessProfileHome', () => {
     upsertProfile({ ...b, accountEmail: 'bob@example.com' })
     expect(resolveHeadlessProfileHome().profileId).toBe(b.id)
   })
+
+  it('uses the bare global when profile metadata persists but its home dir was deleted', () => {
+    // homeExists() must exclude stale-metadata profiles so we never hand back a
+    // home dir that no longer exists -- the branch that distinguishes this from
+    // a naive "first profile in metadata" pick.
+    const a = createProfile('Alice')
+    fs.rmSync(getProfileConfigDir(a.id), { recursive: true, force: true })
+    expect(resolveHeadlessProfileHome()).toEqual({ home: null, profileId: null })
+  })
 })
