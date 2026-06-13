@@ -18,6 +18,7 @@ import {
   isModelActive,
 } from '../lib/claude-cli-options'
 import { useRegistryStore } from '../stores/registryStore'
+import AiUsageChip from './github/AiUsageChip'
 
 interface SessionStatusStripProps {
   /** The PTY/session id for THIS terminal. Telemetry is read for this
@@ -58,6 +59,10 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
   // never re-renders on unrelated store churn.
   const canSwitchAccount = profiles.length >= 2
   const registry = useRegistryStore((s) => s.registry)
+  // Copilot AI-credit meter gate. The chip self-gates on githubAiUsageEnabled
+  // (returns null when off), so we read the same flag here to avoid rendering
+  // an orphaned separator with no chip after it.
+  const aiMeterEnabled = useSettingsStore((s) => s.settings.githubAiUsageEnabled)
 
   const [openPicker, setOpenPicker] = useState<'model' | 'account' | null>(null)
   const [lastEffort, setLastEffort] = useState<string | null>(null)
@@ -210,6 +215,28 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
         )}
         {codexReview && codexReview.reviewCount > 0 && (
           <span className="tabular-nums shrink-0" style={{ color: 'var(--text-muted)' }}>review {codexReview.reviewCount}</span>
+        )}
+        {/* Copilot AI-credit meter -- the per-session home for the meter. Gated
+            on BOTH the statusLine toggle AND the meter-enabled flag so the
+            separator never dangles when the chip itself would render null. The
+            chip clicks through to its popover, and its "Fix auth" / settings
+            link dispatches the same app:openSettings event the repo breadcrumb
+            uses (tab: github). Lives last in the telemetry zone so it shares the
+            shrink budget and clips first under overflow. */}
+        {sl.showCopilot && aiMeterEnabled && (
+          <>
+            <span
+              data-copilot-separator
+              className="w-px self-stretch my-1.5 mx-0.5 shrink-0"
+              style={{ background: 'var(--border-subtle)' }}
+              aria-hidden
+            />
+            <AiUsageChip
+              onOpenSettings={() =>
+                window.dispatchEvent(new CustomEvent('app:openSettings', { detail: { tab: 'github' } }))
+              }
+            />
+          </>
         )}
       </div>
 
