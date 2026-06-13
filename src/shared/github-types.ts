@@ -26,7 +26,10 @@ export type GitHubAuthFeatureKey =
 export type GitHubAppWideFeatureKey = 'localGit' | 'sessionContext'
 
 // Legacy union, still used by the (unmigrated until Plan 2) settings UI and
-// by the legacy global featureToggles field. Do not delete.
+// by the legacy global featureToggles field. Do not delete, and do not add
+// new keys: new auth features go in GitHubAuthFeatureKey only (this union
+// keys PermissionsSummary's capability table, which silently skips unknown
+// keys at runtime).
 export type GitHubFeatureKey =
   | 'activePR'
   | 'ci'

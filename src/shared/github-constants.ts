@@ -70,8 +70,10 @@ export const DEFAULT_FEATURE_TOGGLES: Record<GitHubFeatureKey, boolean> = {
   sessionContext: true,
 }
 
-// Per-account auth-feature defaults (spec 2026-06-13 section 2). Shared keys
-// MUST mirror DEFAULT_FEATURE_TOGGLES: notifications stays false (requires
+// Per-account auth-feature defaults (spec 2026-06-13 section 2). The key SETS
+// of this and DEFAULT_FEATURE_TOGGLES intentionally differ (aiCredits here;
+// localGit/sessionContext there); the constraint is that keys present in BOTH
+// must carry identical values. notifications stays false (requires
 // notifications-capable auth). aiCredits defaults off (requires the `plan`
 // capability — classic `user` scope / fine-grained Account "Plan: read").
 export const DEFAULT_AUTH_FEATURE_TOGGLES: Record<GitHubAuthFeatureKey, boolean> = {
@@ -83,10 +85,11 @@ export const DEFAULT_AUTH_FEATURE_TOGGLES: Record<GitHubAuthFeatureKey, boolean>
   aiCredits: false,
 }
 
-// App-wide no-auth feature defaults. Mirror DEFAULT_FEATURE_TOGGLES.
+// App-wide no-auth feature defaults; values must match the same keys in
+// DEFAULT_FEATURE_TOGGLES until Plan 2 retires them there.
 export const DEFAULT_APP_WIDE_TOGGLES: Record<GitHubAppWideFeatureKey, boolean> = {
-  localGit: true,
-  sessionContext: true,
+  localGit: true, // reads the local repo only
+  sessionContext: true, // derived from the session itself, no API calls
 }
 
 // OAuth scopes per repo-visibility mode.

@@ -5,7 +5,7 @@ describe('plan capability (AI-credits coverage)', () => {
   it('classic "user" scope grants plan', () => {
     expect(scopesToCapabilities('classic', ['user'])).toContain('plan')
   })
-  it('oauth "user" scope grants plan (same table as classic)', () => {
+  it('oauth token with "user" scope grants plan', () => {
     expect(scopesToCapabilities('oauth', ['user'])).toContain('plan')
   })
   it('fine-grained "plan" permission grants plan', () => {
