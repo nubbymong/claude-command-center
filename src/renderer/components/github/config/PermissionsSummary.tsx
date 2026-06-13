@@ -95,7 +95,8 @@ export default function PermissionsSummary() {
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        className="w-full flex items-center gap-2 text-sm uppercase text-subtext0 hover:text-text transition-colors"
+        aria-controls="permissions-summary-body"
+        className="w-full flex items-center gap-2 text-sm uppercase text-subtext0 hover:text-text transition-colors rounded focus:outline-none focus-visible:ring-1 focus-visible:ring-blue/50"
       >
         <svg
           viewBox="0 0 16 16"
@@ -109,7 +110,7 @@ export default function PermissionsSummary() {
         What each feature needs
       </button>
       {open && (
-        <div className="bg-mantle p-3 rounded text-sm space-y-3 mt-3">
+        <div id="permissions-summary-body" className="bg-mantle p-3 rounded text-sm space-y-3 mt-3">
           <div>
             <div className="text-subtext0 text-xs mb-1">
               OAuth / Classic PAT scopes (public repos only)

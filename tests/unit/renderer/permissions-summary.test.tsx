@@ -108,6 +108,15 @@ function clickDisclosure(container: HTMLElement) {
   })
 }
 
+// Read the OAuth public-scopes <code> by its block label rather than DOM order,
+// so a future markup reorder can't silently select the wrong scope block.
+function publicScopesText(container: HTMLElement): string {
+  const code = Array.from(container.querySelectorAll('code')).find((c) =>
+    (c.closest('div')?.textContent ?? '').includes('public repos only'),
+  )
+  return code?.textContent ?? ''
+}
+
 beforeEach(() => {
   useGitHubStore.setState({ config: null, profiles: [] } as never)
 })
@@ -124,6 +133,13 @@ describe('PermissionsSummary', () => {
     r.unmount()
   })
 
+  it('disclosure button keeps a visible keyboard focus ring (codebase convention)', () => {
+    seed(makeConfig([makeProfile('a', allOff)]))
+    const r = render(<PermissionsSummary />)
+    expect(disclosure(r.container).className).toContain('focus-visible:ring-1')
+    r.unmount()
+  })
+
   it('derives required scopes from per-account state, not the global featureToggles', () => {
     // Profile enables only activePR (pulls). NOT ci / notifications / aiCredits.
     // The legacy global featureToggles has notifications:true, but that must
@@ -131,8 +147,7 @@ describe('PermissionsSummary', () => {
     seed(makeConfig([makeProfile('a', { ...allOff, activePR: true })]))
     const r = render(<PermissionsSummary />)
     clickDisclosure(r.container)
-    const code = Array.from(r.container.querySelectorAll('code')).map((c) => c.textContent ?? '')
-    const publicScopes = code[0] ?? ''
+    const publicScopes = publicScopesText(r.container)
     expect(publicScopes).toContain('public_repo')
     expect(publicScopes).not.toContain('workflow')
     expect(publicScopes).not.toContain('notifications')
@@ -144,8 +159,7 @@ describe('PermissionsSummary', () => {
     seed(makeConfig([makeProfile('a', { ...allOff, aiCredits: true })]))
     const r = render(<PermissionsSummary />)
     clickDisclosure(r.container)
-    const code = Array.from(r.container.querySelectorAll('code')).map((c) => c.textContent ?? '')
-    const publicScopes = code[0] ?? ''
+    const publicScopes = publicScopesText(r.container)
     expect(publicScopes).toContain('user')
     expect(r.container.textContent).toContain('Plan: read (Account)')
     r.unmount()
@@ -164,8 +178,7 @@ describe('PermissionsSummary', () => {
     )
     const r = render(<PermissionsSummary />)
     clickDisclosure(r.container)
-    const code = Array.from(r.container.querySelectorAll('code')).map((c) => c.textContent ?? '')
-    const publicScopes = code[0] ?? ''
+    const publicScopes = publicScopesText(r.container)
     expect(publicScopes).toContain('public_repo')
     r.unmount()
   })
@@ -179,8 +192,7 @@ describe('PermissionsSummary', () => {
     )
     const r = render(<PermissionsSummary />)
     clickDisclosure(r.container)
-    const code = Array.from(r.container.querySelectorAll('code')).map((c) => c.textContent ?? '')
-    const publicScopes = code[0] ?? ''
+    const publicScopes = publicScopesText(r.container)
     expect(publicScopes).toContain('notifications')
     r.unmount()
   })
