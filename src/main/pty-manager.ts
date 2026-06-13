@@ -1038,23 +1038,28 @@ export function spawnPty(
       //
       // `claude --resume <uuid>` is cwd-SCOPED: it only resolves a conversation
       // from the LAUNCH cwd's mangled ~/.claude/projects/<mangled> folder, and
-      // needs both <uuid>.jsonl and a same-name companion dir there. The default
-      // resume-picker / newest-in-folder behaviour can therefore pick a STALE
-      // conversation when the live one ran under a DIFFERENT cwd (e.g. a git
-      // worktree). So we must do BOTH: pass --resume <uuid> AND override the
-      // launch cwd to the directory the conversation actually ran in (read out
-      // of the JSONL — the mangled folder name is lossy and not reversible).
+      // needs both <uuid>.jsonl AND a same-name companion dir there. The CLI only
+      // creates that companion dir LAZILY (first subagent/workflow), so a
+      // direct-work conversation lacks one — CCC therefore ENSURES it on demand
+      // (see below) rather than requiring it. The default resume-picker /
+      // newest-in-folder behaviour can also pick a STALE conversation when the
+      // live one ran under a DIFFERENT cwd (e.g. a git worktree). So we must do
+      // BOTH: pass --resume <uuid> AND override the launch cwd to the directory
+      // the conversation actually ran in (read out of the JSONL — the mangled
+      // folder name is lossy and not reversible).
       //
       // Effective target precedence (all fail-open):
       //   options.resume          (app-relaunch: persisted on the restored session)
       //   lastResumeTarget        (in-session Restart / Switch-account: self-captured)
       //
       // The whole override is gated by the pure resolveResumeLaunch() helper:
-      // transcript file present, companion dir present, and the RAW target cwd
-      // is a real directory (stat'd directly — NOT via the homedir-fallback
-      // resolveCwd). ANY miss → drop resume entirely and fall back to existing
-      // behaviour. We never launch --resume from os.homedir() (a deleted
-      // worktree therefore falls back, it does not silently retarget home).
+      // transcript file present AND the RAW target cwd is a real directory
+      // (stat'd directly — NOT via the homedir-fallback resolveCwd). A missing
+      // companion dir is NO LONGER a gate — the helper creates it best-effort so
+      // a direct-work conversation stays resumable. ANY OTHER miss → drop resume
+      // entirely and fall back to existing behaviour. We never launch --resume
+      // from os.homedir() (a deleted worktree therefore falls back, it does not
+      // silently retarget home).
       let resumeUuid: string | undefined = undefined
       let claudeCwd = resolvedCwd
       // Precedence: app-relaunch persisted target wins over the self-captured
