@@ -60,6 +60,13 @@ export function pendingReauth(
 
 export type MasterToggleState = 'on' | 'off' | 'mixed'
 
+/** NOTE for callers: `defaults` must be a COMPLETE map. Post-migration
+ * configs and emptyGitHubConfig() guarantee that, but an interrupted-
+ * migration or hand-edited file may carry a sparse featureDefaults — layer
+ * DEFAULT_AUTH_FEATURE_TOGGLES underneath before calling
+ * (`{ ...DEFAULT_AUTH_FEATURE_TOGGLES, ...(cfg.featureDefaults ?? {}) }`),
+ * the same pattern the store's setMasterFeature uses on its write path. */
+
 export function masterState(
   profiles: AuthProfile[],
   defaults: Record<GitHubAuthFeatureKey, boolean>,
