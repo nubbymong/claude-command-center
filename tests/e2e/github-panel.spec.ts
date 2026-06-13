@@ -4,7 +4,7 @@
  * Covers renderer shell behavior that doesn't require network or OAuth:
  *   - Integration-disabled state renders a floating logo FAB (Configure)
  *   - Ctrl+/ (⌘+/ on Mac) toggles panelVisible
- *   - Empty-state copy for AuthProfilesList surfaces when no profiles
+ *   - Empty-state copy for AccountsSection surfaces when no profiles
  *
  * What this does NOT cover:
  *   - Populated panel sections (requires real GitHub data or fixture
@@ -137,7 +137,7 @@ test.describe('GitHub Panel states', () => {
     await page.waitForTimeout(400)
 
     const body = await page.locator('body').innerText()
-    // AuthProfilesList copy when empty.
+    // AccountsSection empty-state copy.
     expect(body).toContain('No auth profiles yet')
   })
 })

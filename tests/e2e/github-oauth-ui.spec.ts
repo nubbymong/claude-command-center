@@ -4,7 +4,7 @@
  * What this covers:
  *   - Settings → GitHub tab renders without crashing
  *   - "Sign in with GitHub / Add auth" entry point is present
- *   - AuthProfilesList shows the empty-state when no profiles exist
+ *   - AccountsSection shows the empty-state when no profiles exist
  *
  * What this intentionally does NOT cover:
  *   - Hitting real api.github.com — E2E must not depend on the network

@@ -163,7 +163,7 @@ const SAMPLE_CLOUD_AGENTS = [
 // credential storage and are not captured in the JSON file. These fields
 // populate the Accounts panels and the all-accounts master section so the
 // screenshot shows a realistic multi-account state instead of the empty
-// "No accounts yet" placeholder.
+// "No auth profiles yet" placeholder.
 // Importantly: no real usernames, repo owners, or tokens in this demo.
 //
 // Two profiles are engineered so the captured screenshots demonstrate the
