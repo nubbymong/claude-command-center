@@ -200,6 +200,38 @@ describe('per-account feature actions', () => {
     expect(updateProfileMock).toHaveBeenCalledWith('c', { featureToggles: allOn })
   })
 
+  // Sparse featureDefaults in the per-PROFILE write path. A map-less profile on
+  // a pre-migration/sparse config must inherit DEFAULT_AUTH_FEATURE_TOGGLES for
+  // keys the sparse featureDefaults omits — NOT collapse them to false. The
+  // settings UI renders rows from layered defaults, so the write path must layer
+  // identically or toggling one feature silently turns the default-on ones off.
+  const sparseDefaults = { activePR: true } as unknown as Record<GitHubAuthFeatureKey, boolean>
+  const layeredFromSparse: Record<GitHubAuthFeatureKey, boolean> = {
+    activePR: true, ci: true, reviews: true, linkedIssues: true, notifications: false, aiCredits: false,
+  }
+
+  it('setProfileFeature layers DEFAULT under a sparse featureDefaults for a map-less profile', async () => {
+    seed([{ id: 'a', toggles: undefined }], sparseDefaults)
+    await useGitHubStore.getState().setProfileFeature('a', 'notifications', true)
+    expect(updateProfileMock).toHaveBeenCalledWith('a', {
+      featureToggles: { ...layeredFromSparse, notifications: true },
+    })
+  })
+
+  it('setMasterFeature layers DEFAULT under a sparse featureDefaults for a map-less profile', async () => {
+    seed([{ id: 'a', toggles: undefined }], sparseDefaults)
+    await useGitHubStore.getState().setMasterFeature('notifications', true)
+    expect(updateProfileMock).toHaveBeenCalledWith('a', {
+      featureToggles: { ...layeredFromSparse, notifications: true },
+    })
+  })
+
+  it('applyProfileToAll layers DEFAULT under a sparse featureDefaults when the source has no map', async () => {
+    seed([{ id: 'a', toggles: undefined }, { id: 'b', toggles: allOff }], sparseDefaults)
+    await useGitHubStore.getState().applyProfileToAll('a')
+    expect(updateProfileMock).toHaveBeenCalledWith('b', { featureToggles: layeredFromSparse })
+  })
+
   // F2 — serialization against the RMW race. Two rapid setProfileFeature calls
   // on the SAME profile (different keys). The mocked updateProfile resolves on a
   // deferred promise and applies the written map back into store state; the

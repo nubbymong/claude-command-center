@@ -16,6 +16,24 @@ import type {
 
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
 
+// Minimal electronAPI surface used by the panel's Test button (doTest).
+const testProfileMock = vi.fn().mockResolvedValue({ ok: true, username: 'work-user' })
+;(globalThis as any).window = (globalThis as any).window ?? {}
+;(globalThis as any).window.electronAPI = {
+  ...((globalThis as any).window?.electronAPI ?? {}),
+  github: {
+    ...((globalThis as any).window?.electronAPI?.github ?? {}),
+    testProfile: testProfileMock,
+  },
+}
+
+function flush() {
+  return act(async () => {
+    await Promise.resolve()
+    await Promise.resolve()
+  })
+}
+
 function render(ui: React.ReactElement) {
   const container = document.createElement('div')
   document.body.appendChild(container)
@@ -260,6 +278,73 @@ describe('AccountPanel', () => {
     )!
     expect(featTabA.textContent).not.toContain(warn)
     ra.unmount()
+  })
+
+  it('features tab marks a feature that differs across accounts and leaves agreeing ones unmarked', () => {
+    // a: aiCredits ON; b: aiCredits OFF -> masterState('aiCredits') === 'mixed'.
+    // Every other feature agrees (both allOn except b.aiCredits).
+    const a = makeProfile('a', FULL_CAPS, allOn)
+    const b = makeProfile('b', FULL_CAPS, { ...allOn, aiCredits: false })
+    seedGitHub(makeConfig([a, b]))
+    const r = render(<AccountPanel profile={a} index={0} />)
+    act(() => {
+      featuresTabButton(r.container).dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    // Exactly one "differs across accounts" chip (the aiCredits row).
+    const differs = Array.from(r.container.querySelectorAll('*')).filter(
+      (el) => el.childElementCount === 0 && el.textContent === 'differs across accounts',
+    )
+    expect(differs).toHaveLength(1)
+    r.unmount()
+
+    // All-agree config -> no "differs" chip anywhere.
+    seedGitHub(makeConfig([makeProfile('a', FULL_CAPS, allOn), makeProfile('b', FULL_CAPS, allOn)]))
+    const r2 = render(<AccountPanel profile={makeProfile('a', FULL_CAPS, allOn)} index={0} />)
+    act(() => {
+      featuresTabButton(r2.container).dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    expect(r2.container.textContent).not.toContain('differs across accounts')
+    r2.unmount()
+  })
+
+  it('Test button calls testProfile and renders the result', async () => {
+    testProfileMock.mockClear().mockResolvedValue({ ok: true, username: 'work-user' })
+    const a = makeProfile('a', FULL_CAPS, allOn)
+    seedGitHub(makeConfig([a]))
+    const r = render(<AccountPanel profile={a} index={0} />)
+    act(() => {
+      buttonByText(r.container, 'Test')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await flush()
+    expect(testProfileMock).toHaveBeenCalledWith('a')
+    expect(r.container.textContent).toContain('work-user')
+    r.unmount()
+  })
+
+  it('rename double-fire guard: Enter then blur fires renameProfile once', async () => {
+    // commitRename runs on BOTH Enter (onKeyDown) and the blur it triggers; the
+    // renamingRef guard must collapse the pair into a single IPC call.
+    let resolveRename: () => void = () => {}
+    const renameProfile = vi.fn().mockImplementation(
+      () => new Promise<void>((res) => { resolveRename = res }),
+    )
+    const a = makeProfile('a', FULL_CAPS, allOn)
+    seedGitHub(makeConfig([a]), { renameProfile })
+    const r = render(<AccountPanel profile={a} index={0} />)
+    act(() => {
+      buttonByText(r.container, 'Rename')!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    const input = r.container.querySelector('input') as HTMLInputElement
+    expect(input).toBeTruthy()
+    act(() => {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      // React delegates onBlur to the bubbling 'focusout' event, not 'blur'.
+      input.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
+    })
+    expect(renameProfile).toHaveBeenCalledTimes(1)
+    act(() => { resolveRename() })
+    await flush()
+    r.unmount()
   })
 
   it('Remove keeps the confirm() guard: confirm=false does not call removeProfile', () => {

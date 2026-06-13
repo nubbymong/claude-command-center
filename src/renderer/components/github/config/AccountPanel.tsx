@@ -282,8 +282,10 @@ function StatusTab({
         <span className="text-overlay0"> (sessions link via their repo; informational)</span>
       </div>
       <div className="flex flex-wrap gap-1.5">
-        {profile.scopes.map((s) => (
-          <Chip key={s} tone="ok">
+        {profile.scopes.map((s, i) => (
+          // Index-suffixed key: GitHub can report a scope string more than once;
+          // a bare key={s} would collide and drop a chip.
+          <Chip key={`${s}-${i}`} tone="ok">
             {s} {CHECK}
           </Chip>
         ))}

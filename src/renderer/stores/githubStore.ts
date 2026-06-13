@@ -88,6 +88,15 @@ function enqueueToggleWrite(work: () => Promise<void>): Promise<void> {
   return run
 }
 
+// featureDefaults can be sparse or absent on a pre-migration / hand-edited
+// config; layer DEFAULT_AUTH_FEATURE_TOGGLES underneath so every feature-toggle
+// write resolves a COMPLETE map for all auth keys — the same layering the
+// settings UI uses to render rows. Passing bare featureDefaults into
+// effectiveToggleMap would collapse omitted keys to false on the next write.
+function layeredDefaults(cfg: GitHubConfig): Record<GitHubAuthFeatureKey, boolean> {
+  return { ...DEFAULT_AUTH_FEATURE_TOGGLES, ...(cfg.featureDefaults ?? {}) }
+}
+
 export const useGitHubStore = create<GitHubStoreState>((set, get) => ({
   config: null,
   profiles: [],
@@ -135,7 +144,10 @@ export const useGitHubStore = create<GitHubStoreState>((set, get) => ({
       const cfg = get().config
       const p = cfg?.authProfiles[profileId]
       if (!cfg || !p) return
-      const next = effectiveToggleMap(p, cfg.featureDefaults)
+      // Layer DEFAULT under a sparse/absent featureDefaults so a map-less
+      // profile inherits the same complete defaults the settings UI renders —
+      // a bare featureDefaults would collapse omitted keys to false on write.
+      const next = effectiveToggleMap(p, layeredDefaults(cfg))
       next[key] = on
       await window.electronAPI.github.updateProfile(profileId, { featureToggles: next })
       await get().loadConfig()
@@ -152,9 +164,13 @@ export const useGitHubStore = create<GitHubStoreState>((set, get) => ({
     enqueueToggleWrite(async () => {
       const cfg = get().config
       if (!cfg) return
+      // One complete defaults map for both the per-profile writes and the
+      // persisted featureDefaults — sparse/absent featureDefaults is layered
+      // under DEFAULT_AUTH_FEATURE_TOGGLES so every write is full (F3).
+      const layered = layeredDefaults(cfg)
       try {
         for (const p of Object.values(cfg.authProfiles)) {
-          const next = effectiveToggleMap(p, cfg.featureDefaults)
+          const next = effectiveToggleMap(p, layered)
           next[key] = on
           try {
             await window.electronAPI.github.updateProfile(p.id, { featureToggles: next })
@@ -162,15 +178,8 @@ export const useGitHubStore = create<GitHubStoreState>((set, get) => ({
             console.warn('[github] toggle write failed for profile', p.id, err)
           }
         }
-        // Sparse pre-migration configs may carry a partial (or absent)
-        // featureDefaults; layer DEFAULT_AUTH_FEATURE_TOGGLES underneath so the
-        // persisted map is always complete for every auth feature key (F3).
         await window.electronAPI.github.updateConfig({
-          featureDefaults: {
-            ...DEFAULT_AUTH_FEATURE_TOGGLES,
-            ...(cfg.featureDefaults ?? {}),
-            [key]: on,
-          } as Record<GitHubAuthFeatureKey, boolean>,
+          featureDefaults: { ...layered, [key]: on },
         })
       } finally {
         await get().loadConfig()
@@ -187,7 +196,7 @@ export const useGitHubStore = create<GitHubStoreState>((set, get) => ({
       const cfg = get().config
       const src = cfg?.authProfiles[sourceId]
       if (!cfg || !src) return
-      const map = effectiveToggleMap(src, cfg.featureDefaults)
+      const map = effectiveToggleMap(src, layeredDefaults(cfg))
       try {
         for (const p of Object.values(cfg.authProfiles)) {
           if (p.id === sourceId) continue
