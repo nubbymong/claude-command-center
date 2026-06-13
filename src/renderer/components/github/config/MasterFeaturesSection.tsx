@@ -41,7 +41,9 @@ export function Chip({
 
 // Label/description copied verbatim from FeatureTogglesList's FEATURES array.
 // aiCredits is new in the per-account model (no row in the legacy list).
-const AUTH_FEATURE_META: Record<
+// Exported so AccountPanel (Task 3) reuses the same labels for its chips and
+// pending-re-auth text rather than duplicating the strings.
+export const AUTH_FEATURE_META: Record<
   GitHubAuthFeatureKey,
   { label: string; description: string }
 > = {
