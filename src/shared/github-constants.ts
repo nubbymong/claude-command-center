@@ -124,9 +124,9 @@ export const FINEGRAINED_PERMISSION_CAPABILITIES: Record<string, Capability[]> =
 export const GITHUB_CONFIG_SCHEMA_VERSION = 1
 export const GITHUB_CACHE_SCHEMA_VERSION = 1
 
-// First-launch / no-config-file default. Seeds the per-account toggle fields
+// First-launch / no-config-file default. Seeds the new toggle fields
 // (appWideToggles, featureDefaults) from their default constants, so new
-// configs are born already-migrated; the Task 4 migration only runs for
+// configs are born already-migrated; the shape migration only runs for
 // configs from older builds that predate those fields.
 export function emptyGitHubConfig(): GitHubConfig {
   return {
