@@ -65,7 +65,7 @@ export type MasterToggleState = 'on' | 'off' | 'mixed'
  * migration or hand-edited file may carry a sparse featureDefaults — layer
  * DEFAULT_AUTH_FEATURE_TOGGLES underneath before calling
  * (`{ ...DEFAULT_AUTH_FEATURE_TOGGLES, ...(cfg.featureDefaults ?? {}) }`),
- * the same pattern the store's setMasterFeature uses on its write path. */
+ * the same layering the store's feature-toggle writes use. */
 
 export function masterState(
   profiles: AuthProfile[],

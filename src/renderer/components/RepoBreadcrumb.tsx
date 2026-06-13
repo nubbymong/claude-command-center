@@ -10,16 +10,8 @@ import { Session } from '../stores/sessionStore'
 // user-managed aliases set per session from the sidebar right-click menu.
 // v2: the AI-usage chip was extracted to components/github/AiUsageChip so it can
 // render in the per-session status strip; this strip is now path + repo slug +
-// connection only.
-//
-// onOpenSettings is accepted (and still passed by callers) but no longer used
-// here now that the AI-usage chip lives elsewhere; kept optional for callers.
-export default function RepoBreadcrumb({
-  session,
-}: {
-  session: Session
-  onOpenSettings?: () => void
-}) {
+// connection only (no actions, so no onOpenSettings prop).
+export default function RepoBreadcrumb({ session }: { session: Session }) {
   const cwd = session.workingDirectory || ''
   const gi = session.githubIntegration
   const slug = gi?.repoSlug

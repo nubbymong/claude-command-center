@@ -596,7 +596,7 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
     const profile = cfg?.authProfiles?.[profileId]
     if (!profile) return { ok: false, error: 'not-found' }
     // featureDefaults may be sparse on hand-edited/old configs — layer the
-    // constant underneath (same pattern the store's setMasterFeature uses).
+    // constant underneath (same layering the store's feature-toggle writes use).
     const defaults = { ...DEFAULT_AUTH_FEATURE_TOGGLES, ...(cfg?.featureDefaults ?? {}) }
     const plan = reauthPlanForProfile(profile, defaults)
     if (plan.kind === 'oauth') {

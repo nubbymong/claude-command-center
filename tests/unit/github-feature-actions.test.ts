@@ -115,26 +115,12 @@ describe('per-account feature actions', () => {
     expect(updateProfileMock).toHaveBeenCalledWith('a', { featureToggles: { ...allOn, ci: false } })
     expect(updateConfigMock).not.toHaveBeenCalled()
   })
-  it('setMasterFeature patches every profile AND persists featureDefaults', async () => {
-    seed([{ id: 'a', toggles: allOn }, { id: 'b', toggles: allOff }])
-    await useGitHubStore.getState().setMasterFeature('notifications', true)
-    expect(updateProfileMock).toHaveBeenCalledTimes(2)
-    expect(updateConfigMock).toHaveBeenCalledWith(
-      expect.objectContaining({ featureDefaults: expect.objectContaining({ notifications: true }) }))
-  })
   it('applyProfileToAll copies the source map to every other profile', async () => {
     seed([{ id: 'a', toggles: allOn }, { id: 'b', toggles: allOff }, { id: 'c', toggles: allOff }])
     await useGitHubStore.getState().applyProfileToAll('a')
     expect(updateProfileMock).toHaveBeenCalledTimes(2) // b and c, not a
     expect(updateProfileMock).toHaveBeenCalledWith('b', { featureToggles: allOn })
     expect(updateProfileMock).toHaveBeenCalledWith('c', { featureToggles: allOn })
-  })
-  it('setMasterFeature with zero profiles writes featureDefaults only', async () => {
-    seed([])
-    await useGitHubStore.getState().setMasterFeature('aiCredits', true)
-    expect(updateProfileMock).not.toHaveBeenCalled()
-    expect(updateConfigMock).toHaveBeenCalledWith(
-      expect.objectContaining({ featureDefaults: expect.objectContaining({ aiCredits: true }) }))
   })
   it('setAppWideToggle writes appWideToggles via config update', async () => {
     seed([{ id: 'a', toggles: allOn }])
@@ -144,48 +130,8 @@ describe('per-account feature actions', () => {
     expect(updateProfileMock).not.toHaveBeenCalled()
   })
 
-  // F3 — sparse featureDefaults on a pre-migration config. The config predates
-  // featureDefaults entirely; the persisted map must still come out complete
-  // (all six auth keys) so downstream readers never see a partial defaults map.
-  it('setMasterFeature backfills a complete featureDefaults from a config missing it', async () => {
-    seed([], undefined)
-    // Strip featureDefaults to simulate a pre-migration config.
-    useGitHubStore.setState((s) => ({
-      config: { ...(s.config as GitHubConfig), featureDefaults: undefined },
-    }))
-    await useGitHubStore.getState().setMasterFeature('notifications', true)
-    const patch = updateConfigMock.mock.calls.at(-1)![0] as { featureDefaults: Record<string, boolean> }
-    expect(Object.keys(patch.featureDefaults).sort()).toEqual([...fullKeys].sort())
-    expect(patch.featureDefaults).toEqual({
-      activePR: true, ci: true, reviews: true, linkedIssues: true,
-      notifications: true, // the toggled key
-      aiCredits: false, // default
-    })
-  })
-
   // F4 — error isolation in the multi-profile loop. A rejected write for the
-  // MIDDLE profile must not abort the loop: later profiles still get patched
-  // and featureDefaults is still written.
-  it('setMasterFeature isolates a failing per-profile write and still patches the rest', async () => {
-    seed([{ id: 'a', toggles: allOn }, { id: 'b', toggles: allOn }, { id: 'c', toggles: allOn }])
-    updateProfileMock.mockImplementation(async (id: string) => {
-      if (id === 'b') throw new Error('write failed for b')
-      return { ok: true }
-    })
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    try {
-      await useGitHubStore.getState().setMasterFeature('notifications', false)
-    } finally {
-      warnSpy.mockRestore()
-    }
-    // All three were attempted; c (after the failing b) still got patched.
-    expect(updateProfileMock).toHaveBeenCalledTimes(3)
-    expect(updateProfileMock).toHaveBeenCalledWith('c', expect.anything())
-    // featureDefaults still persisted despite the mid-loop failure.
-    expect(updateConfigMock).toHaveBeenCalledWith(
-      expect.objectContaining({ featureDefaults: expect.objectContaining({ notifications: false }) }))
-  })
-
+  // MIDDLE profile must not abort the loop: later profiles still get patched.
   it('applyProfileToAll isolates a failing per-target write and still patches the rest', async () => {
     seed([{ id: 'a', toggles: allOn }, { id: 'b', toggles: allOff }, { id: 'c', toggles: allOff }])
     updateProfileMock.mockImplementation(async (id: string) => {
@@ -214,14 +160,6 @@ describe('per-account feature actions', () => {
   it('setProfileFeature layers DEFAULT under a sparse featureDefaults for a map-less profile', async () => {
     seed([{ id: 'a', toggles: undefined }], sparseDefaults)
     await useGitHubStore.getState().setProfileFeature('a', 'notifications', true)
-    expect(updateProfileMock).toHaveBeenCalledWith('a', {
-      featureToggles: { ...layeredFromSparse, notifications: true },
-    })
-  })
-
-  it('setMasterFeature layers DEFAULT under a sparse featureDefaults for a map-less profile', async () => {
-    seed([{ id: 'a', toggles: undefined }], sparseDefaults)
-    await useGitHubStore.getState().setMasterFeature('notifications', true)
     expect(updateProfileMock).toHaveBeenCalledWith('a', {
       featureToggles: { ...layeredFromSparse, notifications: true },
     })

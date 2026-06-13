@@ -56,7 +56,6 @@ interface GitHubStoreState {
     key: GitHubAuthFeatureKey,
     on: boolean,
   ) => Promise<void>
-  setMasterFeature: (key: GitHubAuthFeatureKey, on: boolean) => Promise<void>
   applyProfileToAll: (sourceId: string) => Promise<void>
   setAppWideToggle: (key: GitHubAppWideFeatureKey, on: boolean) => Promise<void>
   togglePanel: () => void
@@ -167,41 +166,12 @@ export const useGitHubStore = create<GitHubStoreState>((set, get) => ({
         profileId === resolveAiUsageTargetId(Object.values(cfg.authProfiles))
       ) {
         await useSettingsStore.getState().updateSettings({ githubAiUsageEnabled: on })
+        // Populate (or clear) the meter immediately, mirroring the old
+        // AiUsageSettings enable — otherwise the relocated statusline chip would
+        // sit on its placeholder until the ~60-min scheduler tick.
+        await get().loadAiUsage().catch(() => {})
       }
       await get().loadConfig()
-    }),
-
-  // Master toggle: flip one feature on EVERY account (each via its own profile
-  // patch) AND persist featureDefaults so the intent survives zero accounts and
-  // seeds newly added ones. Profiles go through the profile IPC; featureDefaults
-  // (a root field) goes through updateConfig. Serialized + snapshot re-read
-  // inside the thunk (F2). Per-profile failures are isolated (F4): a rejected
-  // write is logged and skipped, the remaining profiles + featureDefaults still
-  // write, and loadConfig() always runs in the finally.
-  setMasterFeature: (key, on) =>
-    enqueueToggleWrite(async () => {
-      const cfg = get().config
-      if (!cfg) return
-      // One complete defaults map for both the per-profile writes and the
-      // persisted featureDefaults — sparse/absent featureDefaults is layered
-      // under DEFAULT_AUTH_FEATURE_TOGGLES so every write is full (F3).
-      const layered = layeredDefaults(cfg)
-      try {
-        for (const p of Object.values(cfg.authProfiles)) {
-          const next = effectiveToggleMap(p, layered)
-          next[key] = on
-          try {
-            await window.electronAPI.github.updateProfile(p.id, { featureToggles: next })
-          } catch (err) {
-            console.warn('[github] toggle write failed for profile', p.id, err)
-          }
-        }
-        await window.electronAPI.github.updateConfig({
-          featureDefaults: { ...layered, [key]: on },
-        })
-      } finally {
-        await get().loadConfig()
-      }
     }),
 
   // Copy a source account's effective toggle map onto every OTHER account.
