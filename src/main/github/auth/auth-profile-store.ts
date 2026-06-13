@@ -1,11 +1,7 @@
 import { safeStorage } from 'electron'
 import { randomUUID } from 'node:crypto'
 import type { AuthProfile, GitHubConfig } from '../../../shared/github-types'
-import {
-  GITHUB_CONFIG_SCHEMA_VERSION,
-  DEFAULT_SYNC_INTERVALS,
-  DEFAULT_FEATURE_TOGGLES,
-} from '../../../shared/github-constants'
+import { emptyGitHubConfig } from '../../../shared/github-constants'
 import { AsyncMutex } from '../async-mutex'
 
 export interface AuthProfileStoreIO {
@@ -63,24 +59,13 @@ export type ProfilePatch = Partial<
   >
 >
 
-function emptyConfig(): GitHubConfig {
-  return {
-    schemaVersion: GITHUB_CONFIG_SCHEMA_VERSION,
-    authProfiles: {},
-    featureToggles: { ...DEFAULT_FEATURE_TOGGLES },
-    syncIntervals: { ...DEFAULT_SYNC_INTERVALS },
-    enabledByDefault: false,
-    transcriptScanningOptIn: false,
-  }
-}
-
 export class AuthProfileStore {
   private mutex = new AsyncMutex()
 
   constructor(private io: AuthProfileStoreIO) {}
 
   private async load(): Promise<GitHubConfig> {
-    return (await this.io.readConfig()) ?? emptyConfig()
+    return (await this.io.readConfig()) ?? emptyGitHubConfig()
   }
 
   async addProfile(input: AddProfileInput): Promise<string> {

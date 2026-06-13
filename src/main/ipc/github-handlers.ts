@@ -31,9 +31,7 @@ import { extractFileSignals } from '../github/session/tool-call-inspector'
 import { scanTranscriptMessages } from '../github/session/transcript-scanner'
 import { loadTranscriptEvents } from '../github/session/transcript-loader'
 import {
-  DEFAULT_FEATURE_TOGGLES,
-  DEFAULT_SYNC_INTERVALS,
-  GITHUB_CONFIG_SCHEMA_VERSION,
+  emptyGitHubConfig,
   OAUTH_SCOPES_PRIVATE,
   OAUTH_SCOPES_PUBLIC,
 } from '../../shared/github-constants'
@@ -81,17 +79,6 @@ async function readCurrentBranch(cwd: string | undefined): Promise<string> {
     return out && out !== 'HEAD' ? out : 'main'
   } catch {
     return 'main'
-  }
-}
-
-function emptyConfig(): GitHubConfig {
-  return {
-    schemaVersion: GITHUB_CONFIG_SCHEMA_VERSION,
-    authProfiles: {},
-    featureToggles: { ...DEFAULT_FEATURE_TOGGLES },
-    syncIntervals: { ...DEFAULT_SYNC_INTERVALS },
-    enabledByDefault: false,
-    transcriptScanningOptIn: false,
   }
 }
 
@@ -325,7 +312,7 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
   })
 
   ipcMain.handle(IPC.GITHUB_CONFIG_UPDATE, async (_e, patch: Partial<GitHubConfig>) => {
-    const cur = (await configStore.read()) ?? emptyConfig()
+    const cur = (await configStore.read()) ?? emptyGitHubConfig()
     const next = { ...cur, ...patch }
     await configStore.write(next)
     cachedConfig = next

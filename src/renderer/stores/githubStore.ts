@@ -8,25 +8,7 @@ import type {
   AiUsageStatus,
   AiUsagePayload,
 } from '../../shared/github-types'
-import {
-  DEFAULT_FEATURE_TOGGLES,
-  DEFAULT_SYNC_INTERVALS,
-  GITHUB_CONFIG_SCHEMA_VERSION,
-} from '../../shared/github-constants'
-
-// First-launch default. Used client-side when no github-config.json exists yet
-// so the UI renders immediately instead of sitting on "Loading…" forever.
-// The first user mutation persists this + the patch via updateConfig.
-function emptyConfig(): GitHubConfig {
-  return {
-    schemaVersion: GITHUB_CONFIG_SCHEMA_VERSION,
-    authProfiles: {},
-    featureToggles: { ...DEFAULT_FEATURE_TOGGLES },
-    syncIntervals: { ...DEFAULT_SYNC_INTERVALS },
-    enabledByDefault: false,
-    transcriptScanningOptIn: false,
-  }
-}
+import { emptyGitHubConfig } from '../../shared/github-constants'
 
 export interface SessionPanelState {
   panelWidth: number
@@ -98,7 +80,7 @@ export const useGitHubStore = create<GitHubStoreState>((set, get) => ({
     } else {
       // No config file yet (first launch). Render UI with defaults; the first
       // updateConfig call will persist. Avoids a stuck "Loading…" state.
-      set({ config: emptyConfig(), profiles: [] })
+      set({ config: emptyGitHubConfig(), profiles: [] })
     }
   },
 

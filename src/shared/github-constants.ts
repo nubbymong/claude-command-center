@@ -3,6 +3,7 @@ import type {
   Capability,
   GitHubAppWideFeatureKey,
   GitHubAuthFeatureKey,
+  GitHubConfig,
   GitHubFeatureKey,
 } from './github-types'
 
@@ -122,6 +123,23 @@ export const FINEGRAINED_PERMISSION_CAPABILITIES: Record<string, Capability[]> =
 
 export const GITHUB_CONFIG_SCHEMA_VERSION = 1
 export const GITHUB_CACHE_SCHEMA_VERSION = 1
+
+// First-launch / no-config-file default. Seeds the per-account toggle fields
+// (appWideToggles, featureDefaults) from their default constants, so new
+// configs are born already-migrated; the Task 4 migration only runs for
+// configs from older builds that predate those fields.
+export function emptyGitHubConfig(): GitHubConfig {
+  return {
+    schemaVersion: GITHUB_CONFIG_SCHEMA_VERSION,
+    authProfiles: {},
+    featureToggles: { ...DEFAULT_FEATURE_TOGGLES },
+    appWideToggles: { ...DEFAULT_APP_WIDE_TOGGLES },
+    featureDefaults: { ...DEFAULT_AUTH_FEATURE_TOGGLES },
+    syncIntervals: { ...DEFAULT_SYNC_INTERVALS },
+    enabledByDefault: false,
+    transcriptScanningOptIn: false,
+  }
+}
 
 export const CACHE_MAX_REPOS = 50
 export const CACHE_MAX_BYTES = 10 * 1024 * 1024
