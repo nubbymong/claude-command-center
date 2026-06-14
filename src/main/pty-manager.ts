@@ -1,4 +1,4 @@
-import { BrowserWindow } from 'electron'
+import { BrowserWindow, nativeTheme } from 'electron'
 import * as pty from 'node-pty'
 import { PasteQueue } from './paste-queue'
 import { runChunkedWrite, WRITE_CHUNK_SIZE, WRITE_CHUNK_DELAY } from './pty-chunked-write'
@@ -14,7 +14,7 @@ import { logInfo, logDebug, logError, logWarn } from './debug-logger'
 import { writeCliSetupPty, getResourcesDirectory } from './ipc/setup-handlers'
 import { isGlobalVisionRunning, getGlobalVisionConfig, teardownVisionSession } from './vision-manager'
 import { getConductorMcpPort } from './conductor-mcp-server'
-import { resolveClaudeBinary } from './providers/claude/spawn'
+import { resolveClaudeBinary, resolveHostColorScheme } from './providers/claude/spawn'
 import { detectClaudeUi, lastPromptLineForClaude } from './providers/claude/ui-detection'
 import { getProvider } from './providers'
 import { isSshCapable } from './providers/types'
@@ -942,9 +942,15 @@ export function spawnPty(
     // bare shell + env comes from the provider.
     const shellOnly = options?.shellOnly
     const provider = getProvider('claude')
-    // Read classicTerminalCopyPaste fresh on every spawn (default true when absent).
-    const claudeSpawnSettings = readConfig<{ classicTerminalCopyPaste?: boolean }>('settings')
+    // Read classicTerminalCopyPaste + theme fresh on every spawn (default true /
+    // dark when absent). The theme drives COLORFGBG so Claude's startup theme
+    // auto-detection matches CCC; 'system' follows the OS via nativeTheme.
+    const claudeSpawnSettings = readConfig<{ classicTerminalCopyPaste?: boolean; theme?: string }>('settings')
     const classicTerminalCopyPaste = claudeSpawnSettings?.classicTerminalCopyPaste !== false
+    const hostColorScheme = resolveHostColorScheme(
+      claudeSpawnSettings?.theme,
+      nativeTheme.shouldUseDarkColors,
+    )
     const { cmd: spawnCmd, args: spawnArgs, env: spawnEnv } = provider.buildSpawnCommand({
       sessionId,
       cwd: options?.cwd,
@@ -959,6 +965,7 @@ export function spawnPty(
       useResumePicker: options?.useResumePicker,
       agentsConfig: options?.agentsConfig,
       classicTerminalCopyPaste,
+      hostColorScheme,
     })
     const wantProfileId = options?.profileId
     if (wantProfileId && fs.existsSync(getProfileConfigDir(wantProfileId))) {

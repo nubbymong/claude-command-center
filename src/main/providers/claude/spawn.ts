@@ -5,6 +5,21 @@ import { logInfo } from '../../debug-logger'
 import type { LegacyVersion } from '../../../shared/types'
 import type { SpawnOptions } from '../types'
 
+/**
+ * Resolves the host's effective light/dark scheme from the CCC theme setting.
+ * 'light'/'dark' are explicit; 'system' (or absent, but absent defaults to the
+ * app's dark default) follows the OS preference. Pure so it is table-testable;
+ * the caller supplies the OS preference (Electron nativeTheme.shouldUseDarkColors).
+ */
+export function resolveHostColorScheme(
+  themePref: string | undefined,
+  systemPrefersDark: boolean,
+): 'light' | 'dark' {
+  if (themePref === 'light') return 'light'
+  if (themePref === 'system') return systemPrefersDark ? 'dark' : 'light'
+  return 'dark'
+}
+
 export function resolveClaudeBinary(legacyVersion?: LegacyVersion): { cmd: string; args: string[] } {
   if (legacyVersion?.enabled && legacyVersion.version) {
     const legacyBin = resolveVersionBinary(legacyVersion.version)
@@ -43,6 +58,20 @@ export function resolveClaudeBinary(legacyVersion?: LegacyVersion): { cmd: strin
  */
 export function buildClaudeLocalSpawn(opts: SpawnOptions): { cmd: string; args: string[]; env: Record<string, string> } {
   const env: Record<string, string> = { ...process.env, CLAUDE_MULTI_SESSION_ID: opts.sessionId } as Record<string, string>
+
+  // Tell Claude Code (and any TUI) the host terminal's light/dark scheme via
+  // COLORFGBG, which Claude reads FIRST when auto-detecting its theme. Without
+  // this, a session launched while CCC is in light mode keeps Claude's dark
+  // theme, so its user-message blocks render with dark/black backgrounds on the
+  // light terminal. Format is "foreground;background" by ANSI index; Claude reads
+  // the background field (7 / 9-15 = light, 0-6 / 8 = dark). Set for ALL session
+  // kinds (the terminal IS this theme). dark -> "15;0" matches the prior implicit
+  // behavior, so dark mode is unchanged; only theme detection runs at startup, so
+  // this affects newly launched sessions, not ones already running.
+  if (opts.hostColorScheme) {
+    env.COLORFGBG = opts.hostColorScheme === 'light' ? '0;15' : '15;0'
+  }
+
   if (opts.disableAutoMemory) env.CLAUDE_CODE_DISABLE_AUTO_MEMORY = '1'
 
   const shell = os.platform() === 'win32' ? 'powershell.exe' : (process.env.SHELL || '/bin/bash')
