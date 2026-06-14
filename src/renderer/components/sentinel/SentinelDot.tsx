@@ -2,17 +2,28 @@ import React from 'react'
 import { useSentinelStore } from '../../stores/sentinelStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import type { SentinelStateSnapshot } from '../../../shared/sentinel-types'
+import { findingReachesUser, type ReachabilityContext } from '../../../shared/sentinel-reachability'
 
 // ── Pure helper (exported for unit tests) ────────────────────────────────────
 
-export type DotState = 'hidden' | 'ok' | 'analyzing' | 'findings' | 'high'
+// 'reviewed' = open findings exist, but NONE of them reach the user's setup
+// (info / managed-only / mechanisms CCC doesn't use). It is a calm state — the
+// alarming colours (amber 'findings', red 'high') are reserved for findings that
+// would actually affect this install, so the colour means what the user expects.
+export type DotState = 'hidden' | 'ok' | 'analyzing' | 'reviewed' | 'findings' | 'high'
 
-export function deriveDotState(enabled: boolean, snap: SentinelStateSnapshot | null): DotState {
+export function deriveDotState(
+  enabled: boolean,
+  snap: SentinelStateSnapshot | null,
+  ctx: ReachabilityContext = {},
+): DotState {
   if (!enabled || !snap) return 'hidden'
   if (snap.analyzing) return 'analyzing'
   const open = snap.findings.filter((f) => f.status === 'open')
-  if (open.some((f) => f.kind === 'compat' && f.severity === 'high')) return 'high'
-  if (open.length) return 'findings'
+  const reaching = open.filter((f) => findingReachesUser(f, ctx))
+  if (reaching.some((f) => f.severity === 'high')) return 'high'
+  if (reaching.length) return 'findings'
+  if (open.length) return 'reviewed'
   return 'ok'
 }
 
@@ -27,23 +38,30 @@ export default function SentinelDot() {
 
   if (state === 'hidden') return null
 
-  const openCount = snap ? snap.findings.filter((f) => f.status === 'open').length : 0
+  const openFindings = snap ? snap.findings.filter((f) => f.status === 'open') : []
+  const openCount = openFindings.length
+  // The count that drives the alarm — findings that actually reach this install.
+  const reachingCount = openFindings.filter((fnd) => findingReachesUser(fnd)).length
 
+  // Calm grey for 'ok' AND 'reviewed' (findings exist but none reach the user).
+  // Amber/red are reserved for findings that would actually affect this setup.
   const dotColor =
-    state === 'ok'
-      ? 'bg-overlay0'
-      : state === 'analyzing'
+    state === 'analyzing'
       ? 'bg-yellow animate-pulse'
       : state === 'high'
       ? 'bg-red'
-      : 'bg-yellow' // findings
+      : state === 'findings'
+      ? 'bg-yellow'
+      : 'bg-overlay0' // ok + reviewed
 
   const tooltip =
-    state === 'ok'
-      ? 'Sentinel: no issues found'
-      : state === 'analyzing'
+    state === 'analyzing'
       ? 'Sentinel: analyzing Claude Code update…'
-      : `Sentinel: ${openCount} open finding${openCount !== 1 ? 's' : ''}`
+      : state === 'high' || state === 'findings'
+      ? `Sentinel: ${reachingCount} change${reachingCount !== 1 ? 's' : ''} affecting your setup`
+      : state === 'reviewed'
+      ? `Sentinel: ${openCount} change${openCount !== 1 ? 's' : ''} reviewed — none affect your setup`
+      : 'Sentinel: no issues found'
 
   return (
     <button
