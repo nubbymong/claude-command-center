@@ -308,6 +308,11 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
     // persists githubAiUsageEnabled into the shared 'settings' config file.
     isEnabled: () =>
       readConfig<{ githubAiUsageEnabled?: boolean }>('settings')?.githubAiUsageEnabled === true,
+    // The plan-cycle start for the included-credits meter (e.g. the Max upgrade
+    // date). Re-read each tick so a Settings change applies on the next refresh.
+    getCycleStart: () =>
+      readConfig<{ copilotCreditsCycleStart?: string | null }>('settings')
+        ?.copilotCreditsCycleStart ?? null,
     emit: (payload) =>
       deps.getWindow()?.webContents.send(IPC.GITHUB_AI_USAGE_UPDATE, payload),
     logFn: (line) => logWarn(line),
@@ -330,6 +335,7 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
     return {
       report: aiUsageScheduler.getLatest(),
       status: aiUsageScheduler.getStatus(),
+      cycle: aiUsageScheduler.getLatestCycle(),
     }
   })
 

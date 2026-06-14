@@ -134,10 +134,19 @@ export interface AppSettings {
    *  it requires extra token scope ('user' for classic PATs / 'Plan: read' for
    *  fine-grained PATs) and makes its own GitHub requests. */
   githubAiUsageEnabled?: boolean
-  /** v2: the user's plan included-credit cap, in USD. GitHub does not expose
-   *  this for personal accounts via API, so the user enters it from their plan
-   *  page. null/absent = unknown (the meter shows billed usage without a cap). */
+  /** v2: the user's plan included AI-credit allowance (a CREDIT count, e.g.
+   *  20,000 for Copilot Max — NOT dollars). GitHub does not expose this for
+   *  personal accounts via API, so the user enters it from their plan page.
+   *  null/absent = unknown (the meter shows usage without a cap bar). */
   copilotIncludedCredits?: number | null
+  /** v2: the current plan-cycle start ('YYYY-MM-DD'), e.g. a mid-month Max
+   *  upgrade date. When set, the included-credits meter counts AI-credit usage
+   *  only from this date (matching GitHub's card, which resets per cycle) rather
+   *  than the whole calendar month. null/absent = whole-month. */
+  copilotCreditsCycleStart?: string | null
+  /** v2: optional Copilot plan label for display ("Max" / "Pro" / "Plus"). Not
+   *  exposed by any API, so it's a user-entered label shown next to the meter. */
+  copilotPlanName?: string | null
   /** Account profile Sentinel's headless analysis runs under. null/absent =
    *  the captured primary (never the bare global login when profiles exist —
    *  the frozen global hangs at auth or carries stale usage limits). Switchable

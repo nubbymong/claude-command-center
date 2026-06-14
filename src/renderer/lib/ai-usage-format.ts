@@ -1,7 +1,7 @@
 // Pure formatting helpers for the unified AI-usage meter (repo-strip chip +
 // provider popover). Kept framework-free so the chip's number formatting and
 // state selection are table-testable without rendering React.
-import type { AiUsageReport } from '../../shared/github-types'
+import type { AiUsageReport, CycleCredits } from '../../shared/github-types'
 
 /**
  * Compact credit-count formatter. GitHub's AI-credit grossQuantity is a
