@@ -23,6 +23,10 @@ export interface SpawnOptions {
    *  copy/paste). When false, CC's mouse mode is preserved. Shell-only sessions
    *  are never affected regardless of this flag. */
   classicTerminalCopyPaste?: boolean
+  /** Host (CCC) effective light/dark scheme, stamped into COLORFGBG so Claude
+   *  Code's startup theme auto-detection matches the terminal. Resolved by the
+   *  caller from AppSettings.theme + the OS preference. Absent = no COLORFGBG. */
+  hostColorScheme?: 'light' | 'dark'
   // Codex-specific (only present when provider === 'codex')
   codexOptions?: CodexOptions
 }
