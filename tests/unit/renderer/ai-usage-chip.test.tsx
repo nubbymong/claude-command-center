@@ -55,7 +55,7 @@ beforeEach(() => {
   root = createRoot(container)
   // Reset stores to a known baseline.
   useSettingsStore.setState({ settings: { ...DEFAULT_SETTINGS } })
-  useGitHubStore.setState({ aiUsage: null, aiUsageStatus: 'pending' })
+  useGitHubStore.setState({ aiUsage: null, aiUsageStatus: 'pending', aiUsageCycle: null })
 })
 
 afterEach(() => {
@@ -145,7 +145,30 @@ describe('AI-usage chip content', () => {
     expect(chip!.textContent).toBe('Copilot 8.1k/20k')
   })
 
-  it('switches to the billed warning idiom when billedAmount > 0', async () => {
+  it('renders an inline progress bar when the cap is set (like the other status-line meters)', async () => {
+    useSettingsStore.setState((s) => ({
+      settings: { ...s.settings, githubAiUsageEnabled: true, copilotIncludedCredits: 20000 },
+    }))
+    useGitHubStore.setState({ aiUsage: makeReport() })
+    await render()
+    const bar = container.querySelector('[data-copilot-bar]')
+    expect(bar).not.toBeNull()
+    expect(bar!.getAttribute('role')).toBe('progressbar')
+  })
+
+  it('renders NO progress bar without a cap (no denominator to fill toward)', async () => {
+    useSettingsStore.setState((s) => ({
+      settings: { ...s.settings, githubAiUsageEnabled: true, copilotIncludedCredits: null },
+    }))
+    useGitHubStore.setState({ aiUsage: makeReport() })
+    await render()
+    expect(container.querySelector('[data-copilot-bar]')).toBeNull()
+  })
+
+  it('a billed overage under the cap no longer hijacks the headline (credit count leads)', async () => {
+    // Pre-redesign this showed "Copilot +$11.69". Now usage (8.1k) is under the
+    // cap (20k), so the chip stays the calm ratio -- the dollar figure lives in
+    // the popover, not the strip.
     useSettingsStore.setState((s) => ({
       settings: { ...s.settings, githubAiUsageEnabled: true, copilotIncludedCredits: 20000 },
     }))
@@ -154,6 +177,38 @@ describe('AI-usage chip content', () => {
     })
     await render()
     const chip = container.querySelector('[data-ai-usage-chip]')
-    expect(chip!.textContent).toBe('Copilot +$11.69')
+    expect(chip!.textContent).toBe('Copilot 8.1k/20k')
+    expect(chip!.textContent).not.toContain('$')
+  })
+
+  it('prefers the cycle-scoped figure over the whole-month report', async () => {
+    // The month report is dominated by pre-upgrade usage; the cycle (since the
+    // Max upgrade) is the number the user expects to match GitHub's card.
+    useSettingsStore.setState((s) => ({
+      settings: { ...s.settings, githubAiUsageEnabled: true, copilotIncludedCredits: 20000 },
+    }))
+    useGitHubStore.setState({
+      aiUsage: makeReport({ totals: { grossAmount: 120, coveredAmount: 108, billedAmount: 11.69 } }),
+      aiUsageCycle: { since: '2026-06-13', through: '2026-06-14', creditsUsed: 891.29, billedUsd: 0 },
+    })
+    await render()
+    const chip = container.querySelector('[data-ai-usage-chip]') as HTMLElement
+    expect(chip.textContent).toBe('Copilot 891/20k')
+    // The stale prior-plan overage must NOT leak into the strip.
+    expect(chip.textContent).not.toContain('$')
+  })
+
+  it('shows a warning treatment + glyph only when cycle usage exceeds the cap', async () => {
+    useSettingsStore.setState((s) => ({
+      settings: { ...s.settings, githubAiUsageEnabled: true, copilotIncludedCredits: 20000 },
+    }))
+    useGitHubStore.setState({
+      aiUsage: makeReport(),
+      aiUsageCycle: { since: '2026-06-13', through: '2026-06-14', creditsUsed: 21000, billedUsd: 4.2 },
+    })
+    await render()
+    const chip = container.querySelector('[data-ai-usage-chip]') as HTMLElement
+    expect(chip.textContent).toContain('Copilot 21k/20k')
+    expect(chip.textContent).toContain(WARN)
   })
 })

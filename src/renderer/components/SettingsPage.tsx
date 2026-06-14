@@ -9,6 +9,7 @@ import { useAppMetaStore } from '../stores/appMetaStore'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { eventToShortcutString, DEFAULT_SHORTCUTS, SHORTCUT_LABELS } from '../utils/shortcuts'
 import GitHubConfigTab from './github/config/GitHubConfigTab'
+import CopilotMeterSettings from './settings/CopilotMeterSettings'
 import { CodexSettingsTab } from './codex/CodexSettingsTab'
 import HooksGatewaySection from './github/config/HooksGatewaySection'
 import PageFrame from './PageFrame'
@@ -644,6 +645,10 @@ function StatusLineTab({
           </div>
         </div>
       </div>
+
+      {/* Copilot AI-credits config -- self-gates on the meter being enabled, so it
+          appears right under the "Copilot Usage" toggle only when relevant. */}
+      <CopilotMeterSettings />
     </>
   )
 }

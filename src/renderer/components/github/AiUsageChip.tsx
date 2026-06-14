@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import { useGitHubStore } from '../../stores/githubStore'
 import { useSettingsStore } from '../../stores/settingsStore'
-import { selectAiChip, formatCredits } from '../../lib/ai-usage-format'
+import { selectAiChip, selectUsagePool, formatCredits } from '../../lib/ai-usage-format'
 import { formatResetTime } from '../../utils/terminalFormatting'
 import AiUsagePopover from '../AiUsagePopover'
 
@@ -10,12 +10,20 @@ import AiUsagePopover from '../AiUsagePopover'
 const WARN_GLYPH = String.fromCodePoint(0x26a0)
 
 // Per-model + totals tooltip for the AI-usage chip. Plain text (title attr) so
-// it works without a portal: one line per model, then covered/billed totals and
-// the fetch time.
+// it works without a portal. When a plan cycle is set, the cycle's included-
+// credit total leads (it's the headline number), then the whole-month per-model
+// breakdown, then covered/billed totals and the fetch time.
 function buildAiTooltip(
   report: import('../../../shared/github-types').AiUsageReport,
+  cycle?: import('../../../shared/github-types').CycleCredits | null,
 ): string {
   const lines: string[] = []
+  if (cycle) {
+    lines.push(`Included credits used since ${cycle.since}: ${formatCredits(cycle.creditsUsed)}`)
+    if (cycle.billedUsd > 0) lines.push(`Additional usage this cycle: $${cycle.billedUsd.toFixed(2)}`)
+    lines.push('') // blank separator before the whole-month breakdown
+    lines.push('This month, by model:')
+  }
   for (const it of report.items) {
     const name = it.model || it.sku || it.product || 'usage'
     lines.push(
@@ -53,33 +61,67 @@ function placeholderTooltip(status: import('../../../shared/github-types').AiUsa
 //   - needs-auth (scope-missing / no-auth) -> actionable warning chip:
 //       "Copilot {warn} Fix auth"
 //   - loading / error -> muted "Copilot" placeholder
-function AiUsageChip({ onOpenSettings }: { onOpenSettings?: () => void }) {
+function AiUsageChip({ onOpenSettings }: { onOpenSettings?: (tab?: 'github' | 'statusline') => void }) {
   const enabled = useSettingsStore((s) => s.settings.githubAiUsageEnabled)
   const aiUsage = useGitHubStore((s) => s.aiUsage)
   const aiUsageStatus = useGitHubStore((s) => s.aiUsageStatus)
+  const aiUsageCycle = useGitHubStore((s) => s.aiUsageCycle)
   const cap = useSettingsStore((s) => s.settings.copilotIncludedCredits)
   const [popoverOpen, setPopoverOpen] = useState(false)
 
   // Feature off = invisible.
   if (!enabled) return null
 
-  const chip = aiUsage ? selectAiChip(aiUsage, cap) : null
+  // Prefer the cycle-scoped figure (matches GitHub's billing card) when present;
+  // selectAiChip falls back to the whole-month report when no cycle is set.
+  const chip = aiUsage ? selectAiChip(aiUsage, cap, aiUsageCycle) : null
+  // Pool drives the inline progress bar (cap percentage + over flag).
+  const pool = aiUsage ? selectUsagePool(aiUsage, cap, aiUsageCycle) : null
   // No report + a token/auth problem -> the placeholder is actionable, so it
   // adopts the warning treatment and reads "Fix auth". Loading/error stay muted.
   const needsAuth = !chip && (aiUsageStatus === 'scope-missing' || aiUsageStatus === 'no-auth')
   const warning = chip ? chip.tone === 'warning' : needsAuth
   const color = warning ? 'var(--status-warning)' : 'var(--text-muted)'
 
-  let label: React.ReactNode
+  let content: React.ReactNode
   let ariaLabel: string
   if (chip) {
-    label = chip.label
+    // The credit count leads; when a cap is set a slim inline progress bar trails
+    // it, mirroring the status line's RateLimitBar / context-bar idiom so the
+    // Copilot meter reads as one family with the other meters. The over-allowance
+    // glyph follows the bar (rendered via String.fromCodePoint -- never a \u{...}
+    // escape in JSX). The data layer stays ASCII-clean: glyph + bar live here.
+    content = (
+      <>
+        <span>{chip.label}</span>
+        {pool?.capSet && (
+          <span
+            data-copilot-bar
+            role="progressbar"
+            aria-valuenow={Math.round(pool.pct)}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            className="inline-block rounded-sm overflow-hidden shrink-0"
+            style={{ width: '40px', height: '6px', background: 'var(--surface-overlay)' }}
+          >
+            <span
+              className="block h-full rounded-sm transition-[width] duration-300 ease-out"
+              style={{
+                width: `${pool.pct}%`,
+                background: pool.over ? 'var(--status-warning)' : 'var(--status-success)',
+              }}
+            />
+          </span>
+        )}
+        {chip.tone === 'warning' && <span aria-hidden>{WARN_GLYPH}</span>}
+      </>
+    )
     ariaLabel = chip.ariaLabel
   } else if (needsAuth) {
-    label = `Copilot ${WARN_GLYPH} Fix auth`
+    content = `Copilot ${WARN_GLYPH} Fix auth`
     ariaLabel = 'Copilot usage: re-authentication needed'
   } else {
-    label = 'Copilot'
+    content = 'Copilot'
     ariaLabel = 'Copilot usage: no data yet'
   }
 
@@ -89,7 +131,7 @@ function AiUsageChip({ onOpenSettings }: { onOpenSettings?: () => void }) {
         type="button"
         data-ai-usage-chip
         aria-label={ariaLabel}
-        title={chip ? buildAiTooltip(aiUsage!) : placeholderTooltip(aiUsageStatus)}
+        title={chip ? buildAiTooltip(aiUsage!, aiUsageCycle) : placeholderTooltip(aiUsageStatus)}
         onClick={() => setPopoverOpen((v) => !v)}
         className="flex items-center gap-1 rounded px-1.5 py-0.5 tabular-nums transition-colors duration-150 focus-ring"
         style={{
@@ -99,7 +141,7 @@ function AiUsageChip({ onOpenSettings }: { onOpenSettings?: () => void }) {
           background: warning ? 'color-mix(in srgb, var(--status-warning) 12%, transparent)' : 'transparent',
         }}
       >
-        {label}
+        {content}
       </button>
       <AiUsagePopover
         open={popoverOpen}

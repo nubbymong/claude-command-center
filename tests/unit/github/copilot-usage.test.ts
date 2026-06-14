@@ -397,7 +397,7 @@ describe('AiUsageScheduler', () => {
     const s = new AiUsageScheduler(deps)
     s.start()
     await vi.advanceTimersByTimeAsync(0)
-    expect(emit).toHaveBeenCalledWith({ report: null, status: 'no-auth' })
+    expect(emit).toHaveBeenCalledWith({ report: null, status: 'no-auth', cycle: null })
     expect(s.getStatus()).toBe('no-auth')
     s.dispose()
   })
@@ -423,6 +423,7 @@ describe('AiUsageScheduler', () => {
     expect(emit).toHaveBeenLastCalledWith({
       report: expect.objectContaining({ source: 'ai_credit' }),
       status: 'scope-missing',
+      cycle: null,
     })
     s.dispose()
   })

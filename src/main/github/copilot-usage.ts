@@ -316,6 +316,138 @@ export async function fetchAiUsage(
   return (await fetchAiUsageWithStatus(login, options)).report
 }
 
+// --- Cycle-scoped "included credits" usage ----------------------------------
+//
+// GitHub's billing card shows "included credits used / allowance" counting ONLY
+// the current plan cycle (e.g. since a mid-month upgrade), while the usage API
+// aggregates the whole calendar month. We reconstruct the card's figure by
+// summing per-day Copilot usage from the cycle start via the
+// /settings/billing/usage/summary endpoint (which accepts year/month/day). The
+// usage report's "ai-units" are 1:1 with the card's "AI credits" (both $0.01),
+// so the summed quantity matches the card's "used" number.
+
+const dailySummaryItemSchema = z.object({
+  product: z.string().default(''),
+  sku: z.string().default(''),
+  unitType: z.string().default(''),
+  grossQuantity: z.coerce.number().default(0),
+  netAmount: z.coerce.number().default(0),
+})
+const dailySummarySchema = z.object({
+  usageItems: z.array(dailySummaryItemSchema).default([]),
+})
+
+/** Copilot AI-credit usage (gross ai-units consumed + overage USD) for one day's
+ *  billing summary. Only Copilot rows in an ai-unit/ai-credit unitType count
+ *  toward the pool; premium-request rows and other products are excluded. */
+export function sumCopilotCreditsForDay(raw: unknown): { credits: number; billedUsd: number } {
+  const parsed = dailySummarySchema.safeParse(raw)
+  if (!parsed.success) return { credits: 0, billedUsd: 0 }
+  let credits = 0
+  let billedUsd = 0
+  for (const it of parsed.data.usageItems) {
+    if (it.product.toLowerCase() !== 'copilot') continue
+    // 'ai-units' (summary endpoint) / 'ai-credits' (ai_credit endpoint).
+    if (!/ai[-_ ]?(unit|credit)/i.test(it.unitType)) continue
+    credits += it.grossQuantity
+    billedUsd += it.netAmount
+  }
+  return { credits, billedUsd }
+}
+
+/** UTC calendar days from `sinceISO` (inclusive) through the day of `now`
+ *  (inclusive). Bounded at 70 so a stale/garbage cycle start can't fan out into
+ *  unbounded API calls. Returns [] on an unparseable date or a future start. */
+export function cycleDays(
+  sinceISO: string,
+  now: number,
+): Array<{ year: number; month: number; day: number; iso: string }> {
+  const start = new Date(`${sinceISO}T00:00:00Z`)
+  if (Number.isNaN(start.getTime())) return []
+  const end = new Date(now)
+  const endUTC = Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate())
+  let curUTC = Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate())
+  const out: Array<{ year: number; month: number; day: number; iso: string }> = []
+  for (let guard = 0; curUTC <= endUTC && guard < 70; guard++) {
+    const d = new Date(curUTC)
+    const year = d.getUTCFullYear()
+    const month = d.getUTCMonth() + 1
+    const day = d.getUTCDate()
+    out.push({
+      year,
+      month,
+      day,
+      iso: `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`,
+    })
+    curUTC += 86_400_000
+  }
+  return out
+}
+
+/**
+ * Sums Copilot AI-credit usage across the cycle window [since .. today] by
+ * fetching each day's billing summary in parallel. The result's `creditsUsed`
+ * matches GitHub's billing-card "included credits used". Returns null on a hard
+ * failure (every day errored) so the caller can keep any prior value, or when
+ * no cycle start is configured.
+ */
+export async function fetchCycleCredits(
+  login: string,
+  sinceISO: string,
+  options: FetchAiUsageOptions,
+): Promise<import('../../shared/github-types').CycleCredits | null> {
+  if (!login || !sinceISO) return null
+  const now = (options.now ?? Date.now)()
+  const days = cycleDays(sinceISO, now)
+  if (days.length === 0) return null
+  const fetchImpl = options.fetchImpl ?? fetch
+  const logFn = options.logFn ?? ((line: string) => console.warn(line))
+
+  const results = await Promise.all(
+    days.map(async (d) => {
+      const url = `${GITHUB_API_BASE}/users/${encodeURIComponent(
+        login,
+      )}/settings/billing/usage/summary?year=${d.year}&month=${d.month}&day=${d.day}`
+      try {
+        const token = await options.tokenFn()
+        const resp = await fetchImpl(url, {
+          headers: {
+            Authorization: `token ${token}`,
+            Accept: 'application/vnd.github+json',
+            'User-Agent': UA,
+          },
+        })
+        if (!resp.ok) return null
+        return sumCopilotCreditsForDay(await resp.json())
+      } catch (err) {
+        logOnce(
+          `cycle credits fetch failed for ${d.iso}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+          logFn,
+        )
+        return null
+      }
+    }),
+  )
+
+  // Every day errored -> hard failure (don't report a bogus 0).
+  if (results.every((r) => r === null)) return null
+  let creditsUsed = 0
+  let billedUsd = 0
+  for (const r of results) {
+    if (!r) continue
+    creditsUsed += r.credits
+    billedUsd += r.billedUsd
+  }
+  return {
+    since: sinceISO,
+    through: days[days.length - 1].iso,
+    creditsUsed,
+    billedUsd,
+  }
+}
+
 // --- Polling scheduler ------------------------------------------------------
 //
 // Refreshes on explicit request + every refreshIntervalMs (default 60 min)
@@ -330,8 +462,12 @@ export interface AiUsageSchedulerDeps {
   resolve: () => Promise<{ login: string; tokenFn: () => Promise<string> } | null>
   /** True while the meter is enabled (githubAiUsageEnabled). Re-read each tick. */
   isEnabled: () => boolean
-  /** Push the latest report + status to the renderer. */
-  emit: (payload: { report: AiUsageReport | null; status: AiUsageStatus }) => void
+  /** The current plan-cycle start ('YYYY-MM-DD') for the included-credits meter,
+   *  or null to skip cycle scoping (meter falls back to the whole-month report).
+   *  Re-read each tick so a Settings change takes effect on the next refresh. */
+  getCycleStart?: () => string | null
+  /** Push the latest report + status (+ optional cycle figure) to the renderer. */
+  emit: (payload: import('../../shared/github-types').AiUsagePayload) => void
   /** Refresh cadence; defaults to AI_USAGE_REFRESH_MS. */
   refreshIntervalMs?: number
   /** Injectable fetch for tests. */
@@ -349,6 +485,9 @@ export class AiUsageScheduler {
   // report keeps `latest` intact but updates the status so the UI can show a
   // stale-but-still-displayed report with an accurate "couldn't refresh" hint.
   private latestStatus: AiUsageStatus = 'pending'
+  // Cycle-scoped included-credits figure (or null when not configured / failed).
+  // Cached alongside `latest` so the IPC GET can return it without re-fetching.
+  private latestCycle: import('../../shared/github-types').CycleCredits | null = null
   private inFlight: Promise<AiUsageReport | null> | null = null
 
   constructor(private deps: AiUsageSchedulerDeps) {}
@@ -363,6 +502,11 @@ export class AiUsageScheduler {
     return this.latestStatus
   }
 
+  /** Latest cycle-scoped included-credits figure (or null). */
+  getLatestCycle(): import('../../shared/github-types').CycleCredits | null {
+    return this.latestCycle
+  }
+
   /**
    * Starts the periodic refresh loop. No-op (and clears any cached report) when
    * disabled — the loop arms only while isEnabled() is true. Idempotent.
@@ -375,6 +519,7 @@ export class AiUsageScheduler {
       this.clearTimer()
       this.latest = null
       this.latestStatus = 'pending'
+      this.latestCycle = null
       return
     }
     // Immediate first refresh so the panel populates without waiting a full
@@ -402,6 +547,7 @@ export class AiUsageScheduler {
     if (this.stopped || !this.deps.isEnabled()) {
       this.latest = null
       this.latestStatus = 'pending'
+      this.latestCycle = null
       return null
     }
     if (this.inFlight) return this.inFlight
@@ -420,7 +566,7 @@ export class AiUsageScheduler {
       // push it so the UI can prompt the user to connect GitHub.
       if (!this.latest) {
         this.latestStatus = 'no-auth'
-        this.deps.emit({ report: null, status: 'no-auth' })
+        this.deps.emit({ report: null, status: 'no-auth', cycle: this.latestCycle })
       }
       return this.latest
     }
@@ -434,7 +580,23 @@ export class AiUsageScheduler {
     // rather than wiping the meter on a transient failure. We still emit so the
     // status reaches the renderer (e.g. 'scope-missing' action guidance).
     if (report) this.latest = report
-    this.deps.emit({ report: this.latest, status })
+
+    // Cycle-scoped included-credits figure — only when a cycle start is set
+    // (e.g. the Max upgrade date). A transient failure (null) keeps the prior
+    // value; clearing the cycle start drops it entirely.
+    const since = this.deps.getCycleStart?.() ?? null
+    if (since) {
+      const cycle = await fetchCycleCredits(target.login, since, {
+        tokenFn: target.tokenFn,
+        fetchImpl: this.deps.fetchImpl,
+        logFn: this.deps.logFn,
+      }).catch(() => null)
+      if (cycle) this.latestCycle = cycle
+    } else {
+      this.latestCycle = null
+    }
+
+    this.deps.emit({ report: this.latest, status, cycle: this.latestCycle })
     return report ?? this.latest
   }
 

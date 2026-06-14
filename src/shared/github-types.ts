@@ -277,12 +277,32 @@ export interface AiUsageReport {
 //   - 'ok'            a report was fetched successfully (may have zero items)
 export type AiUsageStatus = 'ok' | 'no-auth' | 'scope-missing' | 'error' | 'pending'
 
+// Cycle-scoped "included credits" usage. GitHub's billing card counts AI-credit
+// consumption only within the CURRENT plan cycle (e.g. since a mid-month
+// upgrade), while the usage report aggregates the whole calendar month. We
+// reconstruct the card's figure by summing per-day usage from `since`. The
+// usage report's "ai-units" are 1:1 with the card's "AI credits" (both $0.01),
+// so creditsUsed matches the card's "X / allowance" number. null when no cycle
+// start is configured (then the meter falls back to the whole-month report).
+export interface CycleCredits {
+  /** 'YYYY-MM-DD' the current plan cycle started (user setting). */
+  since: string
+  /** 'YYYY-MM-DD' last day counted (today, UTC). */
+  through: string
+  /** Copilot AI-credits consumed in the window (== GitHub's "included credits used"). */
+  creditsUsed: number
+  /** Additional-usage (overage) billed in the window, USD. */
+  billedUsd: number
+}
+
 // The payload pushed over GITHUB_AI_USAGE_UPDATE and returned by
 // GITHUB_AI_USAGE_GET. Additive: the report is still the headline, but it now
-// carries a status so the renderer renders accurate empty/action states.
+// carries a status so the renderer renders accurate empty/action states, plus
+// the optional cycle-scoped included-credits figure.
 export interface AiUsagePayload {
   report: AiUsageReport | null
   status: AiUsageStatus
+  cycle?: CycleCredits | null
 }
 
 export interface ToolCallFileSignal {

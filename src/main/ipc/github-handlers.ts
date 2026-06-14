@@ -308,6 +308,11 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
     // persists githubAiUsageEnabled into the shared 'settings' config file.
     isEnabled: () =>
       readConfig<{ githubAiUsageEnabled?: boolean }>('settings')?.githubAiUsageEnabled === true,
+    // The plan-cycle start for the included-credits meter (e.g. the Max upgrade
+    // date). Re-read each tick so a Settings change applies on the next refresh.
+    getCycleStart: () =>
+      readConfig<{ copilotCreditsCycleStart?: string | null }>('settings')
+        ?.copilotCreditsCycleStart ?? null,
     emit: (payload) =>
       deps.getWindow()?.webContents.send(IPC.GITHUB_AI_USAGE_UPDATE, payload),
     logFn: (line) => logWarn(line),
@@ -316,20 +321,23 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
   // (and clears any cache) when disabled, so this is safe unconditionally.
   aiUsageScheduler.start()
 
-  ipcMain.handle(IPC.GITHUB_AI_USAGE_GET, async () => {
+  ipcMain.handle(IPC.GITHUB_AI_USAGE_GET, async (_e, force?: boolean) => {
     // Return the cached report + status if present, else drive a fresh fetch.
-    // refresh() honors the disabled state (returns null without a network call)
+    // `force` (the popover Refresh button, a cycle-start change in Settings)
+    // bypasses the cache so the user sees an up-to-date figure immediately
+    // instead of waiting for the hourly tick. refresh() honors the disabled
+    // state (returns null without a network call), coalesces concurrent callers,
     // and re-arms the loop if the user just enabled the meter. The status rides
     // alongside the report so the renderer can render accurate empty/action
     // states (scope-missing / no-auth) rather than a generic "no data".
-    const cached = aiUsageScheduler.getLatest()
-    if (!cached) {
+    if (force || !aiUsageScheduler.getLatest()) {
       aiUsageScheduler.start()
       await aiUsageScheduler.refresh()
     }
     return {
       report: aiUsageScheduler.getLatest(),
       status: aiUsageScheduler.getStatus(),
+      cycle: aiUsageScheduler.getLatestCycle(),
     }
   })
 

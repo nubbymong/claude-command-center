@@ -7,6 +7,7 @@ import type {
   AiUsageReport,
   AiUsageStatus,
   AiUsagePayload,
+  CycleCredits,
   GitHubAuthFeatureKey,
   GitHubAppWideFeatureKey,
 } from '../../shared/github-types'
@@ -41,6 +42,10 @@ interface GitHubStoreState {
   // "no data yet" from "token lacks the billing scope" from "no GitHub auth".
   // 'pending' until the first fetch resolves.
   aiUsageStatus: AiUsageStatus
+  // Cycle-scoped included-credits figure (used since the plan-cycle start), or
+  // null when no cycle start is configured. The chip prefers this over the
+  // whole-month report so it matches GitHub's billing-card "X / allowance".
+  aiUsageCycle: CycleCredits | null
 
   loadConfig: () => Promise<void>
   updateConfig: (patch: Partial<GitHubConfig>) => Promise<void>
@@ -72,7 +77,7 @@ interface GitHubStoreState {
     profileId: string
     items: NotificationSummary[]
   }) => void
-  loadAiUsage: () => Promise<void>
+  loadAiUsage: (force?: boolean) => Promise<void>
   handleAiUsageUpdate: (payload: AiUsagePayload) => void
 }
 
@@ -107,6 +112,7 @@ export const useGitHubStore = create<GitHubStoreState>((set, get) => ({
   notificationsByProfile: {},
   aiUsage: null,
   aiUsageStatus: 'pending',
+  aiUsageCycle: null,
 
   loadConfig: async () => {
     const config = await window.electronAPI.github.getConfig()
@@ -261,17 +267,27 @@ export const useGitHubStore = create<GitHubStoreState>((set, get) => ({
       notificationsByProfile: { ...s.notificationsByProfile, [profileId]: items },
     })),
 
-  loadAiUsage: async () => {
+  loadAiUsage: async (force) => {
     // Drives a main-side fetch (or returns the cached report + status). Returns
     // a null report when the meter is disabled / unauthed; we still set it so
     // the UI reflects the cleared state rather than a stale report. The status
     // tells the UI WHY the report is null (scope-missing / no-auth / pending).
-    const payload = await window.electronAPI.github.getAiUsage()
-    set({ aiUsage: payload?.report ?? null, aiUsageStatus: payload?.status ?? 'pending' })
+    // `force` bypasses the main-process cache (popover Refresh, cycle-date change)
+    // so the figure recomputes now rather than on the next hourly tick.
+    const payload = await window.electronAPI.github.getAiUsage(force)
+    set({
+      aiUsage: payload?.report ?? null,
+      aiUsageStatus: payload?.status ?? 'pending',
+      aiUsageCycle: payload?.cycle ?? null,
+    })
   },
 
   handleAiUsageUpdate: (payload) =>
-    set({ aiUsage: payload?.report ?? null, aiUsageStatus: payload?.status ?? 'pending' }),
+    set({
+      aiUsage: payload?.report ?? null,
+      aiUsageStatus: payload?.status ?? 'pending',
+      aiUsageCycle: payload?.cycle ?? null,
+    }),
 }))
 
 // Module-local unsubscribes so setupGitHubListener is idempotent — calling it
