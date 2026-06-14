@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { useSentinelStore } from '../../stores/sentinelStore'
 import type { SentinelFinding } from '../../../shared/sentinel-types'
+import { findingReachesUser } from '../../../shared/sentinel-reachability'
 import { selectSentinelSections, formatFindingText, formatSentinelReportText } from './sentinel-report-text'
 
 // ── Copy-to-clipboard button ──────────────────────────────────────────────────
@@ -46,13 +47,22 @@ function CopyButton({
 
 // ── Per-row apply error state ─────────────────────────────────────────────────
 
-function SeverityChip({ severity }: { severity: SentinelFinding['severity'] }) {
-  const cls =
-    severity === 'high'
-      ? 'bg-red/15 text-red'
-      : severity === 'warn'
-      ? 'bg-yellow/15 text-yellow'
-      : 'bg-overlay0/20 text-overlay1'
+function SeverityChip({
+  severity,
+  muted,
+}: {
+  severity: SentinelFinding['severity']
+  // When the finding doesn't reach the user's setup, the chip is greyed
+  // regardless of the AI's severity so the panel matches the calm dot.
+  muted?: boolean
+}) {
+  const cls = muted
+    ? 'bg-overlay0/20 text-overlay1'
+    : severity === 'high'
+    ? 'bg-red/15 text-red'
+    : severity === 'warn'
+    ? 'bg-yellow/15 text-yellow'
+    : 'bg-overlay0/20 text-overlay1'
   return (
     <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${cls}`}>
       {severity}
@@ -118,12 +128,19 @@ function CompatRow({ finding }: { finding: SentinelFinding }) {
     void window.electronAPI.sentinel.setStatus(finding.id, 'muted')
   }
 
+  // Does this change actually reach the user's CCC? Drives both the (muted)
+  // severity chip and the explanatory tag, so the panel reads the same as the
+  // dot: a flagged-but-inert change is visibly de-emphasised, not alarming.
+  const reaches = findingReachesUser(finding)
+
   return (
     <div className="py-2.5 border-b border-surface1/50 last:border-0">
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
-          <SeverityChip severity={finding.severity} />
-          <span className="text-xs font-medium text-text truncate">{finding.title}</span>
+          <SeverityChip severity={finding.severity} muted={!reaches} />
+          <span className={`text-xs font-medium truncate ${reaches ? 'text-text' : 'text-subtext0'}`}>
+            {finding.title}
+          </span>
         </div>
         <div className="flex gap-1.5 shrink-0">
           <CopyButton getText={() => formatFindingText(finding)} title="Copy this finding" />
@@ -135,11 +152,18 @@ function CompatRow({ finding }: { finding: SentinelFinding }) {
           </button>
         </div>
       </div>
-      {finding.affectedFeature && (
-        <span className="inline-block mt-0.5 text-[10px] px-1.5 py-px rounded bg-surface1/60 text-overlay1">
-          {finding.affectedFeature}
-        </span>
-      )}
+      <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+        {finding.affectedFeature && (
+          <span className="inline-block text-[10px] px-1.5 py-px rounded bg-surface1/60 text-overlay1">
+            {finding.affectedFeature}
+          </span>
+        )}
+        {!reaches && (
+          <span className="inline-block text-[10px] px-1.5 py-px rounded bg-overlay0/15 text-overlay1">
+            doesn&apos;t affect your setup
+          </span>
+        )}
+      </div>
       <p className="text-[11px] text-overlay0 mt-0.5">{finding.evidence}</p>
     </div>
   )
