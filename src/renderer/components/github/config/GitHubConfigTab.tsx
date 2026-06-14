@@ -5,7 +5,6 @@ import AppWideFeatures from './AppWideFeatures'
 import PermissionsSummary from './PermissionsSummary'
 import PrivacySettings from './PrivacySettings'
 import SyncSettings from './SyncSettings'
-import AiUsageSettings from './AiUsageSettings'
 export default function GitHubConfigTab() {
   const config = useGitHubStore((s) => s.config)
   const loadConfig = useGitHubStore((s) => s.loadConfig)
@@ -36,7 +35,6 @@ export default function GitHubConfigTab() {
       <AppWideFeatures />
       <PrivacySettings />
       <SyncSettings />
-      <AiUsageSettings />
       <PermissionsSummary />
       <div className="text-xs text-overlay0 pt-4 border-t border-surface0">
         <strong>No telemetry.</strong> This feature sends no usage data to Anthropic

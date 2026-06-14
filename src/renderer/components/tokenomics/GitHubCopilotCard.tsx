@@ -12,8 +12,10 @@ function usd(n: number): string {
 }
 
 function openGitHubSettings(): void {
-  // Deep-links to the GitHub settings tab (where AiUsageSettings + the per-auth
-  // re-auth row live). Mirrors the app:openSettings handler in App.tsx.
+  // Deep-links to the GitHub settings tab, where the per-account re-auth row
+  // lives -- the action a scope-missing card needs. (Meter display config -- cap,
+  // plan, cycle start -- moved to the Status Line tab; re-auth stays here.)
+  // Mirrors the app:openSettings handler in App.tsx.
   window.dispatchEvent(new CustomEvent('app:openSettings', { detail: { tab: 'github' } }))
 }
 

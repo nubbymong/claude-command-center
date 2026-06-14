@@ -10,12 +10,20 @@ import AiUsagePopover from '../AiUsagePopover'
 const WARN_GLYPH = String.fromCodePoint(0x26a0)
 
 // Per-model + totals tooltip for the AI-usage chip. Plain text (title attr) so
-// it works without a portal: one line per model, then covered/billed totals and
-// the fetch time.
+// it works without a portal. When a plan cycle is set, the cycle's included-
+// credit total leads (it's the headline number), then the whole-month per-model
+// breakdown, then covered/billed totals and the fetch time.
 function buildAiTooltip(
   report: import('../../../shared/github-types').AiUsageReport,
+  cycle?: import('../../../shared/github-types').CycleCredits | null,
 ): string {
   const lines: string[] = []
+  if (cycle) {
+    lines.push(`Included credits used since ${cycle.since}: ${formatCredits(cycle.creditsUsed)}`)
+    if (cycle.billedUsd > 0) lines.push(`Additional usage this cycle: $${cycle.billedUsd.toFixed(2)}`)
+    lines.push('') // blank separator before the whole-month breakdown
+    lines.push('This month, by model:')
+  }
   for (const it of report.items) {
     const name = it.model || it.sku || it.product || 'usage'
     lines.push(
@@ -53,17 +61,20 @@ function placeholderTooltip(status: import('../../../shared/github-types').AiUsa
 //   - needs-auth (scope-missing / no-auth) -> actionable warning chip:
 //       "Copilot {warn} Fix auth"
 //   - loading / error -> muted "Copilot" placeholder
-function AiUsageChip({ onOpenSettings }: { onOpenSettings?: () => void }) {
+function AiUsageChip({ onOpenSettings }: { onOpenSettings?: (tab?: 'github' | 'statusline') => void }) {
   const enabled = useSettingsStore((s) => s.settings.githubAiUsageEnabled)
   const aiUsage = useGitHubStore((s) => s.aiUsage)
   const aiUsageStatus = useGitHubStore((s) => s.aiUsageStatus)
+  const aiUsageCycle = useGitHubStore((s) => s.aiUsageCycle)
   const cap = useSettingsStore((s) => s.settings.copilotIncludedCredits)
   const [popoverOpen, setPopoverOpen] = useState(false)
 
   // Feature off = invisible.
   if (!enabled) return null
 
-  const chip = aiUsage ? selectAiChip(aiUsage, cap) : null
+  // Prefer the cycle-scoped figure (matches GitHub's billing card) when present;
+  // selectAiChip falls back to the whole-month report when no cycle is set.
+  const chip = aiUsage ? selectAiChip(aiUsage, cap, aiUsageCycle) : null
   // No report + a token/auth problem -> the placeholder is actionable, so it
   // adopts the warning treatment and reads "Fix auth". Loading/error stay muted.
   const needsAuth = !chip && (aiUsageStatus === 'scope-missing' || aiUsageStatus === 'no-auth')
@@ -73,7 +84,10 @@ function AiUsageChip({ onOpenSettings }: { onOpenSettings?: () => void }) {
   let label: React.ReactNode
   let ariaLabel: string
   if (chip) {
-    label = chip.label
+    // The warning glyph is appended here (not baked into the format string) so
+    // the data layer stays ASCII-clean and the glyph only ever renders through
+    // String.fromCodePoint -- the over-allowance signal reads "Copilot 21k/20k ⚠".
+    label = chip.tone === 'warning' ? `${chip.label} ${WARN_GLYPH}` : chip.label
     ariaLabel = chip.ariaLabel
   } else if (needsAuth) {
     label = `Copilot ${WARN_GLYPH} Fix auth`
@@ -89,7 +103,7 @@ function AiUsageChip({ onOpenSettings }: { onOpenSettings?: () => void }) {
         type="button"
         data-ai-usage-chip
         aria-label={ariaLabel}
-        title={chip ? buildAiTooltip(aiUsage!) : placeholderTooltip(aiUsageStatus)}
+        title={chip ? buildAiTooltip(aiUsage!, aiUsageCycle) : placeholderTooltip(aiUsageStatus)}
         onClick={() => setPopoverOpen((v) => !v)}
         className="flex items-center gap-1 rounded px-1.5 py-0.5 tabular-nums transition-colors duration-150 focus-ring"
         style={{

@@ -105,19 +105,15 @@ describe('GitHubConfigTab', () => {
     // The PermissionsSummary drawer now sits at the BOTTOM as the collapsed
     // reference. Its collapsed header is a <button>, not an <h3>, so verify its
     // document position relative to the last real heading via
-    // compareDocumentPosition: the drawer button comes AFTER Sync (and after AI
-    // credits usage), not between Accounts and Privacy.
+    // compareDocumentPosition: the drawer button comes AFTER Sync, not between
+    // Accounts and Privacy. (The Copilot AI-credits config moved out of this tab
+    // into the Status Line tab as of the cycle-meter redesign.)
     const btn = drawerButton(r.container)
     const sync = h3ByText(r.container, 'Sync')
-    const ai = h3ByText(r.container, 'AI credits usage')
     expect(btn).toBeTruthy()
     // Sync comes before the drawer button.
     expect(
       sync.compareDocumentPosition(btn) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy()
-    // AI credits usage comes before the drawer button.
-    expect(
-      ai.compareDocumentPosition(btn) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy()
     r.unmount()
   })

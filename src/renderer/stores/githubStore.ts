@@ -77,7 +77,7 @@ interface GitHubStoreState {
     profileId: string
     items: NotificationSummary[]
   }) => void
-  loadAiUsage: () => Promise<void>
+  loadAiUsage: (force?: boolean) => Promise<void>
   handleAiUsageUpdate: (payload: AiUsagePayload) => void
 }
 
@@ -267,12 +267,14 @@ export const useGitHubStore = create<GitHubStoreState>((set, get) => ({
       notificationsByProfile: { ...s.notificationsByProfile, [profileId]: items },
     })),
 
-  loadAiUsage: async () => {
+  loadAiUsage: async (force) => {
     // Drives a main-side fetch (or returns the cached report + status). Returns
     // a null report when the meter is disabled / unauthed; we still set it so
     // the UI reflects the cleared state rather than a stale report. The status
     // tells the UI WHY the report is null (scope-missing / no-auth / pending).
-    const payload = await window.electronAPI.github.getAiUsage()
+    // `force` bypasses the main-process cache (popover Refresh, cycle-date change)
+    // so the figure recomputes now rather than on the next hourly tick.
+    const payload = await window.electronAPI.github.getAiUsage(force)
     set({
       aiUsage: payload?.report ?? null,
       aiUsageStatus: payload?.status ?? 'pending',

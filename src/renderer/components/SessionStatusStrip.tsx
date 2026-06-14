@@ -219,10 +219,11 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
         {/* Copilot AI-credit meter -- the per-session home for the meter. Gated
             on BOTH the statusLine toggle AND the meter-enabled flag so the
             separator never dangles when the chip itself would render null. The
-            chip clicks through to its popover, and its "Fix auth" / settings
-            link dispatches the same app:openSettings event the repo breadcrumb
-            uses (tab: github). Lives last in the telemetry zone so it shares the
-            shrink budget and clips first under overflow. */}
+            chip clicks through to its popover, which deep-links to Settings per
+            context: auth/scope prompts open the GitHub tab; the cap / plan /
+            cycle config opens the Status Line tab (its new home, default). Lives
+            last in the telemetry zone so it shares the shrink budget and clips
+            first under overflow. */}
         {sl.showCopilot && aiMeterEnabled && (
           <>
             <span
@@ -232,8 +233,8 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
               aria-hidden
             />
             <AiUsageChip
-              onOpenSettings={() =>
-                window.dispatchEvent(new CustomEvent('app:openSettings', { detail: { tab: 'github' } }))
+              onOpenSettings={(tab = 'statusline') =>
+                window.dispatchEvent(new CustomEvent('app:openSettings', { detail: { tab } }))
               }
             />
           </>

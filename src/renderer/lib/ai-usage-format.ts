@@ -37,6 +37,11 @@ export function formatBilledUsd(n: number): string {
   return `+$${v.toFixed(2)}`
 }
 
+// U+00B7 MIDDLE DOT. Separates the demoted billed-overage suffix from the credit
+// count in the no-cap idiom ("Copilot 500 · +$11.69"). Built via String.fromCodePoint
+// (never a \u{...} escape) so it survives esbuild when the label reaches JSX.
+const MIDDLE_DOT = String.fromCodePoint(0xb7)
+
 export type AiChipTone = 'normal' | 'warning'
 
 export interface AiChipModel {
@@ -55,46 +60,64 @@ export interface AiChipModel {
 /**
  * Selects the repo-strip chip's content + tone from a usage report.
  *
- * Idiom (mirrors github.com's AI-usage card in a condensed strip form):
- *   - no overage (billedAmount <= 0): show credits used, with the cap when set
- *       cap set:   "Copilot 8.1k/20k"
- *       no cap:    "Copilot 8.1k"
- *   - overage (billedAmount > 0): the headline warning signal. Show the billed
- *     amount instead of the credit count (that is the number the user pays):
- *       "Copilot +$11.69"   tone: warning
+ * Idiom (mirrors github.com's AI-usage card in a condensed strip form). The
+ * credit COUNT is always the headline; the cap is the warning threshold:
+ *   - cap set:   "Copilot 891/20k", warning tone ONLY when used > cap
+ *                (the over-allowance signal, e.g. "Copilot 21k/20k")
+ *   - no cap, no overage:  "Copilot 8.1k"
+ *   - no cap, billed > 0:  "Copilot 8.1k · +$11.69" (billed demoted to a small
+ *                trailing annotation; tone stays normal -- without a cap there is
+ *                no allowance to exceed, so the chip does not cry wolf)
  *
- * `cap` is the user-entered included-credit denominator (copilotIncludedCredits),
- * or null/undefined when unknown.
+ * When `cycle` is provided it is PREFERRED over the whole-month report: GitHub's
+ * billing card counts AI-credit usage only within the current plan cycle (e.g.
+ * since a mid-month Max upgrade), and the cycle figure is reconstructed to match
+ * it. The whole-month report (which can be dominated by pre-upgrade usage and a
+ * stale prior-plan overage) is the fallback when no cycle start is configured.
+ *
+ * `cap` is the user-entered included-credit allowance (copilotIncludedCredits),
+ * a CREDIT count, or null/undefined when unknown.
  */
 export function selectAiChip(
   report: AiUsageReport,
   cap: number | null | undefined,
+  cycle?: CycleCredits | null,
 ): AiChipModel {
-  const creditsUsed = report.items.reduce((sum, it) => sum + it.grossQuantity, 0)
-  const billedAmount = report.totals.billedAmount
+  // Prefer the cycle-scoped figure (matches GitHub's billing card) over the
+  // whole-month aggregate when a plan cycle is configured.
+  const creditsUsed = cycle
+    ? cycle.creditsUsed
+    : report.items.reduce((sum, it) => sum + it.grossQuantity, 0)
+  const billedAmount = cycle ? cycle.billedUsd : report.totals.billedAmount
 
-  if (billedAmount > 0) {
-    const usd = formatBilledUsd(billedAmount)
+  const used = formatCredits(creditsUsed)
+  const capSet = cap != null && cap > 0
+
+  if (capSet) {
+    const capLabel = formatCredits(cap)
+    const over = creditsUsed > cap
     return {
-      label: `Copilot ${usd}`,
-      ariaLabel: `Copilot usage billed over plan: ${usd}`,
-      tone: 'warning',
+      label: `Copilot ${used}/${capLabel}`,
+      ariaLabel: over
+        ? `Copilot credits used: ${used} of ${capLabel} (over your included allowance)`
+        : `Copilot credits used: ${used} of ${capLabel}`,
+      tone: over ? 'warning' : 'normal',
       creditsUsed,
       billedAmount,
     }
   }
 
-  const used = formatCredits(creditsUsed)
-  if (cap != null && cap > 0) {
-    const capLabel = formatCredits(cap)
+  if (billedAmount > 0) {
+    const usd = formatBilledUsd(billedAmount)
     return {
-      label: `Copilot ${used}/${capLabel}`,
-      ariaLabel: `Copilot credits used: ${used} of ${capLabel}`,
+      label: `Copilot ${used} ${MIDDLE_DOT} ${usd}`,
+      ariaLabel: `Copilot credits used: ${used}, billed ${usd}`,
       tone: 'normal',
       creditsUsed,
       billedAmount,
     }
   }
+
   return {
     label: `Copilot ${used}`,
     ariaLabel: `Copilot credits used: ${used}`,
@@ -102,4 +125,45 @@ export function selectAiChip(
     creditsUsed,
     billedAmount,
   }
+}
+
+export interface UsagePool {
+  /** Credits used in the active window (cycle when configured, else whole month). */
+  used: number
+  /** Overage billed in the active window, USD. */
+  billed: number
+  /** Percentage of the cap consumed (0 when no cap), clamped to 100. */
+  pct: number
+  /** True when `used` exceeds the cap (cap set only). */
+  over: boolean
+  /** True when an included-credit cap is configured. */
+  capSet: boolean
+  /** A whole-month overage that predates the current cycle: nonzero only when a
+   *  cycle is set, that cycle is fully covered (billedUsd 0), yet the month
+   *  carries a billed amount — i.e. the charge happened on a prior plan/cycle. */
+  priorPlanBilled: number
+}
+
+/**
+ * Resolves the included-credit progress bar shown in the popover and the
+ * Settings live preview. Prefers the cycle figure (matches GitHub's billing
+ * card) over the whole-month aggregate, computes the cap percentage, and splits
+ * out any overage that predates the cycle so the UI can label it as prior-plan
+ * billing instead of alarming the user about a charge they already expected.
+ */
+export function selectUsagePool(
+  report: AiUsageReport,
+  cap: number | null | undefined,
+  cycle?: CycleCredits | null,
+): UsagePool {
+  const monthUsed = report.items.reduce((sum, it) => sum + it.grossQuantity, 0)
+  const monthBilled = report.totals.billedAmount
+  const used = cycle ? cycle.creditsUsed : monthUsed
+  const billed = cycle ? cycle.billedUsd : monthBilled
+  const capSet = cap != null && cap > 0
+  const pct = capSet ? Math.min(100, (used / (cap as number)) * 100) : 0
+  const over = capSet && used > (cap as number)
+  const priorPlanBilled =
+    cycle != null && cycle.billedUsd === 0 && monthBilled > 0 ? monthBilled : 0
+  return { used, billed, pct, over, capSet, priorPlanBilled }
 }

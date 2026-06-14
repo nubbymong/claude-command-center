@@ -321,14 +321,16 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
   // (and clears any cache) when disabled, so this is safe unconditionally.
   aiUsageScheduler.start()
 
-  ipcMain.handle(IPC.GITHUB_AI_USAGE_GET, async () => {
+  ipcMain.handle(IPC.GITHUB_AI_USAGE_GET, async (_e, force?: boolean) => {
     // Return the cached report + status if present, else drive a fresh fetch.
-    // refresh() honors the disabled state (returns null without a network call)
+    // `force` (the popover Refresh button, a cycle-start change in Settings)
+    // bypasses the cache so the user sees an up-to-date figure immediately
+    // instead of waiting for the hourly tick. refresh() honors the disabled
+    // state (returns null without a network call), coalesces concurrent callers,
     // and re-arms the loop if the user just enabled the meter. The status rides
     // alongside the report so the renderer can render accurate empty/action
     // states (scope-missing / no-auth) rather than a generic "no data".
-    const cached = aiUsageScheduler.getLatest()
-    if (!cached) {
+    if (force || !aiUsageScheduler.getLatest()) {
       aiUsageScheduler.start()
       await aiUsageScheduler.refresh()
     }

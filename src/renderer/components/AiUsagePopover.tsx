@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { useGitHubStore } from '../stores/githubStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useSessionStore, type Session } from '../stores/sessionStore'
-import { formatCredits, formatBilledUsd } from '../lib/ai-usage-format'
+import { formatCredits, formatBilledUsd, selectUsagePool } from '../lib/ai-usage-format'
 import { formatResetTime } from '../utils/terminalFormatting'
 
 // No \u{...} escapes in JSX (esbuild). U+21BB CLOCKWISE OPEN CIRCLE ARROW.
@@ -70,7 +70,7 @@ function SectionHeader({ title, note }: { title: string; note?: string }) {
 export default function AiUsagePopover(props: {
   open: boolean
   onClose: () => void
-  onOpenSettings?: () => void
+  onOpenSettings?: (tab?: 'github' | 'statusline') => void
 }) {
   if (!props.open) return null
   return <AiUsagePopoverBody {...props} />
@@ -83,12 +83,14 @@ function AiUsagePopoverBody({
 }: {
   open: boolean
   onClose: () => void
-  onOpenSettings?: () => void
+  onOpenSettings?: (tab?: 'github' | 'statusline') => void
 }) {
   const aiUsage = useGitHubStore((s) => s.aiUsage)
   const aiUsageStatus = useGitHubStore((s) => s.aiUsageStatus)
+  const aiUsageCycle = useGitHubStore((s) => s.aiUsageCycle)
   const loadAiUsage = useGitHubStore((s) => s.loadAiUsage)
   const cap = useSettingsStore((s) => s.settings.copilotIncludedCredits)
+  const planName = useSettingsStore((s) => s.settings.copilotPlanName)
   const sessions = useSessionStore((s) => s.sessions)
   const activeSessionId = useSessionStore((s) => s.activeSessionId)
 
@@ -135,7 +137,9 @@ function AiUsagePopoverBody({
   const handleRefresh = async () => {
     setRefreshing(true)
     try {
-      await loadAiUsage()
+      // force: bypass the main-process cache so Refresh actually re-pulls usage
+      // (and recomputes the cycle figure) instead of echoing the cached report.
+      await loadAiUsage(true)
     } finally {
       setRefreshing(false)
     }
@@ -145,9 +149,17 @@ function AiUsagePopoverBody({
   const totalGrossCredits = aiUsage
     ? aiUsage.items.reduce((sum, it) => sum + it.grossQuantity, 0)
     : 0
-  const capPct = capSet ? Math.min(100, (totalGrossCredits / (cap as number)) * 100) : 0
-  const overCap = capSet && totalGrossCredits > (cap as number)
-  const billed = aiUsage?.totals.billedAmount ?? 0
+  // Cycle-preferred included-credit pool drives the primary progress bar. When
+  // aiUsage is null the placeholder branch renders, so a zero pool is harmless.
+  const pool = aiUsage
+    ? selectUsagePool(aiUsage, cap, aiUsageCycle)
+    : { used: 0, billed: 0, pct: 0, over: false, capSet, priorPlanBilled: 0 }
+  const headerNote = [
+    planName || null,
+    aiUsage ? `as of ${formatResetTime(new Date(aiUsage.fetchedAt).toISOString())}` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ') || undefined
 
   return (
     <div
@@ -160,10 +172,7 @@ function AiUsagePopoverBody({
     >
       {/* GitHub section */}
       <div className="rounded border border-surface0 bg-crust/50 p-2.5">
-        <SectionHeader
-          title="GitHub Copilot"
-          note={aiUsage ? `as of ${formatResetTime(new Date(aiUsage.fetchedAt).toISOString())}` : undefined}
-        />
+        <SectionHeader title="GitHub Copilot" note={headerNote} />
         {!aiUsage ? (
           <div className="text-[11px] text-overlay1">
             {aiUsageStatus === 'no-auth' ? (
@@ -187,68 +196,101 @@ function AiUsagePopoverBody({
               </>
             )}
             <button
-              onClick={onOpenSettings}
+              onClick={() => onOpenSettings?.('github')}
               className="mt-1.5 block self-start text-[10px] text-overlay1 underline decoration-dotted hover:text-text transition-colors focus-ring"
             >
               Open Settings
             </button>
           </div>
-        ) : aiUsage.items.length === 0 ? (
-          <div className="text-[11px] text-overlay1">No AI-credit usage this period.</div>
         ) : (
-          <div className="flex flex-col gap-1 text-[11px] tabular-nums">
-            <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-2 text-[9px] uppercase tracking-wide text-overlay1">
-              <span>Model</span>
-              <span className="text-right">Credits</span>
-              <span className="text-right">Covered</span>
-              <span className="text-right">Billed</span>
-            </div>
-            {aiUsage.items.map((it, i) => (
-              <div key={i} className="grid grid-cols-[1fr_auto_auto_auto] gap-x-2 text-subtext0">
-                <span className="truncate text-text" title={`${it.product} ${it.sku} ${it.model}`.trim()}>
-                  {it.model || it.sku || it.product || 'usage'}
+          <div className="flex flex-col gap-2 text-[11px] tabular-nums">
+            {/* PRIMARY: the included-credit pool (cycle-scoped when configured,
+                matching GitHub's billing card). This is the headline number. */}
+            <div className="flex flex-col gap-1">
+              <div className="flex items-center justify-between text-[10px]">
+                <span className="text-subtext0">
+                  {aiUsageCycle ? 'Included AI credits' : 'Credits this month'}
+                  {aiUsageCycle && (
+                    <span className="text-overlay1"> since {aiUsageCycle.since}</span>
+                  )}
                 </span>
-                <span className="text-right">{formatCredits(it.grossQuantity)}</span>
-                <span className="text-right text-overlay1">{usd(it.coveredAmount)}</span>
-                <span className={`text-right ${it.billedAmount > 0 ? 'text-yellow' : 'text-overlay1'}`}>
-                  {usd(it.billedAmount)}
+                <span className={pool.over ? 'text-red font-medium' : 'text-text'}>
+                  {formatCredits(pool.used)}
+                  {capSet && ` / ${formatCredits(cap as number)}`}
+                  {capSet && <span className="text-overlay1"> · {Math.round(pool.pct)}%</span>}
                 </span>
               </div>
-            ))}
-            <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-2 border-t border-surface0/70 mt-0.5 pt-1 text-text font-medium">
-              <span>Total</span>
-              <span className="text-right">{formatCredits(totalGrossCredits)}</span>
-              <span className="text-right text-overlay1">{usd(aiUsage.totals.coveredAmount)}</span>
-              <span className={`text-right ${billed > 0 ? 'text-yellow' : ''}`}>{usd(billed)}</span>
-            </div>
-            {capSet ? (
-              <div className="mt-2 flex flex-col gap-1">
-                <div className="flex items-center justify-between text-[10px] text-overlay1">
-                  <span>
-                    {formatCredits(totalGrossCredits)} / {formatCredits(cap as number)} credits
-                  </span>
-                  <span>{Math.round(capPct)}%</span>
-                </div>
+              {capSet ? (
                 <span className="h-1.5 rounded-full overflow-hidden bg-surface0">
                   <span
-                    className={`block h-full rounded-full transition-all duration-200 ${overCap ? 'bg-red' : 'bg-green'}`}
-                    style={{ width: `${capPct}%` }}
+                    className={`block h-full rounded-full transition-all duration-200 ${pool.over ? 'bg-red' : 'bg-green'}`}
+                    style={{ width: `${pool.pct}%` }}
                   />
                 </span>
-              </div>
+              ) : (
+                <button
+                  onClick={() => onOpenSettings?.('statusline')}
+                  className="self-start text-[10px] text-overlay1 underline decoration-dotted hover:text-text transition-colors focus-ring"
+                >
+                  Set your included-credit allowance in Settings
+                </button>
+              )}
+              {pool.billed > 0 && (
+                <span className="text-[10px] text-yellow">
+                  {aiUsageCycle ? 'Additional usage this cycle' : 'Billed beyond included credits'}:{' '}
+                  {formatBilledUsd(pool.billed)}
+                </span>
+              )}
+            </div>
+
+            {/* SECONDARY: the whole-month per-model breakdown, collapsed so the
+                pool stays the focus. The chip's tooltip mirrors this. */}
+            {aiUsage.items.length === 0 ? (
+              <div className="text-[10px] text-overlay1">No AI-credit usage recorded this month.</div>
             ) : (
-              <button
-                onClick={onOpenSettings}
-                className="mt-1 self-start text-[10px] text-overlay1 underline decoration-dotted hover:text-text transition-colors focus-ring"
-              >
-                Set your included-credit cap in Settings
-              </button>
+              <details className="group">
+                <summary className="cursor-pointer list-none text-[9px] uppercase tracking-wide text-overlay1 hover:text-subtext0 transition-colors select-none">
+                  This month, by model
+                </summary>
+                <div className="mt-1 flex flex-col gap-1">
+                  <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-2 text-[9px] uppercase tracking-wide text-overlay1">
+                    <span>Model</span>
+                    <span className="text-right">Credits</span>
+                    <span className="text-right">Covered</span>
+                    <span className="text-right">Billed</span>
+                  </div>
+                  {aiUsage.items.map((it, i) => (
+                    <div key={i} className="grid grid-cols-[1fr_auto_auto_auto] gap-x-2 text-subtext0">
+                      <span className="truncate text-text" title={`${it.product} ${it.sku} ${it.model}`.trim()}>
+                        {it.model || it.sku || it.product || 'usage'}
+                      </span>
+                      <span className="text-right">{formatCredits(it.grossQuantity)}</span>
+                      <span className="text-right text-overlay1">{usd(it.coveredAmount)}</span>
+                      <span className={`text-right ${it.billedAmount > 0 ? 'text-yellow' : 'text-overlay1'}`}>
+                        {usd(it.billedAmount)}
+                      </span>
+                    </div>
+                  ))}
+                  <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-2 border-t border-surface0/70 mt-0.5 pt-1 text-text font-medium">
+                    <span>Total</span>
+                    <span className="text-right">{formatCredits(totalGrossCredits)}</span>
+                    <span className="text-right text-overlay1">{usd(aiUsage.totals.coveredAmount)}</span>
+                    <span className={`text-right ${aiUsage.totals.billedAmount > 0 ? 'text-yellow' : ''}`}>
+                      {usd(aiUsage.totals.billedAmount)}
+                    </span>
+                  </div>
+                </div>
+              </details>
             )}
-          </div>
-        )}
-        {billed > 0 && (
-          <div className="mt-2 text-[11px] text-yellow">
-            Billed beyond included credits: {formatBilledUsd(billed)}
+
+            {/* A month overage that predates this cycle (e.g. a prior plan). Shown
+                quietly so the stale charge is explained, not alarming. */}
+            {pool.priorPlanBilled > 0 && (
+              <div className="text-[10px] text-overlay1">
+                Earlier this month: {formatBilledUsd(pool.priorPlanBilled)} billed on your prior
+                plan, before this cycle.
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -267,10 +309,10 @@ function AiUsagePopoverBody({
 
       <div className="flex items-center justify-between pt-0.5">
         <button
-          onClick={onOpenSettings}
+          onClick={() => onOpenSettings?.('statusline')}
           className="text-[10px] text-overlay1 hover:text-text transition-colors focus-ring"
         >
-          Settings
+          Copilot meter settings
         </button>
         <button
           onClick={handleRefresh}
