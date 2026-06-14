@@ -214,7 +214,10 @@ function AiUsagePopoverBody({
                     <span className="text-overlay1"> since {aiUsageCycle.since}</span>
                   )}
                 </span>
-                <span className={pool.over ? 'text-red font-medium' : 'text-text'}>
+                <span
+                  className="font-medium"
+                  style={{ color: pool.over ? 'var(--status-warning)' : 'var(--text)' }}
+                >
                   {formatCredits(pool.used)}
                   {capSet && ` / ${formatCredits(cap as number)}`}
                   {capSet && <span className="text-overlay1"> · {Math.round(pool.pct)}%</span>}
@@ -223,8 +226,11 @@ function AiUsagePopoverBody({
               {capSet ? (
                 <span className="h-1.5 rounded-full overflow-hidden bg-surface0">
                   <span
-                    className={`block h-full rounded-full transition-all duration-200 ${pool.over ? 'bg-red' : 'bg-green'}`}
-                    style={{ width: `${pool.pct}%` }}
+                    className="block h-full rounded-full transition-all duration-200"
+                    style={{
+                      width: `${pool.pct}%`,
+                      background: pool.over ? 'var(--status-warning)' : 'var(--status-success)',
+                    }}
                   />
                 </span>
               ) : (

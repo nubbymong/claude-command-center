@@ -200,8 +200,11 @@ export default function CopilotMeterSettings() {
             <span className="flex items-center gap-1.5">
               <span className="w-20 h-1.5 rounded-full overflow-hidden bg-surface0">
                 <span
-                  className={`block h-full rounded-full transition-all duration-200 ${pool.over ? 'bg-red' : 'bg-green'}`}
-                  style={{ width: `${pool.pct}%` }}
+                  className="block h-full rounded-full transition-all duration-200"
+                  style={{
+                    width: `${pool.pct}%`,
+                    background: pool.over ? 'var(--status-warning)' : 'var(--status-success)',
+                  }}
                 />
               </span>
               <span className="text-[10px] text-overlay1 tabular-nums">{Math.round(pool.pct)}%</span>

@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import { useGitHubStore } from '../../stores/githubStore'
 import { useSettingsStore } from '../../stores/settingsStore'
-import { selectAiChip, formatCredits } from '../../lib/ai-usage-format'
+import { selectAiChip, selectUsagePool, formatCredits } from '../../lib/ai-usage-format'
 import { formatResetTime } from '../../utils/terminalFormatting'
 import AiUsagePopover from '../AiUsagePopover'
 
@@ -75,25 +75,53 @@ function AiUsageChip({ onOpenSettings }: { onOpenSettings?: (tab?: 'github' | 's
   // Prefer the cycle-scoped figure (matches GitHub's billing card) when present;
   // selectAiChip falls back to the whole-month report when no cycle is set.
   const chip = aiUsage ? selectAiChip(aiUsage, cap, aiUsageCycle) : null
+  // Pool drives the inline progress bar (cap percentage + over flag).
+  const pool = aiUsage ? selectUsagePool(aiUsage, cap, aiUsageCycle) : null
   // No report + a token/auth problem -> the placeholder is actionable, so it
   // adopts the warning treatment and reads "Fix auth". Loading/error stay muted.
   const needsAuth = !chip && (aiUsageStatus === 'scope-missing' || aiUsageStatus === 'no-auth')
   const warning = chip ? chip.tone === 'warning' : needsAuth
   const color = warning ? 'var(--status-warning)' : 'var(--text-muted)'
 
-  let label: React.ReactNode
+  let content: React.ReactNode
   let ariaLabel: string
   if (chip) {
-    // The warning glyph is appended here (not baked into the format string) so
-    // the data layer stays ASCII-clean and the glyph only ever renders through
-    // String.fromCodePoint -- the over-allowance signal reads "Copilot 21k/20k ⚠".
-    label = chip.tone === 'warning' ? `${chip.label} ${WARN_GLYPH}` : chip.label
+    // The credit count leads; when a cap is set a slim inline progress bar trails
+    // it, mirroring the status line's RateLimitBar / context-bar idiom so the
+    // Copilot meter reads as one family with the other meters. The over-allowance
+    // glyph follows the bar (rendered via String.fromCodePoint -- never a \u{...}
+    // escape in JSX). The data layer stays ASCII-clean: glyph + bar live here.
+    content = (
+      <>
+        <span>{chip.label}</span>
+        {pool?.capSet && (
+          <span
+            data-copilot-bar
+            role="progressbar"
+            aria-valuenow={Math.round(pool.pct)}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            className="inline-block rounded-sm overflow-hidden shrink-0"
+            style={{ width: '40px', height: '6px', background: 'var(--surface-overlay)' }}
+          >
+            <span
+              className="block h-full rounded-sm transition-[width] duration-300 ease-out"
+              style={{
+                width: `${pool.pct}%`,
+                background: pool.over ? 'var(--status-warning)' : 'var(--status-success)',
+              }}
+            />
+          </span>
+        )}
+        {chip.tone === 'warning' && <span aria-hidden>{WARN_GLYPH}</span>}
+      </>
+    )
     ariaLabel = chip.ariaLabel
   } else if (needsAuth) {
-    label = `Copilot ${WARN_GLYPH} Fix auth`
+    content = `Copilot ${WARN_GLYPH} Fix auth`
     ariaLabel = 'Copilot usage: re-authentication needed'
   } else {
-    label = 'Copilot'
+    content = 'Copilot'
     ariaLabel = 'Copilot usage: no data yet'
   }
 
@@ -113,7 +141,7 @@ function AiUsageChip({ onOpenSettings }: { onOpenSettings?: (tab?: 'github' | 's
           background: warning ? 'color-mix(in srgb, var(--status-warning) 12%, transparent)' : 'transparent',
         }}
       >
-        {label}
+        {content}
       </button>
       <AiUsagePopover
         open={popoverOpen}

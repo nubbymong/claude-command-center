@@ -145,6 +145,26 @@ describe('AI-usage chip content', () => {
     expect(chip!.textContent).toBe('Copilot 8.1k/20k')
   })
 
+  it('renders an inline progress bar when the cap is set (like the other status-line meters)', async () => {
+    useSettingsStore.setState((s) => ({
+      settings: { ...s.settings, githubAiUsageEnabled: true, copilotIncludedCredits: 20000 },
+    }))
+    useGitHubStore.setState({ aiUsage: makeReport() })
+    await render()
+    const bar = container.querySelector('[data-copilot-bar]')
+    expect(bar).not.toBeNull()
+    expect(bar!.getAttribute('role')).toBe('progressbar')
+  })
+
+  it('renders NO progress bar without a cap (no denominator to fill toward)', async () => {
+    useSettingsStore.setState((s) => ({
+      settings: { ...s.settings, githubAiUsageEnabled: true, copilotIncludedCredits: null },
+    }))
+    useGitHubStore.setState({ aiUsage: makeReport() })
+    await render()
+    expect(container.querySelector('[data-copilot-bar]')).toBeNull()
+  })
+
   it('a billed overage under the cap no longer hijacks the headline (credit count leads)', async () => {
     // Pre-redesign this showed "Copilot +$11.69". Now usage (8.1k) is under the
     // cap (20k), so the chip stays the calm ratio -- the dollar figure lives in
