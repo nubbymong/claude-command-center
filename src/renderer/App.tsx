@@ -831,7 +831,13 @@ export default function App() {
               )
             })}
           </div>
-          {activeSession && <GitHubPanel sessionId={activeSession.id} />}
+          {/* BUG-7: the GitHub FAB (absolute top-2 right-2) is a later sibling
+              than the session content, so it painted over the draw pane's Close
+              button. The FAB is irrelevant while drawing — suppress the whole
+              panel when the active session is in draw mode. */}
+          {activeSession && !excalidrawBySession[activeSession.id]?.isOpen && (
+            <GitHubPanel sessionId={activeSession.id} />
+          )}
         </div>
         {/* Per-session telemetry strip + command rows live BELOW the
             terminal/GitHub-panel row so they span the full content-column
