@@ -11,7 +11,7 @@ interface CloudAgentState {
   accountFilter: string
 
   hydrate: (agents: CloudAgent[]) => void
-  dispatch: (params: { name: string; description: string; projectPath: string; configId?: string; profileId?: string; legacyVersion?: { enabled: boolean; version: string } }) => Promise<void>
+  dispatch: (params: { name: string; description: string; projectPath: string; configId?: string; profileId?: string; legacyVersion?: { enabled: boolean; version: string }; skipPermissions?: boolean }) => Promise<void>
   cancel: (id: string) => Promise<void>
   remove: (id: string) => Promise<void>
   retry: (id: string) => Promise<void>

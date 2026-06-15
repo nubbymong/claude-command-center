@@ -134,6 +134,8 @@ export async function dispatchAgent(params: {
   configId?: string
   profileId?: string
   legacyVersion?: { enabled: boolean; version: string }
+  // Per-run, ephemeral opt-in to --dangerously-skip-permissions. Default OFF.
+  skipPermissions?: boolean
 }): Promise<CloudAgentData> {
   // Resolve the per-account isolated environment up front so the agent record
   // is stamped with the account it actually ran under (drives the card label,
@@ -189,9 +191,11 @@ export async function dispatchAgent(params: {
   const tmpFile = path.join(os.tmpdir(), `ccc-agent-${agent.id}.txt`)
   fs.writeFileSync(tmpFile, params.description, 'utf8')
 
-  // Read setting to decide whether to include --dangerously-skip-permissions
-  const settings = readConfig<{ skipPermissionsForAgents?: boolean }>('settings')
-  const skipPerms = settings?.skipPermissionsForAgents !== false // default true
+  // P1.3 / FEAT-1: cloud-agent dispatch is decoupled from the global
+  // `skipPermissionsForAgents` setting (which now scopes Insights only). The
+  // dangerous skip is an explicit, ephemeral PER-RUN opt-in from the New Agent
+  // dialog: default OFF, never read from persisted config here.
+  const skipPerms = params.skipPermissions === true
 
   const pipeCmd = process.platform === 'win32' ? 'type' : 'cat'
   const permFlag = skipPerms ? ' --dangerously-skip-permissions' : ''
