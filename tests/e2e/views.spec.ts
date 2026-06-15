@@ -1,27 +1,23 @@
 /**
  * Playwright E2E tests — Various views (Settings, Usage, Logs, Insights, Browse)
+ *
+ * Runs against an isolated temp data dir (helpers/electron-app) so the app
+ * boots to a clean, setup-complete first-launch state with no real user data.
  */
 
-import { test, expect, _electron as electron, ElectronApplication, Page } from '@playwright/test'
-import path from 'path'
+import { test, expect } from '@playwright/test'
+import { launchIsolatedApp, closeIsolatedApp, IsolatedApp } from './helpers/electron-app'
 
-const APP_PATH = path.resolve(__dirname, '../../out/main/index.js')
-
-let app: ElectronApplication
-let page: Page
+let ctx: IsolatedApp
+let page: IsolatedApp['page']
 
 test.beforeAll(async () => {
-  app = await electron.launch({
-    args: [APP_PATH],
-    env: { ...process.env, NODE_ENV: 'test', E2E_HEADLESS: '1' },
-  })
-  page = await app.firstWindow()
-  await page.waitForLoadState('domcontentloaded')
-  await page.waitForTimeout(3000)
+  ctx = await launchIsolatedApp()
+  page = ctx.page
 })
 
 test.afterAll(async () => {
-  if (app) await app.close()
+  await closeIsolatedApp(ctx)
 })
 
 async function clickNavButton(index: number): Promise<boolean> {

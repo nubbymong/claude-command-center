@@ -2,40 +2,28 @@
  * Playwright E2E tests for Claude Command Center
  * Tests the actual Electron app using Playwright's Electron support.
  *
- * Prerequisites: `npm run build` must have been run first.
+ * Runs against an isolated temp data dir (helpers/electron-app) so the app
+ * boots to a clean, setup-complete first-launch state with no real user data.
  */
 
-import { test, expect, _electron as electron, ElectronApplication, Page } from '@playwright/test'
-import path from 'path'
+import { test, expect } from '@playwright/test'
+import { launchIsolatedApp, closeIsolatedApp, IsolatedApp } from './helpers/electron-app'
 
-const APP_PATH = path.resolve(__dirname, '../../out/main/index.js')
-
-let app: ElectronApplication
-let page: Page
+let ctx: IsolatedApp
+let page: IsolatedApp['page']
 
 test.beforeAll(async () => {
-  app = await electron.launch({
-    args: [APP_PATH],
-    env: {
-      ...process.env,
-      NODE_ENV: 'test',
-      E2E_HEADLESS: '1',  // Signal to main process to stay off-screen
-    },
-  })
-  page = await app.firstWindow()
-  // Wait for the app to fully render
-  await page.waitForLoadState('domcontentloaded')
-  // Give React time to hydrate
-  await page.waitForTimeout(2000)
+  ctx = await launchIsolatedApp()
+  page = ctx.page
 })
 
 test.afterAll(async () => {
-  if (app) await app.close()
+  await closeIsolatedApp(ctx)
 })
 
 test.describe('App Launch', () => {
   test('window is visible', async () => {
-    const isVisible = await app.evaluate(({ BrowserWindow }) => {
+    const isVisible = await ctx.app.evaluate(({ BrowserWindow }) => {
       const win = BrowserWindow.getAllWindows()[0]
       return win ? win.isVisible() : false
     })
@@ -43,7 +31,7 @@ test.describe('App Launch', () => {
   })
 
   test('window has correct minimum size', async () => {
-    const size = await app.evaluate(({ BrowserWindow }) => {
+    const size = await ctx.app.evaluate(({ BrowserWindow }) => {
       const win = BrowserWindow.getAllWindows()[0]
       return win ? win.getMinimumSize() : [0, 0]
     })
@@ -94,7 +82,7 @@ test.describe('Setup / Config Loading', () => {
 test.describe('Window Controls', () => {
   test('window can be minimized via IPC', async () => {
     // Test that the minimize IPC channel works
-    const result = await app.evaluate(({ BrowserWindow }) => {
+    const result = await ctx.app.evaluate(({ BrowserWindow }) => {
       const win = BrowserWindow.getAllWindows()[0]
       if (!win) return false
       const wasMinimized = win.isMinimized()
@@ -108,7 +96,7 @@ test.describe('Window Controls', () => {
   })
 
   test('isMaximized IPC handler responds', async () => {
-    const isMaximized = await app.evaluate(({ BrowserWindow }) => {
+    const isMaximized = await ctx.app.evaluate(({ BrowserWindow }) => {
       const win = BrowserWindow.getAllWindows()[0]
       return win ? win.isMaximized() : false
     })

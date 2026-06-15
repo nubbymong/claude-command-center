@@ -12,35 +12,24 @@
  *     OAuth start IPC has side effects that are impractical to mock in a
  *     launched Electron app). OAuth end-to-end validation stays in manual
  *     QA + the unit tests around OAuthDeviceFlow.
+ *
+ * Runs against an isolated temp data dir (helpers/electron-app) so the app
+ * boots to a clean, setup-complete first-launch state with no real user data.
  */
 
-import { test, expect, _electron as electron, ElectronApplication, Page } from '@playwright/test'
-import path from 'path'
+import { test, expect } from '@playwright/test'
+import { launchIsolatedApp, closeIsolatedApp, IsolatedApp } from './helpers/electron-app'
 
-const APP_PATH = path.resolve(__dirname, '../../out/main/index.js')
-
-let app: ElectronApplication
-let page: Page
+let ctx: IsolatedApp
+let page: IsolatedApp['page']
 
 test.beforeAll(async () => {
-  app = await electron.launch({
-    args: [APP_PATH],
-    env: {
-      ...process.env,
-      NODE_ENV: 'test',
-      E2E_HEADLESS: '1',
-    },
-  })
-  page = await app.firstWindow()
-  await page.waitForLoadState('domcontentloaded')
-  // Wait for the Settings sidebar button — a deterministic readiness
-  // signal for React + store hydration. Fixed waitForTimeout calls are
-  // flaky on slower CI workers and waste time on fast ones.
-  await page.waitForSelector('button[title="Settings"]', { timeout: 15000 })
+  ctx = await launchIsolatedApp()
+  page = ctx.page
 })
 
 test.afterAll(async () => {
-  if (app) await app.close()
+  await closeIsolatedApp(ctx)
 })
 
 test.describe('GitHub OAuth UI', () => {
