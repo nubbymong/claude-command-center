@@ -175,6 +175,20 @@ function stripAnsiCodes(str: string): string {
 }
 
 /**
+ * Human-readable reason for a /insights PTY timeout, by how far it got. Pure, so
+ * it's unit-testable without the live PTY. The detail flows into run.error and is
+ * surfaced in the Insights UI (Unit 3 W7). NOTE: a content-based *fast-exit* for
+ * the no-usage-data case is deferred to live-QA — capturing the exact empty-state
+ * string needs a real no-data run, and a blind timing cutoff risks killing a
+ * slow-but-working generation on a heavy account (real-data gate).
+ */
+export function describeInsightsTimeout(commandSent: boolean, timeoutSec: number): string {
+  return commandSent
+    ? `/insights did not produce a report within ${timeoutSec}s (likely no usage data yet, or the trust prompt was not accepted)`
+    : `Claude did not reach an interactive prompt within ${timeoutSec}s`
+}
+
+/**
  * Find a working directory that Claude already trusts.
  * Prefers: install path (already in ~/.claude/projects/) > source path (dev) > homedir
  */
@@ -269,10 +283,11 @@ function spawnClaudeInsights(home: string | null, timeoutMs = 600000): Promise<{
       if (!resolved) {
         resolved = true
         cleanup()
-        logError(`[insights] PTY timed out after ${timeoutMs / 1000}s`)
+        const reason = describeInsightsTimeout(commandSent, timeoutMs / 1000)
+        logError(`[insights] PTY timed out: ${reason}`)
         logError(`[insights] Last output: ${stripAnsiCodes(output).slice(-500)}`)
         try { proc.kill() } catch { /* ignore */ }
-        resolve({ code: 1, output: output + '\nTimed out after ' + (timeoutMs / 1000) + 's' })
+        resolve({ code: 1, output: output + '\n' + reason })
       }
     }, timeoutMs)
 
