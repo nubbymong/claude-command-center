@@ -171,7 +171,7 @@ export async function parseClaudeTranscriptFile(filePath: string): Promise<Claud
 
 /**
  * Decode a Claude project folder name (encoded path) back to a real filesystem path.
- * e.g. F--CLAUDE-MULTI-APP -> F:/CLAUDE_MULTI_APP
+ * e.g. F--MY-PROJECT -> F:/MY_PROJECT
  *
  * Mirrors the inverse of pathToClaudeProjectFolder (claude-project-path.ts) and
  * the sanitizeProjectPath helper in session-discovery.ts.

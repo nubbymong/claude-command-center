@@ -734,13 +734,13 @@ describe('transcripts-worker', () => {
     // s1 in our project, closed at 1500
     seed.insertRun({
       sessionId: 's1', configId: 'cfg1', configLabel: 'APP', provider: 'claude',
-      startedAt: 1000, projectCwd: 'F:\\CLAUDE_MULTI_APP',
+      startedAt: 1000, projectCwd: 'F:\\MY_PROJECT',
     })
     seed.closeRun('s1', 1500, 'exited')
     // s2 in our project, open (startedAt=2000, no endedAt) — lastActive=2000
     seed.insertRun({
       sessionId: 's2', configId: 'cfg2', configLabel: 'APP', provider: 'claude',
-      startedAt: 2000, projectCwd: 'F:\\CLAUDE_MULTI_APP',
+      startedAt: 2000, projectCwd: 'F:\\MY_PROJECT',
     })
     // s3 in a DIFFERENT project — must be excluded
     seed.insertRun({
@@ -752,8 +752,8 @@ describe('transcripts-worker', () => {
     const h = makeWorker()
     h.send({ type: 'open', dbPath })
 
-    // mangleCwdToProjectDir('F:\\CLAUDE_MULTI_APP') = 'F--CLAUDE-MULTI-APP'
-    h.send({ type: 'query', id: 10, kind: 'recent-sessions', args: { projectDir: 'F--CLAUDE-MULTI-APP', limit: 5 } })
+    // mangleCwdToProjectDir('F:\\MY_PROJECT') = 'F--MY-PROJECT'
+    h.send({ type: 'query', id: 10, kind: 'recent-sessions', args: { projectDir: 'F--MY-PROJECT', limit: 5 } })
     const res = h.out.find((m) => m.type === 'query-result' && m.id === 10) as { rows: { sessionId: string; lastActive: number }[] }
     expect(res).toBeDefined()
     // s2 (lastActive=2000) before s1 (lastActive=1500); s3 excluded
@@ -762,7 +762,7 @@ describe('transcripts-worker', () => {
     expect(res.rows[1].lastActive).toBe(1500)
 
     // limit=1 returns only the most recent
-    h.send({ type: 'query', id: 11, kind: 'recent-sessions', args: { projectDir: 'F--CLAUDE-MULTI-APP', limit: 1 } })
+    h.send({ type: 'query', id: 11, kind: 'recent-sessions', args: { projectDir: 'F--MY-PROJECT', limit: 1 } })
     const res1 = h.out.find((m) => m.type === 'query-result' && m.id === 11) as { rows: { sessionId: string }[] }
     expect(res1.rows.map((r) => r.sessionId)).toEqual(['s2'])
 

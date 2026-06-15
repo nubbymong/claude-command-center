@@ -37,10 +37,10 @@ const readline = require('readline')
 //   Formally: cwd.replace(/[^A-Za-z0-9]/g, '-')
 //
 // Verified examples:
-//   F:\CLAUDE_MULTI_APP                              → F--CLAUDE-MULTI-APP
-//   f:\platform_v9                                   → f--platform-v9
-//   F:\platform_v9\.claude-worktrees\warm-toolchain  → F--platform-v9--claude-worktrees-warm-toolchain
-//   C:\Users\nicho                                   → C--Users-nicho
+//   F:\MY_PROJECT                              → F--MY-PROJECT
+//   f:\sample_app                                   → f--sample-app
+//   F:\sample_app\.claude-worktrees\warm-toolchain  → F--sample-app--claude-worktrees-warm-toolchain
+//   C:\Users\jane                                   → C--Users-jane
 //
 // The OLD rule (only `:` `\` `_`, leaving `.` etc.) produced the WRONG folder
 // name for dotted/worktree paths, which is exactly why worktree conversations

@@ -103,10 +103,10 @@ describe('middleTruncateEmail', () => {
   })
 
   it('middle-truncates long emails keeping head and tail', () => {
-    const out = middleTruncateEmail('nicholas.moger@somecompany.com', 24)
+    const out = middleTruncateEmail('jane.developer@somecompany.com', 24)
     expect(out.length).toBeLessThanOrEqual(24)
     expect(out).toContain('...')
-    expect(out.startsWith('nicholas')).toBe(true)
+    expect(out.startsWith('jane')).toBe(true)
     expect(out.endsWith('.com')).toBe(true)
   })
 

@@ -169,7 +169,7 @@ describe('buildClaudeLaunchCommand — RESUME (resumeUuid present)', () => {
 // the homedir. The provider / discoveryOn gating stays in spawnPty (Fix 3); the
 // helper is concerned only with paths.
 describe('resolveResumeLaunch — gate', () => {
-  const HOME = 'C:\\Users\\nicho'
+  const HOME = 'C:\\Users\\jane'
   const PROJECTS_ROOT = path.join(HOME, '.claude', 'projects')
   const T_UUID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
   const REAL_CWD = 'F:\\proj\\worktree'
@@ -375,7 +375,7 @@ describe('resolveResumeLaunch — gate', () => {
 // statusline / heuristic). This pure helper constructs the canonical transcript
 // path it hands to binder.notifyTranscriptPath.
 describe('buildResumeTranscriptPath — canonical ~/.claude/projects path', () => {
-  const HOME = 'C:\\Users\\nicho'
+  const HOME = 'C:\\Users\\jane'
   const UUID2 = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
 
   it('joins homedir/.claude/projects/<mangle(cwd)>/<uuid>.jsonl', () => {
@@ -384,8 +384,8 @@ describe('buildResumeTranscriptPath — canonical ~/.claude/projects path', () =
   })
 
   it('mangles every non-alphanumeric char individually (no run-collapse)', () => {
-    const out = buildResumeTranscriptPath('F:\\CLAUDE_MULTI_APP', UUID2, () => HOME)
-    expect(out).toBe(path.join(HOME, '.claude', 'projects', 'F--CLAUDE-MULTI-APP', `${UUID2}.jsonl`))
+    const out = buildResumeTranscriptPath('F:\\MY_PROJECT', UUID2, () => HOME)
+    expect(out).toBe(path.join(HOME, '.claude', 'projects', 'F--MY-PROJECT', `${UUID2}.jsonl`))
   })
 
   it('returns null for a non-UUID stem (never builds a path from garbage)', () => {

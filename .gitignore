@@ -17,6 +17,8 @@ USER/
 /memory/
 .pr30-body.md
 .pr*-body.md
+docs/release-prep/
+scripts/probe-transcript-path.md
 
 # Build cache
 *.tsbuildinfo

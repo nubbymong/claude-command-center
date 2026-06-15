@@ -29,18 +29,18 @@ const picker = require('../../../scripts/resume-picker.js') as {
 describe('resume-picker encodeProjectPath (mangle rule)', () => {
   it('the worktree dotted path produces the REAL on-disk folder name', () => {
     // The bug: the old rule left `.` untouched and only replaced `: \ _`, so it
-    // produced F--platform-v9-.claude-worktrees-... which did NOT match disk.
-    expect(picker.encodeProjectPath('F:\\platform_v9\\.claude-worktrees\\warm-toolchain'))
-      .toBe('F--platform-v9--claude-worktrees-warm-toolchain')
+    // produced F--sample-app-.claude-worktrees-... which did NOT match disk.
+    expect(picker.encodeProjectPath('F:\\sample_app\\.claude-worktrees\\warm-toolchain'))
+      .toBe('F--sample-app--claude-worktrees-warm-toolchain')
   })
 
   it('a simple project path', () => {
-    expect(picker.encodeProjectPath('F:\\CLAUDE_MULTI_APP')).toBe('F--CLAUDE-MULTI-APP')
-    expect(picker.encodeProjectPath('C:\\Users\\nicho')).toBe('C--Users-nicho')
+    expect(picker.encodeProjectPath('F:\\MY_PROJECT')).toBe('F--MY-PROJECT')
+    expect(picker.encodeProjectPath('C:\\Users\\jane')).toBe('C--Users-jane')
   })
 
   it('underscores become hyphens', () => {
-    expect(picker.encodeProjectPath('f:\\platform_v9')).toBe('f--platform-v9')
+    expect(picker.encodeProjectPath('f:\\sample_app')).toBe('f--sample-app')
   })
 
   it('preserves case (no lowercasing)', () => {
@@ -56,20 +56,20 @@ describe('resume-picker encodeProjectPath (mangle rule)', () => {
 describe('resume-picker parseWorktrees', () => {
   it('parses a multi-worktree porcelain listing, flags main + branches', () => {
     const text = [
-      'worktree F:/platform_v9',
+      'worktree F:/sample_app',
       'HEAD abc123',
       'branch refs/heads/main',
       '',
-      'worktree F:/platform_v9/.claude-worktrees/warm-toolchain',
+      'worktree F:/sample_app/.claude-worktrees/warm-toolchain',
       'HEAD def456',
       'branch refs/heads/feat/warm',
       '',
     ].join('\n')
     const out = picker.parseWorktrees(text)
     expect(out).toHaveLength(2)
-    expect(out[0]).toEqual({ path: 'F:/platform_v9', branch: 'main', isMain: true })
+    expect(out[0]).toEqual({ path: 'F:/sample_app', branch: 'main', isMain: true })
     expect(out[1]).toEqual({
-      path: 'F:/platform_v9/.claude-worktrees/warm-toolchain',
+      path: 'F:/sample_app/.claude-worktrees/warm-toolchain',
       branch: 'feat/warm',
       isMain: false,
     })
@@ -117,12 +117,12 @@ describe('resume-picker parseWorktrees', () => {
 // ── worktreeLabelFor ───────────────────────────────────────────────
 describe('resume-picker worktreeLabelFor', () => {
   it('returns null for the main worktree', () => {
-    expect(picker.worktreeLabelFor({ path: 'F:/platform_v9', branch: 'main', isMain: true })).toBeNull()
+    expect(picker.worktreeLabelFor({ path: 'F:/sample_app', branch: 'main', isMain: true })).toBeNull()
   })
 
   it('uses the directory basename for a non-main worktree', () => {
     expect(picker.worktreeLabelFor({
-      path: 'F:/platform_v9/.claude-worktrees/warm-toolchain',
+      path: 'F:/sample_app/.claude-worktrees/warm-toolchain',
       branch: 'feat/warm',
       isMain: false,
     })).toBe('warm-toolchain')
