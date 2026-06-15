@@ -152,8 +152,8 @@ function ContextMenu({ x, y, agent, onClose }: {
   return (
     <div
       ref={menuRef}
-      className="fixed z-50 bg-surface0 border border-surface1 rounded-xl shadow-2xl py-1.5 min-w-[180px]"
-      style={{ left: x, top: y }}
+      className="fixed z-50 rounded-xl shadow-2xl py-1.5 min-w-[180px]"
+      style={{ left: x, top: y, background: 'var(--surface-overlay)', border: '1px solid var(--border-subtle)' }}
     >
       {menuItems.map((item, i) => (
         <button
@@ -220,11 +220,10 @@ export function AgentCard({ agent, selected, onClick, onContextMenu, accountName
     <button
       onClick={onClick}
       onContextMenu={onContextMenu}
-      className={`w-full text-left rounded-xl p-3 transition-all duration-150 border group ${
-        selected
-          ? 'bg-surface0/60 border-sapphire/30'
-          : 'bg-mantle/30 border-transparent hover:bg-surface0/30 hover:border-surface0/60'
-      }`}
+      className={`w-full text-left rounded-xl p-3 transition-all duration-150 group focus-ring ${selected ? '' : 'hover:ring-1 hover:ring-sapphire/25'}`}
+      style={selected
+        ? { background: 'color-mix(in srgb, var(--surface-raised) 80%, var(--color-sapphire) 8%)', border: '1px solid color-mix(in srgb, var(--color-sapphire) 45%, transparent)' }
+        : { background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
     >
       {/* Row 1: Status dot + name + elapsed */}
       <div className="flex items-center gap-2 mb-1">
@@ -711,7 +710,8 @@ export default function CloudAgentsPage() {
             <select
               value={accountFilter}
               onChange={e => setAccountFilter(e.target.value)}
-              className="bg-surface0/40 border border-surface0/80 rounded-lg px-2 py-1.5 text-xs text-text outline-none focus:border-blue/40 transition-colors"
+              className="rounded-lg px-2 py-1.5 text-xs outline-none transition-colors focus-ring"
+              style={{ background: 'var(--surface-base)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}
               title="Filter agents by account"
             >
               <option value="all">All accounts</option>
@@ -725,7 +725,8 @@ export default function CloudAgentsPage() {
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
               placeholder="Search agents..."
-              className="bg-surface0/40 border border-surface0/80 rounded-lg px-3 py-1.5 text-xs text-text placeholder:text-overlay0 outline-none focus:border-blue/40 w-44 transition-colors"
+              className="rounded-lg px-3 py-1.5 text-xs placeholder:text-overlay0 outline-none w-44 transition-colors focus-ring"
+              style={{ background: 'var(--surface-base)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}
             />
             {searchQuery && (
               <button
@@ -744,8 +745,8 @@ export default function CloudAgentsPage() {
         <div className="w-[40%] border-r border-surface0/40 overflow-y-auto p-3 space-y-1.5">
           {agents.length === 0 ? (
             <div className="flex-1 flex flex-col items-center justify-center py-16 text-center">
-              <div className="w-14 h-14 mx-auto mb-4 rounded-2xl bg-surface0/30 flex items-center justify-center">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" className="text-overlay0">
+              <div className="w-14 h-14 mx-auto mb-4 rounded-2xl flex items-center justify-center" style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z" />
                 </svg>
               </div>
@@ -793,8 +794,8 @@ export default function CloudAgentsPage() {
           ) : (
             <div className="flex-1 flex items-center justify-center">
               <div className="text-center">
-                <div className="w-14 h-14 mx-auto mb-4 rounded-2xl bg-surface0/30 flex items-center justify-center">
-                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" className="text-overlay0">
+                <div className="w-14 h-14 mx-auto mb-4 rounded-2xl flex items-center justify-center" style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round">
                     <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z" />
                     <polyline points="8 14 12 10 16 14" />
                   </svg>

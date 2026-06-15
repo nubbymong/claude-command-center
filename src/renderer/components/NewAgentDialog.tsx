@@ -80,8 +80,8 @@ export default function NewAgentDialog({ onClose, initialName, initialDescriptio
 
   return (
     <div className="absolute inset-0 bg-base/80 z-50 flex items-center justify-center" onKeyDown={handleKeyDown}>
-      <div className="bg-surface0 border border-surface1 rounded-lg shadow-2xl p-6 w-full max-w-lg mx-4">
-        <h2 className="text-lg font-semibold text-text mb-4">New Cloud Agent</h2>
+      <div className="rounded-xl shadow-2xl p-6 w-full max-w-lg mx-4" style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}>
+        <h2 className="text-lg font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>New agent</h2>
 
         {/* Task name */}
         <div className="mb-3">
@@ -205,9 +205,9 @@ export default function NewAgentDialog({ onClose, initialName, initialDescriptio
           <button
             onClick={handleDispatch}
             disabled={!name.trim() || !description.trim() || !projectPath.trim() || dispatching}
-            className="px-4 py-2 text-sm font-medium rounded bg-blue hover:bg-blue/80 text-crust transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            className="px-4 py-2 text-sm font-medium rounded-lg bg-sapphire hover:bg-sapphire/85 text-crust transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            {dispatching ? 'Dispatching...' : 'Dispatch Agent'}
+            {dispatching ? 'Dispatching...' : 'Dispatch agent'}
           </button>
         </div>
 
