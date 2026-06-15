@@ -73,6 +73,7 @@ import { readConfig } from './config-manager'
 import { loadCredential, saveCredential, deleteCredential } from './credential-store'
 import { resolveConductorMcpPort } from '../shared/mcp-ports'
 import { IPC } from '../shared/ipc-channels'
+import { safeExternalHttpsHref } from '../shared/safe-url'
 
 import { migrateRegistryKeys } from './registry'
 import { installGlobalErrorHandlers, logInfo, logError, closeDebugLogger, setVerboseBaseline } from './debug-logger'
@@ -836,10 +837,11 @@ if (!gotTheLock) {
     }
 
     // Shell — open URLs in system browser
-    ipcMain.handle('shell:openExternal', async (_event, url: string) => {
-      if (typeof url === 'string' && url.startsWith('https://')) {
-        await shell.openExternal(url)
-      }
+    ipcMain.handle('shell:openExternal', async (_event, url: unknown) => {
+      // P1.2: parse + require https rather than a startsWith prefix check, and
+      // hand the OS only the normalized href (never raw renderer input).
+      const href = safeExternalHttpsHref(url)
+      if (href) await shell.openExternal(href)
     })
 
     // Fetch model pricing in background (non-blocking)
