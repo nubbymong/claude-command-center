@@ -10,6 +10,7 @@ import * as path from 'path'
 import { readConfig, writeConfig } from './config-manager'
 import { logInfo, logWarn, logError } from './debug-logger'
 import { resolveVersionBinary, isVersionInstalled, installVersion } from './legacy-version-manager'
+import { isValidLegacyVersion } from '../shared/legacy-version'
 import { getProfileConfigDir, getPrimaryProfileId, setupProfileLinks, listProfiles } from './account-profiles'
 import { withProfileHome } from './pty-manager'
 
@@ -161,18 +162,23 @@ export async function dispatchAgent(params: {
   // Resolve Claude binary (use legacy version if configured)
   let claudeBin = 'claude'
   if (params.legacyVersion?.enabled && params.legacyVersion.version) {
-    // Auto-install if needed
-    if (!isVersionInstalled(params.legacyVersion.version)) {
-      logInfo(`[cloud-agent] Auto-installing legacy v${params.legacyVersion.version} for agent ${agent.id}`)
-      const result = await installVersion(params.legacyVersion.version)
-      if (!result.ok) {
-        logInfo(`[cloud-agent] Legacy install failed, using system claude: ${result.error}`)
+    if (!isValidLegacyVersion(params.legacyVersion.version)) {
+      // P0.3: never feed a non-semver version into install/spawn — fall back.
+      logWarn(`[cloud-agent] Ignoring invalid legacy version ${JSON.stringify(params.legacyVersion.version)}; using system claude`)
+    } else {
+      // Auto-install if needed
+      if (!isVersionInstalled(params.legacyVersion.version)) {
+        logInfo(`[cloud-agent] Auto-installing legacy v${params.legacyVersion.version} for agent ${agent.id}`)
+        const result = await installVersion(params.legacyVersion.version)
+        if (!result.ok) {
+          logInfo(`[cloud-agent] Legacy install failed, using system claude: ${result.error}`)
+        }
       }
-    }
-    const legacyBin = resolveVersionBinary(params.legacyVersion.version)
-    if (legacyBin) {
-      claudeBin = legacyBin
-      logInfo(`[cloud-agent] Using legacy Claude CLI v${params.legacyVersion.version}: ${legacyBin}`)
+      const legacyBin = resolveVersionBinary(params.legacyVersion.version)
+      if (legacyBin) {
+        claudeBin = legacyBin
+        logInfo(`[cloud-agent] Using legacy Claude CLI v${params.legacyVersion.version}: ${legacyBin}`)
+      }
     }
   }
 
