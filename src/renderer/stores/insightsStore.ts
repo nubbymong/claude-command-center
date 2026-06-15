@@ -40,10 +40,16 @@ export const useInsightsStore = create<InsightsState>((set, get) => ({
       const catalogue = await window.electronAPI.insights.getCatalogue()
 
       const running = await window.electronAPI.insights.isRunning()
-      set({
-        catalogue,
-        status: running ? 'running' : get().status === 'running' ? 'idle' : get().status
-      })
+      // Clear a stale mid-run status if a run ended while we weren't listening,
+      // but do NOT persistently mark a historical failure here: that would redden
+      // the Insights nav dot on every boot for a past failure (the Sentinel
+      // calibration lesson — a dot means "needs attention now", not "once failed").
+      // Failures are surfaced on the page itself (banner/picker, from the
+      // catalogue); a LIVE failure still flashes via handleStatusChanged.
+      let status = get().status
+      if (running) status = 'running'
+      else if (status === 'running' || status === 'extracting_kpis') status = 'idle'
+      set({ catalogue, status })
       // Auto-select latest complete run if nothing selected
       if (!get().selectedRunId && catalogue.runs.length > 0) {
         for (let i = catalogue.runs.length - 1; i >= 0; i--) {

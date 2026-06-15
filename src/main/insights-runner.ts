@@ -40,6 +40,8 @@ export interface InsightsRun {
   /** Account this run was generated for (multi-account). Undefined = default. */
   accountEmail?: string
   profileId?: string
+  /** Run completed but KPI extraction failed: report is viewable, no kpis.json. */
+  kpisUnavailable?: boolean
 }
 
 /**
@@ -571,8 +573,11 @@ export async function runInsights(getWindow: () => BrowserWindow | null, opts?: 
 
     const kpiSuccess = await extractKpis(archiveDir, id, account.home)
     if (!kpiSuccess) {
-      // KPI extraction is non-fatal — report is still viewable
+      // KPI extraction is non-fatal — the report is still viewable. Flag it so
+      // the UI shows "report ready, KPIs unavailable" instead of silently
+      // hiding the sidebar with no explanation.
       logError('[insights] KPI extraction failed, report is still available')
+      run.kpisUnavailable = true
     }
 
     run.status = 'complete'

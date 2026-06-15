@@ -244,6 +244,8 @@ export interface InsightsRun {
   /** Account this run was generated for (multi-account). Undefined = default. */
   accountEmail?: string
   profileId?: string
+  /** Run completed but KPI extraction failed: report is viewable, no kpis.json. */
+  kpisUnavailable?: boolean
 }
 
 export interface InsightsCatalogue {
