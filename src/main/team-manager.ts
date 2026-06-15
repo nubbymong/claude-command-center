@@ -264,52 +264,42 @@ async function executePipeline(run: TeamRun, team: TeamTemplate): Promise<void> 
   }
 }
 
-function waitForBatch(run: TeamRun, stepIds: string[]): Promise<void> {
+// Exported for unit testing the timer lifecycle. Resolves when every step in
+// the batch reaches a terminal state, when the run stops running (cancel), or
+// after a 30-minute safety timeout -- and ALWAYS clears its own interval and
+// timeout on exit. The previous version replaced its interval with a SECOND,
+// never-cleared interval (plus a second timeout), so each batch leaked a timer
+// that kept polling for up to 30 minutes after the batch had finished.
+export function waitForBatch(run: TeamRun, stepIds: string[]): Promise<void> {
   return new Promise<void>(resolve => {
+    let settled = false
+    let interval: ReturnType<typeof setInterval> | undefined
+    let timeout: ReturnType<typeof setTimeout> | undefined
+
+    const finish = () => {
+      if (settled) return
+      settled = true
+      if (interval !== undefined) clearInterval(interval)
+      if (timeout !== undefined) clearTimeout(timeout)
+      resolve()
+    }
+
     const check = () => {
       const steps = run.steps.filter(s => stepIds.includes(s.stepId))
       const allDone = steps.every(s =>
         s.status === 'completed' || s.status === 'failed' || s.status === 'cancelled'
       )
-      if (allDone || run.status === 'cancelled') resolve()
+      if (allDone || run.status !== 'running') finish()
     }
 
-    // Check immediately in case already done
+    // Resolve synchronously if the batch is already terminal, and skip arming
+    // timers in that case so nothing is left pending.
     check()
+    if (settled) return
 
-    // Poll periodically (agent completion callback also triggers state updates)
-    const interval = setInterval(() => {
-      check()
-      if (run.status !== 'running') {
-        clearInterval(interval)
-        resolve()
-      }
-    }, 500)
-
-    // Also check on state (the interval handles it, but this is a safety net)
-    const timeout = setTimeout(() => {
-      clearInterval(interval)
-      resolve()
-    }, 30 * 60 * 1000) // 30min safety timeout
-
-    // Store cleanup in a way check() can clear
-    const origCheck = check
-    const wrappedCheck = () => {
-      origCheck()
-      const steps = run.steps.filter(s => stepIds.includes(s.stepId))
-      const allDone = steps.every(s =>
-        s.status === 'completed' || s.status === 'failed' || s.status === 'cancelled'
-      )
-      if (allDone || run.status !== 'running') {
-        clearInterval(interval)
-        clearTimeout(timeout)
-      }
-    }
-    // Replace the interval check
-    clearInterval(interval)
-    const newInterval = setInterval(wrappedCheck, 500)
-    // Final safety
-    setTimeout(() => clearInterval(newInterval), 30 * 60 * 1000)
+    // Poll periodically (the agent-completion callback also drives state).
+    interval = setInterval(check, 500)
+    timeout = setTimeout(finish, 30 * 60 * 1000) // 30-min safety net
   })
 }
 
