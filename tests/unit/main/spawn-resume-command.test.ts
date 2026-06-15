@@ -47,11 +47,13 @@ function goldenNoResume(opts: {
   const escapedCwd = cwd.replace(/'/g, "''")
   const posixCwd = escapedCwd.replace(/'/g, "'\\''")
   if (useResumePicker) {
+    // P1.1: the picker branch now also forwards agentsFlag (it previously
+    // dropped --agents on a restored session). Oracle updated to the fixed shape.
     if (pickerScript && win32) {
       const escapedScript = pickerScript.replace(/'/g, "''")
-      return `Set-Location '${escapedCwd}'; node '${escapedScript}'${extraFlags}; exit`
+      return `Set-Location '${escapedCwd}'; node '${escapedScript}'${agentsFlag}${extraFlags}; exit`
     } else if (pickerScript) {
-      return `cd '${posixCwd}' && node '${pickerScript.replace(/'/g, "'\\''")}'${extraFlags}; exit`
+      return `cd '${posixCwd}' && node '${pickerScript.replace(/'/g, "'\\''")}'${agentsFlag}${extraFlags}; exit`
     } else {
       return win32
         ? `Set-Location '${escapedCwd}'; & "${claudeBin}"${agentsFlag}${extraFlags}; exit`
@@ -115,6 +117,32 @@ describe('buildClaudeLaunchCommand — GOLDEN (no resumeUuid, byte-identical)', 
       extraFlags: '', agentsFlag: '', useResumePicker: false, pickerScript: null,
     })
     expect(out).toContain("cd '/home/o'\\''brien'")
+  })
+})
+
+describe('buildClaudeLaunchCommand — picker forwards --agents (P1.1)', () => {
+  // resume-picker.js forwards its own argv (process.argv.slice(2)) to
+  // `claude --resume <id> ...`, so any flag passed to the picker survives the
+  // launch. The picker branch previously appended extraFlags but NOT agentsFlag,
+  // so a restored session silently lost its --agents subagents.
+  it('win32 picker launch includes the --agents flag', () => {
+    const out = buildClaudeLaunchCommand({
+      platform: 'win32', cwd: CWD, claudeBin: CLAUDE,
+      extraFlags: EXTRA, agentsFlag: AGENTS,
+      useResumePicker: true, pickerScript: PICKER,
+    })
+    expect(out).toContain('resume-picker.js')
+    expect(out).toContain(AGENTS.trim()) // --agents '[]'
+  })
+
+  it('posix picker launch includes the --agents flag', () => {
+    const out = buildClaudeLaunchCommand({
+      platform: 'posix', cwd: CWD, claudeBin: CLAUDE,
+      extraFlags: EXTRA, agentsFlag: AGENTS,
+      useResumePicker: true, pickerScript: PICKER,
+    })
+    expect(out).toContain('resume-picker.js')
+    expect(out).toContain(AGENTS.trim())
   })
 })
 
