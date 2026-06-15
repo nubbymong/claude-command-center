@@ -64,12 +64,12 @@ export default function TeamsPanel() {
         {/* Header */}
         <div className="px-3 py-3 border-b border-surface0/40">
           <div className="flex items-center justify-between mb-2">
-            <div className="text-[11px] text-subtext0 font-semibold">Teams</div>
+            <div className="text-[11px] text-subtext0 font-semibold">Pipelines</div>
             <button
               onClick={() => openBuilder()}
               className="text-[11px] text-sapphire hover:text-sapphire/80 transition-colors font-medium"
             >
-              + New Team
+              + New Pipeline
             </button>
           </div>
         </div>
@@ -78,7 +78,7 @@ export default function TeamsPanel() {
         <div className="flex-1 overflow-y-auto p-3 space-y-1.5">
           {teams.length === 0 ? (
             <div className="flex-1 flex flex-col items-center justify-center py-16 text-center">
-              <div className="w-14 h-14 mx-auto mb-4 rounded-2xl bg-surface0/30 flex items-center justify-center">
+              <div className="w-14 h-14 mx-auto mb-4 rounded-2xl flex items-center justify-center" style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}>
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" className="text-overlay0">
                   <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
                   <circle cx="9" cy="7" r="4" />
@@ -86,15 +86,15 @@ export default function TeamsPanel() {
                   <path d="M16 3.13a4 4 0 0 1 0 7.75" />
                 </svg>
               </div>
-              <p className="text-sm text-subtext1 font-medium mb-1">No teams yet</p>
+              <p className="text-sm text-subtext1 font-medium mb-1">No pipelines yet</p>
               <p className="text-xs text-overlay0 mb-4 max-w-[200px]">
-                Create a team to chain multiple agents into a pipeline
+                Chain multiple agents so one&apos;s output feeds the next
               </p>
               <button
                 onClick={() => openBuilder()}
                 className="px-4 py-2 rounded-lg text-xs font-medium bg-sapphire hover:bg-sapphire/85 text-crust transition-colors"
               >
-                + New Team
+                + New Pipeline
               </button>
             </div>
           ) : (
@@ -156,7 +156,7 @@ export default function TeamsPanel() {
         ) : (
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center">
-              <div className="w-14 h-14 mx-auto mb-4 rounded-2xl bg-surface0/30 flex items-center justify-center">
+              <div className="w-14 h-14 mx-auto mb-4 rounded-2xl flex items-center justify-center" style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}>
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" className="text-overlay0">
                   <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
                   <circle cx="9" cy="7" r="4" />
@@ -164,8 +164,8 @@ export default function TeamsPanel() {
                   <path d="M16 3.13a4 4 0 0 1 0 7.75" />
                 </svg>
               </div>
-              <p className="text-sm text-subtext1 font-medium mb-1">Select a team</p>
-              <p className="text-[11px] text-overlay0">Click a team card to view details or start a run</p>
+              <p className="text-sm text-subtext1 font-medium mb-1">Select a pipeline</p>
+              <p className="text-[11px] text-overlay0">Click a pipeline card to view details or start a run</p>
             </div>
           </div>
         )}
@@ -185,11 +185,10 @@ function TeamCard({ team, selected, lastStatus, onClick }: {
   return (
     <button
       onClick={onClick}
-      className={`w-full text-left rounded-xl p-3 transition-all duration-150 border group ${
-        selected
-          ? 'bg-surface0/60 border-sapphire/30'
-          : 'bg-mantle/30 border-transparent hover:bg-surface0/30 hover:border-surface0/60'
-      }`}
+      className={`w-full text-left rounded-xl p-3 transition-all duration-150 group focus-ring ${selected ? '' : 'hover:ring-1 hover:ring-sapphire/25'}`}
+      style={selected
+        ? { background: 'color-mix(in srgb, var(--surface-raised) 80%, var(--color-sapphire) 8%)', border: '1px solid color-mix(in srgb, var(--color-sapphire) 45%, transparent)' }
+        : { background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
     >
       <div className="flex items-center gap-2 mb-1">
         {lastStatus && (
