@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseHdropBuffer, parseFileUrl } from '../../../src/main/clipboard-file'
+import { parseHdropBuffer, parseFileUrl, pickPasteableImage } from '../../../src/main/clipboard-file'
 
 // Unit 5 W1: pure decoders for clipboard file references (BUG-8 fallback).
 describe('parseFileUrl (macOS public.file-url)', () => {
@@ -32,5 +32,19 @@ describe('parseHdropBuffer (Windows CF_HDROP)', () => {
   })
   it('returns [] for a too-short buffer', () => {
     expect(parseHdropBuffer(Buffer.alloc(4))).toEqual([])
+  })
+})
+
+describe('pickPasteableImage', () => {
+  const MB = 1024 * 1024
+  const sizeOf = (p: string) => (p.includes('big') ? 11 * MB : 2 * MB)
+  it('picks the first allowed image extension, case-insensitive', () => {
+    expect(pickPasteableImage(['/a/notes.txt', '/a/Pic.PNG'], sizeOf)).toEqual({ path: '/a/Pic.PNG' })
+  })
+  it('rejects an oversize image', () => {
+    expect(pickPasteableImage(['/a/big.png'], sizeOf)).toEqual({ error: 'too-large' })
+  })
+  it('returns no-image when nothing qualifies', () => {
+    expect(pickPasteableImage(['/a/doc.pdf', '/a/folder'], sizeOf)).toEqual({ error: 'no-image' })
   })
 })
