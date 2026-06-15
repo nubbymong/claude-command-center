@@ -7,6 +7,7 @@ import ScreenshotButton from './ScreenshotButton'
 import ExcalidrawButton from './ExcalidrawButton'
 import LogsButton from './LogsButton'
 import WebviewButton from './WebviewButton'
+import PasteHint from './PasteHint'
 import { useWebviewStore, pollUrlForContent, probeWebviewUrls } from '../stores/webviewStore'
 import { generateId } from '../utils/id'
 import { trackUsage } from '../stores/tipsStore'
@@ -510,6 +511,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
 
   return (
     <div className="flex flex-col shrink-0" onContextMenu={(e) => handleContextMenu(e, undefined, 'claude')}>
+      <PasteHint sessionId={sessionId} />
       {/* Row 1: Magic buttons */}
       <div className="flex items-center gap-1 px-2 py-0.5 border-t" style={{ background: 'var(--surface-chrome)', borderColor: 'var(--border-subtle)' }}>
         {/* Collapse toggle -- chevron + "Commands" + visible-command count.

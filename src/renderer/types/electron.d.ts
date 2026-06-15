@@ -111,7 +111,7 @@ export interface ElectronAPI {
   }
   clipboard: {
     readImage: () => Promise<string | null>
-    saveImage: () => Promise<string | null>
+    saveImage: () => Promise<{ path: string } | { error: 'no-image' | 'too-large' }>
   }
   credentials: {
     save: (configId: string, password: string) => Promise<boolean>

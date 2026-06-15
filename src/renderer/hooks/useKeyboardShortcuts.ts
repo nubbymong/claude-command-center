@@ -4,6 +4,7 @@ import { useSettingsStore } from '../stores/settingsStore'
 import { killSessionPty } from '../ptyTracker'
 import { matchesShortcut, DEFAULT_SHORTCUTS } from '../utils/shortcuts'
 import { sendImageToSession } from '../utils/imageTransfer'
+import { usePasteHintStore } from '../stores/pasteHintStore'
 import type { ViewType } from '../types/views'
 
 /**
@@ -63,15 +64,19 @@ export function useKeyboardShortcuts(
       if (matchesShortcut(e, shortcuts.pasteImage)) {
         e.preventDefault()
         const state = useSessionStore.getState()
-        if (state.activeSessionId) {
-          const filePath = await window.electronAPI.clipboard.saveImage()
-          if (filePath) {
-            const session = state.sessions.find((s) => s.id === state.activeSessionId)
-            sendImageToSession(
-              state.activeSessionId,
-              filePath,
-              'I just pasted an image — please view it.',
-              session?.sessionType,
+        const sessionId = state.activeSessionId
+        if (sessionId) {
+          const session = state.sessions.find((s) => s.id === sessionId)
+          const res = await window.electronAPI.clipboard.saveImage()
+          if ('path' in res) {
+            // Success is self-evident — the path appears in the prompt (no toast).
+            sendImageToSession(sessionId, res.path, 'I just pasted an image — please view it.', session?.sessionType)
+          } else {
+            usePasteHintStore.getState().show(
+              sessionId,
+              res.error === 'too-large'
+                ? 'Image too large to paste (max 10 MB)'
+                : 'No image in clipboard — copy an image or an image file, then Alt+V',
             )
           }
         }

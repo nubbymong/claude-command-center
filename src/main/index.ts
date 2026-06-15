@@ -50,6 +50,7 @@ import { startEffortTracker } from './effort-tracker'
 import { startAttentionSource } from './attention-source'
 import { startJankDetector } from './jank-detector'
 import { readClipboardImageWithRetry } from './clipboard-image'
+import { readClipboardImageFilePath, type PasteableImage } from './clipboard-file'
 import { HooksGateway } from './hooks/hooks-gateway'
 import { setGateway, getGateway } from './hooks'
 import { ServiceSupervisor } from './services/service-supervisor'
@@ -426,28 +427,31 @@ function createWindow(): void {
   // bare filename so the renderer can use the conductor MCP fetch_host_screenshot tool.
   // Returns { filename, path } so callers have both the bare name (for the MCP tool)
   // and the absolute path (for local-only flows that bypass MCP).
-  ipcMain.handle('clipboard:saveImage', async () => {
+  ipcMain.handle('clipboard:saveImage', async (): Promise<PasteableImage> => {
+    const screenshotsDir = join(getResourcesDirectory(), 'screenshots')
     // Retry the read so the FIRST Alt+V after copying an image reliably detects
     // it -- Windows' delayed-render clipboard can return empty on the first read
     // after the window gains focus, which was the "no image detected" miss.
     const img = await readClipboardImageWithRetry()
-    if (!img) return null
-    // [perf] resize + JPEG encode is the suspected clipboard-paste freeze; time it
-    // with the source dimensions, since cost scales with input size.
-    const __t0 = Date.now()
-    const resized = constrainToMaxDim(img, 1920)
-    const jpeg = resized.toJPEG(85)
-    const __dt = Date.now() - __t0
-    if (__dt > 150) {
-      const s = img.getSize()
-      logInfo(`[perf] clipboard-image resize+encode took ${__dt}ms (${s.width}x${s.height})`)
+    if (img) {
+      // [perf] resize + JPEG encode is the suspected clipboard-paste freeze; time it
+      // with the source dimensions, since cost scales with input size.
+      const __t0 = Date.now()
+      const resized = constrainToMaxDim(img, 1920)
+      const jpeg = resized.toJPEG(85)
+      const __dt = Date.now() - __t0
+      if (__dt > 150) {
+        const s = img.getSize()
+        logInfo(`[perf] clipboard-image resize+encode took ${__dt}ms (${s.width}x${s.height})`)
+      }
+      if (!existsSync(screenshotsDir)) mkdirSync(screenshotsDir, { recursive: true })
+      const filename = `clipboard-${Date.now()}-${randomBytes(4).toString('hex')}.jpg`
+      const filePath = join(screenshotsDir, filename)
+      writeFileSync(filePath, jpeg)
+      return { path: filePath }
     }
-    const screenshotsDir = join(getResourcesDirectory(), 'screenshots')
-    if (!existsSync(screenshotsDir)) mkdirSync(screenshotsDir, { recursive: true })
-    const filename = `clipboard-${Date.now()}-${randomBytes(4).toString('hex')}.jpg`
-    const filePath = join(screenshotsDir, filename)
-    writeFileSync(filePath, jpeg)
-    return filePath
+    // No bitmap on the clipboard — fall back to a copied image FILE (BUG-8).
+    return readClipboardImageFilePath(screenshotsDir)
   })
 
   // Encrypted credential storage using safeStorage — delegated to credential-store module
