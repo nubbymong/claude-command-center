@@ -33,4 +33,21 @@ describe('listener idempotency (P2.3)', () => {
     expect(onLedgerEvent).toHaveBeenCalledTimes(1)
     expect(onAttention).toHaveBeenCalledTimes(1)
   })
+
+  it('setupInsightsListener registers exactly once across repeated calls', async () => {
+    const onStatusChanged = vi.fn().mockReturnValue(() => {})
+    const getCatalogue = vi.fn().mockResolvedValue({ runs: [] })
+    const isRunning = vi.fn().mockResolvedValue(false)
+    ;(window as any).electronAPI = {
+      ...(window as any).electronAPI,
+      insights: { onStatusChanged, getCatalogue, isRunning },
+    }
+    const { setupInsightsListener } = await import('../../src/renderer/stores/insightsStore')
+
+    setupInsightsListener()
+    setupInsightsListener()
+    setupInsightsListener()
+
+    expect(onStatusChanged).toHaveBeenCalledTimes(1)
+  })
 })

@@ -94,21 +94,19 @@ export const useInsightsStore = create<InsightsState>((set, get) => ({
   },
 }))
 
-// Set up IPC listener once
+// Set up the insights IPC listener once globally — never tear down. Mirrors the
+// cloudAgent/github guard so a React StrictMode double-invoke or a remount never
+// installs duplicate listeners. App-level setup (see App.tsx) keeps both
+// InsightsPage and the Sidebar nav status dot live during a run (Unit 3 W2).
 let listenerSetup = false
-export function setupInsightsListener(): () => void {
-  if (listenerSetup) return () => {}
+export function setupInsightsListener(): void {
+  if (listenerSetup) return
   listenerSetup = true
 
-  const unsub = window.electronAPI.insights.onStatusChanged((run) => {
+  window.electronAPI.insights.onStatusChanged((run) => {
     useInsightsStore.getState().handleStatusChanged(run)
   })
 
   // Load catalogue on setup
   useInsightsStore.getState().loadCatalogue()
-
-  return () => {
-    unsub()
-    listenerSetup = false
-  }
 }
