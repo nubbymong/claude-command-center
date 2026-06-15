@@ -1,7 +1,7 @@
 import { BrowserWindow, nativeTheme } from 'electron'
 import * as pty from 'node-pty'
 import { PasteQueue } from './paste-queue'
-import { runChunkedWrite, WRITE_CHUNK_SIZE, WRITE_CHUNK_DELAY } from './pty-chunked-write'
+import { runChunkedWrite, WRITE_CHUNK_SIZE } from './pty-chunked-write'
 import * as os from 'os'
 import { execSync } from 'child_process'
 import { logPtyOutput, isDebugModeEnabled } from './debug-capture'
@@ -1437,16 +1437,17 @@ const pasteQueues = new Map<string, PasteQueue>()
 // be deduped). Mirrors writeChunked's 256-byte/12ms cadence.
 function writeEnvelopeChunked(sessionId: string, data: string): Promise<void> {
   return new Promise<void>((resolve) => {
-    let i = 0
-    const step = () => {
-      const session = ptySessions.get(sessionId)   // re-fetch: session may be killed mid-paste
-      if (!session || i >= data.length) return resolve()
-      try { session.ptyProcess.write(data.slice(i, i + WRITE_CHUNK_SIZE)) }
-      catch { return resolve() }                    // session died mid-write; stop, do not stall the queue
-      i += WRITE_CHUNK_SIZE
-      setTimeout(step, WRITE_CHUNK_DELAY)
-    }
-    step()
+    // Capture THIS pty up front and route through the R-010-tested
+    // runChunkedWrite with an identity-guarded isAlive, so a respawn (new PTY
+    // under the same sessionId) can't receive the tail of a half-written
+    // envelope (P1.5 — mirrors writeChunked). onDone resolves the queue's writer.
+    const proc = ptySessions.get(sessionId)?.ptyProcess
+    if (!proc) return resolve()
+    runChunkedWrite(data, {
+      write: (slice) => proc.write(slice),
+      isAlive: () => ptySessions.get(sessionId)?.ptyProcess === proc,
+      onDone: resolve,
+    })
   })
 }
 
@@ -1552,6 +1553,7 @@ function cleanupSessionResources(sessionId: string): void {
   pendingWrites.delete(sessionId)
   recentWrites.delete(sessionId)
   sshOscBuffers.delete(sessionId)
+  pasteQueues.get(sessionId)?.cancel() // stop draining + drop pending before dropping the ref (P1.5)
   pasteQueues.delete(sessionId)
   // Delete the per-session statusline status file so the watcher's poll
   // fan-out stays bounded between boot sweeps (the reaper only unlinks
