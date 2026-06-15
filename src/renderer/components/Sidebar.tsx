@@ -25,6 +25,7 @@ import SessionGroupHeader from './sidebar/SessionGroupHeader'
 import PinnedConfigsPanel from './sidebar/PinnedConfigsPanel'
 import FirstRunCard from './FirstRunCard'
 import ColourMigrationNotice from './ColourMigrationNotice'
+import ConfigHydrationNotice from './ConfigHydrationNotice'
 import { useAppMetaStore } from '../stores/appMetaStore'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { useSwitchAccount } from '../hooks/useSwitchAccount'
@@ -877,6 +878,9 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
             if (cfg) setEditingConfig(cfg)
           }}
         />
+
+        {/* P2.4: warns when a corrupt config section was reset on hydrate. */}
+        <ConfigHydrationNotice />
 
         {showFirstRunCard && onShowFirstRun && (
           <FirstRunCard
