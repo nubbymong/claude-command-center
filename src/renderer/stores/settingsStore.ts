@@ -76,7 +76,6 @@ export interface AppSettings {
   statusLine: StatusLineSettings
   localMachineName: string
   updateChannel: UpdateChannel
-  skipPermissionsForAgents: boolean
   showTips: boolean
   // Agent Hub first-run "How it works" banner: true once the user dismisses it.
   // Optional/absent = not yet dismissed (banner shows).
@@ -181,7 +180,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   statusLine: { ...DEFAULT_STATUS_LINE },
   localMachineName: '',
   updateChannel: 'stable' as const,
-  skipPermissionsForAgents: true,
   showTips: true,
   hooksEnabled: true,
   hooksPort: 19334,

@@ -191,10 +191,10 @@ export async function dispatchAgent(params: {
   const tmpFile = path.join(os.tmpdir(), `ccc-agent-${agent.id}.txt`)
   fs.writeFileSync(tmpFile, params.description, 'utf8')
 
-  // P1.3 / FEAT-1: cloud-agent dispatch is decoupled from the global
-  // `skipPermissionsForAgents` setting (which now scopes Insights only). The
-  // dangerous skip is an explicit, ephemeral PER-RUN opt-in from the New Agent
-  // dialog: default OFF, never read from persisted config here.
+  // P1.3 / FEAT-1: cloud-agent dispatch never reads a persisted skip-permissions
+  // setting (the legacy global `skipPermissionsForAgents` was removed in Unit 3;
+  // Insights no longer skips either). The dangerous skip is an explicit,
+  // ephemeral PER-RUN opt-in from the New Agent dialog: default OFF.
   const skipPerms = params.skipPermissions === true
 
   const pipeCmd = process.platform === 'win32' ? 'type' : 'cat'

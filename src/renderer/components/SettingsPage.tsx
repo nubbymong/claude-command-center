@@ -213,16 +213,6 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
                 <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
                   <input
                     type="checkbox"
-                    checked={settings.skipPermissionsForAgents}
-                    onChange={(e) => save({ skipPermissionsForAgents: e.target.checked })}
-                    className="rounded border-surface1"
-                  />
-                  Skip permission prompts for headless agents
-                  <span className="text-[10px] text-overlay0">(--dangerously-skip-permissions)</span>
-                </label>
-                <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
-                  <input
-                    type="checkbox"
                     checked={!!settings.disableClaudeWorkflows}
                     onChange={(e) => save({ disableClaudeWorkflows: e.target.checked })}
                     className="rounded border-surface1"

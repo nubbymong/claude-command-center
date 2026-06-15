@@ -179,8 +179,10 @@ describe('cloud-agent-manager', () => {
       expect(shellCmd).toContain('--dangerously-skip-permissions')
     })
 
-    it('ignores the global skipPermissionsForAgents setting (cloud-agent dispatch is per-run now)', async () => {
-      // Even with the legacy global setting ON, a default dispatch must NOT skip.
+    it('never skips by default, ignoring any persisted config (per-run opt-in only)', async () => {
+      // The legacy global skipPermissionsForAgents setting was removed in Unit 3;
+      // cloud-agent dispatch is per-run. Even if stale config still carries the
+      // flag, a default dispatch must NOT skip.
       mockReadConfig.mockImplementation((key: string) => key === 'settings' ? { skipPermissionsForAgents: true } : null)
       mockSpawn.mockReturnValue(createMockProcess())
       await dispatchAgent({ name: 'T', description: 'd', projectPath: '/p' })

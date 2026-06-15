@@ -18,7 +18,6 @@ import { spawnClaudeHeadless } from './claude-headless'
 import { getProfileConfigDir, getPrimaryProfileId, setupProfileLinks, listProfiles } from './account-profiles'
 import { getProjectRootPath, getInstallPath } from './update-watcher'
 import { getResourcesDirectory } from './ipc/setup-handlers'
-import { readConfig } from './config-manager'
 
 // Source locations (Claude CLI output). `/insights` writes report.html under the
 // running account's HOME (~/.claude/usage-data); with per-account isolation the
@@ -424,6 +423,18 @@ function loadPreviousKpis(currentRunId: string): string | null {
   }
 }
 
+/**
+ * Build the headless `claude` args for KPI extraction. Read-only: the step only
+ * reads one archived HTML report (absolute path embedded in the prompt). No
+ * `--dangerously-skip-permissions` — `-p` already skips the workspace-trust
+ * dialog and `--allowedTools Read` pre-authorizes the only tool needed. Verified
+ * on the VM: an out-of-cwd absolute Read succeeds with zero permission denials
+ * and no dangerous flag. See specs/2026-06-15-unit3-insights-review-design.md W1.
+ */
+export function buildKpiSpawnArgs(): string[] {
+  return ['-p', '--allowedTools', 'Read', '--output-format', 'json']
+}
+
 async function extractKpis(archiveDir: string, runId: string, home: string | null = null): Promise<boolean> {
   const reportPath = join(archiveDir, 'report.html').replace(/\\/g, '/')
 
@@ -440,16 +451,7 @@ async function extractKpis(archiveDir: string, runId: string, home: string | nul
 
   logInfo('[insights] Starting KPI extraction for ' + reportPath + (prevKpis ? ' (with comparison)' : ' (no previous data)'))
 
-  // Read setting to decide whether to include --dangerously-skip-permissions
-  const settings = readConfig<{ skipPermissionsForAgents?: boolean }>('settings')
-  const skipPerms = settings?.skipPermissionsForAgents !== false // default true
-
-  const spawnArgs = [
-    '-p',
-    '--allowedTools', 'Read',
-    ...(skipPerms ? ['--dangerously-skip-permissions'] : []),
-    '--output-format', 'json'
-  ]
+  const spawnArgs = buildKpiSpawnArgs()
 
   // Pipe the prompt via stdin — passing multi-KB prompts with embedded JSON
   // as shell arguments is unreliable on Windows (quoting/escaping breaks).
