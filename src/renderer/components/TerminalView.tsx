@@ -265,15 +265,15 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       term.open(container)
 
       // Load WebGL renderer (Codex recommendation #2). This swaps
-      // xterm's default 2D-canvas glyph rendering for GPU-textured
+      // xterm's default DOM glyph rendering for GPU-textured
       // glyphs — different cursor draw path, different glyph
       // fallback, and uniform across platforms. Fails gracefully if
       // WebGL is unavailable in the Electron renderer.
       //
       // On context loss (GPU crash / OOM / driver preempt > 3 s) the
-      // addon disposes itself (xterm falls back to canvas automatically)
+      // addon disposes itself (xterm falls back to the DOM renderer automatically)
       // then we try ONE recreate in the next frame (GPU-blip recovery).
-      // If recreate fails, we force term.refresh so the canvas renderer
+      // If recreate fails, we force term.refresh so the DOM renderer
       // repaints the viewport the dead WebGL canvas left garbled.
       installWebglWithRecovery(term, {
         WebglAddonCtor: WebglAddon,
