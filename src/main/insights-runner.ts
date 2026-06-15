@@ -166,7 +166,7 @@ function copyReportToArchive(archiveDir: string, home: string | null): boolean {
  * Strip ANSI escape sequences for reliable text detection.
  * Handles CSI (including private mode ?), OSC, charset selection, and other sequences.
  */
-function stripAnsiCodes(str: string): string {
+export function stripAnsiCodes(str: string): string {
   return str
     .replace(/\x1b\[[\x20-\x3f]*[0-9;]*[\x20-\x7e]/g, '')  // CSI sequences (including ?...)
     .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')       // OSC sequences
@@ -471,6 +471,30 @@ export function buildKpiSpawnArgs(): string[] {
   return ['-p', '--allowedTools', 'Read', '--output-format', 'json']
 }
 
+/**
+ * Parse the KPI JSON out of a `claude -p --output-format json` reply. Pure +
+ * exported for testing. Handles: a direct JSON object; the `{result:"<json>"}`
+ * envelope; and a result/raw string with prose around the JSON (greedy
+ * outermost-braces extraction). Returns null if no JSON object is recoverable.
+ */
+export function parseKpiOutput(stdout: string): unknown | null {
+  const trimmed = stdout.trim()
+  const fromBraces = (s: string): unknown | null => {
+    const m = s.match(/\{[\s\S]*\}/)
+    if (!m) return null
+    try { return JSON.parse(m[0]) } catch { return null }
+  }
+  try {
+    const parsed = JSON.parse(trimmed)
+    if (parsed && parsed.result && typeof parsed.result === 'string') {
+      try { return JSON.parse(parsed.result) } catch { return fromBraces(parsed.result) }
+    }
+    return parsed
+  } catch {
+    return fromBraces(trimmed)
+  }
+}
+
 async function extractKpis(archiveDir: string, runId: string, home: string | null = null): Promise<boolean> {
   const reportPath = join(archiveDir, 'report.html').replace(/\\/g, '/')
 
@@ -499,47 +523,19 @@ async function extractKpis(archiveDir: string, runId: string, home: string | nul
     return false
   }
 
+  const kpiData = parseKpiOutput(result.stdout)
+  if (kpiData == null) {
+    logError('[insights] Failed to parse KPI output')
+    logError('[insights] Raw output:', result.stdout.slice(0, 500))
+    return false
+  }
+
   try {
-    // Claude with --output-format json wraps in a JSON object with "result" key
-    let kpiData: unknown
-    const trimmed = result.stdout.trim()
-
-    // Try parsing directly first
-    try {
-      const parsed = JSON.parse(trimmed)
-      // If it has a "result" key that's a string, extract KPI JSON from it
-      if (parsed.result && typeof parsed.result === 'string') {
-        const resultStr = parsed.result
-        try {
-          kpiData = JSON.parse(resultStr)
-        } catch {
-          // Result has text preamble before JSON -- extract the JSON object
-          const jsonMatch = resultStr.match(/\{[\s\S]*\}/)
-          if (jsonMatch) {
-            kpiData = JSON.parse(jsonMatch[0])
-          } else {
-            throw new Error('No JSON found in result string')
-          }
-        }
-      } else {
-        kpiData = parsed
-      }
-    } catch {
-      // Try extracting JSON from the raw output
-      const jsonMatch = trimmed.match(/\{[\s\S]*\}/)
-      if (jsonMatch) {
-        kpiData = JSON.parse(jsonMatch[0])
-      } else {
-        throw new Error('No JSON found in output')
-      }
-    }
-
     writeFileSync(join(archiveDir, 'kpis.json'), JSON.stringify(kpiData, null, 2))
     logInfo('[insights] KPIs extracted and saved')
     return true
   } catch (err) {
-    logError('[insights] Failed to parse KPI output:', err)
-    logError('[insights] Raw output:', result.stdout.slice(0, 500))
+    logError('[insights] Failed to write kpis.json:', err)
     return false
   }
 }
