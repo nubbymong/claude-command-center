@@ -36,7 +36,6 @@ export interface ElectronAPI {
     openFolder: () => Promise<string | null>
   }
   clipboard: {
-    readImage: () => Promise<string | null>
     saveImage: () => Promise<{ path: string } | { error: 'no-image' | 'too-large' }>
   }
   credentials: {
@@ -490,7 +489,6 @@ const electronAPI: ElectronAPI = {
     openFolder: () => ipcRenderer.invoke(IPC.DIALOG_OPEN_FOLDER)
   },
   clipboard: {
-    readImage: () => ipcRenderer.invoke(IPC.CLIPBOARD_READ_IMAGE),
     saveImage: () => ipcRenderer.invoke(IPC.CLIPBOARD_SAVE_IMAGE)
   },
   credentials: {

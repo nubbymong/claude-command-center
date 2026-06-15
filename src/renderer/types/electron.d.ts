@@ -110,7 +110,6 @@ export interface ElectronAPI {
     openFolder: () => Promise<string | null>
   }
   clipboard: {
-    readImage: () => Promise<string | null>
     saveImage: () => Promise<{ path: string } | { error: 'no-image' | 'too-large' }>
   }
   credentials: {

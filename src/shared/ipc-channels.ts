@@ -24,7 +24,6 @@ export const IPC = {
   DIALOG_OPEN_FOLDER: 'dialog:openFolder',
 
   // Clipboard
-  CLIPBOARD_READ_IMAGE: 'clipboard:readImage',
   CLIPBOARD_SAVE_IMAGE: 'clipboard:saveImage',
 
   // Credentials

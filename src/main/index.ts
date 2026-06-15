@@ -413,16 +413,6 @@ function createWindow(): void {
     return img.resize({ height: maxDim, quality: 'good' as const })
   }
 
-  // Clipboard image reading (legacy — kept for compatibility, prefer saveImage)
-  // Uses readClipboardImageWithRetry so the first Alt+V after copying an image
-  // doesn't miss on Windows' delayed-render clipboard sync.
-  ipcMain.handle('clipboard:readImage', async () => {
-    const img = await readClipboardImageWithRetry()
-    if (!img) return null
-    const resized = constrainToMaxDim(img, 1920)
-    return resized.toJPEG(85).toString('base64')
-  })
-
   // Save clipboard image to a unique file in the host screenshots dir and return its
   // bare filename so the renderer can use the conductor MCP fetch_host_screenshot tool.
   // Returns { filename, path } so callers have both the bare name (for the MCP tool)
