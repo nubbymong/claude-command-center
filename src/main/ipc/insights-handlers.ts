@@ -1,7 +1,6 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import {
   runInsights,
-  seedFromExisting,
   getCatalogue,
   getInsightsReport,
   getInsightsKpis,
@@ -35,13 +34,5 @@ export function registerInsightsHandlers(getWindow: () => BrowserWindow | null):
 
   ipcMain.handle('insights:isRunning', async () => {
     return isRunning()
-  })
-
-  // Seed: just copy existing report.html into archive (no KPI extraction, no tokens)
-  // Only runs if catalogue is empty and a report exists
-  ipcMain.handle('insights:seed', async () => {
-    const catalogue = getCatalogue()
-    if (catalogue.runs.length > 0) return null
-    return seedFromExisting(getWindow)
   })
 }

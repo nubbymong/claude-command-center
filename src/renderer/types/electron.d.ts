@@ -342,7 +342,6 @@ export interface ElectronAPI {
     getKpis: (runId: string) => Promise<KpiData | null>
     getLatest: () => Promise<InsightsRun | null>
     isRunning: () => Promise<boolean>
-    seed: () => Promise<string | null>
     onStatusChanged: (callback: (run: InsightsRun) => void) => () => void
   }
   notes: {

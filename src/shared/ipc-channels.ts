@@ -158,7 +158,6 @@ export const IPC = {
   INSIGHTS_GET_KPIS: 'insights:getKpis',
   INSIGHTS_GET_LATEST: 'insights:getLatest',
   INSIGHTS_IS_RUNNING: 'insights:isRunning',
-  INSIGHTS_SEED: 'insights:seed',
   INSIGHTS_STATUS_CHANGED: 'insights:statusChanged',
 
   // Notes

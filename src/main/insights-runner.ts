@@ -200,8 +200,7 @@ function spawnClaudeInsights(home: string | null, timeoutMs = 600000): Promise<{
       cols: 120,
       rows: 30,
       cwd,
-      env: withProfileHome(process.env as Record<string, string>, home),
-      useConpty: false
+      env: withProfileHome(process.env as Record<string, string>, home)
     })
 
     let output = ''
@@ -577,52 +576,6 @@ export async function runInsights(getWindow: () => BrowserWindow | null, opts?: 
   }
 
   return id
-}
-
-// Seed: copy existing report.html into the archive and extract KPIs in background.
-// KPI extraction is cheap (just reads the HTML, ~$0.20) and needed for trend comparison.
-export async function seedFromExisting(getWindow: () => BrowserWindow | null): Promise<string | null> {
-  // Seed is a one-time bootstrap from whatever report already exists in the
-  // global ~/.claude (pre-isolation); it is not account-attributed.
-  if (!existsSync(claudeReportPath(null))) return null
-
-  // Take the SAME mutex runInsights uses. Seed's KPI extraction runs a headless
-  // claude for up to 10 min; without this a real run could start in that window
-  // and the two whole-catalogue writes would interleave from divergent snapshots
-  // (each erasing the other's run). Bail quietly if anything is already running.
-  if (running) return null
-  running = true
-
-  try {
-    const id = generateRunId()
-    const archiveDir = join(getInsightsDir(), id)
-    ensureDir(archiveDir)
-
-    if (!copyReportToArchive(archiveDir, null)) {
-      logError('[insights] seedFromExisting: failed to copy report')
-      return null
-    }
-
-    const run: InsightsRun = { id, timestamp: Date.now(), status: 'extracting_kpis' }
-    upsertRun(run)
-    notifyRenderer(getWindow, run)
-
-    logInfo('[insights] Seeded archive from existing report, extracting KPIs...')
-
-    // Extract KPIs (cheap — just reads the HTML file)
-    const kpiSuccess = await extractKpis(archiveDir, id)
-    if (!kpiSuccess) {
-      logError('[insights] Seed KPI extraction failed, report still viewable')
-    }
-
-    run.status = 'complete'
-    upsertRun(run)
-    notifyRenderer(getWindow, run)
-
-    return id
-  } finally {
-    running = false
-  }
 }
 
 export function getCatalogue(): InsightsCatalogue {

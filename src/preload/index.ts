@@ -287,7 +287,6 @@ export interface ElectronAPI {
     getKpis: (runId: string) => Promise<import('../shared/types').KpiData | null>
     getLatest: () => Promise<import('../shared/types').InsightsRun | null>
     isRunning: () => Promise<boolean>
-    seed: () => Promise<string | null>
     onStatusChanged: (callback: (run: unknown) => void) => () => void
   }
   vision: {
@@ -712,7 +711,6 @@ const electronAPI: ElectronAPI = {
     getKpis: (runId: string) => ipcRenderer.invoke(IPC.INSIGHTS_GET_KPIS, runId),
     getLatest: () => ipcRenderer.invoke(IPC.INSIGHTS_GET_LATEST),
     isRunning: () => ipcRenderer.invoke(IPC.INSIGHTS_IS_RUNNING),
-    seed: () => ipcRenderer.invoke(IPC.INSIGHTS_SEED),
     onStatusChanged: (callback: (run: unknown) => void) => {
       const handler = (_: unknown, run: unknown) => callback(run)
       ipcRenderer.on(IPC.INSIGHTS_STATUS_CHANGED, handler)
