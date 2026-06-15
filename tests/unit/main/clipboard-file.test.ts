@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseHdropBuffer, parseFileUrl, pickPasteableImage } from '../../../src/main/clipboard-file'
+import { parseHdropBuffer, parseFileUrl, pickPasteableImage, mimeForImage, isReapableImageFile } from '../../../src/main/clipboard-file'
 
 // Unit 5 W1: pure decoders for clipboard file references (BUG-8 fallback).
 describe('parseFileUrl (macOS public.file-url)', () => {
@@ -46,5 +46,29 @@ describe('pickPasteableImage', () => {
   })
   it('returns no-image when nothing qualifies', () => {
     expect(pickPasteableImage(['/a/doc.pdf', '/a/folder'], sizeOf)).toEqual({ error: 'no-image' })
+  })
+})
+
+describe('mimeForImage', () => {
+  it('maps the allowed extensions case-insensitively', () => {
+    expect(mimeForImage('a.png')).toBe('image/png')
+    expect(mimeForImage('a.GIF')).toBe('image/gif')
+    expect(mimeForImage('a.bmp')).toBe('image/bmp')
+    expect(mimeForImage('a.webp')).toBe('image/webp')
+    expect(mimeForImage('a.jpeg')).toBe('image/jpeg')
+    expect(mimeForImage('a.unknown')).toBe('image/jpeg')
+  })
+})
+
+describe('isReapableImageFile', () => {
+  it('matches screenshot- and clipboard- image files', () => {
+    expect(isReapableImageFile('screenshot-123.jpg')).toBe(true)
+    expect(isReapableImageFile('clipboard-123.png')).toBe(true)
+    expect(isReapableImageFile('clipboard-123.gif')).toBe(true)
+  })
+  it('ignores unrelated files', () => {
+    expect(isReapableImageFile('catalogue.json')).toBe(false)
+    expect(isReapableImageFile('clipboard-123.txt')).toBe(false)
+    expect(isReapableImageFile('notes.png')).toBe(false)
   })
 })

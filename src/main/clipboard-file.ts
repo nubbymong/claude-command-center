@@ -103,3 +103,19 @@ export function readClipboardImageFilePath(screenshotsDir: string): PasteableIma
     return { error: 'no-image' }
   }
 }
+
+/** MIME type for an image filename by extension (covers ALLOWED_IMAGE_EXTS). */
+export function mimeForImage(filename: string): string {
+  switch (extOf(filename)) {
+    case '.png': return 'image/png'
+    case '.webp': return 'image/webp'
+    case '.gif': return 'image/gif'
+    case '.bmp': return 'image/bmp'
+    default: return 'image/jpeg' // .jpg / .jpeg / unknown
+  }
+}
+
+/** True for screenshot-/clipboard- image files the screenshots reaper should sweep. */
+export function isReapableImageFile(name: string): boolean {
+  return (name.startsWith('screenshot-') || name.startsWith('clipboard-')) && ALLOWED_IMAGE_EXTS.has(extOf(name))
+}

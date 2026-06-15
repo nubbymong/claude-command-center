@@ -30,6 +30,7 @@ import * as path from 'path'
 import * as os from 'os'
 import { logInfo, logError, logDebug, logWarn } from './debug-logger'
 import { getResourcesDirectory } from './ipc/setup-handlers'
+import { mimeForImage } from './clipboard-file'
 import { injectConductorVisionInCodexConfig, removeConductorVisionFromCodexConfig } from './providers/codex/mcp-config'
 import { getGlobalManager, startGlobalVision, launchBrowser } from './vision-manager'
 import type { VisionCommand, VisionResult } from './vision-manager'
@@ -311,10 +312,7 @@ function imageFileToMcpContent(filename: string) {
       }
     }
     const buffer = fs.readFileSync(resolved)
-    const lower = filename.toLowerCase()
-    const mimeType = lower.endsWith('.png') ? 'image/png'
-      : lower.endsWith('.webp') ? 'image/webp'
-      : 'image/jpeg'
+    const mimeType = mimeForImage(filename)
     return {
       content: [{
         type: 'image' as const,
