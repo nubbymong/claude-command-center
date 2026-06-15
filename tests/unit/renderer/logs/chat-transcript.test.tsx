@@ -164,6 +164,61 @@ describe('ChatTranscriptView — top-sentinel load-older dedup (race guard)', ()
   })
 })
 
+describe('ChatTranscriptView — jump-to-result scroll + highlight', () => {
+  it('scrolls the jump target into view (centered) and flashes a highlight on it', async () => {
+    const scrollSpy = vi.fn()
+    ;(Element.prototype as any).scrollIntoView = scrollSpy
+
+    const props = { ...viewProps(WINDOW), jumpTarget: { runId: 1, idx: 2, nonce: 1 } }
+    await act(async () => {
+      root.render(React.createElement(ChatTranscriptView, props))
+    })
+    await flush()
+
+    // Each row carries a stable data-msgkey so the view can find the target node.
+    const target = container.querySelector('[data-msgkey="1:2"]') as HTMLElement
+    expect(target).toBeTruthy()
+    // The clicked message flashes (the brief highlight class is applied to it).
+    expect(target.className).toContain('cct-jump-flash')
+    // Non-target rows do NOT get the highlight.
+    expect((container.querySelector('[data-msgkey="1:0"]') as HTMLElement).className).not.toContain('cct-jump-flash')
+    // scrollIntoView was invoked on the target node, centered.
+    expect(scrollSpy).toHaveBeenCalled()
+    expect(scrollSpy.mock.instances[0]).toBe(target)
+    expect(scrollSpy.mock.calls[0][0]).toMatchObject({ block: 'center' })
+  })
+
+  it('does NOT scroll or highlight when no jumpTarget is supplied', async () => {
+    const scrollSpy = vi.fn()
+    ;(Element.prototype as any).scrollIntoView = scrollSpy
+    await act(async () => {
+      root.render(React.createElement(ChatTranscriptView, viewProps(WINDOW)))
+    })
+    await flush()
+    expect(scrollSpy).not.toHaveBeenCalled()
+    expect(container.querySelector('.cct-jump-flash')).toBeNull()
+  })
+
+  it('removes the highlight after the flash window elapses', async () => {
+    vi.useFakeTimers()
+    ;(Element.prototype as any).scrollIntoView = vi.fn()
+    try {
+      const props = { ...viewProps(WINDOW), jumpTarget: { runId: 1, idx: 1, nonce: 7 } }
+      await act(async () => {
+        root.render(React.createElement(ChatTranscriptView, props))
+      })
+      // Flush the layout effect's microtasks under fake timers.
+      await act(async () => { await Promise.resolve(); await Promise.resolve() })
+      expect(container.querySelector('[data-msgkey="1:1"]')?.className).toContain('cct-jump-flash')
+      // After the flash duration, the highlight is gone (UI not stuck on it).
+      await act(async () => { vi.advanceTimersByTime(2200) })
+      expect(container.querySelector('[data-msgkey="1:1"]')?.className ?? '').not.toContain('cct-jump-flash')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
 describe('ChatTranscript (container)', () => {
   it('instantiates EXACTLY ONE windowing hook (one tail read, one subscription)', async () => {
     const readMessages = vi.fn(async () => WINDOW)

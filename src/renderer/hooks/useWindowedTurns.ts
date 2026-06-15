@@ -64,6 +64,14 @@ export interface WindowedTurns {
    * height to scrollTop so the viewport doesn't jump).
    */
   prependToken: number
+  /**
+   * The most-recent jump target (a search-hit or timeline-rail click), or null
+   * before the first jump. The `nonce` increments on EVERY jump so the view
+   * re-fires its scroll-into-view + highlight even when two jumps land on the
+   * same (runId, idx) — `jumpTo` already loads a window that BEGINS at the
+   * target, but it never told the view where the target row is.
+   */
+  jumpTarget: { runId: number; idx: number; nonce: number } | null
 }
 
 type ReadAnchor = 'tail' | { runId: number; idx: number }
@@ -97,6 +105,9 @@ export function useWindowedTurns(scope: Logs2Scope): WindowedTurns {
   const [loadingOlder, setLoadingOlder] = useState(false)
   const [error, setError] = useState<Error | null>(null)
   const [prependToken, setPrependToken] = useState(0)
+  // The target a search-hit / rail jump last landed on, surfaced to the view so
+  // it can scroll the row into view + flash it (null until the first jump).
+  const [jumpTarget, setJumpTarget] = useState<{ runId: number; idx: number; nonce: number } | null>(null)
 
   // Refs that the async callbacks read so they don't capture stale closures and
   // so concurrent loads can be guarded without re-subscribing effects.
@@ -108,6 +119,9 @@ export function useWindowedTurns(scope: Logs2Scope): WindowedTurns {
   // A generation token: bumped on every (re)initialization so a late-resolving
   // read from a previous scope/jump cannot clobber the current window.
   const genRef = useRef(0)
+  // Monotonic id stamped on each jumpTarget so a repeat jump to the SAME target
+  // still changes identity and re-triggers the view's scroll + highlight.
+  const jumpNonceRef = useRef(0)
 
   const sk = scopeKey(scope)
   // Hold the latest scope in a ref so `read` stays identity-stable per scope key
@@ -137,6 +151,10 @@ export function useWindowedTurns(scope: Logs2Scope): WindowedTurns {
     setFollowState(true)
     followRef.current = true
     setPages(new Map())
+    // Clear any stale jump target so a new scope can't inherit the prior one's
+    // (runId, idx) — they are per-transcript, not globally unique. This keeps the
+    // jump machinery's reset consistent with the pages/follow/loading resets.
+    setJumpTarget(null)
     let cancelled = false
     read('tail')
       .then((tail) => {
@@ -231,6 +249,9 @@ export function useWindowedTurns(scope: Logs2Scope): WindowedTurns {
       const myGen = ++genRef.current // invalidate any in-flight reads
       setFollowState(false)
       followRef.current = false
+      // Surface the target so the view can scroll to + flash the exact row once
+      // the centered window settles. Stamp a fresh nonce every time.
+      setJumpTarget({ runId: target.runId, idx: target.idx, nonce: ++jumpNonceRef.current })
       setLoading(true)
       setError(null)
       try {
@@ -304,6 +325,7 @@ export function useWindowedTurns(scope: Logs2Scope): WindowedTurns {
     loadOlder,
     jumpTo,
     prependToken,
+    jumpTarget,
   }
 }
 

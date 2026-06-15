@@ -31,6 +31,7 @@ export function ChatTranscript({ scope, className }: ChatTranscriptProps) {
       error={win.error}
       loadOlder={win.loadOlder}
       prependToken={win.prependToken}
+      jumpTarget={win.jumpTarget}
       className={className}
     />
   )

@@ -249,6 +249,56 @@ describe('useWindowedTurns', () => {
     expect(msgs.some((m) => m.idx === target)).toBe(true)
   })
 
+  it('exposes jumpTarget (coords + a fresh nonce per jump); null until the first jump', async () => {
+    const { result } = renderHook(() => useWindowedTurns(SCOPE))
+    await flush()
+    // No jump yet: the view has nothing to scroll/highlight.
+    expect(result.current.jumpTarget).toBeNull()
+
+    await act(async () => { await result.current.jumpTo({ runId: RUN, idx: 120 }) })
+    await flush()
+    const first = result.current.jumpTarget
+    expect(first).toMatchObject({ runId: RUN, idx: 120 })
+    expect(typeof first!.nonce).toBe('number')
+
+    // A second jump (even to a different target) must carry a DISTINCT nonce so a
+    // repeat jump re-fires the view's scroll/highlight rather than being deduped.
+    await act(async () => { await result.current.jumpTo({ runId: RUN, idx: 300 }) })
+    await flush()
+    const second = result.current.jumpTarget
+    expect(second).toMatchObject({ runId: RUN, idx: 300 })
+    expect(second!.nonce).not.toBe(first!.nonce)
+  })
+
+  it('clears jumpTarget when the scope re-initializes (no stale highlight target)', async () => {
+    // A host that re-runs the hook with a SWAPPABLE scope so we exercise the
+    // in-place scope re-init path (configId<->sessionId, sk changes) WITHOUT a
+    // remount — the case GlobalLogsView's keyed panel hides but ChatTranscript /
+    // LogsPane allow. A stale jumpTarget here could scroll/flash the wrong row
+    // (runIds are per-transcript, not globally unique).
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    const result = { current: undefined as unknown as ReturnType<typeof useWindowedTurns> }
+    const Host: React.FC<{ scope: Parameters<typeof useWindowedTurns>[0] }> = ({ scope }) => {
+      result.current = useWindowedTurns(scope)
+      return null
+    }
+    act(() => { root.render(<Host scope={{ sessionId: 's1' }} />) })
+    await flush()
+    await act(async () => { await result.current.jumpTo({ runId: RUN, idx: 200 }) })
+    await flush()
+    expect(result.current.jumpTarget).not.toBeNull()
+
+    // Re-init on a DIFFERENT scope must wipe the stale jump target.
+    act(() => { root.render(<Host scope={{ sessionId: 's2' }} />) })
+    await flush()
+    expect(result.current.jumpTarget).toBeNull()
+
+    act(() => root.unmount())
+    container.remove()
+  })
+
   it('jumpTo to idx 0 still includes the target (idx-1 = -1 newer anchor)', async () => {
     const { result } = renderHook(() => useWindowedTurns(SCOPE))
     await flush()
