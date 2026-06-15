@@ -81,6 +81,13 @@ describe('ConductorHealthPill', () => {
     expect(r.container.textContent).toContain('Services')
   })
 
+  it('does not render a leading diamond glyph (BUG-5: pill parity with Code/Claude.ai/Sentinel)', async () => {
+    mockApi(mkSnap('listening'))
+    const r = await renderPill({ open: false, onOpen: () => {} })
+    unmount = r.unmount
+    expect(r.container.textContent).not.toContain(String.fromCodePoint(0x25c6))
+  })
+
   it('renders green and no state word when listening', async () => {
     mockApi(mkSnap('listening'))
     const r = await renderPill({ open: false, onOpen: () => {} })
