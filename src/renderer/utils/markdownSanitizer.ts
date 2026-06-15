@@ -80,3 +80,28 @@ export function renderCommentMarkdown(md: string): string {
 export function renderTranscriptMarkdown(md: string): string {
   return sanitizeMarkdown(md)
 }
+
+// Memory files are the user's own ~/.claude/projects markdown. The memory
+// renderer (memory-ui `renderMarkdown`) entity-escapes content first and injects
+// only fixed CCC theme classes, so the styling must survive — hence a `class`-
+// permitting allowlist distinct from the strict GitHub/transcript pipeline. The
+// input is already-rendered themed HTML (NOT raw markdown), so we sanitize it
+// directly rather than re-parsing with marked.
+const MEMORY_ALLOWED_TAGS = ['p', 'br', 'strong', 'em', 'code', 'li', 'ul', 'ol', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote']
+const MEMORY_ALLOWED_ATTR = ['class']
+
+/**
+ * Sanitize the memory drawer's themed HTML through the same DOMPurify so the
+ * drawer shares the single audited render site (spec §9) instead of its own
+ * bare `dangerouslySetInnerHTML`. Scripts, handlers, styles, links, and any
+ * unknown tag are stripped; only the themed structural tags + their class
+ * survive.
+ */
+export function sanitizeMemoryHtml(themedHtml: string): string {
+  if (typeof themedHtml !== 'string') return ''
+  return DOMPurify.sanitize(themedHtml, {
+    ALLOWED_TAGS: MEMORY_ALLOWED_TAGS,
+    ALLOWED_ATTR: MEMORY_ALLOWED_ATTR,
+    FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover', 'style'],
+  })
+}

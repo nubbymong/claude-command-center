@@ -1,6 +1,8 @@
 import React, { useState } from 'react'
 import type { MemoryFile } from '../../../shared/types'
 import { TypeBadge, fmt, fmtRel, renderMarkdown } from './memory-ui'
+import { SanitizedMarkdown } from '../github/SanitizedMarkdown'
+import { sanitizeMemoryHtml } from '../../utils/markdownSanitizer'
 
 interface Props {
   memory: MemoryFile
@@ -86,9 +88,13 @@ export default function MemoryReadingDrawer({ memory, content, onClose, onDelete
           {content === null ? (
             <div className="text-overlay0 font-mono text-xs">Loading...</div>
           ) : (
-            <div
+            // P2.6: route the (already entity-escaped + themed) memory markdown
+            // through the single audited SanitizedMarkdown render site + DOMPurify
+            // rather than a bespoke dangerouslySetInnerHTML. Styling is unchanged.
+            <SanitizedMarkdown
+              source={content}
+              render={(md) => sanitizeMemoryHtml('<p>' + renderMarkdown(md) + '</p>')}
               className="text-xs leading-relaxed text-subtext1"
-              dangerouslySetInnerHTML={{ __html: '<p>' + renderMarkdown(content) + '</p>' }}
             />
           )}
         </div>
