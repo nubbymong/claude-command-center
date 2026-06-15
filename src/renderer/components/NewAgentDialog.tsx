@@ -7,11 +7,14 @@ import { resolveAccountName } from '../../shared/account-chip-color'
 
 interface Props {
   onClose: () => void
+  // Prefill from a first-run example card (project still required).
+  initialName?: string
+  initialDescription?: string
 }
 
-export default function NewAgentDialog({ onClose }: Props) {
-  const [name, setName] = useState('')
-  const [description, setDescription] = useState('')
+export default function NewAgentDialog({ onClose, initialName, initialDescription }: Props) {
+  const [name, setName] = useState(initialName ?? '')
+  const [description, setDescription] = useState(initialDescription ?? '')
   const [projectPath, setProjectPath] = useState('')
   const [selectedConfigId, setSelectedConfigId] = useState<string>('')
   const [dispatching, setDispatching] = useState(false)

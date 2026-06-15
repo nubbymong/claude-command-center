@@ -78,6 +78,9 @@ export interface AppSettings {
   updateChannel: UpdateChannel
   skipPermissionsForAgents: boolean
   showTips: boolean
+  // Agent Hub first-run "How it works" banner: true once the user dismisses it.
+  // Optional/absent = not yet dismissed (banner shows).
+  agentHubExplainerDismissed?: boolean
   hooksEnabled: boolean
   hooksPort: number
   theme: ThemeMode

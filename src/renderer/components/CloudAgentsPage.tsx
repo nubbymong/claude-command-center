@@ -10,6 +10,7 @@ import NewAgentDialog from './NewAgentDialog'
 import AgentLibrary from './AgentLibrary'
 import TeamsPanel from './TeamsPanel'
 import PageFrame from './PageFrame'
+import { AgentHubExplainer, AgentHubExamples } from './agent-hub/AgentHubOnboarding'
 
 const STATUS_COLORS: Record<CloudAgentStatus, string> = {
   running:   'var(--status-info)',
@@ -527,7 +528,8 @@ type HubTab = 'tasks' | 'teams' | 'library'
 
 const HUB_TABS: { id: HubTab; label: string }[] = [
   { id: 'tasks', label: 'Tasks' },
-  { id: 'teams', label: 'Teams' },
+  // Label-only rename to "Pipelines" (the id/config keys/IPC stay `team*`).
+  { id: 'teams', label: 'Pipelines' },
   { id: 'library', label: 'Library' },
 ]
 
@@ -569,6 +571,10 @@ export default function CloudAgentsPage() {
   const clearCompleted = useCloudAgentStore(s => s.clearCompleted)
   const [showNewDialog, setShowNewDialog] = useState(false)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
+  // First-run example prefill for the New Agent dialog (ephemeral).
+  const [prefill, setPrefill] = useState<{ name: string; description: string } | null>(null)
+  const explainerDismissed = useSettingsStore(s => s.settings.agentHubExplainerDismissed)
+  const updateSettings = useSettingsStore(s => s.updateSettings)
 
   // Account naming: resolve an agent's accountEmail to its friendly name via the
   // shared single-source resolver (profile name > alias > raw email).
@@ -682,6 +688,16 @@ export default function CloudAgentsPage() {
         <AgentLibrary />
       ) : (
         <div className="flex flex-col flex-1 min-h-0">
+        {!explainerDismissed && (
+          <AgentHubExplainer onDismiss={() => { void updateSettings({ agentHubExplainerDismissed: true }) }} />
+        )}
+        {counts.all === 0 ? (
+          <AgentHubExamples
+            onPick={(ex) => { setPrefill({ name: ex.name, description: ex.description }); setShowNewDialog(true) }}
+            onNew={() => { setPrefill(null); setShowNewDialog(true) }}
+          />
+        ) : (
+          <>
         {/* Filter chips + search */}
         <div className="flex items-center gap-2 px-4 py-2 border-b border-surface0/40 shrink-0">
           <div className="flex gap-1">
@@ -790,6 +806,8 @@ export default function CloudAgentsPage() {
           )}
         </div>
         </div>
+          </>
+        )}
         </div>
       )}
       </PageFrame>
@@ -804,7 +822,13 @@ export default function CloudAgentsPage() {
         />
       )}
 
-      {showNewDialog && <NewAgentDialog onClose={() => setShowNewDialog(false)} />}
+      {showNewDialog && (
+        <NewAgentDialog
+          onClose={() => { setShowNewDialog(false); setPrefill(null) }}
+          initialName={prefill?.name}
+          initialDescription={prefill?.description}
+        />
+      )}
     </>
   )
 }
