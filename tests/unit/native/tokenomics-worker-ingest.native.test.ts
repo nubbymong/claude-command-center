@@ -16,8 +16,17 @@ function writeClaudeFile(dir: string, project: string, name: string, lines: obje
 
 describe('tokenomics worker ingest', () => {
   let tmp: string
-  beforeEach(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tkw-')) })
-  afterEach(() => { fs.rmSync(tmp, { recursive: true, force: true }) })
+  let workers: { stop: () => void }[]
+  const track = <T extends { stop: () => void }>(w: T): T => { workers.push(w); return w }
+  beforeEach(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tkw-')); workers = [] })
+  afterEach(() => {
+    // Stop every worker created in the test so its fs.watch watchers release the
+    // temp dir before removal. Under Node 24 (Electron 42) an active fs.watch
+    // holds the watched directory handle on Windows, so a leaked watcher makes
+    // rmSync throw ENOTEMPTY. (Pre-Node-24 the handle was released eagerly.)
+    for (const w of workers) { try { w.stop() } catch { /* already stopped */ } }
+    fs.rmSync(tmp, { recursive: true, force: true })
+  })
 
   it('initial sweep ingests claude files and answers summary query', async () => {
     const claudeDir = path.join(tmp, 'claude')
@@ -29,7 +38,7 @@ describe('tokenomics worker ingest', () => {
     const fake = new FakeTkWorkerTransport()
     const msgs: FromTkWorker[] = []
     fake.onMessage((m) => msgs.push(m))
-    createTokenomicsWorker(fake.asWorkerSide(), {})
+    track(createTokenomicsWorker(fake.asWorkerSide(), {}))
     fake.post({ type: 'open', dbPath: ':memory:', pricing: PRICING, configs: [{ configId: 'a', label: 'App', workingDirectory: 'F:\\proj' }], claudeProjectsDir: claudeDir, codexSessionsDir: path.join(tmp, 'codex') })
     await new Promise((r) => setTimeout(r, 60))
     expect(msgs.some((m) => m.type === 'ready')).toBe(true)
@@ -59,7 +68,7 @@ describe('tokenomics worker ingest', () => {
     const fake = new FakeTkWorkerTransport()
     const msgs: FromTkWorker[] = []
     fake.onMessage((m) => msgs.push(m))
-    createTokenomicsWorker(fake.asWorkerSide(), {})
+    track(createTokenomicsWorker(fake.asWorkerSide(), {}))
     fake.post({ type: 'open', dbPath: ':memory:', pricing: PRICING, configs: [], claudeProjectsDir: claudeDir, codexSessionsDir: path.join(tmp, 'codex') })
     await new Promise((r) => setTimeout(r, 80))
     fake.post({ type: 'query', id: 1, kind: 'summary', args: {} })
@@ -80,7 +89,7 @@ describe('tokenomics worker ingest', () => {
       const fake = new FakeTkWorkerTransport()
       const msgs: FromTkWorker[] = []
       fake.onMessage((m) => msgs.push(m))
-      const w = createTokenomicsWorker(fake.asWorkerSide(), {})
+      const w = track(createTokenomicsWorker(fake.asWorkerSide(), {}))
       fake.post({ type: 'open', dbPath: dbFile, pricing: PRICING, configs: [], claudeProjectsDir: claudeDir, codexSessionsDir: path.join(tmp, 'codex') })
       await new Promise((r) => setTimeout(r, 60))
       fake.post({ type: 'query', id: 1, kind: 'summary', args: {} })
@@ -99,7 +108,7 @@ describe('tokenomics worker ingest', () => {
     ])
     const fake = new FakeTkWorkerTransport(); const msgs: FromTkWorker[] = []
     fake.onMessage((m) => msgs.push(m))
-    const w = createTokenomicsWorker(fake.asWorkerSide(), {})
+    const w = track(createTokenomicsWorker(fake.asWorkerSide(), {}))
     fake.post({ type: 'open', dbPath: ':memory:', pricing: PRICING, configs: [], claudeProjectsDir: claudeDir, codexSessionsDir: path.join(tmp, 'codex') })
     await new Promise((r) => setTimeout(r, 60))
     fs.appendFileSync(file, JSON.stringify({ type: 'assistant', timestamp: '2026-06-01T11:00:00Z', sessionId: 's1', requestId: 'r2', message: { id: 'm2', model: 'claude-opus-4-8', usage: { input_tokens: 1_000_000, output_tokens: 0 } } }) + '\n')
@@ -118,7 +127,7 @@ describe('tokenomics worker ingest', () => {
     ])
     const fake = new FakeTkWorkerTransport(); const msgs: FromTkWorker[] = []
     fake.onMessage((m) => msgs.push(m))
-    createTokenomicsWorker(fake.asWorkerSide(), {})
+    track(createTokenomicsWorker(fake.asWorkerSide(), {}))
     fake.post({ type: 'open', dbPath: ':memory:', pricing: PRICING, configs: [], claudeProjectsDir: claudeDir, codexSessionsDir: path.join(tmp, 'codex') })
     await new Promise((r) => setTimeout(r, 60))
     fake.post({ type: 'query', id: 3, kind: 'index-status', args: {} })
@@ -138,7 +147,7 @@ describe('tokenomics worker ingest', () => {
     writeClaudeFile(claudeDir, 'F--proj', 's1.jsonl', lines)
     const fake = new FakeTkWorkerTransport(); const msgs: FromTkWorker[] = []
     fake.onMessage((m) => msgs.push(m))
-    const w = createTokenomicsWorker(fake.asWorkerSide(), { maxTickBytes: 200 })  // far smaller than the file
+    const w = track(createTokenomicsWorker(fake.asWorkerSide(), { maxTickBytes: 200 }))  // far smaller than the file
     fake.post({ type: 'open', dbPath: ':memory:', pricing: PRICING, configs: [], claudeProjectsDir: claudeDir, codexSessionsDir: path.join(tmp, 'codex') })
     await new Promise((r) => setTimeout(r, 60))
     // Drive successive ticks until the cost stops growing (capped at a generous loop bound).
@@ -164,7 +173,7 @@ describe('tokenomics worker ingest', () => {
     ])
     const fake = new FakeTkWorkerTransport(); const msgs: FromTkWorker[] = []
     fake.onMessage((m) => msgs.push(m))
-    const w = createTokenomicsWorker(fake.asWorkerSide(), { watchDebounceMs: 30 })
+    const w = track(createTokenomicsWorker(fake.asWorkerSide(), { watchDebounceMs: 30 }))
     fake.post({ type: 'open', dbPath: ':memory:', pricing: PRICING, configs: [], claudeProjectsDir: claudeDir, codexSessionsDir: path.join(tmp, 'codex') })
     await new Promise((r) => setTimeout(r, 60))
     fs.appendFileSync(file, JSON.stringify({ type: 'assistant', timestamp: '2026-06-01T11:00:00Z', sessionId: 's1', requestId: 'r2', message: { id: 'm2', model: 'claude-opus-4-8', usage: { input_tokens: 1_000_000, output_tokens: 0 } } }) + '\n')
@@ -182,7 +191,7 @@ describe('tokenomics worker ingest', () => {
       { type: 'assistant', timestamp: '2026-06-01T10:00:00Z', sessionId: 's1', requestId: 'r1', message: { id: 'm1', model: 'claude-opus-4-8', usage: { input_tokens: 10, output_tokens: 0 } } },
     ])
     const fake = new FakeTkWorkerTransport()
-    const w = createTokenomicsWorker(fake.asWorkerSide(), {})
+    const w = track(createTokenomicsWorker(fake.asWorkerSide(), {}))
     fake.post({ type: 'open', dbPath: ':memory:', pricing: PRICING, configs: [], claudeProjectsDir: claudeDir, codexSessionsDir: path.join(tmp, 'codex') })
     await new Promise((r) => setTimeout(r, 60))
     expect(() => { w.stop(); w.stop() }).not.toThrow()
