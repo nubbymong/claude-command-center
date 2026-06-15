@@ -420,10 +420,18 @@ Rules:
 - If previous data IS provided, focus summary on what changed — improved metrics, worsened metrics, and what to do differently.
 - Output ONLY valid JSON. No explanation, no markdown.`
 
-function loadPreviousKpis(currentRunId: string): string | null {
+export function loadPreviousKpis(currentRunId: string): string | null {
   try {
     const catalogue = loadCatalogue()
-    const completeRuns = catalogue.runs.filter(r => r.status === 'complete' && r.id !== currentRunId)
+    // Compare against the previous COMPLETE run of the SAME account — otherwise a
+    // multi-account setup diffs account A's run against account B's (nonsense
+    // "what changed"). profileId is the stable key; single-account runs have it
+    // undefined so they all match (unchanged behaviour). (Unit 3 W5)
+    const current = catalogue.runs.find(r => r.id === currentRunId)
+    const currentAccount = current?.profileId ?? null
+    const completeRuns = catalogue.runs.filter(
+      r => r.status === 'complete' && r.id !== currentRunId && (r.profileId ?? null) === currentAccount
+    )
     if (completeRuns.length === 0) return null
 
     const prevRun = completeRuns[completeRuns.length - 1]

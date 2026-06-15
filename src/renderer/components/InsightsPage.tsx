@@ -74,7 +74,12 @@ export default function InsightsPage() {
     })
 
     if (catalogue) {
-      const runs = catalogue.runs.filter((r) => r.status === 'complete')
+      // Compare against the previous complete run of the SAME account (W5) —
+      // otherwise multi-account diffs one account's run against another's.
+      const sel = catalogue.runs.find((r) => r.id === selectedRunId)
+      const runs = catalogue.runs.filter(
+        (r) => r.status === 'complete' && (r.profileId ?? null) === (sel?.profileId ?? null)
+      )
       const idx = runs.findIndex((r) => r.id === selectedRunId)
       if (idx > 0) {
         window.electronAPI.insights.getKpis(runs[idx - 1].id).then(setPreviousKpis)
