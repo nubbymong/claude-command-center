@@ -11,8 +11,14 @@ export const useChannelStore = create<ChannelState>((set) => ({
   pushLedger: (r) => set((s) => ({ ledger: [r, ...s.ledger].slice(0, 100) })),
 }))
 
+// P2.3: module-local unsub so setupChannelListeners is idempotent — a repeated
+// call (StrictMode double-invoke / remount) returns the existing teardown
+// instead of installing duplicate ledger/attention listeners.
+let channelUnsub: (() => void) | null = null
+
 // Wire IPC subscriptions once at app start (called from App.tsx postConfigInit).
 export function setupChannelListeners(): () => void {
+  if (channelUnsub) return channelUnsub
   const offL = window.electronAPI.channels.onLedgerEvent((r) => useChannelStore.getState().pushLedger(r as LedgerRecord))
   const offA = window.electronAPI.channels.onAttention(({ sessionId, needsAttention }) => {
     const ss = useSessionStore.getState()
@@ -22,5 +28,6 @@ export function setupChannelListeners(): () => void {
   })
   // Handshake so main knows the renderer's channel listeners are mounted.
   void window.electronAPI.channels.rendererReady()
-  return () => { offL(); offA() }
+  channelUnsub = () => { offL(); offA() }
+  return channelUnsub
 }

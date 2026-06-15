@@ -100,9 +100,16 @@ export const useConductorMcpStore = create<ConductorMcpState>((set, get) => ({
   },
 }))
 
+// P2.3: module-local unsub so setupConductorMcpListener is idempotent — a
+// repeated call (StrictMode double-invoke / remount) returns the existing
+// teardown instead of installing a duplicate vision-status listener.
+let mcpListenerUnsub: (() => void) | null = null
+
 /** Call once from App.tsx -- sets up the global IPC listener. Never torn down. */
 export function setupConductorMcpListener(): () => void {
-  return window.electronAPI.vision.onStatusChanged((data) => {
+  if (mcpListenerUnsub) return mcpListenerUnsub
+  mcpListenerUnsub = window.electronAPI.vision.onStatusChanged((data) => {
     useConductorMcpStore.getState().handleStatusChanged(data)
   })
+  return mcpListenerUnsub
 }
