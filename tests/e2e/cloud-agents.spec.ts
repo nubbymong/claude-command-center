@@ -39,7 +39,7 @@ test.describe('Cloud Agents Page', () => {
       test.skip()
       return
     }
-    await expect(page.getByRole('button', { name: 'New Agent' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'New Agent' }).first()).toBeVisible()
   })
 
   test('shows New Agent button', async () => {
@@ -47,7 +47,7 @@ test.describe('Cloud Agents Page', () => {
       test.skip()
       return
     }
-    const newBtn = page.getByRole('button', { name: 'New Agent' })
+    const newBtn = page.getByRole('button', { name: 'New Agent' }).first()
     await expect(newBtn).toBeVisible()
   })
 
@@ -58,7 +58,7 @@ test.describe('Cloud Agents Page', () => {
     }
     await expect(page.locator('button.rounded-full:has-text("All")')).toBeVisible()
     await expect(page.locator('button.rounded-full:has-text("Running")')).toBeVisible()
-    await expect(page.locator('button.rounded-full:has-text("Completed")')).toBeVisible()
+    await expect(page.locator('button.rounded-full:has-text("Done")')).toBeVisible()
     await expect(page.locator('button.rounded-full:has-text("Failed")')).toBeVisible()
   })
 
@@ -87,7 +87,7 @@ test.describe('Cloud Agents Page', () => {
       test.skip()
       return
     }
-    const newBtn = page.getByRole('button', { name: 'New Agent' })
+    const newBtn = page.getByRole('button', { name: 'New Agent' }).first()
     await newBtn.click()
     await page.waitForTimeout(300)
 
@@ -101,7 +101,7 @@ test.describe('Cloud Agents Page', () => {
     const dialog = page.locator('h2:has-text("New Cloud Agent")')
     if (!await dialog.isVisible().catch(() => false)) {
       if (!await navigateToCloudAgents()) { test.skip(); return }
-      await page.getByRole('button', { name: 'New Agent' }).click()
+      await page.getByRole('button', { name: 'New Agent' }).first().click()
       await page.waitForTimeout(300)
     }
 
@@ -116,7 +116,7 @@ test.describe('Cloud Agents Page', () => {
     const dialog = page.locator('h2:has-text("New Cloud Agent")')
     if (!await dialog.isVisible().catch(() => false)) {
       if (!await navigateToCloudAgents()) { test.skip(); return }
-      await page.getByRole('button', { name: 'New Agent' }).click()
+      await page.getByRole('button', { name: 'New Agent' }).first().click()
       await page.waitForTimeout(300)
     }
 
@@ -129,7 +129,7 @@ test.describe('Cloud Agents Page', () => {
     const dialog = page.locator('h2:has-text("New Cloud Agent")')
     if (!await dialog.isVisible().catch(() => false)) {
       if (!await navigateToCloudAgents()) { test.skip(); return }
-      await page.getByRole('button', { name: 'New Agent' }).click()
+      await page.getByRole('button', { name: 'New Agent' }).first().click()
       await page.waitForTimeout(300)
     }
 
