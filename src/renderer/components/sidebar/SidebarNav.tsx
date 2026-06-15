@@ -97,7 +97,7 @@ const navItems: { view: ViewType; icon: React.ReactNode; label: string }[] = [
   },
 ]
 
-function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMessage, cloudAgentRunning, visionRunning, serverRunning, tokenomicsIndexComplete, isCollapsed, loggingEnabled }: {
+function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMessage, cloudAgentRunning, visionRunning, serverRunning, tokenomicsIndexComplete, isCollapsed, loggingEnabled, tooltipAlign = 'start' }: {
   item: typeof navItems[0]
   currentView: ViewType
   onViewChange: (view: ViewType) => void
@@ -109,6 +109,11 @@ function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMe
   tokenomicsIndexComplete?: boolean
   isCollapsed: boolean
   loggingEnabled?: boolean
+  // Expanded-mode tooltip anchoring. Left-group icons anchor 'start' (extend
+  // right); right-group icons anchor 'end' (extend left). Keeps every tooltip
+  // inside the window instead of centring it (which clipped the leftmost icon
+  // off the left edge). Ignored when collapsed (tooltip sits to the right).
+  tooltipAlign?: 'start' | 'end'
 }) {
   // Logs nav entry is greyed and non-interactive when session logging is off.
   const isLogsDisabled = item.view === 'logs' && loggingEnabled === false
@@ -153,7 +158,6 @@ function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMe
         }
         onViewChange(item.view)
       }}
-      title={title}
       aria-label={title}
       aria-disabled={isLogsDisabled || undefined}
       tabIndex={isLogsDisabled ? -1 : undefined}
@@ -171,12 +175,17 @@ function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMe
       style={!isLogsDisabled && currentView === item.view ? { color: 'var(--accent)' } : undefined}
     >
       <span className={isLogsDisabled ? 'opacity-40' : undefined}>{item.icon}</span>
-      {/* Fast inline tooltip -- appears immediately on hover instead of waiting
-          for the OS native `title` delay. Pointer-events:none so it doesn't
-          block clicks. Position adapts: collapsed = right of icon; expanded = below. */}
+      {/* Instant inline tooltip -- the only tooltip (the OS-native `title` was
+          removed so the two no longer conflict). Pointer-events:none so it
+          doesn't block clicks. Position adapts: collapsed = right of icon;
+          expanded = below, edge-anchored so it can't clip off-screen. */}
       <span
         className={`pointer-events-none absolute z-40 px-2 py-0.5 text-[11px] rounded bg-surface1 text-text border border-surface2 shadow-md whitespace-nowrap opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 transition-opacity duration-100 ${
-          isCollapsed ? 'left-full ml-2 top-1/2 -translate-y-1/2' : 'top-full mt-1 left-1/2 -translate-x-1/2'
+          isCollapsed
+            ? 'left-full ml-2 top-1/2 -translate-y-1/2'
+            : tooltipAlign === 'end'
+            ? 'top-full mt-1 right-0'
+            : 'top-full mt-1 left-0'
         }`}
         aria-hidden="true"
       >
@@ -235,7 +244,6 @@ export default function SidebarNav({ currentView, onViewChange, insightsStatus, 
   const helpButton = onShowHelp ? (
     <button
       onClick={onShowHelp}
-      title="Feature Guide"
       aria-label="Feature Guide"
       className={`group ${collapsed ? 'w-10 h-10' : 'flex-1 py-2'} flex items-center justify-center rounded-lg transition-colors text-overlay0 hover:text-text hover:bg-surface0/50 focus-ring relative`}
     >
@@ -246,7 +254,7 @@ export default function SidebarNav({ currentView, onViewChange, insightsStatus, 
       </svg>
       <span
         className={`pointer-events-none absolute z-40 px-2 py-0.5 text-[11px] rounded bg-surface1 text-text border border-surface2 shadow-md whitespace-nowrap opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 transition-opacity duration-100 ${
-          collapsed ? 'left-full ml-2 top-1/2 -translate-y-1/2' : 'top-full mt-1 left-1/2 -translate-x-1/2'
+          collapsed ? 'left-full ml-2 top-1/2 -translate-y-1/2' : 'top-full mt-1 right-0'
         }`}
         aria-hidden="true"
       >
@@ -257,11 +265,11 @@ export default function SidebarNav({ currentView, onViewChange, insightsStatus, 
 
   const primary = navItems.filter(i => ['cloud-agents', 'insights', 'tokenomics'].includes(i.view))
   const system = navItems.filter(i => !['cloud-agents', 'insights', 'tokenomics'].includes(i.view))
-  const renderItem = (item: typeof navItems[0]) => (
+  const renderItem = (item: typeof navItems[0], tooltipAlign: 'start' | 'end') => (
     <NavButton key={item.view} item={item} currentView={currentView} onViewChange={onViewChange}
       insightsStatus={insightsStatus} insightsMessage={insightsMessage} cloudAgentRunning={cloudAgentRunning}
       visionRunning={visionRunning} serverRunning={serverRunning} tokenomicsIndexComplete={tokenomicsIndexComplete}
-      isCollapsed={false} loggingEnabled={loggingEnabled} />
+      isCollapsed={false} loggingEnabled={loggingEnabled} tooltipAlign={tooltipAlign} />
   )
 
   if (collapsed) {
@@ -293,9 +301,9 @@ export default function SidebarNav({ currentView, onViewChange, insightsStatus, 
       className="px-2 pt-2 flex gap-1 items-center border-b border-surface0 pb-2"
       style={{ background: 'var(--surface-chrome)', color: 'var(--text-on-chrome)' }}
     >
-      {primary.map(renderItem)}
+      {primary.map((item) => renderItem(item, 'start'))}
       <span className="w-px self-stretch my-1 bg-surface1 shrink-0" aria-hidden />
-      {system.map(renderItem)}
+      {system.map((item) => renderItem(item, 'end'))}
       {helpButton}
     </div>
   )
