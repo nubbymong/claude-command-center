@@ -68,16 +68,28 @@ export interface InsightsCatalogue {
   runs: InsightsRun[]
 }
 
-let running = false
+// Per-account in-flight lock: keyed by resolved profileId so two DIFFERENT
+// accounts can run concurrently, while the same account can't double-run.
+// Catalogue integrity across concurrent runs is preserved by upsertRun's
+// synchronous read-modify-write (it re-reads the on-disk catalogue each call).
+const inFlight = new Set<string>()
+function accountKey(profileId?: string): string {
+  return profileId ?? '(default)'
+}
 
 function ensureDir(dir: string): void {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
 }
 
+let runCounter = 0
 function generateRunId(): string {
   const now = new Date()
   const pad = (n: number) => n.toString().padStart(2, '0')
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
+  const pad3 = (n: number) => n.toString().padStart(3, '0')
+  // Millisecond + a monotonic counter keep IDs unique when two accounts run
+  // concurrently within the same second (per-account concurrency, Unit 3 W6).
+  runCounter = (runCounter + 1) % 1000
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}-${pad3(now.getMilliseconds())}${pad3(runCounter)}`
 }
 
 function loadCatalogue(): InsightsCatalogue {
@@ -508,10 +520,12 @@ async function extractKpis(archiveDir: string, runId: string, home: string | nul
 }
 
 export async function runInsights(getWindow: () => BrowserWindow | null, opts?: { profileId?: string }): Promise<string> {
-  if (running) throw new Error('Insights already running')
-  running = true
-
   const account = resolveInsightsAccount(opts?.profileId)
+  const key = accountKey(account.profileId)
+  if (inFlight.has(key)) throw new Error('Insights already running for this account')
+  inFlight.add(key)
+
+
   const id = generateRunId()
   const archiveDir = join(getInsightsDir(), id)
   ensureDir(archiveDir)
@@ -534,7 +548,6 @@ export async function runInsights(getWindow: () => BrowserWindow | null, opts?: 
       run.error = 'claude /insights failed: ' + stripAnsiCodes(result.output).slice(-200)
       upsertRun(run)
       notifyRenderer(getWindow, run)
-      running = false
       return id
     }
 
@@ -547,7 +560,6 @@ export async function runInsights(getWindow: () => BrowserWindow | null, opts?: 
       run.error = 'Failed to copy report files'
       upsertRun(run)
       notifyRenderer(getWindow, run)
-      running = false
       return id
     }
 
@@ -572,7 +584,7 @@ export async function runInsights(getWindow: () => BrowserWindow | null, opts?: 
     upsertRun(run)
     notifyRenderer(getWindow, run)
   } finally {
-    running = false
+    inFlight.delete(key)
   }
 
   return id
@@ -609,8 +621,8 @@ export function getLatestRun(): InsightsRun | null {
   return catalogue.runs[catalogue.runs.length - 1]
 }
 
-export function isRunning(): boolean {
-  return running
+export function isRunning(profileId?: string): boolean {
+  return profileId ? inFlight.has(accountKey(profileId)) : inFlight.size > 0
 }
 
 // On startup, mark any stuck 'running' or 'extracting_kpis' entries as 'failed'
