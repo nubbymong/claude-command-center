@@ -12,6 +12,7 @@ import { useAccountGateStore, GATE_CANCELLED } from '../stores/accountGateStore'
 import { hasSpawned, markSpawned, killSessionPty } from '../ptyTracker'
 import SshFlowOverlay from './SshFlowOverlay'
 import { shouldUseResumePicker } from '../utils/resumePicker'
+import { shouldGateAccountChoice, formatSpawnError } from '../utils/sessionLaunch'
 import { stripCursorSequences } from '../utils/terminalFormatting'
 import { isControlReportOnly, decideContextMenuAction } from '../utils/terminalInput'
 import { getTerminalTheme } from './terminal/terminalTheme'
@@ -383,7 +384,15 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
             if (resume) {
               updateSession(sessionId, { resumeUuid: undefined, resumeCwd: undefined })
             }
-            window.electronAPI.pty.spawn(sessionId, { cwd, cols, rows, ssh, shellOnly, elevated, configId, configLabel, useResumePicker, legacyVersion, agentsConfig, effortLevel, disableAutoMemory, enableCodexReview, loggingEnabled, model, provider, codexOptions, profileId: resolvedProfileId, resume })
+            window.electronAPI.pty
+              .spawn(sessionId, { cwd, cols, rows, ssh, shellOnly, elevated, configId, configLabel, useResumePicker, legacyVersion, agentsConfig, effortLevel, disableAutoMemory, enableCodexReview, loggingEnabled, model, provider, codexOptions, profileId: resolvedProfileId, resume })
+              .catch((err: unknown) => {
+                // BUG-2: spawn was fire-and-forget, so a main-process throw (e.g.
+                // "Codex CLI not found on PATH") became a silent unhandled
+                // rejection + blank terminal. Surface the real cause in-terminal.
+                console.error('[TerminalView] pty.spawn failed', err)
+                term?.writeln(`\r\n\x1b[31mFailed to launch session: ${formatSpawnError(err)}\x1b[0m`)
+              })
           }
           // Pre-spawn account gate: on a session's first spawn this run, ask which
           // account to launch under (multi-account on + >=1 profile), unless a
@@ -395,7 +404,10 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
           // record), user "shell only" sessions, and the add-account login shell
           // (which already carries an explicit profileId) -- and skip when there
           // is no real session record.
-          const eligible = !shellOnly && !!session && profilesCount >= 2
+          // BUG-1: account isolation is Claude-only (Codex auth lives in
+          // ~/.codex, not profile-scoped), so the picker must never fire for a
+          // Codex launch even when >=2 Claude account profiles exist.
+          const eligible = shouldGateAccountChoice({ shellOnly, hasSession: !!session, profileCount: profilesCount, provider })
           // Consume the predetermined flag only for eligible sessions so a
           // restart/switch re-spawn skips the gate and uses its chosen account.
           const predetermined = eligible && gate.consumePredetermined(sessionId)
