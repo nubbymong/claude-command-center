@@ -4,6 +4,7 @@ import { useSettingsStore, DEFAULT_STATUS_LINE, type StatusLineSettings } from '
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 
 const GEAR = String.fromCodePoint(0x2699)
+const CHECK = String.fromCodePoint(0x2713)
 const SPARK = String.fromCodePoint(0x2733)
 const ELBOW = String.fromCodePoint(0x2514)
 const DOT = String.fromCodePoint(0x25cf)
@@ -228,9 +229,16 @@ export function StatusLineStep({ onNext, onBack }: { onNext: () => void; onBack:
                 <b>How it works</b>
                 <span>
                   Command Center adds one setting (<code>statusLine</code>) to each session it launches — it runs a
-                  small local script that reads the session's tokens, cost and limits. Sessions launched anywhere else
-                  and your global Claude config are untouched. Turn this off and new sessions launch without it.
+                  small local script that reads the session's tokens, cost and limits. Turn this off and new sessions
+                  launch without it.
                 </span>
+              </div>
+            </div>
+            <div className="assure" style={{ margin: '12px auto 0', maxWidth: 760 }}>
+              <div className="assure-ic">{CHECK}</div>
+              <div>
+                <b>No impact on Claude Code outside Command Center.</b>
+                <span>Only sessions launched here get the status line — your global Claude config never changes.</span>
               </div>
             </div>
           </div>

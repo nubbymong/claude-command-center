@@ -73,8 +73,8 @@ export function AccountsStep({ onNext, onBack }: { onNext: () => void; onBack: (
             </div>
           </div>
 
-          <div className="ma-heads">
-            <div className="mh-ic">{CHECK}</div>
+          <div className="assure">
+            <div className="assure-ic">{CHECK}</div>
             <div>
               <b>Claude Code outside Command Center keeps working exactly as today.</b>
               <span>
