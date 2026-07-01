@@ -7,6 +7,7 @@ import { FindClaudeStep } from './FindClaudeStep'
 import { CompatibilityStep } from './CompatibilityStep'
 import { AccountsStep } from './AccountsStep'
 import { StatusLineStep } from './StatusLineStep'
+import { GitHubStep } from './GitHubStep'
 
 interface StepNav {
   onNext: () => void
@@ -44,6 +45,10 @@ const PAGES: BuiltStep[] = [
     ),
   },
   { id: 'accounts', phase: 1, render: (nav) => <AccountsStep onNext={nav.onNext} onBack={nav.onBack} /> },
+  // GitHub deliberately precedes Status line (user call 2026-07-01): the p4
+  // preview's Copilot element only exists once the meter is enabled, so the
+  // integration must be introduced first.
+  { id: 'github', phase: 2, render: (nav) => <GitHubStep onNext={nav.onNext} onBack={nav.onBack} /> },
   { id: 'statusline', phase: 2, render: (nav) => <StatusLineStep onNext={nav.onNext} onBack={nav.onBack} /> },
 ]
 

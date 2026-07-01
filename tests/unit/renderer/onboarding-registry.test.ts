@@ -3,9 +3,11 @@ import { STEPS } from '../../../src/renderer/onboarding/steps'
 
 describe('onboarding registry', () => {
   it('has 12 steps in the locked order', () => {
+    // github precedes statusline (user call 2026-07-01): the status-line
+    // page's Copilot preview element only exists once the meter is enabled.
     expect(STEPS.map((s) => s.id)).toEqual([
       'whatsNewV2', 'welcome', 'findClaude', 'compatibility', 'accounts',
-      'statusline', 'builtinTools', 'github', 'codex', 'codexSignIn',
+      'github', 'statusline', 'builtinTools', 'codex', 'codexSignIn',
       'transparency', 'finish',
     ])
   })
