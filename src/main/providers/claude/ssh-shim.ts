@@ -76,8 +76,9 @@ process.stdout.write(' ');
 export function generateRemoteSetupScript(
   sessionId: string,
   hooksConfig: { port: number; secret: string } | null,
-  includeStatusLine = true,
+  opts?: { includeStatusLine?: boolean; includeConductorMcp?: boolean },
 ): string {
+  const { includeStatusLine = true, includeConductorMcp = true } = opts ?? {}
   // Conductor MCP server is always running (independent of browser/vision config),
   // so SSH sessions always get the conductor MCP entry pointing at the
   // reverse-tunneled MCP port. The fetch_host_screenshot tool is always available;
@@ -89,7 +90,9 @@ export function generateRemoteSetupScript(
   // pointing at a phantom 19333 endpoint that may or may not match where the
   // server actually came up.
   const mcpPort = getConductorMcpPort()
-  const hasVision = mcpPort > 0
+  // Built-in tools master off => empty remote mcpServers, same as the port-0
+  // fallback: the session sees no tools rather than a dangling endpoint.
+  const hasVision = mcpPort > 0 && includeConductorMcp
   // Embed the shim as a JSON string literal -- Node parses it back to source
   const shimLiteral = JSON.stringify(SSH_STATUSLINE_SHIM)
   // Sanitise for path use -- sessionId comes from session.id (generateId), but
@@ -263,10 +266,10 @@ export function getRemoteSetupCommand(
   sessionId: string,
   remotePath: string,
   hooksConfig: { port: number; secret: string } | null,
-  includeStatusLine = true,
+  opts?: { includeStatusLine?: boolean; includeConductorMcp?: boolean },
 ): string {
   assertSafeRemotePath(remotePath)
-  const script = generateRemoteSetupScript(sessionId, hooksConfig, includeStatusLine)
+  const script = generateRemoteSetupScript(sessionId, hooksConfig, opts)
   const b64 = Buffer.from(script).toString('base64')
   // `cd --` so a path beginning with "-" is treated as an operand, not an option.
   return `stty -echo 2>/dev/null; echo '${b64}' | base64 -d | node 2>/dev/null; stty echo 2>/dev/null; cd -- ${remotePath} && clear`

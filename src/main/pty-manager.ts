@@ -609,8 +609,11 @@ export function spawnPty(
         }
       }, SETUP_TIMEOUT_MS)
       setTimeout(() => {
-        const statusLineOn = readConfig<{ statusLineEnabled?: boolean }>('settings')?.statusLineEnabled !== false
-        const setupCmd = claudeProvider.configureRemoteSettings(sessionId, remotePath, hooksConfig, statusLineOn)
+        const s = readConfig<{ statusLineEnabled?: boolean; conductorToolsEnabled?: boolean }>('settings')
+        const setupCmd = claudeProvider.configureRemoteSettings(sessionId, remotePath, hooksConfig, {
+          includeStatusLine: s?.statusLineEnabled !== false,
+          includeConductorMcp: s?.conductorToolsEnabled !== false,
+        })
         ptyProcess.write(setupCmd + '\r')
       }, 200)
     }
@@ -636,8 +639,11 @@ export function spawnPty(
         }
       }, SETUP_TIMEOUT_MS)
       setTimeout(() => {
-        const statusLineOn = readConfig<{ statusLineEnabled?: boolean }>('settings')?.statusLineEnabled !== false
-        const setupCmd = claudeProvider.configureRemoteSettings(sessionId, remotePath, hooksConfig, statusLineOn)
+        const s = readConfig<{ statusLineEnabled?: boolean; conductorToolsEnabled?: boolean }>('settings')
+        const setupCmd = claudeProvider.configureRemoteSettings(sessionId, remotePath, hooksConfig, {
+          includeStatusLine: s?.statusLineEnabled !== false,
+          includeConductorMcp: s?.conductorToolsEnabled !== false,
+        })
         ptyProcess.write(setupCmd + '\r')
       }, 300)
     }
@@ -1207,7 +1213,10 @@ export function spawnPty(
         logError(`[pty] Failed to seed per-session settings for ${sessionId}: ${(err as Error)?.message ?? err}`)
       }
       try {
-        const mcpCfgPath = writeLocalSessionMcpConfig(sessionId)
+        // Built-in tools master (onboarding p6 / Settings): off = the session's
+        // mcp-config carries no conductor entry. Read fresh per spawn.
+        const conductorOn = readConfig<{ conductorToolsEnabled?: boolean }>('settings')?.conductorToolsEnabled !== false
+        const mcpCfgPath = writeLocalSessionMcpConfig(sessionId, conductorOn)
         extraFlags += ` --mcp-config '${quoteForShell(mcpCfgPath)}'`
       } catch (err) {
         logError(`[pty] Failed to seed per-session MCP config for ${sessionId}: ${(err as Error)?.message ?? err}`)

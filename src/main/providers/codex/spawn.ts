@@ -6,6 +6,7 @@ import { sandboxFor, approvalFor } from './permissions'
 import { getResourcesDirectory } from '../../ipc/setup-handlers'
 import type { SpawnOptions } from '../types'
 import { getConductorMcpPort, getConductorMcpSecret } from '../../conductor-mcp-server'
+import { readConfig } from '../../config-manager'
 
 export function resolveCodexBinary(): { cmd: string; args: string[] } | null {
   if (os.platform() !== 'win32') {
@@ -114,7 +115,11 @@ export function buildCodexSpawn(opts: SpawnOptions): { cmd: string; args: string
   // the conductor server accepts), so the URL carries only `?source=codex` -- no
   // `&`, which keeps it intact through the cmd.exe .cmd-shim spawn path. The
   // `source=codex` marker keeps codex_review hidden from Codex (no self-review).
-  const mcpPort = getConductorMcpPort()
+  // Built-in tools master (onboarding p6 / Settings): off = no conductor MCP
+  // flags at all, so Codex launches without the built-in tools. Read fresh
+  // per spawn; port 0 (server unbound) behaves identically.
+  const conductorOn = readConfig<{ conductorToolsEnabled?: boolean }>('settings')?.conductorToolsEnabled !== false
+  const mcpPort = conductorOn ? getConductorMcpPort() : 0
   if (mcpPort > 0) {
     flags.push('-c', `mcp_servers.conductor.url=http://localhost:${mcpPort}/mcp?source=codex`)
     flags.push('-c', 'mcp_servers.conductor.enabled=true')

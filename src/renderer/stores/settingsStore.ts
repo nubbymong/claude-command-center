@@ -36,6 +36,20 @@ export const DEFAULT_STATUS_LINE: StatusLineSettings = {
   fontSize: 12
 }
 
+/** Conductor MCP built-in tool toggles (onboarding p6 / Settings). Each key
+ *  filters a tool group on the conductor MCP server's tool list. */
+export interface ConductorToolsSettings {
+  vision: boolean
+  codexReview: boolean
+  hostTransfer: boolean
+}
+
+export const DEFAULT_CONDUCTOR_TOOLS: ConductorToolsSettings = {
+  vision: true,
+  codexReview: true,
+  hostTransfer: true,
+}
+
 export type UpdateChannel = 'stable' | 'beta'
 
 // 'system' follows the OS prefers-color-scheme; explicit 'dark' / 'light'
@@ -75,6 +89,11 @@ export interface AppSettings {
   configPanelPinned: boolean
   statusLine: StatusLineSettings
   statusLineEnabled?: boolean
+  /** Master for the conductor MCP built-in tools (default on). Gates the MCP
+   *  attach at spawn (local / SSH / Codex); the per-tool flags filter which
+   *  tool groups the server registers. Absent = on (pre-upgrade configs). */
+  conductorToolsEnabled?: boolean
+  conductorTools?: ConductorToolsSettings
   localMachineName: string
   updateChannel: UpdateChannel
   showTips: boolean
@@ -181,6 +200,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   configPanelPinned: false,
   statusLine: { ...DEFAULT_STATUS_LINE },
   statusLineEnabled: true,
+  conductorToolsEnabled: true,
+  conductorTools: { ...DEFAULT_CONDUCTOR_TOOLS },
   localMachineName: '',
   updateChannel: 'stable' as const,
   showTips: true,
@@ -228,6 +249,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       // newly added fields (e.g. statusLine.font/fontSize) instead of getting undefined.
       statusLine: { ...DEFAULT_STATUS_LINE, ...(settings.statusLine || {}) },
       terminal: { ...DEFAULT_TERMINAL_SETTINGS, ...(settings.terminal || {}) },
+      conductorTools: { ...DEFAULT_CONDUCTOR_TOOLS, ...(settings.conductorTools || {}) },
     }
     const { settings: migrated, changed } = migrateV2Font(merged)
     if (changed) {

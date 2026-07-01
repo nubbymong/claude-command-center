@@ -91,9 +91,15 @@ export interface SshCapableProvider extends SessionProvider {
    */
   getSshMcpConfigPath(sessionId: string): string
   /** Returns shell command to write settings + statusline shim on remote.
-   *  includeStatusLine (default true) mirrors the statusLineEnabled master
-   *  switch: false omits the statusLine stanza from the per-session settings. */
-  configureRemoteSettings(sessionId: string, remotePath: string, hooksConfig: { port: number; secret: string } | null, includeStatusLine?: boolean): string
+   *  opts mirror the renderer master switches (absent = on):
+   *  includeStatusLine=false omits the statusLine stanza; includeConductorMcp=false
+   *  writes an empty remote mcpServers (no built-in tools). */
+  configureRemoteSettings(
+    sessionId: string,
+    remotePath: string,
+    hooksConfig: { port: number; secret: string } | null,
+    opts?: { includeStatusLine?: boolean; includeConductorMcp?: boolean },
+  ): string
 }
 
 /** Type guard. */

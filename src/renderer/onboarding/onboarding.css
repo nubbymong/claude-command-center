@@ -195,6 +195,19 @@
 .ob-root .howc-body { display: none; padding: 0 15px 14px 48px; font-size: 12.5px; color: var(--text-muted); line-height: 1.55; }
 .ob-root .howc.open .howc-body { display: block; }
 
+/* PAGE — built-in tools (conductor MCP tool cards) */
+.ob-root .tool-card { display: flex; align-items: center; gap: 14px; padding: 15px 17px; border: 1px solid var(--border-subtle); border-radius: 12px; background: var(--surface-raised); margin-bottom: 11px; }
+.ob-root .tc-ic { width: 38px; height: 38px; border-radius: 10px; background: var(--ob-soft); display: grid; place-items: center; font-size: 18px; flex: none; }
+.ob-root .tc-body { flex: 1; }
+.ob-root .tc-t { font-size: 14.5px; font-weight: 650; color: var(--text-primary); }
+.ob-root .tc-d { font-size: 12.5px; color: var(--text-muted); margin-top: 3px; line-height: 1.5; }
+.ob-root .tc-sw { width: 40px; height: 23px; border-radius: 999px; background: var(--surface-sunken); border: 1px solid var(--border-strong); position: relative; cursor: pointer; flex: none; transition: .16s; padding: 0; }
+.ob-root .tc-sw::after { content: ''; position: absolute; top: 2px; left: 2px; width: 17px; height: 17px; border-radius: 50%; background: var(--text-secondary); box-shadow: 0 1px 3px rgba(0,0,0,.45); transition: .16s; }
+.ob-root .tc-sw.on { background: var(--ob); border-color: var(--ob); }
+.ob-root .tc-sw.on::after { left: 19px; background: #fff; }
+.ob-root .mcp-detail { transition: opacity .18s; }
+.ob-root .mcp-detail.off { opacity: .32; pointer-events: none; filter: grayscale(.45); }
+
 /* PAGE — GitHub (feature grid + connect chooser) */
 .ob-root .gh-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 8px; }
 .ob-root .gh-card { display: flex; gap: 10px; align-items: flex-start; padding: 11px 13px; border: 1px solid var(--border-subtle); border-radius: 11px; background: var(--surface-raised); }

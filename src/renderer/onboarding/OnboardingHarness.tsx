@@ -8,6 +8,7 @@ import { CompatibilityStep } from './CompatibilityStep'
 import { AccountsStep } from './AccountsStep'
 import { StatusLineStep } from './StatusLineStep'
 import { GitHubStep } from './GitHubStep'
+import { BuiltinToolsStep } from './BuiltinToolsStep'
 
 interface StepNav {
   onNext: () => void
@@ -50,6 +51,7 @@ const PAGES: BuiltStep[] = [
   // integration must be introduced first.
   { id: 'github', phase: 2, render: (nav) => <GitHubStep onNext={nav.onNext} onBack={nav.onBack} /> },
   { id: 'statusline', phase: 2, render: (nav) => <StatusLineStep onNext={nav.onNext} onBack={nav.onBack} /> },
+  { id: 'builtinTools', phase: 2, render: (nav) => <BuiltinToolsStep onNext={nav.onNext} onBack={nav.onBack} /> },
 ]
 
 export function OnboardingHarness() {

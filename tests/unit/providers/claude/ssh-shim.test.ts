@@ -155,7 +155,7 @@ describe('SSH remote setup script (P7.8 -- --mcp-config migration)', () => {
   })
 
   it('includeStatusLine=false omits the statusLine stanza from the per-session settings', () => {
-    const script = generateRemoteSetupScript('sid-x', null, false)
+    const script = generateRemoteSetupScript('sid-x', null, { includeStatusLine: false })
     const parts = script.split(`Object.assign({},sBase,{`)
     expect(parts.length).toBeGreaterThanOrEqual(2)
     const sesCfgLine = parts[1].split(`})`)[0]
@@ -165,11 +165,22 @@ describe('SSH remote setup script (P7.8 -- --mcp-config migration)', () => {
     expect(script).toContain('conductor-ssh-statusline.js')
   })
 
-  it('configureRemoteSettings threads includeStatusLine through to the script', () => {
+  it('configureRemoteSettings threads the master-switch opts through to the script', () => {
     const p = new ClaudeProvider()
     const on = p.configureRemoteSettings('sid-x', '~/repo', null)
-    const off = p.configureRemoteSettings('sid-x', '~/repo', null, false)
+    const off = p.configureRemoteSettings('sid-x', '~/repo', null, { includeStatusLine: false })
     expect(on).not.toBe(off)
+  })
+
+  // Built-in tools master (onboarding p6): off = empty remote mcpServers,
+  // exactly like the port-0 fallback; statusline is independent of this flag.
+  it('includeConductorMcp=false writes empty remote mcpServers (no built-in tools)', () => {
+    const script = generateRemoteSetupScript('sid-x', null, { includeConductorMcp: false })
+    const writeMatch = script.match(/fs\.writeFileSync\(mcpPath,"([^"\\]|\\.)*"\)/)
+    expect(writeMatch).not.toBeNull()
+    expect(writeMatch![0]).toContain('\\"mcpServers\\":{}')
+    expect(writeMatch![0]).not.toContain('conductor')
+    expect(script).toContain(`statusLine:{type:'command'`)
   })
 
   // P7.8 parity with writeLocalSessionMcpConfig: when the conductor server

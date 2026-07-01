@@ -48,8 +48,13 @@ export class ClaudeProvider implements SshCapableProvider {
   getSshMcpConfigPath(sessionId: string): string {
     return remoteSessionMcpConfigPath(sessionId)
   }
-  configureRemoteSettings(sessionId: string, remotePath: string, hooksConfig: { port: number; secret: string } | null, includeStatusLine = true): string {
-    return getRemoteSetupCommand(sessionId, remotePath, hooksConfig, includeStatusLine)
+  configureRemoteSettings(
+    sessionId: string,
+    remotePath: string,
+    hooksConfig: { port: number; secret: string } | null,
+    opts?: { includeStatusLine?: boolean; includeConductorMcp?: boolean },
+  ): string {
+    return getRemoteSetupCommand(sessionId, remotePath, hooksConfig, opts)
   }
   async deployStatuslineScript(resourcesDir: string): Promise<void> {
     return deployClaudeStatuslineScript(resourcesDir)

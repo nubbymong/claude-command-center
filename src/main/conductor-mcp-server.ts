@@ -356,6 +356,19 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
       { capabilities: {} }
     )
 
+    // Built-in tool gates (onboarding p6 / Settings): master + per-group flags.
+    // Read fresh per client connection so a toggle applies to the next session
+    // without an app restart. Absent keys mean ON (pre-upgrade configs). The
+    // spawn paths also skip attaching the server entirely when the master is
+    // off; this filter is belt-and-braces for stale session configs.
+    const toolCfg = readConfig<{
+      conductorToolsEnabled?: boolean
+      conductorTools?: { vision?: boolean; codexReview?: boolean; hostTransfer?: boolean }
+    }>('settings')
+    const toolsMaster = toolCfg?.conductorToolsEnabled !== false
+    const toolOn = (k: 'vision' | 'codexReview' | 'hostTransfer') =>
+      toolsMaster && toolCfg?.conductorTools?.[k] !== false
+
     // Diagnostics (opt-in, verbose-gated): wrap server.tool ONCE so every tool
     // request is logged at a single narrow point -- name + resolved cccSessionId
     // + transport on entry, ok/duration on completion (logWarn on failure with
@@ -411,7 +424,7 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
     // Returns an image from the host's screenshots dir as inline MCP image content.
     // Used by snap, storyboard, and clipboard paste in BOTH local and SSH sessions.
     // SSH sessions reach the MCP server via the existing reverse tunnel.
-    server.tool(
+    if (toolOn('hostTransfer')) server.tool(
       'fetch_host_screenshot',
       'Fetch an image file from the Conductor host\'s screenshots directory and return it as inline image content. The Conductor app saves clipboard pastes, snap captures, and storyboard frames here so they can be viewed by Claude regardless of session type (local or SSH). Use the filename the user references (e.g. "clipboard-1234.jpg" or "screenshot-2026-04-08-...jpg").',
       {
@@ -423,7 +436,8 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
     )
 
     // ── Vision tools (require connected browser) ────────────────────────────
-
+    // Registered as one gated group; inner indentation intentionally unchanged.
+    if (toolOn('vision')) {
     // -- Status --
     server.tool('vision_status', 'Check browser connection status', {}, async () => {
       const vm = getVisionManager()
@@ -539,11 +553,12 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
       if (deviceScaleFactor !== undefined) args.push(String(deviceScaleFactor))
       return withVision({ command: 'setViewport', args })
     })
+    } // end if (toolOn('vision'))
 
     // P6.9: codex_review is intentionally NOT advertised to Codex sessions.
     // Codex calling itself would be confusing UX in v1.5; v1.5.x can
     // reconsider if reciprocal review demand surfaces.
-    if (source !== 'codex') {
+    if (source !== 'codex' && toolOn('codexReview')) {
       registerCodexReviewTool(
         server,
         z,

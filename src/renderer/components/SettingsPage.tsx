@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import WhatsNewModal, { markWhatsNewSeen } from './WhatsNewModal'
 import TrainingWalkthrough from './TrainingWalkthrough'
 import { getLatestVersion } from '../changelog'
-import { useSettingsStore, DEFAULT_STATUS_LINE, DEFAULT_TERMINAL_SETTINGS, UpdateChannel } from '../stores/settingsStore'
+import { useSettingsStore, DEFAULT_STATUS_LINE, DEFAULT_TERMINAL_SETTINGS, DEFAULT_CONDUCTOR_TOOLS, UpdateChannel } from '../stores/settingsStore'
 import type { StatusLineSettings, TerminalSettings, CursorStyle, ThemeMode } from '../stores/settingsStore'
 import { useSessionStore } from '../stores/sessionStore'
 import { useAppMetaStore } from '../stores/appMetaStore'
@@ -241,6 +241,51 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
                     Clear index
                   </button>
                   <span className="text-[10px] text-overlay0">(removes CCC's index only; conversations remain in Claude's own files at ~/.claude/projects)</span>
+                </div>
+              </Section>
+
+              {/* Built-in tools (conductor MCP) -- the recovery surface for the
+                  onboarding p6 master ("switch them on anytime in Settings"). */}
+              <Section title="Built-in Tools" icon={<path d="M8 2v4M8 10v4M2 8h4M10 8h4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />}>
+                <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.conductorToolsEnabled !== false}
+                    onChange={(e) => save({ conductorToolsEnabled: e.target.checked })}
+                    className="mt-0.5 rounded border-surface1"
+                  />
+                  <span>
+                    Give sessions the built-in tools (conductor MCP)
+                    <span className="block text-[10px] text-overlay0">A local helper registered per session — Claude, Codex, local and SSH. Applies to new sessions.</span>
+                  </span>
+                </label>
+                <div
+                  inert={settings.conductorToolsEnabled === false}
+                  className={settings.conductorToolsEnabled !== false ? 'pl-6 space-y-1.5' : 'pl-6 space-y-1.5 opacity-40'}
+                >
+                  {([
+                    ['vision', 'Vision — see & drive a browser'],
+                    ['codexReview', 'Second-opinion code review'],
+                    ['hostTransfer', 'Host screenshots (incl. over SSH)'],
+                  ] as const).map(([key, label]) => (
+                    <label key={key} className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={(settings.conductorTools ?? DEFAULT_CONDUCTOR_TOOLS)[key] !== false}
+                        onChange={(e) =>
+                          save({
+                            conductorTools: {
+                              ...DEFAULT_CONDUCTOR_TOOLS,
+                              ...(settings.conductorTools || {}),
+                              [key]: e.target.checked,
+                            },
+                          })
+                        }
+                        className="rounded border-surface1"
+                      />
+                      {label}
+                    </label>
+                  ))}
                 </div>
               </Section>
 
