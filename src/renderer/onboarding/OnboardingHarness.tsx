@@ -11,6 +11,7 @@ import { GitHubStep } from './GitHubStep'
 import { BuiltinToolsStep } from './BuiltinToolsStep'
 import { CodexStep } from './CodexStep'
 import { CodexSignInStep } from './CodexSignInStep'
+import { TransparencyStep } from './TransparencyStep'
 import { useSettingsStore } from '../stores/settingsStore'
 
 interface StepNav {
@@ -67,6 +68,7 @@ const PAGES: BuiltStep[] = [
     render: (nav) => <CodexSignInStep onNext={nav.onNext} onBack={nav.onBack} />,
   },
   { id: 'builtinTools', phase: 2, render: (nav) => <BuiltinToolsStep onNext={nav.onNext} onBack={nav.onBack} /> },
+  { id: 'transparency', phase: 3, render: (nav) => <TransparencyStep onNext={nav.onNext} onBack={nav.onBack} /> },
 ]
 
 export function OnboardingHarness() {
