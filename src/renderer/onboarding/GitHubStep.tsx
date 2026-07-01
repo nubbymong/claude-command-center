@@ -52,6 +52,9 @@ export function GitHubStep({ onNext, onBack }: { onNext: () => void; onBack: () 
   const [patToken, setPatToken] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Multi-auth is supported (authProfiles is a map): "adding" re-opens the
+  // connect chooser alongside the already-connected rows.
+  const [adding, setAdding] = useState(false)
   // Master = config.enabledByDefault ("GitHub panel on new sessions"). Local
   // until Next so merely LOOKING at the page never writes config; persisted
   // only when the user touched the toggle or actually connected.
@@ -76,8 +79,10 @@ export function GitHubStep({ onNext, onBack }: { onNext: () => void; onBack: () 
     setError(null)
     try {
       const r = await window.electronAPI.github.adoptGhCli(username)
-      if (r.ok) await useGitHubStore.getState().loadConfig()
-      else setError(r.error ?? 'Failed to use the gh account')
+      if (r.ok) {
+        await useGitHubStore.getState().loadConfig()
+        setAdding(false)
+      } else setError(r.error ?? 'Failed to use the gh account')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to use the gh account')
     } finally {
@@ -106,9 +111,22 @@ export function GitHubStep({ onNext, onBack }: { onNext: () => void; onBack: () 
       if (r.ok) {
         setPatToken('')
         await useGitHubStore.getState().loadConfig()
+        setAdding(false)
       } else setError(r.error ?? 'Token verification failed')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Token verification failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const disconnect = async (id: string) => {
+    setBusy(true)
+    setError(null)
+    try {
+      await useGitHubStore.getState().removeProfile(id)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to disconnect the account')
     } finally {
       setBusy(false)
     }
@@ -162,21 +180,45 @@ export function GitHubStep({ onNext, onBack }: { onNext: () => void; onBack: () 
               <b>Already on, no account needed:</b> local git state (dirty files, ahead/behind) and session context.
             </p>
 
-            {connected ? (
+            {connected && (
               <>
                 {profiles.map((p) => (
-                  <div className="checkrow" key={p.username + p.kind}>
+                  <div className="checkrow" key={p.id}>
                     <div className="badge ok">{CHECK}</div>
                     <div>
                       <div className="nm">Connected as {p.username}</div>
-                      <div className="meta">{KIND_LABEL[p.kind] ?? p.kind} — manage in Settings → GitHub.</div>
+                      <div className="meta">{KIND_LABEL[p.kind] ?? p.kind}</div>
                     </div>
+                    <button
+                      className="skip"
+                      style={{ marginLeft: 'auto' }}
+                      onClick={() => void disconnect(p.id)}
+                      disabled={busy}
+                      type="button"
+                    >
+                      Disconnect
+                    </button>
                   </div>
                 ))}
+                {!adding && (
+                  <div className="gh-act">
+                    <button className="self" onClick={() => setAdding(true)} type="button">
+                      + Connect another account
+                    </button>
+                  </div>
+                )}
               </>
-            ) : (
+            )}
+            {(!connected || adding) && (
               <>
-                <p className="connect-l">Connect an account</p>
+                <p className="connect-l">
+                  {connected ? 'Connect another account' : 'Connect an account'}
+                  {connected && adding && (
+                    <button className="skip" style={{ marginLeft: 8, padding: 0 }} onClick={() => setAdding(false)} type="button">
+                      cancel
+                    </button>
+                  )}
+                </p>
                 {ghUsers.length > 0 && (
                   <button className={method === 'gh' ? 'opt sel' : 'opt'} onClick={() => setMethod('gh')} type="button">
                     <span className="opt-rad" />
@@ -286,12 +328,12 @@ export function GitHubStep({ onNext, onBack }: { onNext: () => void; onBack: () 
                     </button>
                   </div>
                 )}
-                {error && (
-                  <div className="gh-err" role="alert">
-                    {error}
-                  </div>
-                )}
               </>
+            )}
+            {error && (
+              <div className="gh-err" role="alert">
+                {error}
+              </div>
             )}
 
             <div className="assure" style={{ marginTop: 14 }}>
@@ -337,9 +379,20 @@ export function GitHubStep({ onNext, onBack }: { onNext: () => void; onBack: () 
             Off
           </button>
         </div>
-        <button className="cta" onClick={finish} type="button" style={{ justifySelf: 'end', marginLeft: 0 }}>
-          Next →
-        </button>
+        {/* With the master ON, Next commits to a connection: gated until an
+            account exists. Turning GitHub Off is the explicit skip path. */}
+        <div style={{ justifySelf: 'end', display: 'flex', alignItems: 'center', gap: 12 }}>
+          {masterOn && !connected && <span className="hint">Connect an account — or turn GitHub off</span>}
+          <button
+            className="cta"
+            onClick={finish}
+            disabled={masterOn && !connected}
+            type="button"
+            style={{ marginLeft: 0 }}
+          >
+            Next →
+          </button>
+        </div>
       </div>
 
       {oauthFlow && (
@@ -347,6 +400,7 @@ export function GitHubStep({ onNext, onBack }: { onNext: () => void; onBack: () 
           flow={oauthFlow}
           onDone={() => {
             setOauthFlow(null)
+            setAdding(false)
             void useGitHubStore.getState().loadConfig()
           }}
           onCancel={() => setOauthFlow(null)}
