@@ -52,12 +52,11 @@ export function WelcomeStep({ onNext }: { onNext: () => void }) {
         <div className="sub">Command Center</div>
         <p className="lede">
           Welcome — I built <b>Command Center to sit on top of the Claude Code you already use</b>. It runs your
-          sessions, never changes anything without asking, and adds a whole layer of features we'll walk through
-          together.
+          sessions and adds accounts, status lines, history and cost tracking on top.
         </p>
         <p className="setup">
-          This one-time walkthrough takes about <b>5 minutes</b>, and you're in control the whole way — skip any
-          feature now and switch it on later whenever you like.
+          This one-time walkthrough takes about <b>5 minutes</b>. Every feature is optional — skip it now, switch it
+          on later in Settings.
         </p>
         <p className="themeq">First — pick a look (you can change it anytime)</p>
         <div className="tiles">
@@ -67,10 +66,7 @@ export function WelcomeStep({ onNext }: { onNext: () => void }) {
         </div>
         <div className="privacy">
           <span className="lock">{LOCK}</span>
-          <span>
-            Privacy-first: everything stays on your machine. We'll show you exactly what runs — and what (if anything)
-            leaves it — at every step.
-          </span>
+          <span>Everything stays on your machine. Any command Command Center runs is shown to you first.</span>
         </div>
       </div>
       <div className="foot">

@@ -39,7 +39,9 @@ const PAGES: BuiltStep[] = [
   {
     id: 'compatibility',
     phase: 0,
-    render: (nav, ctx) => <CompatibilityStep onNext={nav.onNext} onBack={nav.onBack} version={ctx.version} />,
+    render: (nav, ctx) => (
+      <CompatibilityStep onNext={nav.onNext} onBack={nav.onBack} version={ctx.version} onVersion={ctx.setVersion} />
+    ),
   },
   { id: 'accounts', phase: 1, render: (nav) => <AccountsStep onNext={nav.onNext} onBack={nav.onBack} /> },
   { id: 'statusline', phase: 2, render: (nav) => <StatusLineStep onNext={nav.onNext} onBack={nav.onBack} /> },

@@ -74,6 +74,11 @@ const ELEMS: PreviewElem[] = [
 export function StatusLineStep({ onNext, onBack }: { onNext: () => void; onBack: () => void }) {
   const sl = useSettingsStore((s) => s.settings.statusLine) || DEFAULT_STATUS_LINE
   const master = useSettingsStore((s) => s.settings.statusLineEnabled ?? true)
+  // The Copilot meter element only exists in a real strip once the GitHub
+  // AI-credits meter is enabled — previewing it before GitHub is introduced
+  // in the flow would advertise an element the user won't get.
+  const aiMeter = useSettingsStore((s) => !!s.settings.githubAiUsageEnabled)
+  const elems = aiMeter ? ELEMS : ELEMS.filter((e) => e.k !== 'showCopilot')
   const profiles = useAccountProfilesStore((s) => s.profiles)
   const [globalEmail, setGlobalEmail] = useState<string | null>(null)
   const elsRef = useRef<HTMLDivElement>(null)
@@ -102,7 +107,7 @@ export function StatusLineStep({ onNext, onBack }: { onNext: () => void; onBack:
     const scroll = scrollRef.current
     if (scroll) setOverflowing(scroll.scrollWidth > scroll.clientWidth + 1)
   }
-  useLayoutEffect(measure, [sl.font, sl.fontSize, email])
+  useLayoutEffect(measure, [sl.font, sl.fontSize, email, aiMeter])
   useEffect(() => {
     void useAccountProfilesStore.getState().hydrate()
     void window.electronAPI.accountProfiles.globalEmail().then(setGlobalEmail).catch(() => {})
@@ -133,7 +138,7 @@ export function StatusLineStep({ onNext, onBack }: { onNext: () => void; onBack:
           </h2>
           <p className="sl-sub">
             Command Center can show a live status line beneath every Claude session — usage, cost and limits at a
-            glance. Turn it on and choose what it shows, or leave it off — it'll wait for you in Settings.
+            glance. Flip the switches to build yours.
           </p>
 
           {/* inert makes Off real for keyboard/AT too — pointer-events:none in
@@ -158,8 +163,8 @@ export function StatusLineStep({ onNext, onBack }: { onNext: () => void; onBack:
                 <div className={overflowing ? 'sl-scroll scrolling' : 'sl-scroll'} ref={scrollRef}>
                 <div className="sl-strip">
                   <div className="sl-switches">
-                    {centers.length === ELEMS.length &&
-                      ELEMS.map((e, i) => (
+                    {centers.length === elems.length &&
+                      elems.map((e, i) => (
                         <div key={e.k} className={sl[e.k] ? 'swcol on' : 'swcol'} style={{ left: centers[i] }}>
                           <button
                             className="sw"
@@ -180,7 +185,7 @@ export function StatusLineStep({ onNext, onBack }: { onNext: () => void; onBack:
                       fontFamily: sl.font === 'mono' ? "'JetBrains Mono', monospace" : undefined,
                     }}
                   >
-                    {ELEMS.map((e) => (
+                    {elems.map((e) => (
                       <span key={e.k} data-elx className={sl[e.k] ? 'elx' : 'elx off'}>
                         {e.node(email)}
                       </span>
@@ -220,13 +225,11 @@ export function StatusLineStep({ onNext, onBack }: { onNext: () => void; onBack:
             <div className="how" style={{ margin: '20px auto 0', maxWidth: 760 }}>
               <div className="how-ic">{GEAR}</div>
               <div>
-                <b>How it works — before you turn it on</b>
+                <b>How it works</b>
                 <span>
-                  To show this line, Command Center adds one setting (<code>statusLine</code>) to each Claude session it
-                  launches. That setting tells Claude Code to run a small bundled script, which reads the session's
-                  tokens, cost and limits and produces the line above. It's added{' '}
-                  <b>only to the sessions you start inside Command Center</b> — your other Claude sessions and your
-                  global config are left untouched — and it's removed the moment you turn this off.
+                  Command Center adds one setting (<code>statusLine</code>) to each session it launches — it runs a
+                  small local script that reads the session's tokens, cost and limits. Sessions launched anywhere else
+                  and your global Claude config are untouched. Turn this off and new sessions launch without it.
                 </span>
               </div>
             </div>
@@ -237,7 +240,7 @@ export function StatusLineStep({ onNext, onBack }: { onNext: () => void; onBack:
               <div>
                 <b>Status line is off.</b>
                 <span>
-                  No problem — switch it on anytime in <b>Settings → Status line</b>, and pick what it shows then.
+                  Switch it on anytime in <b>Settings → Status line</b>.
                 </span>
               </div>
             </div>

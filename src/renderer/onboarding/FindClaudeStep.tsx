@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react'
+import { VersionConsentCard } from './VersionConsentCard'
 
 const CHECK = String.fromCodePoint(0x2713)
 const LOCK = String.fromCodePoint(0x1f512)
 
-// Everything here is real, read-only app data. The version is the one thing that
-// needs a command run, so it stays behind a single explicit consent click (honouring
-// this page's "we never run a command without your approval" promise) — CCC needs it
-// for the p3 compatibility check, so there's no "run it yourself" dead end.
+// Everything here is real, read-only app data. The version is the one thing
+// that needs a command run, so it stays behind a single explicit consent click
+// (VersionConsentCard); the page-level privacy line carries the no-command
+// promise ONCE instead of every row repeating it.
 export function FindClaudeStep({
   onNext,
   onBack,
@@ -20,8 +21,6 @@ export function FindClaudeStep({
   const [path, setPath] = useState<string | null>(null)
   const [email, setEmail] = useState<string | null>(null)
   const [version, setVersion] = useState<string | null>(null)
-  const [checking, setChecking] = useState(false)
-  const [versionFailed, setVersionFailed] = useState(false)
 
   useEffect(() => {
     const cli = window.electronAPI.cli
@@ -30,37 +29,17 @@ export function FindClaudeStep({
     void window.electronAPI.accountProfiles.globalEmail().then(setEmail).catch(() => {})
   }, [])
 
-  const runVersion = () => {
-    const call = window.electronAPI.cli.version
-    setChecking(true)
-    setVersionFailed(false)
-    if (!call) {
-      setChecking(false)
-      setVersionFailed(true)
-      return
-    }
-    call()
-      .then((v) => {
-        setChecking(false)
-        if (v) {
-          setVersion(v)
-          onVersion?.(v)
-        } else setVersionFailed(true)
-      })
-      .catch(() => {
-        setChecking(false)
-        setVersionFailed(true)
-      })
-  }
+  // On macOS/Linux cli.path resolves to the literal string 'claude' (no real
+  // filesystem lookup), which would render as "Found at claude" — treat it as
+  // no-path and use the PATH copy instead.
+  const realPath = path && path !== 'claude' ? path : null
 
   return (
     <>
       <div className="p2">
         <div className="p2-inner">
           <h2 className="h2">Let's find Claude Code.</h2>
-          <p className="p2-sub">
-            Command Center runs on top of Claude Code, so first let's check it's installed and that you're signed in.
-          </p>
+          <p className="p2-sub">First, a check that Claude Code is installed and you're signed in.</p>
 
           <div className="checkrow">
             <div className={installed === false ? 'badge wait' : 'badge ok'}>{installed === false ? '!' : CHECK}</div>
@@ -71,12 +50,12 @@ export function FindClaudeStep({
                   'Checking…'
                 ) : installed === false ? (
                   'Install Claude Code, then reopen Command Center.'
-                ) : path ? (
+                ) : realPath ? (
                   <>
-                    Found at <code>{path}</code> — we only located the file; nothing has been run.
+                    Found at <code>{realPath}</code>.
                   </>
                 ) : (
-                  'Found on your PATH — we only located the file; nothing has been run.'
+                  'Found on your PATH.'
                 )}
               </div>
             </div>
@@ -88,39 +67,18 @@ export function FindClaudeStep({
               <div>
                 <div className="nm">Claude Code {version}</div>
                 <div className="meta">
-                  Read just now with <code>claude --version</code> — nothing else ran.
+                  Read just now with <code>claude --version</code>.
                 </div>
               </div>
             </div>
           ) : (
-            <div className="approve">
-              <div className="ah">
-                Check which version you have <span className="pill">Needs your OK</span>
-              </div>
-              <div className="desc">
-                Command Center needs your Claude version to check compatibility next. With your OK it'll run one short,
-                read-only command:
-              </div>
-              <div className="cmd">
-                <span className="cm">claude</span> <span className="fl">--version</span>
-              </div>
-              <div className="ameta">
-                <span>Prints the version and confirms Claude responds.</span>
-                <span className="chip ok">{LOCK} Read-only · local · ~1s</span>
-              </div>
-              <div className="abtns">
-                <button className="run" onClick={runVersion} disabled={checking} type="button">
-                  {checking ? 'Checking…' : 'Run it for me'}
-                </button>
-              </div>
-              {versionFailed && (
-                <div className="ameta">
-                  <span>
-                    Couldn't read the version — make sure <code>claude</code> is on your PATH, then try again.
-                  </span>
-                </div>
-              )}
-            </div>
+            <VersionConsentCard
+              desc="The compatibility check on the next page needs your Claude version — one command:"
+              onVersion={(v) => {
+                setVersion(v)
+                onVersion?.(v)
+              }}
+            />
           )}
 
           <div className="checkrow">
@@ -130,7 +88,7 @@ export function FindClaudeStep({
               <div className="meta">
                 {email ? (
                   <>
-                    as <b>{email}</b> — read from your local Claude config, no command run.
+                    as <b>{email}</b> — read from your local Claude config.
                   </>
                 ) : (
                   "We'll help you sign in when you start your first session."
@@ -141,10 +99,7 @@ export function FindClaudeStep({
 
           <div className="p2-priv">
             <span className="lock">{LOCK}</span>
-            <span>
-              We never run a Claude command without your approval, and we'll always show you the exact command first.
-              Nothing here leaves your machine.
-            </span>
+            <span>Every command needs your OK and is shown in full first. Nothing leaves your machine.</span>
           </div>
         </div>
       </div>
