@@ -609,7 +609,8 @@ export function spawnPty(
         }
       }, SETUP_TIMEOUT_MS)
       setTimeout(() => {
-        const setupCmd = claudeProvider.configureRemoteSettings(sessionId, remotePath, hooksConfig)
+        const statusLineOn = readConfig<{ statusLineEnabled?: boolean }>('settings')?.statusLineEnabled !== false
+        const setupCmd = claudeProvider.configureRemoteSettings(sessionId, remotePath, hooksConfig, statusLineOn)
         ptyProcess.write(setupCmd + '\r')
       }, 200)
     }
@@ -635,7 +636,8 @@ export function spawnPty(
         }
       }, SETUP_TIMEOUT_MS)
       setTimeout(() => {
-        const setupCmd = claudeProvider.configureRemoteSettings(sessionId, remotePath, hooksConfig)
+        const statusLineOn = readConfig<{ statusLineEnabled?: boolean }>('settings')?.statusLineEnabled !== false
+        const setupCmd = claudeProvider.configureRemoteSettings(sessionId, remotePath, hooksConfig, statusLineOn)
         ptyProcess.write(setupCmd + '\r')
       }, 300)
     }
@@ -1176,9 +1178,15 @@ export function spawnPty(
         // at the per-session level without the user hand-editing
         // ~/.claude/settings.json. Read fresh on every spawn so a Settings
         // toggle takes effect on the next session without an app restart.
-        const appSettings = readConfig<{ disableClaudeWorkflows?: boolean }>('settings')
+        const appSettings = readConfig<{ disableClaudeWorkflows?: boolean; statusLineEnabled?: boolean }>('settings')
         const disableWorkflows = !!appSettings?.disableClaudeWorkflows
-        const sesPath = writeLocalSessionSettings(sessionId, { disableWorkflows, resourcesDir: getResourcesDirectory() })
+        // Master status-line switch (onboarding p4 / Settings -> Status line):
+        // absent means ON (pre-upgrade configs). Off = no resourcesDir, so the
+        // per-session clone gets no statusLine key and Claude runs without the
+        // bundled script. Read fresh per spawn; sessions already running keep
+        // theirs until restarted.
+        const statusLineOn = appSettings?.statusLineEnabled !== false
+        const sesPath = writeLocalSessionSettings(sessionId, { disableWorkflows, resourcesDir: statusLineOn ? getResourcesDirectory() : undefined })
         // injectHooks rewrites the per-session settings file to point Claude's
         // hook events at our local gateway, which drives the session attention
         // pulse, statusline ingest, and conversation logging. Skipped only when

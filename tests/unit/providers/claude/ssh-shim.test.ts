@@ -146,6 +146,32 @@ describe('SSH remote setup script (P7.8 -- --mcp-config migration)', () => {
     expect(sesCfgLine).not.toContain('mcpServers')
   })
 
+  // Master status-line switch (onboarding p4): includeStatusLine=false must
+  // omit the statusLine stanza from the per-session settings while leaving
+  // the rest of the setup (hooks, mcp, legacy cleanup) intact.
+  it('includes the statusLine stanza by default', () => {
+    const script = generateRemoteSetupScript('sid-x', null)
+    expect(script).toContain(`statusLine:{type:'command'`)
+  })
+
+  it('includeStatusLine=false omits the statusLine stanza from the per-session settings', () => {
+    const script = generateRemoteSetupScript('sid-x', null, false)
+    const parts = script.split(`Object.assign({},sBase,{`)
+    expect(parts.length).toBeGreaterThanOrEqual(2)
+    const sesCfgLine = parts[1].split(`})`)[0]
+    expect(sesCfgLine).not.toContain('statusLine')
+    // The shim file is still staged (inert without the stanza) and the
+    // legacy-global cleanup still runs.
+    expect(script).toContain('conductor-ssh-statusline.js')
+  })
+
+  it('configureRemoteSettings threads includeStatusLine through to the script', () => {
+    const p = new ClaudeProvider()
+    const on = p.configureRemoteSettings('sid-x', '~/repo', null)
+    const off = p.configureRemoteSettings('sid-x', '~/repo', null, false)
+    expect(on).not.toBe(off)
+  })
+
   // P7.8 parity with writeLocalSessionMcpConfig: when the conductor server
   // hasn't bound yet (port=0), write an empty mcpServers object rather than
   // pointing at a phantom port. Mirrors the local writer's behaviour and

@@ -1,10 +1,12 @@
 /**
  * Claude statusline deployment (lifted from statusline-watcher.ts in P0.7)
  *
- * - Writes the Node.js statusline bridge script to ~/.claude/claude-multi-statusline.js
- *   AND to <resourcesDir>/scripts/claude-multi-statusline.js (for SSH-mounted access).
- * - Mutates ~/.claude/settings.json to point Claude Code's `statusLine.command`
- *   at the resources-dir copy.
+ * - Stages the Node.js statusline bridge script at
+ *   <resourcesDir>/scripts/claude-multi-statusline.js.
+ * - Delivery is PER-SESSION only (U2): the statusLine stanza is injected into
+ *   the per-session settings clone (per-session-settings.ts), never the global
+ *   ~/.claude/settings.json. healGlobalStatusline below strips the legacy
+ *   global stanza + planted ~/.claude script that pre-U2 installs wrote.
  * - Bundled script handles fetching rate limits from the Anthropic OAuth usage
  *   endpoint (api.anthropic.com/api/oauth/usage) at runtime.
  *

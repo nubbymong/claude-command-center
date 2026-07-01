@@ -76,6 +76,7 @@ process.stdout.write(' ');
 export function generateRemoteSetupScript(
   sessionId: string,
   hooksConfig: { port: number; secret: string } | null,
+  includeStatusLine = true,
 ): string {
   // Conductor MCP server is always running (independent of browser/vision config),
   // so SSH sessions always get the conductor MCP entry pointing at the
@@ -133,9 +134,12 @@ export function generateRemoteSetupScript(
         },
       })
     : JSON.stringify({ mcpServers: {} })
-  const sesCfgParts: string[] = [
-    `statusLine:{type:'command',command:'CLAUDE_MULTI_SESSION_ID=${sessionId} node '+shimPath}`,
-  ]
+  // Master status-line switch: with it off, the per-session clone simply gets
+  // no statusLine key (the shim file is still staged but inert without it).
+  const sesCfgParts: string[] = []
+  if (includeStatusLine) {
+    sesCfgParts.push(`statusLine:{type:'command',command:'CLAUDE_MULTI_SESSION_ID=${sessionId} node '+shimPath}`)
+  }
   if (hooksLiteral) sesCfgParts.push(`hooks:${hooksLiteral}`)
 
   // Build as semicolon-separated statements -- NO comments (they break single-lining)
@@ -259,9 +263,10 @@ export function getRemoteSetupCommand(
   sessionId: string,
   remotePath: string,
   hooksConfig: { port: number; secret: string } | null,
+  includeStatusLine = true,
 ): string {
   assertSafeRemotePath(remotePath)
-  const script = generateRemoteSetupScript(sessionId, hooksConfig)
+  const script = generateRemoteSetupScript(sessionId, hooksConfig, includeStatusLine)
   const b64 = Buffer.from(script).toString('base64')
   // `cd --` so a path beginning with "-" is treated as an operand, not an option.
   return `stty -echo 2>/dev/null; echo '${b64}' | base64 -d | node 2>/dev/null; stty echo 2>/dev/null; cd -- ${remotePath} && clear`
