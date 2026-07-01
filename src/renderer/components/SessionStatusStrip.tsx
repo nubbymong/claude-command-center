@@ -45,6 +45,10 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
   const session = useSessionStore((s) => s.sessions.find((x) => x.id === sessionId) || null)
   const updateSession = useSessionStore((s) => s.updateSession)
   const sl = useSettingsStore((s) => s.settings.statusLine) || DEFAULT_STATUS_LINE
+  // Master status-line switch (onboarding p4 / Settings). Gates ONLY the
+  // telemetry band; the Claude controls cluster (Mode/Model/Restart/account)
+  // stays regardless. Absent (pre-upgrade config) means on.
+  const statusLineEnabled = useSettingsStore((s) => s.settings.statusLineEnabled ?? true)
   const codexReview = useCodexReviewUsage(session?.enableCodexReview ? sessionId : null)
   const { restart } = useRestartSession(session, false)
   const switchAccount = useSwitchAccount(session)
@@ -94,6 +98,9 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
   }
 
   if (!session) return null
+  // A Codex strip is telemetry-only (no controls cluster), so with the master
+  // off there is nothing left to show — collapse the band entirely.
+  if (!statusLineEnabled && !isClaude) return null
 
   const pct = session.contextPercent ?? 0
   // Context-meter thresholds: >85 danger, >=70 warning -- carried over from
@@ -133,7 +140,10 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
       style={{ background: 'var(--surface-raised)', color: 'var(--text-on-chrome)', borderColor: 'var(--border-subtle)' }}
     >
       {/* Telemetry -- inherits statusLine font + fontSize so Settings controls
-          stay honest. Carried over verbatim from BottomBar's middle zone. */}
+          stay honest. Carried over verbatim from BottomBar's middle zone.
+          With the master switch off, a bare spacer keeps the controls cluster
+          right-aligned. */}
+      {statusLineEnabled ? (
       <div
         className="flex items-center gap-3 flex-1 min-w-0 overflow-hidden"
         style={{ fontSize: `${sl.fontSize}px`, fontFamily: sl.font === 'mono' ? "'JetBrains Mono', monospace" : undefined }}
@@ -238,6 +248,9 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
           </>
         )}
       </div>
+      ) : (
+        <div className="flex-1" aria-hidden />
+      )}
 
       {/* Controls (Claude only): Mode + Model as a pair, Compact as a normal
           action, Restart visually separated behind a divider with a quiet

@@ -89,3 +89,35 @@ describe('SessionStatusStrip account/model de-duplication (Bug 6)', () => {
     expect(container.querySelector('[title^="Switch account"]')).toBeNull()
   })
 })
+
+describe('SessionStatusStrip master switch (onboarding p4)', () => {
+  it('absent statusLineEnabled (pre-upgrade config) keeps the telemetry band', () => {
+    sessionState.sessions = [{ id: 's1', provider: 'claude', contextPercent: 10 }]
+    settingsState.settings.statusLine = { font: 'sans', fontSize: 11, showContextBar: true }
+
+    act(() => { root.render(createElement(SessionStatusStrip, { sessionId: 's1' })) })
+
+    expect(container.textContent).toContain('10%')
+  })
+
+  it('statusLineEnabled=false hides the telemetry band but keeps the Claude controls', () => {
+    sessionState.sessions = [{ id: 's1', provider: 'claude', contextPercent: 10 }]
+    settingsState.settings.statusLine = { font: 'sans', fontSize: 11, showContextBar: true }
+    settingsState.settings.statusLineEnabled = false
+
+    act(() => { root.render(createElement(SessionStatusStrip, { sessionId: 's1' })) })
+
+    expect(container.textContent).not.toContain('10%')
+    expect(container.querySelector('[title="Restart session"]')).not.toBeNull()
+  })
+
+  it('statusLineEnabled=false collapses a Codex strip entirely (telemetry-only, nothing left)', () => {
+    sessionState.sessions = [{ id: 's1', provider: 'codex', contextPercent: 10 }]
+    settingsState.settings.statusLine = { font: 'sans', fontSize: 11, showContextBar: true }
+    settingsState.settings.statusLineEnabled = false
+
+    act(() => { root.render(createElement(SessionStatusStrip, { sessionId: 's1' })) })
+
+    expect(container.firstChild).toBeNull()
+  })
+})

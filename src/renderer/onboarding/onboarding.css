@@ -190,3 +190,69 @@
 .ob-root .howc.open .howc-chev { transform: rotate(180deg); }
 .ob-root .howc-body { display: none; padding: 0 15px 14px 48px; font-size: 12.5px; color: var(--text-muted); line-height: 1.55; }
 .ob-root .howc.open .howc-body { display: block; }
+
+/* PAGE 4 — status line (mock terminal scene + spotlit strip + switch columns) */
+.ob-root .sl-stage { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 0 24px; }
+.ob-root .sl-inner { width: min(1140px, 97vw); }
+.ob-root .sl-sub { font-size: 14.5px; line-height: 1.55; color: var(--text-secondary); text-align: center; margin: 0 auto 18px; max-width: 66ch; }
+.ob-root .sl-scene { position: relative; border: 1px solid var(--border-subtle); border-radius: 14px; overflow: hidden; background: #0a0f16; }
+.ob-root .sl-spot { position: absolute; left: 50%; bottom: 0; width: 78%; height: 330px; transform: translateX(-50%); background: radial-gradient(52% 100% at 50% 100%, var(--ob-soft) 0%, rgba(0,0,0,0) 70%); pointer-events: none; z-index: 0; }
+.ob-root .term-body { padding: 14px 16px 6px; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12.5px; line-height: 1.7; color: #c4cdd9; opacity: .34; position: relative; z-index: 1; }
+.ob-root .term .u { color: #dde4ee; }
+.ob-root .term .c { color: var(--accent); }
+.ob-root .term .g { color: var(--status-success); }
+.ob-root .term .box { border: 1px solid #202a37; border-radius: 6px; padding: 4px 10px; margin: 6px 0; color: var(--text-muted); }
+.ob-root .sl-annot { position: relative; z-index: 2; padding: 58px 18px 22px; }
+/* .sl-scroll: overflow guard around the strip. The top padding (offset by the
+   negative margin) keeps the 62px switch columns inside the box so engaging
+   overflow-x never clips them vertically; .scrolling is applied from JS only
+   when the elements outgrow the strip (large fonts / long emails), turning the
+   strip + its switch columns into one horizontal scroller. The bottom pair
+   preserves the strip's drop shadow (0 12px 38px) from the clip. */
+.ob-root .sl-scroll { padding-top: 62px; margin-top: -62px; }
+.ob-root .sl-scroll.scrolling { overflow-x: auto; padding-bottom: 52px; margin-bottom: -52px; }
+.ob-root .sl-strip { position: relative; display: flex; justify-content: center; background: var(--surface-raised); border: 1px solid var(--ob-line); border-radius: 10px; box-shadow: 0 12px 38px var(--ob-soft), 0 0 0 4px var(--ob-soft); min-height: 34px; width: max-content; min-width: 100%; }
+.ob-root .sl-els { display: flex; align-items: center; gap: 13px; justify-content: center; flex-wrap: nowrap; padding: 9px 14px; width: auto; }
+.ob-root .sl-switches { position: absolute; bottom: 100%; left: 0; right: 0; height: 62px; }
+.ob-root .swcol { position: absolute; bottom: 0; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; height: 62px; }
+.ob-root .swcol .sw { width: 40px; height: 23px; border-radius: 999px; background: var(--surface-sunken); border: 1px solid var(--border-strong); position: relative; cursor: pointer; flex: none; transition: .16s; box-shadow: inset 0 1px 2px rgba(0,0,0,.25); padding: 0; }
+.ob-root .swcol .sw::after { content: ''; position: absolute; top: 2px; left: 2px; width: 17px; height: 17px; border-radius: 50%; background: var(--text-secondary); box-shadow: 0 1px 3px rgba(0,0,0,.45); transition: .16s; }
+.ob-root .swcol.on .sw { background: var(--ob); border-color: var(--ob); }
+.ob-root .swcol.on .sw::after { left: 19px; background: #fff; }
+.ob-root .swcol .ln { width: 1.5px; flex: 1; background: var(--border-strong); margin-top: 6px; transition: .15s; }
+.ob-root .swcol.on .ln { background: var(--ob-line); }
+/* .elx font-size is inherited from .sl-els (inline, driven by the real
+   statusLine.fontSize setting) — the mockup pinned 12px here, which would have
+   made the size slider cosmetic-only. */
+.ob-root .elx { flex: none; white-space: nowrap; color: var(--text-secondary); transition: opacity .15s; }
+.ob-root .elx.off { opacity: .24; text-decoration: line-through; }
+.ob-root .elx .d { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--color-mauve); margin-right: 5px; vertical-align: middle; }
+.ob-root .elx .bar { display: inline-block; width: 46px; height: 6px; border-radius: 999px; background: var(--surface-sunken); overflow: hidden; vertical-align: middle; margin: 0 5px; }
+.ob-root .elx .bar > i { display: block; height: 100%; border-radius: 999px; }
+.ob-root .elx .num { font-variant-numeric: tabular-nums; }
+.ob-root .elx .add { color: var(--status-success); }
+.ob-root .elx .rem { color: var(--status-danger); }
+.ob-root .elx .mut { color: var(--text-muted); }
+.ob-root .elx .cop { border: 1px solid var(--border-subtle); border-radius: 999px; padding: 2px 8px; }
+.ob-root .sl-cap { text-align: center; font-size: 11.5px; color: var(--text-muted); margin-top: 12px; }
+.ob-root .sl-fontrow { display: flex; align-items: center; gap: 10px; margin-top: 14px; font-size: 12.5px; color: var(--text-secondary); justify-content: center; }
+.ob-root .fbtn { border: 1px solid var(--border-strong); background: transparent; color: var(--text-secondary); border-radius: 7px; padding: 5px 12px; font-size: 12px; cursor: pointer; }
+.ob-root .fbtn.on { border-color: var(--ob); color: var(--ob); background: var(--ob-soft); }
+.ob-root .sl-fontrow input[type=range] { accent-color: var(--ob); max-width: 150px; }
+.ob-root .sl-mut { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.ob-root .sl-detail { transition: opacity .18s; }
+.ob-root .sl-detail.off { opacity: .32; pointer-events: none; filter: grayscale(.45); }
+.ob-root .how { display: flex; gap: 12px; align-items: flex-start; padding: 13px 15px; border: 1px solid var(--border-subtle); border-radius: 11px; background: var(--surface-raised); }
+.ob-root .how-ic { width: 28px; height: 28px; border-radius: 8px; background: var(--ob-soft); color: var(--ob); display: grid; place-items: center; font-size: 15px; flex: none; }
+.ob-root .how b { font-size: 13px; }
+.ob-root .how span { display: block; font-size: 12px; color: var(--text-muted); margin-top: 3px; line-height: 1.55; }
+.ob-root .how code { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11px; color: var(--text-secondary); }
+.ob-root .feat-onoff { display: inline-flex; align-items: center; gap: 4px; padding: 4px; border: 1px solid var(--border-strong); border-radius: 11px; background: var(--surface-sunken); }
+.ob-root .oo-lbl { font-size: 12px; color: var(--text-muted); padding: 0 9px 0 6px; }
+.ob-root .oo-btn { border: 0; background: none; color: var(--text-muted); font: inherit; font-size: 13.5px; font-weight: 680; padding: 7px 20px; border-radius: 8px; cursor: pointer; transition: .14s; }
+.ob-root .oo-btn.on { background: var(--ob); color: #1a0d05; }
+.ob-root .oo-btn.oo-off.on { background: var(--border-strong); color: var(--text-primary); }
+.ob-root .sl-offnote { display: flex; gap: 12px; align-items: flex-start; padding: 15px 18px; border: 1px dashed var(--border-strong); border-radius: 12px; background: var(--surface-stage); max-width: 760px; margin: 14px auto 0; }
+.ob-root .off-ic { width: 28px; height: 28px; border-radius: 8px; background: var(--surface-overlay); color: var(--text-muted); display: grid; place-items: center; font-size: 15px; flex: none; }
+.ob-root .sl-offnote b { font-size: 14px; color: var(--text-primary); }
+.ob-root .sl-offnote span { display: block; font-size: 12.5px; color: var(--text-muted); margin-top: 3px; line-height: 1.5; }

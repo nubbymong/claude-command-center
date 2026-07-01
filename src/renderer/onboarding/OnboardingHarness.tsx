@@ -6,6 +6,7 @@ import { WelcomeStep } from './WelcomeStep'
 import { FindClaudeStep } from './FindClaudeStep'
 import { CompatibilityStep } from './CompatibilityStep'
 import { AccountsStep } from './AccountsStep'
+import { StatusLineStep } from './StatusLineStep'
 
 interface StepNav {
   onNext: () => void
@@ -41,6 +42,7 @@ const PAGES: BuiltStep[] = [
     render: (nav, ctx) => <CompatibilityStep onNext={nav.onNext} onBack={nav.onBack} version={ctx.version} />,
   },
   { id: 'accounts', phase: 1, render: (nav) => <AccountsStep onNext={nav.onNext} onBack={nav.onBack} /> },
+  { id: 'statusline', phase: 2, render: (nav) => <StatusLineStep onNext={nav.onNext} onBack={nav.onBack} /> },
 ]
 
 export function OnboardingHarness() {

@@ -544,8 +544,30 @@ function StatusLineTab({
   onToggle: (key: keyof StatusLineSettings) => void
   onSet: <K extends keyof StatusLineSettings>(key: K, value: StatusLineSettings[K]) => void
 }) {
+  // Master switch -- the same flag onboarding p4's "Status line On/Off" writes.
+  // This is the promised recovery surface ("switch it on anytime in Settings ->
+  // Status line"), so it must exist here or Off would be a one-way door.
+  const statusLineEnabled = useSettingsStore((s) => s.settings.statusLineEnabled ?? true)
+  const setMaster = (on: boolean) => {
+    void useSettingsStore.getState().updateSettings({ statusLineEnabled: on })
+  }
   return (
     <>
+      {/* Master switch */}
+      <div className="rounded-xl bg-surface0/30 border border-surface0/60 px-4 py-3 flex items-center gap-3">
+        <Toggle on={statusLineEnabled} onClick={() => setMaster(!statusLineEnabled)} label="Status line" />
+        <div className="min-w-0">
+          <div className="text-sm text-text leading-tight">Show the status line</div>
+          <div className="text-[11px] text-overlay0 leading-tight">
+            Live usage, cost and limits beneath every session. When off, only the session controls remain.
+          </div>
+        </div>
+      </div>
+
+      <div
+        inert={!statusLineEnabled}
+        className={statusLineEnabled ? 'space-y-4' : 'space-y-4 opacity-40 pointer-events-none'}
+      >
       {/* Live Preview */}
       <div className="rounded-xl bg-surface0/30 border border-surface0/60 overflow-hidden">
         <div className="px-4 py-2.5 border-b border-surface0/40 flex items-center gap-2">
@@ -640,6 +662,7 @@ function StatusLineTab({
       {/* Copilot AI-credits config -- self-gates on the meter being enabled, so it
           appears right under the "Copilot Usage" toggle only when relevant. */}
       <CopilotMeterSettings />
+      </div>
     </>
   )
 }
