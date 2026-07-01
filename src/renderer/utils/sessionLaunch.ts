@@ -10,19 +10,37 @@ import type { ProviderId } from '../../shared/types'
  *
  * Account isolation is a CLAUDE-only concept: each Claude account gets a
  * private `~/.claude` home via `withProfileHome`. Codex auth lives in
- * `~/.codex` and is NOT profile-scoped, so a Codex launch must never show the
- * Claude account picker. The old gate checked only `shellOnly` + a session
- * record + `profileCount >= 2` and so fired for Codex sessions whenever a
- * second Claude account profile existed (BUG-1). Provider-gating fixes that.
+ * `~/.codex` and is NOT profile-scoped, and an SSH session runs under the
+ * REMOTE host's own login, so neither must ever show the Claude account picker.
+ * The old gate checked only `shellOnly` + a session record + `profileCount >= 2`
+ * and so fired for Codex (BUG-1) and SSH (BUG-13) sessions whenever a second
+ * Claude account profile existed. Provider- + SSH-gating fixes that.
  */
 export function shouldGateAccountChoice(opts: {
   shellOnly?: boolean
   hasSession: boolean
   profileCount: number
   provider?: ProviderId
+  isSsh?: boolean
 }): boolean {
   const provider = opts.provider ?? 'claude'
-  return !opts.shellOnly && opts.hasSession && opts.profileCount >= 2 && provider === 'claude'
+  return !opts.shellOnly && opts.hasSession && opts.profileCount >= 2 && provider === 'claude' && !opts.isSsh
+}
+
+/**
+ * Whether the mid-session "Switch Account" control applies to a session (the
+ * Sidebar context menu + the SessionStatusStrip pill). Same rule as the launch
+ * gate minus the launch-only conditions: account profiles are LOCAL Claude only,
+ * so Codex (own OpenAI login) and SSH (remote host's login) sessions can never
+ * switch a local CCC profile even when 2+ profiles exist (BUG-13).
+ */
+export function canSwitchAccountForSession(opts: {
+  provider?: ProviderId
+  isSsh?: boolean
+  profileCount: number
+}): boolean {
+  const provider = opts.provider ?? 'claude'
+  return opts.profileCount >= 2 && provider === 'claude' && !opts.isSsh
 }
 
 /**

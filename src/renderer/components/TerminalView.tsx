@@ -407,7 +407,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
           // BUG-1: account isolation is Claude-only (Codex auth lives in
           // ~/.codex, not profile-scoped), so the picker must never fire for a
           // Codex launch even when >=2 Claude account profiles exist.
-          const eligible = shouldGateAccountChoice({ shellOnly, hasSession: !!session, profileCount: profilesCount, provider })
+          const eligible = shouldGateAccountChoice({ shellOnly, hasSession: !!session, profileCount: profilesCount, provider, isSsh: !!session?.sshConfig })
           // Consume the predetermined flag only for eligible sessions so a
           // restart/switch re-spawn skips the gate and uses its chosen account.
           const predetermined = eligible && gate.consumePredetermined(sessionId)

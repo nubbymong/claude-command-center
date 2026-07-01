@@ -11,6 +11,7 @@ import { ViewType } from '../types/views'
 import { trackUsage } from '../stores/tipsStore'
 import { generateId } from '../utils/id'
 import { matchesShortcut, DEFAULT_SHORTCUTS } from '../utils/shortcuts'
+import { canSwitchAccountForSession } from '../utils/sessionLaunch'
 import { useLaunchConfig } from '../hooks/useLaunchConfig'
 import SidebarNav from './sidebar/SidebarNav'
 import ConfigRow from './sidebar/ConfigRow'
@@ -125,8 +126,8 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
   // no-ops when the chosen account equals the current one.
   const accountProfiles = useAccountProfilesStore((s) => s.profiles)
   const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
-  const canSwitchAccount = accountProfiles.length >= 2
   const menuSession = sessionContextMenu ? sessions.find((s) => s.id === sessionContextMenu.sessionId) ?? null : null
+  const canSwitchAccount = canSwitchAccountForSession({ provider: menuSession?.provider, isSsh: !!menuSession?.sshConfig, profileCount: accountProfiles.length })
   const switchMenuAccount = useSwitchAccount(menuSession)
 
   // Inject attention styles on mount
