@@ -129,9 +129,10 @@ export interface AppSettings {
    *  Set false to restore CC's mouse mode (copy-on-select active; right-click pastes).
    *  Changes apply to newly-launched sessions only. */
   classicTerminalCopyPaste?: boolean
-  /** Sentinel service (spec 2026-06-11): when false, the Sentinel service is not
+  /** Sentinel service (spec 2026-06-11): when not enabled, the service is not
    *  initialised at all — no startup check, no dot, zero overhead.
-   *  Absent or true = enabled (default-on). */
+   *  OPT-IN (default-off): absent or false = disabled; only an explicit `true`
+   *  enables it, because it spends Claude tokens on a Claude Code version change. */
   sentinelEnabled?: boolean
   /** When true (default), the Sentinel panel auto-opens once when a completed
    *  analysis finds open findings. Set false to suppress all automatic opens. */
@@ -186,7 +187,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   theme: 'dark',
   loggingEnabled: true,
   classicTerminalCopyPaste: true,
-  sentinelEnabled: true,
+  sentinelEnabled: false,
   sentinelAutoOpen: true,
   githubAiUsageEnabled: false,
 }

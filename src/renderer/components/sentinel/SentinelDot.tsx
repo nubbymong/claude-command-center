@@ -3,6 +3,7 @@ import { useSentinelStore } from '../../stores/sentinelStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import type { SentinelStateSnapshot } from '../../../shared/sentinel-types'
 import { findingReachesUser, type ReachabilityContext } from '../../../shared/sentinel-reachability'
+import { isSentinelEnabled } from '../../../shared/sentinel-enabled'
 
 // ── Pure helper (exported for unit tests) ────────────────────────────────────
 
@@ -32,7 +33,7 @@ export function deriveDotState(
 export default function SentinelDot() {
   const snap = useSentinelStore((s) => s.snap)
   const setPanelOpen = useSentinelStore((s) => s.setPanelOpen)
-  const sentinelEnabled = useSettingsStore((s) => s.settings.sentinelEnabled !== false)
+  const sentinelEnabled = useSettingsStore((s) => isSentinelEnabled(s.settings.sentinelEnabled))
 
   const state = deriveDotState(sentinelEnabled, snap)
 

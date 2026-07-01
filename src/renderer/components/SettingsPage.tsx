@@ -10,6 +10,7 @@ import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { eventToShortcutString, DEFAULT_SHORTCUTS, SHORTCUT_LABELS } from '../utils/shortcuts'
 import GitHubConfigTab from './github/config/GitHubConfigTab'
 import CopilotMeterSettings from './settings/CopilotMeterSettings'
+import { isSentinelEnabled } from '../../shared/sentinel-enabled'
 import { CodexSettingsTab } from './codex/CodexSettingsTab'
 import HooksGatewaySection from './github/config/HooksGatewaySection'
 import PageFrame from './PageFrame'
@@ -247,13 +248,13 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
                 <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer">
                   <input
                     type="checkbox"
-                    checked={settings.sentinelEnabled !== false}
+                    checked={isSentinelEnabled(settings.sentinelEnabled)}
                     onChange={(e) => save({ sentinelEnabled: e.target.checked })}
                     className="mt-0.5 rounded border-surface1"
                   />
                   <span>
                     Enable Sentinel
-                    <span className="block text-[10px] text-overlay0">Detects Claude Code updates and proposes registry fixes. Takes effect after restart.</span>
+                    <span className="block text-[10px] text-overlay0">Detects Claude Code updates and proposes registry fixes. Off by default — it spends Claude tokens on a Claude update. Takes effect after restart.</span>
                   </span>
                 </label>
                 <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">

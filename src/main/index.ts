@@ -60,6 +60,7 @@ import { initLogging, shutdownLogging, getTranscriptBinder } from './logging/log
 import { detectOldLogArtifacts, executeWipe } from './logging/logs-wipe'
 import { backfillCompanionDirs, nodeFsCompanionDeps } from './logging/companion-dir'
 import { cleanupStaleHookEntries, cleanupStaleMcpConfigs } from './hooks/boot-cleanup'
+import { isSentinelEnabled } from '../shared/sentinel-enabled'
 import { DEFAULT_HOOKS_PORT } from './hooks/hooks-types'
 import { fetchModelPricing } from './tokenomics/tk-pricing'
 import { killAllAgents } from './cloud-agent-manager'
@@ -684,7 +685,7 @@ if (!gotTheLock) {
     // readConfig('settings') is available here (same pattern as the beta-channel read below).
     {
       const sentinelSettings = readConfig<{ sentinelEnabled?: boolean }>('settings')
-      if (sentinelSettings?.sentinelEnabled !== false) {
+      if (isSentinelEnabled(sentinelSettings?.sentinelEnabled)) {
         initSentinel(getResourcesDirectory())
         registerSentinelHandlers()
         reconcileOnUpdate()
