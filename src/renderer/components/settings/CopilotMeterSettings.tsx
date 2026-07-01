@@ -131,11 +131,14 @@ export default function CopilotMeterSettings() {
           <path d="M8 5v3l2 1.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
         <h3 className="text-xs font-semibold text-subtext0 uppercase tracking-wider">Copilot AI credits</h3>
+        <span className="text-[9px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-surface1 text-overlay1">Beta</span>
       </div>
       <div className="p-4 space-y-3">
         <p className="text-[11px] text-overlay0 leading-relaxed">
-          GitHub does not expose your Copilot plan, allowance, or cycle start through its API for
-          personal accounts. Set them here so the status-bar chip matches your billing page.
+          <span className="text-overlay1 font-medium">Beta.</span> GitHub's usage API is limited for
+          personal accounts -- it does not expose your Copilot plan, allowance, or cycle start, and
+          the figures can be sparse or lag your billing page. Set the values below so the chip
+          matches your billing page as closely as the API allows.
         </p>
 
         <Row label="Plan" hint="Shown next to the meter, e.g. Max, Pro, or Plus.">

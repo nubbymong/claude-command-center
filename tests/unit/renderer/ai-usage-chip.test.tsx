@@ -132,7 +132,7 @@ describe('AI-usage chip content', () => {
     await render()
     const chip = container.querySelector('[data-ai-usage-chip]')
     expect(chip).not.toBeNull()
-    expect(chip!.textContent).toBe('Copilot 8.1k')
+    expect(chip!.textContent).toBe('Copilot 8.1k credits')
   })
 
   it('shows used / cap when the cap is set', async () => {
