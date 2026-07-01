@@ -10,7 +10,7 @@ import { killAllPty, gracefulExitAllPty } from './pty-manager'
 import { registerResumeHandlers } from './ipc/resume-handlers'
 import { registerLogs2Handlers } from './ipc/logs2-handlers'
 
-import { startStatuslineWatcher, setTranscriptPathSink } from './statusline-watcher'
+import { startStatuslineWatcher, setTranscriptPathSink, healGlobalStatusline } from './statusline-watcher'
 import { registerProvider, getProvider } from './providers'
 import { ClaudeProvider } from './providers/claude'
 import { CodexProvider } from './providers/codex'
@@ -603,10 +603,14 @@ if (!gotTheLock) {
     // under CONFIG/_backups/YYYY-MM-DD/. Non-fatal if it fails.
     try { snapshotConfig() } catch (err) { console.warn('[main] snapshotConfig failed:', err) }
 
-    // Deploy statusline script (Claude provider) — also configures
-    // ~/.claude/settings.json statusLine stanza internally. Fire-and-forget;
-    // the original sync calls (deployStatuslineScript + configureClaudeSettings)
-    // had no downstream consumers in this boot sequence, so awaiting isn't needed.
+    // U2: heal installs that carry a legacy GLOBAL statusLine stanza + planted
+    // ~/.claude/claude-multi-statusline.js from a prior CCC version. The statusline
+    // is now delivered per-session (writeLocalSessionSettings), so plain `claude`
+    // outside CCC gets its native line back. Best-effort, never blocks boot.
+    try { healGlobalStatusline() } catch (err) { console.warn('[main] healGlobalStatusline failed:', err) }
+
+    // Deploy the statusline script to the resources dir (per-session command +
+    // SSH mounts). Fire-and-forget; no downstream consumers here.
     Promise.resolve()
       .then(() => getProvider('claude').deployStatuslineScript?.(getResourcesDirectory()))
       .then(() => getProvider('claude').deployResumePickerScript?.(getResourcesDirectory()))

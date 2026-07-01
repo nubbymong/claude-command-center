@@ -1177,7 +1177,7 @@ export function spawnPty(
         // toggle takes effect on the next session without an app restart.
         const appSettings = readConfig<{ disableClaudeWorkflows?: boolean }>('settings')
         const disableWorkflows = !!appSettings?.disableClaudeWorkflows
-        const sesPath = writeLocalSessionSettings(sessionId, { disableWorkflows })
+        const sesPath = writeLocalSessionSettings(sessionId, { disableWorkflows, resourcesDir: getResourcesDirectory() })
         // injectHooks rewrites the per-session settings file to point Claude's
         // hook events at our local gateway, which drives the session attention
         // pulse, statusline ingest, and conversation logging. Skipped only when

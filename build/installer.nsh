@@ -212,6 +212,13 @@ FunctionEnd
     ${EndIf}
   ${EndIf}
 
+  ; U2: remove the legacy planted statusline script from ~/.claude. Pre-U2 installs
+  ; left ~/.claude/claude-multi-statusline.js behind (new installs never plant it).
+  ; The settings.json statusLine stanza is stripped by CCC's boot-heal on the first
+  ; run after upgrade; a belt-and-braces uninstall-time stanza strip is deferred
+  ; until it can be build-validated (Unit 13).
+  Delete "$PROFILE\.claude\claude-multi-statusline.js"
+
   ; Clean up old registry key if it still exists
   DeleteRegKey /ifempty HKCU "Software\Claude Conductor"
 !macroend

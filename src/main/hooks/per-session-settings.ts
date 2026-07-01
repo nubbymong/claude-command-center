@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import { getConductorMcpPort, getConductorMcpSecret } from '../conductor-mcp-server'
+import { buildStatuslineSetting } from '../providers/claude/statusline-command'
 
 /**
  * Path to the local-session settings file. Mirrors the SSH remote layout
@@ -39,6 +40,11 @@ export interface WriteSessionSettingsOptions {
    *  Caller (pty-manager) reads the CCC AppSettings.disableClaudeWorkflows
    *  flag and passes it through. */
   disableWorkflows?: boolean
+  /** U2: when provided, inject the CCC statusLine command per-session (pointing
+   *  at `<resourcesDir>/scripts/claude-multi-statusline.js`) instead of writing
+   *  it into the user's global ~/.claude/settings.json. Overrides any statusLine
+   *  inherited from the shared-settings clone. */
+  resourcesDir?: string
 }
 
 export function writeLocalSessionSettings(sessionId: string, opts: WriteSessionSettingsOptions = {}): string {
@@ -71,6 +77,13 @@ export function writeLocalSessionSettings(sessionId: string, opts: WriteSessionS
   // leave the shared value alone, which is what we want for the off path.
   if (opts.disableWorkflows) {
     sesCfg.disableWorkflows = true
+  }
+
+  // U2: deliver the statusLine PER-SESSION rather than via a global
+  // ~/.claude/settings.json write. Overrides any statusLine inherited from the
+  // shared clone so external `claude` runs outside CCC keep their native line.
+  if (opts.resourcesDir) {
+    sesCfg.statusLine = buildStatuslineSetting(opts.resourcesDir)
   }
 
   const sesPath = getLocalSessionSettingsPath(sessionId)
