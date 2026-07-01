@@ -179,8 +179,11 @@
 .ob-root .ma-local { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--text-muted); margin: 0 0 12px; }
 .ob-root .ma-local .ml-ic { color: var(--text-secondary); flex: none; }
 .ob-root .ma-local b { color: var(--text-secondary); }
-.ob-root .ma-heads { display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; border: 1px solid var(--ob-line); border-radius: 12px; background: var(--ob-soft); margin: 0 0 12px; }
-.ob-root .mh-ic { width: 28px; height: 28px; border-radius: 8px; background: rgba(232,145,92,.22); color: var(--ob); display: grid; place-items: center; font-size: 15px; flex: none; }
+/* Positive confirmation, so GREEN, not amber — amber reads as a warning in a
+   business context (user rule 2026-07-01); amber is reserved for brand,
+   selection, consent-asks and real warnings. Same green family as .allgood. */
+.ob-root .ma-heads { display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; border: 1px solid rgba(123,216,143,.3); border-radius: 12px; background: rgba(123,216,143,.06); margin: 0 0 12px; }
+.ob-root .mh-ic { width: 28px; height: 28px; border-radius: 8px; background: rgba(123,216,143,.16); color: var(--status-success); display: grid; place-items: center; font-size: 15px; flex: none; }
 .ob-root .ma-heads b { font-size: 13.5px; color: var(--text-primary); }
 .ob-root .ma-heads span { display: block; font-size: 12.5px; color: var(--text-secondary); margin-top: 3px; line-height: 1.55; }
 .ob-root .howc { border: 1px solid var(--border-subtle); border-radius: 11px; background: var(--surface-raised); overflow: hidden; }
