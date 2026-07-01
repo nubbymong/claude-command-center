@@ -10,6 +10,9 @@
  * Priority (highest first):
  *   1. logsWipe          — blocking + destructive decision; nothing shows
  *                          until detection has resolved AND any wipe is done.
+ *   1.5 onboarding       — forced first-run harness (deriveOnboarding). Timer-free
+ *                          pure appMeta predicate, so it sits above whatsNew and
+ *                          needs no entry in the *Due short-circuit below.
  *   2. whatsNew          — release notes.
  *   3. training          — first-run / what's-new tour (chained from whatsNew
  *                          close; also the user-invoked help tour).
@@ -24,6 +27,7 @@
 
 export type BootGate =
   | 'logsWipe'
+  | 'onboarding'
   | 'whatsNew'
   | 'training'
   | 'githubOnboarding'
@@ -34,6 +38,8 @@ export interface BootGateState {
   configLoaded: boolean
   /** null = wipe detection still running, 0 = nothing to wipe, >0 = wipe pending. */
   logsWipeBytes: number | null
+  /** deriveOnboarding(...).due — the forced first-run harness. Optional: absent === false. */
+  onboardingDue?: boolean
   showWhatsNew: boolean
   showTraining: boolean
   showTrainingAll: boolean
@@ -52,6 +58,7 @@ export function pickBootGate(s: BootGateState): BootGate | null {
   if (!s.configLoaded) return null
   if (s.logsWipeBytes === null) return null
   if (s.logsWipeBytes > 0) return 'logsWipe'
+  if (s.onboardingDue) return 'onboarding'
   if (s.showWhatsNew) return 'whatsNew'
   if (s.showTraining || s.showTrainingAll) return 'training'
   if (s.showGitHubOnboarding) return 'githubOnboarding'
