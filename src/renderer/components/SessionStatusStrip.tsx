@@ -2,7 +2,7 @@ import React, { useState } from 'react'
 import { useSessionStore, type Session } from '../stores/sessionStore'
 import { useSettingsStore, DEFAULT_STATUS_LINE } from '../stores/settingsStore'
 import RateLimitBar from './terminal/RateLimitBar'
-import { formatResetTime, formatTokens, formatDuration } from '../utils/terminalFormatting'
+import { formatTokens, formatDuration } from '../utils/terminalFormatting'
 import { canSwitchAccountForSession } from '../utils/sessionLaunch'
 import { useCodexReviewUsage } from '../hooks/useCodexReviewUsage'
 import { useRestartSession } from '../hooks/useRestartSession'
@@ -202,17 +202,14 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
         )}
         {sl.showRateLimits && session.rateLimitCurrent != null && (
           <span className="flex items-center gap-3 shrink-0">
-            <RateLimitBar label="5h" pct={session.rateLimitCurrent} resets={session.rateLimitCurrentResets} />
+            <RateLimitBar label="5h" pct={session.rateLimitCurrent} resets={session.rateLimitCurrentResets} showReset={sl.showResetTime} />
             {session.rateLimitWeekly != null && (
-              <RateLimitBar label="7d" pct={session.rateLimitWeekly} resets={session.rateLimitWeeklyResets} />
+              <RateLimitBar label="7d" pct={session.rateLimitWeekly} resets={session.rateLimitWeeklyResets} showReset={sl.showResetTime} />
             )}
             {session.rateLimitExtra?.enabled && (
               <span className="tabular-nums" style={{ color: 'var(--text-muted)' }}>extra: <span className={session.rateLimitExtra.utilization > 80 ? 'text-red' : ''}>${session.rateLimitExtra.usedUsd.toFixed(2)}</span>/${session.rateLimitExtra.limitUsd.toFixed(0)}</span>
             )}
           </span>
-        )}
-        {sl.showResetTime && session.rateLimitCurrentResets && (
-          <span className="tabular-nums shrink-0" style={{ color: 'var(--text-muted)' }} title="5h window resets">resets {formatResetTime(session.rateLimitCurrentResets)}</span>
         )}
         {codexReview && codexReview.reviewCount > 0 && (
           <span className="tabular-nums shrink-0" style={{ color: 'var(--text-muted)' }}>review {codexReview.reviewCount}</span>

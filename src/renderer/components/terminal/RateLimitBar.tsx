@@ -4,7 +4,7 @@ import { formatResetTime } from '../../utils/terminalFormatting'
 // Slim contiguous bar instead of a row of dots. Easier to scan in
 // peripheral vision and uses less horizontal space — UX audit 2026-04-25
 // flagged the dot row as the hardest-to-parse element on the status line.
-export default function RateLimitBar({ label, pct, resets }: { label: string; pct: number; resets?: string }) {
+export default function RateLimitBar({ label, pct, resets, showReset }: { label: string; pct: number; resets?: string; showReset?: boolean }) {
   const clamped = Math.min(100, Math.max(0, pct))
   // Drive from theme tokens so the bar adapts to light/dark — hard-
   // coded Catppuccin Mocha hex didn't repaint when the user flipped
@@ -37,6 +37,9 @@ export default function RateLimitBar({ label, pct, resets }: { label: string; pc
         />
       </span>
       <span className="text-subtext0 tabular-nums">{Math.round(clamped)}%</span>
+      {showReset && resets && (
+        <span className="tabular-nums" style={{ color: 'var(--text-muted)' }}>resets {formatResetTime(resets)}</span>
+      )}
     </span>
   )
 }
