@@ -9,6 +9,9 @@ import { AccountsStep } from './AccountsStep'
 import { StatusLineStep } from './StatusLineStep'
 import { GitHubStep } from './GitHubStep'
 import { BuiltinToolsStep } from './BuiltinToolsStep'
+import { CodexStep } from './CodexStep'
+import { CodexSignInStep } from './CodexSignInStep'
+import { useSettingsStore } from '../stores/settingsStore'
 
 interface StepNav {
   onNext: () => void
@@ -25,6 +28,9 @@ interface OnboardingCtx {
 interface BuiltStep {
   id: string
   phase: number
+  /** Applicability gate, evaluated at navigation time (mirrors the registry's
+   *  when()); a false step is skipped in both directions. */
+  when?: () => boolean
   render: (nav: StepNav, ctx: OnboardingCtx) => ReactNode
 }
 
@@ -51,6 +57,15 @@ const PAGES: BuiltStep[] = [
   // integration must be introduced first.
   { id: 'github', phase: 2, render: (nav) => <GitHubStep onNext={nav.onNext} onBack={nav.onBack} /> },
   { id: 'statusline', phase: 2, render: (nav) => <StatusLineStep onNext={nav.onNext} onBack={nav.onBack} /> },
+  // Codex precedes Built-in tools (user call 2026-07-02): the answer drives
+  // p6's Code review card ("Codex off" state) and the codex_review tool gate.
+  { id: 'codex', phase: 2, render: (nav) => <CodexStep onNext={nav.onNext} onBack={nav.onBack} /> },
+  {
+    id: 'codexSignIn',
+    phase: 2,
+    when: () => useSettingsStore.getState().settings.codexEnabled === true,
+    render: (nav) => <CodexSignInStep onNext={nav.onNext} onBack={nav.onBack} />,
+  },
   { id: 'builtinTools', phase: 2, render: (nav) => <BuiltinToolsStep onNext={nav.onNext} onBack={nav.onBack} /> },
 ]
 
@@ -59,14 +74,17 @@ export function OnboardingHarness() {
   const [version, setVersion] = useState<string | null>(null)
   const idx = Math.max(0, PAGES.findIndex((p) => p.id === cursor))
   const step = PAGES[idx]
+  const applicable = (p: BuiltStep | undefined) => !!p && (!p.when || p.when())
   const nav: StepNav = {
     onNext: () => {
-      const next = PAGES[idx + 1]
-      if (next) setCursor(next.id)
+      for (let i = idx + 1; i < PAGES.length; i++) {
+        if (applicable(PAGES[i])) return setCursor(PAGES[i].id)
+      }
     },
     onBack: () => {
-      const prev = PAGES[idx - 1]
-      if (prev) setCursor(prev.id)
+      for (let i = idx - 1; i >= 0; i--) {
+        if (applicable(PAGES[i])) return setCursor(PAGES[i].id)
+      }
     },
   }
   const ctx: OnboardingCtx = { version, setVersion }

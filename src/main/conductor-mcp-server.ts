@@ -364,6 +364,7 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
     const toolCfg = readConfig<{
       conductorToolsEnabled?: boolean
       conductorTools?: { vision?: boolean; codexReview?: boolean; hostTransfer?: boolean }
+      codexEnabled?: boolean
     }>('settings')
     const toolsMaster = toolCfg?.conductorToolsEnabled !== false
     const toolOn = (k: 'vision' | 'codexReview' | 'hostTransfer') =>
@@ -437,7 +438,9 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
 
     // ── Vision tools (require connected browser) ────────────────────────────
     // Registered as one gated group; inner indentation intentionally unchanged.
-    if (toolOn('vision')) {
+    // Not advertised to Codex sessions: vision is Claude-only for now (user
+    // call 2026-07-02) — the onboarding p6 card carries the same note.
+    if (toolOn('vision') && source !== 'codex') {
     // -- Status --
     server.tool('vision_status', 'Check browser connection status', {}, async () => {
       const vm = getVisionManager()
@@ -558,7 +561,9 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
     // P6.9: codex_review is intentionally NOT advertised to Codex sessions.
     // Codex calling itself would be confusing UX in v1.5; v1.5.x can
     // reconsider if reciprocal review demand surfaces.
-    if (source !== 'codex' && toolOn('codexReview')) {
+    // Also requires Codex itself to be enabled ("Do you use Codex?" — absent
+    // means yes for pre-onboarding installs): the tool runs the codex CLI.
+    if (source !== 'codex' && toolOn('codexReview') && toolCfg?.codexEnabled !== false) {
       registerCodexReviewTool(
         server,
         z,

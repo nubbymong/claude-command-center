@@ -39,11 +39,13 @@ export const STEPS: OnboardingStep[] = [
   { id: 'accounts',      sinceVersion: '2.0.0', requiresSetup: false },
   // github precedes statusline (user call 2026-07-01): the status-line page's
   // Copilot preview element only exists once the GitHub meter is enabled.
+  // codex precedes builtinTools (user call 2026-07-02): the answer drives the
+  // Code review card's "Codex off" state and the codex_review tool gate.
   { id: 'github',        sinceVersion: '2.0.0', requiresSetup: true  },
   { id: 'statusline',    sinceVersion: '2.0.0', requiresSetup: true  },
-  { id: 'builtinTools',  sinceVersion: '2.0.0', requiresSetup: true  },
   { id: 'codex',         sinceVersion: '2.0.0', requiresSetup: true  },
   { id: 'codexSignIn',   sinceVersion: '2.0.0', requiresSetup: true, when: (s) => s.codexEnabled === true },
+  { id: 'builtinTools',  sinceVersion: '2.0.0', requiresSetup: true  },
   { id: 'transparency',  sinceVersion: '2.0.0', requiresSetup: true  },
   { id: 'finish',        sinceVersion: '2.0.0', requiresSetup: false },
 ]

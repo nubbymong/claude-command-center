@@ -207,6 +207,12 @@
 .ob-root .tc-sw.on::after { left: 19px; background: #fff; }
 .ob-root .mcp-detail { transition: opacity .18s; }
 .ob-root .mcp-detail.off { opacity: .32; pointer-events: none; filter: grayscale(.45); }
+.ob-root .tool-card.blocked { opacity: .55; }
+
+/* PAGE — Codex (question + sign-in) */
+.ob-root .beta-tag { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; font-family: 'Inter', system-ui, sans-serif; font-weight: 650; color: var(--ob); border: 1px solid var(--ob-line); background: var(--ob-soft); border-radius: 999px; padding: 3px 10px; margin-left: 12px; vertical-align: middle; }
+.ob-root .cx-detail { transition: opacity .18s; }
+.ob-root .cx-detail.off { opacity: .32; pointer-events: none; filter: grayscale(.45); }
 
 /* PAGE — GitHub (feature grid + connect chooser) */
 .ob-root .gh-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 8px; }

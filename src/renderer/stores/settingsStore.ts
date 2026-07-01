@@ -94,6 +94,10 @@ export interface AppSettings {
    *  tool groups the server registers. Absent = on (pre-upgrade configs). */
   conductorToolsEnabled?: boolean
   conductorTools?: ConductorToolsSettings
+  /** "Do you use Codex?" (onboarding / Settings -> Codex). Absent = never
+   *  answered (existing installs keep full behaviour); false disables Codex
+   *  surfaces incl. the codex_review built-in tool. Codex support is Beta. */
+  codexEnabled?: boolean
   localMachineName: string
   updateChannel: UpdateChannel
   showTips: boolean

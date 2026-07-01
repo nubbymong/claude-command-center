@@ -10,19 +10,23 @@ type ToolKey = keyof ConductorToolsSettings
 
 // Every switch drives a real settings.conductorTools.* flag: the conductor MCP
 // server filters its tool groups by them per connection, and the master gates
-// the attach at every spawn path (local Claude / SSH / Codex).
-const TOOLS: { k: ToolKey; icon: string; title: string; desc: string }[] = [
+// the attach at every spawn path (local Claude / SSH / Codex). Vision is
+// Claude-only (the server never advertises it to Codex); code review runs the
+// codex CLI, so it also requires Codex to be enabled.
+const TOOLS: { k: ToolKey; icon: string; title: string; desc: string; tag?: string }[] = [
   {
     k: 'vision',
     icon: GLOBE,
     title: 'Vision — see & drive a browser',
-    desc: 'Claude can open a real browser, take screenshots, click, type, scroll and run JavaScript — ideal for testing UIs and reproducing bugs.',
+    tag: 'Claude only',
+    desc: 'Claude can open a real browser, take screenshots, click, type, scroll and run JavaScript — ideal for testing UIs and reproducing bugs. Not yet available in Codex sessions.',
   },
   {
     k: 'codexReview',
     icon: MAG,
-    title: 'Second-opinion code review',
-    desc: 'Ask another model for an independent review of your working changes — a fresh pair of eyes on a diff before you commit.',
+    title: 'Code review',
+    tag: 'uses Codex',
+    desc: 'Ask Codex for an independent review of your working changes — a fresh pair of eyes on a diff before you commit.',
   },
   {
     k: 'hostTransfer',
@@ -35,6 +39,9 @@ const TOOLS: { k: ToolKey; icon: string; title: string; desc: string }[] = [
 export function BuiltinToolsStep({ onNext, onBack }: { onNext: () => void; onBack: () => void }) {
   const tools = useSettingsStore((s) => s.settings.conductorTools) ?? DEFAULT_CONDUCTOR_TOOLS
   const master = useSettingsStore((s) => s.settings.conductorToolsEnabled ?? true)
+  // Code review runs the codex CLI: with Codex off it can't work, so the card
+  // shows a disabled state (the stored preference is left untouched).
+  const codexOn = useSettingsStore((s) => s.settings.codexEnabled) !== false
 
   const flip = (k: ToolKey) => {
     void useSettingsStore
@@ -56,31 +63,43 @@ export function BuiltinToolsStep({ onNext, onBack }: { onNext: () => void; onBac
           </p>
 
           <div className={master ? 'mcp-detail' : 'mcp-detail off'} inert={!master}>
-            {TOOLS.map((t) => (
-              <div className="tool-card" key={t.k}>
-                <div className="tc-ic">{t.icon}</div>
-                <div className="tc-body">
-                  <div className="tc-t">{t.title}</div>
-                  <div className="tc-d">{t.desc}</div>
+            {TOOLS.map((t) => {
+              const codexBlocked = t.k === 'codexReview' && !codexOn
+              return (
+                <div className={codexBlocked ? 'tool-card blocked' : 'tool-card'} key={t.k} inert={codexBlocked}>
+                  <div className="tc-ic">{t.icon}</div>
+                  <div className="tc-body">
+                    <div className="tc-t">
+                      {t.title}
+                      {(codexBlocked || t.tag) && <span className="gh-tag">{codexBlocked ? 'Codex off' : t.tag}</span>}
+                    </div>
+                    <div className="tc-d">
+                      {codexBlocked
+                        ? 'Code review is powered by Codex, which is turned off — enable it on the Codex page or in Settings → Codex.'
+                        : t.desc}
+                    </div>
+                  </div>
+                  <button
+                    className={tools[t.k] && !codexBlocked ? 'tc-sw on' : 'tc-sw'}
+                    onClick={() => flip(t.k)}
+                    aria-label={`${tools[t.k] ? 'Disable' : 'Enable'} ${t.title}`}
+                    type="button"
+                  />
                 </div>
-                <button
-                  className={tools[t.k] ? 'tc-sw on' : 'tc-sw'}
-                  onClick={() => flip(t.k)}
-                  aria-label={`${tools[t.k] ? 'Disable' : 'Enable'} ${t.title}`}
-                  type="button"
-                />
-              </div>
-            ))}
+              )
+            })}
 
-            <div className="how" style={{ marginTop: 16 }}>
-              <div className="how-ic">{GEAR}</div>
-              <div>
-                <b>How it works</b>
-                <span>
+            {/* Same tool-card geometry as the switches above so the column
+                reads as one family (user note: the smaller how-box misaligned). */}
+            <div className="tool-card" style={{ marginTop: 16 }}>
+              <div className="tc-ic">{GEAR}</div>
+              <div className="tc-body">
+                <div className="tc-t">How it works</div>
+                <div className="tc-d">
                   Command Center runs a small local helper (an MCP server) and registers it with each session it
                   launches — Claude, Codex, local or SSH — so these tools appear automatically. It runs only while
                   Command Center is open. Turn this off and new sessions launch without it.
-                </span>
+                </div>
               </div>
             </div>
             <div className="assure" style={{ marginTop: 12 }}>

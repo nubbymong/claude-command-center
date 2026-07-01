@@ -5,9 +5,11 @@ describe('onboarding registry', () => {
   it('has 12 steps in the locked order', () => {
     // github precedes statusline (user call 2026-07-01): the status-line
     // page's Copilot preview element only exists once the meter is enabled.
+    // codex precedes builtinTools (2026-07-02): the answer drives the Code
+    // review card's disabled state and the codex_review tool gate.
     expect(STEPS.map((s) => s.id)).toEqual([
       'whatsNewV2', 'welcome', 'findClaude', 'compatibility', 'accounts',
-      'github', 'statusline', 'builtinTools', 'codex', 'codexSignIn',
+      'github', 'statusline', 'codex', 'codexSignIn', 'builtinTools',
       'transparency', 'finish',
     ])
   })
