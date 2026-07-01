@@ -12,6 +12,7 @@ import { buildClaudeLaunchCommand, resolveResumeLaunch, buildResumeTranscriptPat
 import { ensureCompanionDir, nodeFsCompanionDeps } from './logging/companion-dir'
 import { logInfo, logDebug, logError, logWarn } from './debug-logger'
 import { writeCliSetupPty, getResourcesDirectory } from './ipc/setup-handlers'
+import { buildRemoteSessionCleanupCommand } from './providers/claude/ssh-shim'
 import { isGlobalVisionRunning, getGlobalVisionConfig, teardownVisionSession } from './vision-manager'
 import { getConductorMcpPort } from './conductor-mcp-server'
 import { resolveClaudeBinary, resolveHostColorScheme } from './providers/claude/spawn'
@@ -1582,12 +1583,27 @@ function cleanupSessionResources(sessionId: string): void {
   }
 }
 
+// U8: grace before killing an SSH PTY so the in-band remote-cleanup command has
+// time to reach the remote shell and run before we tear the tunnel down.
+const REMOTE_CLEANUP_GRACE_MS = 400
+
 export function killPty(sessionId: string): void {
   const entry = ptySessions.get(sessionId)
   if (entry) {
     logInfo(`[pty] Killing PTY for session ${sessionId}`)
-    try { entry.ptyProcess.kill() } catch (err) {
-      logError(`[pty] Error killing PTY ${sessionId}:`, err)
+    if (sshFlows.has(sessionId)) {
+      // U8: sweep the per-session files we planted on the remote, in-band down the
+      // still-live PTY, then kill after a short grace so the `rm` runs before the
+      // tunnel dies. No SSH creds retained. A crash / natural exit can't do this
+      // (the tunnel is already gone), which is acceptable -- the files are inert.
+      // ptySessions.delete below means the delayed kill's onExit no-ops.
+      const proc = entry.ptyProcess
+      try { proc.write(buildRemoteSessionCleanupCommand(sessionId)) } catch { /* best-effort */ }
+      setTimeout(() => { try { proc.kill() } catch { /* already gone */ } }, REMOTE_CLEANUP_GRACE_MS)
+    } else {
+      try { entry.ptyProcess.kill() } catch (err) {
+        logError(`[pty] Error killing PTY ${sessionId}:`, err)
+      }
     }
     ptySessions.delete(sessionId)
   }

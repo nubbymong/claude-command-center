@@ -203,6 +203,19 @@ export function remoteSessionMcpConfigPath(sessionId: string): string {
 }
 
 /**
+ * U8: the in-band cleanup command run down a live SSH PTY when a session is
+ * explicitly closed -- removes the two per-session sidecars CCC planted on the
+ * remote (`settings-<sid>.json` + `mcp-<sid>.json`). The shared statusline shim
+ * is reused across sessions so it is left in place; the shared settings /
+ * .claude.json edits are removals (healing), not plants, so nothing else needs
+ * sweeping. The session id is sanitized to the same safe form used for the
+ * filenames, so it cannot smuggle shell metacharacters into the command.
+ */
+export function buildRemoteSessionCleanupCommand(sessionId: string): string {
+  return `rm -f ${remoteSessionSettingsPath(sessionId)} ${remoteSessionMcpConfigPath(sessionId)}\n`
+}
+
+/**
  * Write the setup script to the remote, execute it, then clean up.
  * Uses a short write-and-run pattern to avoid PTY echo of the long script.
  */
