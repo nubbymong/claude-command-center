@@ -79,64 +79,6 @@ function stripManagedBlock(content: string): string {
 }
 
 /**
- * Write a `[mcp_servers.conductor]` HTTP/SSE entry into the user's Codex
- * config.toml so Codex sessions reach the same MCP server Claude does.
- *
- * Gated on `~/.codex/` directory existence -- we don't pre-create the
- * directory for users who don't have Codex installed. If a managed block
- * already exists (current or legacy conductor-vision name), it is stripped
- * first so the new port takes effect and the legacy block is cleaned up.
- * This mirrors Claude's `injectMcpSettings` JSON overwrite semantics.
- */
-export function injectConductorVisionInCodexConfig(port: number, token: string): void {
-  const codexHome = getCodexHome()
-  if (!existsSync(codexHome)) {
-    logInfo('[codex-mcp] ~/.codex not present; skipping conductor injection')
-    return
-  }
-
-  const tomlPath = getCodexConfigPath()
-  let existing = ''
-  if (existsSync(tomlPath)) {
-    try {
-      existing = readFileSync(tomlPath, 'utf-8')
-    } catch (err: any) {
-      logError(`[codex-mcp] failed to read ${tomlPath}: ${err?.message}`)
-      return
-    }
-  }
-
-  // Strip any prior managed block so re-injection picks up the current
-  // port. No-op when the block is absent.
-  existing = stripManagedBlock(existing)
-
-  // P9.6: point Codex at the new /mcp streamable-HTTP endpoint. The rmcp
-  // client used by Codex 0.128+ wraps URL-based MCP servers in
-  // StreamableHttpClientAdapter and POSTs `initialize` expecting a JSON
-  // response back; the legacy /sse route uses SSEServerTransport which
-  // returns 202 + pushes the response over the event stream, which the
-  // new client mis-reads as "missing-content-type". /sse stays in place
-  // for Claude clients. The source query param is preserved so the P6.9
-  // codex_review gate (`if source !== 'codex'`) still hides that tool
-  // from Codex sessions (no recursive Codex-self-review).
-  //
-  // R-DEC-3: append &token=<secret> so Codex authenticates against the gated
-  // MCP server. Codex's rmcp client POSTs to this exact URL (query string
-  // included), so the token reaches the server.
-  //
-  // Leading newline ensures we start on a fresh line even if the file
-  // lacks a trailing newline. Trailing newline keeps the file POSIX-clean.
-  const block = `\n${MARKER_COMMENT}\n${MARKER_SECTION}\nurl = "http://localhost:${port}/mcp?source=codex&token=${token}"\nenabled = true\n`
-
-  try {
-    writeFileSync(tomlPath, existing + block, 'utf-8')
-    logInfo(`[codex-mcp] injected conductor into ${tomlPath} (port ${port})`)
-  } catch (err: any) {
-    logError(`[codex-mcp] failed to write ${tomlPath}: ${err?.message}`)
-  }
-}
-
-/**
  * Remove the conductor block (current AND legacy conductor-vision) from
  * the Codex config.toml. No-op when the file or block is absent.
  */

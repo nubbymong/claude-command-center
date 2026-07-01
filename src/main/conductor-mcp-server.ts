@@ -31,7 +31,7 @@ import * as os from 'os'
 import { logInfo, logError, logDebug, logWarn } from './debug-logger'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import { mimeForImage } from './clipboard-file'
-import { injectConductorVisionInCodexConfig, removeConductorVisionFromCodexConfig } from './providers/codex/mcp-config'
+import { removeConductorVisionFromCodexConfig } from './providers/codex/mcp-config'
 import { getGlobalManager, startGlobalVision, launchBrowser } from './vision-manager'
 import type { VisionCommand, VisionResult } from './vision-manager'
 import { readConfig } from './config-manager'
@@ -861,11 +861,11 @@ export async function startConductorMcpServer(
   // ~/.claude.json. Heal any stale entry a pre-U3 version / crash left behind so
   // plain `claude` outside CCC doesn't try a dead endpoint.
   removeMcpSettings()
-  // Codex sessions read MCP config from ~/.codex/config.toml; mirror the
-  // entry there so they reach the same vision MCP endpoint Claude does.
-  // Gated on ~/.codex existing -- skips silently for users without Codex.
-  // R-DEC-3: pass the per-launch secret so Codex's URL carries the token too.
-  injectConductorVisionInCodexConfig(port, conductorMcpSecret)
+  // U6: Codex gets the conductor MCP per-spawn via `-c` overrides
+  // (buildCodexSpawn), NOT a global ~/.codex/config.toml write. Heal any stale
+  // block a pre-U6 version / crash left behind so plain `codex` outside CCC
+  // doesn't try the dead endpoint.
+  removeConductorVisionFromCodexConfig()
   logInfo(`[mcp] Conductor MCP server started on port ${port} (vision: ${getGlobalManager() ? 'connected' : 'idle'})`)
 }
 

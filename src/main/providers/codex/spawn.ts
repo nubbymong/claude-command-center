@@ -5,6 +5,7 @@ import { execSync } from 'child_process'
 import { sandboxFor, approvalFor } from './permissions'
 import { getResourcesDirectory } from '../../ipc/setup-handlers'
 import type { SpawnOptions } from '../types'
+import { getConductorMcpPort, getConductorMcpSecret } from '../../conductor-mcp-server'
 
 export function resolveCodexBinary(): { cmd: string; args: string[] } | null {
   if (os.platform() !== 'win32') {
@@ -106,6 +107,20 @@ export function buildCodexSpawn(opts: SpawnOptions): { cmd: string; args: string
   flags.push('--sandbox', sandboxFor(co.permissionsPreset))
   flags.push('--ask-for-approval', approvalFor(co.permissionsPreset))
 
+  // U6: deliver the conductor MCP config PER-SPAWN via `-c` overrides -- nothing
+  // is written to the user's global ~/.codex/config.toml, so plain `codex` outside
+  // CCC never tries the dead endpoint. The token rides a bearer header via the
+  // CONDUCTOR_MCP_TOKEN env var (Codex sends `Authorization: Bearer <value>`, which
+  // the conductor server accepts), so the URL carries only `?source=codex` -- no
+  // `&`, which keeps it intact through the cmd.exe .cmd-shim spawn path. The
+  // `source=codex` marker keeps codex_review hidden from Codex (no self-review).
+  const mcpPort = getConductorMcpPort()
+  if (mcpPort > 0) {
+    flags.push('-c', `mcp_servers.conductor.url=http://localhost:${mcpPort}/mcp?source=codex`)
+    flags.push('-c', 'mcp_servers.conductor.enabled=true')
+    flags.push('-c', 'mcp_servers.conductor.bearer_token_env_var=CONDUCTOR_MCP_TOKEN')
+  }
+
   // CLAUDE_MULTI_SESSION_ID identifies the spawning CCC session for downstream
   // hook / telemetry correlation in P3+. Codex CLI itself does not read it; it
   // is transparent pass-through and survives any future env-var hygiene pass.
@@ -113,6 +128,10 @@ export function buildCodexSpawn(opts: SpawnOptions): { cmd: string; args: string
     ...process.env,
     CLAUDE_MULTI_SESSION_ID: opts.sessionId,
   } as Record<string, string>
+  // U6: bearer token for the per-spawn conductor MCP entry above.
+  if (mcpPort > 0) {
+    env.CONDUCTOR_MCP_TOKEN = getConductorMcpSecret()
+  }
 
   // Picker swap: when useResumePicker is true and the picker script is
   // deployed, run `node <picker> <flags>` instead of `codex <flags>`. The
