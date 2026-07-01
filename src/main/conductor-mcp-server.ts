@@ -18,8 +18,8 @@
  * writeLocalSessionMcpConfig. SSH sessions reach it via reverse tunnel.
  *
  * Naming: the server identifier is `conductor` as of P7.7.5 (was
- * `conductor-vision` through v1.4). Both injectMcpSettings and the Codex TOML
- * writer strip legacy `conductor-vision` entries during migration so users
+ * `conductor-vision` through v1.4). Both removeMcpSettings (the boot heal) and
+ * the Codex TOML writer strip legacy `conductor-vision` entries so users
  * upgrading from <=v1.4 don't end up with a dead entry alongside.
  */
 
@@ -780,68 +780,7 @@ function strictAtomicWriteJson(filePath: string, data: unknown): boolean {
   }
 }
 
-export function injectMcpSettings(mcpPort: number): void {
-  const entry = {
-    type: 'sse',
-    // R-DEC-3: embed the per-launch secret so `claude` invocations outside CCC
-    // authenticate against the now-gated server with zero user-visible change.
-    url: `http://localhost:${mcpPort}/sse?token=${conductorMcpSecret}`,
-  }
-
-  // Defensive merge into ~/.claude.json: preserve every other top-level key
-  // and every other mcpServers entry. Only touch mcpServers['conductor']
-  // (and strip any legacy 'conductor-vision' entry for migration).
-  //
-  // Safety: distinguish ENOENT (fresh install, start from {}) from any other
-  // read/parse failure (corrupted file, EACCES, etc.) -- in the latter case
-  // ABORT rather than overwrite the user's global with our partial config.
-  // ~/.claude.json holds the user's projects map, OAuth account, settings
-  // cache, etc.; overwriting it with {} would be catastrophic.
-  try {
-    const claudeJsonPath = path.join(os.homedir(), '.claude.json')
-    let cj: Record<string, unknown> = {}
-    let exists = true
-    try {
-      const raw = fs.readFileSync(claudeJsonPath, 'utf-8')
-      const parsed = JSON.parse(raw) as unknown
-      if (!parsed || typeof parsed !== 'object') {
-        logError(`[vision] ~/.claude.json parsed to non-object (type=${typeof parsed}); aborting MCP injection to avoid clobbering.`)
-        return
-      }
-      cj = parsed as Record<string, unknown>
-    } catch (err: any) {
-      if (err?.code === 'ENOENT') {
-        exists = false
-      } else {
-        logError(`[vision] Cannot read ~/.claude.json (${err?.code ?? err?.message}); aborting MCP injection to avoid clobbering.`)
-        return
-      }
-    }
-    void exists
-    const servers = (cj.mcpServers && typeof cj.mcpServers === 'object')
-      ? cj.mcpServers as Record<string, unknown>
-      : {}
-    // Preserve extra fields (headers, oauth, env) on the existing entry
-    // if any. We only own type + url.
-    const existing = (servers['conductor'] && typeof servers['conductor'] === 'object')
-      ? servers['conductor'] as Record<string, unknown>
-      : {}
-    servers['conductor'] = { ...existing, ...entry }
-    // P7.7.5 migration: strip legacy 'conductor-vision' name so users
-    // upgrading from <=v1.4 don't end up with a dead entry alongside.
-    if ('conductor-vision' in servers) {
-      delete servers['conductor-vision']
-    }
-    cj.mcpServers = servers
-    strictAtomicWriteJson(claudeJsonPath, cj)
-  } catch (err: any) {
-    logError('[vision] Failed to inject ~/.claude.json MCP:', err?.message)
-  }
-
-  logInfo(`[vision] Registered conductor in ~/.claude.json (port ${mcpPort})`)
-}
-
-function removeMcpSettings(): void {
+export function removeMcpSettings(): void {
   // Defensive remove from ~/.claude.json: only delete the conductor (and
   // legacy conductor-vision) keys; preserve every other mcpServers entry
   // and every other top-level key. Same safety stance as injectMcpSettings
@@ -917,7 +856,11 @@ export async function startConductorMcpServer(
   }
   await startMcpServer(port, () => getGlobalManager())
   conductorMcpPort = port
-  injectMcpSettings(port)
+  // U3: CCC sessions get the conductor MCP per-session via --mcp-config
+  // (writeLocalSessionMcpConfig); we no longer write it into the global
+  // ~/.claude.json. Heal any stale entry a pre-U3 version / crash left behind so
+  // plain `claude` outside CCC doesn't try a dead endpoint.
+  removeMcpSettings()
   // Codex sessions read MCP config from ~/.codex/config.toml; mirror the
   // entry there so they reach the same vision MCP endpoint Claude does.
   // Gated on ~/.codex existing -- skips silently for users without Codex.
