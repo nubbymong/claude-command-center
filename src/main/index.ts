@@ -59,7 +59,7 @@ import { start as startLoopStallMonitor, stop as stopLoopStallMonitor } from './
 import { initLogging, shutdownLogging, getTranscriptBinder } from './logging/logging-service'
 import { detectOldLogArtifacts, executeWipe } from './logging/logs-wipe'
 import { backfillCompanionDirs, nodeFsCompanionDeps } from './logging/companion-dir'
-import { cleanupStaleHookEntries } from './hooks/boot-cleanup'
+import { cleanupStaleHookEntries, cleanupStaleMcpConfigs } from './hooks/boot-cleanup'
 import { DEFAULT_HOOKS_PORT } from './hooks/hooks-types'
 import { fetchModelPricing } from './tokenomics/tk-pricing'
 import { killAllAgents } from './cloud-agent-manager'
@@ -833,6 +833,9 @@ if (!gotTheLock) {
     if (hooksEnabled) {
       cleanupStaleHookEntries(new Set())   // supervisor.start() already fired proxy.start()
     }
+    // U4: sweep leaked per-session mcp-<sid>.json sidecars (removed on normal
+    // dispose; a crash leaves them). Independent of hooks.
+    cleanupStaleMcpConfigs(new Set())
 
     // Shell — open URLs in system browser
     ipcMain.handle('shell:openExternal', async (_event, url: unknown) => {
