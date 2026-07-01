@@ -177,7 +177,7 @@ export function generateRemoteSetupScript(
     `if(s.mcpServers){if(s.mcpServers['conductor-vision'])delete s.mcpServers['conductor-vision'];if(s.mcpServers['conductor'])delete s.mcpServers['conductor']}`,
     `try{fs.writeFileSync(sp,JSON.stringify(s,null,2))}catch{}`,
     `try{const cj=path.join(home,'.claude.json');if(fs.existsSync(cj)){let c=JSON.parse(fs.readFileSync(cj,'utf-8'));let mut=false;if(c.mcpServers){if(c.mcpServers['conductor-vision']){delete c.mcpServers['conductor-vision'];mut=true}if(c.mcpServers['conductor']){delete c.mcpServers['conductor'];mut=true}}if(mut)fs.writeFileSync(cj,JSON.stringify(c,null,2))}}catch{}`,
-    `try{const md=path.join(claudeDir,'CLAUDE.md');let c=fs.readFileSync(md,'utf-8');const rx=/\\n?\\n?<!-- VISION-INSTRUCTIONS-START -->[\\s\\S]*?<!-- VISION-INSTRUCTIONS-END -->\\n?/g;if(rx.test(c)){c=c.replace(rx,'').trim();c?fs.writeFileSync(md,c+'\\n'):fs.unlinkSync(md)}}catch{}`,
+    `try{const md=path.join(claudeDir,'CLAUDE.md');let c=fs.readFileSync(md,'utf-8');const rx=/\\n?\\n?<!-- VISION-INSTRUCTIONS-START -->[\\s\\S]*?<!-- VISION-INSTRUCTIONS-END -->\\n?/g;if(rx.test(c)){c=c.replace(rx,'').trim();fs.writeFileSync(md,c?c+'\\n':'')}}catch{}`,
     `process.stdout.write('setup ok\\n')`,
   ]
   return lines.join(';')

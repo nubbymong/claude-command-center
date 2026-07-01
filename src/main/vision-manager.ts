@@ -522,16 +522,17 @@ export class VisionManager {
 }
 
 /** One-time cleanup: remove old CLAUDE.md vision markers from the legacy per-session system. */
-export function cleanupLegacyVisionMarkers(): void {
+export function cleanupLegacyVisionMarkers(
+  claudeMdPath: string = path.join(os.homedir(), '.claude', 'CLAUDE.md'),
+): void {
   try {
-    const claudeMdPath = path.join(os.homedir(), '.claude', 'CLAUDE.md')
     if (!fs.existsSync(claudeMdPath)) return
     const content = fs.readFileSync(claudeMdPath, 'utf-8')
     const markerRegex = /\n?\n?<!-- VISION-INSTRUCTIONS-START -->[\s\S]*?<!-- VISION-INSTRUCTIONS-END -->\n?/g
     if (markerRegex.test(content)) {
       const cleaned = content.replace(markerRegex, '').trim()
-      if (cleaned.length === 0) fs.unlinkSync(claudeMdPath)
-      else fs.writeFileSync(claudeMdPath, cleaned + '\n')
+      // Never unlink the user's file -- if the strip empties it, leave it empty.
+      fs.writeFileSync(claudeMdPath, cleaned.length === 0 ? '' : cleaned + '\n')
       logInfo('[vision] Cleaned up legacy vision markers from ~/.claude/CLAUDE.md')
     }
   } catch (err: any) {
