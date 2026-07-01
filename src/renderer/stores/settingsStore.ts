@@ -74,6 +74,7 @@ export interface AppSettings {
   inputBarMaxHeight: number
   configPanelPinned: boolean
   statusLine: StatusLineSettings
+  statusLineEnabled?: boolean
   localMachineName: string
   updateChannel: UpdateChannel
   showTips: boolean
@@ -179,6 +180,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   inputBarMaxHeight: 400,
   configPanelPinned: false,
   statusLine: { ...DEFAULT_STATUS_LINE },
+  statusLineEnabled: true,
   localMachineName: '',
   updateChannel: 'stable' as const,
   showTips: true,

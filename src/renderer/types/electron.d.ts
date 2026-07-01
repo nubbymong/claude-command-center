@@ -398,6 +398,8 @@ export interface ElectronAPI {
   }
   cli: {
     check: () => Promise<boolean>
+    path: () => Promise<string | null>
+    version: () => Promise<string | null>
   }
   tokenomics: {
     summary: (filter?: import('../../shared/types').TkSummaryFilter) => Promise<import('../../shared/types').TkSummary | null>

@@ -212,6 +212,8 @@ export const IPC = {
 
   // CLI
   CLI_CHECK: 'cli:check',
+  CLI_PATH: 'cli:path',
+  CLI_VERSION: 'cli:version',
 
   // Tokenomics v2 — SQLite-backed summary/sessions/detail + index push
   TOKENOMICS2_SUMMARY: 'tokenomics2:summary',

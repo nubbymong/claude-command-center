@@ -6,7 +6,9 @@ import { randomBytes } from 'crypto'
 import { registerPtyHandlers } from './ipc/pty-handlers'
 import { registerUsageHandlers } from './ipc/usage-handlers'
 import { registerDiscoveryHandlers } from './ipc/discovery-handlers'
-import { killAllPty, gracefulExitAllPty } from './pty-manager'
+import { killAllPty, gracefulExitAllPty, resolveClaudeForPty } from './pty-manager'
+import { spawnClaudeHeadless } from './claude-headless'
+import { parseClaudeVersion } from './sentinel/sentinel-version'
 import { registerResumeHandlers } from './ipc/resume-handlers'
 import { registerLogs2Handlers } from './ipc/logs2-handlers'
 
@@ -512,6 +514,25 @@ function createWindow(): void {
       }
     } catch {
       return false
+    }
+  })
+
+  // Onboarding "Find Claude": the resolved claude binary path (no command run).
+  ipcMain.handle('cli:path', async () => {
+    try {
+      return resolveClaudeForPty()?.cmd ?? null
+    } catch {
+      return null
+    }
+  })
+
+  // Onboarding "Find Claude": run `claude --version` on demand (user-approved).
+  ipcMain.handle('cli:version', async () => {
+    try {
+      const res = await spawnClaudeHeadless(['--version'], 10000)
+      return parseClaudeVersion(res.stdout) ?? parseClaudeVersion(res.stderr) ?? null
+    } catch {
+      return null
     }
   })
 

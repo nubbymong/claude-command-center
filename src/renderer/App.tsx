@@ -41,6 +41,8 @@ import { useCommandStore } from './stores/commandStore'
 import { useMagicButtonStore } from './stores/magicButtonStore'
 import { useAppMetaStore } from './stores/appMetaStore'
 import { useSettingsStore } from './stores/settingsStore'
+import { OnboardingHarness } from './onboarding/OnboardingHarness'
+import { deriveOnboarding } from './onboarding/gate'
 import { useAccountProfilesStore } from './stores/accountProfilesStore'
 import { useRegistryStore } from './stores/registryStore'
 import { useSentinelStore } from './stores/sentinelStore'
@@ -914,8 +916,13 @@ export default function App() {
   // version compare, settings flags, staggered boot timers); without a shared
   // priority they mount simultaneously and stack, with DOM order deciding who
   // paints on top. Exactly one gate renders at a time — see pickBootGate.
+  // Phase-2: render the forced first-run harness when onboarding is due. NOTE: getState()
+  // read for now (safe below the SetupDialog early-return); the reactive subscription +
+  // per-step settle + finish stamping land with the step flow.
+  const onboardingDue = deriveOnboarding(useAppMetaStore.getState().meta, {}).due
   const bootGate = pickBootGate({
     configLoaded,
+    onboardingDue,
     logsWipeBytes,
     showWhatsNew,
     showTraining,
@@ -934,8 +941,9 @@ export default function App() {
         {bootGate === 'logsWipe' && logsWipeBytes !== null && (
           <LogsWipeModal totalBytes={logsWipeBytes} onComplete={() => setLogsWipeBytes(0)} />
         )}
+        {bootGate === 'onboarding' && <OnboardingHarness />}
         {bootGate === 'whatsNew' && <WhatsNewModal onClose={handleWhatsNewClose} />}
-        {showTipModal && <TipModal onClose={() => setShowTipModal(false)} onNavigate={(v) => setView(v)} />}
+        {showTipModal && bootGate !== 'onboarding' && <TipModal onClose={() => setShowTipModal(false)} onNavigate={(v) => setView(v)} />}
         {bootGate === 'githubOnboarding' && (
           <OnboardingModal
             onClose={dismissGitHubOnboarding}
@@ -952,7 +960,7 @@ export default function App() {
           />
         )}
 
-        {newAccountDetected && (
+        {newAccountDetected && bootGate !== 'onboarding' && (
           <NewAccountPrompt
             email={newAccountDetected.email}
             onDismiss={() => setNewAccountDetected(null)}
@@ -969,7 +977,7 @@ export default function App() {
           <LoggingConsentPrompt />
         )}
 
-        {pendingRestore && (
+        {pendingRestore && bootGate !== 'onboarding' && (
           <ResumeSessionsPrompt
             count={pendingRestore.sessions.length}
             onResume={() => {

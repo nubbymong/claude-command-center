@@ -106,6 +106,15 @@
      content rather than a hovering element. */
   --shadow-fab: 0 3px 10px rgba(0,0,0,.4);
   --highlight-inset: inset 0 1px 0 rgba(255,255,255,.04);
+
+  /* Onboarding harness — brand orange (NOT the app teal); scoped to the first-run flow. */
+  --ob: #e8915c;
+  --ob-bright: #f0a06a;
+  --ob-deep: #c47b4a;
+  --ob-soft: rgba(232,145,92,.14);
+  --ob-line: rgba(232,145,92,.45);
+  --field: #0c1117;
+  --serif: 'Georgia', 'Times New Roman', serif;
 }
 
 /* Light theme — "foggy daylight" not "bright sunlight". The first
@@ -195,6 +204,14 @@
   --shadow-panel: 7px 0 18px -6px rgba(0,0,0,.16);
   --shadow-raised: -11px 0 26px rgba(0,0,0,.20);
   --highlight-inset: inset 0 1px 0 rgba(255,255,255,.5); /* inverted: light substrate needs a bright top highlight */
+
+  /* Onboarding harness — brand orange, light values. */
+  --ob: #b3612e;
+  --ob-bright: #c47b4a;
+  --ob-deep: #9a4f29;
+  --ob-soft: rgba(179,97,46,.10);
+  --ob-line: rgba(179,97,46,.5);
+  --field: #cdd5e0;
 }
 
 body {

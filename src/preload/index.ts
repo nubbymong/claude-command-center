@@ -336,6 +336,8 @@ export interface ElectronAPI {
   }
   cli: {
     check: () => Promise<boolean>
+    path: () => Promise<string | null>
+    version: () => Promise<string | null>
   }
   tokenomics: {
     summary: (filter?: import('../shared/types').TkSummaryFilter) => Promise<import('../shared/types').TkSummary | null>
@@ -802,7 +804,9 @@ const electronAPI: ElectronAPI = {
     }
   },
   cli: {
-    check: () => ipcRenderer.invoke(IPC.CLI_CHECK)
+    check: () => ipcRenderer.invoke(IPC.CLI_CHECK),
+    path: () => ipcRenderer.invoke(IPC.CLI_PATH),
+    version: () => ipcRenderer.invoke(IPC.CLI_VERSION)
   },
   tokenomics: {
     summary: (filter?: import('../shared/types').TkSummaryFilter) => ipcRenderer.invoke(IPC.TOKENOMICS2_SUMMARY, filter ?? {}),
