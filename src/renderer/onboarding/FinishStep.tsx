@@ -14,8 +14,8 @@ export function FinishStep({ onTour, onSkip }: { onTour: () => void; onSkip: () 
         <h1 className="word">You're all set</h1>
         <div className="sub">Command Center</div>
         <p className="lede">
-          Everything you chose is saved and running. Next, a <b>quick tour of the app</b>, then we'll create your
-          first session together.
+          Everything you chose is saved and running. Next, a <b>quick tour of the app</b>, then we'll set up your
+          first saved config and launch a session from it.
         </p>
         <p className="setup">Need a refresher later? The Feature Guide button in the sidebar explains every feature.</p>
         <div className="privacy">

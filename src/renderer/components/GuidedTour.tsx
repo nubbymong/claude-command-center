@@ -25,8 +25,8 @@ const STEPS: TourStep[] = [
   },
   {
     selector: '[data-tour="new-config"]',
-    title: 'Start a session here',
-    body: 'This is where you create a saved config and launch a Claude or Codex session, local or over SSH.',
+    title: 'Saved configs live here',
+    body: 'A saved config is a reusable launcher: project folder, model, account. Create it once, then start a session from it whenever you want (Claude or Codex, local or over SSH).',
   },
   {
     selector: '[aria-label="Settings"]',
@@ -41,8 +41,8 @@ const STEPS: TourStep[] = [
   {
     selector: null,
     title: 'Ready to go',
-    body: 'Let’s set up your first session. The New Saved Config dialog opens so you can pick a name, model and account.',
-    cta: 'Create your first session',
+    body: 'Let’s create your first saved config: pick a name, model and account. Saving it launches your first session, and the config stays in the sidebar so you can come back to it anytime.',
+    cta: 'Create your first config',
   },
 ]
 

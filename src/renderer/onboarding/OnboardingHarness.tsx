@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { ReactNode } from 'react'
 import './onboarding.css'
 import { OnboardingShell } from './OnboardingShell'
+import { WhatsNewV2Step } from './WhatsNewV2Step'
 import { WelcomeStep } from './WelcomeStep'
 import { FindClaudeStep } from './FindClaudeStep'
 import { CompatibilityStep } from './CompatibilityStep'
@@ -15,6 +16,7 @@ import { TransparencyStep } from './TransparencyStep'
 import { FinishStep } from './FinishStep'
 import { settleOnboardingFinish } from './settle'
 import { useSettingsStore } from '../stores/settingsStore'
+import { useAppMetaStore } from '../stores/appMetaStore'
 
 interface StepNav {
   onNext: () => void
@@ -47,6 +49,15 @@ interface BuiltStep {
 // registry-driven flow (completedSteps stamping, per-step settle, finish, and
 // conditional steps) replaces this array once every page is signed off.
 const PAGES: BuiltStep[] = [
+  {
+    id: 'whatsNewV2',
+    phase: 0,
+    // Upgraders only: lastSeenVersion is stamped by every What's-New/finish
+    // dismissal since 1.2.x, so it exists exactly when there is a "before" to
+    // compare against. Fresh installs have nothing "new" and start at welcome.
+    when: () => !!useAppMetaStore.getState().meta.lastSeenVersion,
+    render: (nav) => <WhatsNewV2Step onNext={nav.onNext} />,
+  },
   { id: 'welcome', phase: 0, render: (nav) => <WelcomeStep onNext={nav.onNext} /> },
   {
     id: 'findClaude',
@@ -87,7 +98,9 @@ const PAGES: BuiltStep[] = [
 ]
 
 export function OnboardingHarness({ onComplete }: { onComplete: (startTour: boolean) => void }) {
-  const [cursor, setCursor] = useState(PAGES[0].id)
+  // Start at the first APPLICABLE page — PAGES[0] (whatsNewV2) is upgrader-only,
+  // so a fresh install must open on welcome, not render a when():false page.
+  const [cursor, setCursor] = useState(() => (PAGES.find((p) => !p.when || p.when()) ?? PAGES[0]).id)
   const [version, setVersion] = useState<string | null>(null)
   const idx = Math.max(0, PAGES.findIndex((p) => p.id === cursor))
   const step = PAGES[idx]
