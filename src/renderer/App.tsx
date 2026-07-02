@@ -184,6 +184,11 @@ export default function App() {
   // same setter here to open the real create dialog from the stage empty state.
   const onCreateConfigFromStage = () => setShowGuidedConfig(true)
   const loggingConsentSeen = useSettingsStore((s) => s.settings.loggingConsentSeen)
+  // Reactive onboarding-gate input. MUST be a top-level hook (above the
+  // Loading/SetupDialog early returns) — the reactive subscription is what lets
+  // the finish step's completion stamp dismiss the harness, but a hook placed
+  // after a conditional return breaks the Rules of Hooks and blanks the app.
+  const onboardingMeta = useAppMetaStore((s) => s.meta)
   const activeSessionId = useSessionStore((s) => s.activeSessionId)
   // Subscribe to sessions through a STRUCTURAL equality so the root shell does
   // NOT re-render on the statusline bridge's ~1-3×/s telemetry ticks (which only
@@ -920,11 +925,11 @@ export default function App() {
   // version compare, settings flags, staggered boot timers); without a shared
   // priority they mount simultaneously and stack, with DOM order deciding who
   // paints on top. Exactly one gate renders at a time — see pickBootGate.
-  // Forced first-run harness gate. Reactive on appMeta so the finish step's
-  // completion stamp (settleOnboardingFinish) flips due->false and unmounts the
-  // harness on the next render. Settings view kept minimal — the codexSignIn
-  // when() only narrows the applicable set, never the due decision.
-  const onboardingMeta = useAppMetaStore((s) => s.meta)
+  // Forced first-run harness gate. onboardingMeta is subscribed at the top of
+  // the component (reactive) so the finish step's completion stamp
+  // (settleOnboardingFinish) flips due->false and unmounts the harness on the
+  // next render. Settings view kept minimal — the codexSignIn when() only
+  // narrows the applicable set, never the due decision.
   const onboardingDue = deriveOnboarding(onboardingMeta, {}).due
   const bootGate = pickBootGate({
     configLoaded,
