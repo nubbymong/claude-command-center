@@ -23,6 +23,11 @@ export interface SpawnOptions {
    *  copy/paste). When false, CC's mouse mode is preserved. Shell-only sessions
    *  are never affected regardless of this flag. */
   classicTerminalCopyPaste?: boolean
+  /** v2.0: CC >= 2.1.195 renders question options as CLICKABLE targets, which
+   *  misfire inside xterm.js. False (or undefined = CCC default) stamps
+   *  CLAUDE_CODE_DISABLE_MOUSE_CLICKS=1 so answers stay keyboard-driven (wheel
+   *  scroll unaffected). True preserves CC's clickable prompts. */
+  clickableQuestions?: boolean
   /** Host (CCC) effective light/dark scheme, stamped into COLORFGBG so Claude
    *  Code's startup theme auto-detection matches the terminal. Resolved by the
    *  caller from AppSettings.theme + the OS preference. Absent = no COLORFGBG. */

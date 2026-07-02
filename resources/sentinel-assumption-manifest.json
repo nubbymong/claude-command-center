@@ -152,11 +152,11 @@
   {
     "id": "env-killswitches",
     "area": "sessions",
-    "contract": "CCC sets CLAUDE_CODE_DISABLE_MOUSE=1 and CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1 by default (unless classicTerminalCopyPaste is disabled) to allow xterm.js to own mouse and scrollback. CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 is set when the disableAutoMemory session option is active.",
+    "contract": "CCC sets CLAUDE_CODE_DISABLE_MOUSE=1 and CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1 by default (unless classicTerminalCopyPaste is disabled) to allow xterm.js to own mouse and scrollback, and CLAUDE_CODE_DISABLE_MOUSE_CLICKS=1 by default (unless clickableQuestions is enabled) so CC 2.1.195+ clickable question options stay keyboard-driven inside xterm. CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 is set when the disableAutoMemory session option is active.",
     "files": [
       "src/main/providers/claude/spawn.ts"
     ],
-    "failureMode": "Removed env killswitches re-enable CC mouse tracking (breaks text selection) and alternate-screen renderer (breaks scrollback). Removed DISABLE_AUTO_MEMORY causes unwanted automatic memory writes.",
+    "failureMode": "Removed/renamed env killswitches re-enable CC mouse tracking (breaks text selection), alternate-screen renderer (breaks scrollback), or clickable question options (stray clicks answer prompts in xterm). Removed DISABLE_AUTO_MEMORY causes unwanted automatic memory writes.",
     "severity": "warn",
     "configFixable": false,
     "affectedFeature": "sessions"

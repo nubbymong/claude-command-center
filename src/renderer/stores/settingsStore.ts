@@ -153,6 +153,12 @@ export interface AppSettings {
    *  Set false to restore CC's mouse mode (copy-on-select active; right-click pastes).
    *  Changes apply to newly-launched sessions only. */
   classicTerminalCopyPaste?: boolean
+  /** v2.0: Claude Code >= 2.1.195 renders its question options as CLICKABLE
+   *  targets in the terminal. OFF by default in CCC (absent/false): the spawn
+   *  env gets CLAUDE_CODE_DISABLE_MOUSE_CLICKS=1 so answers stay keyboard-only
+   *  (wheel scroll unaffected) -- the clickable layer misfires inside xterm.
+   *  Set true to restore CC's clickable prompts. New sessions only. */
+  clickableQuestions?: boolean
   /** Sentinel service (spec 2026-06-11): when not enabled, the service is not
    *  initialised at all — no startup check, no dot, zero overhead.
    *  OPT-IN (default-off): absent or false = disabled; only an explicit `true`
@@ -214,6 +220,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   theme: 'dark',
   loggingEnabled: true,
   classicTerminalCopyPaste: true,
+  clickableQuestions: false,
   sentinelEnabled: false,
   sentinelAutoOpen: true,
   githubAiUsageEnabled: false,

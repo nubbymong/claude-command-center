@@ -98,6 +98,15 @@ export function buildClaudeLocalSpawn(opts: SpawnOptions): { cmd: string; args: 
     env.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN = '1'
   }
 
+  // CC >= 2.1.195: question options render as clickable targets, which misfire
+  // inside xterm.js (stray clicks answer prompts). The official opt-out is
+  // CLAUDE_CODE_DISABLE_MOUSE_CLICKS (disables click/drag/hover, keeps wheel
+  // scroll); older CC versions ignore the var. Off by default in CCC -- the
+  // Settings toggle (clickableQuestions) opts back in per user choice.
+  if (opts.clickableQuestions !== true) {
+    env.CLAUDE_CODE_DISABLE_MOUSE_CLICKS = '1'
+  }
+
   // Claude session: spawn shell only; pty-manager writes the cd+claude command into the shell post-spawn.
   return { cmd: shell, args: [], env }
 }
