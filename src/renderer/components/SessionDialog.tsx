@@ -6,6 +6,7 @@ import { CodexFormFields } from './SessionDialog/CodexFormFields'
 import { IDENTITY_COLOR_KEYS, resolveIdentityColor, bucketLegacyColorToKey, type IdentityColorKey } from '../../shared/identity-colors'
 import { useResolvedTheme } from '../hooks/useThemeController'
 import { useRegistryStore } from '../stores/registryStore'
+import { useSettingsStore } from '../stores/settingsStore'
 import { modelsFromRegistry } from '../lib/claude-cli-options'
 
 export type SessionType = 'local' | 'ssh'
@@ -69,6 +70,9 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
   )
   const theme = useResolvedTheme()
   const [sessionType, setSessionType] = useState<SessionType>(initial?.sessionType ?? 'local')
+  // Codex master ("Do you use Codex?"): with it off the conductor server never
+  // registers codex_review, so the review checkbox below would be a dead control.
+  const codexDisabled = useSettingsStore((s) => s.settings.codexEnabled === false)
   const [shellOnly, setShellOnly] = useState(initial?.shellOnly ?? false)
   const [groupId, setGroupId] = useState<string | undefined>(initial?.groupId)
   const [newGroupName, setNewGroupName] = useState('')
@@ -249,7 +253,10 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
       legacyVersion: legacyEnabled && legacyVersion ? { enabled: true, version: legacyVersion } : undefined,
       agentIds: !shellOnly && selectedAgentIds.size > 0 ? Array.from(selectedAgentIds) : undefined,
       disableAutoMemory: !shellOnly && disableAutoMemory ? true : undefined,
-      enableCodexReview: !shellOnly && enableCodexReview ? true : undefined,
+      // Mirror the display gate: while Codex is off the checkbox renders
+      // unchecked+disabled, so persisting the stale true would silently
+      // re-arm review the moment Codex is re-enabled.
+      enableCodexReview: !shellOnly && enableCodexReview && !codexDisabled ? true : undefined,
       // DEFAULT-TRUE: only write false when the user has turned the toggle off.
       // Omitting the field (undefined) is equivalent to on, keeps configs clean.
       loggingEnabled: !shellOnly && !loggingEnabled ? false : undefined,
@@ -301,12 +308,16 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
         onSubmit={handleSubmit}
         className="bg-surface0 rounded-lg p-6 w-[760px] max-h-[90vh] overflow-y-auto shadow-2xl border border-surface1"
       >
-        <h3 className="text-base font-semibold text-text mb-4">
+        <h3 className="text-base font-semibold text-text mb-1">
           {initial ? 'Edit Config' : 'New Saved Config'}
         </h3>
+        <p className="text-[11px] text-overlay0 mb-4 leading-snug">
+          A saved config is a reusable launcher: it stays in the sidebar and every launch starts a fresh session
+          with these settings.
+        </p>
 
         {/* Session type toggle */}
-        <div className="flex items-center bg-crust rounded-md p-0.5 mb-4">
+        <div className="flex items-center bg-crust rounded-md p-0.5 mb-1">
           <button
             type="button"
             onClick={() => setSessionType('local')}
@@ -326,12 +337,16 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
             SSH
           </button>
         </div>
+        <p className="text-[10px] text-overlay0 mb-4">
+          Where sessions run: this machine, or a remote machine over SSH.
+        </p>
 
         {/* Provider segmented control */}
         <ProviderSegmentedControl
           value={provider}
           onChange={setProvider}
           sessionType={sessionType}
+          codexMasterOff={codexDisabled}
         />
 
         {/* Two-column grid */}
@@ -354,6 +369,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                 placeholder="My project"
                 className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue"
               />
+              <p className="text-[10px] text-overlay0 mt-1">Names this config in the sidebar and on its session tabs.</p>
             </div>
 
             {sessionType === 'ssh' && (
@@ -365,6 +381,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                   placeholder="e.g. GPU Server, Build Box"
                   className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue"
                 />
+                <p className="text-[10px] text-overlay0 mt-1">Shows in logs and the status line so you can tell machines apart.</p>
               </div>
             )}
 
@@ -385,6 +402,9 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                   />
                 ))}
               </div>
+              <p className="text-[10px] text-overlay0 mt-1.5">
+                Tints this config's rail, tabs and dots so you can tell sessions apart at a glance.
+              </p>
             </div>
 
             {/* -- CONNECTION section -- */}
@@ -410,6 +430,9 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                     Browse
                   </button>
                 </div>
+                <p className="text-[10px] text-overlay0 mt-1">
+                  The folder sessions start in. Claude reads and edits files here (with your approval).
+                </p>
               </div>
             ) : (
               <>
@@ -533,7 +556,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
             </div>
 
             {/* Shell only toggle */}
-            <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
+            <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer">
               <input
                 type="checkbox"
                 checked={shellOnly}
@@ -541,22 +564,32 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                   setShellOnly(e.target.checked)
                   if (e.target.checked) setPartnerTerminalPath('')
                 }}
-                className="rounded border-surface1"
+                className="mt-0.5 rounded border-surface1"
               />
-              Shell only (don't run Claude)
+              <span>
+                Shell only (don't run Claude)
+                <span className="block text-[10px] text-overlay0">
+                  A plain terminal with no AI attached. Handy for servers, builds and logs.
+                </span>
+              </span>
             </label>
 
             {/* Partner Terminal */}
             {!shellOnly && (
               <div>
-                <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer mb-1.5">
+                <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer mb-1.5">
                   <input
                     type="checkbox"
                     checked={!!partnerTerminalPath}
                     onChange={(e) => setPartnerTerminalPath(e.target.checked ? (workingDir || '.') : '')}
-                    className="rounded border-surface1"
+                    className="mt-0.5 rounded border-surface1"
                   />
-                  Partner Terminal
+                  <span>
+                    Partner Terminal
+                    <span className="block text-[10px] text-overlay0">
+                      A second plain terminal beside the session, for running commands yourself while Claude works.
+                    </span>
+                  </span>
                 </label>
                 {partnerTerminalPath && (
                   <>
@@ -607,34 +640,51 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                   <option key={m.value} value={m.value}>{m.label}</option>
                 ))}
               </select>
+              <p className="text-[10px] text-overlay0 mt-1">
+                The model sessions start on. Default follows Claude's own setting; /model inside a session still works.
+              </p>
             </div>
 
             {/* Disable auto-memory toggle */}
             {!shellOnly && (
-              <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
+              <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={disableAutoMemory}
                   onChange={(e) => setDisableAutoMemory(e.target.checked)}
-                  className="rounded border-surface1"
+                  className="mt-0.5 rounded border-surface1"
                 />
-                Disable auto-memory
-                <span className="text-[10px] text-overlay0">(no CLAUDE.md memory writes)</span>
+                <span>
+                  Disable auto-memory
+                  <span className="block text-[10px] text-overlay0">
+                    Claude won't save memories (CLAUDE.md writes) from these sessions.
+                  </span>
+                </span>
               </label>
             )}
 
-            {/* P6: Codex code review toggle */}
-            {!shellOnly && (
-              <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer">
+            {/* P6: Codex code review toggle. Hidden for SSH (the tool is never
+                registered for SSH sessions and would run codex against a local
+                path that only exists on the remote); disabled when Codex is
+                answered off (the MCP server won't register the tool at all). */}
+            {!shellOnly && sessionType !== 'ssh' && (
+              <label
+                className={`flex items-start gap-2 text-sm text-subtext0 ${codexDisabled ? 'opacity-50' : 'cursor-pointer'}`}
+              >
                 <input
                   type="checkbox"
-                  checked={enableCodexReview}
+                  checked={enableCodexReview && !codexDisabled}
+                  disabled={codexDisabled}
                   onChange={(e) => setEnableCodexReview(e.target.checked)}
                   className="mt-0.5 rounded border-surface1"
                 />
                 <span>
                   Enable Codex code review
-                  <span className="block text-[10px] text-overlay0">Lets Claude call the codex_review MCP tool. Each call counts against your gpt-5.5 5h budget.</span>
+                  <span className="block text-[10px] text-overlay0">
+                    {codexDisabled
+                      ? 'Codex is off. Enable it in Settings → Codex first.'
+                      : 'Lets Claude ask Codex for an independent review of working changes. Each call counts against your Codex budget.'}
+                  </span>
                 </span>
               </label>
             )}
@@ -650,7 +700,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                 />
                 <span>
                   Index conversation logs
-                  <span className="block text-[10px] text-overlay0">CCC indexes Claude's own transcripts so you can browse them here. Your conversation always lives in Claude's files (~/.claude/projects) — turning this off only stops CCC from indexing it.</span>
+                  <span className="block text-[10px] text-overlay0">CCC indexes Claude's own transcripts so you can browse them here. Your conversation always lives in Claude's files (~/.claude/projects); turning this off only stops CCC from indexing it.</span>
                 </span>
               </label>
             )}
@@ -662,7 +712,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
 
             {/* Legacy Claude Version */}
             <div>
-              <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
+              <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={legacyEnabled}
@@ -672,9 +722,14 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                       setInstallError('')
                     }
                   }}
-                  className="rounded border-surface1"
+                  className="mt-0.5 rounded border-surface1"
                 />
-                Legacy Claude Version
+                <span>
+                  Legacy Claude Version
+                  <span className="block text-[10px] text-overlay0">
+                    Pin these sessions to an older Claude Code release, installed from npm beside your current one.
+                  </span>
+                </span>
               </label>
               {legacyEnabled && (
                 <div className="ml-5 mt-2 space-y-2">
@@ -729,6 +784,9 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
               <>
                 <div className="border-t border-surface1 pt-3 mt-3">
                   <span className="text-[10px] uppercase tracking-wider text-overlay1 font-medium">Agents</span>
+                  <p className="text-[10px] text-overlay0 mt-1">
+                    Subagents Claude can delegate work to in these sessions (via its Task tool). Tick the ones to include.
+                  </p>
                 </div>
                 <div className="max-h-[120px] overflow-y-auto border border-surface1 rounded bg-base">
                   {allAgentTemplates.map(t => (
@@ -787,6 +845,9 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
             {/* -- ORGANIZATION section -- */}
             <div className="border-t border-surface1 pt-3 mt-3">
               <span className="text-[10px] uppercase tracking-wider text-overlay1 font-medium">Organization</span>
+              <p className="text-[10px] text-overlay0 mt-1">
+                Optional. Both just organise the sidebar; skip them until you have a few configs.
+              </p>
             </div>
 
             {/* Group assignment */}
@@ -803,6 +864,9 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                 ))}
                 <option value="__new__">+ New Group...</option>
               </select>
+              <p className="text-[10px] text-overlay0 mt-1">
+                Grouped configs collapse together in the sidebar and can all launch with one click.
+              </p>
               {showNewGroup && (
                 <div className="flex gap-2 mt-1.5">
                   <input
@@ -839,6 +903,9 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                   ))}
                   <option value="__new__">+ New Section...</option>
                 </select>
+                <p className="text-[10px] text-overlay0 mt-1">
+                  A labelled heading this config sits under in the sidebar; sections can also launch all their configs at once.
+                </p>
                 {showNewSection && (
                   <div className="flex gap-2 mt-1.5">
                     <input

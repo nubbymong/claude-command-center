@@ -110,8 +110,7 @@ export interface ElectronAPI {
     openFolder: () => Promise<string | null>
   }
   clipboard: {
-    readImage: () => Promise<string | null>
-    saveImage: () => Promise<string | null>
+    saveImage: () => Promise<{ path: string } | { error: 'no-image' | 'too-large' }>
   }
   credentials: {
     save: (configId: string, password: string) => Promise<boolean>
@@ -342,7 +341,6 @@ export interface ElectronAPI {
     getKpis: (runId: string) => Promise<KpiData | null>
     getLatest: () => Promise<InsightsRun | null>
     isRunning: () => Promise<boolean>
-    seed: () => Promise<string | null>
     onStatusChanged: (callback: (run: InsightsRun) => void) => () => void
   }
   notes: {
@@ -400,6 +398,11 @@ export interface ElectronAPI {
   }
   cli: {
     check: () => Promise<boolean>
+    path: () => Promise<string | null>
+    version: () => Promise<string | null>
+  }
+  help: {
+    workspace: () => Promise<string | null>
   }
   tokenomics: {
     summary: (filter?: import('../../shared/types').TkSummaryFilter) => Promise<import('../../shared/types').TkSummary | null>

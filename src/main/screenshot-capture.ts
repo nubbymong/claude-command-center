@@ -5,6 +5,7 @@ import { randomBytes } from 'crypto'
 import Screenshots from 'electron-screenshots'
 
 import { getResourcesDirectory } from './ipc/setup-handlers'
+import { isReapableImageFile } from './clipboard-file'
 
 function getScreenshotsDir(): string { return join(getResourcesDirectory(), 'screenshots') }
 
@@ -255,7 +256,7 @@ export async function cleanupOldScreenshots(maxAgeDays: number): Promise<number>
   try {
     const dir = getScreenshotsDir()
     const files = readdirSync(dir)
-      .filter(f => f.startsWith('screenshot-') && (f.endsWith('.jpg') || f.endsWith('.png')))
+      .filter(isReapableImageFile) // screenshot-* AND clipboard-* image files (Unit 5 W5)
 
     for (const f of files) {
       const fullPath = join(dir, f)

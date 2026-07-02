@@ -87,7 +87,7 @@ describe('memory-scanner', () => {
     })
 
     it('scans project memory directory and returns memories', async () => {
-      const memoryDir = path.join(projectsRoot, 'F--CLAUDE-MULTI-APP', 'memory')
+      const memoryDir = path.join(projectsRoot, 'F--MY-PROJECT', 'memory')
       const filePath = path.join(memoryDir, 'MEMORY.md')
 
       applyAsyncFsMocks({
@@ -97,7 +97,7 @@ describe('memory-scanner', () => {
           return null
         },
         readdir: (p) => {
-          if (p === projectsRoot) return [{ name: 'F--CLAUDE-MULTI-APP', isDirectory: () => true }]
+          if (p === projectsRoot) return [{ name: 'F--MY-PROJECT', isDirectory: () => true }]
           if (p === memoryDir) return ['MEMORY.md']
           return []
         },
@@ -107,12 +107,12 @@ describe('memory-scanner', () => {
       const result = await scanLocalMemory()
 
       expect(result.projects).toHaveLength(1)
-      expect(result.projects[0].name).toBe('claude-multi-app')
+      expect(result.projects[0].name).toBe('my-project')
       expect(result.projects[0].fileCount).toBe(1)
       expect(result.memories).toHaveLength(1)
       expect(result.memories[0].filename).toBe('MEMORY.md')
       expect(result.memories[0].type).toBe('reference')
-      expect(result.memories[0].project).toBe('claude-multi-app')
+      expect(result.memories[0].project).toBe('my-project')
     })
 
     // Single-project scaffold: projectsRoot + memoryDir are dirs; files get fileStat.
@@ -129,10 +129,10 @@ describe('memory-scanner', () => {
       })
     }
 
-    it('cleans project name: F--CLAUDE-MULTI-APP becomes claude-multi-app', async () => {
-      oneProject('F--CLAUDE-MULTI-APP', ['test.md'], () => 'Content')
+    it('cleans project name: F--MY-PROJECT becomes my-project', async () => {
+      oneProject('F--MY-PROJECT', ['test.md'], () => 'Content')
       const result = await scanLocalMemory()
-      expect(result.projects[0].name).toBe('claude-multi-app')
+      expect(result.projects[0].name).toBe('my-project')
     })
 
     it('cleans project name: C--Users-testuser becomes users-testuser', async () => {

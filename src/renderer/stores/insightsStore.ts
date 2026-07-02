@@ -40,10 +40,16 @@ export const useInsightsStore = create<InsightsState>((set, get) => ({
       const catalogue = await window.electronAPI.insights.getCatalogue()
 
       const running = await window.electronAPI.insights.isRunning()
-      set({
-        catalogue,
-        status: running ? 'running' : get().status === 'running' ? 'idle' : get().status
-      })
+      // Clear a stale mid-run status if a run ended while we weren't listening,
+      // but do NOT persistently mark a historical failure here: that would redden
+      // the Insights nav dot on every boot for a past failure (the Sentinel
+      // calibration lesson — a dot means "needs attention now", not "once failed").
+      // Failures are surfaced on the page itself (banner/picker, from the
+      // catalogue); a LIVE failure still flashes via handleStatusChanged.
+      let status = get().status
+      if (running) status = 'running'
+      else if (status === 'running' || status === 'extracting_kpis') status = 'idle'
+      set({ catalogue, status })
       // Auto-select latest complete run if nothing selected
       if (!get().selectedRunId && catalogue.runs.length > 0) {
         for (let i = catalogue.runs.length - 1; i >= 0; i--) {
@@ -94,21 +100,19 @@ export const useInsightsStore = create<InsightsState>((set, get) => ({
   },
 }))
 
-// Set up IPC listener once
+// Set up the insights IPC listener once globally — never tear down. Mirrors the
+// cloudAgent/github guard so a React StrictMode double-invoke or a remount never
+// installs duplicate listeners. App-level setup (see App.tsx) keeps both
+// InsightsPage and the Sidebar nav status dot live during a run (Unit 3 W2).
 let listenerSetup = false
-export function setupInsightsListener(): () => void {
-  if (listenerSetup) return () => {}
+export function setupInsightsListener(): void {
+  if (listenerSetup) return
   listenerSetup = true
 
-  const unsub = window.electronAPI.insights.onStatusChanged((run) => {
+  window.electronAPI.insights.onStatusChanged((run) => {
     useInsightsStore.getState().handleStatusChanged(run)
   })
 
   // Load catalogue on setup
   useInsightsStore.getState().loadCatalogue()
-
-  return () => {
-    unsub()
-    listenerSetup = false
-  }
 }

@@ -141,7 +141,7 @@ describe('cloud-agent-manager', () => {
   })
 
   describe('dispatchAgent', () => {
-    it('spawns claude process with correct args', async () => {
+    it('spawns claude piped from a temp file, WITHOUT --dangerously-skip-permissions by default (P1.3 safe default)', async () => {
       const mockProc = createMockProcess()
       mockSpawn.mockReturnValue(mockProc)
 
@@ -156,9 +156,10 @@ describe('cloud-agent-manager', () => {
       const shellCmd = spawnCall[0] as string
       // Windows uses `type`, macOS/Linux uses `cat`
       const pipeCmdPattern = process.platform === 'win32'
-        ? /type ".*ccc-agent-.*\.txt" \| claude --dangerously-skip-permissions/
-        : /cat ".*ccc-agent-.*\.txt" \| claude --dangerously-skip-permissions/
+        ? /type ".*ccc-agent-.*\.txt" \| claude\b/
+        : /cat ".*ccc-agent-.*\.txt" \| claude\b/
       expect(shellCmd).toMatch(pipeCmdPattern)
+      expect(shellCmd).not.toContain('--dangerously-skip-permissions')
       expect(spawnCall[1]).toEqual([])
       expect(spawnCall[2]).toEqual(expect.objectContaining({
         cwd: 'C:\\dev\\project',
@@ -169,6 +170,24 @@ describe('cloud-agent-manager', () => {
       expect(agent.status).toBe('running')
       expect(agent.name).toBe('Test')
       expect(agent.id).toMatch(/^ca-/)
+    })
+
+    it('includes --dangerously-skip-permissions only when skipPermissions is true (FEAT-1 per-run opt-in)', async () => {
+      mockSpawn.mockReturnValue(createMockProcess())
+      await dispatchAgent({ name: 'T', description: 'd', projectPath: '/p', skipPermissions: true })
+      const shellCmd = mockSpawn.mock.calls[0][0] as string
+      expect(shellCmd).toContain('--dangerously-skip-permissions')
+    })
+
+    it('never skips by default, ignoring any persisted config (per-run opt-in only)', async () => {
+      // The legacy global skipPermissionsForAgents setting was removed in Unit 3;
+      // cloud-agent dispatch is per-run. Even if stale config still carries the
+      // flag, a default dispatch must NOT skip.
+      mockReadConfig.mockImplementation((key: string) => key === 'settings' ? { skipPermissionsForAgents: true } : null)
+      mockSpawn.mockReturnValue(createMockProcess())
+      await dispatchAgent({ name: 'T', description: 'd', projectPath: '/p' })
+      const shellCmd = mockSpawn.mock.calls[0][0] as string
+      expect(shellCmd).not.toContain('--dangerously-skip-permissions')
     })
 
     it('broadcasts status on dispatch', async () => {

@@ -22,13 +22,15 @@ export function fmtRel(ts: number) {
   if (d < 30) return d + 'd ago'
   return Math.floor(d / 30) + 'mo ago'
 }
+// Freshness ramp ends in a calm dormant grey, not red: a memory being old is
+// not an error, and red is reserved for genuine problem states.
 export function staleClass(ts: number) {
   const d = (Date.now() - ts) / 86400000
-  return d < 7 ? 'bg-green' : d < 30 ? 'bg-yellow' : 'bg-red'
+  return d < 7 ? 'bg-green' : d < 30 ? 'bg-yellow' : 'bg-overlay0'
 }
 export function staleShadow(ts: number) {
   const d = (Date.now() - ts) / 86400000
-  return d < 7 ? '0 0 4px rgba(166,227,161,0.4)' : d < 30 ? '0 0 4px rgba(249,226,175,0.3)' : '0 0 4px rgba(243,139,168,0.3)'
+  return d < 7 ? '0 0 4px rgba(166,227,161,0.4)' : d < 30 ? '0 0 4px rgba(249,226,175,0.3)' : 'none'
 }
 
 export function TypeBadge({ type }: { type: string }) {

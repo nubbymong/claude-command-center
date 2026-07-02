@@ -129,8 +129,7 @@ export function registerSetupHandlers(): void {
         cols: cols || 100,
         rows: rows || 20,
         cwd,
-        env: process.env as Record<string, string>,
-        useConpty: false
+        env: process.env as Record<string, string>
       })
     } else {
       // macOS/Linux: spawn interactive login shell so PATH includes Homebrew etc.

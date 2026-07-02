@@ -15,8 +15,8 @@ export interface MemoryFile {
   id: string // project + filename hash
   name: string // from frontmatter `name:` or filename without .md
   filename: string // e.g. "feedback_logging.md"
-  project: string // e.g. "claude-multi-app" (cleaned from dir name)
-  projectDir: string // raw directory name e.g. "F--CLAUDE-MULTI-APP"
+  project: string // e.g. "my-project" (cleaned from dir name)
+  projectDir: string // raw directory name e.g. "F--MY-PROJECT"
   type: 'user' | 'feedback' | 'project' | 'reference' | 'snapshot' | 'uncategorized'
   description: string // from frontmatter or first content line
   size: number // bytes
@@ -60,7 +60,7 @@ const VALID_TYPES = new Set(['user', 'feedback', 'project', 'reference', 'snapsh
  * Clean a raw project directory name into a human-friendly project name.
  *
  * Examples:
- *   "F--CLAUDE-MULTI-APP" → "claude-multi-app"
+ *   "F--MY-PROJECT" → "my-project"
  *   "C--Users-jane"       → "home"
  */
 function cleanProjectName(dirName: string): string {

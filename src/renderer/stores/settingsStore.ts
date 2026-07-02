@@ -36,6 +36,20 @@ export const DEFAULT_STATUS_LINE: StatusLineSettings = {
   fontSize: 12
 }
 
+/** Conductor MCP built-in tool toggles (onboarding p6 / Settings). Each key
+ *  filters a tool group on the conductor MCP server's tool list. */
+export interface ConductorToolsSettings {
+  vision: boolean
+  codexReview: boolean
+  hostTransfer: boolean
+}
+
+export const DEFAULT_CONDUCTOR_TOOLS: ConductorToolsSettings = {
+  vision: true,
+  codexReview: true,
+  hostTransfer: true,
+}
+
 export type UpdateChannel = 'stable' | 'beta'
 
 // 'system' follows the OS prefers-color-scheme; explicit 'dark' / 'light'
@@ -74,10 +88,22 @@ export interface AppSettings {
   inputBarMaxHeight: number
   configPanelPinned: boolean
   statusLine: StatusLineSettings
+  statusLineEnabled?: boolean
+  /** Master for the conductor MCP built-in tools (default on). Gates the MCP
+   *  attach at spawn (local / SSH / Codex); the per-tool flags filter which
+   *  tool groups the server registers. Absent = on (pre-upgrade configs). */
+  conductorToolsEnabled?: boolean
+  conductorTools?: ConductorToolsSettings
+  /** "Do you use Codex?" (onboarding / Settings -> Codex). Absent = never
+   *  answered (existing installs keep full behaviour); false disables Codex
+   *  surfaces incl. the codex_review built-in tool. Codex support is Beta. */
+  codexEnabled?: boolean
   localMachineName: string
   updateChannel: UpdateChannel
-  skipPermissionsForAgents: boolean
   showTips: boolean
+  // Agent Hub first-run "How it works" banner: true once the user dismisses it.
+  // Optional/absent = not yet dismissed (banner shows).
+  agentHubExplainerDismissed?: boolean
   hooksEnabled: boolean
   hooksPort: number
   theme: ThemeMode
@@ -86,6 +112,11 @@ export interface AppSettings {
   identityColorMigratedV2?: boolean      // one-time guard: saved-config colours migrated to identity keys
   colourMigrationNoticePending?: boolean // a colour migration changed records and the notice should show
   colourMigrationNoticeDismissed?: boolean
+  // P2.4: a config section was corrupt and reset/dropped on hydrate; the notice
+  // lists what was dropped so the user isn't silently missing data.
+  configHydrationNoticePending?: boolean
+  configHydrationNoticeDismissed?: boolean
+  configHydrationDropped?: string[]
   /** User-defined per-account email -> identity colour key overrides. Keyed by
    *  canonicalised (lowercase+trim) email. Absent = use the deterministic colour.
    *  v1.5.9: no longer surfaced anywhere in the UI (AccountColoursSection removed).
@@ -122,9 +153,16 @@ export interface AppSettings {
    *  Set false to restore CC's mouse mode (copy-on-select active; right-click pastes).
    *  Changes apply to newly-launched sessions only. */
   classicTerminalCopyPaste?: boolean
-  /** Sentinel service (spec 2026-06-11): when false, the Sentinel service is not
+  /** v2.0: Claude Code >= 2.1.195 renders its question options as CLICKABLE
+   *  targets in the terminal. OFF by default in CCC (absent/false): the spawn
+   *  env gets CLAUDE_CODE_DISABLE_MOUSE_CLICKS=1 so answers stay keyboard-only
+   *  (wheel scroll unaffected) -- the clickable layer misfires inside xterm.
+   *  Set true to restore CC's clickable prompts. New sessions only. */
+  clickableQuestions?: boolean
+  /** Sentinel service (spec 2026-06-11): when not enabled, the service is not
    *  initialised at all — no startup check, no dot, zero overhead.
-   *  Absent or true = enabled (default-on). */
+   *  OPT-IN (default-off): absent or false = disabled; only an explicit `true`
+   *  enables it, because it spends Claude tokens on a Claude Code version change. */
   sentinelEnabled?: boolean
   /** When true (default), the Sentinel panel auto-opens once when a completed
    *  analysis finds open findings. Set false to suppress all automatic opens. */
@@ -171,16 +209,19 @@ export const DEFAULT_SETTINGS: AppSettings = {
   inputBarMaxHeight: 400,
   configPanelPinned: false,
   statusLine: { ...DEFAULT_STATUS_LINE },
+  statusLineEnabled: true,
+  conductorToolsEnabled: true,
+  conductorTools: { ...DEFAULT_CONDUCTOR_TOOLS },
   localMachineName: '',
   updateChannel: 'stable' as const,
-  skipPermissionsForAgents: true,
   showTips: true,
   hooksEnabled: true,
   hooksPort: 19334,
   theme: 'dark',
   loggingEnabled: true,
   classicTerminalCopyPaste: true,
-  sentinelEnabled: true,
+  clickableQuestions: false,
+  sentinelEnabled: false,
   sentinelAutoOpen: true,
   githubAiUsageEnabled: false,
 }
@@ -219,6 +260,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       // newly added fields (e.g. statusLine.font/fontSize) instead of getting undefined.
       statusLine: { ...DEFAULT_STATUS_LINE, ...(settings.statusLine || {}) },
       terminal: { ...DEFAULT_TERMINAL_SETTINGS, ...(settings.terminal || {}) },
+      conductorTools: { ...DEFAULT_CONDUCTOR_TOOLS, ...(settings.conductorTools || {}) },
     }
     const { settings: migrated, changed } = migrateV2Font(merged)
     if (changed) {

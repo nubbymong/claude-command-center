@@ -40,7 +40,7 @@ import type { StatuslineData } from '../shared/types'
 
 // Backwards-compatible re-exports of the lifted Claude-specific helpers.
 // New callers should use getProvider('claude').deployStatuslineScript?.(...).
-export { deployClaudeStatuslineScript as deployStatuslineScript, configureClaudeSettings } from './providers/claude/statusline'
+export { deployClaudeStatuslineScript as deployStatuslineScript, healGlobalStatusline } from './providers/claude/statusline'
 
 // Lazy-initialized: can't call getResourcesDirectory() at module load time
 let STATUS_DIR: string | null = null

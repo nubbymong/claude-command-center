@@ -107,6 +107,26 @@ describe('ConductorServicesPanel', () => {
     expect(JSON.parse(arg)).toEqual(snap)
   })
 
+  it('shows "Copied" feedback after Copy diagnostics is clicked (BUG-2)', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    ;(navigator as any).clipboard = { writeText }
+    mockApi(mkSnap('listening'))
+    const r = await renderPanel({ onClose: () => {} })
+    unmount = r.unmount
+    const copyBtn = findButton(r.container, /Copy/i)
+    await act(async () => { copyBtn.click() })
+    await act(async () => { await Promise.resolve() })
+    expect(findButton(r.container, /Copied/i)).toBeTruthy()
+  })
+
+  it('styles Restart with a warning (red) tone (BUG-3)', async () => {
+    mockApi(mkSnap('listening'))
+    const r = await renderPanel({ onClose: () => {} })
+    unmount = r.unmount
+    const restartBtn = findButton(r.container, /Restart/i)
+    expect(restartBtn.className).toMatch(/red/)
+  })
+
   it('Restart calls serviceHealth.restart("hooks") in utility mode', async () => {
     mockApi(mkSnap('listening'))
     const r = await renderPanel({ onClose: () => {} })

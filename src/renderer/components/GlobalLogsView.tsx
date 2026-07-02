@@ -78,6 +78,7 @@ function SlotTranscriptPanel({
         error={win.error}
         loadOlder={win.loadOlder}
         prependToken={win.prependToken}
+        jumpTarget={win.jumpTarget}
         className="flex-1 min-w-0 px-2"
       />
       <TimelineRail

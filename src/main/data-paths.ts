@@ -31,6 +31,18 @@ let dataDirFromRegistry = false // true if DataDirectory was found in registry
 export function getDataDirectory(): string {
   if (cachedDataDir) return cachedDataDir
 
+  // E2E isolation: when CCC_E2E_DATA_DIR is set (Playwright only, never in
+  // production) use a fresh temp dir as the data root and treat it as
+  // configured so the setup wizard is skipped. Keeps e2e off the user's
+  // real data and registry.
+  const e2eDir = process.env.CCC_E2E_DATA_DIR
+  if (e2eDir) {
+    cachedDataDir = e2eDir
+    dataDirFromRegistry = true
+    logInfo(`[setup] Data directory from E2E override: ${cachedDataDir}`)
+    return cachedDataDir
+  }
+
   const regVal = readRegistry('DataDirectory')
   if (regVal) {
     cachedDataDir = regVal
@@ -47,6 +59,14 @@ export function getDataDirectory(): string {
 // Read resources directory from registry (cached after first call)
 export function getResourcesDirectory(): string {
   if (cachedResourcesDir) return cachedResourcesDir
+
+  // E2E isolation (see getDataDirectory): resources live under the temp data dir.
+  const e2eDir = process.env.CCC_E2E_DATA_DIR
+  if (e2eDir) {
+    cachedResourcesDir = path.join(e2eDir, 'resources')
+    logInfo(`[setup] Resources directory from E2E override: ${cachedResourcesDir}`)
+    return cachedResourcesDir
+  }
 
   const regVal = readRegistry('ResourcesDirectory')
   if (regVal) {

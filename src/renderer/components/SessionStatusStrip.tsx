@@ -2,7 +2,8 @@ import React, { useState } from 'react'
 import { useSessionStore, type Session } from '../stores/sessionStore'
 import { useSettingsStore, DEFAULT_STATUS_LINE } from '../stores/settingsStore'
 import RateLimitBar from './terminal/RateLimitBar'
-import { formatResetTime, formatTokens, formatDuration } from '../utils/terminalFormatting'
+import { formatTokens, formatDuration } from '../utils/terminalFormatting'
+import { canSwitchAccountForSession } from '../utils/sessionLaunch'
 import { useCodexReviewUsage } from '../hooks/useCodexReviewUsage'
 import { useRestartSession } from '../hooks/useRestartSession'
 import { useSwitchAccount } from '../hooks/useSwitchAccount'
@@ -44,6 +45,10 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
   const session = useSessionStore((s) => s.sessions.find((x) => x.id === sessionId) || null)
   const updateSession = useSessionStore((s) => s.updateSession)
   const sl = useSettingsStore((s) => s.settings.statusLine) || DEFAULT_STATUS_LINE
+  // Master status-line switch (onboarding p4 / Settings). Gates ONLY the
+  // telemetry band; the Claude controls cluster (Mode/Model/Restart/account)
+  // stays regardless. Absent (pre-upgrade config) means on.
+  const statusLineEnabled = useSettingsStore((s) => s.settings.statusLineEnabled ?? true)
   const codexReview = useCodexReviewUsage(session?.enableCodexReview ? sessionId : null)
   const { restart } = useRestartSession(session, false)
   const switchAccount = useSwitchAccount(session)
@@ -57,7 +62,7 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
   // Mid-session account switch (respawn + resume): gated on having at least 2
   // profiles (need a real choice). Selector form on every read so the strip
   // never re-renders on unrelated store churn.
-  const canSwitchAccount = profiles.length >= 2
+  const canSwitchAccount = canSwitchAccountForSession({ provider: session?.provider, isSsh: !!session?.sshConfig, shellOnly: !!session?.shellOnly, profileCount: profiles.length })
   const registry = useRegistryStore((s) => s.registry)
   // Copilot AI-credit meter gate. The chip self-gates on githubAiUsageEnabled
   // (returns null when off), so we read the same flag here to avoid rendering
@@ -93,6 +98,9 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
   }
 
   if (!session) return null
+  // A Codex strip is telemetry-only (no controls cluster), so with the master
+  // off there is nothing left to show — collapse the band entirely.
+  if (!statusLineEnabled && !isClaude) return null
 
   const pct = session.contextPercent ?? 0
   // Context-meter thresholds: >85 danger, >=70 warning -- carried over from
@@ -132,7 +140,10 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
       style={{ background: 'var(--surface-raised)', color: 'var(--text-on-chrome)', borderColor: 'var(--border-subtle)' }}
     >
       {/* Telemetry -- inherits statusLine font + fontSize so Settings controls
-          stay honest. Carried over verbatim from BottomBar's middle zone. */}
+          stay honest. Carried over verbatim from BottomBar's middle zone.
+          With the master switch off, a bare spacer keeps the controls cluster
+          right-aligned. */}
+      {statusLineEnabled ? (
       <div
         className="flex items-center gap-3 flex-1 min-w-0 overflow-hidden"
         style={{ fontSize: `${sl.fontSize}px`, fontFamily: sl.font === 'mono' ? "'JetBrains Mono', monospace" : undefined }}
@@ -201,17 +212,14 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
         )}
         {sl.showRateLimits && session.rateLimitCurrent != null && (
           <span className="flex items-center gap-3 shrink-0">
-            <RateLimitBar label="5h" pct={session.rateLimitCurrent} resets={session.rateLimitCurrentResets} />
+            <RateLimitBar label="5h" pct={session.rateLimitCurrent} resets={session.rateLimitCurrentResets} showReset={sl.showResetTime} />
             {session.rateLimitWeekly != null && (
-              <RateLimitBar label="7d" pct={session.rateLimitWeekly} resets={session.rateLimitWeeklyResets} />
+              <RateLimitBar label="7d" pct={session.rateLimitWeekly} resets={session.rateLimitWeeklyResets} showReset={sl.showResetTime} />
             )}
             {session.rateLimitExtra?.enabled && (
               <span className="tabular-nums" style={{ color: 'var(--text-muted)' }}>extra: <span className={session.rateLimitExtra.utilization > 80 ? 'text-red' : ''}>${session.rateLimitExtra.usedUsd.toFixed(2)}</span>/${session.rateLimitExtra.limitUsd.toFixed(0)}</span>
             )}
           </span>
-        )}
-        {sl.showResetTime && session.rateLimitCurrentResets && (
-          <span className="tabular-nums shrink-0" style={{ color: 'var(--text-muted)' }} title="5h window resets">resets {formatResetTime(session.rateLimitCurrentResets)}</span>
         )}
         {codexReview && codexReview.reviewCount > 0 && (
           <span className="tabular-nums shrink-0" style={{ color: 'var(--text-muted)' }}>review {codexReview.reviewCount}</span>
@@ -240,6 +248,9 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
           </>
         )}
       </div>
+      ) : (
+        <div className="flex-1" aria-hidden />
+      )}
 
       {/* Controls (Claude only): Mode + Model as a pair, Compact as a normal
           action, Restart visually separated behind a divider with a quiet

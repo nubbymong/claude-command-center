@@ -10,6 +10,7 @@ import * as path from 'path'
 import { readConfig, writeConfig } from './config-manager'
 import { logInfo, logWarn, logError } from './debug-logger'
 import { resolveVersionBinary, isVersionInstalled, installVersion } from './legacy-version-manager'
+import { isValidLegacyVersion } from '../shared/legacy-version'
 import { getProfileConfigDir, getPrimaryProfileId, setupProfileLinks, listProfiles } from './account-profiles'
 import { withProfileHome } from './pty-manager'
 
@@ -133,6 +134,8 @@ export async function dispatchAgent(params: {
   configId?: string
   profileId?: string
   legacyVersion?: { enabled: boolean; version: string }
+  // Per-run, ephemeral opt-in to --dangerously-skip-permissions. Default OFF.
+  skipPermissions?: boolean
 }): Promise<CloudAgentData> {
   // Resolve the per-account isolated environment up front so the agent record
   // is stamped with the account it actually ran under (drives the card label,
@@ -161,18 +164,23 @@ export async function dispatchAgent(params: {
   // Resolve Claude binary (use legacy version if configured)
   let claudeBin = 'claude'
   if (params.legacyVersion?.enabled && params.legacyVersion.version) {
-    // Auto-install if needed
-    if (!isVersionInstalled(params.legacyVersion.version)) {
-      logInfo(`[cloud-agent] Auto-installing legacy v${params.legacyVersion.version} for agent ${agent.id}`)
-      const result = await installVersion(params.legacyVersion.version)
-      if (!result.ok) {
-        logInfo(`[cloud-agent] Legacy install failed, using system claude: ${result.error}`)
+    if (!isValidLegacyVersion(params.legacyVersion.version)) {
+      // P0.3: never feed a non-semver version into install/spawn — fall back.
+      logWarn(`[cloud-agent] Ignoring invalid legacy version ${JSON.stringify(params.legacyVersion.version)}; using system claude`)
+    } else {
+      // Auto-install if needed
+      if (!isVersionInstalled(params.legacyVersion.version)) {
+        logInfo(`[cloud-agent] Auto-installing legacy v${params.legacyVersion.version} for agent ${agent.id}`)
+        const result = await installVersion(params.legacyVersion.version)
+        if (!result.ok) {
+          logInfo(`[cloud-agent] Legacy install failed, using system claude: ${result.error}`)
+        }
       }
-    }
-    const legacyBin = resolveVersionBinary(params.legacyVersion.version)
-    if (legacyBin) {
-      claudeBin = legacyBin
-      logInfo(`[cloud-agent] Using legacy Claude CLI v${params.legacyVersion.version}: ${legacyBin}`)
+      const legacyBin = resolveVersionBinary(params.legacyVersion.version)
+      if (legacyBin) {
+        claudeBin = legacyBin
+        logInfo(`[cloud-agent] Using legacy Claude CLI v${params.legacyVersion.version}: ${legacyBin}`)
+      }
     }
   }
 
@@ -183,9 +191,11 @@ export async function dispatchAgent(params: {
   const tmpFile = path.join(os.tmpdir(), `ccc-agent-${agent.id}.txt`)
   fs.writeFileSync(tmpFile, params.description, 'utf8')
 
-  // Read setting to decide whether to include --dangerously-skip-permissions
-  const settings = readConfig<{ skipPermissionsForAgents?: boolean }>('settings')
-  const skipPerms = settings?.skipPermissionsForAgents !== false // default true
+  // P1.3 / FEAT-1: cloud-agent dispatch never reads a persisted skip-permissions
+  // setting (the legacy global `skipPermissionsForAgents` was removed in Unit 3;
+  // Insights no longer skips either). The dangerous skip is an explicit,
+  // ephemeral PER-RUN opt-in from the New Agent dialog: default OFF.
+  const skipPerms = params.skipPermissions === true
 
   const pipeCmd = process.platform === 'win32' ? 'type' : 'cat'
   const permFlag = skipPerms ? ' --dangerously-skip-permissions' : ''

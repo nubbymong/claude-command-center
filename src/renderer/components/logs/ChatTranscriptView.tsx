@@ -17,7 +17,7 @@
 //
 // Rendering reuses the T12 components (MarkdownMessage / ToolCallRow); dividers
 // and unknown rows are rendered inline here per the spec.
-import { useLayoutEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import MarkdownMessage from './MarkdownMessage'
 import ToolCallRow from './ToolCallRow'
 import type { Logs2Message } from '../../hooks/useWindowedTurns'
@@ -41,6 +41,13 @@ export interface ChatTranscriptViewProps {
   error: Error | null
   loadOlder: () => Promise<void>
   prependToken: number
+  /**
+   * A search-hit / timeline-rail jump target surfaced by useWindowedTurns. When
+   * its `nonce` changes the view scrolls that message into view (centered) and
+   * briefly flashes it. Optional/absent for the in-session transcript, which
+   * never jumps (it lives at the tail).
+   */
+  jumpTarget?: { runId: number; idx: number; nonce: number } | null
   className?: string
 }
 
@@ -128,6 +135,7 @@ export function ChatTranscriptView({
   error,
   loadOlder,
   prependToken,
+  jumpTarget,
   className,
 }: ChatTranscriptViewProps) {
   const scrollerRef = useRef<HTMLDivElement | null>(null)
@@ -148,6 +156,23 @@ export function ChatTranscriptView({
   // True until the first bottom-anchor has been applied for the current window.
   const didInitialAnchor = useRef(false)
 
+  // ---- Jump-to-result (search hit / timeline-rail click) -------------------
+  // The flash currently shown ({ message key, jump nonce }) or null. Cleared on
+  // a timer so the highlight fades and the UI never stays stuck on an old hit.
+  const [highlight, setHighlight] = useState<{ key: string; nonce: number } | null>(null)
+  // Nonce of a jump whose scroll-into-view this view still owes. Set when a new
+  // jumpTarget arrives, consumed by the scroll-to-target effect. While it is
+  // set, the bottom-anchor effect yields so it can't yank the view to the tail
+  // over the jump.
+  const pendingJumpRef = useRef<number | null>(null)
+  const jumpNonce = jumpTarget?.nonce ?? null
+
+  // Mark a brand-new jump pending. Declared BEFORE the bottom-anchor effect so
+  // pendingJumpRef is set first within the commit and the anchor effect yields.
+  useLayoutEffect(() => {
+    if (jumpNonce !== null) pendingJumpRef.current = jumpNonce
+  }, [jumpNonce])
+
   // Reset the initial-anchor latch when the window reloads (loading flips true).
   // The container reloads the hook on scope change, which sets loading=true; we
   // re-anchor to the bottom on the next non-loading commit.
@@ -160,6 +185,13 @@ export function ChatTranscriptView({
     const el = scrollerRef.current
     if (!el) return
     if (loading) return
+    if (pendingJumpRef.current !== null) {
+      // A jump is pending: the scroll-to-target effect below owns the scroll for
+      // this window. Mark the initial anchor satisfied so we don't slam to the
+      // tail once the centered jump window settles.
+      didInitialAnchor.current = true
+      return
+    }
     if (!didInitialAnchor.current && messages.length > 0) {
       // Initial render: jump (no animation) to the bottom.
       el.scrollTop = el.scrollHeight
@@ -172,6 +204,35 @@ export function ChatTranscriptView({
     }
     // `messages` drives this: any window change re-evaluates the anchor.
   }, [messages, loading, follow])
+
+  // Jump-to-result: once the centered window has settled, scroll the target
+  // message into view and flash it. Declared AFTER the bottom-anchor effect so
+  // it wins the scroll position for a jump.
+  useLayoutEffect(() => {
+    if (loading) return
+    const nonce = pendingJumpRef.current
+    if (nonce === null) return
+    // Consume the latch BEFORE any other guard: even if jumpTarget was wiped by a
+    // scope re-init (leaving a stale pending), we must release the bottom-anchor
+    // yield so the new window isn't wedged. jumpTo loads a window that BEGINS at
+    // the target, so when jumpTarget is present its row should be mounted.
+    pendingJumpRef.current = null
+    if (!jumpTarget) return
+    const el = scrollerRef.current
+    if (!el) return
+    const key = `${jumpTarget.runId}:${jumpTarget.idx}`
+    const node = el.querySelector<HTMLElement>(`[data-msgkey="${key}"]`)
+    if (!node) return
+    node.scrollIntoView({ block: 'center' })
+    setHighlight({ key, nonce })
+  }, [jumpNonce, messages, loading]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Fade the jump flash after it has played so the highlight doesn't linger.
+  useEffect(() => {
+    if (!highlight) return
+    const t = setTimeout(() => setHighlight(null), 1800)
+    return () => clearTimeout(t)
+  }, [highlight?.nonce]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Preserve scroll position when an OLDER page prepends: before paint, add the
   // height the new content introduced so the user's viewport doesn't jump.
@@ -237,9 +298,14 @@ export function ChatTranscriptView({
       )}
 
       <div className="flex flex-col gap-0.5 pb-4">
-        {messages.map((m) => (
-          <TranscriptRow key={`${m.runId}:${m.idx}`} m={m} />
-        ))}
+        {messages.map((m) => {
+          const k = `${m.runId}:${m.idx}`
+          return (
+            <div key={k} data-msgkey={k} className={highlight?.key === k ? 'cct-jump-flash' : undefined}>
+              <TranscriptRow m={m} />
+            </div>
+          )
+        })}
       </div>
     </div>
   )

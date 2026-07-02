@@ -24,7 +24,6 @@ export const IPC = {
   DIALOG_OPEN_FOLDER: 'dialog:openFolder',
 
   // Clipboard
-  CLIPBOARD_READ_IMAGE: 'clipboard:readImage',
   CLIPBOARD_SAVE_IMAGE: 'clipboard:saveImage',
 
   // Credentials
@@ -158,7 +157,6 @@ export const IPC = {
   INSIGHTS_GET_KPIS: 'insights:getKpis',
   INSIGHTS_GET_LATEST: 'insights:getLatest',
   INSIGHTS_IS_RUNNING: 'insights:isRunning',
-  INSIGHTS_SEED: 'insights:seed',
   INSIGHTS_STATUS_CHANGED: 'insights:statusChanged',
 
   // Notes
@@ -214,6 +212,11 @@ export const IPC = {
 
   // CLI
   CLI_CHECK: 'cli:check',
+  CLI_PATH: 'cli:path',
+  CLI_VERSION: 'cli:version',
+
+  // Ask Command Center help workspace
+  HELP_WORKSPACE: 'help:workspace',
 
   // Tokenomics v2 — SQLite-backed summary/sessions/detail + index push
   TOKENOMICS2_SUMMARY: 'tokenomics2:summary',

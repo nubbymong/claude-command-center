@@ -88,7 +88,7 @@ describe('selectAiChip (whole-month report, no cycle)', () => {
     const r = report([item({ grossQuantity: 8120 })])
     const chip = selectAiChip(r, null)
     expect(chip.tone).toBe('normal')
-    expect(chip.label).toBe('Copilot 8.1k')
+    expect(chip.label).toBe('Copilot 8.1k credits')
     expect(chip.creditsUsed).toBe(8120)
   })
 
@@ -125,7 +125,7 @@ describe('selectAiChip (whole-month report, no cycle)', () => {
     const r = report([item({ grossQuantity: 22000, billedAmount: 11.69 })], 11.69)
     const chip = selectAiChip(r, null)
     expect(chip.tone).toBe('normal')
-    expect(chip.label).toBe(`Copilot 22k ${DOT} +$11.69`)
+    expect(chip.label).toBe(`Copilot 22k credits ${DOT} +$11.69`)
   })
 
   it('zero billed is NOT a warning even with usage present', () => {
@@ -135,8 +135,8 @@ describe('selectAiChip (whole-month report, no cycle)', () => {
 
   it('cap of 0 or negative is treated as unset', () => {
     const r = report([item({ grossQuantity: 100 })])
-    expect(selectAiChip(r, 0).label).toBe('Copilot 100')
-    expect(selectAiChip(r, -5).label).toBe('Copilot 100')
+    expect(selectAiChip(r, 0).label).toBe('Copilot 100 credits')
+    expect(selectAiChip(r, -5).label).toBe('Copilot 100 credits')
   })
 
   it('every label is prefixed "Copilot" (the renamed meter, not the bare "AI")', () => {
@@ -174,7 +174,7 @@ describe('selectAiChip (cycle-scoped included credits)', () => {
     const month = report([item({ grossQuantity: 9342 })])
     const chip = selectAiChip(month, null, cycle({ creditsUsed: 500, billedUsd: 11.69 }))
     expect(chip.tone).toBe('normal')
-    expect(chip.label).toBe(`Copilot 500 ${DOT} +$11.69`)
+    expect(chip.label).toBe(`Copilot 500 credits ${DOT} +$11.69`)
   })
 
   it('cycle with cap, no overage, fully covered: just the ratio (the user-approved calm chip)', () => {

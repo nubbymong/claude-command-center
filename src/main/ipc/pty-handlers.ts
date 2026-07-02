@@ -4,6 +4,7 @@ import { spawnPty, writePty, resizePty, killPty, getSshFlow, SSHOptions } from '
 import { logUserInput, isDebugModeEnabled } from '../debug-capture'
 import { logInfo } from '../debug-logger'
 import { isVersionInstalled, installVersion } from '../legacy-version-manager'
+import { isValidLegacyVersion } from '../../shared/legacy-version'
 import { loadCredential } from '../credential-store'
 import { IPC } from '../../shared/ipc-channels'
 import { getPtyIntegrityMonitor } from '../services/pty-integrity-monitor'
@@ -40,6 +41,12 @@ export const spawnOptionsSchema = z.object({
   legacyVersion: z.object({
     enabled: z.boolean(),
     version: z.string(),
+  }).refine((lv) => !lv.enabled || isValidLegacyVersion(lv.version), {
+    // P0.3: only a legacy-ENABLED session uses the version as a path/spawn
+    // coordinate, so only then must it be strict semver. Disabled configs may
+    // carry a stale/empty version that is never used — leave those alone.
+    path: ['version'],
+    message: 'legacyVersion.version must be valid semver when enabled',
   }).optional(),
   agentsConfig: z.array(z.object({
     name: z.string(),

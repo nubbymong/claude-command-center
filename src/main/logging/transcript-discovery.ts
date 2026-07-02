@@ -22,13 +22,13 @@
  * NOTE: all four verified pairs are ASCII-only inputs/outputs. The behaviour of
  * `[^A-Za-z0-9]→'-'` for non-ASCII characters (e.g. accented letters, CJK) is an
  * unverified assumption — Claude CLI's actual handling of non-ASCII cwds is unknown.
- *   F:\CLAUDE_MULTI_APP                              → F--CLAUDE-MULTI-APP
+ *   F:\MY_PROJECT                              → F--MY-PROJECT
  *     (underscore → hyphen, colon → hyphen, backslash → hyphen)
- *   f:\platform_v9                                   → f--platform-v9
+ *   f:\sample_app                                   → f--sample-app
  *     (lowercase drive preserved, underscore → hyphen)
- *   F:\platform_v9\.claude-worktrees\warm-toolchain  → F--platform-v9--claude-worktrees-warm-toolchain
+ *   F:\sample_app\.claude-worktrees\warm-toolchain  → F--sample-app--claude-worktrees-warm-toolchain
  *     (dot → hyphen, each non-alnum replaced individually — NO run-collapsing)
- *   C:\Users\nicho                                   → C--Users-nicho
+ *   C:\Users\jane                                   → C--Users-jane
  *
  * NOTE: src/main/utils/claude-project-path.ts uses a DIFFERENT (older/looser) rule —
  * it preserves underscores and collapses separator runs. That helper serves a separate

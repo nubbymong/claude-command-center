@@ -7,10 +7,20 @@ import ScreenshotButton from './ScreenshotButton'
 import ExcalidrawButton from './ExcalidrawButton'
 import LogsButton from './LogsButton'
 import WebviewButton from './WebviewButton'
+import PasteHint from './PasteHint'
 import { useWebviewStore, pollUrlForContent, probeWebviewUrls } from '../stores/webviewStore'
 import { generateId } from '../utils/id'
 import { trackUsage } from '../stores/tipsStore'
 import { CODEX_MODELS } from '../codex-models'
+import { useResolvedTheme } from '../hooks/useThemeController'
+
+// User-picked section colours (SECTION_TEXT_COLORS) are Mocha pastels tuned
+// for dark surfaces; rendered as bare text on the light theme they wash out.
+// Darken them toward the theme's text colour in light mode, keep verbatim in dark.
+function legibleSectionColor(color: string | null | undefined, theme: 'dark' | 'light'): string | undefined {
+  if (!color) return undefined
+  return theme === 'light' ? `color-mix(in srgb, ${color} 55%, var(--text-primary))` : color
+}
 
 // -- Codex toolbar sub-components --
 
@@ -81,6 +91,7 @@ interface Props {
 
 export default function CommandBar({ sessionId, configId, sessionType = 'local', partnerEnabled, isPartnerActive, onTogglePartner, partnerSessionId, parentSessionId }: Props) {
   const webviewKey = parentSessionId ?? sessionId
+  const resolvedTheme = useResolvedTheme()
   const { commands, sections, addCommand, updateCommand, removeCommand, reorderCommands, updateSection, removeSection, reorderSections } = useCommandStore()
   const [showDialog, setShowDialog] = useState(false)
   const [editingCommand, setEditingCommand] = useState<CustomCommand | null>(null)
@@ -492,11 +503,11 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
                   <svg
                     width="7" height="7" viewBox="0 0 8 8" fill="none" stroke="currentColor" strokeWidth="1.5"
                     className="shrink-0 transition-transform"
-                    style={{ transform: isCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)', color: section.color || undefined }}
+                    style={{ transform: isCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)', color: legibleSectionColor(section.color, resolvedTheme) }}
                   >
                     <path d="M1.5 2.5l2.5 3 2.5-3" />
                   </svg>
-                  <span style={{ color: section.color || undefined }}>{section.name}</span>
+                  <span style={{ color: legibleSectionColor(section.color, resolvedTheme) }}>{section.name}</span>
                   {isCollapsed && sectionCmds.length > 0 && <span className="text-[9px] text-overlay0 font-normal">{sectionCmds.length}</span>}
                 </button>
                 {!isCollapsed && sectionCmds.map(renderCommandButton)}
@@ -510,6 +521,7 @@ export default function CommandBar({ sessionId, configId, sessionType = 'local',
 
   return (
     <div className="flex flex-col shrink-0" onContextMenu={(e) => handleContextMenu(e, undefined, 'claude')}>
+      <PasteHint sessionId={sessionId} />
       {/* Row 1: Magic buttons */}
       <div className="flex items-center gap-1 px-2 py-0.5 border-t" style={{ background: 'var(--surface-chrome)', borderColor: 'var(--border-subtle)' }}>
         {/* Collapse toggle -- chevron + "Commands" + visible-command count.

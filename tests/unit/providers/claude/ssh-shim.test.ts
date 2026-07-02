@@ -146,6 +146,54 @@ describe('SSH remote setup script (P7.8 -- --mcp-config migration)', () => {
     expect(sesCfgLine).not.toContain('mcpServers')
   })
 
+  // Master status-line switch (onboarding p4): includeStatusLine=false must
+  // omit the statusLine stanza from the per-session settings while leaving
+  // the rest of the setup (hooks, mcp, legacy cleanup) intact.
+  it('includes the statusLine stanza by default', () => {
+    const script = generateRemoteSetupScript('sid-x', null)
+    expect(script).toContain(`statusLine:{type:'command'`)
+  })
+
+  it('includeStatusLine=false omits the statusLine stanza from the per-session settings', () => {
+    const script = generateRemoteSetupScript('sid-x', null, { includeStatusLine: false })
+    const parts = script.split(`Object.assign({},sBase,{`)
+    expect(parts.length).toBeGreaterThanOrEqual(2)
+    const sesCfgLine = parts[1].split(`})`)[0]
+    expect(sesCfgLine).not.toContain('statusLine')
+    // The shim file is still staged (inert without the stanza) and the
+    // legacy-global cleanup still runs.
+    expect(script).toContain('conductor-ssh-statusline.js')
+  })
+
+  // Master-off + legacy remote: the per-session clone must strip a legacy
+  // shared statusLine stanza BEFORE the clone is written, or the first
+  // post-upgrade connect inherits it despite the master being off (the
+  // shared-file heal runs after the clone is taken).
+  it('strips a legacy statusLine stanza from the sBase clone itself', () => {
+    const script = generateRemoteSetupScript('sid-x', null, { includeStatusLine: false })
+    expect(script).toContain('delete sBase.statusLine')
+    // Ordering: the sBase strip appears before the per-session settings write.
+    expect(script.indexOf('delete sBase.statusLine')).toBeLessThan(script.indexOf('sesPath'))
+  })
+
+  it('configureRemoteSettings threads the master-switch opts through to the script', () => {
+    const p = new ClaudeProvider()
+    const on = p.configureRemoteSettings('sid-x', '~/repo', null)
+    const off = p.configureRemoteSettings('sid-x', '~/repo', null, { includeStatusLine: false })
+    expect(on).not.toBe(off)
+  })
+
+  // Built-in tools master (onboarding p6): off = empty remote mcpServers,
+  // exactly like the port-0 fallback; statusline is independent of this flag.
+  it('includeConductorMcp=false writes empty remote mcpServers (no built-in tools)', () => {
+    const script = generateRemoteSetupScript('sid-x', null, { includeConductorMcp: false })
+    const writeMatch = script.match(/fs\.writeFileSync\(mcpPath,"([^"\\]|\\.)*"\)/)
+    expect(writeMatch).not.toBeNull()
+    expect(writeMatch![0]).toContain('\\"mcpServers\\":{}')
+    expect(writeMatch![0]).not.toContain('conductor')
+    expect(script).toContain(`statusLine:{type:'command'`)
+  })
+
   // P7.8 parity with writeLocalSessionMcpConfig: when the conductor server
   // hasn't bound yet (port=0), write an empty mcpServers object rather than
   // pointing at a phantom port. Mirrors the local writer's behaviour and

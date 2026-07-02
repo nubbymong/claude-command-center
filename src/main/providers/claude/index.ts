@@ -38,9 +38,9 @@ export class ClaudeProvider implements SshCapableProvider {
     return { cmd, args: ['--resume', sessionId] }
   }
   async configureMcpServer(_cfg: { name: string; url: string }): Promise<void> {
-    // MCP injection currently flows through vision-manager.startConductorMcpServer,
-    // which calls injectMcpSettings internally at boot time. This method exists for
-    // future provider parity (e.g. Codex MCP injection) but has no active callers yet.
+    // Conductor MCP now flows per-session via --mcp-config (writeLocalSessionMcpConfig);
+    // there is no global ~/.claude.json injection. This method exists for future
+    // provider parity (e.g. Codex MCP) but has no active callers yet.
   }
   getSshSettingsPath(sessionId: string): string {
     return remoteSessionSettingsPath(sessionId)
@@ -48,8 +48,13 @@ export class ClaudeProvider implements SshCapableProvider {
   getSshMcpConfigPath(sessionId: string): string {
     return remoteSessionMcpConfigPath(sessionId)
   }
-  configureRemoteSettings(sessionId: string, remotePath: string, hooksConfig: { port: number; secret: string } | null): string {
-    return getRemoteSetupCommand(sessionId, remotePath, hooksConfig)
+  configureRemoteSettings(
+    sessionId: string,
+    remotePath: string,
+    hooksConfig: { port: number; secret: string } | null,
+    opts?: { includeStatusLine?: boolean; includeConductorMcp?: boolean },
+  ): string {
+    return getRemoteSetupCommand(sessionId, remotePath, hooksConfig, opts)
   }
   async deployStatuslineScript(resourcesDir: string): Promise<void> {
     return deployClaudeStatuslineScript(resourcesDir)

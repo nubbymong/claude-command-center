@@ -106,6 +106,15 @@
      content rather than a hovering element. */
   --shadow-fab: 0 3px 10px rgba(0,0,0,.4);
   --highlight-inset: inset 0 1px 0 rgba(255,255,255,.04);
+
+  /* Onboarding harness — brand orange (NOT the app teal); scoped to the first-run flow. */
+  --ob: #e8915c;
+  --ob-bright: #f0a06a;
+  --ob-deep: #c47b4a;
+  --ob-soft: rgba(232,145,92,.14);
+  --ob-line: rgba(232,145,92,.45);
+  --field: #0c1117;
+  --serif: 'Georgia', 'Times New Roman', serif;
 }
 
 /* Light theme — "foggy daylight" not "bright sunlight". The first
@@ -195,6 +204,14 @@
   --shadow-panel: 7px 0 18px -6px rgba(0,0,0,.16);
   --shadow-raised: -11px 0 26px rgba(0,0,0,.20);
   --highlight-inset: inset 0 1px 0 rgba(255,255,255,.5); /* inverted: light substrate needs a bright top highlight */
+
+  /* Onboarding harness — brand orange, light values. */
+  --ob: #b3612e;
+  --ob-bright: #c47b4a;
+  --ob-deep: #9a4f29;
+  --ob-soft: rgba(179,97,46,.10);
+  --ob-line: rgba(179,97,46,.5);
+  --field: #cdd5e0;
 }
 
 body {
@@ -356,6 +373,24 @@ body {
 .channels-toast { animation: ccc-tray-in 180ms ease-out; }
 @keyframes ccc-tray-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .channels-toast { animation: none; } }
+
+/* Logs transcript jump-to-result flash. Clicking a search hit or a timeline-
+   rail cell loads a window centered on the target message; ChatTranscriptView
+   scrolls it into view and tags it with this class so the eye lands on the exact
+   row. The wash fades from peach back to transparent and JS removes the class
+   after it plays (~1.8s). Respects prefers-reduced-motion -- the scroll still
+   happens; only the flash is dropped (mirrors footer-update-pulse above). */
+@keyframes cct-jump-flash {
+  from { background-color: color-mix(in oklab, var(--color-peach) 42%, transparent); }
+  to   { background-color: transparent; }
+}
+.cct-jump-flash {
+  animation: cct-jump-flash 1.8s ease-out;
+  border-radius: 0.5rem;
+}
+@media (prefers-reduced-motion: reduce) {
+  .cct-jump-flash { animation: none; }
+}
 
 /* Logs v2 transcript markdown body. No typography plugin is installed (the
    `prose` classes are inert), so transcript message bodies get a small scoped

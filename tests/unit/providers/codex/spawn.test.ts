@@ -21,6 +21,14 @@ vi.mock('../../../../src/main/ipc/setup-handlers', () => ({
   getResourcesDirectory: () => (globalThis as any).__mockResourcesDir ?? '',
 }))
 
+// U6: buildCodexSpawn reads the live conductor MCP port + secret to emit the
+// per-spawn `-c` overrides. Drive them per-test via globals; default port 0
+// (server not bound) so the existing tests see no MCP flags.
+vi.mock('../../../../src/main/conductor-mcp-server', () => ({
+  getConductorMcpPort: () => (globalThis as any).__mockMcpPort ?? 0,
+  getConductorMcpSecret: () => 'test-secret-123',
+}))
+
 import * as osMod from 'os'
 import { execSync } from 'child_process'
 import { CodexProvider } from '../../../../src/main/providers/codex'
@@ -104,6 +112,40 @@ describe('CodexProvider', () => {
       codexOptions: { model: 'gpt-5.5', permissionsPreset: 'standard' },
     })
     expect(out.env.CLAUDE_MULTI_SESSION_ID).toBe('session-xyz')
+  })
+
+  it('injects per-spawn conductor MCP -c flags + bearer-token env when the MCP port is live (U6)', () => {
+    ;(globalThis as any).__mockMcpPort = 19333
+    try {
+      const out = new CodexProvider().buildSpawnCommand({
+        sessionId: 'sid',
+        codexOptions: { model: 'gpt-5.5', permissionsPreset: 'standard' },
+      })
+      expect(out.args).toContain('mcp_servers.conductor.url=http://localhost:19333/mcp?source=codex')
+      expect(out.args).toContain('mcp_servers.conductor.enabled=true')
+      expect(out.args).toContain('mcp_servers.conductor.bearer_token_env_var=CONDUCTOR_MCP_TOKEN')
+      // Token rides a bearer header via env -- NOT the URL -- so the URL has no
+      // `&` and survives the cmd.exe .cmd-shim spawn path.
+      expect(out.env.CONDUCTOR_MCP_TOKEN).toBe('test-secret-123')
+      const urlFlag = out.args.find((a) => a.startsWith('mcp_servers.conductor.url='))
+      expect(urlFlag).not.toContain('&')
+    } finally {
+      delete (globalThis as any).__mockMcpPort
+    }
+  })
+
+  it('omits the conductor MCP flags + token env when the MCP port is 0 (server not bound) (U6)', () => {
+    ;(globalThis as any).__mockMcpPort = 0
+    try {
+      const out = new CodexProvider().buildSpawnCommand({
+        sessionId: 'sid',
+        codexOptions: { model: 'gpt-5.5', permissionsPreset: 'standard' },
+      })
+      expect(out.args.find((a) => a.startsWith('mcp_servers.conductor'))).toBeUndefined()
+      expect(out.env.CONDUCTOR_MCP_TOKEN).toBeUndefined()
+    } finally {
+      delete (globalThis as any).__mockMcpPort
+    }
   })
 
   it('wraps .cmd binary in cmd.exe /c on win32 for node-pty', () => {

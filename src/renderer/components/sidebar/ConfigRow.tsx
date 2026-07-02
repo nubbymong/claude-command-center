@@ -3,6 +3,8 @@ import { TerminalConfig } from '../../stores/configStore'
 import { ShellBadge, SshBadge } from './Badges'
 import { resolveIdentityColor, bucketLegacyColorToKey } from '../../../shared/identity-colors'
 import { useResolvedTheme } from '../../hooks/useThemeController'
+import { useSettingsStore } from '../../stores/settingsStore'
+import { CODEX_OFF_LAUNCH_REASON } from '../../hooks/useLaunchConfig'
 
 interface ConfigRowProps {
   config: TerminalConfig
@@ -25,6 +27,11 @@ export default function ConfigRow({ config, onLaunch, onEdit, onDelete, onPin, o
   // colour is held in the dot and badges only.
   const theme = useResolvedTheme()
   const dotColour = resolveIdentityColor(config.identityColorKey ?? bucketLegacyColorToKey(config.color), theme)
+  // Codex configs can't launch while the Codex master is off (user decision
+  // 2026-07-02): mark the row disabled with the reason instead of a dead play
+  // button. Reactive so flipping the master in Settings updates rows live.
+  const codexOff = useSettingsStore((s) => s.settings.codexEnabled === false)
+  const launchBlocked = codexOff && config.provider === 'codex'
   return (
     <div
       className={`flex items-center gap-1.5 rounded py-1 px-2 group transition-colors hover:bg-surface0/50 ${isDragOver ? 'border-t-2 border-blue' : ''}`}
@@ -40,14 +47,28 @@ export default function ConfigRow({ config, onLaunch, onEdit, onDelete, onPin, o
         style={{ backgroundColor: dotColour }}
         aria-hidden
       />
-      <span className="text-xs text-text truncate flex-1">{config.label}</span>
+      <span className={`text-xs truncate flex-1 ${launchBlocked ? 'text-overlay0' : 'text-text'}`}>{config.label}</span>
+      {launchBlocked && (
+        <span
+          className="text-[9px] text-overlay0 border border-surface1 rounded-full px-1.5 shrink-0"
+          title={CODEX_OFF_LAUNCH_REASON}
+        >
+          Codex off
+        </span>
+      )}
       {config.sessionType === 'ssh' && <SshBadge />}
       {config.shellOnly && <ShellBadge />}
       <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
         <button
-          onClick={onLaunch}
-          className="p-1 rounded hover:bg-surface1 text-overlay1 hover:text-text focus-ring"
-          title="Launch"
+          onClick={launchBlocked ? undefined : onLaunch}
+          disabled={launchBlocked}
+          aria-disabled={launchBlocked}
+          className={
+            launchBlocked
+              ? 'p-1 rounded text-overlay0/50 cursor-not-allowed'
+              : 'p-1 rounded hover:bg-surface1 text-overlay1 hover:text-text focus-ring'
+          }
+          title={launchBlocked ? CODEX_OFF_LAUNCH_REASON : 'Launch'}
         >
           <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><polygon points="3,1 10,6 3,11" /></svg>
         </button>

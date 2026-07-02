@@ -76,7 +76,9 @@ process.stdout.write(' ');
 export function generateRemoteSetupScript(
   sessionId: string,
   hooksConfig: { port: number; secret: string } | null,
+  opts?: { includeStatusLine?: boolean; includeConductorMcp?: boolean },
 ): string {
+  const { includeStatusLine = true, includeConductorMcp = true } = opts ?? {}
   // Conductor MCP server is always running (independent of browser/vision config),
   // so SSH sessions always get the conductor MCP entry pointing at the
   // reverse-tunneled MCP port. The fetch_host_screenshot tool is always available;
@@ -88,7 +90,9 @@ export function generateRemoteSetupScript(
   // pointing at a phantom 19333 endpoint that may or may not match where the
   // server actually came up.
   const mcpPort = getConductorMcpPort()
-  const hasVision = mcpPort > 0
+  // Built-in tools master off => empty remote mcpServers, same as the port-0
+  // fallback: the session sees no tools rather than a dangling endpoint.
+  const hasVision = mcpPort > 0 && includeConductorMcp
   // Embed the shim as a JSON string literal -- Node parses it back to source
   const shimLiteral = JSON.stringify(SSH_STATUSLINE_SHIM)
   // Sanitise for path use -- sessionId comes from session.id (generateId), but
@@ -133,9 +137,12 @@ export function generateRemoteSetupScript(
         },
       })
     : JSON.stringify({ mcpServers: {} })
-  const sesCfgParts: string[] = [
-    `statusLine:{type:'command',command:'CLAUDE_MULTI_SESSION_ID=${sessionId} node '+shimPath}`,
-  ]
+  // Master status-line switch: with it off, the per-session clone simply gets
+  // no statusLine key (the shim file is still staged but inert without it).
+  const sesCfgParts: string[] = []
+  if (includeStatusLine) {
+    sesCfgParts.push(`statusLine:{type:'command',command:'CLAUDE_MULTI_SESSION_ID=${sessionId} node '+shimPath}`)
+  }
   if (hooksLiteral) sesCfgParts.push(`hooks:${hooksLiteral}`)
 
   // Build as semicolon-separated statements -- NO comments (they break single-lining)
@@ -156,6 +163,12 @@ export function generateRemoteSetupScript(
     // file should not carry any mcpServers state. Claude CLI ignores it
     // there anyway; stripping prevents stale entries from leaking through.
     `const sBase=Object.assign({},s);delete sBase.mcpServers`,
+    // Strip a LEGACY statusLine stanza from the clone too, not just the shared
+    // file below: with includeStatusLine=false there is no CCC override, so a
+    // pre-per-session install's shared stanza would otherwise be inherited by
+    // the per-session file on the FIRST post-upgrade connect (the shared-file
+    // heal further down runs after this clone is taken).
+    `if(sBase.statusLine&&typeof sBase.statusLine.command==='string'&&sBase.statusLine.command.includes('conductor-ssh-statusline'))delete sBase.statusLine`,
     // Per-session settings -- clone of shared (without mcpServers) with CCC
     // keys overridden.
     `const sesPath=path.join(claudeDir,'settings-${safeSid}.json')`,
@@ -177,7 +190,7 @@ export function generateRemoteSetupScript(
     `if(s.mcpServers){if(s.mcpServers['conductor-vision'])delete s.mcpServers['conductor-vision'];if(s.mcpServers['conductor'])delete s.mcpServers['conductor']}`,
     `try{fs.writeFileSync(sp,JSON.stringify(s,null,2))}catch{}`,
     `try{const cj=path.join(home,'.claude.json');if(fs.existsSync(cj)){let c=JSON.parse(fs.readFileSync(cj,'utf-8'));let mut=false;if(c.mcpServers){if(c.mcpServers['conductor-vision']){delete c.mcpServers['conductor-vision'];mut=true}if(c.mcpServers['conductor']){delete c.mcpServers['conductor'];mut=true}}if(mut)fs.writeFileSync(cj,JSON.stringify(c,null,2))}}catch{}`,
-    `try{const md=path.join(claudeDir,'CLAUDE.md');let c=fs.readFileSync(md,'utf-8');const rx=/\\n?\\n?<!-- VISION-INSTRUCTIONS-START -->[\\s\\S]*?<!-- VISION-INSTRUCTIONS-END -->\\n?/g;if(rx.test(c)){c=c.replace(rx,'').trim();c?fs.writeFileSync(md,c+'\\n'):fs.unlinkSync(md)}}catch{}`,
+    `try{const md=path.join(claudeDir,'CLAUDE.md');let c=fs.readFileSync(md,'utf-8');const rx=/\\n?\\n?<!-- VISION-INSTRUCTIONS-START -->[\\s\\S]*?<!-- VISION-INSTRUCTIONS-END -->\\n?/g;if(rx.test(c)){c=c.replace(rx,'').trim();fs.writeFileSync(md,c?c+'\\n':'')}}catch{}`,
     `process.stdout.write('setup ok\\n')`,
   ]
   return lines.join(';')
@@ -200,6 +213,19 @@ export function remoteSessionSettingsPath(sessionId: string): string {
 export function remoteSessionMcpConfigPath(sessionId: string): string {
   const safeSid = sessionId.replace(/[^a-zA-Z0-9_-]/g, '_')
   return `~/.claude/mcp-${safeSid}.json`
+}
+
+/**
+ * U8: the in-band cleanup command run down a live SSH PTY when a session is
+ * explicitly closed -- removes the two per-session sidecars CCC planted on the
+ * remote (`settings-<sid>.json` + `mcp-<sid>.json`). The shared statusline shim
+ * is reused across sessions so it is left in place; the shared settings /
+ * .claude.json edits are removals (healing), not plants, so nothing else needs
+ * sweeping. The session id is sanitized to the same safe form used for the
+ * filenames, so it cannot smuggle shell metacharacters into the command.
+ */
+export function buildRemoteSessionCleanupCommand(sessionId: string): string {
+  return `rm -f ${remoteSessionSettingsPath(sessionId)} ${remoteSessionMcpConfigPath(sessionId)}\n`
 }
 
 /**
@@ -246,9 +272,10 @@ export function getRemoteSetupCommand(
   sessionId: string,
   remotePath: string,
   hooksConfig: { port: number; secret: string } | null,
+  opts?: { includeStatusLine?: boolean; includeConductorMcp?: boolean },
 ): string {
   assertSafeRemotePath(remotePath)
-  const script = generateRemoteSetupScript(sessionId, hooksConfig)
+  const script = generateRemoteSetupScript(sessionId, hooksConfig, opts)
   const b64 = Buffer.from(script).toString('base64')
   // `cd --` so a path beginning with "-" is treated as an operand, not an option.
   return `stty -echo 2>/dev/null; echo '${b64}' | base64 -d | node 2>/dev/null; stty echo 2>/dev/null; cd -- ${remotePath} && clear`

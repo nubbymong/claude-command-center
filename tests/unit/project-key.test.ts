@@ -5,13 +5,13 @@ import { mangleCwdToProjectDir } from '../../src/shared/project-key'
 // against real ~/.claude/projects in transcript-discovery's original tests.
 describe('mangleCwdToProjectDir (canonical shared key)', () => {
   it.each([
-    ['F:\\CLAUDE_MULTI_APP', 'F--CLAUDE-MULTI-APP'],
-    ['C:\\Users\\nicho', 'C--Users-nicho'],
+    ['F:\\MY_PROJECT', 'F--MY-PROJECT'],
+    ['C:\\Users\\jane', 'C--Users-jane'],
     ['/home/user/my.project', '-home-user-my-project'],
-    // NOTE: input has platform-v9 (hyphen, already alphanum-bounded); `\` and `.`
-    // each become one `-`; the hyphen in `platform-v9` is itself already a `-`
+    // NOTE: input has sample-app (hyphen, already alphanum-bounded); `\` and `.`
+    // each become one `-`; the hyphen in `sample-app` is itself already a `-`
     // in the output, so no extra hyphen is inserted — the result is 2 hyphens
     // before `.claude`, NOT 3. Task plan's expected value had a typo here.
-    ['F:\\platform-v9\\.claude-worktrees\\warm-toolchain', 'F--platform-v9--claude-worktrees-warm-toolchain'],
+    ['F:\\sample-app\\.claude-worktrees\\warm-toolchain', 'F--sample-app--claude-worktrees-warm-toolchain'],
   ])('%s -> %s', (cwd, dir) => expect(mangleCwdToProjectDir(cwd)).toBe(dir))
 })

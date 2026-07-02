@@ -6,11 +6,13 @@ import { randomBytes } from 'crypto'
 import { registerPtyHandlers } from './ipc/pty-handlers'
 import { registerUsageHandlers } from './ipc/usage-handlers'
 import { registerDiscoveryHandlers } from './ipc/discovery-handlers'
-import { killAllPty, gracefulExitAllPty } from './pty-manager'
+import { killAllPty, gracefulExitAllPty, resolveClaudeForPty } from './pty-manager'
+import { spawnClaudeHeadless } from './claude-headless'
+import { parseClaudeVersion } from './sentinel/sentinel-version'
 import { registerResumeHandlers } from './ipc/resume-handlers'
 import { registerLogs2Handlers } from './ipc/logs2-handlers'
 
-import { startStatuslineWatcher, setTranscriptPathSink } from './statusline-watcher'
+import { startStatuslineWatcher, setTranscriptPathSink, healGlobalStatusline } from './statusline-watcher'
 import { registerProvider, getProvider } from './providers'
 import { ClaudeProvider } from './providers/claude'
 import { CodexProvider } from './providers/codex'
@@ -18,6 +20,7 @@ import { registerDebugHandlers } from './ipc/debug-handlers'
 import { disableDebugMode } from './debug-capture'
 import { registerUpdateHandlers } from './ipc/update-handlers'
 import { registerSetupHandlers, getResourcesDirectory, getDataDirectory } from './ipc/setup-handlers'
+import { ensureHelpWorkspace } from './help-workspace'
 import { registerScreenshotHandlers } from './ipc/screenshot-handlers'
 import { registerWebviewHandlers } from './ipc/webview-handlers'
 import { closeAllWebviews } from './webview-manager'
@@ -50,6 +53,7 @@ import { startEffortTracker } from './effort-tracker'
 import { startAttentionSource } from './attention-source'
 import { startJankDetector } from './jank-detector'
 import { readClipboardImageWithRetry } from './clipboard-image'
+import { readClipboardImageFilePath, type PasteableImage } from './clipboard-file'
 import { HooksGateway } from './hooks/hooks-gateway'
 import { setGateway, getGateway } from './hooks'
 import { ServiceSupervisor } from './services/service-supervisor'
@@ -58,7 +62,8 @@ import { start as startLoopStallMonitor, stop as stopLoopStallMonitor } from './
 import { initLogging, shutdownLogging, getTranscriptBinder } from './logging/logging-service'
 import { detectOldLogArtifacts, executeWipe } from './logging/logs-wipe'
 import { backfillCompanionDirs, nodeFsCompanionDeps } from './logging/companion-dir'
-import { cleanupStaleHookEntries } from './hooks/boot-cleanup'
+import { cleanupStaleHookEntries, cleanupStaleMcpConfigs } from './hooks/boot-cleanup'
+import { isSentinelEnabled } from '../shared/sentinel-enabled'
 import { DEFAULT_HOOKS_PORT } from './hooks/hooks-types'
 import { fetchModelPricing } from './tokenomics/tk-pricing'
 import { killAllAgents } from './cloud-agent-manager'
@@ -73,6 +78,7 @@ import { readConfig } from './config-manager'
 import { loadCredential, saveCredential, deleteCredential } from './credential-store'
 import { resolveConductorMcpPort } from '../shared/mcp-ports'
 import { IPC } from '../shared/ipc-channels'
+import { safeExternalHttpsHref } from '../shared/safe-url'
 
 import { migrateRegistryKeys } from './registry'
 import { installGlobalErrorHandlers, logInfo, logError, closeDebugLogger, setVerboseBaseline } from './debug-logger'
@@ -411,42 +417,35 @@ function createWindow(): void {
     return img.resize({ height: maxDim, quality: 'good' as const })
   }
 
-  // Clipboard image reading (legacy — kept for compatibility, prefer saveImage)
-  // Uses readClipboardImageWithRetry so the first Alt+V after copying an image
-  // doesn't miss on Windows' delayed-render clipboard sync.
-  ipcMain.handle('clipboard:readImage', async () => {
-    const img = await readClipboardImageWithRetry()
-    if (!img) return null
-    const resized = constrainToMaxDim(img, 1920)
-    return resized.toJPEG(85).toString('base64')
-  })
-
   // Save clipboard image to a unique file in the host screenshots dir and return its
   // bare filename so the renderer can use the conductor MCP fetch_host_screenshot tool.
   // Returns { filename, path } so callers have both the bare name (for the MCP tool)
   // and the absolute path (for local-only flows that bypass MCP).
-  ipcMain.handle('clipboard:saveImage', async () => {
+  ipcMain.handle('clipboard:saveImage', async (): Promise<PasteableImage> => {
+    const screenshotsDir = join(getResourcesDirectory(), 'screenshots')
     // Retry the read so the FIRST Alt+V after copying an image reliably detects
     // it -- Windows' delayed-render clipboard can return empty on the first read
     // after the window gains focus, which was the "no image detected" miss.
     const img = await readClipboardImageWithRetry()
-    if (!img) return null
-    // [perf] resize + JPEG encode is the suspected clipboard-paste freeze; time it
-    // with the source dimensions, since cost scales with input size.
-    const __t0 = Date.now()
-    const resized = constrainToMaxDim(img, 1920)
-    const jpeg = resized.toJPEG(85)
-    const __dt = Date.now() - __t0
-    if (__dt > 150) {
-      const s = img.getSize()
-      logInfo(`[perf] clipboard-image resize+encode took ${__dt}ms (${s.width}x${s.height})`)
+    if (img) {
+      // [perf] resize + JPEG encode is the suspected clipboard-paste freeze; time it
+      // with the source dimensions, since cost scales with input size.
+      const __t0 = Date.now()
+      const resized = constrainToMaxDim(img, 1920)
+      const jpeg = resized.toJPEG(85)
+      const __dt = Date.now() - __t0
+      if (__dt > 150) {
+        const s = img.getSize()
+        logInfo(`[perf] clipboard-image resize+encode took ${__dt}ms (${s.width}x${s.height})`)
+      }
+      if (!existsSync(screenshotsDir)) mkdirSync(screenshotsDir, { recursive: true })
+      const filename = `clipboard-${Date.now()}-${randomBytes(4).toString('hex')}.jpg`
+      const filePath = join(screenshotsDir, filename)
+      writeFileSync(filePath, jpeg)
+      return { path: filePath }
     }
-    const screenshotsDir = join(getResourcesDirectory(), 'screenshots')
-    if (!existsSync(screenshotsDir)) mkdirSync(screenshotsDir, { recursive: true })
-    const filename = `clipboard-${Date.now()}-${randomBytes(4).toString('hex')}.jpg`
-    const filePath = join(screenshotsDir, filename)
-    writeFileSync(filePath, jpeg)
-    return filePath
+    // No bitmap on the clipboard — fall back to a copied image FILE (BUG-8).
+    return readClipboardImageFilePath(screenshotsDir)
   })
 
   // Encrypted credential storage using safeStorage — delegated to credential-store module
@@ -516,6 +515,36 @@ function createWindow(): void {
       }
     } catch {
       return false
+    }
+  })
+
+  // Onboarding "Find Claude": the resolved claude binary path (no command run).
+  ipcMain.handle('cli:path', async () => {
+    try {
+      return resolveClaudeForPty()?.cmd ?? null
+    } catch {
+      return null
+    }
+  })
+
+  // Onboarding "Find Claude": run `claude --version` on demand (user-approved).
+  ipcMain.handle('cli:version', async () => {
+    try {
+      const res = await spawnClaudeHeadless(['--version'], 10000)
+      return parseClaudeVersion(res.stdout) ?? parseClaudeVersion(res.stderr) ?? null
+    } catch {
+      return null
+    }
+  })
+
+  // "Ask Command Center": stage (refresh) the help workspace and return its
+  // path; the renderer launches a normal Claude session with this cwd so the
+  // CLAUDE.md + app-knowledge.md docs prime the session.
+  ipcMain.handle('help:workspace', async () => {
+    try {
+      return ensureHelpWorkspace(getResourcesDirectory())
+    } catch {
+      return null
     }
   })
 
@@ -608,10 +637,14 @@ if (!gotTheLock) {
     // under CONFIG/_backups/YYYY-MM-DD/. Non-fatal if it fails.
     try { snapshotConfig() } catch (err) { console.warn('[main] snapshotConfig failed:', err) }
 
-    // Deploy statusline script (Claude provider) — also configures
-    // ~/.claude/settings.json statusLine stanza internally. Fire-and-forget;
-    // the original sync calls (deployStatuslineScript + configureClaudeSettings)
-    // had no downstream consumers in this boot sequence, so awaiting isn't needed.
+    // U2: heal installs that carry a legacy GLOBAL statusLine stanza + planted
+    // ~/.claude/claude-multi-statusline.js from a prior CCC version. The statusline
+    // is now delivered per-session (writeLocalSessionSettings), so plain `claude`
+    // outside CCC gets its native line back. Best-effort, never blocks boot.
+    try { healGlobalStatusline() } catch (err) { console.warn('[main] healGlobalStatusline failed:', err) }
+
+    // Deploy the statusline script to the resources dir (per-session command +
+    // SSH mounts). Fire-and-forget; no downstream consumers here.
     Promise.resolve()
       .then(() => getProvider('claude').deployStatuslineScript?.(getResourcesDirectory()))
       .then(() => getProvider('claude').deployResumePickerScript?.(getResourcesDirectory()))
@@ -685,7 +718,7 @@ if (!gotTheLock) {
     // readConfig('settings') is available here (same pattern as the beta-channel read below).
     {
       const sentinelSettings = readConfig<{ sentinelEnabled?: boolean }>('settings')
-      if (sentinelSettings?.sentinelEnabled !== false) {
+      if (isSentinelEnabled(sentinelSettings?.sentinelEnabled)) {
         initSentinel(getResourcesDirectory())
         registerSentinelHandlers()
         reconcileOnUpdate()
@@ -834,12 +867,16 @@ if (!gotTheLock) {
     if (hooksEnabled) {
       cleanupStaleHookEntries(new Set())   // supervisor.start() already fired proxy.start()
     }
+    // U4: sweep leaked per-session mcp-<sid>.json sidecars (removed on normal
+    // dispose; a crash leaves them). Independent of hooks.
+    cleanupStaleMcpConfigs(new Set())
 
     // Shell — open URLs in system browser
-    ipcMain.handle('shell:openExternal', async (_event, url: string) => {
-      if (typeof url === 'string' && url.startsWith('https://')) {
-        await shell.openExternal(url)
-      }
+    ipcMain.handle('shell:openExternal', async (_event, url: unknown) => {
+      // P1.2: parse + require https rather than a startsWith prefix check, and
+      // hand the OS only the normalized href (never raw renderer input).
+      const href = safeExternalHttpsHref(url)
+      if (href) await shell.openExternal(href)
     })
 
     // Fetch model pricing in background (non-blocking)

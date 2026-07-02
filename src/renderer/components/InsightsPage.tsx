@@ -74,7 +74,12 @@ export default function InsightsPage() {
     })
 
     if (catalogue) {
-      const runs = catalogue.runs.filter((r) => r.status === 'complete')
+      // Compare against the previous complete run of the SAME account (W5) —
+      // otherwise multi-account diffs one account's run against another's.
+      const sel = catalogue.runs.find((r) => r.id === selectedRunId)
+      const runs = catalogue.runs.filter(
+        (r) => r.status === 'complete' && (r.profileId ?? null) === (sel?.profileId ?? null)
+      )
       const idx = runs.findIndex((r) => r.id === selectedRunId)
       if (idx > 0) {
         window.electronAPI.insights.getKpis(runs[idx - 1].id).then(setPreviousKpis)
@@ -85,6 +90,12 @@ export default function InsightsPage() {
   }, [selectedRunId, catalogue])
 
   const completedRuns = catalogue?.runs.filter((r) => r.status === 'complete') || []
+  const failedRuns = catalogue?.runs.filter((r) => r.status === 'failed') || []
+  const latestRun = catalogue?.runs[catalogue.runs.length - 1] || null
+  const selectedRun = catalogue?.runs.find((r) => r.id === selectedRunId) || null
+  // Picker lists viewable (complete) + failed runs, newest first, so failures
+  // are discoverable instead of being silently filtered out.
+  const pickerRuns = [...completedRuns, ...failedRuns].sort((a, b) => b.timestamp - a.timestamp)
   const isRunning = status === 'running' || status === 'extracting_kpis'
 
   // Codex-only empty state: user has Codex sessions but no Claude sessions.
@@ -136,7 +147,7 @@ export default function InsightsPage() {
                 <path d="M4 8h8M6 6v4M10 6v4M3 12h10" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
               </svg>
             </div>
-            <h3 className="text-sm font-medium text-subtext1 mb-2">No Insights Yet</h3>
+            <h3 className="text-sm font-medium text-subtext1 mb-2">{latestRun?.status === 'failed' ? 'Last run failed' : 'No Insights Yet'}</h3>
             {isRunning ? (
               <div className="flex flex-col items-center gap-3">
                 <svg className="w-5 h-5 animate-spin text-teal" viewBox="0 0 24 24" fill="none">
@@ -149,6 +160,11 @@ export default function InsightsPage() {
               </div>
             ) : (
               <>
+                {latestRun?.status === 'failed' && (
+                  <p className="text-xs text-red mb-3 max-w-[260px]" title={latestRun.error || undefined}>
+                    {latestRun.error || 'unknown error'}
+                  </p>
+                )}
                 <p className="text-xs text-overlay0 mb-4 max-w-[240px]">Generate an AI-powered analysis of your session history and workflow patterns</p>
                 {multiAccount && (
                   <select
@@ -190,14 +206,16 @@ export default function InsightsPage() {
         onChange={(e) => selectRun(e.target.value)}
         className="bg-surface0 text-text text-xs rounded border border-surface1 px-2 py-0.5 focus:outline-none focus:border-blue/40 transition-colors"
       >
-        {completedRuns.slice().reverse().map((run) => {
+        {pickerRuns.map((run) => {
           const date = new Date(run.timestamp)
           const label = date.toLocaleDateString('en-US', {
             month: 'short', day: 'numeric', year: 'numeric',
             hour: '2-digit', minute: '2-digit'
           })
           const acct = multiAccount ? nameForAccount(run.accountEmail) : null
-          return <option key={run.id} value={run.id}>{acct ? `${label} · ${acct}` : label}</option>
+          const base = acct ? `${label} · ${acct}` : label
+          const suffix = run.status === 'failed' ? ' · failed' : run.kpisUnavailable ? ' · no KPIs' : ''
+          return <option key={run.id} value={run.id}>{base}{suffix}</option>
         })}
       </select>
       {multiAccount && (
@@ -246,6 +264,14 @@ export default function InsightsPage() {
       actions={insightsActions}
       scrollable={false}
     >
+      {latestRun?.status === 'failed' && (
+        <div
+          className="px-4 py-1.5 text-[11px] text-red bg-red/10 border-b border-red/20 shrink-0 truncate"
+          title={latestRun.error || undefined}
+        >
+          Last Insights run failed: {latestRun.error || 'unknown error'}
+        </div>
+      )}
       <div className="flex-1 flex overflow-hidden">
         {/* Report native sections */}
         <div className="flex-1 overflow-hidden">
@@ -268,6 +294,13 @@ export default function InsightsPage() {
               )}
               <InsightsSections sections={parsed.sections} />
             </div>
+          ) : selectedRun?.status === 'failed' ? (
+            <div className="flex items-center justify-center h-full">
+              <div className="text-center max-w-[340px] px-4">
+                <p className="text-sm text-red mb-1">This run failed</p>
+                <p className="text-xs text-overlay0 break-words">{selectedRun.error || 'Unknown error'}</p>
+              </div>
+            </div>
           ) : (
             <div className="flex items-center justify-center h-full">
               <p className="text-overlay0 text-xs">No report available for this run</p>
@@ -275,10 +308,14 @@ export default function InsightsPage() {
           )}
         </div>
 
-        {/* KPI Sidebar */}
-        {currentKpis && (
+        {/* KPI Sidebar — or a note when KPIs failed for this completed run */}
+        {currentKpis ? (
           <KpiSidebar current={currentKpis} previous={previousKpis} />
-        )}
+        ) : selectedRun?.kpisUnavailable ? (
+          <div className="w-72 shrink-0 border-l border-surface0/80 p-4 text-xs text-overlay0">
+            Report ready — KPI extraction failed for this run.
+          </div>
+        ) : null}
       </div>
     </PageFrame>
   )

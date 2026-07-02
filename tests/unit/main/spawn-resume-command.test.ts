@@ -47,11 +47,13 @@ function goldenNoResume(opts: {
   const escapedCwd = cwd.replace(/'/g, "''")
   const posixCwd = escapedCwd.replace(/'/g, "'\\''")
   if (useResumePicker) {
+    // P1.1: the picker branch now also forwards agentsFlag (it previously
+    // dropped --agents on a restored session). Oracle updated to the fixed shape.
     if (pickerScript && win32) {
       const escapedScript = pickerScript.replace(/'/g, "''")
-      return `Set-Location '${escapedCwd}'; node '${escapedScript}'${extraFlags}; exit`
+      return `Set-Location '${escapedCwd}'; node '${escapedScript}'${agentsFlag}${extraFlags}; exit`
     } else if (pickerScript) {
-      return `cd '${posixCwd}' && node '${pickerScript.replace(/'/g, "'\\''")}'${extraFlags}; exit`
+      return `cd '${posixCwd}' && node '${pickerScript.replace(/'/g, "'\\''")}'${agentsFlag}${extraFlags}; exit`
     } else {
       return win32
         ? `Set-Location '${escapedCwd}'; & "${claudeBin}"${agentsFlag}${extraFlags}; exit`
@@ -118,6 +120,32 @@ describe('buildClaudeLaunchCommand — GOLDEN (no resumeUuid, byte-identical)', 
   })
 })
 
+describe('buildClaudeLaunchCommand — picker forwards --agents (P1.1)', () => {
+  // resume-picker.js forwards its own argv (process.argv.slice(2)) to
+  // `claude --resume <id> ...`, so any flag passed to the picker survives the
+  // launch. The picker branch previously appended extraFlags but NOT agentsFlag,
+  // so a restored session silently lost its --agents subagents.
+  it('win32 picker launch includes the --agents flag', () => {
+    const out = buildClaudeLaunchCommand({
+      platform: 'win32', cwd: CWD, claudeBin: CLAUDE,
+      extraFlags: EXTRA, agentsFlag: AGENTS,
+      useResumePicker: true, pickerScript: PICKER,
+    })
+    expect(out).toContain('resume-picker.js')
+    expect(out).toContain(AGENTS.trim()) // --agents '[]'
+  })
+
+  it('posix picker launch includes the --agents flag', () => {
+    const out = buildClaudeLaunchCommand({
+      platform: 'posix', cwd: CWD, claudeBin: CLAUDE,
+      extraFlags: EXTRA, agentsFlag: AGENTS,
+      useResumePicker: true, pickerScript: PICKER,
+    })
+    expect(out).toContain('resume-picker.js')
+    expect(out).toContain(AGENTS.trim())
+  })
+})
+
 describe('buildClaudeLaunchCommand — RESUME (resumeUuid present)', () => {
   it('win32: emits --resume <uuid> FIRST, bypasses the picker, keeps later flags', () => {
     const out = buildClaudeLaunchCommand({
@@ -169,7 +197,7 @@ describe('buildClaudeLaunchCommand — RESUME (resumeUuid present)', () => {
 // the homedir. The provider / discoveryOn gating stays in spawnPty (Fix 3); the
 // helper is concerned only with paths.
 describe('resolveResumeLaunch — gate', () => {
-  const HOME = 'C:\\Users\\nicho'
+  const HOME = 'C:\\Users\\jane'
   const PROJECTS_ROOT = path.join(HOME, '.claude', 'projects')
   const T_UUID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
   const REAL_CWD = 'F:\\proj\\worktree'
@@ -375,7 +403,7 @@ describe('resolveResumeLaunch — gate', () => {
 // statusline / heuristic). This pure helper constructs the canonical transcript
 // path it hands to binder.notifyTranscriptPath.
 describe('buildResumeTranscriptPath — canonical ~/.claude/projects path', () => {
-  const HOME = 'C:\\Users\\nicho'
+  const HOME = 'C:\\Users\\jane'
   const UUID2 = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
 
   it('joins homedir/.claude/projects/<mangle(cwd)>/<uuid>.jsonl', () => {
@@ -384,8 +412,8 @@ describe('buildResumeTranscriptPath — canonical ~/.claude/projects path', () =
   })
 
   it('mangles every non-alphanumeric char individually (no run-collapse)', () => {
-    const out = buildResumeTranscriptPath('F:\\CLAUDE_MULTI_APP', UUID2, () => HOME)
-    expect(out).toBe(path.join(HOME, '.claude', 'projects', 'F--CLAUDE-MULTI-APP', `${UUID2}.jsonl`))
+    const out = buildResumeTranscriptPath('F:\\MY_PROJECT', UUID2, () => HOME)
+    expect(out).toBe(path.join(HOME, '.claude', 'projects', 'F--MY-PROJECT', `${UUID2}.jsonl`))
   })
 
   it('returns null for a non-UUID stem (never builds a path from garbage)', () => {

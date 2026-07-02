@@ -90,7 +90,7 @@ export default function TeamBuilder({ onClose }: { onClose: () => void }) {
         {/* Header */}
         <div className="px-5 py-4 border-b border-surface0/80">
           <h2 className="text-base font-semibold text-text">
-            {editingTeam ? 'Edit Team' : 'New Team'}
+            {editingTeam ? 'Edit Pipeline' : 'New Pipeline'}
           </h2>
           <p className="text-[11px] text-overlay0 mt-0.5">
             Configure a pipeline of agents that execute in sequence or parallel
@@ -102,7 +102,7 @@ export default function TeamBuilder({ onClose }: { onClose: () => void }) {
           {/* Name + Description */}
           <div className="space-y-2">
             <div>
-              <label className="text-[11px] text-subtext0 font-medium block mb-1">Team Name</label>
+              <label className="text-[11px] text-subtext0 font-medium block mb-1">Pipeline Name</label>
               <input
                 value={name}
                 onChange={e => setName(e.target.value)}
@@ -115,7 +115,7 @@ export default function TeamBuilder({ onClose }: { onClose: () => void }) {
               <input
                 value={description}
                 onChange={e => setDescription(e.target.value)}
-                placeholder="What does this team pipeline do?"
+                placeholder="What does this pipeline do?"
                 className="w-full bg-surface0/40 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text placeholder:text-overlay0 outline-none focus:border-sapphire/40"
               />
             </div>
@@ -186,7 +186,7 @@ export default function TeamBuilder({ onClose }: { onClose: () => void }) {
             disabled={!isValid || saving}
             className="px-4 py-1.5 rounded-lg text-xs font-medium bg-sapphire hover:bg-sapphire/85 text-crust transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            {saving ? 'Saving...' : editingTeam ? 'Save Changes' : 'Create Team'}
+            {saving ? 'Saving...' : editingTeam ? 'Save Changes' : 'Create Pipeline'}
           </button>
         </div>
       </div>

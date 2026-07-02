@@ -2,6 +2,9 @@ import React from 'react'
 import { TerminalConfig } from '../stores/configStore'
 import { resolveIdentityColor, bucketLegacyColorToKey } from '../../shared/identity-colors'
 import { useResolvedTheme } from '../hooks/useThemeController'
+import { useSettingsStore } from '../stores/settingsStore'
+import { DEFAULT_SHORTCUTS } from '../utils/shortcuts'
+import { CODEX_OFF_LAUNCH_REASON } from '../hooks/useLaunchConfig'
 
 interface Props {
   configs: TerminalConfig[]
@@ -15,6 +18,10 @@ interface Props {
 // invite creating one.
 export default function StageEmptyState({ configs, onLaunch, onShowAllConfigs, onCreateConfig }: Props) {
   const theme = useResolvedTheme()
+  // Shortcuts are user-rebindable; show the live bindings, not the defaults.
+  const userShortcuts = useSettingsStore((s) => s.settings.keyboardShortcuts)
+  const sc = { ...DEFAULT_SHORTCUTS, ...(userShortcuts || {}) }
+  const codexOff = useSettingsStore((s) => s.settings.codexEnabled === false)
   const hasConfigs = configs.length > 0
   const pinned = configs.filter((c) => c.pinned)
   const launchers = (pinned.length > 0 ? pinned : configs).slice(0, 6)
@@ -35,15 +42,23 @@ export default function StageEmptyState({ configs, onLaunch, onShowAllConfigs, o
             <div className="grid grid-cols-2 gap-2 mb-4">
               {launchers.map((c) => {
                 const color = resolveIdentityColor(c.identityColorKey ?? bucketLegacyColorToKey(c.color), theme)
+                const launchBlocked = codexOff && c.provider === 'codex'
                 return (
                   <button
                     key={c.id}
-                    onClick={() => onLaunch(c)}
-                    className="flex items-center gap-2 px-3 py-2 rounded-lg border border-surface1 hover:border-surface2 hover:bg-surface0/40 transition-colors text-left focus-ring"
-                    title={`Launch ${c.label}`}
+                    onClick={launchBlocked ? undefined : () => onLaunch(c)}
+                    disabled={launchBlocked}
+                    aria-disabled={launchBlocked}
+                    className={
+                      launchBlocked
+                        ? 'flex items-center gap-2 px-3 py-2 rounded-lg border border-surface1 opacity-50 cursor-not-allowed text-left'
+                        : 'flex items-center gap-2 px-3 py-2 rounded-lg border border-surface1 hover:border-surface2 hover:bg-surface0/40 transition-colors text-left focus-ring'
+                    }
+                    title={launchBlocked ? CODEX_OFF_LAUNCH_REASON : `Launch ${c.label}`}
                   >
                     <span className="w-2 h-2 rounded-[2px] shrink-0" style={{ backgroundColor: color }} aria-hidden />
                     <span className="text-xs text-text truncate">{c.label}</span>
+                    {launchBlocked && <span className="text-[9px] text-overlay0 shrink-0">Codex off</span>}
                   </button>
                 )
               })}
@@ -63,7 +78,7 @@ export default function StageEmptyState({ configs, onLaunch, onShowAllConfigs, o
             Create a saved config
           </button>
         )}
-        <p className="text-xs text-overlay0 mt-4">Ctrl+T to create, Ctrl+Tab to switch</p>
+        <p className="text-xs text-overlay0 mt-4">{sc.newConfig} to create, {sc.nextSession} to switch</p>
       </div>
     </div>
   )

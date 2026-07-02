@@ -1,7 +1,7 @@
 import { BrowserWindow, nativeTheme } from 'electron'
 import * as pty from 'node-pty'
 import { PasteQueue } from './paste-queue'
-import { runChunkedWrite, WRITE_CHUNK_SIZE, WRITE_CHUNK_DELAY } from './pty-chunked-write'
+import { runChunkedWrite, WRITE_CHUNK_SIZE } from './pty-chunked-write'
 import * as os from 'os'
 import { execSync } from 'child_process'
 import { logPtyOutput, isDebugModeEnabled } from './debug-capture'
@@ -12,6 +12,7 @@ import { buildClaudeLaunchCommand, resolveResumeLaunch, buildResumeTranscriptPat
 import { ensureCompanionDir, nodeFsCompanionDeps } from './logging/companion-dir'
 import { logInfo, logDebug, logError, logWarn } from './debug-logger'
 import { writeCliSetupPty, getResourcesDirectory } from './ipc/setup-handlers'
+import { buildRemoteSessionCleanupCommand } from './providers/claude/ssh-shim'
 import { isGlobalVisionRunning, getGlobalVisionConfig, teardownVisionSession } from './vision-manager'
 import { getConductorMcpPort } from './conductor-mcp-server'
 import { resolveClaudeBinary, resolveHostColorScheme } from './providers/claude/spawn'
@@ -550,8 +551,13 @@ export function spawnPty(
       }, IDLE_FALLBACK_MS)
     }
     const remotePath = ssh.remotePath || '~'
+    // Clickable question options (CC >= 2.1.195) default OFF in CCC -- the
+    // clickable layer misfires inside xterm.js. Read fresh per spawn so the
+    // Settings toggle applies to the next session without a restart.
+    const clickableQuestions = readConfig<{ clickableQuestions?: boolean }>('settings')?.clickableQuestions === true
     const claudeEnvPrefix = [
       options?.disableAutoMemory ? 'CLAUDE_CODE_DISABLE_AUTO_MEMORY=1' : '',
+      clickableQuestions ? '' : 'CLAUDE_CODE_DISABLE_MOUSE_CLICKS=1',
     ].filter(Boolean).join(' ')
     const claudeFlags = [
       // --settings loads per-session config so concurrent sessions to the same
@@ -608,7 +614,11 @@ export function spawnPty(
         }
       }, SETUP_TIMEOUT_MS)
       setTimeout(() => {
-        const setupCmd = claudeProvider.configureRemoteSettings(sessionId, remotePath, hooksConfig)
+        const s = readConfig<{ statusLineEnabled?: boolean; conductorToolsEnabled?: boolean }>('settings')
+        const setupCmd = claudeProvider.configureRemoteSettings(sessionId, remotePath, hooksConfig, {
+          includeStatusLine: s?.statusLineEnabled !== false,
+          includeConductorMcp: s?.conductorToolsEnabled !== false,
+        })
         ptyProcess.write(setupCmd + '\r')
       }, 200)
     }
@@ -634,7 +644,11 @@ export function spawnPty(
         }
       }, SETUP_TIMEOUT_MS)
       setTimeout(() => {
-        const setupCmd = claudeProvider.configureRemoteSettings(sessionId, remotePath, hooksConfig)
+        const s = readConfig<{ statusLineEnabled?: boolean; conductorToolsEnabled?: boolean }>('settings')
+        const setupCmd = claudeProvider.configureRemoteSettings(sessionId, remotePath, hooksConfig, {
+          includeStatusLine: s?.statusLineEnabled !== false,
+          includeConductorMcp: s?.conductorToolsEnabled !== false,
+        })
         ptyProcess.write(setupCmd + '\r')
       }, 300)
     }
@@ -945,8 +959,10 @@ export function spawnPty(
     // Read classicTerminalCopyPaste + theme fresh on every spawn (default true /
     // dark when absent). The theme drives COLORFGBG so Claude's startup theme
     // auto-detection matches CCC; 'system' follows the OS via nativeTheme.
-    const claudeSpawnSettings = readConfig<{ classicTerminalCopyPaste?: boolean; theme?: string }>('settings')
+    const claudeSpawnSettings = readConfig<{ classicTerminalCopyPaste?: boolean; theme?: string; clickableQuestions?: boolean }>('settings')
     const classicTerminalCopyPaste = claudeSpawnSettings?.classicTerminalCopyPaste !== false
+    // Clickable question options (CC >= 2.1.195) default OFF in CCC.
+    const clickableQuestions = claudeSpawnSettings?.clickableQuestions === true
     const hostColorScheme = resolveHostColorScheme(
       claudeSpawnSettings?.theme,
       nativeTheme.shouldUseDarkColors,
@@ -965,6 +981,7 @@ export function spawnPty(
       useResumePicker: options?.useResumePicker,
       agentsConfig: options?.agentsConfig,
       classicTerminalCopyPaste,
+      clickableQuestions,
       hostColorScheme,
     })
     const wantProfileId = options?.profileId
@@ -1175,9 +1192,15 @@ export function spawnPty(
         // at the per-session level without the user hand-editing
         // ~/.claude/settings.json. Read fresh on every spawn so a Settings
         // toggle takes effect on the next session without an app restart.
-        const appSettings = readConfig<{ disableClaudeWorkflows?: boolean }>('settings')
+        const appSettings = readConfig<{ disableClaudeWorkflows?: boolean; statusLineEnabled?: boolean }>('settings')
         const disableWorkflows = !!appSettings?.disableClaudeWorkflows
-        const sesPath = writeLocalSessionSettings(sessionId, { disableWorkflows })
+        // Master status-line switch (onboarding p4 / Settings -> Status line):
+        // absent means ON (pre-upgrade configs). Off = no resourcesDir, so the
+        // per-session clone gets no statusLine key and Claude runs without the
+        // bundled script. Read fresh per spawn; sessions already running keep
+        // theirs until restarted.
+        const statusLineOn = appSettings?.statusLineEnabled !== false
+        const sesPath = writeLocalSessionSettings(sessionId, { disableWorkflows, resourcesDir: statusLineOn ? getResourcesDirectory() : undefined })
         // injectHooks rewrites the per-session settings file to point Claude's
         // hook events at our local gateway, which drives the session attention
         // pulse, statusline ingest, and conversation logging. Skipped only when
@@ -1198,7 +1221,10 @@ export function spawnPty(
         logError(`[pty] Failed to seed per-session settings for ${sessionId}: ${(err as Error)?.message ?? err}`)
       }
       try {
-        const mcpCfgPath = writeLocalSessionMcpConfig(sessionId)
+        // Built-in tools master (onboarding p6 / Settings): off = the session's
+        // mcp-config carries no conductor entry. Read fresh per spawn.
+        const conductorOn = readConfig<{ conductorToolsEnabled?: boolean }>('settings')?.conductorToolsEnabled !== false
+        const mcpCfgPath = writeLocalSessionMcpConfig(sessionId, conductorOn)
         extraFlags += ` --mcp-config '${quoteForShell(mcpCfgPath)}'`
       } catch (err) {
         logError(`[pty] Failed to seed per-session MCP config for ${sessionId}: ${(err as Error)?.message ?? err}`)
@@ -1437,16 +1463,17 @@ const pasteQueues = new Map<string, PasteQueue>()
 // be deduped). Mirrors writeChunked's 256-byte/12ms cadence.
 function writeEnvelopeChunked(sessionId: string, data: string): Promise<void> {
   return new Promise<void>((resolve) => {
-    let i = 0
-    const step = () => {
-      const session = ptySessions.get(sessionId)   // re-fetch: session may be killed mid-paste
-      if (!session || i >= data.length) return resolve()
-      try { session.ptyProcess.write(data.slice(i, i + WRITE_CHUNK_SIZE)) }
-      catch { return resolve() }                    // session died mid-write; stop, do not stall the queue
-      i += WRITE_CHUNK_SIZE
-      setTimeout(step, WRITE_CHUNK_DELAY)
-    }
-    step()
+    // Capture THIS pty up front and route through the R-010-tested
+    // runChunkedWrite with an identity-guarded isAlive, so a respawn (new PTY
+    // under the same sessionId) can't receive the tail of a half-written
+    // envelope (P1.5 — mirrors writeChunked). onDone resolves the queue's writer.
+    const proc = ptySessions.get(sessionId)?.ptyProcess
+    if (!proc) return resolve()
+    runChunkedWrite(data, {
+      write: (slice) => proc.write(slice),
+      isAlive: () => ptySessions.get(sessionId)?.ptyProcess === proc,
+      onDone: resolve,
+    })
   })
 }
 
@@ -1552,6 +1579,7 @@ function cleanupSessionResources(sessionId: string): void {
   pendingWrites.delete(sessionId)
   recentWrites.delete(sessionId)
   sshOscBuffers.delete(sessionId)
+  pasteQueues.get(sessionId)?.cancel() // stop draining + drop pending before dropping the ref (P1.5)
   pasteQueues.delete(sessionId)
   // Delete the per-session statusline status file so the watcher's poll
   // fan-out stays bounded between boot sweeps (the reaper only unlinks
@@ -1580,12 +1608,27 @@ function cleanupSessionResources(sessionId: string): void {
   }
 }
 
+// U8: grace before killing an SSH PTY so the in-band remote-cleanup command has
+// time to reach the remote shell and run before we tear the tunnel down.
+const REMOTE_CLEANUP_GRACE_MS = 400
+
 export function killPty(sessionId: string): void {
   const entry = ptySessions.get(sessionId)
   if (entry) {
     logInfo(`[pty] Killing PTY for session ${sessionId}`)
-    try { entry.ptyProcess.kill() } catch (err) {
-      logError(`[pty] Error killing PTY ${sessionId}:`, err)
+    if (sshFlows.has(sessionId)) {
+      // U8: sweep the per-session files we planted on the remote, in-band down the
+      // still-live PTY, then kill after a short grace so the `rm` runs before the
+      // tunnel dies. No SSH creds retained. A crash / natural exit can't do this
+      // (the tunnel is already gone), which is acceptable -- the files are inert.
+      // ptySessions.delete below means the delayed kill's onExit no-ops.
+      const proc = entry.ptyProcess
+      try { proc.write(buildRemoteSessionCleanupCommand(sessionId)) } catch { /* best-effort */ }
+      setTimeout(() => { try { proc.kill() } catch { /* already gone */ } }, REMOTE_CLEANUP_GRACE_MS)
+    } else {
+      try { entry.ptyProcess.kill() } catch (err) {
+        logError(`[pty] Error killing PTY ${sessionId}:`, err)
+      }
     }
     ptySessions.delete(sessionId)
   }

@@ -18,7 +18,6 @@ import { spawnClaudeHeadless } from './claude-headless'
 import { getProfileConfigDir, getPrimaryProfileId, setupProfileLinks, listProfiles } from './account-profiles'
 import { getProjectRootPath, getInstallPath } from './update-watcher'
 import { getResourcesDirectory } from './ipc/setup-handlers'
-import { readConfig } from './config-manager'
 
 // Source locations (Claude CLI output). `/insights` writes report.html under the
 // running account's HOME (~/.claude/usage-data); with per-account isolation the
@@ -41,6 +40,8 @@ export interface InsightsRun {
   /** Account this run was generated for (multi-account). Undefined = default. */
   accountEmail?: string
   profileId?: string
+  /** Run completed but KPI extraction failed: report is viewable, no kpis.json. */
+  kpisUnavailable?: boolean
 }
 
 /**
@@ -69,16 +70,28 @@ export interface InsightsCatalogue {
   runs: InsightsRun[]
 }
 
-let running = false
+// Per-account in-flight lock: keyed by resolved profileId so two DIFFERENT
+// accounts can run concurrently, while the same account can't double-run.
+// Catalogue integrity across concurrent runs is preserved by upsertRun's
+// synchronous read-modify-write (it re-reads the on-disk catalogue each call).
+const inFlight = new Set<string>()
+function accountKey(profileId?: string): string {
+  return profileId ?? '(default)'
+}
 
 function ensureDir(dir: string): void {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
 }
 
+let runCounter = 0
 function generateRunId(): string {
   const now = new Date()
   const pad = (n: number) => n.toString().padStart(2, '0')
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
+  const pad3 = (n: number) => n.toString().padStart(3, '0')
+  // Millisecond + a monotonic counter keep IDs unique when two accounts run
+  // concurrently within the same second (per-account concurrency, Unit 3 W6).
+  runCounter = (runCounter + 1) % 1000
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}-${pad3(now.getMilliseconds())}${pad3(runCounter)}`
 }
 
 function loadCatalogue(): InsightsCatalogue {
@@ -153,12 +166,26 @@ function copyReportToArchive(archiveDir: string, home: string | null): boolean {
  * Strip ANSI escape sequences for reliable text detection.
  * Handles CSI (including private mode ?), OSC, charset selection, and other sequences.
  */
-function stripAnsiCodes(str: string): string {
+export function stripAnsiCodes(str: string): string {
   return str
     .replace(/\x1b\[[\x20-\x3f]*[0-9;]*[\x20-\x7e]/g, '')  // CSI sequences (including ?...)
     .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')       // OSC sequences
     .replace(/\x1b[()][A-Z0-9]/g, '')                          // Character set selection
     .replace(/\x1b[>=]/g, '')                                   // Keypad/cursor mode
+}
+
+/**
+ * Human-readable reason for a /insights PTY timeout, by how far it got. Pure, so
+ * it's unit-testable without the live PTY. The detail flows into run.error and is
+ * surfaced in the Insights UI (Unit 3 W7). NOTE: a content-based *fast-exit* for
+ * the no-usage-data case is deferred to live-QA — capturing the exact empty-state
+ * string needs a real no-data run, and a blind timing cutoff risks killing a
+ * slow-but-working generation on a heavy account (real-data gate).
+ */
+export function describeInsightsTimeout(commandSent: boolean, timeoutSec: number): string {
+  return commandSent
+    ? `/insights did not produce a report within ${timeoutSec}s (likely no usage data yet, or the trust prompt was not accepted)`
+    : `Claude did not reach an interactive prompt within ${timeoutSec}s`
 }
 
 /**
@@ -201,8 +228,7 @@ function spawnClaudeInsights(home: string | null, timeoutMs = 600000): Promise<{
       cols: 120,
       rows: 30,
       cwd,
-      env: withProfileHome(process.env as Record<string, string>, home),
-      useConpty: false
+      env: withProfileHome(process.env as Record<string, string>, home)
     })
 
     let output = ''
@@ -257,10 +283,11 @@ function spawnClaudeInsights(home: string | null, timeoutMs = 600000): Promise<{
       if (!resolved) {
         resolved = true
         cleanup()
-        logError(`[insights] PTY timed out after ${timeoutMs / 1000}s`)
+        const reason = describeInsightsTimeout(commandSent, timeoutMs / 1000)
+        logError(`[insights] PTY timed out: ${reason}`)
         logError(`[insights] Last output: ${stripAnsiCodes(output).slice(-500)}`)
         try { proc.kill() } catch { /* ignore */ }
-        resolve({ code: 1, output: output + '\nTimed out after ' + (timeoutMs / 1000) + 's' })
+        resolve({ code: 1, output: output + '\n' + reason })
       }
     }, timeoutMs)
 
@@ -408,10 +435,18 @@ Rules:
 - If previous data IS provided, focus summary on what changed — improved metrics, worsened metrics, and what to do differently.
 - Output ONLY valid JSON. No explanation, no markdown.`
 
-function loadPreviousKpis(currentRunId: string): string | null {
+export function loadPreviousKpis(currentRunId: string): string | null {
   try {
     const catalogue = loadCatalogue()
-    const completeRuns = catalogue.runs.filter(r => r.status === 'complete' && r.id !== currentRunId)
+    // Compare against the previous COMPLETE run of the SAME account — otherwise a
+    // multi-account setup diffs account A's run against account B's (nonsense
+    // "what changed"). profileId is the stable key; single-account runs have it
+    // undefined so they all match (unchanged behaviour). (Unit 3 W5)
+    const current = catalogue.runs.find(r => r.id === currentRunId)
+    const currentAccount = current?.profileId ?? null
+    const completeRuns = catalogue.runs.filter(
+      r => r.status === 'complete' && r.id !== currentRunId && (r.profileId ?? null) === currentAccount
+    )
     if (completeRuns.length === 0) return null
 
     const prevRun = completeRuns[completeRuns.length - 1]
@@ -421,6 +456,42 @@ function loadPreviousKpis(currentRunId: string): string | null {
     return readFileSync(prevKpiPath, 'utf-8')
   } catch {
     return null
+  }
+}
+
+/**
+ * Build the headless `claude` args for KPI extraction. Read-only: the step only
+ * reads one archived HTML report (absolute path embedded in the prompt). No
+ * `--dangerously-skip-permissions` — `-p` already skips the workspace-trust
+ * dialog and `--allowedTools Read` pre-authorizes the only tool needed. Verified
+ * on the VM: an out-of-cwd absolute Read succeeds with zero permission denials
+ * and no dangerous flag. See specs/2026-06-15-unit3-insights-review-design.md W1.
+ */
+export function buildKpiSpawnArgs(): string[] {
+  return ['-p', '--allowedTools', 'Read', '--output-format', 'json']
+}
+
+/**
+ * Parse the KPI JSON out of a `claude -p --output-format json` reply. Pure +
+ * exported for testing. Handles: a direct JSON object; the `{result:"<json>"}`
+ * envelope; and a result/raw string with prose around the JSON (greedy
+ * outermost-braces extraction). Returns null if no JSON object is recoverable.
+ */
+export function parseKpiOutput(stdout: string): unknown | null {
+  const trimmed = stdout.trim()
+  const fromBraces = (s: string): unknown | null => {
+    const m = s.match(/\{[\s\S]*\}/)
+    if (!m) return null
+    try { return JSON.parse(m[0]) } catch { return null }
+  }
+  try {
+    const parsed = JSON.parse(trimmed)
+    if (parsed && parsed.result && typeof parsed.result === 'string') {
+      try { return JSON.parse(parsed.result) } catch { return fromBraces(parsed.result) }
+    }
+    return parsed
+  } catch {
+    return fromBraces(trimmed)
   }
 }
 
@@ -440,16 +511,7 @@ async function extractKpis(archiveDir: string, runId: string, home: string | nul
 
   logInfo('[insights] Starting KPI extraction for ' + reportPath + (prevKpis ? ' (with comparison)' : ' (no previous data)'))
 
-  // Read setting to decide whether to include --dangerously-skip-permissions
-  const settings = readConfig<{ skipPermissionsForAgents?: boolean }>('settings')
-  const skipPerms = settings?.skipPermissionsForAgents !== false // default true
-
-  const spawnArgs = [
-    '-p',
-    '--allowedTools', 'Read',
-    ...(skipPerms ? ['--dangerously-skip-permissions'] : []),
-    '--output-format', 'json'
-  ]
+  const spawnArgs = buildKpiSpawnArgs()
 
   // Pipe the prompt via stdin — passing multi-KB prompts with embedded JSON
   // as shell arguments is unreliable on Windows (quoting/escaping breaks).
@@ -461,56 +523,30 @@ async function extractKpis(archiveDir: string, runId: string, home: string | nul
     return false
   }
 
+  const kpiData = parseKpiOutput(result.stdout)
+  if (kpiData == null) {
+    logError('[insights] Failed to parse KPI output')
+    logError('[insights] Raw output:', result.stdout.slice(0, 500))
+    return false
+  }
+
   try {
-    // Claude with --output-format json wraps in a JSON object with "result" key
-    let kpiData: unknown
-    const trimmed = result.stdout.trim()
-
-    // Try parsing directly first
-    try {
-      const parsed = JSON.parse(trimmed)
-      // If it has a "result" key that's a string, extract KPI JSON from it
-      if (parsed.result && typeof parsed.result === 'string') {
-        const resultStr = parsed.result
-        try {
-          kpiData = JSON.parse(resultStr)
-        } catch {
-          // Result has text preamble before JSON -- extract the JSON object
-          const jsonMatch = resultStr.match(/\{[\s\S]*\}/)
-          if (jsonMatch) {
-            kpiData = JSON.parse(jsonMatch[0])
-          } else {
-            throw new Error('No JSON found in result string')
-          }
-        }
-      } else {
-        kpiData = parsed
-      }
-    } catch {
-      // Try extracting JSON from the raw output
-      const jsonMatch = trimmed.match(/\{[\s\S]*\}/)
-      if (jsonMatch) {
-        kpiData = JSON.parse(jsonMatch[0])
-      } else {
-        throw new Error('No JSON found in output')
-      }
-    }
-
     writeFileSync(join(archiveDir, 'kpis.json'), JSON.stringify(kpiData, null, 2))
     logInfo('[insights] KPIs extracted and saved')
     return true
   } catch (err) {
-    logError('[insights] Failed to parse KPI output:', err)
-    logError('[insights] Raw output:', result.stdout.slice(0, 500))
+    logError('[insights] Failed to write kpis.json:', err)
     return false
   }
 }
 
 export async function runInsights(getWindow: () => BrowserWindow | null, opts?: { profileId?: string }): Promise<string> {
-  if (running) throw new Error('Insights already running')
-  running = true
-
   const account = resolveInsightsAccount(opts?.profileId)
+  const key = accountKey(account.profileId)
+  if (inFlight.has(key)) throw new Error('Insights already running for this account')
+  inFlight.add(key)
+
+
   const id = generateRunId()
   const archiveDir = join(getInsightsDir(), id)
   ensureDir(archiveDir)
@@ -533,7 +569,6 @@ export async function runInsights(getWindow: () => BrowserWindow | null, opts?: 
       run.error = 'claude /insights failed: ' + stripAnsiCodes(result.output).slice(-200)
       upsertRun(run)
       notifyRenderer(getWindow, run)
-      running = false
       return id
     }
 
@@ -546,7 +581,6 @@ export async function runInsights(getWindow: () => BrowserWindow | null, opts?: 
       run.error = 'Failed to copy report files'
       upsertRun(run)
       notifyRenderer(getWindow, run)
-      running = false
       return id
     }
 
@@ -558,8 +592,11 @@ export async function runInsights(getWindow: () => BrowserWindow | null, opts?: 
 
     const kpiSuccess = await extractKpis(archiveDir, id, account.home)
     if (!kpiSuccess) {
-      // KPI extraction is non-fatal — report is still viewable
+      // KPI extraction is non-fatal — the report is still viewable. Flag it so
+      // the UI shows "report ready, KPIs unavailable" instead of silently
+      // hiding the sidebar with no explanation.
       logError('[insights] KPI extraction failed, report is still available')
+      run.kpisUnavailable = true
     }
 
     run.status = 'complete'
@@ -571,56 +608,10 @@ export async function runInsights(getWindow: () => BrowserWindow | null, opts?: 
     upsertRun(run)
     notifyRenderer(getWindow, run)
   } finally {
-    running = false
+    inFlight.delete(key)
   }
 
   return id
-}
-
-// Seed: copy existing report.html into the archive and extract KPIs in background.
-// KPI extraction is cheap (just reads the HTML, ~$0.20) and needed for trend comparison.
-export async function seedFromExisting(getWindow: () => BrowserWindow | null): Promise<string | null> {
-  // Seed is a one-time bootstrap from whatever report already exists in the
-  // global ~/.claude (pre-isolation); it is not account-attributed.
-  if (!existsSync(claudeReportPath(null))) return null
-
-  // Take the SAME mutex runInsights uses. Seed's KPI extraction runs a headless
-  // claude for up to 10 min; without this a real run could start in that window
-  // and the two whole-catalogue writes would interleave from divergent snapshots
-  // (each erasing the other's run). Bail quietly if anything is already running.
-  if (running) return null
-  running = true
-
-  try {
-    const id = generateRunId()
-    const archiveDir = join(getInsightsDir(), id)
-    ensureDir(archiveDir)
-
-    if (!copyReportToArchive(archiveDir, null)) {
-      logError('[insights] seedFromExisting: failed to copy report')
-      return null
-    }
-
-    const run: InsightsRun = { id, timestamp: Date.now(), status: 'extracting_kpis' }
-    upsertRun(run)
-    notifyRenderer(getWindow, run)
-
-    logInfo('[insights] Seeded archive from existing report, extracting KPIs...')
-
-    // Extract KPIs (cheap — just reads the HTML file)
-    const kpiSuccess = await extractKpis(archiveDir, id)
-    if (!kpiSuccess) {
-      logError('[insights] Seed KPI extraction failed, report still viewable')
-    }
-
-    run.status = 'complete'
-    upsertRun(run)
-    notifyRenderer(getWindow, run)
-
-    return id
-  } finally {
-    running = false
-  }
 }
 
 export function getCatalogue(): InsightsCatalogue {
@@ -654,8 +645,8 @@ export function getLatestRun(): InsightsRun | null {
   return catalogue.runs[catalogue.runs.length - 1]
 }
 
-export function isRunning(): boolean {
-  return running
+export function isRunning(profileId?: string): boolean {
+  return profileId ? inFlight.has(accountKey(profileId)) : inFlight.size > 0
 }
 
 // On startup, mark any stuck 'running' or 'extracting_kpis' entries as 'failed'

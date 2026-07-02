@@ -110,7 +110,7 @@ export function selectAiChip(
   if (billedAmount > 0) {
     const usd = formatBilledUsd(billedAmount)
     return {
-      label: `Copilot ${used} ${MIDDLE_DOT} ${usd}`,
+      label: `Copilot ${used} credits ${MIDDLE_DOT} ${usd}`,
       ariaLabel: `Copilot credits used: ${used}, billed ${usd}`,
       tone: 'normal',
       creditsUsed,
@@ -119,7 +119,7 @@ export function selectAiChip(
   }
 
   return {
-    label: `Copilot ${used}`,
+    label: `Copilot ${used} credits`,
     ariaLabel: `Copilot credits used: ${used}`,
     tone: 'normal',
     creditsUsed,

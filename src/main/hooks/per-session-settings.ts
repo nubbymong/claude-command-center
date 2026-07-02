@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import { getConductorMcpPort, getConductorMcpSecret } from '../conductor-mcp-server'
+import { buildStatuslineSetting } from '../providers/claude/statusline-command'
 
 /**
  * Path to the local-session settings file. Mirrors the SSH remote layout
@@ -39,6 +40,11 @@ export interface WriteSessionSettingsOptions {
    *  Caller (pty-manager) reads the CCC AppSettings.disableClaudeWorkflows
    *  flag and passes it through. */
   disableWorkflows?: boolean
+  /** U2: when provided, inject the CCC statusLine command per-session (pointing
+   *  at `<resourcesDir>/scripts/claude-multi-statusline.js`) instead of writing
+   *  it into the user's global ~/.claude/settings.json. Overrides any statusLine
+   *  inherited from the shared-settings clone. */
+  resourcesDir?: string
 }
 
 export function writeLocalSessionSettings(sessionId: string, opts: WriteSessionSettingsOptions = {}): string {
@@ -73,6 +79,13 @@ export function writeLocalSessionSettings(sessionId: string, opts: WriteSessionS
     sesCfg.disableWorkflows = true
   }
 
+  // U2: deliver the statusLine PER-SESSION rather than via a global
+  // ~/.claude/settings.json write. Overrides any statusLine inherited from the
+  // shared clone so external `claude` runs outside CCC keep their native line.
+  if (opts.resourcesDir) {
+    sesCfg.statusLine = buildStatuslineSetting(opts.resourcesDir)
+  }
+
   const sesPath = getLocalSessionSettingsPath(sessionId)
   return atomicJsonWrite(sesPath, sesCfg)
 }
@@ -99,7 +112,7 @@ export function writeLocalSessionSettings(sessionId: string, opts: WriteSessionS
  * caller can still pass --mcp-config; the file simply has an empty
  * mcpServers object in that case.
  */
-export function writeLocalSessionMcpConfig(sessionId: string): string {
+export function writeLocalSessionMcpConfig(sessionId: string, includeConductor = true): string {
   const claudeDir = path.join(os.homedir(), '.claude')
   try {
     fs.mkdirSync(claudeDir, { recursive: true })
@@ -107,7 +120,10 @@ export function writeLocalSessionMcpConfig(sessionId: string): string {
 
   const mcpPort = getConductorMcpPort()
   const mcpServers: Record<string, unknown> = {}
-  if (mcpPort > 0) {
+  // includeConductor=false (conductorToolsEnabled master off) writes an empty
+  // mcpServers object -- same shape as the port-0 fallback -- so the session
+  // launches with no built-in tools instead of a dangling endpoint.
+  if (mcpPort > 0 && includeConductor) {
     const encodedSid = encodeURIComponent(sessionId)
     // R-DEC-3: &token=<secret> authenticates this session against the gated
     // MCP server. The SSE transport preserves the query on its /messages

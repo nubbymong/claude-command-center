@@ -27,6 +27,7 @@ vi.mock('../../src/main/debug-logger', () => ({
 }))
 
 import * as fs from 'fs'
+import { logError } from '../../src/main/debug-logger'
 
 // Now import config-manager — its deps are mocked
 const configManagerModule = await import('../../src/main/config-manager')
@@ -91,6 +92,12 @@ describe('config-manager', () => {
       const result = readConfig('commands')
       expect(result).toBeNull()
     })
+
+    it('returns null (not a throw) on an unregistered config key', () => {
+      const result = readConfig('totally-not-a-key' as any)
+      expect(result).toBeNull()
+      expect(vi.mocked(logError)).toHaveBeenCalled()
+    })
   })
 
   describe('writeConfig', () => {
@@ -124,6 +131,28 @@ describe('config-manager', () => {
       mockedFs.writeFileSync.mockImplementation(() => { throw new Error('disk full') })
       const result = writeConfig('settings', {})
       expect(result).toBe(false)
+    })
+
+    it('writes the excalidraw key to excalidraw.json (regression: key was absent from CONFIG_FILES, so every draw-mode autosave failed)', () => {
+      mockedFs.existsSync.mockReturnValue(true)
+      // clearAllMocks() does not reset implementations, so drop the throwing
+      // writeFileSync left by the preceding "write error" test.
+      mockedFs.writeFileSync.mockReset()
+      const result = writeConfig('excalidraw', { bySessionId: {} })
+      expect(result).toBe(true)
+      expect(mockedFs.writeFileSync).toHaveBeenCalledWith(
+        expect.stringContaining('excalidraw.json'),
+        expect.any(String),
+        'utf-8'
+      )
+    })
+
+    it('fails closed (false), never writes, on an unregistered config key', () => {
+      mockedFs.existsSync.mockReturnValue(true)
+      const result = writeConfig('totally-not-a-key' as any, { x: 1 })
+      expect(result).toBe(false)
+      expect(mockedFs.writeFileSync).not.toHaveBeenCalled()
+      expect(vi.mocked(logError)).toHaveBeenCalled()
     })
   })
 
@@ -173,6 +202,19 @@ describe('config-manager', () => {
       const { data } = loadAllConfig()
       expect(data).toHaveProperty('agentTeams')
       expect(data).toHaveProperty('agentTeamRuns')
+    })
+
+    it('includes the excalidraw key so draw-mode drawings persist and restore', () => {
+      mockedFs.existsSync.mockReturnValue(true)
+      mockedFs.readdirSync.mockReturnValue(['excalidraw.json'] as any)
+      const scene = { bySessionId: { s1: { drawings: [{ id: 'd1', name: 'Untitled 1' }], activeDrawingId: 'd1' } } }
+      mockedFs.readFileSync.mockImplementation((p: any) => {
+        if (typeof p === 'string' && p.includes('excalidraw')) return JSON.stringify(scene)
+        return 'null'
+      })
+      const { data } = loadAllConfig()
+      expect(data).toHaveProperty('excalidraw')
+      expect(data.excalidraw).toEqual(scene)
     })
 
     it('returns needsMigration=true when no config files exist', () => {

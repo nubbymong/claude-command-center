@@ -1,9 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import type { DiagnosticsSnapshot, ServiceHealth } from '../../shared/service-health'
 
-// No \u{...} escapes in JSX (esbuild doesn't support them). U+25C6 BLACK DIAMOND.
-const DIAMOND = String.fromCodePoint(0x25c6)
-
 type Tone = 'green' | 'amber' | 'red' | 'grey'
 
 // Severity ordering: higher index = worse. Used by worst() to pick the
@@ -93,7 +90,7 @@ export default function ConductorHealthPill({ open, onOpen }: Props) {
     >
       <span className={`w-1.5 h-1.5 rounded-full ${DOT[w.tone]}`} />
       <span className={`text-[10px] font-medium leading-none ${TXT[w.tone]}`}>
-        {DIAMOND} Services
+        Services
       </span>
       {w.word && (
         <span className={`text-[10px] font-semibold leading-none ${TXT[w.tone]}`}>{w.word}</span>

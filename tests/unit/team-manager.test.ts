@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
 // Mock config-manager
 const mockReadConfig = vi.fn()
@@ -28,6 +28,7 @@ import {
   listRuns,
   runTeam,
   cancelRun,
+  waitForBatch,
 } from '../../src/main/team-manager'
 import type { TeamTemplate, TeamRun } from '../../src/shared/types'
 
@@ -346,6 +347,40 @@ describe('team-manager', () => {
       mockDispatchAgent.mockResolvedValue({ id: 'ca-d', status: 'running' })
       // Should not throw
       expect(() => runTeam('team-null')).not.toThrow()
+    })
+  })
+
+  describe('waitForBatch (timer lifecycle)', () => {
+    afterEach(() => { vi.useRealTimers() })
+
+    const oneStepRun = (stepStatus: 'running' | 'completed' | 'failed' | 'cancelled') =>
+      makeRun({ status: 'running', steps: [{ stepId: 'ts-1', agentId: 'ca-a1', status: stepStatus, label: 'X' }] })
+
+    it('clears its interval and timeout when the batch completes (no leak)', async () => {
+      vi.useFakeTimers()
+      const run = oneStepRun('running')
+      const p = waitForBatch(run, ['ts-1'])
+      run.steps[0].status = 'completed'
+      await vi.advanceTimersByTimeAsync(500)
+      await p
+      expect(vi.getTimerCount()).toBe(0)
+    })
+
+    it('clears its timers when the run is cancelled mid-wait', async () => {
+      vi.useFakeTimers()
+      const run = oneStepRun('running')
+      const p = waitForBatch(run, ['ts-1'])
+      run.status = 'cancelled'
+      await vi.advanceTimersByTimeAsync(500)
+      await p
+      expect(vi.getTimerCount()).toBe(0)
+    })
+
+    it('arms no timers when the batch is already terminal', async () => {
+      vi.useFakeTimers()
+      const run = oneStepRun('completed')
+      await waitForBatch(run, ['ts-1'])
+      expect(vi.getTimerCount()).toBe(0)
     })
   })
 })

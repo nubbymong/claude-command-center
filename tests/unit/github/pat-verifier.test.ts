@@ -23,6 +23,10 @@ describe('parseExpiryHeader', () => {
 
 describe('verifyToken', () => {
   it('returns username + scopes + expiry on 200', async () => {
+    // Expiry fixture is built relative to the clock (a pinned date became a
+    // time bomb: the suite started failing the day it passed).
+    const inAYear = new Date(Date.now() + 365 * 24 * 3600 * 1000)
+    const expiryHeader = `${inAYear.toISOString().slice(0, 10)} 12:00:00 UTC`
     globalThis.fetch = vi.fn(
       async () =>
         ({
@@ -33,7 +37,7 @@ describe('verifyToken', () => {
               ((
                 {
                   'x-oauth-scopes': 'repo, read:org',
-                  'github-authentication-token-expiration': '2026-07-01 12:00:00 UTC',
+                  'github-authentication-token-expiration': expiryHeader,
                 } as Record<string, string>
               )[h.toLowerCase()] ?? null),
           },

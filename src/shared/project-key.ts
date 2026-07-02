@@ -8,10 +8,10 @@
 //
 //   Input                                            → Directory name
 //   ──────────────────────────────────────────────────────────────────────────
-//   F:\CLAUDE_MULTI_APP                              → F--CLAUDE-MULTI-APP
-//   f:\platform_v9                                   → f--platform-v9
-//   F:\platform_v9\.claude-worktrees\warm-toolchain  → F--platform-v9--claude-worktrees-warm-toolchain
-//   C:\Users\nicho                                   → C--Users-nicho
+//   F:\MY_PROJECT                              → F--MY-PROJECT
+//   f:\sample_app                                   → f--sample-app
+//   F:\sample_app\.claude-worktrees\warm-toolchain  → F--sample-app--claude-worktrees-warm-toolchain
+//   C:\Users\jane                                   → C--Users-jane
 //
 // Rule: replace every non-alphanumeric character individually with `-`.
 //   cwd.replace(/[^A-Za-z0-9]/g, '-')

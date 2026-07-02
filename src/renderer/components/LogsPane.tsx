@@ -141,6 +141,7 @@ function SessionTranscript({ scope }: { scope: Logs2Scope }) {
       error={win.error}
       loadOlder={win.loadOlder}
       prependToken={win.prependToken}
+      jumpTarget={win.jumpTarget}
       className="flex-1 px-3"
     />
   )

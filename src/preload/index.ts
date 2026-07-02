@@ -36,8 +36,7 @@ export interface ElectronAPI {
     openFolder: () => Promise<string | null>
   }
   clipboard: {
-    readImage: () => Promise<string | null>
-    saveImage: () => Promise<string | null>
+    saveImage: () => Promise<{ path: string } | { error: 'no-image' | 'too-large' }>
   }
   credentials: {
     save: (configId: string, password: string) => Promise<boolean>
@@ -287,7 +286,6 @@ export interface ElectronAPI {
     getKpis: (runId: string) => Promise<import('../shared/types').KpiData | null>
     getLatest: () => Promise<import('../shared/types').InsightsRun | null>
     isRunning: () => Promise<boolean>
-    seed: () => Promise<string | null>
     onStatusChanged: (callback: (run: unknown) => void) => () => void
   }
   vision: {
@@ -308,7 +306,7 @@ export interface ElectronAPI {
     onInstallProgress: (cb: (data: { version: string; message: string }) => void) => () => void
   }
   cloudAgent: {
-    dispatch: (agent: { name: string; description: string; projectPath: string; configId?: string; profileId?: string }) => Promise<import('../shared/types').CloudAgent>
+    dispatch: (agent: { name: string; description: string; projectPath: string; configId?: string; profileId?: string; legacyVersion?: { enabled: boolean; version: string }; skipPermissions?: boolean }) => Promise<import('../shared/types').CloudAgent>
     cancel: (id: string) => Promise<boolean>
     remove: (id: string) => Promise<boolean>
     retry: (id: string) => Promise<import('../shared/types').CloudAgent | null>
@@ -338,6 +336,11 @@ export interface ElectronAPI {
   }
   cli: {
     check: () => Promise<boolean>
+    path: () => Promise<string | null>
+    version: () => Promise<string | null>
+  }
+  help: {
+    workspace: () => Promise<string | null>
   }
   tokenomics: {
     summary: (filter?: import('../shared/types').TkSummaryFilter) => Promise<import('../shared/types').TkSummary | null>
@@ -491,7 +494,6 @@ const electronAPI: ElectronAPI = {
     openFolder: () => ipcRenderer.invoke(IPC.DIALOG_OPEN_FOLDER)
   },
   clipboard: {
-    readImage: () => ipcRenderer.invoke(IPC.CLIPBOARD_READ_IMAGE),
     saveImage: () => ipcRenderer.invoke(IPC.CLIPBOARD_SAVE_IMAGE)
   },
   credentials: {
@@ -712,7 +714,6 @@ const electronAPI: ElectronAPI = {
     getKpis: (runId: string) => ipcRenderer.invoke(IPC.INSIGHTS_GET_KPIS, runId),
     getLatest: () => ipcRenderer.invoke(IPC.INSIGHTS_GET_LATEST),
     isRunning: () => ipcRenderer.invoke(IPC.INSIGHTS_IS_RUNNING),
-    seed: () => ipcRenderer.invoke(IPC.INSIGHTS_SEED),
     onStatusChanged: (callback: (run: unknown) => void) => {
       const handler = (_: unknown, run: unknown) => callback(run)
       ipcRenderer.on(IPC.INSIGHTS_STATUS_CHANGED, handler)
@@ -754,7 +755,7 @@ const electronAPI: ElectronAPI = {
     }
   },
   cloudAgent: {
-    dispatch: (params: { name: string; description: string; projectPath: string; configId?: string; profileId?: string }) =>
+    dispatch: (params: { name: string; description: string; projectPath: string; configId?: string; profileId?: string; legacyVersion?: { enabled: boolean; version: string }; skipPermissions?: boolean }) =>
       ipcRenderer.invoke(IPC.CLOUD_AGENT_DISPATCH, params),
     cancel: (id: string) => ipcRenderer.invoke(IPC.CLOUD_AGENT_CANCEL, id),
     remove: (id: string) => ipcRenderer.invoke(IPC.CLOUD_AGENT_REMOVE, id),
@@ -806,7 +807,12 @@ const electronAPI: ElectronAPI = {
     }
   },
   cli: {
-    check: () => ipcRenderer.invoke(IPC.CLI_CHECK)
+    check: () => ipcRenderer.invoke(IPC.CLI_CHECK),
+    path: () => ipcRenderer.invoke(IPC.CLI_PATH),
+    version: () => ipcRenderer.invoke(IPC.CLI_VERSION)
+  },
+  help: {
+    workspace: () => ipcRenderer.invoke(IPC.HELP_WORKSPACE)
   },
   tokenomics: {
     summary: (filter?: import('../shared/types').TkSummaryFilter) => ipcRenderer.invoke(IPC.TOKENOMICS2_SUMMARY, filter ?? {}),

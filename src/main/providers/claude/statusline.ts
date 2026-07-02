@@ -1,10 +1,12 @@
 /**
  * Claude statusline deployment (lifted from statusline-watcher.ts in P0.7)
  *
- * - Writes the Node.js statusline bridge script to ~/.claude/claude-multi-statusline.js
- *   AND to <resourcesDir>/scripts/claude-multi-statusline.js (for SSH-mounted access).
- * - Mutates ~/.claude/settings.json to point Claude Code's `statusLine.command`
- *   at the resources-dir copy.
+ * - Stages the Node.js statusline bridge script at
+ *   <resourcesDir>/scripts/claude-multi-statusline.js.
+ * - Delivery is PER-SESSION only (U2): the statusLine stanza is injected into
+ *   the per-session settings clone (per-session-settings.ts), never the global
+ *   ~/.claude/settings.json. healGlobalStatusline below strips the legacy
+ *   global stanza + planted ~/.claude script that pre-U2 installs wrote.
  * - Bundled script handles fetching rate limits from the Anthropic OAuth usage
  *   endpoint (api.anthropic.com/api/oauth/usage) at runtime.
  *
@@ -14,16 +16,6 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
-
-import { getResourcesDirectory } from '../../ipc/setup-handlers'
-
-// Lazy because os.homedir() is sensitive to USERPROFILE / HOME, which tests
-// sandbox in beforeEach. A module-level constant freezes the path at import
-// time and bypasses sandboxing -- prior bug surfaced by P4.2's deploy test on
-// CI runners where the runner's real ~/.claude does not pre-exist.
-function statuslineScriptPath(): string {
-  return path.join(os.homedir(), '.claude', 'claude-multi-statusline.js')
-}
 
 /**
  * Deploy the statusline script that Claude Code will invoke.
@@ -208,9 +200,11 @@ process.stdin.on('end', async () => {
 });
 `
 
-  fs.writeFileSync(statuslineScriptPath(), scriptContent, { mode: 0o755 })
+  // The statusline is delivered PER-SESSION (writeLocalSessionSettings) pointing
+  // at the resources-dir copy below -- we no longer plant a script in ~/.claude
+  // or write the global settings stanza. Boot-heal removes any legacy ones.
 
-  // Also deploy to resources/scripts/ for SSH-mounted access
+  // Deploy to resources/scripts/ for the per-session command + SSH-mounted access
   try {
     const resourcesScriptsDir = path.join(resourcesDir, 'scripts')
     if (!fs.existsSync(resourcesScriptsDir)) {
@@ -233,40 +227,30 @@ process.stdin.on('end', async () => {
 
   } catch { /* resources dir may not be configured yet */ }
 
-  // Configure ~/.claude/settings.json to invoke our script
-  configureClaudeSettings()
 }
 
 /**
- * Merge our statusline command into Claude's settings.json without overwriting other settings.
+ * Boot-heal: remove a GLOBAL statusLine stanza a prior CCC version wrote into
+ * ~/.claude/settings.json (so plain `claude` outside CCC shows its native line
+ * again) and delete the legacy planted ~/.claude/claude-multi-statusline.js.
+ * Only OUR stanza is stripped -- a user's own statusLine is left untouched.
  */
-export function configureClaudeSettings(): void {
-  const settingsPath = path.join(os.homedir(), '.claude', 'settings.json')
-  let settings: Record<string, unknown> = {}
-
+export function healGlobalStatusline(claudeDir: string = path.join(os.homedir(), '.claude')): void {
   try {
+    const settingsPath = path.join(claudeDir, 'settings.json')
     if (fs.existsSync(settingsPath)) {
-      settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'))
+      const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')) as Record<string, unknown>
+      const sl = settings.statusLine as { command?: unknown } | undefined
+      if (sl && typeof sl.command === 'string' && sl.command.includes('claude-multi-statusline.js')) {
+        delete settings.statusLine
+        fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2))
+      }
     }
-  } catch { /* start fresh */ }
-
-  // Point to the resources dir copy so the script can derive status dir
-  // from its own location (scripts/ → ../status/)
-  const resourcesScript = path.join(getResourcesDirectory(), 'scripts', 'claude-multi-statusline.js')
-  const command = os.platform() === 'win32'
-    ? `node "${resourcesScript.replace(/\\/g, '\\\\')}"`
-    : `node "${resourcesScript}"`
-
-  settings.statusLine = {
-    type: 'command',
-    command
-  }
-
-  const claudeDir = path.join(os.homedir(), '.claude')
-  if (!fs.existsSync(claudeDir)) {
-    fs.mkdirSync(claudeDir, { recursive: true })
-  }
-  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2))
+  } catch { /* best-effort -- never block boot on cleanup */ }
+  try {
+    const legacyScript = path.join(claudeDir, 'claude-multi-statusline.js')
+    if (fs.existsSync(legacyScript)) fs.unlinkSync(legacyScript)
+  } catch { /* best-effort */ }
 }
 
 /**

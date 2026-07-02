@@ -33,7 +33,7 @@ export function registerMemoryHandlers(): void {
     } catch (err) {
       throw new Error(`Invalid parameters: ${err instanceof Error ? err.message : String(err)}`)
     }
-    const validPath = validateMemoryPath(filePath)
+    const validPath = validateMemoryPath(filePath, { destructive: true })
     await deleteMemoryFile(validPath)
   })
 
@@ -44,7 +44,7 @@ export function registerMemoryHandlers(): void {
     } catch (err) {
       throw new Error(`Invalid parameters: ${err instanceof Error ? err.message : String(err)}`)
     }
-    const validPath = validateMemoryPath(filePath)
+    const validPath = validateMemoryPath(filePath, { destructive: true })
     await writeMemoryFrontmatter(validPath, frontmatter)
   })
 

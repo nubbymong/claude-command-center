@@ -29,7 +29,9 @@ import NewAccountPrompt from './components/NewAccountPrompt'
 import SentinelPanel from './components/sentinel/SentinelPanel'
 import { useAddAccount } from './hooks/useAddAccount'
 import TrainingWalkthrough, { shouldShowTraining, isFirstInstall } from './components/TrainingWalkthrough'
-import GuidedConfigView from './components/GuidedConfigView'
+import SessionDialog from './components/SessionDialog'
+import GuidedTour from './components/GuidedTour'
+import HelpPanel from './components/HelpPanel'
 import TipModal from './components/TipModal'
 import { useTipsStore, trackUsage } from './stores/tipsStore'
 import ErrorBoundary from './components/ErrorBoundary'
@@ -41,6 +43,8 @@ import { useCommandStore } from './stores/commandStore'
 import { useMagicButtonStore } from './stores/magicButtonStore'
 import { useAppMetaStore } from './stores/appMetaStore'
 import { useSettingsStore } from './stores/settingsStore'
+import { OnboardingHarness } from './onboarding/OnboardingHarness'
+import { deriveOnboarding } from './onboarding/gate'
 import { useAccountProfilesStore } from './stores/accountProfilesStore'
 import { useRegistryStore } from './stores/registryStore'
 import { useSentinelStore } from './stores/sentinelStore'
@@ -54,6 +58,7 @@ import { migrateColorRecords } from './utils/migrateIdentityColors'
 import { gatherLocalStorageData, hydrateStores, applyConfigColourMigration } from './utils/configHydration'
 import { isGitHubOnboardingDue as isGitHubOnboardingDuePredicate } from './utils/githubOnboarding'
 import { setupCloudAgentListener } from './stores/cloudAgentStore'
+import { setupInsightsListener } from './stores/insightsStore'
 import { setupConductorMcpListener, useConductorMcpStore } from './stores/conductorMcpStore'
 import { setupGitHubListener, useGitHubStore } from './stores/githubStore'
 import { setupChannelListeners } from './stores/channelStore'
@@ -158,6 +163,13 @@ export default function App() {
   }, [])
 
   const [showGuidedConfig, setShowGuidedConfig] = useState(false)
+  // Live-app guided tour that follows the onboarding finish step (or the
+  // Feature Guide button). Anchored coach-marks over the real UI, ending by
+  // opening the first-config dialog.
+  const [tourActive, setTourActive] = useState(false)
+  // One home for help (searchable guide + feature tour + Ask Claude); opened
+  // by the sidebar ? button.
+  const [showHelpPanel, setShowHelpPanel] = useState(false)
   const [showTipModal, setShowTipModal] = useState(false)
   const [partnerActive, setPartnerActive] = useState<Set<string>>(new Set())
   const [showMachineNamePrompt, setShowMachineNamePrompt] = useState(false)
@@ -171,11 +183,16 @@ export default function App() {
   // termination (crash / external-installer force-close) never re-offers phantom
   // sessions the user already closed. Resume still reads pendingRestore in-memory.
   useSessionAutosave()
-  // onCreateConfigFromStage: App owns the GuidedConfigView toggle via showGuidedConfig.
+  // onCreateConfigFromStage: App owns the first-config dialog via showGuidedConfig.
   // Sidebar receives onShowFirstRun={() => setShowGuidedConfig(true)}, so we use the
   // same setter here to open the real create dialog from the stage empty state.
   const onCreateConfigFromStage = () => setShowGuidedConfig(true)
   const loggingConsentSeen = useSettingsStore((s) => s.settings.loggingConsentSeen)
+  // Reactive onboarding-gate input. MUST be a top-level hook (above the
+  // Loading/SetupDialog early returns) — the reactive subscription is what lets
+  // the finish step's completion stamp dismiss the harness, but a hook placed
+  // after a conditional return breaks the Rules of Hooks and blanks the app.
+  const onboardingMeta = useAppMetaStore((s) => s.meta)
   const activeSessionId = useSessionStore((s) => s.activeSessionId)
   // Subscribe to sessions through a STRUCTURAL equality so the root shell does
   // NOT re-render on the statusline bridge's ~1-3×/s telemetry ticks (which only
@@ -368,6 +385,7 @@ export default function App() {
       // Start cloud agent IPC listener early so status updates are
       // never missed (previously only started when CloudAgentsPage mounted)
       setupCloudAgentListener()
+      setupInsightsListener()
       setupConductorMcpListener()
       setupGitHubListener()
       setupChannelListeners()
@@ -384,23 +402,15 @@ export default function App() {
         window.electronAPI.screenshot.cleanup(magicSettings.autoDeleteDays)
       }
 
-      // Prompt for local machine name if not set (first run after update)
-      const currentSettings = useSettingsStore.getState().settings
-      if (!currentSettings.localMachineName) {
-        setTimeout(() => setShowMachineNamePrompt(true), 800)
-      }
-
-      const gateShown = false
-
-      setTimeout(() => {
-        if (gateShown) return
-        if (isFirstInstall()) {
-          setShowTraining(true)
-        } else {
-          if (shouldShowWhatsNew()) setShowWhatsNew(true)
-          else if (shouldShowTraining()) setShowTraining(true)
-        }
-      }, 500)
+      // NOTE (v2): the legacy first-run auto-popups — the 800ms machine-name
+      // prompt, and the 500ms What's-New / training-tour arm — are intentionally
+      // GONE. The onboarding harness is their single replacement: it collects the
+      // machine name (Transparency step), and its finish step stamps
+      // lastSeenVersion + lastTrainingVersion so neither the What's-New modal nor
+      // the tour auto-fire this release. The tour remains reachable on demand via
+      // the Feature Guide button, and What's-New via a future changelog bump for
+      // ALREADY-onboarded users. Machine-name / training-due state is no longer
+      // armed here.
 
       // Pick a tip for this session (one per app launch)
       setTimeout(() => {
@@ -450,14 +460,17 @@ export default function App() {
   useEffect(() => {
     if (!isGitHubOnboardingDue()) return
     if (logsWipeBytes !== 0) return
+    // v2: never arm the legacy GitHub modal while the onboarding harness is (or
+    // could still be) the active flow — its own GitHub step replaces it, and the
+    // finish step stamps seenOnboardingVersion. Without this guard the modal
+    // could arm in the background mid-flow and then surface the instant
+    // onboarding completes.
+    if (deriveOnboarding(useAppMetaStore.getState().meta, {}).due) return
     if (showWhatsNew || showTraining || showTrainingAll) return
-    // The machine-name prompt is below onboarding in the boot-gate priority,
-    // so opening onboarding while it's visible would unmount it mid-typing.
-    if (showMachineNamePrompt) return
     if (isFirstInstall() || shouldShowWhatsNew() || shouldShowTraining()) return
     const t = setTimeout(() => setShowGitHubOnboarding(true), 120)
     return () => clearTimeout(t)
-  }, [githubConfig, logsWipeBytes, showWhatsNew, showTraining, showTrainingAll, showMachineNamePrompt, needsCliSetup])
+  }, [githubConfig, logsWipeBytes, showWhatsNew, showTraining, showTrainingAll, needsCliSetup])
 
   // useCallback: passed to OnboardingModal as `onClose`, which forwards it
   // to useFocusTrap. Without stable identity, the focus-trap effect re-runs
@@ -831,7 +844,13 @@ export default function App() {
               )
             })}
           </div>
-          {activeSession && <GitHubPanel sessionId={activeSession.id} />}
+          {/* BUG-7: the GitHub FAB (absolute top-2 right-2) is a later sibling
+              than the session content, so it painted over the draw pane's Close
+              button. The FAB is irrelevant while drawing — suppress the whole
+              panel when the active session is in draw mode. */}
+          {activeSession && !excalidrawBySession[activeSession.id]?.isOpen && (
+            <GitHubPanel sessionId={activeSession.id} />
+          )}
         </div>
         {/* Per-session telemetry strip + command rows live BELOW the
             terminal/GitHub-panel row so they span the full content-column
@@ -859,8 +878,12 @@ export default function App() {
     )
   }
 
-  // Show loading while checking setup status or loading config
-  if (setupComplete === null || (setupComplete && !configLoaded)) {
+  // Show loading while checking setup status or loading config. Also hold
+  // until logsWipe detection resolves: pickBootGate returns null while
+  // logsWipeBytes === null, so rendering the shell here would flash an
+  // ungated, interactive app for a few frames before a due gate (onboarding,
+  // wipe) pops over it.
+  if (setupComplete === null || (setupComplete && (!configLoaded || logsWipeBytes === null))) {
     return (
       <div className="flex flex-col h-screen bg-base text-text items-center justify-center">
         <div className="text-overlay1">Loading...</div>
@@ -906,8 +929,15 @@ export default function App() {
   // version compare, settings flags, staggered boot timers); without a shared
   // priority they mount simultaneously and stack, with DOM order deciding who
   // paints on top. Exactly one gate renders at a time — see pickBootGate.
+  // Forced first-run harness gate. onboardingMeta is subscribed at the top of
+  // the component (reactive) so the finish step's completion stamp
+  // (settleOnboardingFinish) flips due->false and unmounts the harness on the
+  // next render. Settings view kept minimal — the codexSignIn when() only
+  // narrows the applicable set, never the due decision.
+  const onboardingDue = deriveOnboarding(onboardingMeta, {}).due
   const bootGate = pickBootGate({
     configLoaded,
+    onboardingDue,
     logsWipeBytes,
     showWhatsNew,
     showTraining,
@@ -926,8 +956,33 @@ export default function App() {
         {bootGate === 'logsWipe' && logsWipeBytes !== null && (
           <LogsWipeModal totalBytes={logsWipeBytes} onComplete={() => setLogsWipeBytes(0)} />
         )}
+        {bootGate === 'onboarding' && (
+          <OnboardingHarness
+            onComplete={(startTour) => {
+              // settleOnboardingFinish already stamped completion (harness will
+              // unmount on this render). Launch the live-app tour if chosen.
+              if (startTour) setTourActive(true)
+            }}
+          />
+        )}
+        {tourActive && bootGate === null && (
+          <GuidedTour
+            onClose={() => setTourActive(false)}
+            onCreateConfig={() => {
+              setTourActive(false)
+              setShowGuidedConfig(true)
+            }}
+          />
+        )}
         {bootGate === 'whatsNew' && <WhatsNewModal onClose={handleWhatsNewClose} />}
-        {showTipModal && <TipModal onClose={() => setShowTipModal(false)} onNavigate={(v) => setView(v)} />}
+        {showTipModal && bootGate !== 'onboarding' && <TipModal onClose={() => setShowTipModal(false)} onNavigate={(v) => setView(v)} />}
+        {showHelpPanel && (
+          <HelpPanel
+            onClose={() => setShowHelpPanel(false)}
+            onStartTour={() => { setShowTrainingAll(true); setShowTraining(true) }}
+            onShowSessions={() => setView('sessions')}
+          />
+        )}
         {bootGate === 'githubOnboarding' && (
           <OnboardingModal
             onClose={dismissGitHubOnboarding}
@@ -944,7 +999,11 @@ export default function App() {
           />
         )}
 
-        {newAccountDetected && (
+        {/* Suppressed under the guided tour and the first-config dialog too:
+            the tour's centered steps paint a click-capturing full-viewport dim
+            (z-60) over these (z-40/z-50), stranding a real decision prompt
+            underneath. State is kept, so they surface once the overlay closes. */}
+        {newAccountDetected && bootGate !== 'onboarding' && !tourActive && !showGuidedConfig && (
           <NewAccountPrompt
             email={newAccountDetected.email}
             onDismiss={() => setNewAccountDetected(null)}
@@ -961,7 +1020,7 @@ export default function App() {
           <LoggingConsentPrompt />
         )}
 
-        {pendingRestore && (
+        {pendingRestore && bootGate !== 'onboarding' && !tourActive && !showGuidedConfig && (
           <ResumeSessionsPrompt
             count={pendingRestore.sessions.length}
             onResume={() => {
@@ -1043,69 +1102,15 @@ export default function App() {
         )}
         <TitleBar sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
         <div className="flex flex-1 overflow-hidden">
-          <Sidebar currentView={view} onViewChange={setView} collapsed={!sidebarOpen} tourActive={showTraining || showTrainingAll} onShowFirstRun={() => setShowGuidedConfig(true)} onShowHelp={() => { setShowTrainingAll(true); setShowTraining(true) }} />
+          <Sidebar currentView={view} onViewChange={setView} collapsed={!sidebarOpen} tourActive={showTraining || showTrainingAll} onShowFirstRun={() => setShowGuidedConfig(true)} onShowHelp={() => setShowHelpPanel(true)} />
           <main className="flex-1 flex flex-col overflow-hidden titlebar-no-drag">
             <div className="flex-1 flex flex-col overflow-hidden min-h-0 relative">
-              {showGuidedConfig ? (
-                <GuidedConfigView
-                  onSkip={() => setShowGuidedConfig(false)}
-                  onConfirm={async (configDraft, sshPassword) => {
-                    const { generateId } = await import('./utils/id')
-                    const configId = generateId()
-                    if (sshPassword) {
-                      await window.electronAPI.credentials.save(configId, sshPassword)
-                    }
-                    const newConfig = { ...configDraft, id: configId }
-                    useConfigStore.getState().addConfig(newConfig)
-                    useAppMetaStore.getState().update({ hasCreatedFirstConfig: true })
-
-                    // Track feature usage based on config fields set
-                    trackUsage('sessions.create-config')
-                    if (newConfig.sessionType === 'ssh') trackUsage('sessions.session-type')
-                    if (newConfig.claudeOptions?.effortLevel) trackUsage('sessions.effort-level')
-                    if (newConfig.claudeOptions?.disableAutoMemory) trackUsage('sessions.disable-auto-memory')
-                    if (newConfig.claudeOptions?.enableCodexReview) trackUsage('sessions.enable-codex-review')
-                    if (newConfig.partnerTerminalPath) trackUsage('sessions.partner-terminal')
-
-                    const session: Session = {
-                      id: generateId(),
-                      configId: newConfig.id,
-                      label: newConfig.label,
-                      workingDirectory: newConfig.workingDirectory,
-                      model: newConfig.claudeOptions?.model ?? '',
-                      color: newConfig.color,
-                      status: 'idle',
-                      createdAt: Date.now(),
-                      sessionType: newConfig.sessionType,
-                      shellOnly: newConfig.shellOnly,
-                      sshConfig: newConfig.sshConfig,
-                      effortLevel: newConfig.claudeOptions?.effortLevel,
-                      disableAutoMemory: newConfig.claudeOptions?.disableAutoMemory,
-                      enableCodexReview: newConfig.claudeOptions?.enableCodexReview,
-                      loggingEnabled: newConfig.claudeOptions?.loggingEnabled,
-                      provider: newConfig.provider,
-                      codexOptions: newConfig.codexOptions,
-                    }
-                    // Both providers support a resume picker. For Codex, the picker
-                    // script may not be deployed yet on first boot -- buildCodexSpawn
-                    // falls back to direct codex spawn (see src/main/providers/codex/spawn.ts).
-                    if (
-                      !session.shellOnly &&
-                      session.sessionType === 'local'
-                    ) {
-                      markSessionForResumePicker(session.id)
-                    }
-                    useSessionStore.getState().addSession(session)
-                    setShowGuidedConfig(false)
-                    setView('sessions')
-                  }}
-                />
-              ) : (
-                <>
-                  {renderSessions()}
-                  {renderOverlayView()}
-                </>
-              )}
+              {/* The live app is always what's behind — the first-config flow is
+                  the REAL SessionDialog rendered as an overlay (below), so the
+                  user sees the workbench while creating their first session.
+                  (The old full-column GuidedConfigView is retired.) */}
+              {renderSessions()}
+              {renderOverlayView()}
             </div>
           </main>
         </div>
@@ -1130,6 +1135,28 @@ export default function App() {
             onClose={handleTrainingClose}
             showAll={showTrainingAll}
             mode={showTrainingAll ? 'help' : 'first-run'}
+          />
+        )}
+        {/* First-config creation (from the onboarding tour, the sidebar
+            FirstRunCard, or the empty-state button). The REAL SessionDialog over
+            the live app — same create + launch path as the sidebar's New Session,
+            so there is no behaviour drift and no dead controls (retires the old
+            GuidedConfigView). */}
+        {showGuidedConfig && (
+          <SessionDialog
+            onCancel={() => setShowGuidedConfig(false)}
+            onConfirm={async (data, password, sudoPassword) => {
+              const { generateId } = await import('./utils/id')
+              const config = { ...data, id: generateId() }
+              useConfigStore.getState().addConfig(config)
+              if (password) await window.electronAPI.credentials.save(config.id, password)
+              if (sudoPassword) await window.electronAPI.credentials.save(config.id + '_sudo', sudoPassword)
+              useAppMetaStore.getState().update({ hasCreatedFirstConfig: true })
+              trackUsage('sessions.create-config')
+              setShowGuidedConfig(false)
+              launchConfig(config)
+              setView('sessions')
+            }}
           />
         )}
         {/* Pre-spawn account launch gate: asks which account a session runs

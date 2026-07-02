@@ -8,7 +8,7 @@ const fixtureHome = vi.hoisted(() => {
   const nodeOs = require('node:os') as typeof import('node:os')
   const nodePath = require('node:path') as typeof import('node:path')
   const home = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'ccc-resume-home-'))
-  const projectDir = nodePath.join(home, '.claude', 'projects', 'F--CLAUDE-MULTI-APP')
+  const projectDir = nodePath.join(home, '.claude', 'projects', 'F--MY-PROJECT')
   nodeFs.mkdirSync(projectDir, { recursive: true })
   nodeFs.writeFileSync(
     nodePath.join(projectDir, 'fixture-session-1.jsonl'),
@@ -16,7 +16,7 @@ const fixtureHome = vi.hoisted(() => {
       JSON.stringify({ type: 'summary', summary: 'not a label source' }),
       JSON.stringify({
         type: 'user',
-        cwd: 'F:\\CLAUDE_MULTI_APP',
+        cwd: 'F:\\MY_PROJECT',
         message: { content: 'first real user prompt for the label' },
       }),
     ].join('\n') + '\n',
@@ -45,8 +45,8 @@ describe('ClaudeProvider resume + history', () => {
     expect(s.sessionId).toBe('fixture-session-1')
     expect(typeof s.lastModified).toBe('number')
     // cwd must be the real path from the transcript line, not the encoded
-    // project-dir name like "F--CLAUDE-MULTI-APP"
-    expect(s.cwd).toBe('F:\\CLAUDE_MULTI_APP')
+    // project-dir name like "F--MY-PROJECT"
+    expect(s.cwd).toBe('F:\\MY_PROJECT')
     expect(s.label).toBe('first real user prompt for the label')
   })
 

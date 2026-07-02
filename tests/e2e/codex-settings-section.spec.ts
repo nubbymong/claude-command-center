@@ -3,35 +3,27 @@
  *
  * Verifies that the Codex tab exists in Settings and renders a status row
  * containing "Codex CLI" text. Does not depend on Codex being installed.
+ *
+ * Runs against an isolated temp data dir (helpers/electron-app) so the app
+ * boots to a clean, setup-complete first-launch state with no real user data.
  */
 
-import { test, expect, _electron as electron, ElectronApplication, Page } from '@playwright/test'
-import path from 'path'
+import { test, expect } from '@playwright/test'
+import { launchIsolatedApp, closeIsolatedApp, IsolatedApp } from './helpers/electron-app'
 
-const APP_PATH = path.resolve(__dirname, '../../out/main/index.js')
-
-let app: ElectronApplication
-let page: Page
+let ctx: IsolatedApp
+let page: IsolatedApp['page']
 
 test.beforeAll(async () => {
-  app = await electron.launch({
-    args: [APP_PATH],
-    env: {
-      ...process.env,
-      NODE_ENV: 'test',
-      E2E_HEADLESS: '1',
-    },
-  })
-  page = await app.firstWindow()
-  await page.waitForLoadState('domcontentloaded')
-  await page.waitForTimeout(2000)
+  ctx = await launchIsolatedApp()
+  page = ctx.page
 })
 
 test.afterAll(async () => {
-  if (app) await app.close()
+  await closeIsolatedApp(ctx)
 })
 
-test('Settings shows Codex tab with status row', async ({ page: _p }) => {
+test('Settings shows Codex tab with status row', async () => {
   await page.click('button:has-text("Settings")')
   await page.click('button:has-text("Codex")')
   // Status row must be present (text varies by environment -- installed or not)

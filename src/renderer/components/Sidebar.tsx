@@ -11,6 +11,7 @@ import { ViewType } from '../types/views'
 import { trackUsage } from '../stores/tipsStore'
 import { generateId } from '../utils/id'
 import { matchesShortcut, DEFAULT_SHORTCUTS } from '../utils/shortcuts'
+import { canSwitchAccountForSession } from '../utils/sessionLaunch'
 import { useLaunchConfig } from '../hooks/useLaunchConfig'
 import SidebarNav from './sidebar/SidebarNav'
 import ConfigRow from './sidebar/ConfigRow'
@@ -25,7 +26,9 @@ import SessionGroupHeader from './sidebar/SessionGroupHeader'
 import PinnedConfigsPanel from './sidebar/PinnedConfigsPanel'
 import FirstRunCard from './FirstRunCard'
 import ColourMigrationNotice from './ColourMigrationNotice'
+import ConfigHydrationNotice from './ConfigHydrationNotice'
 import { useAppMetaStore } from '../stores/appMetaStore'
+import { deriveOnboarding } from '../onboarding/gate'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { useSwitchAccount } from '../hooks/useSwitchAccount'
 import { useTokenomicsStore } from '../stores/tokenomicsStore'
@@ -62,7 +65,7 @@ interface Props {
   onShowHelp?: () => void
   onShowFirstRun?: () => void
   // Suppresses the FirstRunCard while the training/walkthrough is
-  // open — clicking "Create Config" otherwise opens GuidedConfigView
+  // open — clicking "Create Config" otherwise opens the first-config dialog
   // behind the tour, which the user can't see and which doesn't
   // dismiss the tour. macOS and Windows both affected.
   tourActive?: boolean
@@ -124,8 +127,8 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
   // no-ops when the chosen account equals the current one.
   const accountProfiles = useAccountProfilesStore((s) => s.profiles)
   const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
-  const canSwitchAccount = accountProfiles.length >= 2
   const menuSession = sessionContextMenu ? sessions.find((s) => s.id === sessionContextMenu.sessionId) ?? null : null
+  const canSwitchAccount = canSwitchAccountForSession({ provider: menuSession?.provider, isSsh: !!menuSession?.sshConfig, shellOnly: !!menuSession?.shellOnly, profileCount: accountProfiles.length })
   const switchMenuAccount = useSwitchAccount(menuSession)
 
   // Inject attention styles on mount
@@ -140,6 +143,9 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
   // New config shortcut (configurable)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Suppressed while onboarding overlays the shell — Ctrl+T here would
+      // open the New Config dialog invisibly underneath it.
+      if (deriveOnboarding(useAppMetaStore.getState().meta, {}).due) return
       const sc = useSettingsStore.getState().settings.keyboardShortcuts || DEFAULT_SHORTCUTS
       if (matchesShortcut(e, sc.newConfig)) {
         e.preventDefault()
@@ -153,6 +159,11 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
   const handleCreateConfig = async (data: Omit<TerminalConfig, 'id'>, password?: string, sudoPassword?: string) => {
     const config: TerminalConfig = { ...data, id: generateId() }
     addConfig(config)
+    // Same stamps as the guided first-config path (App.tsx): without them the
+    // FirstRunCard re-appears if the user later deletes all configs, and the
+    // tips system never learns the feature was used.
+    useAppMetaStore.getState().update({ hasCreatedFirstConfig: true })
+    trackUsage('sessions.create-config')
     // Save credentials to the encrypted store (main process handles decryption at spawn time)
     if (password) {
       await window.electronAPI.credentials.save(config.id, password)
@@ -606,6 +617,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
               </svg>
             </button>
             <button
+              data-tour="new-config"
               onClick={(e) => { e.stopPropagation(); setShowNewDialog(true) }}
               className="w-6 h-6 flex items-center justify-center rounded hover:bg-surface0 text-overlay1 hover:text-text transition-colors focus-ring"
               title="New config (Ctrl+T)"
@@ -877,6 +889,9 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
             if (cfg) setEditingConfig(cfg)
           }}
         />
+
+        {/* P2.4: warns when a corrupt config section was reset on hydrate. */}
+        <ConfigHydrationNotice />
 
         {showFirstRunCard && onShowFirstRun && (
           <FirstRunCard

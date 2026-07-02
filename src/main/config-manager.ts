@@ -30,6 +30,7 @@ const CONFIG_FILES = {
   commandSections: 'command-sections.json',
   usageTracking: 'usage-tracking.json',
   commandBarUi: 'command-bar-ui.json',
+  excalidraw: 'excalidraw.json',
 } as const
 
 export type ConfigKey = keyof typeof CONFIG_FILES
@@ -132,7 +133,16 @@ function pruneOldBackups(backupRoot: string): void {
  * Read a single config file. Returns parsed JSON or null if not found/invalid.
  */
 export function readConfig<T = unknown>(key: ConfigKey): T | null {
-  const filePath = join(getConfigDir(), CONFIG_FILES[key])
+  // Fail closed on an unregistered key. join(dir, undefined) would otherwise
+  // throw OUTSIDE the try below, propagating as an uncaught error rather than
+  // the documented null. (This is the class of bug that silently broke the
+  // 'excalidraw' key when it was missing from CONFIG_FILES.)
+  const fileName = CONFIG_FILES[key]
+  if (!fileName) {
+    logError(`[config-manager] Refusing to read unknown config key: ${String(key)}`)
+    return null
+  }
+  const filePath = join(getConfigDir(), fileName)
   try {
     if (!existsSync(filePath)) return null
     const data = readFileSync(filePath, 'utf-8')
@@ -152,8 +162,18 @@ export function readConfig<T = unknown>(key: ConfigKey): T | null {
  * destination in place (same bug fixed in session-state.ts, P7.7.16).
  */
 export function writeConfig(key: ConfigKey, data: unknown): boolean {
+  // Fail closed on an unregistered key. The CONFIG_FILES[key] lookup ran
+  // OUTSIDE the try below, so an unknown key made join(dir, undefined) throw
+  // uncaught -- it surfaced to the renderer as an IPC rejection (config-saver
+  // -> "Save failed") with nothing in app.log. This is exactly how the missing
+  // 'excalidraw' entry stayed invisible. Guard + log so it can never be silent.
+  const fileName = CONFIG_FILES[key]
+  if (!fileName) {
+    logError(`[config-manager] Refusing to write unknown config key: ${String(key)}`)
+    return false
+  }
   ensureConfigDir()
-  const filePath = join(getConfigDir(), CONFIG_FILES[key])
+  const filePath = join(getConfigDir(), fileName)
   const tmpPath = `${filePath}.tmp.${process.pid}`
   try {
     const json = JSON.stringify(data, null, 2)

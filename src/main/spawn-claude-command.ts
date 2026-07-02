@@ -210,13 +210,16 @@ export function buildClaudeLaunchCommand(opts: BuildClaudeLaunchCommandOptions):
       : `cd '${escapedCwd}' && "${claudeBin}"${resumeFlag}${agentsFlag}${extraFlags}; exit`
   }
 
-  // GOLDEN no-resume behaviour (byte-identical to the prior inline code).
+  // No-resume behaviour. P1.1: the picker-script branch forwards agentsFlag too
+  // (it previously appended only extraFlags, silently dropping --agents on a
+  // restored session). resume-picker.js forwards its own argv to
+  // `claude --resume <id> ...`, so the flag survives the launch.
   if (useResumePicker) {
     if (pickerScript && isWin32) {
       const escapedScript = pickerScript.replace(/'/g, "''")
-      return `Set-Location '${escapedCwd}'; node '${escapedScript}'${extraFlags}; exit`
+      return `Set-Location '${escapedCwd}'; node '${escapedScript}'${agentsFlag}${extraFlags}; exit`
     } else if (pickerScript) {
-      return `cd '${escapedCwd}' && node '${pickerScript.replace(/'/g, "'\\''")}'${extraFlags}; exit`
+      return `cd '${escapedCwd}' && node '${pickerScript.replace(/'/g, "'\\''")}'${agentsFlag}${extraFlags}; exit`
     } else {
       // Fallback: no picker script found, launch Claude directly.
       return isWin32

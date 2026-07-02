@@ -9,10 +9,10 @@
  * the dev machine:
  *   Input cwd                                            → Real dir observed
  *   ─────────────────────────────────────────────────────────────────────────
- *   F:\CLAUDE_MULTI_APP                                  → F--CLAUDE-MULTI-APP
- *   f:\platform_v9                                       → f--platform-v9
- *   F:\platform_v9\.claude-worktrees\warm-toolchain      → F--platform-v9--claude-worktrees-warm-toolchain
- *   C:\Users\nicho                                       → C--Users-nicho
+ *   F:\MY_PROJECT                                  → F--MY-PROJECT
+ *   f:\sample_app                                       → f--sample-app
+ *   F:\sample_app\.claude-worktrees\warm-toolchain      → F--sample-app--claude-worktrees-warm-toolchain
+ *   C:\Users\jane                                       → C--Users-jane
  *
  * Rule: cwd.replace(/[^A-Za-z0-9]/g, '-')
  *   Every non-alphanumeric char (colon, backslash, forward-slash, underscore, dot, space)
@@ -56,7 +56,7 @@ describe('canonicalizeTranscriptPath', () => {
   })
 
   it('passes through an already-canonical path unchanged (normalized)', () => {
-    const canonical = path.join(homedir, '.claude', 'projects', 'F--CLAUDE-MULTI-APP', 'conv-uuid.jsonl')
+    const canonical = path.join(homedir, '.claude', 'projects', 'F--MY-PROJECT', 'conv-uuid.jsonl')
     const result = canonicalizeTranscriptPath(canonical)
     expect(result).toBe(path.normalize(canonical))
   })
@@ -141,10 +141,10 @@ describe('canonicalizeTranscriptPath', () => {
   // ── Pinned: original casing in rest is preserved (segment match is case-insensitive) ──
   it('preserves original casing of the rest portion despite case-insensitive segment match', () => {
     // The segment `.CLAUDE/Projects` is matched case-insensitively; the rest
-    // `F--CLAUDE-MULTI-APP/Conv.jsonl` must keep its original case verbatim.
-    const input = 'F:\\RES\\p1\\.CLAUDE\\Projects\\F--CLAUDE-MULTI-APP\\Conv.jsonl'
+    // `F--MY-PROJECT/Conv.jsonl` must keep its original case verbatim.
+    const input = 'F:\\RES\\p1\\.CLAUDE\\Projects\\F--MY-PROJECT\\Conv.jsonl'
     const result = canonicalizeTranscriptPath(input)
-    const expected = path.join(homedir, '.claude', 'projects', 'F--CLAUDE-MULTI-APP', 'Conv.jsonl')
+    const expected = path.join(homedir, '.claude', 'projects', 'F--MY-PROJECT', 'Conv.jsonl')
     expect(result).toBe(expected)
   })
 })
@@ -167,25 +167,25 @@ describe('mangleCwdToProjectDir', () => {
    */
 
   // ── Pair 1: verified against real store 2026-06-06 ──
-  it('F:\\CLAUDE_MULTI_APP → F--CLAUDE-MULTI-APP (underscore → hyphen; verified real dir)', () => {
-    expect(mangleCwdToProjectDir('F:\\CLAUDE_MULTI_APP')).toBe('F--CLAUDE-MULTI-APP')
+  it('F:\\MY_PROJECT → F--MY-PROJECT (underscore → hyphen; verified real dir)', () => {
+    expect(mangleCwdToProjectDir('F:\\MY_PROJECT')).toBe('F--MY-PROJECT')
   })
 
   // ── Pair 2: verified against real store 2026-06-06 ──
-  it('f:\\platform_v9 → f--platform-v9 (lowercase preserved, underscore → hyphen; verified real dir)', () => {
-    expect(mangleCwdToProjectDir('f:\\platform_v9')).toBe('f--platform-v9')
+  it('f:\\sample_app → f--sample-app (lowercase preserved, underscore → hyphen; verified real dir)', () => {
+    expect(mangleCwdToProjectDir('f:\\sample_app')).toBe('f--sample-app')
   })
 
   // ── Pair 3: verified against real store 2026-06-06 ──
-  it('F:\\platform_v9\\.claude-worktrees\\warm-toolchain → F--platform-v9--claude-worktrees-warm-toolchain (dot → hyphen, NO run-collapsing; verified real dir)', () => {
-    expect(mangleCwdToProjectDir('F:\\platform_v9\\.claude-worktrees\\warm-toolchain')).toBe(
-      'F--platform-v9--claude-worktrees-warm-toolchain',
+  it('F:\\sample_app\\.claude-worktrees\\warm-toolchain → F--sample-app--claude-worktrees-warm-toolchain (dot → hyphen, NO run-collapsing; verified real dir)', () => {
+    expect(mangleCwdToProjectDir('F:\\sample_app\\.claude-worktrees\\warm-toolchain')).toBe(
+      'F--sample-app--claude-worktrees-warm-toolchain',
     )
   })
 
   // ── Pair 4: verified against real store 2026-06-06 ──
-  it('C:\\Users\\nicho → C--Users-nicho (verified real dir)', () => {
-    expect(mangleCwdToProjectDir('C:\\Users\\nicho')).toBe('C--Users-nicho')
+  it('C:\\Users\\jane → C--Users-jane (verified real dir)', () => {
+    expect(mangleCwdToProjectDir('C:\\Users\\jane')).toBe('C--Users-jane')
   })
 
   // ── Synthetic: dots and spaces replaced, no collapsing ──

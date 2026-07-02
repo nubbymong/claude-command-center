@@ -1,27 +1,23 @@
 /**
  * Playwright E2E tests — Cloud Agents page functionality
+ *
+ * Runs against an isolated temp data dir (helpers/electron-app) so the app
+ * boots to a clean, setup-complete first-launch state with no real user data.
  */
 
-import { test, expect, _electron as electron, ElectronApplication, Page } from '@playwright/test'
-import path from 'path'
+import { test, expect } from '@playwright/test'
+import { launchIsolatedApp, closeIsolatedApp, IsolatedApp } from './helpers/electron-app'
 
-const APP_PATH = path.resolve(__dirname, '../../out/main/index.js')
-
-let app: ElectronApplication
-let page: Page
+let ctx: IsolatedApp
+let page: IsolatedApp['page']
 
 test.beforeAll(async () => {
-  app = await electron.launch({
-    args: [APP_PATH],
-    env: { ...process.env, NODE_ENV: 'test', E2E_HEADLESS: '1' },
-  })
-  page = await app.firstWindow()
-  await page.waitForLoadState('domcontentloaded')
-  await page.waitForTimeout(3000)
+  ctx = await launchIsolatedApp()
+  page = ctx.page
 })
 
 test.afterAll(async () => {
-  if (app) await app.close()
+  await closeIsolatedApp(ctx)
 })
 
 async function navigateToCloudAgents(): Promise<boolean> {
@@ -32,7 +28,9 @@ async function navigateToCloudAgents(): Promise<boolean> {
   await firstButton.click()
   await page.waitForTimeout(500)
 
-  return await page.locator('h1:has-text("Cloud Agents")').isVisible().catch(() => false)
+  // Page title is a PageFrame <span> ("Agent Hub"), not an h1; success = the
+  // first nav entry (Agent Hub) is now the active view.
+  return await firstButton.evaluate((el) => el.className.includes('rail-active')).catch(() => false)
 }
 
 test.describe('Cloud Agents Page', () => {
@@ -41,7 +39,7 @@ test.describe('Cloud Agents Page', () => {
       test.skip()
       return
     }
-    await expect(page.locator('h1:has-text("Cloud Agents")')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'New Agent' }).first()).toBeVisible()
   })
 
   test('shows New Agent button', async () => {
@@ -49,7 +47,7 @@ test.describe('Cloud Agents Page', () => {
       test.skip()
       return
     }
-    const newBtn = page.getByRole('button', { name: 'New Agent', exact: true })
+    const newBtn = page.getByRole('button', { name: 'New Agent' }).first()
     await expect(newBtn).toBeVisible()
   })
 
@@ -60,7 +58,7 @@ test.describe('Cloud Agents Page', () => {
     }
     await expect(page.locator('button.rounded-full:has-text("All")')).toBeVisible()
     await expect(page.locator('button.rounded-full:has-text("Running")')).toBeVisible()
-    await expect(page.locator('button.rounded-full:has-text("Completed")')).toBeVisible()
+    await expect(page.locator('button.rounded-full:has-text("Done")')).toBeVisible()
     await expect(page.locator('button.rounded-full:has-text("Failed")')).toBeVisible()
   })
 
@@ -80,7 +78,7 @@ test.describe('Cloud Agents Page', () => {
       test.skip()
       return
     }
-    const search = page.locator('input[placeholder="Search..."]')
+    const search = page.locator('input[placeholder="Search agents..."]')
     await expect(search).toBeVisible()
   })
 
@@ -89,7 +87,7 @@ test.describe('Cloud Agents Page', () => {
       test.skip()
       return
     }
-    const newBtn = page.getByRole('button', { name: 'New Agent', exact: true })
+    const newBtn = page.getByRole('button', { name: 'New Agent' }).first()
     await newBtn.click()
     await page.waitForTimeout(300)
 
@@ -103,7 +101,7 @@ test.describe('Cloud Agents Page', () => {
     const dialog = page.locator('h2:has-text("New Cloud Agent")')
     if (!await dialog.isVisible().catch(() => false)) {
       if (!await navigateToCloudAgents()) { test.skip(); return }
-      await page.getByRole('button', { name: 'New Agent', exact: true }).click()
+      await page.getByRole('button', { name: 'New Agent' }).first().click()
       await page.waitForTimeout(300)
     }
 
@@ -118,7 +116,7 @@ test.describe('Cloud Agents Page', () => {
     const dialog = page.locator('h2:has-text("New Cloud Agent")')
     if (!await dialog.isVisible().catch(() => false)) {
       if (!await navigateToCloudAgents()) { test.skip(); return }
-      await page.getByRole('button', { name: 'New Agent', exact: true }).click()
+      await page.getByRole('button', { name: 'New Agent' }).first().click()
       await page.waitForTimeout(300)
     }
 
@@ -131,7 +129,7 @@ test.describe('Cloud Agents Page', () => {
     const dialog = page.locator('h2:has-text("New Cloud Agent")')
     if (!await dialog.isVisible().catch(() => false)) {
       if (!await navigateToCloudAgents()) { test.skip(); return }
-      await page.getByRole('button', { name: 'New Agent', exact: true }).click()
+      await page.getByRole('button', { name: 'New Agent' }).first().click()
       await page.waitForTimeout(300)
     }
 

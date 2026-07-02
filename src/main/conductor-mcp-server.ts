@@ -18,8 +18,8 @@
  * writeLocalSessionMcpConfig. SSH sessions reach it via reverse tunnel.
  *
  * Naming: the server identifier is `conductor` as of P7.7.5 (was
- * `conductor-vision` through v1.4). Both injectMcpSettings and the Codex TOML
- * writer strip legacy `conductor-vision` entries during migration so users
+ * `conductor-vision` through v1.4). Both removeMcpSettings (the boot heal) and
+ * the Codex TOML writer strip legacy `conductor-vision` entries so users
  * upgrading from <=v1.4 don't end up with a dead entry alongside.
  */
 
@@ -30,7 +30,8 @@ import * as path from 'path'
 import * as os from 'os'
 import { logInfo, logError, logDebug, logWarn } from './debug-logger'
 import { getResourcesDirectory } from './ipc/setup-handlers'
-import { injectConductorVisionInCodexConfig, removeConductorVisionFromCodexConfig } from './providers/codex/mcp-config'
+import { mimeForImage } from './clipboard-file'
+import { removeConductorVisionFromCodexConfig } from './providers/codex/mcp-config'
 import { getGlobalManager, startGlobalVision, launchBrowser } from './vision-manager'
 import type { VisionCommand, VisionResult } from './vision-manager'
 import { readConfig } from './config-manager'
@@ -311,10 +312,7 @@ function imageFileToMcpContent(filename: string) {
       }
     }
     const buffer = fs.readFileSync(resolved)
-    const lower = filename.toLowerCase()
-    const mimeType = lower.endsWith('.png') ? 'image/png'
-      : lower.endsWith('.webp') ? 'image/webp'
-      : 'image/jpeg'
+    const mimeType = mimeForImage(filename)
     return {
       content: [{
         type: 'image' as const,
@@ -357,6 +355,20 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
       { name: 'conductor', version: '1.1.0' },
       { capabilities: {} }
     )
+
+    // Built-in tool gates (onboarding p6 / Settings): master + per-group flags.
+    // Read fresh per client connection so a toggle applies to the next session
+    // without an app restart. Absent keys mean ON (pre-upgrade configs). The
+    // spawn paths also skip attaching the server entirely when the master is
+    // off; this filter is belt-and-braces for stale session configs.
+    const toolCfg = readConfig<{
+      conductorToolsEnabled?: boolean
+      conductorTools?: { vision?: boolean; codexReview?: boolean; hostTransfer?: boolean }
+      codexEnabled?: boolean
+    }>('settings')
+    const toolsMaster = toolCfg?.conductorToolsEnabled !== false
+    const toolOn = (k: 'vision' | 'codexReview' | 'hostTransfer') =>
+      toolsMaster && toolCfg?.conductorTools?.[k] !== false
 
     // Diagnostics (opt-in, verbose-gated): wrap server.tool ONCE so every tool
     // request is logged at a single narrow point -- name + resolved cccSessionId
@@ -413,7 +425,7 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
     // Returns an image from the host's screenshots dir as inline MCP image content.
     // Used by snap, storyboard, and clipboard paste in BOTH local and SSH sessions.
     // SSH sessions reach the MCP server via the existing reverse tunnel.
-    server.tool(
+    if (toolOn('hostTransfer')) server.tool(
       'fetch_host_screenshot',
       'Fetch an image file from the Conductor host\'s screenshots directory and return it as inline image content. The Conductor app saves clipboard pastes, snap captures, and storyboard frames here so they can be viewed by Claude regardless of session type (local or SSH). Use the filename the user references (e.g. "clipboard-1234.jpg" or "screenshot-2026-04-08-...jpg").',
       {
@@ -425,7 +437,10 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
     )
 
     // ── Vision tools (require connected browser) ────────────────────────────
-
+    // Registered as one gated group; inner indentation intentionally unchanged.
+    // Not advertised to Codex sessions: vision is Claude-only for now (user
+    // call 2026-07-02) — the onboarding p6 card carries the same note.
+    if (toolOn('vision') && source !== 'codex') {
     // -- Status --
     server.tool('vision_status', 'Check browser connection status', {}, async () => {
       const vm = getVisionManager()
@@ -541,11 +556,14 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
       if (deviceScaleFactor !== undefined) args.push(String(deviceScaleFactor))
       return withVision({ command: 'setViewport', args })
     })
+    } // end if (toolOn('vision'))
 
     // P6.9: codex_review is intentionally NOT advertised to Codex sessions.
     // Codex calling itself would be confusing UX in v1.5; v1.5.x can
     // reconsider if reciprocal review demand surfaces.
-    if (source !== 'codex') {
+    // Also requires Codex itself to be enabled ("Do you use Codex?" — absent
+    // means yes for pre-onboarding installs): the tool runs the codex CLI.
+    if (source !== 'codex' && toolOn('codexReview') && toolCfg?.codexEnabled !== false) {
       registerCodexReviewTool(
         server,
         z,
@@ -782,68 +800,7 @@ function strictAtomicWriteJson(filePath: string, data: unknown): boolean {
   }
 }
 
-export function injectMcpSettings(mcpPort: number): void {
-  const entry = {
-    type: 'sse',
-    // R-DEC-3: embed the per-launch secret so `claude` invocations outside CCC
-    // authenticate against the now-gated server with zero user-visible change.
-    url: `http://localhost:${mcpPort}/sse?token=${conductorMcpSecret}`,
-  }
-
-  // Defensive merge into ~/.claude.json: preserve every other top-level key
-  // and every other mcpServers entry. Only touch mcpServers['conductor']
-  // (and strip any legacy 'conductor-vision' entry for migration).
-  //
-  // Safety: distinguish ENOENT (fresh install, start from {}) from any other
-  // read/parse failure (corrupted file, EACCES, etc.) -- in the latter case
-  // ABORT rather than overwrite the user's global with our partial config.
-  // ~/.claude.json holds the user's projects map, OAuth account, settings
-  // cache, etc.; overwriting it with {} would be catastrophic.
-  try {
-    const claudeJsonPath = path.join(os.homedir(), '.claude.json')
-    let cj: Record<string, unknown> = {}
-    let exists = true
-    try {
-      const raw = fs.readFileSync(claudeJsonPath, 'utf-8')
-      const parsed = JSON.parse(raw) as unknown
-      if (!parsed || typeof parsed !== 'object') {
-        logError(`[vision] ~/.claude.json parsed to non-object (type=${typeof parsed}); aborting MCP injection to avoid clobbering.`)
-        return
-      }
-      cj = parsed as Record<string, unknown>
-    } catch (err: any) {
-      if (err?.code === 'ENOENT') {
-        exists = false
-      } else {
-        logError(`[vision] Cannot read ~/.claude.json (${err?.code ?? err?.message}); aborting MCP injection to avoid clobbering.`)
-        return
-      }
-    }
-    void exists
-    const servers = (cj.mcpServers && typeof cj.mcpServers === 'object')
-      ? cj.mcpServers as Record<string, unknown>
-      : {}
-    // Preserve extra fields (headers, oauth, env) on the existing entry
-    // if any. We only own type + url.
-    const existing = (servers['conductor'] && typeof servers['conductor'] === 'object')
-      ? servers['conductor'] as Record<string, unknown>
-      : {}
-    servers['conductor'] = { ...existing, ...entry }
-    // P7.7.5 migration: strip legacy 'conductor-vision' name so users
-    // upgrading from <=v1.4 don't end up with a dead entry alongside.
-    if ('conductor-vision' in servers) {
-      delete servers['conductor-vision']
-    }
-    cj.mcpServers = servers
-    strictAtomicWriteJson(claudeJsonPath, cj)
-  } catch (err: any) {
-    logError('[vision] Failed to inject ~/.claude.json MCP:', err?.message)
-  }
-
-  logInfo(`[vision] Registered conductor in ~/.claude.json (port ${mcpPort})`)
-}
-
-function removeMcpSettings(): void {
+export function removeMcpSettings(): void {
   // Defensive remove from ~/.claude.json: only delete the conductor (and
   // legacy conductor-vision) keys; preserve every other mcpServers entry
   // and every other top-level key. Same safety stance as injectMcpSettings
@@ -919,12 +876,16 @@ export async function startConductorMcpServer(
   }
   await startMcpServer(port, () => getGlobalManager())
   conductorMcpPort = port
-  injectMcpSettings(port)
-  // Codex sessions read MCP config from ~/.codex/config.toml; mirror the
-  // entry there so they reach the same vision MCP endpoint Claude does.
-  // Gated on ~/.codex existing -- skips silently for users without Codex.
-  // R-DEC-3: pass the per-launch secret so Codex's URL carries the token too.
-  injectConductorVisionInCodexConfig(port, conductorMcpSecret)
+  // U3: CCC sessions get the conductor MCP per-session via --mcp-config
+  // (writeLocalSessionMcpConfig); we no longer write it into the global
+  // ~/.claude.json. Heal any stale entry a pre-U3 version / crash left behind so
+  // plain `claude` outside CCC doesn't try a dead endpoint.
+  removeMcpSettings()
+  // U6: Codex gets the conductor MCP per-spawn via `-c` overrides
+  // (buildCodexSpawn), NOT a global ~/.codex/config.toml write. Heal any stale
+  // block a pre-U6 version / crash left behind so plain `codex` outside CCC
+  // doesn't try the dead endpoint.
+  removeConductorVisionFromCodexConfig()
   logInfo(`[mcp] Conductor MCP server started on port ${port} (vision: ${getGlobalManager() ? 'connected' : 'idle'})`)
 }
 

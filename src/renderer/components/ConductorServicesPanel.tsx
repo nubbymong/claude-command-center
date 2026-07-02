@@ -134,7 +134,9 @@ function PtySection({ pty }: { pty: PtyIntegritySnapshot }) {
 export default function ConductorServicesPanel({ open = true, onClose }: { open?: boolean; onClose: () => void }) {
   const [snap, setSnap] = useState<DiagnosticsSnapshot | null>(null)
   const [entered, setEntered] = useState(false)
+  const [copied, setCopied] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
+  const copyTimerRef = useRef<number | null>(null)
 
   useEffect(() => {
     let active = true
@@ -177,9 +179,24 @@ export default function ConductorServicesPanel({ open = true, onClose }: { open?
       : 'Restart the hooks gateway'
 
   const handleRestart = () => { void window.electronAPI.serviceHealth.restart('hooks') }
-  const handleCopy = () => {
-    if (snap) void navigator.clipboard?.writeText(JSON.stringify(snap, null, 2))
+  // BUG-2: the copy gave no feedback, so it read as a no-op even on success.
+  // Flip to a brief "Copied" state and surface real failures.
+  const handleCopy = async () => {
+    if (!snap) return
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(snap, null, 2))
+      setCopied(true)
+      if (copyTimerRef.current != null) window.clearTimeout(copyTimerRef.current)
+      copyTimerRef.current = window.setTimeout(() => setCopied(false), 1500)
+    } catch (err) {
+      console.error('[services] copy diagnostics failed', err)
+    }
   }
+
+  // Clear the copy-feedback timer on unmount so it can't setState after teardown.
+  useEffect(() => () => {
+    if (copyTimerRef.current != null) window.clearTimeout(copyTimerRef.current)
+  }, [])
 
   return (
     <div
@@ -208,7 +225,7 @@ export default function ConductorServicesPanel({ open = true, onClose }: { open?
           onClick={handleRestart}
           disabled={restartDisabled}
           title={restartTitle}
-          className="flex-1 px-2 py-1 rounded border border-surface0 bg-surface0/40 text-[11px] text-text transition-colors hover:bg-surface0/70 disabled:opacity-40 disabled:cursor-not-allowed focus-ring"
+          className="flex-1 px-2 py-1 rounded border border-red/40 bg-red/10 text-[11px] text-red transition-colors hover:bg-red/20 disabled:opacity-40 disabled:cursor-not-allowed focus-ring"
         >
           {RESTART_GLYPH} Restart
         </button>
@@ -217,7 +234,7 @@ export default function ConductorServicesPanel({ open = true, onClose }: { open?
           title="Copy the full diagnostics snapshot as JSON"
           className="flex-1 px-2 py-1 rounded border border-surface0 bg-surface0/40 text-[11px] text-text transition-colors hover:bg-surface0/70 focus-ring"
         >
-          {COPY_GLYPH} Copy diagnostics
+          {copied ? 'Copied' : `${COPY_GLYPH} Copy diagnostics`}
         </button>
       </div>
     </div>

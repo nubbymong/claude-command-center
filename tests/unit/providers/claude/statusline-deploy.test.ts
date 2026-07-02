@@ -44,12 +44,12 @@ describe('Claude script deployment', () => {
     expect(existsSync(join(resDir, 'scripts', 'claude-multi-statusline.js'))).toBe(true)
   })
 
-  it('deployClaudeStatuslineScript writes the statusline bridge to the sandbox HOME, NOT the real ~/.claude', async () => {
-    // Regression test: prior bug captured os.homedir() in a module-level constant
-    // at import time, bypassing the sandbox HOME override. P4.10 made the path
-    // lazy. This test asserts the home write lands in the sandbox.
+  it('deployClaudeStatuslineScript no longer plants a script in ~/.claude (footprint: resources copy only)', async () => {
+    // U2: the statusline is delivered per-session pointing at the resources-dir
+    // copy; the unreferenced ~/.claude/claude-multi-statusline.js is no longer
+    // planted, and boot-heal removes any legacy one.
     await deployClaudeStatuslineScript(resDir)
-    expect(existsSync(join(sandboxHome, '.claude', 'claude-multi-statusline.js'))).toBe(true)
+    expect(existsSync(join(sandboxHome, '.claude', 'claude-multi-statusline.js'))).toBe(false)
   })
 
   it('deployClaudeResumePickerScript copies the source resume-picker.js to resourcesDir/scripts', async () => {

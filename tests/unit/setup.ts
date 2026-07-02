@@ -111,7 +111,6 @@ const mockElectronAPI = {
     getKpis: vi.fn(() => Promise.resolve(null)),
     getLatest: vi.fn(() => Promise.resolve(null)),
     isRunning: vi.fn(() => Promise.resolve(false)),
-    seed: vi.fn(() => Promise.resolve(null)),
     onStatusChanged: vi.fn(() => () => {}),
   },
   team: {

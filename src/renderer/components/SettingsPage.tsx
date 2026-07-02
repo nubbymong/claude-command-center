@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import WhatsNewModal, { markWhatsNewSeen } from './WhatsNewModal'
 import TrainingWalkthrough from './TrainingWalkthrough'
-import { getLatestVersion } from '../changelog'
-import { useSettingsStore, DEFAULT_STATUS_LINE, DEFAULT_TERMINAL_SETTINGS, UpdateChannel } from '../stores/settingsStore'
+import { useSettingsStore, DEFAULT_STATUS_LINE, DEFAULT_TERMINAL_SETTINGS, DEFAULT_CONDUCTOR_TOOLS, UpdateChannel } from '../stores/settingsStore'
 import type { StatusLineSettings, TerminalSettings, CursorStyle, ThemeMode } from '../stores/settingsStore'
 import { useSessionStore } from '../stores/sessionStore'
 import { useAppMetaStore } from '../stores/appMetaStore'
@@ -10,6 +9,7 @@ import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { eventToShortcutString, DEFAULT_SHORTCUTS, SHORTCUT_LABELS } from '../utils/shortcuts'
 import GitHubConfigTab from './github/config/GitHubConfigTab'
 import CopilotMeterSettings from './settings/CopilotMeterSettings'
+import { isSentinelEnabled } from '../../shared/sentinel-enabled'
 import { CodexSettingsTab } from './codex/CodexSettingsTab'
 import HooksGatewaySection from './github/config/HooksGatewaySection'
 import PageFrame from './PageFrame'
@@ -18,6 +18,7 @@ import { Kbd } from './ui/Kbd'
 import { useAddAccount } from '../hooks/useAddAccount'
 import AccountsPanel from './AccountsPanel'
 declare const __BUILD_TIME__: string
+declare const __APP_VERSION__: string
 
 export const SETTINGS_TAB_IDS = ['general', 'accounts', 'statusline', 'shortcuts', 'github', 'codex', 'hooks', 'about'] as const
 export type SettingsTab = typeof SETTINGS_TAB_IDS[number]
@@ -80,8 +81,6 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
   useEffect(() => {
     if (initialTab) setActiveTab(initialTab)
   }, [initialTab])
-  const latestVersion = getLatestVersion()
-
   useEffect(() => {
     window.electronAPI.debug.isEnabled().then(debugEnabled => {
       if (debugEnabled !== settings.debugMode) {
@@ -213,16 +212,6 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
                 <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
                   <input
                     type="checkbox"
-                    checked={settings.skipPermissionsForAgents}
-                    onChange={(e) => save({ skipPermissionsForAgents: e.target.checked })}
-                    className="rounded border-surface1"
-                  />
-                  Skip permission prompts for headless agents
-                  <span className="text-[10px] text-overlay0">(--dangerously-skip-permissions)</span>
-                </label>
-                <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
-                  <input
-                    type="checkbox"
                     checked={!!settings.disableClaudeWorkflows}
                     onChange={(e) => save({ disableClaudeWorkflows: e.target.checked })}
                     className="rounded border-surface1"
@@ -253,17 +242,78 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
                 </div>
               </Section>
 
+              {/* Built-in tools (conductor MCP) -- the recovery surface for the
+                  onboarding p6 master ("switch them on anytime in Settings"). */}
+              <Section title="Built-in Tools" icon={<path d="M8 2v4M8 10v4M2 8h4M10 8h4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />}>
+                <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.conductorToolsEnabled !== false}
+                    onChange={(e) => save({ conductorToolsEnabled: e.target.checked })}
+                    className="mt-0.5 rounded border-surface1"
+                  />
+                  <span>
+                    Give sessions the built-in tools (conductor MCP)
+                    <span className="block text-[10px] text-overlay0">A local helper registered per session (Claude, Codex, local and SSH). Applies to new sessions.</span>
+                  </span>
+                </label>
+                <div
+                  inert={settings.conductorToolsEnabled === false}
+                  className={settings.conductorToolsEnabled !== false ? 'pl-6 space-y-1.5' : 'pl-6 space-y-1.5 opacity-40'}
+                >
+                  {([
+                    ['vision', 'Vision: see & drive a browser'],
+                    ['codexReview', 'Code review'],
+                    ['hostTransfer', 'Host screenshots (incl. over SSH)'],
+                  ] as const).map(([key, label]) => {
+                    // Code review runs the codex CLI: with the Codex master off
+                    // the MCP server never registers the tool, so a live
+                    // checkbox here would be a dead control (onboarding p6
+                    // blocks the same card). Stored preference is untouched.
+                    const codexBlocked = key === 'codexReview' && settings.codexEnabled === false
+                    return (
+                      <label
+                        key={key}
+                        className={
+                          codexBlocked
+                            ? 'flex items-center gap-2 text-sm text-subtext0 opacity-40 cursor-not-allowed'
+                            : 'flex items-center gap-2 text-sm text-subtext0 cursor-pointer'
+                        }
+                      >
+                        <input
+                          type="checkbox"
+                          disabled={codexBlocked}
+                          checked={!codexBlocked && (settings.conductorTools ?? DEFAULT_CONDUCTOR_TOOLS)[key] !== false}
+                          onChange={(e) =>
+                            save({
+                              conductorTools: {
+                                ...DEFAULT_CONDUCTOR_TOOLS,
+                                ...(settings.conductorTools || {}),
+                                [key]: e.target.checked,
+                              },
+                            })
+                          }
+                          className="rounded border-surface1"
+                        />
+                        {label}
+                        {codexBlocked && <span className="text-[10px] text-overlay0">(Codex is off)</span>}
+                      </label>
+                    )
+                  })}
+                </div>
+              </Section>
+
               <Section title="CCC Sentinel" icon={<path d="M8 2L3 5v4c0 3.5 2.1 6.4 5 7.5 2.9-1.1 5-4 5-7.5V5L8 2z" stroke="currentColor" strokeWidth="1.2" fill="none" />}>
                 <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer">
                   <input
                     type="checkbox"
-                    checked={settings.sentinelEnabled !== false}
+                    checked={isSentinelEnabled(settings.sentinelEnabled)}
                     onChange={(e) => save({ sentinelEnabled: e.target.checked })}
                     className="mt-0.5 rounded border-surface1"
                   />
                   <span>
                     Enable Sentinel
-                    <span className="block text-[10px] text-overlay0">Detects Claude Code updates and proposes registry fixes. Takes effect after restart.</span>
+                    <span className="block text-[10px] text-overlay0">Detects Claude Code updates and proposes registry fixes. Off by default because it spends Claude tokens on a Claude update. Takes effect after restart.</span>
                   </span>
                 </label>
                 <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
@@ -377,6 +427,18 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
                     <span className="block text-[10px] text-overlay0">Disables Claude&apos;s mouse mode so selection + right-click copy/paste work the classic way: select text then right-click to copy; right-click with nothing selected to paste. Trade-off: you lose Claude&apos;s click-to-expand and scroll-inside-Claude; xterm scrollback + native selection take over. Changes apply to newly-launched sessions.</span>
                   </span>
                 </label>
+                <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer mt-2">
+                  <input
+                    type="checkbox"
+                    checked={settings.clickableQuestions === true}
+                    onChange={(e) => save({ clickableQuestions: e.target.checked })}
+                    className="mt-0.5 rounded border-surface1"
+                  />
+                  <span>
+                    Clickable question options (Claude Code)
+                    <span className="block text-[10px] text-overlay0">Claude Code 2.1.195+ renders its multiple-choice questions as clickable targets. Off by default: stray clicks in the terminal could select an answer, so answers stay keyboard-only (type the option number or arrow + Enter); wheel scroll is unaffected. Applies to newly-launched sessions.</span>
+                  </span>
+                </label>
                 <p className="text-[11px] text-overlay0 mt-2 leading-relaxed">
                   Terminal settings apply to new terminals. Restart sessions for changes to take effect.
                 </p>
@@ -474,7 +536,9 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
               <div className="space-y-2.5">
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-text">Version</span>
-                  <span className="text-sm text-subtext0 font-medium">v{latestVersion.version}</span>
+                  {/* The INSTALLED build version, not changelog[0] — the two only
+                      match on the release commit itself. */}
+                  <span className="text-sm text-subtext0 font-medium">v{__APP_VERSION__}</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-text">Build</span>
@@ -485,7 +549,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
                     onClick={() => setShowWhatsNew(true)}
                     className="text-[11px] text-blue hover:text-blue/80 transition-colors"
                   >
-                    View What's New
+                    View full changelog
                   </button>
                   <span className="text-[11px] text-overlay0">|</span>
                   <button
@@ -530,18 +594,20 @@ type BooleanStatusLineKey = {
   [K in keyof StatusLineSettings]: StatusLineSettings[K] extends boolean ? K : never
 }[keyof StatusLineSettings]
 
+// Labels shared verbatim with onboarding p4's element switches (StatusLineStep
+// ELEMS) so the same element carries the same name on both surfaces.
 const STATUS_LINE_TOGGLES: { key: BooleanStatusLineKey; label: string; description: string }[] = [
-  { key: 'showModel', label: 'Model Name', description: 'Shows the active Claude model' },
-  { key: 'showEffort', label: 'Effort Level', description: 'Active reasoning effort next to the model' },
+  { key: 'showModel', label: 'Model', description: 'Shows the active Claude model' },
+  { key: 'showEffort', label: 'Effort level', description: 'Active reasoning effort next to the model' },
   { key: 'showAccount', label: 'Account', description: 'Claude account this session runs as' },
-  { key: 'showTokens', label: 'Token Count', description: 'Input tokens / context window' },
-  { key: 'showContextBar', label: 'Context Bar', description: 'Visual progress bar + percentage' },
-  { key: 'showCost', label: 'API Cost', description: 'API equivalent cost estimate' },
-  { key: 'showLinesChanged', label: 'Lines Changed', description: 'Lines added and removed' },
+  { key: 'showTokens', label: 'Token usage', description: 'Input tokens / context window' },
+  { key: 'showContextBar', label: 'Context bar', description: 'Visual progress bar + percentage' },
+  { key: 'showCost', label: 'Cost', description: 'API equivalent cost estimate' },
+  { key: 'showLinesChanged', label: 'Lines changed', description: 'Lines added and removed' },
   { key: 'showDuration', label: 'Duration', description: 'Total session duration' },
-  { key: 'showRateLimits', label: 'Rate Limits', description: '5h and 7d usage dot bars' },
-  { key: 'showResetTime', label: 'Reset Time', description: 'Time until rate limit resets' },
-  { key: 'showCopilot', label: 'Copilot Usage', description: 'GitHub Copilot AI-credit meter' }
+  { key: 'showRateLimits', label: 'Rate limits', description: '5h and 7d usage dot bars' },
+  { key: 'showResetTime', label: 'Reset time', description: 'Time until rate limit resets' },
+  { key: 'showCopilot', label: 'Copilot meter', description: 'GitHub Copilot AI-credit meter (Beta -- limited by the GitHub API)' }
 ]
 
 function StatusLineTab({
@@ -553,8 +619,30 @@ function StatusLineTab({
   onToggle: (key: keyof StatusLineSettings) => void
   onSet: <K extends keyof StatusLineSettings>(key: K, value: StatusLineSettings[K]) => void
 }) {
+  // Master switch -- the same flag onboarding p4's "Status line On/Off" writes.
+  // This is the promised recovery surface ("switch it on anytime in Settings ->
+  // Status line"), so it must exist here or Off would be a one-way door.
+  const statusLineEnabled = useSettingsStore((s) => s.settings.statusLineEnabled ?? true)
+  const setMaster = (on: boolean) => {
+    void useSettingsStore.getState().updateSettings({ statusLineEnabled: on })
+  }
   return (
     <>
+      {/* Master switch */}
+      <div className="rounded-xl bg-surface0/30 border border-surface0/60 px-4 py-3 flex items-center gap-3">
+        <Toggle on={statusLineEnabled} onClick={() => setMaster(!statusLineEnabled)} label="Status line" />
+        <div className="min-w-0">
+          <div className="text-sm text-text leading-tight">Show the status line</div>
+          <div className="text-[11px] text-overlay0 leading-tight">
+            Live usage, cost and limits beneath every session. When off, only the session controls remain.
+          </div>
+        </div>
+      </div>
+
+      <div
+        inert={!statusLineEnabled}
+        className={statusLineEnabled ? 'space-y-4' : 'space-y-4 opacity-40 pointer-events-none'}
+      >
       {/* Live Preview */}
       <div className="rounded-xl bg-surface0/30 border border-surface0/60 overflow-hidden">
         <div className="px-4 py-2.5 border-b border-surface0/40 flex items-center gap-2">
@@ -569,7 +657,7 @@ function StatusLineTab({
             <StatusLinePreview sl={sl} />
           </div>
           <p className="text-[11px] text-overlay0 mt-2">
-            Toggle elements below to see how the status bar changes.
+            Toggle elements below to see how the status line changes.
           </p>
         </div>
       </div>
@@ -649,6 +737,7 @@ function StatusLineTab({
       {/* Copilot AI-credits config -- self-gates on the meter being enabled, so it
           appears right under the "Copilot Usage" toggle only when relevant. */}
       <CopilotMeterSettings />
+      </div>
     </>
   )
 }

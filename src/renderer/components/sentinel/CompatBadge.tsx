@@ -1,6 +1,7 @@
 import React from 'react'
 import { useSentinelStore } from '../../stores/sentinelStore'
 import { useSettingsStore } from '../../stores/settingsStore'
+import { isSentinelEnabled } from '../../../shared/sentinel-enabled'
 
 interface Props {
   feature: string
@@ -8,7 +9,7 @@ interface Props {
 
 export default function CompatBadge({ feature }: Props) {
   const snap = useSentinelStore((s) => s.snap)
-  const sentinelEnabled = useSettingsStore((s) => s.settings.sentinelEnabled !== false)
+  const sentinelEnabled = useSettingsStore((s) => isSentinelEnabled(s.settings.sentinelEnabled))
 
   if (!sentinelEnabled || !snap) return null
 

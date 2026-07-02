@@ -522,16 +522,17 @@ export class VisionManager {
 }
 
 /** One-time cleanup: remove old CLAUDE.md vision markers from the legacy per-session system. */
-export function cleanupLegacyVisionMarkers(): void {
+export function cleanupLegacyVisionMarkers(
+  claudeMdPath: string = path.join(os.homedir(), '.claude', 'CLAUDE.md'),
+): void {
   try {
-    const claudeMdPath = path.join(os.homedir(), '.claude', 'CLAUDE.md')
     if (!fs.existsSync(claudeMdPath)) return
     const content = fs.readFileSync(claudeMdPath, 'utf-8')
     const markerRegex = /\n?\n?<!-- VISION-INSTRUCTIONS-START -->[\s\S]*?<!-- VISION-INSTRUCTIONS-END -->\n?/g
     if (markerRegex.test(content)) {
       const cleaned = content.replace(markerRegex, '').trim()
-      if (cleaned.length === 0) fs.unlinkSync(claudeMdPath)
-      else fs.writeFileSync(claudeMdPath, cleaned + '\n')
+      // Never unlink the user's file -- if the strip empties it, leave it empty.
+      fs.writeFileSync(claudeMdPath, cleaned.length === 0 ? '' : cleaned + '\n')
       logInfo('[vision] Cleaned up legacy vision markers from ~/.claude/CLAUDE.md')
     }
   } catch (err: any) {
@@ -637,6 +638,29 @@ export function killSpawnedBrowser(): void {
   }
 }
 
+/**
+ * Build the browser launch args. Pure + exported for unit testing.
+ *
+ * P2.7: bind the CDP debug port to loopback (`--remote-debugging-address=
+ * 127.0.0.1`) so the DevTools endpoint is never reachable from other hosts —
+ * defense-in-depth rather than relying on Chrome's default-localhost behaviour.
+ */
+export function buildBrowserLaunchArgs(
+  debugPort: number,
+  profileDir: string,
+  headless: boolean,
+  url?: string,
+): string[] {
+  const args = [
+    `--remote-debugging-port=${debugPort}`,
+    '--remote-debugging-address=127.0.0.1',
+    `--user-data-dir=${profileDir}`,
+  ]
+  if (headless) args.push('--headless=new', '--disable-gpu')
+  if (url) args.push(url)
+  return args
+}
+
 export function launchBrowser(browser: 'chrome' | 'edge', debugPort: number, url?: string, headless: boolean = true): { pid: number; command: string } {
   // Relaunch path: kill the previous CCC-spawned headless browser first so we
   // never stack orphans (the --user-data-dir singleton means a stale one would
@@ -654,9 +678,7 @@ export function launchBrowser(browser: 'chrome' | 'edge', debugPort: number, url
     getBrowserPaths(other).find(p => fs.existsSync(p)) ||
     fallback
 
-  const args = [`--remote-debugging-port=${debugPort}`, `--user-data-dir=${profileDir}`]
-  if (headless) args.push('--headless=new', '--disable-gpu')
-  if (url) args.push(url)
+  const args = buildBrowserLaunchArgs(debugPort, profileDir, headless, url)
 
   const command = `"${executable}" ${args.join(' ')}`
   logInfo(`[vision] Launching browser: ${command}`)

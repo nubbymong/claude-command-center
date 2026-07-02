@@ -1,33 +1,29 @@
 /**
- * Playwright E2E tests — Sidebar navigation and view switching
+ * Playwright E2E tests — Sidebar navigation and view switching.
+ *
+ * Runs against an isolated temp data dir (helpers/electron-app) so the app
+ * boots to a clean, setup-complete first-launch state with no real user data.
  */
 
-import { test, expect, _electron as electron, ElectronApplication, Page } from '@playwright/test'
-import path from 'path'
+import { test, expect } from '@playwright/test'
+import { launchIsolatedApp, closeIsolatedApp, IsolatedApp } from './helpers/electron-app'
 
-const APP_PATH = path.resolve(__dirname, '../../out/main/index.js')
-
-let app: ElectronApplication
-let page: Page
+let ctx: IsolatedApp
+let page: IsolatedApp['page']
 
 test.beforeAll(async () => {
-  app = await electron.launch({
-    args: [APP_PATH],
-    env: { ...process.env, NODE_ENV: 'test', E2E_HEADLESS: '1' },
-  })
-  page = await app.firstWindow()
-  await page.waitForLoadState('domcontentloaded')
-  await page.waitForTimeout(3000) // Wait for setup check + config load
+  ctx = await launchIsolatedApp()
+  page = ctx.page
 })
 
 test.afterAll(async () => {
-  if (app) await app.close()
+  await closeIsolatedApp(ctx)
 })
 
 test.describe('Sidebar Navigation', () => {
   test('sidebar is visible by default', async () => {
     const sidebar = page.locator('aside')
-    // If setup dialog is showing, sidebar won't be visible — that's OK
+    // If a setup/boot gate is somehow showing, sidebar won't be visible — skip.
     const isVisible = await sidebar.isVisible().catch(() => false)
     if (!isVisible) {
       test.skip()
@@ -43,11 +39,11 @@ test.describe('Sidebar Navigation', () => {
       return
     }
 
-    // Navigation area with buttons
+    // Nav row: Agent Hub, Insights, Tokenomics, Conductor MCP, Memory, Logs,
+    // Settings + Feature Guide = 8 buttons.
     const navArea = sidebar.locator('.px-2.pt-2')
     const buttons = navArea.locator('button')
     const count = await buttons.count()
-    // Should have: Cloud Agents, Sessions, Browse, Usage, Insights, Logs, Settings, Debug = 8
     expect(count).toBeGreaterThanOrEqual(7)
   })
 
@@ -71,20 +67,21 @@ test.describe('Sidebar Navigation', () => {
     }
   })
 
-  test('Cloud Agents nav button is first', async () => {
+  test('Agent Hub nav button is first', async () => {
     const sidebar = page.locator('aside')
     if (!await sidebar.isVisible().catch(() => false)) {
       test.skip()
       return
     }
 
-    // First nav button should have cloud agents tooltip
+    // First nav button is Agent Hub (formerly "Cloud Agents"). The button's
+    // title attribute mirrors the nav label.
     const firstButton = sidebar.locator('.px-2.pt-2 button').first()
     const title = await firstButton.getAttribute('title')
-    expect(title).toContain('Cloud Agents')
+    expect(title).toContain('Agent Hub')
   })
 
-  test('clicking Cloud Agents shows the dashboard', async () => {
+  test('clicking Agent Hub shows the dashboard', async () => {
     const sidebar = page.locator('aside')
     if (!await sidebar.isVisible().catch(() => false)) {
       test.skip()
@@ -95,9 +92,9 @@ test.describe('Sidebar Navigation', () => {
     await firstButton.click()
     await page.waitForTimeout(500)
 
-    // Should see "Cloud Agents" heading
-    const heading = page.locator('h1:has-text("Cloud Agents")')
-    await expect(heading).toBeVisible({ timeout: 3000 })
+    // PageFrame renders its title as a <span>, not an <h1>, so assert the nav
+    // entry's active state — a robust "the Agent Hub view is showing" signal.
+    await expect(firstButton).toHaveClass(/rail-active/)
   })
 
   test('"Saved Configs" section exists in sidebar', async () => {
@@ -107,7 +104,9 @@ test.describe('Sidebar Navigation', () => {
       return
     }
 
-    const configsLabel = sidebar.locator('text=Saved Configs')
+    // Exact match: the empty-state "No saved configs…" also contains the
+    // substring, so a loose text= locator hits two elements.
+    const configsLabel = sidebar.getByText('Saved Configs', { exact: true })
     await expect(configsLabel).toBeVisible()
   })
 
@@ -122,17 +121,23 @@ test.describe('Sidebar Navigation', () => {
     await expect(sessionsLabel).toBeVisible()
   })
 
-  test('Check for Updates button exists', async () => {
-    const sidebar = page.locator('aside')
-    if (!await sidebar.isVisible().catch(() => false)) {
-      test.skip()
-      return
-    }
+  test('Check for Updates lives in Settings (moved off the sidebar)', async () => {
+    // The big green sidebar update toast was removed; the update affordance is
+    // now the footer pill (shown only when an update is available) plus a
+    // Settings field. Assert the Settings field exists rather than the old
+    // sidebar text.
+    await page.evaluate(() => {
+      const buttons = Array.from(document.querySelectorAll('button'))
+      for (const b of buttons) {
+        if (b.title === 'Settings' || b.title?.startsWith('Settings')) {
+          b.click()
+          return
+        }
+      }
+    })
+    await page.waitForTimeout(500)
 
-    const updateBtn = sidebar.locator('text=Check for Updates')
-    // May also show "Update Available" — either is fine
-    const hasUpdate = await updateBtn.isVisible().catch(() => false)
-    const hasAvailable = await sidebar.locator('text=Update Available').isVisible().catch(() => false)
-    expect(hasUpdate || hasAvailable).toBe(true)
+    const body = await page.locator('body').innerText()
+    expect(body).toContain('Check for Updates')
   })
 })

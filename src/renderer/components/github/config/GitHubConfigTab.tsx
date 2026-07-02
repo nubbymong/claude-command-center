@@ -22,13 +22,19 @@ export default function GitHubConfigTab() {
     <div className="p-6 space-y-6 max-w-3xl">
       <div className="flex items-center justify-between">
         <h2 className="text-lg text-text">GitHub integration</h2>
-        <label className="flex items-center gap-2 text-sm">
+        <label className="flex items-start gap-2 text-sm">
           <input
             type="checkbox"
+            className="mt-0.5"
             checked={config.enabledByDefault}
             onChange={(e) => updateConfig({ enabledByDefault: e.target.checked })}
           />
-          <span>Enable by default for new sessions</span>
+          <span>
+            Enable GitHub
+            <span className="block text-[11px] text-overlay0">
+              Adds the GitHub panel to new sessions by default. The same master as the setup flow's GitHub On/Off.
+            </span>
+          </span>
         </label>
       </div>
       <AccountsSection />

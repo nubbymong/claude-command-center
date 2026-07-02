@@ -31,6 +31,10 @@ export interface ChunkedWriteHooks {
   chunkSize?: number
   /** Inter-chunk delay override (tests). */
   delayMs?: number
+  /** Called exactly once when the write finishes — all bytes sent, the session
+   *  bailed (isAlive false), or a write threw. Lets a caller resolve a Promise
+   *  (e.g. PasteQueue's envelope writer). No-op for callers that don't pass it. */
+  onDone?: () => void
 }
 
 /**
@@ -44,19 +48,23 @@ export function runChunkedWrite(data: string, hooks: ChunkedWriteHooks): void {
   const delay = hooks.delayMs ?? WRITE_CHUNK_DELAY
   const schedule = hooks.schedule ?? ((fn, ms) => { setTimeout(fn, ms) })
   let offset = 0
+  let finished = false
+  const done = (): void => { if (!finished) { finished = true; hooks.onDone?.() } }
   const writeNext = (): void => {
-    if (offset >= data.length) return
+    if (offset >= data.length) return done()
     // Liveness: bail if the session is gone or its PTY was replaced by a respawn.
-    if (!hooks.isAlive()) return
+    if (!hooks.isAlive()) return done()
     const end = Math.min(offset + size, data.length)
     try {
       hooks.write(data.slice(offset, end))
     } catch {
-      return // session died mid-paste; drop the rest rather than crash main
+      return done() // session died mid-paste; drop the rest rather than crash main
     }
     offset = end
     if (offset < data.length) {
       schedule(writeNext, delay)
+    } else {
+      done()
     }
   }
   writeNext()

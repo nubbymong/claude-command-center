@@ -85,4 +85,31 @@ describe('runChunkedWrite (R-010)', () => {
     expect(written).toEqual(['short'])
     expect(scheduled).toBe(0) // nothing left to schedule
   })
+
+  // onDone (Unit 5 P1.5): fires exactly once at every terminal outcome so the
+  // envelope writer's Promise can resolve and the PasteQueue won't stall.
+  it('calls onDone once when all bytes are written', () => {
+    let dones = 0
+    runChunkedWrite('x'.repeat(600), {
+      write: () => {}, isAlive: () => true, schedule: syncSchedule, chunkSize: 256,
+      onDone: () => { dones++ },
+    })
+    expect(dones).toBe(1)
+  })
+  it('calls onDone when the session bails mid-paste', () => {
+    let dones = 0; let alive = true
+    runChunkedWrite('y'.repeat(600), {
+      write: () => { alive = false }, isAlive: () => alive, schedule: syncSchedule, chunkSize: 256,
+      onDone: () => { dones++ },
+    })
+    expect(dones).toBe(1)
+  })
+  it('calls onDone when a write throws', () => {
+    let dones = 0
+    runChunkedWrite('w'.repeat(600), {
+      write: () => { throw new Error('dead') }, isAlive: () => true, schedule: syncSchedule, chunkSize: 256,
+      onDone: () => { dones++ },
+    })
+    expect(dones).toBe(1)
+  })
 })

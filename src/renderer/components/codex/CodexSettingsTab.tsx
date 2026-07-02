@@ -1,9 +1,13 @@
 import { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useCodexAccountStore } from '../../stores/codexAccountStore'
+import { useSettingsStore } from '../../stores/settingsStore'
 import { useFocusTrap } from '../../hooks/useFocusTrap'
 
 export function CodexSettingsTab() {
+  // Master "Do you use Codex?" answer — the recovery surface for the
+  // onboarding page's Off state. Absent (never answered) counts as on.
+  const codexEnabled = useSettingsStore((s) => s.settings.codexEnabled)
   const installed = useCodexAccountStore((s) => s.installed)
   const version = useCodexAccountStore((s) => s.version)
   const authMode = useCodexAccountStore((s) => s.authMode)
@@ -67,6 +71,35 @@ export function CodexSettingsTab() {
 
   return (
     <div className="space-y-4">
+      {/* Master switch (Beta) */}
+      <div className="rounded-xl bg-surface0/30 border border-surface0/60 px-4 py-3 flex items-center gap-3">
+        <input
+          type="checkbox"
+          checked={codexEnabled !== false}
+          onChange={(e) => void useSettingsStore.getState().updateSettings({ codexEnabled: e.target.checked })}
+          className="rounded border-surface1"
+        />
+        <div className="min-w-0">
+          <div className="text-sm text-text leading-tight">
+            Enable Codex{' '}
+            <span className="text-[9px] uppercase tracking-wider text-peach border border-peach/40 rounded-full px-1.5 py-px align-middle">
+              Beta
+            </span>
+          </div>
+          <div className="text-[11px] text-overlay0 leading-tight">
+            Off blocks launching Codex configs and removes the code-review tool from new Claude sessions.
+          </div>
+        </div>
+      </div>
+
+      {/* Body dims + goes inert when the master is off, matching the Status
+          Line and Built-in Tools tabs. The master above stays live as the
+          recovery surface. */}
+      <div
+        inert={codexEnabled === false}
+        className={codexEnabled === false ? 'space-y-4 opacity-40 pointer-events-none' : 'space-y-4'}
+      >
+
       {/* Status section */}
       <div className="rounded-xl bg-surface0/30 border border-surface0/60 overflow-hidden">
         <div className="px-4 py-2.5 border-b border-surface0/40 flex items-center gap-2">
@@ -208,6 +241,7 @@ export function CodexSettingsTab() {
       <p className="text-xs text-overlay0 leading-relaxed px-1">
         Profiles edited in <code className="text-overlay1 bg-crust/60 px-1 py-0.5 rounded">{'~/.codex/config.toml'}</code> outside CCC are ignored when spawning from here. CCC sets model and reasoning effort per session.
       </p>
+      </div>
     </div>
   )
 }

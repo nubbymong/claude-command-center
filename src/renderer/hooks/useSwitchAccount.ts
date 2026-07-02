@@ -40,6 +40,12 @@ export function useSwitchAccount(
   return useCallback(
     (sessionId, newProfileId) => {
       if (!session || session.id !== sessionId) return
+      // Defense-in-depth (BUG-13): account profiles are LOCAL Claude only, so a
+      // Codex (its own login) or SSH (remote host's login) session must never
+      // switch a CCC profile -- the surfaces are already gated, this is a backstop.
+      // Shell-only panes are refused too: the add-account /login shell is pinned
+      // to its new profile, and a switch would redirect the /login elsewhere.
+      if ((session.provider ?? 'claude') !== 'claude' || session.sshConfig || session.shellOnly) return
       // 1. No-op when the chosen account is already the active one.
       if (!shouldSwitch(session.profileId, newProfileId)) return
       // 2. Pin the new profile (undefined => default account) AND flush it to disk
