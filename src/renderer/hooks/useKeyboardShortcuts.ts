@@ -5,6 +5,8 @@ import { killSessionPty } from '../ptyTracker'
 import { matchesShortcut, DEFAULT_SHORTCUTS } from '../utils/shortcuts'
 import { sendImageToSession } from '../utils/imageTransfer'
 import { usePasteHintStore } from '../stores/pasteHintStore'
+import { useAppMetaStore } from '../stores/appMetaStore'
+import { deriveOnboarding } from '../onboarding/gate'
 import type { ViewType } from '../types/views'
 
 /**
@@ -17,6 +19,11 @@ export function useKeyboardShortcuts(
 ) {
   useEffect(() => {
     const handleKeyDown = async (e: KeyboardEvent) => {
+      // The onboarding overlay covers the whole shell: a global shortcut
+      // firing under it would act on invisible UI (close a session, switch
+      // sessions, paste into a hidden prompt), so suppress them until the
+      // flow settles. Same gate expression as App.tsx's bootGate input.
+      if (deriveOnboarding(useAppMetaStore.getState().meta, {}).due) return
       const shortcuts = useSettingsStore.getState().settings.keyboardShortcuts || DEFAULT_SHORTCUTS
 
       // Close current session

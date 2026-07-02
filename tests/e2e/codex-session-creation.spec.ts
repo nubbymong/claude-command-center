@@ -54,7 +54,7 @@ test.describe('SessionDialog ProviderSegmentedControl', () => {
 
     // Codex should now be disabled with the helper text visible
     await expect(codexBtn).toBeDisabled()
-    await expect(page.locator('text=SSH Codex coming in v1.5.x')).toBeVisible()
+    await expect(page.locator('text=Codex is not available for SSH sessions yet.')).toBeVisible()
   })
 
   test('Codex form fields render when Codex provider is picked', async () => {

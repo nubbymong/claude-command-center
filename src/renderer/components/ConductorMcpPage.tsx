@@ -65,12 +65,13 @@ export default function ConductorMcpPage() {
               className="rounded-xl p-4 text-sm text-subtext0 leading-relaxed"
               style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
             >
-              Local HTTP MCP server hosting all CCC-provided tools. Claude CLI auto-discovers it via
-              <code className="font-mono mx-1 text-xs">~/.claude.json</code>
-              (the canonical <code className="font-mono mx-1 text-xs">mcpServers</code> registry); CCC-spawned sessions also get per-session
+              Local HTTP MCP server hosting all CCC-provided tools. It is registered per session:
+              each CCC-spawned session gets its own
               <code className="font-mono mx-1 text-xs">--mcp-config</code>
-              overrides with the current port. Sub-tools below own their own state; the server stays
-              running independent of any of them.
+              pointing at the current port. Your global
+              <code className="font-mono mx-1 text-xs">~/.claude.json</code>
+              is never touched (entries written there by older versions are cleaned up at startup).
+              Sub-tools below own their own state; the server stays running independent of any of them.
             </div>
 
             <VisionSubTool />

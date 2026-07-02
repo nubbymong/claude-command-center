@@ -24,7 +24,7 @@ interface OAuthFlowStart {
 type Method = 'gh' | 'oauth' | 'pat'
 
 const KIND_LABEL: Record<string, string> = {
-  'gh-cli': 'GitHub CLI — token never stored',
+  'gh-cli': 'GitHub CLI (token never stored)',
   oauth: 'Signed in with GitHub',
   'pat-classic': 'Personal access token',
   'pat-fine-grained': 'Personal access token',
@@ -42,7 +42,7 @@ const FEATURES: { icon: string; title: string; desc: string; offTag?: boolean }[
   {
     icon: SPARK,
     title: 'Copilot meter',
-    desc: 'Credits used this cycle, in your status line — switch it on in Settings → Status line.',
+    desc: 'Credits used this cycle, in your status line. Switch it on in Settings → Status line.',
     offTag: true,
   },
 ]
@@ -179,7 +179,7 @@ export function GitHubStep({ onNext, onBack }: { onNext: () => void; onBack: () 
         <div className="p2-inner" style={{ width: 'min(880px, 95vw)' }}>
           <h2 className="h2">Do you use GitHub?</h2>
           <p className="p2-sub">
-            Connect once and every project gets a live GitHub panel — connections are app-wide, panels are per
+            Connect once and every project gets a live GitHub panel: connections are app-wide, panels are per
             project. All optional.
           </p>
 
@@ -254,7 +254,7 @@ export function GitHubStep({ onNext, onBack }: { onNext: () => void; onBack: () 
                             <code>{u}</code>
                           </span>
                         ))}{' '}
-                        — reuse it. The token is never stored; fetched from <code>gh</code> when needed.
+                        already. Reuse it: the token is never stored, fetched from <code>gh</code> when needed.
                       </span>
                     </span>
                     <span className="opt-tag">Fastest</span>
@@ -269,7 +269,7 @@ export function GitHubStep({ onNext, onBack }: { onNext: () => void; onBack: () 
                   <span className="opt-body">
                     <span className="opt-t">Sign in with GitHub</span>
                     <span className="opt-d">
-                      One-time code at <code>github.com/login/device</code> — your password never touches Command
+                      One-time code at <code>github.com/login/device</code>. Your password never touches Command
                       Center.
                     </span>
                   </span>
@@ -278,7 +278,7 @@ export function GitHubStep({ onNext, onBack }: { onNext: () => void; onBack: () 
                   <span className="opt-rad" />
                   <span className="opt-body">
                     <span className="opt-t">Paste a token</span>
-                    <span className="opt-d">Classic or fine-grained PAT — verified, then encrypted on your machine.</span>
+                    <span className="opt-d">Classic or fine-grained PAT: verified, then encrypted on your machine.</span>
                   </span>
                 </button>
 
@@ -363,7 +363,7 @@ export function GitHubStep({ onNext, onBack }: { onNext: () => void; onBack: () 
               <div>
                 <b>Read-only until you click.</b>
                 <span>
-                  It displays your PRs, checks and issues; the only writes are buttons you press — Merge, Re-run,
+                  It displays your PRs, checks and issues; the only writes are buttons you press: Merge, Re-run,
                   Reply. Everything talks straight to github.com: no telemetry, and your token is encrypted on this
                   machine.
                 </span>
@@ -408,7 +408,7 @@ export function GitHubStep({ onNext, onBack }: { onNext: () => void; onBack: () 
             connect gate: there must always be a "keep my settings" path. */}
         <div style={{ justifySelf: 'end', display: 'flex', alignItems: 'center', gap: 12 }}>
           {masterOn && !connected && !cfgEnabledByDefault && (
-            <span className="hint">Connect an account — or turn GitHub off</span>
+            <span className="hint">Connect an account, or turn GitHub off</span>
           )}
           <button
             className="cta"

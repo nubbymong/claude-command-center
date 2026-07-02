@@ -51,7 +51,7 @@ export function VersionConsentCard({ desc, onVersion }: { desc: string; onVersio
       {failed && (
         <div className="ameta">
           <span>
-            Couldn't read the version — make sure <code>claude</code> is on your PATH, then try again.
+            Couldn't read the version. Make sure <code>claude</code> is on your PATH, then try again.
           </span>
         </div>
       )}

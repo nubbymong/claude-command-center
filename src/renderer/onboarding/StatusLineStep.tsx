@@ -138,7 +138,7 @@ export function StatusLineStep({ onNext, onBack }: { onNext: () => void; onBack:
             Want a status line in your sessions?
           </h2>
           <p className="sl-sub">
-            Command Center can show a live status line beneath every Claude session — usage, cost and limits at a
+            Command Center can show a live status line beneath every Claude session: usage, cost and limits at a
             glance. Flip the switches to build yours.
           </p>
 
@@ -155,7 +155,7 @@ export function StatusLineStep({ onNext, onBack }: { onNext: () => void; onBack:
                   <div className="c">{SPARK} I'll update the login flow.</div>
                   <div className="box">{ELBOW} Read src/auth/login.ts (142 lines)</div>
                   <div>
-                    <span className="g">{DOT}</span> Done — <span className="u">login()</span> now uses{' '}
+                    <span className="g">{DOT}</span> Done: <span className="u">login()</span> now uses{' '}
                     <span className="u">tokenHelper.refresh()</span>.
                   </div>
                 </div>
@@ -228,7 +228,7 @@ export function StatusLineStep({ onNext, onBack }: { onNext: () => void; onBack:
               <div>
                 <b>How it works</b>
                 <span>
-                  Command Center adds one setting (<code>statusLine</code>) to each session it launches — it runs a
+                  Command Center adds one setting (<code>statusLine</code>) to each session it launches. It runs a
                   small local script that reads the session's tokens, cost and limits. Turn this off and new sessions
                   launch without it.
                 </span>
@@ -238,7 +238,7 @@ export function StatusLineStep({ onNext, onBack }: { onNext: () => void; onBack:
               <div className="assure-ic">{CHECK}</div>
               <div>
                 <b>No impact on Claude Code outside Command Center.</b>
-                <span>Only sessions launched here get the status line — your global Claude config never changes.</span>
+                <span>Only sessions launched here get the status line. Your global Claude config never changes.</span>
               </div>
             </div>
           </div>

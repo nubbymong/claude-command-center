@@ -128,7 +128,7 @@ export default function HelpPanel({ onClose, onStartTour, onShowSessions }: Prop
         <div className="flex-1 overflow-y-auto p-5 space-y-4">
           {sections.length === 0 && (
             <p className="text-sm text-subtext0">
-              Nothing in the guide matches "{query}" — try asking Claude below.
+              Nothing in the guide matches "{query}". Try asking Claude below.
             </p>
           )}
           {sections.map((s) => (
@@ -157,7 +157,7 @@ export default function HelpPanel({ onClose, onStartTour, onShowSessions }: Prop
             </button>
           </div>
           <p className="text-[11px] text-overlay0 mt-2">
-            Opens a Claude session primed with this guide (uses your normal Claude usage). Your question is copied —
+            Opens a Claude session primed with this guide (uses your normal Claude usage). Your question is copied;
             paste it when the prompt appears.
           </p>
         </div>

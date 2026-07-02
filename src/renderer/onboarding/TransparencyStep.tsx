@@ -46,22 +46,22 @@ export function TransparencyStep({ onNext, onBack }: { onNext: () => void; onBac
     {
       icon: BRANCH,
       label: 'GitHub',
-      value: ghProfiles.length > 0 ? `Connected as ${ghProfiles[0].username}` : 'Off — Settings → GitHub',
+      value: ghProfiles.length > 0 ? `Connected as ${ghProfiles[0].username}` : 'Off (Settings → GitHub)',
     },
     {
       icon: STRIP,
       label: 'Status line',
-      value: settings.statusLineEnabled !== false ? 'On, in every session' : 'Off — Settings → Status line',
+      value: settings.statusLineEnabled !== false ? 'On, in every session' : 'Off (Settings → Status line)',
     },
     {
       icon: SPARK,
       label: 'Codex (Beta)',
-      value: settings.codexEnabled !== false ? 'On' : 'Off — Settings → Codex',
+      value: settings.codexEnabled !== false ? 'On' : 'Off (Settings → Codex)',
     },
     {
       icon: GEAR,
       label: 'Built-in tools',
-      value: settings.conductorToolsEnabled !== false ? `On — ${toolCount} of 3 tools` : 'Off — Settings → General',
+      value: settings.conductorToolsEnabled !== false ? `On: ${toolCount} of 3 tools` : 'Off (Settings → General)',
     },
   ]
 
@@ -99,7 +99,7 @@ export function TransparencyStep({ onNext, onBack }: { onNext: () => void; onBac
               <div className="tc-t">Index your session logs</div>
               <div className="tc-d">
                 Powers the Logs, Memory and Tokenomics pages by indexing Claude's own transcripts
-                (~/.claude/projects). Indexing is local; turning it off only stops the index — your conversations
+                (~/.claude/projects). Indexing is local; turning it off only stops the index. Your conversations
                 stay in Claude's files either way.
               </div>
             </div>
@@ -116,7 +116,7 @@ export function TransparencyStep({ onNext, onBack }: { onNext: () => void; onBac
               <div className="tc-t">CCC Sentinel</div>
               <div className="tc-d">
                 Watches Claude Code updates for changes that could break your setup and proposes fixes. Off by
-                default — it spends Claude tokens when Claude updates, and takes effect after a restart.
+                default because it spends Claude tokens when Claude updates. Takes effect after a restart.
               </div>
             </div>
             <button
@@ -131,7 +131,7 @@ export function TransparencyStep({ onNext, onBack }: { onNext: () => void; onBac
             <div className="tc-ic">{GEAR}</div>
             <div className="tc-body">
               <div className="tc-t">What should we call this machine?</div>
-              <div className="tc-d">Shows in your logs and status line — handy once SSH machines join.</div>
+              <div className="tc-d">Shows in your logs and status line, handy once SSH machines join.</div>
             </div>
             <input
               className="gh-input"

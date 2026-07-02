@@ -42,9 +42,17 @@ export function FindClaudeStep({
           <p className="p2-sub">First, a check that Claude Code is installed and you're signed in.</p>
 
           <div className="checkrow">
-            <div className={installed === false ? 'badge wait' : 'badge ok'}>{installed === false ? '!' : CHECK}</div>
+            <div className={installed === null ? 'badge pending' : installed === false ? 'badge wait' : 'badge ok'}>
+              {installed === null ? '…' : installed === false ? '!' : CHECK}
+            </div>
             <div>
-              <div className="nm">{installed === false ? "We couldn't find Claude Code" : 'Claude Code is installed'}</div>
+              <div className="nm">
+                {installed === null
+                  ? 'Checking for Claude Code…'
+                  : installed === false
+                    ? "We couldn't find Claude Code"
+                    : 'Claude Code is installed'}
+              </div>
               <div className="meta">
                 {installed === null ? (
                   'Checking…'
@@ -73,7 +81,7 @@ export function FindClaudeStep({
             </div>
           ) : (
             <VersionConsentCard
-              desc="The compatibility check on the next page needs your Claude version — one command:"
+              desc="The compatibility check on the next page needs your Claude version. One command:"
               onVersion={(v) => {
                 setVersion(v)
                 onVersion?.(v)
@@ -88,7 +96,7 @@ export function FindClaudeStep({
               <div className="meta">
                 {email ? (
                   <>
-                    as <b>{email}</b> — read from your local Claude config.
+                    as <b>{email}</b>, read from your local Claude config.
                   </>
                 ) : (
                   "We'll help you sign in when you start your first session."
@@ -105,7 +113,7 @@ export function FindClaudeStep({
       </div>
       <div className="foot">
         <button className="back" onClick={onBack} type="button">← Back</button>
-        <button className="cta" onClick={onNext} type="button">Continue →</button>
+        <button className="cta" onClick={onNext} type="button">Next →</button>
       </div>
     </>
   )

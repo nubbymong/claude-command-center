@@ -41,7 +41,7 @@ export function CodexStep({ onNext, onBack }: { onNext: () => void; onBack: () =
             Do you use Codex?<span className="beta-tag">Beta</span>
           </h2>
           <p className="p2-sub">
-            Run OpenAI's Codex CLI side by side with Claude — same workbench, sessions, status line and history. It
+            Run OpenAI's Codex CLI side by side with Claude: same workbench, sessions, status line and history. It
             also powers the code-review tool Claude sessions get.
           </p>
 
@@ -55,7 +55,7 @@ export function CodexStep({ onNext, onBack }: { onNext: () => void; onBack: () =
                     <>Version {version ?? 'unknown'}.</>
                   ) : (
                     <>
-                      Install it with <code>npm i -g @openai/codex</code> — or turn Codex off for now.
+                      Install it with <code>npm i -g @openai/codex</code>, or turn Codex off for now.
                     </>
                   )}
                 </div>
@@ -73,7 +73,7 @@ export function CodexStep({ onNext, onBack }: { onNext: () => void; onBack: () =
                 </div>
                 <div className="meta">
                   {authMode === 'chatgpt' && planType
-                    ? `${planType} plan — read from your local Codex config.`
+                    ? `${planType} plan, read from your local Codex config.`
                     : authMode !== 'none'
                       ? 'Read from your local Codex config.'
                       : "We'll sign you in on the next page."}

@@ -56,8 +56,8 @@ export function CompatibilityStep({
                 <b>Everything will work as expected.</b>
                 <span>
                   {status === 'ahead'
-                    ? `A touch newer than the ${VALIDATED_CC_VERSION} we validate against — good to go.`
-                    : `Exactly the version we validate against (${VALIDATED_CC_VERSION}) — nothing to do here.`}
+                    ? `A touch newer than the ${VALIDATED_CC_VERSION} we validate against. Good to go.`
+                    : `Exactly the version we validate against (${VALIDATED_CC_VERSION}). Nothing to do here.`}
                 </span>
               </div>
             </div>
@@ -69,7 +69,7 @@ export function CompatibilityStep({
                 <div className="v-ic">!</div>
                 <div>
                   <b>Your Claude Code is older than we've validated.</b>
-                  <span>Command Center is built for {VALIDATED_CC_VERSION}+ — on {version}, some things may not work.</span>
+                  <span>Command Center is built for {VALIDATED_CC_VERSION}+. On {version}, some things may not work.</span>
                 </div>
               </div>
               <div className="updbox">
@@ -90,7 +90,7 @@ export function CompatibilityStep({
         {status === 'behind' || !version ? (
           <button className="skip foot-skip" onClick={onNext} type="button">Continue anyway →</button>
         ) : (
-          <button className="cta" onClick={onNext} type="button">Continue →</button>
+          <button className="cta" onClick={onNext} type="button">Next →</button>
         )}
       </div>
     </>

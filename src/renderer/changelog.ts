@@ -15,6 +15,79 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '2.0.0',
+    date: '2026-07-02',
+    highlights: 'Claude Command Center 2.0: a guided first-run setup, an in-app Ask Command Center guide, a modernized engine, and a privacy pass that keeps every Claude config write per-session.',
+    changes: [
+      { type: 'feature', description: 'New guided setup on first launch (and once after this upgrade): pick your theme, point CCC at your Claude install, see how accounts and GitHub connect, and switch on exactly the features you want. Every step shows real state from your machine, and nothing runs or gets enabled without you seeing it.' },
+      { type: 'feature', description: 'A live guided tour follows setup: coach marks anchored to the real app walk you to your first session. The old static tour and the stack of first-launch popups are retired.' },
+      { type: 'feature', description: 'Ask Command Center: the ? button in the sidebar opens a searchable guide to every feature, or hands your question to a Claude session primed with the app\'s docs so you can ask in plain language.' },
+      { type: 'improvement', description: 'Engine modernization: Electron 42, React 19, xterm.js 6, Vite 7, and TypeScript 6. A faster renderer on a current Chromium security baseline.' },
+      { type: 'improvement', description: 'Privacy pass: the status line and the Conductor MCP server are now delivered per session instead of being written into your global Claude config, legacy global entries are cleaned up on boot, per-session SSH files are swept on close, and your ~/.claude/CLAUDE.md is never touched.' },
+      { type: 'feature', description: 'Built-in tools are now under your control: a master switch plus per-tool toggles (vision, code review, host transfer) in setup and Settings, enforced everywhere a session spawns: local, SSH, and Codex.' },
+      { type: 'feature', description: 'The status line has a real master switch: turn it off and CCC stops injecting it into sessions entirely, local and SSH alike.' },
+      { type: 'feature', description: 'Codex support is now clearly marked Beta with its own master switch, and you can sign in during setup with the browser flow or an API key.' },
+      { type: 'improvement', description: 'CCC Sentinel and cloud-agent permissions now default to off. Both are opt-in, with the ask made plainly during setup, so nothing spends tokens or grants permissions without your say-so.' },
+      { type: 'improvement', description: 'Agent Hub is reorganized into Tasks, Pipelines, and Library, with clearer first-run guidance.' },
+      { type: 'improvement', description: 'Insights reliability round: runs compare against the previous run of the same account, concurrent runs are locked per account, failed runs and KPI-extraction failures are surfaced instead of silently vanishing, and KPI extraction no longer bypasses permissions.' },
+      { type: 'fix', description: 'Alt+V now pastes copied image files (not just screenshots), with inline feedback when the clipboard has no usable image.' },
+      { type: 'fix', description: 'Each rate-limit window in the status line shows its own reset time (5-hour and weekly), instead of one shared timestamp.' },
+      { type: 'improvement', description: 'Security hardening: external links open only over verified https, config files are validated as they load, the vision browser\'s debug port binds to loopback only, and memory files are contained against symlink escape.' },
+    ],
+  },
+  {
+    version: '1.5.45',
+    date: '2026-06-14',
+    highlights: 'CCC Sentinel\'s status dot now only turns amber when a finding actually affects your setup.',
+    changes: [
+      { type: 'improvement', description: 'The Sentinel status dot is graded by reachability: amber means a compatibility finding reaches the accounts and features you actually use, and a calm grey state shows once you have reviewed the report.' },
+    ],
+  },
+  {
+    version: '1.5.44',
+    date: '2026-06-14',
+    highlights: 'Light theme: Claude sessions now start with a matching light terminal theme.',
+    changes: [
+      { type: 'fix', description: 'When CCC is in light mode, new Claude sessions are told about it (via the standard COLORFGBG signal) so Claude picks its light terminal theme instead of rendering dark-on-light. Applies to newly started sessions.' },
+    ],
+  },
+  {
+    version: '1.5.43',
+    date: '2026-06-14',
+    highlights: 'The Copilot AI-credits meter now tracks your current billing cycle, with a progress bar.',
+    changes: [
+      { type: 'improvement', description: 'The Copilot chip counts credits used in the current billing cycle instead of a lifetime total, and gains an inline progress bar matching the Claude rate-limit meters.' },
+      { type: 'improvement', description: 'Copilot meter configuration (including your plan\'s included-credits cap) now lives in Settings, Status Line, next to the other status-line elements.' },
+    ],
+  },
+  {
+    version: '1.5.42',
+    date: '2026-06-13',
+    highlights: 'GitHub settings, round two: re-auth now targets the right account and asks only for what it needs, and a Copilot usage meter lands in the session status strip.',
+    changes: [
+      { type: 'fix', description: 'Re-authenticating a GitHub account now works per account and per auth kind (OAuth, PAT, or gh CLI), fixing the long-standing bug where re-auth could target the wrong profile or silently do nothing.' },
+      { type: 'improvement', description: 'Re-auth requests are additive and minimal: the scopes asked for are derived from the features you actually have enabled, so you never grant more than the app uses.' },
+      { type: 'feature', description: 'A Copilot AI-credits meter in the session status strip, with a toggle to show or hide it.' },
+      { type: 'improvement', description: 'GitHub settings are recomposed account-first, with one consistent panel per account and an app-wide group for the settings that span accounts.' },
+    ],
+  },
+  {
+    version: '1.5.41',
+    date: '2026-06-13',
+    highlights: 'Copy the CCC Sentinel compatibility report to your clipboard.',
+    changes: [
+      { type: 'feature', description: 'The Sentinel report gains copy buttons: copy the whole report or a single finding, ready to paste into an issue or a Claude session.' },
+    ],
+  },
+  {
+    version: '1.5.40',
+    date: '2026-06-13',
+    highlights: 'Fix: conversations recorded outside a CCC session now show up in the resume picker.',
+    changes: [
+      { type: 'fix', description: 'The resume picker now surfaces and resumes conversations that were recorded without a companion log folder (for example, work done directly in a repo before or outside CCC sessions). Existing conversations are backfilled on the next scan.' },
+    ],
+  },
+  {
     version: '1.5.39',
     date: '2026-06-13',
     highlights: 'GitHub settings are rebuilt around your accounts, plus a batch of fixes: first-launch prompts no longer stack, the Sentinel watcher no longer hangs, and the Tokenomics cost donut is cleaner.',
@@ -66,15 +139,15 @@ export const changelog: ChangelogEntry[] = [
   {
     version: '1.5.34',
     date: '2026-06-09',
-    highlights: 'Fix: closing all your sessions now reliably means no resume prompt on the next launch — even when you update via the installer.',
+    highlights: 'Fix: closing all your sessions now reliably means no resume prompt on the next launch -- even when you update via the installer.',
     changes: [
-      { type: 'fix', description: 'The "Resume previous sessions?" prompt no longer offers sessions you already closed. Your open sessions are now saved continuously as you open and close them, so the next launch always reflects what was actually open — even if the app was force-closed by an external installer or a crash (which previously left a stale list and re-offered phantom sessions). Close everything, and there is nothing to resume.' },
+      { type: 'fix', description: 'The "Resume previous sessions?" prompt no longer offers sessions you already closed. Your open sessions are now saved continuously as you open and close them, so the next launch always reflects what was actually open -- even if the app was force-closed by an external installer or a crash (which previously left a stale list and re-offered phantom sessions). Close everything, and there is nothing to resume.' },
     ],
   },
   {
     version: '1.5.33',
     date: '2026-06-09',
-    highlights: 'Fable 5 support — Anthropic\'s new flagship model (the tier above Opus) is now a first-class choice across the app.',
+    highlights: 'Fable 5 support -- Anthropic\'s new flagship model (the tier above Opus) is now a first-class choice across the app.',
     changes: [
       { type: 'feature', description: 'Fable 5 is now selectable in the session model dropdown and the agent/config model pickers. It is Anthropic\'s most capable model (the tier above Opus) and runs roughly 2x faster than Opus.' },
       { type: 'feature', description: 'Tokenomics now prices Fable 5 correctly out of the box ($10/$50 per 1M tokens) and gives it its own colour in the model breakdown, so Fable spend is tracked and shown distinctly. LiteLLM live pricing still wins when reachable.' },
@@ -390,24 +463,24 @@ export const changelog: ChangelogEntry[] = [
     date: '2026-04-29',
     highlights: "New branded splash now actually shows on launch, plus a refreshed README with v1.4 feature highlights",
     changes: [
-      { type: 'fix', description: "Splash window now displays the new branded artwork. The 1.5 MB PNG was being inlined into a data: URL that exceeded Electron's loadURL size limit, so the window was created but never reached ready-to-show. Switched to writing the wrapper HTML to a temp file and loading via loadFile — works for any image size" },
+      { type: 'fix', description: "Splash window now displays the new branded artwork. The 1.5 MB PNG was being inlined into a data: URL that exceeded Electron's loadURL size limit, so the window was created but never reached ready-to-show. Switched to writing the wrapper HTML to a temp file and loading via loadFile -- works for any image size" },
       { type: 'improvement', description: "README overhaul. Branded splash at the top, six new feature highlight cards (Excalidraw, Combined Mode, Insights, Logs, GitHub sidebar, Vision), accurate v1.4 feature audit, dedicated 'What's New' section, corrected installer naming, and a 'Defence in Depth' security subsection covering daily CONFIG backups" },
     ]
   },
   {
     version: '1.4.2',
     date: '2026-04-28',
-    highlights: "Safety-net daily backups of your CONFIG directory — never lose a session list to a corrupted write again",
+    highlights: "Safety-net daily backups of your CONFIG directory -- never lose a session list to a corrupted write again",
     changes: [
-      { type: 'feature', description: "Daily auto-backup of CONFIG/*.json under CONFIG/_backups/YYYY-MM-DD/ on every app launch. Last 7 days kept, prunes older. Recovery is a manual copy back into CONFIG/ — but the data is always there if anything goes sideways" },
+      { type: 'feature', description: "Daily auto-backup of CONFIG/*.json under CONFIG/_backups/YYYY-MM-DD/ on every app launch. Last 7 days kept, prunes older. Recovery is a manual copy back into CONFIG/ -- but the data is always there if anything goes sideways" },
       { type: 'fix', description: "Capture-training script no longer destroys real config data on cleanup. PID lock prevents concurrent captures; cleanup only restores files it explicitly backed up; never blind-deletes by filename match" },
-      { type: 'fix', description: "Memory frontmatter writer now produces valid YAML for values containing backslashes, newlines, and other control chars. Previously only escaped quotes — anything else round-tripped as malformed YAML. Switched to JSON-stringify which is a strict subset of YAML 1.2's double-quoted scalar grammar" },
+      { type: 'fix', description: "Memory frontmatter writer now produces valid YAML for values containing backslashes, newlines, and other control chars. Previously only escaped quotes -- anything else round-tripped as malformed YAML. Switched to JSON-stringify which is a strict subset of YAML 1.2's double-quoted scalar grammar" },
     ]
   },
   {
     version: '1.4.0',
     date: '2026-04-24',
-    highlights: "GitHub sidebar — PR, CI, reviews, linked issues, and session context next to the terminal",
+    highlights: "GitHub sidebar -- PR, CI, reviews, linked issues, and session context next to the terminal",
     changes: [
       { type: 'feature', description: "New GitHub sidebar. Collapsible right panel that shows the PR for your current branch, CI runs, reviews, linked issues, local git state, and a session-context summary of what this terminal is working on" },
       { type: 'feature', description: "Sign in with GitHub via OAuth device flow, fine-grained PAT, or gh CLI adoption. Nothing runs until you opt in per session" },
@@ -424,14 +497,14 @@ export const changelog: ChangelogEntry[] = [
   {
     version: '1.3.1',
     date: '2026-04-15',
-    highlights: "First public release — open-sourced on GitHub",
+    highlights: "First public release -- open-sourced on GitHub",
     changes: [
       { type: 'feature', description: "Command bar sections: drag commands into named sections, right-click to rename/delete, custom text colors, independent Claude/Partner row sections" },
-      { type: 'feature', description: "SSH statusline now shows full second line (rate limits, extra spend, peak/off-peak) — fetches from Anthropic API on the remote" },
+      { type: 'feature', description: "SSH statusline now shows full second line (rate limits, extra spend, peak/off-peak) -- fetches from Anthropic API on the remote" },
       { type: 'feature', description: "Insights report links now open in your system browser instead of showing blank pages" },
       { type: 'fix', description: "SSH sessions now auto-start Claude (was broken for sessions without a post-connect command)" },
-      { type: 'fix', description: "SSH setup script no longer echoes binary text — suppressed with stty" },
-      { type: 'fix', description: "Logs tab no longer freezes the UI — async file reads with loading spinner" },
+      { type: 'fix', description: "SSH setup script no longer echoes binary text -- suppressed with stty" },
+      { type: 'fix', description: "Logs tab no longer freezes the UI -- async file reads with loading spinner" },
       { type: 'fix', description: "Memory manager: 'originSessionId' recognized as valid field, warnings now expandable" },
       { type: 'fix', description: "Insights KPI extraction: prompt piped via stdin instead of fragile shell arguments" },
       { type: 'improvement', description: "Tips updated for new section features with trackUsage calls" },
@@ -444,9 +517,9 @@ export const changelog: ChangelogEntry[] = [
     highlights: "Branching model: beta + main with promote flow",
     changes: [
       { type: 'improvement', description: "New branching model: all feature work happens on the `beta` branch; the `main` branch is stable-only and receives fast-forwards from beta" },
-      { type: 'improvement', description: "Release script now enforces branch ↔ channel correspondence — --stable must run on main, --beta/--dev must run on beta (bypass with --skip-branch-check in emergencies)" },
+      { type: 'improvement', description: "Release script now enforces branch ↔ channel correspondence -- --stable must run on main, --beta/--dev must run on beta (bypass with --skip-branch-check in emergencies)" },
       { type: 'feature', description: "New `npm run promote` command merges the beta→main PR and ships a stable release at the same version as the current beta" },
-      { type: 'feature', description: "New --no-bump flag on the release script reuses the current package.json version instead of incrementing — used by the promote flow to keep beta and stable version numbers aligned" },
+      { type: 'feature', description: "New --no-bump flag on the release script reuses the current package.json version instead of incrementing -- used by the promote flow to keep beta and stable version numbers aligned" },
       { type: 'feature', description: "New --ff-only and --yes flags on the promote script for partial/automated runs" },
     ]
   },
@@ -456,7 +529,7 @@ export const changelog: ChangelogEntry[] = [
     highlights: "Release script hotfix: cross-platform sleep + proper workflow watching",
     changes: [
       { type: 'fix', description: "Local release script now uses Node-native sleep instead of shelling out to `timeout`/`sleep`, which was silently failing inside execSync and preventing the script from finding the dispatched workflow run ID" },
-      { type: 'fix', description: "Release script now surfaces real errors from the run-ID polling loop instead of swallowing them — gives a useful hint if GitHub API is unreachable" },
+      { type: 'fix', description: "Release script now surfaces real errors from the run-ID polling loop instead of swallowing them -- gives a useful hint if GitHub API is unreachable" },
       { type: 'improvement', description: "Run-ID detection picks the newest workflow_dispatch run regardless of branch, so the filter doesn't miss the just-dispatched run due to API pagination lag" },
     ]
   },
@@ -468,7 +541,7 @@ export const changelog: ChangelogEntry[] = [
       { type: 'improvement', description: "Release script now dispatches the GitHub Actions workflow for canonical dual-platform builds (Windows EXE + macOS DMG, both signed/notarized, both VirusTotal-scanned, single release with checksums) instead of doing a Windows-only local build" },
       { type: 'improvement', description: "Local release script does fast smoke checks (typecheck + unit tests + build) for fast feedback before pushing to CI, then watches the workflow run to completion and verifies both .exe and .dmg are attached" },
       { type: 'improvement', description: "Release script now supports stable / beta / dev channels via --stable / --beta / --dev (default: interactive prompt with beta as fallback)" },
-      { type: 'feature', description: "Check for Updates button now shows the active channel — 'Check for Beta Updates' / 'Check for Stable Updates' / 'Check for Dev Updates' — so you always know what you're checking against without opening the dropdown" },
+      { type: 'feature', description: "Check for Updates button now shows the active channel -- 'Check for Beta Updates' / 'Check for Stable Updates' / 'Check for Dev Updates' -- so you always know what you're checking against without opening the dropdown" },
     ]
   },
   {
@@ -477,14 +550,14 @@ export const changelog: ChangelogEntry[] = [
     highlights: "SSH statusline + unified MCP image transport + dual service status indicator",
     changes: [
       { type: 'fix', description: "SSH statusline now updates: a tiny shim deployed to the remote ~/.claude emits an OSC sentinel via /dev/tty that the host parses out of the PTY stream (no SMB mount needed)" },
-      { type: 'feature', description: "Image paste, snap, and storyboard now work in BOTH local and SSH sessions via the conductor-vision MCP fetch_host_screenshot tool — one unified code path, no path-vs-base64 hacks" },
-      { type: 'feature', description: "vision_screenshot returns inline image content directly — no second Read tool call needed to view the captured browser screenshot" },
+      { type: 'feature', description: "Image paste, snap, and storyboard now work in BOTH local and SSH sessions via the conductor-vision MCP fetch_host_screenshot tool -- one unified code path, no path-vs-base64 hacks" },
+      { type: 'feature', description: "vision_screenshot returns inline image content directly -- no second Read tool call needed to view the captured browser screenshot" },
       { type: 'feature', description: "Conductor MCP server now starts at app launch independent of browser/vision config so fetch_host_screenshot is always available" },
       { type: 'feature', description: "Title bar service status redesigned: separate Claude Code + Claude.ai pills with colored dots, plus API status surfacing only when degraded" },
       { type: 'fix', description: "'Got it' tip button now actually clears the tip pill from the session header (markTipActed clears currentTipId)" },
-      { type: 'fix', description: "Snap, storyboard, and clipboard image resize now preserve aspect ratio — was previously distorting non-square images by passing both width and height to nativeImage.resize()" },
+      { type: 'fix', description: "Snap, storyboard, and clipboard image resize now preserve aspect ratio -- was previously distorting non-square images by passing both width and height to nativeImage.resize()" },
       { type: 'improvement', description: "All screenshot capture sites cap longest edge to 1920px and use JPEG q85 (q78 for storyboard frames) to reduce token cost" },
-      { type: 'improvement', description: "Clipboard paste regression fixed — was sending raw base64 to the PTY, now uses saveImage path through the MCP fetch tool" },
+      { type: 'improvement', description: "Clipboard paste regression fixed -- was sending raw base64 to the PTY, now uses saveImage path through the MCP fetch tool" },
     ]
   },
   {
@@ -493,13 +566,13 @@ export const changelog: ChangelogEntry[] = [
     highlights: "Update system refactor: GitHub-only with stable/beta/dev channels + PTY dedupe",
     changes: [
       { type: 'feature', description: "Update checker now polls GitHub releases directly instead of a local WebSocket server" },
-      { type: 'feature', description: "New update channel selector next to Check for Updates button — stable / beta / dev with full keyboard accessibility" },
+      { type: 'feature', description: "New update channel selector next to Check for Updates button -- stable / beta / dev with full keyboard accessibility" },
       { type: 'feature', description: "Dev channel for experimental builds (alongside existing stable and beta)" },
       { type: 'fix', description: "Duplicate Claude prompts: PTY now suppresses identical submitted payloads within 300ms (prevents double-sends that triggered rate limits)" },
       { type: 'improvement', description: "Update checker works without gh CLI once the repo is public (tries public GitHub API first, falls back to gh CLI only when needed)" },
       { type: 'improvement', description: "Safer update downloads: HTTPS-only redirects, Windows retry safety (unlinks stale files before rename), no shell injection risk" },
       { type: 'improvement', description: "Proper prerelease ordering (beta.2 > beta.1, final > beta)" },
-      { type: 'improvement', description: "CI workflow on every PR — typecheck, tests, build on both Windows and macOS" },
+      { type: 'improvement', description: "CI workflow on every PR -- typecheck, tests, build on both Windows and macOS" },
     ]
   },
   {
@@ -510,7 +583,7 @@ export const changelog: ChangelogEntry[] = [
       { type: 'feature', description: "Animated tip pill in the session header shows contextual, one-per-session feature discovery hints" },
       { type: 'feature', description: "Clicking a tip opens a platform-aware modal with full details, optional navigation, and dismiss/silence controls" },
       { type: 'feature', description: "New Transparency category: explicit tips about statusline injection, Vision MCP, session logging, credential storage, resources folder, and all network activity" },
-      { type: 'feature', description: "Usage tracking persists to CONFIG/usage-tracking.json — tips intelligently skip features you've already used or show 'did you know' variants" },
+      { type: 'feature', description: "Usage tracking persists to CONFIG/usage-tracking.json -- tips intelligently skip features you've already used or show 'did you know' variants" },
       { type: 'feature', description: "Toggle 'Show intelligent tips' in Settings > General to disable the system" },
       { type: 'improvement', description: "Platform-aware tip copy: Partner Terminal, Credential Storage, Resources Folder, and Session Logs tips show correct Windows vs macOS paths" },
     ]
@@ -563,12 +636,12 @@ export const changelog: ChangelogEntry[] = [
     date: '2026-02-08',
     highlights: 'Platform v9 theme, rate limits, enriched statusline, config improvements',
     changes: [
-      { type: 'feature', description: 'Rate limit tracking — 5-hour and weekly usage with colored dot bars, reset times, and extra usage cost shown in context bar' },
-      { type: 'feature', description: 'Enriched context bar — now shows model name, token count (135k/200k), context %, cost, lines changed, and session duration' },
-      { type: 'improvement', description: 'New platform v9 dark theme — deeper blue-black backgrounds replace the old purple-tinted Catppuccin palette' },
+      { type: 'feature', description: 'Rate limit tracking -- 5-hour and weekly usage with colored dot bars, reset times, and extra usage cost shown in context bar' },
+      { type: 'feature', description: 'Enriched context bar -- now shows model name, token count (135k/200k), context %, cost, lines changed, and session duration' },
+      { type: 'improvement', description: 'New platform v9 dark theme -- deeper blue-black backgrounds replace the old purple-tinted Catppuccin palette' },
       { type: 'feature', description: 'Config right-click menu now includes Edit and Delete options alongside group management' },
       { type: 'improvement', description: 'Config items show Claude/Shell badges and colored left borders. Active tabs have colored bottom border' },
-      { type: 'fix', description: 'Command button context menu no longer truncates at window edge — opens upward when near bottom' },
+      { type: 'fix', description: 'Command button context menu no longer truncates at window edge -- opens upward when near bottom' },
     ]
   },
   {
@@ -576,9 +649,9 @@ export const changelog: ChangelogEntry[] = [
     date: '2026-02-07',
     highlights: 'Insights fix, command button fix, update reliability',
     changes: [
-      { type: 'fix', description: 'Insights now works — /insights runs via PTY with proper TTY instead of headless spawn that hung forever' },
-      { type: 'fix', description: 'Custom command buttons no longer re-fire when pressing Enter — buttons no longer steal keyboard focus' },
-      { type: 'fix', description: 'Update process simplified — copies installer to Downloads, kills PTYs, launches installer, exits immediately' },
+      { type: 'fix', description: 'Insights now works -- /insights runs via PTY with proper TTY instead of headless spawn that hung forever' },
+      { type: 'fix', description: 'Custom command buttons no longer re-fire when pressing Enter -- buttons no longer steal keyboard focus' },
+      { type: 'fix', description: 'Update process simplified -- copies installer to Downloads, kills PTYs, launches installer, exits immediately' },
     ]
   },
   {
@@ -586,11 +659,11 @@ export const changelog: ChangelogEntry[] = [
     date: '2026-02-07',
     highlights: 'Debug logging overhaul, input protection, crash recovery',
     changes: [
-      { type: 'improvement', description: 'Debug toggle now controls verbose app logging instead of screenshot capture — logs persist across updates' },
+      { type: 'improvement', description: 'Debug toggle now controls verbose app logging instead of screenshot capture -- logs persist across updates' },
       { type: 'improvement', description: 'Log rotation increased to 10MB with 3 backup files for better diagnostic history' },
-      { type: 'fix', description: 'Restored image paste handler — clipboard images saved as JPEG (max 1920px, 85%) with file path sent to Claude' },
+      { type: 'fix', description: 'Restored image paste handler -- clipboard images saved as JPEG (max 1920px, 85%) with file path sent to Claude' },
       { type: 'fix', description: 'Right-click in terminal pastes clipboard text when no text is selected' },
-      { type: 'fix', description: 'Input bar blocks multi-char text when Claude is asking a question — prevents losing typed content' },
+      { type: 'fix', description: 'Input bar blocks multi-char text when Claude is asking a question -- prevents losing typed content' },
       { type: 'fix', description: 'Image paste debounced (3s) to prevent duplicate sends via Alt+V or Ctrl+V' },
       { type: 'improvement', description: 'Insights timeout increased from 5 to 10 minutes' },
       { type: 'improvement', description: 'Error boundary catches renderer crashes and shows error with recovery button instead of blank screen' },
@@ -602,7 +675,7 @@ export const changelog: ChangelogEntry[] = [
     date: '2026-02-06',
     highlights: 'Config and session groups with collapsible tree view',
     changes: [
-      { type: 'feature', description: 'Group saved configs into named groups — collapsible tree view in sidebar' },
+      { type: 'feature', description: 'Group saved configs into named groups -- collapsible tree view in sidebar' },
       { type: 'feature', description: 'Launch all configs in a group at once with the group play button' },
       { type: 'feature', description: 'Active sessions auto-group based on their config\'s group' },
       { type: 'feature', description: 'Right-click configs to move between groups or create new ones' },
@@ -615,7 +688,7 @@ export const changelog: ChangelogEntry[] = [
     date: '2026-02-06',
     highlights: 'Image optimization, yellow cursor fix, and update button fix',
     changes: [
-      { type: 'fix', description: 'Clipboard images (Alt+V) now resized to max 1920px and saved as JPEG — drastically reduces context usage' },
+      { type: 'fix', description: 'Clipboard images (Alt+V) now resized to max 1920px and saved as JPEG -- drastically reduces context usage' },
       { type: 'fix', description: 'Screenshot capture also switched from PNG to JPEG for smaller files' },
       { type: 'fix', description: 'Yellow cursor block eliminated by stripping yellow background color sequences' },
       { type: 'fix', description: 'Screenshot dropdown labels render properly (SVG icons instead of broken Unicode)' },
@@ -629,7 +702,7 @@ export const changelog: ChangelogEntry[] = [
     changes: [
       { type: 'feature', description: 'KPI extraction now uses smart Claude skill that compares to previous run and produces actionable bullet points' },
       { type: 'feature', description: 'Insights sidebar shows improvements (green), regressions (red), and suggestions (purple) at the top' },
-      { type: 'improvement', description: 'KPI format is now fully dynamic — the skill decides categories, metrics, and lists without hardcoded schemas' },
+      { type: 'improvement', description: 'KPI format is now fully dynamic -- the skill decides categories, metrics, and lists without hardcoded schemas' },
       { type: 'improvement', description: 'What\'s New modal now triggers on version change, not every build' },
     ]
   },
@@ -640,7 +713,7 @@ export const changelog: ChangelogEntry[] = [
     changes: [
       { type: 'improvement', description: 'Screenshot button restyled to match app design (no more garish cyan)' },
       { type: 'fix', description: 'Input text no longer lost when switching between sessions and other views' },
-      { type: 'feature', description: 'npm run release — single command for full build, package, and update notification' },
+      { type: 'feature', description: 'npm run release -- single command for full build, package, and update notification' },
     ]
   },
   {
@@ -650,7 +723,7 @@ export const changelog: ChangelogEntry[] = [
     changes: [
       { type: 'improvement', description: 'Insights report now renders with full Catppuccin dark theme matching the app' },
       { type: 'fix', description: 'Screenshot button replaced with clean SVG icon instead of emoji' },
-      { type: 'fix', description: 'Ctrl+V paste no longer intercepts clipboard images — screenshot workflow uses right-click only' },
+      { type: 'fix', description: 'Ctrl+V paste no longer intercepts clipboard images -- screenshot workflow uses right-click only' },
       { type: 'fix', description: 'Stuck insight runs automatically marked as failed on app restart' },
       { type: 'feature', description: 'CLI availability indicator (green/red dot) in status bar' },
       { type: 'fix', description: 'Restart button now works for SSH/remote sessions (kills old PTY before re-spawning)' },

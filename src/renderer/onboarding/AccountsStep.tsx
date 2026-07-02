@@ -32,7 +32,7 @@ export function AccountsStep({ onNext, onBack }: { onNext: () => void; onBack: (
         <div className="p2-inner" style={{ width: 'min(820px, 95vw)' }}>
           <h2 className="h2">Got more than one Claude account?</h2>
           <p className="p2-sub">
-            Run each <b>local</b> session under whichever account you pick — logins never mix, while memory, projects
+            Run each <b>local</b> session under whichever account you pick: logins never mix, while memory, projects
             and history are shared, so switching never loses your place.
           </p>
 
@@ -78,7 +78,7 @@ export function AccountsStep({ onNext, onBack }: { onNext: () => void; onBack: (
             <div>
               <b>Claude Code outside Command Center keeps working exactly as today.</b>
               <span>
-                Terminal, IDE, anywhere — same login, same history. Nothing is moved or rewritten, and your setup is
+                Terminal, IDE, anywhere: same login, same history. Nothing is moved or rewritten, and your setup is
                 backed up once before accounts are ever set up.
               </span>
             </div>
@@ -87,7 +87,7 @@ export function AccountsStep({ onNext, onBack }: { onNext: () => void; onBack: (
           <p className="ma-local">
             <span className="ml-ic">{MONITOR}</span>
             <span>
-              SSH sessions use the remote machine's own login — accounts apply to <b>local</b> sessions only.
+              SSH sessions use the remote machine's own login. Accounts apply to <b>local</b> sessions only.
             </span>
           </p>
         </div>

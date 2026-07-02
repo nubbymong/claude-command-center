@@ -51,16 +51,16 @@ export function WelcomeStep({ onNext }: { onNext: () => void }) {
         <h1 className="word">Claude</h1>
         <div className="sub">Command Center</div>
         <p className="lede">
-          Welcome — I built <b>Command Center to sit on top of the Claude Code you already use</b>. It runs your
+          Welcome. I built <b>Command Center to sit on top of the Claude Code you already use</b>. It runs your
           sessions and adds accounts, status lines, history and cost tracking on top.
         </p>
         <p className="setup">
-          This one-time walkthrough takes about <b>5 minutes</b>. Every feature is optional — skip it now, switch it
+          This one-time walkthrough takes about <b>5 minutes</b>. Every feature is optional: skip it now, switch it
           on later in Settings.
         </p>
-        <p className="themeq">First — pick a look (you can change it anytime)</p>
+        <p className="themeq">First, pick a look (you can change it anytime)</p>
         <div className="tiles">
-          <ThemeTile look="dark" name="Dark" desc="Easy on the eyes — our default." mini="d" selected={theme === 'dark'} onSelect={pick} />
+          <ThemeTile look="dark" name="Dark" desc="Easy on the eyes, our default." mini="d" selected={theme === 'dark'} onSelect={pick} />
           <ThemeTile look="light" name="Light" desc="Bright, without the glare." mini="l" selected={theme === 'light'} onSelect={pick} />
           <ThemeTile look="system" name="System" desc="Follow your OS." mini="s" selected={theme === 'system'} onSelect={pick} />
         </div>
@@ -70,7 +70,7 @@ export function WelcomeStep({ onNext }: { onNext: () => void }) {
         </div>
       </div>
       <div className="foot">
-        <span className="hint">No account needed yet — we'll get to Claude next.</span>
+        <span className="hint">No account needed yet. We'll get to Claude next.</span>
         <button className="cta" onClick={onNext} type="button">
           Let's go →
         </button>

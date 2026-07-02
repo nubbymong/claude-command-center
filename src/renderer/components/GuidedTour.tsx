@@ -21,27 +21,27 @@ const STEPS: TourStep[] = [
   {
     selector: '[data-tour="nav-rail"]',
     title: 'Everything has a home',
-    body: 'Agent Hub, Insights, Tokenomics, Memory, Logs and the built-in tools all live on this rail. Each opens a full page.',
+    body: 'Agent Hub, Insights, Tokenomics, Memory, Logs and the built-in tools (Conductor MCP) all live on this rail. Each opens a full page.',
   },
   {
     selector: '[data-tour="new-config"]',
     title: 'Start a session here',
-    body: 'This is where you create a saved config and launch a Claude or Codex session — local or over SSH.',
+    body: 'This is where you create a saved config and launch a Claude or Codex session, local or over SSH.',
   },
   {
     selector: '[aria-label="Settings"]',
     title: 'Change anything, anytime',
-    body: 'Everything you just set up — accounts, GitHub, status line, tools, Codex — lives in Settings.',
+    body: 'Everything you just set up (accounts, GitHub, status line, tools, Codex) lives in Settings.',
   },
   {
     selector: '[aria-label="Feature Guide"]',
-    title: 'Replay this later',
-    body: 'The Feature Guide walks through every feature in depth whenever you want it.',
+    title: 'Help lives here',
+    body: 'The Feature Guide explains every feature in depth whenever you want it, and can hand your question to a Claude session that knows the app.',
   },
   {
     selector: null,
     title: 'Ready to go',
-    body: 'Let’s create your first session — it opens the New Session dialog so you can pick a name, model and account.',
+    body: 'Let’s set up your first session. The New Saved Config dialog opens so you can pick a name, model and account.',
     cta: 'Create your first session',
   },
 ]

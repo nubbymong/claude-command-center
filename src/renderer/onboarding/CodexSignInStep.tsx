@@ -54,7 +54,7 @@ export function CodexSignInStep({ onNext, onBack }: { onNext: () => void; onBack
           <h2 className="h2">
             Sign in to Codex.<span className="beta-tag">Beta</span>
           </h2>
-          <p className="p2-sub">One sign-in, read by the Codex CLI itself — Command Center never sees your password.</p>
+          <p className="p2-sub">One sign-in, read by the Codex CLI itself. Command Center never sees your password.</p>
 
           {signed ? (
             <div className="checkrow">
@@ -64,7 +64,7 @@ export function CodexSignInStep({ onNext, onBack }: { onNext: () => void; onBack
                   {authMode === 'chatgpt' ? 'Signed in with ChatGPT' : 'Signed in with an API key'}
                 </div>
                 <div className="meta">
-                  {authMode === 'chatgpt' && planType ? `${planType} plan — ` : ''}manage in Settings → Codex.
+                  {authMode === 'chatgpt' && planType ? `${planType} plan. ` : ''}Manage in Settings → Codex.
                 </div>
               </div>
             </div>

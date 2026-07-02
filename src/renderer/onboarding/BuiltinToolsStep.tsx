@@ -17,22 +17,22 @@ const TOOLS: { k: ToolKey; icon: string; title: string; desc: string; tag?: stri
   {
     k: 'vision',
     icon: GLOBE,
-    title: 'Vision — see & drive a browser',
+    title: 'Vision: see & drive a browser',
     tag: 'Claude only',
-    desc: 'Claude can open a real browser, take screenshots, click, type, scroll and run JavaScript — ideal for testing UIs and reproducing bugs. Not yet available in Codex sessions.',
+    desc: 'Claude can open a real browser, take screenshots, click, type, scroll and run JavaScript. Ideal for testing UIs and reproducing bugs. Not yet available in Codex sessions.',
   },
   {
     k: 'codexReview',
     icon: MAG,
     title: 'Code review',
     tag: 'uses Codex',
-    desc: 'Ask Codex for an independent review of your working changes — a fresh pair of eyes on a diff before you commit.',
+    desc: 'Ask Codex for an independent review of your working changes: a fresh pair of eyes on a diff before you commit.',
   },
   {
     k: 'hostTransfer',
     icon: CAMERA,
     title: 'Bring in screenshots, even over SSH',
-    desc: 'Pull screenshots and images from your machine straight into the conversation — even on a remote box over SSH.',
+    desc: 'Pull screenshots and images from your machine straight into the conversation, even on a remote box over SSH.',
   },
 ]
 
@@ -58,7 +58,7 @@ export function BuiltinToolsStep({ onNext, onBack }: { onNext: () => void; onBac
         <div className="p2-inner" style={{ width: 'min(760px, 95vw)' }}>
           <h2 className="h2">Want Claude to have a few extra tools?</h2>
           <p className="p2-sub">
-            Command Center can hand every session a set of ready-made tools — no setup, no servers to wire up. Choose
+            Command Center can hand every session a set of ready-made tools: no setup, no servers to wire up. Choose
             which ones Claude gets.
           </p>
 
@@ -75,7 +75,7 @@ export function BuiltinToolsStep({ onNext, onBack }: { onNext: () => void; onBac
                     </div>
                     <div className="tc-d">
                       {codexBlocked
-                        ? 'Code review is powered by Codex, which is turned off — enable it on the Codex page or in Settings → Codex.'
+                        ? 'Code review is powered by Codex, which is turned off. Enable it on the Codex page or in Settings → Codex.'
                         : t.desc}
                     </div>
                   </div>
@@ -97,7 +97,7 @@ export function BuiltinToolsStep({ onNext, onBack }: { onNext: () => void; onBac
                 <div className="tc-t">How it works</div>
                 <div className="tc-d">
                   Command Center runs a small local helper (an MCP server) and registers it with each session it
-                  launches — Claude, Codex, local or SSH — so these tools appear automatically. It runs only while
+                  launches (Claude, Codex, local or SSH), so these tools appear automatically. It runs only while
                   Command Center is open. Turn this off and new sessions launch without it.
                 </div>
               </div>
@@ -107,7 +107,7 @@ export function BuiltinToolsStep({ onNext, onBack }: { onNext: () => void; onBac
               <div>
                 <b>Nothing touches your global Claude config.</b>
                 <span>
-                  The helper is registered per session, only for sessions launched here — plain Claude and Codex
+                  The helper is registered per session, only for sessions launched here. Plain Claude and Codex
                   outside Command Center never see it.
                 </span>
               </div>

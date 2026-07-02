@@ -336,6 +336,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
           value={provider}
           onChange={setProvider}
           sessionType={sessionType}
+          codexMasterOff={codexDisabled}
         />
 
         {/* Two-column grid */}

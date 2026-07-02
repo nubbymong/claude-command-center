@@ -256,7 +256,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
                   />
                   <span>
                     Give sessions the built-in tools (conductor MCP)
-                    <span className="block text-[10px] text-overlay0">A local helper registered per session — Claude, Codex, local and SSH. Applies to new sessions.</span>
+                    <span className="block text-[10px] text-overlay0">A local helper registered per session (Claude, Codex, local and SSH). Applies to new sessions.</span>
                   </span>
                 </label>
                 <div
@@ -264,8 +264,8 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
                   className={settings.conductorToolsEnabled !== false ? 'pl-6 space-y-1.5' : 'pl-6 space-y-1.5 opacity-40'}
                 >
                   {([
-                    ['vision', 'Vision — see & drive a browser'],
-                    ['codexReview', 'Second-opinion code review'],
+                    ['vision', 'Vision: see & drive a browser'],
+                    ['codexReview', 'Code review'],
                     ['hostTransfer', 'Host screenshots (incl. over SSH)'],
                   ] as const).map(([key, label]) => (
                     <label key={key} className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
@@ -299,7 +299,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
                   />
                   <span>
                     Enable Sentinel
-                    <span className="block text-[10px] text-overlay0">Detects Claude Code updates and proposes registry fixes. Off by default — it spends Claude tokens on a Claude update. Takes effect after restart.</span>
+                    <span className="block text-[10px] text-overlay0">Detects Claude Code updates and proposes registry fixes. Off by default because it spends Claude tokens on a Claude update. Takes effect after restart.</span>
                   </span>
                 </label>
                 <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
