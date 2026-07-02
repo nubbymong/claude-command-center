@@ -64,7 +64,7 @@ interface Props {
   onShowHelp?: () => void
   onShowFirstRun?: () => void
   // Suppresses the FirstRunCard while the training/walkthrough is
-  // open — clicking "Create Config" otherwise opens GuidedConfigView
+  // open — clicking "Create Config" otherwise opens the first-config dialog
   // behind the tour, which the user can't see and which doesn't
   // dismiss the tour. macOS and Windows both affected.
   tourActive?: boolean
@@ -608,6 +608,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
               </svg>
             </button>
             <button
+              data-tour="new-config"
               onClick={(e) => { e.stopPropagation(); setShowNewDialog(true) }}
               className="w-6 h-6 flex items-center justify-center rounded hover:bg-surface0 text-overlay1 hover:text-text transition-colors focus-ring"
               title="New config (Ctrl+T)"

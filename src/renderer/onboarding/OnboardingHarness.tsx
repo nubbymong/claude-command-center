@@ -12,6 +12,8 @@ import { BuiltinToolsStep } from './BuiltinToolsStep'
 import { CodexStep } from './CodexStep'
 import { CodexSignInStep } from './CodexSignInStep'
 import { TransparencyStep } from './TransparencyStep'
+import { FinishStep } from './FinishStep'
+import { settleOnboardingFinish } from './settle'
 import { useSettingsStore } from '../stores/settingsStore'
 
 interface StepNav {
@@ -26,13 +28,19 @@ interface OnboardingCtx {
   setVersion: (v: string | null) => void
 }
 
+interface StepDone {
+  /** Called from the finish page. startTour=true launches the live-app guided
+   *  tour after the harness dismisses; false reveals the app directly. */
+  finish: (startTour: boolean) => void
+}
+
 interface BuiltStep {
   id: string
   phase: number
   /** Applicability gate, evaluated at navigation time (mirrors the registry's
    *  when()); a false step is skipped in both directions. */
   when?: () => boolean
-  render: (nav: StepNav, ctx: OnboardingCtx) => ReactNode
+  render: (nav: StepNav, ctx: OnboardingCtx, done: StepDone) => ReactNode
 }
 
 // The built onboarding pages in flow order. Grows as each page lands; the full
@@ -69,9 +77,16 @@ const PAGES: BuiltStep[] = [
   },
   { id: 'builtinTools', phase: 2, render: (nav) => <BuiltinToolsStep onNext={nav.onNext} onBack={nav.onBack} /> },
   { id: 'transparency', phase: 3, render: (nav) => <TransparencyStep onNext={nav.onNext} onBack={nav.onBack} /> },
+  {
+    id: 'finish',
+    phase: 3,
+    render: (_nav, _ctx, done) => (
+      <FinishStep onTour={() => done.finish(true)} onSkip={() => done.finish(false)} />
+    ),
+  },
 ]
 
-export function OnboardingHarness() {
+export function OnboardingHarness({ onComplete }: { onComplete: (startTour: boolean) => void }) {
   const [cursor, setCursor] = useState(PAGES[0].id)
   const [version, setVersion] = useState<string | null>(null)
   const idx = Math.max(0, PAGES.findIndex((p) => p.id === cursor))
@@ -89,6 +104,15 @@ export function OnboardingHarness() {
       }
     },
   }
+  const done: StepDone = {
+    finish: (startTour) => {
+      // Stamp completion + retire legacy popups, THEN hand control back to App.
+      // The appMeta write flips deriveOnboarding to due:false; App's reactive
+      // gate unmounts this harness on the next render.
+      settleOnboardingFinish()
+      onComplete(startTour)
+    },
+  }
   const ctx: OnboardingCtx = { version, setVersion }
-  return <OnboardingShell phase={step.phase}>{step.render(nav, ctx)}</OnboardingShell>
+  return <OnboardingShell phase={step.phase}>{step.render(nav, ctx, done)}</OnboardingShell>
 }

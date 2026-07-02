@@ -29,7 +29,8 @@ import NewAccountPrompt from './components/NewAccountPrompt'
 import SentinelPanel from './components/sentinel/SentinelPanel'
 import { useAddAccount } from './hooks/useAddAccount'
 import TrainingWalkthrough, { shouldShowTraining, isFirstInstall } from './components/TrainingWalkthrough'
-import GuidedConfigView from './components/GuidedConfigView'
+import SessionDialog from './components/SessionDialog'
+import GuidedTour from './components/GuidedTour'
 import TipModal from './components/TipModal'
 import { useTipsStore, trackUsage } from './stores/tipsStore'
 import ErrorBoundary from './components/ErrorBoundary'
@@ -161,6 +162,10 @@ export default function App() {
   }, [])
 
   const [showGuidedConfig, setShowGuidedConfig] = useState(false)
+  // Live-app guided tour that follows the onboarding finish step (or the
+  // Feature Guide button). Anchored coach-marks over the real UI, ending by
+  // opening the first-config dialog.
+  const [tourActive, setTourActive] = useState(false)
   const [showTipModal, setShowTipModal] = useState(false)
   const [partnerActive, setPartnerActive] = useState<Set<string>>(new Set())
   const [showMachineNamePrompt, setShowMachineNamePrompt] = useState(false)
@@ -174,7 +179,7 @@ export default function App() {
   // termination (crash / external-installer force-close) never re-offers phantom
   // sessions the user already closed. Resume still reads pendingRestore in-memory.
   useSessionAutosave()
-  // onCreateConfigFromStage: App owns the GuidedConfigView toggle via showGuidedConfig.
+  // onCreateConfigFromStage: App owns the first-config dialog via showGuidedConfig.
   // Sidebar receives onShowFirstRun={() => setShowGuidedConfig(true)}, so we use the
   // same setter here to open the real create dialog from the stage empty state.
   const onCreateConfigFromStage = () => setShowGuidedConfig(true)
@@ -388,23 +393,15 @@ export default function App() {
         window.electronAPI.screenshot.cleanup(magicSettings.autoDeleteDays)
       }
 
-      // Prompt for local machine name if not set (first run after update)
-      const currentSettings = useSettingsStore.getState().settings
-      if (!currentSettings.localMachineName) {
-        setTimeout(() => setShowMachineNamePrompt(true), 800)
-      }
-
-      const gateShown = false
-
-      setTimeout(() => {
-        if (gateShown) return
-        if (isFirstInstall()) {
-          setShowTraining(true)
-        } else {
-          if (shouldShowWhatsNew()) setShowWhatsNew(true)
-          else if (shouldShowTraining()) setShowTraining(true)
-        }
-      }, 500)
+      // NOTE (v2): the legacy first-run auto-popups — the 800ms machine-name
+      // prompt, and the 500ms What's-New / training-tour arm — are intentionally
+      // GONE. The onboarding harness is their single replacement: it collects the
+      // machine name (Transparency step), and its finish step stamps
+      // lastSeenVersion + lastTrainingVersion so neither the What's-New modal nor
+      // the tour auto-fire this release. The tour remains reachable on demand via
+      // the Feature Guide button, and What's-New via a future changelog bump for
+      // ALREADY-onboarded users. Machine-name / training-due state is no longer
+      // armed here.
 
       // Pick a tip for this session (one per app launch)
       setTimeout(() => {
@@ -454,14 +451,17 @@ export default function App() {
   useEffect(() => {
     if (!isGitHubOnboardingDue()) return
     if (logsWipeBytes !== 0) return
+    // v2: never arm the legacy GitHub modal while the onboarding harness is (or
+    // could still be) the active flow — its own GitHub step replaces it, and the
+    // finish step stamps seenOnboardingVersion. Without this guard the modal
+    // could arm in the background mid-flow and then surface the instant
+    // onboarding completes.
+    if (deriveOnboarding(useAppMetaStore.getState().meta, {}).due) return
     if (showWhatsNew || showTraining || showTrainingAll) return
-    // The machine-name prompt is below onboarding in the boot-gate priority,
-    // so opening onboarding while it's visible would unmount it mid-typing.
-    if (showMachineNamePrompt) return
     if (isFirstInstall() || shouldShowWhatsNew() || shouldShowTraining()) return
     const t = setTimeout(() => setShowGitHubOnboarding(true), 120)
     return () => clearTimeout(t)
-  }, [githubConfig, logsWipeBytes, showWhatsNew, showTraining, showTrainingAll, showMachineNamePrompt, needsCliSetup])
+  }, [githubConfig, logsWipeBytes, showWhatsNew, showTraining, showTrainingAll, needsCliSetup])
 
   // useCallback: passed to OnboardingModal as `onClose`, which forwards it
   // to useFocusTrap. Without stable identity, the focus-trap effect re-runs
@@ -920,10 +920,12 @@ export default function App() {
   // version compare, settings flags, staggered boot timers); without a shared
   // priority they mount simultaneously and stack, with DOM order deciding who
   // paints on top. Exactly one gate renders at a time — see pickBootGate.
-  // Phase-2: render the forced first-run harness when onboarding is due. NOTE: getState()
-  // read for now (safe below the SetupDialog early-return); the reactive subscription +
-  // per-step settle + finish stamping land with the step flow.
-  const onboardingDue = deriveOnboarding(useAppMetaStore.getState().meta, {}).due
+  // Forced first-run harness gate. Reactive on appMeta so the finish step's
+  // completion stamp (settleOnboardingFinish) flips due->false and unmounts the
+  // harness on the next render. Settings view kept minimal — the codexSignIn
+  // when() only narrows the applicable set, never the due decision.
+  const onboardingMeta = useAppMetaStore((s) => s.meta)
+  const onboardingDue = deriveOnboarding(onboardingMeta, {}).due
   const bootGate = pickBootGate({
     configLoaded,
     onboardingDue,
@@ -945,7 +947,24 @@ export default function App() {
         {bootGate === 'logsWipe' && logsWipeBytes !== null && (
           <LogsWipeModal totalBytes={logsWipeBytes} onComplete={() => setLogsWipeBytes(0)} />
         )}
-        {bootGate === 'onboarding' && <OnboardingHarness />}
+        {bootGate === 'onboarding' && (
+          <OnboardingHarness
+            onComplete={(startTour) => {
+              // settleOnboardingFinish already stamped completion (harness will
+              // unmount on this render). Launch the live-app tour if chosen.
+              if (startTour) setTourActive(true)
+            }}
+          />
+        )}
+        {tourActive && bootGate === null && (
+          <GuidedTour
+            onClose={() => setTourActive(false)}
+            onCreateConfig={() => {
+              setTourActive(false)
+              setShowGuidedConfig(true)
+            }}
+          />
+        )}
         {bootGate === 'whatsNew' && <WhatsNewModal onClose={handleWhatsNewClose} />}
         {showTipModal && bootGate !== 'onboarding' && <TipModal onClose={() => setShowTipModal(false)} onNavigate={(v) => setView(v)} />}
         {bootGate === 'githubOnboarding' && (
@@ -1066,66 +1085,12 @@ export default function App() {
           <Sidebar currentView={view} onViewChange={setView} collapsed={!sidebarOpen} tourActive={showTraining || showTrainingAll} onShowFirstRun={() => setShowGuidedConfig(true)} onShowHelp={() => { setShowTrainingAll(true); setShowTraining(true) }} />
           <main className="flex-1 flex flex-col overflow-hidden titlebar-no-drag">
             <div className="flex-1 flex flex-col overflow-hidden min-h-0 relative">
-              {showGuidedConfig ? (
-                <GuidedConfigView
-                  onSkip={() => setShowGuidedConfig(false)}
-                  onConfirm={async (configDraft, sshPassword) => {
-                    const { generateId } = await import('./utils/id')
-                    const configId = generateId()
-                    if (sshPassword) {
-                      await window.electronAPI.credentials.save(configId, sshPassword)
-                    }
-                    const newConfig = { ...configDraft, id: configId }
-                    useConfigStore.getState().addConfig(newConfig)
-                    useAppMetaStore.getState().update({ hasCreatedFirstConfig: true })
-
-                    // Track feature usage based on config fields set
-                    trackUsage('sessions.create-config')
-                    if (newConfig.sessionType === 'ssh') trackUsage('sessions.session-type')
-                    if (newConfig.claudeOptions?.effortLevel) trackUsage('sessions.effort-level')
-                    if (newConfig.claudeOptions?.disableAutoMemory) trackUsage('sessions.disable-auto-memory')
-                    if (newConfig.claudeOptions?.enableCodexReview) trackUsage('sessions.enable-codex-review')
-                    if (newConfig.partnerTerminalPath) trackUsage('sessions.partner-terminal')
-
-                    const session: Session = {
-                      id: generateId(),
-                      configId: newConfig.id,
-                      label: newConfig.label,
-                      workingDirectory: newConfig.workingDirectory,
-                      model: newConfig.claudeOptions?.model ?? '',
-                      color: newConfig.color,
-                      status: 'idle',
-                      createdAt: Date.now(),
-                      sessionType: newConfig.sessionType,
-                      shellOnly: newConfig.shellOnly,
-                      sshConfig: newConfig.sshConfig,
-                      effortLevel: newConfig.claudeOptions?.effortLevel,
-                      disableAutoMemory: newConfig.claudeOptions?.disableAutoMemory,
-                      enableCodexReview: newConfig.claudeOptions?.enableCodexReview,
-                      loggingEnabled: newConfig.claudeOptions?.loggingEnabled,
-                      provider: newConfig.provider,
-                      codexOptions: newConfig.codexOptions,
-                    }
-                    // Both providers support a resume picker. For Codex, the picker
-                    // script may not be deployed yet on first boot -- buildCodexSpawn
-                    // falls back to direct codex spawn (see src/main/providers/codex/spawn.ts).
-                    if (
-                      !session.shellOnly &&
-                      session.sessionType === 'local'
-                    ) {
-                      markSessionForResumePicker(session.id)
-                    }
-                    useSessionStore.getState().addSession(session)
-                    setShowGuidedConfig(false)
-                    setView('sessions')
-                  }}
-                />
-              ) : (
-                <>
-                  {renderSessions()}
-                  {renderOverlayView()}
-                </>
-              )}
+              {/* The live app is always what's behind — the first-config flow is
+                  the REAL SessionDialog rendered as an overlay (below), so the
+                  user sees the workbench while creating their first session.
+                  (The old full-column GuidedConfigView is retired.) */}
+              {renderSessions()}
+              {renderOverlayView()}
             </div>
           </main>
         </div>
@@ -1150,6 +1115,28 @@ export default function App() {
             onClose={handleTrainingClose}
             showAll={showTrainingAll}
             mode={showTrainingAll ? 'help' : 'first-run'}
+          />
+        )}
+        {/* First-config creation (from the onboarding tour, the sidebar
+            FirstRunCard, or the empty-state button). The REAL SessionDialog over
+            the live app — same create + launch path as the sidebar's New Session,
+            so there is no behaviour drift and no dead controls (retires the old
+            GuidedConfigView). */}
+        {showGuidedConfig && (
+          <SessionDialog
+            onCancel={() => setShowGuidedConfig(false)}
+            onConfirm={async (data, password, sudoPassword) => {
+              const { generateId } = await import('./utils/id')
+              const config = { ...data, id: generateId() }
+              useConfigStore.getState().addConfig(config)
+              if (password) await window.electronAPI.credentials.save(config.id, password)
+              if (sudoPassword) await window.electronAPI.credentials.save(config.id + '_sudo', sudoPassword)
+              useAppMetaStore.getState().update({ hasCreatedFirstConfig: true })
+              trackUsage('sessions.create-config')
+              setShowGuidedConfig(false)
+              launchConfig(config)
+              setView('sessions')
+            }}
           />
         )}
         {/* Pre-spawn account launch gate: asks which account a session runs

@@ -275,6 +275,7 @@ export default function SidebarNav({ currentView, onViewChange, insightsStatus, 
   if (collapsed) {
     return (
       <div
+        data-tour="nav-rail"
         className="flex flex-col items-center gap-1 py-2 border-b border-surface0"
         style={{ background: 'var(--surface-chrome)', color: 'var(--text-on-chrome)' }}
       >
@@ -298,6 +299,7 @@ export default function SidebarNav({ currentView, onViewChange, insightsStatus, 
 
   return (
     <div
+      data-tour="nav-rail"
       className="px-2 pt-2 flex gap-1 items-center border-b border-surface0 pb-2"
       style={{ background: 'var(--surface-chrome)', color: 'var(--text-on-chrome)' }}
     >
