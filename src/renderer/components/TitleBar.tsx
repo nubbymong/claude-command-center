@@ -162,15 +162,23 @@ export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
   }
   const tooltip = tooltipLines.join(' · ')
 
+  // macOS keeps its native traffic lights (main window uses
+  // titleBarStyle:'hiddenInset'): left-pad the bar so our controls clear them,
+  // and drop the custom minimize/maximize/close cluster (Windows-only chrome).
+  const isMac = window.electronPlatform === 'darwin'
+
   return (
     <div
       className="titlebar-drag flex items-center h-10 px-3 shrink-0 relative"
-      style={gradientColor ? {
-        background: `linear-gradient(90deg, var(--surface-panel) 0%, ${gradientColor}18 30%, ${gradientColor}25 50%, ${gradientColor}18 70%, var(--surface-panel) 100%)`,
-        color: 'var(--text-on-chrome)',
-      } : {
-        background: 'var(--surface-panel)',
-        color: 'var(--text-on-chrome)',
+      style={{
+        ...(isMac ? { paddingLeft: 84 } : {}),
+        ...(gradientColor ? {
+          background: `linear-gradient(90deg, var(--surface-panel) 0%, ${gradientColor}18 30%, ${gradientColor}25 50%, ${gradientColor}18 70%, var(--surface-panel) 100%)`,
+          color: 'var(--text-on-chrome)',
+        } : {
+          background: 'var(--surface-panel)',
+          color: 'var(--text-on-chrome)',
+        }),
       }}
     >
       <div className="titlebar-no-drag flex items-center gap-1 mr-3">
@@ -225,28 +233,33 @@ export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
         )}
         <SentinelDot />
         <ThemeToggle />
-        <button
-          onClick={() => window.electronAPI.window.minimize()}
-          className="p-2 hover:bg-surface0 rounded transition-colors text-overlay1 hover:text-text focus-ring"
-        >
-          <svg width="12" height="12" viewBox="0 0 12 12"><line x1="1" y1="6" x2="11" y2="6" stroke="currentColor" strokeWidth="1.2"/></svg>
-        </button>
-        <button
-          onClick={() => window.electronAPI.window.maximize()}
-          className="p-2 hover:bg-surface0 rounded transition-colors text-overlay1 hover:text-text focus-ring"
-        >
-          {maximized ? (
-            <svg width="12" height="12" viewBox="0 0 12 12"><rect x="2" y="3.5" width="7" height="7" rx="0.5" stroke="currentColor" strokeWidth="1.2" fill="none"/><path d="M3.5 3.5V2.5C3.5 2.22 3.72 2 4 2H9.5C9.78 2 10 2.22 10 2.5V8C10 8.28 9.78 8.5 9.5 8.5H9" stroke="currentColor" strokeWidth="1.2" fill="none"/></svg>
-          ) : (
-            <svg width="12" height="12" viewBox="0 0 12 12"><rect x="1.5" y="1.5" width="9" height="9" rx="0.5" stroke="currentColor" strokeWidth="1.2" fill="none"/></svg>
-          )}
-        </button>
-        <button
-          onClick={() => window.electronAPI.window.close()}
-          className="p-2 hover:bg-red rounded transition-colors text-overlay1 hover:text-text focus-ring"
-        >
-          <svg width="12" height="12" viewBox="0 0 12 12"><line x1="2" y1="2" x2="10" y2="10" stroke="currentColor" strokeWidth="1.2"/><line x1="10" y1="2" x2="2" y2="10" stroke="currentColor" strokeWidth="1.2"/></svg>
-        </button>
+        {/* Custom window controls are Windows chrome; macOS has native traffic lights. */}
+        {!isMac && (
+          <>
+            <button
+              onClick={() => window.electronAPI.window.minimize()}
+              className="p-2 hover:bg-surface0 rounded transition-colors text-overlay1 hover:text-text focus-ring"
+            >
+              <svg width="12" height="12" viewBox="0 0 12 12"><line x1="1" y1="6" x2="11" y2="6" stroke="currentColor" strokeWidth="1.2"/></svg>
+            </button>
+            <button
+              onClick={() => window.electronAPI.window.maximize()}
+              className="p-2 hover:bg-surface0 rounded transition-colors text-overlay1 hover:text-text focus-ring"
+            >
+              {maximized ? (
+                <svg width="12" height="12" viewBox="0 0 12 12"><rect x="2" y="3.5" width="7" height="7" rx="0.5" stroke="currentColor" strokeWidth="1.2" fill="none"/><path d="M3.5 3.5V2.5C3.5 2.22 3.72 2 4 2H9.5C9.78 2 10 2.22 10 2.5V8C10 8.28 9.78 8.5 9.5 8.5H9" stroke="currentColor" strokeWidth="1.2" fill="none"/></svg>
+              ) : (
+                <svg width="12" height="12" viewBox="0 0 12 12"><rect x="1.5" y="1.5" width="9" height="9" rx="0.5" stroke="currentColor" strokeWidth="1.2" fill="none"/></svg>
+              )}
+            </button>
+            <button
+              onClick={() => window.electronAPI.window.close()}
+              className="p-2 hover:bg-red rounded transition-colors text-overlay1 hover:text-text focus-ring"
+            >
+              <svg width="12" height="12" viewBox="0 0 12 12"><line x1="2" y1="2" x2="10" y2="10" stroke="currentColor" strokeWidth="1.2"/><line x1="10" y1="2" x2="2" y2="10" stroke="currentColor" strokeWidth="1.2"/></svg>
+            </button>
+          </>
+        )}
       </div>
     </div>
   )

@@ -71,7 +71,16 @@ const PAGES: BuiltStep[] = [
       <CompatibilityStep onNext={nav.onNext} onBack={nav.onBack} version={ctx.version} onVersion={ctx.setVersion} />
     ),
   },
-  { id: 'accounts', phase: 1, render: (nav) => <AccountsStep onNext={nav.onNext} onBack={nav.onBack} /> },
+  {
+    id: 'accounts',
+    phase: 1,
+    // Multi-account isolation is Windows-only: on macOS Claude Code's OAuth
+    // token lives in the login Keychain, which HOME redirection cannot
+    // isolate, so the page's "logins never mix" promise would be false there
+    // (Mac readiness review 2026-07-02). Skip the page on darwin.
+    when: () => window.electronPlatform !== 'darwin',
+    render: (nav) => <AccountsStep onNext={nav.onNext} onBack={nav.onBack} />,
+  },
   // GitHub deliberately precedes Status line (user call 2026-07-01): the p4
   // preview's Copilot element only exists once the meter is enabled, so the
   // integration must be introduced first.

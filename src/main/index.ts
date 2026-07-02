@@ -306,7 +306,14 @@ function createWindow(): void {
     y: state.y,
     minWidth: 1280,
     minHeight: 720,
-    frame: false,
+    // Windows: fully frameless with custom controls in the TitleBar.
+    // macOS: keep the native traffic lights (hiddenInset) — frame:false there
+    // removes them entirely and the custom right-docked controls read as a
+    // broken window to Mac users. The renderer hides its custom controls and
+    // left-pads the drag region on darwin (TitleBar.tsx).
+    ...(process.platform === 'darwin'
+      ? { titleBarStyle: 'hiddenInset' as const }
+      : { frame: false }),
     backgroundColor: '#1E1E2E',
     show: false,
     webPreferences: {

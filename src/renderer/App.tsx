@@ -1003,7 +1003,9 @@ export default function App() {
             the tour's centered steps paint a click-capturing full-viewport dim
             (z-60) over these (z-40/z-50), stranding a real decision prompt
             underneath. State is kept, so they surface once the overlay closes. */}
-        {newAccountDetected && bootGate !== 'onboarding' && !tourActive && !showGuidedConfig && (
+        {/* darwin: multi-account is Windows-only (Keychain token can't be
+            isolated per profile), so never offer to capture a second account. */}
+        {newAccountDetected && window.electronPlatform !== 'darwin' && bootGate !== 'onboarding' && !tourActive && !showGuidedConfig && (
           <NewAccountPrompt
             email={newAccountDetected.email}
             onDismiss={() => setNewAccountDetected(null)}

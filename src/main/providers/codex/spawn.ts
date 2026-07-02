@@ -10,9 +10,21 @@ import { readConfig } from '../../config-manager'
 
 export function resolveCodexBinary(): { cmd: string; args: string[] } | null {
   if (os.platform() !== 'win32') {
+    // Probe through a LOGIN shell and keep the absolute path: a Finder/Dock
+    // launched app inherits launchd's minimal PATH (no Homebrew/npm-global),
+    // so both a bare `which codex` probe and a later bare-'codex' spawn fail
+    // even though the user's terminal finds it. Matches cli:check's login-
+    // shell approach for claude.
     try {
-      execSync('which codex', { encoding: 'utf-8', timeout: 5000 })
-      return { cmd: 'codex', args: [] }
+      const shell = process.env.SHELL || '/bin/bash'
+      const out = execSync(`${shell} -l -c 'which codex'`, {
+        encoding: 'utf-8',
+        timeout: 8000,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+      const resolved = out.trim().split(/\r?\n/).map((l) => l.trim()).filter((l) => l.startsWith('/')).pop()
+      if (resolved) return { cmd: resolved, args: [] }
+      return null
     } catch { return null }
   }
   for (const bin of ['codex.exe', 'codex.cmd']) {
@@ -48,7 +60,26 @@ export function resolveCodexBinary(): { cmd: string; args: string[] } | null {
  */
 let cachedNodeExe: string | null = null
 export function resolveNodeExe(): string {
-  if (os.platform() !== 'win32') return 'node'
+  if (os.platform() !== 'win32') {
+    // Same launchd-minimal-PATH hazard as resolveCodexBinary: resolve the
+    // absolute node path via a login shell so PTY execvp doesn't depend on
+    // the GUI app's inherited PATH. Falls back to bare 'node'.
+    if (cachedNodeExe) return cachedNodeExe
+    try {
+      const shell = process.env.SHELL || '/bin/bash'
+      const out = execSync(`${shell} -l -c 'which node'`, {
+        encoding: 'utf-8',
+        timeout: 8000,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+      const resolved = out.trim().split(/\r?\n/).map((l) => l.trim()).filter((l) => l.startsWith('/')).pop()
+      if (resolved) {
+        cachedNodeExe = resolved
+        return resolved
+      }
+    } catch { /* fall through */ }
+    return 'node'
+  }
   if (cachedNodeExe) return cachedNodeExe
   try {
     const resolved = execSync('where node', {

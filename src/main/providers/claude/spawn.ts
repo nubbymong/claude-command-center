@@ -75,14 +75,20 @@ export function buildClaudeLocalSpawn(opts: SpawnOptions): { cmd: string; args: 
   if (opts.disableAutoMemory) env.CLAUDE_CODE_DISABLE_AUTO_MEMORY = '1'
 
   const shell = os.platform() === 'win32' ? 'powershell.exe' : (process.env.SHELL || '/bin/bash')
+  // POSIX: spawn a LOGIN shell (-l) so PATH picks up Homebrew/nvm/npm-global
+  // entries from ~/.zprofile. A Finder/Dock-launched app inherits launchd's
+  // minimal PATH, and a non-login zsh never sources ~/.zprofile, so without
+  // this every session hits "command not found: claude" while the onboarding
+  // check (which already uses -l, see index.ts cli:check) passes.
+  const shellArgs = os.platform() === 'win32' ? [] : ['-l']
 
   if (opts.shellOnly && opts.elevated) {
     const cmd = os.platform() === 'win32' ? 'gsudo' : 'sudo'
-    return { cmd, args: [shell], env }
+    return { cmd, args: [shell, ...shellArgs], env }
   }
 
   if (opts.shellOnly) {
-    return { cmd: shell, args: [], env }
+    return { cmd: shell, args: shellArgs, env }
   }
 
   // Claude session: disable CC's mouse mode + alternate screen when classic copy/paste is
@@ -108,5 +114,5 @@ export function buildClaudeLocalSpawn(opts: SpawnOptions): { cmd: string; args: 
   }
 
   // Claude session: spawn shell only; pty-manager writes the cd+claude command into the shell post-spawn.
-  return { cmd: shell, args: [], env }
+  return { cmd: shell, args: shellArgs, env }
 }

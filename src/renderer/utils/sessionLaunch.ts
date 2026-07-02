@@ -45,6 +45,12 @@ export function canSwitchAccountForSession(opts: {
   shellOnly?: boolean
 }): boolean {
   const provider = opts.provider ?? 'claude'
+  // macOS: Claude Code keeps its live OAuth token in the login Keychain,
+  // which per-profile HOME redirection cannot isolate — switching would
+  // relabel the session while every API call kept using the shared token
+  // (Mac readiness review 2026-07-02, confirmed blocker). Multi-account is
+  // Windows-only until a darwin Keychain-swap engine exists.
+  if (typeof window !== 'undefined' && window.electronPlatform === 'darwin') return false
   return !opts.shellOnly && opts.profileCount >= 2 && provider === 'claude' && !opts.isSsh
 }
 

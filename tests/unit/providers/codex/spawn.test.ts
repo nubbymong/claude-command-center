@@ -215,15 +215,24 @@ describe('CodexProvider', () => {
       writeFileSync(join(dir, 'scripts', 'codex-resume-picker.js'), '// stub')
       setMockResourcesDir(dir)
 
+      // POSIX now resolves node via a login shell (a Finder/Dock-launched app
+      // inherits launchd's minimal PATH, so bare 'node' can fail under PTY).
+      vi.mocked(execSync).mockImplementation((cmd: any) => {
+        const s = String(cmd)
+        if (s.includes('which node')) return '/usr/local/bin/node\n' as any
+        if (s.includes('which codex')) return '/mock/path/codex\n' as any
+        throw new Error(`unexpected: ${s}`)
+      })
+
       const out = new CodexProvider().buildSpawnCommand({
         sessionId: 'sid-resume',
         useResumePicker: true,
         codexOptions: { model: 'gpt-5.5', reasoningEffort: 'xhigh', permissionsPreset: 'standard' },
       })
 
-      // On linux/macOS bare 'node' works (PTY uses execvp -> PATH lookup).
-      // On win32 we resolve the full path via `where node` (see resolveNodeExe).
-      expect(out.cmd).toBe('node')
+      // On win32 the full path comes from `where node`; on POSIX from the
+      // login-shell `which node` probe (see resolveNodeExe).
+      expect(out.cmd).toBe('/usr/local/bin/node')
       expect(out.args[0]).toBe(join(dir, 'scripts', 'codex-resume-picker.js'))
       expect(out.args).toContain('-m')
       expect(out.args).toContain('gpt-5.5')
@@ -311,11 +320,20 @@ describe('CodexProvider', () => {
       expect(resolveNodeExe()).toBe('node')
     })
 
-    it('resolveNodeExe returns bare "node" on non-win32 without invoking where', () => {
+    it('resolveNodeExe resolves node via a login shell on non-win32 (launchd minimal-PATH hazard)', () => {
       vi.mocked(osMod.platform).mockReturnValue('linux' as NodeJS.Platform)
-      const before = vi.mocked(execSync).mock.calls.length
+      vi.mocked(execSync).mockImplementation((cmd: any) => {
+        const s = String(cmd)
+        if (s.includes('-l -c') && s.includes('which node')) return '/opt/homebrew/bin/node\n' as any
+        throw new Error(`unexpected: ${s}`)
+      })
+      expect(resolveNodeExe()).toBe('/opt/homebrew/bin/node')
+    })
+
+    it('resolveNodeExe falls back to bare "node" on non-win32 when the login-shell probe fails', () => {
+      vi.mocked(osMod.platform).mockReturnValue('linux' as NodeJS.Platform)
+      vi.mocked(execSync).mockImplementation(() => { throw new Error('not found') })
       expect(resolveNodeExe()).toBe('node')
-      expect(vi.mocked(execSync).mock.calls.length).toBe(before)
     })
   })
 })

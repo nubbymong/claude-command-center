@@ -266,17 +266,28 @@ export default function AccountsPanel({ onAdd }: AccountsPanelProps) {
         ))}
       </div>
 
-      {/* Add another account */}
-      <button
-        onClick={onAdd}
-        data-testid="add-account-btn"
-        className="mt-3 w-full flex items-center justify-center gap-2 rounded-lg border border-dashed border-surface1 hover:border-blue/50 text-overlay1 hover:text-blue py-2 px-4 text-sm transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-blue/50"
-      >
-        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden>
-          <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-        </svg>
-        Add another account
-      </button>
+      {/* Add another account. Windows-only: on macOS Claude Code keeps its
+          OAuth token in the login Keychain, which per-profile HOME redirection
+          cannot isolate, so added accounts would silently share one login
+          (Mac readiness review 2026-07-02). */}
+      {window.electronPlatform === 'darwin' ? (
+        <p className="mt-3 text-[11px] text-overlay0 leading-relaxed rounded-lg border border-dashed border-surface1 py-2 px-4">
+          Multiple accounts are not available on macOS yet: Claude Code stores its sign-in
+          token in the macOS Keychain, which is shared across the whole app, so added
+          accounts could not be kept separate. Your single account works exactly as normal.
+        </p>
+      ) : (
+        <button
+          onClick={onAdd}
+          data-testid="add-account-btn"
+          className="mt-3 w-full flex items-center justify-center gap-2 rounded-lg border border-dashed border-surface1 hover:border-blue/50 text-overlay1 hover:text-blue py-2 px-4 text-sm transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-blue/50"
+        >
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden>
+            <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          </svg>
+          Add another account
+        </button>
+      )}
 
       {/* Informational note - no em dashes */}
       <p className="text-[11px] text-overlay0 leading-relaxed mt-2">
