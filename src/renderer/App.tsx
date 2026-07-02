@@ -999,7 +999,11 @@ export default function App() {
           />
         )}
 
-        {newAccountDetected && bootGate !== 'onboarding' && (
+        {/* Suppressed under the guided tour and the first-config dialog too:
+            the tour's centered steps paint a click-capturing full-viewport dim
+            (z-60) over these (z-40/z-50), stranding a real decision prompt
+            underneath. State is kept, so they surface once the overlay closes. */}
+        {newAccountDetected && bootGate !== 'onboarding' && !tourActive && !showGuidedConfig && (
           <NewAccountPrompt
             email={newAccountDetected.email}
             onDismiss={() => setNewAccountDetected(null)}
@@ -1016,7 +1020,7 @@ export default function App() {
           <LoggingConsentPrompt />
         )}
 
-        {pendingRestore && bootGate !== 'onboarding' && (
+        {pendingRestore && bootGate !== 'onboarding' && !tourActive && !showGuidedConfig && (
           <ResumeSessionsPrompt
             count={pendingRestore.sessions.length}
             onResume={() => {

@@ -83,12 +83,25 @@ export default function GuidedTour({ onCreateConfig, onClose }: { onCreateConfig
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
+  // A step whose anchor isn't mounted (e.g. the new-config button while the
+  // sidebar is collapsed) would degrade to a centered card pointing at nothing,
+  // so navigation skips it. Centered steps (selector: null) are always available.
+  const available = (s: TourStep) => !s.selector || !!document.querySelector(s.selector)
+
   const next = () => {
     if (last) {
       onClose()
       onCreateConfig()
-    } else {
-      setI((n) => Math.min(n + 1, STEPS.length - 1))
+      return
+    }
+    for (let n = i + 1; n < STEPS.length; n++) {
+      if (available(STEPS[n])) return setI(n)
+    }
+  }
+
+  const back = () => {
+    for (let n = i - 1; n >= 0; n--) {
+      if (available(STEPS[n])) return setI(n)
     }
   }
 
@@ -165,7 +178,7 @@ export default function GuidedTour({ onCreateConfig, onClose }: { onCreateConfig
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
             {i > 0 && (
               <button
-                onClick={() => setI((n) => Math.max(0, n - 1))}
+                onClick={back}
                 type="button"
                 style={{ background: 'transparent', border: '1px solid var(--border-strong, #33404f)', color: 'var(--text-secondary, #a8b2c0)', borderRadius: 9, padding: '8px 14px', fontSize: 13, cursor: 'pointer' }}
               >

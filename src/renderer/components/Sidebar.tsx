@@ -159,6 +159,11 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
   const handleCreateConfig = async (data: Omit<TerminalConfig, 'id'>, password?: string, sudoPassword?: string) => {
     const config: TerminalConfig = { ...data, id: generateId() }
     addConfig(config)
+    // Same stamps as the guided first-config path (App.tsx): without them the
+    // FirstRunCard re-appears if the user later deletes all configs, and the
+    // tips system never learns the feature was used.
+    useAppMetaStore.getState().update({ hasCreatedFirstConfig: true })
+    trackUsage('sessions.create-config')
     // Save credentials to the encrypted store (main process handles decryption at spawn time)
     if (password) {
       await window.electronAPI.credentials.save(config.id, password)

@@ -19,6 +19,7 @@ const SHIELD = String.fromCodePoint(0x1f6e1)
 export function TransparencyStep({ onNext, onBack }: { onNext: () => void; onBack: () => void }) {
   const settings = useSettingsStore((s) => s.settings)
   const ghProfiles = useGitHubStore((s) => s.profiles)
+  const ghEnabled = useGitHubStore((s) => s.config?.enabledByDefault)
   const profiles = useAccountProfilesStore((s) => s.profiles)
   const [globalEmail, setGlobalEmail] = useState<string | null>(null)
 
@@ -46,7 +47,17 @@ export function TransparencyStep({ onNext, onBack }: { onNext: () => void; onBac
     {
       icon: BRANCH,
       label: 'GitHub',
-      value: ghProfiles.length > 0 ? `Connected as ${ghProfiles[0].username}` : 'Off (Settings → GitHub)',
+      // Honest recap: the master (enabledByDefault) decides on/off; connected
+      // accounts refine the On case. Profiles can exist with the master off,
+      // and the no-account opt-in can be On with zero profiles.
+      value:
+        ghEnabled === false
+          ? 'Off (Settings → GitHub)'
+          : ghProfiles.length > 0
+            ? `Connected as ${ghProfiles[0].username}`
+            : ghEnabled === true
+              ? 'On, no account connected yet'
+              : 'Off (Settings → GitHub)',
     },
     {
       icon: STRIP,
@@ -96,7 +107,7 @@ export function TransparencyStep({ onNext, onBack }: { onNext: () => void; onBac
           <div className="tool-card">
             <div className="tc-ic">{CHART}</div>
             <div className="tc-body">
-              <div className="tc-t">Index your session logs</div>
+              <div className="tc-t">Index conversation logs</div>
               <div className="tc-d">
                 Powers the Logs, Memory and Tokenomics pages by indexing Claude's own transcripts
                 (~/.claude/projects). Indexing is local; turning it off only stops the index. Your conversations

@@ -253,7 +253,10 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
       legacyVersion: legacyEnabled && legacyVersion ? { enabled: true, version: legacyVersion } : undefined,
       agentIds: !shellOnly && selectedAgentIds.size > 0 ? Array.from(selectedAgentIds) : undefined,
       disableAutoMemory: !shellOnly && disableAutoMemory ? true : undefined,
-      enableCodexReview: !shellOnly && enableCodexReview ? true : undefined,
+      // Mirror the display gate: while Codex is off the checkbox renders
+      // unchecked+disabled, so persisting the stale true would silently
+      // re-arm review the moment Codex is re-enabled.
+      enableCodexReview: !shellOnly && enableCodexReview && !codexDisabled ? true : undefined,
       // DEFAULT-TRUE: only write false when the user has turned the toggle off.
       // Omitting the field (undefined) is equivalent to on, keeps configs clean.
       loggingEnabled: !shellOnly && !loggingEnabled ? false : undefined,

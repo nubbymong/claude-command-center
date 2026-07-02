@@ -87,10 +87,18 @@ export function CodexSettingsTab() {
             </span>
           </div>
           <div className="text-[11px] text-overlay0 leading-tight">
-            Also powers the code-review tool Claude sessions get — off removes it from new sessions.
+            Also powers the code-review tool Claude sessions get; off removes it from new sessions.
           </div>
         </div>
       </div>
+
+      {/* Body dims + goes inert when the master is off, matching the Status
+          Line and Built-in Tools tabs. The master above stays live as the
+          recovery surface. */}
+      <div
+        inert={codexEnabled === false}
+        className={codexEnabled === false ? 'space-y-4 opacity-40 pointer-events-none' : 'space-y-4'}
+      >
 
       {/* Status section */}
       <div className="rounded-xl bg-surface0/30 border border-surface0/60 overflow-hidden">
@@ -233,6 +241,7 @@ export function CodexSettingsTab() {
       <p className="text-xs text-overlay0 leading-relaxed px-1">
         Profiles edited in <code className="text-overlay1 bg-crust/60 px-1 py-0.5 rounded">{'~/.codex/config.toml'}</code> outside CCC are ignored when spawning from here. CCC sets model and reasoning effort per session.
       </p>
+      </div>
     </div>
   )
 }

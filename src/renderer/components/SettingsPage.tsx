@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import WhatsNewModal, { markWhatsNewSeen } from './WhatsNewModal'
 import TrainingWalkthrough from './TrainingWalkthrough'
-import { getLatestVersion } from '../changelog'
 import { useSettingsStore, DEFAULT_STATUS_LINE, DEFAULT_TERMINAL_SETTINGS, DEFAULT_CONDUCTOR_TOOLS, UpdateChannel } from '../stores/settingsStore'
 import type { StatusLineSettings, TerminalSettings, CursorStyle, ThemeMode } from '../stores/settingsStore'
 import { useSessionStore } from '../stores/sessionStore'
@@ -19,6 +18,7 @@ import { Kbd } from './ui/Kbd'
 import { useAddAccount } from '../hooks/useAddAccount'
 import AccountsPanel from './AccountsPanel'
 declare const __BUILD_TIME__: string
+declare const __APP_VERSION__: string
 
 export const SETTINGS_TAB_IDS = ['general', 'accounts', 'statusline', 'shortcuts', 'github', 'codex', 'hooks', 'about'] as const
 export type SettingsTab = typeof SETTINGS_TAB_IDS[number]
@@ -81,8 +81,6 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
   useEffect(() => {
     if (initialTab) setActiveTab(initialTab)
   }, [initialTab])
-  const latestVersion = getLatestVersion()
-
   useEffect(() => {
     window.electronAPI.debug.isEnabled().then(debugEnabled => {
       if (debugEnabled !== settings.debugMode) {
@@ -267,25 +265,41 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
                     ['vision', 'Vision: see & drive a browser'],
                     ['codexReview', 'Code review'],
                     ['hostTransfer', 'Host screenshots (incl. over SSH)'],
-                  ] as const).map(([key, label]) => (
-                    <label key={key} className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={(settings.conductorTools ?? DEFAULT_CONDUCTOR_TOOLS)[key] !== false}
-                        onChange={(e) =>
-                          save({
-                            conductorTools: {
-                              ...DEFAULT_CONDUCTOR_TOOLS,
-                              ...(settings.conductorTools || {}),
-                              [key]: e.target.checked,
-                            },
-                          })
+                  ] as const).map(([key, label]) => {
+                    // Code review runs the codex CLI: with the Codex master off
+                    // the MCP server never registers the tool, so a live
+                    // checkbox here would be a dead control (onboarding p6
+                    // blocks the same card). Stored preference is untouched.
+                    const codexBlocked = key === 'codexReview' && settings.codexEnabled === false
+                    return (
+                      <label
+                        key={key}
+                        className={
+                          codexBlocked
+                            ? 'flex items-center gap-2 text-sm text-subtext0 opacity-40 cursor-not-allowed'
+                            : 'flex items-center gap-2 text-sm text-subtext0 cursor-pointer'
                         }
-                        className="rounded border-surface1"
-                      />
-                      {label}
-                    </label>
-                  ))}
+                      >
+                        <input
+                          type="checkbox"
+                          disabled={codexBlocked}
+                          checked={!codexBlocked && (settings.conductorTools ?? DEFAULT_CONDUCTOR_TOOLS)[key] !== false}
+                          onChange={(e) =>
+                            save({
+                              conductorTools: {
+                                ...DEFAULT_CONDUCTOR_TOOLS,
+                                ...(settings.conductorTools || {}),
+                                [key]: e.target.checked,
+                              },
+                            })
+                          }
+                          className="rounded border-surface1"
+                        />
+                        {label}
+                        {codexBlocked && <span className="text-[10px] text-overlay0">(Codex is off)</span>}
+                      </label>
+                    )
+                  })}
                 </div>
               </Section>
 
@@ -510,7 +524,9 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
               <div className="space-y-2.5">
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-text">Version</span>
-                  <span className="text-sm text-subtext0 font-medium">v{latestVersion.version}</span>
+                  {/* The INSTALLED build version, not changelog[0] — the two only
+                      match on the release commit itself. */}
+                  <span className="text-sm text-subtext0 font-medium">v{__APP_VERSION__}</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-text">Build</span>
@@ -521,7 +537,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
                     onClick={() => setShowWhatsNew(true)}
                     className="text-[11px] text-blue hover:text-blue/80 transition-colors"
                   >
-                    View What's New
+                    View full changelog
                   </button>
                   <span className="text-[11px] text-overlay0">|</span>
                   <button
@@ -566,18 +582,20 @@ type BooleanStatusLineKey = {
   [K in keyof StatusLineSettings]: StatusLineSettings[K] extends boolean ? K : never
 }[keyof StatusLineSettings]
 
+// Labels shared verbatim with onboarding p4's element switches (StatusLineStep
+// ELEMS) so the same element carries the same name on both surfaces.
 const STATUS_LINE_TOGGLES: { key: BooleanStatusLineKey; label: string; description: string }[] = [
-  { key: 'showModel', label: 'Model Name', description: 'Shows the active Claude model' },
-  { key: 'showEffort', label: 'Effort Level', description: 'Active reasoning effort next to the model' },
+  { key: 'showModel', label: 'Model', description: 'Shows the active Claude model' },
+  { key: 'showEffort', label: 'Effort level', description: 'Active reasoning effort next to the model' },
   { key: 'showAccount', label: 'Account', description: 'Claude account this session runs as' },
-  { key: 'showTokens', label: 'Token Count', description: 'Input tokens / context window' },
-  { key: 'showContextBar', label: 'Context Bar', description: 'Visual progress bar + percentage' },
-  { key: 'showCost', label: 'API Cost', description: 'API equivalent cost estimate' },
-  { key: 'showLinesChanged', label: 'Lines Changed', description: 'Lines added and removed' },
+  { key: 'showTokens', label: 'Token usage', description: 'Input tokens / context window' },
+  { key: 'showContextBar', label: 'Context bar', description: 'Visual progress bar + percentage' },
+  { key: 'showCost', label: 'Cost', description: 'API equivalent cost estimate' },
+  { key: 'showLinesChanged', label: 'Lines changed', description: 'Lines added and removed' },
   { key: 'showDuration', label: 'Duration', description: 'Total session duration' },
-  { key: 'showRateLimits', label: 'Rate Limits', description: '5h and 7d usage dot bars' },
-  { key: 'showResetTime', label: 'Reset Time', description: 'Time until rate limit resets' },
-  { key: 'showCopilot', label: 'Copilot Usage', description: 'GitHub Copilot AI-credit meter (Beta -- limited by the GitHub API)' }
+  { key: 'showRateLimits', label: 'Rate limits', description: '5h and 7d usage dot bars' },
+  { key: 'showResetTime', label: 'Reset time', description: 'Time until rate limit resets' },
+  { key: 'showCopilot', label: 'Copilot meter', description: 'GitHub Copilot AI-credit meter (Beta -- limited by the GitHub API)' }
 ]
 
 function StatusLineTab({
@@ -627,7 +645,7 @@ function StatusLineTab({
             <StatusLinePreview sl={sl} />
           </div>
           <p className="text-[11px] text-overlay0 mt-2">
-            Toggle elements below to see how the status bar changes.
+            Toggle elements below to see how the status line changes.
           </p>
         </div>
       </div>

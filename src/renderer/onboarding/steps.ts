@@ -31,6 +31,13 @@ export interface OnboardingStep {
   settle?: (ctx: OnboardingSettleCtx) => void | Promise<void>
 }
 
+// NOTE (v2 contract): the harness (OnboardingHarness PAGES) is FULL-FLOW-ONLY.
+// It does not consult completedSteps, so deriveOnboarding's incremental path
+// (adding a step without bumping ONBOARDING_VERSION -> due:true for just that
+// step) would re-run the whole flow from the top. Adding a page in a later
+// release therefore REQUIRES an ONBOARDING_VERSION bump. Also: whatsNewV2's
+// upgraders-only gate lives in the harness (when(): !!appMeta.lastSeenVersion,
+// meta-based) and can't be expressed in the settings-view when() below.
 export const STEPS: OnboardingStep[] = [
   { id: 'whatsNewV2',    sinceVersion: '2.0.0', requiresSetup: false },
   { id: 'welcome',       sinceVersion: '2.0.0', requiresSetup: false },

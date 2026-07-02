@@ -2,6 +2,8 @@ import React from 'react'
 import { TerminalConfig } from '../stores/configStore'
 import { resolveIdentityColor, bucketLegacyColorToKey } from '../../shared/identity-colors'
 import { useResolvedTheme } from '../hooks/useThemeController'
+import { useSettingsStore } from '../stores/settingsStore'
+import { DEFAULT_SHORTCUTS } from '../utils/shortcuts'
 
 interface Props {
   configs: TerminalConfig[]
@@ -15,6 +17,9 @@ interface Props {
 // invite creating one.
 export default function StageEmptyState({ configs, onLaunch, onShowAllConfigs, onCreateConfig }: Props) {
   const theme = useResolvedTheme()
+  // Shortcuts are user-rebindable; show the live bindings, not the defaults.
+  const userShortcuts = useSettingsStore((s) => s.settings.keyboardShortcuts)
+  const sc = { ...DEFAULT_SHORTCUTS, ...(userShortcuts || {}) }
   const hasConfigs = configs.length > 0
   const pinned = configs.filter((c) => c.pinned)
   const launchers = (pinned.length > 0 ? pinned : configs).slice(0, 6)
@@ -63,7 +68,7 @@ export default function StageEmptyState({ configs, onLaunch, onShowAllConfigs, o
             Create a saved config
           </button>
         )}
-        <p className="text-xs text-overlay0 mt-4">Ctrl+T to create, Ctrl+Tab to switch</p>
+        <p className="text-xs text-overlay0 mt-4">{sc.newConfig} to create, {sc.nextSession} to switch</p>
       </div>
     </div>
   )

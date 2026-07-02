@@ -1,6 +1,7 @@
 import { useState } from 'react'
 
 const LOCK = String.fromCodePoint(0x1f512)
+const WARN = String.fromCodePoint(0x26a0)
 
 // One explicit consent click per `claude --version` run — the flow's "every
 // command needs your OK" promise, enforced wherever the version is needed
@@ -50,8 +51,9 @@ export function VersionConsentCard({ desc, onVersion }: { desc: string; onVersio
       </div>
       {failed && (
         <div className="ameta">
-          <span>
-            Couldn't read the version. Make sure <code>claude</code> is on your PATH, then try again.
+          {/* A real failure reads as a warning (onboarding amber), not muted meta text. */}
+          <span style={{ color: 'var(--ob)' }}>
+            {WARN} Couldn't read the version. Make sure <code>claude</code> is on your PATH, then try again.
           </span>
         </div>
       )}

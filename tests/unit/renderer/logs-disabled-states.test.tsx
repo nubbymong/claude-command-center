@@ -85,7 +85,7 @@ describe('Logs disabled states — SidebarNav', () => {
     // The Logs button carries an `aria-label` set to the tooltip text when
     // logging is disabled (the slow native `title` was removed; the accessible
     // name now comes from aria-label only).
-    const TOOLTIP = 'Enable session logging in Settings'
+    const TOOLTIP = 'Turn on "Index conversation logs" in Settings'
 
     const logsBtn = Array.from(container.querySelectorAll('button')).find((b) =>
       b.getAttribute('aria-label') === TOOLTIP ||

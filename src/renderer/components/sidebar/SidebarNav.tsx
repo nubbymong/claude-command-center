@@ -139,7 +139,7 @@ function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMe
   void visionRunning
 
   const title = isLogsDisabled
-    ? 'Enable session logging in Settings'
+    ? 'Turn on "Index conversation logs" in Settings'
     : isCollapsed
     ? item.label
     : isCloudAgentsRunning

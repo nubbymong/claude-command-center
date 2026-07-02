@@ -78,7 +78,9 @@ export function ProviderSegmentedControl({ value, onChange, sessionType, codexMa
       {sessionType === 'ssh' ? (
         <p className="text-[10px] text-overlay0 mt-1">Codex is not available for SSH sessions yet.</p>
       ) : codexMasterOff ? (
-        <p className="text-[10px] text-overlay0 mt-1">Codex is switched off. Enable it in Settings → Codex.</p>
+        <p className="text-[10px] text-overlay0 mt-1">
+          Codex is switched off, so new configs can't use it. Enable it in Settings → Codex.
+        </p>
       ) : null}
     </div>
   )

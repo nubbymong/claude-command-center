@@ -42,7 +42,7 @@ const FEATURES: { icon: string; title: string; desc: string; offTag?: boolean }[
   {
     icon: SPARK,
     title: 'Copilot meter',
-    desc: 'Credits used this cycle, in your status line. Switch it on in Settings → Status line.',
+    desc: 'Credits used this cycle, in your status line. Turn on AI credits usage per account in Settings → GitHub.',
     offTag: true,
   },
 ]

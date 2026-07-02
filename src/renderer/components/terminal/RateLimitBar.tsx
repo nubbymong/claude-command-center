@@ -9,12 +9,14 @@ export default function RateLimitBar({ label, pct, resets, showReset }: { label:
   // Drive from theme tokens so the bar adapts to light/dark — hard-
   // coded Catppuccin Mocha hex didn't repaint when the user flipped
   // theme and clashed with the lighter palette.
+  // Monotonic warm ramp: green -> yellow -> peach -> red as utilisation rises
+  // (peach is the hotter of the two middle stops).
   const color = clamped >= 90
     ? 'var(--color-red)'
     : clamped >= 70
-      ? 'var(--color-yellow)'
+      ? 'var(--color-peach)'
       : clamped >= 50
-        ? 'var(--color-peach)'
+        ? 'var(--color-yellow)'
         : 'var(--color-green)'
   return (
     <span
