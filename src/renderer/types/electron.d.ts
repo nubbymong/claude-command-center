@@ -401,6 +401,9 @@ export interface ElectronAPI {
     path: () => Promise<string | null>
     version: () => Promise<string | null>
   }
+  help: {
+    workspace: () => Promise<string | null>
+  }
   tokenomics: {
     summary: (filter?: import('../../shared/types').TkSummaryFilter) => Promise<import('../../shared/types').TkSummary | null>
     sessions: (query?: import('../../shared/types').TkSessionsQuery) => Promise<import('../../shared/types').TkSessionsPage>

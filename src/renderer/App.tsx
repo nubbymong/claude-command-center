@@ -31,6 +31,7 @@ import { useAddAccount } from './hooks/useAddAccount'
 import TrainingWalkthrough, { shouldShowTraining, isFirstInstall } from './components/TrainingWalkthrough'
 import SessionDialog from './components/SessionDialog'
 import GuidedTour from './components/GuidedTour'
+import HelpPanel from './components/HelpPanel'
 import TipModal from './components/TipModal'
 import { useTipsStore, trackUsage } from './stores/tipsStore'
 import ErrorBoundary from './components/ErrorBoundary'
@@ -166,6 +167,9 @@ export default function App() {
   // Feature Guide button). Anchored coach-marks over the real UI, ending by
   // opening the first-config dialog.
   const [tourActive, setTourActive] = useState(false)
+  // One home for help (searchable guide + feature tour + Ask Claude); opened
+  // by the sidebar ? button.
+  const [showHelpPanel, setShowHelpPanel] = useState(false)
   const [showTipModal, setShowTipModal] = useState(false)
   const [partnerActive, setPartnerActive] = useState<Set<string>>(new Set())
   const [showMachineNamePrompt, setShowMachineNamePrompt] = useState(false)
@@ -972,6 +976,13 @@ export default function App() {
         )}
         {bootGate === 'whatsNew' && <WhatsNewModal onClose={handleWhatsNewClose} />}
         {showTipModal && bootGate !== 'onboarding' && <TipModal onClose={() => setShowTipModal(false)} onNavigate={(v) => setView(v)} />}
+        {showHelpPanel && (
+          <HelpPanel
+            onClose={() => setShowHelpPanel(false)}
+            onStartTour={() => { setShowTrainingAll(true); setShowTraining(true) }}
+            onShowSessions={() => setView('sessions')}
+          />
+        )}
         {bootGate === 'githubOnboarding' && (
           <OnboardingModal
             onClose={dismissGitHubOnboarding}
@@ -1087,7 +1098,7 @@ export default function App() {
         )}
         <TitleBar sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
         <div className="flex flex-1 overflow-hidden">
-          <Sidebar currentView={view} onViewChange={setView} collapsed={!sidebarOpen} tourActive={showTraining || showTrainingAll} onShowFirstRun={() => setShowGuidedConfig(true)} onShowHelp={() => { setShowTrainingAll(true); setShowTraining(true) }} />
+          <Sidebar currentView={view} onViewChange={setView} collapsed={!sidebarOpen} tourActive={showTraining || showTrainingAll} onShowFirstRun={() => setShowGuidedConfig(true)} onShowHelp={() => setShowHelpPanel(true)} />
           <main className="flex-1 flex flex-col overflow-hidden titlebar-no-drag">
             <div className="flex-1 flex flex-col overflow-hidden min-h-0 relative">
               {/* The live app is always what's behind — the first-config flow is

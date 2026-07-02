@@ -20,6 +20,7 @@ import { registerDebugHandlers } from './ipc/debug-handlers'
 import { disableDebugMode } from './debug-capture'
 import { registerUpdateHandlers } from './ipc/update-handlers'
 import { registerSetupHandlers, getResourcesDirectory, getDataDirectory } from './ipc/setup-handlers'
+import { ensureHelpWorkspace } from './help-workspace'
 import { registerScreenshotHandlers } from './ipc/screenshot-handlers'
 import { registerWebviewHandlers } from './ipc/webview-handlers'
 import { closeAllWebviews } from './webview-manager'
@@ -531,6 +532,17 @@ function createWindow(): void {
     try {
       const res = await spawnClaudeHeadless(['--version'], 10000)
       return parseClaudeVersion(res.stdout) ?? parseClaudeVersion(res.stderr) ?? null
+    } catch {
+      return null
+    }
+  })
+
+  // "Ask Command Center": stage (refresh) the help workspace and return its
+  // path; the renderer launches a normal Claude session with this cwd so the
+  // CLAUDE.md + app-knowledge.md docs prime the session.
+  ipcMain.handle('help:workspace', async () => {
+    try {
+      return ensureHelpWorkspace(getResourcesDirectory())
     } catch {
       return null
     }

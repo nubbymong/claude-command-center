@@ -339,6 +339,9 @@ export interface ElectronAPI {
     path: () => Promise<string | null>
     version: () => Promise<string | null>
   }
+  help: {
+    workspace: () => Promise<string | null>
+  }
   tokenomics: {
     summary: (filter?: import('../shared/types').TkSummaryFilter) => Promise<import('../shared/types').TkSummary | null>
     sessions: (query?: import('../shared/types').TkSessionsQuery) => Promise<import('../shared/types').TkSessionsPage>
@@ -807,6 +810,9 @@ const electronAPI: ElectronAPI = {
     check: () => ipcRenderer.invoke(IPC.CLI_CHECK),
     path: () => ipcRenderer.invoke(IPC.CLI_PATH),
     version: () => ipcRenderer.invoke(IPC.CLI_VERSION)
+  },
+  help: {
+    workspace: () => ipcRenderer.invoke(IPC.HELP_WORKSPACE)
   },
   tokenomics: {
     summary: (filter?: import('../shared/types').TkSummaryFilter) => ipcRenderer.invoke(IPC.TOKENOMICS2_SUMMARY, filter ?? {}),

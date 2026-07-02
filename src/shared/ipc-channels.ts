@@ -215,6 +215,9 @@ export const IPC = {
   CLI_PATH: 'cli:path',
   CLI_VERSION: 'cli:version',
 
+  // Ask Command Center help workspace
+  HELP_WORKSPACE: 'help:workspace',
+
   // Tokenomics v2 — SQLite-backed summary/sessions/detail + index push
   TOKENOMICS2_SUMMARY: 'tokenomics2:summary',
   TOKENOMICS2_SESSIONS: 'tokenomics2:sessions',
