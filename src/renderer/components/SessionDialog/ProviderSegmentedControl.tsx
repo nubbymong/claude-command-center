@@ -75,13 +75,13 @@ export function ProviderSegmentedControl({ value, onChange, sessionType, codexMa
           </span>
         </button>
       </div>
-      {sessionType === 'ssh' ? (
-        <p className="text-[10px] text-overlay0 mt-1">Codex is not available for SSH sessions yet.</p>
-      ) : codexMasterOff ? (
-        <p className="text-[10px] text-overlay0 mt-1">
-          Codex is switched off, so new configs can't use it. Enable it in Settings → Codex.
-        </p>
-      ) : null}
+      <p className="text-[10px] text-overlay0 mt-1">
+        {sessionType === 'ssh'
+          ? 'Codex is not available for SSH sessions yet.'
+          : codexMasterOff
+            ? "Codex is switched off, so new configs can't use it. Enable it in Settings → Codex."
+            : "Which CLI this config runs: Anthropic's Claude Code, or OpenAI's Codex (its own account and sign-in)."}
+      </p>
     </div>
   )
 }
