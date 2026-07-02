@@ -42,6 +42,9 @@ describe('canSwitchAccountForSession', () => {
   it('does not allow with fewer than 2 profiles', () => {
     expect(canSwitchAccountForSession({ provider: 'claude', profileCount: 1 })).toBe(false)
   })
+  it('refuses shell-only panes (the add-account /login shell must never switch profile)', () => {
+    expect(canSwitchAccountForSession({ provider: 'claude', shellOnly: true, profileCount: 2 })).toBe(false)
+  })
 })
 
 describe('formatSpawnError', () => {

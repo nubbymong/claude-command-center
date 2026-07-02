@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useGitHubStore } from '../stores/githubStore'
 import OAuthDeviceFlow from '../components/github/config/OAuthDeviceFlow'
 import type { GitHubConfig } from '../../shared/github-types'
@@ -39,7 +39,12 @@ const FEATURES: { icon: string; title: string; desc: string; offTag?: boolean }[
   { icon: SPEECH, title: 'Reviews & comments', desc: 'Threaded review comments with inline reply.' },
   { icon: ISSUE, title: 'Linked issues', desc: 'Issues linked by PR body or branch.' },
   { icon: BELL, title: 'Notifications', desc: 'Review requests, mentions, assignments.', offTag: true },
-  { icon: SPARK, title: 'Copilot meter', desc: 'Credits used this cycle, in your status line — next page.', offTag: true },
+  {
+    icon: SPARK,
+    title: 'Copilot meter',
+    desc: 'Credits used this cycle, in your status line — switch it on in Settings → Status line.',
+    offTag: true,
+  },
 ]
 
 export function GitHubStep({ onNext, onBack }: { onNext: () => void; onBack: () => void }) {
@@ -55,11 +60,21 @@ export function GitHubStep({ onNext, onBack }: { onNext: () => void; onBack: () 
   // Multi-auth is supported (authProfiles is a map): "adding" re-opens the
   // connect chooser alongside the already-connected rows.
   const [adding, setAdding] = useState(false)
-  // Master = config.enabledByDefault ("GitHub panel on new sessions"). Local
-  // until Next so merely LOOKING at the page never writes config; persisted
-  // only when the user touched the toggle or actually connected.
-  const [masterOn, setMasterOn] = useState(true)
-  const [masterTouched, setMasterTouched] = useState(false)
+  // Master DISPLAYS On by default (the page invites a decision), but persisted
+  // preferences are only ever WRITTEN on an explicit signal: the toggle was
+  // touched, or an account was connected during THIS visit. An upgrader who
+  // pages through untouched never has their stored enabledByDefault clobbered,
+  // and a deliberate pre-existing enabledByDefault=true exempts them from the
+  // connect gate below.
+  const cfgEnabledByDefault = useGitHubStore((s) => s.config?.enabledByDefault === true)
+  const [localMaster, setLocalMaster] = useState<boolean | null>(null)
+  const masterTouched = localMaster !== null
+  const masterOn = localMaster ?? true
+  const [connectedNow, setConnectedNow] = useState(false)
+  // Once the user picks a connect method themselves, a slow ghcliDetect result
+  // must not yank the chooser out from under them (gh auth status can take
+  // seconds — it validates tokens over the network).
+  const methodTouched = useRef(false)
 
   useEffect(() => {
     void useGitHubStore.getState().loadConfig()
@@ -67,10 +82,15 @@ export function GitHubStep({ onNext, onBack }: { onNext: () => void; onBack: () 
       .ghcliDetect()
       .then((r) => {
         setGhUsers(r.users)
-        if (r.users.length > 0) setMethod('gh')
+        if (r.users.length > 0 && !methodTouched.current) setMethod('gh')
       })
       .catch(() => setGhUsers([]))
   }, [])
+
+  const pickMethod = (m: Method) => {
+    methodTouched.current = true
+    setMethod(m)
+  }
 
   const connected = profiles.length > 0
 
@@ -82,6 +102,7 @@ export function GitHubStep({ onNext, onBack }: { onNext: () => void; onBack: () 
       if (r.ok) {
         await useGitHubStore.getState().loadConfig()
         setAdding(false)
+        setConnectedNow(true)
       } else setError(r.error ?? 'Failed to use the gh account')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to use the gh account')
@@ -112,6 +133,7 @@ export function GitHubStep({ onNext, onBack }: { onNext: () => void; onBack: () 
         setPatToken('')
         await useGitHubStore.getState().loadConfig()
         setAdding(false)
+        setConnectedNow(true)
       } else setError(r.error ?? 'Token verification failed')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Token verification failed')
@@ -134,17 +156,17 @@ export function GitHubStep({ onNext, onBack }: { onNext: () => void; onBack: () 
 
   // Advancing stamps seenOnboardingVersion (this step replaces the legacy
   // GitHub onboarding modal, which keys off the same field). enabledByDefault
-  // is written only on explicit signal: toggle touched, or an account exists.
+  // is written ONLY on explicit signal: the toggle was touched, or an account
+  // was connected during this visit (never for pre-existing profiles — an
+  // upgrader paging through untouched keeps their stored preference).
   const finish = () => {
     const patch: Partial<GitHubConfig> = { seenOnboardingVersion: __APP_VERSION__ }
-    if (masterTouched || connected) patch.enabledByDefault = masterOn
+    if (masterTouched) patch.enabledByDefault = masterOn
+    else if (connectedNow && !cfgEnabledByDefault) patch.enabledByDefault = true
     void useGitHubStore.getState().updateConfig(patch).catch(() => {})
     onNext()
   }
-  const setMaster = (on: boolean) => {
-    setMasterOn(on)
-    setMasterTouched(true)
-  }
+  const setMaster = (on: boolean) => setLocalMaster(on)
 
   const oauthScopes =
     oauthMode === 'private'
@@ -220,7 +242,7 @@ export function GitHubStep({ onNext, onBack }: { onNext: () => void; onBack: () 
                   )}
                 </p>
                 {ghUsers.length > 0 && (
-                  <button className={method === 'gh' ? 'opt sel' : 'opt'} onClick={() => setMethod('gh')} type="button">
+                  <button className={method === 'gh' ? 'opt sel' : 'opt'} onClick={() => pickMethod('gh')} type="button">
                     <span className="opt-rad" />
                     <span className="opt-body">
                       <span className="opt-t">Use your GitHub CLI login</span>
@@ -240,7 +262,7 @@ export function GitHubStep({ onNext, onBack }: { onNext: () => void; onBack: () 
                 )}
                 <button
                   className={method === 'oauth' ? 'opt sel' : 'opt'}
-                  onClick={() => setMethod('oauth')}
+                  onClick={() => pickMethod('oauth')}
                   type="button"
                 >
                   <span className="opt-rad" />
@@ -252,7 +274,7 @@ export function GitHubStep({ onNext, onBack }: { onNext: () => void; onBack: () 
                     </span>
                   </span>
                 </button>
-                <button className={method === 'pat' ? 'opt sel' : 'opt'} onClick={() => setMethod('pat')} type="button">
+                <button className={method === 'pat' ? 'opt sel' : 'opt'} onClick={() => pickMethod('pat')} type="button">
                   <span className="opt-rad" />
                   <span className="opt-body">
                     <span className="opt-t">Paste a token</span>
@@ -381,12 +403,17 @@ export function GitHubStep({ onNext, onBack }: { onNext: () => void; onBack: () 
         </div>
         {/* With the master ON, Next commits to a connection: gated until an
             account exists. Turning GitHub Off is the explicit skip path. */}
+        {/* Pre-existing enabledByDefault=true (a deliberate no-auth opt-in —
+            the app-wide features work without an account) exempts from the
+            connect gate: there must always be a "keep my settings" path. */}
         <div style={{ justifySelf: 'end', display: 'flex', alignItems: 'center', gap: 12 }}>
-          {masterOn && !connected && <span className="hint">Connect an account — or turn GitHub off</span>}
+          {masterOn && !connected && !cfgEnabledByDefault && (
+            <span className="hint">Connect an account — or turn GitHub off</span>
+          )}
           <button
             className="cta"
             onClick={finish}
-            disabled={masterOn && !connected}
+            disabled={masterOn && !connected && !cfgEnabledByDefault}
             type="button"
             style={{ marginLeft: 0 }}
           >
@@ -401,6 +428,7 @@ export function GitHubStep({ onNext, onBack }: { onNext: () => void; onBack: () 
           onDone={() => {
             setOauthFlow(null)
             setAdding(false)
+            setConnectedNow(true)
             void useGitHubStore.getState().loadConfig()
           }}
           onCancel={() => setOauthFlow(null)}

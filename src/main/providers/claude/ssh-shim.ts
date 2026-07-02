@@ -163,6 +163,12 @@ export function generateRemoteSetupScript(
     // file should not carry any mcpServers state. Claude CLI ignores it
     // there anyway; stripping prevents stale entries from leaking through.
     `const sBase=Object.assign({},s);delete sBase.mcpServers`,
+    // Strip a LEGACY statusLine stanza from the clone too, not just the shared
+    // file below: with includeStatusLine=false there is no CCC override, so a
+    // pre-per-session install's shared stanza would otherwise be inherited by
+    // the per-session file on the FIRST post-upgrade connect (the shared-file
+    // heal further down runs after this clone is taken).
+    `if(sBase.statusLine&&typeof sBase.statusLine.command==='string'&&sBase.statusLine.command.includes('conductor-ssh-statusline'))delete sBase.statusLine`,
     // Per-session settings -- clone of shared (without mcpServers) with CCC
     // keys overridden.
     `const sesPath=path.join(claudeDir,'settings-${safeSid}.json')`,

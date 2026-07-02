@@ -6,6 +6,7 @@ import { CodexFormFields } from './SessionDialog/CodexFormFields'
 import { IDENTITY_COLOR_KEYS, resolveIdentityColor, bucketLegacyColorToKey, type IdentityColorKey } from '../../shared/identity-colors'
 import { useResolvedTheme } from '../hooks/useThemeController'
 import { useRegistryStore } from '../stores/registryStore'
+import { useSettingsStore } from '../stores/settingsStore'
 import { modelsFromRegistry } from '../lib/claude-cli-options'
 
 export type SessionType = 'local' | 'ssh'
@@ -69,6 +70,9 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
   )
   const theme = useResolvedTheme()
   const [sessionType, setSessionType] = useState<SessionType>(initial?.sessionType ?? 'local')
+  // Codex master ("Do you use Codex?"): with it off the conductor server never
+  // registers codex_review, so the review checkbox below would be a dead control.
+  const codexDisabled = useSettingsStore((s) => s.settings.codexEnabled === false)
   const [shellOnly, setShellOnly] = useState(initial?.shellOnly ?? false)
   const [groupId, setGroupId] = useState<string | undefined>(initial?.groupId)
   const [newGroupName, setNewGroupName] = useState('')
@@ -623,18 +627,28 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
               </label>
             )}
 
-            {/* P6: Codex code review toggle */}
-            {!shellOnly && (
-              <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer">
+            {/* P6: Codex code review toggle. Hidden for SSH (the tool is never
+                registered for SSH sessions and would run codex against a local
+                path that only exists on the remote); disabled when Codex is
+                answered off (the MCP server won't register the tool at all). */}
+            {!shellOnly && sessionType !== 'ssh' && (
+              <label
+                className={`flex items-start gap-2 text-sm text-subtext0 ${codexDisabled ? 'opacity-50' : 'cursor-pointer'}`}
+              >
                 <input
                   type="checkbox"
-                  checked={enableCodexReview}
+                  checked={enableCodexReview && !codexDisabled}
+                  disabled={codexDisabled}
                   onChange={(e) => setEnableCodexReview(e.target.checked)}
                   className="mt-0.5 rounded border-surface1"
                 />
                 <span>
                   Enable Codex code review
-                  <span className="block text-[10px] text-overlay0">Lets Claude call the codex_review MCP tool. Each call counts against your gpt-5.5 5h budget.</span>
+                  <span className="block text-[10px] text-overlay0">
+                    {codexDisabled
+                      ? 'Codex is off — enable it in Settings → Codex first.'
+                      : 'Lets Claude call the codex_review MCP tool. Each call counts against your gpt-5.5 5h budget.'}
+                  </span>
                 </span>
               </label>
             )}

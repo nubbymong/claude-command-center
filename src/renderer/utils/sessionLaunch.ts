@@ -38,9 +38,14 @@ export function canSwitchAccountForSession(opts: {
   provider?: ProviderId
   isSsh?: boolean
   profileCount: number
+  /** Shell-only panes (incl. the add-account /login shell, which is pinned to
+   *  a brand-new profile) must never offer Switch Account: respawning the
+   *  login shell under another profile redirects the /login into that
+   *  account's private home (same class as BUG-1/BUG-13). */
+  shellOnly?: boolean
 }): boolean {
   const provider = opts.provider ?? 'claude'
-  return opts.profileCount >= 2 && provider === 'claude' && !opts.isSsh
+  return !opts.shellOnly && opts.profileCount >= 2 && provider === 'claude' && !opts.isSsh
 }
 
 /**

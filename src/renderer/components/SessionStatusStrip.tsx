@@ -62,7 +62,7 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
   // Mid-session account switch (respawn + resume): gated on having at least 2
   // profiles (need a real choice). Selector form on every read so the strip
   // never re-renders on unrelated store churn.
-  const canSwitchAccount = canSwitchAccountForSession({ provider: session?.provider, isSsh: !!session?.sshConfig, profileCount: profiles.length })
+  const canSwitchAccount = canSwitchAccountForSession({ provider: session?.provider, isSsh: !!session?.sshConfig, shellOnly: !!session?.shellOnly, profileCount: profiles.length })
   const registry = useRegistryStore((s) => s.registry)
   // Copilot AI-credit meter gate. The chip self-gates on githubAiUsageEnabled
   // (returns null when off), so we read the same flag here to avoid rendering

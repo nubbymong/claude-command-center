@@ -869,8 +869,12 @@ export default function App() {
     )
   }
 
-  // Show loading while checking setup status or loading config
-  if (setupComplete === null || (setupComplete && !configLoaded)) {
+  // Show loading while checking setup status or loading config. Also hold
+  // until logsWipe detection resolves: pickBootGate returns null while
+  // logsWipeBytes === null, so rendering the shell here would flash an
+  // ungated, interactive app for a few frames before a due gate (onboarding,
+  // wipe) pops over it.
+  if (setupComplete === null || (setupComplete && (!configLoaded || logsWipeBytes === null))) {
     return (
       <div className="flex flex-col h-screen bg-base text-text items-center justify-center">
         <div className="text-overlay1">Loading...</div>

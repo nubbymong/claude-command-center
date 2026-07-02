@@ -165,6 +165,17 @@ describe('SSH remote setup script (P7.8 -- --mcp-config migration)', () => {
     expect(script).toContain('conductor-ssh-statusline.js')
   })
 
+  // Master-off + legacy remote: the per-session clone must strip a legacy
+  // shared statusLine stanza BEFORE the clone is written, or the first
+  // post-upgrade connect inherits it despite the master being off (the
+  // shared-file heal runs after the clone is taken).
+  it('strips a legacy statusLine stanza from the sBase clone itself', () => {
+    const script = generateRemoteSetupScript('sid-x', null, { includeStatusLine: false })
+    expect(script).toContain('delete sBase.statusLine')
+    // Ordering: the sBase strip appears before the per-session settings write.
+    expect(script.indexOf('delete sBase.statusLine')).toBeLessThan(script.indexOf('sesPath'))
+  })
+
   it('configureRemoteSettings threads the master-switch opts through to the script', () => {
     const p = new ClaudeProvider()
     const on = p.configureRemoteSettings('sid-x', '~/repo', null)

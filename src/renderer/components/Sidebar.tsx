@@ -127,7 +127,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
   const accountProfiles = useAccountProfilesStore((s) => s.profiles)
   const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
   const menuSession = sessionContextMenu ? sessions.find((s) => s.id === sessionContextMenu.sessionId) ?? null : null
-  const canSwitchAccount = canSwitchAccountForSession({ provider: menuSession?.provider, isSsh: !!menuSession?.sshConfig, profileCount: accountProfiles.length })
+  const canSwitchAccount = canSwitchAccountForSession({ provider: menuSession?.provider, isSsh: !!menuSession?.sshConfig, shellOnly: !!menuSession?.shellOnly, profileCount: accountProfiles.length })
   const switchMenuAccount = useSwitchAccount(menuSession)
 
   // Inject attention styles on mount
