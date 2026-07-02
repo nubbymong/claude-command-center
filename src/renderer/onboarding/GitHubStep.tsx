@@ -60,17 +60,16 @@ export function GitHubStep({ onNext, onBack }: { onNext: () => void; onBack: () 
   // Multi-auth is supported (authProfiles is a map): "adding" re-opens the
   // connect chooser alongside the already-connected rows.
   const [adding, setAdding] = useState(false)
-  // Master DISPLAYS On by default (the page invites a decision), but persisted
-  // preferences are only ever WRITTEN on an explicit signal: the toggle was
-  // touched, or an account was connected during THIS visit. An upgrader who
-  // pages through untouched never has their stored enabledByDefault clobbered,
-  // and a deliberate pre-existing enabledByDefault=true exempts them from the
-  // connect gate below.
-  const cfgEnabledByDefault = useGitHubStore((s) => s.config?.enabledByDefault === true)
+  // Master displays the STORED enabledByDefault when one exists (an upgrader
+  // sees their real state, so this page and Settings can never disagree) and
+  // defaults to On only when the preference has never been set (fresh install:
+  // the page invites a decision, and the connect gate below keeps an
+  // unconnected user from advancing with it On). finish() persists exactly
+  // what is displayed - a no-op for an untouched upgrader.
+  const cfgEnabledRaw = useGitHubStore((s) => s.config?.enabledByDefault)
+  const cfgEnabledByDefault = cfgEnabledRaw === true
   const [localMaster, setLocalMaster] = useState<boolean | null>(null)
-  const masterTouched = localMaster !== null
-  const masterOn = localMaster ?? true
-  const [connectedNow, setConnectedNow] = useState(false)
+  const masterOn = localMaster ?? cfgEnabledRaw ?? true
   // Once the user picks a connect method themselves, a slow ghcliDetect result
   // must not yank the chooser out from under them (gh auth status can take
   // seconds — it validates tokens over the network).
@@ -102,7 +101,6 @@ export function GitHubStep({ onNext, onBack }: { onNext: () => void; onBack: () 
       if (r.ok) {
         await useGitHubStore.getState().loadConfig()
         setAdding(false)
-        setConnectedNow(true)
       } else setError(r.error ?? 'Failed to use the gh account')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to use the gh account')
@@ -133,7 +131,6 @@ export function GitHubStep({ onNext, onBack }: { onNext: () => void; onBack: () 
         setPatToken('')
         await useGitHubStore.getState().loadConfig()
         setAdding(false)
-        setConnectedNow(true)
       } else setError(r.error ?? 'Token verification failed')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Token verification failed')
@@ -155,14 +152,12 @@ export function GitHubStep({ onNext, onBack }: { onNext: () => void; onBack: () 
   }
 
   // Advancing stamps seenOnboardingVersion (this step replaces the legacy
-  // GitHub onboarding modal, which keys off the same field). enabledByDefault
-  // is written ONLY on explicit signal: the toggle was touched, or an account
-  // was connected during this visit (never for pre-existing profiles — an
-  // upgrader paging through untouched keeps their stored preference).
+  // GitHub onboarding modal, which keys off the same field) and persists the
+  // displayed master state. Since the display initialises FROM the stored
+  // value, this is a no-op for an untouched upgrader (no clobber), and it
+  // guarantees Settings shows exactly what this page showed.
   const finish = () => {
-    const patch: Partial<GitHubConfig> = { seenOnboardingVersion: __APP_VERSION__ }
-    if (masterTouched) patch.enabledByDefault = masterOn
-    else if (connectedNow && !cfgEnabledByDefault) patch.enabledByDefault = true
+    const patch: Partial<GitHubConfig> = { seenOnboardingVersion: __APP_VERSION__, enabledByDefault: masterOn }
     void useGitHubStore.getState().updateConfig(patch).catch(() => {})
     onNext()
   }
@@ -428,7 +423,6 @@ export function GitHubStep({ onNext, onBack }: { onNext: () => void; onBack: () 
           onDone={() => {
             setOauthFlow(null)
             setAdding(false)
-            setConnectedNow(true)
             void useGitHubStore.getState().loadConfig()
           }}
           onCancel={() => setOauthFlow(null)}

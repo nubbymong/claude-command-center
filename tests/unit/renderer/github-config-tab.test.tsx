@@ -151,7 +151,7 @@ describe('GitHubConfigTab', () => {
 
     const checkbox = Array.from(
       r.container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'),
-    ).find((c) => (c.closest('label')?.textContent ?? '').includes('Enable by default for new sessions'))
+    ).find((c) => (c.closest('label')?.textContent ?? '').includes('Enable GitHub'))
     expect(checkbox).toBeTruthy()
 
     // Dispatching a real click on the (unchecked) checkbox flips checked → true

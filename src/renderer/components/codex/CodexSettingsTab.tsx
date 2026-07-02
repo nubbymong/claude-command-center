@@ -87,7 +87,7 @@ export function CodexSettingsTab() {
             </span>
           </div>
           <div className="text-[11px] text-overlay0 leading-tight">
-            Also powers the code-review tool Claude sessions get; off removes it from new sessions.
+            Off blocks launching Codex configs and removes the code-review tool from new Claude sessions.
           </div>
         </div>
       </div>

@@ -1,8 +1,19 @@
 import { useCallback } from 'react'
 import { Session, useSessionStore } from '../stores/sessionStore'
+import { useSettingsStore } from '../stores/settingsStore'
 import { TerminalConfig } from '../stores/configStore'
 import { generateId } from '../utils/id'
 import { markSessionForResumePicker } from '../utils/resumePicker'
+
+/** True when this config cannot launch because the Codex master is off.
+ *  Single source of truth for every launch surface (rows, pinned panel,
+ *  empty-state cards) AND the launch action itself. */
+export function isConfigLaunchBlocked(config: Pick<TerminalConfig, 'provider'>): boolean {
+  return config.provider === 'codex' && useSettingsStore.getState().settings.codexEnabled === false
+}
+
+/** The reason shown wherever a blocked config is marked disabled. */
+export const CODEX_OFF_LAUNCH_REASON = 'Codex is off. Enable it in Settings → Codex to launch this config.'
 
 /**
  * Shared "launch a saved config into a new active session" action. Extracted
@@ -15,6 +26,9 @@ import { markSessionForResumePicker } from '../utils/resumePicker'
 export function useLaunchConfig(): (config: TerminalConfig) => string {
   const addSession = useSessionStore((s) => s.addSession)
   return useCallback((config: TerminalConfig) => {
+    // Backstop for any path that missed the disabled UI (group/section
+    // launch-all included): a Codex config never spawns while Codex is off.
+    if (isConfigLaunchBlocked(config)) return ''
     const session: Session = {
       id: generateId(),
       configId: config.id,
