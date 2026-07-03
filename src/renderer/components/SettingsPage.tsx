@@ -605,7 +605,7 @@ const STATUS_LINE_TOGGLES: { key: BooleanStatusLineKey; label: string; descripti
   { key: 'showCost', label: 'Cost', description: 'API equivalent cost estimate' },
   { key: 'showLinesChanged', label: 'Lines changed', description: 'Lines added and removed' },
   { key: 'showDuration', label: 'Duration', description: 'Total session duration' },
-  { key: 'showRateLimits', label: 'Rate limits', description: '5h and 7d usage dot bars' },
+  { key: 'showRateLimits', label: 'Usage limits', description: 'Usage bars (5h, weekly, per-model). Pick which below.' },
   { key: 'showResetTime', label: 'Reset time', description: 'Time until rate limit resets' },
   { key: 'showCopilot', label: 'Copilot meter', description: 'GitHub Copilot AI-credit meter (Beta -- limited by the GitHub API)' }
 ]
@@ -734,11 +734,80 @@ function StatusLineTab({
         </div>
       </div>
 
+      {/* Dynamic per-bucket usage toggles -- discovered live so they always
+          reflect what Anthropic currently tracks (Fable today, whatever next);
+          hidden ones persist as a denylist. Self-gates on the Usage limits master. */}
+      {sl.showRateLimits && <UsageBucketToggles />}
+
       {/* Copilot AI-credits config -- self-gates on the meter being enabled, so it
           appears right under the "Copilot Usage" toggle only when relevant. */}
       <CopilotMeterSettings />
       </div>
     </>
+  )
+}
+
+/* ── Dynamic usage-bucket toggles ────────────────────── */
+
+// Renders one toggle per usage bucket CURRENTLY reported by the API (discovered
+// via a live fetch), so the list always matches what Anthropic tracks — Fable
+// today, a new per-model bucket the moment they add one, none removed by hand.
+// Choices persist as a denylist (hiddenUsageBuckets by label): a bucket not in
+// the list shows by default; hiding one remembers it even if it disappears and
+// returns. No release is needed when the set of buckets changes.
+function UsageBucketToggles(): React.ReactElement | null {
+  const hidden = useSettingsStore((s) => s.settings.hiddenUsageBuckets) ?? []
+  const [labels, setLabels] = React.useState<string[] | null>(null)
+
+  React.useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const rows = await window.electronAPI.accountUsage.fetchAll()
+        const seen: string[] = []
+        for (const r of rows) for (const b of r.buckets) if (!seen.includes(b.label)) seen.push(b.label)
+        if (!cancelled) setLabels(seen)
+      } catch { if (!cancelled) setLabels([]) }
+    })()
+    return () => { cancelled = true }
+  }, [])
+
+  const setHidden = (next: string[]) => {
+    void useSettingsStore.getState().updateSettings({ hiddenUsageBuckets: next })
+  }
+  const toggle = (label: string) => {
+    setHidden(hidden.includes(label) ? hidden.filter((l) => l !== label) : [...hidden, label])
+  }
+
+  if (labels === null) {
+    return (
+      <div className="rounded-xl bg-surface0/30 border border-surface0/60 px-4 py-3 text-[11px] text-overlay0">
+        Loading your current usage limits…
+      </div>
+    )
+  }
+  if (labels.length === 0) {
+    return (
+      <div className="rounded-xl bg-surface0/30 border border-surface0/60 px-4 py-3 text-[11px] text-overlay0">
+        Per-limit toggles appear here once your usage limits load (start a session or open the account usage view once).
+      </div>
+    )
+  }
+  return (
+    <div className="rounded-xl bg-surface0/30 border border-surface0/60 overflow-hidden">
+      <div className="px-4 py-2.5 border-b border-surface0/40">
+        <h3 className="text-xs font-semibold text-subtext0 uppercase tracking-wider">Which usage bars</h3>
+        <p className="text-[11px] text-overlay0 mt-0.5">Discovered from your account, so this list follows whatever Anthropic tracks.</p>
+      </div>
+      <div className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-2">
+        {labels.map((label) => (
+          <div key={label} className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-surface0/30 transition-colors">
+            <Toggle on={!hidden.includes(label)} onClick={() => toggle(label)} label={label} />
+            <div className="text-sm text-text leading-tight">{label}</div>
+          </div>
+        ))}
+      </div>
+    </div>
   )
 }
 

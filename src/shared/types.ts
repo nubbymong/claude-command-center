@@ -176,6 +176,11 @@ export interface StatuslineData {
   rateLimitWeekly?: number
   rateLimitWeeklyResets?: string
   rateLimitExtra?: RateLimitExtra
+  /** Dynamic usage buckets discovered from the API's self-describing limits[]
+   *  array (session + weekly incl. per-model like Fable). Present when the CLI
+   *  returns limits[]; the strip renders one bar per bucket (minus the user's
+   *  hidden set). Legacy rateLimit* fields stay for older CLIs + the footer. */
+  usageBuckets?: import('./usage-types').UsageBucket[]
   /** Active-account email surfaced by the bridge script. Renderer displays it left of the model name. */
   accountEmail?: string
   /** Pre-computed by main process via `colourForEmail()` as an identity-palette KEY;

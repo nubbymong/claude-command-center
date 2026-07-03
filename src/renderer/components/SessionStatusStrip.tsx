@@ -33,6 +33,10 @@ interface SessionStatusStripProps {
 const CONTROL_PILL =
   'px-2 py-0.5 rounded-md text-xs transition-colors duration-150 focus-ring whitespace-nowrap'
 
+// Stable empty-array reference so the Zustand selector doesn't return a fresh
+// [] each render (which would trip the re-render cascade guard).
+const EMPTY_HIDDEN: string[] = []
+
 // SessionStatusStrip (v2 shell, UAT R2): the per-session telemetry + controls
 // band. Lives directly above the command rows, under the terminal -- the old
 // ContextBar position. Replaces the MIDDLE + RIGHT zones that briefly lived in
@@ -45,6 +49,8 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
   const session = useSessionStore((s) => s.sessions.find((x) => x.id === sessionId) || null)
   const updateSession = useSessionStore((s) => s.updateSession)
   const sl = useSettingsStore((s) => s.settings.statusLine) || DEFAULT_STATUS_LINE
+  // Usage buckets the user hid (denylist by label). Empty/absent = show all.
+  const hiddenBuckets = useSettingsStore((s) => s.settings.hiddenUsageBuckets) ?? EMPTY_HIDDEN
   // Master status-line switch (onboarding p4 / Settings). Gates ONLY the
   // telemetry band; the Claude controls cluster (Mode/Model/Restart/account)
   // stays regardless. Absent (pre-upgrade config) means on.
@@ -210,17 +216,38 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
         {sl.showDuration && session.totalDurationMs != null && (
           <span className="tabular-nums shrink-0" style={{ color: 'var(--text-muted)' }}>{formatDuration(session.totalDurationMs)}</span>
         )}
-        {sl.showRateLimits && session.rateLimitCurrent != null && (
-          <span className="flex items-center gap-3 shrink-0">
-            <RateLimitBar label="5h" pct={session.rateLimitCurrent} resets={session.rateLimitCurrentResets} showReset={sl.showResetTime} />
-            {session.rateLimitWeekly != null && (
-              <RateLimitBar label="7d" pct={session.rateLimitWeekly} resets={session.rateLimitWeeklyResets} showReset={sl.showResetTime} />
-            )}
-            {session.rateLimitExtra?.enabled && (
-              <span className="tabular-nums" style={{ color: 'var(--text-muted)' }}>extra: <span className={session.rateLimitExtra.utilization > 80 ? 'text-red' : ''}>${session.rateLimitExtra.usedUsd.toFixed(2)}</span>/${session.rateLimitExtra.limitUsd.toFixed(0)}</span>
-            )}
-          </span>
-        )}
+        {sl.showRateLimits && (() => {
+          // Dynamic buckets (5h, Weekly, Fable, future per-model) discovered
+          // from the API's limits[]; the user's hidden set is filtered out.
+          // Falls back to the legacy 5h/7d fields for older CLIs that don't
+          // return limits[]. Hidden-set keyed by label (see hiddenUsageBuckets).
+          const shown = (session.usageBuckets ?? []).filter((b) => !hiddenBuckets.includes(b.label))
+          if (session.usageBuckets && session.usageBuckets.length > 0) {
+            if (shown.length === 0 && !session.rateLimitExtra?.enabled) return null
+            return (
+              <span className="flex items-center gap-3 shrink-0">
+                {shown.map((b) => (
+                  <RateLimitBar key={b.key} label={b.label} pct={b.percent} resets={b.resetsAt || undefined} showReset={sl.showResetTime} />
+                ))}
+                {session.rateLimitExtra?.enabled && (
+                  <span className="tabular-nums" style={{ color: 'var(--text-muted)' }}>extra: <span className={session.rateLimitExtra.utilization > 80 ? 'text-red' : ''}>${session.rateLimitExtra.usedUsd.toFixed(2)}</span>/${session.rateLimitExtra.limitUsd.toFixed(0)}</span>
+                )}
+              </span>
+            )
+          }
+          if (session.rateLimitCurrent == null) return null
+          return (
+            <span className="flex items-center gap-3 shrink-0">
+              {!hiddenBuckets.includes('5h') && <RateLimitBar label="5h" pct={session.rateLimitCurrent} resets={session.rateLimitCurrentResets} showReset={sl.showResetTime} />}
+              {session.rateLimitWeekly != null && !hiddenBuckets.includes('Weekly') && (
+                <RateLimitBar label="7d" pct={session.rateLimitWeekly} resets={session.rateLimitWeeklyResets} showReset={sl.showResetTime} />
+              )}
+              {session.rateLimitExtra?.enabled && (
+                <span className="tabular-nums" style={{ color: 'var(--text-muted)' }}>extra: <span className={session.rateLimitExtra.utilization > 80 ? 'text-red' : ''}>${session.rateLimitExtra.usedUsd.toFixed(2)}</span>/${session.rateLimitExtra.limitUsd.toFixed(0)}</span>
+              )}
+            </span>
+          )
+        })()}
         {codexReview && codexReview.reviewCount > 0 && (
           <span className="tabular-nums shrink-0" style={{ color: 'var(--text-muted)' }}>review {codexReview.reviewCount}</span>
         )}

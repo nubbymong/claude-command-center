@@ -99,6 +99,11 @@ export interface AppSettings {
    *  surfaces incl. the codex_review built-in tool. Codex support is Beta. */
   codexEnabled?: boolean
   localMachineName: string
+  /** Usage buckets the user has HIDDEN from the status line, by label (e.g.
+   *  "Fable"). Denylist model so the set stays dynamic: a new bucket shows by
+   *  default (not listed), a removed one's entry goes inert, and a hidden one
+   *  is remembered if it returns. Absent/empty = show every discovered bucket. */
+  hiddenUsageBuckets?: string[]
   updateChannel: UpdateChannel
   showTips: boolean
   // Agent Hub first-run "How it works" banner: true once the user dismisses it.

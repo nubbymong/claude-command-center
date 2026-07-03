@@ -37,6 +37,9 @@ export function useStatuslineSubscription(sessionId: string) {
       if (data.rateLimitWeekly != null) updates.rateLimitWeekly = data.rateLimitWeekly
       if (data.rateLimitWeeklyResets) updates.rateLimitWeeklyResets = data.rateLimitWeeklyResets
       if (data.rateLimitExtra) updates.rateLimitExtra = data.rateLimitExtra
+      // Dynamic usage buckets (limits[] discovery). Copy even when empty so a
+      // bucket that disappeared upstream clears from the strip.
+      if (data.usageBuckets) updates.usageBuckets = data.usageBuckets
       // v1.5.9: do NOT copy accountEmail / accountColour into the session
       // store. The statusline bridge reads ~/.claude.json:oauthAccount which
       // is a GLOBAL field -- every per-session tick was clobbering the chip

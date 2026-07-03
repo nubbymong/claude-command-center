@@ -57,6 +57,8 @@ export interface Session {
     usedUsd: number
     limitUsd: number
   }
+  /** Dynamic usage buckets from the statusline bridge (limits[] discovery). */
+  usageBuckets?: import('../../shared/usage-types').UsageBucket[]
   /** Active-account email from the statusline bridge. Drives the coloured email chip.
    *  v1.5.9: no longer read by the renderer (the chip was removed). Field is kept so
    *  older saved state still hydrates without errors. */

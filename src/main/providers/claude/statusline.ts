@@ -177,6 +177,34 @@ process.stdin.on('end', async () => {
           limitUsd: Math.round(Number(limits.extra_usage.monthly_limit || 0)) / 100
         };
       }
+      // Dynamic usage buckets from the self-describing limits[] array (session +
+      // weekly, incl. per-model weeklies like Fable). Same labelling rules as
+      // src/main/usage/usage-buckets.ts (kept in sync; this script can't import).
+      // New categories appear automatically; the ~dozen null codenamed keys are
+      // skipped by the group filter.
+      if (Array.isArray(limits.limits)) {
+        var buckets = [];
+        for (var i = 0; i < limits.limits.length; i++) {
+          var it = limits.limits[i];
+          if (!it || typeof it !== 'object') continue;
+          var grp = typeof it.group === 'string' ? it.group : '';
+          if (grp !== 'session' && grp !== 'weekly') continue;
+          var pct = typeof it.percent === 'number' ? it.percent : null;
+          if (pct === null) continue;
+          var label = 'Weekly';
+          if (grp === 'session') label = '5h';
+          else if (it.scope && it.scope.model && typeof it.scope.model.display_name === 'string' && it.scope.model.display_name.trim()) label = it.scope.model.display_name;
+          buckets.push({
+            key: (typeof it.kind === 'string' ? it.kind : grp) + ':' + (label === '5h' || label === 'Weekly' ? '' : label),
+            label: label,
+            group: grp,
+            percent: Math.round(pct),
+            resetsAt: it.resets_at || '',
+            severity: typeof it.severity === 'string' ? it.severity : 'normal'
+          });
+        }
+        if (buckets.length) status.usageBuckets = buckets;
+      }
     }
 
     // Suppress statusline display in the terminal — the Conductor's own ContextBar
