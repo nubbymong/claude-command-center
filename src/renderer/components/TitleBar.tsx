@@ -4,10 +4,13 @@ import ThemeToggle from './ThemeToggle'
 import ConductorHealthPill from './ConductorHealthPill'
 import ConductorServicesPanel from './ConductorServicesPanel'
 import SentinelDot from './sentinel/SentinelDot'
+import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 
 interface Props {
   sidebarOpen: boolean
   onToggleSidebar: () => void
+  /** Opens the all-accounts usage overview. */
+  onShowAccountUsage: () => void
 }
 
 interface ComponentStatus {
@@ -110,7 +113,11 @@ function StatusPill({ label, status, highlight }: StatusPillProps) {
   )
 }
 
-export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
+export default function TitleBar({ sidebarOpen, onToggleSidebar, onShowAccountUsage }: Props) {
+  // The all-accounts usage button appears only when the user actually has
+  // multiple accounts (never on single-account setups or macOS, where
+  // multi-account is gated off, so profileCount stays 1).
+  const hasMultipleAccounts = useAccountProfilesStore((s) => s.profiles.length >= 2)
   const [maximized, setMaximized] = useState(false)
   const [serviceStatus, setServiceStatus] = useState<ServiceStatusPayload | null>(null)
   // panelOpen drives the open/closed visual state; panelMounted keeps the panel in
@@ -192,6 +199,19 @@ export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
             <line x1="5.5" y1="2" x2="5.5" y2="14" stroke="currentColor" strokeWidth="1.2" />
           </svg>
         </button>
+        {hasMultipleAccounts && (
+          <button
+            onClick={onShowAccountUsage}
+            className="p-1.5 rounded hover:bg-surface0 text-overlay1 hover:text-text transition-colors focus-ring"
+            title="Account usage (all accounts)"
+            aria-label="Account usage"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2">
+              <circle cx="8" cy="5.5" r="2.5" />
+              <path d="M3.5 13c0-2.2 2-3.5 4.5-3.5s4.5 1.3 4.5 3.5" strokeLinecap="round" />
+            </svg>
+          </button>
+        )}
       </div>
 
       <div className="flex-1 text-center text-xs text-overlay1 font-medium flex items-center justify-center gap-0">

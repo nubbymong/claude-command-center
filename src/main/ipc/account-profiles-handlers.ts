@@ -7,10 +7,17 @@ import {
   captureDetectedAccount, backupProfileHomeToCanonical, restoreProfileHomeFromCanonical,
 } from '../account-profiles'
 import { getAccountIdentity, getDefaultAccountEmail, getWatchedProfileId, isProfileInUseByLiveSession } from '../claude-account-identity'
+import { fetchAllAccountsUsage, fetchAccountUsage } from '../usage/account-usage'
 import { logError } from '../debug-logger'
 
 export function registerAccountProfilesHandlers(): void {
   ipcMain.handle(IPC.ACCOUNT_PROFILES_LIST, () => listProfiles())
+
+  // All-accounts usage overview: fetch each profile's usage directly (no session).
+  ipcMain.handle(IPC.ACCOUNT_USAGE_FETCH_ALL, () => fetchAllAccountsUsage())
+  ipcMain.handle(IPC.ACCOUNT_USAGE_FETCH_ONE, (_e, p: { id: string }) =>
+    p && isValidProfileId(p.id) ? fetchAccountUsage(p.id) : null,
+  )
 
   // Renderer pull: the reliable per-session account identity captured at spawn.
   ipcMain.handle(IPC.ACCOUNT_IDENTITY_GET, (_e, p: { sessionId: string }) => (p?.sessionId ? getAccountIdentity(p.sessionId) : null))

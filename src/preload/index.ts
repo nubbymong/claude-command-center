@@ -21,6 +21,10 @@ export interface ElectronAPI {
     captureDetected: (sessionId: string, name?: string) => Promise<import('../shared/account-types').AccountProfile | null>
     onAccountNewDetected: (cb: (data: { sessionId: string; profileId: string; email: string }) => void) => () => void
   }
+  accountUsage: {
+    fetchAll: () => Promise<import('../shared/usage-types').AccountUsage[]>
+    fetchOne: (id: string) => Promise<import('../shared/usage-types').AccountUsage | null>
+  }
   window: {
     minimize: () => void
     maximize: () => void
@@ -470,6 +474,10 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.on(IPC.ACCOUNT_NEW_DETECTED, handler)
       return () => ipcRenderer.removeListener(IPC.ACCOUNT_NEW_DETECTED, handler)
     },
+  },
+  accountUsage: {
+    fetchAll: () => ipcRenderer.invoke(IPC.ACCOUNT_USAGE_FETCH_ALL),
+    fetchOne: (id: string) => ipcRenderer.invoke(IPC.ACCOUNT_USAGE_FETCH_ONE, { id }),
   },
   window: {
     minimize: () => ipcRenderer.send(IPC.WINDOW_MINIMIZE),

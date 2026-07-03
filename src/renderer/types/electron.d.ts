@@ -95,6 +95,10 @@ export interface ElectronAPI {
     captureDetected: (sessionId: string, name?: string) => Promise<import('../../shared/account-types').AccountProfile | null>
     onAccountNewDetected: (cb: (data: { sessionId: string; profileId: string; email: string }) => void) => () => void
   }
+  accountUsage: {
+    fetchAll: () => Promise<import('../../shared/usage-types').AccountUsage[]>
+    fetchOne: (id: string) => Promise<import('../../shared/usage-types').AccountUsage | null>
+  }
   window: {
     minimize: () => void
     maximize: () => void

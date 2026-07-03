@@ -32,6 +32,7 @@ import TrainingWalkthrough, { shouldShowTraining, isFirstInstall } from './compo
 import SessionDialog from './components/SessionDialog'
 import GuidedTour from './components/GuidedTour'
 import HelpPanel from './components/HelpPanel'
+import AccountUsagePanel from './components/AccountUsagePanel'
 import TipModal from './components/TipModal'
 import { useTipsStore, trackUsage } from './stores/tipsStore'
 import ErrorBoundary from './components/ErrorBoundary'
@@ -170,6 +171,7 @@ export default function App() {
   // One home for help (searchable guide + feature tour + Ask Claude); opened
   // by the sidebar ? button.
   const [showHelpPanel, setShowHelpPanel] = useState(false)
+  const [showAccountUsage, setShowAccountUsage] = useState(false)
   const [showTipModal, setShowTipModal] = useState(false)
   const [partnerActive, setPartnerActive] = useState<Set<string>>(new Set())
   const [showMachineNamePrompt, setShowMachineNamePrompt] = useState(false)
@@ -983,6 +985,12 @@ export default function App() {
             onShowSessions={() => setView('sessions')}
           />
         )}
+        {showAccountUsage && (
+          <AccountUsagePanel
+            onClose={() => setShowAccountUsage(false)}
+            onReauthNavigate={() => setView('sessions')}
+          />
+        )}
         {bootGate === 'githubOnboarding' && (
           <OnboardingModal
             onClose={dismissGitHubOnboarding}
@@ -1102,7 +1110,7 @@ export default function App() {
             </div>
           </div>
         )}
-        <TitleBar sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
+        <TitleBar sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} onShowAccountUsage={() => setShowAccountUsage(true)} />
         <div className="flex flex-1 overflow-hidden">
           <Sidebar currentView={view} onViewChange={setView} collapsed={!sidebarOpen} tourActive={showTraining || showTrainingAll} onShowFirstRun={() => setShowGuidedConfig(true)} onShowHelp={() => setShowHelpPanel(true)} />
           <main className="flex-1 flex flex-col overflow-hidden titlebar-no-drag">

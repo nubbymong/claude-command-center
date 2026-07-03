@@ -324,6 +324,10 @@ export const IPC = {
   ACCOUNT_PROFILES_CAPTURE_DETECTED: 'accountProfiles:captureDetected',
   ACCOUNT_GLOBAL_EMAIL_GET: 'accountProfiles:globalEmail',
 
+  // All-accounts usage overview (fetch each profile's usage without a session)
+  ACCOUNT_USAGE_FETCH_ALL: 'accountUsage:fetchAll',
+  ACCOUNT_USAGE_FETCH_ONE: 'accountUsage:fetchOne',
+
   // Reliable per-session account identity (main -> renderer push at spawn; renderer pull on mount)
   ACCOUNT_IDENTITY_UPDATE: 'identity:accountUpdate',
   ACCOUNT_IDENTITY_GET: 'identity:accountGet',
