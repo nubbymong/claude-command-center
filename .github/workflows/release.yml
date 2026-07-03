@@ -78,11 +78,18 @@ jobs:
         run: |
           VERSION=$(node -e "console.log(require('./package.json').version)")
           CHANNEL="${{ inputs.channel }}"
-          case "$CHANNEL" in
-            beta) TAG="v${VERSION}-beta" ;;
-            dev)  TAG="v${VERSION}-dev"  ;;
-            *)    TAG="v${VERSION}"      ;;
-          esac
+          # When package.json already carries a prerelease suffix (e.g.
+          # 2.0.0-beta.1 for numbered betas), the tag IS v${VERSION} — don't
+          # append a second -beta. Bare versions keep the channel suffix.
+          if [[ "$VERSION" == *-* ]]; then
+            TAG="v${VERSION}"
+          else
+            case "$CHANNEL" in
+              beta) TAG="v${VERSION}-beta" ;;
+              dev)  TAG="v${VERSION}-dev"  ;;
+              *)    TAG="v${VERSION}"      ;;
+            esac
+          fi
           INSTALLER="ClaudeCommandCenter-${VERSION}.exe"
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "tag=${TAG}" >> $GITHUB_OUTPUT

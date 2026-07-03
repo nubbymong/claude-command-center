@@ -8,6 +8,12 @@ const pkg = JSON.parse(readFileSync(resolve(__dirname, 'package.json'), 'utf-8')
 export default defineConfig({
   main: {
     plugins: [externalizeDepsPlugin()],
+    // Bake the full package version (incl. any -beta.N suffix) into the main
+    // process so the updater knows its exact prerelease build (numbered-beta
+    // detection). Mirrors the renderer define below.
+    define: {
+      __APP_VERSION__: JSON.stringify(pkg.version),
+    },
     build: {
       outDir: 'out/main',
       rollupOptions: {

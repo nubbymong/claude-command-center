@@ -190,6 +190,20 @@ function compareTagToCurrentVersion(tag: string, currentVersion: string): number
   return compareTags(tag, `v${currentVersion}`)
 }
 
+// The authoritative running version. Baked from package.json at build time
+// (__APP_VERSION__) so it carries the FULL prerelease suffix (e.g.
+// "2.0.0-beta.1") regardless of whether electron-builder preserves it in
+// app.getVersion() -- this is what makes numbered betas (beta.1 -> beta.2)
+// detectable by the updater. Falls back to app.getVersion() in dev/tests where
+// the define isn't injected.
+declare const __APP_VERSION__: string
+function getRunningVersion(): string {
+  try {
+    if (typeof __APP_VERSION__ === 'string' && __APP_VERSION__) return __APP_VERSION__
+  } catch { /* not defined in this build/test context */ }
+  return app.getVersion()
+}
+
 /** Read the update channel from user settings */
 function getUpdateChannel(): UpdateChannel {
   try {
@@ -386,7 +400,7 @@ async function fetchReleases(): Promise<GitHubRelease[] | null> {
  * Returns release info if a newer version exists, null otherwise.
  */
 export async function checkGitHubRelease(): Promise<ReleaseInfo | null> {
-  const currentVersion = app.getVersion()
+  const currentVersion = getRunningVersion()
   const channel = getUpdateChannel()
   logInfo(`[github-update] Checking for updates (current: v${currentVersion}, channel: ${channel})`)
 
