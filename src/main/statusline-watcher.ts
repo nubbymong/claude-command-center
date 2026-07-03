@@ -32,6 +32,7 @@ import { getResourcesDirectory } from './ipc/setup-handlers'
 import { decorateStatuslineWithColour } from './account-color'
 import { notifyClaudeTelemetry } from './providers/claude/telemetry'
 import { sentinelObserve } from './sentinel/index'
+import { isBackgroundContext } from './background-context'
 import { logWarn } from './debug-logger'
 
 // Re-export from shared types for backward compatibility
@@ -81,13 +82,26 @@ function fanOutStatusline(data: StatuslineData, getWindow: (() => BrowserWindow 
   // at the renderer-send site, so the ContextBar sees accountColour. Decorate
   // once and forward the enriched object to every consumer.
   const decorated = decorateStatuslineWithColour(data)
+  // While a subagent / dynamic-workflow agent runs under this session, CC's
+  // statusline reports the AGENT's model + effort. Strip those two fields from
+  // the DISPLAY payload so the strip's pills stay pinned to the main window.
+  // Everything else (context %, cost, tokens, rate limits, transcript path)
+  // is session- or account-level and still flows. Sentinel (below) and the
+  // transcript binder read the RAW `data`, so they are unaffected.
+  let forDisplay = decorated
+  if (isBackgroundContext(data.sessionId, data.transcriptPath)) {
+    forDisplay = { ...decorated }
+    delete forDisplay.model
+    delete forDisplay.modelId
+    delete forDisplay.effortLevel
+  }
   if (getWindow) {
     const win = getWindow()
     if (win && !win.isDestroyed()) {
-      win.webContents.send('statusline:update', decorated)
+      win.webContents.send('statusline:update', forDisplay)
     }
   }
-  notifyClaudeTelemetry(decorated)
+  notifyClaudeTelemetry(forDisplay)
   // Logs v2 (Task 8): forward the live transcript path to the binder (continuous,
   // exact discovery source). Guarded — the sink may not be registered yet (and
   // isn't in unit tests). A throw here must not break the statusline pipeline.

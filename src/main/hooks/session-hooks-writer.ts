@@ -2,9 +2,10 @@ import fs from 'node:fs'
 import path from 'node:path'
 import type { HookEventKind } from '../../shared/hook-types'
 
-// MVP injects these five. Adding the remaining four (PreCompact,
-// SubagentStart, SubagentStop, StopFailure) is a one-line change once
-// the renderer consumes them.
+// Injected hook events. SubagentStart/SubagentStop bracket subagent and
+// dynamic-workflow-agent execution so the status strip can pin its model +
+// effort pills to the main window (see background-context.ts). PreCompact /
+// StopFailure remain unused for now.
 export const MVP_EVENTS: HookEventKind[] = [
   'PreToolUse',
   'PostToolUse',
@@ -12,6 +13,8 @@ export const MVP_EVENTS: HookEventKind[] = [
   'SessionStart',
   'Stop',
   'UserPromptSubmit',
+  'SubagentStart',
+  'SubagentStop',
 ]
 
 export interface InjectArgs {

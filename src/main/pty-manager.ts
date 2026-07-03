@@ -22,6 +22,7 @@ import { isSshCapable } from './providers/types'
 import type { TelemetrySource } from './providers/types'
 import { resolveCwd } from './path-utils'
 import { dispatchSSHStatuslineUpdate, cleanupStatusFile } from './statusline-watcher'
+import { forgetSession } from './background-context'
 import { decorateStatuslineWithColour } from './account-color'
 import { getGateway } from './hooks'
 import { injectHooks } from './hooks/session-hooks-writer'
@@ -1585,6 +1586,9 @@ function cleanupSessionResources(sessionId: string): void {
   // fan-out stays bounded between boot sweeps (the reaper only unlinks
   // files older than 3 days).
   cleanupStatusFile(sessionId)
+  // Drop the session's background-context state (subagent depth + main
+  // transcript anchor) so those maps don't grow for the life of the install.
+  forgetSession(sessionId)
   // T8b: drop any captured resume target so it can't leak into a future,
   // unrelated spawn of the same sessionId. The respawn path captures fresh
   // BEFORE calling killPty, so the just-captured target survives this clear.

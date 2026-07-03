@@ -10,6 +10,13 @@ import { IPC } from '../shared/ipc-channels'
 import type { HookEvent } from '../shared/hook-types'
 import { getRegistry } from './model-registry-service'
 import { sentinelObserve } from './sentinel/index'
+import {
+  noteSessionStart,
+  noteSubagentStart,
+  noteSubagentStop,
+  noteTurnEnd,
+  isBackgroundContext,
+} from './background-context'
 
 // DELIBERATE behaviour change (spec 2026-06-11 §3/§4): unknown effort levels
 // now display verbatim instead of being silently dropped. A hardcoded VALID set
@@ -41,12 +48,28 @@ function pushEffort(sessionId: string, effortLevel: string): void {
   }
 }
 
+function transcriptOf(e: HookEvent): string | undefined {
+  const tp = (e.payload as { transcript_path?: unknown }).transcript_path
+  return typeof tp === 'string' ? tp : undefined
+}
+
 function track(e: HookEvent): void {
+  // Background-context lifecycle (see background-context.ts): anchor the main
+  // transcript at SessionStart, bracket subagent/workflow-agent execution with
+  // SubagentStart/Stop. These carry no effort we want to push.
+  if (e.event === 'SessionStart') { noteSessionStart(e.sessionId, transcriptOf(e)); return }
+  if (e.event === 'SubagentStart') { noteSubagentStart(e.sessionId); return }
+  if (e.event === 'SubagentStop') { noteSubagentStop(e.sessionId); return }
   // Turn ended -> drop the session's last-effort so the map can't grow
-  // unbounded. Mirrors channel-permissions.ts clearing per-session state on Stop.
-  if (e.event === 'Stop') { lastBySession.delete(e.sessionId); return }
+  // unbounded, and clear any dangling subagent depth. Mirrors
+  // channel-permissions.ts clearing per-session state on Stop.
+  if (e.event === 'Stop') { lastBySession.delete(e.sessionId); noteTurnEnd(e.sessionId); return }
   const level = effortFromEvent(e)
   if (!level || !e.sessionId) return
+  // A subagent / workflow agent's effort must not repaint the main strip: its
+  // PreToolUse/PostToolUse events reach the main session's hook endpoint, but
+  // the effort is the agent's, not the main window's.
+  if (isBackgroundContext(e.sessionId, transcriptOf(e))) return
   if (lastBySession.get(e.sessionId) === level) return
   lastBySession.set(e.sessionId, level)
   pushEffort(e.sessionId, level)

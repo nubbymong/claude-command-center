@@ -22,6 +22,7 @@ vi.mock('../../src/main/model-registry-service', () => ({
 }))
 
 import { effortFromEvent, _emitForTest, _resetEffort, _setEffortObserverForTest } from '../../src/main/effort-tracker'
+import { _resetBackgroundContextForTest } from '../../src/main/background-context'
 import type { HookEvent } from '../../src/shared/hook-types'
 
 const ev = (over: Partial<HookEvent>): HookEvent => ({
@@ -40,7 +41,7 @@ describe('effortFromEvent', () => {
 })
 
 describe('effort push + dedupe', () => {
-  beforeEach(() => { sent.length = 0; _resetEffort(); _setEffortObserverForTest(null) })
+  beforeEach(() => { sent.length = 0; _resetEffort(); _resetBackgroundContextForTest(); _setEffortObserverForTest(null) })
   it('pushes on first valid event and dedupes repeats', () => {
     _emitForTest(ev({ payload: { effort: { level: 'high' } } }))
     _emitForTest(ev({ payload: { effort: { level: 'high' } } }))
@@ -61,6 +62,36 @@ describe('effort push + dedupe', () => {
     _emitForTest(ev({ event: 'Stop', payload: {} }))
     _emitForTest(ev({ payload: { effort: { level: 'high' } } }))
     expect(sent).toHaveLength(2)
+  })
+})
+
+describe('effort gating — subagents + dynamic-workflow agents must not repaint the main strip', () => {
+  beforeEach(() => { sent.length = 0; _resetEffort(); _resetBackgroundContextForTest(); _setEffortObserverForTest(null) })
+
+  it('suppresses effort from a subagent (bracketed by SubagentStart/Stop)', () => {
+    _emitForTest(ev({ payload: { effort: { level: 'high' } } }))       // main
+    _emitForTest(ev({ event: 'SubagentStart', payload: {} }))
+    _emitForTest(ev({ payload: { effort: { level: 'xhigh' } } }))      // subagent — must be ignored
+    _emitForTest(ev({ event: 'SubagentStop', payload: {} }))
+    // Only the main-thread 'high' pushed; the subagent 'xhigh' was gated.
+    expect(sent).toEqual([{ channel: 'hooks:effortUpdate', payload: { sessionId: 's1', effortLevel: 'high' } }])
+  })
+
+  it('resumes pushing the main effort after the subagent finishes', () => {
+    _emitForTest(ev({ event: 'SubagentStart', payload: {} }))
+    _emitForTest(ev({ payload: { effort: { level: 'xhigh' } } }))      // subagent — ignored
+    _emitForTest(ev({ event: 'SubagentStop', payload: {} }))
+    _emitForTest(ev({ payload: { effort: { level: 'max' } } }))        // back on the main thread
+    expect(sent).toEqual([{ channel: 'hooks:effortUpdate', payload: { sessionId: 's1', effortLevel: 'max' } }])
+  })
+
+  it('suppresses effort from a dynamic-workflow agent via transcript mismatch (no SubagentStart)', () => {
+    const MAIN = '/p/main.jsonl'
+    const AGENT = '/p/agent.jsonl'
+    _emitForTest(ev({ event: 'SessionStart', payload: { transcript_path: MAIN } }))
+    _emitForTest(ev({ payload: { effort: { level: 'high' }, transcript_path: MAIN } }))   // main
+    _emitForTest(ev({ payload: { effort: { level: 'xhigh' }, transcript_path: AGENT } })) // workflow agent — gated
+    expect(sent).toEqual([{ channel: 'hooks:effortUpdate', payload: { sessionId: 's1', effortLevel: 'high' } }])
   })
 })
 
