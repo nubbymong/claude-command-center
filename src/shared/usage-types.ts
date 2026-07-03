@@ -21,12 +21,16 @@ export interface UsageBucket {
 export interface CreditsInfo {
   /** ISO-4217 currency (e.g. "GBP", "USD"). */
   currency: string
-  /** Remaining balance in major units, when the API reports a cap/limit. */
+  /** Remaining balance in major units, when the API reports a cap/limit/balance. */
   remaining: number | null
   /** Used credits in major units. */
   used: number
   /** Cap/limit in major units, when set. */
   limit: number | null
+  /** Whether paid credit is currently active for this account. */
+  enabled: boolean
+  /** e.g. "out_of_credits" — shown when disabled so the user knows why. */
+  disabledReason?: string
 }
 
 export interface ParsedUsage {

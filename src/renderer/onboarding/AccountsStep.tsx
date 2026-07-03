@@ -37,29 +37,20 @@ export function AccountsStep({ onNext, onBack }: { onNext: () => void; onBack: (
           </p>
 
           <div className="ma-diagram">
+            {/* Centered vertical list: every email shown in full, no truncation
+                or horizontal overflow regardless of how many accounts. */}
             <div className="ma-accounts">
               {accounts.map((a, i) => (
-                <div className="ma-card" key={a.email + i}>
-                  <div className="ma-top">
-                    <span className="ma-dot" style={{ background: DOT_COLOURS[i % DOT_COLOURS.length] }} />
-                    <span className="ma-email">{a.email}</span>
-                  </div>
-                  {a.primary && (
-                    <div className="ma-meta">
-                      <span className="ma-badge">Primary</span>
-                    </div>
-                  )}
+                <div className="ma-row" key={a.email + i}>
+                  <span className="ma-dot" style={{ background: DOT_COLOURS[i % DOT_COLOURS.length] }} />
+                  <span className="ma-email">{a.email}</span>
+                  {a.primary && <span className="ma-badge">Primary</span>}
                 </div>
               ))}
-              <div className="ma-card add">
+              <div className="ma-row add">
                 <span className="ma-addt">+ Add more later</span>
                 <span className="ma-addsub">any time, in Settings</span>
               </div>
-            </div>
-            <div className="ma-connect">
-              <span />
-              <span />
-              <span />
             </div>
             <div className="ma-shared">
               <div className="ma-shared-l">Shared across every account</div>

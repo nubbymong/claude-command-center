@@ -63,6 +63,7 @@ interface Props {
   onViewChange: (view: ViewType) => void
   collapsed?: boolean
   onShowHelp?: () => void
+  onShowAccountUsage?: () => void
   onShowFirstRun?: () => void
   // Suppresses the FirstRunCard while the training/walkthrough is
   // open — clicking "Create Config" otherwise opens the first-config dialog
@@ -71,7 +72,7 @@ interface Props {
   tourActive?: boolean
 }
 
-export default function Sidebar({ currentView, onViewChange, collapsed, onShowHelp, onShowFirstRun, tourActive }: Props) {
+export default function Sidebar({ currentView, onViewChange, collapsed, onShowHelp, onShowAccountUsage, onShowFirstRun, tourActive }: Props) {
   const launchConfig = useLaunchConfig()
   const { sessions, activeSessionId, setActiveSession, removeSession, updateSession } = useSessionStore()
   const { configs, groups, sections, addConfig, updateConfig, removeConfig, addGroup, renameGroup, removeGroup, toggleGroupCollapsed, moveConfigToGroup, addSection, renameSection, removeSection, toggleSectionCollapsed, moveGroupToSection, moveConfigToSection, togglePinned, duplicateConfig, reorderConfigs } = useConfigStore()
@@ -490,6 +491,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
           tokenomicsIndexComplete={tokenomicsIndexComplete}
           collapsed
           onShowHelp={onShowHelp}
+          onShowAccountUsage={onShowAccountUsage}
         />
       </aside>
     )
@@ -553,6 +555,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
         serverRunning={serverRunning}
         tokenomicsIndexComplete={tokenomicsIndexComplete}
         onShowHelp={onShowHelp}
+        onShowAccountUsage={onShowAccountUsage}
       />
 
       {/* Saved Configs — hover trigger or pinned inline */}

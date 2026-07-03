@@ -157,7 +157,10 @@ export function createProfile(name?: string): AccountProfile {
   const trimmed = name?.trim()
   const profile: AccountProfile = {
     id,
-    name: trimmed ? trimmed.slice(0, 120) : 'New account',
+    // No auto-name: an account is identified by its email once /login resolves
+    // it; the friendly name stays blank until the user sets one (user request
+    // 2026-07-03 — don't default to "New account").
+    name: trimmed ? trimmed.slice(0, 120) : '',
     accountEmail: '',
     createdAt: Date.now(),
   }

@@ -46,7 +46,9 @@ export function useAddAccount(): (name?: string) => Promise<{ profile: AccountPr
     const sessionId = generateId()
     addSession({
       id: sessionId,
-      label: profile.name,
+      // Transient tab label for the login shell only; the profile itself stays
+      // unnamed. The poll swaps this for the resolved email once /login lands.
+      label: profile.name || 'Signing in…',
       workingDirectory: '',
       model: '',
       // #89B4FA = Catppuccin Mocha blue; the standard safe-default session colour

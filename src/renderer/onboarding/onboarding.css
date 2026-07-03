@@ -158,22 +158,18 @@
 .ob-root .block-foot { font-size: 12px; color: var(--text-muted); margin-top: 12px; text-align: center; }
 .ob-root .block-foot a { color: var(--text-secondary); text-decoration: underline; cursor: pointer; }
 
-/* PAGE 7 — multi-account */
+/* PAGE 7 — multi-account. Accounts render as a CENTERED VERTICAL LIST so every
+   email shows in full with no horizontal overflow/truncation, at any count. */
 .ob-root .ma-diagram { margin: 8px 0 16px; }
-.ob-root .ma-accounts { display: flex; gap: 14px; }
-.ob-root .ma-card { flex: 1; border: 1px solid var(--border-subtle); border-radius: 12px; background: var(--surface-raised); padding: 13px 15px; }
-.ob-root .ma-card.add { border-style: dashed; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; }
-.ob-root .ma-card.add .ma-addt { font-size: 14px; font-weight: 650; color: var(--text-secondary); }
+.ob-root .ma-accounts { display: flex; flex-direction: column; gap: 8px; max-width: 560px; margin: 0 auto 12px; }
+.ob-root .ma-row { display: flex; align-items: center; gap: 10px; border: 1px solid var(--border-subtle); border-radius: 10px; background: var(--surface-raised); padding: 10px 14px; }
+.ob-root .ma-row.add { border-style: dashed; justify-content: center; gap: 8px; }
+.ob-root .ma-row.add .ma-addt { font-size: 13px; font-weight: 650; color: var(--text-secondary); }
 .ob-root .ma-addsub { font-size: 11px; color: var(--text-muted); }
-.ob-root .ma-top { display: flex; align-items: center; gap: 8px; }
 .ob-root .ma-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
-.ob-root .ma-email { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12.5px; color: var(--text-primary); }
-.ob-root .ma-meta { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
-.ob-root .ma-badge { font-size: 10px; letter-spacing: .05em; text-transform: uppercase; color: var(--ob); border: 1px solid var(--ob-line); background: var(--ob-soft); border-radius: 999px; padding: 2px 8px; }
-.ob-root .ma-connect { display: flex; gap: 14px; height: 20px; }
-.ob-root .ma-connect > span { flex: 1; display: flex; justify-content: center; }
-.ob-root .ma-connect > span::before { content: ''; width: 1.5px; height: 100%; background: var(--border-strong); }
-.ob-root .ma-shared { border: 1px solid var(--ob-line); border-radius: 12px; background: var(--ob-soft); padding: 13px 16px; text-align: center; }
+.ob-root .ma-email { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12.5px; color: var(--text-primary); white-space: nowrap; }
+.ob-root .ma-badge { margin-left: auto; font-size: 10px; letter-spacing: .05em; text-transform: uppercase; color: var(--ob); border: 1px solid var(--ob-line); background: var(--ob-soft); border-radius: 999px; padding: 2px 8px; flex: none; }
+.ob-root .ma-shared { max-width: 560px; margin: 0 auto; border: 1px solid var(--ob-line); border-radius: 12px; background: var(--ob-soft); padding: 13px 16px; text-align: center; }
 .ob-root .ma-shared-l { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--ob); margin-bottom: 10px; }
 .ob-root .ma-chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
 .ob-root .ma-chips span { font-size: 12px; color: var(--text-secondary); border: 1px solid var(--border-subtle); background: var(--surface-raised); border-radius: 999px; padding: 4px 12px; }

@@ -2,6 +2,7 @@ import React from 'react'
 import { ViewType } from '../../types/views'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { useTokenomicsStore } from '../../stores/tokenomicsStore'
+import { useAccountProfilesStore } from '../../stores/accountProfilesStore'
 
 interface SidebarNavProps {
   currentView: ViewType
@@ -18,6 +19,8 @@ interface SidebarNavProps {
   tokenomicsIndexComplete?: boolean
   collapsed?: boolean
   onShowHelp?: () => void
+  /** Opens the all-accounts usage overview. Button shown only with 2+ accounts. */
+  onShowAccountUsage?: () => void
 }
 
 const navItems: { view: ViewType; icon: React.ReactNode; label: string }[] = [
@@ -238,8 +241,32 @@ function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMe
   )
 }
 
-export default function SidebarNav({ currentView, onViewChange, insightsStatus, insightsMessage, cloudAgentRunning, visionRunning, serverRunning, tokenomicsIndexComplete, collapsed, onShowHelp }: SidebarNavProps) {
+export default function SidebarNav({ currentView, onViewChange, insightsStatus, insightsMessage, cloudAgentRunning, visionRunning, serverRunning, tokenomicsIndexComplete, collapsed, onShowHelp, onShowAccountUsage }: SidebarNavProps) {
   const loggingEnabled = useSettingsStore((s) => s.settings.loggingEnabled)
+  // Account-usage button lives here in the nav rail (alongside Insights etc.),
+  // shown only with 2+ accounts (never single-account or macOS).
+  const hasMultipleAccounts = useAccountProfilesStore((s) => s.profiles.length >= 2)
+
+  const accountUsageButton = onShowAccountUsage && hasMultipleAccounts ? (
+    <button
+      onClick={onShowAccountUsage}
+      aria-label="Account usage"
+      className={`group ${collapsed ? 'w-10 h-10' : 'flex-1 py-2'} flex items-center justify-center rounded-lg transition-colors text-overlay0 hover:text-text hover:bg-surface0/50 focus-ring relative`}
+    >
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="8" r="3.25" />
+        <path d="M5.5 19.5c0-3.4 3-5.5 6.5-5.5s6.5 2.1 6.5 5.5" />
+      </svg>
+      <span
+        className={`pointer-events-none absolute z-40 px-2 py-0.5 text-[11px] rounded bg-surface1 text-text border border-surface2 shadow-md whitespace-nowrap opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 transition-opacity duration-100 ${
+          collapsed ? 'left-full ml-2 top-1/2 -translate-y-1/2' : 'top-full mt-1 right-0'
+        }`}
+        aria-hidden="true"
+      >
+        Account usage
+      </span>
+    </button>
+  ) : null
 
   const helpButton = onShowHelp ? (
     <button
@@ -292,6 +319,7 @@ export default function SidebarNav({ currentView, onViewChange, insightsStatus, 
             visionRunning={visionRunning} serverRunning={serverRunning} tokenomicsIndexComplete={tokenomicsIndexComplete}
             isCollapsed loggingEnabled={loggingEnabled} />
         ))}
+        {accountUsageButton}
         {helpButton}
       </div>
     )
@@ -306,6 +334,7 @@ export default function SidebarNav({ currentView, onViewChange, insightsStatus, 
       {primary.map((item) => renderItem(item, 'start'))}
       <span className="w-px self-stretch my-1 bg-surface1 shrink-0" aria-hidden />
       {system.map((item) => renderItem(item, 'end'))}
+      {accountUsageButton}
       {helpButton}
     </div>
   )

@@ -88,32 +88,48 @@ function bucketsFromLegacy(raw: Record<string, unknown>): UsageBucket[] {
  *  newer `spend` object; fall back to `extra_usage`. Returns undefined when
  *  disabled/out-of-credits so the UI hides the row entirely. */
 function parseCredits(raw: Record<string, unknown>): CreditsInfo | undefined {
+  // Surface credits whenever the account has ANY monetary activity (paid credit
+  // enabled, or a used/limit/balance figure), not only when currently enabled —
+  // so a user who has added cash still sees their balance / "out of credits".
   const spend = raw.spend as Record<string, unknown> | undefined
-  if (spend && spend.enabled === true) {
+  if (spend && typeof spend === 'object') {
     const used = spend.used as { amount_minor?: unknown; currency?: unknown; exponent?: unknown } | undefined
-    const exp = num(used?.exponent) ?? 2
-    const div = Math.pow(10, exp)
-    const usedMajor = (num(used?.amount_minor) ?? 0) / div
+    const usedMinor = num(used?.amount_minor)
     const limitMinor = num(spend.limit)
     const balanceMinor = num(spend.balance)
-    return {
-      currency: str(used?.currency) || 'USD',
-      used: usedMajor,
-      limit: limitMinor !== null ? limitMinor / div : null,
-      remaining: balanceMinor !== null ? balanceMinor / div : (limitMinor !== null ? limitMinor / div - usedMajor : null),
+    const hasData = spend.enabled === true || usedMinor !== null || limitMinor !== null || balanceMinor !== null
+    if (hasData) {
+      const exp = num(used?.exponent) ?? 2
+      const div = Math.pow(10, exp)
+      const usedMajor = (usedMinor ?? 0) / div
+      return {
+        currency: str(used?.currency) || 'USD',
+        used: usedMajor,
+        limit: limitMinor !== null ? limitMinor / div : null,
+        remaining: balanceMinor !== null ? balanceMinor / div : (limitMinor !== null ? limitMinor / div - usedMajor : null),
+        enabled: spend.enabled === true,
+        disabledReason: str(spend.disabled_reason) || undefined,
+      }
     }
   }
   const extra = raw.extra_usage as Record<string, unknown> | undefined
-  if (extra && extra.is_enabled === true) {
-    const exp = num(extra.decimal_places) ?? 2
-    const div = Math.pow(10, exp)
-    const usedMajor = (num(extra.used_credits) ?? 0) / div
-    const limitMajor = num(extra.monthly_limit)
-    return {
-      currency: str(extra.currency) || 'USD',
-      used: usedMajor,
-      limit: limitMajor !== null ? limitMajor / div : null,
-      remaining: limitMajor !== null ? limitMajor / div - usedMajor : null,
+  if (extra && typeof extra === 'object') {
+    const usedCredits = num(extra.used_credits)
+    const limitMajorRaw = num(extra.monthly_limit)
+    const hasData = extra.is_enabled === true || usedCredits !== null || limitMajorRaw !== null
+    if (hasData) {
+      const exp = num(extra.decimal_places) ?? 2
+      const div = Math.pow(10, exp)
+      const usedMajor = (usedCredits ?? 0) / div
+      const limitMajor = limitMajorRaw !== null ? limitMajorRaw / div : null
+      return {
+        currency: str(extra.currency) || 'USD',
+        used: usedMajor,
+        limit: limitMajor,
+        remaining: limitMajor !== null ? limitMajor - usedMajor : null,
+        enabled: extra.is_enabled === true,
+        disabledReason: str(extra.disabled_reason) || undefined,
+      }
     }
   }
   return undefined

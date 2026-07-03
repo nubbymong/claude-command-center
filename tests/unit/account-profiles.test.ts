@@ -113,17 +113,22 @@ describe('createProfile', () => {
     expect(sharedAfter).toEqual(sharedBefore)
   })
 
-  it('uses "New account" as the default name when none is provided', () => {
+  it('leaves the name BLANK by default (identified by email once /login resolves it)', () => {
     const profile = createProfile()
-    expect(profile.name).toBe('New account')
+    expect(profile.name).toBe('')
     expect(profile.accountEmail).toBe('')
     expect(isValidProfileId(profile.id)).toBe(true)
   })
 
-  it('uses "New account" as the fallback when only whitespace is provided', () => {
+  it('leaves the name blank when only whitespace is provided', () => {
     const profile = createProfile('   ')
-    expect(profile.name).toBe('New account')
+    expect(profile.name).toBe('')
     expect(isValidProfileId(profile.id)).toBe(true)
+  })
+
+  it('keeps a real provided name', () => {
+    const profile = createProfile('  Work  ')
+    expect(profile.name).toBe('Work')
   })
 })
 

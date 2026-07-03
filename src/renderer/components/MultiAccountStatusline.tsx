@@ -95,6 +95,9 @@ export default function MultiAccountStatusline() {
   const profiles = useAccountProfilesStore((s) => s.profiles)
   const aliases = useSettingsStore((s) => s.settings.accountAliases)
   const overrides = useSettingsStore((s) => s.settings.accountColourOverrides)
+  // Honour the Settings status-line font size here too, so the one control
+  // governs both the per-session strip and this multi-account footer.
+  const fontSize = useSettingsStore((s) => s.settings.statusLine?.fontSize) ?? 12
   const theme = useResolvedTheme()
 
   const accounts = React.useMemo(
@@ -111,6 +114,7 @@ export default function MultiAccountStatusline() {
     <div
       className="flex items-center gap-6 min-w-0"
       data-testid="multi-account-statusline"
+      style={{ fontSize: `${fontSize}px` }}
     >
       {accounts.map((a) => (
         <span key={a.email} className="flex items-center gap-2 shrink-0" title={tooltip(a)}>
@@ -125,8 +129,8 @@ export default function MultiAccountStatusline() {
             ? <RateLimitBar label="5h" pct={a.pct5h} resets={a.resets5h} />
             : <span style={{ color: 'var(--text-muted)' }}>5h —</span>}
           {a.pct7d !== null
-            ? <RateLimitBar label="7d" pct={a.pct7d} resets={a.resets7d} />
-            : <span style={{ color: 'var(--text-muted)' }}>7d —</span>}
+            ? <RateLimitBar label="Weekly" pct={a.pct7d} resets={a.resets7d} />
+            : <span style={{ color: 'var(--text-muted)' }}>Weekly —</span>}
         </span>
       ))}
     </div>

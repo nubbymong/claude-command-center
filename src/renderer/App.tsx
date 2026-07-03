@@ -1110,9 +1110,9 @@ export default function App() {
             </div>
           </div>
         )}
-        <TitleBar sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} onShowAccountUsage={() => setShowAccountUsage(true)} />
+        <TitleBar sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
         <div className="flex flex-1 overflow-hidden">
-          <Sidebar currentView={view} onViewChange={setView} collapsed={!sidebarOpen} tourActive={showTraining || showTrainingAll} onShowFirstRun={() => setShowGuidedConfig(true)} onShowHelp={() => setShowHelpPanel(true)} />
+          <Sidebar currentView={view} onViewChange={setView} collapsed={!sidebarOpen} tourActive={showTraining || showTrainingAll} onShowFirstRun={() => setShowGuidedConfig(true)} onShowHelp={() => setShowHelpPanel(true)} onShowAccountUsage={() => setShowAccountUsage(true)} />
           <main className="flex-1 flex flex-col overflow-hidden titlebar-no-drag">
             <div className="flex-1 flex flex-col overflow-hidden min-h-0 relative">
               {/* The live app is always what's behind — the first-config flow is

@@ -63,12 +63,16 @@ describe('parseUsage — legacy fallback (no limits[])', () => {
   })
 })
 
-describe('parseUsage — credits only when enabled', () => {
-  it('omits credits when extra_usage/spend are disabled (out of credits)', () => {
-    expect(parseUsage(REAL).credits).toBeUndefined()
+describe('parseUsage — credits (shown whenever there is monetary activity)', () => {
+  it('reports out-of-credits with used amount + enabled:false', () => {
+    const c = parseUsage(REAL).credits!
+    expect(c.enabled).toBe(false)
+    expect(c.disabledReason).toBe('out_of_credits')
+    expect(c.used).toBeCloseTo(298.28)
+    expect(c.remaining).toBeNull()
   })
 
-  it('reports credits from spend when enabled', () => {
+  it('reports credits from spend when enabled (remaining from balance)', () => {
     const withSpend = {
       limits: [],
       spend: { used: { amount_minor: 500, currency: 'GBP', exponent: 2 }, limit: 2000, balance: 1500, enabled: true },
@@ -78,6 +82,7 @@ describe('parseUsage — credits only when enabled', () => {
     expect(c.used).toBe(5)
     expect(c.limit).toBe(20)
     expect(c.remaining).toBe(15)
+    expect(c.enabled).toBe(true)
   })
 
   it('falls back to extra_usage when enabled and spend absent', () => {
@@ -90,6 +95,11 @@ describe('parseUsage — credits only when enabled', () => {
     expect(c.used).toBe(10)
     expect(c.limit).toBe(30)
     expect(c.remaining).toBe(20)
+    expect(c.enabled).toBe(true)
+  })
+
+  it('omits credits entirely when there is no spend/extra_usage block at all', () => {
+    expect(parseUsage({ limits: [] }).credits).toBeUndefined()
   })
 })
 
