@@ -51,6 +51,7 @@ import { useRegistryStore } from './stores/registryStore'
 import { useSentinelStore } from './stores/sentinelStore'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 import { useThemeController } from './hooks/useThemeController'
+import { useTypographyController } from './hooks/useTypography'
 import { useLaunchConfig } from './hooks/useLaunchConfig'
 import StageEmptyState from './components/StageEmptyState'
 import { markSessionForResumePicker } from './utils/resumePicker'
@@ -237,6 +238,8 @@ export default function App() {
   // Stamp data-theme on <html> from the persisted setting + listen for
   // OS prefers-color-scheme changes when in 'system' mode.
   useThemeController()
+  // Apply the global UI font scale (<html> root font-size) + family var.
+  useTypographyController()
 
   // Emergency escape hatch for the WebContentsView pane — Esc closes
   // the *active* session's webview. Native Electron views render above

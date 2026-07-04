@@ -197,32 +197,6 @@ export function StatusLineStep({ onNext, onBack }: { onNext: () => void; onBack:
               </div>
             </div>
             <div className="sl-cap">Each switch lines up with the part of the status line it controls.</div>
-            <div className="sl-fontrow">
-              <span>Font:</span>
-              <button
-                className={sl.font === 'sans' ? 'fbtn on' : 'fbtn'}
-                onClick={() => patchSl({ font: 'sans' })}
-                type="button"
-              >
-                Sans (Inter)
-              </button>
-              <button
-                className={sl.font === 'mono' ? 'fbtn on' : 'fbtn'}
-                onClick={() => patchSl({ font: 'mono' })}
-                type="button"
-              >
-                Mono
-              </button>
-              <span style={{ marginLeft: 8 }}>Size:</span>
-              <input
-                type="range"
-                min={10}
-                max={16}
-                value={sl.fontSize}
-                onChange={(e) => patchSl({ fontSize: Number(e.target.value) })}
-              />
-              <span className="sl-mut">{sl.fontSize}px</span>
-            </div>
             <div className="how" style={{ margin: '20px auto 0', maxWidth: 760 }}>
               <div className="how-ic">{GEAR}</div>
               <div>

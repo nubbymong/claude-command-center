@@ -215,7 +215,7 @@
 }
 
 body {
-  font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: var(--ui-font-family, Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
   background: var(--color-base);
   color: var(--color-text);
 }

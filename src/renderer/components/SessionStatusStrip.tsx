@@ -8,6 +8,7 @@ import { useCodexReviewUsage } from '../hooks/useCodexReviewUsage'
 import { useRestartSession } from '../hooks/useRestartSession'
 import { useSwitchAccount } from '../hooks/useSwitchAccount'
 import { useResolvedTheme } from '../hooks/useThemeController'
+import { useRegionTypography } from '../hooks/useTypography'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { resolveAccountName, resolveAccountNameByEmail, resolveAccountColourKey, middleTruncateEmail } from '../../shared/account-chip-color'
 import { resolveIdentityColor } from '../../shared/identity-colors'
@@ -49,6 +50,9 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
   const session = useSessionStore((s) => s.sessions.find((x) => x.id === sessionId) || null)
   const updateSession = useSessionStore((s) => s.updateSession)
   const sl = useSettingsStore((s) => s.settings.statusLine) || DEFAULT_STATUS_LINE
+  // Whole-band scale/family for the Status-bars region (Font & Size page). Applied
+  // to the OUTER wrapper so telemetry AND the control pills move together.
+  const statusType = useRegionTypography('status')
   // Usage buckets the user hid (denylist by label). Empty/absent = show all.
   const hiddenBuckets = useSettingsStore((s) => s.settings.hiddenUsageBuckets) ?? EMPTY_HIDDEN
   // Master status-line switch (onboarding p4 / Settings). Gates ONLY the
@@ -143,16 +147,17 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
   return (
     <div
       className="min-h-7 shrink-0 flex items-center gap-3 px-3 text-xs border-t border-b"
-      style={{ background: 'var(--surface-raised)', color: 'var(--text-on-chrome)', borderColor: 'var(--border-subtle)' }}
+      style={{ background: 'var(--surface-raised)', color: 'var(--text-on-chrome)', borderColor: 'var(--border-subtle)', ...statusType }}
     >
-      {/* Telemetry -- inherits statusLine font + fontSize so Settings controls
-          stay honest. Carried over verbatim from BottomBar's middle zone.
+      {/* Telemetry. The whole strip (this cluster + the controls) scales as one
+          via the Status-bars region on the Font & Size page (zoom on the outer
+          wrapper), so there is no per-element font size here anymore -- that split
+          was exactly what made the pills stay a different size from the text.
           With the master switch off, a bare spacer keeps the controls cluster
           right-aligned. */}
       {statusLineEnabled ? (
       <div
         className="flex items-center gap-3 flex-1 min-w-0 overflow-hidden"
-        style={{ fontSize: `${sl.fontSize}px`, fontFamily: sl.font === 'mono' ? "'JetBrains Mono', monospace" : undefined }}
       >
         {/* Bug 6: for Claude the interactive Model pill (controls cluster, right)
             is the single home for the model + effort, so the read-only telemetry

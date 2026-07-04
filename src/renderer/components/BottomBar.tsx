@@ -4,6 +4,7 @@ import { useConfigHealthStore } from '../stores/configHealthStore'
 import { retryFailedConfigSaves } from '../utils/config-saver'
 import { ViewType } from '../types/views'
 import MultiAccountStatusline from './MultiAccountStatusline'
+import { useRegionTypography } from '../hooks/useTypography'
 
 declare const __BUILD_TIME__: string
 declare const __APP_VERSION__: string
@@ -29,6 +30,9 @@ export default function BottomBar({ currentView, onViewChange, onUpdateRequested
   void currentView
   const channel = useSettingsStore((s) => s.settings.updateChannel)
   const failedSaveKeys = useConfigHealthStore((s) => s.failedKeys)
+  // Status-bars region scale/family (Font & Size page) governs this footer and
+  // the multi-account cluster nested inside it.
+  const statusType = useRegionTypography('status')
 
   const [cliAvailable, setCliAvailable] = useState<boolean | null>(null)
   const [updateAvailable, setUpdateAvailable] = useState(false)
@@ -75,7 +79,7 @@ export default function BottomBar({ currentView, onViewChange, onUpdateRequested
   return (
     <div
       className="min-h-7 shrink-0 flex items-center gap-3 px-3 text-xs border-t"
-      style={{ background: 'var(--surface-chrome)', color: 'var(--text-on-chrome)', borderColor: 'var(--border-subtle)' }}
+      style={{ background: 'var(--surface-chrome)', color: 'var(--text-on-chrome)', borderColor: 'var(--border-subtle)', ...statusType }}
     >
       {/* Runtime band */}
       <div className="flex items-center gap-3 shrink-0">

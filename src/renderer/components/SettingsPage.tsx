@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react'
 import WhatsNewModal, { markWhatsNewSeen } from './WhatsNewModal'
 import TrainingWalkthrough from './TrainingWalkthrough'
-import { useSettingsStore, DEFAULT_STATUS_LINE, DEFAULT_TERMINAL_SETTINGS, DEFAULT_CONDUCTOR_TOOLS, UpdateChannel } from '../stores/settingsStore'
-import type { StatusLineSettings, TerminalSettings, CursorStyle, ThemeMode } from '../stores/settingsStore'
+import { useSettingsStore, DEFAULT_STATUS_LINE, DEFAULT_TERMINAL_SETTINGS, DEFAULT_CONDUCTOR_TOOLS, DEFAULT_TYPOGRAPHY, UpdateChannel } from '../stores/settingsStore'
+import type { AppSettings, StatusLineSettings, TerminalSettings, CursorStyle, ThemeMode, UiFontFamily, TypographyRegionKey, TypographySettings, RegionTypography } from '../stores/settingsStore'
+import { familyCss } from '../utils/typography'
 import { useSessionStore } from '../stores/sessionStore'
 import { useAppMetaStore } from '../stores/appMetaStore'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
@@ -20,13 +21,14 @@ import AccountsPanel from './AccountsPanel'
 declare const __BUILD_TIME__: string
 declare const __APP_VERSION__: string
 
-export const SETTINGS_TAB_IDS = ['general', 'accounts', 'statusline', 'shortcuts', 'github', 'codex', 'hooks', 'about'] as const
+export const SETTINGS_TAB_IDS = ['general', 'accounts', 'statusline', 'uifont', 'shortcuts', 'github', 'codex', 'hooks', 'about'] as const
 export type SettingsTab = typeof SETTINGS_TAB_IDS[number]
 
 const TABS: { id: SettingsTab; label: string }[] = [
   { id: 'general', label: 'General' },
   { id: 'accounts', label: 'Accounts' },
   { id: 'statusline', label: 'Status Line' },
+  { id: 'uifont', label: 'Font & Size' },
   { id: 'shortcuts', label: 'Shortcuts' },
   { id: 'github', label: 'GitHub' },
   { id: 'codex', label: 'Codex' },
@@ -127,10 +129,6 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
 
   const toggleStatusLine = (key: keyof StatusLineSettings) => {
     save({ statusLine: { ...sl, [key]: !sl[key] } })
-  }
-
-  const setStatusLineField = <K extends keyof StatusLineSettings>(key: K, value: StatusLineSettings[K]) => {
-    save({ statusLine: { ...sl, [key]: value } })
   }
 
   const settingsIcon = (
@@ -351,46 +349,9 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
               </Section>
 
               <Section title="Terminal" icon={<><rect x="2" y="3" width="12" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.2" fill="none" /><path d="M5 7l2 2-2 2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" /><line x1="9" y1="11" x2="11" y2="11" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" /></>}>
-                <Field label="Font Family">
-                  <select
-                    value={(settings.terminal || DEFAULT_TERMINAL_SETTINGS).fontFamily}
-                    onChange={e => save({ terminal: { ...(settings.terminal || DEFAULT_TERMINAL_SETTINGS), fontFamily: e.target.value } })}
-                    className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-48 focus:outline-none focus:border-blue/50 transition-colors"
-                  >
-                    {['Cascadia Code', 'JetBrains Mono', 'Fira Code', 'Consolas', 'Courier New'].map(f => (
-                      <option key={f} value={f}>{f}</option>
-                    ))}
-                  </select>
-                </Field>
-                <Field label="Font Size">
-                  <div className="flex items-center gap-3">
-                    <input
-                      type="range"
-                      min={11}
-                      max={20}
-                      value={(settings.terminal || DEFAULT_TERMINAL_SETTINGS).fontSize}
-                      onChange={e => {
-                        const sz = parseInt(e.target.value)
-                        save({ terminal: { ...(settings.terminal || DEFAULT_TERMINAL_SETTINGS), fontSize: sz }, terminalFontSize: sz })
-                      }}
-                      className="w-32"
-                    />
-                    <span className="text-sm text-subtext0 tabular-nums w-8">{(settings.terminal || DEFAULT_TERMINAL_SETTINGS).fontSize}px</span>
-                  </div>
-                </Field>
-                <Field label="Line Height">
-                  <div className="flex items-center gap-3">
-                    <input
-                      type="range"
-                      min={10}
-                      max={16}
-                      value={Math.round(((settings.terminal || DEFAULT_TERMINAL_SETTINGS).lineHeight) * 10)}
-                      onChange={e => save({ terminal: { ...(settings.terminal || DEFAULT_TERMINAL_SETTINGS), lineHeight: parseInt(e.target.value) / 10 } })}
-                      className="w-32"
-                    />
-                    <span className="text-sm text-subtext0 tabular-nums w-8">{((settings.terminal || DEFAULT_TERMINAL_SETTINGS).lineHeight).toFixed(1)}</span>
-                  </div>
-                </Field>
+                <p className="text-[11px] text-overlay0 leading-relaxed">
+                  Terminal font, size and line height moved to the Font &amp; Size tab.
+                </p>
                 <Field label="Cursor Style">
                   <div className="flex gap-1">
                     {(['bar', 'block', 'underline'] as CursorStyle[]).map(style => (
@@ -489,8 +450,12 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
           {activeTab === 'statusline' && (
             <>
               <StatuslineCodexBanner />
-              <StatusLineTab sl={sl} onToggle={toggleStatusLine} onSet={setStatusLineField} />
+              <StatusLineTab sl={sl} onToggle={toggleStatusLine} />
             </>
+          )}
+
+          {activeTab === 'uifont' && (
+            <FontSizeTab settings={settings} save={save} />
           )}
 
           {activeTab === 'shortcuts' && (
@@ -613,11 +578,9 @@ const STATUS_LINE_TOGGLES: { key: BooleanStatusLineKey; label: string; descripti
 function StatusLineTab({
   sl,
   onToggle,
-  onSet,
 }: {
   sl: StatusLineSettings
   onToggle: (key: keyof StatusLineSettings) => void
-  onSet: <K extends keyof StatusLineSettings>(key: K, value: StatusLineSettings[K]) => void
 }) {
   // Master switch -- the same flag onboarding p4's "Status line On/Off" writes.
   // This is the promised recovery surface ("switch it on anytime in Settings ->
@@ -659,48 +622,6 @@ function StatusLineTab({
           <p className="text-[11px] text-overlay0 mt-2">
             Toggle elements below to see how the status line changes.
           </p>
-        </div>
-      </div>
-
-      {/* Typography */}
-      <div className="rounded-xl bg-surface0/30 border border-surface0/60 overflow-hidden">
-        <div className="px-4 py-2.5 border-b border-surface0/40 flex items-center gap-2">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" className="text-overlay1 shrink-0">
-            <path d="M3 4h10M5 4v8h2V4M9 4v8h2V4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-          </svg>
-          <h3 className="text-xs font-semibold text-subtext0 uppercase tracking-wider">Typography</h3>
-        </div>
-        <div className="p-4 space-y-3">
-          <Field label="Font">
-            <div className="flex gap-1">
-              {(['sans', 'mono'] as const).map((f) => (
-                <button
-                  key={f}
-                  onClick={() => onSet('font', f)}
-                  className={`px-3 py-1.5 rounded-md text-xs transition-colors ${
-                    sl.font === f
-                      ? 'bg-blue/20 text-blue border border-blue/30'
-                      : 'bg-surface0/60 text-overlay1 border border-surface0/80 hover:text-text'
-                  }`}
-                >
-                  {f === 'sans' ? 'Sans (Inter)' : 'Mono'}
-                </button>
-              ))}
-            </div>
-          </Field>
-          <Field label="Font Size">
-            <div className="flex items-center gap-3">
-              <input
-                type="range"
-                min={10}
-                max={16}
-                value={sl.fontSize}
-                onChange={(e) => onSet('fontSize', parseInt(e.target.value))}
-                className="w-32"
-              />
-              <span className="text-sm text-subtext0 tabular-nums w-8">{sl.fontSize}px</span>
-            </div>
-          </Field>
         </div>
       </div>
 
@@ -820,8 +741,7 @@ function StatusLinePreview({ sl }: { sl: StatusLineSettings }) {
 
   return (
     <div
-      className={`flex flex-col shrink-0 bg-crust border-t border-surface0 text-subtext0 ${sl.font === 'mono' ? 'font-mono' : ''}`}
-      style={{ fontSize: `${sl.fontSize}px` }}
+      className="flex flex-col shrink-0 bg-crust border-t border-surface0 text-subtext0"
     >
       {/* Row 1 */}
       <div className="flex items-center gap-3 px-2 py-1">
@@ -943,6 +863,200 @@ function CheckForUpdatesField() {
         )}
       </div>
     </Field>
+  )
+}
+
+/* ── Font & Size Tab ─────────────────────────────────── */
+
+const UI_FAMILIES: { key: UiFontFamily; label: string }[] = [
+  { key: 'system', label: 'System' },
+  { key: 'inter', label: 'Inter' },
+  { key: 'serif', label: 'Serif' },
+  { key: 'mono', label: 'Mono' },
+]
+
+const TYPOGRAPHY_REGIONS: { key: TypographyRegionKey; label: string; hint: string }[] = [
+  { key: 'status', label: 'Status bars', hint: 'Per-session strip and the bottom footer' },
+  { key: 'sidebar', label: 'Sidebar', hint: 'Session list and the collapsed nav rail' },
+  { key: 'header', label: 'Session header + tabs', hint: 'Tab strip and the header above the terminal' },
+  { key: 'panels', label: 'Panels', hint: 'Settings, Tokenomics, Memory, Insights, Vision, Cloud Agents, Logs' },
+]
+
+function asPercent(scale: number): string {
+  return Math.round(scale * 100) + '%'
+}
+
+// Family swatch buttons. `allowFollow` prepends a "Follow global" option that
+// clears the override (undefined) for a region picker.
+function FamilyPicker({ value, onPick, allowFollow }: {
+  value: UiFontFamily | undefined
+  onPick: (f: UiFontFamily | undefined) => void
+  allowFollow?: boolean
+}) {
+  const swatch = (active: boolean) =>
+    `px-2.5 py-1.5 rounded-md text-xs transition-colors ${
+      active
+        ? 'bg-blue/20 text-blue border border-blue/30'
+        : 'bg-surface0/60 text-overlay1 border border-surface0/80 hover:text-text'
+    }`
+  return (
+    <div className="flex flex-wrap gap-1">
+      {allowFollow && (
+        <button onClick={() => onPick(undefined)} className={swatch(value === undefined)}>
+          Follow global
+        </button>
+      )}
+      {UI_FAMILIES.map((f) => (
+        <button key={f.key} onClick={() => onPick(f.key)} style={{ fontFamily: familyCss(f.key) }} className={swatch(value === f.key)}>
+          {f.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function FontSizeTab({ settings, save }: {
+  settings: AppSettings
+  save: (updates: Partial<AppSettings>) => void
+}) {
+  const typography = settings.typography || DEFAULT_TYPOGRAPHY
+  const terminal = settings.terminal || DEFAULT_TERMINAL_SETTINGS
+
+  const setGlobal = (patch: Partial<TypographySettings>) => {
+    save({ typography: { ...typography, ...patch } })
+  }
+  // Persist a region override, pruning no-ops so an untouched region stays "follow
+  // global" (100% scale + global family are the defaults, not stored overrides).
+  const setRegion = (key: TypographyRegionKey, patch: RegionTypography) => {
+    const next: RegionTypography = { ...(typography.regions[key] || {}), ...patch }
+    if (next.scale === undefined || next.scale === 1) delete next.scale
+    if (next.fontFamily === undefined) delete next.fontFamily
+    save({ typography: { ...typography, regions: { ...typography.regions, [key]: next } } })
+  }
+  const resetRegion = (key: TypographyRegionKey) => {
+    save({ typography: { ...typography, regions: { ...typography.regions, [key]: {} } } })
+  }
+
+  return (
+    <>
+      <Section title="Global" icon={<path d="M3 4h10M5 4v8h2V4M9 4v8h2V4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />}>
+        <Field label="Font">
+          <FamilyPicker value={typography.globalFontFamily} onPick={(f) => setGlobal({ globalFontFamily: f ?? 'inter' })} />
+        </Field>
+        <Field label="Size">
+          <div className="flex items-center gap-3">
+            <input
+              type="range"
+              min={0.8}
+              max={1.3}
+              step={0.05}
+              value={typography.globalScale}
+              onChange={(e) => setGlobal({ globalScale: parseFloat(e.target.value) })}
+              className="w-32"
+            />
+            <span className="text-sm text-subtext0 tabular-nums w-10">{asPercent(typography.globalScale)}</span>
+          </div>
+        </Field>
+        <div
+          className="rounded-lg border border-surface0/70 bg-surface0/20 px-3 py-2 text-text"
+          style={{ fontFamily: familyCss(typography.globalFontFamily), fontSize: 13 * typography.globalScale }}
+        >
+          The quick brown fox jumps over the lazy dog
+        </div>
+        <p className="text-[11px] text-overlay0 leading-relaxed">
+          Size scales the whole app together. The terminal keeps its own font below.
+        </p>
+      </Section>
+
+      <Section title="Regions" icon={<><rect x="2" y="2.5" width="5" height="4" rx="1" stroke="currentColor" strokeWidth="1.2" fill="none" /><rect x="9" y="2.5" width="5" height="4" rx="1" stroke="currentColor" strokeWidth="1.2" fill="none" /><rect x="2" y="9" width="12" height="4.5" rx="1" stroke="currentColor" strokeWidth="1.2" fill="none" /></>}>
+        <p className="text-[11px] text-overlay0 leading-relaxed -mt-1 mb-1">
+          Nudge a part of the UI relative to the global size. 100% follows global. For example, set Status bars below 100% to keep them smaller than the rest.
+        </p>
+        {TYPOGRAPHY_REGIONS.map((r) => {
+          const region = typography.regions[r.key] || {}
+          const scale = region.scale ?? 1
+          const overridden = region.scale !== undefined || region.fontFamily !== undefined
+          return (
+            <div key={r.key} className="rounded-lg border border-surface0/60 bg-surface0/15 px-3 py-2.5 space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-sm text-text leading-tight">{r.label}</div>
+                  <div className="text-[10px] text-overlay0 leading-tight">{r.hint}</div>
+                </div>
+                {overridden && (
+                  <button onClick={() => resetRegion(r.key)} className="text-[11px] text-blue hover:text-blue/80 transition-colors shrink-0">
+                    Reset
+                  </button>
+                )}
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-[11px] text-overlay1 w-9 shrink-0">Size</span>
+                <input
+                  type="range"
+                  min={0.7}
+                  max={1.2}
+                  step={0.05}
+                  value={scale}
+                  onChange={(e) => setRegion(r.key, { scale: parseFloat(e.target.value) })}
+                  className="w-28"
+                />
+                <span className="text-sm text-subtext0 tabular-nums w-10">{asPercent(scale)}</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-[11px] text-overlay1 w-9 shrink-0">Font</span>
+                <FamilyPicker value={region.fontFamily} onPick={(f) => setRegion(r.key, { fontFamily: f })} allowFollow />
+              </div>
+            </div>
+          )
+        })}
+      </Section>
+
+      <Section title="Terminal" icon={<><rect x="2" y="3" width="12" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.2" fill="none" /><path d="M5 7l2 2-2 2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" /><line x1="9" y1="11" x2="11" y2="11" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" /></>}>
+        <p className="text-[11px] text-overlay0 leading-relaxed -mt-1">
+          The terminal is independent of the UI scale above and keeps its own font.
+        </p>
+        <Field label="Font Family">
+          <select
+            value={terminal.fontFamily}
+            onChange={(e) => save({ terminal: { ...terminal, fontFamily: e.target.value } })}
+            className="bg-crust/60 border border-surface0/80 rounded-lg px-3 py-2 text-sm text-text w-48 focus:outline-none focus:border-blue/50 transition-colors"
+          >
+            {['Cascadia Code', 'JetBrains Mono', 'Fira Code', 'Consolas', 'Courier New'].map((f) => (
+              <option key={f} value={f}>{f}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Font Size">
+          <div className="flex items-center gap-3">
+            <input
+              type="range"
+              min={11}
+              max={20}
+              value={terminal.fontSize}
+              onChange={(e) => {
+                const sz = parseInt(e.target.value)
+                save({ terminal: { ...terminal, fontSize: sz }, terminalFontSize: sz })
+              }}
+              className="w-32"
+            />
+            <span className="text-sm text-subtext0 tabular-nums w-8">{terminal.fontSize}px</span>
+          </div>
+        </Field>
+        <Field label="Line Height">
+          <div className="flex items-center gap-3">
+            <input
+              type="range"
+              min={10}
+              max={16}
+              value={Math.round(terminal.lineHeight * 10)}
+              onChange={(e) => save({ terminal: { ...terminal, lineHeight: parseInt(e.target.value) / 10 } })}
+              className="w-32"
+            />
+            <span className="text-sm text-subtext0 tabular-nums w-8">{terminal.lineHeight.toFixed(1)}</span>
+          </div>
+        </Field>
+      </Section>
+    </>
   )
 }
 

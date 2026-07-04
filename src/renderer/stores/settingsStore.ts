@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { saveConfigNow } from '../utils/config-saver'
 import { DEFAULT_SHORTCUTS } from '../utils/shortcuts'
+import { migrateTypography } from './migrateTypography'
 
 export type StatusLineFont = 'sans' | 'mono'
 
@@ -34,6 +35,34 @@ export const DEFAULT_STATUS_LINE: StatusLineSettings = {
   showCopilot: true,
   font: 'sans',
   fontSize: 12
+}
+
+// ── UI typography (Font & Size settings page, spec 2026-07-04) ──
+// Global scale drives the <html> root font-size (rem-based Tailwind utilities
+// scale in lockstep; the canvas terminal is immune). Each region factor is a
+// CSS zoom on that group's outer wrapper, compounding on global so it stays
+// relative (e.g. Status bars set below 1.0 stay smaller than the rest as the
+// whole UI scales up). Terminal font is NOT governed here (see TerminalSettings).
+export type UiFontFamily = 'system' | 'inter' | 'serif' | 'mono'
+export type TypographyRegionKey = 'status' | 'sidebar' | 'header' | 'panels'
+
+export interface RegionTypography {
+  /** 0.7..1.2 relative to global; undefined = follow global (1.0). */
+  scale?: number
+  /** undefined = follow the global family. */
+  fontFamily?: UiFontFamily
+}
+
+export interface TypographySettings {
+  globalScale: number             // 0.8..1.3, default 1.0
+  globalFontFamily: UiFontFamily  // default 'inter'
+  regions: Record<TypographyRegionKey, RegionTypography>
+}
+
+export const DEFAULT_TYPOGRAPHY: TypographySettings = {
+  globalScale: 1,
+  globalFontFamily: 'inter',
+  regions: { status: {}, sidebar: {}, header: {}, panels: {} },
 }
 
 /** Conductor MCP built-in tool toggles (onboarding p6 / Settings). Each key
@@ -89,6 +118,9 @@ export interface AppSettings {
   configPanelPinned: boolean
   statusLine: StatusLineSettings
   statusLineEnabled?: boolean
+  /** v2.0.0-beta.2: UI Font & Size page. Global scale + family and per-region
+   *  overrides. Migrated from legacy statusLine.font/fontSize (see migrateTypography). */
+  typography: TypographySettings
   /** Master for the conductor MCP built-in tools (default on). Gates the MCP
    *  attach at spawn (local / SSH / Codex); the per-tool flags filter which
    *  tool groups the server registers. Absent = on (pre-upgrade configs). */
@@ -215,6 +247,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
   configPanelPinned: false,
   statusLine: { ...DEFAULT_STATUS_LINE },
   statusLineEnabled: true,
+  typography: {
+    globalScale: 1,
+    globalFontFamily: 'inter',
+    regions: { status: {}, sidebar: {}, header: {}, panels: {} },
+  },
   conductorToolsEnabled: true,
   conductorTools: { ...DEFAULT_CONDUCTOR_TOOLS },
   localMachineName: '',
@@ -266,6 +303,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       statusLine: { ...DEFAULT_STATUS_LINE, ...(settings.statusLine || {}) },
       terminal: { ...DEFAULT_TERMINAL_SETTINGS, ...(settings.terminal || {}) },
       conductorTools: { ...DEFAULT_CONDUCTOR_TOOLS, ...(settings.conductorTools || {}) },
+      typography: migrateTypography(settings),
     }
     const { settings: migrated, changed } = migrateV2Font(merged)
     if (changed) {

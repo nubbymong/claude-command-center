@@ -1,4 +1,5 @@
 import React from 'react'
+import { useRegionTypography } from '../hooks/useTypography'
 
 type Accent =
   | 'blue' | 'teal' | 'mauve' | 'peach' | 'green' | 'yellow' | 'red'
@@ -65,8 +66,11 @@ export default function PageFrame({
   scrollable = true,
   children,
 }: Props) {
+  // Panels / admin-pages region scale + family (Font & Size page). Covers
+  // Settings, Tokenomics, Memory, Insights, Vision, Cloud Agents, Logs.
+  const panelType = useRegionTypography('panels')
   return (
-    <div className="flex-1 flex flex-col overflow-hidden min-h-0" style={{ background: 'var(--surface-stage)' }}>
+    <div className="flex-1 flex flex-col overflow-hidden min-h-0" style={{ background: 'var(--surface-stage)', ...panelType }}>
       <div className="flex items-center gap-2 px-3 py-1.5 shrink-0" style={{ background: 'var(--surface-panel)', borderBottom: '1px solid var(--border-subtle)' }}>
         {icon && (
           <span className={`${ACCENT_CLASS[iconAccent]} shrink-0 flex items-center`}>{icon}</span>

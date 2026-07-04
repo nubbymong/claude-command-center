@@ -95,9 +95,6 @@ export default function MultiAccountStatusline() {
   const profiles = useAccountProfilesStore((s) => s.profiles)
   const aliases = useSettingsStore((s) => s.settings.accountAliases)
   const overrides = useSettingsStore((s) => s.settings.accountColourOverrides)
-  // Honour the Settings status-line font size here too, so the one control
-  // governs both the per-session strip and this multi-account footer.
-  const fontSize = useSettingsStore((s) => s.settings.statusLine?.fontSize) ?? 12
   const theme = useResolvedTheme()
 
   const accounts = React.useMemo(
@@ -114,7 +111,6 @@ export default function MultiAccountStatusline() {
     <div
       className="flex items-center gap-6 min-w-0"
       data-testid="multi-account-statusline"
-      style={{ fontSize: `${fontSize}px` }}
     >
       {accounts.map((a) => (
         <span key={a.email} className="flex items-center gap-2 shrink-0" title={tooltip(a)}>

@@ -13,6 +13,7 @@ import { generateId } from '../utils/id'
 import { matchesShortcut, DEFAULT_SHORTCUTS } from '../utils/shortcuts'
 import { canSwitchAccountForSession } from '../utils/sessionLaunch'
 import { useLaunchConfig } from '../hooks/useLaunchConfig'
+import { useRegionTypography } from '../hooks/useTypography'
 import SidebarNav from './sidebar/SidebarNav'
 import ConfigRow from './sidebar/ConfigRow'
 import SessionRow from './sidebar/SessionRow'
@@ -74,6 +75,7 @@ interface Props {
 
 export default function Sidebar({ currentView, onViewChange, collapsed, onShowHelp, onShowAccountUsage, onShowFirstRun, tourActive }: Props) {
   const launchConfig = useLaunchConfig()
+  const sideType = useRegionTypography('sidebar')
   const { sessions, activeSessionId, setActiveSession, removeSession, updateSession } = useSessionStore()
   const { configs, groups, sections, addConfig, updateConfig, removeConfig, addGroup, renameGroup, removeGroup, toggleGroupCollapsed, moveConfigToGroup, addSection, renameSection, removeSection, toggleSectionCollapsed, moveGroupToSection, moveConfigToSection, togglePinned, duplicateConfig, reorderConfigs } = useConfigStore()
   const appMeta = useAppMetaStore((s) => s.meta)
@@ -478,7 +480,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
     return (
       <aside
         className="w-12 flex flex-col border-r border-surface0 shrink-0 select-none titlebar-no-drag transition-[width] duration-200"
-        style={{ background: 'var(--surface-panel)', boxShadow: 'var(--shadow-panel), var(--highlight-inset)' }}
+        style={{ background: 'var(--surface-panel)', boxShadow: 'var(--shadow-panel), var(--highlight-inset)', ...sideType }}
       >
         <SidebarNav
           currentView={currentView}
@@ -542,7 +544,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
   return (
     <aside
       className="w-64 flex flex-col border-r border-surface0 shrink-0 select-none titlebar-no-drag relative transition-[width] duration-200"
-      style={{ background: 'var(--surface-panel)', boxShadow: 'var(--shadow-panel), var(--highlight-inset)' }}
+      style={{ background: 'var(--surface-panel)', boxShadow: 'var(--shadow-panel), var(--highlight-inset)', ...sideType }}
     >
       {/* Navigation */}
       <SidebarNav

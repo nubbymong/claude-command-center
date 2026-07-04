@@ -4,6 +4,7 @@ import NotesBar from './NotesBar'
 import TipPill from './TipPill'
 import { resolveIdentityColor, bucketLegacyColorToKey } from '../../shared/identity-colors'
 import { useResolvedTheme } from '../hooks/useThemeController'
+import { useRegionTypography } from '../hooks/useTypography'
 
 interface Props {
   session: Session
@@ -12,13 +13,14 @@ interface Props {
 
 export default function SessionHeader({ session, onShowTip }: Props) {
   const theme = useResolvedTheme()
+  const headerType = useRegionTypography('header')
   // Resolve identity per-theme (like every other migrated surface) so the accent
   // theme-shifts and a pre-migration reserved hue never leaks through.
   const identity = resolveIdentityColor(session.identityColorKey ?? bucketLegacyColorToKey(session.color), theme)
   return (
     <div
       className="flex items-center gap-3 px-4 py-2 border-b shrink-0 relative"
-      style={{ background: 'var(--surface-panel)', borderColor: 'var(--border-subtle)' }}
+      style={{ background: 'var(--surface-panel)', borderColor: 'var(--border-subtle)', ...headerType }}
     >
       {/* Session-color accent line that fades out toward the right --
           the gradient stops before fully transparent at ~70% so the
