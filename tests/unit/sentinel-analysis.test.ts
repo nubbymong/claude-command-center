@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildAnalysisPrompt, parseAnalysisOutput, runAnalysis } from '../../src/main/sentinel/sentinel-analysis'
+import { buildAnalysisPrompt, parseAnalysisOutput, runAnalysis, analysisFailureMessage } from '../../src/main/sentinel/sentinel-analysis'
 
 const goodJson = JSON.stringify({ findings: [{
   kind: 'compat', severity: 'high', title: 'Hooks schema changed',
@@ -56,9 +56,35 @@ describe('runAnalysis', () => {
     expect(seenArgs).toContain('-p'); expect(seenArgs).toContain('--output-format')
     expect(seenStdin).toContain('CHANGELOG-MARKER')
   })
-  it('non-zero exit on both attempts -> failure with stderr context', async () => {
+  it('non-zero exit on both attempts -> failure with a calm, degraded message', async () => {
     const runner = async () => ({ code: 1, stdout: '', stderr: 'not logged in' })
     const r = await runAnalysis({ runner, changelog: 'x', manifestJson: '[]', registryJson: '{}', from: '1', to: '2' })
     expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error).toMatch(/deterministic checks still ran/i)
+  })
+  it('timeout degrades to a calm message that never leaks raw stderr', async () => {
+    const runner = async () => ({ code: 1, stdout: '', stderr: '\nTimed out after 180s' })
+    const r = await runAnalysis({ runner, changelog: 'x', manifestJson: '[]', registryJson: '{}', from: '1', to: '2' })
+    expect(r.ok).toBe(false)
+    if (!r.ok) {
+      expect(r.error).not.toMatch(/Timed out after/i)
+      expect(r.error).not.toContain('180')
+    }
+  })
+})
+
+describe('analysisFailureMessage', () => {
+  it('timeout -> calm wording, hints at rate limit, points to Re-run, no raw stderr', () => {
+    const m = analysisFailureMessage('\nTimed out after 180s')
+    expect(m).toMatch(/in time/i)
+    expect(m).toMatch(/rate limited/i)
+    expect(m).toMatch(/Re-run/)
+    expect(m).not.toMatch(/Timed out after/i)
+  })
+  it('other failure -> calm generic wording', () => {
+    const m = analysisFailureMessage('not logged in')
+    expect(m).toMatch(/could not complete/i)
+    expect(m).toMatch(/deterministic checks still ran/i)
+    expect(m).not.toContain('not logged in')
   })
 })

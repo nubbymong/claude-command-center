@@ -272,7 +272,7 @@ export default function SentinelPanel() {
           )}
           {!hasAny && !snap?.analyzing && snap?.lastAnalysisError && (
             <p className="text-xs text-overlay0 py-4 text-center">
-              The last analysis did not complete — no verdict yet. Use Re-run to try again.
+              The last analysis did not complete. No verdict yet, and the deterministic checks still ran. Use Re-run to try again.
             </p>
           )}
           {!hasAny && !snap?.analyzing && !snap?.lastAnalysisError && (

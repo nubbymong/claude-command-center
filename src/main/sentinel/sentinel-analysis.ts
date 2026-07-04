@@ -80,6 +80,20 @@ export function parseAnalysisOutput(stdout: string, from: string, to: string): S
 
 export type HeadlessRunner = (args: string[], timeoutMs: number, stdin?: string) => Promise<{ code: number; stdout: string; stderr: string }>
 
+// Graceful-degrade copy for a failed AI pass. The deterministic min-version
+// findings run separately (and are shown regardless), so a failed AI analysis
+// is a soft, retryable condition, not an error. Keep it calm and human: never
+// surface raw stderr / "Timed out after 180s" to the user (that detail is in the
+// main-process logs). A timeout most often means the signed-in account is busy
+// or rate limited, so the message hints at that and points to Re-run.
+export function analysisFailureMessage(stderr: string): string {
+  const timedOut = /timed out after/i.test(stderr)
+  const base = timedOut
+    ? 'AI analysis could not finish in time this run. This usually means the signed-in account is busy or rate limited, or the update was large.'
+    : 'AI analysis could not complete this run.'
+  return `${base} The deterministic checks still ran. Use Re-run to try again.`
+}
+
 export async function runAnalysis(opts: {
   runner: HeadlessRunner; changelog: string; manifestJson: string; registryJson: string; from: string; to: string
 }): Promise<{ ok: true; findings: SentinelFinding[] } | { ok: false; error: string }> {
@@ -94,5 +108,5 @@ export async function runAnalysis(opts: {
       if (findings) return { ok: true, findings }
     }
   }
-  return { ok: false, error: `analysis produced no valid output after retry${lastStderr ? `: ${lastStderr.slice(0, 200)}` : ''}` }
+  return { ok: false, error: analysisFailureMessage(lastStderr) }
 }
