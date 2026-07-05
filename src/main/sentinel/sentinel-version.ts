@@ -43,13 +43,15 @@ export function compareSemver(a: string, b: string): number {
 }
 
 /**
- * Evaluate minCcVersion guards from the assumption manifest against the
- * currently installed Claude Code version. Returns one compat SentinelFinding
- * per entry whose minCcVersion exceeds ccVersion.
+ * Deterministic backstop (severe-breaking-only): the BREAKING subset of the
+ * manifest's minCcVersion guards -- entries marked severity 'high' whose
+ * minCcVersion exceeds the installed Claude Code version. So a known-breaking
+ * version floor still alerts even when the AI pass is unavailable. Non-breaking
+ * (info/warn) guards no longer surface.
  */
 export function minVersionFindings(ccVersion: string, manifest: ManifestEntry[]): SentinelFinding[] {
   return manifest
-    .filter((e) => e.minCcVersion && compareSemver(ccVersion, e.minCcVersion) < 0)
+    .filter((e) => e.severity === 'high' && e.minCcVersion && compareSemver(ccVersion, e.minCcVersion) < 0)
     .map((e) => ({
       id: `minver:${e.id}`,
       kind: 'compat' as const,

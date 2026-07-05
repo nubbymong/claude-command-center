@@ -13,33 +13,26 @@ beforeEach(() => {
 })
 afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }) })
 
-describe('sentinel observe (Trigger A)', () => {
+// Severe-breaking-only (spec 2026-07-04): Trigger A no longer raises findings.
+// Unknown model / effort observations are housekeeping, not breaking changes,
+// so the observer is a safe no-op and never accumulates findings.
+describe('sentinel observe (Trigger A) — no-op under severe-breaking-only', () => {
   it('known model -> no finding', () => {
     observe({ kind: 'model', value: 'claude-opus-4-8-20260601', source: 'statusline' })
     expect(state.snapshot().findings).toHaveLength(0)
   })
-  it('known display name -> no finding (resolver handles display forms)', () => {
-    observe({ kind: 'model', value: 'Opus 4.7 (1M context)', source: 'statusline' })
+  it('unknown model -> no finding (registry-proposal findings cut)', () => {
+    observe({ kind: 'model', value: 'claude-vision-2', source: 'statusline' })
     expect(state.snapshot().findings).toHaveLength(0)
   })
-  it('unknown model -> registry-proposal finding with drafted overlay entry', () => {
-    observe({ kind: 'model', value: 'claude-vision-2', source: 'statusline' })
-    const f = state.snapshot().findings[0]
-    expect(f.kind).toBe('registry-proposal')
-    expect(f.proposedPatch!.id).toBe('claude-vision-2')
-    expect(f.proposedPatch!.provenance.addedBy).toBe('sentinel')
-    expect(f.proposedPatch!.family).toBe('vision')
-  })
-  it('repeat observations dedup to one finding', () => {
-    observe({ kind: 'model', value: 'claude-vision-2', source: 'statusline' })
-    observe({ kind: 'model', value: 'claude-vision-2', source: 'statusline' })
-    expect(state.snapshot().findings).toHaveLength(1)
-  })
-  it('unknown effort -> info finding (no dead Apply: overlay has no effort schema)', () => {
+  it('unknown effort -> no finding (info findings cut)', () => {
     observe({ kind: 'effort', value: 'theoretical', source: 'hooks' })
-    const f = state.snapshot().findings[0]
-    expect(f.title).toContain('theoretical')
-    expect(f.kind).toBe('info')
-    expect(f.proposedPatch).toBeUndefined()
+    expect(state.snapshot().findings).toHaveLength(0)
+  })
+  it('repeated observations never accumulate findings', () => {
+    observe({ kind: 'model', value: 'claude-vision-2', source: 'statusline' })
+    observe({ kind: 'model', value: 'claude-vision-2', source: 'statusline' })
+    observe({ kind: 'effort', value: 'theoretical', source: 'hooks' })
+    expect(state.snapshot().findings).toHaveLength(0)
   })
 })

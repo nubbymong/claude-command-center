@@ -1,70 +1,53 @@
 /**
- * Pure helpers for the CCC Sentinel panel: section selection + plain-text
- * rendering of findings so the panel can offer "Copy" (the modal had no way to
- * get the report text out). Kept pure + framework-free so it is unit-tested
- * without rendering, and so the panel and the copy buttons share ONE definition
- * of "what is shown" — copy output can never drift from the rendered report.
- * No default export (project convention).
+ * Pure helpers for the CCC Sentinel panel (severe-breaking-only): the open
+ * breaking findings + plain-text rendering, so the panel's Copy buttons and the
+ * rendered list share ONE definition of what is shown (copy can never drift from
+ * the rendered report). Kept pure + framework-free so it is unit-tested without
+ * rendering. No default export (project convention).
  */
 import type { SentinelFinding, SentinelStateSnapshot } from '../../../shared/sentinel-types'
 
-export interface SentinelSections {
-  proposals: SentinelFinding[]
-  compatFindings: SentinelFinding[]
-  applied: SentinelFinding[]
+const SURFACE_LABEL: Record<number, string> = {
+  1: 'session launch',
+  2: 'terminal embedding',
+  3: 'statusline hook',
+  4: 'config & account files',
+}
+
+/** Human label for a breaking finding's CCC surface (1-4), or null. */
+export function surfaceLabel(surface?: number): string | null {
+  return surface != null ? (SURFACE_LABEL[surface] ?? null) : null
 }
 
 /**
- * Partition a snapshot's findings the same way SentinelPanel renders them:
- *   - proposals     = open registry-proposal findings
- *   - compatFindings = open compat/info findings
- *   - applied       = findings with status 'applied'
- * dismissed/muted are excluded. A null snapshot yields empty sections.
+ * The open severe-breaking findings the panel lists. Both the AI pass and the
+ * deterministic backstop produce kind 'compat'; dismissed/muted are excluded and
+ * any legacy info / registry-proposal findings are filtered out. Null snap -> [].
  */
-export function selectSentinelSections(snap: SentinelStateSnapshot | null): SentinelSections {
-  const findings = snap?.findings ?? []
-  return {
-    proposals: findings.filter((f) => f.kind === 'registry-proposal' && f.status === 'open'),
-    compatFindings: findings.filter((f) => (f.kind === 'compat' || f.kind === 'info') && f.status === 'open'),
-    applied: findings.filter((f) => f.status === 'applied'),
-  }
+export function selectBreakingFindings(snap: SentinelStateSnapshot | null): SentinelFinding[] {
+  return (snap?.findings ?? []).filter((f) => f.kind === 'compat' && f.status === 'open')
 }
 
-/** One finding as copyable plain text: a severity/title head line, the evidence,
- *  and (for proposals) the proposed patch JSON. */
+/** One finding as copyable plain text: title (+ surface), what breaks, evidence. */
 export function formatFindingText(finding: SentinelFinding): string {
-  const head = `[${finding.severity.toUpperCase()}] ${finding.title}${finding.affectedFeature ? ` (${finding.affectedFeature})` : ''}`
-  const lines = [head]
+  const sfc = surfaceLabel(finding.surface)
+  const lines = [`[BREAKING] ${finding.title}${sfc ? ` (${sfc})` : ''}`]
+  if (finding.badgeText) lines.push(finding.badgeText)   // whatBreaks
   if (finding.evidence) lines.push(finding.evidence)
-  if (finding.proposedPatch) lines.push(JSON.stringify(finding.proposedPatch, null, 2))
   return lines.join('\n')
 }
 
-/** The whole report as copyable plain text — header + only the non-empty
- *  sections, mirroring what the panel shows. */
+/** The whole report as copyable plain text: header + each breaking change, or a
+ *  clean all-clear line. */
 export function formatSentinelReportText(snap: SentinelStateSnapshot | null): string {
-  const { proposals, compatFindings, applied } = selectSentinelSections(snap)
+  const breaking = selectBreakingFindings(snap)
   const version = snap?.lastSeenCcVersion ?? 'unknown'
   const when = snap?.lastAnalysisAt ? new Date(snap.lastAnalysisAt).toISOString() : 'no analysis yet'
-
-  const out: string[] = ['CCC Sentinel — Compatibility Report', `CC ${version} · ${when}`, '']
-
-  if (proposals.length > 0) {
-    out.push('## Proposed fixes')
-    for (const f of proposals) out.push(formatFindingText(f), '')
+  const out: string[] = ['CCC Sentinel: Breaking Changes', `CC ${version} · ${when}`, '']
+  if (breaking.length === 0) {
+    out.push(`No breaking changes. Claude Code ${version} is compatible.`)
+  } else {
+    for (const f of breaking) out.push(formatFindingText(f), '')
   }
-  if (compatFindings.length > 0) {
-    out.push('## Compatibility report')
-    for (const f of compatFindings) out.push(formatFindingText(f), '')
-  }
-  if (applied.length > 0) {
-    out.push('## Applied')
-    for (const f of applied) out.push(`- ${f.title}`)
-    out.push('')
-  }
-  if (proposals.length === 0 && compatFindings.length === 0 && applied.length === 0) {
-    out.push('No findings — Claude Code and CCC look compatible.')
-  }
-
   return out.join('\n').trim() + '\n'
 }

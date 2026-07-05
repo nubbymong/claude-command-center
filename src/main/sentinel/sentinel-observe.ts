@@ -1,7 +1,6 @@
 // Trigger A (spec §5): deterministic unknown-model/effort detector. Free, no
 // AI. Drafts a registry-proposal finding awaiting user Apply (action level B).
 import type { ModelRegistry, OverlayModelEntry } from '../../shared/model-registry'
-import { resolveModelInfo } from '../../shared/model-registry'
 import type { SentinelState } from './sentinel-state'
 
 export interface Observation { kind: 'model' | 'effort'; value: string; source: string }
@@ -34,31 +33,12 @@ export function draftProposal(registry: ModelRegistry, modelId: string): Overlay
 }
 
 export function makeObserver(state: SentinelState, getRegistry: () => ModelRegistry) {
-  return function observe(obs: Observation): void {
-    try {
-      if (!obs.value || typeof obs.value !== 'string') return
-      const registry = getRegistry()
-      if (obs.kind === 'model') {
-        if (resolveModelInfo(registry, obs.value).known) return
-        state.upsertFinding({
-          id: `obs:model:${obs.value}`, kind: 'registry-proposal', severity: 'warn',
-          title: `Unknown model: ${obs.value}`,
-          evidence: `Observed via ${obs.source}; not matched by the model registry.`,
-          proposedPatch: draftProposal(registry, obs.value),
-          status: 'open', createdAt: Date.now(),
-        })
-      } else {
-        if (registry.effortLevels.some((l) => l.value === obs.value)) return
-        // 'info' (not registry-proposal): RegistryOverlay has no effort schema,
-        // so there's nothing to Apply. Render it in the Compatibility report,
-        // not under "Proposed fixes" with a dead Apply button.
-        state.upsertFinding({
-          id: `obs:effort:${obs.value}`, kind: 'info', severity: 'info',
-          title: `Unknown effort level: ${obs.value}`,
-          evidence: `Observed via ${obs.source}; not in the registry's effortLevels.`,
-          status: 'open', createdAt: Date.now(),
-        })
-      }
-    } catch { /* observation must never break the caller (fail-open) */ }
-  }
+  // Severe-breaking-only (spec 2026-07-04): unknown model / effort observations
+  // are housekeeping, not breaking changes, so Sentinel no longer raises findings
+  // for them. The registry overlay still auto-reconciles on CCC update
+  // (reconcileOnUpdate); this observer is now a safe no-op kept for the Trigger A
+  // call sites (effort-tracker / statusline-watcher). guessFamily/draftProposal
+  // stay exported for the registry tooling.
+  void state; void getRegistry
+  return function observe(_obs: Observation): void { /* no-op: findings cut */ }
 }

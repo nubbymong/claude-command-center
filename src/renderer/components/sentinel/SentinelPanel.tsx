@@ -1,14 +1,12 @@
 import React, { useState } from 'react'
 import { useSentinelStore } from '../../stores/sentinelStore'
 import type { SentinelFinding } from '../../../shared/sentinel-types'
-import { findingReachesUser } from '../../../shared/sentinel-reachability'
-import { selectSentinelSections, formatFindingText, formatSentinelReportText } from './sentinel-report-text'
+import { selectBreakingFindings, surfaceLabel, formatFindingText, formatSentinelReportText } from './sentinel-report-text'
 
 // ── Copy-to-clipboard button ──────────────────────────────────────────────────
-// The report modal previously had no way to get its text out. getText is a thunk
-// so the (possibly large) report string is only built on click. Clipboard access
-// can reject when the window isn't focused or OS policy blocks it — swallow so
-// the click never surfaces as an unhandled rejection; the user can still read it.
+// getText is a thunk so the (possibly large) report string is only built on
+// click. Clipboard access can reject when the window isn't focused or OS policy
+// blocks it — swallow so the click never surfaces as an unhandled rejection.
 
 function CopyButton({
   getText,
@@ -45,102 +43,23 @@ function CopyButton({
   )
 }
 
-// ── Per-row apply error state ─────────────────────────────────────────────────
+// ── One severe breaking change ────────────────────────────────────────────────
+// Every finding here is, by construction, a severe break (the AI pass and the
+// deterministic backstop both emit kind 'compat'/'high'), so there is one flat
+// list — no severity chips, no info/warn wall, no proposed-fix apply flow.
 
-function SeverityChip({
-  severity,
-  muted,
-}: {
-  severity: SentinelFinding['severity']
-  // When the finding doesn't reach the user's setup, the chip is greyed
-  // regardless of the AI's severity so the panel matches the calm dot.
-  muted?: boolean
-}) {
-  const cls = muted
-    ? 'bg-overlay0/20 text-overlay1'
-    : severity === 'high'
-    ? 'bg-red/15 text-red'
-    : severity === 'warn'
-    ? 'bg-yellow/15 text-yellow'
-    : 'bg-overlay0/20 text-overlay1'
-  return (
-    <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${cls}`}>
-      {severity}
-    </span>
-  )
-}
-
-function ProposalRow({ finding }: { finding: SentinelFinding }) {
-  const [applyError, setApplyError] = useState<string | null>(null)
-  const [applying, setApplying] = useState(false)
-
-  const handleApply = async () => {
-    setApplyError(null)
-    setApplying(true)
-    try {
-      const r = await window.electronAPI.sentinel.apply(finding.id)
-      if (!r.ok) setApplyError(r.error ?? 'Apply failed')
-    } finally {
-      setApplying(false)
-    }
-  }
-
-  const handleDismiss = () => {
-    void window.electronAPI.sentinel.setStatus(finding.id, 'dismissed')
-  }
-
-  return (
-    <div className="py-2.5 border-b border-surface1/50 last:border-0">
-      <div className="flex items-start justify-between gap-2">
-        <span className="text-xs font-medium text-text">{finding.title}</span>
-        <div className="flex gap-1.5 shrink-0">
-          <CopyButton getText={() => formatFindingText(finding)} title="Copy this finding" />
-          <button
-            onClick={handleApply}
-            disabled={applying}
-            className="px-2 py-0.5 text-[11px] rounded bg-blue/15 text-blue hover:bg-blue/25 transition-colors disabled:opacity-50"
-          >
-            {applying ? 'Applying…' : 'Apply'}
-          </button>
-          <button
-            onClick={handleDismiss}
-            className="px-2 py-0.5 text-[11px] rounded bg-surface1/60 text-overlay1 hover:bg-surface2/60 transition-colors"
-          >
-            Dismiss
-          </button>
-        </div>
-      </div>
-      <p className="text-[11px] text-overlay0 mt-0.5 truncate">{finding.evidence}</p>
-      {finding.proposedPatch && (
-        <pre className="mt-1.5 max-h-40 overflow-auto rounded bg-crust/60 border border-surface0/60 p-2 text-[10px] text-subtext0 font-mono leading-relaxed">
-          {JSON.stringify(finding.proposedPatch, null, 2)}
-        </pre>
-      )}
-      {applyError && (
-        <p className="mt-1 text-[11px] text-red">{applyError}</p>
-      )}
-    </div>
-  )
-}
-
-function CompatRow({ finding }: { finding: SentinelFinding }) {
+function BreakingRow({ finding }: { finding: SentinelFinding }) {
   const handleMute = () => {
     void window.electronAPI.sentinel.setStatus(finding.id, 'muted')
   }
-
-  // Does this change actually reach the user's CCC? Drives both the (muted)
-  // severity chip and the explanatory tag, so the panel reads the same as the
-  // dot: a flagged-but-inert change is visibly de-emphasised, not alarming.
-  const reaches = findingReachesUser(finding)
+  const sfc = surfaceLabel(finding.surface)
 
   return (
     <div className="py-2.5 border-b border-surface1/50 last:border-0">
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
-          <SeverityChip severity={finding.severity} muted={!reaches} />
-          <span className={`text-xs font-medium truncate ${reaches ? 'text-text' : 'text-subtext0'}`}>
-            {finding.title}
-          </span>
+          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-red/15 text-red shrink-0">breaking</span>
+          <span className="text-xs font-medium text-text truncate">{finding.title}</span>
         </div>
         <div className="flex gap-1.5 shrink-0">
           <CopyButton getText={() => formatFindingText(finding)} title="Copy this finding" />
@@ -152,39 +71,15 @@ function CompatRow({ finding }: { finding: SentinelFinding }) {
           </button>
         </div>
       </div>
-      <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
-        {finding.affectedFeature && (
+      {finding.badgeText && <p className="text-[11px] text-subtext0 mt-1">{finding.badgeText}</p>}
+      <div className="flex items-center gap-1.5 flex-wrap mt-1">
+        {sfc && (
           <span className="inline-block text-[10px] px-1.5 py-px rounded bg-surface1/60 text-overlay1">
-            {finding.affectedFeature}
-          </span>
-        )}
-        {!reaches && (
-          <span className="inline-block text-[10px] px-1.5 py-px rounded bg-overlay0/15 text-overlay1">
-            doesn&apos;t affect your setup
+            {sfc}
           </span>
         )}
       </div>
-      <p className="text-[11px] text-overlay0 mt-0.5">{finding.evidence}</p>
-    </div>
-  )
-}
-
-function AppliedRow({ finding }: { finding: SentinelFinding }) {
-  const handleRevert = () => {
-    void window.electronAPI.sentinel.revert(finding.id)
-  }
-
-  return (
-    <div className="py-2.5 border-b border-surface1/50 last:border-0">
-      <div className="flex items-start justify-between gap-2">
-        <span className="text-xs text-subtext0">{finding.title}</span>
-        <button
-          onClick={handleRevert}
-          className="px-2 py-0.5 text-[11px] rounded bg-surface1/60 text-overlay1 hover:bg-red/15 hover:text-red transition-colors shrink-0"
-        >
-          Revert
-        </button>
-      </div>
+      <p className="text-[11px] text-overlay0 mt-1">{finding.evidence}</p>
     </div>
   )
 }
@@ -198,20 +93,19 @@ export default function SentinelPanel() {
 
   if (!panelOpen) return null
 
-  const { proposals, compatFindings, applied } = selectSentinelSections(snap)
-  const hasAny = proposals.length > 0 || compatFindings.length > 0 || applied.length > 0
-
+  const breaking = selectBreakingFindings(snap)
+  const version = snap?.lastSeenCcVersion ?? 'unknown'
   const subtitleDate = snap?.lastAnalysisAt
     ? new Date(snap.lastAnalysisAt).toLocaleString()
     : 'no analysis yet'
-  const subtitle = `CC ${snap?.lastSeenCcVersion ?? 'unknown'} · ${snap?.analyzing ? 'analyzing…' : subtitleDate}`
+  const subtitle = `CC ${version} · ${snap?.analyzing ? 'analyzing…' : subtitleDate}`
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
       role="dialog"
       aria-modal="true"
-      aria-label="CCC Sentinel findings"
+      aria-label="CCC Sentinel"
       onClick={(e) => { if (e.target === e.currentTarget) setPanelOpen(false) }}
     >
       <div
@@ -225,7 +119,7 @@ export default function SentinelPanel() {
             <p className="text-[11px] text-overlay0 mt-0.5">{subtitle}</p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
-            {hasAny && (
+            {breaking.length > 0 && (
               <CopyButton
                 getText={() => formatSentinelReportText(snap)}
                 label="Copy"
@@ -254,67 +148,60 @@ export default function SentinelPanel() {
           </div>
         </div>
 
-        {/* Error banner */}
+        {/* Calm degrade banner: a failed/timed-out AI pass, never raw stderr. */}
         {snap?.lastAnalysisError && (
           <div className="mx-5 mt-3 px-3 py-2 rounded-lg bg-yellow/10 border border-yellow/30 text-[11px] text-yellow shrink-0">
             {snap.lastAnalysisError}
           </div>
         )}
 
-        {/* Body. Three honest empty states: in-progress, failed, clean. The old
-            single "looks compatible" line rendered DURING analysis and next to
-            a failure banner — both read as a finished green verdict. */}
-        <div className="flex-1 overflow-y-auto px-5 py-3 space-y-4">
-          {!hasAny && snap?.analyzing && (
-            <p className="text-xs text-overlay0 py-4 text-center">
+        {/* Body: one honest state at a time. Never a green "compatible" verdict
+            while analyzing or after a failed run (the AI didn't get to say). */}
+        <div className="flex-1 overflow-y-auto px-5 py-3">
+          {breaking.length === 0 && snap?.analyzing && (
+            <p className="text-xs text-overlay0 py-6 text-center">
               Analyzing the Claude Code update… this can take a few minutes.
             </p>
           )}
-          {!hasAny && !snap?.analyzing && snap?.lastAnalysisError && (
-            <p className="text-xs text-overlay0 py-4 text-center">
-              The last analysis did not complete. No verdict yet, and the deterministic checks still ran. Use Re-run to try again.
-            </p>
-          )}
-          {!hasAny && !snap?.analyzing && !snap?.lastAnalysisError && (
-            <p className="text-xs text-overlay0 py-4 text-center">
-              No findings — Claude Code and CCC look compatible.
+
+          {breaking.length === 0 && !snap?.analyzing && snap?.lastAnalysisError && (
+            <p className="text-xs text-overlay0 py-6 text-center">
+              The last analysis did not complete. No verdict yet; the deterministic checks still ran. Use Re-run to try again.
             </p>
           )}
 
-          {proposals.length > 0 && (
-            <section>
-              <h3 className="text-[11px] font-semibold text-overlay1 uppercase tracking-wide mb-1">
-                Proposed fixes
-              </h3>
-              <div className="rounded-lg border border-surface1/60 bg-crust/30 px-3">
-                {proposals.map((f) => (
-                  <ProposalRow key={f.id} finding={f} />
-                ))}
-              </div>
-            </section>
+          {breaking.length === 0 && !snap?.analyzing && !snap?.lastAnalysisError && (
+            <div className="py-8 text-center">
+              <svg
+                width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                className="text-green mx-auto mb-2"
+              >
+                <path d="M20 6 9 17l-5-5" />
+              </svg>
+              <p className="text-sm font-medium text-text">No breaking changes</p>
+              <p className="text-xs text-overlay0 mt-0.5">Claude Code {version} is compatible with CCC.</p>
+            </div>
           )}
 
-          {compatFindings.length > 0 && (
+          {breaking.length > 0 && (
             <section>
-              <h3 className="text-[11px] font-semibold text-overlay1 uppercase tracking-wide mb-1">
-                Compatibility report
-              </h3>
-              <div className="rounded-lg border border-surface1/60 bg-crust/30 px-3">
-                {compatFindings.map((f) => (
-                  <CompatRow key={f.id} finding={f} />
-                ))}
+              <div className="flex items-center gap-1.5 mb-2">
+                <svg
+                  width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-red shrink-0"
+                >
+                  <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                  <line x1="12" y1="9" x2="12" y2="13" />
+                  <line x1="12" y1="17" x2="12.01" y2="17" />
+                </svg>
+                <h3 className="text-xs font-semibold text-red">
+                  {breaking.length} severe breaking change{breaking.length === 1 ? '' : 's'}
+                </h3>
               </div>
-            </section>
-          )}
-
-          {applied.length > 0 && (
-            <section>
-              <h3 className="text-[11px] font-semibold text-overlay1 uppercase tracking-wide mb-1">
-                Applied
-              </h3>
-              <div className="rounded-lg border border-surface1/60 bg-crust/30 px-3">
-                {applied.map((f) => (
-                  <AppliedRow key={f.id} finding={f} />
+              <div className="rounded-lg border border-red/30 bg-crust/30 px-3">
+                {breaking.map((f) => (
+                  <BreakingRow key={f.id} finding={f} />
                 ))}
               </div>
             </section>

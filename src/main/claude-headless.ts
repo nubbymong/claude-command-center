@@ -34,7 +34,8 @@ export function spawnClaudeHeadless(
   args: string[],
   timeoutMs = 600000,
   stdinData?: string,
-  home: string | null = null
+  home: string | null = null,
+  signal?: AbortSignal
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
     logInfo(`[claude-headless] Spawning: claude ${args.join(' ')}${stdinData ? ' (with stdin)' : ''}${home ? ' (account home)' : ''}`)
@@ -63,6 +64,21 @@ export function spawnClaudeHeadless(
         resolve({ code: 1, stdout, stderr: stderr + '\nTimed out after ' + (timeoutMs / 1000) + 's' })
       }
     }, timeoutMs)
+
+    // External cancel (Sentinel disable / re-run / account change): kill the
+    // whole tree like the timeout path. shell:true makes proc the cmd.exe pid, so
+    // a plain proc.kill() would orphan the real claude; killHeadlessTree taskkills
+    // the tree by pid.
+    const onAbort = () => {
+      if (resolved) return
+      resolved = true
+      clearTimeout(timeout)
+      logInfo('[claude-headless] Aborted; killing process tree')
+      killHeadlessTree(proc)
+      resolve({ code: 1, stdout, stderr: stderr + '\nAborted' })
+    }
+    if (signal?.aborted) onAbort()
+    else signal?.addEventListener('abort', onAbort, { once: true })
 
     proc.stdout?.on('data', (data) => { stdout += data.toString() })
     proc.stderr?.on('data', (data) => { stderr += data.toString() })

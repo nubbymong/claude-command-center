@@ -1,53 +1,42 @@
-// AI half of Trigger B (spec §5): one self-contained claude -p call, strict
-// zod-validated JSON out, one retry, 3-minute cap. Proposals only — Apply is
-// the sole writer, and only to the overlay (spec §7).
+// AI half of Trigger B: one self-contained claude -p call, strict zod-validated
+// JSON out, one retry, 3-minute cap. Severe-breaking-changes-only (spec
+// 2026-07-04): the prompt is a LEAN ~2KB (changelog slice + CCC's 4-item
+// breaking surface), which also removes the large-stdin hang that stalled the
+// old ~21KB manifest prompt (anthropics/claude-code#7263).
 import { z } from 'zod'
 import type { SentinelFinding } from '../../shared/sentinel-types'
 
-const FindingSchema = z.object({
-  kind: z.enum(['registry-proposal', 'compat', 'info']),
-  severity: z.enum(['info', 'warn', 'high']),
-  title: z.string().min(1).max(200),
-  evidence: z.string().min(1).max(2000),
-  affectedFeature: z.string().max(50).optional(),
-  badgeText: z.string().max(200).optional(),
-  proposedPatch: z.object({
-    id: z.string().min(1), patterns: z.array(z.string()).min(1), family: z.string().min(1),
-    label: z.string().min(1),
-    fallbackPricing: z.object({ input: z.number().positive(), output: z.number().positive(),
-      cacheRead: z.number().nonnegative(), cacheWrite: z.number().nonnegative() }).optional(),
-    efforts: z.array(z.string()).optional(),
-  }).optional(),
-})
-const OutputSchema = z.object({ findings: z.array(FindingSchema).max(30) })
+// The only things that, if CC changes them, actually stop CCC working. The AI
+// checks the changelog against ONLY these four surfaces.
+const CCC_BREAKING_SURFACE = [
+  '1. Session launch — how `claude` is spawned (CLI flags, env vars, PATH, install layout). Break = CCC sessions will not start.',
+  '2. Terminal embedding — mouse modes, clickable UI, alternate-screen, OSC/escape sequences; CCC renders claude inside xterm.js. Break = the session renders garbled or unusable.',
+  '3. Statusline hook — the statusLine settings/hook contract CCC installs to read session telemetry. Break = telemetry / rate-limit readouts die.',
+  '4. Config & account files — the shape of ~/.claude/settings.json and ~/.claude.json that CCC multi-account isolation and hook install depend on. Break = multi-account or hooks break.',
+].join('\n')
 
-export function buildAnalysisPrompt(changelog: string, manifestJson: string, registryJson: string): string {
+const BreakingChangeSchema = z.object({
+  title: z.string().min(1).max(200),
+  evidence: z.string().min(1).max(2000),   // exact changelog line(s), quoted
+  surface: z.number().int().min(1).max(4),
+  whatBreaks: z.string().min(1).max(400),
+})
+const OutputSchema = z.object({ breakingChanges: z.array(BreakingChangeSchema).max(5) })
+
+export function buildAnalysisPrompt(changelog: string): string {
   return [
-    'You are CCC Sentinel, analyzing a Claude Code (CC) update for impact on Claude Command Center (CCC).',
-    'Below: (1) the CC changelog entries for this update, (2) CCC\'s assumption manifest — the contracts CCC',
-    'relies on, each with failureMode and whether it is configFixable, (3) CCC\'s current model registry.',
+    'You are CCC Sentinel. Claude Command Center (CCC) is a desktop app that runs the Claude Code (CC) CLI inside embedded terminals.',
+    'Read the CC changelog below and report ONLY changes that would SEVERELY BREAK CCC — stop it working — by hitting one of these four surfaces:',
+    CCC_BREAKING_SURFACE,
     '',
-    'TASK: identify which manifest contracts the changelog plausibly threatens, and any new models/efforts',
-    'mentioned. Output STRICT JSON only — no markdown, no prose: {"findings": [...]} where each finding is',
-    '{"kind": "registry-proposal"|"compat"|"info", "severity": "info"|"warn"|"high", "title": "...",',
-    ' "evidence": "<exact changelog line(s) quoted>", "affectedFeature": "<manifest affectedFeature>",',
-    ' "badgeText": "<one user-facing sentence>", "proposedPatch": {<only for registry-proposal: id, patterns,',
-    ' family, label, fallbackPricing?, efforts?>}}.',
-    'Rules: evidence MUST quote the changelog verbatim. Do not invent contracts not in the manifest.',
-    'EXCEPTION (terminal-interaction watch): CCC embeds CC inside xterm.js, so ALSO emit an "info" finding',
-    'for any changelog entry that changes how CC interacts with the HOST TERMINAL itself — mouse modes or',
-    'clickable UI elements, keyboard protocols, alternate screen / rendering, OSC or escape-sequence use —',
-    'even when no manifest contract names it. These additive changes historically reach CCC users (e.g. the',
-    '2.1.195 clickable question options misfired in xterm before CCC gated them).',
-    'Only registry-proposal findings get proposedPatch. If nothing is threatened, return {"findings": []}.',
-    'Severity: reserve "warn"/"high" for changes that threaten a contract CCC ACTIVELY relies on AND that can',
-    'reach an INDIVIDUAL (non-managed) account — CCC\'s default user. Grade as "info" (not warn/high):',
-    'enterprise/managed-settings-only changes, and changes to mechanisms CCC does not use (e.g. model-redirect',
-    'env vars CCC never sets). When unsure whether CCC actually depends on the changed behavior, prefer "info".',
+    'Ignore everything else: new features, new models, model/pricing housekeeping, performance, cosmetic or informational changes, and anything that only affects enterprise / managed-settings installs. A change is NOT breaking just because it is new.',
     '',
-    '--- CHANGELOG ---', changelog,
-    '--- ASSUMPTION MANIFEST ---', manifestJson,
-    '--- MODEL REGISTRY ---', registryJson,
+    'Output STRICT JSON only — no markdown, no prose: {"breakingChanges": [ ... ]} where each item is',
+    '{"title": "<short>", "evidence": "<exact changelog line(s), quoted verbatim>", "surface": <1-4>, "whatBreaks": "<one sentence: what stops working in CCC>"}.',
+    'Quote the changelog verbatim in evidence. List at most 5. If nothing severely breaks CCC, return {"breakingChanges": []}.',
+    '',
+    '--- CHANGELOG ---',
+    changelog,
   ].join('\n')
 }
 
@@ -67,25 +56,32 @@ function unwrapPayload(stdout: string): string {
 export function parseAnalysisOutput(stdout: string, from: string, to: string): SentinelFinding[] | null {
   try {
     const parsed = OutputSchema.parse(JSON.parse(unwrapPayload(stdout)))
-    return parsed.findings.map((f, i) => ({
-      ...f,
-      proposedPatch: f.proposedPatch
-        ? { ...f.proposedPatch, provenance: { addedBy: 'sentinel' as const, date: new Date().toISOString().slice(0, 10), ccVersion: to } }
-        : undefined,
-      id: `cc:${to}:${i}`, status: 'open' as const, createdAt: Date.now(),
-      ccVersionFrom: from, ccVersionTo: to,
+    // Every breaking change is a high-severity compat finding (the panel has one
+    // list now). whatBreaks rides in badgeText; surface tags which contract broke.
+    return parsed.breakingChanges.map((b, i) => ({
+      id: `cc:${to}:${i}`,
+      kind: 'compat' as const,
+      severity: 'high' as const,
+      title: b.title,
+      evidence: b.evidence,
+      badgeText: b.whatBreaks,
+      surface: b.surface,
+      status: 'open' as const,
+      createdAt: Date.now(),
+      ccVersionFrom: from,
+      ccVersionTo: to,
     }))
   } catch { return null }
 }
 
 export type HeadlessRunner = (args: string[], timeoutMs: number, stdin?: string) => Promise<{ code: number; stdout: string; stderr: string }>
 
-// Graceful-degrade copy for a failed AI pass. The deterministic min-version
-// findings run separately (and are shown regardless), so a failed AI analysis
-// is a soft, retryable condition, not an error. Keep it calm and human: never
-// surface raw stderr / "Timed out after 180s" to the user (that detail is in the
-// main-process logs). A timeout most often means the signed-in account is busy
-// or rate limited, so the message hints at that and points to Re-run.
+// Graceful-degrade copy for a failed AI pass. The deterministic backstop runs
+// separately (and is shown regardless), so a failed AI analysis is a soft,
+// retryable condition, not an error. Keep it calm and human: never surface raw
+// stderr / "Timed out after 180s" to the user (that detail is in the logs). A
+// timeout most often means the signed-in account is busy or rate limited, so the
+// message hints at that and points to Re-run.
 export function analysisFailureMessage(stderr: string): string {
   const timedOut = /timed out after/i.test(stderr)
   const base = timedOut
@@ -95,13 +91,13 @@ export function analysisFailureMessage(stderr: string): string {
 }
 
 export async function runAnalysis(opts: {
-  runner: HeadlessRunner; changelog: string; manifestJson: string; registryJson: string; from: string; to: string
+  runner: HeadlessRunner; changelog: string; from: string; to: string
 }): Promise<{ ok: true; findings: SentinelFinding[] } | { ok: false; error: string }> {
-  const prompt = buildAnalysisPrompt(opts.changelog, opts.manifestJson, opts.registryJson)
+  const prompt = buildAnalysisPrompt(opts.changelog)
   const args = ['-p', '--model', 'sonnet', '--output-format', 'json']
   let lastStderr = ''
   for (let attempt = 0; attempt < 2; attempt++) {
-    const res = await opts.runner(args, 180000, prompt)        // 3-minute cap (spec §5)
+    const res = await opts.runner(args, 180000, prompt)          // 3-minute cap
     lastStderr = res.stderr
     if (res.code === 0) {
       const findings = parseAnalysisOutput(res.stdout, opts.from, opts.to)

@@ -14,6 +14,8 @@ import { logInfo } from '../debug-logger'
 const manifest = manifestJson as unknown as ManifestEntry[]
 let state: SentinelState | null = null
 let observer: ((obs: Observation) => void) | null = null
+// The in-flight AI analysis, so a new run or a disable can abort it (kill tree).
+let currentAnalysis: AbortController | null = null
 
 export function initSentinel(resourcesDir: string): SentinelState {
   state = new SentinelState(resourcesDir)
@@ -23,27 +25,15 @@ export function initSentinel(resourcesDir: string): SentinelState {
 export function getSentinelState(): SentinelState | null { return state }
 export function sentinelObserve(obs: Observation): void { observer?.(obs) }
 
-/** First launch after a CCC update: retire overlay entries the new baseline covers (spec §4). */
+/** First launch after a CCC update: retire overlay entries the new baseline
+ *  covers. Housekeeping only — severe-breaking-only Sentinel no longer raises
+ *  user-facing findings for registry reconciliation. */
 export function reconcileOnUpdate(): void {
   if (!state) return
   const overlay = loadOverlay()
   if (!overlay?.models?.length) return
   const r = reconcileOverlay(getBaseline(), overlay)
-  if (r.autoRetired.length) {
-    setOverlay(r.overlay)
-    for (const m of r.autoRetired) state.upsertFinding({
-      id: `retired:${m.id}`, kind: 'info', severity: 'info',
-      title: `Registry amendment retired: ${m.id}`,
-      evidence: 'This CCC release ships its own entry for this model; your Sentinel amendment was removed.',
-      status: 'open', createdAt: Date.now(),
-    })
-  }
-  for (const m of r.retireProposals) state.upsertFinding({
-    id: `retire-proposal:${m.id}`, kind: 'info', severity: 'info',
-    title: `Your custom entry for ${m.id} may be superseded`,
-    evidence: 'This CCC release ships an entry for this model id; your user-authored amendment still wins. Revert it from Applied if you prefer the shipped one.',
-    status: 'open', createdAt: Date.now(),
-  })
+  if (r.autoRetired.length) setOverlay(r.overlay)
 }
 
 // Lazy: claude-headless imports the pty-manager graph (which reaches electron.app
@@ -92,26 +82,29 @@ export async function sentinelStartupCheck(): Promise<void> {
 
 async function analyzeVersionChange(last: string, version: string): Promise<void> {
   if (!state) return
+  // A new run supersedes any in-flight one (kills its process tree) so a stale
+  // analysis can't finish late and clobber state or leave `analyzing` stuck.
+  currentAnalysis?.abort()
+  const ac = new AbortController()
+  currentAnalysis = ac
   state.setAnalyzing(true)
   const md = await fetchChangelog()
   if (!md) {
-    state.setAnalyzing(false, 'changelog unavailable — retry from the Sentinel panel')
-    state.upsertFinding({
-      id: `cc:${version}:unavailable`, kind: 'info', severity: 'info',
-      title: `Claude Code updated ${last} → ${version} — analysis unavailable (offline?)`,
-      evidence: 'Changelog fetch failed. Use Re-run in the Sentinel panel.',
-      status: 'open', createdAt: Date.now(),
-    })
+    // Analysis-unavailable is the degraded state, shown as a calm note -- not a
+    // finding. Findings are reserved for actual severe breaking changes now.
+    if (currentAnalysis === ac) currentAnalysis = null
+    state.setAnalyzing(false, 'Changelog unavailable (offline?). Use Re-run in the Sentinel panel.')
     return
   }
   const { spawnClaudeHeadless } = await headlessRunner()
   const home = await analysisHome()
   const result = await runAnalysis({
-    runner: (args, t, stdin) => spawnClaudeHeadless(args, t, stdin, home),
+    runner: (args, t, stdin) => spawnClaudeHeadless(args, t, stdin, home, ac.signal),
     changelog: sliceChangelog(md, last, version),
-    manifestJson: JSON.stringify(manifest), registryJson: JSON.stringify(getRegistry()),
     from: last, to: version,
   })
+  if (currentAnalysis === ac) currentAnalysis = null
+  if (ac.signal.aborted) return                        // superseded / cancelled: drop the result
   if (result.ok) {
     for (const f of result.findings) state.upsertFinding(f)
     state.setLastSeenCcVersion(version)
@@ -140,6 +133,15 @@ export async function sentinelRerun(): Promise<void> {
   } catch (err) {
     state?.setAnalyzing(false, (err as Error).message)
   }
+}
+
+/** Abort any in-flight analysis (kills its process tree) and clear `analyzing`.
+ *  Wire to Sentinel-disable / analysis-account-change so a slow run can't linger.
+ *  Safe to call when nothing is running. */
+export function sentinelCancel(): void {
+  currentAnalysis?.abort()
+  currentAnalysis = null
+  state?.setAnalyzing(false)
 }
 
 export function sentinelApply(findingId: string): { ok: boolean; error?: string } {
