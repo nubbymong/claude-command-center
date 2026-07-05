@@ -400,6 +400,18 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
                     <span className="block text-[10px] text-overlay0">Claude Code 2.1.195+ renders its multiple-choice questions as clickable targets. Off by default: stray clicks in the terminal could select an answer, so answers stay keyboard-only (type the option number or arrow + Enter); wheel scroll is unaffected. Applies to newly-launched sessions.</span>
                   </span>
                 </label>
+                <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer mt-2">
+                  <input
+                    type="checkbox"
+                    checked={settings.disableBackgroundTasks !== false}
+                    onChange={(e) => save({ disableBackgroundTasks: e.target.checked })}
+                    className="mt-0.5 rounded border-surface1"
+                  />
+                  <span>
+                    Disable background tasks
+                    <span className="block text-[10px] text-overlay0">Stops a stray Ctrl+B (or /bg) from detaching a session into a background agent and stranding your conversation. On by default. Turn off only if you deliberately use Claude Code background agents. Applies to newly-launched sessions.</span>
+                  </span>
+                </label>
                 <p className="text-[11px] text-overlay0 mt-2 leading-relaxed">
                   Terminal settings apply to new terminals. Restart sessions for changes to take effect.
                 </p>
@@ -670,14 +682,46 @@ function StatusLineTab({
 
 /* ── Dynamic usage-bucket toggles ────────────────────── */
 
-// Renders one toggle per usage bucket CURRENTLY reported by the API (discovered
-// via a live fetch), so the list always matches what Anthropic tracks — Fable
-// today, a new per-model bucket the moment they add one, none removed by hand.
-// Choices persist as a denylist (hiddenUsageBuckets by label): a bucket not in
-// the list shows by default; hiding one remembers it even if it disappears and
-// returns. No release is needed when the set of buckets changes.
+// Stable empty ref so an absent denylist selector doesn't spin a fresh array
+// each render (re-render cascade guard).
+const EMPTY_BUCKET_HIDDEN: string[] = []
+
+// One toggle per usage bucket CURRENTLY reported by the API (discovered via a
+// live fetch), so the list always matches what Anthropic tracks — Fable today, a
+// new per-model bucket the moment they add one, none removed by hand. Choices
+// persist as a denylist by label: a bucket not listed shows by default; hiding
+// one remembers it even if it disappears and returns. No release is needed when
+// the set of buckets changes. Two independent scopes share the one discovery
+// fetch: the per-session status line (hiddenUsageBuckets) and the multi-account
+// footer (footerHiddenUsageBuckets).
+function BucketToggleCard({ title, subtitle, labels, hidden, onToggle }: {
+  title: string
+  subtitle: string
+  labels: string[]
+  hidden: string[]
+  onToggle: (label: string) => void
+}): React.ReactElement {
+  return (
+    <div className="rounded-xl bg-surface0/30 border border-surface0/60 overflow-hidden">
+      <div className="px-4 py-2.5 border-b border-surface0/40">
+        <h3 className="text-xs font-semibold text-subtext0 uppercase tracking-wider">{title}</h3>
+        <p className="text-[11px] text-overlay0 mt-0.5">{subtitle}</p>
+      </div>
+      <div className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-2">
+        {labels.map((label) => (
+          <div key={label} className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-surface0/30 transition-colors">
+            <Toggle on={!hidden.includes(label)} onClick={() => onToggle(label)} label={label} />
+            <div className="text-sm text-text leading-tight">{label}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function UsageBucketToggles(): React.ReactElement | null {
-  const hidden = useSettingsStore((s) => s.settings.hiddenUsageBuckets) ?? []
+  const hidden = useSettingsStore((s) => s.settings.hiddenUsageBuckets) ?? EMPTY_BUCKET_HIDDEN
+  const footerHidden = useSettingsStore((s) => s.settings.footerHiddenUsageBuckets) ?? EMPTY_BUCKET_HIDDEN
   const [labels, setLabels] = React.useState<string[] | null>(null)
 
   React.useEffect(() => {
@@ -693,11 +737,11 @@ function UsageBucketToggles(): React.ReactElement | null {
     return () => { cancelled = true }
   }, [])
 
-  const setHidden = (next: string[]) => {
-    void useSettingsStore.getState().updateSettings({ hiddenUsageBuckets: next })
-  }
-  const toggle = (label: string) => {
-    setHidden(hidden.includes(label) ? hidden.filter((l) => l !== label) : [...hidden, label])
+  const toggle = (cur: string[], scope: 'session' | 'footer', label: string) => {
+    const next = cur.includes(label) ? cur.filter((l) => l !== label) : [...cur, label]
+    void useSettingsStore.getState().updateSettings(
+      scope === 'footer' ? { footerHiddenUsageBuckets: next } : { hiddenUsageBuckets: next },
+    )
   }
 
   if (labels === null) {
@@ -715,19 +759,21 @@ function UsageBucketToggles(): React.ReactElement | null {
     )
   }
   return (
-    <div className="rounded-xl bg-surface0/30 border border-surface0/60 overflow-hidden">
-      <div className="px-4 py-2.5 border-b border-surface0/40">
-        <h3 className="text-xs font-semibold text-subtext0 uppercase tracking-wider">Which usage bars</h3>
-        <p className="text-[11px] text-overlay0 mt-0.5">Discovered from your account, so this list follows whatever Anthropic tracks.</p>
-      </div>
-      <div className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-2">
-        {labels.map((label) => (
-          <div key={label} className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-surface0/30 transition-colors">
-            <Toggle on={!hidden.includes(label)} onClick={() => toggle(label)} label={label} />
-            <div className="text-sm text-text leading-tight">{label}</div>
-          </div>
-        ))}
-      </div>
+    <div className="space-y-3">
+      <BucketToggleCard
+        title="Which usage bars"
+        subtitle="Shown on each session's status line. Discovered from your account, so this list follows whatever Anthropic tracks."
+        labels={labels}
+        hidden={hidden}
+        onToggle={(l) => toggle(hidden, 'session', l)}
+      />
+      <BucketToggleCard
+        title="Multi-account footer bars"
+        subtitle="Shown in the bottom footer when 2 or more accounts are live, independent of the per-session bars above (e.g. keep only Fable here to narrow the strip)."
+        labels={labels}
+        hidden={footerHidden}
+        onToggle={(l) => toggle(footerHidden, 'footer', l)}
+      />
     </div>
   )
 }

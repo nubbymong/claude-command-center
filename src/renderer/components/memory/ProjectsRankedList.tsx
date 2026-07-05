@@ -49,7 +49,7 @@ export function ProjectsRankedList({ projects, liveCounts, onSelect }: Props) {
                 onMouseEnter={() => setHoveredId(p.projectDir)}
                 onMouseLeave={() => setHoveredId(null)}
               >
-                <div className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1.8fr)_auto_auto_auto] items-center gap-3">
+                <div className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1.8fr)_3rem_4rem_5.5rem_auto] items-center gap-3">
                   {/* 1. Name */}
                   <span
                     className="text-xs font-medium truncate"
@@ -61,54 +61,56 @@ export function ProjectsRankedList({ projects, liveCounts, onSelect }: Props) {
                     {p.name}
                   </span>
 
-                  {/* 2. Bar + count */}
-                  <div className="flex items-center gap-2">
+                  {/* 2. Bar */}
+                  <div
+                    className="h-1.5 rounded-sm overflow-hidden"
+                    style={{ background: 'var(--surface-stage)' }}
+                  >
                     <div
-                      className="flex-1 h-1.5 rounded-sm overflow-hidden"
-                      style={{ background: 'var(--surface-stage)' }}
-                    >
-                      <div
-                        style={{
-                          width: `${pct}%`,
-                          background: 'var(--accent)',
-                          height: '100%',
-                        }}
-                      />
-                    </div>
-                    <span
-                      className="text-[11px] font-mono"
-                      style={{ color: 'var(--text-secondary)' }}
-                    >
-                      {p.fileCount}
-                    </span>
+                      style={{
+                        width: `${pct}%`,
+                        background: 'var(--accent)',
+                        height: '100%',
+                      }}
+                    />
                   </div>
 
-                  {/* 3. Size */}
-                  <span className="text-[10px] font-mono text-overlay0">
+                  {/* 3. Count (own right-aligned column so counts line up row-to-row) */}
+                  <span
+                    className="text-[11px] font-mono text-right tabular-nums"
+                    style={{ color: 'var(--text-secondary)' }}
+                  >
+                    {p.fileCount}
+                  </span>
+
+                  {/* 4. Size */}
+                  <span className="text-[10px] font-mono text-overlay0 text-right tabular-nums">
                     {fmt(p.totalSize)}
                   </span>
 
-                  {/* 4. Staleness */}
-                  <div className="flex items-center gap-1 text-[10px] text-overlay0">
+                  {/* 5. Staleness (fixed track; warning compacted to a single icon
+                       so the column width never shifts with the line count) */}
+                  <div className="flex items-center gap-1 text-[10px] text-overlay0 min-w-0">
                     <span
-                      className={`w-1.5 h-1.5 rounded-full ${staleClass(p.lastModified)}`}
+                      className={`w-1.5 h-1.5 rounded-full shrink-0 ${staleClass(p.lastModified)}`}
                       style={{ boxShadow: staleShadow(p.lastModified) }}
                     />
-                    {fmtRel(p.lastModified)}
+                    <span className="truncate">{fmtRel(p.lastModified)}</span>
                     {p.memoryMdLines != null && p.memoryMdLines > 200 && (
                       <span
-                        title="MEMORY.md over the 200-line load limit"
+                        className="shrink-0"
+                        title={`MEMORY.md is ${p.memoryMdLines} lines, over the 200-line load limit`}
                         style={{ color: 'var(--status-warning)' }}
                       >
-                        {String.fromCodePoint(0x26a0)} index {p.memoryMdLines} !
+                        {String.fromCodePoint(0x26a0)}
                       </span>
                     )}
                   </div>
 
-                  {/* 5. Live chip */}
+                  {/* 6. Live chip */}
                   {liveCount > 0 ? (
                     <span
-                      className="text-[10px] px-1.5 py-0.5 rounded-full shrink-0"
+                      className="text-[10px] px-1.5 py-0.5 rounded-full shrink-0 justify-self-start"
                       style={{
                         background: 'color-mix(in srgb, var(--status-success) 18%, transparent)',
                         color: 'var(--status-success)',

@@ -1,15 +1,25 @@
 import React, { useEffect, useState, useCallback } from 'react'
-import { createPortal } from 'react-dom'
 import { useReauthAccount } from '../hooks/useReauthAccount'
 import { resolveAccountColourKey } from '../../shared/account-chip-color'
 import { resolveIdentityColor } from '../../shared/identity-colors'
 import { useResolvedTheme } from '../hooks/useThemeController'
 import { formatResetTime } from '../utils/terminalFormatting'
+import PageFrame from './PageFrame'
 import type { AccountUsage, UsageBucket } from '../../shared/usage-types'
 
-// All-accounts usage overview (person icon in the title bar, shown only with
-// 2+ accounts). Fetches each account's usage directly — no session needed —
-// and offers a per-card "Sign in" for accounts whose token has expired.
+const peopleIcon = (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="12" cy="8" r="3.25" />
+    <path d="M5.5 19.5c0-3.4 3-5.5 6.5-5.5s6.5 2.1 6.5 5.5" />
+  </svg>
+)
+
+// All-accounts usage overview. A full PageFrame view (reached from the nav-rail
+// person icon, shown only with 2+ accounts) rather than a slide-in right-bar, so
+// it matches Tokenomics/Memory and lives in the `panels` typography region --
+// which (with rem sizing below) lets Font & Size scale it. Fetches each account's
+// usage directly -- no session needed -- and offers a per-card "Sign in" for
+// accounts whose token has expired.
 export default function AccountUsagePanel({ onClose, onReauthNavigate }: {
   onClose: () => void
   /** Switch the app to the sessions view so the user sees the login shell. */
@@ -34,13 +44,6 @@ export default function AccountUsagePanel({ onClose, onReauthNavigate }: {
 
   useEffect(() => { void load() }, [load])
 
-  // Esc closes.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
-
   const refreshOne = useCallback(async (profileId: string) => {
     try {
       const one = await window.electronAPI.accountUsage.fetchOne(profileId)
@@ -54,42 +57,30 @@ export default function AccountUsagePanel({ onClose, onReauthNavigate }: {
     onClose()
   }
 
-  return createPortal(
-    <div className="fixed inset-0 z-[70] flex justify-end bg-black/40" onClick={onClose}>
-      <div
-        className="h-full w-[480px] max-w-[94vw] bg-mantle border-l border-surface0 shadow-2xl flex flex-col"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between px-5 py-3.5 border-b border-surface0 shrink-0">
-          <h3 className="text-base font-semibold text-text">Account usage</h3>
-          <div className="flex items-center gap-1">
-            <button
-              onClick={() => void load()}
-              className="text-[13px] px-2.5 py-1 rounded text-overlay1 hover:text-text hover:bg-surface0 transition-colors"
-              title="Refresh all"
-            >
-              Refresh
-            </button>
-            <button onClick={onClose} className="p-1 rounded text-overlay1 hover:text-text hover:bg-surface0 transition-colors" aria-label="Close">
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3"><line x1="3" y1="3" x2="11" y2="11" /><line x1="11" y1="3" x2="3" y2="11" /></svg>
-            </button>
-          </div>
-        </div>
+  const refreshAction = (
+    <button
+      onClick={() => void load()}
+      className="text-xs px-2 py-0.5 rounded text-overlay1 hover:text-text hover:bg-surface0 transition-colors"
+      title="Refresh all"
+    >
+      Refresh
+    </button>
+  )
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-3">
-          {loading && !rows && <p className="text-[13px] text-overlay0">Loading usage for all accounts…</p>}
-          {rows && rows.length === 0 && <p className="text-[13px] text-overlay0">No accounts found.</p>}
-          {rows?.map((row) => (
-            <AccountCard key={row.profileId} row={row} theme={theme} onSignIn={() => onSignIn(row)} />
-          ))}
-          <p className="text-[11px] text-overlay0 leading-relaxed pt-1">
-            Usage is read live from each account, no session required. An account whose sign-in has expired shows a
-            Sign in button; signing in refreshes only that account.
-          </p>
-        </div>
+  return (
+    <PageFrame title="Account usage" icon={peopleIcon} iconAccent="mauve" onClose={onClose} actions={refreshAction}>
+      <div className="max-w-3xl mx-auto p-4 space-y-3">
+        {loading && !rows && <p className="text-[0.8125rem] text-overlay0">Loading usage for all accounts…</p>}
+        {rows && rows.length === 0 && <p className="text-[0.8125rem] text-overlay0">No accounts found.</p>}
+        {rows?.map((row) => (
+          <AccountCard key={row.profileId} row={row} theme={theme} onSignIn={() => onSignIn(row)} />
+        ))}
+        <p className="text-[0.6875rem] text-overlay0 leading-relaxed pt-1">
+          Usage is read live from each account, no session required. An account whose sign-in has expired shows a
+          Sign in button; signing in refreshes only that account.
+        </p>
       </div>
-    </div>,
-    document.body,
+    </PageFrame>
   )
 }
 
@@ -100,13 +91,13 @@ function UsageBar({ bucket }: { bucket: UsageBucket }) {
   const color = clamped >= 90 ? 'var(--color-red)' : clamped >= 70 ? 'var(--color-peach)' : clamped >= 50 ? 'var(--color-yellow)' : 'var(--color-green)'
   return (
     <div className="flex items-center gap-2.5">
-      <span className="text-[13px] text-subtext0 shrink-0" style={{ minWidth: 58 }}>{bucket.label}</span>
+      <span className="text-[0.8125rem] text-subtext0 shrink-0" style={{ minWidth: '3.625rem' }}>{bucket.label}</span>
       <span className="flex-1 h-2 rounded-full bg-surface1 overflow-hidden" role="progressbar" aria-valuenow={clamped} aria-valuemin={0} aria-valuemax={100}>
         <span className="block h-full rounded-full transition-[width] duration-300" style={{ width: `${clamped}%`, backgroundColor: color }} />
       </span>
-      <span className="text-[13px] text-text tabular-nums shrink-0" style={{ minWidth: 40, textAlign: 'right' }}>{Math.round(clamped)}%</span>
+      <span className="text-[0.8125rem] text-text tabular-nums shrink-0" style={{ minWidth: '2.5rem', textAlign: 'right' }}>{Math.round(clamped)}%</span>
       {bucket.resetsAt && (
-        <span className="text-[12px] shrink-0" style={{ color: 'var(--text-muted)' }}>resets {formatResetTime(bucket.resetsAt)}</span>
+        <span className="text-[0.75rem] shrink-0" style={{ color: 'var(--text-muted)' }}>resets {formatResetTime(bucket.resetsAt)}</span>
       )}
     </div>
   )
@@ -128,15 +119,15 @@ function AccountCard({ row, theme, onSignIn }: { row: AccountUsage; theme: 'dark
       <div className="flex items-center gap-2 mb-2.5">
         <span className="w-2.5 h-2.5 rounded-[3px] shrink-0" style={{ backgroundColor: dot }} />
         {/* Full email, never truncated (accounts are distinct even when emails look similar). */}
-        <span className="text-[15px] text-text font-medium break-all">{row.email || row.name}</span>
-        {row.isPrimary && <span className="text-[10px] text-overlay0 border border-surface1 rounded-full px-1.5 py-px shrink-0">Primary</span>}
+        <span className="text-[0.9375rem] text-text font-medium break-all">{row.email || row.name}</span>
+        {row.isPrimary && <span className="text-[0.625rem] text-overlay0 border border-surface1 rounded-full px-1.5 py-px shrink-0">Primary</span>}
       </div>
 
       {row.status === 'ok' && row.buckets.length > 0 && (
         <div className="flex flex-col gap-2">
           {row.buckets.map((b) => <UsageBar key={b.key} bucket={b} />)}
           {row.credits && (
-            <div className="flex items-center justify-between text-[13px] mt-1 pt-2 border-t border-surface0/60">
+            <div className="flex items-center justify-between text-[0.8125rem] mt-1 pt-2 border-t border-surface0/60">
               <span className="text-overlay1">Credits</span>
               <span className={`tabular-nums ${row.credits.enabled ? 'text-text' : 'text-overlay1'}`}>{creditsText(row.credits)}</span>
             </div>
@@ -145,15 +136,15 @@ function AccountCard({ row, theme, onSignIn }: { row: AccountUsage; theme: 'dark
       )}
 
       {row.status === 'ok' && row.buckets.length === 0 && (
-        <p className="text-[13px] text-overlay0">No usage limits reported.</p>
+        <p className="text-[0.8125rem] text-overlay0">No usage limits reported.</p>
       )}
 
       {row.status === 'needs-login' && (
         <div className="flex items-center justify-between gap-2">
-          <span className="text-[13px] text-overlay0">{row.detail === 'session expired' ? 'Sign-in expired' : 'Not signed in'}</span>
+          <span className="text-[0.8125rem] text-overlay0">{row.detail === 'session expired' ? 'Sign-in expired' : 'Not signed in'}</span>
           <button
             onClick={onSignIn}
-            className="text-[13px] px-3 py-1.5 rounded-lg bg-blue text-crust font-medium hover:bg-blue/90 transition-colors shrink-0"
+            className="text-[0.8125rem] px-3 py-1.5 rounded-lg bg-blue text-crust font-medium hover:bg-blue/90 transition-colors shrink-0"
           >
             Sign in
           </button>
@@ -161,11 +152,11 @@ function AccountCard({ row, theme, onSignIn }: { row: AccountUsage; theme: 'dark
       )}
 
       {row.status === 'error' && (
-        <p className="text-[13px] text-overlay0">Couldn&apos;t load usage{row.detail ? ` (${row.detail})` : ''}.</p>
+        <p className="text-[0.8125rem] text-overlay0">Couldn&apos;t load usage{row.detail ? ` (${row.detail})` : ''}.</p>
       )}
 
       {row.status === 'ok' && (
-        <p className="text-[11px] text-overlay0 mt-2">Updated {relAgo(row.fetchedAt)}</p>
+        <p className="text-[0.6875rem] text-overlay0 mt-2">Updated {relAgo(row.fetchedAt)}</p>
       )}
     </div>
   )

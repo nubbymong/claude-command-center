@@ -555,10 +555,12 @@ export function spawnPty(
     // Clickable question options (CC >= 2.1.195) default OFF in CCC -- the
     // clickable layer misfires inside xterm.js. Read fresh per spawn so the
     // Settings toggle applies to the next session without a restart.
-    const clickableQuestions = readConfig<{ clickableQuestions?: boolean }>('settings')?.clickableQuestions === true
+    const spawnCfg = readConfig<{ clickableQuestions?: boolean; disableBackgroundTasks?: boolean }>('settings')
+    const clickableQuestions = spawnCfg?.clickableQuestions === true
     const claudeEnvPrefix = [
       options?.disableAutoMemory ? 'CLAUDE_CODE_DISABLE_AUTO_MEMORY=1' : '',
       clickableQuestions ? '' : 'CLAUDE_CODE_DISABLE_MOUSE_CLICKS=1',
+      spawnCfg?.disableBackgroundTasks !== false ? 'CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1' : '',
     ].filter(Boolean).join(' ')
     const claudeFlags = [
       // --settings loads per-session config so concurrent sessions to the same
@@ -960,10 +962,12 @@ export function spawnPty(
     // Read classicTerminalCopyPaste + theme fresh on every spawn (default true /
     // dark when absent). The theme drives COLORFGBG so Claude's startup theme
     // auto-detection matches CCC; 'system' follows the OS via nativeTheme.
-    const claudeSpawnSettings = readConfig<{ classicTerminalCopyPaste?: boolean; theme?: string; clickableQuestions?: boolean }>('settings')
+    const claudeSpawnSettings = readConfig<{ classicTerminalCopyPaste?: boolean; theme?: string; clickableQuestions?: boolean; disableBackgroundTasks?: boolean }>('settings')
     const classicTerminalCopyPaste = claudeSpawnSettings?.classicTerminalCopyPaste !== false
     // Clickable question options (CC >= 2.1.195) default OFF in CCC.
     const clickableQuestions = claudeSpawnSettings?.clickableQuestions === true
+    // Background tasks/agents disabled by default so a stray Ctrl+B / bg can't strand a session.
+    const disableBackgroundTasks = claudeSpawnSettings?.disableBackgroundTasks !== false
     const hostColorScheme = resolveHostColorScheme(
       claudeSpawnSettings?.theme,
       nativeTheme.shouldUseDarkColors,
@@ -983,6 +987,7 @@ export function spawnPty(
       agentsConfig: options?.agentsConfig,
       classicTerminalCopyPaste,
       clickableQuestions,
+      disableBackgroundTasks,
       hostColorScheme,
     })
     const wantProfileId = options?.profileId

@@ -78,7 +78,7 @@ export default function BottomBar({ currentView, onViewChange, onUpdateRequested
 
   return (
     <div
-      className="min-h-7 shrink-0 flex items-center gap-3 px-3 text-xs border-t"
+      className="min-h-7 shrink-0 flex items-center gap-3 px-3 text-xs border-t overflow-hidden"
       style={{ background: 'var(--surface-chrome)', color: 'var(--text-on-chrome)', borderColor: 'var(--border-subtle)', ...statusType }}
     >
       {/* Runtime band */}

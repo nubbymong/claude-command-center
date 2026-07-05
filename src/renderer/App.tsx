@@ -45,7 +45,7 @@ import { useMagicButtonStore } from './stores/magicButtonStore'
 import { useAppMetaStore } from './stores/appMetaStore'
 import { useSettingsStore } from './stores/settingsStore'
 import { OnboardingHarness } from './onboarding/OnboardingHarness'
-import { deriveOnboarding } from './onboarding/gate'
+import { deriveOnboarding, shouldReonboardForBeta } from './onboarding/gate'
 import { useAccountProfilesStore } from './stores/accountProfilesStore'
 import { useRegistryStore } from './stores/registryStore'
 import { useSentinelStore } from './stores/sentinelStore'
@@ -172,7 +172,6 @@ export default function App() {
   // One home for help (searchable guide + feature tour + Ask Claude); opened
   // by the sidebar ? button.
   const [showHelpPanel, setShowHelpPanel] = useState(false)
-  const [showAccountUsage, setShowAccountUsage] = useState(false)
   const [showTipModal, setShowTipModal] = useState(false)
   const [partnerActive, setPartnerActive] = useState<Set<string>>(new Set())
   const [showMachineNamePrompt, setShowMachineNamePrompt] = useState(false)
@@ -362,6 +361,17 @@ export default function App() {
 
     async function postConfigInit() {
       const appMeta = useAppMetaStore.getState().meta
+
+      // Beta line: re-fire the first-run tour on every app version so testers see
+      // the latest flow. Clearing completedSteps + onboardingCompletedVersion
+      // flips deriveOnboarding back to due (the harness re-runs); its finish step
+      // re-stamps onboardingAppVersion so it won't re-fire until the next version.
+      // First install runs via deriveOnboarding already; stable retriggers only on
+      // an ONBOARDING_VERSION bump (a major feature).
+      if (shouldReonboardForBeta(appMeta, __APP_VERSION__, useSettingsStore.getState().settings.updateChannel)) {
+        useAppMetaStore.getState().update({ completedSteps: {}, onboardingCompletedVersion: undefined })
+      }
+
       if (appMeta.setupVersion !== __APP_VERSION__) {
         const hasExistingConfig = useConfigStore.getState().configs.length > 0 ||
           useCommandStore.getState().commands.length > 0
@@ -667,6 +677,7 @@ export default function App() {
       onOpenSessionLogs={(sessionId) => { setPendingLogsSessionId(sessionId); setView('logs') }}
       onJumpToSession={(sessionId) => { useSessionStore.getState().setActiveSession(sessionId); setView('sessions') }}
     />
+    if (view === 'account-usage') return <AccountUsagePanel onClose={() => setView('sessions')} onReauthNavigate={() => setView('sessions')} />
     return null
   }
 
@@ -988,12 +999,6 @@ export default function App() {
             onShowSessions={() => setView('sessions')}
           />
         )}
-        {showAccountUsage && (
-          <AccountUsagePanel
-            onClose={() => setShowAccountUsage(false)}
-            onReauthNavigate={() => setView('sessions')}
-          />
-        )}
         {bootGate === 'githubOnboarding' && (
           <OnboardingModal
             onClose={dismissGitHubOnboarding}
@@ -1115,7 +1120,7 @@ export default function App() {
         )}
         <TitleBar sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
         <div className="flex flex-1 overflow-hidden">
-          <Sidebar currentView={view} onViewChange={setView} collapsed={!sidebarOpen} tourActive={showTraining || showTrainingAll} onShowFirstRun={() => setShowGuidedConfig(true)} onShowHelp={() => setShowHelpPanel(true)} onShowAccountUsage={() => setShowAccountUsage(true)} />
+          <Sidebar currentView={view} onViewChange={setView} collapsed={!sidebarOpen} tourActive={showTraining || showTrainingAll} onShowFirstRun={() => setShowGuidedConfig(true)} onShowHelp={() => setShowHelpPanel(true)} onShowAccountUsage={() => setView('account-usage')} />
           <main className="flex-1 flex flex-col overflow-hidden titlebar-no-drag">
             <div className="flex-1 flex flex-col overflow-hidden min-h-0 relative">
               {/* The live app is always what's behind — the first-config flow is

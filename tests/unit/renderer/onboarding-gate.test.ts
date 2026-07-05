@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { deriveOnboarding, type OnboardingMetaView } from '../../../src/renderer/onboarding/gate'
+import { deriveOnboarding, shouldReonboardForBeta, type OnboardingMetaView } from '../../../src/renderer/onboarding/gate'
 import { STEPS, ONBOARDING_VERSION } from '../../../src/renderer/onboarding/steps'
 import type { OnboardingStep } from '../../../src/renderer/onboarding/steps'
 
@@ -89,5 +89,32 @@ describe('deriveOnboarding', () => {
       if (due) expect(shown.length).toBeGreaterThan(0)      // due ⇒ non-empty
       expect(due && shown.length === 0).toBe(false)         // never a zero-step forced harness
     }
+  })
+})
+
+describe('shouldReonboardForBeta', () => {
+  // Someone who FINISHED onboarding at app version v (undefined = onboarded
+  // before the onboardingAppVersion field existed, e.g. a beta.2 install).
+  const done = (v?: string): OnboardingMetaView => ({ onboardingCompletedVersion: '2', onboardingAppVersion: v })
+  it('beta + finished on a different version -> re-fire', () => {
+    expect(shouldReonboardForBeta(done('2.0.0-beta.2'), '2.0.0-beta.3', 'beta')).toBe(true)
+  })
+  it('beta + finished before the field existed (undefined) -> re-fire on the first post-upgrade beta', () => {
+    expect(shouldReonboardForBeta(done(undefined), '2.0.0-beta.3', 'beta')).toBe(true)
+  })
+  it('beta + finished on the same version -> no re-fire', () => {
+    expect(shouldReonboardForBeta(done('2.0.0-beta.3'), '2.0.0-beta.3', 'beta')).toBe(false)
+  })
+  it('fresh install (never finished) -> false; deriveOnboarding runs the first flow', () => {
+    expect(shouldReonboardForBeta({}, '2.0.0-beta.3', 'beta')).toBe(false)
+  })
+  it('mid-flow crash-resume (partial steps, not finished) -> false', () => {
+    expect(shouldReonboardForBeta({ completedSteps: { welcome: '2.0.0-beta.2' } }, '2.0.0-beta.3', 'beta')).toBe(false)
+  })
+  it('stable never re-fires on version change (ONBOARDING_VERSION handles major features)', () => {
+    expect(shouldReonboardForBeta(done('2.0.0'), '2.0.1', 'stable')).toBe(false)
+  })
+  it('undefined channel -> false', () => {
+    expect(shouldReonboardForBeta(done('2.0.0-beta.2'), '2.0.0-beta.3', undefined)).toBe(false)
   })
 })

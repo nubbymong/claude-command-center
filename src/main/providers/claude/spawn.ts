@@ -113,6 +113,14 @@ export function buildClaudeLocalSpawn(opts: SpawnOptions): { cmd: string; args: 
     env.CLAUDE_CODE_DISABLE_MOUSE_CLICKS = '1'
   }
 
+  // CC background tasks / agents: a stray Ctrl+B (or /bg) detaches the running
+  // session into a background agent and strands the conversation (a beta tester
+  // lost sessions twice this way). Default-on protective: absent/true disables
+  // the feature so no keystroke can background a session. Set false to restore it.
+  if (opts.disableBackgroundTasks !== false) {
+    env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS = '1'
+  }
+
   // Claude session: spawn shell only; pty-manager writes the cd+claude command into the shell post-spawn.
   return { cmd: shell, args: shellArgs, env }
 }

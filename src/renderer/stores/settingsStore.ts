@@ -136,6 +136,11 @@ export interface AppSettings {
    *  default (not listed), a removed one's entry goes inert, and a hidden one
    *  is remembered if it returns. Absent/empty = show every discovered bucket. */
   hiddenUsageBuckets?: string[]
+  /** Like hiddenUsageBuckets but scoped to the multi-account BOTTOM footer
+   *  (MultiAccountStatusline), so the footer's bars are curated INDEPENDENTLY of
+   *  the per-session strip -- e.g. keep only Fable there to narrow the cluster.
+   *  Same denylist model (by label); absent/empty = show every discovered bucket. */
+  footerHiddenUsageBuckets?: string[]
   updateChannel: UpdateChannel
   showTips: boolean
   // Agent Hub first-run "How it works" banner: true once the user dismisses it.
@@ -196,6 +201,10 @@ export interface AppSettings {
    *  (wheel scroll unaffected) -- the clickable layer misfires inside xterm.
    *  Set true to restore CC's clickable prompts. New sessions only. */
   clickableQuestions?: boolean
+  /** v2.0.0-beta.3: disable Claude Code's background tasks/agents so a stray
+   *  Ctrl+B (or /bg) can't detach and strand a session. Default-on (absent/true
+   *  = disabled); set false to allow background agents. New sessions only. */
+  disableBackgroundTasks?: boolean
   /** Sentinel service (spec 2026-06-11): when not enabled, the service is not
    *  initialised at all — no startup check, no dot, zero overhead.
    *  OPT-IN (default-off): absent or false = disabled; only an explicit `true`

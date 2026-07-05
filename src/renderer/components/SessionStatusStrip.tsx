@@ -313,7 +313,7 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
                     style={{ backgroundColor: accountDot }}
                     aria-hidden
                   />
-                  <span className="truncate max-w-[10rem]">{accountName ?? 'Account'}</span>
+                  <span className="truncate max-w-[16rem]">{accountName ?? 'Account'}</span>
                 </span>
               </button>
               {openPicker === 'account' && (

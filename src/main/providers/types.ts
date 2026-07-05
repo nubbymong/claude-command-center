@@ -28,6 +28,11 @@ export interface SpawnOptions {
    *  CLAUDE_CODE_DISABLE_MOUSE_CLICKS=1 so answers stay keyboard-driven (wheel
    *  scroll unaffected). True preserves CC's clickable prompts. */
   clickableQuestions?: boolean
+  /** v2.0.0-beta.3: a stray Ctrl+B (or /bg) detaches the session into a Claude
+   *  Code background agent and strands the conversation (a beta tester hit this
+   *  twice in two days). Absent or true stamps CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1
+   *  so no keystroke can background a session; false restores CC's background feature. */
+  disableBackgroundTasks?: boolean
   /** Host (CCC) effective light/dark scheme, stamped into COLORFGBG so Claude
    *  Code's startup theme auto-detection matches the terminal. Resolved by the
    *  caller from AppSettings.theme + the OS preference. Absent = no COLORFGBG. */

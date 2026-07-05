@@ -18,6 +18,9 @@ export function settleOnboardingFinish(): void {
   useAppMetaStore.getState().update({
     completedSteps,
     onboardingCompletedVersion: ONBOARDING_VERSION,
+    // App version at completion: on the beta line the tour re-fires whenever this
+    // no longer matches __APP_VERSION__ (see shouldReonboardForBeta).
+    onboardingAppVersion: appVersion,
     // Stamp the tour + what's-new as already seen so their auto-triggers stay
     // dormant (the flow covered v2; the tour is still reachable via the Feature
     // Guide button on demand).

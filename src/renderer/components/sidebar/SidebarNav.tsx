@@ -247,11 +247,16 @@ export default function SidebarNav({ currentView, onViewChange, insightsStatus, 
   // shown only with 2+ accounts (never single-account or macOS).
   const hasMultipleAccounts = useAccountProfilesStore((s) => s.profiles.length >= 2)
 
+  // Active when its view is showing, so the rail highlights it like any nav item.
+  const accountUsageActive = currentView === 'account-usage'
   const accountUsageButton = onShowAccountUsage && hasMultipleAccounts ? (
     <button
       onClick={onShowAccountUsage}
       aria-label="Account usage"
-      className={`group ${collapsed ? 'w-10 h-10' : 'flex-1 py-2'} flex items-center justify-center rounded-lg transition-colors text-overlay0 hover:text-text hover:bg-surface0/50 focus-ring relative`}
+      className={`group ${collapsed ? 'w-10 h-10' : 'flex-1 py-2'} flex items-center justify-center rounded-lg transition-colors focus-ring relative ${
+        accountUsageActive ? 'bg-surface0 rail-active' : 'text-overlay0 hover:text-text hover:bg-surface0/50'
+      }`}
+      style={accountUsageActive ? { color: 'var(--accent)' } : undefined}
     >
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
         <circle cx="12" cy="8" r="3.25" />
