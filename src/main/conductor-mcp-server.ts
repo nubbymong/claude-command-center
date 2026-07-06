@@ -34,7 +34,7 @@ import { mimeForImage } from './clipboard-file'
 import { removeConductorVisionFromCodexConfig } from './providers/codex/mcp-config'
 import { getGlobalManager, startGlobalVision, launchBrowser } from './vision-manager'
 import type { VisionCommand, VisionResult } from './vision-manager'
-import { readConfig } from './config-manager'
+import { readConfig, saveConfig } from './config-manager'
 import { isPackagedApp } from './update-watcher'
 import { resolveCdpPort, CDP_PORT_PROD } from '../shared/cdp-ports'
 import type { GlobalVisionConfig } from '../shared/types'
@@ -88,17 +88,33 @@ export function parseCccSessionIdFromUrl(reqUrl: string): string | null {
 // including vision_eval (arbitrary JS in the embedded browser) -- plus
 // cross-session actions. Loopback is NOT an authorisation boundary: any
 // local process (or a malicious page in a browser the user opened) could
-// drive it. We mint a 32-byte random secret once per app launch and require
-// it on EVERY request. The secret never persists to disk on its own; it is
-// embedded into the MCP registration URLs CCC writes for Claude/Codex
-// (?token=<secret>) so legitimate sessions authenticate transparently.
-const conductorMcpSecret = crypto.randomBytes(32).toString('hex')
+// drive it, so we require a 32-byte secret on EVERY request, embedded into the
+// MCP registration URLs CCC writes for Claude/Codex (?token=<secret>) so
+// legitimate sessions authenticate transparently. The secret is PERSISTED once
+// (CONFIG/conductor-secret.json) and reused across launches: a live SSH session
+// bakes the token into its --mcp-config, so if a restart / crash-relaunch rotated
+// the secret, that still-running session's MCP would fail every request as "not
+// authenticated" (SSE closed) with no recovery but relaunching the session. It is
+// already effectively on disk (in each session's mcp-config), so central
+// persistence adds no new exposure; loopback remains not an auth boundary.
+let _conductorMcpSecret: string | null = null
+function loadOrCreateConductorMcpSecret(): string {
+  try {
+    const saved = readConfig<{ secret?: string }>('conductorSecret')
+    if (saved?.secret && /^[0-9a-f]{64}$/.test(saved.secret)) return saved.secret
+  } catch { /* fall through and mint a fresh one */ }
+  const secret = crypto.randomBytes(32).toString('hex')
+  try { saveConfig('conductorSecret', { secret }) } catch (err) { logWarn(`[conductor-mcp] could not persist auth secret: ${err}`) }
+  return secret
+}
 
-/** The per-launch MCP auth secret. Stable for the process lifetime. Consumed
- *  by every MCP-URL writer (global ~/.claude.json, per-session --mcp-config,
- *  SSH shim, Codex TOML) so registered sessions carry the token. */
+/** The MCP auth secret, persisted across launches (lazy so it loads AFTER the
+ *  resources dir is configured, not at module init). Consumed by every MCP-URL
+ *  writer (global ~/.claude.json, per-session --mcp-config, SSH shim, Codex TOML)
+ *  so registered sessions carry the token, plus the request auth gate + SSE transport. */
 export function getConductorMcpSecret(): string {
-  return conductorMcpSecret
+  if (_conductorMcpSecret === null) _conductorMcpSecret = loadOrCreateConductorMcpSecret()
+  return _conductorMcpSecret
 }
 
 /** Extract the presented token from either an `Authorization: Bearer <token>`
@@ -598,7 +614,7 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
       // headers on it. We deliberately gate /health too: it leaks vision
       // connection state + browser name + session count, none of which an
       // unauthenticated caller should see.
-      if (!isAuthorizedMcpRequest(req.url, req.headers['authorization'], conductorMcpSecret)) {
+      if (!isAuthorizedMcpRequest(req.url, req.headers['authorization'], getConductorMcpSecret())) {
         if (!authWarnedForPort.has(port)) {
           authWarnedForPort.add(port)
           const ua = req.headers['user-agent']
@@ -619,7 +635,7 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
         // does `new URL(endpoint).searchParams.set('sessionId', ...)`, which
         // PRESERVES our token param, so the client's follow-up POSTs arrive as
         // /messages?token=<secret>&sessionId=<sid> and clear the auth gate.
-        const transport = new SSEServerTransport(`/messages?token=${conductorMcpSecret}`, res)
+        const transport = new SSEServerTransport(`/messages?token=${getConductorMcpSecret()}`, res)
         transports.set(transport.sessionId, transport)
 
         res.on('close', () => {

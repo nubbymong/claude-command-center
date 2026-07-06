@@ -27,6 +27,7 @@ const CONFIG_FILES = {
   agentTeamRuns: 'agent-team-runs.json',
   accounts: 'accounts.json',
   visionGlobal: 'vision-global.json',
+  conductorSecret: 'conductor-secret.json',
   commandSections: 'command-sections.json',
   usageTracking: 'usage-tracking.json',
   commandBarUi: 'command-bar-ui.json',
