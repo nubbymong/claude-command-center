@@ -24,20 +24,31 @@ import { buildHooksBlock } from '../../hooks/session-hooks-writer'
 // smaller, zero-network, and survives token-format changes. Trade-off: stdin
 // doesn't expose `extra_usage`, so SSH statuslines no longer show the extra
 // top-up bar (local sessions still do). Re-add via API later if needed.
-// Fallback order for the OSC sentinel:
-//   1. /dev/tty — correct path. Bypasses Claude entirely; flows through the
-//      ssh PTY back to pty-manager.
-//   2. stderr — Claude captures stdout as the statusline text, so stdout is
-//      a dead-end (the sentinel gets displayed or stripped). stderr is NOT
-//      captured by Claude Code's statusline handler and, in a PTY context,
-//      travels back through the ssh PTY just like stdout would.
-//   3. Append a trace line to ~/.claude/conductor-shim.log on any failure
-//      path so we can diagnose "no statusline ever appeared" issues without
-//      guesswork. The log is capped via append-and-forget; grows slowly.
+// Fallback order for the OSC sentinel (first that succeeds wins):
+//   1. /dev/tty — the controlling terminal. Correct when it exists, but Claude
+//      runs the statusLine command as a DETACHED child (via `sh -c`), so that
+//      child has NO controlling terminal and this fails with ENXIO over SSH.
+//   2. Ancestor pts — walk the process tree for the /dev/pts/N slave that an
+//      ancestor (claude itself) holds on one of its fds, and write the sentinel
+//      to that device. Writing the pts slave sends bytes toward the master →
+//      sshd → local, i.e. it reaches the ssh PTY and the local OSC parser. This
+//      is the path that actually works over SSH. Linux-only (needs /proc).
+//   3. stderr — last resort. NOTE: over SSH, Claude captures the child's stderr
+//      on a pipe, so this typically does NOT reach the local PTY (that is why
+//      the pre-fix shim, which relied on it, never showed a statusline). Kept
+//      only for environments where the child's stderr is inherited.
+//   4. Append a trace line to ~/.claude/conductor-shim.log on every path
+//      (tty-fail / pts-ok / pts-fail / pts-none / stderr-fallback) so "no
+//      statusline ever appeared" stays diagnosable without guesswork. The log
+//      is capped via append-and-forget; grows slowly.
 const SSH_STATUSLINE_SHIM = `#!/usr/bin/env node
 const fs=require('fs'),os=require('os'),path=require('path');
 const logPath=path.join(os.homedir(),'.claude','conductor-shim.log');
 const trace=(m)=>{try{fs.appendFileSync(logPath,new Date().toISOString()+' '+m+'\\n');}catch{}};
+// Walk up the process tree to find the pty slave (/dev/pts/N) the SSH session
+// is attached to. The statusLine command runs as a detached child, so it has no
+// controlling terminal; an ancestor (claude) still holds the pts on an fd.
+const findPty=()=>{let pid=process.pid;for(let h=0;h<8&&pid>1;h++){for(const fd of[0,1,2]){try{const p=fs.readlinkSync('/proc/'+pid+'/fd/'+fd);if(p.indexOf('/dev/pts/')===0)return p;}catch{}}try{const st=fs.readFileSync('/proc/'+pid+'/stat','utf8');pid=parseInt(st.slice(st.lastIndexOf(')')+2).split(' ')[1],10);}catch{return null;}}return null;};
 let input='';
 process.stdin.setEncoding('utf8');
 process.stdin.on('data',c=>input+=c);
@@ -56,9 +67,10 @@ const iso=(t)=>typeof t==='number'?new Date(t*1000).toISOString():(t||'');
 if(rl.five_hour){s.rateLimitCurrent=Math.round(Number(rl.five_hour.used_percentage)||0);s.rateLimitCurrentResets=iso(rl.five_hour.resets_at);}
 if(rl.seven_day){s.rateLimitWeekly=Math.round(Number(rl.seven_day.used_percentage)||0);s.rateLimitWeeklyResets=iso(rl.seven_day.resets_at);}
 const sentinel='\\x1b]9999;CMSTATUS='+JSON.stringify(s)+'\\x07';
-let tty_ok=false;
-try{fs.writeFileSync('/dev/tty',sentinel);tty_ok=true;}catch(e){trace('tty-fail sid='+sid+' err='+(e&&e.code||e.message||'unknown'));}
-if(!tty_ok){try{process.stderr.write(sentinel);trace('stderr-fallback sid='+sid);}catch(e2){trace('stderr-fail sid='+sid+' err='+(e2&&e2.message||'unknown'));}}
+let ok=false;
+try{fs.writeFileSync('/dev/tty',sentinel);ok=true;}catch(e){trace('tty-fail sid='+sid+' err='+(e&&e.code||e.message||'unknown'));}
+if(!ok){const pts=findPty();if(pts){try{fs.writeFileSync(pts,sentinel);ok=true;trace('pts-ok sid='+sid+' dev='+pts);}catch(e2){trace('pts-fail sid='+sid+' dev='+pts+' err='+(e2&&e2.code||e2.message||'unknown'));}}else{trace('pts-none sid='+sid);}}
+if(!ok){try{process.stderr.write(sentinel);trace('stderr-fallback sid='+sid);}catch(e3){trace('stderr-fail sid='+sid+' err='+(e3&&e3.message||'unknown'));}}
 process.stdout.write(' ');
 }catch(e){trace('parse-fail err='+(e&&e.message||'unknown'));process.stdout.write(' ');}
 });
