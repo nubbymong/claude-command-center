@@ -30,13 +30,17 @@ function render(ui: React.ReactElement) {
   }
 }
 
+// A genuinely reaching finding (high severity, hits a CCC surface, not managed-only
+// or an unused-model env) so it survives selectBreakingFindings' reachability gate
+// and the panel actually renders it with its Copy buttons.
 const compat: SentinelFinding = {
   id: 'c1',
   kind: 'compat',
-  severity: 'warn',
-  title: 'enforceAvailableModels constrains --model flag resolution',
-  evidence: 'Added `enforceAvailableModels` managed setting',
-  affectedFeature: 'sessions',
+  severity: 'high',
+  title: 'Statusline stdin fields renamed',
+  evidence: 'model.id removed from the statusline JSON payload',
+  affectedFeature: 'statusline',
+  surface: 3,
   status: 'open',
   createdAt: 1,
 }
