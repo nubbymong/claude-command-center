@@ -15,12 +15,22 @@ import { buildClaudeLocalSpawn } from '../../../../src/main/providers/claude/spa
 
 const BASE_OPTS = { sessionId: 'ses-1', cwd: '/work', cols: 80, rows: 24 }
 
+// Clear every CLAUDE_CODE_DISABLE_* var buildClaudeLocalSpawn reads from
+// process.env, not just _CLICKS: a dev machine (or a CCC/Claude session running
+// the suite) commonly has CLAUDE_CODE_DISABLE_MOUSE / _ALTERNATE_SCREEN set,
+// and buildClaudeLocalSpawn spreads process.env, so an unset assertion would
+// false-fail from the ambient value. CI runs with a clean env; this keeps local
+// runs identical.
 beforeEach(() => {
   delete process.env.CLAUDE_CODE_DISABLE_MOUSE_CLICKS
+  delete process.env.CLAUDE_CODE_DISABLE_MOUSE
+  delete process.env.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN
 })
 
 afterEach(() => {
   delete process.env.CLAUDE_CODE_DISABLE_MOUSE_CLICKS
+  delete process.env.CLAUDE_CODE_DISABLE_MOUSE
+  delete process.env.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN
 })
 
 describe('buildClaudeLocalSpawn — CLAUDE_CODE_DISABLE_MOUSE_CLICKS', () => {
