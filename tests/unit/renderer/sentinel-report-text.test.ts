@@ -54,6 +54,20 @@ describe('selectBreakingFindings', () => {
     expect(selectBreakingFindings(snap({ findings })).map((f) => f.id)).toEqual(['b1', 'b2'])
   })
 
+  it('drops findings that do not reach this install: compat/info, managed-only, and unused model-env', () => {
+    // The exact shapes that leaked into the panel as "[BREAKING]" before the
+    // reachability gate: legacy info-severity compat findings, and warn findings
+    // about managed-only settings / ANTHROPIC_DEFAULT_*_MODEL env vars CCC never
+    // sets. Only the genuinely reaching high finding survives.
+    const findings: SentinelFinding[] = [
+      finding({ id: 'real', severity: 'high', title: 'Statusline stdin fields renamed', evidence: 'model.id removed from the statusline JSON' }),
+      finding({ id: 'ci', kind: 'compat', severity: 'info', title: 'New sandbox.credentials key', evidence: 'Added sandbox.credentials setting' }),
+      finding({ id: 'managed', kind: 'compat', severity: 'warn', title: 'enforceAvailableModels constrains --model', evidence: 'Added enforceAvailableModels managed setting' }),
+      finding({ id: 'env', kind: 'compat', severity: 'warn', title: 'ANTHROPIC_DEFAULT_*_MODEL blocked', evidence: 'alias picks can no longer be redirected via ANTHROPIC_DEFAULT_*_MODEL env vars' }),
+    ]
+    expect(selectBreakingFindings(snap({ findings })).map((f) => f.id)).toEqual(['real'])
+  })
+
   it('returns [] for a null snapshot', () => {
     expect(selectBreakingFindings(null)).toEqual([])
   })

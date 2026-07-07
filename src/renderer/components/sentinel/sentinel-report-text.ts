@@ -6,6 +6,7 @@
  * rendering. No default export (project convention).
  */
 import type { SentinelFinding, SentinelStateSnapshot } from '../../../shared/sentinel-types'
+import { findingReachesUser, type ReachabilityContext } from '../../../shared/sentinel-reachability'
 
 const SURFACE_LABEL: Record<number, string> = {
   1: 'session launch',
@@ -20,12 +21,20 @@ export function surfaceLabel(surface?: number): string | null {
 }
 
 /**
- * The open severe-breaking findings the panel lists. Both the AI pass and the
- * deterministic backstop produce kind 'compat'; dismissed/muted are excluded and
- * any legacy info / registry-proposal findings are filtered out. Null snap -> [].
+ * The open breaking findings the panel and the Copy report surface. A finding
+ * shows only when it is open AND actually reaches the user's install
+ * (`findingReachesUser`) -- the SAME gate the dot uses, so the panel can never
+ * again disagree with the dot. This drops dismissed/muted/applied, legacy
+ * info/registry-proposal findings, and -- the reason the panel used to cry wolf
+ * -- the info/warn "reviewed" changes the AI logged that don't touch CCC
+ * (managed-only settings like `enforceAvailableModels`, and the
+ * `ANTHROPIC_DEFAULT_*_MODEL` env vars CCC never sets). Null snap -> [].
  */
-export function selectBreakingFindings(snap: SentinelStateSnapshot | null): SentinelFinding[] {
-  return (snap?.findings ?? []).filter((f) => f.kind === 'compat' && f.status === 'open')
+export function selectBreakingFindings(
+  snap: SentinelStateSnapshot | null,
+  ctx: ReachabilityContext = {},
+): SentinelFinding[] {
+  return (snap?.findings ?? []).filter((f) => f.status === 'open' && findingReachesUser(f, ctx))
 }
 
 /** One finding as copyable plain text: title (+ surface), what breaks, evidence. */
