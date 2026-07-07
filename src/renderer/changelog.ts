@@ -15,6 +15,15 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '2.0.0-beta.5',
+    date: '2026-07-07',
+    highlights: 'Two SSH fixes: Conductor tools and the session status line both work again inside SSH sessions.',
+    changes: [
+      { type: 'fix', description: 'Conductor tools (host screenshot and browser vision) work in SSH sessions again. The reverse tunnel that carries them was connecting to the wrong loopback address on the host — the server listens on IPv4 while the tunnel was landing on IPv6 — so remote sessions saw the connection close immediately. It now targets the right address.' },
+      { type: 'fix', description: 'The session status line shows again in SSH sessions on Linux hosts (model, context, cost, and rate limits). Over SSH, Claude runs the status-line command without a terminal of its own, so the update was being dropped; it is now routed back through the session\'s terminal.' },
+    ],
+  },
+  {
     version: '2.0.0',
     date: '2026-07-02',
     highlights: 'Claude Command Center 2.0: a guided first-run setup, an in-app Ask Command Center guide, a modernized engine, and a privacy pass that keeps every Claude config write per-session.',
