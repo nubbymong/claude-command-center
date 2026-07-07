@@ -378,9 +378,16 @@ export function spawnPty(
 
     // Add reverse tunnel for the Conductor MCP server so remote sessions can reach
     // both fetch_host_screenshot (always) and vision tools (when browser connected).
+    // Host-side target is 127.0.0.1, NOT `localhost`: the MCP server binds IPv4-only
+    // (conductor-mcp-server.ts listens on '127.0.0.1'), but Windows resolves
+    // `localhost` IPv6-first (::1) — a dead address here — so ssh.exe's forward
+    // connect lands on [::1]:port, gets ECONNREFUSED, and the channel dies
+    // ("socket connection closed unexpectedly" on the remote MCP client). Pinning
+    // the middle field to 127.0.0.1 forwards straight to the address the server
+    // actually binds, with no name resolution and no IPv6-fallback dependency.
     const mcpPort = getConductorMcpPort()
     if (mcpPort > 0) {
-      sshArgs.push('-R', `${mcpPort}:localhost:${mcpPort}`)
+      sshArgs.push('-R', `${mcpPort}:127.0.0.1:${mcpPort}`)
     }
 
     // HTTP Hooks Gateway: when enabled, tunnel the gateway's loopback port so
