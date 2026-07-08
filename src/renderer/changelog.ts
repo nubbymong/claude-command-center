@@ -15,6 +15,16 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '2.0.0-beta.6',
+    date: '2026-07-08',
+    highlights: 'The all-accounts usage panel is far more reliable — no more spurious "Sign in" or "HTTP 429" on accounts that are actually fine.',
+    changes: [
+      { type: 'fix', description: 'The account usage panel no longer loads every account at once, which was triggering rate-limit (HTTP 429) errors on perfectly valid accounts. Accounts now load staggered, with automatic retry, so a transient rate-limit recovers on its own instead of showing an error.' },
+      { type: 'fix', description: 'Accounts that are still signed in no longer show a false "Sign in" prompt. Between sessions only the short-lived access token lapses — the account stays logged in — so the panel now shows the last-known usage (or a quiet "open a session to refresh") instead of a misleading Sign in button. A real Sign in appears only when an account genuinely has no credentials.' },
+      { type: 'improvement', description: 'When a live refresh can\'t complete (rate-limit, a network blip, or a lapsed token), the panel keeps showing each account\'s last-known figures with their age, instead of blanking the card.' },
+    ],
+  },
+  {
     version: '2.0.0-beta.5',
     date: '2026-07-07',
     highlights: 'Two SSH fixes: Conductor tools and the session status line both work again inside SSH sessions.',
