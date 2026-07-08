@@ -607,11 +607,12 @@ function getBrowserPaths(browser: 'chrome' | 'edge'): string[] {
   ]
 }
 
-// The headless browser CCC itself spawns is detached + unref'd, so without an
-// explicit kill it survives app quit forever (orphan process tree + an open CDP
-// debug port with no owner). Track the pid of the CCC-spawned HEADLESS browser
-// only — user-launched headed browsers are theirs to keep — and tear it down on
-// stop/quit (killSpawnedBrowser) and before any relaunch.
+// Any browser CCC itself spawns is detached + unref'd, so without an explicit
+// kill it survives app quit forever (orphan process tree + an open CDP debug port
+// with no owner, showing as a blank window). Track the pid of whatever launchBrowser
+// spawned — headless or headed, since both are CCC's own child — and tear it down on
+// stop/quit (killSpawnedBrowser) and before any relaunch. A browser the USER opened
+// themselves never comes through launchBrowser, so it is never tracked or killed.
 let spawnedBrowserPid: number | null = null
 
 /**
@@ -656,7 +657,10 @@ export function buildBrowserLaunchArgs(
     '--remote-debugging-address=127.0.0.1',
     `--user-data-dir=${profileDir}`,
   ]
-  if (headless) args.push('--headless=new', '--disable-gpu')
+  // --window-position offscreen is belt-and-braces: `--headless=new` is meant to
+  // be windowless, but on Windows it can still flash/leak a blank window. Parking
+  // it at -32000,-32000 means the user never sees it even if that happens.
+  if (headless) args.push('--headless=new', '--disable-gpu', '--window-position=-32000,-32000')
   if (url) args.push(url)
   return args
 }
@@ -687,8 +691,10 @@ export function launchBrowser(browser: 'chrome' | 'edge', debugPort: number, url
     logInfo(`[vision] Browser launch failed; vision disabled (non-fatal): ${err instanceof Error ? err.message : String(err)}`)
   })
   child.unref()
-  // Only track headless browsers WE spawned for teardown; leave user-launched
-  // headed browsers running on stop/quit.
-  if (headless && child.pid) spawnedBrowserPid = child.pid
+  // Track EVERY browser WE spawn (headless or headed) for teardown — anything
+  // launched via launchBrowser is CCC's own detached child, so it must be killed
+  // on stop/quit or it orphans as a blank window that outlives the app. (A browser
+  // the USER opened themselves never comes through here, so it's never touched.)
+  if (child.pid) spawnedBrowserPid = child.pid
   return { pid: child.pid || 0, command }
 }
