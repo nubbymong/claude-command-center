@@ -21,6 +21,23 @@ interface StoredCreds {
   expiresAt: number
 }
 
+/** Space consecutive account fetches out so a batch doesn't burst the usage
+ *  endpoint's per-IP rate limit (the old Promise.all drew 429s on valid tokens). */
+const STAGGER_MS = 300
+/** Max 429 retries per account before giving up and reporting the error. */
+const MAX_429_RETRIES = 3
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+
+/** Parse a Retry-After header (delta-seconds form; capped at 10s). Null when
+ *  absent or not a plain number (HTTP-date form is not sent by this endpoint). */
+function parseRetryAfterMs(header: string | string[] | undefined): number | null {
+  const v = Array.isArray(header) ? header[0] : header
+  if (!v) return null
+  const secs = Number(v)
+  return Number.isFinite(secs) && secs >= 0 ? Math.min(secs * 1000, 10_000) : null
+}
+
 /** Read a profile's OAuth token + expiry from its isolated credentials file.
  *  Falls back to the global ~/.claude for the primary account when its profile
  *  home hasn't been seeded yet. Never throws. */
@@ -39,9 +56,14 @@ function readProfileToken(profileId: string, isPrimary: boolean): StoredCreds {
   return { token: null, expiresAt: 0 }
 }
 
+export type RawResult =
+  | { ok: true; data: unknown }
+  | { ok: false; httpStatus: number | null; retryAfterMs: number | null }
+
 /** GET api.anthropic.com/api/oauth/usage with a bearer token. Resolves the
- *  parsed JSON, or an { httpStatus } marker on a non-2xx (so 401 -> needs-login). */
-async function fetchUsageRaw(token: string): Promise<{ ok: true; data: unknown } | { ok: false; httpStatus: number | null }> {
+ *  parsed JSON, or an { httpStatus, retryAfterMs } marker on a non-2xx (so
+ *  401 -> needs-login, 429 -> caller backs off and retries). */
+async function fetchUsageRaw(token: string): Promise<RawResult> {
   const https = await import('https')
   return new Promise((resolve) => {
     const req = https.request(
@@ -64,17 +86,33 @@ async function fetchUsageRaw(token: string): Promise<{ ok: true; data: unknown }
           const status = res.statusCode ?? null
           if (status && status >= 200 && status < 300) {
             try { resolve({ ok: true, data: JSON.parse(body) }) }
-            catch { resolve({ ok: false, httpStatus: status }) }
+            catch { resolve({ ok: false, httpStatus: status, retryAfterMs: null }) }
           } else {
-            resolve({ ok: false, httpStatus: status })
+            resolve({ ok: false, httpStatus: status, retryAfterMs: parseRetryAfterMs(res.headers['retry-after']) })
           }
         })
       },
     )
-    req.on('error', () => resolve({ ok: false, httpStatus: null }))
-    req.on('timeout', () => { req.destroy(); resolve({ ok: false, httpStatus: null }) })
+    req.on('error', () => resolve({ ok: false, httpStatus: null, retryAfterMs: null }))
+    req.on('timeout', () => { req.destroy(); resolve({ ok: false, httpStatus: null, retryAfterMs: null }) })
     req.end()
   })
+}
+
+/** Run `fetch` and retry on HTTP 429 with backoff, honouring Retry-After when
+ *  present. The usage endpoint burst-rate-limits by IP, so a batch of accounts
+ *  can 429 even with a valid token. Exported for testing; `sleepFn` is injectable
+ *  so tests exercise the retry logic without waiting real time. */
+export async function fetchWithRetry(
+  fetch: () => Promise<RawResult>,
+  sleepFn: (ms: number) => Promise<void> = sleep,
+): Promise<RawResult> {
+  let res = await fetch()
+  for (let attempt = 1; attempt <= MAX_429_RETRIES && !res.ok && res.httpStatus === 429; attempt++) {
+    await sleepFn(res.retryAfterMs ?? attempt * 600)
+    res = await fetch()
+  }
+  return res
 }
 
 /** Fetch usage for one profile. Expired/absent token -> needs-login (no network). */
@@ -101,7 +139,7 @@ export async function fetchAccountUsage(profileId: string): Promise<AccountUsage
     return { ...base, status: 'needs-login', detail: 'session expired' }
   }
 
-  const res = await fetchUsageRaw(token)
+  const res = await fetchWithRetry(() => fetchUsageRaw(token))
   if (!res.ok) {
     if (res.httpStatus === 401 || res.httpStatus === 403) {
       return { ...base, status: 'needs-login', detail: 'session expired' }
@@ -113,9 +151,16 @@ export async function fetchAccountUsage(profileId: string): Promise<AccountUsage
   return { ...base, status: 'ok', buckets: parsed.buckets, credits: parsed.credits }
 }
 
-/** Fetch usage for every account, concurrently. Order matches listProfiles
- *  (primary first is the store's responsibility). */
+/** Fetch usage for every account, sequentially with a small stagger between
+ *  accounts. The usage endpoint burst-rate-limits by IP, so firing every account
+ *  at once (the old Promise.all) drew 429s on otherwise-valid tokens. Order
+ *  matches listProfiles (primary first is the store's responsibility). */
 export async function fetchAllAccountsUsage(): Promise<AccountUsage[]> {
   const profiles = listProfiles()
-  return Promise.all(profiles.map((p) => fetchAccountUsage(p.id)))
+  const out: AccountUsage[] = []
+  for (let i = 0; i < profiles.length; i++) {
+    if (i > 0) await sleep(STAGGER_MS)
+    out.push(await fetchAccountUsage(profiles[i].id))
+  }
+  return out
 }
