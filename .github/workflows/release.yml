@@ -276,7 +276,14 @@ jobs:
             echo "Release ${TAG} exists - replacing assets (rolling re-release)"
             gh release upload "${TAG}" artifacts/* --clobber
           else
+            # --target pins the tag to the commit we actually built ($GITHUB_SHA
+            # = the dispatched beta ref). WITHOUT it, `gh release create` tags the
+            # DEFAULT branch (main), which is frozen at an old commit — GitHub then
+            # derives the release's created_at from that stale commit's date, and
+            # the in-app updater (which fetches releases in created_at order) never
+            # sees the new beta. See src/main/github-update.ts.
             gh release create "${TAG}" $PRERELEASE_FLAG \
+              --target "$GITHUB_SHA" \
               --title "${TITLE}" \
               --notes "$(echo -e "${BODY}")" \
               artifacts/*

@@ -261,7 +261,13 @@ type PublicFetchResult =
  *   - 403 with rate-limit header: API rate limit hit, gh CLI won't help — give up
  *   - 403 otherwise: treated as "error" and fall through to gh CLI
  */
-async function fetchReleasesPublic(limit = 30): Promise<PublicFetchResult> {
+// Fetch well beyond the total release count. GitHub's /releases (and `gh release
+// list`) return releases in created_at order, and a release's created_at is the
+// tagged commit's date — so a release tagged on an old commit sorts far down the
+// list. Fetching a large page means we still see every release regardless of that
+// ordering; selection is then purely by version tag (compareTags). Defense in
+// depth alongside the release.yml `--target` fix.
+async function fetchReleasesPublic(limit = 100): Promise<PublicFetchResult> {
   try {
     const url = `https://api.github.com/repos/${REPO}/releases?per_page=${limit}`
     const { status, headers, body } = await httpGetJson<GitHubRelease[]>(url)
@@ -318,7 +324,7 @@ async function getGhToken(): Promise<string | null> {
 }
 
 /** Fetch releases using an authenticated GitHub API call */
-async function fetchReleasesAuthenticated(limit = 30): Promise<GitHubRelease[] | null> {
+async function fetchReleasesAuthenticated(limit = 100): Promise<GitHubRelease[] | null> {
   const token = await getGhToken()
   if (!token) {
     logInfo('[github-update] No gh auth token available — skipping authenticated API')
@@ -344,7 +350,7 @@ async function fetchReleasesAuthenticated(limit = 30): Promise<GitHubRelease[] |
 
 // ── gh CLI fallback (for private repos during dev) ───────────────────────
 
-async function fetchReleasesGhCli(limit = 30): Promise<GitHubRelease[] | null> {
+async function fetchReleasesGhCli(limit = 100): Promise<GitHubRelease[] | null> {
   try {
     const { stdout } = await execFileAsync(
       'gh',
