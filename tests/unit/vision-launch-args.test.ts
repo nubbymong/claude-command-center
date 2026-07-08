@@ -15,6 +15,15 @@ describe('buildBrowserLaunchArgs (P2.7 CDP loopback bind)', () => {
     expect(args).toContain('--disable-gpu')
   })
 
+  it('suppresses first-run + default-browser prompts (no desktop-shortcut touching)', () => {
+    const headed = buildBrowserLaunchArgs(9222, '/tmp/p', false)
+    const headless = buildBrowserLaunchArgs(9222, '/tmp/p', true)
+    for (const args of [headed, headless]) {
+      expect(args).toContain('--no-first-run')
+      expect(args).toContain('--no-default-browser-check')
+    }
+  })
+
   it('omits headless flags and appends the url when not headless', () => {
     const args = buildBrowserLaunchArgs(9222, '/tmp/p', false, 'https://example.com')
     expect(args).not.toContain('--headless=new')

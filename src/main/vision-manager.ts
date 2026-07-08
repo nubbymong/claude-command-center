@@ -656,6 +656,13 @@ export function buildBrowserLaunchArgs(
     `--remote-debugging-port=${debugPort}`,
     '--remote-debugging-address=127.0.0.1',
     `--user-data-dir=${profileDir}`,
+    // Automation hygiene: skip Chrome's first-run flow (it creates/repairs the
+    // desktop + Start-menu shortcuts — on a OneDrive-synced Desktop that makes the
+    // "Google Chrome" icon's sync-overlay flicker), and never prompt to become the
+    // default browser. The debug profile is fresh each time, so first-run would
+    // otherwise fire on every launch.
+    '--no-first-run',
+    '--no-default-browser-check',
   ]
   // --window-position offscreen is belt-and-braces: `--headless=new` is meant to
   // be windowless, but on Windows it can still flash/leak a blank window. Parking
