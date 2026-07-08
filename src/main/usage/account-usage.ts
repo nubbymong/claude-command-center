@@ -2,16 +2,22 @@
 //
 // Each account profile has its own OAuth credentials file (its isolated home),
 // so we can read that account's access token and call the same usage endpoint
-// the live statusline uses — no PTY, no fake session. An account whose stored
-// token has expired can't be fetched silently (refresh tokens rotate; a bad
-// write would log the account out), so it's reported as `needs-login` and the
-// UI offers a re-auth button.
+// the live statusline uses — no PTY, no fake session.
+//
+// Accounts stay signed in (the refresh token is long-lived); only the short-lived
+// access token lapses between sessions, and starting a session refreshes it. So a
+// lapsed/absent access token is NOT "signed out": we surface a "Sign in" prompt
+// ONLY when the account has no credentials at all. When the account is signed in
+// but we can't fetch right now (lapsed token, a 429 burst, a network blip) we show
+// its last-known usage (flagged stale) rather than blanking the card. We never
+// refresh the token ourselves — refresh tokens rotate, and racing Claude Code's own
+// refresh would log the account out.
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import { listProfiles, getProfileConfigDir, readProfileAccountEmail } from '../account-profiles'
 import { parseUsage } from './usage-buckets'
-import type { AccountUsage } from '../../shared/usage-types'
+import type { AccountUsage, UsageBucket, CreditsInfo } from '../../shared/usage-types'
 import { logWarn } from '../debug-logger'
 
 export type { AccountUsage } from '../../shared/usage-types'
@@ -19,6 +25,10 @@ export type { AccountUsage } from '../../shared/usage-types'
 interface StoredCreds {
   token: string | null
   expiresAt: number
+  /** True when the account has credential material (a refresh/access token) or a
+   *  credentials file we just couldn't parse this instant. Only when this is FALSE
+   *  do we treat the account as genuinely signed out (and show a "Sign in" prompt). */
+  signedIn: boolean
 }
 
 /** Space consecutive account fetches out so a batch doesn't burst the usage
@@ -38,22 +48,46 @@ function parseRetryAfterMs(header: string | string[] | undefined): number | null
   return Number.isFinite(secs) && secs >= 0 ? Math.min(secs * 1000, 10_000) : null
 }
 
-/** Read a profile's OAuth token + expiry from its isolated credentials file.
- *  Falls back to the global ~/.claude for the primary account when its profile
- *  home hasn't been seeded yet. Never throws. */
-function readProfileToken(profileId: string, isPrimary: boolean): StoredCreds {
+/** Read a profile's OAuth token + expiry + signed-in state from its isolated
+ *  credentials file (falling back to global ~/.claude for the primary account).
+ *  Retries a couple of times on a read/parse failure: Claude Code rewrites this
+ *  file on its own token refresh, and a single read can catch it mid-write — a
+ *  transient parse failure would otherwise masquerade as "not signed in". Async
+ *  only for the retry backoff. Never throws. */
+async function readProfileToken(profileId: string, isPrimary: boolean): Promise<StoredCreds> {
   const candidates = [path.join(getProfileConfigDir(profileId), '.claude', '.credentials.json')]
   if (isPrimary) candidates.push(path.join(os.homedir(), '.claude', '.credentials.json'))
+  let fileSeen = false
   for (const p of candidates) {
-    try {
-      const raw = fs.readFileSync(p, 'utf8')
-      const c = JSON.parse(raw) as { claudeAiOauth?: { accessToken?: unknown; expiresAt?: unknown } }
-      const token = typeof c.claudeAiOauth?.accessToken === 'string' ? c.claudeAiOauth.accessToken : null
-      const expiresAt = typeof c.claudeAiOauth?.expiresAt === 'number' ? c.claudeAiOauth.expiresAt : 0
-      if (token) return { token, expiresAt }
-    } catch { /* try next candidate */ }
+    for (let attempt = 0; attempt < 3; attempt++) {
+      let raw: string
+      try {
+        raw = fs.readFileSync(p, 'utf8')
+      } catch (e) {
+        // Missing at this path -> try the next candidate. Any other read error
+        // (e.g. a rename gap during Claude's refresh) gets one brief retry.
+        if ((e as NodeJS.ErrnoException)?.code === 'ENOENT' || attempt >= 2) break
+        await sleep(60)
+        continue
+      }
+      fileSeen = true
+      try {
+        const c = JSON.parse(raw) as { claudeAiOauth?: { accessToken?: unknown; refreshToken?: unknown; expiresAt?: unknown } }
+        const oauth = c.claudeAiOauth
+        const token = typeof oauth?.accessToken === 'string' ? oauth.accessToken : null
+        const hasRefresh = typeof oauth?.refreshToken === 'string' && oauth.refreshToken.length > 0
+        const expiresAt = typeof oauth?.expiresAt === 'number' ? oauth.expiresAt : 0
+        return { token, expiresAt, signedIn: !!token || hasRefresh }
+      } catch {
+        // Parsed nothing — likely caught the file mid-rewrite. Brief retry.
+        if (attempt < 2) await sleep(60)
+      }
+    }
   }
-  return { token: null, expiresAt: 0 }
+  // Never parsed a token. A credentials file that EXISTS but wouldn't parse is a
+  // transient read, not a sign-out, so keep signedIn true to avoid a false "Sign
+  // in"; only a genuinely absent file is treated as signed out.
+  return { token: null, expiresAt: 0, signedIn: fileSeen }
 }
 
 export type RawResult =
@@ -62,7 +96,7 @@ export type RawResult =
 
 /** GET api.anthropic.com/api/oauth/usage with a bearer token. Resolves the
  *  parsed JSON, or an { httpStatus, retryAfterMs } marker on a non-2xx (so
- *  401 -> needs-login, 429 -> caller backs off and retries). */
+ *  401 -> token lapsed, 429 -> caller backs off and retries). */
 async function fetchUsageRaw(token: string): Promise<RawResult> {
   const https = await import('https')
   return new Promise((resolve) => {
@@ -115,7 +149,47 @@ export async function fetchWithRetry(
   return res
 }
 
-/** Fetch usage for one profile. Expired/absent token -> needs-login (no network). */
+/** Last successful usage per profile, in-memory for the app's lifetime. When a
+ *  later fetch can't complete but the account is still signed in (lapsed token,
+ *  429 burst, network blip), we show these last-known figures flagged stale
+ *  instead of blanking the card. Cleared naturally on app restart. */
+const lastGoodUsage = new Map<string, { buckets: UsageBucket[]; credits?: CreditsInfo; fetchedAt: number }>()
+
+/** Pure decision: given the account's signed-in state, whether its token was
+ *  usable, the fetch result (if we made one), and any cached usage, produce the
+ *  AccountUsage to show. Exported + pure so the whole state matrix is unit-tested. */
+export function resolveUsageOutcome(
+  base: AccountUsage,
+  input: { signedIn: boolean; tokenUsable: boolean; fetch?: RawResult },
+  cached: { buckets: UsageBucket[]; credits?: CreditsInfo; fetchedAt: number } | undefined,
+): AccountUsage {
+  // Genuinely signed out (no credentials at all) is the ONLY "Sign in" case.
+  if (!input.signedIn) return { ...base, status: 'needs-login', detail: 'not signed in' }
+
+  const staleOr = (fallback: AccountUsage): AccountUsage =>
+    cached
+      ? { ...base, status: 'ok', stale: true, buckets: cached.buckets, credits: cached.credits, fetchedAt: cached.fetchedAt }
+      : fallback
+
+  const refreshHint: AccountUsage = { ...base, status: 'error', detail: 'signed in — open a session to refresh' }
+
+  // Signed in but no usable token, or we never fetched -> can't fetch live; show
+  // last-known usage, else a soft refresh hint. Never "Sign in".
+  if (!input.tokenUsable || !input.fetch) return staleOr(refreshHint)
+
+  const res = input.fetch
+  if (!res.ok) {
+    // A 401/403 on a signed-in account means the token lapsed just now -> soft refresh.
+    if (res.httpStatus === 401 || res.httpStatus === 403) return staleOr(refreshHint)
+    // 429-after-retries / network error -> last-known if we have it, else the error.
+    return staleOr({ ...base, status: 'error', detail: res.httpStatus ? `HTTP ${res.httpStatus}` : 'network error' })
+  }
+  const parsed = parseUsage(res.data)
+  return { ...base, status: 'ok', stale: false, buckets: parsed.buckets, credits: parsed.credits }
+}
+
+/** Fetch usage for one profile. Signed-out -> needs-login; signed-in but not
+ *  fetchable -> last-known (stale) or a soft refresh hint; success -> fresh. */
 export async function fetchAccountUsage(profileId: string): Promise<AccountUsage> {
   const profiles = listProfiles()
   const profile = profiles.find((p) => p.id === profileId)
@@ -131,24 +205,24 @@ export async function fetchAccountUsage(profileId: string): Promise<AccountUsage
   }
   if (!profile) return { ...base, detail: 'unknown profile' }
 
-  const { token, expiresAt } = readProfileToken(profileId, isPrimary)
-  if (!token) return { ...base, status: 'needs-login', detail: 'not signed in' }
-  // A 60s skew guard: a token expiring imminently is treated as stale so we
+  const { token, expiresAt, signedIn } = await readProfileToken(profileId, isPrimary)
+  // 60s skew guard: a token within 60s of expiry is treated as unusable so we
   // don't burn a request that will 401.
-  if (expiresAt > 0 && expiresAt < Date.now() + 60_000) {
-    return { ...base, status: 'needs-login', detail: 'session expired' }
+  const tokenUsable = !!token && !(expiresAt > 0 && expiresAt < Date.now() + 60_000)
+
+  let fetched: RawResult | undefined
+  if (signedIn && tokenUsable && token) {
+    fetched = await fetchWithRetry(() => fetchUsageRaw(token))
+    if (!fetched.ok && fetched.httpStatus && fetched.httpStatus !== 401 && fetched.httpStatus !== 403) {
+      logWarn(`[account-usage] fetch failed profile=${profileId} http=${fetched.httpStatus}`)
+    }
   }
 
-  const res = await fetchWithRetry(() => fetchUsageRaw(token))
-  if (!res.ok) {
-    if (res.httpStatus === 401 || res.httpStatus === 403) {
-      return { ...base, status: 'needs-login', detail: 'session expired' }
-    }
-    logWarn(`[account-usage] fetch failed profile=${profileId} http=${res.httpStatus}`)
-    return { ...base, status: 'error', detail: res.httpStatus ? `HTTP ${res.httpStatus}` : 'network error' }
+  const result = resolveUsageOutcome(base, { signedIn, tokenUsable, fetch: fetched }, lastGoodUsage.get(profileId))
+  if (result.status === 'ok' && !result.stale) {
+    lastGoodUsage.set(profileId, { buckets: result.buckets, credits: result.credits, fetchedAt: result.fetchedAt })
   }
-  const parsed = parseUsage(res.data)
-  return { ...base, status: 'ok', buckets: parsed.buckets, credits: parsed.credits }
+  return result
 }
 
 /** Fetch usage for every account, sequentially with a small stagger between

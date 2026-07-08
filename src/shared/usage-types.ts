@@ -53,4 +53,7 @@ export interface AccountUsage {
   fetchedAt: number
   /** short reason for a non-ok status (for the UI hint). */
   detail?: string
+  /** True when `status: 'ok'` figures are served from cache — a live refresh
+   *  couldn't complete but the account is still signed in. */
+  stale?: boolean
 }

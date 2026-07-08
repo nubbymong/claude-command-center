@@ -152,11 +152,17 @@ function AccountCard({ row, theme, onSignIn }: { row: AccountUsage; theme: 'dark
       )}
 
       {row.status === 'error' && (
-        <p className="text-[0.8125rem] text-overlay0">Couldn&apos;t load usage{row.detail ? ` (${row.detail})` : ''}.</p>
+        <p className="text-[0.8125rem] text-overlay0">
+          {row.detail?.startsWith('signed in')
+            ? 'Signed in — open a session to refresh usage.'
+            : `Couldn't load usage${row.detail ? ` (${row.detail})` : ''}.`}
+        </p>
       )}
 
       {row.status === 'ok' && (
-        <p className="text-[0.6875rem] text-overlay0 mt-2">Updated {relAgo(row.fetchedAt)}</p>
+        <p className="text-[0.6875rem] text-overlay0 mt-2">
+          {row.stale ? `Last updated ${relAgo(row.fetchedAt)} · couldn't refresh` : `Updated ${relAgo(row.fetchedAt)}`}
+        </p>
       )}
     </div>
   )
