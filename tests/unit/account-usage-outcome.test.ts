@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { resolveUsageOutcome, type RawResult } from '../../src/main/usage/account-usage'
+import { resolveUsageOutcome, parseRefreshResponse, type RawResult } from '../../src/main/usage/account-usage'
 import type { AccountUsage, UsageBucket } from '../../src/shared/usage-types'
 
 const base: AccountUsage = {
@@ -71,5 +71,32 @@ describe('resolveUsageOutcome — account panel state matrix', () => {
     expect(r.buckets.length).toBe(1)
     expect(r.buckets[0].label).toBe('5h')
     expect(r.buckets[0].percent).toBe(42)
+  })
+})
+
+describe('parseRefreshResponse — token-refresh response parsing', () => {
+  const NOW = 1_000_000
+
+  it('parses a full response and computes expiresAt from expires_in', () => {
+    const r = parseRefreshResponse({ access_token: 'sk-ant-oat01-new', refresh_token: 'rt-new', expires_in: 3600 }, NOW)
+    expect(r).toEqual({ accessToken: 'sk-ant-oat01-new', refreshToken: 'rt-new', expiresAt: NOW + 3600 * 1000 })
+  })
+
+  it('returns null when the refresh_token is missing (never persist a dropped rotation)', () => {
+    expect(parseRefreshResponse({ access_token: 'a', expires_in: 3600 }, NOW)).toBeNull()
+  })
+
+  it('returns null when the access_token is missing', () => {
+    expect(parseRefreshResponse({ refresh_token: 'r', expires_in: 3600 }, NOW)).toBeNull()
+  })
+
+  it('returns null for a non-object / empty payload', () => {
+    expect(parseRefreshResponse(null, NOW)).toBeNull()
+    expect(parseRefreshResponse('nope', NOW)).toBeNull()
+  })
+
+  it('tolerates a missing expires_in (expiresAt 0)', () => {
+    const r = parseRefreshResponse({ access_token: 'a', refresh_token: 'r' }, NOW)
+    expect(r).toEqual({ accessToken: 'a', refreshToken: 'r', expiresAt: 0 })
   })
 })

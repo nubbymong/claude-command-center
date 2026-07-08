@@ -47,6 +47,10 @@ export function captureClaudeAccount(sessionId: string, profileId: string | unde
 export function getClaudeAccount(sessionId: string): string | null { return bySession.get(sessionId) ?? null }
 /** The profileId a session spawned under (undefined => default/single-account). */
 export function getClaudeProfileId(sessionId: string): string | undefined { return profileBySession.get(sessionId) }
+/** profileIds that currently have a live (captured, not-yet-cleared) session.
+ *  Used to guard background token refresh: never refresh a profile that has a
+ *  running Claude session, so we can't rotate a token out from under it. */
+export function getActiveProfileIds(): Set<string> { return new Set(profileBySession.values()) }
 export function getClaudeAccountMap(): ReadonlyMap<string, string> { return bySession }
 export function clearClaudeAccount(sessionId: string): void { bySession.delete(sessionId); profileBySession.delete(sessionId) }
 
