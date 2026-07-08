@@ -15,6 +15,16 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '2.0.0-beta.7',
+    date: '2026-07-08',
+    highlights: 'In-app updates find new betas again, the all-accounts usage panel shows every signed-in account live, and a stray blank browser window on startup is gone.',
+    changes: [
+      { type: 'fix', description: 'In-app update checks now find newer beta releases. Releases were being tagged against a stale commit, which mis-dated them so the updater never saw them; they are now tagged at the exact commit that was built, and the updater scans the full release list.' },
+      { type: 'fix', description: 'The all-accounts usage panel now shows live usage for every signed-in account — even ones you have not opened a session with recently. It quietly refreshes each account\'s short-lived key in the background, and only for accounts with no running session, so it never disturbs one you are using.' },
+      { type: 'fix', description: 'Fixed a blank browser window that could appear on startup (and linger after closing the app) when the browser/vision tool was enabled. The automation browser is now kept off-screen and is reliably shut down together with the app.' },
+    ],
+  },
+  {
     version: '2.0.0-beta.6',
     date: '2026-07-08',
     highlights: 'The all-accounts usage panel is far more reliable — no more spurious "Sign in" or "HTTP 429" on accounts that are actually fine.',
