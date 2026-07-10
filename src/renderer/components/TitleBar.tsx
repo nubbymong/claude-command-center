@@ -10,6 +10,17 @@ interface Props {
   onToggleSidebar: () => void
 }
 
+// Baked at build time by electron-vite's `define`; absent under vitest, hence
+// the typeof guard in prereleaseChipLabel.
+declare const __APP_VERSION__: string
+
+/** Title-bar prerelease chip label, tracking the RUNNING build: an -rc.N build
+ *  reads "RC"; anything else on the beta channel keeps "Beta". */
+function prereleaseChipLabel(): string {
+  if (typeof __APP_VERSION__ === 'string' && __APP_VERSION__.includes('-rc')) return 'RC'
+  return 'Beta'
+}
+
 interface ComponentStatus {
   id: string
   label: string
@@ -197,7 +208,7 @@ export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
       <div className="flex-1 text-center text-xs text-overlay1 font-medium flex items-center justify-center gap-0">
         <span>Claude Command Center</span>
         {useSettingsStore((s) => s.settings.updateChannel) === 'beta' && (
-          <span className="ml-2 px-1.5 py-px rounded-full text-[10px] font-semibold align-middle" style={{ color: 'var(--brand)', background: 'color-mix(in srgb, var(--brand) 16%, transparent)' }}>Beta</span>
+          <span className="ml-2 px-1.5 py-px rounded-full text-[10px] font-semibold align-middle" style={{ color: 'var(--brand)', background: 'color-mix(in srgb, var(--brand) 16%, transparent)' }}>{prereleaseChipLabel()}</span>
         )}
       </div>
 

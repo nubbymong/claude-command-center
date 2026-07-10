@@ -224,6 +224,64 @@ describe('github-update', () => {
     })
   })
 
+  describe('release candidates (-rc.N)', () => {
+    it('beta channel sees rc tags, and rc outranks beta of the same base version', async () => {
+      currentChannel = 'beta'
+      httpsState.nextResponse = {
+        statusCode: 200,
+        body: [
+          releaseWithBothAssets('v2.0.0-beta.9', '2.0.0', true),
+          releaseWithBothAssets('v2.0.0-rc.1', '2.0.0', true),
+        ],
+      }
+      const result = await checkGitHubRelease()
+      expect(result).not.toBeNull()
+      expect(result!.tagName).toBe('v2.0.0-rc.1')
+      expect(result!.channel).toBe('beta')
+    })
+
+    it('final release outranks an rc of the same base version', async () => {
+      currentChannel = 'beta'
+      httpsState.nextResponse = {
+        statusCode: 200,
+        body: [
+          releaseWithBothAssets('v2.0.0-rc.1', '2.0.0', true),
+          releaseWithBothAssets('v2.0.0', '2.0.0'),
+        ],
+      }
+      const result = await checkGitHubRelease()
+      expect(result).not.toBeNull()
+      expect(result!.tagName).toBe('v2.0.0')
+      expect(result!.channel).toBe('stable')
+    })
+
+    it('rc.2 outranks rc.1', async () => {
+      currentChannel = 'beta'
+      httpsState.nextResponse = {
+        statusCode: 200,
+        body: [
+          releaseWithBothAssets('v2.0.0-rc.1', '2.0.0', true),
+          releaseWithBothAssets('v2.0.0-rc.2', '2.0.0', true),
+        ],
+      }
+      const result = await checkGitHubRelease()
+      expect(result).not.toBeNull()
+      expect(result!.tagName).toBe('v2.0.0-rc.2')
+    })
+
+    it('stable channel does NOT see rc tags', async () => {
+      currentChannel = 'stable'
+      httpsState.nextResponse = {
+        statusCode: 200,
+        body: [
+          releaseWithBothAssets('v2.0.0-rc.1', '2.0.0', true),
+        ],
+      }
+      const result = await checkGitHubRelease()
+      expect(result).toBeNull()
+    })
+  })
+
   describe('public API path', () => {
     it('uses public API and does not invoke gh CLI when API returns data', async () => {
       currentChannel = 'stable'

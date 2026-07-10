@@ -76,11 +76,13 @@ interface ReleaseInfo {
 
 // ── Channel matching ─────────────────────────────────────────────────────
 
-/** Which channel does this tag belong to? */
+/** Which channel does this tag belong to? Release candidates (-rc.N) ride the
+ *  beta channel: they are prereleases offered to beta-channel users, ordered
+ *  above betas of the same base version (see parseTag prereleaseRank). */
 function classifyTag(tag: string): UpdateChannel | null {
   const stripped = tag.replace(/^v/, '')
   if (/^\d+\.\d+\.\d+$/.test(stripped)) return 'stable'
-  if (/^\d+\.\d+\.\d+-beta(\.\d+)?$/.test(stripped)) return 'beta'
+  if (/^\d+\.\d+\.\d+-(?:beta|rc)(\.\d+)?$/.test(stripped)) return 'beta'
   return null  // unknown format — ignore
 }
 
@@ -99,7 +101,7 @@ function tagMatchesChannel(tag: string, channel: UpdateChannel): boolean {
  * This is what gets shown to the user — e.g. 'v1.2.3-beta.2' → '1.2.3'.
  */
 function parseVersion(tag: string): string {
-  return tag.replace(/^v/, '').replace(/-(?:beta|dev)(?:\.\d+)?$/, '')
+  return tag.replace(/^v/, '').replace(/-(?:beta|dev|rc)(?:\.\d+)?$/, '')
 }
 
 /**
@@ -109,6 +111,8 @@ function parseVersion(tag: string): string {
  *
  * prereleaseRank follows semver convention: final releases outrank prereleases.
  *   final:  Infinity
+ *   rc.N:   3 (release candidate — closest to final)
+ *   rc:     3, num = 0
  *   beta.N: 2 (beta is closer to final than dev)
  *   beta:   2, num = 0
  *   dev.N:  1
@@ -124,12 +128,13 @@ interface TagComponents {
 
 function parseTag(tag: string): TagComponents | null {
   const stripped = tag.replace(/^v/, '')
-  const m = stripped.match(/^(\d+)\.(\d+)\.(\d+)(?:-(beta)(?:\.(\d+))?)?$/)
+  const m = stripped.match(/^(\d+)\.(\d+)\.(\d+)(?:-(beta|rc)(?:\.(\d+))?)?$/)
   if (!m) return null
   const [, maj, min, pat, pre, preN] = m
   let prereleaseRank = Number.POSITIVE_INFINITY
   let prereleaseNum = 0
   if (pre === 'beta') { prereleaseRank = 2; prereleaseNum = preN ? parseInt(preN, 10) : 0 }
+  if (pre === 'rc') { prereleaseRank = 3; prereleaseNum = preN ? parseInt(preN, 10) : 0 }
   return {
     major: parseInt(maj, 10),
     minor: parseInt(min, 10),
