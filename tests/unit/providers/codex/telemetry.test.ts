@@ -11,7 +11,7 @@ vi.mock('../../../../src/main/providers/codex/auth', () => ({
 
 let _mockCodexHome = ''
 
-import { parseCodexRollout, mapTokenCountToStatusline, watchAndClaimRollout } from '../../../../src/main/providers/codex/telemetry'
+import { parseCodexRollout, mapTokenCountToStatusline, contextTokensInWindow, watchAndClaimRollout } from '../../../../src/main/providers/codex/telemetry'
 import type { TokenCountEvent } from '../../../../src/main/providers/codex/telemetry'
 import { getCodexHome } from '../../../../src/main/providers/codex/auth'
 
@@ -110,6 +110,49 @@ describe('codex rollout parsing', () => {
     const sl = mapTokenCountToStatusline(tc, meta, 'sid-effort')
     expect(sl.model).toBe('gpt-5.5')
     expect(sl.reasoningEffort).toBe('xhigh')
+  })
+
+  // Context % must reflect the WINDOW's occupancy (last request), not the
+  // session's cumulative total — the old total/window formula pinned the bar
+  // at ~96-100% red on long sessions whose window was mostly free.
+  describe('contextUsedPercent — window occupancy, not cumulative total', () => {
+    const meta = { id: 'm', cwd: '/x', model: 'gpt-5.5', cli_version: '0.144.0', timestamp: '2026-07-09T00:00:00.000Z' }
+
+    it('uses last_token_usage (prompt + output of the last request)', () => {
+      const tc: TokenCountEvent = {
+        // Cumulative total (350k) exceeds the 100k window — the OLD formula read 350%.
+        total_token_usage: { input_tokens: 330_000, cached_input_tokens: 280_000, output_tokens: 20_000, reasoning_output_tokens: 0, total_tokens: 350_000 },
+        last_token_usage: { input_tokens: 50_000, cached_input_tokens: 45_000, output_tokens: 1_000 },
+      }
+      expect(contextTokensInWindow(tc)).toBe(51_000)
+      const sl = mapTokenCountToStatusline(tc, meta, 'sid-ctx', 100_000)
+      expect(sl.contextUsedPercent).toBe(51)
+    })
+
+    it('falls back to the cumulative total when last_token_usage is absent (first event)', () => {
+      const tc: TokenCountEvent = {
+        total_token_usage: { input_tokens: 21_805, cached_input_tokens: 19_328, output_tokens: 30, reasoning_output_tokens: 0, total_tokens: 21_835 },
+      }
+      expect(contextTokensInWindow(tc)).toBe(21_835)
+      const sl = mapTokenCountToStatusline(tc, meta, 'sid-ctx2', 258_400)
+      expect(sl.contextUsedPercent).toBeCloseTo((21_835 / 258_400) * 100, 5)
+    })
+
+    it('caps at 100 even when the fallback total exceeds the window', () => {
+      const tc: TokenCountEvent = {
+        total_token_usage: { input_tokens: 340_000, cached_input_tokens: 0, output_tokens: 10_000, reasoning_output_tokens: 0, total_tokens: 350_000 },
+      }
+      const sl = mapTokenCountToStatusline(tc, meta, 'sid-ctx3', 100_000)
+      expect(sl.contextUsedPercent).toBe(100)
+    })
+
+    it('omits contextUsedPercent when the window is unknown', () => {
+      const tc: TokenCountEvent = {
+        total_token_usage: { input_tokens: 100, cached_input_tokens: 0, output_tokens: 10, reasoning_output_tokens: 0, total_tokens: 110 },
+      }
+      const sl = mapTokenCountToStatusline(tc, meta, 'sid-ctx4')
+      expect(sl.contextUsedPercent).toBeUndefined()
+    })
   })
 
   it('leaves reasoningEffort undefined when turn_context omits effort', () => {

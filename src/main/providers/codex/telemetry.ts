@@ -184,8 +184,23 @@ export function parseCodexRollout(text: string): {
  * - costUsd: computed via computeCodexCostUsd; undefined if model has no pricing entry
  * - rateLimitCurrent + rateLimitCurrentResets: present when rate_limits.primary exists
  * - rateLimitWeekly + rateLimitWeeklyResets: present when rate_limits.secondary exists
- * - contextUsedPercent: total_tokens / contextWindow * 100 when contextWindow is known
+ * - contextUsedPercent: contextTokensInWindow / contextWindow * 100 when contextWindow is known
  */
+
+/** Tokens currently occupying the context window. Codex's `total_token_usage`
+ *  is CUMULATIVE across the whole session, so `total / window` overshoots 100%
+ *  after a few turns (the bar pinned red at ~96% on sessions whose window was
+ *  mostly free, contradicting Codex's own "% left" footer). The window's real
+ *  occupancy is the LAST request: its prompt (input_tokens, which already
+ *  includes cached_input_tokens) + its output (which rides into the next turn).
+ *  Falls back to the cumulative total on the first event, where the two are
+ *  identical anyway. Exported for tests. */
+export function contextTokensInWindow(tc: TokenCountEvent): number {
+  const last = tc.last_token_usage
+  const lastTokens = last ? (last.input_tokens ?? 0) + (last.output_tokens ?? 0) : 0
+  return lastTokens > 0 ? lastTokens : tc.total_token_usage.total_tokens
+}
+
 export function mapTokenCountToStatusline(
   tc: TokenCountEvent,
   meta: RolloutMeta,
@@ -209,7 +224,7 @@ export function mapTokenCountToStatusline(
     outputTokens: u.output_tokens + u.reasoning_output_tokens,
     costUsd: cost ?? undefined,
     contextWindowSize: contextWindow ?? undefined,
-    contextUsedPercent: contextWindow ? (u.total_tokens / contextWindow) * 100 : undefined,
+    contextUsedPercent: contextWindow ? Math.min(100, (contextTokensInWindow(tc) / contextWindow) * 100) : undefined,
   }
 
   if (tc.rate_limits?.primary) {
