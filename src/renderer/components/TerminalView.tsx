@@ -193,6 +193,18 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
     let lastSentCols: number | null = null, lastSentRows: number | null = null
     let reportTimer: ReturnType<typeof setTimeout> | null = null
     let resizeDebounce: ReturnType<typeof setTimeout> | null = null
+    // Post-resume settle nudge (resume terminal corruption). A `claude --resume`
+    // replays the whole prior transcript in one giant burst; on ConPTY that can
+    // leave Claude's TUI and xterm disagreeing about geometry/viewport by a row,
+    // so every later delta-redraw lands offset — stray `─`/text fragments overlay
+    // the input line and PERSIST while typing. After a burst settles (600ms of
+    // PTY silence), nudge the PTY rows-1 → rows: Claude re-lays-out its whole TUI
+    // at the reconfirmed geometry, then term.refresh repaints xterm. Armed only
+    // for resume-flavoured spawns, as a small self-extinguishing shot counter:
+    // 2 for a direct --resume (first settle = post-replay), 3 for the resume
+    // picker (its first settle is the picker UI itself, pre-replay).
+    let resumeNudgesLeft = 0
+    let resumeNudgeTimer: ReturnType<typeof setTimeout> | null = null
     const reportIntegrity = () => {
       if (reportTimer) return
       reportTimer = setTimeout(() => {
@@ -383,6 +395,9 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
                 : undefined
             if (resume) {
               updateSession(sessionId, { resumeUuid: undefined, resumeCwd: undefined })
+              resumeNudgesLeft = 2
+            } else if (useResumePicker && !shellOnly) {
+              resumeNudgesLeft = 3
             }
             window.electronAPI.pty
               .spawn(sessionId, { cwd, cols, rows, ssh, shellOnly, elevated, configId, configLabel, useResumePicker, legacyVersion, agentsConfig, effortLevel, disableAutoMemory, enableCodexReview, loggingEnabled, model, provider, codexOptions, profileId: resolvedProfileId, resume })
@@ -596,6 +611,32 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
           term?.scrollToBottom()
         }
 
+        // Post-resume settle nudge: every chunk re-arms the timer; it fires only
+        // once a burst has gone quiet for 600ms, and only while shots remain.
+        // See the declaration comment for why (ConPTY redraw desync after the
+        // resume replay burst).
+        if (resumeNudgesLeft > 0) {
+          if (resumeNudgeTimer) clearTimeout(resumeNudgeTimer)
+          resumeNudgeTimer = setTimeout(() => {
+            resumeNudgeTimer = null
+            if (disposed || !term || resumeNudgesLeft <= 0) return
+            resumeNudgesLeft -= 1
+            const c = term.cols, r = term.rows
+            if (c > 0 && r > 2) {
+              ptyResizeCount += 2
+              window.electronAPI.pty.resize(sessionId, c, r - 1)
+              setTimeout(() => {
+                if (disposed || !term) return
+                window.electronAPI.pty.resize(sessionId, c, r)
+                lastSentCols = c
+                lastSentRows = r
+                try { term.refresh(0, r - 1) } catch { /* disposed mid-nudge */ }
+                reportIntegrity()
+              }, 60)
+            }
+          }, 600)
+        }
+
         reportIntegrity()
         pendingParseData += data
         scheduleParse()
@@ -690,6 +731,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       if (refreshTimer) clearTimeout(refreshTimer)
       if (reportTimer) clearTimeout(reportTimer)
       if (resizeDebounce) clearTimeout(resizeDebounce)
+      if (resumeNudgeTimer) clearTimeout(resumeNudgeTimer)
       if (handleKeyDownCopy) document.removeEventListener('keydown', handleKeyDownCopy)
       if (handleContextMenu) container.removeEventListener('contextmenu', handleContextMenu, true)
       if (handleWheel) container.removeEventListener('wheel', handleWheel)
