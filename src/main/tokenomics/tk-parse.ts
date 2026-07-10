@@ -74,7 +74,9 @@ export function codexEventsFromRollout(text: string, priceKeys: string[], startO
     const u = last ?? total
     const inputTotal = Number(u.input_tokens ?? 0)
     const cached = Number(u.cached_input_tokens ?? 0)
-    const out = Number(u.output_tokens ?? 0) + Number(u.reasoning_output_tokens ?? 0)
+    // reasoning_output_tokens is a SUBSET of output_tokens (verified against real
+    // rollouts: total_tokens == input + output exactly) — adding it double-counts.
+    const out = Number(u.output_tokens ?? 0)
     turns.push({
       ts: evt.timestamp ? Date.parse(evt.timestamp) : baseTs,
       inNonCached: Math.max(0, inputTotal - cached),

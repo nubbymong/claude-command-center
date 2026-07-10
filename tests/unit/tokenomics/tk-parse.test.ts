@@ -60,9 +60,11 @@ describe('codexEventsFromRollout', () => {
     ].join('\n')
     const evs = codexEventsFromRollout(text, PRICE_KEYS, 0)
     expect(evs).toHaveLength(2)
+    // outTok excludes reasoning_output_tokens: it is a SUBSET of output_tokens
+    // (real rollouts show total_tokens == input + output exactly).
     expect(evs[0]).toMatchObject({ dedupKey: 'x:cx1:0', provider: 'codex', model: 'gpt-5.5', priceModel: 'gpt-5.5',
-      cwd: 'F:\\cx', inTok: 90, cacheReadTok: 10, outTok: 55, cacheCreateTok: 0 })
-    expect(evs[1]).toMatchObject({ dedupKey: 'x:cx1:1', inTok: 180, cacheReadTok: 20, outTok: 75 })
+      cwd: 'F:\\cx', inTok: 90, cacheReadTok: 10, outTok: 50, cacheCreateTok: 0 })
+    expect(evs[1]).toMatchObject({ dedupKey: 'x:cx1:1', inTok: 180, cacheReadTok: 20, outTok: 70 })
   })
 
   it('supports startOrdinal for incremental tail (skips already-ingested turns)', () => {

@@ -179,8 +179,9 @@ export function parseCodexRollout(text: string): {
 /**
  * Convert a TokenCountEvent into a StatuslineData update.
  *
- * - inputTokens = input_tokens + cached_input_tokens (total consumed input)
- * - outputTokens = output_tokens + reasoning_output_tokens
+ * - inputTokens = input_tokens (cached_input_tokens is a SUBSET of it — verified
+ *   against real rollouts where total_tokens == input_tokens + output_tokens)
+ * - outputTokens = output_tokens (reasoning_output_tokens is likewise a subset)
  * - costUsd: computed via computeCodexCostUsd; undefined if model has no pricing entry
  * - rateLimitCurrent + rateLimitCurrentResets: present when rate_limits.primary exists
  * - rateLimitWeekly + rateLimitWeeklyResets: present when rate_limits.secondary exists
@@ -213,15 +214,14 @@ export function mapTokenCountToStatusline(
     inputTokens: u.input_tokens,
     cachedInputTokens: u.cached_input_tokens,
     outputTokens: u.output_tokens,
-    reasoningOutputTokens: u.reasoning_output_tokens,
   })
 
   const sl: StatuslineData = {
     sessionId,
     model: meta.model,
     reasoningEffort: meta.reasoningEffort,
-    inputTokens: u.input_tokens + u.cached_input_tokens,
-    outputTokens: u.output_tokens + u.reasoning_output_tokens,
+    inputTokens: u.input_tokens,
+    outputTokens: u.output_tokens,
     costUsd: cost ?? undefined,
     contextWindowSize: contextWindow ?? undefined,
     contextUsedPercent: contextWindow ? Math.min(100, (contextTokensInWindow(tc) / contextWindow) * 100) : undefined,

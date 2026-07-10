@@ -17,9 +17,16 @@ export function codexPricingKeys(): string[] {
   return Object.keys(pricing)
 }
 
+/** Codex usage semantics (verified against real rollouts: total_tokens ==
+ *  input_tokens + output_tokens exactly, even with nonzero reasoning):
+ *  `cached_input_tokens` is a SUBSET of `input_tokens`, and
+ *  `reasoning_output_tokens` is a SUBSET of `output_tokens`. So cost splits
+ *  input into uncached (full rate) + cached (cached rate, or full rate when the
+ *  model has no cached tier), and charges output_tokens once — the old formula
+ *  charged the cached portion twice and re-added reasoning on top of output. */
 export function computeCodexCostUsd(
   model: string,
-  tokens: { inputTokens: number; cachedInputTokens: number; outputTokens: number; reasoningOutputTokens: number },
+  tokens: { inputTokens: number; cachedInputTokens: number; outputTokens: number },
 ): number | null {
   const p = priceForModel(model)
   if (!p) {
@@ -29,8 +36,10 @@ export function computeCodexCostUsd(
     }
     return null
   }
-  const inputCost = (tokens.inputTokens / 1e6) * p.inputPer1M
-  const cachedCost = p.cachedInputPer1M != null ? (tokens.cachedInputTokens / 1e6) * p.cachedInputPer1M : 0
-  const outputCost = ((tokens.outputTokens + tokens.reasoningOutputTokens) / 1e6) * p.outputPer1M
+  const cached = Math.min(tokens.cachedInputTokens, tokens.inputTokens)
+  const uncached = tokens.inputTokens - cached
+  const inputCost = (uncached / 1e6) * p.inputPer1M
+  const cachedCost = (cached / 1e6) * (p.cachedInputPer1M ?? p.inputPer1M)
+  const outputCost = (tokens.outputTokens / 1e6) * p.outputPer1M
   return inputCost + cachedCost + outputCost
 }

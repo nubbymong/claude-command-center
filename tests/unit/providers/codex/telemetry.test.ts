@@ -524,7 +524,7 @@ describe('watchAndClaimRollout', () => {
 
     expect(updates.length).toBeGreaterThan(0)
     const latest = updates[updates.length - 1]
-    expect(latest.inputTokens).toBe(1500 + 300) // input_tokens + cached_input_tokens
+    expect(latest.inputTokens).toBe(1500) // input_tokens alone — cached_input_tokens is a subset of it
     expect(latest.outputTokens).toBe(200)
     expect(latest.contextWindowSize).toBe(200000)
     expect(latest.contextUsedPercent).toBeCloseTo((2000 / 200000) * 100, 4)
