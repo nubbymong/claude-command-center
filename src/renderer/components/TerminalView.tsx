@@ -202,9 +202,18 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
     // at the reconfirmed geometry, then term.refresh repaints xterm. Armed only
     // for resume-flavoured spawns, as a small self-extinguishing shot counter:
     // 2 for a direct --resume (first settle = post-replay), 3 for the resume
-    // picker (its first settle is the picker UI itself, pre-replay).
+    // picker. Two traps this design must dodge: (a) each nudge's own repaint
+    // output would re-arm the settle timer and CHAIN-FIRE the remaining shots —
+    // hence a post-nudge suppression window; (b) the picker path settles many
+    // times (UI paint, arrow-key echo) before the replay — hence picker shots
+    // only spend on a replay-SIZED burst.
     let resumeNudgesLeft = 0
+    let resumeNudgeGated = false          // picker path: only replay-sized bursts consume a shot
+    let resumeNudgeBurstBytes = 0         // bytes accumulated since the last settle evaluation
+    let resumeNudgeSuppressUntil = 0      // epoch ms; ignore re-arms right after our own nudge
+    let resumeNudgeShrunk = false         // rows-1 shrink in flight, restore pending
     let resumeNudgeTimer: ReturnType<typeof setTimeout> | null = null
+    let resumeNudgeRestoreTimer: ReturnType<typeof setTimeout> | null = null
     const reportIntegrity = () => {
       if (reportTimer) return
       reportTimer = setTimeout(() => {
@@ -398,6 +407,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
               resumeNudgesLeft = 2
             } else if (useResumePicker && !shellOnly) {
               resumeNudgesLeft = 3
+              resumeNudgeGated = true
             }
             window.electronAPI.pty
               .spawn(sessionId, { cwd, cols, rows, ssh, shellOnly, elevated, configId, configLabel, useResumePicker, legacyVersion, agentsConfig, effortLevel, disableAutoMemory, enableCodexReview, loggingEnabled, model, provider, codexOptions, profileId: resolvedProfileId, resume })
@@ -613,24 +623,41 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
 
         // Post-resume settle nudge: every chunk re-arms the timer; it fires only
         // once a burst has gone quiet for 600ms, and only while shots remain.
-        // See the declaration comment for why (ConPTY redraw desync after the
-        // resume replay burst).
-        if (resumeNudgesLeft > 0) {
+        // Suppressed right after our own nudge so its repaint can't chain-fire
+        // the next shot. See the declaration comment for the full picture.
+        if (resumeNudgesLeft > 0 && Date.now() >= resumeNudgeSuppressUntil) {
+          resumeNudgeBurstBytes += data.length
           if (resumeNudgeTimer) clearTimeout(resumeNudgeTimer)
           resumeNudgeTimer = setTimeout(() => {
             resumeNudgeTimer = null
             if (disposed || !term || resumeNudgesLeft <= 0) return
+            const burst = resumeNudgeBurstBytes
+            resumeNudgeBurstBytes = 0
+            // Picker sessions settle repeatedly before the replay (UI paint,
+            // arrow-key echo) — only a replay-sized burst is worth a shot. 32KB
+            // is far above a one-screen repaint and far below any real replay;
+            // a tiny transcript may slip under it, but tiny replays are also the
+            // least corruption-prone.
+            if (resumeNudgeGated && burst < 32_768) return
             resumeNudgesLeft -= 1
+            resumeNudgeSuppressUntil = Date.now() + 1500
             const c = term.cols, r = term.rows
             if (c > 0 && r > 2) {
               ptyResizeCount += 2
+              resumeNudgeShrunk = true
               window.electronAPI.pty.resize(sessionId, c, r - 1)
-              setTimeout(() => {
+              resumeNudgeRestoreTimer = setTimeout(() => {
+                resumeNudgeRestoreTimer = null
+                resumeNudgeShrunk = false
                 if (disposed || !term) return
-                window.electronAPI.pty.resize(sessionId, c, r)
-                lastSentCols = c
-                lastSentRows = r
-                try { term.refresh(0, r - 1) } catch { /* disposed mid-nudge */ }
+                // Re-read geometry AT FIRE TIME: a real user resize can land inside
+                // the 60ms shrink window, and restoring the stale capture would
+                // stomp it — PTY and xterm would disagree until the next resize.
+                const c2 = term.cols, r2 = term.rows
+                window.electronAPI.pty.resize(sessionId, c2, r2)
+                lastSentCols = c2
+                lastSentRows = r2
+                try { term.refresh(0, r2 - 1) } catch { /* disposed mid-nudge */ }
                 reportIntegrity()
               }, 60)
             }
@@ -732,6 +759,13 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       if (reportTimer) clearTimeout(reportTimer)
       if (resizeDebounce) clearTimeout(resizeDebounce)
       if (resumeNudgeTimer) clearTimeout(resumeNudgeTimer)
+      if (resumeNudgeRestoreTimer) clearTimeout(resumeNudgeRestoreTimer)
+      if (resumeNudgeShrunk && lastSentCols && lastSentRows) {
+        // Unmount raced the 60ms shrink→restore gap: the session's PTY outlives
+        // this view one row short — restore it best-effort with the last real
+        // geometry so a remount doesn't inherit a desynced terminal.
+        try { window.electronAPI.pty.resize(sessionId, lastSentCols, lastSentRows) } catch { /* main gone */ }
+      }
       if (handleKeyDownCopy) document.removeEventListener('keydown', handleKeyDownCopy)
       if (handleContextMenu) container.removeEventListener('contextmenu', handleContextMenu, true)
       if (handleWheel) container.removeEventListener('wheel', handleWheel)
