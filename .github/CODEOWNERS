@@ -1,0 +1,5 @@
+# Every path requires review from the repository owner before merging into a
+# protected branch (main/beta) — enforced by the protect-release-lines ruleset's
+# "require code owner review". Collaborators develop on feature branches and
+# open PRs; final merge decision stays with the owner.
+* @nubbymong
