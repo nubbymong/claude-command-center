@@ -196,10 +196,16 @@ export class VisionManager {
           this.dropSessions()
           this.notifyStatusChange()
         }
+        // Whether or not we were ever connected: the endpoint is dead, so
+        // relaunch OUR browser (cooldown-limited). Pre-fix this branch did
+        // nothing when the browser died before the FIRST connect, so the
+        // Vision panel sat on "Browser launching…" forever.
+        maybeAutoRelaunchBrowser(this.debugPort)
       })
       req.on('timeout', () => {
         req.destroy()
         if (this.connected) { this.connected = false; this.dropSessions(); this.notifyStatusChange() }
+        maybeAutoRelaunchBrowser(this.debugPort)
       })
       req.end()
     }, 30000)
@@ -615,6 +621,55 @@ function getBrowserPaths(browser: 'chrome' | 'edge'): string[] {
 // themselves never comes through launchBrowser, so it is never tracked or killed.
 let spawnedBrowserPid: number | null = null
 
+// ── Heartbeat auto-relaunch ───────────────────────────────────────────────
+let lastAutoRelaunchAt = 0
+const AUTO_RELAUNCH_COOLDOWN_MS = 120_000
+
+/** The heartbeat found the CDP endpoint dead. While vision is running
+ *  (globalConfig set), relaunch OUR browser instead of reconnecting to a corpse
+ *  forever — the panel otherwise sticks on "Browser launching…" until the user
+ *  manually Stop/Starts. Cooldown-limited so a crash-looping browser can't
+ *  spawn-storm. Returns whether a relaunch was attempted. Exported for tests. */
+export function maybeAutoRelaunchBrowser(debugPort: number): boolean {
+  const cfg = globalConfig
+  if (!cfg || cfg.debugPort !== debugPort) return false
+  const now = Date.now()
+  if (now - lastAutoRelaunchAt < AUTO_RELAUNCH_COOLDOWN_MS) return false
+  lastAutoRelaunchAt = now
+  logInfo(`[vision] Browser gone on port ${debugPort} — auto-relaunching`)
+  try {
+    launchBrowser(cfg.browser, cfg.debugPort, cfg.url, cfg.headless !== false)
+    return true
+  } catch (err) {
+    logInfo(`[vision] Auto-relaunch failed (heartbeat will retry): ${(err as Error)?.message ?? err}`)
+    return false
+  }
+}
+
+/** Test seam: clear the auto-relaunch cooldown. */
+export function _resetAutoRelaunchForTest(): void { lastAutoRelaunchAt = 0 }
+
+/** Kill ORPHANED debug browsers left over from a PREVIOUS CCC run. The tracked-pid
+ *  kill above only covers this process's own spawn — after a crash the pid is lost
+ *  and the detached browser survives as a blank zombie window that also holds the
+ *  CDP port and the profile singleton lock (making the next launch silently fail).
+ *  Match main processes (not --type= children) by the profile-dir signature we bake
+ *  into the command line (`chrome-debug-<port>` / `msedge-debug-<port>`) and kill
+ *  each tree. Best-effort: never throws, no-op when nothing matches. */
+function sweepOrphanDebugBrowsers(debugPort: number): void {
+  try {
+    if (process.platform === 'win32') {
+      const ps =
+        `Get-CimInstance Win32_Process -Filter \\"Name='chrome.exe' or Name='msedge.exe'\\" | ` +
+        `Where-Object { $_.CommandLine -match 'debug-${debugPort}' -and $_.CommandLine -notmatch '--type=' } | ` +
+        `ForEach-Object { taskkill /PID $_.ProcessId /T /F }`
+      execSync(`powershell -NoProfile -NonInteractive -Command "${ps}"`, { windowsHide: true, timeout: 10000, stdio: 'ignore' })
+    } else {
+      execSync(`pkill -f -- "-debug-${debugPort}" || true`, { timeout: 10000, stdio: 'ignore' })
+    }
+  } catch { /* nothing matched / tool unavailable — best-effort */ }
+}
+
 /**
  * Kill the headless browser process tree CCC spawned, if any. Best-effort with a
  * hard fallback: taskkill /T /F (whole tree) on Windows, process.kill(-pid) on
@@ -673,10 +728,13 @@ export function buildBrowserLaunchArgs(
 }
 
 export function launchBrowser(browser: 'chrome' | 'edge', debugPort: number, url?: string, headless: boolean = true): { pid: number; command: string } {
-  // Relaunch path: kill the previous CCC-spawned headless browser first so we
-  // never stack orphans (the --user-data-dir singleton means a stale one would
-  // also reject the new debug port).
+  // Relaunch path: kill the previous CCC-spawned browser first so we never
+  // stack orphans (the --user-data-dir singleton means a stale one would also
+  // reject the new debug port). Then sweep UNTRACKED orphans from a prior
+  // crashed run — those hold the same profile lock and would make this spawn
+  // silently die.
   killSpawnedBrowser()
+  sweepOrphanDebugBrowsers(debugPort)
 
   const tmpDir = process.env.TEMP || process.env.TMP || os.tmpdir()
   const profileDir = path.join(tmpDir, `${browser}-debug-${debugPort}`)

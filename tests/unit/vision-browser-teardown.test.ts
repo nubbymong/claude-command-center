@@ -26,7 +26,13 @@ vi.mock('../../src/main/conductor-mcp-server', () => ({ getConductorMcpPort: () 
 vi.mock('../../src/main/ipc/setup-handlers', () => ({ getResourcesDirectory: () => '/res' }))
 vi.mock('../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logError: vi.fn() }))
 
-const { launchBrowser, killSpawnedBrowser, stopGlobalVision } = await import('../../src/main/vision-manager')
+const { launchBrowser, killSpawnedBrowser, stopGlobalVision, startGlobalVision, maybeAutoRelaunchBrowser, _resetAutoRelaunchForTest, _setCdpForTest } = await import('../../src/main/vision-manager')
+
+// launchBrowser now ALSO fires an orphan sweep (powershell/pkill) via execSync on
+// every launch, so tests that count kill commands must filter to the DIRECT
+// tracked-pid kill (`taskkill /pid <n>` on Windows) and ignore sweep commands.
+const directKills = () => execSyncCalls.filter((c) => !c.startsWith('powershell') && !c.startsWith('pkill'))
+const sweepCalls = () => execSyncCalls.filter((c) => c.startsWith('powershell') || c.startsWith('pkill'))
 
 describe('vision browser teardown (leak fix)', () => {
   beforeEach(() => {
@@ -43,14 +49,14 @@ describe('vision browser teardown (leak fix)', () => {
     expect(pid).toBe(1000)
     killSpawnedBrowser()
     if (process.platform === 'win32') {
-      expect(execSyncCalls).toHaveLength(1)
-      expect(execSyncCalls[0]).toContain('taskkill')
-      expect(execSyncCalls[0]).toContain('1000')
+      expect(directKills()).toHaveLength(1)
+      expect(directKills()[0]).toContain('taskkill')
+      expect(directKills()[0]).toContain('1000')
     }
     // Idempotent: a second teardown does nothing.
     execSyncCalls.length = 0
     killSpawnedBrowser()
-    expect(execSyncCalls).toHaveLength(0)
+    expect(directKills()).toHaveLength(0)
   })
 
   it('tracks and kills a CCC-spawned HEADED browser too (the boot-spawn leak fix)', () => {
@@ -61,10 +67,17 @@ describe('vision browser teardown (leak fix)', () => {
     expect(pid).toBe(1000)
     killSpawnedBrowser()
     if (process.platform === 'win32') {
-      expect(execSyncCalls).toHaveLength(1)
-      expect(execSyncCalls[0]).toContain('taskkill')
-      expect(execSyncCalls[0]).toContain('1000')
+      expect(directKills()).toHaveLength(1)
+      expect(directKills()[0]).toContain('taskkill')
+      expect(directKills()[0]).toContain('1000')
     }
+  })
+
+  it('sweeps orphaned debug browsers (by profile signature) on every launch', () => {
+    launchBrowser('chrome', 9222, undefined, true)
+    // The sweep is the cross-restart safety net: a crashed CCC loses the tracked
+    // pid, so the next launch must kill any process holding our debug profile.
+    expect(sweepCalls().some((c) => c.includes('debug-9222'))).toBe(true)
   })
 
   it('kills the previous headless browser before relaunching a new one', () => {
@@ -82,7 +95,35 @@ describe('vision browser teardown (leak fix)', () => {
     launchBrowser('chrome', 9222, undefined, true)
     await stopGlobalVision()
     if (process.platform === 'win32') {
-      expect(execSyncCalls.some(c => c.includes('taskkill'))).toBe(true)
+      expect(directKills().some(c => c.includes('taskkill'))).toBe(true)
     }
+  })
+
+  it('auto-relaunches the browser when the heartbeat finds it gone (cooldown-limited)', async () => {
+    // Fake CDP that never connects — mirrors "browser died before first connect",
+    // the case that previously left the Vision panel on "Browser launching…" forever.
+    _setCdpForTest(() => Promise.reject(new Error('no browser')))
+    _resetAutoRelaunchForTest()
+    try {
+      await startGlobalVision({ browser: 'chrome', debugPort: 9222, headless: true } as any, () => null)
+      spawnCalls.length = 0
+
+      expect(maybeAutoRelaunchBrowser(9222)).toBe(true)   // relaunch attempted...
+      expect(spawnCalls).toHaveLength(1)                   // ...and a browser spawned
+      expect(maybeAutoRelaunchBrowser(9222)).toBe(false)  // cooldown blocks a storm
+      expect(spawnCalls).toHaveLength(1)
+      expect(maybeAutoRelaunchBrowser(9333)).toBe(false)  // wrong port → not ours
+    } finally {
+      await stopGlobalVision()
+      _setCdpForTest(null)
+      _resetAutoRelaunchForTest()
+    }
+  })
+
+  it('does NOT auto-relaunch when vision is not running (no global config)', () => {
+    _resetAutoRelaunchForTest()
+    spawnCalls.length = 0
+    expect(maybeAutoRelaunchBrowser(9222)).toBe(false)
+    expect(spawnCalls).toHaveLength(0)
   })
 })
