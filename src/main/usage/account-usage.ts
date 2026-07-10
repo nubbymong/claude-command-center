@@ -15,7 +15,7 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import { listProfiles, getProfileConfigDir, readProfileAccountEmail } from '../account-profiles'
-import { getActiveProfileIds } from '../claude-account-identity'
+import { isProfileInUseByLiveSession } from '../claude-account-identity'
 import { parseUsage } from './usage-buckets'
 import type { AccountUsage, UsageBucket, CreditsInfo } from '../../shared/usage-types'
 import { logWarn, logInfo } from '../debug-logger'
@@ -221,21 +221,39 @@ export function parseRefreshResponse(
 
 /** Atomically write refreshed tokens back into the credentials file, preserving
  *  every other field in `claudeAiOauth`. temp-file + rename so the file is never
- *  observed half-written by a concurrently-starting Claude. Returns false (and
- *  does NOT touch the file) on any error. */
-function writeRefreshedCreds(credsPath: string, t: { accessToken: string; refreshToken: string; expiresAt: number }): boolean {
-  try {
-    const raw = fs.readFileSync(credsPath, 'utf8')
-    const c = JSON.parse(raw) as { claudeAiOauth?: Record<string, unknown> }
-    c.claudeAiOauth = { ...(c.claudeAiOauth ?? {}), accessToken: t.accessToken, refreshToken: t.refreshToken, expiresAt: t.expiresAt }
-    const tmp = credsPath + '.ccc-refresh.tmp'
-    fs.writeFileSync(tmp, JSON.stringify(c, null, 2), { mode: 0o600 })
-    fs.renameSync(tmp, credsPath)
-    return true
-  } catch (e) {
-    logWarn(`[account-usage] failed to persist refreshed token: ${(e as Error)?.message ?? e}`)
-    return false
+ *  observed half-written by a concurrently-starting Claude.
+ *
+ *  Rotation safety: re-reads the file and ABORTS (returning false, file untouched)
+ *  when its refresh token is no longer the one we spent on the grant — another
+ *  writer (a /login completing in a login shell, or Claude's own refresh) rotated
+ *  the lineage mid-flight, and theirs is NEWER; overwriting would destroy a live
+ *  sign-in. Transient write errors are retried: the server-side rotation already
+ *  happened, so giving up too easily would strand the account on a dead token. */
+async function writeRefreshedCreds(
+  credsPath: string,
+  spentRefreshToken: string,
+  t: { accessToken: string; refreshToken: string; expiresAt: number },
+): Promise<boolean> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const raw = fs.readFileSync(credsPath, 'utf8')
+      const c = JSON.parse(raw) as { claudeAiOauth?: Record<string, unknown> }
+      const current = c.claudeAiOauth?.refreshToken
+      if (typeof current === 'string' && current.length > 0 && current !== spentRefreshToken) {
+        logWarn('[account-usage] credentials rotated by another writer during refresh — keeping theirs, discarding ours')
+        return false
+      }
+      c.claudeAiOauth = { ...(c.claudeAiOauth ?? {}), accessToken: t.accessToken, refreshToken: t.refreshToken, expiresAt: t.expiresAt }
+      const tmp = credsPath + '.ccc-refresh.tmp'
+      fs.writeFileSync(tmp, JSON.stringify(c, null, 2), { mode: 0o600 })
+      fs.renameSync(tmp, credsPath)
+      return true
+    } catch (e) {
+      if (attempt < 2) { await sleep(100); continue }
+      logWarn(`[account-usage] failed to persist refreshed token after retries: ${(e as Error)?.message ?? e}`)
+    }
   }
+  return false
 }
 
 /** Per-profile in-flight guard so two concurrent fetches (fetchAll + a manual
@@ -253,10 +271,11 @@ async function refreshProfileToken(profileId: string, refreshToken: string, cred
     if (!res.ok) { logWarn(`[account-usage] token refresh rejected for profile=${profileId}`); return null }
     const parsed = parseRefreshResponse(res.data)
     if (!parsed) { logWarn(`[account-usage] token refresh response unparseable for profile=${profileId}`); return null }
-    // Persist the ROTATED tokens before returning; if the write fails we bail
-    // (the server already rotated, but leaving creds untouched is the safe call —
-    // worst case the account needs a re-login, which is the same failure Claude has).
-    if (!writeRefreshedCreds(credsPath, parsed)) return null
+    // Persist the ROTATED tokens immediately (a Claude spawning right now re-reads
+    // this file for its own refresh, so landing the new lineage fast is what keeps
+    // it signed in). writeRefreshedCreds aborts instead when ANOTHER writer rotated
+    // mid-flight — their sign-in is newer than our rotation, keep theirs.
+    if (!(await writeRefreshedCreds(credsPath, refreshToken, parsed))) return null
     logInfo(`[account-usage] refreshed access token for profile=${profileId}`)
     return { accessToken: parsed.accessToken, expiresAt: parsed.expiresAt }
   })()
@@ -331,10 +350,17 @@ export async function fetchAccountUsage(profileId: string): Promise<AccountUsage
   // Auto-refresh a lapsed token so an idle-but-signed-in account still shows live
   // usage without opening a session. GUARDS (all must hold): signed in, we have a
   // refresh token + the creds path to write back, the token is actually lapsed,
-  // and NO live session is running for this profile — so we can't race Claude's own
-  // refresh and rotate the token out from under it. Refresh tokens rotate, so a
-  // careless refresh here would log the account out.
-  if (!tokenUsable && creds.signedIn && creds.refreshToken && creds.credsPath && !getActiveProfileIds().has(profileId)) {
+  // NOT the primary profile, and no live session is using this profile. Refresh
+  // tokens rotate (single-use), so a careless refresh here logs the account out:
+  //  - PRIMARY is excluded outright: its credentials are shared with the global
+  //    ~/.claude (credsPath can literally BE the global file), which `claude` runs
+  //    OUTSIDE CCC read — rotating under them strands every external terminal.
+  //    Non-primary profiles live in CCC-managed isolated homes, so CCC sessions
+  //    are their only consumers and the live-session guard below is sufficient.
+  //  - isProfileInUseByLiveSession covers BOTH interactive sessions and the
+  //    profile-pinned shell-only login shells (re-auth / add-account), whose
+  //    in-flight /login a refresh could otherwise clobber.
+  if (!tokenUsable && creds.signedIn && creds.refreshToken && creds.credsPath && !isPrimary && !isProfileInUseByLiveSession(profileId)) {
     const refreshed = await refreshProfileToken(profileId, creds.refreshToken, creds.credsPath)
     if (refreshed) {
       token = refreshed.accessToken
