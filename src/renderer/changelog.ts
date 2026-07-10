@@ -22,6 +22,9 @@ export const changelog: ChangelogEntry[] = [
       { type: 'fix', description: 'In-app update checks now find newer beta releases. Releases were being tagged against a stale commit, which mis-dated them so the updater never saw them; they are now tagged at the exact commit that was built, and the updater scans the full release list.' },
       { type: 'fix', description: 'The all-accounts usage panel now shows live usage for every signed-in account — even ones you have not opened a session with recently. It quietly refreshes each account\'s short-lived key in the background, and only for accounts with no running session, so it never disturbs one you are using.' },
       { type: 'fix', description: 'Fixed a blank browser window that could appear on startup (and linger after closing the app) when the browser/vision tool was enabled. The automation browser is now kept off-screen and is reliably shut down together with the app.' },
+      { type: 'fix', description: 'The automation browser no longer runs Chrome\'s first-run setup on every launch, which was touching the desktop shortcuts and making the Chrome icon flicker on OneDrive-synced desktops.' },
+      { type: 'fix', description: 'Codex sessions: the context meter now shows how full the context window actually is (the last request against the window), instead of the session\'s lifetime token total — which pinned the bar red at ~100% on long sessions whose window was mostly free.' },
+      { type: 'fix', description: 'Resumed sessions: after the resume replay finishes, the terminal geometry is re-confirmed and the view repainted — targeting the garbled overlay text (stray line fragments over the input box) that could appear and persist after resuming a session.' },
     ],
   },
   {
