@@ -47,7 +47,8 @@ npm run test         # both
 
 ## Release Process
 
-- Work on `beta` branch. Cut beta releases with `npm run release -- --beta`
-- Promote to stable: merge beta→main PR, then `npm run release -- --stable --no-bump` from main
-- GitHub Actions builds Windows (.exe) + macOS (.dmg) installers
+- Work on a feature branch off `beta`. To cut a prerelease: bump `package.json` (e.g. `2.0.0-rc.1`), commit `build(release): <version>`, ff-merge to `beta`, push, then `gh workflow run release.yml --ref beta -f channel=beta -f skip_vt=false` and watch it to green
+- Prerelease tags: `-beta.N` and `-rc.N` — both ride the beta update channel; rc outranks beta, final outranks rc
+- Promote to stable: merge beta→main PR, then run the release workflow from `main` with `channel=stable`
+- GitHub Actions builds Windows (.exe) + macOS (.dmg) installers; the release job tags the exact built commit (`--target`) so the in-app updater orders releases correctly
 - Never commit secrets, .env files, or personal paths

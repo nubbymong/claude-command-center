@@ -15,16 +15,17 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
-    version: '2.0.0-beta.7',
-    date: '2026-07-08',
-    highlights: 'In-app updates find new betas again, the all-accounts usage panel shows every signed-in account live, and a stray blank browser window on startup is gone.',
+    version: '2.0.0-rc.1',
+    date: '2026-07-10',
+    highlights: 'v2.0 Release Candidate 1: in-app updates work again, every signed-in account shows live usage, the stray blank browser window is gone, and a full dependency security refresh.',
     changes: [
-      { type: 'fix', description: 'In-app update checks now find newer beta releases. Releases were being tagged against a stale commit, which mis-dated them so the updater never saw them; they are now tagged at the exact commit that was built, and the updater scans the full release list.' },
+      { type: 'fix', description: 'In-app update checks now find newer releases. Releases were being tagged against a stale commit, which mis-dated them so the updater never saw them; they are now tagged at the exact commit that was built, the updater scans the full release list, and it understands release-candidate versions.' },
       { type: 'fix', description: 'The all-accounts usage panel now shows live usage for every signed-in account — even ones you have not opened a session with recently. It quietly refreshes each account\'s short-lived key in the background, and only for accounts with no running session, so it never disturbs one you are using.' },
       { type: 'fix', description: 'Fixed a blank browser window that could appear on startup (and linger after closing the app) when the browser/vision tool was enabled. The automation browser is now kept off-screen and is reliably shut down together with the app.' },
       { type: 'fix', description: 'The automation browser no longer runs Chrome\'s first-run setup on every launch, which was touching the desktop shortcuts and making the Chrome icon flicker on OneDrive-synced desktops.' },
       { type: 'fix', description: 'Codex sessions: the context meter now shows how full the context window actually is (the last request against the window), instead of the session\'s lifetime token total — which pinned the bar red at ~100% on long sessions whose window was mostly free.' },
       { type: 'fix', description: 'Resumed sessions: after the resume replay finishes, the terminal geometry is re-confirmed and the view repainted — targeting the garbled overlay text (stray line fragments over the input box) that could appear and persist after resuming a session.' },
+      { type: 'improvement', description: 'Security refresh: the one remaining vulnerable dependency (the WebSocket client used for browser automation) is patched, and the dependency audit is clean — 0 known vulnerabilities across the shipped tree.' },
     ],
   },
   {
