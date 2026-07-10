@@ -82,7 +82,10 @@
     "mermaid": "^11.15.0",
     "qs": "^6.15.2",
     "uuid": "^11.1.1",
-    "tmp": "^0.2.6"
+    "tmp": "^0.2.6",
+    "chrome-remote-interface": {
+      "ws": "^7.5.11"
+    }
   },
   "build": {
     "appId": "com.claudeconductor.app",
