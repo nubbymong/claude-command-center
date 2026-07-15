@@ -75,7 +75,7 @@ import AutoDetectBanner from './components/github/AutoDetectBanner'
 import { handleAutoDetectAccept } from './utils/githubAutoDetectAccept'
 import RepoBreadcrumb from './components/RepoBreadcrumb'
 import type { SessionState, SavedSession } from './types/electron'
-import { buildSessionState, buildSessionStateWithResumeTargets } from './session-persistence'
+import { buildSessionState, buildSessionStateWithResumeTargets, markRestoredSessionsPredetermined } from './session-persistence'
 import { useSessionAutosave } from './hooks/useSessionAutosave'
 
 // Re-export ViewType from its canonical location for backwards compatibility
@@ -572,6 +572,14 @@ export default function App() {
           markSessionForResumePicker(session.id)
         }
       }
+
+      // Relaunch must CONTINUE each session under the same account it was closed
+      // on (issue #76). The account is already determined (persisted profileId),
+      // so -- like in-session Restart/Recover/Switch -- mark the restored sessions
+      // predetermined BEFORE the store restore mounts their TerminalViews, so each
+      // spawn skips the pre-spawn AccountLaunchGate re-prompt and respawns under
+      // its saved account.
+      markRestoredSessionsPredetermined(restoredSessions.map((s) => s.id))
 
       useSessionStore.getState().restoreSessions(restoredSessions, savedState.activeSessionId)
       await window.electronAPI.session.clear()

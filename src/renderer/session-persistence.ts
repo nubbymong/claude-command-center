@@ -1,4 +1,5 @@
 import { useSessionStore } from './stores/sessionStore'
+import { useAccountGateStore } from './stores/accountGateStore'
 import type { SessionState, SavedSession } from './types/electron'
 
 // Serialize the current sessionStore into the shape the main process persists.
@@ -108,6 +109,28 @@ export async function buildSessionStateWithResumeTargets(): Promise<SessionState
  * BEFORE the await, so callers that immediately read the store / respawn still
  * see the new id; the disk flush is best-effort and never blocks the spawn.
  */
+/**
+ * Mark every relaunch-restored session as predetermined in the account gate so
+ * its respawn continues under the SAME account it was closed on, skipping the
+ * pre-spawn AccountLaunchGate re-prompt (issue #76).
+ *
+ * The relaunch account is already determined -- it is the persisted
+ * session.profileId -- exactly like an in-session Restart/Recover/Switch, all of
+ * which call markPredetermined for the same reason. Without this, every restored
+ * multi-account (>=2 profiles) session re-pops the picker on each launch and does
+ * not auto-continue under its account; a relaunched session could even come back
+ * on a different account than it left.
+ *
+ * Must be called BEFORE the store restore that mounts the TerminalViews, so the
+ * flag is set before each spawn effect reads consumePredetermined(). The flag is
+ * consumed only on the gate-eligible path, so it is a harmless no-op for
+ * single-account / shell-only / Codex / SSH restores.
+ */
+export function markRestoredSessionsPredetermined(sessionIds: string[]): void {
+  const gate = useAccountGateStore.getState()
+  for (const id of sessionIds) gate.markPredetermined(id)
+}
+
 export async function persistLastUsedAccount(sessionId: string, profileId: string | undefined): Promise<void> {
   useSessionStore.getState().updateSession(sessionId, { profileId })
   try {
