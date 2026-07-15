@@ -15,6 +15,7 @@ import { shouldUseResumePicker } from '../utils/resumePicker'
 import { shouldGateAccountChoice, formatSpawnError } from '../utils/sessionLaunch'
 import { stripCursorSequences } from '../utils/terminalFormatting'
 import { isControlReportOnly, decideContextMenuAction } from '../utils/terminalInput'
+import { decideFollow } from '../utils/terminalScroll'
 import { getTerminalTheme } from './terminal/terminalTheme'
 import { useSettingsStore, DEFAULT_TERMINAL_SETTINGS } from '../stores/settingsStore'
 import { ScrollToBottomButton } from './terminal'
@@ -614,12 +615,24 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         bytesReceived += data.length
         strippedBytes += data.length - filtered.length
         bytesWritten += filtered.length
+
+        // Sticky-bottom follow (issue #73): sample the LIVE viewport position
+        // BEFORE this chunk lays out and decide from THAT — not from the
+        // wheel-set latch, which scrollbar-thumb drags and keyboard scrolling
+        // never touched, so live output kept yanking the viewport back down.
+        // onData chunks run atomically, so viewportY is the user's current
+        // position. Keeps the scrolled-up latch (the scroll-to-bottom button)
+        // in sync with where the user actually is, every chunk.
+        const preWriteBuf = term?.buffer.active
+        const follow = decideFollow({
+          viewportY: preWriteBuf?.viewportY ?? 0,
+          baseY: preWriteBuf?.baseY ?? 0,
+        })
+
         term?.write(filtered)
 
-        // Only auto-scroll if user hasn't scrolled up
-        if (!isScrolledUpRef.current) {
-          term?.scrollToBottom()
-        }
+        if (follow.scrollToBottom) term?.scrollToBottom()
+        if (follow.scrolledUp !== isScrolledUpRef.current) updateScrollState(follow.scrolledUp)
 
         // Post-resume settle nudge: every chunk re-arms the timer; it fires only
         // once a burst has gone quiet for 600ms, and only while shots remain.
