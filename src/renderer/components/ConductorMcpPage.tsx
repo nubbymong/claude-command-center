@@ -5,6 +5,7 @@ import CompatBadge from './sentinel/CompatBadge'
 import VisionSubTool from './conductor-mcp/VisionSubTool'
 import CodexReviewSubTool from './conductor-mcp/CodexReviewSubTool'
 import HostTransferSubTool from './conductor-mcp/HostTransferSubTool'
+import ProxySubTool from './conductor-mcp/ProxySubTool'
 
 const headerIcon = (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
@@ -74,6 +75,7 @@ export default function ConductorMcpPage() {
               Sub-tools below own their own state; the server stays running independent of any of them.
             </div>
 
+            <ProxySubTool />
             <VisionSubTool />
             <CodexReviewSubTool />
             <HostTransferSubTool />

@@ -301,6 +301,16 @@ export interface ElectronAPI {
     getConfig: () => Promise<{ enabled?: boolean; browser: 'chrome' | 'edge'; debugPort: number; mcpPort?: number; url?: string; headless?: boolean } | null>
     onStatusChanged: (callback: (data: { connected: boolean; browser: string; mcpPort: number }) => void) => () => void
   }
+  mcpProxy: {
+    list: () => Promise<import('../shared/types').McpUpstreamView[]>
+    add: (input: Omit<import('../shared/types').McpUpstream, 'id'>) => Promise<{ ok: boolean; error?: string; upstreams?: import('../shared/types').McpUpstreamView[] }>
+    update: (id: string, patch: Partial<Omit<import('../shared/types').McpUpstream, 'id'>>) => Promise<{ ok: boolean; error?: string; upstreams?: import('../shared/types').McpUpstreamView[] }>
+    remove: (id: string) => Promise<{ ok: boolean; upstreams?: import('../shared/types').McpUpstreamView[] }>
+    start: (id: string) => Promise<{ ok: boolean; error?: string; upstreams?: import('../shared/types').McpUpstreamView[] }>
+    stop: (id: string) => Promise<{ ok: boolean; upstreams?: import('../shared/types').McpUpstreamView[] }>
+    restart: (id: string) => Promise<{ ok: boolean; error?: string; upstreams?: import('../shared/types').McpUpstreamView[] }>
+    onChanged: (callback: (upstreams: import('../shared/types').McpUpstreamView[]) => void) => () => void
+  }
   legacyVersion: {
     fetchVersions: () => Promise<string[]>
     isInstalled: (version: string) => Promise<boolean>
@@ -761,6 +771,20 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.on(IPC.VISION_STATUS_CHANGED, handler)
       return () => ipcRenderer.removeListener(IPC.VISION_STATUS_CHANGED, handler)
     }
+  },
+  mcpProxy: {
+    list: () => ipcRenderer.invoke(IPC.MCP_PROXY_LIST),
+    add: (input: any) => ipcRenderer.invoke(IPC.MCP_PROXY_ADD, input),
+    update: (id: string, patch: any) => ipcRenderer.invoke(IPC.MCP_PROXY_UPDATE, id, patch),
+    remove: (id: string) => ipcRenderer.invoke(IPC.MCP_PROXY_REMOVE, id),
+    start: (id: string) => ipcRenderer.invoke(IPC.MCP_PROXY_START, id),
+    stop: (id: string) => ipcRenderer.invoke(IPC.MCP_PROXY_STOP, id),
+    restart: (id: string) => ipcRenderer.invoke(IPC.MCP_PROXY_RESTART, id),
+    onChanged: (callback: (upstreams: any) => void) => {
+      const handler = (_: unknown, upstreams: any) => callback(upstreams)
+      ipcRenderer.on(IPC.MCP_PROXY_CHANGED, handler)
+      return () => ipcRenderer.removeListener(IPC.MCP_PROXY_CHANGED, handler)
+    },
   },
   cloudAgent: {
     dispatch: (params: { name: string; description: string; projectPath: string; configId?: string; profileId?: string; legacyVersion?: { enabled: boolean; version: string }; skipPermissions?: boolean }) =>

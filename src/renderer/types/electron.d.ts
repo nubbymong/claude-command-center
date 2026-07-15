@@ -363,6 +363,16 @@ export interface ElectronAPI {
     getConfig: () => Promise<{ enabled?: boolean; browser: 'chrome' | 'edge'; debugPort: number; mcpPort?: number; url?: string; headless?: boolean } | null>
     onStatusChanged: (callback: (data: { connected: boolean; browser: string; mcpPort: number }) => void) => () => void
   }
+  mcpProxy: {
+    list: () => Promise<import('../../shared/types').McpUpstreamView[]>
+    add: (input: Omit<import('../../shared/types').McpUpstream, 'id'>) => Promise<{ ok: boolean; error?: string; upstreams?: import('../../shared/types').McpUpstreamView[] }>
+    update: (id: string, patch: Partial<Omit<import('../../shared/types').McpUpstream, 'id'>>) => Promise<{ ok: boolean; error?: string; upstreams?: import('../../shared/types').McpUpstreamView[] }>
+    remove: (id: string) => Promise<{ ok: boolean; upstreams?: import('../../shared/types').McpUpstreamView[] }>
+    start: (id: string) => Promise<{ ok: boolean; error?: string; upstreams?: import('../../shared/types').McpUpstreamView[] }>
+    stop: (id: string) => Promise<{ ok: boolean; upstreams?: import('../../shared/types').McpUpstreamView[] }>
+    restart: (id: string) => Promise<{ ok: boolean; error?: string; upstreams?: import('../../shared/types').McpUpstreamView[] }>
+    onChanged: (callback: (upstreams: import('../../shared/types').McpUpstreamView[]) => void) => () => void
+  }
   legacyVersion: {
     fetchVersions: () => Promise<string[]>
     isInstalled: (version: string) => Promise<boolean>

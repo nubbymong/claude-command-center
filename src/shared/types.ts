@@ -75,6 +75,13 @@ export interface McpUpstream {
   autostart: boolean
 }
 
+/** Registry config + live runtime state for one upstream, as shown in the UI. */
+export interface McpUpstreamView extends McpUpstream {
+  status: 'offline' | 'connecting' | 'online' | 'error'
+  toolCount: number
+  lastError?: string
+}
+
 // ── SSH ──
 
 export interface SshConfig {

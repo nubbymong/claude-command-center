@@ -183,6 +183,16 @@ export const IPC = {
   VISION_GET_CONFIG: 'vision:getConfig',
   VISION_STATUS_CHANGED: 'vision:statusChanged',
 
+  // MCP proxy (Conductor upstream aggregation)
+  MCP_PROXY_LIST: 'mcpProxy:list',
+  MCP_PROXY_ADD: 'mcpProxy:add',
+  MCP_PROXY_UPDATE: 'mcpProxy:update',
+  MCP_PROXY_REMOVE: 'mcpProxy:remove',
+  MCP_PROXY_START: 'mcpProxy:start',
+  MCP_PROXY_STOP: 'mcpProxy:stop',
+  MCP_PROXY_RESTART: 'mcpProxy:restart',
+  MCP_PROXY_CHANGED: 'mcpProxy:changed',
+
   // Cloud agents
   CLOUD_AGENT_DISPATCH: 'cloudAgent:dispatch',
   CLOUD_AGENT_CANCEL: 'cloudAgent:cancel',

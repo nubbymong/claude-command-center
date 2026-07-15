@@ -27,6 +27,7 @@ import { closeAllWebviews } from './webview-manager'
 import { registerInsightsHandlers } from './ipc/insights-handlers'
 import { registerNotesHandlers } from './ipc/notes-handlers'
 import { registerVisionHandlers } from './ipc/vision-handlers'
+import { registerMcpProxyHandlers } from './ipc/mcp-proxy-handlers'
 import { registerConfigHandlers } from './ipc/config-handlers'
 import { registerAccountProfilesHandlers } from './ipc/account-profiles-handlers'
 import { migrateProfilesToHomeLayout, cleanupSessionHomes, syncPrimaryCredentialsWithGlobal } from './account-profiles'
@@ -770,6 +771,7 @@ if (!gotTheLock) {
     registerInsightsHandlers(getWindow)
     registerNotesHandlers()
     registerVisionHandlers(getWindow)
+    registerMcpProxyHandlers(getWindow)
     registerCodexHandlers()
     registerCodexReviewHandlers()
     registerChannelHandlers()
