@@ -152,6 +152,42 @@ describe('passthrough', () => {
   })
 })
 
+describe('local tools (built-ins via search facade, T9)', () => {
+  const local = [
+    { name: 'vision_screenshot', description: 'Capture a screenshot', inputSchema: { type: 'object', properties: {} }, run: vi.fn(async () => ({ content: [{ type: 'text', text: 'shot' }] })) },
+  ]
+
+  it('are discoverable via search_tools under the Conductor server', async () => {
+    const s = fakeServer()
+    registerProxyTools(s, z, deps({ localTools: local }))
+    const { json } = await parse(await s.invoke('search_tools', { query: 'screenshot' }))
+    expect(json.results[0].name).toBe('conductor__vision_screenshot')
+  })
+
+  it('call_tool routes to the local run, not the supervisor', async () => {
+    const callTool = vi.fn()
+    const s = fakeServer()
+    registerProxyTools(s, z, deps({ callTool, localTools: local }))
+    const res = await s.invoke('call_tool', { name: 'conductor__vision_screenshot' })
+    expect(local[0].run).toHaveBeenCalled()
+    expect(callTool).not.toHaveBeenCalled()
+    expect(res.content[0].text).toBe('shot')
+  })
+
+  it('list_servers includes the Conductor built-in server', async () => {
+    const s = fakeServer()
+    registerProxyTools(s, z, deps({ localTools: local }))
+    const { json } = await parse(await s.invoke('list_servers'))
+    expect(json.servers[0]).toMatchObject({ name: 'Conductor', status: 'online', toolCount: 1 })
+  })
+
+  it('does not register local tools as direct passthrough tools', () => {
+    const s = fakeServer()
+    registerProxyTools(s, z, deps({ localTools: local }))
+    expect(s.tools.has('conductor__vision_screenshot')).toBe(false)
+  })
+})
+
 describe('onChanged hot-reload wiring', () => {
   it('subscribes and calls sendToolListChanged; cleanup unsubscribes', () => {
     let cb: (() => void) | null = null

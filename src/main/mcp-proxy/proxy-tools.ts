@@ -25,6 +25,20 @@ import { ToolIndex } from './tool-index'
 import { ProxyDispatchError } from './supervisor'
 import type { AggregatedTool, UpstreamRuntimeState } from './supervisor'
 
+/** Virtual upstream id/name for the Conductor built-in tools when they are
+ *  exposed through the search facade (T9, builtinExposure='search'). */
+export const BUILTIN_UPSTREAM_ID = 'conductor-builtin'
+export const BUILTIN_UPSTREAM_NAME = 'Conductor'
+
+/** An in-process tool exposed through the facade (Conductor built-in). Unlike
+ *  upstream tools it is invoked via its own `run`, not the supervisor. */
+export interface LocalTool {
+  name: string
+  description: string
+  inputSchema?: unknown
+  run: (args: Record<string, unknown>) => Promise<{ content: unknown[]; isError?: boolean }> | { content: unknown[]; isError?: boolean }
+}
+
 /** Everything registerProxyTools needs from the supervisor — injected for tests. */
 export interface ProxyToolDeps {
   /** All tools across ONLINE upstreams (supervisor.getTools). */
@@ -33,6 +47,8 @@ export interface ProxyToolDeps {
   getState: () => UpstreamRuntimeState[]
   /** Route a resolved call to its upstream (supervisor.callTool). */
   callTool: (upstreamId: string, toolName: string, args: Record<string, unknown> | undefined) => Promise<unknown>
+  /** In-process Conductor built-ins exposed via search (T9). Optional. */
+  localTools?: LocalTool[]
   /** Subscribe to change events; return an unsubscribe fn. Optional (tests skip). */
   onChanged?: (cb: () => void) => () => void
 }
@@ -123,6 +139,18 @@ export function jsonSchemaToZodShape(inputSchema: unknown, z: any): Record<strin
  * conductor-mcp-server's lazy-loaded deps) so this module needs no direct import.
  */
 export function registerProxyTools(server: any, z: any, deps: ProxyToolDeps): () => void {
+  const localTools = deps.localTools ?? []
+  const localByName = new Map(localTools.map((t) => [t.name, t]))
+
+  // Local (built-in) tools appear in the index as a virtual `Conductor` upstream
+  // so search_tools/describe_tool/call_tool cover them uniformly with upstreams.
+  const localAsAggregated: AggregatedTool[] = localTools.map((t) => ({
+    upstreamId: BUILTIN_UPSTREAM_ID,
+    upstreamName: BUILTIN_UPSTREAM_NAME,
+    tool: { name: t.name, description: t.description, inputSchema: t.inputSchema },
+  }))
+  const buildIndex = () => new ToolIndex([...deps.getTools(), ...localAsAggregated])
+
   // search_tools ---------------------------------------------------------------
   server.tool(
     'search_tools',
@@ -133,7 +161,7 @@ export function registerProxyTools(server: any, z: any, deps: ProxyToolDeps): ()
       limit: z.number().optional().describe('Max results (default 10).'),
     },
     async ({ query, server: serverFilter, limit }: { query: string; server?: string; limit?: number }) => {
-      const index = new ToolIndex(deps.getTools())
+      const index = buildIndex()
       const rows = index.search(query, { server: serverFilter, limit })
       if (rows.length === 0) {
         return textResult(
@@ -155,7 +183,7 @@ export function registerProxyTools(server: any, z: any, deps: ProxyToolDeps): ()
       name: z.string().describe('Namespaced tool name, e.g. "filesystem__read_file".'),
     },
     async ({ name }: { name: string }) => {
-      const index = new ToolIndex(deps.getTools())
+      const index = buildIndex()
       const detail = index.describe(name)
       if (!detail) {
         return textResult(`Unknown tool "${name}". Run search_tools to get valid names.`, true)
@@ -180,12 +208,18 @@ export function registerProxyTools(server: any, z: any, deps: ProxyToolDeps): ()
       arguments: z.record(z.any()).optional().describe('Arguments object for the tool (see describe_tool).'),
     },
     async ({ name, arguments: args }: { name: string; arguments?: Record<string, unknown> }) => {
-      const index = new ToolIndex(deps.getTools())
+      const index = buildIndex()
       const target = index.resolve(name)
       if (!target) {
         return textResult(`Unknown tool "${name}". Run search_tools to get current names.`, true)
       }
       try {
+        // Built-ins run in-process; everything else routes to its upstream.
+        if (target.upstreamId === BUILTIN_UPSTREAM_ID) {
+          const local = localByName.get(target.toolName)
+          if (!local) return textResult(`Unknown tool "${name}". Run search_tools to get current names.`, true)
+          return await local.run(args ?? {})
+        }
         const raw = await deps.callTool(target.upstreamId, target.toolName, args)
         return passthroughResult(raw)
       } catch (err) {
@@ -207,6 +241,14 @@ export function registerProxyTools(server: any, z: any, deps: ProxyToolDeps): ()
         toolCount: s.toolCount,
         ...(s.lastError ? { lastError: s.lastError } : {}),
       }))
+      if (localTools.length > 0) {
+        servers.unshift({
+          name: BUILTIN_UPSTREAM_NAME,
+          status: 'online',
+          exposure: 'search',
+          toolCount: localTools.length,
+        })
+      }
       return textResult(JSON.stringify({ servers }))
     },
   )

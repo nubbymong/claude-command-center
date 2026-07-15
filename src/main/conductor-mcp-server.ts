@@ -40,7 +40,8 @@ import { resolveCdpPort, CDP_PORT_PROD } from '../shared/cdp-ports'
 import type { GlobalVisionConfig } from '../shared/types'
 import { registerCodexReviewTool } from './codex-review-mcp-tool'
 import { getProxySupervisor } from './mcp-proxy/supervisor'
-import { registerProxyTools } from './mcp-proxy/proxy-tools'
+import { registerProxyTools, type LocalTool } from './mcp-proxy/proxy-tools'
+import { builtinCatalog, type BuiltinCtx } from './mcp-proxy/builtin-catalog'
 import { onInternal } from './internal-events'
 
 /** P6.9: Parse the `source` query string from the SSE request URL.
@@ -382,7 +383,7 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
     // off; this filter is belt-and-braces for stale session configs.
     const toolCfg = readConfig<{
       conductorToolsEnabled?: boolean
-      conductorTools?: { vision?: boolean; codexReview?: boolean; hostTransfer?: boolean; proxy?: boolean }
+      conductorTools?: { vision?: boolean; codexReview?: boolean; hostTransfer?: boolean; proxy?: boolean; builtinExposure?: 'passthrough' | 'search' }
       codexEnabled?: boolean
     }>('settings')
     const toolsMaster = toolCfg?.conductorToolsEnabled !== false
@@ -438,13 +439,34 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
     // session's own pinned browser target, so concurrent sessions never collide.
     const withVision = (cmd: VisionCommand) => runVision({ ...cmd, sessionId: boundSessionId ?? undefined })
 
+    // Built-in tool exposure (T9/#102). 'passthrough' (default) keeps the inline
+    // registrations below -- byte-for-byte the pre-proxy behavior. 'search' skips
+    // them (builtinDirect=false) and instead hands the gated built-ins to the
+    // proxy facade as local tools (built below), keeping the ~19 vision tools out
+    // of the advertised set. All original gates still apply either way.
+    const builtinExposure = toolCfg?.conductorTools?.builtinExposure === 'search' ? 'search' : 'passthrough'
+    const builtinDirect = builtinExposure !== 'search'
+    const builtinCtx: BuiltinCtx = {
+      withVision, getVisionManager, imageFileToMcpContent, resultToMcpContent, visionUnavailable, boundSessionId,
+    }
+    const builtinLocalTools: LocalTool[] = builtinExposure === 'search'
+      ? builtinCatalog()
+          .filter((b) => (b.group === 'vision' ? (toolOn('vision') && source !== 'codex') : toolOn('hostTransfer')))
+          .map((b) => ({
+            name: b.name,
+            description: b.description,
+            inputSchema: b.jsonSchema,
+            run: (args: Record<string, unknown>) => b.run(args ?? {}, builtinCtx),
+          }))
+      : []
+
     // ── Host file access (always available, no vision required) ────────────
 
     // -- fetch_host_screenshot --
     // Returns an image from the host's screenshots dir as inline MCP image content.
     // Used by snap, storyboard, and clipboard paste in BOTH local and SSH sessions.
     // SSH sessions reach the MCP server via the existing reverse tunnel.
-    if (toolOn('hostTransfer')) server.tool(
+    if (builtinDirect && toolOn('hostTransfer')) server.tool(
       'fetch_host_screenshot',
       'Fetch an image file from the Conductor host\'s screenshots directory and return it as inline image content. The Conductor app saves clipboard pastes, snap captures, and storyboard frames here so they can be viewed by Claude regardless of session type (local or SSH). Use the filename the user references (e.g. "clipboard-1234.jpg" or "screenshot-2026-04-08-...jpg").',
       {
@@ -459,7 +481,7 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
     // Registered as one gated group; inner indentation intentionally unchanged.
     // Not advertised to Codex sessions: vision is Claude-only for now (user
     // call 2026-07-02) — the onboarding p6 card carries the same note.
-    if (toolOn('vision') && source !== 'codex') {
+    if (builtinDirect && toolOn('vision') && source !== 'codex') {
     // -- Status --
     server.tool('vision_status', 'Check browser connection status', {}, async () => {
       const vm = getVisionManager()
@@ -597,13 +619,17 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
     // Only registered when at least one upstream is configured, so existing
     // installs with no upstreams see no new tools (zero behavior change until
     // the user adds one in the T5 UI). Absent flag means ON, like the others.
+    // Register the facade when there is anything to expose through it: at least
+    // one configured upstream, OR built-ins in 'search' mode (T9). Installs with
+    // neither see no proxy meta-tools (zero behavior change).
     const proxyOn = toolsMaster && toolCfg?.conductorTools?.proxy !== false
     const supervisor = getProxySupervisor()
-    if (proxyOn && supervisor.getState().length > 0) {
+    if (proxyOn && (supervisor.getState().length > 0 || builtinLocalTools.length > 0)) {
       const cleanup = registerProxyTools(server, z, {
         getTools: () => supervisor.getTools(),
         getState: () => supervisor.getState(),
         callTool: (id, tool, args) => supervisor.callTool(id, tool, args),
+        localTools: builtinLocalTools,
         onChanged: (cb) => onInternal('mcp-proxy:changed', () => cb()),
       })
       ;(server as { __proxyCleanup?: () => void }).__proxyCleanup = cleanup
