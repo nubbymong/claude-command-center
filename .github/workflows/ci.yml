@@ -97,20 +97,23 @@ jobs:
       # uses, so the macOS DMG is unsigned and Gatekeeper will warn on
       # first launch (right-click → Open). The Windows installer is also
       # unsigned, same SmartScreen warning as the release pipeline.
+      # Gate on runner.os, NOT a matrix image name: `matrix.os` carries whatever
+      # image is pinned above, so a re-pin silently turns these steps off while
+      # the job stays green.
       - name: Package Windows installer (release/* branches only)
-        if: matrix.os == 'windows-latest' && startsWith(github.head_ref, 'release/')
+        if: runner.os == 'Windows' && startsWith(github.head_ref, 'release/')
         run: npx electron-builder --win
 
       - name: Verify native modules unpacked (release/* branches only)
-        if: matrix.os == 'windows-latest' && startsWith(github.head_ref, 'release/')
+        if: runner.os == 'Windows' && startsWith(github.head_ref, 'release/')
         run: npm run verify:package
 
       - name: Package macOS DMG (release/* branches only)
-        if: matrix.os == 'macos-latest' && startsWith(github.head_ref, 'release/')
+        if: runner.os == 'macOS' && startsWith(github.head_ref, 'release/')
         run: npx electron-builder --mac
 
       - name: Upload Windows installer
-        if: matrix.os == 'windows-latest' && startsWith(github.head_ref, 'release/')
+        if: runner.os == 'Windows' && startsWith(github.head_ref, 'release/')
         uses: actions/upload-artifact@v4
         with:
           name: windows-installer-${{ github.sha }}
@@ -119,7 +122,7 @@ jobs:
           retention-days: 14
 
       - name: Upload macOS DMG
-        if: matrix.os == 'macos-latest' && startsWith(github.head_ref, 'release/')
+        if: runner.os == 'macOS' && startsWith(github.head_ref, 'release/')
         uses: actions/upload-artifact@v4
         with:
           name: macos-dmg-${{ github.sha }}
