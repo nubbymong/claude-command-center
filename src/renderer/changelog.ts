@@ -15,9 +15,9 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
-    version: '2.0.0-rc.2',
+    version: '2.0.0',
     date: '2026-07-15',
-    highlights: 'Release Candidate 2: terminal scrolling holds your place during live output, and relaunch reopens every session under its saved account — the first community-contributed fixes.',
+    highlights: 'Claude Command Center 2.0 — the stable release. Terminal scrolling holds your place during live output, and relaunch reopens every session under its saved account: the first community-contributed fixes.',
     changes: [
       { type: 'fix', description: 'Scrolling up with the scrollbar or keyboard now holds your place while a session streams output. Previously only mouse-wheel scrolling was recognised, so any other way of scrolling up got yanked back to the bottom by the next burst of output.' },
       { type: 'fix', description: 'Relaunching CCC reopens each session under the account it was closed with, instead of re-asking which account to use for every restored session.' },
