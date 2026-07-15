@@ -60,15 +60,17 @@ npx tsc --noEmit       # Type-check only
 
 ### For contributors
 
-1. Fork the repo and create a feature branch from `beta`
+1. Fork the repo (or create a feature branch in-repo) from `beta`
 2. Make your changes and ensure tests pass
 3. Submit a PR targeting `beta`
 
-### Release candidates
+That's the whole contributor surface — everything below this line is maintainer/release-manager process, documented for transparency.
+
+### Release process (maintainers)
 
 We cut a dedicated RC branch for every release cycle so that `beta` stays open for feature development at all times — features never wait for a release to finish stabilizing.
 
-- When a release is ready to stabilize, cut a `release/vX.Y.Z` branch from `beta` and tag the `-rc.N` builds **there**.
+- When a release is ready to stabilize, cut a `release/vX.Y.Z` branch from `beta` and tag the `-rc.N` release candidates **there**.
 - **`beta`:** feature branches and fix branches merge here continuously; it is never frozen.
 - **`release/vX.Y.Z`:** bug fixes and stabilization only — **no features**. The RC branch is the proposed stable release; merging a feature into it invalidates the candidate.
 - Fixes made on the RC branch are back-ported to `beta` so the next cycle keeps them.

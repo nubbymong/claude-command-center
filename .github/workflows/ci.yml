@@ -3,7 +3,7 @@ name: CI
 on:
   pull_request:
     types: [opened, synchronize, reopened, labeled]
-    branches: [main, beta]
+    branches: [main, beta, 'release/**']
   push:
     branches: [main]
 
