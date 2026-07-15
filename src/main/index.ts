@@ -74,6 +74,7 @@ import { saveSessionState, loadSessionState, clearSessionState, hasSavedSessionS
 import { getConfigDir, ensureConfigDir, snapshotConfig } from './config-manager'
 import { stopGlobalVision, killSpawnedBrowser, cleanupLegacyVisionMarkers } from './vision-manager'
 import { startConductorMcpServer, stopConductorMcpServer, startBrowserAtBoot } from './conductor-mcp-server'
+import { startProxySupervisor, getProxySupervisor } from './mcp-proxy/supervisor'
 import { readConfig } from './config-manager'
 import { loadCredential, saveCredential, deleteCredential } from './credential-store'
 import { resolveConductorMcpPort } from '../shared/mcp-ports'
@@ -905,6 +906,13 @@ if (!gotTheLock) {
       logError(`[main] Conductor MCP server startup failed: ${err?.message}`)
     })
 
+    // Conductor Proxy (T2/#94): connect the shared upstream MCP supervisor so
+    // one process/connection per upstream is fanned out to every session.
+    // Never blocks launch — a bad upstream surfaces as an error state in the UI.
+    startProxySupervisor().catch(err => {
+      logError(`[main] MCP proxy supervisor startup failed: ${err?.message}`)
+    })
+
     // P7.3: Browser-vision sub-tool auto-starts unconditionally at boot.
     // The MCP server has always been unconditional; this drops the
     // visionConfig.enabled gate that caused intermittent "Vision not
@@ -978,6 +986,9 @@ if (!gotTheLock) {
     // + idempotent — call it directly so the headless Chrome tree dies on quit.
     killSpawnedBrowser()
     stopConductorMcpServer()
+    // Close every upstream MCP connection the proxy supervisor holds (async +
+    // fire-and-forget on quit; child processes also die with the app).
+    void getProxySupervisor().stopAll()
     killAllAgents()
     killAllPty()
     closeAllWebviews()

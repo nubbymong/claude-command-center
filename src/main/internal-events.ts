@@ -8,6 +8,7 @@ export interface InternalEventMap {
   'tokenomics:anomaly': { sessionId: string; sessionLabel: string; headroom: number; tool?: string; spendDelta: number; baseline: number }
   'memory:added': { project: string; projectPath?: string; entryTitle: string; entryBody: string }
   'attention:pulse': { sessionId: string }
+  'mcp-proxy:changed': { reason: string }
 }
 type Handler<K extends keyof InternalEventMap> = (payload: InternalEventMap[K]) => void
 
