@@ -12,6 +12,26 @@ import { act } from 'react'
 
 ;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
 
+// The page now renders ProxySubTool, which uses the real mcpProxyStore and hits
+// window.electronAPI.mcpProxy on mount (list + onChanged). Stub it so the page
+// renders; the proxy card is exercised in its own store test.
+;(globalThis as any).window = (globalThis as any).window ?? {}
+;(globalThis as any).window.electronAPI = {
+  mcpProxy: {
+    list: vi.fn().mockResolvedValue([]),
+    add: vi.fn(),
+    update: vi.fn(),
+    remove: vi.fn(),
+    start: vi.fn(),
+    stop: vi.fn(),
+    restart: vi.fn(),
+    discover: vi.fn().mockResolvedValue([]),
+    importServers: vi.fn(),
+    takeOver: vi.fn(),
+    onChanged: vi.fn(() => () => {}),
+  },
+}
+
 const mockState = {
   serverRunning: true,
   mcpPort: 19333,
@@ -61,9 +81,10 @@ describe('ConductorMcpPage umbrella (P7.4)', () => {
     expect(text).toContain('19333')
   })
 
-  it('renders all three sub-tool cards', () => {
+  it('renders the sub-tool cards (proxy + vision + codex review + host transfer)', () => {
     act(() => { root.render(React.createElement(ConductorMcpPage)) })
     const text = container.textContent ?? ''
+    expect(text).toContain('MCP Proxy')
     expect(text).toContain('Vision (browser automation)')
     expect(text).toContain('Codex review (Claude-driven)')
     expect(text).toContain('Host transfer')
