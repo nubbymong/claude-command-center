@@ -15,6 +15,15 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '2.0.0-rc.2',
+    date: '2026-07-15',
+    highlights: 'Release Candidate 2: terminal scrolling holds your place during live output, and relaunch reopens every session under its saved account — the first community-contributed fixes.',
+    changes: [
+      { type: 'fix', description: 'Scrolling up with the scrollbar or keyboard now holds your place while a session streams output. Previously only mouse-wheel scrolling was recognised, so any other way of scrolling up got yanked back to the bottom by the next burst of output.' },
+      { type: 'fix', description: 'Relaunching CCC reopens each session under the account it was closed with, instead of re-asking which account to use for every restored session.' },
+    ],
+  },
+  {
     version: '2.0.0-rc.1',
     date: '2026-07-10',
     highlights: 'v2.0 Release Candidate 1: in-app updates work again, every signed-in account shows live usage, the stray blank browser window is gone, and a full dependency security refresh.',
