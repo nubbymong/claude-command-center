@@ -62,6 +62,18 @@ export const spawnOptionsSchema = z.object({
   // Charset guard = injection defense: value is shell-interpolated UNQUOTED at
   // spawn (pty-manager.ts:1137 local, :563 SSH) — mirrors the resume.uuid guard.
   effortLevel: z.string().min(1).max(32).regex(/^[a-zA-Z0-9_-]+$/).optional(),
+  // Shell-interpolated UNQUOTED at spawn. Constrained to the CLI's own --permission-mode
+  // choices (+ 'default'/'' meaning "emit no flag") so an arbitrary string can never
+  // reach the shell. 'default'/'' are accepted but not emitted.
+  permissionMode: z.enum(['default', 'acceptEdits', 'auto', 'plan', 'dontAsk', 'bypassPermissions', 'manual']).optional().or(z.literal('')),
+  // Advanced escape hatch, shell-interpolated UNQUOTED at spawn. Charset guard blocks
+  // every shell metacharacter (; | & $ ` ( ) < > ' " * ? ~ ! % ^ newline), leaving only
+  // characters that make up ordinary flags/paths. The refine rejects CCC-managed flags
+  // so extraArgs can't clobber --model/--effort/--permission-mode/--settings/etc.
+  extraArgs: z.string().max(512).regex(/^[A-Za-z0-9 _\-=.\/\\:@,+[\]]*$/).refine(
+    (v) => !/(^|\s)--(model|effort|permission-mode|settings|mcp-config|agents|resume)\b/.test(v),
+    { message: 'extraArgs must not include a CCC-managed flag (--model/--effort/--permission-mode/--settings/--mcp-config/--agents/--resume)' },
+  ).optional(),
   disableAutoMemory: z.boolean().optional(),
   enableCodexReview: z.boolean().optional(),
   // T8b (bug #5): app-relaunch exact-conversation resume target.
@@ -111,6 +123,8 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     agentsConfig?: Array<{ name: string; description: string; prompt: string; model?: string; tools?: string[] }>
     // Widened to string — the Zod schema's charset guard is the real contract.
     effortLevel?: string
+    permissionMode?: string
+    extraArgs?: string
     disableAutoMemory?: boolean
     enableCodexReview?: boolean
     resume?: { uuid: string; cwd: string }

@@ -66,6 +66,16 @@ export interface AccountIdentity {
 export interface ClaudeOptions {
   model?: string
   effortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode'
+  /** Per-config permission mode -> claude `--permission-mode <mode>`. Undefined /
+   *  'default' emits no flag (Claude's own default). Valid CLI modes: acceptEdits,
+   *  auto, plan, dontAsk, bypassPermissions, manual. Lets one saved config run
+   *  bypassPermissions while another runs dontAsk. */
+  permissionMode?: string
+  /** Advanced escape hatch: extra CLI args appended verbatim to the claude launch
+   *  command. Charset-guarded at the IPC seam (no shell metacharacters); CCC-managed
+   *  flags (--model/--effort/--permission-mode/--settings/--mcp-config/--agents/
+   *  --resume) are rejected so the escape hatch can't clobber CCC's own wiring. */
+  extraArgs?: string
   legacyVersion?: LegacyVersion
   disableAutoMemory?: boolean
   agentIds?: string[]

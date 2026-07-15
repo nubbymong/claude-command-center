@@ -55,6 +55,8 @@ export function useLaunchConfig(): (config: TerminalConfig) => string {
       agentIds: config.claudeOptions?.agentIds,
       machineName: config.machineName,
       effortLevel: config.claudeOptions?.effortLevel,
+      permissionMode: config.claudeOptions?.permissionMode,
+      extraArgs: config.claudeOptions?.extraArgs,
       disableAutoMemory: config.claudeOptions?.disableAutoMemory,
       enableCodexReview: config.claudeOptions?.enableCodexReview,
       provider: config.provider,

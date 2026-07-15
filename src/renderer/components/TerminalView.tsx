@@ -50,6 +50,10 @@ interface Props {
   }
   agentIds?: string[]
   effortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode'
+  /** Per-session permission mode -> claude `--permission-mode`. '' / 'default' = no flag. */
+  permissionMode?: string
+  /** Advanced: extra CLI args appended verbatim to the claude launch command. */
+  extraArgs?: string
   disableAutoMemory?: boolean
   /** P6: when true, the spawned Claude PTY is registered into the
    *  codex_review opt-in set in conductor-mcp-server. Mirrors
@@ -68,7 +72,7 @@ interface Props {
   codexOptions?: CodexOptions
 }
 
-export default function TerminalView({ sessionId, configId, cwd, shellOnly, elevated, ssh, isActive = true, legacyVersion, agentIds, effortLevel, disableAutoMemory, enableCodexReview, loggingEnabled, model, provider, codexOptions }: Props) {
+export default function TerminalView({ sessionId, configId, cwd, shellOnly, elevated, ssh, isActive = true, legacyVersion, agentIds, effortLevel, permissionMode, extraArgs, disableAutoMemory, enableCodexReview, loggingEnabled, model, provider, codexOptions }: Props) {
   const xtermContainerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
@@ -431,7 +435,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
               resumeNudgeGated = true
             }
             window.electronAPI.pty
-              .spawn(sessionId, { cwd, cols, rows, ssh, shellOnly, elevated, configId, configLabel, useResumePicker, legacyVersion, agentsConfig, effortLevel, disableAutoMemory, enableCodexReview, loggingEnabled, model, provider, codexOptions, profileId: resolvedProfileId, resume })
+              .spawn(sessionId, { cwd, cols, rows, ssh, shellOnly, elevated, configId, configLabel, useResumePicker, legacyVersion, agentsConfig, effortLevel, permissionMode, extraArgs, disableAutoMemory, enableCodexReview, loggingEnabled, model, provider, codexOptions, profileId: resolvedProfileId, resume })
               .catch((err: unknown) => {
                 // BUG-2: spawn was fire-and-forget, so a main-process throw (e.g.
                 // "Codex CLI not found on PATH") became a silent unhandled

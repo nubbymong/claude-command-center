@@ -290,6 +290,12 @@ export function spawnPty(
     agentsConfig?: Array<{ name: string; description: string; prompt: string; model?: string; tools?: string[] }>
     // Widened to string — the IPC schema's charset guard (/^[a-zA-Z0-9_-]+$/) is the real contract.
     effortLevel?: string
+    // Per-config permission mode -> `--permission-mode`. 'default'/'' => no flag.
+    // IPC schema constrains to the CLI's own mode choices.
+    permissionMode?: string
+    // Advanced escape hatch appended verbatim to the claude command. IPC schema
+    // charset-guards it (no shell metacharacters) and rejects CCC-managed flags.
+    extraArgs?: string
     disableAutoMemory?: boolean
     model?: string
     /** Per-session account isolation: spawn claude under this profile's CLAUDE_CONFIG_DIR. */
@@ -592,6 +598,10 @@ export function spawnPty(
       // the config form means "no override" — the CLI picks whatever
       // the user's plan exposes by default.
       options?.model ? `--model ${options.model}` : '',
+      // Per-config permission mode. 'default'/'' => no flag (Claude's own default).
+      options?.permissionMode && options.permissionMode !== 'default' ? `--permission-mode ${options.permissionMode}` : '',
+      // Advanced escape hatch: extra CLI args verbatim (IPC-charset-guarded).
+      options?.extraArgs && options.extraArgs.trim() ? options.extraArgs.trim() : '',
     ].filter(Boolean).join(' ')
     const claudeCmd = [claudeEnvPrefix, 'claude', claudeFlags].filter(Boolean).join(' ')
     const password = ssh.password
@@ -1203,6 +1213,15 @@ export function spawnPty(
       }
       if (options?.model) {
         extraFlags += ` --model ${options.model}`
+      }
+      // Per-config permission mode. 'default'/'' => no flag (Claude's own default).
+      if (options?.permissionMode && options.permissionMode !== 'default') {
+        extraFlags += ` --permission-mode ${options.permissionMode}`
+      }
+      // Advanced escape hatch: extra CLI args verbatim (IPC-charset-guarded, no
+      // shell metacharacters, CCC-managed flags rejected at the IPC seam).
+      if (options?.extraArgs && options.extraArgs.trim()) {
+        extraFlags += ` ${options.extraArgs.trim()}`
       }
 
       // P7.7.2: seed a per-session settings file for hooks/statusLine

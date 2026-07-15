@@ -76,6 +76,11 @@ export interface Session {
     version: string
   }
   agentIds?: string[]                    // Agent template IDs for this session
+  /** Per-session permission mode -> claude `--permission-mode`. '' / 'default' /
+   *  undefined = no flag. Sourced from the config's claudeOptions at launch. */
+  permissionMode?: string
+  /** Advanced: extra CLI args appended verbatim to the claude launch command. */
+  extraArgs?: string
   effortLevel?: EffortLevel
   /** True once a LIVE effort tick (statusline effort.level or the hooks effort
    *  gateway) has arrived for THIS session. The sidebar card gates its EffortPill
@@ -234,7 +239,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 export const STRUCTURAL_SESSION_FIELDS = [
   'id', 'createdAt', 'configId', 'label', 'customName', 'workingDirectory', 'sessionType',
   'shellOnly', 'sshConfig', 'partnerTerminalPath', 'partnerElevated',
-  'legacyVersion', 'agentIds', 'effortLevel', 'disableAutoMemory',
+  'legacyVersion', 'agentIds', 'effortLevel', 'permissionMode', 'extraArgs', 'disableAutoMemory',
   'enableCodexReview', 'loggingEnabled', 'model', 'provider', 'codexOptions',
   'identityColorKey', 'color', 'githubIntegration',
 ] as const

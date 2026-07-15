@@ -825,6 +825,8 @@ export default function App() {
                       legacyVersion={session.legacyVersion}
                       agentIds={session.agentIds}
                       effortLevel={session.effortLevel}
+                      permissionMode={session.permissionMode}
+                      extraArgs={session.extraArgs}
                       disableAutoMemory={session.disableAutoMemory}
                       enableCodexReview={session.enableCodexReview}
                       loggingEnabled={session.loggingEnabled}
