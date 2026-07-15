@@ -6,9 +6,15 @@ import { describe, it, expect } from 'vitest'
 const promote = require('../../../scripts/promote.js') as {
   stableVersionFor: (branch: string, currentVersion: string) => string
   unBackportedCommits: (logLines: string[]) => string[]
+  promoteSummaryLines: (opts: {
+    released: boolean
+    branch: string
+    rcVersion: string
+    stableVersion: string
+  }) => string[]
 }
 
-const { stableVersionFor, unBackportedCommits } = promote
+const { stableVersionFor, unBackportedCommits, promoteSummaryLines } = promote
 
 // ── stableVersionFor ───────────────────────────────────────────────
 describe('promote stableVersionFor', () => {
@@ -79,5 +85,41 @@ describe('promote unBackportedCommits', () => {
     // As of the v2.0.0 promote, the only commit on release/2.0.0 that is not on
     // beta is the rc.2 bump, so the promote should report a clean back-port.
     expect(unBackportedCommits(['78471f1 build(release): 2.0.0-rc.2'])).toEqual([])
+  })
+})
+
+// ── promoteSummaryLines ────────────────────────────────────────────
+describe('promote promoteSummaryLines', () => {
+  const opts = { branch: 'release/2.0.0', rcVersion: '2.0.0-rc.2', stableVersion: '2.0.0' }
+
+  it('claims stable only when the release actually shipped', () => {
+    const lines = promoteSummaryLines({ ...opts, released: true }).join('\n')
+    expect(lines).toContain('Promote complete!')
+    expect(lines).toContain('main is now stable v2.0.0.')
+    expect(lines).toContain('git push origin --delete release/2.0.0')
+  })
+
+  it('does NOT claim stable when the release was skipped', () => {
+    // Reported by Copilot on #91. Skipping the release leaves main merged but
+    // still on 2.0.0-rc.2 with no v2.0.0 tag, so the old unconditional
+    // "main is now stable v2.0.0" was false exactly where it would be believed.
+    const lines = promoteSummaryLines({ ...opts, released: false }).join('\n')
+    expect(lines).not.toContain('Promote complete!')
+    expect(lines).not.toContain('main is now stable')
+    expect(lines).toContain('INCOMPLETE')
+  })
+
+  it('names the version main is actually left on when skipped', () => {
+    const lines = promoteSummaryLines({ ...opts, released: false }).join('\n')
+    expect(lines).toContain('2.0.0-rc.2')
+    expect(lines).toContain('no v2.0.0 tag exists')
+    expect(lines).toContain('npm run release -- --stable')
+  })
+
+  it('warns against deleting the release branch when skipped', () => {
+    // The unrecoverable move: delete the branch believing stable shipped.
+    const lines = promoteSummaryLines({ ...opts, released: false }).join('\n')
+    expect(lines).toContain('Do NOT delete release/2.0.0')
+    expect(lines).not.toContain('git push origin --delete release/2.0.0\n')
   })
 })

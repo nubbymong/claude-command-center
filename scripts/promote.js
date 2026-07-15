@@ -123,6 +123,36 @@ function unBackportedCommits(logLines) {
     .filter((l) => !/^[0-9a-f]{7,40}\s+build\(release\):/i.test(l))
 }
 
+/**
+ * The closing summary. Pure so that "did we actually ship?" is testable.
+ *
+ * Skipping the release leaves main merged but still carrying the -rc.N version
+ * and no stable tag. Announcing "main is now stable" there is a lie told at
+ * precisely the moment someone would act on it by deleting the release branch —
+ * which is the one thing that makes the state unrecoverable.
+ */
+function promoteSummaryLines({ released, branch, rcVersion, stableVersion }) {
+  if (released) {
+    return [
+      'Promote complete!',
+      `main is now stable v${stableVersion}.`,
+      '',
+      'Once the release is verified, clean up:',
+      `  git push origin --delete ${branch}`,
+      'Feature work continues on beta (never frozen).',
+    ]
+  }
+  return [
+    'Promote INCOMPLETE — no release was shipped.',
+    `main carries ${branch}'s code, but package.json still says`,
+    `${rcVersion} and no v${stableVersion} tag exists.`,
+    '',
+    'Finish with:',
+    '  npm run release -- --stable',
+    `Do NOT delete ${branch} until that succeeds.`,
+  ]
+}
+
 async function main() {
 
 const TOTAL = FF_ONLY ? 5 : 6
@@ -311,19 +341,20 @@ if (!AUTO_YES) {
   confirm = await ask(`      Run \`npm run release -- --stable\` now (ships v${stableVersion})? (y/N): `)
 }
 
+let released = false
 if (confirm === 'y' || confirm === 'yes') {
   try {
     // No --no-bump: release.js derives the stable version by stripping the rc
     // suffix. Reusing the version verbatim would tag stable as v2.0.0-rc.2.
     runInherit('node scripts/release.js --stable')
+    released = true
     ok('Stable release dispatched')
   } catch {
     fail('Release failed — check the output above')
   }
 } else {
   console.log('')
-  console.log('  Skipped release. To ship stable manually:')
-  console.log('    npm run release -- --stable')
+  console.log('  Skipped release.')
 }
 
 // The old script merged main back into beta here. Under the RC-branch model
@@ -333,12 +364,14 @@ if (confirm === 'y' || confirm === 'yes') {
 // which step 3 verifies.
 console.log('')
 console.log('  ===========================================')
-console.log('    Promote complete!')
-console.log(`    main is now stable v${stableVersion}.`)
-console.log('')
-console.log('    Once the release is verified, clean up:')
-console.log(`      git push origin --delete ${currentBranch}`)
-console.log('    Feature work continues on beta (never frozen).')
+for (const line of promoteSummaryLines({
+  released,
+  branch: currentBranch,
+  rcVersion: pkgVersion,
+  stableVersion,
+})) {
+  console.log(line ? `    ${line}` : '')
+}
 console.log('  ===========================================')
 
 }
@@ -348,6 +381,7 @@ console.log('  ===========================================')
 module.exports = {
   stableVersionFor,
   unBackportedCommits,
+  promoteSummaryLines,
 }
 
 if (require.main === module) {
