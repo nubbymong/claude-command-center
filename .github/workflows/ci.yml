@@ -97,10 +97,9 @@ jobs:
       # uses, so the macOS DMG is unsigned and Gatekeeper will warn on
       # first launch (right-click → Open). The Windows installer is also
       # unsigned, same SmartScreen warning as the release pipeline.
-      # Gate on runner.os, NOT a matrix image name: `matrix.os` is pinned
-      # (windows-2025) and drifts whenever an image is re-pinned, which silently
-      # turns these steps off. They were dead from the windows-latest -> -2025 pin
-      # until 2026-07-15 for exactly that reason.
+      # Gate on runner.os, NOT a matrix image name: `matrix.os` carries whatever
+      # image is pinned above, so a re-pin silently turns these steps off while
+      # the job stays green.
       - name: Package Windows installer (release/* branches only)
         if: runner.os == 'Windows' && startsWith(github.head_ref, 'release/')
         run: npx electron-builder --win
