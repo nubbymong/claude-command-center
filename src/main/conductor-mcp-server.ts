@@ -39,6 +39,9 @@ import { isPackagedApp } from './update-watcher'
 import { resolveCdpPort, CDP_PORT_PROD } from '../shared/cdp-ports'
 import type { GlobalVisionConfig } from '../shared/types'
 import { registerCodexReviewTool } from './codex-review-mcp-tool'
+import { getProxySupervisor } from './mcp-proxy/supervisor'
+import { registerProxyTools } from './mcp-proxy/proxy-tools'
+import { onInternal } from './internal-events'
 
 /** P6.9: Parse the `source` query string from the SSE request URL.
  *  The Codex TOML writer appends `?source=codex` so the server can skip
@@ -379,7 +382,7 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
     // off; this filter is belt-and-braces for stale session configs.
     const toolCfg = readConfig<{
       conductorToolsEnabled?: boolean
-      conductorTools?: { vision?: boolean; codexReview?: boolean; hostTransfer?: boolean }
+      conductorTools?: { vision?: boolean; codexReview?: boolean; hostTransfer?: boolean; proxy?: boolean }
       codexEnabled?: boolean
     }>('settings')
     const toolsMaster = toolCfg?.conductorToolsEnabled !== false
@@ -589,6 +592,23 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
       )
     }
 
+    // Conductor Proxy (T4/#96): the search-based meta-tools (search_tools,
+    // describe_tool, call_tool, list_servers) + per-upstream passthrough tools.
+    // Only registered when at least one upstream is configured, so existing
+    // installs with no upstreams see no new tools (zero behavior change until
+    // the user adds one in the T5 UI). Absent flag means ON, like the others.
+    const proxyOn = toolsMaster && toolCfg?.conductorTools?.proxy !== false
+    const supervisor = getProxySupervisor()
+    if (proxyOn && supervisor.getState().length > 0) {
+      const cleanup = registerProxyTools(server, z, {
+        getTools: () => supervisor.getTools(),
+        getState: () => supervisor.getState(),
+        callTool: (id, tool, args) => supervisor.callTool(id, tool, args),
+        onChanged: (cb) => onInternal('mcp-proxy:changed', () => cb()),
+      })
+      ;(server as { __proxyCleanup?: () => void }).__proxyCleanup = cleanup
+    }
+
     return server
   }
 
@@ -640,6 +660,7 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
 
         res.on('close', () => {
           transports.delete(transport.sessionId)
+          try { (server as { __proxyCleanup?: () => void }).__proxyCleanup?.() } catch { /* ignore */ }
           logInfo(`[vision-mcp] SSE connection closed (${transports.size} remaining)`)
         })
 
@@ -713,6 +734,7 @@ export async function startMcpServer(port: number, getVisionManager: GetVisionMa
           await server.connect(transport)
           await transport.handleRequest(req, res)
           res.on('close', () => {
+            try { (server as { __proxyCleanup?: () => void }).__proxyCleanup?.() } catch { /* ignore */ }
             try { transport.close() } catch { /* already closed */ }
             try { server.close() } catch { /* already closed */ }
           })
