@@ -5,13 +5,22 @@
  * using npm install, then the binary is resolved for PTY spawning.
  */
 
-import { spawn, execSync } from 'child_process'
+import { spawn, execFile } from 'child_process'
+import { promisify } from 'util'
 import * as path from 'path'
 import * as fs from 'fs'
 import * as os from 'os'
 import { BrowserWindow } from 'electron'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import { logInfo, logError } from './debug-logger'
+import { isValidLegacyVersion } from '../shared/legacy-version'
+
+const execFileAsync = promisify(execFile)
+
+// On Windows the npm CLI is a .cmd shim, which execFile (no shell) cannot launch
+// directly; resolve it per platform. Mirrors the install path's reliance on the
+// shell to map `npm` -> `npm.cmd` (doInstall uses spawn with shell:true).
+const NPM_BIN = os.platform() === 'win32' ? 'npm.cmd' : 'npm'
 
 // Cache fetched versions for 10 minutes
 let cachedVersions: string[] | null = null
@@ -32,7 +41,21 @@ function getVersionsDir(): string {
 }
 
 function getVersionDir(version: string): string {
-  return path.join(getVersionsDir(), version)
+  const versionsDir = getVersionsDir()
+  // P0.3: `version` flows in from IPC / PTY spawn / cloud-agent dispatch and is
+  // used as a filesystem path segment and an npm install coordinate. Reject
+  // anything that isn't strict semver before it can traverse or inject.
+  if (!isValidLegacyVersion(version)) {
+    throw new Error(`Invalid Claude version identifier: ${JSON.stringify(version)}`)
+  }
+  // Containment backstop: the resolved path must be a DIRECT child of the
+  // versions dir, defending any future caller that reaches here without first
+  // calling isValidLegacyVersion.
+  const dir = path.resolve(versionsDir, version)
+  if (path.dirname(dir) !== path.resolve(versionsDir)) {
+    throw new Error(`Refusing out-of-bounds version path: ${JSON.stringify(version)}`)
+  }
+  return dir
 }
 
 /**
@@ -45,13 +68,18 @@ export async function fetchAvailableVersions(): Promise<string[]> {
   }
 
   try {
-    const output = execSync('npm view @anthropic-ai/claude-code versions --json', {
-      encoding: 'utf-8',
-      timeout: 15000,
-      windowsHide: true,
-    })
+    // execFile (async) instead of execSync so the network round-trip to the npm
+    // registry never blocks the main thread. The handler is already async.
+    // shell on win32: Node's CVE-2024-27980 hardening makes execFile of a
+    // .cmd shim throw EINVAL without it. Args are literal constants, so the
+    // shell adds no injection surface here.
+    const { stdout } = await execFileAsync(
+      NPM_BIN,
+      ['view', '@anthropic-ai/claude-code', 'versions', '--json'],
+      { encoding: 'utf-8', timeout: 15000, windowsHide: true, shell: process.platform === 'win32' },
+    )
 
-    const versions: string[] = JSON.parse(output)
+    const versions: string[] = JSON.parse(stdout)
     // Newest first
     cachedVersions = versions.reverse()
     cachedVersionsAt = Date.now()
@@ -77,6 +105,9 @@ export function isVersionInstalled(version: string): boolean {
  * Returns null if not installed.
  */
 export function resolveVersionBinary(version: string): string | null {
+  // Invalid versions are simply "not installed" — callers fall back to the
+  // system claude binary rather than throwing into the spawn path.
+  if (!isValidLegacyVersion(version)) return null
   const versionDir = getVersionDir(version)
 
   if (os.platform() === 'win32') {
@@ -98,6 +129,10 @@ export function resolveVersionBinary(version: string): string | null {
  * Sends progress events to the renderer via IPC.
  */
 export function installVersion(version: string): Promise<{ ok: boolean; error?: string }> {
+  if (!isValidLegacyVersion(version)) {
+    logError(`[legacy-version] Refusing to install invalid version id: ${JSON.stringify(version)}`)
+    return Promise.resolve({ ok: false, error: `Invalid Claude version: ${version}` })
+  }
   // Deduplicate concurrent installs of the same version
   const existing = installLocks.get(version)
   if (existing) return existing
@@ -184,6 +219,16 @@ async function doInstall(version: string): Promise<{ ok: boolean; error?: string
  * Remove an installed version.
  */
 export function removeVersion(version: string): boolean {
+  if (!isValidLegacyVersion(version)) {
+    logError(`[legacy-version] Refusing to remove invalid version id: ${JSON.stringify(version)}`)
+    return false
+  }
+  // A destructive recursive delete must only ever act on a version we actually
+  // list as installed — never on an arbitrary (even validly-named) path.
+  if (!listInstalledVersions().some((v) => v.version === version)) {
+    logError(`[legacy-version] Refusing to remove non-installed version: ${version}`)
+    return false
+  }
   const versionDir = getVersionDir(version)
   try {
     fs.rmSync(versionDir, { recursive: true, force: true })

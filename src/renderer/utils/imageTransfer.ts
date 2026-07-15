@@ -7,7 +7,7 @@
  * an image onto its CLI.
  *
  * SSH sessions: write the bare filename and ask Claude to call
- * `mcp__conductor-vision__fetch_host_screenshot`. The remote machine
+ * `mcp__conductor__fetch_host_screenshot`. The remote machine
  * has no access to the host filesystem, so the MCP fetch (running over
  * the auto-injected reverse tunnel) is the only way the image lands on
  * Claude's input. Vision MCP is started at app launch, so this path is
@@ -39,7 +39,7 @@ export function composeFetchHostScreenshotPrompt(
 ): string {
   const ctx = userContext?.trim() || 'Please view this image.'
   // Single-line prompt — Claude needs the tool name and the filename arg clearly.
-  return `${ctx} (use mcp__conductor-vision__fetch_host_screenshot with filename="${filename}" to load the image from the Conductor host)`
+  return `${ctx} (use mcp__conductor__fetch_host_screenshot with filename="${filename}" to load the image from the Conductor host)`
 }
 
 /**
@@ -93,12 +93,12 @@ export function sendStoryboardToSession(
   const filenames = frames.map(basename)
   const ctx = userContext?.trim() || 'Please review these storyboard frames in order.'
   const list = filenames.map((f, i) => `${i + 1}. ${f}`).join('\n')
-  // Multi-line prompt — Claude reads context, then calls fetch_host_screenshot
-  // for each filename via the conductor-vision MCP server.
+  // Multi-line prompt: Claude reads context, then calls fetch_host_screenshot
+  // for each filename via the Conductor MCP server.
   const prompt = [
     ctx,
     '',
-    'Frames (use mcp__conductor-vision__fetch_host_screenshot for each):',
+    'Frames (use mcp__conductor__fetch_host_screenshot for each):',
     list,
   ].join('\n')
   // Send line by line so the PTY chunked writer doesn't fight with the heredoc-free protocol

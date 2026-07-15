@@ -1,0 +1,157 @@
+// @vitest-environment jsdom
+import React from 'react'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { createRoot, type Root } from 'react-dom/client'
+import { act } from 'react'
+;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
+
+vi.mock('../../../src/renderer/stores/settingsStore', () => {
+  const STATE = { settings: { theme: 'dark' as const, accountAliases: {} as Record<string, string>, accountColourOverrides: {} as Record<string, import('../../../src/shared/identity-colors').IdentityColorKey> } }
+  const useSettingsStore: any = (sel: (s: typeof STATE) => unknown) => sel(STATE)
+  useSettingsStore.getState = () => STATE
+  return { useSettingsStore }
+})
+
+vi.mock('../../../src/renderer/stores/accountProfilesStore', () => {
+  // Default: no profiles. Tests that need profile-name resolution seed the
+  // mock directly via the STATE reference.
+  const PROFILES_STATE = { profiles: [] as Array<{ id: string; name: string; accountEmail: string }> }
+  const useAccountProfilesStore: any = (sel: (s: typeof PROFILES_STATE) => unknown) => sel(PROFILES_STATE)
+  useAccountProfilesStore.getState = () => PROFILES_STATE
+  // Expose STATE so individual tests can seed profiles.
+  useAccountProfilesStore.__state = PROFILES_STATE
+  return { useAccountProfilesStore }
+})
+
+const { useAccountProfilesStore: profilesStore } = await import('../../../src/renderer/stores/accountProfilesStore')
+const { default: SessionRow } = await import('../../../src/renderer/components/sidebar/SessionRow')
+
+const base = {
+  id: 's1', label: 'web-frontend', model: 'sonnet', identityColorKey: 'mauve' as const,
+  color: '', status: 'working' as const, createdAt: 0, provider: 'claude' as const,
+  sessionType: 'local' as const, contextPercent: 40,
+}
+const props = {
+  isActive: false, needsAttention: false, isRenaming: false, renameValue: '',
+  renameRef: { current: null }, onRenameChange: () => {}, onRenameFinish: () => {},
+  onRenameCancel: () => {}, onClick: () => {}, onContextMenu: () => {},
+}
+
+function render(root: Root, sessionOverrides: any, propOverrides: any = {}) {
+  act(() => root.render(React.createElement(SessionRow, { ...(props as any), ...propOverrides, session: { ...base, ...sessionOverrides } })))
+}
+
+describe('SessionRow card', () => {
+  let container: HTMLDivElement; let root: Root
+  beforeEach(() => { container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container) })
+  afterEach(() => { act(() => root.unmount()); container.remove() })
+
+  it('does NOT render a Claude provider badge for the default (claude) provider', () => {
+    render(root, { provider: 'claude' })
+    expect(container.querySelector('[title="Claude is working"]')).toBeNull()
+    expect(container.querySelector('[title="Waiting for input"]')).toBeNull()
+  })
+
+  it('renders a Codex glyph for codex provider (non-default)', () => {
+    render(root, { provider: 'codex' })
+    expect(container.querySelector('[title="Codex is working"]')).toBeTruthy()
+  })
+
+  it('applies the quiet dashed focus ring class when focused', () => {
+    render(root, {}, { isFocused: true })
+    expect(container.querySelector('.card-focus')).toBeTruthy()
+  })
+
+  it('active card uses an inset box-shadow rail with the identity colour', () => {
+    render(root, {}, { isActive: true })
+    const card = container.querySelector('.session-card') as HTMLElement
+    const style = card.getAttribute('style') || ''
+    expect(style).toContain('inset 4px')
+  })
+
+  it('inactive row has a muted 3px inset box-shadow rail (identity colour visible, narrower than active)', () => {
+    render(root, {}, { isActive: false, isSelected: false })
+    const card = container.querySelector('.session-card') as HTMLElement
+    const style = card.getAttribute('style') || ''
+    expect(style).toContain('inset 3px')
+    expect(style).not.toContain('inset 4px')
+  })
+
+  it('active row box-shadow contains "inset 4px" (stronger rail than inactive)', () => {
+    render(root, {}, { isActive: true })
+    const card = container.querySelector('.session-card') as HTMLElement
+    const style = card.getAttribute('style') || ''
+    expect(style).toContain('inset 4px')
+  })
+
+  it('context meter turns danger above 85%', () => {
+    render(root, { contextPercent: 90 })
+    expect(container.querySelector('.meter-danger')).toBeTruthy()
+    render(root, { contextPercent: 50 })
+    expect(container.querySelector('.meter-neutral')).toBeTruthy()
+  })
+
+  it('rename input is NOT nested inside a <button> (a11y #398)', () => {
+    render(root, {}, { isRenaming: true, renameValue: 'x' })
+    const input = container.querySelector('input') as HTMLElement
+    expect(input).toBeTruthy()
+    expect(input.closest('button')).toBeNull()
+  })
+
+  it('renders a persistent account stamp (dot + name) when accountEmail is set', () => {
+    render(root, { accountEmail: 'nicholas@example.com', accountColour: 'mauve' })
+    expect(container.querySelector('[data-testid="account-dot"]')).toBeTruthy()
+    const name = container.querySelector('[data-testid="account-name"]') as HTMLElement
+    expect(name).toBeTruthy()
+    // No profile/alias resolved here, so the visible name falls back to the email.
+    expect(name.textContent).toBe('nicholas@example.com')
+    expect(name.getAttribute('title')).toBe('nicholas@example.com')
+    // Account name now lives on its own line-3 row, not crammed into line-2.
+    const line3 = container.querySelector('[data-testid="card-line3"]') as HTMLElement
+    expect(line3).toBeTruthy()
+    expect(line3.style.gridColumn).toBe('1 / 3')
+    expect(line3.contains(name)).toBe(true)
+  })
+
+  it('resolves account name by live email, not by launch profileId', () => {
+    // Seed a profile whose email matches the session's live accountEmail.
+    const state = (profilesStore as any).__state
+    state.profiles = [{ id: 'profile-abc', name: 'iCloud', accountEmail: 'me@icloud.com' }]
+    // Session was launched under a different profile but /login changed it.
+    render(root, { accountEmail: 'me@icloud.com', profileId: 'profile-xyz', accountColour: 'mauve' })
+    const name = container.querySelector('[data-testid="account-name"]') as HTMLElement
+    expect(name).toBeTruthy()
+    // Name follows the LIVE email -> profile match, not the stale launch profileId.
+    expect(name.textContent).toBe('iCloud')
+    // Restore
+    state.profiles = []
+  })
+
+  it('falls back to email when accountEmail does not match any profile', () => {
+    render(root, { accountEmail: 'unknown@example.com', accountColour: 'mauve' })
+    const name = container.querySelector('[data-testid="account-name"]') as HTMLElement
+    expect(name).toBeTruthy()
+    expect(name.textContent).toBe('unknown@example.com')
+  })
+
+  it('renders no account stamp when accountEmail is absent', () => {
+    render(root, { accountEmail: undefined })
+    expect(container.querySelector('[data-testid="account-dot"]')).toBeNull()
+    expect(container.querySelector('[data-testid="account-name"]')).toBeNull()
+    // No line-3 row for accountless sessions (no layout shift).
+    expect(container.querySelector('[data-testid="card-line3"]')).toBeNull()
+  })
+
+  it('line 2 spans the full 2-column grid so the model meta is not clipped', () => {
+    // jsdom cannot compute CSS grid, so lock the structural intent: the line-2
+    // content lives in ONE child that spans the full grid (columns 1 / 3, after
+    // the leading status-dot column was removed), and the model meta text lives
+    // inside that wrapper.
+    render(root, { model: 'sonnet', provider: 'claude' })
+    const line2 = container.querySelector('[data-testid="card-line2"]') as HTMLElement
+    expect(line2).toBeTruthy()
+    expect(line2.style.gridColumn).toBe('1 / 3')
+    expect(line2.textContent).toContain('sonnet')
+    expect(line2.textContent).toContain('claude')
+  })
+})

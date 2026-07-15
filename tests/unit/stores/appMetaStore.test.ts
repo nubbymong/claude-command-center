@@ -52,4 +52,27 @@ describe('appMetaStore', () => {
       expect(useAppMetaStore.getState().meta.lastTrainingVersion).toBeUndefined()
     })
   })
+
+  describe('onboarding fields', () => {
+    it('hydrates completedSteps and onboardingCompletedVersion', () => {
+      useAppMetaStore.getState().hydrate({ completedSteps: { welcome: '2.0.0' }, onboardingCompletedVersion: '2' })
+      const meta = useAppMetaStore.getState().meta
+      expect(meta.completedSteps).toEqual({ welcome: '2.0.0' })
+      expect(meta.onboardingCompletedVersion).toBe('2')
+    })
+
+    it('are undefined by default', () => {
+      useAppMetaStore.getState().hydrate({})
+      const meta = useAppMetaStore.getState().meta
+      expect(meta.completedSteps).toBeUndefined()
+      expect(meta.onboardingCompletedVersion).toBeUndefined()
+    })
+
+    it('update merges a new completed step (caller spreads prev — top-level replace)', () => {
+      useAppMetaStore.getState().hydrate({ completedSteps: { welcome: '2.0.0' } })
+      const prev = useAppMetaStore.getState().meta.completedSteps ?? {}
+      useAppMetaStore.getState().update({ completedSteps: { ...prev, statusline: '2.0.0' } })
+      expect(useAppMetaStore.getState().meta.completedSteps).toEqual({ welcome: '2.0.0', statusline: '2.0.0' })
+    })
+  })
 })

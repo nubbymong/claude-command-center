@@ -1,16 +1,12 @@
 import { useState } from 'react'
-import type { Capability, GitHubFeatureKey } from '../../../../shared/github-types'
+import type { Capability } from '../../../../shared/github-types'
+import {
+  AUTH_FEATURE_KEYS,
+  FEATURE_CAPABILITIES,
+  masterState,
+} from '../../../../shared/github-features'
+import { DEFAULT_AUTH_FEATURE_TOGGLES } from '../../../../shared/github-constants'
 import { useGitHubStore } from '../../../stores/githubStore'
-
-const FEATURE_CAPABILITIES: Record<GitHubFeatureKey, Capability[]> = {
-  activePR: ['pulls'],
-  ci: ['actions'],
-  reviews: ['pulls'],
-  linkedIssues: ['issues'],
-  notifications: ['notifications'],
-  localGit: [],
-  sessionContext: [],
-}
 
 // Classic OAuth / classic-PAT scopes. `mode` matches the Tier-2 device flow
 // split from spec §2: the public-default asks for `public_repo`; the opt-in
@@ -31,6 +27,9 @@ function capsToOAuthScopes(caps: Set<Capability>, mode: 'public' | 'private'): s
   }
   if (caps.has('actions')) set.add('workflow')
   if (caps.has('notifications')) set.add('notifications')
+  // `user` is the classic/OAuth scope that grants the plan / AI-credits read,
+  // matching CLASSIC_PAT_SCOPE_CAPABILITIES.user = ['plan'].
+  if (caps.has('plan')) set.add('user')
   return Array.from(set)
 }
 
@@ -41,6 +40,9 @@ function capsToFineGrainedPermissions(caps: Set<Capability>): string[] {
   if (caps.has('contents')) out.push('Contents (R)')
   if (caps.has('statuses')) out.push('Commit statuses (R)')
   if (caps.has('actions')) out.push('Actions (R or RW)')
+  // 'plan' maps to the Account "Plan: read" fine-grained permission, which
+  // grants the AI-credits (Copilot billing) coverage the aiCredits feature reads.
+  if (caps.has('plan')) out.push('Plan: read (Account)')
   if (caps.has('checks')) out.push('[unavailable on fine-grained]')
   if (caps.has('notifications')) out.push('[unavailable on fine-grained]')
   return out
@@ -49,12 +51,25 @@ function capsToFineGrainedPermissions(caps: Set<Capability>): string[] {
 export default function PermissionsSummary() {
   const config = useGitHubStore((s) => s.config)
   const [copied, setCopied] = useState<'public' | 'private' | null>(null)
+  const [open, setOpen] = useState(false)
   if (!config) return null
 
+  // Derive required capabilities from PER-ACCOUNT state, not the legacy global
+  // featureToggles. A feature enabled on ANY account (or default-on with zero
+  // accounts) contributes its capabilities; masterState !== 'off' covers both
+  // 'on' and 'mixed'. layeredDefaults guards against a sparse featureDefaults
+  // (interrupted migration / hydrate race), mirroring MasterFeaturesSection.
+  // localGit/sessionContext are app-wide and excluded from the shared registry,
+  // so they correctly contribute nothing.
+  const profiles = Object.values(config.authProfiles)
+  const layeredDefaults = {
+    ...DEFAULT_AUTH_FEATURE_TOGGLES,
+    ...(config.featureDefaults ?? {}),
+  }
   const required = new Set<Capability>()
-  for (const [key, enabled] of Object.entries(config.featureToggles)) {
-    if (!enabled) continue
-    for (const c of FEATURE_CAPABILITIES[key as GitHubFeatureKey] ?? []) required.add(c)
+  for (const k of AUTH_FEATURE_KEYS) {
+    if (masterState(profiles, layeredDefaults, k) === 'off') continue
+    for (const c of FEATURE_CAPABILITIES[k]) required.add(c)
   }
 
   const oauthPublic = capsToOAuthScopes(required, 'public')
@@ -76,53 +91,72 @@ export default function PermissionsSummary() {
 
   return (
     <section>
-      <h3 className="text-sm uppercase text-subtext0 mb-3">Permissions you&apos;d need</h3>
-      <div className="bg-mantle p-3 rounded text-sm space-y-3">
-        <div>
-          <div className="text-subtext0 text-xs mb-1">
-            OAuth / Classic PAT scopes — public repos only
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-controls="permissions-summary-body"
+        className="w-full flex items-center gap-2 text-sm uppercase text-subtext0 hover:text-text transition-colors rounded focus:outline-none focus-visible:ring-1 focus-visible:ring-blue/50"
+      >
+        <svg
+          viewBox="0 0 16 16"
+          width="12"
+          height="12"
+          aria-hidden="true"
+          className={`transition-transform duration-200 ${open ? 'rotate-90' : ''}`}
+        >
+          <path d="M5 3l6 5-6 5z" fill="currentColor" />
+        </svg>
+        What each feature needs
+      </button>
+      {open && (
+        <div id="permissions-summary-body" className="bg-mantle p-3 rounded text-sm space-y-3 mt-3">
+          <div>
+            <div className="text-subtext0 text-xs mb-1">
+              OAuth / Classic PAT scopes (public repos only)
+            </div>
+            <code className="text-blue">
+              {oauthPublic.join(' ') || '(none; local only)'}
+            </code>
+            {oauthPublic.length > 0 && (
+              <button
+                onClick={() => copyScopes(oauthPublic, 'public')}
+                className="ml-3 text-xs bg-surface0 px-2 py-0.5 rounded"
+              >
+                {copied === 'public' ? 'Copied' : 'Copy'}
+              </button>
+            )}
           </div>
-          <code className="text-blue">
-            {oauthPublic.join(' ') || '(none — local only)'}
-          </code>
-          {oauthPublic.length > 0 && (
-            <button
-              onClick={() => copyScopes(oauthPublic, 'public')}
-              className="ml-3 text-xs bg-surface0 px-2 py-0.5 rounded"
-            >
-              {copied === 'public' ? 'Copied' : 'Copy'}
-            </button>
-          )}
-        </div>
-        <div>
-          <div className="text-subtext0 text-xs mb-1">
-            OAuth / Classic PAT scopes — includes private repos
+          <div>
+            <div className="text-subtext0 text-xs mb-1">
+              OAuth / Classic PAT scopes (includes private repos)
+            </div>
+            <code className="text-blue">
+              {oauthPrivate.join(' ') || '(none; local only)'}
+            </code>
+            {oauthPrivate.length > 0 && (
+              <button
+                onClick={() => copyScopes(oauthPrivate, 'private')}
+                className="ml-3 text-xs bg-surface0 px-2 py-0.5 rounded"
+              >
+                {copied === 'private' ? 'Copied' : 'Copy'}
+              </button>
+            )}
           </div>
-          <code className="text-blue">
-            {oauthPrivate.join(' ') || '(none — local only)'}
-          </code>
-          {oauthPrivate.length > 0 && (
-            <button
-              onClick={() => copyScopes(oauthPrivate, 'private')}
-              className="ml-3 text-xs bg-surface0 px-2 py-0.5 rounded"
-            >
-              {copied === 'private' ? 'Copied' : 'Copy'}
-            </button>
-          )}
+          <div>
+            <div className="text-subtext0 text-xs mb-1">Fine-grained PAT permissions</div>
+            {fine.length === 0 ? (
+              <code className="text-overlay1">(none; local only)</code>
+            ) : (
+              <ul className="text-xs text-subtext0 list-disc ml-4">
+                {fine.map((f, i) => (
+                  <li key={i}>{f}</li>
+                ))}
+              </ul>
+            )}
+          </div>
         </div>
-        <div>
-          <div className="text-subtext0 text-xs mb-1">Fine-grained PAT permissions</div>
-          {fine.length === 0 ? (
-            <code className="text-overlay1">(none — local only)</code>
-          ) : (
-            <ul className="text-xs text-subtext0 list-disc ml-4">
-              {fine.map((f, i) => (
-                <li key={i}>{f}</li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </div>
+      )}
     </section>
   )
 }

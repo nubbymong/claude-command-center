@@ -1,5 +1,7 @@
-import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
-import type { ChildProcess } from 'child_process'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import * as fs from 'fs'
+import * as os from 'os'
+import * as path from 'path'
 
 // Mock child_process
 const mockSpawn = vi.fn()
@@ -25,6 +27,22 @@ vi.mock('../../src/main/legacy-version-manager', () => ({
   resolveVersionBinary: vi.fn(() => null),
   isVersionInstalled: vi.fn(() => false),
   installVersion: vi.fn(async () => ({ ok: false, error: 'mock' })),
+}))
+
+// Mock account-profiles so dispatch NEVER touches the real profiles on disk
+// (getResourcesDirectory reads the registry → the real resources dir). The
+// profile env-resolution path is tested deterministically via these stubs.
+const profMocks = vi.hoisted(() => ({
+  getPrimaryProfileId: vi.fn<() => string | null>(() => null),
+  getProfileConfigDir: vi.fn((id: string) => `/nonexistent/profiles/${id}`),
+  setupProfileLinks: vi.fn(),
+  listProfiles: vi.fn(() => [] as Array<{ id: string; accountEmail?: string; name?: string; isPrimary?: boolean }>),
+}))
+vi.mock('../../src/main/account-profiles', () => ({
+  getPrimaryProfileId: profMocks.getPrimaryProfileId,
+  getProfileConfigDir: profMocks.getProfileConfigDir,
+  setupProfileLinks: profMocks.setupProfileLinks,
+  listProfiles: profMocks.listProfiles,
 }))
 
 import {
@@ -59,14 +77,32 @@ function createMockProcess(): any {
 describe('cloud-agent-manager', () => {
   let mockWindow: any
 
+  const tmpDirs: string[] = []
+  function makeExistingProfileDir(): string {
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-prof-'))
+    tmpDirs.push(d)
+    return d
+  }
+
   beforeEach(() => {
     vi.clearAllMocks()
+    // clearAllMocks resets call history but not return values — restore defaults.
+    profMocks.getPrimaryProfileId.mockReturnValue(null)
+    profMocks.getProfileConfigDir.mockImplementation((id: string) => `/nonexistent/profiles/${id}`)
+    profMocks.setupProfileLinks.mockReset()
+    profMocks.listProfiles.mockReturnValue([])
     mockReadConfig.mockReturnValue(null) // No persisted agents
     mockWindow = {
       isDestroyed: vi.fn(() => false),
       webContents: { send: vi.fn() },
     }
     initCloudAgentManager(() => mockWindow)
+  })
+
+  afterEach(() => {
+    for (const d of tmpDirs.splice(0)) {
+      try { fs.rmSync(d, { recursive: true, force: true }) } catch { /* ignore */ }
+    }
   })
 
   describe('initCloudAgentManager', () => {
@@ -105,7 +141,7 @@ describe('cloud-agent-manager', () => {
   })
 
   describe('dispatchAgent', () => {
-    it('spawns claude process with correct args', async () => {
+    it('spawns claude piped from a temp file, WITHOUT --dangerously-skip-permissions by default (P1.3 safe default)', async () => {
       const mockProc = createMockProcess()
       mockSpawn.mockReturnValue(mockProc)
 
@@ -120,9 +156,10 @@ describe('cloud-agent-manager', () => {
       const shellCmd = spawnCall[0] as string
       // Windows uses `type`, macOS/Linux uses `cat`
       const pipeCmdPattern = process.platform === 'win32'
-        ? /type ".*ccc-agent-.*\.txt" \| claude --dangerously-skip-permissions/
-        : /cat ".*ccc-agent-.*\.txt" \| claude --dangerously-skip-permissions/
+        ? /type ".*ccc-agent-.*\.txt" \| claude\b/
+        : /cat ".*ccc-agent-.*\.txt" \| claude\b/
       expect(shellCmd).toMatch(pipeCmdPattern)
+      expect(shellCmd).not.toContain('--dangerously-skip-permissions')
       expect(spawnCall[1]).toEqual([])
       expect(spawnCall[2]).toEqual(expect.objectContaining({
         cwd: 'C:\\dev\\project',
@@ -133,6 +170,24 @@ describe('cloud-agent-manager', () => {
       expect(agent.status).toBe('running')
       expect(agent.name).toBe('Test')
       expect(agent.id).toMatch(/^ca-/)
+    })
+
+    it('includes --dangerously-skip-permissions only when skipPermissions is true (FEAT-1 per-run opt-in)', async () => {
+      mockSpawn.mockReturnValue(createMockProcess())
+      await dispatchAgent({ name: 'T', description: 'd', projectPath: '/p', skipPermissions: true })
+      const shellCmd = mockSpawn.mock.calls[0][0] as string
+      expect(shellCmd).toContain('--dangerously-skip-permissions')
+    })
+
+    it('never skips by default, ignoring any persisted config (per-run opt-in only)', async () => {
+      // The legacy global skipPermissionsForAgents setting was removed in Unit 3;
+      // cloud-agent dispatch is per-run. Even if stale config still carries the
+      // flag, a default dispatch must NOT skip.
+      mockReadConfig.mockImplementation((key: string) => key === 'settings' ? { skipPermissionsForAgents: true } : null)
+      mockSpawn.mockReturnValue(createMockProcess())
+      await dispatchAgent({ name: 'T', description: 'd', projectPath: '/p' })
+      const shellCmd = mockSpawn.mock.calls[0][0] as string
+      expect(shellCmd).not.toContain('--dangerously-skip-permissions')
     })
 
     it('broadcasts status on dispatch', async () => {
@@ -162,6 +217,68 @@ describe('cloud-agent-manager', () => {
       mockSpawn.mockReturnValue(mockProc)
       await dispatchAgent({ name: 'Test', description: 'desc', projectPath: '/p' })
       expect(mockProc.on).toHaveBeenCalledWith('close', expect.any(Function))
+    })
+  })
+
+  describe('dispatchAgent account isolation', () => {
+    it('runs on the bare global env when no profiles exist (single-account unchanged)', async () => {
+      mockSpawn.mockReturnValue(createMockProcess())
+      const agent = await dispatchAgent({ name: 'T', description: 'd', projectPath: '/p' })
+      expect(agent.profileId).toBeUndefined()
+      expect(agent.accountEmail).toBeUndefined()
+      expect(profMocks.setupProfileLinks).not.toHaveBeenCalled()
+    })
+
+    it('spawns under the requested profile fake HOME and stamps the account', async () => {
+      const dir = makeExistingProfileDir()
+      profMocks.getProfileConfigDir.mockImplementation((id: string) => id === 'p1' ? dir : `/nonexistent/${id}`)
+      profMocks.listProfiles.mockReturnValue([{ id: 'p1', accountEmail: 'work@x.com', name: 'Work' }])
+      mockSpawn.mockReturnValue(createMockProcess())
+
+      const agent = await dispatchAgent({ name: 'T', description: 'd', projectPath: '/p', profileId: 'p1' })
+
+      expect(profMocks.setupProfileLinks).toHaveBeenCalledWith('p1')
+      expect(agent.profileId).toBe('p1')
+      expect(agent.accountEmail).toBe('work@x.com')
+      const env = mockSpawn.mock.calls[0][2].env
+      expect(env.USERPROFILE).toBe(dir)
+    })
+
+    it('falls back to the primary profile when none is requested (clobber-proof)', async () => {
+      const dir = makeExistingProfileDir()
+      profMocks.getPrimaryProfileId.mockReturnValue('pp')
+      profMocks.getProfileConfigDir.mockImplementation((id: string) => id === 'pp' ? dir : `/nonexistent/${id}`)
+      profMocks.listProfiles.mockReturnValue([{ id: 'pp', accountEmail: 'primary@x.com', isPrimary: true }])
+      mockSpawn.mockReturnValue(createMockProcess())
+
+      const agent = await dispatchAgent({ name: 'T', description: 'd', projectPath: '/p' })
+
+      expect(agent.profileId).toBe('pp')
+      expect(agent.accountEmail).toBe('primary@x.com')
+      expect(mockSpawn.mock.calls[0][2].env.USERPROFILE).toBe(dir)
+    })
+
+    it('falls back to primary when the requested profile dir is missing', async () => {
+      const dir = makeExistingProfileDir()
+      profMocks.getPrimaryProfileId.mockReturnValue('pp')
+      profMocks.getProfileConfigDir.mockImplementation((id: string) => id === 'pp' ? dir : `/nonexistent/${id}`)
+      profMocks.listProfiles.mockReturnValue([{ id: 'pp', accountEmail: 'primary@x.com', isPrimary: true }])
+      mockSpawn.mockReturnValue(createMockProcess())
+
+      const agent = await dispatchAgent({ name: 'T', description: 'd', projectPath: '/p', profileId: 'gone' })
+      expect(agent.profileId).toBe('pp')
+    })
+
+    it('retry preserves the resolved profileId', async () => {
+      const dir = makeExistingProfileDir()
+      profMocks.getProfileConfigDir.mockImplementation((id: string) => id === 'p1' ? dir : `/nonexistent/${id}`)
+      profMocks.listProfiles.mockReturnValue([{ id: 'p1', accountEmail: 'work@x.com' }])
+      mockSpawn.mockReturnValue(createMockProcess())
+
+      const first = await dispatchAgent({ name: 'T', description: 'd', projectPath: '/p', profileId: 'p1' })
+      const retried = await retryAgent(first.id)
+      expect(retried!.profileId).toBe('p1')
+      expect(retried!.accountEmail).toBe('work@x.com')
     })
   })
 

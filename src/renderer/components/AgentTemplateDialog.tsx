@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import type { AgentTemplate, AgentModelOverride } from '../types/electron'
+import { useRegistryStore } from '../stores/registryStore'
+import { modelsFromRegistry } from '../lib/claude-cli-options'
 
 const AVAILABLE_TOOLS = [
   'Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep',
@@ -15,6 +17,7 @@ interface Props {
 }
 
 export default function AgentTemplateDialog({ initial, onSave, onCancel }: Props) {
+  const registry = useRegistryStore((s) => s.registry)
   const [name, setName] = useState(initial?.name ?? '')
   const [description, setDescription] = useState(initial?.description ?? '')
   const [prompt, setPrompt] = useState(initial?.prompt ?? '')
@@ -123,9 +126,9 @@ export default function AgentTemplateDialog({ initial, onSave, onCancel }: Props
               className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-blue"
             >
               <option value="inherit">Inherit (use session model)</option>
-              <option value="sonnet">Sonnet</option>
-              <option value="opus">Opus</option>
-              <option value="haiku">Haiku</option>
+              {modelsFromRegistry(registry).map((m) => (
+                <option key={m.value} value={m.value}>{m.label}</option>
+              ))}
             </select>
           </div>
 

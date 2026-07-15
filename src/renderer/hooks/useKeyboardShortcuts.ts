@@ -4,6 +4,9 @@ import { useSettingsStore } from '../stores/settingsStore'
 import { killSessionPty } from '../ptyTracker'
 import { matchesShortcut, DEFAULT_SHORTCUTS } from '../utils/shortcuts'
 import { sendImageToSession } from '../utils/imageTransfer'
+import { usePasteHintStore } from '../stores/pasteHintStore'
+import { useAppMetaStore } from '../stores/appMetaStore'
+import { deriveOnboarding } from '../onboarding/gate'
 import type { ViewType } from '../types/views'
 
 /**
@@ -12,10 +15,15 @@ import type { ViewType } from '../types/views'
 export function useKeyboardShortcuts(
   activeSessionId: string | null,
   setSidebarOpen: React.Dispatch<React.SetStateAction<boolean>>,
-  setView: React.Dispatch<React.SetStateAction<ViewType>>
+  setView: (view: ViewType) => void
 ) {
   useEffect(() => {
     const handleKeyDown = async (e: KeyboardEvent) => {
+      // The onboarding overlay covers the whole shell: a global shortcut
+      // firing under it would act on invisible UI (close a session, switch
+      // sessions, paste into a hidden prompt), so suppress them until the
+      // flow settles. Same gate expression as App.tsx's bootGate input.
+      if (deriveOnboarding(useAppMetaStore.getState().meta, {}).due) return
       const shortcuts = useSettingsStore.getState().settings.keyboardShortcuts || DEFAULT_SHORTCUTS
 
       // Close current session
@@ -55,23 +63,27 @@ export function useKeyboardShortcuts(
         e.preventDefault()
         setSidebarOpen(prev => !prev)
       }
-      // Paste clipboard image — saves to host screenshots dir, then routes to
+      // Paste clipboard image: saves to host screenshots dir, then routes to
       // Claude. Local sessions get the absolute path written into the prompt
       // (Claude's Read tool ingests it directly). SSH sessions can't reach
-      // the host filesystem so they go through the conductor-vision MCP
+      // the host filesystem so they go through the Conductor MCP
       // fetch over the reverse tunnel.
       if (matchesShortcut(e, shortcuts.pasteImage)) {
         e.preventDefault()
         const state = useSessionStore.getState()
-        if (state.activeSessionId) {
-          const filePath = await window.electronAPI.clipboard.saveImage()
-          if (filePath) {
-            const session = state.sessions.find((s) => s.id === state.activeSessionId)
-            sendImageToSession(
-              state.activeSessionId,
-              filePath,
-              'I just pasted an image — please view it.',
-              session?.sessionType,
+        const sessionId = state.activeSessionId
+        if (sessionId) {
+          const session = state.sessions.find((s) => s.id === sessionId)
+          const res = await window.electronAPI.clipboard.saveImage()
+          if ('path' in res) {
+            // Success is self-evident — the path appears in the prompt (no toast).
+            sendImageToSession(sessionId, res.path, 'I just pasted an image — please view it.', session?.sessionType)
+          } else {
+            usePasteHintStore.getState().show(
+              sessionId,
+              res.error === 'too-large'
+                ? 'Image too large to paste (max 10 MB)'
+                : 'No image in clipboard — copy an image or an image file, then Alt+V',
             )
           }
         }

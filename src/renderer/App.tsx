@@ -4,47 +4,79 @@ import Sidebar from './components/Sidebar'
 import TabBar from './components/TabBar'
 import SessionHeader from './components/SessionHeader'
 import TerminalView, { killSessionPty } from './components/TerminalView'
+import CommandBar from './components/CommandBar'
+import SessionStatusStrip from './components/SessionStatusStrip'
 import WebviewPane from './components/WebviewPane'
 import ExcalidrawPane from './components/ExcalidrawPane'
+import LogsPane from './components/LogsPane'
 import { useWebviewStore } from './stores/webviewStore'
 import { useExcalidrawStore } from './stores/excalidrawStore'
-import StatusBar from './components/StatusBar'
+import { useLogsStore } from './stores/useLogsStore'
+import BottomBar from './components/BottomBar'
 import UsageDashboard from './components/UsageDashboard'
 import ProjectBrowser from './components/ProjectBrowser'
-import SettingsPage from './components/SettingsPage'
-import LogViewer from './components/LogViewer'
+import SettingsPage, { SETTINGS_TAB_IDS, type SettingsTab } from './components/SettingsPage'
+import GlobalLogsView from './components/GlobalLogsView'
 import InsightsPage from './components/InsightsPage'
 import CloudAgentsPage from './components/CloudAgentsPage'
 import TokenomicsPage from './components/TokenomicsPage'
-import VisionPage from './components/VisionPage'
+import ConductorMcpPage from './components/ConductorMcpPage'
 import MemoryPage from './components/MemoryPage'
 import SetupDialog from './components/SetupDialog'
 import WhatsNewModal, { shouldShowWhatsNew, markWhatsNewSeen } from './components/WhatsNewModal'
+import AccountLaunchGate from './components/AccountLaunchGate'
+import NewAccountPrompt from './components/NewAccountPrompt'
+import SentinelPanel from './components/sentinel/SentinelPanel'
+import { useAddAccount } from './hooks/useAddAccount'
 import TrainingWalkthrough, { shouldShowTraining, isFirstInstall } from './components/TrainingWalkthrough'
-import GuidedConfigView from './components/GuidedConfigView'
+import SessionDialog from './components/SessionDialog'
+import GuidedTour from './components/GuidedTour'
+import HelpPanel from './components/HelpPanel'
+import AccountUsagePanel from './components/AccountUsagePanel'
 import TipModal from './components/TipModal'
 import { useTipsStore, trackUsage } from './stores/tipsStore'
 import ErrorBoundary from './components/ErrorBoundary'
 import CloseDialog from './components/CloseDialog'
-import { useSessionStore, Session } from './stores/sessionStore'
+import { useSessionStore, structuralSessionsEqual, Session } from './stores/sessionStore'
+import { useStoreWithEqualityFn } from 'zustand/traditional'
 import { useConfigStore } from './stores/configStore'
 import { useCommandStore } from './stores/commandStore'
 import { useMagicButtonStore } from './stores/magicButtonStore'
 import { useAppMetaStore } from './stores/appMetaStore'
 import { useSettingsStore } from './stores/settingsStore'
+import { OnboardingHarness } from './onboarding/OnboardingHarness'
+import { deriveOnboarding, shouldReonboardForBeta } from './onboarding/gate'
+import { useAccountProfilesStore } from './stores/accountProfilesStore'
+import { useRegistryStore } from './stores/registryStore'
+import { useSentinelStore } from './stores/sentinelStore'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 import { useThemeController } from './hooks/useThemeController'
+import { useTypographyController } from './hooks/useTypography'
+import { useLaunchConfig } from './hooks/useLaunchConfig'
+import StageEmptyState from './components/StageEmptyState'
 import { markSessionForResumePicker } from './utils/resumePicker'
-import { gatherLocalStorageData, hydrateStores } from './utils/configHydration'
+import { flushPendingConfigSaves } from './utils/config-saver'
+import { migrateColorRecords } from './utils/migrateIdentityColors'
+import { gatherLocalStorageData, hydrateStores, applyConfigColourMigration } from './utils/configHydration'
+import { isGitHubOnboardingDue as isGitHubOnboardingDuePredicate } from './utils/githubOnboarding'
 import { setupCloudAgentListener } from './stores/cloudAgentStore'
-import { setupTokenomicsListener } from './stores/tokenomicsStore'
-import { setupVisionListener, useVisionStore } from './stores/visionStore'
+import { setupInsightsListener } from './stores/insightsStore'
+import { setupConductorMcpListener, useConductorMcpStore } from './stores/conductorMcpStore'
 import { setupGitHubListener, useGitHubStore } from './stores/githubStore'
+import { setupChannelListeners } from './stores/channelStore'
+import LoggingConsentPrompt from './components/LoggingConsentPrompt'
+import LogsWipeModal from './components/LogsWipeModal'
+import { pickBootGate } from './utils/bootGates'
+import ResumeSessionsPrompt from './components/ResumeSessionsPrompt'
+import { useCodexAccountStore } from './stores/codexAccountStore'
 import GitHubPanel from './components/github/GitHubPanel'
 import OnboardingModal from './components/github/onboarding/OnboardingModal'
 import AutoDetectBanner from './components/github/AutoDetectBanner'
+import { handleAutoDetectAccept } from './utils/githubAutoDetectAccept'
+import RepoBreadcrumb from './components/RepoBreadcrumb'
 import type { SessionState, SavedSession } from './types/electron'
-import { buildSessionState } from './session-persistence'
+import { buildSessionState, buildSessionStateWithResumeTargets, markRestoredSessionsPredetermined } from './session-persistence'
+import { useSessionAutosave } from './hooks/useSessionAutosave'
 
 // Re-export ViewType from its canonical location for backwards compatibility
 export type { ViewType } from './types/views'
@@ -75,6 +107,9 @@ export default function App() {
   }
   const [setupComplete, setSetupComplete] = useState<boolean | null>(null)
   const [configLoaded, setConfigLoaded] = useState(false)
+  // Logs v2 first-run wipe gate: null = not yet detected, >0 = old artifacts
+  // present (show the blocking modal), 0 = nothing to wipe (or already wiped).
+  const [logsWipeBytes, setLogsWipeBytes] = useState<number | null>(null)
   const [needsCliSetup, setNeedsCliSetup] = useState(false)
   const [isClosing, setIsClosing] = useState(false)
   const [isUpdating, setIsUpdating] = useState(false)
@@ -83,12 +118,12 @@ export default function App() {
   const [showTraining, setShowTraining] = useState(false)
   const [showTrainingAll, setShowTrainingAll] = useState(false)
   const [showGitHubOnboarding, setShowGitHubOnboarding] = useState(false)
+  const [newAccountDetected, setNewAccountDetected] = useState<{ sessionId: string; profileId: string; email: string } | null>(null)
+  const addAccount = useAddAccount()
   // Deep-link the Settings page to a specific tab the next time it opens.
   // Set by the onboarding "Set up now" button and the auto-detect banner
   // Accept/Edit actions; consumed once by SettingsPage's initialTab prop.
-  const [pendingSettingsTab, setPendingSettingsTab] = useState<
-    'general' | 'statusline' | 'shortcuts' | 'github' | 'about' | null
-  >(null)
+  const [pendingSettingsTab, setPendingSettingsTab] = useState<SettingsTab | null>(null)
 
   // Clear the pending tab once SettingsPage has consumed it (i.e. we've
   // navigated away from the settings view). A return visit then defaults to
@@ -99,15 +134,83 @@ export default function App() {
       setPendingSettingsTab(null)
     }
   }, [view, pendingSettingsTab])
+
+  // Deep-link from the Memory page: navigate to Logs and pre-select the slot
+  // for a specific sessionId. Consumed once by GlobalLogsView's initialSessionId prop.
+  const [pendingLogsSessionId, setPendingLogsSessionId] = useState<string | null>(null)
+
+  // Clear the pending sessionId when navigating away from Logs (mirror of the
+  // pendingSettingsTab pattern above).
+  useEffect(() => {
+    if (view !== 'logs' && pendingLogsSessionId) {
+      setPendingLogsSessionId(null)
+    }
+  }, [view, pendingLogsSessionId])
+
+  // Listen for app:openSettings dispatched by CodexFormFields "Open Settings" links.
+  // Switches the active view to Settings and deep-links to the requested tab.
+  // Validates the tab against the allow-list -- a malformed CustomEvent
+  // detail otherwise leaves SettingsPage with no matching tab content.
+  useEffect(() => {
+    const onOpenSettings = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { tab?: string } | undefined
+      const tab = detail?.tab
+      if (tab && (SETTINGS_TAB_IDS as readonly string[]).includes(tab)) {
+        setPendingSettingsTab(tab as SettingsTab)
+      }
+      setView('settings')
+    }
+    window.addEventListener('app:openSettings', onOpenSettings)
+    return () => window.removeEventListener('app:openSettings', onOpenSettings)
+  }, [])
+
   const [showGuidedConfig, setShowGuidedConfig] = useState(false)
+  // Live-app guided tour that follows the onboarding finish step (or the
+  // Feature Guide button). Anchored coach-marks over the real UI, ending by
+  // opening the first-config dialog.
+  const [tourActive, setTourActive] = useState(false)
+  // One home for help (searchable guide + feature tour + Ask Claude); opened
+  // by the sidebar ? button.
+  const [showHelpPanel, setShowHelpPanel] = useState(false)
   const [showTipModal, setShowTipModal] = useState(false)
   const [partnerActive, setPartnerActive] = useState<Set<string>>(new Set())
   const [showMachineNamePrompt, setShowMachineNamePrompt] = useState(false)
   const [machineNameInput, setMachineNameInput] = useState('')
+  // Saved sessions awaiting the user's Resume / Don't-open choice (startup gate —
+  // previously every boot force-resumed the whole saved set).
+  const [pendingRestore, setPendingRestore] = useState<SessionState | null>(null)
+  const configs = useConfigStore((s) => s.configs)
+  const launchConfig = useLaunchConfig()
+  // Keep session-state.json in sync with the live session set so a non-graceful
+  // termination (crash / external-installer force-close) never re-offers phantom
+  // sessions the user already closed. Resume still reads pendingRestore in-memory.
+  useSessionAutosave()
+  // onCreateConfigFromStage: App owns the first-config dialog via showGuidedConfig.
+  // Sidebar receives onShowFirstRun={() => setShowGuidedConfig(true)}, so we use the
+  // same setter here to open the real create dialog from the stage empty state.
+  const onCreateConfigFromStage = () => setShowGuidedConfig(true)
+  const loggingConsentSeen = useSettingsStore((s) => s.settings.loggingConsentSeen)
+  // Reactive onboarding-gate input. MUST be a top-level hook (above the
+  // Loading/SetupDialog early returns) — the reactive subscription is what lets
+  // the finish step's completion stamp dismiss the harness, but a hook placed
+  // after a conditional return breaks the Rules of Hooks and blanks the app.
+  const onboardingMeta = useAppMetaStore((s) => s.meta)
   const activeSessionId = useSessionStore((s) => s.activeSessionId)
-  const sessions = useSessionStore((s) => s.sessions)
+  // Subscribe to sessions through a STRUCTURAL equality so the root shell does
+  // NOT re-render on the statusline bridge's ~1-3×/s telemetry ticks (which only
+  // touch contextPercent / cost / tokens / rate-limit / status). Telemetry is
+  // read by self-subscribing leaves (SessionStatusStrip, the sidebar card), so
+  // the shell only needs to re-render on structural changes (add/remove/reorder,
+  // configId, cwd, github state, …). This is the one cut that stops the whole
+  // tree re-rendering per tick — see structuralSessionsEqual.
+  const sessions = useStoreWithEqualityFn(
+    useSessionStore,
+    (s) => s.sessions,
+    structuralSessionsEqual,
+  )
   const webviewBySession = useWebviewStore((s) => s.bySessionId)
   const excalidrawBySession = useExcalidrawStore((s) => s.bySessionId)
+  const logsBySession = useLogsStore((s) => s.bySessionId)
   const activeSession = sessions.find((s) => s.id === activeSessionId)
   const hasRestoredRef = useRef(false)
 
@@ -126,6 +229,7 @@ export default function App() {
   useEffect(() => {
     if (sessions.length === 0) return
     useExcalidrawStore.getState().reconcile(sessions.map((s) => s.id))
+    useLogsStore.getState().reconcile(sessions.map((s) => s.id))
   }, [sessions])
 
   // Global keyboard shortcuts
@@ -133,6 +237,8 @@ export default function App() {
   // Stamp data-theme on <html> from the persisted setting + listen for
   // OS prefers-color-scheme changes when in 'system' mode.
   useThemeController()
+  // Apply the global UI font scale (<html> root font-size) + family var.
+  useTypographyController()
 
   // Emergency escape hatch for the WebContentsView pane — Esc closes
   // the *active* session's webview. Native Electron views render above
@@ -176,6 +282,13 @@ export default function App() {
     })
   }, [])
 
+  // Subscribe to main-process notification that a /login produced a previously
+  // unseen account. The prompt lets the user name + save it as a profile.
+  useEffect(() => {
+    const off = window.electronAPI.accountProfiles.onAccountNewDetected?.((d) => setNewAccountDetected(d))
+    return () => off?.()
+  }, [])
+
   const togglePartner = (sessionId: string) => {
     setPartnerActive(prev => {
       const next = new Set(prev)
@@ -207,12 +320,12 @@ export default function App() {
           await window.electronAPI.config.migrateFromLocalStorage(lsData)
           console.log('[App] Migration complete, reloading...')
           const reloaded = await window.electronAPI.config.loadAll()
-          hydrateStores(reloaded.data)
+          hydrateStores(await applyConfigColourMigration(reloaded.data))
         } else {
-          hydrateStores(result.data)
+          hydrateStores(await applyConfigColourMigration(result.data))
         }
       } else {
-        hydrateStores(result.data)
+        hydrateStores(await applyConfigColourMigration(result.data))
       }
 
       setConfigLoaded(true)
@@ -223,6 +336,24 @@ export default function App() {
     }
   }
 
+  // Logs v2 first-run wipe detection. Runs once after config loads: detect the
+  // OLD log artifacts and, if present, surface the blocking LogsWipeModal (which
+  // performs the deletion on confirm). Detection-driven + idempotent — once wiped
+  // nothing is detected, so this is a no-op on every subsequent launch.
+  useEffect(() => {
+    if (!configLoaded || logsWipeBytes !== null) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const inv = await window.electronAPI.logsWipe.detect()
+        if (!cancelled) setLogsWipeBytes(inv.present ? inv.totalBytes : 0)
+      } catch {
+        if (!cancelled) setLogsWipeBytes(0)   // fail-open: never block boot on a detect error
+      }
+    })()
+    return () => { cancelled = true }
+  }, [configLoaded, logsWipeBytes])
+
   // Post-config-load initialization
   useEffect(() => {
     if (!configLoaded || hasRestoredRef.current) return
@@ -230,6 +361,17 @@ export default function App() {
 
     async function postConfigInit() {
       const appMeta = useAppMetaStore.getState().meta
+
+      // Beta line: re-fire the first-run tour on every app version so testers see
+      // the latest flow. Clearing completedSteps + onboardingCompletedVersion
+      // flips deriveOnboarding back to due (the harness re-runs); its finish step
+      // re-stamps onboardingAppVersion so it won't re-fire until the next version.
+      // First install runs via deriveOnboarding already; stable retriggers only on
+      // an ONBOARDING_VERSION bump (a major feature).
+      if (shouldReonboardForBeta(appMeta, __APP_VERSION__, useSettingsStore.getState().settings.updateChannel)) {
+        useAppMetaStore.getState().update({ completedSteps: {}, onboardingCompletedVersion: undefined })
+      }
+
       if (appMeta.setupVersion !== __APP_VERSION__) {
         const hasExistingConfig = useConfigStore.getState().configs.length > 0 ||
           useCommandStore.getState().commands.length > 0
@@ -245,37 +387,45 @@ export default function App() {
         }
       }
 
-      await restoreSavedSessions()
+      // Resume opt-out: LOAD the saved state but do not auto-restore — the
+      // ResumeSessionsPrompt lets the user decline ("Don't open") instead of
+      // being forced to resume every boot.
+      try {
+        const savedState = await window.electronAPI.session.load() as SessionState | null
+        if (savedState && savedState.sessions.length > 0) setPendingRestore(savedState)
+      } catch (err) {
+        console.error('[App] Failed to load saved sessions:', err)
+      }
 
       // Start cloud agent IPC listener early so status updates are
       // never missed (previously only started when CloudAgentsPage mounted)
       setupCloudAgentListener()
-      setupTokenomicsListener()
-      setupVisionListener()
+      setupInsightsListener()
+      setupConductorMcpListener()
       setupGitHubListener()
+      setupChannelListeners()
       useGitHubStore.getState().loadConfig()
-      useVisionStore.getState().loadConfig()
-      useVisionStore.getState().fetchStatus()
+      useConductorMcpStore.getState().loadConfig()
+      useConductorMcpStore.getState().fetchStatus()
+      useCodexAccountStore.getState().refresh()
+      useAccountProfilesStore.getState().hydrate()
+      useRegistryStore.getState().hydrate().catch((err) => console.warn('[registry] hydrate failed:', err))
+      useSentinelStore.getState().hydrate().catch((err) => console.warn('[sentinel] hydrate failed:', err))
 
       const magicSettings = useMagicButtonStore.getState().settings
       if (magicSettings.autoDeleteDays != null && magicSettings.autoDeleteDays > 0) {
         window.electronAPI.screenshot.cleanup(magicSettings.autoDeleteDays)
       }
 
-      // Prompt for local machine name if not set (first run after update)
-      const currentSettings = useSettingsStore.getState().settings
-      if (!currentSettings.localMachineName) {
-        setTimeout(() => setShowMachineNamePrompt(true), 800)
-      }
-
-      setTimeout(() => {
-        if (isFirstInstall()) {
-          setShowTraining(true)
-        } else {
-          if (shouldShowWhatsNew()) setShowWhatsNew(true)
-          else if (shouldShowTraining()) setShowTraining(true)
-        }
-      }, 500)
+      // NOTE (v2): the legacy first-run auto-popups — the 800ms machine-name
+      // prompt, and the 500ms What's-New / training-tour arm — are intentionally
+      // GONE. The onboarding harness is their single replacement: it collects the
+      // machine name (Transparency step), and its finish step stamps
+      // lastSeenVersion + lastTrainingVersion so neither the What's-New modal nor
+      // the tour auto-fire this release. The tour remains reachable on demand via
+      // the Feature Guide button, and What's-New via a future changelog bump for
+      // ALREADY-onboarded users. Machine-name / training-due state is no longer
+      // armed here.
 
       // Pick a tip for this session (one per app launch)
       setTimeout(() => {
@@ -305,14 +455,13 @@ export default function App() {
   // — NOT a pure persistent-state read, but stable across React render
   // timing in a way that `showWhatsNew` / `showTraining` are not (those flip
   // after a 500ms postConfigInit timer).
-  const isGitHubOnboardingDue = (): boolean => {
-    if (!githubConfig) return false
-    if (onboardingDismissedThisSessionRef.current) return false
-    if (githubConfig.seenOnboardingVersion === 'permanent') return false
-    if (githubConfig.seenOnboardingVersion === __APP_VERSION__) return false
-    if (needsCliSetup) return false
-    return true
-  }
+  const isGitHubOnboardingDue = (): boolean =>
+    isGitHubOnboardingDuePredicate({
+      githubConfig,
+      dismissedThisSession: onboardingDismissedThisSessionRef.current,
+      appVersion: __APP_VERSION__,
+      needsCliSetup,
+    })
 
   // Single source of truth for when the GitHub onboarding modal opens. The
   // previous design also had handleWhatsNewClose / handleTrainingClose
@@ -325,11 +474,18 @@ export default function App() {
   // change before it fires.
   useEffect(() => {
     if (!isGitHubOnboardingDue()) return
+    if (logsWipeBytes !== 0) return
+    // v2: never arm the legacy GitHub modal while the onboarding harness is (or
+    // could still be) the active flow — its own GitHub step replaces it, and the
+    // finish step stamps seenOnboardingVersion. Without this guard the modal
+    // could arm in the background mid-flow and then surface the instant
+    // onboarding completes.
+    if (deriveOnboarding(useAppMetaStore.getState().meta, {}).due) return
     if (showWhatsNew || showTraining || showTrainingAll) return
     if (isFirstInstall() || shouldShowWhatsNew() || shouldShowTraining()) return
     const t = setTimeout(() => setShowGitHubOnboarding(true), 120)
     return () => clearTimeout(t)
-  }, [githubConfig, showWhatsNew, showTraining, showTrainingAll, needsCliSetup])
+  }, [githubConfig, logsWipeBytes, showWhatsNew, showTraining, showTrainingAll, needsCliSetup])
 
   // useCallback: passed to OnboardingModal as `onClose`, which forwards it
   // to useFocusTrap. Without stable identity, the focus-trap effect re-runs
@@ -354,27 +510,86 @@ export default function App() {
   }, [])
 
   // Restore saved sessions on startup
-  async function restoreSavedSessions() {
+  async function restoreSavedSessions(savedState: SessionState) {
     try {
-      const savedState = await window.electronAPI.session.load() as SessionState | null
-      if (!savedState || savedState.sessions.length === 0) return
-
       console.log(`[App] Restoring ${savedState.sessions.length} sessions...`)
 
-      const restoredSessions: Session[] = savedState.sessions.map((saved: SavedSession) => ({
-        ...saved,
-        status: 'idle' as const,
-        createdAt: Date.now(),
-      }))
+      // Idempotent session colour migration (no guard). session.clear() below wipes
+      // the on-disk copy right after restore, and migrated keys only reach disk on a
+      // graceful close (buildSessionState). So this recomputes each launch until then
+      // -- harmless: it is a no-op once keyed, raw `color` is always preserved, and the
+      // notice guard below prevents re-notifying.
+      const { records: migratedSaved, summary: sessionSummary } = migrateColorRecords(savedState.sessions || [])
+      console.log('[colourMigration] sessions', sessionSummary)
+
+      const restoredSessions: Session[] = migratedSaved.map((saved: SavedSession) => {
+        // v1.5 provider-shape: read Claude fields from claudeOptions, fall back to
+        // legacy top-level fields for un-migrated files (belt-and-braces).
+        const claude = saved.claudeOptions
+        return {
+          id: saved.id,
+          configId: saved.configId,
+          label: saved.label,
+          workingDirectory: saved.workingDirectory,
+          model: claude?.model ?? saved.model ?? '',
+          color: saved.color,
+          identityColorKey: saved.identityColorKey,
+          legacyColor: saved.legacyColor,
+          sessionType: saved.sessionType,
+          shellOnly: saved.shellOnly,
+          partnerTerminalPath: saved.partnerTerminalPath,
+          partnerElevated: saved.partnerElevated,
+          sshConfig: saved.sshConfig,
+          legacyVersion: claude?.legacyVersion ?? saved.legacyVersion,
+          agentIds: claude?.agentIds ?? saved.agentIds,
+          effortLevel: claude?.effortLevel ?? saved.effortLevel,
+          disableAutoMemory: claude?.disableAutoMemory ?? saved.disableAutoMemory,
+          enableCodexReview: claude?.enableCodexReview,
+          loggingEnabled: claude?.loggingEnabled,
+          machineName: saved.machineName,
+          githubIntegration: saved.githubIntegration,
+          status: 'idle' as const,
+          createdAt: Date.now(),
+          provider: saved.provider,
+          profileId: saved.profileId,
+          // T8b (bug #5): carry the persisted exact-conversation resume target so
+          // TerminalView passes `resume:{uuid,cwd}` through pty.spawn on relaunch.
+          resumeUuid: saved.resumeUuid,
+          resumeCwd: saved.resumeCwd,
+          codexOptions: saved.codexOptions,
+        }
+      })
 
       for (const session of restoredSessions) {
-        if (!session.shellOnly && session.sessionType === 'local') {
+        // Both providers support a resume picker. For Codex, the picker script
+        // may not be deployed yet on first boot -- buildCodexSpawn falls back
+        // to direct codex spawn in that case (see src/main/providers/codex/spawn.ts).
+        // T8b (bug #5): when a persisted exact-conversation target exists, the
+        // spawn resumes THAT conversation directly (cwd-overridden) -- so the
+        // resume PICKER is only the fallback for sessions WITHOUT a persisted uuid.
+        const hasExactResume = !!(session.resumeUuid && session.resumeCwd)
+        if (!session.shellOnly && session.sessionType === 'local' && !hasExactResume) {
           markSessionForResumePicker(session.id)
         }
       }
 
+      // Relaunch must CONTINUE each session under the same account it was closed
+      // on (issue #76). The account is already determined (persisted profileId),
+      // so -- like in-session Restart/Recover/Switch -- mark the restored sessions
+      // predetermined BEFORE the store restore mounts their TerminalViews, so each
+      // spawn skips the pre-spawn AccountLaunchGate re-prompt and respawns under
+      // its saved account.
+      markRestoredSessionsPredetermined(restoredSessions.map((s) => s.id))
+
       useSessionStore.getState().restoreSessions(restoredSessions, savedState.activeSessionId)
       await window.electronAPI.session.clear()
+
+      if (sessionSummary.changed > 0) {
+        const s = useSettingsStore.getState()
+        if (!s.settings.colourMigrationNoticeDismissed && !s.settings.colourMigrationNoticePending) {
+          s.updateSettings({ colourMigrationNoticePending: true })
+        }
+      }
 
       console.log('[App] Sessions restored')
     } catch (err) {
@@ -388,7 +603,19 @@ export default function App() {
     setIsClosing(true)
     if (isUpdate) setIsUpdating(true)
     try {
-      await window.electronAPI.session.save(buildSessionState())
+      // Drain debounced config saves (DnD reorders, collapse toggles) made in
+      // the last ~300ms so they aren't lost with the renderer.
+      await flushPendingConfigSaves()
+      // T8b (bug #5): enrich each session with its exact-conversation resume
+      // target so this relaunch resumes the SAME conversation. Fail-safe: falls
+      // back to the plain (sync) state if enrichment throws.
+      let stateToSave: SessionState
+      try {
+        stateToSave = await buildSessionStateWithResumeTargets()
+      } catch {
+        stateToSave = buildSessionState()
+      }
+      await window.electronAPI.session.save(stateToSave)
       console.log('[App] Session state saved')
       if (isUpdate) {
         await window.electronAPI.update.installAndRestart()
@@ -410,6 +637,7 @@ export default function App() {
     setIsClosing(true)
     if (isUpdate) setIsUpdating(true)
     try {
+      await flushPendingConfigSaves()
       await window.electronAPI.session.clear()
       console.log('[App] Session state cleared')
       if (isUpdate) {
@@ -430,7 +658,11 @@ export default function App() {
       if (isClosing) return
       const state = useSessionStore.getState()
       if (state.sessions.length === 0) {
-        window.electronAPI.window.allowClose()
+        // No dialog on the zero-session path, so drain pending debounced
+        // config saves here before letting the window die.
+        void flushPendingConfigSaves().finally(() => {
+          window.electronAPI.window.allowClose()
+        })
         return
       }
       setCloseDialog('close')
@@ -442,13 +674,18 @@ export default function App() {
 
   // Render non-session views (shown on top of sessions)
   const renderOverlayView = () => {
-    if (view === 'logs') return <LogViewer />
-    if (view === 'settings') return <SettingsPage initialTab={pendingSettingsTab ?? undefined} />
+    if (view === 'logs') return <GlobalLogsView initialSessionId={pendingLogsSessionId} onInitialSessionConsumed={() => setPendingLogsSessionId(null)} />
+    if (view === 'settings') return <SettingsPage initialTab={pendingSettingsTab ?? undefined} onNavigateToSessions={() => setView('sessions')} />
     if (view === 'insights') return <InsightsPage />
     if (view === 'cloud-agents') return <CloudAgentsPage />
     if (view === 'tokenomics') return <TokenomicsPage />
-    if (view === 'vision') return <VisionPage />
-    if (view === 'memory') return <MemoryPage />
+    if (view === 'vision') return <ConductorMcpPage />
+    if (view === 'memory') return <MemoryPage
+      onClose={() => setView('sessions')}
+      onOpenSessionLogs={(sessionId) => { setPendingLogsSessionId(sessionId); setView('logs') }}
+      onJumpToSession={(sessionId) => { useSessionStore.getState().setActiveSession(sessionId); setView('sessions') }}
+    />
+    if (view === 'account-usage') return <AccountUsagePanel onClose={() => setView('sessions')} onReauthNavigate={() => setView('sessions')} />
     return null
   }
 
@@ -457,14 +694,12 @@ export default function App() {
     if (!activeSessionId || sessions.length === 0 || !activeSession) {
       return (
         <div className="flex-1 flex flex-col" style={{ display: view === 'sessions' ? 'flex' : 'none' }}>
-          <div className="flex-1 flex items-center justify-center">
-            <div className="text-center text-overlay1">
-              <div className="text-5xl mb-4 font-mono">&gt;_</div>
-              <h2 className="text-xl font-semibold mb-2">Claude Command Center <span className="text-yellow/70">Beta</span></h2>
-              <p className="text-sm">Create a terminal config to get started</p>
-              <p className="text-xs text-overlay0 mt-2">Ctrl+T to create, Ctrl+Tab to switch</p>
-            </div>
-          </div>
+          <StageEmptyState
+            configs={configs}
+            onLaunch={(c) => { launchConfig(c); setView('sessions') }}
+            onShowAllConfigs={() => setView('sessions')}
+            onCreateConfig={onCreateConfigFromStage}
+          />
         </div>
       )
     }
@@ -472,7 +707,8 @@ export default function App() {
     return (
       <div className="flex-1 flex flex-col" style={{ display: view === 'sessions' ? 'flex' : 'none', minHeight: 0 }}>
         <TabBar />
-        <SessionHeader session={activeSession} isShowingPartner={partnerActive.has(activeSession.id)} sidebarCollapsed={!sidebarOpen} onShowTip={() => setShowTipModal(true)} />
+        <RepoBreadcrumb session={activeSession} />
+        <SessionHeader session={activeSession} onShowTip={() => setShowTipModal(true)} />
         {(() => {
           const gi = activeSession.githubIntegration
           const shouldShow =
@@ -485,33 +721,48 @@ export default function App() {
             <AutoDetectBanner
               cwd={activeSession.workingDirectory!}
               onAccept={async (slug) => {
-                // Persist the detected repo onto the session BEFORE
-                // navigating so the GitHub config tab reflects the
-                // auto-filled value. Without this write the slug was
-                // silently discarded and the user had to re-enter it.
-                try {
-                  const patch = {
-                    repoUrl: `https://github.com/${slug}`,
-                    repoSlug: slug,
-                    autoDetected: true,
-                  }
-                  await window.electronAPI.github.updateSessionConfig(
-                    activeSession.id,
-                    patch,
-                  )
-                  useSessionStore.getState().updateSession(activeSession.id, {
-                    githubIntegration: {
-                      ...(gi ?? { enabled: false, autoDetected: false }),
-                      ...patch,
+                // Logic lives in utils/githubAutoDetectAccept so it is unit-
+                // testable (App.tsx is enormous). It fixes two bugs the
+                // inline version had:
+                //   #436 -- now writes the patch to the parent CONFIG too,
+                //   so the GH repo selection persists across app restarts.
+                //   #437 -- if the user already has at least one auth
+                //   profile, the click auto-enables the integration, picks
+                //   a profile by slug owner, and stays on the session
+                //   view. The legacy "send to Settings" path only fires
+                //   for unauthed users.
+                await handleAutoDetectAccept(
+                  slug,
+                  {
+                    id: activeSession.id,
+                    configId: activeSession.configId,
+                    githubIntegration: gi,
+                  },
+                  {
+                    electronAPI: window.electronAPI,
+                    updateSession: (id, patch) =>
+                      useSessionStore.getState().updateSession(id, patch),
+                    updateConfig: (id, patch) =>
+                      useConfigStore.getState().updateConfig(id, patch),
+                    profiles: useGitHubStore.getState().profiles,
+                    navigateToGitHubSettings: () => {
+                      setPendingSettingsTab('github')
+                      setView('settings')
                     },
-                  })
-                } catch {
-                  // Fall through: we still send the user to the GitHub
-                  // tab so they can configure manually. Losing the write
-                  // is fine; losing the navigation would be worse.
-                }
-                setPendingSettingsTab('github')
-                setView('settings')
+                    // #441: flush the session store to disk first so the
+                    // main-side updateSessionConfig handler can find the row
+                    // in sessions[] -- freshly-spawned sessions aren't on
+                    // disk until graceful close otherwise.
+                    flushSessionState: async () => {
+                      try {
+                        const state = buildSessionState()
+                        return await window.electronAPI.session.save(state)
+                      } catch {
+                        return false
+                      }
+                    },
+                  },
+                )
               }}
               onEdit={() => {
                 setPendingSettingsTab('github')
@@ -536,7 +787,7 @@ export default function App() {
             />
           )
         })()}
-        <div className="flex-1 flex flex-row" style={{ minHeight: 0 }}>
+        <div className="relative flex-1 flex flex-row" style={{ minHeight: 0 }}>
           <div className="flex-1 flex flex-col" style={{ minWidth: 0, minHeight: 0 }}>
             {sessions.map((session) => {
               const isShowingPartner = partnerActive.has(session.id)
@@ -544,9 +795,10 @@ export default function App() {
               const partnerPtyId = session.id + '-partner'
               const isShowingWebview = !!webviewBySession[session.id]?.isOpen
               const isShowingExcalidraw = !!excalidrawBySession[session.id]?.isOpen
-              // Priority: webview > excalidraw > partner > claude. Each
-              // alternative pane replaces the underlying terminal panes.
-              const altPaneShowing = isShowingWebview || isShowingExcalidraw
+              const isShowingLogs = !!logsBySession[session.id]?.isOpen
+              // Priority: logs > webview > excalidraw > partner > claude. Logs
+              // sits TOP so an open log view isn't suppressed by Draw/Web/Partner.
+              const altPaneShowing = isShowingLogs || isShowingWebview || isShowingExcalidraw
               return (
                 <div
                   key={session.id + '-' + session.createdAt}
@@ -566,21 +818,20 @@ export default function App() {
                     <TerminalView
                       key={session.id + '-main-' + session.createdAt}
                       sessionId={session.id}
-                      parentSessionId={session.id}
                       configId={session.configId}
                       cwd={session.sessionType === 'local' ? session.workingDirectory : undefined}
                       shellOnly={session.shellOnly}
                       ssh={session.sshConfig}
                       isActive={session.id === activeSessionId && view === 'sessions' && !isShowingPartner && !altPaneShowing}
-                      partnerEnabled={hasPartner}
-                      isPartnerActive={isShowingPartner}
-                      onTogglePartner={() => togglePartner(session.id)}
-                      partnerSessionId={hasPartner ? partnerPtyId : undefined}
                       legacyVersion={session.legacyVersion}
                       agentIds={session.agentIds}
                       effortLevel={session.effortLevel}
                       disableAutoMemory={session.disableAutoMemory}
+                      enableCodexReview={session.enableCodexReview}
+                      loggingEnabled={session.loggingEnabled}
                       model={session.model}
+                      provider={session.provider}
+                      codexOptions={session.codexOptions}
                     />
                   </div>
                   {hasPartner && (
@@ -594,23 +845,21 @@ export default function App() {
                       <TerminalView
                         key={partnerPtyId + '-' + session.createdAt}
                         sessionId={partnerPtyId}
-                        parentSessionId={session.id}
                         configId={session.configId}
                         cwd={session.partnerTerminalPath}
                         shellOnly={true}
                         elevated={session.partnerElevated}
                         isActive={session.id === activeSessionId && view === 'sessions' && isShowingPartner && !altPaneShowing}
-                        partnerEnabled={true}
-                        isPartnerActive={isShowingPartner}
-                        onTogglePartner={() => togglePartner(session.id)}
-                        partnerSessionId={partnerPtyId}
                       />
                     </div>
                   )}
-                  {/* Webview takes precedence over Excalidraw if both are
-                      somehow open (the toggle buttons are independent so
-                      the user CAN have both flags true). Render only one. */}
-                  {isShowingWebview ? (
+                  {/* Alt-pane priority: Logs > Webview > Excalidraw. Each
+                      alternative pane replaces the underlying terminal panes.
+                      Toggle buttons are independent so multiple flags can be
+                      true; render only the highest-priority one. */}
+                  {isShowingLogs ? (
+                    <LogsPane sessionId={session.id} />
+                  ) : isShowingWebview ? (
                     <WebviewPane sessionId={session.id} isActive={session.id === activeSessionId} />
                   ) : isShowingExcalidraw ? (
                     <ExcalidrawPane sessionId={session.id} />
@@ -619,14 +868,46 @@ export default function App() {
               )
             })}
           </div>
-          {activeSession && <GitHubPanel sessionId={activeSession.id} />}
+          {/* BUG-7: the GitHub FAB (absolute top-2 right-2) is a later sibling
+              than the session content, so it painted over the draw pane's Close
+              button. The FAB is irrelevant while drawing — suppress the whole
+              panel when the active session is in draw mode. */}
+          {activeSession && !excalidrawBySession[activeSession.id]?.isOpen && (
+            <GitHubPanel sessionId={activeSession.id} />
+          )}
         </div>
+        {/* Per-session telemetry strip + command rows live BELOW the
+            terminal/GitHub-panel row so they span the full content-column
+            width and the GitHub panel ends above them. Rendered once for the
+            ACTIVE session only -- switching tabs re-resolves these against
+            `activeSession`. The telemetry strip is hidden for shell-only
+            sessions (matches the old per-TerminalView gate). */}
+        {activeSession && !activeSession.shellOnly && (
+          <SessionStatusStrip sessionId={activeSession.id} />
+        )}
+        {activeSession && (
+          <CommandBar
+            key={activeSession.id + '-commandbar'}
+            sessionId={activeSession.id}
+            configId={activeSession.configId}
+            sessionType={activeSession.sessionType === 'ssh' ? 'ssh' : 'local'}
+            partnerEnabled={!!activeSession.partnerTerminalPath}
+            isPartnerActive={partnerActive.has(activeSession.id)}
+            onTogglePartner={() => togglePartner(activeSession.id)}
+            partnerSessionId={activeSession.partnerTerminalPath ? activeSession.id + '-partner' : undefined}
+            parentSessionId={activeSession.id}
+          />
+        )}
       </div>
     )
   }
 
-  // Show loading while checking setup status or loading config
-  if (setupComplete === null || (setupComplete && !configLoaded)) {
+  // Show loading while checking setup status or loading config. Also hold
+  // until logsWipe detection resolves: pickBootGate returns null while
+  // logsWipeBytes === null, so rendering the shell here would flash an
+  // ungated, interactive app for a few frames before a due gate (onboarding,
+  // wipe) pops over it.
+  if (setupComplete === null || (setupComplete && (!configLoaded || logsWipeBytes === null))) {
     return (
       <div className="flex flex-col h-screen bg-base text-text items-center justify-center">
         <div className="text-overlay1">Loading...</div>
@@ -668,12 +949,65 @@ export default function App() {
     // here.
   }
 
+  // First-launch gates each have an independent trigger (wipe detection IPC,
+  // version compare, settings flags, staggered boot timers); without a shared
+  // priority they mount simultaneously and stack, with DOM order deciding who
+  // paints on top. Exactly one gate renders at a time — see pickBootGate.
+  // Forced first-run harness gate. onboardingMeta is subscribed at the top of
+  // the component (reactive) so the finish step's completion stamp
+  // (settleOnboardingFinish) flips due->false and unmounts the harness on the
+  // next render. Settings view kept minimal — the codexSignIn when() only
+  // narrows the applicable set, never the due decision.
+  const onboardingDue = deriveOnboarding(onboardingMeta, {}).due
+  const bootGate = pickBootGate({
+    configLoaded,
+    onboardingDue,
+    logsWipeBytes,
+    showWhatsNew,
+    showTraining,
+    showTrainingAll,
+    showGitHubOnboarding,
+    showMachineNamePrompt,
+    loggingConsentSeen: Boolean(loggingConsentSeen),
+    whatsNewDue: shouldShowWhatsNew(),
+    trainingDue: shouldShowTraining() || isFirstInstall(),
+    githubOnboardingDue: isGitHubOnboardingDue(),
+  })
+
   return (
     <ErrorBoundary>
       <div className="flex flex-col h-screen bg-base text-text">
-        {showWhatsNew && <WhatsNewModal onClose={handleWhatsNewClose} />}
-        {showTipModal && <TipModal onClose={() => setShowTipModal(false)} onNavigate={(v) => setView(v)} />}
-        {showGitHubOnboarding && (
+        {bootGate === 'logsWipe' && logsWipeBytes !== null && (
+          <LogsWipeModal totalBytes={logsWipeBytes} onComplete={() => setLogsWipeBytes(0)} />
+        )}
+        {bootGate === 'onboarding' && (
+          <OnboardingHarness
+            onComplete={(startTour) => {
+              // settleOnboardingFinish already stamped completion (harness will
+              // unmount on this render). Launch the live-app tour if chosen.
+              if (startTour) setTourActive(true)
+            }}
+          />
+        )}
+        {tourActive && bootGate === null && (
+          <GuidedTour
+            onClose={() => setTourActive(false)}
+            onCreateConfig={() => {
+              setTourActive(false)
+              setShowGuidedConfig(true)
+            }}
+          />
+        )}
+        {bootGate === 'whatsNew' && <WhatsNewModal onClose={handleWhatsNewClose} />}
+        {showTipModal && bootGate !== 'onboarding' && <TipModal onClose={() => setShowTipModal(false)} onNavigate={(v) => setView(v)} />}
+        {showHelpPanel && (
+          <HelpPanel
+            onClose={() => setShowHelpPanel(false)}
+            onStartTour={() => { setShowTrainingAll(true); setShowTraining(true) }}
+            onShowSessions={() => setView('sessions')}
+          />
+        )}
+        {bootGate === 'githubOnboarding' && (
           <OnboardingModal
             onClose={dismissGitHubOnboarding}
             onSetup={() => {
@@ -689,7 +1023,47 @@ export default function App() {
           />
         )}
 
-        {showMachineNamePrompt && (
+        {/* Suppressed under the guided tour and the first-config dialog too:
+            the tour's centered steps paint a click-capturing full-viewport dim
+            (z-60) over these (z-40/z-50), stranding a real decision prompt
+            underneath. State is kept, so they surface once the overlay closes. */}
+        {/* darwin: multi-account is Windows-only (Keychain token can't be
+            isolated per profile), so never offer to capture a second account. */}
+        {newAccountDetected && window.electronPlatform !== 'darwin' && bootGate !== 'onboarding' && !tourActive && !showGuidedConfig && (
+          <NewAccountPrompt
+            email={newAccountDetected.email}
+            onDismiss={() => setNewAccountDetected(null)}
+            onAdd={async (name) => {
+              const np = await window.electronAPI.accountProfiles.captureDetected(newAccountDetected.sessionId, name || undefined)
+              await useAccountProfilesStore.getState().hydrate()
+              if (np) useSessionStore.getState().updateSession(newAccountDetected.sessionId, { profileId: np.id })
+              setNewAccountDetected(null)
+            }}
+          />
+        )}
+
+        {bootGate === 'loggingConsent' && (
+          <LoggingConsentPrompt />
+        )}
+
+        {pendingRestore && bootGate !== 'onboarding' && !tourActive && !showGuidedConfig && (
+          <ResumeSessionsPrompt
+            count={pendingRestore.sessions.length}
+            onResume={() => {
+              const saved = pendingRestore
+              setPendingRestore(null)
+              void restoreSavedSessions(saved)
+            }}
+            onDontOpen={() => {
+              setPendingRestore(null)
+              // Discard the saved cards so the next boot doesn't re-prompt; the
+              // conversations themselves stay resumable from inside Claude.
+              void window.electronAPI.session.clear()
+            }}
+          />
+        )}
+
+        {bootGate === 'machineName' && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
             <div className="bg-surface0 rounded-lg p-5 w-[360px] shadow-2xl border border-surface1">
               <h3 className="text-sm font-semibold text-text mb-2">Name this machine</h3>
@@ -754,7 +1128,24 @@ export default function App() {
         )}
         <TitleBar sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
         <div className="flex flex-1 overflow-hidden">
-          <Sidebar currentView={view} onViewChange={setView} collapsed={!sidebarOpen} tourActive={showTraining || showTrainingAll} onShowFirstRun={() => setShowGuidedConfig(true)} onShowHelp={() => { setShowTrainingAll(true); setShowTraining(true) }} onUpdateRequested={() => {
+          <Sidebar currentView={view} onViewChange={setView} collapsed={!sidebarOpen} tourActive={showTraining || showTrainingAll} onShowFirstRun={() => setShowGuidedConfig(true)} onShowHelp={() => setShowHelpPanel(true)} onShowAccountUsage={() => setView('account-usage')} />
+          <main className="flex-1 flex flex-col overflow-hidden titlebar-no-drag">
+            <div className="flex-1 flex flex-col overflow-hidden min-h-0 relative">
+              {/* The live app is always what's behind — the first-config flow is
+                  the REAL SessionDialog rendered as an overlay (below), so the
+                  user sees the workbench while creating their first session.
+                  (The old full-column GuidedConfigView is retired.) */}
+              {renderSessions()}
+              {renderOverlayView()}
+            </div>
+          </main>
+        </div>
+        {/* Runtime footer spans the FULL app width (under the sidebar too) so
+            CLI/version sits at the absolute bottom-left of the app -- a global
+            status bar, distinct from the per-session statusline strip which
+            lives above the command rows inside the terminal column. */}
+        <div className="titlebar-no-drag shrink-0">
+          <BottomBar currentView={view} onViewChange={setView} onUpdateRequested={() => {
             const state = useSessionStore.getState()
             if (state.sessions.length === 0) {
               setIsClosing(true)
@@ -764,66 +1155,42 @@ export default function App() {
               setCloseDialog('update')
             }
           }} />
-          <main className="flex-1 flex flex-col overflow-hidden titlebar-no-drag">
-            {showGuidedConfig ? (
-              <GuidedConfigView
-                onSkip={() => setShowGuidedConfig(false)}
-                onConfirm={async (configDraft, sshPassword) => {
-                  const { generateId } = await import('./utils/id')
-                  const configId = generateId()
-                  if (sshPassword) {
-                    await window.electronAPI.credentials.save(configId, sshPassword)
-                  }
-                  const newConfig = { ...configDraft, id: configId }
-                  useConfigStore.getState().addConfig(newConfig)
-                  useAppMetaStore.getState().update({ hasCreatedFirstConfig: true })
-
-                  // Track feature usage based on config fields set
-                  trackUsage('sessions.create-config')
-                  if (newConfig.sessionType === 'ssh') trackUsage('sessions.session-type')
-                  if (newConfig.effortLevel) trackUsage('sessions.effort-level')
-                  if (newConfig.disableAutoMemory) trackUsage('sessions.disable-auto-memory')
-                  if (newConfig.partnerTerminalPath) trackUsage('sessions.partner-terminal')
-
-                  const session: Session = {
-                    id: generateId(),
-                    configId: newConfig.id,
-                    label: newConfig.label,
-                    workingDirectory: newConfig.workingDirectory,
-                    model: newConfig.model,
-                    color: newConfig.color,
-                    status: 'idle',
-                    createdAt: Date.now(),
-                    sessionType: newConfig.sessionType,
-                    shellOnly: newConfig.shellOnly,
-                    sshConfig: newConfig.sshConfig,
-                    effortLevel: newConfig.effortLevel,
-                    disableAutoMemory: newConfig.disableAutoMemory,
-                  }
-                  if (!session.shellOnly && session.sessionType === 'local') {
-                    markSessionForResumePicker(session.id)
-                  }
-                  useSessionStore.getState().addSession(session)
-                  setShowGuidedConfig(false)
-                  setView('sessions')
-                }}
-              />
-            ) : (
-              <>
-                {renderSessions()}
-                {renderOverlayView()}
-              </>
-            )}
-          </main>
         </div>
-        <StatusBar />
-        {showTraining && (
+        {bootGate === 'training' && (
           <TrainingWalkthrough
             onClose={handleTrainingClose}
             showAll={showTrainingAll}
             mode={showTrainingAll ? 'help' : 'first-run'}
           />
         )}
+        {/* First-config creation (from the onboarding tour, the sidebar
+            FirstRunCard, or the empty-state button). The REAL SessionDialog over
+            the live app — same create + launch path as the sidebar's New Session,
+            so there is no behaviour drift and no dead controls (retires the old
+            GuidedConfigView). */}
+        {showGuidedConfig && (
+          <SessionDialog
+            onCancel={() => setShowGuidedConfig(false)}
+            onConfirm={async (data, password, sudoPassword) => {
+              const { generateId } = await import('./utils/id')
+              const config = { ...data, id: generateId() }
+              useConfigStore.getState().addConfig(config)
+              if (password) await window.electronAPI.credentials.save(config.id, password)
+              if (sudoPassword) await window.electronAPI.credentials.save(config.id + '_sudo', sudoPassword)
+              useAppMetaStore.getState().update({ hasCreatedFirstConfig: true })
+              trackUsage('sessions.create-config')
+              setShowGuidedConfig(false)
+              launchConfig(config)
+              setView('sessions')
+            }}
+          />
+        )}
+        {/* Pre-spawn account launch gate: asks which account a session runs
+            under on its first spawn (multi-account only). App-root so it
+            overlays every view. */}
+        <AccountLaunchGate />
+        {/* Sentinel findings panel: global overlay, driven by sentinelStore. */}
+        <SentinelPanel />
       </div>
     </ErrorBoundary>
   )

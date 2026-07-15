@@ -1,6 +1,13 @@
 import React, { useState, useEffect } from 'react'
-import { TerminalConfig, ConfigGroup, ConfigSection, useConfigStore } from '../stores/configStore'
+import { TerminalConfig, ConfigGroup, ConfigSection, ProviderId, CodexOptions, useConfigStore } from '../stores/configStore'
 import { useAgentLibraryStore, BUILTIN_TEMPLATES } from '../stores/agentLibraryStore'
+import { ProviderSegmentedControl } from './SessionDialog/ProviderSegmentedControl'
+import { CodexFormFields } from './SessionDialog/CodexFormFields'
+import { IDENTITY_COLOR_KEYS, resolveIdentityColor, bucketLegacyColorToKey, type IdentityColorKey } from '../../shared/identity-colors'
+import { useResolvedTheme } from '../hooks/useThemeController'
+import { useRegistryStore } from '../stores/registryStore'
+import { useSettingsStore } from '../stores/settingsStore'
+import { modelsFromRegistry } from '../lib/claude-cli-options'
 
 export type SessionType = 'local' | 'ssh'
 
@@ -11,7 +18,13 @@ export interface SSHConfig {
   remotePath: string
 }
 
-// Neon / Claude UX style color palette
+// Identity-colour swatches: stable palette keys (resolved to a theme hex at render).
+// Reserved status/brand/link hues are intentionally absent -- identity can never collide with state.
+export const IDENTITY_SWATCHES: readonly IdentityColorKey[] = IDENTITY_COLOR_KEYS
+
+// Legacy 24-hex palette retained for non-identity pickers (screenshot button,
+// custom commands, notes, project-browser auto-assign) that still store a raw
+// hex string. Identity pickers use IDENTITY_SWATCHES above.
 export const COLOR_SWATCHES = [
   // Neon electric
   '#00FFFF', '#FF00FF', '#00FF7F', '#FF6EC7',
@@ -38,11 +51,28 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
   const addGroup = useConfigStore((s) => s.addGroup)
   const sections = useConfigStore((s) => s.sections)
   const addSection = useConfigStore((s) => s.addSection)
+  const registry = useRegistryStore((s) => s.registry)
+  // Read legacy + claudeOptions fields with claudeOptions taking precedence (P1.4 migration)
+  const initialClaude = initial?.claudeOptions
+  const [provider, setProvider] = useState<ProviderId>(initial?.provider ?? 'claude')
+  const [codexModel, setCodexModel] = useState(initial?.codexOptions?.model ?? 'gpt-5.5')
+  const [codexEffort, setCodexEffort] = useState<NonNullable<CodexOptions['reasoningEffort']>>(initial?.codexOptions?.reasoningEffort ?? 'medium')
+  const [codexPreset, setCodexPreset] = useState<CodexOptions['permissionsPreset']>(initial?.codexOptions?.permissionsPreset ?? 'standard')
   const [label, setLabel] = useState(initial?.label ?? '')
   const [workingDir, setWorkingDir] = useState(initial?.workingDirectory ?? '')
-  const [model, setModel] = useState(initial?.model ?? '')
-  const [color, setColor] = useState(initial?.color ?? COLOR_SWATCHES[0])
+  // v1.5.11: default to the `opus` alias so new sessions land on Opus 4.8
+  // (the latest Opus family member, as of 2026-05-28). The alias resolves
+  // to whichever Opus version Claude Code currently ships, so this
+  // doesn't go stale when Anthropic releases the next one.
+  const [model, setModel] = useState(initialClaude?.model ?? initial?.model ?? 'opus')
+  const [colorKey, setColorKey] = useState<IdentityColorKey>(
+    (initial?.identityColorKey as IdentityColorKey) ?? bucketLegacyColorToKey(initial?.color ?? '')
+  )
+  const theme = useResolvedTheme()
   const [sessionType, setSessionType] = useState<SessionType>(initial?.sessionType ?? 'local')
+  // Codex master ("Do you use Codex?"): with it off the conductor server never
+  // registers codex_review, so the review checkbox below would be a dead control.
+  const codexDisabled = useSettingsStore((s) => s.settings.codexEnabled === false)
   const [shellOnly, setShellOnly] = useState(initial?.shellOnly ?? false)
   const [groupId, setGroupId] = useState<string | undefined>(initial?.groupId)
   const [newGroupName, setNewGroupName] = useState('')
@@ -65,8 +95,8 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
   const [saveSudoPassword, setSaveSudoPassword] = useState(initial?.sshConfig?.hasSudoPassword ?? false)
 
   // Legacy version fields
-  const [legacyEnabled, setLegacyEnabled] = useState(initial?.legacyVersion?.enabled ?? false)
-  const [legacyVersion, setLegacyVersion] = useState(initial?.legacyVersion?.version ?? '')
+  const [legacyEnabled, setLegacyEnabled] = useState((initialClaude?.legacyVersion ?? initial?.legacyVersion)?.enabled ?? false)
+  const [legacyVersion, setLegacyVersion] = useState((initialClaude?.legacyVersion ?? initial?.legacyVersion)?.version ?? '')
   const [availableVersions, setAvailableVersions] = useState<string[]>([])
   const [loadingVersions, setLoadingVersions] = useState(false)
   const [versionInstalled, setVersionInstalled] = useState(false)
@@ -76,9 +106,12 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
   // Agent fields
   const agentUserTemplates = useAgentLibraryStore(s => s.templates)
   const allAgentTemplates = [...agentUserTemplates, ...BUILTIN_TEMPLATES]
-  const [selectedAgentIds, setSelectedAgentIds] = useState<Set<string>>(new Set(initial?.agentIds ?? []))
-  const [effortLevel, setEffortLevel] = useState<string>(initial?.effortLevel ?? '')
-  const [disableAutoMemory, setDisableAutoMemory] = useState(initial?.disableAutoMemory ?? false)
+  const [selectedAgentIds, setSelectedAgentIds] = useState<Set<string>>(new Set(initialClaude?.agentIds ?? initial?.agentIds ?? []))
+  const [disableAutoMemory, setDisableAutoMemory] = useState(initialClaude?.disableAutoMemory ?? initial?.disableAutoMemory ?? false)
+  const [enableCodexReview, setEnableCodexReview] = useState(initialClaude?.enableCodexReview ?? false)
+  // T16: per-session indexing toggle. DEFAULT-TRUE: undefined / true → checked.
+  // Storing only false avoids writing an explicit true to every new config.
+  const [loggingEnabled, setLoggingEnabled] = useState(initialClaude?.loggingEnabled !== false)
   const [machineName, setMachineName] = useState(initial?.machineName ?? '')
 
   // Fetch available versions when legacy checkbox enabled
@@ -122,6 +155,14 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
     })
     return unsub
   }, [installing])
+
+  // Codex is not yet available over SSH -- if user flips sessionType to ssh while
+  // codex is selected, fall back to claude so the form remains usable.
+  useEffect(() => {
+    if (sessionType === 'ssh' && provider === 'codex') {
+      setProvider('claude')
+    }
+  }, [sessionType, provider])
 
   const handleInstallVersion = async () => {
     if (!legacyVersion) return
@@ -207,11 +248,32 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
 
     const dir = sessionType === 'ssh' ? sshRemotePath.trim() || '~' : (workingDir.trim() || '.')
 
+    const claudeOptions = provider === 'claude' ? {
+      model: model || undefined,
+      legacyVersion: legacyEnabled && legacyVersion ? { enabled: true, version: legacyVersion } : undefined,
+      agentIds: !shellOnly && selectedAgentIds.size > 0 ? Array.from(selectedAgentIds) : undefined,
+      disableAutoMemory: !shellOnly && disableAutoMemory ? true : undefined,
+      // Mirror the display gate: while Codex is off the checkbox renders
+      // unchecked+disabled, so persisting the stale true would silently
+      // re-arm review the moment Codex is re-enabled.
+      enableCodexReview: !shellOnly && enableCodexReview && !codexDisabled ? true : undefined,
+      // DEFAULT-TRUE: only write false when the user has turned the toggle off.
+      // Omitting the field (undefined) is equivalent to on, keeps configs clean.
+      loggingEnabled: !shellOnly && !loggingEnabled ? false : undefined,
+    } : undefined
+
+    const codexOptions: CodexOptions | undefined = provider === 'codex' ? {
+      model: codexModel,
+      reasoningEffort: codexEffort,
+      permissionsPreset: codexPreset,
+    } : undefined
+
     const config: Omit<TerminalConfig, 'id'> = {
+      provider,
       label: label.trim(),
       workingDirectory: dir,
-      model,
-      color,
+      identityColorKey: colorKey,
+      color: resolveIdentityColor(colorKey, 'dark'),  // back-compat shadow; render prefers the key
       sessionType,
       shellOnly,
       groupId,
@@ -224,14 +286,13 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
         postCommand: postCommand.trim() || undefined,
         hasSudoPassword: saveSudoPassword && sudoPassword.length > 0,
       } : undefined,
-      legacyVersion: legacyEnabled && legacyVersion ? {
-        enabled: true,
-        version: legacyVersion
-      } : undefined,
-      agentIds: !shellOnly && selectedAgentIds.size > 0 ? Array.from(selectedAgentIds) : undefined,
-      effortLevel: (!shellOnly && effortLevel ? effortLevel : undefined) as any,
-      disableAutoMemory: !shellOnly && disableAutoMemory ? true : undefined,
+      claudeOptions,
+      codexOptions,
       machineName: machineName.trim() || undefined,
+      // Account is no longer a config field -- it's chosen at launch by the
+      // pre-spawn account gate. Preserve any pre-existing value on edit so older
+      // configs aren't silently rewritten, but never set it from this dialog.
+      profileId: initial?.profileId,
     }
 
     onConfirm(
@@ -247,12 +308,16 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
         onSubmit={handleSubmit}
         className="bg-surface0 rounded-lg p-6 w-[760px] max-h-[90vh] overflow-y-auto shadow-2xl border border-surface1"
       >
-        <h3 className="text-base font-semibold text-text mb-4">
-          {initial ? 'Edit Config' : 'New Terminal Config'}
+        <h3 className="text-base font-semibold text-text mb-1">
+          {initial ? 'Edit Config' : 'New Saved Config'}
         </h3>
+        <p className="text-[11px] text-overlay0 mb-4 leading-snug">
+          A saved config is a reusable launcher: it stays in the sidebar and every launch starts a fresh session
+          with these settings.
+        </p>
 
         {/* Session type toggle */}
-        <div className="flex items-center bg-crust rounded-md p-0.5 mb-4">
+        <div className="flex items-center bg-crust rounded-md p-0.5 mb-1">
           <button
             type="button"
             onClick={() => setSessionType('local')}
@@ -272,6 +337,17 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
             SSH
           </button>
         </div>
+        <p className="text-[10px] text-overlay0 mb-4">
+          Where sessions run: this machine, or a remote machine over SSH.
+        </p>
+
+        {/* Provider segmented control */}
+        <ProviderSegmentedControl
+          value={provider}
+          onChange={setProvider}
+          sessionType={sessionType}
+          codexMasterOff={codexDisabled}
+        />
 
         {/* Two-column grid */}
         <div className="grid grid-cols-2 gap-6">
@@ -293,6 +369,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                 placeholder="My project"
                 className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue"
               />
+              <p className="text-[10px] text-overlay0 mt-1">Names this config in the sidebar and on its session tabs.</p>
             </div>
 
             {sessionType === 'ssh' && (
@@ -304,6 +381,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                   placeholder="e.g. GPU Server, Build Box"
                   className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue"
                 />
+                <p className="text-[10px] text-overlay0 mt-1">Shows in logs and the status line so you can tell machines apart.</p>
               </div>
             )}
 
@@ -311,19 +389,22 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
             <div>
               <label className="block text-xs text-subtext0 mb-1">Color</label>
               <div className="flex flex-wrap gap-1.5">
-                {COLOR_SWATCHES.map((c) => (
+                {IDENTITY_SWATCHES.map((k) => (
                   <button
-                    key={c}
+                    key={k}
                     type="button"
-                    onClick={() => setColor(c)}
+                    onClick={() => setColorKey(k)}
                     className={`w-6 h-6 rounded-md border-2 transition-all ${
-                      color === c ? 'border-text scale-110' : 'border-transparent hover:border-overlay0'
+                      colorKey === k ? 'border-text scale-110' : 'border-transparent hover:border-overlay0'
                     }`}
-                    style={{ backgroundColor: c }}
-                    title={c}
+                    style={{ backgroundColor: resolveIdentityColor(k, theme) }}
+                    title={k}
                   />
                 ))}
               </div>
+              <p className="text-[10px] text-overlay0 mt-1.5">
+                Tints this config's rail, tabs and dots so you can tell sessions apart at a glance.
+              </p>
             </div>
 
             {/* -- CONNECTION section -- */}
@@ -349,6 +430,9 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                     Browse
                   </button>
                 </div>
+                <p className="text-[10px] text-overlay0 mt-1">
+                  The folder sessions start in. Claude reads and edits files here (with your approval).
+                </p>
               </div>
             ) : (
               <>
@@ -472,7 +556,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
             </div>
 
             {/* Shell only toggle */}
-            <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
+            <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer">
               <input
                 type="checkbox"
                 checked={shellOnly}
@@ -480,22 +564,32 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                   setShellOnly(e.target.checked)
                   if (e.target.checked) setPartnerTerminalPath('')
                 }}
-                className="rounded border-surface1"
+                className="mt-0.5 rounded border-surface1"
               />
-              Shell only (don't run Claude)
+              <span>
+                Shell only (don't run Claude)
+                <span className="block text-[10px] text-overlay0">
+                  A plain terminal with no AI attached. Handy for servers, builds and logs.
+                </span>
+              </span>
             </label>
 
             {/* Partner Terminal */}
             {!shellOnly && (
               <div>
-                <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer mb-1.5">
+                <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer mb-1.5">
                   <input
                     type="checkbox"
                     checked={!!partnerTerminalPath}
                     onChange={(e) => setPartnerTerminalPath(e.target.checked ? (workingDir || '.') : '')}
-                    className="rounded border-surface1"
+                    className="mt-0.5 rounded border-surface1"
                   />
-                  Partner Terminal
+                  <span>
+                    Partner Terminal
+                    <span className="block text-[10px] text-overlay0">
+                      A second plain terminal beside the session, for running commands yourself while Claude works.
+                    </span>
+                  </span>
                 </label>
                 {partnerTerminalPath && (
                   <>
@@ -528,6 +622,8 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
               </div>
             )}
 
+            {provider === 'claude' && (
+            <>
             {/* Model override */}
             <div>
               <label className="block text-xs text-subtext0 mb-1">
@@ -540,43 +636,72 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                 className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-blue"
               >
                 <option value="">Default (no override)</option>
-                <option value="sonnet">Sonnet</option>
-                <option value="opus">Opus</option>
-                <option value="haiku">Haiku</option>
+                {modelsFromRegistry(registry).map((m) => (
+                  <option key={m.value} value={m.value}>{m.label}</option>
+                ))}
               </select>
+              <p className="text-[10px] text-overlay0 mt-1">
+                The model sessions start on. Default follows Claude's own setting; /model inside a session still works.
+              </p>
             </div>
-
-            {/* Effort level */}
-            {!shellOnly && (
-              <div>
-                <label className="block text-xs text-subtext0 mb-1">
-                  Effort level
-                  <span className="text-overlay0 ml-1">(thinking depth vs cost)</span>
-                </label>
-                <select
-                  value={effortLevel}
-                  onChange={(e) => setEffortLevel(e.target.value)}
-                  className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-blue"
-                >
-                  <option value="">Auto (default)</option>
-                  <option value="low">Low — fast, minimal thinking</option>
-                  <option value="medium">Medium — balanced</option>
-                  <option value="high">High — deep reasoning</option>
-                </select>
-              </div>
-            )}
 
             {/* Disable auto-memory toggle */}
             {!shellOnly && (
-              <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
+              <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={disableAutoMemory}
                   onChange={(e) => setDisableAutoMemory(e.target.checked)}
-                  className="rounded border-surface1"
+                  className="mt-0.5 rounded border-surface1"
                 />
-                Disable auto-memory
-                <span className="text-[10px] text-overlay0">(no CLAUDE.md memory writes)</span>
+                <span>
+                  Disable auto-memory
+                  <span className="block text-[10px] text-overlay0">
+                    Claude won't save memories (CLAUDE.md writes) from these sessions.
+                  </span>
+                </span>
+              </label>
+            )}
+
+            {/* P6: Codex code review toggle. Hidden for SSH (the tool is never
+                registered for SSH sessions and would run codex against a local
+                path that only exists on the remote); disabled when Codex is
+                answered off (the MCP server won't register the tool at all). */}
+            {!shellOnly && sessionType !== 'ssh' && (
+              <label
+                className={`flex items-start gap-2 text-sm text-subtext0 ${codexDisabled ? 'opacity-50' : 'cursor-pointer'}`}
+              >
+                <input
+                  type="checkbox"
+                  checked={enableCodexReview && !codexDisabled}
+                  disabled={codexDisabled}
+                  onChange={(e) => setEnableCodexReview(e.target.checked)}
+                  className="mt-0.5 rounded border-surface1"
+                />
+                <span>
+                  Enable Codex code review
+                  <span className="block text-[10px] text-overlay0">
+                    {codexDisabled
+                      ? 'Codex is off. Enable it in Settings → Codex first.'
+                      : 'Lets Claude ask Codex for an independent review of working changes. Each call counts against your Codex budget.'}
+                  </span>
+                </span>
+              </label>
+            )}
+
+            {/* T16: Index conversation logs toggle */}
+            {!shellOnly && (
+              <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={loggingEnabled}
+                  onChange={(e) => setLoggingEnabled(e.target.checked)}
+                  className="mt-0.5 rounded border-surface1"
+                />
+                <span>
+                  Index conversation logs
+                  <span className="block text-[10px] text-overlay0">CCC indexes Claude's own transcripts so you can browse them here. Your conversation always lives in Claude's files (~/.claude/projects); turning this off only stops CCC from indexing it.</span>
+                </span>
               </label>
             )}
 
@@ -587,7 +712,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
 
             {/* Legacy Claude Version */}
             <div>
-              <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
+              <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={legacyEnabled}
@@ -597,9 +722,14 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                       setInstallError('')
                     }
                   }}
-                  className="rounded border-surface1"
+                  className="mt-0.5 rounded border-surface1"
                 />
-                Legacy Claude Version
+                <span>
+                  Legacy Claude Version
+                  <span className="block text-[10px] text-overlay0">
+                    Pin these sessions to an older Claude Code release, installed from npm beside your current one.
+                  </span>
+                </span>
               </label>
               {legacyEnabled && (
                 <div className="ml-5 mt-2 space-y-2">
@@ -654,6 +784,9 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
               <>
                 <div className="border-t border-surface1 pt-3 mt-3">
                   <span className="text-[10px] uppercase tracking-wider text-overlay1 font-medium">Agents</span>
+                  <p className="text-[10px] text-overlay0 mt-1">
+                    Subagents Claude can delegate work to in these sessions (via its Task tool). Tick the ones to include.
+                  </p>
                 </div>
                 <div className="max-h-[120px] overflow-y-auto border border-surface1 rounded bg-base">
                   {allAgentTemplates.map(t => (
@@ -687,10 +820,34 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                 </p>
               </>
             )}
+            </>
+            )}
+
+            {provider === 'codex' && (
+              <CodexFormFields
+                value={{ model: codexModel, reasoningEffort: codexEffort, permissionsPreset: codexPreset }}
+                // Spread-then-set: dropdowns + radios always emit defined values, so we can safely
+                // guard each setter on `!== undefined`. Add explicit-clear logic if future nullable fields land.
+                onChange={(next) => {
+                  if (next.model !== undefined) setCodexModel(next.model)
+                  if (next.reasoningEffort !== undefined) setCodexEffort(next.reasoningEffort)
+                  if (next.permissionsPreset !== undefined) setCodexPreset(next.permissionsPreset)
+                }}
+                onOpenSettings={() => {
+                  // Best-effort: ask the host to navigate Settings to the Codex tab.
+                  // For v1.5.0 we simply open Settings; the user can click the Codex tab.
+                  // P3+ may add a deep-link channel.
+                  window.dispatchEvent(new CustomEvent('app:openSettings', { detail: { tab: 'codex' } }))
+                }}
+              />
+            )}
 
             {/* -- ORGANIZATION section -- */}
             <div className="border-t border-surface1 pt-3 mt-3">
               <span className="text-[10px] uppercase tracking-wider text-overlay1 font-medium">Organization</span>
+              <p className="text-[10px] text-overlay0 mt-1">
+                Optional. Both just organise the sidebar; skip them until you have a few configs.
+              </p>
             </div>
 
             {/* Group assignment */}
@@ -707,6 +864,9 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                 ))}
                 <option value="__new__">+ New Group...</option>
               </select>
+              <p className="text-[10px] text-overlay0 mt-1">
+                Grouped configs collapse together in the sidebar and can all launch with one click.
+              </p>
               {showNewGroup && (
                 <div className="flex gap-2 mt-1.5">
                   <input
@@ -743,6 +903,9 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                   ))}
                   <option value="__new__">+ New Section...</option>
                 </select>
+                <p className="text-[10px] text-overlay0 mt-1">
+                  A labelled heading this config sits under in the sidebar; sections can also launch all their configs at once.
+                </p>
                 {showNewSection && (
                   <div className="flex gap-2 mt-1.5">
                     <input

@@ -1,9 +1,17 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import { IPC } from '../../shared/ipc-channels'
-import type { GitHubConfig, RepoCache, SessionGitHubIntegration } from '../../shared/github-types'
-import type { SavedSession } from '../session-state'
+import { setActiveSessionId } from '../active-session'
+import type {
+  GitHubConfig,
+  RepoCache,
+  RendererProfilePatch,
+  ReauthResult,
+  SessionGitHubIntegration,
+} from '../../shared/github-types'
+import type { SavedSession } from '../../shared/types'
 import { GitHubConfigStore } from '../github/github-config-store'
-import { AuthProfileStore } from '../github/auth/auth-profile-store'
+import { migrateGitHubConfig } from '../github/github-config-migrate'
+import { AuthProfileStore, pickRendererProfilePatch } from '../github/auth/auth-profile-store'
 import { ghAuthStatus, ghAuthToken, defaultGhRun } from '../github/auth/gh-cli-delegate'
 import { requestDeviceCode, pollForAccessToken } from '../github/auth/oauth-device-flow'
 import { verifyToken, probeRepoAccess } from '../github/auth/pat-verifier'
@@ -29,13 +37,21 @@ import { buildSessionContext } from '../github/session/session-context-service'
 import { extractFileSignals } from '../github/session/tool-call-inspector'
 import { scanTranscriptMessages } from '../github/session/transcript-scanner'
 import { loadTranscriptEvents } from '../github/session/transcript-loader'
-import {
-  DEFAULT_FEATURE_TOGGLES,
-  DEFAULT_SYNC_INTERVALS,
-  GITHUB_CONFIG_SCHEMA_VERSION,
-  OAUTH_SCOPES_PRIVATE,
-  OAUTH_SCOPES_PUBLIC,
-} from '../../shared/github-constants'
+import { emptyGitHubConfig, DEFAULT_AUTH_FEATURE_TOGGLES } from '../../shared/github-constants'
+import { buildOAuthScopeString } from '../github/auth/oauth-scope'
+import { reauthPlanForProfile } from '../github/auth/reauth-plan'
+import { updateSessionMeta } from '../session-registry'
+import { emitPrMerged } from '../channel-emitters'
+import { AiUsageScheduler } from '../github/copilot-usage'
+import { readConfig } from '../config-manager'
+import { logWarn } from '../debug-logger'
+
+// Binds repo + branch into the session registry without touching the label
+// that pty-manager set at spawn time. updateSessionMeta's patch type makes
+// label optional, so the spread-merge preserves the spawn-set human label.
+function bindGitHubMeta(id: string, repo: string, branch: string): void {
+  updateSessionMeta({ id, repo, branch })
+}
 
 type LoadSessions = () => Promise<SavedSession[]>
 type SaveSessions = (sessions: SavedSession[]) => Promise<void>
@@ -71,17 +87,6 @@ async function readCurrentBranch(cwd: string | undefined): Promise<string> {
   }
 }
 
-function emptyConfig(): GitHubConfig {
-  return {
-    schemaVersion: GITHUB_CONFIG_SCHEMA_VERSION,
-    authProfiles: {},
-    featureToggles: { ...DEFAULT_FEATURE_TOGGLES },
-    syncIntervals: { ...DEFAULT_SYNC_INTERVALS },
-    enabledByDefault: false,
-    transcriptScanningOptIn: false,
-  }
-}
-
 /**
  * Registers IPC handlers for all GitHub-sidebar channels. The handlers are
  * the glue between renderer calls and the main-process modules in
@@ -100,6 +105,27 @@ export interface GitHubHandlersHandle {
 
 export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle {
   const configStore = new GitHubConfigStore(deps.resourcesDir)
+
+  // One-shot per boot: migrate to the per-account toggle shape (spec
+  // 2026-06-13 s2). Shape-detected and additive, so re-running is a no-op.
+  // Fire-and-forget: the renderer's first hydrate can race this write and
+  // observe the PRE-migration shape (it is not re-notified). Benign while
+  // nothing renders featureDefaults/appWideToggles; the Plan 2 settings UI
+  // must either tolerate the legacy shape for one frame or re-pull after
+  // boot rather than assume loadConfig() always returns the migrated shape.
+  void (async () => {
+    try {
+      const cur = await configStore.read()
+      if (!cur) return // no config yet; emptyGitHubConfig() is born migrated
+      const aiUsageEnabled =
+        readConfig<{ githubAiUsageEnabled?: boolean }>('settings')?.githubAiUsageEnabled === true
+      const { config, changed } = migrateGitHubConfig(cur, { aiUsageEnabled })
+      if (changed) await configStore.write(config)
+    } catch (err) {
+      console.warn('[github] toggle migration failed (will retry next boot):', err)
+    }
+  })()
+
   const profileStore = new AuthProfileStore({
     readConfig: () => configStore.read(),
     writeConfig: (c) => configStore.write(c),
@@ -239,12 +265,88 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
     },
   })
 
+  // --- AI-credits (Copilot) usage meter -------------------------------------
+  // Best-effort, default-off. The scheduler refreshes the billed-usage report
+  // every 60 min while enabled and pushes it over GITHUB_AI_USAGE_UPDATE. The
+  // login is resolved from the FIRST available auth profile's token (the usage
+  // endpoint is /users/{login}/... so we need the authenticated user's login);
+  // the resolved login is cached per token so we don't re-hit /user each poll.
+  // KNOWN LIMITATION (review note on adad712): multi-GitHub-account users get
+  // the first profile's usage, not an "active" one — billing has no active-
+  // profile concept. Revisit if/when the meter grows an account picker.
+  let aiUsageLoginCache: { token: string; login: string } | null = null
+  async function resolveAiUsageTarget(): Promise<
+    { login: string; tokenFn: () => Promise<string> } | null
+  > {
+    const cfg = await getCachedConfig()
+    for (const profile of Object.values(cfg?.authProfiles ?? {})) {
+      const token = await profileStore.getToken(profile.id)
+      if (!token) continue
+      // Prefer the profile's known username; fall back to a /user probe when
+      // absent (e.g. gh-cli profiles). Cache the login per token so the poll
+      // loop doesn't verify on every tick.
+      let login = profile.username
+      if (!login) {
+        if (aiUsageLoginCache?.token === token) {
+          login = aiUsageLoginCache.login
+        } else {
+          const v = await verifyToken(token).catch(() => null)
+          if (v?.username) {
+            login = v.username
+            aiUsageLoginCache = { token, login }
+          }
+        }
+      }
+      if (login) return { login, tokenFn: async () => token }
+    }
+    return null
+  }
+
+  const aiUsageScheduler = new AiUsageScheduler({
+    resolve: resolveAiUsageTarget,
+    // Default OFF: only enabled when the user opts in via Settings, which
+    // persists githubAiUsageEnabled into the shared 'settings' config file.
+    isEnabled: () =>
+      readConfig<{ githubAiUsageEnabled?: boolean }>('settings')?.githubAiUsageEnabled === true,
+    // The plan-cycle start for the included-credits meter (e.g. the Max upgrade
+    // date). Re-read each tick so a Settings change applies on the next refresh.
+    getCycleStart: () =>
+      readConfig<{ copilotCreditsCycleStart?: string | null }>('settings')
+        ?.copilotCreditsCycleStart ?? null,
+    emit: (payload) =>
+      deps.getWindow()?.webContents.send(IPC.GITHUB_AI_USAGE_UPDATE, payload),
+    logFn: (line) => logWarn(line),
+  })
+  // Arm the loop if the meter was already enabled at boot. start() is a no-op
+  // (and clears any cache) when disabled, so this is safe unconditionally.
+  aiUsageScheduler.start()
+
+  ipcMain.handle(IPC.GITHUB_AI_USAGE_GET, async (_e, force?: boolean) => {
+    // Return the cached report + status if present, else drive a fresh fetch.
+    // `force` (the popover Refresh button, a cycle-start change in Settings)
+    // bypasses the cache so the user sees an up-to-date figure immediately
+    // instead of waiting for the hourly tick. refresh() honors the disabled
+    // state (returns null without a network call), coalesces concurrent callers,
+    // and re-arms the loop if the user just enabled the meter. The status rides
+    // alongside the report so the renderer can render accurate empty/action
+    // states (scope-missing / no-auth) rather than a generic "no data".
+    if (force || !aiUsageScheduler.getLatest()) {
+      aiUsageScheduler.start()
+      await aiUsageScheduler.refresh()
+    }
+    return {
+      report: aiUsageScheduler.getLatest(),
+      status: aiUsageScheduler.getStatus(),
+      cycle: aiUsageScheduler.getLatestCycle(),
+    }
+  })
+
   ipcMain.handle(IPC.GITHUB_CONFIG_GET, async () => {
     return (await configStore.read()) ?? null
   })
 
   ipcMain.handle(IPC.GITHUB_CONFIG_UPDATE, async (_e, patch: Partial<GitHubConfig>) => {
-    const cur = (await configStore.read()) ?? emptyConfig()
+    const cur = (await configStore.read()) ?? emptyGitHubConfig()
     const next = { ...cur, ...patch }
     await configStore.write(next)
     cachedConfig = next
@@ -371,6 +473,30 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
     return { ok: true }
   })
 
+  // Generic profile patch — the safe write path for per-account fields (e.g.
+  // featureToggles). Routes through profileStore.updateProfile, which whitelists
+  // patchable fields and strips immutable ones (id, kind, tokenCiphertext,
+  // createdAt, ghCliUsername) even if a caller bypasses the type. This is the
+  // ROUTING-RULE path: per-profile toggle writes go here, NEVER through
+  // GITHUB_CONFIG_UPDATE (a wholesale authProfiles write there would shallow-
+  // merge and could drop tokenCiphertext).
+  //
+  // Boundary narrowing (review F1): the renderer may ONLY assert label +
+  // featureToggles. Auth-system fields (scopes/capabilities/expiry/verification
+  // timestamps) are derived from token verification in main; pickRendererProfilePatch
+  // drops everything else so a compromised/buggy renderer can't forge them here.
+  ipcMain.handle(
+    IPC.GITHUB_PROFILE_UPDATE,
+    async (_e, id: string, patch: RendererProfilePatch) => {
+    await profileStore.updateProfile(id, pickRendererProfilePatch(patch ?? {}))
+    // The cached config snapshot now holds a stale profile; force a re-read on
+    // the next consumer so feature-gating sees the new toggles immediately.
+    cachedConfig = undefined
+    void syncNotificationsPollerToConfig()
+    return { ok: true }
+    },
+  )
+
   ipcMain.handle(IPC.GITHUB_PROFILE_TEST, async (_e, id: string) => {
     const token = await profileStore.getToken(id)
     if (!token) return { ok: false, error: 'no-token' }
@@ -382,8 +508,21 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
     }
   })
 
-  ipcMain.handle(IPC.GITHUB_OAUTH_START, async (_e, mode: 'public' | 'private') => {
-    const scope = mode === 'private' ? OAUTH_SCOPES_PRIVATE : OAUTH_SCOPES_PUBLIC
+  ipcMain.handle(
+    IPC.GITHUB_OAUTH_START,
+    async (
+      _e,
+      mode: 'public' | 'private',
+      opts?: { extraScopes?: string[]; includeUserScope?: boolean },
+    ) => {
+    // Default sign-in scopes are UNCHANGED. `extraScopes` is the general path —
+    // the per-profile re-auth flow passes a computed scope union (e.g. `user`,
+    // which unlocks the billing /ai_credit endpoint) so the broadened scopes are
+    // requested only when the user explicitly re-authorizes. `includeUserScope`
+    // is the preserved back-compat alias mapping to `['user']`. The pure
+    // buildOAuthScopeString unions + dedupes against the mode's base.
+    const extras = opts?.extraScopes ?? (opts?.includeUserScope ? ['user'] : [])
+    const scope = buildOAuthScopeString(mode, extras)
     const resp = await requestDeviceCode(scope)
     activeFlows.set(resp.device_code, {
       deviceCode: resp.device_code,
@@ -398,7 +537,8 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
       expiresIn: resp.expires_in,
       interval: resp.interval,
     }
-  })
+    },
+  )
 
   ipcMain.handle(IPC.GITHUB_OAUTH_POLL, async (_e, flowId: string) => {
     const flow = activeFlows.get(flowId)
@@ -427,6 +567,16 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
           rawToken: r.access_token,
           expiryObservable: false,
         })
+        // Re-authing the SAME GitHub account must replace, not duplicate
+        // (review catch on 8026a72): the AI-usage re-auth flow would otherwise
+        // leave the old narrow-scope token in the store, and first-profile
+        // consumers could pick it on next launch, silently reverting the
+        // meter to scope-missing. ProfilePatch can't carry a token, so the
+        // store atomically carries the old account's per-account featureToggles
+        // onto the fresh profile (review F5 — a re-auth must NOT reset toggles
+        // to the master defaults the fresh profile was seeded with) and removes
+        // every OTHER oauth profile with this username, in one transaction.
+        await profileStore.replaceSameAccountOAuth(id, v.username)
         activeFlows.delete(flowId)
         cachedConfig = undefined
         void syncNotificationsPollerToConfig()
@@ -447,6 +597,38 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
     if (f) f.cancelled = true
     activeFlows.delete(flowId)
     return { ok: true }
+  })
+
+  ipcMain.handle(IPC.GITHUB_REAUTH_PROFILE, async (_e, profileId: string): Promise<ReauthResult> => {
+    const cfg = await getCachedConfig()
+    const profile = cfg?.authProfiles?.[profileId]
+    if (!profile) return { ok: false, error: 'not-found' }
+    // featureDefaults may be sparse on hand-edited/old configs — layer the
+    // constant underneath (same layering the store's feature-toggle writes use).
+    const defaults = { ...DEFAULT_AUTH_FEATURE_TOGGLES, ...(cfg?.featureDefaults ?? {}) }
+    const plan = reauthPlanForProfile(profile, defaults)
+    if (plan.kind === 'oauth') {
+      const scope = buildOAuthScopeString(plan.mode, plan.scopes)
+      const resp = await requestDeviceCode(scope)
+      activeFlows.set(resp.device_code, {
+        deviceCode: resp.device_code,
+        intervalSec: resp.interval,
+        scope,
+        cancelled: false,
+      })
+      return {
+        ok: true,
+        plan,
+        flow: {
+          flowId: resp.device_code,
+          userCode: resp.user_code,
+          verificationUri: resp.verification_uri,
+          expiresIn: resp.expires_in,
+          interval: resp.interval,
+        },
+      }
+    }
+    return { ok: true, plan }
   })
 
   ipcMain.handle(IPC.GITHUB_GHCLI_DETECT, async () => {
@@ -489,6 +671,7 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
           branch,
           integration: merged,
         })
+        bindGitHubMeta(sessionId, merged.repoSlug, branch)
         // If the user had this session focused before enabling integration,
         // setFocus was a no-op because the session wasn't registered yet.
         // Replay pending focus now so interval tiering (active vs bg) kicks
@@ -534,6 +717,7 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
         branch,
         integration,
       })
+      bindGitHubMeta(sessionId, integration.repoSlug, branch)
       if (focusedSessionResolver() === sessionId) {
         orchestrator.setFocus(sessionId, true)
       }
@@ -563,6 +747,7 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
       branch,
       integration,
     })
+    bindGitHubMeta(id, integration.repoSlug, branch)
     orchestrator.setFocus(id, true)
     await orchestrator.syncNow(id)
     return { ok: true }
@@ -572,6 +757,9 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
   // this value as the focused-session resolver so SYNC_FOCUSED_NOW resolves
   // correctly without needing a separate session-state round-trip.
   ipcMain.on(IPC.GITHUB_FOCUS_CHANGED, (_e, sessionId: string | null) => {
+    // Mirror the viewed-session id into the shared tracker so focus-aware
+    // main-side features can tell which session the user is currently viewing.
+    setActiveSessionId(sessionId)
     const prev = focusedSessionResolver()
     focusedSessionResolver = () => sessionId
     if (prev && prev !== sessionId) orchestrator.setFocus(prev, false)
@@ -731,9 +919,18 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
           method: 'PUT',
           body: { merge_method: method },
         })
-        return r.ok
-          ? { ok: true }
-          : { ok: false, error: `http-${r.status}` }
+        if (r.ok) {
+          // Emit the pr:merged internal event so the rules engine (PR Cascade)
+          // can notify sessions on dependent branches. Best-effort: a channels
+          // emit must never break the merge response.
+          try {
+            // base branch not returned by the merge endpoint; defaults to main
+            // (custom non-main base targeting is a v1.5.11 follow-up)
+            emitPrMerged({ repo: slug, number: prNumber, branch: 'main' })
+          } catch { /* channels emit is best-effort */ }
+          return { ok: true }
+        }
+        return { ok: false, error: `http-${r.status}` }
       } catch (err) {
         return { ok: false, error: err instanceof Error ? err.message : String(err) }
       }
@@ -856,6 +1053,7 @@ export function registerGitHubHandlers(deps: RegisterDeps): GitHubHandlersHandle
             branch,
             integration: integ,
           })
+          bindGitHubMeta(s.id, integ.repoSlug, branch)
           if (focusedSessionResolver() === s.id) {
             orchestrator.setFocus(s.id, true)
           }

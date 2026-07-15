@@ -40,18 +40,14 @@ const ALLOWED_TAGS = [
 const ALLOWED_ATTR = ['href', 'title']
 
 /**
- * Sanitizes a GitHub markdown comment body for render.
+ * The single hardened sanitize pipeline shared by every markdown render site.
  *
  * Link scheme policy: `https:` only on `<a href>`. `http:`, `mailto:`, bare
  * fragment `#`, `javascript:`, and everything else is stripped. The renderer
  * blocks `will-navigate` and `window.open`, so the only navigation that
  * actually works is `shell.openExternal(https://...)` invoked from main.
- *
- * Callers MUST pass the output through the single audited render site
- * `SanitizedMarkdown` — see spec §9 for the `dangerouslySetInnerHTML`
- * carve-out and delegated anchor click handler.
  */
-export function renderCommentMarkdown(md: string): string {
+function sanitizeMarkdown(md: string): string {
   if (typeof md !== 'string') return ''
   const raw = marked.parse(md) as string
   return DOMPurify.sanitize(raw, {
@@ -59,5 +55,53 @@ export function renderCommentMarkdown(md: string): string {
     ALLOWED_ATTR,
     ALLOWED_URI_REGEXP: /^https:/i,
     FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover'],
+  })
+}
+
+/**
+ * Sanitizes a GitHub markdown comment body for render.
+ *
+ * Callers MUST pass the output through the single audited render site
+ * `SanitizedMarkdown` — see spec §9 for the `dangerouslySetInnerHTML`
+ * carve-out and delegated anchor click handler.
+ */
+export function renderCommentMarkdown(md: string): string {
+  return sanitizeMarkdown(md)
+}
+
+/**
+ * Sanitizes a Claude Code transcript message body for render (Logs v2).
+ *
+ * Uses the EXACT same pipeline + allowlist as `renderCommentMarkdown` — the
+ * allowlist is not loosened because transcript content is equally untrusted
+ * (it is whatever the model and the user typed). Same single audited render
+ * site `SanitizedMarkdown`.
+ */
+export function renderTranscriptMarkdown(md: string): string {
+  return sanitizeMarkdown(md)
+}
+
+// Memory files are the user's own ~/.claude/projects markdown. The memory
+// renderer (memory-ui `renderMarkdown`) entity-escapes content first and injects
+// only fixed CCC theme classes, so the styling must survive — hence a `class`-
+// permitting allowlist distinct from the strict GitHub/transcript pipeline. The
+// input is already-rendered themed HTML (NOT raw markdown), so we sanitize it
+// directly rather than re-parsing with marked.
+const MEMORY_ALLOWED_TAGS = ['p', 'br', 'strong', 'em', 'code', 'li', 'ul', 'ol', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote']
+const MEMORY_ALLOWED_ATTR = ['class']
+
+/**
+ * Sanitize the memory drawer's themed HTML through the same DOMPurify so the
+ * drawer shares the single audited render site (spec §9) instead of its own
+ * bare `dangerouslySetInnerHTML`. Scripts, handlers, styles, links, and any
+ * unknown tag are stripped; only the themed structural tags + their class
+ * survive.
+ */
+export function sanitizeMemoryHtml(themedHtml: string): string {
+  if (typeof themedHtml !== 'string') return ''
+  return DOMPurify.sanitize(themedHtml, {
+    ALLOWED_TAGS: MEMORY_ALLOWED_TAGS,
+    ALLOWED_ATTR: MEMORY_ALLOWED_ATTR,
+    FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover', 'style'],
   })
 }

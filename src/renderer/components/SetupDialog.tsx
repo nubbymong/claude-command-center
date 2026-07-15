@@ -1,31 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
-
-const THEME = {
-  background: '#0f1218',
-  foreground: '#f0f4fc',
-  cursor: '#f0f4fc',
-  cursorAccent: '#0f1218',
-  selectionBackground: '#1e2530',
-  selectionForeground: '#f0f4fc',
-  black: '#1e2530',
-  red: '#F38BA8',
-  green: '#A6E3A1',
-  yellow: '#F9E2AF',
-  blue: '#89B4FA',
-  magenta: '#CBA6F7',
-  cyan: '#94E2D5',
-  white: '#b8c5d6',
-  brightBlack: '#2a3342',
-  brightRed: '#F38BA8',
-  brightGreen: '#A6E3A1',
-  brightYellow: '#F9E2AF',
-  brightBlue: '#89B4FA',
-  brightMagenta: '#CBA6F7',
-  brightCyan: '#94E2D5',
-  brightWhite: '#94a3b8',
-}
+import { buildLogTheme } from '../lib/terminal-theme'
 
 interface Props {
   onComplete: () => void
@@ -62,7 +38,7 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
     if (step !== 2) return
 
     const term = new Terminal({
-      theme: THEME,
+      theme: buildLogTheme(),
       fontSize: 13,
       fontFamily: "'Cascadia Code', 'Consolas', monospace",
       cursorBlink: true,
@@ -178,7 +154,7 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
           <div
             ref={termContainerRef}
             className="rounded-lg overflow-hidden border border-surface2"
-            style={{ height: '400px', backgroundColor: '#0f1218' }}
+            style={{ height: '400px', backgroundColor: 'var(--surface-stage)' }}
           />
 
           <div className="mt-4 flex items-center justify-between">

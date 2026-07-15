@@ -1,350 +1,71 @@
 import React, { useEffect, useState, useMemo } from 'react'
 import { useMemoryStore } from '../stores/memoryStore'
-import type { MemoryFile, MemoryProject } from '../../shared/types'
+import { useAccountProfilesStore } from '../stores/accountProfilesStore'
+import { useSessionStore } from '../stores/sessionStore'
+import type { LiveSessionLite } from './memory/live-sessions'
 import PageFrame from './PageFrame'
+import MemoryKpiRow from './memory/MemoryKpiRow'
+import MemoryActivityChart from './memory/MemoryActivityChart'
+import MemoryTypeDonut from './memory/MemoryTypeDonut'
+import { ProjectsRankedList } from './memory/ProjectsRankedList'
+import ProjectDrilldown from './memory/ProjectDrilldown'
+import MemoryReadingDrawer from './memory/MemoryReadingDrawer'
+import MemorySearchResults from './memory/MemorySearchResults'
+import {
+  deriveKpis,
+  activityBuckets,
+  typeCounts,
+  indexHealth,
+  filterProjects,
+  type ScopeFilter,
+} from './memory/memory-stats'
+import { liveSessionsForProject } from './memory/live-sessions'
 
-const TYPE_COLORS: Record<string, { bg: string; fg: string; label: string }> = {
-  user:          { bg: 'rgba(137,180,250,0.12)', fg: '#89b4fa', label: 'User' },
-  feedback:      { bg: 'rgba(249,226,175,0.12)', fg: '#f9e2af', label: 'Feedback' },
-  project:       { bg: 'rgba(166,227,161,0.12)', fg: '#a6e3a1', label: 'Project' },
-  reference:     { bg: 'rgba(203,166,247,0.12)', fg: '#cba6f7', label: 'Reference' },
-  snapshot:      { bg: 'rgba(127,132,156,0.12)', fg: '#7f849c', label: 'Snapshot' },
-  uncategorized: { bg: 'rgba(88,91,112,0.12)',   fg: '#585b70', label: 'Uncategorized' },
-}
-const TYPE_ORDER = ['user', 'feedback', 'project', 'reference', 'snapshot', 'uncategorized']
+const SCOPE_OPTIONS: { label: string; value: ScopeFilter }[] = [
+  { label: 'All', value: 'all' },
+  { label: 'Active 30d', value: 'active30d' },
+  { label: 'Stale', value: 'stale' },
+]
 
-function fmt(bytes: number) { return bytes < 1024 ? bytes + 'B' : (bytes / 1024).toFixed(1) + 'KB' }
-function fmtRel(ts: number) {
-  const d = Math.floor((Date.now() - ts) / 86400000)
-  if (d === 0) return 'today'
-  if (d === 1) return '1d ago'
-  if (d < 30) return d + 'd ago'
-  return Math.floor(d / 30) + 'mo ago'
-}
-function staleClass(ts: number) {
-  const d = (Date.now() - ts) / 86400000
-  return d < 7 ? 'bg-green' : d < 30 ? 'bg-yellow' : 'bg-red'
-}
-function staleShadow(ts: number) {
-  const d = (Date.now() - ts) / 86400000
-  return d < 7 ? '0 0 4px rgba(166,227,161,0.4)' : d < 30 ? '0 0 4px rgba(249,226,175,0.3)' : '0 0 4px rgba(243,139,168,0.3)'
-}
-
-function TypeBar({ types, total }: { types: Record<string, number>; total: number }) {
-  return (
-    <div className="flex h-1 rounded-sm overflow-hidden bg-surface0">
-      {TYPE_ORDER.map(t => {
-        const pct = ((types[t] || 0) / (total || 1)) * 100
-        if (pct === 0) return null
-        return <div key={t} style={{ width: pct + '%', background: TYPE_COLORS[t]?.fg }} />
-      })}
-    </div>
-  )
-}
-
-function TypeBadge({ type }: { type: string }) {
-  const tc = TYPE_COLORS[type] || TYPE_COLORS.uncategorized
-  return (
-    <span
-      className="font-mono text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded-sm shrink-0"
-      style={{ background: tc.bg, color: tc.fg }}
-    >
-      {tc.label}
-    </span>
-  )
-}
-
-// Escape HTML entities to prevent XSS in dangerouslySetInnerHTML
-function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
-}
-
-// Simple markdown renderer (content is escaped first to prevent injection)
-function renderMarkdown(content: string): string {
-  return escapeHtml(content)
-    .replace(/^---[\s\S]*?---\n*/m, '') // strip frontmatter
-    .replace(/^### (.+)$/gm, '<h3 class="font-mono text-xs text-subtext0 font-semibold mt-4 mb-1">$1</h3>')
-    .replace(/^## (.+)$/gm, '<h2 class="font-mono text-[13px] text-blue font-semibold mt-4 mb-1">$1</h2>')
-    .replace(/^# (.+)$/gm, '<h1 class="font-mono text-[15px] text-text font-semibold mt-4 mb-2">$1</h1>')
-    .replace(/\*\*(.+?)\*\*/g, '<strong class="text-text font-semibold">$1</strong>')
-    .replace(/`([^`]+)`/g, '<code class="font-mono text-[11px] bg-surface0 px-1 py-0.5 rounded text-peach">$1</code>')
-    .replace(/^- (.+)$/gm, '<li class="ml-4 mb-0.5">$1</li>')
-    .replace(/\n{2,}/g, '</p><p class="mb-2">')
-    .replace(/\n/g, '<br>')
-}
-
-// ── Project Cards View ──
-function ProjectsView({ projects, memories, onSelect }: { projects: MemoryProject[]; memories: MemoryFile[]; onSelect: (name: string) => void }) {
-  return (
-    <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-2.5">
-      {projects.map(p => {
-        const preview = memories.find(m => m.project === p.name && m.filename !== 'MEMORY.md')
-        return (
-          <div
-            key={p.name}
-            onClick={() => onSelect(p.name)}
-            className="bg-mantle border border-surface0 rounded-md p-4 cursor-pointer transition-all hover:border-surface1 hover:bg-[rgba(137,180,250,0.03)]"
-          >
-            <div className="flex items-center gap-2.5 mb-2.5">
-              <span className="font-mono text-[13px] font-medium text-text flex-1">{p.name}</span>
-              <span className="font-mono text-[10px] bg-surface0 text-overlay1 px-2 py-0.5 rounded-full">{p.fileCount} files</span>
-            </div>
-            <div className="flex items-center gap-3 font-mono text-[10px] text-overlay0 mb-2.5">
-              <span>{fmt(p.totalSize)}</span>
-              <span className="flex items-center gap-1">
-                <span className={`w-1.5 h-1.5 rounded-full ${staleClass(p.lastModified)}`} style={{ boxShadow: staleShadow(p.lastModified) }} />
-                {fmtRel(p.lastModified)}
-              </span>
-              {p.memoryMdLines != null && p.memoryMdLines > 200 && (
-                <span className="text-yellow">index: {p.memoryMdLines} lines</span>
-              )}
-            </div>
-            <TypeBar types={p.types} total={p.fileCount} />
-            <div className="flex gap-2 flex-wrap mt-2">
-              {TYPE_ORDER.filter(t => p.types[t]).map(t => (
-                <span key={t} className="flex items-center gap-1 font-mono text-[9px] text-overlay0">
-                  <span className="w-1 h-1 rounded-full" style={{ background: TYPE_COLORS[t]?.fg }} />
-                  {TYPE_COLORS[t]?.label} {p.types[t]}
-                </span>
-              ))}
-            </div>
-            {preview && (
-              <p className="text-[11px] text-overlay1 mt-2 line-clamp-2">{preview.description}</p>
-            )}
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
-// ── Project Detail View (grouped by type) ──
-function ProjectDetailView({ project, memories, selectedId, onSelect, collapsedGroups, onToggle, onBack }: {
-  project: string
-  memories: MemoryFile[]
-  selectedId: string | null
-  onSelect: (id: string) => void
-  collapsedGroups: Set<string>
-  onToggle: (type: string) => void
-  onBack: () => void
+export default function MemoryPage({ onClose, onOpenSessionLogs, onJumpToSession }: {
+  onClose?: () => void
+  onOpenSessionLogs?: (sessionId: string) => void
+  onJumpToSession?: (sessionId: string) => void
 }) {
-  const projectMems = memories.filter(m => m.project === project)
-  const grouped: Record<string, MemoryFile[]> = {}
-  TYPE_ORDER.forEach(t => grouped[t] = [])
-  projectMems.forEach(m => {
-    if (grouped[m.type]) grouped[m.type].push(m)
-    else grouped.uncategorized.push(m)
-  })
-
-  const totalSize = projectMems.reduce((s, m) => s + m.size, 0)
-
-  return (
-    <div>
-      <button onClick={onBack} className="flex items-center gap-1.5 font-mono text-[11px] text-blue bg-transparent border-none cursor-pointer mb-4 hover:opacity-80">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
-        All Projects
-      </button>
-
-      <div className="flex items-center gap-4 font-mono text-[11px] mb-5">
-        <div className="flex items-center gap-1.5">
-          <span className="font-semibold text-[13px] text-text">{projectMems.length}</span>
-          <span className="text-overlay0">memories</span>
-        </div>
-        <div className="w-px h-4 bg-surface1" />
-        <div className="flex items-center gap-1.5">
-          <span className="font-semibold text-[13px] text-text">{fmt(totalSize)}</span>
-          <span className="text-overlay0">total</span>
-        </div>
-      </div>
-
-      {TYPE_ORDER.map(type => {
-        const items = grouped[type]
-        if (items.length === 0) return null
-        const tc = TYPE_COLORS[type]
-        const collapsed = collapsedGroups.has(type)
-
-        return (
-          <div key={type} className="mb-4">
-            <div
-              onClick={() => onToggle(type)}
-              className="flex items-center gap-2 py-1.5 cursor-pointer select-none group"
-            >
-              <span className="w-2 h-2 rounded-full shrink-0" style={{ background: tc.fg }} />
-              <span className="font-mono text-[11px] font-medium uppercase tracking-wider text-overlay1 group-hover:text-text transition-colors">
-                {tc.label}
-              </span>
-              <span className="font-mono text-[10px] text-overlay0">{items.length}</span>
-              <span className="flex-1 h-px bg-surface0" />
-              <span className={`text-overlay0 text-[10px] transition-transform ${collapsed ? '-rotate-90' : ''}`}>
-                {String.fromCharCode(0x25BC)}
-              </span>
-            </div>
-            {!collapsed && (
-              <div className="pl-4">
-                {items.map(m => (
-                  <div
-                    key={m.id}
-                    onClick={() => onSelect(m.id)}
-                    className={`flex items-center gap-2.5 px-3 py-2 rounded cursor-pointer transition-colors mb-0.5 ${
-                      selectedId === m.id ? 'bg-[rgba(137,180,250,0.1)]' : 'hover:bg-[rgba(137,180,250,0.05)]'
-                    }`}
-                  >
-                    <span className="font-mono text-xs text-text flex-1 truncate">{m.name}</span>
-                    <span className="text-[11px] text-overlay1 flex-[2] truncate min-w-0">{m.description}</span>
-                    <div className="flex items-center gap-2 font-mono text-[10px] text-overlay0 shrink-0">
-                      {m.hasFrontmatter && (
-                        <span className="text-[8px] text-teal opacity-60 border border-teal/20 px-1 rounded-sm">FM</span>
-                      )}
-                      <span>{fmt(m.size)}</span>
-                      <span className={`w-1.5 h-1.5 rounded-full ${staleClass(m.modified)}`} style={{ boxShadow: staleShadow(m.modified) }} />
-                      <span>{fmtRel(m.modified)}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
-// ── Search Results ──
-function SearchResults({ memories, query, selectedId, onSelect, onClear }: {
-  memories: MemoryFile[]
-  query: string
-  selectedId: string | null
-  onSelect: (id: string) => void
-  onClear: () => void
-}) {
-  const ql = query.toLowerCase()
-  const results = memories.filter(m =>
-    m.name.toLowerCase().includes(ql) ||
-    m.description.toLowerCase().includes(ql) ||
-    m.project.toLowerCase().includes(ql) ||
-    m.filename.toLowerCase().includes(ql)
-  ).sort((a, b) => b.modified - a.modified)
-
-  return (
-    <div>
-      <button onClick={onClear} className="flex items-center gap-1.5 font-mono text-[11px] text-blue bg-transparent border-none cursor-pointer mb-4 hover:opacity-80">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
-        Clear search
-      </button>
-      <div className="font-mono text-[11px] text-overlay1 mb-3">
-        {results.length} result{results.length !== 1 ? 's' : ''} for "{query}"
-      </div>
-      {results.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-16 text-overlay0 gap-2">
-          <span className="font-mono text-xs">No memories match "{query}"</span>
-        </div>
-      ) : results.map(m => {
-        const tc = TYPE_COLORS[m.type] || TYPE_COLORS.uncategorized
-        return (
-          <div
-            key={m.id}
-            onClick={() => onSelect(m.id)}
-            className={`flex items-center gap-2.5 p-3 border border-surface0 rounded mb-1.5 cursor-pointer transition-all ${
-              selectedId === m.id ? 'bg-[rgba(137,180,250,0.1)] border-blue' : 'hover:bg-[rgba(137,180,250,0.04)] hover:border-surface1'
-            }`}
-          >
-            <TypeBadge type={m.type} />
-            <div className="flex-1 min-w-0">
-              <div className="font-mono text-xs text-text">{m.name}</div>
-              <div className="font-mono text-[10px] text-overlay0 mt-0.5">Local / {m.project} / {m.filename}</div>
-              <div className="text-[11px] text-overlay1 truncate mt-0.5">{m.description}</div>
-            </div>
-            <div className="font-mono text-[10px] text-overlay0 shrink-0 text-right">
-              <div>{fmt(m.size)}</div>
-              <div>{fmtRel(m.modified)}</div>
-            </div>
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
-// ── Detail Panel ──
-function DetailPanel({ memory, content, onClose, onDelete, onWriteFrontmatter }: {
-  memory: MemoryFile
-  content: string | null
-  onClose: () => void
-  onDelete: () => void
-  onWriteFrontmatter: () => void
-}) {
-  const [confirmDelete, setConfirmDelete] = useState(false)
-  const tc = TYPE_COLORS[memory.type] || TYPE_COLORS.uncategorized
-
-  return (
-    <div className="w-[440px] min-w-[440px] border-l border-surface0 bg-mantle flex flex-col">
-      <div className="px-4 py-3 border-b border-surface0 flex items-center gap-2.5 shrink-0">
-        <TypeBadge type={memory.type} />
-        <span className="font-mono text-[13px] font-medium text-text flex-1 truncate">{memory.name}</span>
-        <div className="flex gap-1.5">
-          {!memory.hasFrontmatter && (
-            <button onClick={onWriteFrontmatter} className="font-mono text-[10px] px-2.5 py-1 rounded-sm border border-surface1 bg-surface0 text-subtext0 cursor-pointer hover:border-overlay0 hover:text-text transition-all">
-              + Metadata
-            </button>
-          )}
-          {!confirmDelete ? (
-            <button onClick={() => setConfirmDelete(true)} className="font-mono text-[10px] px-2.5 py-1 rounded-sm border border-surface1 bg-surface0 text-subtext0 cursor-pointer hover:border-red hover:text-red transition-all">
-              Delete
-            </button>
-          ) : (
-            <button onClick={onDelete} className="font-mono text-[10px] px-2.5 py-1 rounded-sm border border-red bg-red/10 text-red cursor-pointer">
-              Confirm
-            </button>
-          )}
-        </div>
-        <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded bg-transparent border-none text-overlay0 cursor-pointer hover:bg-surface0 hover:text-text transition-all text-base">
-          {String.fromCodePoint(0x00D7)}
-        </button>
-      </div>
-      <div className="px-4 py-3 border-b border-surface0 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 shrink-0">
-        <span className="font-mono text-[10px] text-overlay0 uppercase tracking-wide">Type</span>
-        <span className="font-mono text-[11px] text-subtext1">{memory.type} {memory.hasFrontmatter ? '(frontmatter)' : '(inferred)'}</span>
-        <span className="font-mono text-[10px] text-overlay0 uppercase tracking-wide">Project</span>
-        <span className="font-mono text-[11px] text-subtext1">{memory.project}</span>
-        <span className="font-mono text-[10px] text-overlay0 uppercase tracking-wide">Machine</span>
-        <span className="font-mono text-[11px] text-subtext1">Local</span>
-        <span className="font-mono text-[10px] text-overlay0 uppercase tracking-wide">Path</span>
-        <span className="font-mono text-[11px] text-subtext1 truncate" title={memory.path}>{memory.path}</span>
-        <span className="font-mono text-[10px] text-overlay0 uppercase tracking-wide">Size</span>
-        <span className="font-mono text-[11px] text-subtext1">{fmt(memory.size)}</span>
-        <span className="font-mono text-[10px] text-overlay0 uppercase tracking-wide">Modified</span>
-        <span className="font-mono text-[11px] text-subtext1">{new Date(memory.modified).toISOString().slice(0, 10)} ({fmtRel(memory.modified)})</span>
-      </div>
-      <div className="flex-1 overflow-y-auto p-4">
-        {content === null ? (
-          <div className="text-overlay0 font-mono text-xs">Loading...</div>
-        ) : (
-          <div
-            className="text-xs leading-relaxed text-subtext1"
-            dangerouslySetInnerHTML={{ __html: '<p>' + renderMarkdown(content) + '</p>' }}
-          />
-        )}
-      </div>
-    </div>
-  )
-}
-
-// ── Main Page ──
-export default function MemoryPage() {
   const {
-    projects, memories, warnings, totalSize, loading, error,
-    selectedProject, selectedMemoryId, searchQuery, collapsedGroups, selectedContent,
-    scan, selectProject, selectMemory, setSearch, toggleGroup, deleteMemory, writeFrontmatter, dismissWarnings,
+    projects, memories, loading, error,
+    selectedProject, selectedMemoryId, searchQuery, selectedContent,
+    scopeFilter, typeFilter, sortBy, sortDir, recentSessions,
+    scan, selectProject, selectMemory, setSearch, deleteMemory, writeFrontmatter,
+    setScopeFilter, setTypeFilter, setSort,
   } = useMemoryStore()
 
+  // Subscribe to a STABLE STRING KEY of only the structural fields
+  // liveSessionsForProject reads (id / workingDirectory / sessionType). A plain
+  // string compares by value (Object.is), so the statusline bridge's ~1-3×/s
+  // telemetry ticks — which never touch these fields — don't re-render the page
+  // (the old raw `s.sessions` selector re-rendered on every tick via array
+  // identity churn). The lite-session array is reconstructed from the key, so it
+  // only changes when the key does.
+  const sessionsKey = useSessionStore((s) =>
+    s.sessions.map((x) => `${x.id}\t${x.workingDirectory ?? ''}\t${x.sessionType}`).join('\n'),
+  )
+  const sessions = useMemo<LiveSessionLite[]>(
+    () =>
+      sessionsKey
+        ? sessionsKey.split('\n').map((line) => {
+            const [id, workingDirectory, sessionType] = line.split('\t')
+            return { id, label: '', workingDirectory, sessionType }
+          })
+        : [],
+    [sessionsKey],
+  )
   const [searchInput, setSearchInput] = useState('')
-  const [warningsExpanded, setWarningsExpanded] = useState(false)
+
+  // Memory lives in ~/.claude/projects (junctioned into every account home), so
+  // it is intentionally shared across accounts. Surface that only when more than
+  // one account profile exists, so single-account users see no extra noise.
+  const multiAccount = useAccountProfilesStore((s) => s.profiles.length >= 2)
 
   useEffect(() => { scan() }, [])
 
@@ -356,10 +77,40 @@ export default function MemoryPage() {
 
   const selectedMem = useMemo(() => memories.find(m => m.id === selectedMemoryId), [memories, selectedMemoryId])
 
+  // Dashboard derivations — now is captured once per render; < 1ms for typical
+  // corpus sizes (~hundreds of files), so no stale concern within a render cycle.
+  const { kpis, health, buckets, types } = useMemo(() => {
+    const now = Date.now()
+    return {
+      kpis: deriveKpis(memories, projects, now),
+      health: indexHealth(projects),
+      buckets: activityBuckets(memories, now),
+      types: typeCounts(memories),
+    }
+  }, [memories, projects])
+
+  // Live session counts per project — recalculated when sessions or projects change.
+  const liveCounts = useMemo(
+    () => Object.fromEntries(
+      projects.map(p => [p.projectDir, liveSessionsForProject(sessions, p.projectDir).length])
+    ),
+    [sessions, projects],
+  )
+
+  // Ranked/filtered project list. `now` is captured once per data change (not per
+  // render): the old inline filterProjects(..., Date.now()) produced a fresh array
+  // every render, defeating ProjectsRankedList's memo and re-rendering it on every
+  // statusline tick. Minute-granularity scope buckets don't need per-render `now`.
+  const rankedProjects = useMemo(
+    () => filterProjects(projects, memories, scopeFilter, Date.now()),
+    [projects, memories, scopeFilter],
+  )
+
+  // Breadcrumb
   const breadcrumb = searchQuery
     ? [{ label: 'All Projects', action: () => { setSearchInput(''); setSearch(''); selectProject(null) } }, { label: `Search: "${searchQuery}"` }]
     : selectedProject
-    ? [{ label: 'All Projects', action: () => selectProject(null) }, { label: selectedProject }]
+    ? [{ label: 'All Projects', action: () => selectProject(null) }, { label: memories.find(m => m.projectDir === selectedProject)?.project ?? selectedProject }]
     : [{ label: 'All Projects' }]
 
   const memoryIcon = (
@@ -386,17 +137,57 @@ export default function MemoryPage() {
   )
 
   const memoryActions = (
-    <div className="relative w-56">
-      <svg className="absolute left-2 top-1/2 -translate-y-1/2 text-overlay0" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-      </svg>
-      <input
-        type="text"
-        value={searchInput}
-        onChange={e => setSearchInput(e.target.value)}
-        placeholder="Search all memories…"
-        className="w-full bg-surface0 border border-surface1 text-text pl-7 pr-2 py-0.5 rounded text-xs focus:outline-none focus:border-blue placeholder:text-overlay0"
-      />
+    <div className="flex items-center gap-2">
+      {/* Scope segmented control — dashboard only */}
+      {!searchQuery && !selectedProject && (
+        <div
+          className="flex rounded overflow-hidden"
+          style={{ border: '1px solid var(--border-subtle)' }}
+        >
+          {SCOPE_OPTIONS.map(({ label, value }) => {
+            const active = scopeFilter === value
+            return (
+              <button
+                key={value}
+                onClick={() => setScopeFilter(value)}
+                className="px-2.5 py-0.5 text-xs transition-colors"
+                style={{
+                  background: active ? 'var(--accent)' : 'var(--surface-stage)',
+                  color: active ? 'var(--surface-base)' : 'var(--text-secondary)',
+                  fontWeight: active ? 600 : 400,
+                }}
+              >
+                {label}
+              </button>
+            )
+          })}
+        </div>
+      )}
+
+      {multiAccount && (
+        <span
+          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-lavender/10 text-lavender border border-lavender/25 shrink-0"
+          title="Memory lives in ~/.claude/projects, which is shared across every account"
+        >
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" />
+          </svg>
+          Shared across accounts
+        </span>
+      )}
+
+      <div className="relative w-56">
+        <svg className="absolute left-2 top-1/2 -translate-y-1/2 text-overlay0" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+        </svg>
+        <input
+          type="text"
+          value={searchInput}
+          onChange={e => setSearchInput(e.target.value)}
+          placeholder="Search all memories…"
+          className="w-full bg-surface0 border border-surface1 text-text pl-7 pr-2 py-0.5 rounded text-xs focus:outline-none focus:border-blue placeholder:text-overlay0"
+        />
+      </div>
     </div>
   )
 
@@ -407,125 +198,89 @@ export default function MemoryPage() {
       title="Memory"
       context={memoryContext}
       actions={memoryActions}
+      onClose={onClose}
       scrollable={false}
     >
+      {/* Codex coverage note (P5.9): clarify that this page is Claude-only */}
+      <div className="rounded-md bg-blue/10 border border-blue/30 p-3 text-sm text-blue mx-5 mt-3">
+        This page surfaces Claude Code memories from <code className="font-mono text-[12px]">~/.claude/projects/*/memory/</code>. Codex stores its project context in <code className="font-mono text-[12px]">AGENTS.md</code> files (project root) and user rules in <code className="font-mono text-[12px]">~/.codex/rules/</code> -- not tracked here.
+      </div>
 
-      {/* Warning Banner */}
-      {warnings.length > 0 && (
-        <div className="flex flex-col bg-yellow/[0.06] border-b border-yellow/10 shrink-0">
-          <div className="flex items-center gap-2 px-5 py-2">
-            <svg className="text-yellow opacity-80 shrink-0" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
-            </svg>
-            <span className="font-mono text-[11px] text-yellow flex-1">{warnings[0].message}{warnings[0].file ? ` (${warnings[0].file})` : ''}</span>
-            {warnings.length > 1 && (
-              <button
-                onClick={() => setWarningsExpanded(!warningsExpanded)}
-                className="font-mono text-[10px] text-yellow/60 hover:text-yellow cursor-pointer"
-              >
-                {warningsExpanded ? 'collapse' : `+${warnings.length - 1} more`}
-              </button>
-            )}
-            <button onClick={dismissWarnings} className="font-mono text-[10px] text-yellow border border-yellow/20 bg-transparent px-2 py-0.5 rounded-sm cursor-pointer hover:bg-yellow/10">
-              Dismiss
-            </button>
+      {/* Main body */}
+      <div className="flex-1 overflow-y-auto p-5">
+        {loading && memories.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 text-overlay0 gap-2">
+            <span className="font-mono text-xs">Scanning memory directories...</span>
           </div>
-          {warningsExpanded && warnings.length > 1 && (
-            <div className="px-5 pb-2 flex flex-col gap-0.5 max-h-[200px] overflow-y-auto">
-              {warnings.slice(1).map((w, i) => (
-                <span key={i} className="font-mono text-[10px] text-yellow/70 pl-[22px]">
-                  {w.message}{w.file ? ` (${w.file})` : ''}
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Main Content + Detail */}
-      <div className="flex flex-1 min-h-0">
-        <div className="flex-1 overflow-y-auto p-5">
-          {loading && memories.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-16 text-overlay0 gap-2">
-              <span className="font-mono text-xs">Scanning memory directories...</span>
-            </div>
-          ) : error ? (
-            <div className="flex flex-col items-center justify-center py-16 text-red gap-2">
-              <span className="font-mono text-xs">{error}</span>
-            </div>
-          ) : projects.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-16 text-overlay0 gap-2">
-              <span className="font-mono text-xs">No memory directories found</span>
-              <span className="text-[11px] text-overlay0">Claude Code stores memories in ~/.claude/projects/*/memory/</span>
-            </div>
-          ) : (
-            <>
-              {/* Stats strip */}
-              {!searchQuery && !selectedProject && (
-                <div className="flex items-center gap-4 font-mono text-[11px] mb-5">
-                  <div className="flex items-center gap-1.5">
-                    <span className="font-semibold text-[13px] text-text">{memories.length}</span>
-                    <span className="text-overlay0">memories</span>
-                  </div>
-                  <div className="w-px h-4 bg-surface1" />
-                  <div className="flex items-center gap-1.5">
-                    <span className="font-semibold text-[13px] text-text">{projects.length}</span>
-                    <span className="text-overlay0">projects</span>
-                  </div>
-                  <div className="w-px h-4 bg-surface1" />
-                  <div className="flex items-center gap-1.5">
-                    <span className="font-semibold text-[13px] text-text">{fmt(totalSize)}</span>
-                    <span className="text-overlay0">total</span>
-                  </div>
-                </div>
-              )}
-
-              {searchQuery ? (
-                <SearchResults
-                  memories={memories}
-                  query={searchQuery}
-                  selectedId={selectedMemoryId}
-                  onSelect={id => selectMemory(id)}
-                  onClear={() => { setSearchInput(''); setSearch('') }}
-                />
-              ) : selectedProject ? (
-                <ProjectDetailView
-                  project={selectedProject}
-                  memories={memories}
-                  selectedId={selectedMemoryId}
-                  onSelect={id => selectMemory(id)}
-                  collapsedGroups={collapsedGroups}
-                  onToggle={toggleGroup}
-                  onBack={() => selectProject(null)}
-                />
-              ) : (
-                <ProjectsView
-                  projects={projects}
-                  memories={memories}
-                  onSelect={selectProject}
-                />
-              )}
-            </>
-          )}
-        </div>
-
-        {/* Detail Panel */}
-        {selectedMem && (
-          <DetailPanel
-            memory={selectedMem}
-            content={selectedContent}
-            onClose={() => selectMemory(null)}
-            onDelete={() => deleteMemory(selectedMem.id)}
-            onWriteFrontmatter={() => {
-              writeFrontmatter(selectedMem.id, {
-                name: selectedMem.name,
-                description: selectedMem.description,
-                type: selectedMem.type,
-              })
-            }}
+        ) : error ? (
+          <div className="flex flex-col items-center justify-center py-16 text-red gap-2">
+            <span className="font-mono text-xs">{error}</span>
+          </div>
+        ) : projects.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 text-overlay0 gap-2">
+            <span className="font-mono text-xs">No memory directories found</span>
+            <span className="text-[11px] text-overlay0">Claude Code stores memories in ~/.claude/projects/*/memory/</span>
+          </div>
+        ) : searchQuery ? (
+          <MemorySearchResults
+            memories={memories}
+            query={searchQuery}
+            selectedId={selectedMemoryId}
+            onSelect={selectMemory}
+            onClear={() => { setSearchInput(''); setSearch('') }}
           />
+        ) : selectedProject ? (
+          <ProjectDrilldown
+            projectDir={selectedProject}
+            project={projects.find(p => p.projectDir === selectedProject)}
+            memories={memories.filter(m => m.projectDir === selectedProject)}
+            typeFilter={typeFilter}
+            sortBy={sortBy}
+            sortDir={sortDir}
+            recentSessions={recentSessions[selectedProject] ?? []}
+            liveSessions={liveSessionsForProject(sessions, selectedProject)}
+            selectedMemoryId={selectedMemoryId}
+            onBack={() => selectProject(null)}
+            onSelectMemory={selectMemory}
+            onSetTypeFilter={setTypeFilter}
+            onSetSort={setSort}
+            onJumpToSession={onJumpToSession ?? (() => {})}
+            onOpenSessionLogs={onOpenSessionLogs ?? (() => {})}
+          />
+        ) : (
+          /* Dashboard */
+          <>
+            <MemoryKpiRow kpis={kpis} health={health} />
+            <div className="grid grid-cols-3 gap-3 mb-5">
+              <div className="col-span-2">
+                <MemoryActivityChart buckets={buckets} />
+              </div>
+              <MemoryTypeDonut types={types} />
+            </div>
+            <ProjectsRankedList
+              projects={rankedProjects}
+              liveCounts={liveCounts}
+              onSelect={selectProject}
+            />
+          </>
         )}
       </div>
+
+      {/* Reading drawer — overlays everything */}
+      {selectedMem && (
+        <MemoryReadingDrawer
+          key={selectedMem.id}
+          memory={selectedMem}
+          content={selectedContent}
+          onClose={() => selectMemory(null)}
+          onDelete={() => deleteMemory(selectedMem.id)}
+          onWriteFrontmatter={() => writeFrontmatter(selectedMem.id, {
+            name: selectedMem.name,
+            description: selectedMem.description,
+            type: selectedMem.type,
+          })}
+        />
+      )}
     </PageFrame>
   )
 }

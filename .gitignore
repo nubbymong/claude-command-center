@@ -10,10 +10,17 @@ dist/
 
 # Personal/local config
 .claude/
+.agents/
+AGENTS.md
 .copilot-review-notes.md
 .superpowers/
+docs/superpowers/
 USER/
-memory/
+/memory/
+.pr30-body.md
+.pr*-body.md
+docs/release-prep/
+scripts/probe-transcript-path.md
 
 # Build cache
 *.tsbuildinfo
@@ -28,6 +35,8 @@ Thumbs.db
 *.swp
 *.swo
 nul
+# PowerShell module-analysis cache (written to CWD when LOCALAPPDATA is redirected)
+Microsoft/
 
 # Test artifacts
 test-results/
@@ -37,3 +46,4 @@ test-results/
 *.log
 process-snapshot-*.txt
 .tip-screenshots/
+.tmp-e2e/

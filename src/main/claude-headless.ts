@@ -1,0 +1,104 @@
+// claude-headless.ts — Reusable headless `claude` process spawner.
+// Used by insights-runner and the Sentinel AI analysis runner.
+import { spawn, execSync } from 'child_process'
+import { logInfo, logError } from './debug-logger'
+import { withProfileHome } from './pty-manager'
+
+// shell:true means the spawn is `cmd.exe -> claude` on Windows, so proc.kill()
+// kills only the shell and orphans the real claude process (it keeps running and
+// a retry / next launch spawns yet another). taskkill /T /F tears down the whole
+// tree by pid -- same pattern as vision-manager / cloud-agent teardown. POSIX
+// keeps proc.kill() (no shell-orphan problem for our spawns).
+function killHeadlessTree(proc: ReturnType<typeof spawn>): void {
+  try {
+    if (process.platform === 'win32' && proc.pid) {
+      execSync(`taskkill /pid ${proc.pid} /T /F`, { windowsHide: true, timeout: 5000 })
+    } else {
+      proc.kill()
+    }
+  } catch {
+    // process may have already exited
+  }
+}
+
+/**
+ * Spawn `claude` as a headless child process (shell:true so both claude.exe and
+ * claude.cmd are found on PATH).  Returns stdout/stderr and the exit code.
+ *
+ * @param args        CLI arguments passed to `claude`
+ * @param timeoutMs   Kill and resolve with code 1 after this many ms (default 10 min)
+ * @param stdinData   Optional data to pipe into stdin
+ * @param home        Per-account fake HOME injected via withProfileHome; null = default
+ */
+export function spawnClaudeHeadless(
+  args: string[],
+  timeoutMs = 600000,
+  stdinData?: string,
+  home: string | null = null,
+  signal?: AbortSignal
+): Promise<{ code: number; stdout: string; stderr: string }> {
+  return new Promise((resolve) => {
+    logInfo(`[claude-headless] Spawning: claude ${args.join(' ')}${stdinData ? ' (with stdin)' : ''}${home ? ' (account home)' : ''}`)
+
+    const proc = spawn('claude', args, {
+      shell: true,
+      windowsHide: true,
+      env: withProfileHome({ ...process.env } as Record<string, string>, home)
+    })
+
+    // Pipe prompt via stdin if provided
+    if (stdinData && proc.stdin) {
+      proc.stdin.write(stdinData)
+      proc.stdin.end()
+    }
+
+    let stdout = ''
+    let stderr = ''
+    let resolved = false
+
+    const timeout = setTimeout(() => {
+      if (!resolved) {
+        resolved = true
+        logError(`[claude-headless] Timed out after ${timeoutMs / 1000}s`)
+        killHeadlessTree(proc)
+        resolve({ code: 1, stdout, stderr: stderr + '\nTimed out after ' + (timeoutMs / 1000) + 's' })
+      }
+    }, timeoutMs)
+
+    // External cancel (Sentinel disable / re-run / account change): kill the
+    // whole tree like the timeout path. shell:true makes proc the cmd.exe pid, so
+    // a plain proc.kill() would orphan the real claude; killHeadlessTree taskkills
+    // the tree by pid.
+    const onAbort = () => {
+      if (resolved) return
+      resolved = true
+      clearTimeout(timeout)
+      logInfo('[claude-headless] Aborted; killing process tree')
+      killHeadlessTree(proc)
+      resolve({ code: 1, stdout, stderr: stderr + '\nAborted' })
+    }
+    if (signal?.aborted) onAbort()
+    else signal?.addEventListener('abort', onAbort, { once: true })
+
+    proc.stdout?.on('data', (data) => { stdout += data.toString() })
+    proc.stderr?.on('data', (data) => { stderr += data.toString() })
+
+    proc.on('error', (err) => {
+      if (!resolved) {
+        resolved = true
+        clearTimeout(timeout)
+        logError('[claude-headless] Spawn error:', err.message)
+        resolve({ code: 1, stdout, stderr: stderr + '\n' + err.message })
+      }
+    })
+
+    proc.on('close', (code) => {
+      if (!resolved) {
+        resolved = true
+        clearTimeout(timeout)
+        logInfo(`[claude-headless] Process exited with code ${code}`)
+        resolve({ code: code ?? 1, stdout, stderr })
+      }
+    })
+  })
+}

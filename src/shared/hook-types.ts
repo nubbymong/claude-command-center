@@ -1,16 +1,13 @@
 // Shared types for the HTTP Hooks Gateway. Imported by both main and
 // renderer, so this file must stay free of Node- or DOM-specific imports.
 
-export type HookEventKind =
-  | 'PreToolUse'
-  | 'PostToolUse'
-  | 'Notification'
-  | 'SessionStart'
-  | 'Stop'
-  | 'PreCompact'
-  | 'SubagentStart'
-  | 'SubagentStop'
-  | 'StopFailure'
+export const HOOK_EVENT_KINDS = [
+  'PreToolUse', 'PostToolUse', 'Notification', 'SessionStart', 'Stop',
+  'UserPromptSubmit',
+  'PreCompact', 'SubagentStart', 'SubagentStop', 'StopFailure',
+  'PermissionRequest', 'FileChanged',
+] as const
+export type HookEventKind = typeof HOOK_EVENT_KINDS[number]
 
 export interface HookEvent {
   sessionId: string

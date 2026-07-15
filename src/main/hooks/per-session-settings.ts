@@ -1,6 +1,8 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
+import { getConductorMcpPort, getConductorMcpSecret } from '../conductor-mcp-server'
+import { buildStatuslineSetting } from '../providers/claude/statusline-command'
 
 /**
  * Path to the local-session settings file. Mirrors the SSH remote layout
@@ -13,17 +15,39 @@ export function getLocalSessionSettingsPath(sessionId: string): string {
 }
 
 /**
- * Seed a local-session settings file as a full clone of the user's
- * ~/.claude/settings.json. Claude Code's `--settings` flag may either
- * REPLACE user settings entirely or MERGE onto them — both assumptions
- * live in the tree's comments and Claude Code docs are ambiguous. Copying
- * every top-level key (not just the three CCC cares about) is safe under
- * both semantics: user-owned fields like `outputStyle`, `permissions`, or
- * future additions survive. The caller (pty-manager) overlays the fields
- * CCC must own (hooks via injectHooks, plus statusLine/mcpServers which
- * are already correct in the clone).
+ * Path to the local-session MCP config file. Distinct from the settings
+ * file because claude.exe reads MCP server config from `--mcp-config` only,
+ * NOT from `--settings`.
  */
-export function writeLocalSessionSettings(sessionId: string): string {
+export function getLocalSessionMcpConfigPath(sessionId: string): string {
+  const safeSid = sessionId.replace(/[^a-zA-Z0-9_-]/g, '_')
+  return path.join(os.homedir(), '.claude', `mcp-${safeSid}.json`)
+}
+
+/**
+ * Seed a local-session settings file as a full clone of the user's
+ * ~/.claude/settings.json. Used for hooks/statusLine overrides only --
+ * NOT for mcpServers (claude.exe ignores mcpServers in --settings files).
+ *
+ * Claude Code's `--settings` flag may either REPLACE user settings entirely
+ * or MERGE onto them; both assumptions live in the codebase comments and
+ * the docs are ambiguous. Copying every top-level key (not just the keys
+ * CCC cares about) is safe under both semantics.
+ */
+export interface WriteSessionSettingsOptions {
+  /** v1.5.12: when true, force `disableWorkflows: true` into the per-session
+   *  settings so Claude Code's dynamic-workflow feature is disabled at boot.
+   *  Caller (pty-manager) reads the CCC AppSettings.disableClaudeWorkflows
+   *  flag and passes it through. */
+  disableWorkflows?: boolean
+  /** U2: when provided, inject the CCC statusLine command per-session (pointing
+   *  at `<resourcesDir>/scripts/claude-multi-statusline.js`) instead of writing
+   *  it into the user's global ~/.claude/settings.json. Overrides any statusLine
+   *  inherited from the shared-settings clone. */
+  resourcesDir?: string
+}
+
+export function writeLocalSessionSettings(sessionId: string, opts: WriteSessionSettingsOptions = {}): string {
   const claudeDir = path.join(os.homedir(), '.claude')
   try {
     fs.mkdirSync(claudeDir, { recursive: true })
@@ -40,33 +64,104 @@ export function writeLocalSessionSettings(sessionId: string): string {
       shared = parsed as Record<string, unknown>
     }
   } catch {
-    /* shared settings may not exist yet (fresh install) — start empty */
+    /* shared settings may not exist yet (fresh install) -- start empty */
   }
 
-  // Clone every top-level key from shared. injectHooks will overlay the
-  // `hooks` key afterwards. `statusLine` and `mcpServers` are already
-  // copied verbatim, so the user's existing config is preserved exactly.
+  // Clone every top-level key from shared so injectHooks can overlay the
+  // `hooks` key without dropping the user's outputStyle, permissions, etc.
   const sesCfg: Record<string, unknown> = { ...shared }
 
-  const sesPath = getLocalSessionSettingsPath(sessionId)
-  // Atomic write — tmp + rename so a crash mid-write can't leave the
-  // per-session file truncated. Claude Code re-reads settings on /reload,
-  // so rename-over-just-released-handle is fine in practice.
-  const tmp = `${sesPath}.tmp.${process.pid}`
-  fs.writeFileSync(tmp, JSON.stringify(sesCfg, null, 2), 'utf-8')
-  try {
-    fs.renameSync(tmp, sesPath)
-  } catch {
-    try { fs.unlinkSync(tmp) } catch { /* ignore */ }
-    fs.writeFileSync(sesPath, JSON.stringify(sesCfg, null, 2), 'utf-8')
+  // v1.5.12: opt-in disable of CC's dynamic workflows feature. Overrides any
+  // existing value in the shared settings.json -- the CCC toggle is the
+  // authoritative source for newly spawned sessions. Set to undefined would
+  // leave the shared value alone, which is what we want for the off path.
+  if (opts.disableWorkflows) {
+    sesCfg.disableWorkflows = true
   }
-  return sesPath
+
+  // U2: deliver the statusLine PER-SESSION rather than via a global
+  // ~/.claude/settings.json write. Overrides any statusLine inherited from the
+  // shared clone so external `claude` runs outside CCC keep their native line.
+  if (opts.resourcesDir) {
+    sesCfg.statusLine = buildStatuslineSetting(opts.resourcesDir)
+  }
+
+  const sesPath = getLocalSessionSettingsPath(sessionId)
+  return atomicJsonWrite(sesPath, sesCfg)
+}
+
+/**
+ * Write a per-session MCP config file containing the conductor entry
+ * pointed at THIS CCC instance's MCP server port. Passed to claude.exe via
+ * `--mcp-config <path>` so it overrides the global ~/.claude.json entry
+ * (which may be stale due to dev/prod CCC instance race).
+ *
+ * Schema mirrors `claude mcp add --transport sse` output:
+ *   { mcpServers: { 'conductor': { type: 'sse', url: '...' } } }
+ *
+ * P7.7.10: bake `cccSessionId=<sid>` into the URL query string so the
+ * server can resolve the CCC session from the MCP transport itself
+ * (rather than trusting an LLM-supplied tool arg, which Claude has been
+ * observed to cache stale from prior conversations). Global
+ * ~/.claude.json entries do NOT include the query (so external `claude`
+ * invocations outside CCC fail closed -- codex_review returns a clean
+ * "no session bound" error rather than dispatching against a stranger's
+ * session id).
+ *
+ * Returns the path even if mcpPort is 0 (MCP server not yet bound) so the
+ * caller can still pass --mcp-config; the file simply has an empty
+ * mcpServers object in that case.
+ */
+export function writeLocalSessionMcpConfig(sessionId: string, includeConductor = true): string {
+  const claudeDir = path.join(os.homedir(), '.claude')
+  try {
+    fs.mkdirSync(claudeDir, { recursive: true })
+  } catch { /* may exist */ }
+
+  const mcpPort = getConductorMcpPort()
+  const mcpServers: Record<string, unknown> = {}
+  // includeConductor=false (conductorToolsEnabled master off) writes an empty
+  // mcpServers object -- same shape as the port-0 fallback -- so the session
+  // launches with no built-in tools instead of a dangling endpoint.
+  if (mcpPort > 0 && includeConductor) {
+    const encodedSid = encodeURIComponent(sessionId)
+    // R-DEC-3: &token=<secret> authenticates this session against the gated
+    // MCP server. The SSE transport preserves the query on its /messages
+    // endpoint, so follow-up POSTs carry it too.
+    mcpServers['conductor'] = {
+      type: 'sse',
+      url: `http://localhost:${mcpPort}/sse?cccSessionId=${encodedSid}&token=${getConductorMcpSecret()}`,
+    }
+  }
+  const cfg = { mcpServers }
+  const cfgPath = getLocalSessionMcpConfigPath(sessionId)
+  return atomicJsonWrite(cfgPath, cfg)
 }
 
 export function removeLocalSessionSettings(sessionId: string): void {
   try {
     fs.unlinkSync(getLocalSessionSettingsPath(sessionId))
   } catch {
-    /* file may already be gone or never written (hooks off) */
+    /* file may already be gone or never written */
   }
+}
+
+export function removeLocalSessionMcpConfig(sessionId: string): void {
+  try {
+    fs.unlinkSync(getLocalSessionMcpConfigPath(sessionId))
+  } catch {
+    /* file may already be gone or never written */
+  }
+}
+
+function atomicJsonWrite(filePath: string, data: unknown): string {
+  const tmp = `${filePath}.tmp.${process.pid}`
+  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf-8')
+  try {
+    fs.renameSync(tmp, filePath)
+  } catch {
+    try { fs.unlinkSync(tmp) } catch { /* ignore */ }
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8')
+  }
+  return filePath
 }

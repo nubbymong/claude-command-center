@@ -1,5 +1,8 @@
 import React from 'react'
 import { ViewType } from '../../types/views'
+import { useSettingsStore } from '../../stores/settingsStore'
+import { useTokenomicsStore } from '../../stores/tokenomicsStore'
+import { useAccountProfilesStore } from '../../stores/accountProfilesStore'
 
 interface SidebarNavProps {
   currentView: ViewType
@@ -8,9 +11,16 @@ interface SidebarNavProps {
   insightsMessage: string | null
   cloudAgentRunning: number
   visionRunning?: boolean
-  visionConnected?: boolean
+  // P7.7: serverRunning replaces visionConnected for the Conductor MCP dot.
+  // The dot now reflects MCP HTTP listener health, not Chrome CDP attach,
+  // matching the P7.4 spec ("Red only if the MCP HTTP listener actually
+  // died"). visionConnected was removed because it was the only consumer.
+  serverRunning?: boolean
+  tokenomicsIndexComplete?: boolean
   collapsed?: boolean
   onShowHelp?: () => void
+  /** Opens the all-accounts usage overview. Button shown only with 2+ accounts. */
+  onShowAccountUsage?: () => void
 }
 
 const navItems: { view: ViewType; icon: React.ReactNode; label: string }[] = [
@@ -44,11 +54,13 @@ const navItems: { view: ViewType; icon: React.ReactNode; label: string }[] = [
   },
   {
     view: 'vision',
-    label: 'Vision',
+    label: 'Conductor MCP',
     icon: (
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-        <circle cx="12" cy="12" r="3" />
+        <rect x="2" y="2" width="20" height="8" rx="2" />
+        <rect x="2" y="14" width="20" height="8" rx="2" />
+        <line x1="6" y1="6" x2="6.01" y2="6" />
+        <line x1="6" y1="18" x2="6.01" y2="18" />
       </svg>
     )
   },
@@ -88,7 +100,7 @@ const navItems: { view: ViewType; icon: React.ReactNode; label: string }[] = [
   },
 ]
 
-function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMessage, cloudAgentRunning, visionRunning, visionConnected, isCollapsed }: {
+function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMessage, cloudAgentRunning, visionRunning, serverRunning, tokenomicsIndexComplete, isCollapsed, loggingEnabled, tooltipAlign = 'start' }: {
   item: typeof navItems[0]
   currentView: ViewType
   onViewChange: (view: ViewType) => void
@@ -96,20 +108,42 @@ function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMe
   insightsMessage: string | null
   cloudAgentRunning: number
   visionRunning?: boolean
-  visionConnected?: boolean
+  serverRunning?: boolean
+  tokenomicsIndexComplete?: boolean
   isCollapsed: boolean
+  loggingEnabled?: boolean
+  // Expanded-mode tooltip anchoring. Left-group icons anchor 'start' (extend
+  // right); right-group icons anchor 'end' (extend left). Keeps every tooltip
+  // inside the window instead of centring it (which clipped the leftmost icon
+  // off the left edge). Ignored when collapsed (tooltip sits to the right).
+  tooltipAlign?: 'start' | 'end'
 }) {
+  // Logs nav entry is greyed and non-interactive when session logging is off.
+  const isLogsDisabled = item.view === 'logs' && loggingEnabled === false
+
   const isInsightsActive = item.view === 'insights' && !!insightsStatus
-  const insightsDotColor = insightsStatus === 'running' ? '#89B4FA'
-    : insightsStatus === 'extracting_kpis' ? '#F9E2AF'
-    : insightsStatus === 'complete' ? '#A6E3A1'
-    : insightsStatus === 'failed' ? '#F38BA8'
+  const insightsDotColor = insightsStatus === 'running' ? 'var(--status-info)'
+    : insightsStatus === 'extracting_kpis' ? 'var(--status-warning)'
+    : insightsStatus === 'complete' ? 'var(--status-success)'
+    : insightsStatus === 'failed' ? 'var(--status-danger)'
     : null
   const isInsightsAnimating = insightsStatus === 'running' || insightsStatus === 'extracting_kpis'
   const isCloudAgentsRunning = item.view === 'cloud-agents' && cloudAgentRunning > 0
-  const isVisionActive = item.view === 'vision' && visionRunning
+  // P7.7: dot reflects MCP server health, not browser CDP attach. Show
+  // the dot whenever serverRunning has been reported (defined) so users
+  // see red immediately if the listener dies, not just when the browser
+  // is also up. Sidebar key stayed 'vision' for back-compat with saved
+  // view state.
+  const isConductorMcpIcon = item.view === 'vision'
+  const showServerDot = isConductorMcpIcon && serverRunning !== undefined
+  // visionRunning is still consumed by callers but no longer gates the
+  // dot rendering -- kept in the signature for future per-tool status
+  // indicators on the Conductor MCP page.
+  void visionRunning
 
-  const title = isCollapsed
+  const title = isLogsDisabled
+    ? 'Turn on "Index conversation logs" in Settings'
+    : isCollapsed
     ? item.label
     : isCloudAgentsRunning
     ? `${cloudAgentRunning} agent${cloudAgentRunning !== 1 ? 's' : ''} running`
@@ -117,40 +151,55 @@ function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMe
     ? (insightsMessage || 'Insights running...')
     : item.label
 
+  const isTokenomicsBadge = item.view === 'tokenomics' && !!tokenomicsIndexComplete
+
   return (
     <button
-      onClick={() => onViewChange(item.view)}
-      title={title}
+      onClick={isLogsDisabled ? undefined : () => {
+        if (item.view === 'tokenomics') {
+          useTokenomicsStore.getState().clearIndexBadge()
+        }
+        onViewChange(item.view)
+      }}
       aria-label={title}
+      aria-disabled={isLogsDisabled || undefined}
+      tabIndex={isLogsDisabled ? -1 : undefined}
       className={`group ${isCollapsed ? 'w-10 h-10' : 'flex-1 py-2'} flex items-center justify-center rounded-lg transition-colors relative ${
-        currentView === item.view
-          ? 'bg-surface0 text-text'
+        isLogsDisabled
+          ? 'text-overlay0/40 cursor-not-allowed'
+          : currentView === item.view
+          ? 'bg-surface0 rail-active focus-ring'
           : isInsightsAnimating
           ? 'text-blue'
           : isCloudAgentsRunning
           ? 'text-blue'
-          : 'text-overlay0 hover:text-text hover:bg-surface0/50'
+          : 'text-overlay0 hover:text-text hover:bg-surface0/50 focus-ring'
       }`}
+      style={!isLogsDisabled && currentView === item.view ? { color: 'var(--accent)' } : undefined}
     >
-      {item.icon}
-      {/* Fast inline tooltip — appears immediately on hover instead of waiting
-          for the OS native `title` delay. Pointer-events:none so it doesn't
-          block clicks. Only rendered for the collapsed/icon-strip layout
-          where the label isn't already visible. */}
-      {isCollapsed && (
-        <span
-          className="pointer-events-none absolute left-full ml-2 z-40 px-2 py-0.5 text-[11px] rounded bg-surface1 text-text border border-surface2 shadow-md whitespace-nowrap opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 transition-opacity duration-100"
-          aria-hidden="true"
-        >
-          {title}
-        </span>
-      )}
+      <span className={isLogsDisabled ? 'opacity-40' : undefined}>{item.icon}</span>
+      {/* Instant inline tooltip -- the only tooltip (the OS-native `title` was
+          removed so the two no longer conflict). Pointer-events:none so it
+          doesn't block clicks. Position adapts: collapsed = right of icon;
+          expanded = below, edge-anchored so it can't clip off-screen. */}
+      <span
+        className={`pointer-events-none absolute z-40 px-2 py-0.5 text-[11px] rounded bg-surface1 text-text border border-surface2 shadow-md whitespace-nowrap opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 transition-opacity duration-100 ${
+          isCollapsed
+            ? 'left-full ml-2 top-1/2 -translate-y-1/2'
+            : tooltipAlign === 'end'
+            ? 'top-full mt-1 right-0'
+            : 'top-full mt-1 left-0'
+        }`}
+        aria-hidden="true"
+      >
+        {title}
+      </span>
       {isInsightsActive && insightsDotColor && (
         <span
           className={`absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ${isInsightsAnimating ? 'insights-pulse-dot' : ''}`}
           style={{
             backgroundColor: insightsDotColor,
-            boxShadow: `0 0 6px 2px ${insightsDotColor}60`,
+            boxShadow: `0 0 6px 2px color-mix(in srgb, ${insightsDotColor} 38%, transparent)`,
           }}
         />
       )}
@@ -158,17 +207,33 @@ function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMe
         <span
           className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full insights-pulse-dot"
           style={{
-            backgroundColor: '#89B4FA',
-            boxShadow: '0 0 6px 2px #89B4FA60',
+            backgroundColor: 'var(--status-info)',
+            boxShadow: '0 0 6px 2px color-mix(in srgb, var(--status-info) 38%, transparent)',
           }}
         />
       )}
-      {isVisionActive && (
+      {showServerDot && (
         <span
+          data-testid="conductor-mcp-dot"
+          role="img"
+          aria-label={serverRunning ? 'Conductor MCP server running' : 'Conductor MCP server stopped'}
+          title={serverRunning ? 'Conductor MCP server running' : 'Conductor MCP server stopped'}
           className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full"
           style={{
-            backgroundColor: visionConnected ? '#A6E3A1' : '#F38BA8',
-            boxShadow: `0 0 6px 2px ${visionConnected ? '#A6E3A160' : '#F38BA860'}`,
+            backgroundColor: serverRunning ? 'var(--status-success)' : 'var(--status-danger)',
+            boxShadow: `0 0 6px 2px color-mix(in srgb, ${serverRunning ? 'var(--status-success)' : 'var(--status-danger)'} 38%, transparent)`,
+          }}
+        />
+      )}
+      {isTokenomicsBadge && (
+        <span
+          data-testid="tokenomics-index-dot"
+          role="img"
+          aria-label="Tokenomics index complete"
+          className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full"
+          style={{
+            backgroundColor: 'var(--status-success)',
+            boxShadow: '0 0 6px 2px color-mix(in srgb, var(--status-success) 38%, transparent)',
           }}
         />
       )}
@@ -176,68 +241,105 @@ function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMe
   )
 }
 
-export default function SidebarNav({ currentView, onViewChange, insightsStatus, insightsMessage, cloudAgentRunning, visionRunning, visionConnected, collapsed, onShowHelp }: SidebarNavProps) {
+export default function SidebarNav({ currentView, onViewChange, insightsStatus, insightsMessage, cloudAgentRunning, visionRunning, serverRunning, tokenomicsIndexComplete, collapsed, onShowHelp, onShowAccountUsage }: SidebarNavProps) {
+  const loggingEnabled = useSettingsStore((s) => s.settings.loggingEnabled)
+  // Account-usage button lives here in the nav rail (alongside Insights etc.),
+  // shown only with 2+ accounts (never single-account or macOS).
+  const hasMultipleAccounts = useAccountProfilesStore((s) => s.profiles.length >= 2)
+
+  // Active when its view is showing, so the rail highlights it like any nav item.
+  const accountUsageActive = currentView === 'account-usage'
+  const accountUsageButton = onShowAccountUsage && hasMultipleAccounts ? (
+    <button
+      onClick={onShowAccountUsage}
+      aria-label="Account usage"
+      className={`group ${collapsed ? 'w-10 h-10' : 'flex-1 py-2'} flex items-center justify-center rounded-lg transition-colors focus-ring relative ${
+        accountUsageActive ? 'bg-surface0 rail-active' : 'text-overlay0 hover:text-text hover:bg-surface0/50'
+      }`}
+      style={accountUsageActive ? { color: 'var(--accent)' } : undefined}
+    >
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="8" r="3.25" />
+        <path d="M5.5 19.5c0-3.4 3-5.5 6.5-5.5s6.5 2.1 6.5 5.5" />
+      </svg>
+      <span
+        className={`pointer-events-none absolute z-40 px-2 py-0.5 text-[11px] rounded bg-surface1 text-text border border-surface2 shadow-md whitespace-nowrap opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 transition-opacity duration-100 ${
+          collapsed ? 'left-full ml-2 top-1/2 -translate-y-1/2' : 'top-full mt-1 right-0'
+        }`}
+        aria-hidden="true"
+      >
+        Account usage
+      </span>
+    </button>
+  ) : null
+
   const helpButton = onShowHelp ? (
     <button
       onClick={onShowHelp}
-      title="Feature Guide"
       aria-label="Feature Guide"
-      className={`group ${collapsed ? 'w-10 h-10' : 'flex-1 py-2'} flex items-center justify-center rounded-lg transition-colors text-overlay0 hover:text-text hover:bg-surface0/50 relative`}
+      className={`group ${collapsed ? 'w-10 h-10' : 'flex-1 py-2'} flex items-center justify-center rounded-lg transition-colors text-overlay0 hover:text-text hover:bg-surface0/50 focus-ring relative`}
     >
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
         <circle cx="12" cy="12" r="10" />
         <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
         <line x1="12" y1="17" x2="12.01" y2="17" />
       </svg>
-      {collapsed && (
-        <span
-          className="pointer-events-none absolute left-full ml-2 z-40 px-2 py-0.5 text-[11px] rounded bg-surface1 text-text border border-surface2 shadow-md whitespace-nowrap opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 transition-opacity duration-100"
-          aria-hidden="true"
-        >
-          Feature Guide
-        </span>
-      )}
+      <span
+        className={`pointer-events-none absolute z-40 px-2 py-0.5 text-[11px] rounded bg-surface1 text-text border border-surface2 shadow-md whitespace-nowrap opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 transition-opacity duration-100 ${
+          collapsed ? 'left-full ml-2 top-1/2 -translate-y-1/2' : 'top-full mt-1 right-0'
+        }`}
+        aria-hidden="true"
+      >
+        Feature Guide
+      </span>
     </button>
   ) : null
 
+  const primary = navItems.filter(i => ['cloud-agents', 'insights', 'tokenomics'].includes(i.view))
+  const system = navItems.filter(i => !['cloud-agents', 'insights', 'tokenomics'].includes(i.view))
+  const renderItem = (item: typeof navItems[0], tooltipAlign: 'start' | 'end') => (
+    <NavButton key={item.view} item={item} currentView={currentView} onViewChange={onViewChange}
+      insightsStatus={insightsStatus} insightsMessage={insightsMessage} cloudAgentRunning={cloudAgentRunning}
+      visionRunning={visionRunning} serverRunning={serverRunning} tokenomicsIndexComplete={tokenomicsIndexComplete}
+      isCollapsed={false} loggingEnabled={loggingEnabled} tooltipAlign={tooltipAlign} />
+  )
+
   if (collapsed) {
     return (
-      <div className="flex flex-col items-center gap-1 py-2 border-b border-surface0">
-        {navItems.map(item => (
-          <NavButton
-            key={item.view}
-            item={item}
-            currentView={currentView}
-            onViewChange={onViewChange}
-            insightsStatus={insightsStatus}
-            insightsMessage={insightsMessage}
-            cloudAgentRunning={cloudAgentRunning}
-            visionRunning={visionRunning}
-            visionConnected={visionConnected}
-            isCollapsed
-          />
+      <div
+        data-tour="nav-rail"
+        className="flex flex-col items-center gap-1 py-2 border-b border-surface0"
+        style={{ background: 'var(--surface-chrome)', color: 'var(--text-on-chrome)' }}
+      >
+        {navItems.filter(i => ['cloud-agents', 'insights', 'tokenomics'].includes(i.view)).map(item => (
+          <NavButton key={item.view} item={item} currentView={currentView} onViewChange={onViewChange}
+            insightsStatus={insightsStatus} insightsMessage={insightsMessage} cloudAgentRunning={cloudAgentRunning}
+            visionRunning={visionRunning} serverRunning={serverRunning} tokenomicsIndexComplete={tokenomicsIndexComplete}
+            isCollapsed loggingEnabled={loggingEnabled} />
         ))}
+        <span className="h-px w-6 my-1 bg-surface1" aria-hidden />
+        {navItems.filter(i => !['cloud-agents', 'insights', 'tokenomics'].includes(i.view)).map(item => (
+          <NavButton key={item.view} item={item} currentView={currentView} onViewChange={onViewChange}
+            insightsStatus={insightsStatus} insightsMessage={insightsMessage} cloudAgentRunning={cloudAgentRunning}
+            visionRunning={visionRunning} serverRunning={serverRunning} tokenomicsIndexComplete={tokenomicsIndexComplete}
+            isCollapsed loggingEnabled={loggingEnabled} />
+        ))}
+        {accountUsageButton}
         {helpButton}
       </div>
     )
   }
 
   return (
-    <div className="px-2 pt-2 flex gap-1 border-b border-surface0 pb-2">
-      {navItems.map(item => (
-        <NavButton
-          key={item.view}
-          item={item}
-          currentView={currentView}
-          onViewChange={onViewChange}
-          insightsStatus={insightsStatus}
-          insightsMessage={insightsMessage}
-          cloudAgentRunning={cloudAgentRunning}
-          visionRunning={visionRunning}
-          visionConnected={visionConnected}
-          isCollapsed={false}
-        />
-      ))}
+    <div
+      data-tour="nav-rail"
+      className="px-2 pt-2 flex gap-1 items-center border-b border-surface0 pb-2"
+      style={{ background: 'var(--surface-chrome)', color: 'var(--text-on-chrome)' }}
+    >
+      {primary.map((item) => renderItem(item, 'start'))}
+      <span className="w-px self-stretch my-1 bg-surface1 shrink-0" aria-hidden />
+      {system.map((item) => renderItem(item, 'end'))}
+      {accountUsageButton}
       {helpButton}
     </div>
   )

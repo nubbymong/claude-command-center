@@ -7,7 +7,7 @@
 import { join } from 'path'
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, unlinkSync, readdirSync, copyFileSync, rmSync, statSync } from 'fs'
 import { getResourcesDirectory } from './ipc/setup-handlers'
-import { logInfo, logError } from './debug-logger'
+import { logInfo, logError, logWarn } from './debug-logger'
 
 // All config file names
 const CONFIG_FILES = {
@@ -27,9 +27,11 @@ const CONFIG_FILES = {
   agentTeamRuns: 'agent-team-runs.json',
   accounts: 'accounts.json',
   visionGlobal: 'vision-global.json',
+  conductorSecret: 'conductor-secret.json',
   commandSections: 'command-sections.json',
   usageTracking: 'usage-tracking.json',
   commandBarUi: 'command-bar-ui.json',
+  excalidraw: 'excalidraw.json',
 } as const
 
 export type ConfigKey = keyof typeof CONFIG_FILES
@@ -132,7 +134,16 @@ function pruneOldBackups(backupRoot: string): void {
  * Read a single config file. Returns parsed JSON or null if not found/invalid.
  */
 export function readConfig<T = unknown>(key: ConfigKey): T | null {
-  const filePath = join(getConfigDir(), CONFIG_FILES[key])
+  // Fail closed on an unregistered key. join(dir, undefined) would otherwise
+  // throw OUTSIDE the try below, propagating as an uncaught error rather than
+  // the documented null. (This is the class of bug that silently broke the
+  // 'excalidraw' key when it was missing from CONFIG_FILES.)
+  const fileName = CONFIG_FILES[key]
+  if (!fileName) {
+    logError(`[config-manager] Refusing to read unknown config key: ${String(key)}`)
+    return null
+  }
+  const filePath = join(getConfigDir(), fileName)
   try {
     if (!existsSync(filePath)) return null
     const data = readFileSync(filePath, 'utf-8')
@@ -144,24 +155,31 @@ export function readConfig<T = unknown>(key: ConfigKey): T | null {
 }
 
 /**
- * Write a config file atomically (write .tmp then rename).
+ * Write a config file atomically (write per-pid .tmp then rename over the
+ * destination). renameSync is an atomic replace on POSIX (rename(2)) and on
+ * Windows (MoveFileExW + REPLACE_EXISTING) whether or not the destination
+ * exists — a crash mid-write leaves the previous file intact, never a torn
+ * one. The previous copyFileSync-when-target-exists branch truncated the
+ * destination in place (same bug fixed in session-state.ts, P7.7.16).
  */
 export function writeConfig(key: ConfigKey, data: unknown): boolean {
+  // Fail closed on an unregistered key. The CONFIG_FILES[key] lookup ran
+  // OUTSIDE the try below, so an unknown key made join(dir, undefined) throw
+  // uncaught -- it surfaced to the renderer as an IPC rejection (config-saver
+  // -> "Save failed") with nothing in app.log. This is exactly how the missing
+  // 'excalidraw' entry stayed invisible. Guard + log so it can never be silent.
+  const fileName = CONFIG_FILES[key]
+  if (!fileName) {
+    logError(`[config-manager] Refusing to write unknown config key: ${String(key)}`)
+    return false
+  }
   ensureConfigDir()
-  const filePath = join(getConfigDir(), CONFIG_FILES[key])
-  const tmpPath = filePath + '.tmp'
+  const filePath = join(getConfigDir(), fileName)
+  const tmpPath = `${filePath}.tmp.${process.pid}`
   try {
     const json = JSON.stringify(data, null, 2)
     writeFileSync(tmpPath, json, 'utf-8')
-    // On Windows, renameSync fails if target exists. Use copyFileSync (which overwrites
-    // atomically) then clean up tmp. This avoids the unlink+rename window where neither
-    // file exists.
-    if (existsSync(filePath)) {
-      copyFileSync(tmpPath, filePath)
-      try { unlinkSync(tmpPath) } catch { /* ignore */ }
-    } else {
-      renameSync(tmpPath, filePath)
-    }
+    renameSync(tmpPath, filePath)
     return true
   } catch (err) {
     logError(`[config-manager] Failed to write ${key}: ${err}`)
@@ -204,8 +222,80 @@ export function loadAllConfig(): { data: Record<string, unknown>; needsMigration
   // only flow.
   stripLegacySshFields(data)
 
+  // v1.5: back-fill provider field + claudeOptions on TerminalConfig[].
+  // Strips top-level Claude fields; persists back to disk only if something actually changed.
+  migrateConfigsToProviderShape(data)
+
   logInfo(`[config-manager] Loaded all config from ${getConfigDir()}, needsMigration=${!hasData}`)
   return { data, needsMigration: !hasData }
+}
+
+// v1.5: provider-shape migration constants
+const CLAUDE_FIELDS = ['model', 'effortLevel', 'legacyVersion', 'disableAutoMemory', 'agentIds'] as const
+
+/**
+ * Migrate a single TerminalConfig from the legacy flat shape to the
+ * provider-namespaced shape. Pure function -- no side effects.
+ *
+ * - Sets provider='claude' if missing.
+ * - Copies the seven Claude-specific fields into claudeOptions (if not already there).
+ * - Strips those fields from the top level.
+ * - Idempotent: running on a new-shape entry returns an equal-by-value object.
+ */
+export function migrateConfigToProviderShape(cfg: any): any {
+  const out = { ...cfg }
+  if (!out.provider) out.provider = 'claude'
+  if (out.provider === 'claude') {
+    const claudeOptions = { ...(out.claudeOptions ?? {}) }
+    for (const field of CLAUDE_FIELDS) {
+      if (field in out && out[field] !== undefined && claudeOptions[field] === undefined) {
+        claudeOptions[field] = out[field]
+      }
+    }
+    out.claudeOptions = claudeOptions
+  }
+  // P7.7.19: strip legacy Claude fields regardless of provider so codex
+  // configs with stale Claude keys converge. On Claude configs they've
+  // been copied to claudeOptions above; on Codex configs they're orphan
+  // cruft (Codex reads codexOptions only). Either way, removing them now
+  // ensures migrateConfigsToProviderShape's dirty flag stops firing on
+  // subsequent boots; otherwise configs.json would be rewritten with the
+  // same shape every boot (CLAUDE_FIELDS.some(f => f in c) stays true
+  // even though no work needed doing).
+  for (const field of CLAUDE_FIELDS) {
+    delete out[field]
+  }
+  return out
+}
+
+/**
+ * Run migrateConfigToProviderShape over every entry in data.configs[].
+ * Persists back to disk only when something actually changed. Idempotent.
+ */
+function migrateConfigsToProviderShape(data: Record<string, unknown>): void {
+  const configs = data.configs as Array<Record<string, unknown>> | null
+  if (!Array.isArray(configs)) return
+  let dirty = false
+  const migrated: any[] = []
+  for (const c of configs) {
+    const out = migrateConfigToProviderShape(c)
+    // Dirty if provider was absent OR any legacy top-level field was present
+    if (!c.provider || CLAUDE_FIELDS.some(f => f in c)) dirty = true
+    migrated.push(out)
+  }
+  if (dirty) {
+    // P7.7.18: check writeConfig return before mutating in-memory data and
+    // before logging success. If the disk write fails, leave data.configs
+    // untouched so the next save attempt has a clean retry surface (and the
+    // in-memory state stays consistent with what callers see on disk).
+    const wrote = writeConfig('configs', migrated)
+    if (wrote) {
+      data.configs = migrated
+      logInfo('[config-manager] Migrated configs.json to provider shape')
+    } else {
+      logWarn('[config-manager] Provider-shape migration computed but disk write failed; leaving in-memory data unchanged for retry on next save')
+    }
+  }
 }
 
 /**

@@ -1,12 +1,20 @@
 import { create } from 'zustand'
 import { saveConfigNow, saveConfigDebounced } from '../utils/config-saver'
+import type { ProviderId, ClaudeOptions, CodexOptions } from '../../shared/types'
+import type { IdentityColorKey } from '../../shared/identity-colors'
+
+// Re-export provider types so callers can import from a single place
+export type { ProviderId, ClaudeOptions, CodexOptions }
 
 export interface TerminalConfig {
   id: string
   label: string
   workingDirectory: string
-  model: string
   color: string
+  /** V2 identity colour: stable palette key. Authoritative over `color` at render time. */
+  identityColorKey?: IdentityColorKey
+  /** Pre-migration raw `color`, retained only when this record was migrated. */
+  legacyColor?: string
   sessionType: 'local' | 'ssh'
   shellOnly?: boolean  // Don't run Claude, just open a shell
   groupId?: string     // Group this config belongs to
@@ -23,17 +31,39 @@ export interface TerminalConfig {
     hasSudoPassword?: boolean // Whether sudo password is needed for postCommand
     dockerContainer?: string  // Docker container name (enables docker cp for screenshots)
   }
+  pinned?: boolean
+  machineName?: string // Identifies which machine this session runs on
+  /** v1.5.19: account profile a session spawned from this config runs under
+   *  (drives CLAUDE_CONFIG_DIR at PTY spawn). Absent = the bare default account. */
+  profileId?: string
+  /**
+   * P9.3 (#280): persisted GitHub integration on the CONFIG template so any
+   * session spawned from it inherits the activation + repo + auth profile.
+   * Previously the integration only lived on the live SavedSession (in
+   * session-state.json) and was lost the moment that session ended; spawning
+   * a fresh session from the same config required re-enabling every time.
+   * SessionGitHubConfig.save() now writes the patch back here too whenever
+   * the session has a configId, so the template stays in sync.
+   */
+  githubIntegration?: import('../../shared/github-types').SessionGitHubIntegration
+  // Provider discriminator + sub-options
+  provider: ProviderId
+  claudeOptions?: ClaudeOptions
+  codexOptions?: CodexOptions
+  // Legacy top-level fields -- kept for backward compat during migration; read from claudeOptions after P1.2
+  /** @deprecated read from claudeOptions; removed in P1.2+ */
+  model?: string
+  /** @deprecated read from claudeOptions; removed in P1.2+ */
   legacyVersion?: {
     enabled: boolean
     version: string
   }
-  pinned?: boolean
+  /** @deprecated read from claudeOptions; removed in P1.2+ */
   agentIds?: string[]  // Selected agent template IDs
-  flickerFree?: boolean // Enable CLAUDE_CODE_NO_FLICKER=1 (alternate screen buffer rendering)
-  powershellTool?: boolean // Enable CLAUDE_CODE_USE_POWERSHELL_TOOL=1 (native PowerShell tool)
-  effortLevel?: 'low' | 'medium' | 'high' // Claude Code --effort flag
+  /** @deprecated read from claudeOptions; removed in P1.2+ */
+  effortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode' // Claude Code --effort flag
+  /** @deprecated read from claudeOptions; removed in P1.2+ */
   disableAutoMemory?: boolean // Disable CLAUDE.md auto-memory writes
-  machineName?: string // Identifies which machine this session runs on
 }
 
 export interface ConfigGroup {

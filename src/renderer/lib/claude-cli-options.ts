@@ -5,26 +5,23 @@
 // family. Using aliases here means the dropdown never goes stale when
 // Anthropic ships a new model.
 
+import type { ModelRegistry, EffortLevelSpec, DropdownOptionSpec } from '../../shared/model-registry'
+
 export interface OptionItem {
   label: string
   value: string
   hint?: string
 }
 
-export const MODELS: OptionItem[] = [
-  { label: 'Opus', value: 'opus', hint: 'Latest Opus (200k context)' },
-  { label: 'Opus 1M', value: 'opus[1m]', hint: 'Latest Opus (1M context)' },
-  { label: 'Sonnet', value: 'sonnet', hint: 'Latest Sonnet' },
-  { label: 'Haiku', value: 'haiku', hint: 'Latest Haiku' },
-]
+// Registry-derived model and effort lists. Components should derive these via
+// useRegistryStore((s) => s.registry) so dropdowns hot-reload on registry updates.
+export function modelsFromRegistry(reg: ModelRegistry): OptionItem[] {
+  return reg.dropdown.map((d: DropdownOptionSpec) => ({ label: d.label, value: d.value, hint: d.hint }))
+}
 
-export const EFFORTS: OptionItem[] = [
-  { label: 'Low', value: 'low' },
-  { label: 'Medium', value: 'medium' },
-  { label: 'High', value: 'high' },
-  { label: 'Extra high', value: 'xhigh' },
-  { label: 'Max', value: 'max' },
-]
+export function effortsFromRegistry(reg: ModelRegistry): OptionItem[] {
+  return reg.effortLevels.map((e: EffortLevelSpec) => ({ label: e.label, value: e.value, hint: e.hint }))
+}
 
 export const PERMISSION_MODES: OptionItem[] = [
   { label: 'Ask permissions', value: 'default', hint: 'Claude asks before most actions' },
@@ -52,14 +49,15 @@ export function shortModelName(name?: string): string {
   if (/^[A-Z]/.test(name)) return name
 
   const lower = name.toLowerCase()
-  const familyMatch = lower.match(/(opus|sonnet|haiku)/)
+  const familyMatch = lower.match(/(opus|sonnet|haiku|fable)/)
   if (!familyMatch) {
     return name.replace(/^claude-/, '').replace(/-/g, ' ')
   }
   const family = familyMatch[1]
   const familyCap = family.charAt(0).toUpperCase() + family.slice(1)
-  const versionMatch = lower.match(/-(\d+)-(\d+)/)
-  const version = versionMatch ? `${versionMatch[1]}.${versionMatch[2]}` : ''
+  // Two-part versions (opus-4-8 -> "4.8") and single-part families (fable-5 -> "5").
+  const versionMatch = lower.match(/-(\d+)(?:-(\d+))?/)
+  const version = versionMatch ? (versionMatch[2] ? `${versionMatch[1]}.${versionMatch[2]}` : versionMatch[1]) : ''
   const contextHint = /\[1m\]|1m context/i.test(lower) ? '1M' : ''
   return [familyCap, version, contextHint].filter(Boolean).join(' ')
 }
@@ -79,5 +77,6 @@ export function isModelActive(optionValue: string, activeModel: string): boolean
   }
   if (optionValue === 'sonnet') return active.includes('sonnet')
   if (optionValue === 'haiku') return active.includes('haiku')
+  if (optionValue === 'fable') return active.includes('fable')
   return false
 }

@@ -7,6 +7,7 @@ import { vi } from 'vitest'
 vi.mock('electron', () => ({
   app: {
     getPath: vi.fn(() => '/mock/userData'),
+    getAppPath: vi.fn(() => process.cwd()),
     requestSingleInstanceLock: vi.fn(() => true),
     whenReady: vi.fn(() => Promise.resolve()),
     on: vi.fn(),
@@ -35,8 +36,15 @@ vi.mock('electron', () => ({
 // Mock the debug-logger to prevent file I/O
 vi.mock('../../src/main/debug-logger', () => ({
   logInfo: vi.fn(),
+  logWarn: vi.fn(),
   logError: vi.fn(),
   logDebug: vi.fn(),
+  logTrace: vi.fn(),
+  setVerboseMode: vi.fn(),
+  isVerboseMode: vi.fn(() => false),
+  setVerboseBaseline: vi.fn(),
+  setTraceMode: vi.fn(),
+  isTraceMode: vi.fn(() => false),
   installGlobalErrorHandlers: vi.fn(),
   closeDebugLogger: vi.fn(),
 }))
@@ -49,6 +57,18 @@ vi.mock('../../src/main/ipc/setup-handlers', () => ({
 
 // Mock window.electronAPI for renderer store tests
 const mockElectronAPI = {
+  registry: {
+    get: vi.fn(() => Promise.resolve({ models: [], families: {}, effortLevels: [], dropdown: [] })),
+    onUpdate: vi.fn(() => () => {}),
+  },
+  sentinel: {
+    getState: vi.fn(() => Promise.resolve(null)),
+    apply: vi.fn(() => Promise.resolve({ ok: true })),
+    revert: vi.fn(() => Promise.resolve()),
+    setStatus: vi.fn(() => Promise.resolve()),
+    rerun: vi.fn(() => Promise.resolve()),
+    onUpdate: vi.fn(() => () => {}),
+  },
   config: {
     loadAll: vi.fn(() => Promise.resolve({ data: {}, needsMigration: false })),
     save: vi.fn(() => Promise.resolve(true)),
@@ -91,7 +111,6 @@ const mockElectronAPI = {
     getKpis: vi.fn(() => Promise.resolve(null)),
     getLatest: vi.fn(() => Promise.resolve(null)),
     isRunning: vi.fn(() => Promise.resolve(false)),
-    seed: vi.fn(() => Promise.resolve(null)),
     onStatusChanged: vi.fn(() => () => {}),
   },
   team: {
@@ -112,6 +131,17 @@ const mockElectronAPI = {
     listRuns: vi.fn(() => Promise.resolve([])),
     onRunStatusChanged: vi.fn(() => () => {}),
   },
+  codex: {
+    status: vi.fn(() => Promise.resolve({
+      installed: false,
+      version: null,
+      authMode: 'none' as const,
+      hasOpenAiApiKeyEnv: false,
+    })),
+    login: vi.fn(() => Promise.resolve({ ok: true })),
+    logout: vi.fn(() => Promise.resolve({ ok: true })),
+    testConnection: vi.fn(() => Promise.resolve({ ok: true, message: 'connected' })),
+  },
   dialog: { openFolder: vi.fn(() => Promise.resolve(null)) },
   memory: {
     scan: vi.fn(() => Promise.resolve({
@@ -124,6 +154,18 @@ const mockElectronAPI = {
     read: vi.fn((path: string) => Promise.resolve('# Mock content')),
     delete: vi.fn(() => Promise.resolve()),
     writeFrontmatter: vi.fn(() => Promise.resolve()),
+    recentSessions: vi.fn(() => Promise.resolve([])),
+  },
+  logs2: {
+    listSlots: vi.fn(() => Promise.resolve([])),
+    readMessages: vi.fn(() => Promise.resolve([])),
+    turnSummary: vi.fn(() => Promise.resolve([])),
+    search: vi.fn(() => Promise.resolve([])),
+    deleteSlot: vi.fn(() => Promise.resolve({ deletedRuns: 0, deletedMessages: 0 })),
+    clearAll: vi.fn(() => Promise.resolve({ deletedRuns: 0, deletedMessages: 0 })),
+    ingestStatus: vi.fn(() => Promise.resolve(null)),
+    sessionConfig: vi.fn(() => Promise.resolve(null)),
+    onNewMessages: vi.fn(() => () => {}),
   },
   webview: {
     check: vi.fn(() => Promise.resolve({ reachable: false })),

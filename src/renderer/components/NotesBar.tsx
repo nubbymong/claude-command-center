@@ -115,11 +115,11 @@ export default function NotesBar({ configId }: Props) {
             className="flex items-center gap-1 px-2 py-0.5 text-xs rounded border text-subtext0 hover:text-text transition-colors whitespace-nowrap shrink-0"
             style={{
               backgroundColor: note.color + '20',
-              borderColor: isDragOver ? '#89B4FA' : note.color + '40',
+              borderColor: isDragOver ? 'var(--accent)' : note.color + '40',
               opacity: isDragging ? 0.4 : 1,
               cursor: isDragging ? 'grabbing' : 'pointer',
               borderLeftWidth: isDragOver ? '2px' : undefined,
-              borderLeftColor: isDragOver ? '#89B4FA' : undefined,
+              borderLeftColor: isDragOver ? 'var(--accent)' : undefined,
             }}
             onMouseEnter={(e) => {
               if (!isDragging) {

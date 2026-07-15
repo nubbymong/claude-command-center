@@ -3,6 +3,8 @@
  * This is the canonical source — other files should import from here.
  */
 
+import type { IdentityColorKey } from './identity-colors'
+
 // ── Vision ──
 
 /** @deprecated Use GlobalVisionConfig instead — vision is now global, not per-session */
@@ -15,10 +17,17 @@ export interface VisionConfig {
 }
 
 export interface GlobalVisionConfig {
-  enabled: boolean
+  /** @deprecated P7.3: browser auto-starts at CCC boot unconditionally.
+   *  Field is ignored on load and treated as true. Retained for back-compat
+   *  with existing user configs; remove in v1.6. */
+  enabled?: boolean
   browser: 'chrome' | 'edge'
   debugPort: number     // CDP port, default 9222
-  mcpPort: number       // MCP SSE server port, default 19333
+  /** @deprecated P7.2: port is now resolved from build mode via
+   *  resolveConductorMcpPort(isPackagedApp()). Field is ignored on load
+   *  and not written on save. Retained on the type for back-compat with
+   *  existing user configs that have it set. Remove in v1.6. */
+  mcpPort?: number
   url?: string
   headless?: boolean    // default true
 }
@@ -43,6 +52,40 @@ export interface LegacyVersion {
   version: string
 }
 
+// ── Provider types ──
+
+export type ProviderId = 'claude' | 'codex'
+
+export interface AccountIdentity {
+  email: string
+  name?: string
+  accountUuid?: string
+  provider: 'claude' | 'codex'
+}
+
+export interface ClaudeOptions {
+  model?: string
+  effortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode'
+  legacyVersion?: LegacyVersion
+  disableAutoMemory?: boolean
+  agentIds?: string[]
+  /** v1.5 P6: when true, the Claude PTY is registered into the codex_review opt-in set
+   *  and the SessionDialog toggle is persisted. Tool description still appears to all
+   *  Claude sessions (soft ACL); this flag controls authorisation server-side. */
+  enableCodexReview?: boolean
+  /** T16: per-session CCC indexing opt-out. DEFAULT-TRUE (undefined / true = on).
+   *  When false, CCC does not index this session's transcript for the Logs viewer.
+   *  The conversation still lives in Claude's own files (~/.claude/projects). */
+  loggingEnabled?: boolean
+}
+
+export interface CodexOptions {
+  /** gpt-5.5 / gpt-5.4 / gpt-5.4-mini / gpt-5.3-codex / gpt-5.3-codex-spark / gpt-5.2 */
+  model?: string
+  reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+  permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted'
+}
+
 // ── Session Persistence ──
 
 export interface SavedSession {
@@ -50,21 +93,45 @@ export interface SavedSession {
   configId?: string
   label: string
   workingDirectory: string
-  model: string
   color: string
+  /** V2 identity colour: stable palette key. Authoritative over `color` at render time. */
+  identityColorKey?: IdentityColorKey
+  /** Pre-migration raw `color`, retained only when this record was migrated. */
+  legacyColor?: string
   sessionType: 'local' | 'ssh'
   shellOnly?: boolean
   partnerTerminalPath?: string
   partnerElevated?: boolean
   sshConfig?: SshConfig
-  legacyVersion?: LegacyVersion
-  agentIds?: string[]
-  flickerFree?: boolean
-  powershellTool?: boolean
-  effortLevel?: 'low' | 'medium' | 'high'
-  disableAutoMemory?: boolean
   machineName?: string
   githubIntegration?: import('./github-types').SessionGitHubIntegration
+  // Provider discriminator + sub-options
+  provider: ProviderId
+  /** v1.5.19: links a session to an account profile (multi-account). */
+  profileId?: string
+  /**
+   * T8b (bug #5): the exact conversation this session was on at quit, so an
+   * app-relaunch resumes the SAME conversation rather than the newest in the
+   * cwd's mangled folder (which can be stale, e.g. a git worktree). `resumeCwd`
+   * is the directory the conversation actually ran in (read from the JSONL);
+   * the launcher must cd there for the cwd-scoped `claude --resume` to resolve.
+   * Best-effort enriched at save time; absent => fall back to existing behaviour.
+   */
+  resumeUuid?: string
+  resumeCwd?: string
+  claudeOptions?: ClaudeOptions
+  codexOptions?: CodexOptions
+  // Legacy top-level fields -- kept for backward compat during migration; read from claudeOptions after P1.2
+  /** @deprecated read from claudeOptions; removed in P1.2+ */
+  model?: string
+  /** @deprecated read from claudeOptions; removed in P1.2+ */
+  legacyVersion?: LegacyVersion
+  /** @deprecated read from claudeOptions; removed in P1.2+ */
+  agentIds?: string[]
+  /** @deprecated read from claudeOptions; removed in P1.2+ */
+  effortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode'
+  /** @deprecated read from claudeOptions; removed in P1.2+ */
+  disableAutoMemory?: boolean
 }
 
 export interface SessionState {
@@ -85,6 +152,16 @@ export interface RateLimitExtra {
 export interface StatuslineData {
   sessionId: string
   model?: string
+  // Codex: reasoning effort label (e.g. "xhigh"), surfaced alongside model in the
+  // ContextBar. Always undefined for Claude sessions.
+  reasoningEffort?: string
+  // Claude: live reasoning effort from the statusline payload (effort.level),
+  // reflects mid-session /effort changes. Maps to session.effortLevel.
+  effortLevel?: string
+  // Claude: live Fast Mode flag from the statusline payload (fast_mode), reflects
+  // mid-session /fast toggles. Per-session and verified to flip true<->false.
+  // Maps to session.fastMode; drives the sidebar card's ⚡ bolt.
+  fastMode?: boolean
   contextUsedPercent?: number
   contextRemainingPercent?: number
   contextWindowSize?: number
@@ -99,12 +176,33 @@ export interface StatuslineData {
   rateLimitWeekly?: number
   rateLimitWeeklyResets?: string
   rateLimitExtra?: RateLimitExtra
-  isPeak?: boolean
+  /** Dynamic usage buckets discovered from the API's self-describing limits[]
+   *  array (session + weekly incl. per-model like Fable). Present when the CLI
+   *  returns limits[]; the strip renders one bar per bucket (minus the user's
+   *  hidden set). Legacy rateLimit* fields stay for older CLIs + the footer. */
+  usageBuckets?: import('./usage-types').UsageBucket[]
+  /** Active-account email surfaced by the bridge script. Renderer displays it left of the model name. */
+  accountEmail?: string
+  /** Pre-computed by main process via `colourForEmail()` as an identity-palette KEY;
+   *  the renderer resolves it to a theme hex via resolveIdentityColor(). */
+  accountColour?: IdentityColorKey
+  /** Logs v2 (Task 8): Claude Code's live `transcript_path` for this session,
+   *  surfaced by the bridge script. Consumed in main (statusline-watcher fan-out
+   *  -> transcript binder) as a continuous, exact discovery source; the renderer
+   *  ignores it. */
+  transcriptPath?: string
+  /** Sentinel Trigger A: raw model id (data.model?.id) from the bridge script.
+   *  `model` above is display-name-preferring; this field is id-first for
+   *  accurate registry matching. The renderer ignores it. */
+  modelId?: string
 }
 
 // ── Agent Templates ──
 
-export type AgentModelOverride = 'sonnet' | 'opus' | 'haiku' | 'inherit'
+// Valid values are registry dropdown entries (e.g. 'opus', 'opus[1m]', 'fable', 'sonnet', 'haiku')
+// plus the special sentinel 'inherit' (use the parent session model). Widened to string so the
+// type does not hard-code the set of models — the registry is the authority.
+export type AgentModelOverride = string
 
 export interface AgentTemplate {
   id: string
@@ -129,6 +227,10 @@ export interface CloudAgent {
   updatedAt: number
   projectPath: string
   configId?: string
+  /** Account profile this agent ran under (multi-account). Undefined = default/global account. */
+  profileId?: string
+  /** Resolved account email at dispatch time. Drives the card label + account filter. */
+  accountEmail?: string
   output: string
   cost?: number
   duration?: number
@@ -144,6 +246,11 @@ export interface InsightsRun {
   status: 'running' | 'extracting_kpis' | 'complete' | 'failed'
   statusMessage?: string
   error?: string
+  /** Account this run was generated for (multi-account). Undefined = default. */
+  accountEmail?: string
+  profileId?: string
+  /** Run completed but KPI extraction failed: report is viewable, no kpis.json. */
+  kpisUnavailable?: boolean
 }
 
 export interface InsightsCatalogue {
@@ -171,23 +278,6 @@ export interface InsightsData {
 
 /** Alias for backward compatibility */
 export type KpiData = InsightsData
-
-// ── Logs ──
-
-export interface LogSession {
-  configLabel: string
-  sessionId: string
-  logDir: string
-  startTime?: number
-  endTime?: number
-  size: number
-}
-
-export interface LogEntry {
-  ts: number
-  type: string
-  data?: string
-}
 
 // ── Agent Teams ──
 
@@ -235,71 +325,107 @@ export interface TeamRun {
   error?: string
 }
 
-// ── Account Profiles ──
-
-export interface AccountProfile {
-  id: 'primary' | 'secondary'
-  label: string
-  savedAt: number
-}
-
 // ── Tokenomics ──
 
-export interface TokenomicsSessionRecord {
+// -- Codex Review (P6) --
+
+export interface CodexReviewRateLimitWindow {
+  /** 0 to 1 (e.g. 0.59 == 59% used). */
+  usedPercent: number
+  /** Unix seconds when the 5h window resets. */
+  resetsAt: number
+  /** Plan tier from the most recent token_count event (e.g. "plus", "pro"). */
+  planType: string
+}
+
+export interface CodexReviewUsageRecord {
+  /** CCC session id (the Claude session that called the tool). */
   sessionId: string
-  projectDir: string
-  model: string
+  /** Number of successful codex_review calls so far in this session. */
+  reviewCount: number
+  /** Sum of input tokens across all reviews in this session. */
   totalInputTokens: number
+  /** Sum of output tokens across all reviews in this session. */
   totalOutputTokens: number
-  totalCacheReadTokens: number
-  totalCacheWriteTokens: number
-  totalCostUsd: number
-  messageCount: number
-  firstTimestamp: string
-  lastTimestamp: string
-  durationMs?: number
-  costPerHour?: number
-  tokensPerMinute?: number
+  /** State of the user's 5h gpt-5.5 window after the most recent review.
+   *  Null if no review has produced a token_count event yet. */
+  lastRateLimitWindow: CodexReviewRateLimitWindow | null
+  /** Unix ms of the last review's completion time. */
+  lastReviewAt: number
 }
 
-export interface TokenomicsDailyAggregate {
-  date: string
-  totalCostUsd: number
-  totalTokens: number
-  messageCount: number
-  sessionCount: number
-  totalDurationMs: number
-  avgCostPerHour: number
-  byModel: Record<string, { costUsd: number; inputTokens: number; outputTokens: number }>
+/** Disk-persisted aggregate keyed by ISO date (YYYY-MM-DD).
+ *  Lives at <resourcesDir>/tokenomics/codex-review-by-day.json. */
+export interface CodexReviewDailyShard {
+  /** ISO date string (YYYY-MM-DD, local time) -> aggregate for that day. */
+  byDay: Record<string, {
+    reviewCount: number
+    totalInputTokens: number
+    totalOutputTokens: number
+  }>
+  lastUpdated: number  // unix ms
 }
 
-export interface TokenomicsData {
-  sessions: Record<string, TokenomicsSessionRecord>
-  dailyAggregates: Record<string, TokenomicsDailyAggregate>
-  lastSyncTimestamp: number
-  totalCostUsd: number
-  seedComplete: boolean
-  // Extra spend tracking (from Anthropic API via statusline)
-  extraSpend?: {
-    enabled: boolean
-    usedUsd: number
-    limitUsd: number
-    lastUpdated: number // epoch ms
+// ── Tokenomics v2 (worker-backed) cross-process contract ──
+export type TkProvider = 'claude' | 'codex'
+
+export interface TkSummary {
+  kpis: {
+    lifeToDateCostUsd: number
+    last7dCostUsd: number
+    prev7dCostUsd: number
+    cacheEfficiencyPct: number
+    cacheSavingsUsd: number
   }
-  // Rate limit tracking (from Anthropic API via statusline)
-  rateLimits?: {
-    fiveHour?: number    // utilization percentage
-    sevenDay?: number    // utilization percentage
-    lastUpdated: number
-  }
+  dailySeries: Array<{ day: string; costUsd: number }>
+  modelSplit: Array<{ model: string; costUsd: number; tokens: number }>
+  cacheSplit: { inputUsd: number; outputUsd: number; cacheReadUsd: number; cacheCreateUsd: number }
+  costByConfig: Array<{ configId: string | null; label: string; costUsd: number; sessions: number }>
+  heatmap: Array<{ bucket: number; tokens: number }>
 }
 
-export interface TokenomicsSyncProgress {
-  phase: 'scanning' | 'processing' | 'complete'
-  totalFiles: number
-  processedFiles: number
-  currentFile?: string
+export interface TkSessionRow {
+  sessionId: string
+  provider: TkProvider
+  configId: string | null
+  configLabel: string
+  model: string
+  costUsd: number
+  inTok: number
+  outTok: number
+  cacheReadTok: number
+  cacheCreateTok: number
+  msgCount: number
+  lastTs: number
 }
+
+export interface TkSessionsPage {
+  rows: TkSessionRow[]
+  nextCursor: { lastTs: number; sessionId: string } | null
+}
+
+export interface TkSessionDetail extends TkSessionRow {
+  firstTs: number
+  projectDir: string
+  byModel: Array<{ model: string; costUsd: number; inTok: number; outTok: number; cacheReadTok: number; cacheCreateTok: number; msgCount: number }>
+}
+
+export interface TkIndexStatus {
+  firstIndexComplete: boolean
+  indexing: boolean
+  filesDone: number
+  filesTotal: number
+  eventsTotal: number
+  lastIndexAt: number | null
+  /** Non-null when the worker reported a fatal/uncorrelated error (e.g. a failed
+   *  DB open). The renderer surfaces this instead of an endless 'indexing' state. */
+  error?: string | null
+}
+
+export interface TkSummaryFilter { configId?: string | null; from?: number; to?: number; model?: string }
+export interface TkSessionsQuery extends TkSummaryFilter { search?: string; cursor?: { lastTs: number; sessionId: string } | null; limit?: number }
+export interface TkIndexProgress { filesDone: number; filesTotal: number; eventsIngested: number; phase: string }
+export interface TkIndexCompleteEvent { firstIndex: boolean; eventsTotal: number }
 
 // ── Notes ──
 

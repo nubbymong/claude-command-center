@@ -4,8 +4,11 @@ import { spawnPty, writePty, resizePty, killPty, getSshFlow, SSHOptions } from '
 import { logUserInput, isDebugModeEnabled } from '../debug-capture'
 import { logInfo } from '../debug-logger'
 import { isVersionInstalled, installVersion } from '../legacy-version-manager'
+import { isValidLegacyVersion } from '../../shared/legacy-version'
 import { loadCredential } from '../credential-store'
 import { IPC } from '../../shared/ipc-channels'
+import { getPtyIntegrityMonitor } from '../services/pty-integrity-monitor'
+import type { PtyIntegrityReport } from '../../shared/service-health'
 
 /** SSH options as received from the renderer (no passwords — only configId) */
 interface RendererSSHOptions {
@@ -24,7 +27,7 @@ const sshSchema = z.object({
   postCommand: z.string().optional(),
 }).optional()
 
-const spawnOptionsSchema = z.object({
+export const spawnOptionsSchema = z.object({
   cwd: z.string().optional(),
   cols: z.number().int().positive().optional(),
   rows: z.number().int().positive().optional(),
@@ -32,10 +35,18 @@ const spawnOptionsSchema = z.object({
   shellOnly: z.boolean().optional(),
   configId: z.string().optional(),
   configLabel: z.string().max(100).optional(),
+  // Task 9: per-config logging opt-out (DEFAULT-TRUE; only false disables).
+  loggingEnabled: z.boolean().optional(),
   useResumePicker: z.boolean().optional(),
   legacyVersion: z.object({
     enabled: z.boolean(),
     version: z.string(),
+  }).refine((lv) => !lv.enabled || isValidLegacyVersion(lv.version), {
+    // P0.3: only a legacy-ENABLED session uses the version as a path/spawn
+    // coordinate, so only then must it be strict semver. Disabled configs may
+    // carry a stale/empty version that is never used — leave those alone.
+    path: ['version'],
+    message: 'legacyVersion.version must be valid semver when enabled',
   }).optional(),
   agentsConfig: z.array(z.object({
     name: z.string(),
@@ -44,8 +55,43 @@ const spawnOptionsSchema = z.object({
     model: z.string().optional(),
     tools: z.array(z.string()).optional(),
   })).optional(),
-  effortLevel: z.enum(['low', 'medium', 'high']).optional(),
+  // PERMISSIVE by design (spec 2026-06-11 §4): a registry-validated enum here
+  // re-creates the restore crash — capping at low/medium/high made a restored
+  // xhigh/max/ultracode session throw. Unknown levels flow through to the
+  // Sentinel observe seam in effort-tracker instead of being rejected at spawn.
+  // Charset guard = injection defense: value is shell-interpolated UNQUOTED at
+  // spawn (pty-manager.ts:1137 local, :563 SSH) — mirrors the resume.uuid guard.
+  effortLevel: z.string().min(1).max(32).regex(/^[a-zA-Z0-9_-]+$/).optional(),
   disableAutoMemory: z.boolean().optional(),
+  enableCodexReview: z.boolean().optional(),
+  // T8b (bug #5): app-relaunch exact-conversation resume target.
+  // FIX 4: the uuid is interpolated UNQUOTED into the spawn shell command, so
+  // constrain it to the canonical UUID format (not just a bounded string) as a
+  // defense-in-depth guard against shell injection. cwd stays a bounded string.
+  resume: z.object({
+    uuid: z.string().regex(/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/),
+    cwd: z.string().min(1).max(4096),
+  }).optional(),
+  // Shell-interpolated UNQUOTED at spawn (pty-manager.ts:1140 local, :567 SSH) → charset-guarded.
+  // Legit values: 'opus', 'opus[1m]', 'fable', 'sonnet', 'haiku', or versioned ids like 'claude-opus-4-8'.
+  // '' is the DEFAULT for "no override" (sessionStore.model is non-optional; TerminalView
+  // passes it verbatim) and must stay accepted — emission already skips empty (`if (options?.model)`).
+  model: z.string().max(64).regex(/^[a-zA-Z0-9._[\]-]+$/).optional().or(z.literal('')),
+  profileId: z.string().optional(),
+  provider: z.enum(['claude', 'codex']).optional(),
+  codexOptions: z.object({
+    model: z.string().optional(),
+    reasoningEffort: z.enum(['none', 'minimal', 'low', 'medium', 'high', 'xhigh']).optional(),
+    permissionsPreset: z.enum(['read-only', 'standard', 'auto', 'unrestricted']),
+  }).optional(),
+}).superRefine((opts, ctx) => {
+  if (opts?.provider === 'codex' && !opts.codexOptions) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'codexOptions required when provider is "codex"',
+      path: ['codexOptions'],
+    })
+  }
 }).optional()
 
 const sessionIdSchema = z.string().min(1).max(200)
@@ -59,11 +105,23 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     shellOnly?: boolean
     configId?: string
     configLabel?: string
+    loggingEnabled?: boolean
     useResumePicker?: boolean
     legacyVersion?: { enabled: boolean; version: string }
     agentsConfig?: Array<{ name: string; description: string; prompt: string; model?: string; tools?: string[] }>
-    effortLevel?: 'low' | 'medium' | 'high'
+    // Widened to string — the Zod schema's charset guard is the real contract.
+    effortLevel?: string
     disableAutoMemory?: boolean
+    enableCodexReview?: boolean
+    resume?: { uuid: string; cwd: string }
+    model?: string
+    profileId?: string
+    provider?: 'claude' | 'codex'
+    codexOptions?: {
+      model?: string
+      reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+      permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted'
+    }
   }) => {
     try {
       sessionIdSchema.parse(sessionId)
@@ -115,6 +173,10 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
 
   ipcMain.on('pty:kill', (_event, sessionId: string) => {
     killPty(sessionId)
+  })
+
+  ipcMain.on(IPC.PTY_INTEGRITY_REPORT, (_event, report: PtyIntegrityReport) => {
+    getPtyIntegrityMonitor()?.recordRendererReport(report)
   })
 
   // SSH manual-flow controller — renderer drives stage transitions.

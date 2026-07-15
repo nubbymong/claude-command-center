@@ -1,5 +1,16 @@
 @import "tailwindcss";
 
+@font-face {
+  font-family: 'JetBrains Mono'; font-style: normal;
+  font-weight: 100 800; font-display: swap;
+  src: url('./assets/fonts/JetBrainsMono[wght].woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Inter'; font-style: normal;
+  font-weight: 100 900; font-display: swap;
+  src: url('./assets/fonts/Inter[wght].woff2') format('woff2');
+}
+
 @theme {
   /* Warm neutral dark palette — default. Light mode overrides below via
      [data-theme="light"] on <html>. Tailwind v4 reads --color-* tokens at
@@ -32,6 +43,78 @@
   --color-pink: #e87bb5;
   --color-flamingo: #e8a8a8;
   --color-rosewater: #e8c8c0;
+}
+
+/* -- Semantic design tokens -- V2 "Command Workbench" (spec §12) --
+   Explicit per-theme values (NOT palette aliases). Touched chrome consumes
+   these; raw --color-* stays for migration compatibility only.
+   Surface ladder by absolute darkness:
+   chrome < sunken < base < panel < stage < raised. overlay sits above all
+   (popovers/menus, with shadow), not part of the depth ramp. Default = E5 Dark. */
+:root {
+  --surface-chrome: #0a0e13;
+  --surface-panel: #111720;
+  --surface-stage: #171e27;
+  --surface-stage-gutter: #141b24;
+  --surface-raised: #1c2430;
+  --surface-base: #0d131b;
+  --surface-sunken: #0c121a;
+  --surface-overlay: #222c39;
+
+  --border-subtle: #1f2731;
+  --border-strong: #33404f;
+
+  --text-primary: #eef2f7;
+  --text-secondary: #a8b2c0;
+  --text-muted: #6a7480;
+  --text-on-chrome: #e6ebf2;
+
+  --terminal-foreground: #eef2f7;
+
+  --accent: #3fbecb;
+  --brand: #c47b4a;
+
+  --status-success: #7bd88f;
+  --status-warning: #ecc14e;
+  --status-danger: #f08a8a;
+  --status-info: #5b9df0;
+
+  /* Effort ramp (R2 smooth heat green->yellow->red). Used by EffortPill on
+     session cards via var(--effort-<level>). Not status colours -> distinct tokens. */
+  --effort-low: #a6e3a1;
+  --effort-medium: #cfe2a8;
+  --effort-high: #f9e2af;
+  --effort-xhigh: #f7c5ad;
+  --effort-max: #f5a8aa;
+  --effort-ultracode: #f38ba8;
+
+  /* Fast Mode bolt -- warm orange, echoes the CLI's fast-mode glyph colour.
+     Only shown on a LIVE statusline fast_mode:true (see FastBolt / SessionRow). */
+  --fast-mode: #f5a35a;
+
+  --chart-opus: #b8714a;
+  --chart-fable: #e0608f;
+  --chart-sonnet: #3fbecb;
+  --chart-codex: #5b9df0;
+  --chart-other: #9a8cf0;
+
+  --shadow-panel: 7px 0 18px -6px rgba(0,0,0,.55);
+  --shadow-raised: -10px 0 24px rgba(0,0,0,.5);
+  /* Soft, centred drop shadow for small floating chips (e.g. the GitHub FAB).
+     The big directional --shadow-raised is for the tall side panel; on a ~30px
+     button it smears a dark halo over the terminal that reads as "cut-out"
+     content rather than a hovering element. */
+  --shadow-fab: 0 3px 10px rgba(0,0,0,.4);
+  --highlight-inset: inset 0 1px 0 rgba(255,255,255,.04);
+
+  /* Onboarding harness — brand orange (NOT the app teal); scoped to the first-run flow. */
+  --ob: #e8915c;
+  --ob-bright: #f0a06a;
+  --ob-deep: #c47b4a;
+  --ob-soft: rgba(232,145,92,.14);
+  --ob-line: rgba(232,145,92,.45);
+  --field: #0c1117;
+  --serif: 'Georgia', 'Times New Roman', serif;
 }
 
 /* Light theme — "foggy daylight" not "bright sunlight". The first
@@ -72,10 +155,67 @@
   --color-pink: #9b3a72;
   --color-flamingo: #8b5858;
   --color-rosewater: #806259;
+
+  /* V2 semantic tokens -- TL2.1 True Light (spec §12). No pure white. */
+  --surface-chrome: #ccd4dd;
+  --surface-panel: #d1d8e2;
+  --surface-stage: #e8ecf3;
+  --surface-stage-gutter: #dee3eb;
+  --surface-raised: #eff2f7;
+  --surface-base: #dfe4ec;
+  --surface-sunken: #d6dce6;
+  --surface-overlay: #f6f8fb;
+
+  --border-subtle: #c2cad6;
+  --border-strong: #a7b2c2;
+
+  --text-primary: #11161f;
+  --text-secondary: #404c5b;
+  --text-muted: #4e5865;
+  --text-on-chrome: #11161f;
+
+  --terminal-foreground: #11161f;
+
+  --accent: #15808d;
+  --brand: #b3612e;
+
+  --status-success: #2d8349;
+  --status-warning: #946a12;
+  --status-danger: #bd3a2c;
+  --status-info: #2360c2;
+
+  /* Effort ramp — darkened for contrast as text on the light background. */
+  --effort-low: #40a02b;
+  --effort-medium: #8f9724;
+  --effort-high: #df8e1d;
+  --effort-xhigh: #e46426;
+  --effort-max: #d6392f;
+  --effort-ultracode: #d20f39;
+
+  /* Fast Mode bolt -- darkened for contrast as a glyph on the light background. */
+  --fast-mode: #c2570f;
+
+  --chart-opus: #a85a2c;
+  --chart-fable: #c43f6f;
+  --chart-sonnet: #15808d;
+  --chart-codex: #2360c2;
+  --chart-other: #6d5cc0;
+
+  --shadow-panel: 7px 0 18px -6px rgba(0,0,0,.16);
+  --shadow-raised: -11px 0 26px rgba(0,0,0,.20);
+  --highlight-inset: inset 0 1px 0 rgba(255,255,255,.5); /* inverted: light substrate needs a bright top highlight */
+
+  /* Onboarding harness — brand orange, light values. */
+  --ob: #b3612e;
+  --ob-bright: #c47b4a;
+  --ob-deep: #9a4f29;
+  --ob-soft: rgba(179,97,46,.10);
+  --ob-line: rgba(179,97,46,.5);
+  --field: #cdd5e0;
 }
 
 body {
-  font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: var(--ui-font-family, Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
   background: var(--color-base);
   color: var(--color-text);
 }
@@ -122,4 +262,173 @@ body {
   -webkit-user-select: text !important;
   pointer-events: auto !important;
 }
+
+/* Keyboard focus = the ONLY non-active use of accent. */
+.focus-ring:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 60%, transparent);
+}
+/* Active rail icon glow (eased). */
+.rail-active {
+  box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 43%, transparent);
+}
+/* Session card (V2 Phase 3): two-line dense card. Selection, health, and focus
+   are three independent channels (spec section 3.2/6):
+     - selection (isActive)  -> identity rail + tint + identity border + elevation
+                                 + bold name + chip (driven by inline styles, since
+                                 the identity hue is per-session, not a token)
+     - health (dot/pill)     -> never recolours rail/tint/name
+     - keyboard focus        -> quiet teal DASHED ring, distinct from selection */
+.session-card {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  column-gap: 9px;
+  row-gap: 2px;
+  padding: 7px 10px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+}
+.session-card .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-card .meta {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+.card-focus {
+  outline: 1px dashed color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: 3px;
+}
+.meter-fill { height: 100%; border-radius: 9999px; transition: width 500ms ease, background-color 200ms ease; }
+.meter-neutral { background: var(--text-muted); }
+.meter-warn    { background: var(--status-warning); }
+.meter-danger  { background: var(--status-danger); }
+
+/* CommandBar quick-actions strip: expand-in for the command rows when the
+   bar is un-collapsed. Kept inside the 150-300ms project window. The rows are
+   removed from the DOM when collapsed, so only the open direction animates. */
+@keyframes commandbar-expand {
+  from { max-height: 0; opacity: 0; }
+  to   { max-height: 240px; opacity: 1; }
+}
+
+/* Footer Update pill: gentle attention pulse when an update is available.
+   The pill is now the single update affordance (the big green sidebar toast
+   was removed in UAT R2), so a subtle slow pulse draws the eye without
+   nagging. Respects prefers-reduced-motion -- no animation when reduced. */
+@keyframes footer-update-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.55; }
+}
+.footer-update-pulse {
+  animation: footer-update-pulse 1.8s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .footer-update-pulse { animation: none; }
+}
+
+/* Collapsed GitHub panel: floating logo FAB (both the not-configured and
+   the user-collapsed states). It overlays the terminal's top-right corner
+   instead of a thin vertical rail. Muted at rest, warming to the mauve
+   accent on hover so the octocat reads as an interactive GitHub affordance
+   rather than a dead glyph. Mauve is defined in both light and dark themes
+   and stays legible against the raised-surface FAB in each. Smooth 180ms
+   colour + background fade keeps it from feeling abrupt. */
+.gh-fab {
+  color: var(--color-overlay0);
+  transition: color 180ms ease, background-color 180ms ease;
+}
+.gh-fab:hover {
+  color: var(--color-mauve);
+  background-color: var(--surface-overlay) !important;
+}
+
+/* GitHub panel + FAB appear animations. The panel/FAB swap is otherwise an
+   instant mount; these soften the entrance so toggling Ctrl+/ or enabling a
+   session's integration reads as a deliberate slide rather than a flash.
+   React unmounts the outgoing element immediately, so this is an APPEAR-only
+   treatment (no exit animation). Respects prefers-reduced-motion -- no
+   animation when reduced, mirroring footer-update-pulse above. */
+@keyframes gh-panel-in {
+  from { opacity: 0; transform: translateX(12px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.gh-panel-in {
+  animation: gh-panel-in 200ms ease-out;
+}
+@keyframes gh-fab-in {
+  from { opacity: 0; transform: scale(0.85); }
+  to   { opacity: 1; transform: scale(1); }
+}
+.gh-fab-in {
+  animation: gh-fab-in 200ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .gh-panel-in,
+  .gh-fab-in { animation: none; }
+}
+
+/* Permission tray cards: slide up + fade on mount so a new card surfacing in
+   the bottom-left stack reads as a deliberate entrance rather than a flash. */
+.channels-toast { animation: ccc-tray-in 180ms ease-out; }
+@keyframes ccc-tray-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .channels-toast { animation: none; } }
+
+/* Logs transcript jump-to-result flash. Clicking a search hit or a timeline-
+   rail cell loads a window centered on the target message; ChatTranscriptView
+   scrolls it into view and tags it with this class so the eye lands on the exact
+   row. The wash fades from peach back to transparent and JS removes the class
+   after it plays (~1.8s). Respects prefers-reduced-motion -- the scroll still
+   happens; only the flash is dropped (mirrors footer-update-pulse above). */
+@keyframes cct-jump-flash {
+  from { background-color: color-mix(in oklab, var(--color-peach) 42%, transparent); }
+  to   { background-color: transparent; }
+}
+.cct-jump-flash {
+  animation: cct-jump-flash 1.8s ease-out;
+  border-radius: 0.5rem;
+}
+@media (prefers-reduced-motion: reduce) {
+  .cct-jump-flash { animation: none; }
+}
+
+/* Logs v2 transcript markdown body. No typography plugin is installed (the
+   `prose` classes are inert), so transcript message bodies get a small scoped
+   ruleset: tokenized colours, readable spacing, themed inline + block code.
+   Untrusted content is already sanitized upstream (renderTranscriptMarkdown). */
+.logs-md-body p { margin: 0 0 0.5rem; }
+.logs-md-body p:last-child { margin-bottom: 0; }
+.logs-md-body ul,
+.logs-md-body ol { margin: 0 0 0.5rem; padding-left: 1.25rem; }
+.logs-md-body ul { list-style: disc; }
+.logs-md-body ol { list-style: decimal; }
+.logs-md-body li { margin: 0.125rem 0; }
+.logs-md-body a { color: var(--accent); text-decoration: underline; }
+.logs-md-body code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.85em;
+  background: var(--surface-sunken);
+  border-radius: 3px;
+  padding: 0.05em 0.3em;
+}
+.logs-md-body pre {
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 0.6rem 0.75rem;
+  overflow-x: auto;
+  margin: 0 0 0.5rem;
+}
+.logs-md-body pre code { background: transparent; padding: 0; font-size: 0.85em; }
+.logs-md-body blockquote {
+  border-left: 2px solid var(--border-strong);
+  padding-left: 0.75rem;
+  color: var(--text-secondary);
+  margin: 0 0 0.5rem;
+}
+.logs-md-body h1,
+.logs-md-body h2,
+.logs-md-body h3,
+.logs-md-body h4 { font-weight: 600; margin: 0.5rem 0 0.25rem; line-height: 1.3; }
+.logs-md-body hr { border: 0; border-top: 1px solid var(--border-subtle); margin: 0.75rem 0; }
 

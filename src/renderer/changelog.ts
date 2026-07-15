@@ -15,28 +15,516 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '2.0.0-rc.2',
+    date: '2026-07-15',
+    highlights: 'Release Candidate 2: terminal scrolling holds your place during live output, and relaunch reopens every session under its saved account — the first community-contributed fixes.',
+    changes: [
+      { type: 'fix', description: 'Scrolling up with the scrollbar or keyboard now holds your place while a session streams output. Previously only mouse-wheel scrolling was recognised, so any other way of scrolling up got yanked back to the bottom by the next burst of output.' },
+      { type: 'fix', description: 'Relaunching CCC reopens each session under the account it was closed with, instead of re-asking which account to use for every restored session.' },
+    ],
+  },
+  {
+    version: '2.0.0-rc.1',
+    date: '2026-07-10',
+    highlights: 'v2.0 Release Candidate 1: in-app updates work again, every signed-in account shows live usage, the stray blank browser window is gone, and a full dependency security refresh.',
+    changes: [
+      { type: 'fix', description: 'In-app update checks now find newer releases. Releases were being tagged against a stale commit, which mis-dated them so the updater never saw them; they are now tagged at the exact commit that was built, the updater scans the full release list, and it understands release-candidate versions.' },
+      { type: 'fix', description: 'The all-accounts usage panel now shows live usage for every signed-in account — even ones you have not opened a session with recently. It quietly refreshes each account\'s short-lived key in the background, only for accounts with no running session or sign-in in progress. Your primary account is deliberately left untouched (its credentials are shared with Claude outside CCC) — it shows last-known usage until you open a session.' },
+      { type: 'fix', description: 'Codex sessions no longer double-count cached input and reasoning tokens in the statusline and Tokenomics — token counts and dollar costs for cache-heavy Codex sessions were inflated (input could read nearly double).' },
+      { type: 'fix', description: 'Fixed a blank browser window that could appear on startup (and linger after closing the app) when the browser/vision tool was enabled. The automation browser is now kept off-screen and is reliably shut down together with the app.' },
+      { type: 'fix', description: 'The automation browser no longer runs Chrome\'s first-run setup on every launch, which was touching the desktop shortcuts and making the Chrome icon flicker on OneDrive-synced desktops.' },
+      { type: 'fix', description: 'Codex sessions: the context meter now shows how full the context window actually is (the last request against the window), instead of the session\'s lifetime token total — which pinned the bar red at ~100% on long sessions whose window was mostly free.' },
+      { type: 'fix', description: 'Resumed sessions: after the resume replay finishes, the terminal geometry is re-confirmed and the view repainted — targeting the garbled overlay text (stray line fragments over the input box) that could appear and persist after resuming a session.' },
+      { type: 'improvement', description: 'Security refresh: the one remaining vulnerable dependency (the WebSocket client used for browser automation) is patched, and the dependency audit is clean — 0 known vulnerabilities across the shipped tree.' },
+    ],
+  },
+  {
+    version: '2.0.0-beta.6',
+    date: '2026-07-08',
+    highlights: 'The all-accounts usage panel is far more reliable — no more spurious "Sign in" or "HTTP 429" on accounts that are actually fine.',
+    changes: [
+      { type: 'fix', description: 'The account usage panel no longer loads every account at once, which was triggering rate-limit (HTTP 429) errors on perfectly valid accounts. Accounts now load staggered, with automatic retry, so a transient rate-limit recovers on its own instead of showing an error.' },
+      { type: 'fix', description: 'Accounts that are still signed in no longer show a false "Sign in" prompt. Between sessions only the short-lived access token lapses — the account stays logged in — so the panel now shows the last-known usage (or a quiet "open a session to refresh") instead of a misleading Sign in button. A real Sign in appears only when an account genuinely has no credentials.' },
+      { type: 'improvement', description: 'When a live refresh can\'t complete (rate-limit, a network blip, or a lapsed token), the panel keeps showing each account\'s last-known figures with their age, instead of blanking the card.' },
+    ],
+  },
+  {
+    version: '2.0.0-beta.5',
+    date: '2026-07-07',
+    highlights: 'Two SSH fixes: Conductor tools and the session status line both work again inside SSH sessions.',
+    changes: [
+      { type: 'fix', description: 'Conductor tools (host screenshot and browser vision) work in SSH sessions again. The reverse tunnel that carries them was connecting to the wrong loopback address on the host — the server listens on IPv4 while the tunnel was landing on IPv6 — so remote sessions saw the connection close immediately. It now targets the right address.' },
+      { type: 'fix', description: 'The session status line shows again in SSH sessions on Linux hosts (model, context, cost, and rate limits). Over SSH, Claude runs the status-line command without a terminal of its own, so the update was being dropped; it is now routed back through the session\'s terminal.' },
+    ],
+  },
+  {
+    version: '2.0.0',
+    date: '2026-07-02',
+    highlights: 'Claude Command Center 2.0: a guided first-run setup, an in-app Ask Command Center guide, a modernized engine, and a privacy pass that keeps every Claude config write per-session.',
+    changes: [
+      { type: 'feature', description: 'New guided setup on first launch (and once after this upgrade): pick your theme, point CCC at your Claude install, see how accounts and GitHub connect, and switch on exactly the features you want. Every step shows real state from your machine, and nothing runs or gets enabled without you seeing it.' },
+      { type: 'feature', description: 'A live guided tour follows setup: coach marks anchored to the real app walk you to your first session. The old static tour and the stack of first-launch popups are retired.' },
+      { type: 'feature', description: 'Ask Command Center: the ? button in the sidebar opens a searchable guide to every feature, or hands your question to a Claude session primed with the app\'s docs so you can ask in plain language.' },
+      { type: 'improvement', description: 'Engine modernization: Electron 42, React 19, xterm.js 6, Vite 7, and TypeScript 6. A faster renderer on a current Chromium security baseline.' },
+      { type: 'improvement', description: 'Privacy pass: the status line and the Conductor MCP server are now delivered per session instead of being written into your global Claude config, legacy global entries are cleaned up on boot, per-session SSH files are swept on close, and your ~/.claude/CLAUDE.md is never touched.' },
+      { type: 'feature', description: 'Built-in tools are now under your control: a master switch plus per-tool toggles (vision, code review, host transfer) in setup and Settings, enforced everywhere a session spawns: local, SSH, and Codex.' },
+      { type: 'feature', description: 'The status line has a real master switch: turn it off and CCC stops injecting it into sessions entirely, local and SSH alike.' },
+      { type: 'feature', description: 'Codex support is now clearly marked Beta with its own master switch, and you can sign in during setup with the browser flow or an API key. Off means off: Codex configs are marked disabled (with the reason) and will not launch while the master is off.' },
+      { type: 'improvement', description: 'Claude Code 2.1.195+ renders its questions with clickable answer options; inside CCC a stray terminal click could select one, so they are switched off by default and answers stay keyboard-driven. Opt back in under Settings, General, Terminal.' },
+      { type: 'improvement', description: 'CCC Sentinel and cloud-agent permissions now default to off. Both are opt-in, with the ask made plainly during setup, so nothing spends tokens or grants permissions without your say-so.' },
+      { type: 'improvement', description: 'Agent Hub is reorganized into Tasks, Pipelines, and Library, with clearer first-run guidance.' },
+      { type: 'improvement', description: 'Insights reliability round: runs compare against the previous run of the same account, concurrent runs are locked per account, failed runs and KPI-extraction failures are surfaced instead of silently vanishing, and KPI extraction no longer bypasses permissions.' },
+      { type: 'fix', description: 'Alt+V now pastes copied image files (not just screenshots), with inline feedback when the clipboard has no usable image.' },
+      { type: 'fix', description: 'Each rate-limit window in the status line shows its own reset time (5-hour and weekly), instead of one shared timestamp.' },
+      { type: 'improvement', description: 'Security hardening: external links open only over verified https, config files are validated as they load, the vision browser\'s debug port binds to loopback only, memory files are contained against symlink escape, and all known dependency vulnerabilities are resolved (undici, ws).' },
+    ],
+  },
+  {
+    version: '1.5.45',
+    date: '2026-06-14',
+    highlights: 'CCC Sentinel\'s status dot now only turns amber when a finding actually affects your setup.',
+    changes: [
+      { type: 'improvement', description: 'The Sentinel status dot is graded by reachability: amber means a compatibility finding reaches the accounts and features you actually use, and a calm grey state shows once you have reviewed the report.' },
+    ],
+  },
+  {
+    version: '1.5.44',
+    date: '2026-06-14',
+    highlights: 'Light theme: Claude sessions now start with a matching light terminal theme.',
+    changes: [
+      { type: 'fix', description: 'When CCC is in light mode, new Claude sessions are told about it (via the standard COLORFGBG signal) so Claude picks its light terminal theme instead of rendering dark-on-light. Applies to newly started sessions.' },
+    ],
+  },
+  {
+    version: '1.5.43',
+    date: '2026-06-14',
+    highlights: 'The Copilot AI-credits meter now tracks your current billing cycle, with a progress bar.',
+    changes: [
+      { type: 'improvement', description: 'The Copilot chip counts credits used in the current billing cycle instead of a lifetime total, and gains an inline progress bar matching the Claude rate-limit meters.' },
+      { type: 'improvement', description: 'Copilot meter configuration (including your plan\'s included-credits cap) now lives in Settings, Status Line, next to the other status-line elements.' },
+    ],
+  },
+  {
+    version: '1.5.42',
+    date: '2026-06-13',
+    highlights: 'GitHub settings, round two: re-auth now targets the right account and asks only for what it needs, and a Copilot usage meter lands in the session status strip.',
+    changes: [
+      { type: 'fix', description: 'Re-authenticating a GitHub account now works per account and per auth kind (OAuth, PAT, or gh CLI), fixing the long-standing bug where re-auth could target the wrong profile or silently do nothing.' },
+      { type: 'improvement', description: 'Re-auth requests are additive and minimal: the scopes asked for are derived from the features you actually have enabled, so you never grant more than the app uses.' },
+      { type: 'feature', description: 'A Copilot AI-credits meter in the session status strip, with a toggle to show or hide it.' },
+      { type: 'improvement', description: 'GitHub settings are recomposed account-first, with one consistent panel per account and an app-wide group for the settings that span accounts.' },
+    ],
+  },
+  {
+    version: '1.5.41',
+    date: '2026-06-13',
+    highlights: 'Copy the CCC Sentinel compatibility report to your clipboard.',
+    changes: [
+      { type: 'feature', description: 'The Sentinel report gains copy buttons: copy the whole report or a single finding, ready to paste into an issue or a Claude session.' },
+    ],
+  },
+  {
+    version: '1.5.40',
+    date: '2026-06-13',
+    highlights: 'Fix: conversations recorded outside a CCC session now show up in the resume picker.',
+    changes: [
+      { type: 'fix', description: 'The resume picker now surfaces and resumes conversations that were recorded without a companion log folder (for example, work done directly in a repo before or outside CCC sessions). Existing conversations are backfilled on the next scan.' },
+    ],
+  },
+  {
+    version: '1.5.39',
+    date: '2026-06-13',
+    highlights: 'GitHub settings are rebuilt around your accounts, plus a batch of fixes: first-launch prompts no longer stack, the Sentinel watcher no longer hangs, and the Tokenomics cost donut is cleaner.',
+    changes: [
+      { type: 'feature', description: 'GitHub settings are rebuilt around accounts. Each connected account gets its own panel with a Status and permissions tab and a Features tab, so you can see and control each account on its own terms instead of one flat list.' },
+      { type: 'feature', description: 'A new "Features for all accounts" master section sits above the per-account panels: each feature shows a tri-state (on, off, or mixed across your accounts) with an "apply to all accounts" action to set it everywhere at once.' },
+      { type: 'feature', description: 'Per-account feature toggles. Turn features like active PR, CI, reviews, linked issues, notifications, and AI credits on or off for each account independently, with the state held per account.' },
+      { type: 'improvement', description: 'Honest re-auth surfacing. When a feature is switched on for an account whose token cannot power it yet, the account now shows a clear "switched on but needs re-auth" state instead of silently doing nothing, and a collapsible "what each feature needs" reference shows which scopes the features you enabled require.' },
+      { type: 'fix', description: 'First-launch prompts (logging consent, What\'s New, setup steps) now appear one at a time in priority order instead of stacking on top of each other.' },
+      { type: 'fix', description: 'CCC Sentinel\'s background compatibility analysis no longer hangs on a shared login or leaves stray claude processes behind: it now runs against one of your signed-in accounts and tears the whole process tree down on timeout.' },
+      { type: 'fix', description: 'The Tokenomics cost donut no longer shows a "<synthetic>" slice; those system rows are labelled and excluded from the cost breakdown.' },
+    ],
+  },
+  {
+    version: '1.5.38',
+    date: '2026-06-12',
+    highlights: 'Memory is now a full dashboard -- KPIs, charts, ranked projects, drilldown, and a reading drawer -- and the Sentinel status dot is now a labelled chip.',
+    changes: [
+      { type: 'feature', description: 'The Memory page is rebuilt as a dashboard: a KPI strip (memories, projects, total size, stale over 30 days, and an index-health KPI that replaces the old warning banner), an activity area-chart, and a type donut for the whole store.' },
+      { type: 'feature', description: 'Ranked project list with staleness dots, index warnings, and live-session chips. Click a project to drill in: a sortable memory table plus a sessions rail where live sessions jump straight to the terminal and recent sessions deep-link into the Logs viewer.' },
+      { type: 'feature', description: 'New reading drawer for distraction-free memory reading, and the search view restyled to match.' },
+      { type: 'improvement', description: 'The Sentinel status dot is now a persistent labelled "Sentinel" chip, so the compatibility watcher is easier to find.' },
+      { type: 'fix', description: 'The memory scanner no longer warns about custom frontmatter fields or types, silencing hundreds of spurious warnings on stores with custom metadata while keeping real signals.' },
+    ],
+  },
+  {
+    version: '1.5.37',
+    date: '2026-06-11',
+    highlights: 'New: CCC Sentinel -- an opt-in watcher that flags when a Claude Code update might affect the app, plus Memory and Hooks fixes.',
+    changes: [
+      { type: 'feature', description: 'CCC Sentinel (opt-in, fail-open) detects Claude Code version changes on startup, checks the CC changelog against CCC\'s compatibility assumptions, and surfaces findings in a status dot plus a panel. It proposes model and effort registry fixes you apply yourself (never automatically) and reports compatibility for everything else. Toggle it in Settings, CCC Sentinel.' },
+      { type: 'improvement', description: 'A new hot-reloadable model and effort registry replaces around ten hardcoded model-identity sites, so an unknown or brand-new model now gets a colour, a label, and flagged pricing instead of vanishing.' },
+      { type: 'improvement', description: 'Memory scanning now runs off the main thread, so opening Memory on a large store no longer stalls the UI. Spurious "unknown frontmatter field" warnings for the standard metadata block are gone, and the close button is back on sessions.' },
+      { type: 'fix', description: 'Raised the hooks request body cap from 256 KiB to 4 MiB so large file-edit events are no longer dropped from the activity feed; the first oversized payload per session is now logged.' },
+    ],
+  },
+  {
+    version: '1.5.36',
+    date: '2026-06-11',
+    highlights: 'Three big workstreams land: Logs v2 (a chat-transcript viewer), a ground-up Tokenomics rebuild, and the removal of the permission tray.',
+    changes: [
+      { type: 'feature', description: 'Logs v2: a clean-slate transcript system. CCC indexes Claude\'s own conversation transcripts and renders them back as a readable chat with a timeline rail and full-text search. Restart and relaunch now resume the conversation you were actually in, worktree-aware. The old logging stack is removed.' },
+      { type: 'improvement', description: 'Tokenomics is rebuilt on its own background indexer that reads ALL transcripts including subagent and sidechain files (the old scan missed around half the events), dedups globally, computes cost at query time from live pricing, attributes by config, and opens instantly with an indexing state and a green nav badge.' },
+      { type: 'improvement', description: 'Heads up: life-to-date spend will read LOWER than the old page. The old ledger priced Opus at a stale 3x tier and double-counted statusline costs. The new number is the deduped API-equivalent at current pricing.' },
+      { type: 'fix', description: 'The permission tray has been removed. Claude\'s permission notifications are generic and fire for auto-approved subagent tools, producing phantom cards no heuristic could filter. The session attention pulse is kept.' },
+      { type: 'improvement', description: 'Security: dependency updates (vitest, ws, hono, tmp). The Electron 38 to 39 upgrade is deferred to a dedicated task.' },
+    ],
+  },
+  {
+    version: '1.5.34',
+    date: '2026-06-09',
+    highlights: 'Fix: closing all your sessions now reliably means no resume prompt on the next launch -- even when you update via the installer.',
+    changes: [
+      { type: 'fix', description: 'The "Resume previous sessions?" prompt no longer offers sessions you already closed. Your open sessions are now saved continuously as you open and close them, so the next launch always reflects what was actually open -- even if the app was force-closed by an external installer or a crash (which previously left a stale list and re-offered phantom sessions). Close everything, and there is nothing to resume.' },
+    ],
+  },
+  {
+    version: '1.5.33',
+    date: '2026-06-09',
+    highlights: 'Fable 5 support -- Anthropic\'s new flagship model (the tier above Opus) is now a first-class choice across the app.',
+    changes: [
+      { type: 'feature', description: 'Fable 5 is now selectable in the session model dropdown and the agent/config model pickers. It is Anthropic\'s most capable model (the tier above Opus) and runs roughly 2x faster than Opus.' },
+      { type: 'feature', description: 'Tokenomics now prices Fable 5 correctly out of the box ($10/$50 per 1M tokens) and gives it its own colour in the model breakdown, so Fable spend is tracked and shown distinctly. LiteLLM live pricing still wins when reachable.' },
+    ],
+  },
+  {
+    version: '1.5.32',
+    date: '2026-06-06',
+    highlights: 'Critical fix: importing your existing logs no longer freezes the app. Tested against a real 16 GB log set, with live progress, a completion notice, and safe interruption.',
+    changes: [
+      { type: 'fix', description: 'Importing existing logs no longer freezes the app. The import now runs entirely in the background logging worker, streams the data in small pieces, keeps the app fully usable throughout, and shows live progress. Verified end to end against a real 16 GB, 990-session log set.' },
+      { type: 'fix', description: 'An interrupted log import is now safe by design: anything already imported stays, the interrupted session is automatically redone on the next run, re-runs skip completed sessions instantly, and the permanent space reclaim stays locked until an import completes 100% cleanly.' },
+      { type: 'feature', description: 'A notice now appears when the log import finishes, wherever you are in the app, with a View report shortcut to the reconciliation report. If anything failed it says so clearly, and nothing is deleted.' },
+      { type: 'feature', description: 'Closing the app while a log import runs now asks first. Quitting is safe: the import stops cleanly and continues from where it left off the next time you run it.' },
+      { type: 'feature', description: 'New startup choice for saved sessions: Resume or Don\'t open. You are no longer forced to resume your saved sessions on every launch.' },
+      { type: 'fix', description: 'The per-session Logs pane no longer goes blank after running /clear in a session. The replay now keeps the full history scrollable and marks where the screen was cleared with a divider. Your captured logs were never lost; this was purely a display issue.' },
+    ],
+  },
+  {
+    version: '1.5.31',
+    date: '2026-06-05',
+    highlights: 'More accurate per-account cost tracking under the hood, plus a clearer warning in the account attribution tool.',
+    changes: [
+      { type: 'improvement', description: 'Per-account cost tracking is now anchored to a stable account id captured when each session starts, so your usage stays attributed to the right account even if you later rename that account or change its sign-in email.' },
+      { type: 'improvement', description: 'Daily cost totals now keep a per-account breakdown, so your per-account spending history stays correct over time even as older session details age out.' },
+      { type: 'fix', description: 'The account attribution tool now explains that its email suggestions come from a history that records one sign-in at a time, so they can be wrong for a setup that ran several accounts at once. Double-check each before applying, or mark a group as mixed.' },
+    ],
+  },
+  {
+    version: '1.5.30',
+    date: '2026-06-04',
+    highlights: 'Critical multi-account stability: upgrades no longer disrupt a running session memory, and your last-used account survives a crash.',
+    changes: [
+      { type: 'fix', description: 'Upgrades no longer disrupt session memory. A session left running across an app update could end up pointing at an old per-session home that the update had cleaned away, so on resume it looked like it had lost its memory. The update now keeps those old homes and re-points them at your shared memory store, so resuming or switching accounts across an update always reaches the same memory. No data was affected, your memory is shared as designed.' },
+      { type: 'fix', description: 'Your last-used account now survives a crash. The account you pick for a session is saved to disk immediately instead of only on a clean close, so after an unexpected shutdown a session still defaults to the account you last used for it.' },
+    ],
+  },
+  {
+    version: '1.5.29',
+    date: '2026-06-04',
+    highlights: 'Keeps your Claude login working in scripts outside the app, read each session effort and fast mode at a glance, with a tidier, more consistent dark and light theme, plus a new terminal-health view in the Conductor diagnostics.',
+    changes: [
+      { type: 'fix', description: 'Running the Claude CLI outside the app (e.g. claude -p in your own scripts) no longer breaks authentication. The app now keeps your real Claude login in lockstep with your main account, so a token refresh inside a session never leaves your outside scripts on a dead login. Only your main account\'s token is mirrored, and only when both sides are still that account.' },
+      { type: 'feature', description: 'Session cards now show a colour-coded effort pill (Low through Ultracode) in the top-right, tinted from green to red as effort rises, so you can read each session effort level at a glance without opening it.' },
+      { type: 'feature', description: 'Session cards now show a lightning bolt when a session is running in Fast Mode, so you can spot fast-mode sessions at a glance. It appears only while Fast Mode is actually on and clears the moment you turn it off.' },
+      { type: 'improvement', description: 'The effort pill now waits for live data before it appears, so a card no longer briefly shows a stale or default effort (for example XHIGH) before the real level loads. A restarted session stays calm until its new effort is known.' },
+      { type: 'improvement', description: 'Tidied the session cards by removing the small leading dot. It only showed grey when idle and duplicated the status pill already shown on the right.' },
+      { type: 'fix', description: 'Themed the Settings pages and the top and tab bars to match the rest of the app, removing the leftover near-black backgrounds and making dark and light mode consistent throughout. The window background now follows the theme instead of staying dark in light mode.' },
+      { type: 'feature', description: 'The Conductor diagnostics console gained a PTY integrity section with live terminal metrics per session (bytes received, resize events and width desyncs) to help track down terminal display glitches.' },
+    ],
+  },
+  {
+    version: '1.5.28',
+    date: '2026-06-02',
+    highlights: 'Per-account statusline stats, settable account colours, and the account follows a mid-session sign-in.',
+    changes: [
+      { type: 'fix', description: 'Each account now shows its own usage and rate limits in the statusline. Previously the usage numbers could briefly show another account figures.' },
+      { type: 'feature', description: 'Set a colour for each account in Settings that sticks, so you can tell your accounts apart at a glance.' },
+      { type: 'fix', description: 'When you sign in to a different account inside a session, the account name and colour now follow the new account.' },
+      { type: 'fix', description: 'Your captured main account now shows its email instead of a generic placeholder name.' },
+    ],
+  },
+  {
+    version: '1.5.27',
+    date: '2026-06-02',
+    highlights: 'Per-session account isolation, plus a safety backup of your Claude config taken before anything runs.',
+    changes: [
+      { type: 'fix', description: 'Two sessions running the same account are now fully isolated. Previously they shared one login on disk, so signing into a different account in one session changed the other and could overwrite the saved account. Each session now gets its own private home.' },
+      { type: 'feature', description: 'Safety backup: on first launch the app snapshots your existing Claude login and settings to a backup folder before the multi-account feature does anything, so your original login is always recoverable.' },
+    ],
+  },
+  {
+    version: '1.5.26',
+    date: '2026-06-02',
+    highlights: 'Multi-account is always on and clobber-proof: your accounts are protected and signing in never overwrites your main login.',
+    changes: [
+      { type: 'feature', description: 'No on/off switch any more. On first run your current Claude login is captured into a protected account, and every session runs under a saved account, so you are multi-account ready from the start.' },
+      { type: 'fix', description: 'Your main login can no longer be overwritten. A session never runs on the bare global login, so running /login in a session can no longer replace the account you are signed in with globally.' },
+      { type: 'feature', description: 'New account detection: run /login as a different account inside a session and CCC offers to add it as a separate named account, keeping your original account intact.' },
+      { type: 'improvement', description: 'The Accounts list shows every account the same way, with the captured original marked as primary (and never deletable).' },
+    ],
+  },
+  {
+    version: '1.5.25',
+    date: '2026-06-01',
+    highlights: 'Sessions now genuinely run under the account you choose, with no impact on your other tools.',
+    changes: [
+      { type: 'fix', description: 'Added accounts are now truly isolated. Previously only the credentials were separated, not the account identity, so a session could still run as the wrong account. Each added account now runs under its own private home, so the account you pick is the account Claude uses.' },
+      { type: 'improvement', description: 'Zero degradation to your other tools: each account home mirrors your real home, so git, ssh, npm and the rest behave exactly as before. Only the Claude account is private; your memory and history stay shared.' },
+      { type: 'improvement', description: 'Cleaner session cards: removed the redundant right-side dots. The account colour dot stays next to the account name.' },
+      { type: 'fix', description: 'One-time after this update: re-run /login once per added account so it re-establishes its isolated login.' },
+    ],
+  },
+  {
+    version: '1.5.23',
+    date: '2026-06-01',
+    highlights: 'Pick the account a session runs under when it starts, and a clearer Accounts list.',
+    changes: [
+      { type: 'improvement', description: 'Account is now chosen when a session starts, not saved on the config. The first time a session launches you pick which account it runs under, so the account stays a live choice rather than a buried setting.' },
+      { type: 'improvement', description: 'The Accounts list in Settings now shows each account by its email, with a clearly labelled Name field below it to give the account a friendly label. Add and remove accounts as before.' },
+      { type: 'improvement', description: 'The start-session account picker now shows the friendly name you gave each account, including your default account.' },
+      { type: 'fix', description: 'If you run /login inside a session and change account, the status strip, session card and statusline now update to the new account (previously they stayed on the account the session started with).' },
+      { type: 'fix', description: 'You can now switch a session between your Default account and a single added account from the status strip (previously this needed two added accounts).' },
+      { type: 'fix', description: 'Removed the leftover Setup Statusline command from existing setups.' },
+      { type: 'improvement', description: 'Added the independent-project disclaimer to the startup splash screen.' },
+    ],
+  },
+  {
+    version: '1.5.19',
+    date: '2026-06-01',
+    highlights: 'Run multiple Claude accounts in CCC: add accounts, switch per session, keep them isolated.',
+    changes: [
+      { type: 'feature', description: 'Multiple accounts: add a second or third Claude account and run different sessions under different accounts. A first-run prompt walks you through it, and you can manage accounts anytime in Settings then Accounts.' },
+      { type: 'feature', description: 'Switch a session to another account from the status strip pill or the right-click menu (it respawns and resumes under the chosen account). Signing in or out of an added account never touches your other accounts.' },
+      { type: 'improvement', description: 'The status strip shows which account a session is using, and the account chip now resolves correctly for single-account users.' },
+      { type: 'improvement', description: 'Effort level now reflects live /effort changes in the status line, and you can toggle the Effort and Account elements in Statusline settings.' },
+      { type: 'improvement', description: 'Removed the Mode pill from the status strip (use Shift+Tab to change permission mode) and the redundant Setup Statusline command.' },
+    ],
+  },
+  {
+    version: '1.5.18',
+    date: '2026-05-31',
+    changes: [
+      { type: 'improvement', description: 'Permission tray no longer shows a card for the session you are currently viewing (Claude prompts you right there). The card appears if you switch to another session while the prompt is still waiting.' },
+      { type: 'fix', description: 'Permission cards now reliably show which tool and command Claude is asking about, even when several tools run at once.' },
+      { type: 'fix', description: 'Permission cards are now mouse-only: they never steal keyboard focus or interrupt your typing, and a stray Enter or Escape can no longer action a card.' },
+      { type: 'improvement', description: 'Added a footer note clarifying this is an independent project, not affiliated with or endorsed by Anthropic.' },
+    ],
+  },
+  {
+    version: '1.5.17',
+    date: '2026-05-31',
+    changes: [
+      { type: 'improvement', description: 'Permission tray now surfaces only genuine prompts Claude is blocked on, honoring your Claude settings (no more cards for auto-approved commands).' },
+      { type: 'feature', description: 'Each card has Go to session and Ignore; a Settings toggle disables the tray.' },
+    ],
+  },
+  {
+    version: '1.5.16',
+    date: '2026-05-30',
+    changes: [
+      { type: 'feature', description: 'Permission tray: approve or deny any tool request from one place, across all sessions' },
+      { type: 'improvement', description: 'Attention indicator no longer re-fires when you revisit a session' },
+      { type: 'fix', description: 'Effort level now shows permanently in the status line' },
+      { type: 'fix', description: 'Settings toggles no longer overlap their labels' },
+    ],
+  },
+  {
+    version: '1.5.15',
+    date: '2026-05-29',
+    highlights: "Removes the per-session account alias feature. Showing which Claude account a session is on is not reliable without isolating each session's config (which would fragment your shared memory and settings), so the alias label on session rows, the right-click Account tagging, and the Settings account-alias list are gone. Per-account spend tracking on the Tokenomics page is unaffected.",
+    changes: [
+      { type: 'improvement', description: "Removed the session account-alias feature: the alias label on session rows, the right-click 'Account' tagging menu, and the Settings account-aliases list. Claude exposes no reliable per-session account signal (it is global / last-login only), so the labels were frequently wrong whenever more than one account was in use" },
+      { type: 'improvement', description: "Tokenomics per-account spend (the Account filter and group-by-account view) is unchanged -- it uses a separate ledger-side mechanism, not the live session label" },
+    ],
+  },
+  {
+    version: '1.5.14',
+    date: '2026-05-29',
+    highlights: "Polish pass: the session duration in the status strip now reads as hours and days past an hour (no more '1731m 38s'), the Permission Attention Tray stops false-flagging safe commands, and sessions whose saved folder no longer exists open in your home directory instead of dying on launch.",
+    changes: [
+      { type: 'fix', description: "Status strip: session duration rolls up to hours past 60 minutes and days past 24 hours, showing two units max (e.g. '1d 4h'). Long-running or resumed sessions no longer show an unreadable raw-minutes count" },
+      { type: 'fix', description: "Permission tray: `git push --force-with-lease` (the safe push form) is no longer flagged as a high-risk force-push, and `sudo` detection only fires when sudo is the command being run -- not when it appears inside a quoted string or a path like /etc/sudoers" },
+      { type: 'fix', description: "Sessions with a working directory that no longer exists (a deleted worktree, an un-cloned repo, a demo path) now fall back to your home directory instead of exiting immediately with '[Process exited with code 1]'" },
+    ],
+  },
+  {
+    version: '1.5.13',
+    date: '2026-05-29',
+    highlights: "Day-two Opus 4.8 polish: Ultracode effort level (xhigh + automatic dynamic workflows), a global Disable Claude Code dynamic workflows toggle in Settings > Security, and new tour + tips entries for the Permission Attention Tray and Dynamic Workflows so they actually show up in /help.",
+    changes: [
+      { type: 'feature', description: "Effort dropdown: **Ultracode** option added. Sets `--effort ultracode` so Claude Code (2.1.154+) automatically plans dynamic workflows for every substantive task. Resets when you start a new session" },
+      { type: 'feature', description: "Settings > Security: **Disable Claude Code dynamic workflows** toggle writes `disableWorkflows: true` into the per-session Claude settings so workflows are off for newly spawned sessions. Applies on next spawn; existing sessions keep their setting" },
+      { type: 'feature', description: "Tour: dedicated **Permission Attention Tray** step covering the high-risk Bash patterns, the 50-entry cap, and how the gateway intercepts before Claude runs the command" },
+      { type: 'feature', description: "Tour: dedicated **Dynamic Workflows** step covering the three ways to invoke (workflow keyword, Ultracode, /deep-research), the /workflows progress view, the 1000-subagent cap, and the global disable" },
+      { type: 'improvement', description: "Tips: new entries for the Permission Tray and Dynamic Workflows so the contextual tip system surfaces them after first use" },
+    ],
+  },
+  {
+    version: '1.5.11',
+    date: '2026-05-29',
+    highlights: "Opus 4.8 lands as the new default, with Extra high effort and a Fast mode toggle (2.5x speed at 2x cost). The Permission Attention Tray from v1.5.10 is now actually wired -- v1.5.10 shipped the toast stack but the hook injection was disabled, so no toast ever fired; v1.5.11 fixes the wiring and ties it to Claude Code's real PreToolUse hook.",
+    changes: [
+      { type: 'feature', description: "Opus 4.8 default: new Claude sessions land on Opus 4.8 (Anthropic's newest model, released 2026-05-28). The model dropdown uses the `opus` alias so the default stays current as Anthropic releases new versions" },
+      { type: 'feature', description: "Effort levels: Extra high (xhigh) and Max added to the Session dropdown; Opus 4.8 supports xhigh as its hardest-task setting" },
+      { type: 'feature', description: "Fast mode toggle for Opus 4.8: 2.5x speed at 2x cost ($10/$50 per 1M tokens vs standard $5/$25). Tokenomics tracks Fast spend through a separate `<model>-fast` pricing row" },
+      { type: 'fix', description: "Permission Attention Tray wiring: v1.5.10 had injectHooks disabled and the gateway only matched a 'PermissionRequest' event Claude Code never fires. v1.5.11 re-enables hook injection per Claude session, ties the gateway to the real PreToolUse hook for Bash, and updates the disposition rule so the tray only fires for the high-risk patterns (rm -rf, sudo, force-push, dd, mkfs, chmod 777, fork bombs)" },
+      { type: 'improvement', description: "Tokenomics: hardcoded fallback pricing for Opus 4.8 + 4.7 ($5/$25 standard, $10/$50 fast). LiteLLM live pricing still wins when reachable" },
+    ],
+  },
+  {
+    version: '1.5.10',
+    date: '2026-05-28',
+    highlights: "V2 UX uplift across Tokenomics, Insights, Logs, Settings, and Agent Hub -- plus a new Permission Attention Tray for high-risk Bash prompts. Insights drops its iframe and renders natively, Logs paginates large buffers, and Tokenomics gains a Project / Account / Model group-by lens.",
+    changes: [
+      { type: 'feature', description: "Permission Attention Tray: high-risk Bash commands (rm -rf, dd, mkfs, force-push, etc.) now stack as toasts in the top-right corner. Keyboard shortcuts let you approve or reject without scrolling back to the prompt; auto-allow handles read-only commands transparently" },
+      { type: 'feature', description: "Tokenomics: new Group by lens (Project / Account / Model) pivots the breakdown panel + sessions table without re-running anything" },
+      { type: 'improvement', description: "Insights: native renderer replaces the iframe + injected dark theme CSS, so the report loads faster, follows your theme cleanly, and inherits the V2 surface tokens" },
+      { type: 'improvement', description: "Logs: chunked virtualization (500 entries per page with a Load older button) plus incremental filter diff -- big session logs no longer freeze the UI" },
+      { type: 'improvement', description: "Settings and Agent Hub: V2 primitive pass (StatusDot, MetricChip, SectionLabel, Kbd) and accent-token rails for tab + filter selection" },
+      { type: 'improvement', description: "TitleBar and Session Status Strip lifted onto the V2 raised-surface tier so they read as a single instrument cluster against the chrome below" },
+      { type: 'fix', description: "Cloud agent status colours now go through semantic tokens; status dot uses the StatusDot primitive (no more broken hex+alpha concat on the box-shadow)" },
+    ],
+  },
+  {
+    version: '1.5.9',
+    date: '2026-05-27',
+    highlights: "Account labels are now user-managed -- you set them once in Settings and tag any session by right-click. The v1.5.7 auto-detected email chip was structurally unreliable (the field it read is global, not per-session) and has been removed.",
+    changes: [
+      { type: 'fix', description: "Removed the per-session account-email chip from the session header and status strip -- it was reading a global file and could display the wrong account when you switched logins in another session" },
+      { type: 'feature', description: "Settings > General > Account Aliases lets you keep a short list of email + alias rows; right-click any session in the sidebar to tag it with one. The alias shows after the project name in non-bold text" },
+      { type: 'fix', description: "Use this repo: clicking on a freshly-spawned session now persists correctly instead of silently doing nothing (regression introduced in v1.5.8 where the session state had not yet been flushed to disk before the IPC write)" },
+    ],
+  },
+  {
+    version: '1.5.8',
+    date: '2026-05-27',
+    highlights: "Three bug fixes: 'Use this repo' in the auto-detect banner now persists across restarts and skips the Settings detour when you are already authed; the Codex MCP server's 'Session not found' 404 now logs diagnostics and returns an actionable recovery message.",
+    changes: [
+      { type: 'fix', description: "Clicking 'Use this repo' in the auto-detect banner now writes the repo to the parent saved config (not just the live session), so the selection survives an app restart" },
+      { type: 'fix', description: "When at least one GitHub auth profile already exists, 'Use this repo' enables the integration in place and auto-picks a matching profile by repo or username -- no more bounce to the Settings tab" },
+      { type: 'improvement', description: "Conductor MCP /messages 404 now logs the requested transport id, active-transport count, sample ids and user-agent, and returns a multi-line recovery message instead of a bare 'Session not found' (helps when Claude reports the Codex review tool as unavailable mid-session)" },
+    ]
+  },
+  {
+    version: '1.5.7',
+    date: '2026-05-27',
+    highlights: "Your account email is back in the status line and session header -- coloured per account -- and you can now pin a fixed colour to any account in Settings. The Update pill also appears on its own now, without needing a restart.",
+    changes: [
+      { type: 'fix', description: "The active account email is shown again in the per-session status line and the session header, coloured per account -- it was dropped during the V2 shell refactor" },
+      { type: 'feature', description: "Assign a fixed colour to any account email in Settings > General > Account Colours. Detected accounts are listed automatically, or add one manually; the chosen colour tints that account's email everywhere it shows" },
+      { type: 'improvement', description: "The app now re-checks for updates periodically and when the window regains focus, so the Update pill appears on its own instead of only after a manual restart" },
+    ]
+  },
+  {
+    version: '1.5.6',
+    date: '2026-05-26',
+    highlights: "Identity colours now span the full hue wheel so sessions are instantly distinguishable, the GitHub panel slides in when shown, and a few first-launch papercuts are fixed.",
+    changes: [
+      { type: 'improvement', description: "Identity colours are re-tuned across the whole colour wheel (blues, teals, greens, ambers, oranges, roses, purples) so saved configs and active sessions are instantly distinguishable in the left rail, tabs, and inactive dots -- not all variations of purple" },
+      { type: 'improvement', description: "The GitHub panel now slides in and fades when shown, and the collapsed floating logo button fades in (both respect reduced-motion)" },
+      { type: 'fix', description: "The Claude service-status pills (Code / Claude.ai) now appear immediately on launch instead of staying blank until the first background poll minutes later" },
+      { type: 'fix', description: "Pasting an image with Alt+V now works on the first try -- previously the first attempt after copying could report 'no image detected' until you typed something (a Windows clipboard timing quirk)" },
+    ]
+  },
+  {
+    version: '1.5.5',
+    date: '2026-05-26',
+    highlights: "Bottom-region rework from UAT: the per-session status line now sits directly above the command rows, CLI/version is a slim status bar at the bottom-left, and the GitHub panel ends above the command rows with a floating logo button when collapsed.",
+    changes: [
+      { type: 'improvement', description: "The per-session status line (model, tokens, context, rate limits) and the Mode / Model / Compact / Restart controls now sit directly above the command rows, where the old context bar lived" },
+      { type: 'improvement', description: "CLI, version and channel are now a slim global status bar pinned to the bottom-left of the window, spanning the full width -- separate from the per-session status line" },
+      { type: 'fix', description: "The GitHub panel no longer stretches down past the status line and command rows. It ends above them, beside the terminal" },
+      { type: 'improvement', description: "When the GitHub panel is collapsed it is now a floating GitHub-logo button in the top-right corner instead of a thin vertical bar (with a coloured hover)" },
+      { type: 'fix', description: "The 'New: GitHub sidebar' onboarding popup no longer reappears on every launch once you have a GitHub account configured" },
+      { type: 'improvement', description: "The update notification is no longer duplicated. The large 'Update Available' card is gone; the status-bar Update pill gently pulses when an update is ready" },
+      { type: 'improvement', description: "Command chips and the Mode / Model / Compact / Restart controls restyled into one consistent set; the model name shows properly and Restart is set apart" },
+    ]
+  },
+  {
+    version: '1.5.4',
+    date: '2026-05-26',
+    highlights: "V2 shell polish from first-look feedback: the bottom instrument bar now sits under the terminal only, inactive sessions keep their identity colour, and the global/custom command rows follow the theme.",
+    changes: [
+      { type: 'fix', description: "The bottom instrument bar is now scoped to the content area instead of spanning the full window width underneath the sidebar" },
+      { type: 'fix', description: "Inactive sessions keep a muted identity-colour rail, so you can still tell sessions apart at a glance; the selected session shows the full rail, tint, and border" },
+      { type: 'fix', description: "Global and custom command rows now use the theme's surface tokens instead of a fixed dark background, so they follow light and dark correctly" },
+    ]
+  },
+  {
+    version: '1.5.3',
+    date: '2026-05-26',
+    highlights: "V2 command-center shell -- a ground-up visual redesign: dense session cards, a single bottom instrument bar, a cleaner header and terminal framing, light/dark theming, and per-session identity colours.",
+    changes: [
+      { type: 'feature', description: "New 'Command Workbench' shell. The session list is rebuilt as dense two-line cards with an unmistakable selected state (identity rail, tint, elevation, bold name, chip); health reads only as a status dot and pill; keyboard focus is a quiet dashed ring distinct from selection" },
+      { type: 'feature', description: "Single bottom instrument bar replaces the old status bar, the per-terminal context bar, and the dead toolbar: runtime (CLI, version, channel, update) on the left, live session telemetry inline in the middle, and Mode / Model / Compact / Restart controls on the right" },
+      { type: 'feature', description: "Per-session identity colours, resolved per theme, shown consistently on cards, tabs, and the header accent -- a curated non-status palette that never collides with running/warning/error status or the teal focus ring. Legacy session colours are migrated once, with a dismissible notice" },
+      { type: 'feature', description: "Light and dark themes with a one-click Light/Dark flip in the title bar; the full Dark / Light / System choice lives in Settings" },
+      { type: 'feature', description: "A passive breadcrumb strip in the header (working directory + detected repo), a quieter info-style repo auto-detect suggestion, and a collapsible command bar with neutral command chips" },
+      { type: 'improvement', description: "Context-aware empty state: with saved configs you get launch cards plus 'Show all configs'; with none, a clear 'Create a terminal config' action. Saved configs are reachable by keyboard, not hover-only" },
+      { type: 'improvement', description: "Terminal container framing -- comfortable padding and a real left gutter so text no longer crowds the edge" },
+      { type: 'fix', description: "Theme toggle no longer shows duplicate icons or dead clicks -- every click reliably and visibly changes the theme" },
+      { type: 'fix', description: "Session attention pulse no longer re-fires when you simply switch away from a session; it only re-arms on genuine new keyboard input, not focus or mouse reports" },
+      { type: 'fix', description: "New branded startup splash" },
+    ]
+  },
+  {
+    version: '1.5.2',
+    date: '2026-05-24',
+    highlights: "Per-session account attribution -- see which Claude/Codex account each session and dollar belongs to. Plus the Electron 38 engine upgrade.",
+    changes: [
+      { type: 'feature', description: "Per-session account attribution. The active account email now shows in the context bar, coloured deterministically per account, so you can tell at a glance which login a session is running under. Works for both Claude (read live from ~/.claude.json) and Codex (decoded from the session JWT)" },
+      { type: 'feature', description: "Tokenomics page gains an Account filter. Slice spend by account email, or by (Mixed) and (Unknown) for sessions that span logins or predate attribution" },
+      { type: 'feature', description: "Account attribution back-fill wizard. Historic sessions recorded before this release are bucketed by config and suggested an account from your ~/.claude backup timeline -- confirm, override, or mark mixed. Runs once on first launch and is re-openable from the tokenomics page" },
+      { type: 'improvement', description: "Removed the global account picker from the title bar. Attribution is now per-session and automatic -- no manual switching, and historic spend is never silently re-stamped to whoever is logged in now" },
+      { type: 'improvement', description: "Electron 33 to 38 engine upgrade (Chromium 132 to 140). Newer rendering engine and security baseline under the hood" },
+      { type: 'fix', description: "Codex sessions no longer open to a blank terminal on Windows. ConPTY does not do PATH lookup, so the bare 'node' spawn failed silently -- now resolved to a full node.exe path" },
+      { type: 'fix', description: "Codex MCP handshake now speaks streamable HTTP alongside SSE, so the conductor tools (vision, codex review) connect correctly under Codex CLI 0.128+" },
+      { type: 'fix', description: "Codex resume picker reads the newer 0.133 rollout format, so resuming a Codex session lists the right sessions with readable labels instead of '(continued session)'" },
+      { type: 'fix', description: "GitHub sidebar can be collapsed when open, and its per-session enablement now persists across app restarts" },
+    ]
+  },
+  {
+    version: '1.5.1',
+    date: '2026-05-08',
+    highlights: "Codex provider, mega release",
+    changes: [
+      { type: 'fix', description: "Removed the peak/off-peak indicator -- Anthropic no longer differentiates peak hours in their rate-limit policy, so the badge was reporting outdated information" },
+    ]
+  },
+  {
     version: '1.4.3',
     date: '2026-04-29',
     highlights: "New branded splash now actually shows on launch, plus a refreshed README with v1.4 feature highlights",
     changes: [
-      { type: 'fix', description: "Splash window now displays the new branded artwork. The 1.5 MB PNG was being inlined into a data: URL that exceeded Electron's loadURL size limit, so the window was created but never reached ready-to-show. Switched to writing the wrapper HTML to a temp file and loading via loadFile — works for any image size" },
+      { type: 'fix', description: "Splash window now displays the new branded artwork. The 1.5 MB PNG was being inlined into a data: URL that exceeded Electron's loadURL size limit, so the window was created but never reached ready-to-show. Switched to writing the wrapper HTML to a temp file and loading via loadFile -- works for any image size" },
       { type: 'improvement', description: "README overhaul. Branded splash at the top, six new feature highlight cards (Excalidraw, Combined Mode, Insights, Logs, GitHub sidebar, Vision), accurate v1.4 feature audit, dedicated 'What's New' section, corrected installer naming, and a 'Defence in Depth' security subsection covering daily CONFIG backups" },
     ]
   },
   {
     version: '1.4.2',
     date: '2026-04-28',
-    highlights: "Safety-net daily backups of your CONFIG directory — never lose a session list to a corrupted write again",
+    highlights: "Safety-net daily backups of your CONFIG directory -- never lose a session list to a corrupted write again",
     changes: [
-      { type: 'feature', description: "Daily auto-backup of CONFIG/*.json under CONFIG/_backups/YYYY-MM-DD/ on every app launch. Last 7 days kept, prunes older. Recovery is a manual copy back into CONFIG/ — but the data is always there if anything goes sideways" },
+      { type: 'feature', description: "Daily auto-backup of CONFIG/*.json under CONFIG/_backups/YYYY-MM-DD/ on every app launch. Last 7 days kept, prunes older. Recovery is a manual copy back into CONFIG/ -- but the data is always there if anything goes sideways" },
       { type: 'fix', description: "Capture-training script no longer destroys real config data on cleanup. PID lock prevents concurrent captures; cleanup only restores files it explicitly backed up; never blind-deletes by filename match" },
-      { type: 'fix', description: "Memory frontmatter writer now produces valid YAML for values containing backslashes, newlines, and other control chars. Previously only escaped quotes — anything else round-tripped as malformed YAML. Switched to JSON-stringify which is a strict subset of YAML 1.2's double-quoted scalar grammar" },
+      { type: 'fix', description: "Memory frontmatter writer now produces valid YAML for values containing backslashes, newlines, and other control chars. Previously only escaped quotes -- anything else round-tripped as malformed YAML. Switched to JSON-stringify which is a strict subset of YAML 1.2's double-quoted scalar grammar" },
     ]
   },
   {
     version: '1.4.0',
     date: '2026-04-24',
-    highlights: "GitHub sidebar — PR, CI, reviews, linked issues, and session context next to the terminal",
+    highlights: "GitHub sidebar -- PR, CI, reviews, linked issues, and session context next to the terminal",
     changes: [
       { type: 'feature', description: "New GitHub sidebar. Collapsible right panel that shows the PR for your current branch, CI runs, reviews, linked issues, local git state, and a session-context summary of what this terminal is working on" },
       { type: 'feature', description: "Sign in with GitHub via OAuth device flow, fine-grained PAT, or gh CLI adoption. Nothing runs until you opt in per session" },
@@ -53,14 +541,14 @@ export const changelog: ChangelogEntry[] = [
   {
     version: '1.3.1',
     date: '2026-04-15',
-    highlights: "First public release — open-sourced on GitHub",
+    highlights: "First public release -- open-sourced on GitHub",
     changes: [
       { type: 'feature', description: "Command bar sections: drag commands into named sections, right-click to rename/delete, custom text colors, independent Claude/Partner row sections" },
-      { type: 'feature', description: "SSH statusline now shows full second line (rate limits, extra spend, peak/off-peak) — fetches from Anthropic API on the remote" },
+      { type: 'feature', description: "SSH statusline now shows full second line (rate limits, extra spend, peak/off-peak) -- fetches from Anthropic API on the remote" },
       { type: 'feature', description: "Insights report links now open in your system browser instead of showing blank pages" },
       { type: 'fix', description: "SSH sessions now auto-start Claude (was broken for sessions without a post-connect command)" },
-      { type: 'fix', description: "SSH setup script no longer echoes binary text — suppressed with stty" },
-      { type: 'fix', description: "Logs tab no longer freezes the UI — async file reads with loading spinner" },
+      { type: 'fix', description: "SSH setup script no longer echoes binary text -- suppressed with stty" },
+      { type: 'fix', description: "Logs tab no longer freezes the UI -- async file reads with loading spinner" },
       { type: 'fix', description: "Memory manager: 'originSessionId' recognized as valid field, warnings now expandable" },
       { type: 'fix', description: "Insights KPI extraction: prompt piped via stdin instead of fragile shell arguments" },
       { type: 'improvement', description: "Tips updated for new section features with trackUsage calls" },
@@ -73,9 +561,9 @@ export const changelog: ChangelogEntry[] = [
     highlights: "Branching model: beta + main with promote flow",
     changes: [
       { type: 'improvement', description: "New branching model: all feature work happens on the `beta` branch; the `main` branch is stable-only and receives fast-forwards from beta" },
-      { type: 'improvement', description: "Release script now enforces branch ↔ channel correspondence — --stable must run on main, --beta/--dev must run on beta (bypass with --skip-branch-check in emergencies)" },
+      { type: 'improvement', description: "Release script now enforces branch ↔ channel correspondence -- --stable must run on main, --beta/--dev must run on beta (bypass with --skip-branch-check in emergencies)" },
       { type: 'feature', description: "New `npm run promote` command merges the beta→main PR and ships a stable release at the same version as the current beta" },
-      { type: 'feature', description: "New --no-bump flag on the release script reuses the current package.json version instead of incrementing — used by the promote flow to keep beta and stable version numbers aligned" },
+      { type: 'feature', description: "New --no-bump flag on the release script reuses the current package.json version instead of incrementing -- used by the promote flow to keep beta and stable version numbers aligned" },
       { type: 'feature', description: "New --ff-only and --yes flags on the promote script for partial/automated runs" },
     ]
   },
@@ -85,7 +573,7 @@ export const changelog: ChangelogEntry[] = [
     highlights: "Release script hotfix: cross-platform sleep + proper workflow watching",
     changes: [
       { type: 'fix', description: "Local release script now uses Node-native sleep instead of shelling out to `timeout`/`sleep`, which was silently failing inside execSync and preventing the script from finding the dispatched workflow run ID" },
-      { type: 'fix', description: "Release script now surfaces real errors from the run-ID polling loop instead of swallowing them — gives a useful hint if GitHub API is unreachable" },
+      { type: 'fix', description: "Release script now surfaces real errors from the run-ID polling loop instead of swallowing them -- gives a useful hint if GitHub API is unreachable" },
       { type: 'improvement', description: "Run-ID detection picks the newest workflow_dispatch run regardless of branch, so the filter doesn't miss the just-dispatched run due to API pagination lag" },
     ]
   },
@@ -97,7 +585,7 @@ export const changelog: ChangelogEntry[] = [
       { type: 'improvement', description: "Release script now dispatches the GitHub Actions workflow for canonical dual-platform builds (Windows EXE + macOS DMG, both signed/notarized, both VirusTotal-scanned, single release with checksums) instead of doing a Windows-only local build" },
       { type: 'improvement', description: "Local release script does fast smoke checks (typecheck + unit tests + build) for fast feedback before pushing to CI, then watches the workflow run to completion and verifies both .exe and .dmg are attached" },
       { type: 'improvement', description: "Release script now supports stable / beta / dev channels via --stable / --beta / --dev (default: interactive prompt with beta as fallback)" },
-      { type: 'feature', description: "Check for Updates button now shows the active channel — 'Check for Beta Updates' / 'Check for Stable Updates' / 'Check for Dev Updates' — so you always know what you're checking against without opening the dropdown" },
+      { type: 'feature', description: "Check for Updates button now shows the active channel -- 'Check for Beta Updates' / 'Check for Stable Updates' / 'Check for Dev Updates' -- so you always know what you're checking against without opening the dropdown" },
     ]
   },
   {
@@ -106,14 +594,14 @@ export const changelog: ChangelogEntry[] = [
     highlights: "SSH statusline + unified MCP image transport + dual service status indicator",
     changes: [
       { type: 'fix', description: "SSH statusline now updates: a tiny shim deployed to the remote ~/.claude emits an OSC sentinel via /dev/tty that the host parses out of the PTY stream (no SMB mount needed)" },
-      { type: 'feature', description: "Image paste, snap, and storyboard now work in BOTH local and SSH sessions via the conductor-vision MCP fetch_host_screenshot tool — one unified code path, no path-vs-base64 hacks" },
-      { type: 'feature', description: "vision_screenshot returns inline image content directly — no second Read tool call needed to view the captured browser screenshot" },
+      { type: 'feature', description: "Image paste, snap, and storyboard now work in BOTH local and SSH sessions via the conductor-vision MCP fetch_host_screenshot tool -- one unified code path, no path-vs-base64 hacks" },
+      { type: 'feature', description: "vision_screenshot returns inline image content directly -- no second Read tool call needed to view the captured browser screenshot" },
       { type: 'feature', description: "Conductor MCP server now starts at app launch independent of browser/vision config so fetch_host_screenshot is always available" },
       { type: 'feature', description: "Title bar service status redesigned: separate Claude Code + Claude.ai pills with colored dots, plus API status surfacing only when degraded" },
       { type: 'fix', description: "'Got it' tip button now actually clears the tip pill from the session header (markTipActed clears currentTipId)" },
-      { type: 'fix', description: "Snap, storyboard, and clipboard image resize now preserve aspect ratio — was previously distorting non-square images by passing both width and height to nativeImage.resize()" },
+      { type: 'fix', description: "Snap, storyboard, and clipboard image resize now preserve aspect ratio -- was previously distorting non-square images by passing both width and height to nativeImage.resize()" },
       { type: 'improvement', description: "All screenshot capture sites cap longest edge to 1920px and use JPEG q85 (q78 for storyboard frames) to reduce token cost" },
-      { type: 'improvement', description: "Clipboard paste regression fixed — was sending raw base64 to the PTY, now uses saveImage path through the MCP fetch tool" },
+      { type: 'improvement', description: "Clipboard paste regression fixed -- was sending raw base64 to the PTY, now uses saveImage path through the MCP fetch tool" },
     ]
   },
   {
@@ -122,13 +610,13 @@ export const changelog: ChangelogEntry[] = [
     highlights: "Update system refactor: GitHub-only with stable/beta/dev channels + PTY dedupe",
     changes: [
       { type: 'feature', description: "Update checker now polls GitHub releases directly instead of a local WebSocket server" },
-      { type: 'feature', description: "New update channel selector next to Check for Updates button — stable / beta / dev with full keyboard accessibility" },
+      { type: 'feature', description: "New update channel selector next to Check for Updates button -- stable / beta / dev with full keyboard accessibility" },
       { type: 'feature', description: "Dev channel for experimental builds (alongside existing stable and beta)" },
       { type: 'fix', description: "Duplicate Claude prompts: PTY now suppresses identical submitted payloads within 300ms (prevents double-sends that triggered rate limits)" },
       { type: 'improvement', description: "Update checker works without gh CLI once the repo is public (tries public GitHub API first, falls back to gh CLI only when needed)" },
       { type: 'improvement', description: "Safer update downloads: HTTPS-only redirects, Windows retry safety (unlinks stale files before rename), no shell injection risk" },
       { type: 'improvement', description: "Proper prerelease ordering (beta.2 > beta.1, final > beta)" },
-      { type: 'improvement', description: "CI workflow on every PR — typecheck, tests, build on both Windows and macOS" },
+      { type: 'improvement', description: "CI workflow on every PR -- typecheck, tests, build on both Windows and macOS" },
     ]
   },
   {
@@ -139,7 +627,7 @@ export const changelog: ChangelogEntry[] = [
       { type: 'feature', description: "Animated tip pill in the session header shows contextual, one-per-session feature discovery hints" },
       { type: 'feature', description: "Clicking a tip opens a platform-aware modal with full details, optional navigation, and dismiss/silence controls" },
       { type: 'feature', description: "New Transparency category: explicit tips about statusline injection, Vision MCP, session logging, credential storage, resources folder, and all network activity" },
-      { type: 'feature', description: "Usage tracking persists to CONFIG/usage-tracking.json — tips intelligently skip features you've already used or show 'did you know' variants" },
+      { type: 'feature', description: "Usage tracking persists to CONFIG/usage-tracking.json -- tips intelligently skip features you've already used or show 'did you know' variants" },
       { type: 'feature', description: "Toggle 'Show intelligent tips' in Settings > General to disable the system" },
       { type: 'improvement', description: "Platform-aware tip copy: Partner Terminal, Credential Storage, Resources Folder, and Session Logs tips show correct Windows vs macOS paths" },
     ]
@@ -192,12 +680,12 @@ export const changelog: ChangelogEntry[] = [
     date: '2026-02-08',
     highlights: 'Platform v9 theme, rate limits, enriched statusline, config improvements',
     changes: [
-      { type: 'feature', description: 'Rate limit tracking — 5-hour and weekly usage with colored dot bars, reset times, and extra usage cost shown in context bar' },
-      { type: 'feature', description: 'Enriched context bar — now shows model name, token count (135k/200k), context %, cost, lines changed, and session duration' },
-      { type: 'improvement', description: 'New platform v9 dark theme — deeper blue-black backgrounds replace the old purple-tinted Catppuccin palette' },
+      { type: 'feature', description: 'Rate limit tracking -- 5-hour and weekly usage with colored dot bars, reset times, and extra usage cost shown in context bar' },
+      { type: 'feature', description: 'Enriched context bar -- now shows model name, token count (135k/200k), context %, cost, lines changed, and session duration' },
+      { type: 'improvement', description: 'New platform v9 dark theme -- deeper blue-black backgrounds replace the old purple-tinted Catppuccin palette' },
       { type: 'feature', description: 'Config right-click menu now includes Edit and Delete options alongside group management' },
       { type: 'improvement', description: 'Config items show Claude/Shell badges and colored left borders. Active tabs have colored bottom border' },
-      { type: 'fix', description: 'Command button context menu no longer truncates at window edge — opens upward when near bottom' },
+      { type: 'fix', description: 'Command button context menu no longer truncates at window edge -- opens upward when near bottom' },
     ]
   },
   {
@@ -205,9 +693,9 @@ export const changelog: ChangelogEntry[] = [
     date: '2026-02-07',
     highlights: 'Insights fix, command button fix, update reliability',
     changes: [
-      { type: 'fix', description: 'Insights now works — /insights runs via PTY with proper TTY instead of headless spawn that hung forever' },
-      { type: 'fix', description: 'Custom command buttons no longer re-fire when pressing Enter — buttons no longer steal keyboard focus' },
-      { type: 'fix', description: 'Update process simplified — copies installer to Downloads, kills PTYs, launches installer, exits immediately' },
+      { type: 'fix', description: 'Insights now works -- /insights runs via PTY with proper TTY instead of headless spawn that hung forever' },
+      { type: 'fix', description: 'Custom command buttons no longer re-fire when pressing Enter -- buttons no longer steal keyboard focus' },
+      { type: 'fix', description: 'Update process simplified -- copies installer to Downloads, kills PTYs, launches installer, exits immediately' },
     ]
   },
   {
@@ -215,11 +703,11 @@ export const changelog: ChangelogEntry[] = [
     date: '2026-02-07',
     highlights: 'Debug logging overhaul, input protection, crash recovery',
     changes: [
-      { type: 'improvement', description: 'Debug toggle now controls verbose app logging instead of screenshot capture — logs persist across updates' },
+      { type: 'improvement', description: 'Debug toggle now controls verbose app logging instead of screenshot capture -- logs persist across updates' },
       { type: 'improvement', description: 'Log rotation increased to 10MB with 3 backup files for better diagnostic history' },
-      { type: 'fix', description: 'Restored image paste handler — clipboard images saved as JPEG (max 1920px, 85%) with file path sent to Claude' },
+      { type: 'fix', description: 'Restored image paste handler -- clipboard images saved as JPEG (max 1920px, 85%) with file path sent to Claude' },
       { type: 'fix', description: 'Right-click in terminal pastes clipboard text when no text is selected' },
-      { type: 'fix', description: 'Input bar blocks multi-char text when Claude is asking a question — prevents losing typed content' },
+      { type: 'fix', description: 'Input bar blocks multi-char text when Claude is asking a question -- prevents losing typed content' },
       { type: 'fix', description: 'Image paste debounced (3s) to prevent duplicate sends via Alt+V or Ctrl+V' },
       { type: 'improvement', description: 'Insights timeout increased from 5 to 10 minutes' },
       { type: 'improvement', description: 'Error boundary catches renderer crashes and shows error with recovery button instead of blank screen' },
@@ -231,7 +719,7 @@ export const changelog: ChangelogEntry[] = [
     date: '2026-02-06',
     highlights: 'Config and session groups with collapsible tree view',
     changes: [
-      { type: 'feature', description: 'Group saved configs into named groups — collapsible tree view in sidebar' },
+      { type: 'feature', description: 'Group saved configs into named groups -- collapsible tree view in sidebar' },
       { type: 'feature', description: 'Launch all configs in a group at once with the group play button' },
       { type: 'feature', description: 'Active sessions auto-group based on their config\'s group' },
       { type: 'feature', description: 'Right-click configs to move between groups or create new ones' },
@@ -244,7 +732,7 @@ export const changelog: ChangelogEntry[] = [
     date: '2026-02-06',
     highlights: 'Image optimization, yellow cursor fix, and update button fix',
     changes: [
-      { type: 'fix', description: 'Clipboard images (Alt+V) now resized to max 1920px and saved as JPEG — drastically reduces context usage' },
+      { type: 'fix', description: 'Clipboard images (Alt+V) now resized to max 1920px and saved as JPEG -- drastically reduces context usage' },
       { type: 'fix', description: 'Screenshot capture also switched from PNG to JPEG for smaller files' },
       { type: 'fix', description: 'Yellow cursor block eliminated by stripping yellow background color sequences' },
       { type: 'fix', description: 'Screenshot dropdown labels render properly (SVG icons instead of broken Unicode)' },
@@ -258,7 +746,7 @@ export const changelog: ChangelogEntry[] = [
     changes: [
       { type: 'feature', description: 'KPI extraction now uses smart Claude skill that compares to previous run and produces actionable bullet points' },
       { type: 'feature', description: 'Insights sidebar shows improvements (green), regressions (red), and suggestions (purple) at the top' },
-      { type: 'improvement', description: 'KPI format is now fully dynamic — the skill decides categories, metrics, and lists without hardcoded schemas' },
+      { type: 'improvement', description: 'KPI format is now fully dynamic -- the skill decides categories, metrics, and lists without hardcoded schemas' },
       { type: 'improvement', description: 'What\'s New modal now triggers on version change, not every build' },
     ]
   },
@@ -269,7 +757,7 @@ export const changelog: ChangelogEntry[] = [
     changes: [
       { type: 'improvement', description: 'Screenshot button restyled to match app design (no more garish cyan)' },
       { type: 'fix', description: 'Input text no longer lost when switching between sessions and other views' },
-      { type: 'feature', description: 'npm run release — single command for full build, package, and update notification' },
+      { type: 'feature', description: 'npm run release -- single command for full build, package, and update notification' },
     ]
   },
   {
@@ -279,7 +767,7 @@ export const changelog: ChangelogEntry[] = [
     changes: [
       { type: 'improvement', description: 'Insights report now renders with full Catppuccin dark theme matching the app' },
       { type: 'fix', description: 'Screenshot button replaced with clean SVG icon instead of emoji' },
-      { type: 'fix', description: 'Ctrl+V paste no longer intercepts clipboard images — screenshot workflow uses right-click only' },
+      { type: 'fix', description: 'Ctrl+V paste no longer intercepts clipboard images -- screenshot workflow uses right-click only' },
       { type: 'fix', description: 'Stuck insight runs automatically marked as failed on app restart' },
       { type: 'feature', description: 'CLI availability indicator (green/red dot) in status bar' },
       { type: 'fix', description: 'Restart button now works for SSH/remote sessions (kills old PTY before re-spawning)' },

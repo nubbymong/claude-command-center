@@ -4,14 +4,16 @@ import { useConfigStore, TerminalConfig, ConfigGroup, ConfigSection } from '../s
 import { useInsightsStore } from '../stores/insightsStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useCloudAgentStore } from '../stores/cloudAgentStore'
-import { useVisionStore } from '../stores/visionStore'
+import { useConductorMcpStore } from '../stores/conductorMcpStore'
 import SessionDialog from './SessionDialog'
 import { killSessionPty } from '../ptyTracker'
 import { ViewType } from '../types/views'
 import { trackUsage } from '../stores/tipsStore'
 import { generateId } from '../utils/id'
 import { matchesShortcut, DEFAULT_SHORTCUTS } from '../utils/shortcuts'
-import { markSessionForResumePicker } from '../utils/resumePicker'
+import { canSwitchAccountForSession } from '../utils/sessionLaunch'
+import { useLaunchConfig } from '../hooks/useLaunchConfig'
+import { useRegionTypography } from '../hooks/useTypography'
 import SidebarNav from './sidebar/SidebarNav'
 import ConfigRow from './sidebar/ConfigRow'
 import SessionRow from './sidebar/SessionRow'
@@ -22,10 +24,15 @@ import SectionHeader from './sidebar/SectionHeader'
 import GroupHeader from './sidebar/GroupHeader'
 import SessionSectionHeader from './sidebar/SessionSectionHeader'
 import SessionGroupHeader from './sidebar/SessionGroupHeader'
-import UpdatePanel from './sidebar/UpdatePanel'
 import PinnedConfigsPanel from './sidebar/PinnedConfigsPanel'
 import FirstRunCard from './FirstRunCard'
+import ColourMigrationNotice from './ColourMigrationNotice'
+import ConfigHydrationNotice from './ConfigHydrationNotice'
 import { useAppMetaStore } from '../stores/appMetaStore'
+import { deriveOnboarding } from '../onboarding/gate'
+import { useAccountProfilesStore } from '../stores/accountProfilesStore'
+import { useSwitchAccount } from '../hooks/useSwitchAccount'
+import { useTokenomicsStore } from '../stores/tokenomicsStore'
 
 // Inject keyframes for attention pulse animation (shared with TabBar)
 const ATTENTION_STYLES_ID = 'attention-pulse-styles'
@@ -55,34 +62,37 @@ function injectAttentionStyles() {
 interface Props {
   currentView: ViewType
   onViewChange: (view: ViewType) => void
-  onUpdateRequested?: () => void
   collapsed?: boolean
   onShowHelp?: () => void
+  onShowAccountUsage?: () => void
   onShowFirstRun?: () => void
   // Suppresses the FirstRunCard while the training/walkthrough is
-  // open — clicking "Create Config" otherwise opens GuidedConfigView
+  // open — clicking "Create Config" otherwise opens the first-config dialog
   // behind the tour, which the user can't see and which doesn't
   // dismiss the tour. macOS and Windows both affected.
   tourActive?: boolean
 }
 
-export default function Sidebar({ currentView, onViewChange, onUpdateRequested, collapsed, onShowHelp, onShowFirstRun, tourActive }: Props) {
-  const { sessions, activeSessionId, setActiveSession, removeSession, addSession, updateSession } = useSessionStore()
+export default function Sidebar({ currentView, onViewChange, collapsed, onShowHelp, onShowAccountUsage, onShowFirstRun, tourActive }: Props) {
+  const launchConfig = useLaunchConfig()
+  const sideType = useRegionTypography('sidebar')
+  const { sessions, activeSessionId, setActiveSession, removeSession, updateSession } = useSessionStore()
   const { configs, groups, sections, addConfig, updateConfig, removeConfig, addGroup, renameGroup, removeGroup, toggleGroupCollapsed, moveConfigToGroup, addSection, renameSection, removeSection, toggleSectionCollapsed, moveGroupToSection, moveConfigToSection, togglePinned, duplicateConfig, reorderConfigs } = useConfigStore()
   const appMeta = useAppMetaStore((s) => s.meta)
   const updateAppMeta = useAppMetaStore((s) => s.update)
   const showFirstRunCard = configs.length === 0 && !appMeta.hasCreatedFirstConfig && !appMeta.firstRunCardDismissed && !tourActive
   const insightsStatus = useInsightsStore((s) => s.status)
   const insightsMessage = useInsightsStore((s) => s.statusMessage)
+  const tokenomicsIndexComplete = useTokenomicsStore((s) => s.indexJustCompleted)
   const cloudAgentRunning = useCloudAgentStore((s) => s.agents.filter(a => a.status === 'running' || a.status === 'pending').length)
-  const visionRunning = useVisionStore((s) => s.running)
-  const visionConnected = useVisionStore((s) => s.connected)
+  const visionRunning = useConductorMcpStore((s) => s.browserRunning)
+  // P7.7: sidebar dot now reflects MCP server health (the per-task reviewer
+  // missed that visionConnected gated the dot on browser CDP attach instead
+  // of server liveness, leaving the dot red until Chrome handshake completed
+  // even though the MCP HTTP listener was up).
+  const serverRunning = useConductorMcpStore((s) => s.serverRunning)
   const [showNewDialog, setShowNewDialog] = useState(false)
   const [editingConfig, setEditingConfig] = useState<TerminalConfig | null>(null)
-  const [updateAvailable, setUpdateAvailable] = useState(false)
-  const [updateVersion, setUpdateVersion] = useState<string | null>(null)
-  const [updating, setUpdating] = useState(false)
-  const [checking, setChecking] = useState(false)
   const [contextMenuConfig, setContextMenuConfig] = useState<{ configId: string; x: number; y: number } | null>(null)
   const [renamingGroupId, setRenamingGroupId] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
@@ -114,54 +124,31 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
   const sectionRenameRef = useRef<HTMLInputElement>(null)
   const newSectionInputRef = useRef<HTMLInputElement>(null)
 
+  // Mid-session account switch (respawn + resume) for the session context menu.
+  // Gated on having 2+ profiles. The hook is bound to whichever
+  // session currently has its context menu open; it reads the live session and
+  // no-ops when the chosen account equals the current one.
+  const accountProfiles = useAccountProfilesStore((s) => s.profiles)
+  const accountAliases = useSettingsStore((s) => s.settings.accountAliases)
+  const menuSession = sessionContextMenu ? sessions.find((s) => s.id === sessionContextMenu.sessionId) ?? null : null
+  const canSwitchAccount = canSwitchAccountForSession({ provider: menuSession?.provider, isSsh: !!menuSession?.sshConfig, shellOnly: !!menuSession?.shellOnly, profileCount: accountProfiles.length })
+  const switchMenuAccount = useSwitchAccount(menuSession)
+
   // Inject attention styles on mount
   useEffect(() => {
     injectAttentionStyles()
   }, [])
 
-  // Check for updates on startup and subscribe to push notifications
-  useEffect(() => {
-    setChecking(true)
-    window.electronAPI.update.check().then((available) => {
-      setUpdateAvailable(available)
-      setChecking(false)
-    }).catch(() => setChecking(false))
-    const unsubAvailable = window.electronAPI.update.onAvailable((available, version) => {
-      setUpdateAvailable(available)
-      if (version) setUpdateVersion(version)
-      setChecking(false)
-    })
-    return () => { unsubAvailable() }
-  }, [])
-
-  const handleCheckForUpdates = () => {
-    if (checking) return
-    setChecking(true)
-    window.electronAPI.update.check().then(async (available) => {
-      setUpdateAvailable(available)
-      if (available) {
-        try {
-          const ver = await window.electronAPI.update.getVersion()
-          if (ver) setUpdateVersion(ver)
-        } catch { /* ignore */ }
-      }
-      setChecking(false)
-    }).catch(() => setChecking(false))
-  }
-
-  const handleInstallUpdate = () => {
-    if (updating) return
-    if (onUpdateRequested) {
-      onUpdateRequested()
-    } else {
-      setUpdating(true)
-      window.electronAPI.update.installAndRestart().catch(() => setUpdating(false))
-    }
-  }
+  // Update availability + install moved to the global runtime footer
+  // (BottomBar) in UAT R2. The big green sidebar toast was removed; the
+  // footer Update pill is now the single update affordance.
 
   // New config shortcut (configurable)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Suppressed while onboarding overlays the shell — Ctrl+T here would
+      // open the New Config dialog invisibly underneath it.
+      if (deriveOnboarding(useAppMetaStore.getState().meta, {}).due) return
       const sc = useSettingsStore.getState().settings.keyboardShortcuts || DEFAULT_SHORTCUTS
       if (matchesShortcut(e, sc.newConfig)) {
         e.preventDefault()
@@ -175,6 +162,11 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
   const handleCreateConfig = async (data: Omit<TerminalConfig, 'id'>, password?: string, sudoPassword?: string) => {
     const config: TerminalConfig = { ...data, id: generateId() }
     addConfig(config)
+    // Same stamps as the guided first-config path (App.tsx): without them the
+    // FirstRunCard re-appears if the user later deletes all configs, and the
+    // tips system never learns the feature was used.
+    useAppMetaStore.getState().update({ hasCreatedFirstConfig: true })
+    trackUsage('sessions.create-config')
     // Save credentials to the encrypted store (main process handles decryption at spawn time)
     if (password) {
       await window.electronAPI.credentials.save(config.id, password)
@@ -210,39 +202,7 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
   }
 
   const launchFromConfig = async (config: TerminalConfig) => {
-    // Credentials are resolved in the main process at PTY spawn time — never loaded in the renderer
-    const session: Session = {
-      id: generateId(),
-      configId: config.id,
-      label: config.label,
-      workingDirectory: config.workingDirectory,
-      model: config.model,
-      color: config.color,
-      status: 'idle',
-      createdAt: Date.now(),
-      sessionType: config.sessionType,
-      shellOnly: config.shellOnly,
-      partnerTerminalPath: config.partnerTerminalPath,
-      partnerElevated: config.partnerElevated,
-      sshConfig: config.sshConfig ? {
-        host: config.sshConfig.host,
-        port: config.sshConfig.port,
-        username: config.sshConfig.username,
-        remotePath: config.sshConfig.remotePath,
-        hasPassword: config.sshConfig.hasPassword,
-        postCommand: config.sshConfig.postCommand,
-        hasSudoPassword: config.sshConfig.hasSudoPassword,
-      } : undefined,
-      legacyVersion: config.legacyVersion,
-      agentIds: config.agentIds,
-      machineName: config.machineName,
-      effortLevel: config.effortLevel,
-      disableAutoMemory: config.disableAutoMemory,
-    }
-    if (!session.shellOnly && session.sessionType === 'local') {
-      markSessionForResumePicker(session.id)
-    }
-    addSession(session)
+    launchConfig(config)
     onViewChange('sessions')
   }
 
@@ -518,7 +478,10 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
   // Collapsed mode: just show the icon rail
   if (collapsed) {
     return (
-      <aside className="w-12 bg-mantle flex flex-col border-r border-surface0 shrink-0 select-none titlebar-no-drag transition-[width] duration-200">
+      <aside
+        className="w-12 flex flex-col border-r border-surface0 shrink-0 select-none titlebar-no-drag transition-[width] duration-200"
+        style={{ background: 'var(--surface-panel)', boxShadow: 'var(--shadow-panel), var(--highlight-inset)', ...sideType }}
+      >
         <SidebarNav
           currentView={currentView}
           onViewChange={onViewChange}
@@ -526,9 +489,11 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
           insightsMessage={insightsMessage}
           cloudAgentRunning={cloudAgentRunning}
           visionRunning={visionRunning}
-          visionConnected={visionConnected}
+          serverRunning={serverRunning}
+          tokenomicsIndexComplete={tokenomicsIndexComplete}
           collapsed
           onShowHelp={onShowHelp}
+          onShowAccountUsage={onShowAccountUsage}
         />
       </aside>
     )
@@ -577,7 +542,10 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
   }
 
   return (
-    <aside className="w-64 bg-mantle flex flex-col border-r border-surface0 shrink-0 select-none titlebar-no-drag relative transition-[width] duration-200">
+    <aside
+      className="w-64 flex flex-col border-r border-surface0 shrink-0 select-none titlebar-no-drag relative transition-[width] duration-200"
+      style={{ background: 'var(--surface-panel)', boxShadow: 'var(--shadow-panel), var(--highlight-inset)', ...sideType }}
+    >
       {/* Navigation */}
       <SidebarNav
         currentView={currentView}
@@ -586,8 +554,10 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
         insightsMessage={insightsMessage}
         cloudAgentRunning={cloudAgentRunning}
         visionRunning={visionRunning}
-        visionConnected={visionConnected}
+        serverRunning={serverRunning}
+        tokenomicsIndexComplete={tokenomicsIndexComplete}
         onShowHelp={onShowHelp}
+        onShowAccountUsage={onShowAccountUsage}
       />
 
       {/* Saved Configs — hover trigger or pinned inline */}
@@ -605,8 +575,14 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
           }
         }}
       >
-        <div className="p-3 flex items-center justify-between cursor-pointer hover:bg-surface0/30 transition-colors">
-          <div className="flex items-center gap-1.5">
+        <div className="p-3 flex items-center justify-between hover:bg-surface0/30 transition-colors">
+          <button
+            type="button"
+            onClick={() => { if (!configPanelPinned) setConfigPanelOpen((o) => !o) }}
+            aria-expanded={configPanelOpen || configPanelPinned}
+            className="flex items-center gap-1.5 rounded focus-ring"
+            title="Show all saved configs"
+          >
             <svg
               width="10" height="10" viewBox="0 0 10 10" fill="currentColor"
               className="text-overlay0 transition-transform"
@@ -616,7 +592,7 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
             </svg>
             <span className="text-xs font-semibold text-subtext0 uppercase tracking-wider">Saved Configs</span>
             <span className="text-[10px] text-overlay0">{configs.length}</span>
-          </div>
+          </button>
           <div className="flex gap-0.5">
             <button
               onClick={(e) => {
@@ -626,7 +602,7 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
                   return !prev
                 })
               }}
-              className={`w-6 h-6 flex items-center justify-center rounded transition-colors ${configPanelPinned ? 'bg-blue/20 text-blue' : 'hover:bg-surface0 text-overlay1 hover:text-text'}`}
+              className={`w-6 h-6 flex items-center justify-center rounded transition-colors focus-ring ${configPanelPinned ? 'bg-blue/20 text-blue' : 'hover:bg-surface0 text-overlay1 hover:text-text'}`}
               title={configPanelPinned ? 'Unpin config panel' : 'Pin config panel open'}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -635,7 +611,7 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
             </button>
             <button
               onClick={(e) => { e.stopPropagation(); setShowNewSectionInput(true); setConfigPanelOpen(true); setTimeout(() => newSectionInputRef.current?.focus(), 0) }}
-              className="w-6 h-6 flex items-center justify-center rounded hover:bg-surface0 text-overlay1 hover:text-text transition-colors"
+              className="w-6 h-6 flex items-center justify-center rounded hover:bg-surface0 text-overlay1 hover:text-text transition-colors focus-ring"
               title="New section"
             >
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.2">
@@ -646,8 +622,9 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
               </svg>
             </button>
             <button
+              data-tour="new-config"
               onClick={(e) => { e.stopPropagation(); setShowNewDialog(true) }}
-              className="w-6 h-6 flex items-center justify-center rounded hover:bg-surface0 text-overlay1 hover:text-text transition-colors"
+              className="w-6 h-6 flex items-center justify-center rounded hover:bg-surface0 text-overlay1 hover:text-text transition-colors focus-ring"
               title="New config (Ctrl+T)"
             >
               <svg width="14" height="14" viewBox="0 0 14 14"><line x1="7" y1="2" x2="7" y2="12" stroke="currentColor" strokeWidth="1.5"/><line x1="2" y1="7" x2="12" y2="7" stroke="currentColor" strokeWidth="1.5"/></svg>
@@ -655,20 +632,29 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
           </div>
         </div>
 
-      {/* Config panel — overlay when not pinned, inline when pinned */}
+      {/* Config panel — elevated popover when not pinned, inline raised panel when pinned */}
       <div
         className={configPanelPinned
-          ? 'border-b border-surface0 overflow-hidden transition-all duration-200'
-          : 'absolute left-0 right-0 z-50 border border-surface1/50 rounded-b-lg overflow-hidden transition-all duration-200'
+          ? 'border-t border-b border-surface1 overflow-hidden'
+          : 'absolute left-0 right-0 z-50 rounded-lg border border-surface1 overflow-hidden'
         }
         style={configPanelPinned
-          ? { maxHeight: '60vh', backgroundColor: 'var(--color-mantle)' }
+          ? {
+              backgroundColor: 'var(--color-surface0)',
+              maxHeight: configPanelOpen ? '60vh' : '0',
+              transition: 'max-height 200ms ease',
+            }
           : {
+              top: '100%',
+              marginTop: 2,
+              backgroundColor: 'var(--color-surface0)',
+              boxShadow: '0 8px 32px rgba(0,0,0,0.6), 0 2px 8px rgba(0,0,0,0.4)',
               maxHeight: configPanelOpen ? '60vh' : '0',
               opacity: configPanelOpen ? 1 : 0,
-              top: '100%',
-              backgroundColor: 'var(--color-base)',
-              boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+              transform: configPanelOpen ? 'translateY(0) scaleY(1)' : 'translateY(-4px) scaleY(0.98)',
+              transformOrigin: 'top center',
+              transition: 'max-height 200ms ease, opacity 180ms ease, transform 180ms ease',
+              pointerEvents: configPanelOpen ? 'auto' : 'none',
             }
         }
       >
@@ -849,19 +835,22 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
 
       {/* Active Sessions */}
       <div className="p-3 flex items-center justify-between border-t border-surface0 mt-2">
-        <span className="text-xs font-semibold text-subtext0 uppercase tracking-wider">Active Sessions</span>
+        <span className="flex items-center gap-1.5">
+          <span className="text-xs font-semibold text-subtext0 uppercase tracking-wider">Active Sessions</span>
+          <span className="text-[10px] text-overlay0">{sessions.length}</span>
+        </span>
         {selectedSessionIds.size > 1 && (
           <div className="flex items-center gap-1.5">
             <span className="text-[10px] text-overlay0">{selectedSessionIds.size} selected</span>
             <button
               onClick={handleBulkClose}
-              className="px-1.5 py-0.5 rounded text-[10px] bg-red/20 text-red hover:bg-red/30 transition-colors"
+              className="px-1.5 py-0.5 rounded text-[10px] bg-red/20 text-red hover:bg-red/30 transition-colors focus-ring"
             >
               Close All
             </button>
             <button
               onClick={() => setSelectedSessionIds(new Set())}
-              className="px-1.5 py-0.5 rounded text-[10px] bg-surface1 text-overlay1 hover:bg-surface1/80 transition-colors"
+              className="px-1.5 py-0.5 rounded text-[10px] bg-surface1 text-overlay1 hover:bg-surface1/80 transition-colors focus-ring"
             >
               Clear
             </button>
@@ -897,6 +886,18 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
           }
         }}
       >
+        {/* One-time colour-migration notice. Wires Review colours to the SAME
+            edit dialog ConfigRow.onEdit uses (setEditingConfig below). */}
+        <ColourMigrationNotice
+          onOpenConfigEditor={(configId) => {
+            const cfg = configs.find((c) => c.id === configId)
+            if (cfg) setEditingConfig(cfg)
+          }}
+        />
+
+        {/* P2.4: warns when a corrupt config section was reset on hydrate. */}
+        <ConfigHydrationNotice />
+
         {showFirstRunCard && onShowFirstRun && (
           <FirstRunCard
             onGetStarted={onShowFirstRun}
@@ -926,7 +927,7 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
               }}
             />
             {!sessionSectionCollapsed[section.id] && (
-              <div className="ml-2 space-y-0.5">
+              <div className="space-y-0.5">
                 {sectionGroups.map(({ group, sessions: groupSessions }) => (
                   <div key={group.id} className="mb-1">
                     <SessionGroupHeader
@@ -936,7 +937,7 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
                       onCloseAll={() => { groupSessions.forEach((s) => { killSessionPty(s.id); removeSession(s.id) }) }}
                     />
                     {!sessionGroupCollapsed[group.id] && (
-                      <div className="ml-3 space-y-0.5">
+                      <div className="space-y-0.5">
                         {groupSessions.map(renderSessionRow)}
                       </div>
                     )}
@@ -958,7 +959,7 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
               onCloseAll={() => { groupSessions.forEach((s) => { killSessionPty(s.id); removeSession(s.id) }) }}
             />
             {!sessionGroupCollapsed[group.id] && (
-              <div className="ml-3 space-y-0.5">
+              <div className="space-y-0.5">
                 {groupSessions.map(renderSessionRow)}
               </div>
             )}
@@ -990,6 +991,10 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
               setSessionContextMenu(null)
             }}
             onDismiss={() => setSessionContextMenu(null)}
+            canSwitchAccount={canSwitchAccount}
+            profiles={accountProfiles}
+            accountAliases={accountAliases}
+            onSwitchAccount={(profileId) => switchMenuAccount(s.id, profileId)}
           />
         ) : null
       })()}
@@ -1009,15 +1014,6 @@ export default function Sidebar({ currentView, onViewChange, onUpdateRequested, 
         />
       )}
 
-      {/* Update panel */}
-      <UpdatePanel
-        updateAvailable={updateAvailable}
-        updateVersion={updateVersion}
-        updating={updating}
-        checking={checking}
-        onCheckForUpdates={handleCheckForUpdates}
-        onInstallUpdate={handleInstallUpdate}
-      />
     </aside>
   )
 }

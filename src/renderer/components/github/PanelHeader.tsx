@@ -9,6 +9,7 @@ interface Props {
   syncedAt?: number
   nextResetAt?: number
   onRefresh: () => void
+  onCollapse?: () => void
 }
 
 export default function PanelHeader({
@@ -20,9 +21,15 @@ export default function PanelHeader({
   syncedAt,
   nextResetAt,
   onRefresh,
+  onCollapse,
 }: Props) {
+  const isMac = typeof window !== 'undefined' && window.electronPlatform === 'darwin'
+  const collapseTitle = `Hide GitHub panel (${isMac ? String.fromCodePoint(0x2318) + '+/' : 'Ctrl+/'})`
   return (
-    <div className="flex items-center gap-2 px-3 py-2 border-b border-surface0 bg-mantle">
+    <div
+      className="flex items-center gap-2 px-3 py-2 border-b"
+      style={{ background: 'var(--surface-overlay)', borderColor: 'var(--border-subtle)' }}
+    >
       {branch && (
         <span
           className="text-sm bg-surface0 px-2 py-0.5 rounded truncate max-w-[60%]"
@@ -94,6 +101,16 @@ export default function PanelHeader({
       >
         {String.fromCodePoint(0x21bb)}
       </button>
+      {onCollapse && (
+        <button
+          onClick={onCollapse}
+          title={collapseTitle}
+          aria-label="Hide GitHub panel"
+          className="text-overlay1 hover:text-text transition-colors"
+        >
+          {String.fromCodePoint(0x00bb)}
+        </button>
+      )}
     </div>
   )
 }

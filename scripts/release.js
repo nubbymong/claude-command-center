@@ -285,6 +285,21 @@ if (NO_BUMP) {
   version = parts.join('.')
   pkg.version = version
   fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n', 'utf-8')
+
+  // Regenerate package-lock.json so its version field matches the bumped
+  // package.json. Without this, the lockfile keeps the OLD version while
+  // package.json has the new one -- npm ci on a clean checkout would either
+  // refuse or install with the stale version. Surfaced by Codex review on
+  // v1.5.0-beta: live tree had package.json@1.5.0 + package-lock.json@1.4.3.
+  // --package-lock-only skips actual node_modules install (~10s -> <1s).
+  // --ignore-scripts avoids running lifecycle scripts mid-release.
+  // --no-audit / --no-fund silence noise we already gate elsewhere.
+  try {
+    run('npm install --package-lock-only --ignore-scripts --no-audit --no-fund', { stdio: 'pipe' })
+    ok(`package-lock.json regenerated at v${version}`)
+  } catch (err) {
+    warn(`Failed to regenerate package-lock.json (continuing anyway): ${err.message}`)
+  }
 }
 
 const tag = tagFor(version, channel)

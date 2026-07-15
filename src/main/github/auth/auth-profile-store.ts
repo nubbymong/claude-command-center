@@ -1,11 +1,7 @@
 import { safeStorage } from 'electron'
 import { randomUUID } from 'node:crypto'
-import type { AuthProfile, GitHubConfig } from '../../../shared/github-types'
-import {
-  GITHUB_CONFIG_SCHEMA_VERSION,
-  DEFAULT_SYNC_INTERVALS,
-  DEFAULT_FEATURE_TOGGLES,
-} from '../../../shared/github-constants'
+import type { AuthProfile, GitHubConfig, RendererProfilePatch } from '../../../shared/github-types'
+import { DEFAULT_AUTH_FEATURE_TOGGLES, emptyGitHubConfig } from '../../../shared/github-constants'
 import { AsyncMutex } from '../async-mutex'
 
 export interface AuthProfileStoreIO {
@@ -60,18 +56,27 @@ export type ProfilePatch = Partial<
     | 'expiresAt'
     | 'expiryObservable'
     | 'rateLimits'
+    // Per-account feature enablement. The map is replaced WHOLE, not
+    // deep-merged — callers send the full toggle set they want persisted
+    // (see githubStore feature actions, which read-modify-write via
+    // effectiveToggle so partial maps inherit defaults at write time).
+    | 'featureToggles'
   >
 >
 
-function emptyConfig(): GitHubConfig {
-  return {
-    schemaVersion: GITHUB_CONFIG_SCHEMA_VERSION,
-    authProfiles: {},
-    featureToggles: { ...DEFAULT_FEATURE_TOGGLES },
-    syncIntervals: { ...DEFAULT_SYNC_INTERVALS },
-    enabledByDefault: false,
-    transcriptScanningOptIn: false,
-  }
+/**
+ * Narrows a raw renderer-supplied patch down to the ONLY fields the renderer
+ * is permitted to assert (label, featureToggles). Auth-system fields — scopes,
+ * capabilities, expiry, verification timestamps, tokenCiphertext — are derived
+ * from token verification in the main process; a renderer must never be able to
+ * forge them via GITHUB_PROFILE_UPDATE. Undefined keys are dropped so the patch
+ * never overwrites an existing value with `undefined`.
+ */
+export function pickRendererProfilePatch(patch: RendererProfilePatch): RendererProfilePatch {
+  const out: RendererProfilePatch = {}
+  if (patch.label !== undefined) out.label = patch.label
+  if (patch.featureToggles !== undefined) out.featureToggles = patch.featureToggles
+  return out
 }
 
 export class AuthProfileStore {
@@ -80,7 +85,7 @@ export class AuthProfileStore {
   constructor(private io: AuthProfileStoreIO) {}
 
   private async load(): Promise<GitHubConfig> {
-    return (await this.io.readConfig()) ?? emptyConfig()
+    return (await this.io.readConfig()) ?? emptyGitHubConfig()
   }
 
   async addProfile(input: AddProfileInput): Promise<string> {
@@ -120,6 +125,12 @@ export class AuthProfileStore {
         lastVerifiedAt: Date.now(),
         expiresAt: input.expiresAt,
         expiryObservable: input.expiryObservable,
+        // spec 2026-06-13 s2: featureDefaults seeds every newly added account
+        // so a fresh profile inherits the user's master intent. Cloned (spread)
+        // so the new profile doesn't share the config's defaults object by
+        // reference. config carries featureDefaults post-migration; fall back
+        // to the constant for pre-migration / first-launch configs.
+        featureToggles: { ...(config.featureDefaults ?? DEFAULT_AUTH_FEATURE_TOGGLES) },
       }
       await this.io.writeConfig(config)
       return id
@@ -149,6 +160,43 @@ export class AuthProfileStore {
       const config = await this.load()
       delete config.authProfiles[id]
       if (config.defaultAuthProfileId === id) config.defaultAuthProfileId = undefined
+      await this.io.writeConfig(config)
+    })
+  }
+
+  /**
+   * Re-auth dedupe for the SAME GitHub account: after a fresh oauth profile
+   * (`newId`) is added, this carries the user's per-account featureToggles from
+   * the OLD same-username profile(s) onto the new one and removes the olds — all
+   * in ONE transaction so the new profile is never observed with the wrong
+   * toggles and a concurrent reader can't see a half-applied state.
+   *
+   * The new profile was just seeded from featureDefaults (addProfile), which is
+   * the GLOBAL intent, not this account's. The old profile's map IS the user's
+   * intent for this account, so it always wins when present. Without this, a
+   * re-auth silently reverts per-account toggles to the master defaults.
+   */
+  async replaceSameAccountOAuth(newId: string, username: string): Promise<void> {
+    await this.mutex.run(async () => {
+      const config = await this.load()
+      const fresh = config.authProfiles[newId]
+      if (!fresh) return
+      let carried: AuthProfile['featureToggles']
+      let removedAny = false
+      for (const [pid, p] of Object.entries(config.authProfiles)) {
+        if (pid === newId || p.kind !== 'oauth' || p.username !== username) continue
+        // Newest old profile wins if there were somehow several; the loop order
+        // is insertion order, so the last match is the most recently added.
+        if (p.featureToggles) carried = p.featureToggles
+        delete config.authProfiles[pid]
+        if (config.defaultAuthProfileId === pid) config.defaultAuthProfileId = undefined
+        removedAny = true
+      }
+      // First-ever auth for this account: nothing replaced, nothing to write.
+      if (!removedAny) return
+      if (carried) {
+        config.authProfiles[newId] = { ...fresh, featureToggles: { ...carried } }
+      }
       await this.io.writeConfig(config)
     })
   }

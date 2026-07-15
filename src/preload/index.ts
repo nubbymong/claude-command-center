@@ -1,6 +1,9 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC, ptyDataChannel, ptyExitChannel } from '../shared/ipc-channels'
 import type { HookEvent, HooksGatewayStatus } from '../shared/hook-types'
+import type { StatuslineData } from '../shared/types'
+import type { ModelRegistry } from '../shared/model-registry'
+import type { SentinelStateSnapshot } from '../shared/sentinel-types'
 
 export interface ElectronAPI {
   config: {
@@ -8,12 +11,27 @@ export interface ElectronAPI {
     save: (key: string, data: unknown) => Promise<boolean>
     migrateFromLocalStorage: (data: Record<string, unknown>) => Promise<boolean>
   }
+  accountProfiles: {
+    list: () => Promise<import('../shared/account-types').AccountProfile[]>
+    create: (name?: string) => Promise<import('../shared/account-types').AccountProfile>
+    rename: (id: string, name: string) => Promise<{ ok: boolean }>
+    delete: (id: string) => Promise<{ ok: boolean; error?: string }>
+    refreshIdentity: (id: string) => Promise<{ ok: boolean; email: string | null; configDir?: string }>
+    globalEmail: () => Promise<string | null>
+    captureDetected: (sessionId: string, name?: string) => Promise<import('../shared/account-types').AccountProfile | null>
+    onAccountNewDetected: (cb: (data: { sessionId: string; profileId: string; email: string }) => void) => () => void
+  }
+  accountUsage: {
+    fetchAll: () => Promise<import('../shared/usage-types').AccountUsage[]>
+    fetchOne: (id: string) => Promise<import('../shared/usage-types').AccountUsage | null>
+  }
   window: {
     minimize: () => void
     maximize: () => void
     close: () => void
     forceClose: () => void
     allowClose: () => void
+    cancelClose: () => void
     isMaximized: () => Promise<boolean>
     onMaximizedChanged: (callback: (maximized: boolean) => void) => () => void
     onCloseRequested: (callback: () => void) => () => void
@@ -22,8 +40,7 @@ export interface ElectronAPI {
     openFolder: () => Promise<string | null>
   }
   clipboard: {
-    readImage: () => Promise<string | null>
-    saveImage: () => Promise<string | null>
+    saveImage: () => Promise<{ path: string } | { error: 'no-image' | 'too-large' }>
   }
   credentials: {
     save: (configId: string, password: string) => Promise<boolean>
@@ -44,19 +61,33 @@ export interface ElectronAPI {
       }
       configId?: string
       configLabel?: string
+      loggingEnabled?: boolean
       useResumePicker?: boolean
       agentsConfig?: Array<{
         name: string; description: string; prompt: string
         model?: string; tools?: string[]
       }>
-      effortLevel?: 'low' | 'medium' | 'high'
+      effortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode'
       disableAutoMemory?: boolean
+      enableCodexReview?: boolean
+      resume?: { uuid: string; cwd: string }
+      model?: string
+      profileId?: string
+      provider?: 'claude' | 'codex'
+      codexOptions?: {
+        model?: string
+        reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+        permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted'
+      }
     }) => Promise<void>
     write: (sessionId: string, data: string) => void
     resize: (sessionId: string, cols: number, rows: number) => void
     kill: (sessionId: string) => void
     onData: (sessionId: string, callback: (data: string) => void) => () => void
     onExit: (sessionId: string, callback: (exitCode: number) => void) => () => void
+  }
+  ptyIntegrity: {
+    report: (report: import('../shared/service-health').PtyIntegrityReport) => void
   }
   ssh: {
     /** Manually trigger the post-connect command stage. */
@@ -73,16 +104,26 @@ export interface ElectronAPI {
     onFlowState: (sessionId: string, callback: (msg: { state: string; info?: string }) => void) => () => void
   }
   statusline: {
-    onUpdate: (callback: (data: {
-      sessionId: string
-      model?: string
-      contextUsedPercent?: number
-      contextRemainingPercent?: number
-      costUsd?: number
-      totalDurationMs?: number
-      linesAdded?: number
-      linesRemoved?: number
-    }) => void) => () => void
+    onUpdate: (callback: (data: StatuslineData) => void) => () => void
+  }
+  effort: {
+    onUpdate: (callback: (data: { sessionId: string; effortLevel: string }) => void) => () => void
+  }
+  registry: {
+    get: () => Promise<ModelRegistry>
+    onUpdate: (callback: (reg: ModelRegistry) => void) => () => void
+  }
+  sentinel: {
+    getState(): Promise<SentinelStateSnapshot | null>
+    apply(id: string): Promise<{ ok: boolean; error?: string }>
+    revert(id: string): Promise<void>
+    setStatus(id: string, status: 'dismissed' | 'muted'): Promise<void>
+    rerun(): Promise<void>
+    onUpdate(cb: (snap: SentinelStateSnapshot) => void): () => void
+  }
+  accountIdentity: {
+    get: (sessionId: string) => Promise<{ email: string; colourKey: string } | null>
+    onUpdate: (callback: (data: { sessionId: string; email: string; colourKey: string }) => void) => () => void
   }
   debug: {
     onDebug: (callback: (data: unknown) => void) => () => void
@@ -96,11 +137,33 @@ export interface ElectronAPI {
     getTotalUsage: () => Promise<unknown>
     getUsageHistory: (hours: number) => Promise<unknown>
   }
-  logs: {
-    list: () => Promise<unknown[]>
-    read: (logDir: string, offset?: number, limit?: number) => Promise<{ entries: unknown[]; total: number }>
-    search: (logDir: string, query: string) => Promise<unknown[]>
-    cleanup: (retentionDays?: number) => Promise<number>
+  logsdb: {
+    /** T8b (bug #5): exact-conversation resume target for a session, or null. */
+    getResumeTarget: (sessionId: string) => Promise<{ uuid: string; cwd: string } | null>
+  }
+  logsWipe: {
+    detect: () => Promise<{ present: boolean; totalBytes: number; paths: string[]; settingsKeys: string[] }>
+    confirm: () => Promise<{ deletedPaths: string[]; clearedKeys: string[]; freedBytes: number }>
+  }
+  logs2: {
+    listSlots: () => Promise<unknown[]>
+    readMessages: (args: {
+      scope: { configId: string } | { sessionId: string }
+      anchor?: 'tail' | { runId: number; idx: number }
+      dir?: 'older' | 'newer'
+      limit?: number
+    }) => Promise<unknown[]>
+    turnSummary: (args: { scope: { configId: string } | { sessionId: string } }) => Promise<unknown[]>
+    search: (args: { query: string; limit?: number }) => Promise<unknown[]>
+    deleteSlot: (args: { scope: { configId: string } | { sessionId: string } }) =>
+      Promise<{ deletedRuns: number; deletedMessages: number }>
+    clearAll: () => Promise<{ deletedRuns: number; deletedMessages: number }>
+    ingestStatus: (args: { sessionId: string }) => Promise<{
+      transcripts: { path: string; status: string; ord: number }[]
+      messageCount: number
+    } | null>
+    sessionConfig: (args: { sessionId: string }) => Promise<{ configId: string | null } | null>
+    onNewMessages: (cb: (e: { sessionId: string; configId: string | null; count: number }) => void) => () => void
   }
   discovery: {
     getProjects: () => Promise<unknown>
@@ -108,8 +171,14 @@ export interface ElectronAPI {
   }
   update: {
     check: () => Promise<boolean>
+    getVersion: () => Promise<string>
     installAndRestart: () => Promise<boolean>
-    onAvailable: (callback: (available: boolean) => void) => () => void
+    hasSourcePath: () => Promise<boolean>
+    getSourcePath: () => Promise<string>
+    setSourcePath: (path: string) => Promise<boolean>
+    selectSourcePath: () => Promise<{ path?: string; error?: string } | null>
+    onAvailable: (callback: (available: boolean, version?: string) => void) => () => void
+    onSourceConfigured: (callback: (configured: boolean) => void) => () => void
     onServerConnected: (callback: (connected: boolean) => void) => () => void
   }
   screenshot: {
@@ -164,8 +233,135 @@ export interface ElectronAPI {
   shell: {
     openExternal: (url: string) => Promise<void>
   }
+  codex: {
+    status: () => Promise<{
+      installed: boolean
+      version: string | null
+      authMode: 'chatgpt' | 'api-key' | 'none'
+      planType?: string
+      accountId?: string
+      hasOpenAiApiKeyEnv: boolean
+    }>
+    login: (payload: { mode: 'chatgpt' | 'api-key' | 'device'; apiKey?: string }) => Promise<{
+      ok: boolean
+      browserUrl?: string
+      deviceCode?: string
+      error?: string
+    }>
+    logout: () => Promise<{ ok: boolean }>
+    testConnection: () => Promise<{ ok: boolean; message: string }>
+  }
   github: GitHubBridge
   hooks: HooksBridge
+  codexReview: {
+    getUsage: (sessionId: string) => Promise<import('../shared/types').CodexReviewUsageRecord | null>
+    onUsageUpdated: (callback: (payload: { sessionId: string; record: import('../shared/types').CodexReviewUsageRecord }) => void) => () => void
+  }
+  channels: {
+    send: (req: unknown) => Promise<unknown>
+    retract: (p: unknown) => Promise<unknown>
+    forceTier: (p: unknown) => Promise<unknown>
+    ruleCRUD: (p: unknown) => Promise<unknown>
+    standingApprovalCRUD: (p: unknown) => Promise<unknown>
+    capabilityDiagnostics: () => Promise<unknown>
+    introDismissed: () => Promise<unknown>
+    killSwitch: (p: unknown) => Promise<unknown>
+    onLedgerEvent: (cb: (r: unknown) => void) => () => void
+    rendererReady: () => Promise<unknown>
+    onAttention: (cb: (p: { sessionId: string; needsAttention: boolean }) => void) => () => void
+  }
+  setup: {
+    isComplete: () => Promise<boolean>
+    getDefaultDataDir: () => Promise<string>
+    selectDataDir: () => Promise<string | null>
+    setDataDir: (dir: string) => Promise<boolean>
+    getDataDir: () => Promise<string>
+    getResourcesDir: () => Promise<string>
+    selectResourcesDir: () => Promise<string | null>
+    setResourcesDir: (dir: string) => Promise<boolean>
+    isCliReady: () => Promise<boolean>
+    spawnCliSetup: (cols: number, rows: number) => Promise<string>
+    killCliSetup: () => Promise<boolean>
+  }
+  insights: {
+    run: (opts?: { profileId?: string }) => Promise<string>
+    getCatalogue: () => Promise<import('../shared/types').InsightsCatalogue>
+    getReport: (runId: string) => Promise<string | null>
+    getKpis: (runId: string) => Promise<import('../shared/types').KpiData | null>
+    getLatest: () => Promise<import('../shared/types').InsightsRun | null>
+    isRunning: () => Promise<boolean>
+    onStatusChanged: (callback: (run: unknown) => void) => () => void
+  }
+  vision: {
+    start: () => Promise<{ ok: boolean; error?: string }>
+    stop: () => Promise<{ ok: boolean }>
+    status: () => Promise<{ running: boolean; connected: boolean; browser: string; mcpPort: number }>
+    launch: (browser: string, debugPort: number, url?: string, headless?: boolean) => Promise<{ ok: boolean; pid?: number; command?: string; error?: string }>
+    saveConfig: (config: { enabled?: boolean; browser: 'chrome' | 'edge'; debugPort: number; mcpPort?: number; url?: string; headless?: boolean }) => Promise<{ ok: boolean }>
+    getConfig: () => Promise<{ enabled?: boolean; browser: 'chrome' | 'edge'; debugPort: number; mcpPort?: number; url?: string; headless?: boolean } | null>
+    onStatusChanged: (callback: (data: { connected: boolean; browser: string; mcpPort: number }) => void) => () => void
+  }
+  legacyVersion: {
+    fetchVersions: () => Promise<string[]>
+    isInstalled: (version: string) => Promise<boolean>
+    install: (version: string) => Promise<{ ok: boolean; error?: string }>
+    remove: (version: string) => Promise<boolean>
+    listInstalled: () => Promise<Array<{ version: string; sizeBytes: number }>>
+    onInstallProgress: (cb: (data: { version: string; message: string }) => void) => () => void
+  }
+  cloudAgent: {
+    dispatch: (agent: { name: string; description: string; projectPath: string; configId?: string; profileId?: string; legacyVersion?: { enabled: boolean; version: string }; skipPermissions?: boolean }) => Promise<import('../shared/types').CloudAgent>
+    cancel: (id: string) => Promise<boolean>
+    remove: (id: string) => Promise<boolean>
+    retry: (id: string) => Promise<import('../shared/types').CloudAgent | null>
+    list: () => Promise<import('../shared/types').CloudAgent[]>
+    getOutput: (id: string) => Promise<string>
+    clearCompleted: () => Promise<number>
+    onStatusChanged: (callback: (agent: import('../shared/types').CloudAgent) => void) => () => void
+    onOutputChunk: (callback: (data: { id: string; chunk: string }) => void) => () => void
+  }
+  team: {
+    list: () => Promise<import('../shared/types').TeamTemplate[]>
+    save: (team: import('../shared/types').TeamTemplate) => Promise<import('../shared/types').TeamTemplate>
+    delete: (id: string) => Promise<boolean>
+    run: (teamId: string, projectPath?: string) => Promise<import('../shared/types').TeamRun | null>
+    cancelRun: (runId: string) => Promise<boolean>
+    listRuns: () => Promise<import('../shared/types').TeamRun[]>
+    onRunStatusChanged: (callback: (run: import('../shared/types').TeamRun) => void) => () => void
+  }
+  serviceStatus: {
+    get: () => Promise<unknown>
+    onUpdate: (callback: (data: unknown) => void) => () => void
+  }
+  serviceHealth: {
+    get: () => Promise<import('../shared/service-health').DiagnosticsSnapshot>
+    restart: (serviceId: string) => Promise<{ ok: boolean; reason?: string }>
+    onUpdate: (callback: (snap: import('../shared/service-health').DiagnosticsSnapshot) => void) => () => void
+  }
+  cli: {
+    check: () => Promise<boolean>
+    path: () => Promise<string | null>
+    version: () => Promise<string | null>
+  }
+  help: {
+    workspace: () => Promise<string | null>
+  }
+  tokenomics: {
+    summary: (filter?: import('../shared/types').TkSummaryFilter) => Promise<import('../shared/types').TkSummary | null>
+    sessions: (query?: import('../shared/types').TkSessionsQuery) => Promise<import('../shared/types').TkSessionsPage>
+    sessionDetail: (sessionId: string) => Promise<import('../shared/types').TkSessionDetail | null>
+    indexStatus: () => Promise<import('../shared/types').TkIndexStatus>
+    onIndexStatus: (cb: (s: import('../shared/types').TkIndexStatus) => void) => () => void
+    onIndexProgress: (cb: (p: import('../shared/types').TkIndexProgress) => void) => () => void
+    onIndexComplete: (cb: (c: import('../shared/types').TkIndexCompleteEvent) => void) => () => void
+  }
+  memory: {
+    scan: () => Promise<import('../shared/types').MemoryScanResult>
+    read: (filePath: string) => Promise<string>
+    delete: (filePath: string) => Promise<void>
+    writeFrontmatter: (filePath: string, frontmatter: { name?: string; description?: string; type?: string }) => Promise<void>
+    recentSessions: (projectDir: string) => Promise<Array<{ sessionId: string; lastActive: number }>>
+  }
 }
 
 interface HooksBridge {
@@ -195,6 +391,7 @@ interface GitHubBridge {
   adoptGhCli: (username: string) => Promise<{ ok: boolean; id?: string; error?: string }>
   removeProfile: (id: string) => Promise<{ ok: boolean }>
   renameProfile: (id: string, label: string) => Promise<{ ok: boolean }>
+  updateProfile: (id: string, patch: unknown) => Promise<{ ok: boolean }>
   testProfile: (id: string) => Promise<{
     ok: boolean
     username?: string
@@ -202,7 +399,10 @@ interface GitHubBridge {
     expiresAt?: number
     error?: string
   }>
-  oauthStart: (mode: 'public' | 'private') => Promise<{
+  oauthStart: (
+    mode: 'public' | 'private',
+    opts?: { includeUserScope?: boolean },
+  ) => Promise<{
     flowId: string
     userCode: string
     verificationUri: string
@@ -211,6 +411,7 @@ interface GitHubBridge {
   }>
   oauthPoll: (flowId: string) => Promise<{ ok: boolean; profileId?: string; error?: string }>
   oauthCancel: (flowId: string) => Promise<{ ok: boolean }>
+  reauthProfile: (profileId: string) => Promise<import('../shared/github-types').ReauthResult>
   ghcliDetect: () => Promise<{ ok: boolean; users: string[] }>
   repoDetect: (cwd: string) => Promise<{ ok: boolean; slug: string | null }>
   updateSessionConfig: (
@@ -250,6 +451,8 @@ interface GitHubBridge {
     body: string,
   ) => Promise<{ ok: boolean; error?: string }>
   markNotifRead: (profileId: string, notifId: string) => Promise<{ ok: boolean; error?: string }>
+  getAiUsage: (force?: boolean) => Promise<unknown>
+  onAiUsageUpdate: (cb: (payload: unknown) => void) => () => void
 }
 
 const electronAPI: ElectronAPI = {
@@ -257,6 +460,24 @@ const electronAPI: ElectronAPI = {
     loadAll: () => ipcRenderer.invoke(IPC.CONFIG_LOAD_ALL),
     save: (key, data) => ipcRenderer.invoke(IPC.CONFIG_SAVE, key, data),
     migrateFromLocalStorage: (data) => ipcRenderer.invoke(IPC.CONFIG_MIGRATE, data),
+  },
+  accountProfiles: {
+    list: () => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_LIST),
+    create: (name?: string) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_CREATE, { name }),
+    rename: (id, name) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_RENAME, { id, name }),
+    delete: (id) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_DELETE, { id }),
+    refreshIdentity: (id) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_REFRESH_IDENTITY, { id }),
+    globalEmail: () => ipcRenderer.invoke(IPC.ACCOUNT_GLOBAL_EMAIL_GET),
+    captureDetected: (sessionId: string, name?: string) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_CAPTURE_DETECTED, { sessionId, name }),
+    onAccountNewDetected: (cb: (data: { sessionId: string; profileId: string; email: string }) => void) => {
+      const handler = (_e: unknown, data: { sessionId: string; profileId: string; email: string }) => cb(data)
+      ipcRenderer.on(IPC.ACCOUNT_NEW_DETECTED, handler)
+      return () => ipcRenderer.removeListener(IPC.ACCOUNT_NEW_DETECTED, handler)
+    },
+  },
+  accountUsage: {
+    fetchAll: () => ipcRenderer.invoke(IPC.ACCOUNT_USAGE_FETCH_ALL),
+    fetchOne: (id: string) => ipcRenderer.invoke(IPC.ACCOUNT_USAGE_FETCH_ONE, { id }),
   },
   window: {
     minimize: () => ipcRenderer.send(IPC.WINDOW_MINIMIZE),
@@ -281,7 +502,6 @@ const electronAPI: ElectronAPI = {
     openFolder: () => ipcRenderer.invoke(IPC.DIALOG_OPEN_FOLDER)
   },
   clipboard: {
-    readImage: () => ipcRenderer.invoke(IPC.CLIPBOARD_READ_IMAGE),
     saveImage: () => ipcRenderer.invoke(IPC.CLIPBOARD_SAVE_IMAGE)
   },
   credentials: {
@@ -310,6 +530,10 @@ const electronAPI: ElectronAPI = {
       return () => ipcRenderer.removeListener(channel, handler)
     }
   },
+  ptyIntegrity: {
+    report: (report: import('../shared/service-health').PtyIntegrityReport) =>
+      ipcRenderer.send(IPC.PTY_INTEGRITY_REPORT, report),
+  },
   ssh: {
     runPostCommand: (sessionId: string) =>
       ipcRenderer.invoke(IPC.SSH_FLOW_RUN_POSTCOMMAND, sessionId),
@@ -333,6 +557,41 @@ const electronAPI: ElectronAPI = {
       return () => ipcRenderer.removeListener(IPC.STATUSLINE_UPDATE, handler)
     }
   },
+  effort: {
+    onUpdate: (callback) => {
+      const handler = (_: unknown, data: unknown) => callback(data as { sessionId: string; effortLevel: string })
+      ipcRenderer.on(IPC.HOOKS_EFFORT_UPDATE, handler)
+      return () => ipcRenderer.removeListener(IPC.HOOKS_EFFORT_UPDATE, handler)
+    },
+  },
+  registry: {
+    get: () => ipcRenderer.invoke(IPC.REGISTRY_GET),
+    onUpdate: (callback) => {
+      const handler = (_: unknown, reg: unknown) => callback(reg as ModelRegistry)
+      ipcRenderer.on(IPC.REGISTRY_UPDATE, handler)
+      return () => ipcRenderer.removeListener(IPC.REGISTRY_UPDATE, handler)
+    },
+  },
+  sentinel: {
+    getState: () => ipcRenderer.invoke(IPC.SENTINEL_GET_STATE),
+    apply: (findingId: string) => ipcRenderer.invoke(IPC.SENTINEL_APPLY, findingId),
+    revert: (findingId: string) => ipcRenderer.invoke(IPC.SENTINEL_REVERT, findingId),
+    setStatus: (findingId: string, status: 'dismissed' | 'muted') => ipcRenderer.invoke(IPC.SENTINEL_SET_STATUS, findingId, status),
+    rerun: () => ipcRenderer.invoke(IPC.SENTINEL_RERUN),
+    onUpdate: (callback) => {
+      const handler = (_: unknown, snap: unknown) => callback(snap as SentinelStateSnapshot)
+      ipcRenderer.on(IPC.SENTINEL_STATE_UPDATE, handler)
+      return () => ipcRenderer.removeListener(IPC.SENTINEL_STATE_UPDATE, handler)
+    },
+  },
+  accountIdentity: {
+    get: (sessionId) => ipcRenderer.invoke(IPC.ACCOUNT_IDENTITY_GET, { sessionId }),
+    onUpdate: (callback) => {
+      const handler = (_: unknown, data: unknown) => callback(data as { sessionId: string; email: string; colourKey: string })
+      ipcRenderer.on(IPC.ACCOUNT_IDENTITY_UPDATE, handler)
+      return () => ipcRenderer.removeListener(IPC.ACCOUNT_IDENTITY_UPDATE, handler)
+    },
+  },
   debug: {
     onDebug: (callback: (data: unknown) => void) => {
       const handler = (_: unknown, data: unknown) => callback(data)
@@ -350,11 +609,37 @@ const electronAPI: ElectronAPI = {
     getTotalUsage: () => ipcRenderer.invoke(IPC.USAGE_TOTAL),
     getUsageHistory: (hours) => ipcRenderer.invoke(IPC.USAGE_HISTORY, hours)
   },
-  logs: {
-    list: () => ipcRenderer.invoke(IPC.LOGS_LIST),
-    read: (logDir, offset, limit) => ipcRenderer.invoke(IPC.LOGS_READ, logDir, offset, limit),
-    search: (logDir, query) => ipcRenderer.invoke(IPC.LOGS_SEARCH, logDir, query),
-    cleanup: (retentionDays) => ipcRenderer.invoke(IPC.LOGS_CLEANUP, retentionDays)
+  logsdb: {
+    getResumeTarget: (sessionId: string) => ipcRenderer.invoke(IPC.LOGS_GET_RESUME_TARGET, sessionId),
+  },
+  // Logs v2 — first-run warned wipe of the OLD log artifacts.
+  logsWipe: {
+    detect: () => ipcRenderer.invoke(IPC.LOGS2_WIPE_DETECT),
+    confirm: () => ipcRenderer.invoke(IPC.LOGS2_WIPE_CONFIRM),
+  },
+  // Logs v2 — the transcript-chat read surface (slots, paged messages, search,
+  // turn summary, deletes, ingest status) + a live new-messages push.
+  logs2: {
+    listSlots: () => ipcRenderer.invoke(IPC.LOGS2_LIST_SLOTS),
+    readMessages: (args: {
+      scope: { configId: string } | { sessionId: string }
+      anchor?: 'tail' | { runId: number; idx: number }
+      dir?: 'older' | 'newer'
+      limit?: number
+    }) => ipcRenderer.invoke(IPC.LOGS2_READ_MESSAGES, args),
+    turnSummary: (args: { scope: { configId: string } | { sessionId: string } }) =>
+      ipcRenderer.invoke(IPC.LOGS2_TURN_SUMMARY, args),
+    search: (args: { query: string; limit?: number }) => ipcRenderer.invoke(IPC.LOGS2_SEARCH, args),
+    deleteSlot: (args: { scope: { configId: string } | { sessionId: string } }) =>
+      ipcRenderer.invoke(IPC.LOGS2_DELETE_SLOT, args),
+    clearAll: () => ipcRenderer.invoke(IPC.LOGS2_CLEAR_ALL),
+    ingestStatus: (args: { sessionId: string }) => ipcRenderer.invoke(IPC.LOGS2_INGEST_STATUS, args),
+    sessionConfig: (args: { sessionId: string }) => ipcRenderer.invoke(IPC.LOGS2_SESSION_CONFIG, args),
+    onNewMessages: (cb: (e: { sessionId: string; configId: string | null; count: number }) => void) => {
+      const handler = (_e: unknown, e: { sessionId: string; configId: string | null; count: number }) => cb(e)
+      ipcRenderer.on(IPC.LOGS2_NEW_MESSAGES, handler)
+      return () => ipcRenderer.removeListener(IPC.LOGS2_NEW_MESSAGES, handler)
+    },
   },
   discovery: {
     getProjects: () => ipcRenderer.invoke(IPC.DISCOVERY_PROJECTS),
@@ -431,13 +716,12 @@ const electronAPI: ElectronAPI = {
     gracefulExit: () => ipcRenderer.invoke(IPC.SESSION_GRACEFUL_EXIT)
   },
   insights: {
-    run: () => ipcRenderer.invoke(IPC.INSIGHTS_RUN),
+    run: (opts?: { profileId?: string }) => ipcRenderer.invoke(IPC.INSIGHTS_RUN, opts),
     getCatalogue: () => ipcRenderer.invoke(IPC.INSIGHTS_GET_CATALOGUE),
     getReport: (runId: string) => ipcRenderer.invoke(IPC.INSIGHTS_GET_REPORT, runId),
     getKpis: (runId: string) => ipcRenderer.invoke(IPC.INSIGHTS_GET_KPIS, runId),
     getLatest: () => ipcRenderer.invoke(IPC.INSIGHTS_GET_LATEST),
     isRunning: () => ipcRenderer.invoke(IPC.INSIGHTS_IS_RUNNING),
-    seed: () => ipcRenderer.invoke(IPC.INSIGHTS_SEED),
     onStatusChanged: (callback: (run: unknown) => void) => {
       const handler = (_: unknown, run: unknown) => callback(run)
       ipcRenderer.on(IPC.INSIGHTS_STATUS_CHANGED, handler)
@@ -479,7 +763,7 @@ const electronAPI: ElectronAPI = {
     }
   },
   cloudAgent: {
-    dispatch: (params: { name: string; description: string; projectPath: string; configId?: string }) =>
+    dispatch: (params: { name: string; description: string; projectPath: string; configId?: string; profileId?: string; legacyVersion?: { enabled: boolean; version: string }; skipPermissions?: boolean }) =>
       ipcRenderer.invoke(IPC.CLOUD_AGENT_DISPATCH, params),
     cancel: (id: string) => ipcRenderer.invoke(IPC.CLOUD_AGENT_CANCEL, id),
     remove: (id: string) => ipcRenderer.invoke(IPC.CLOUD_AGENT_REMOVE, id),
@@ -512,31 +796,40 @@ const electronAPI: ElectronAPI = {
     },
   },
   serviceStatus: {
+    get: () => ipcRenderer.invoke(IPC.SERVICE_STATUS_GET),
     onUpdate: (callback: (data: any) => void) => {
       const handler = (_: unknown, data: any) => callback(data)
       ipcRenderer.on(IPC.SERVICE_STATUS, handler)
       return () => ipcRenderer.removeListener(IPC.SERVICE_STATUS, handler)
     }
   },
+  serviceHealth: {
+    get: (): Promise<import('../shared/service-health').DiagnosticsSnapshot> =>
+      ipcRenderer.invoke(IPC.SERVICE_HEALTH_GET),
+    restart: (serviceId: string): Promise<{ ok: boolean; reason?: string }> =>
+      ipcRenderer.invoke(IPC.SERVICE_RESTART, serviceId),
+    onUpdate: (callback: (snap: import('../shared/service-health').DiagnosticsSnapshot) => void) => {
+      const handler = (_: unknown, snap: import('../shared/service-health').DiagnosticsSnapshot) => callback(snap)
+      ipcRenderer.on(IPC.SERVICE_HEALTH_UPDATE, handler)
+      return () => ipcRenderer.removeListener(IPC.SERVICE_HEALTH_UPDATE, handler)
+    }
+  },
   cli: {
-    check: () => ipcRenderer.invoke(IPC.CLI_CHECK)
+    check: () => ipcRenderer.invoke(IPC.CLI_CHECK),
+    path: () => ipcRenderer.invoke(IPC.CLI_PATH),
+    version: () => ipcRenderer.invoke(IPC.CLI_VERSION)
+  },
+  help: {
+    workspace: () => ipcRenderer.invoke(IPC.HELP_WORKSPACE)
   },
   tokenomics: {
-    getData: () => ipcRenderer.invoke(IPC.TOKENOMICS_GET_DATA),
-    seed: () => ipcRenderer.invoke(IPC.TOKENOMICS_SEED),
-    sync: () => ipcRenderer.invoke(IPC.TOKENOMICS_SYNC),
-    onProgress: (callback: (data: any) => void) => {
-      const handler = (_: unknown, data: any) => callback(data)
-      ipcRenderer.on(IPC.TOKENOMICS_PROGRESS, handler)
-      return () => ipcRenderer.removeListener(IPC.TOKENOMICS_PROGRESS, handler)
-    },
-  },
-  account: {
-    list: () => ipcRenderer.invoke(IPC.ACCOUNT_LIST),
-    switch: (id: string) => ipcRenderer.invoke(IPC.ACCOUNT_SWITCH, id),
-    getActive: () => ipcRenderer.invoke(IPC.ACCOUNT_GET_ACTIVE),
-    saveCurrentAs: (id: string, label: string) => ipcRenderer.invoke(IPC.ACCOUNT_SAVE_CURRENT_AS, id, label),
-    rename: (id: string, newLabel: string) => ipcRenderer.invoke(IPC.ACCOUNT_RENAME, id, newLabel),
+    summary: (filter?: import('../shared/types').TkSummaryFilter) => ipcRenderer.invoke(IPC.TOKENOMICS2_SUMMARY, filter ?? {}),
+    sessions: (query?: import('../shared/types').TkSessionsQuery) => ipcRenderer.invoke(IPC.TOKENOMICS2_SESSIONS, query ?? {}),
+    sessionDetail: (sessionId: string) => ipcRenderer.invoke(IPC.TOKENOMICS2_SESSION_DETAIL, { sessionId }),
+    indexStatus: () => ipcRenderer.invoke(IPC.TOKENOMICS2_INDEX_STATUS),
+    onIndexStatus: (cb: (s: import('../shared/types').TkIndexStatus) => void) => { const h = (_: unknown, s: import('../shared/types').TkIndexStatus) => cb(s); ipcRenderer.on(IPC.TOKENOMICS2_INDEX_STATUS, h); return () => ipcRenderer.removeListener(IPC.TOKENOMICS2_INDEX_STATUS, h) },
+    onIndexProgress: (cb: (p: import('../shared/types').TkIndexProgress) => void) => { const h = (_: unknown, p: import('../shared/types').TkIndexProgress) => cb(p); ipcRenderer.on(IPC.TOKENOMICS2_INDEX_PROGRESS, h); return () => ipcRenderer.removeListener(IPC.TOKENOMICS2_INDEX_PROGRESS, h) },
+    onIndexComplete: (cb: (c: import('../shared/types').TkIndexCompleteEvent) => void) => { const h = (_: unknown, c: import('../shared/types').TkIndexCompleteEvent) => cb(c); ipcRenderer.on(IPC.TOKENOMICS2_INDEX_COMPLETE, h); return () => ipcRenderer.removeListener(IPC.TOKENOMICS2_INDEX_COMPLETE, h) },
   },
   memory: {
     scan: () => ipcRenderer.invoke('memory:scan'),
@@ -544,9 +837,16 @@ const electronAPI: ElectronAPI = {
     delete: (filePath: string) => ipcRenderer.invoke('memory:delete', filePath),
     writeFrontmatter: (filePath: string, frontmatter: { name?: string; description?: string; type?: string }) =>
       ipcRenderer.invoke('memory:writeFrontmatter', filePath, frontmatter),
+    recentSessions: (projectDir: string) => ipcRenderer.invoke(IPC.MEMORY_RECENT_SESSIONS, projectDir),
   },
   shell: {
     openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
+  },
+  codex: {
+    status: () => ipcRenderer.invoke(IPC.CODEX_STATUS),
+    login: (payload) => ipcRenderer.invoke(IPC.CODEX_LOGIN, payload),
+    logout: () => ipcRenderer.invoke(IPC.CODEX_LOGOUT),
+    testConnection: () => ipcRenderer.invoke(IPC.CODEX_TEST_CONNECTION),
   },
   github: {
     getConfig: () => ipcRenderer.invoke(IPC.GITHUB_CONFIG_GET),
@@ -555,10 +855,12 @@ const electronAPI: ElectronAPI = {
     adoptGhCli: (username) => ipcRenderer.invoke(IPC.GITHUB_PROFILE_ADOPT_GHCLI, username),
     removeProfile: (id) => ipcRenderer.invoke(IPC.GITHUB_PROFILE_REMOVE, id),
     renameProfile: (id, label) => ipcRenderer.invoke(IPC.GITHUB_PROFILE_RENAME, id, label),
+    updateProfile: (id, patch) => ipcRenderer.invoke(IPC.GITHUB_PROFILE_UPDATE, id, patch),
     testProfile: (id) => ipcRenderer.invoke(IPC.GITHUB_PROFILE_TEST, id),
-    oauthStart: (mode) => ipcRenderer.invoke(IPC.GITHUB_OAUTH_START, mode),
+    oauthStart: (mode, opts) => ipcRenderer.invoke(IPC.GITHUB_OAUTH_START, mode, opts),
     oauthPoll: (flowId) => ipcRenderer.invoke(IPC.GITHUB_OAUTH_POLL, flowId),
     oauthCancel: (flowId) => ipcRenderer.invoke(IPC.GITHUB_OAUTH_CANCEL, flowId),
+    reauthProfile: (profileId) => ipcRenderer.invoke(IPC.GITHUB_REAUTH_PROFILE, profileId),
     ghcliDetect: () => ipcRenderer.invoke(IPC.GITHUB_GHCLI_DETECT),
     repoDetect: (cwd) => ipcRenderer.invoke(IPC.GITHUB_REPO_DETECT, cwd),
     updateSessionConfig: (sessionId, patch) =>
@@ -600,6 +902,13 @@ const electronAPI: ElectronAPI = {
       ipcRenderer.invoke(IPC.GITHUB_REVIEW_REPLY, slug, threadId, body),
     markNotifRead: (profileId, notifId) =>
       ipcRenderer.invoke(IPC.GITHUB_NOTIF_MARK_READ, profileId, notifId),
+    getAiUsage: (force) => ipcRenderer.invoke(IPC.GITHUB_AI_USAGE_GET, force),
+    onAiUsageUpdate: (cb) => {
+      const l = (_e: Electron.IpcRendererEvent, p: unknown) =>
+        cb(p as Parameters<typeof cb>[0])
+      ipcRenderer.on(IPC.GITHUB_AI_USAGE_UPDATE, l)
+      return () => ipcRenderer.removeListener(IPC.GITHUB_AI_USAGE_UPDATE, l)
+    },
   },
   hooks: {
     toggle: (enabled) => ipcRenderer.invoke(IPC.HOOKS_TOGGLE, { enabled }),
@@ -624,6 +933,36 @@ const electronAPI: ElectronAPI = {
       const handler = (_: unknown, s: HooksGatewayStatus) => cb(s)
       ipcRenderer.on(IPC.HOOKS_STATUS, handler)
       return () => ipcRenderer.removeListener(IPC.HOOKS_STATUS, handler)
+    },
+  },
+  codexReview: {
+    getUsage: (sessionId: string) =>
+      ipcRenderer.invoke(IPC.CODEX_REVIEW_USAGE_GET, sessionId),
+    onUsageUpdated: (callback) => {
+      const wrapped = (_e: Electron.IpcRendererEvent, payload: { sessionId: string; record: import('../shared/types').CodexReviewUsageRecord }) => callback(payload)
+      ipcRenderer.on(IPC.CODEX_REVIEW_USAGE_UPDATED, wrapped)
+      return () => ipcRenderer.removeListener(IPC.CODEX_REVIEW_USAGE_UPDATED, wrapped)
+    },
+  },
+  channels: {
+    send: (req: unknown) => ipcRenderer.invoke(IPC.CHANNELS_SEND, req),
+    retract: (p: unknown) => ipcRenderer.invoke(IPC.CHANNELS_RETRACT, p),
+    forceTier: (p: unknown) => ipcRenderer.invoke(IPC.CHANNELS_FORCE_TIER, p),
+    ruleCRUD: (p: unknown) => ipcRenderer.invoke(IPC.CHANNELS_RULE_CRUD, p),
+    standingApprovalCRUD: (p: unknown) => ipcRenderer.invoke(IPC.CHANNELS_STANDING_APPROVAL_CRUD, p),
+    capabilityDiagnostics: () => ipcRenderer.invoke(IPC.CHANNELS_CAPABILITY_DIAGNOSTICS),
+    introDismissed: () => ipcRenderer.invoke(IPC.CHANNELS_INTRO_DISMISSED),
+    killSwitch: (p: unknown) => ipcRenderer.invoke(IPC.CHANNELS_KILL_SWITCH, p),
+    onLedgerEvent: (cb: (r: unknown) => void) => {
+      const fn = (_e: unknown, r: unknown) => cb(r)
+      ipcRenderer.on(IPC.CHANNELS_LEDGER_EVENT, fn)
+      return () => ipcRenderer.removeListener(IPC.CHANNELS_LEDGER_EVENT, fn)
+    },
+    rendererReady: () => ipcRenderer.invoke(IPC.CHANNELS_RENDERER_READY),
+    onAttention: (cb: (p: { sessionId: string; needsAttention: boolean }) => void) => {
+      const fn = (_e: unknown, p: { sessionId: string; needsAttention: boolean }) => cb(p)
+      ipcRenderer.on(IPC.CHANNELS_ATTENTION, fn)
+      return () => ipcRenderer.removeListener(IPC.CHANNELS_ATTENTION, fn)
     },
   },
 }

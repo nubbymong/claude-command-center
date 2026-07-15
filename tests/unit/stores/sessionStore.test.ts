@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { useSessionStore, Session } from '../../../src/renderer/stores/sessionStore'
+import { useSessionStore, structuralSessionsEqual, Session } from '../../../src/renderer/stores/sessionStore'
 
 function makeSession(overrides: Partial<Session> = {}): Session {
   return {
@@ -128,6 +128,57 @@ describe('sessionStore', () => {
       useSessionStore.getState().addSession(s2)
       useSessionStore.getState().updateSession('a', { label: 'A-Updated' })
       expect(useSessionStore.getState().sessions[1].label).toBe('B')
+    })
+
+    it('preserves the array AND session identity on a value-identical (no-op) patch', () => {
+      useSessionStore.getState().addSession(makeSession({ id: 'a', contextPercent: 42 }))
+      const before = useSessionStore.getState().sessions
+      const beforeSession = before[0]
+      // Re-send the SAME telemetry value (statusline bridge does this ~1-3×/s).
+      useSessionStore.getState().updateSession('a', { contextPercent: 42 })
+      const after = useSessionStore.getState().sessions
+      // No re-render: both the array AND the session object keep identity.
+      expect(after).toBe(before)
+      expect(after[0]).toBe(beforeSession)
+    })
+
+    it('replaces only the matched session (others keep identity) on a real change', () => {
+      useSessionStore.getState().addSession(makeSession({ id: 'a', contextPercent: 1 }))
+      useSessionStore.getState().addSession(makeSession({ id: 'b', contextPercent: 1 }))
+      const before = useSessionStore.getState().sessions
+      const bBefore = before[1]
+      useSessionStore.getState().updateSession('a', { contextPercent: 2 })
+      const after = useSessionStore.getState().sessions
+      expect(after).not.toBe(before)              // array identity changes
+      expect(after[0]).not.toBe(before[0])         // updated session is fresh
+      expect(after[1]).toBe(bBefore)               // untouched session keeps identity
+    })
+
+    it('is a no-op for an unknown id', () => {
+      useSessionStore.getState().addSession(makeSession({ id: 'a' }))
+      const before = useSessionStore.getState().sessions
+      useSessionStore.getState().updateSession('missing', { label: 'x' })
+      expect(useSessionStore.getState().sessions).toBe(before)
+    })
+  })
+
+  describe('structuralSessionsEqual', () => {
+    it('treats telemetry-only changes as equal (skips a root re-render)', () => {
+      const a = [makeSession({ id: 'a', contextPercent: 10, costUsd: 1 })]
+      const b = [{ ...a[0], contextPercent: 99, costUsd: 50, status: 'working' as const }]
+      expect(structuralSessionsEqual(a, b)).toBe(true)
+    })
+
+    it('is false when a structural field changes (configId / cwd / length)', () => {
+      const a = [makeSession({ id: 'a', configId: 'cfg-1' })]
+      expect(structuralSessionsEqual(a, [{ ...a[0], configId: 'cfg-2' }])).toBe(false)
+      expect(structuralSessionsEqual(a, [{ ...a[0], workingDirectory: 'C:\\new' }])).toBe(false)
+      expect(structuralSessionsEqual(a, [a[0], makeSession({ id: 'b' })])).toBe(false)
+    })
+
+    it('short-circuits true on reference equality', () => {
+      const a = [makeSession({ id: 'a' })]
+      expect(structuralSessionsEqual(a, a)).toBe(true)
     })
   })
 

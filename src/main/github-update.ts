@@ -76,11 +76,13 @@ interface ReleaseInfo {
 
 // ── Channel matching ─────────────────────────────────────────────────────
 
-/** Which channel does this tag belong to? */
+/** Which channel does this tag belong to? Release candidates (-rc.N) ride the
+ *  beta channel: they are prereleases offered to beta-channel users, ordered
+ *  above betas of the same base version (see parseTag prereleaseRank). */
 function classifyTag(tag: string): UpdateChannel | null {
   const stripped = tag.replace(/^v/, '')
   if (/^\d+\.\d+\.\d+$/.test(stripped)) return 'stable'
-  if (/^\d+\.\d+\.\d+-beta(\.\d+)?$/.test(stripped)) return 'beta'
+  if (/^\d+\.\d+\.\d+-(?:beta|rc)(\.\d+)?$/.test(stripped)) return 'beta'
   return null  // unknown format — ignore
 }
 
@@ -99,7 +101,7 @@ function tagMatchesChannel(tag: string, channel: UpdateChannel): boolean {
  * This is what gets shown to the user — e.g. 'v1.2.3-beta.2' → '1.2.3'.
  */
 function parseVersion(tag: string): string {
-  return tag.replace(/^v/, '').replace(/-(?:beta|dev)(?:\.\d+)?$/, '')
+  return tag.replace(/^v/, '').replace(/-(?:beta|dev|rc)(?:\.\d+)?$/, '')
 }
 
 /**
@@ -109,6 +111,8 @@ function parseVersion(tag: string): string {
  *
  * prereleaseRank follows semver convention: final releases outrank prereleases.
  *   final:  Infinity
+ *   rc.N:   3 (release candidate — closest to final)
+ *   rc:     3, num = 0
  *   beta.N: 2 (beta is closer to final than dev)
  *   beta:   2, num = 0
  *   dev.N:  1
@@ -124,12 +128,13 @@ interface TagComponents {
 
 function parseTag(tag: string): TagComponents | null {
   const stripped = tag.replace(/^v/, '')
-  const m = stripped.match(/^(\d+)\.(\d+)\.(\d+)(?:-(beta)(?:\.(\d+))?)?$/)
+  const m = stripped.match(/^(\d+)\.(\d+)\.(\d+)(?:-(beta|rc)(?:\.(\d+))?)?$/)
   if (!m) return null
   const [, maj, min, pat, pre, preN] = m
   let prereleaseRank = Number.POSITIVE_INFINITY
   let prereleaseNum = 0
   if (pre === 'beta') { prereleaseRank = 2; prereleaseNum = preN ? parseInt(preN, 10) : 0 }
+  if (pre === 'rc') { prereleaseRank = 3; prereleaseNum = preN ? parseInt(preN, 10) : 0 }
   return {
     major: parseInt(maj, 10),
     minor: parseInt(min, 10),
@@ -190,6 +195,20 @@ function compareTagToCurrentVersion(tag: string, currentVersion: string): number
   return compareTags(tag, `v${currentVersion}`)
 }
 
+// The authoritative running version. Baked from package.json at build time
+// (__APP_VERSION__) so it carries the FULL prerelease suffix (e.g.
+// "2.0.0-beta.1") regardless of whether electron-builder preserves it in
+// app.getVersion() -- this is what makes numbered betas (beta.1 -> beta.2)
+// detectable by the updater. Falls back to app.getVersion() in dev/tests where
+// the define isn't injected.
+declare const __APP_VERSION__: string
+function getRunningVersion(): string {
+  try {
+    if (typeof __APP_VERSION__ === 'string' && __APP_VERSION__) return __APP_VERSION__
+  } catch { /* not defined in this build/test context */ }
+  return app.getVersion()
+}
+
 /** Read the update channel from user settings */
 function getUpdateChannel(): UpdateChannel {
   try {
@@ -247,7 +266,15 @@ type PublicFetchResult =
  *   - 403 with rate-limit header: API rate limit hit, gh CLI won't help — give up
  *   - 403 otherwise: treated as "error" and fall through to gh CLI
  */
-async function fetchReleasesPublic(limit = 30): Promise<PublicFetchResult> {
+// Fetch well beyond the total release count. GitHub's /releases (and `gh release
+// list`) return releases in created_at order, and a release's created_at is the
+// tagged commit's date — so a release tagged on an old commit sorts far down the
+// list. Fetching a large page means we still see every release regardless of that
+// ordering; selection is then purely by version tag (compareTags). Defense in
+// depth alongside the release.yml `--target` fix. Shared by all three fetch paths.
+const RELEASE_FETCH_LIMIT = 100
+
+async function fetchReleasesPublic(limit = RELEASE_FETCH_LIMIT): Promise<PublicFetchResult> {
   try {
     const url = `https://api.github.com/repos/${REPO}/releases?per_page=${limit}`
     const { status, headers, body } = await httpGetJson<GitHubRelease[]>(url)
@@ -304,7 +331,7 @@ async function getGhToken(): Promise<string | null> {
 }
 
 /** Fetch releases using an authenticated GitHub API call */
-async function fetchReleasesAuthenticated(limit = 30): Promise<GitHubRelease[] | null> {
+async function fetchReleasesAuthenticated(limit = RELEASE_FETCH_LIMIT): Promise<GitHubRelease[] | null> {
   const token = await getGhToken()
   if (!token) {
     logInfo('[github-update] No gh auth token available — skipping authenticated API')
@@ -330,7 +357,7 @@ async function fetchReleasesAuthenticated(limit = 30): Promise<GitHubRelease[] |
 
 // ── gh CLI fallback (for private repos during dev) ───────────────────────
 
-async function fetchReleasesGhCli(limit = 30): Promise<GitHubRelease[] | null> {
+async function fetchReleasesGhCli(limit = RELEASE_FETCH_LIMIT): Promise<GitHubRelease[] | null> {
   try {
     const { stdout } = await execFileAsync(
       'gh',
@@ -386,7 +413,7 @@ async function fetchReleases(): Promise<GitHubRelease[] | null> {
  * Returns release info if a newer version exists, null otherwise.
  */
 export async function checkGitHubRelease(): Promise<ReleaseInfo | null> {
-  const currentVersion = app.getVersion()
+  const currentVersion = getRunningVersion()
   const channel = getUpdateChannel()
   logInfo(`[github-update] Checking for updates (current: v${currentVersion}, channel: ${channel})`)
 

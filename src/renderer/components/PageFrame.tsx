@@ -1,5 +1,5 @@
 import React from 'react'
-import HeaderCluster from './HeaderCluster'
+import { useRegionTypography } from '../hooks/useTypography'
 
 type Accent =
   | 'blue' | 'teal' | 'mauve' | 'peach' | 'green' | 'yellow' | 'red'
@@ -26,8 +26,11 @@ interface Props {
   title: string
   /** Optional secondary line: active sub-section, key metric, breadcrumb, etc. */
   context?: React.ReactNode
-  /** Right-aligned page-specific buttons / selectors (rendered before the global HeaderCluster). */
+  /** Right-aligned page-specific buttons / selectors. */
   actions?: React.ReactNode
+  /** When provided, render a close (X) button at the far right of the header
+   * strip that returns to the sessions view. */
+  onClose?: () => void
   /** Optional left rail (sub-nav). When present, body sits to its right. */
   leftRail?: React.ReactNode
   /** When true (default), the body wraps its content in `overflow-y-auto`
@@ -47,7 +50,7 @@ interface Props {
  * page chrome around.
  *
  * Layout: one thin top strip (icon + title + context | actions +
- * HeaderCluster), then either a single body or a [left rail | body]
+ * actions slot), then either a single body or a [left rail | body]
  * split. Body always uses full width — pages that want narrower
  * forms should self-impose `max-w-3xl mx-auto` *inside* their own
  * content, never on this frame.
@@ -58,13 +61,17 @@ export default function PageFrame({
   title,
   context,
   actions,
+  onClose,
   leftRail,
   scrollable = true,
   children,
 }: Props) {
+  // Panels / admin-pages region scale + family (Font & Size page). Covers
+  // Settings, Tokenomics, Memory, Insights, Vision, Cloud Agents, Logs.
+  const panelType = useRegionTypography('panels')
   return (
-    <div className="flex-1 flex flex-col bg-base overflow-hidden min-h-0">
-      <div className="flex items-center gap-2 px-3 py-1.5 border-b border-surface0 bg-crust shrink-0">
+    <div className="flex-1 flex flex-col overflow-hidden min-h-0" style={{ background: 'var(--surface-stage)', ...panelType }}>
+      <div className="flex items-center gap-2 px-3 py-1.5 shrink-0" style={{ background: 'var(--surface-panel)', borderBottom: '1px solid var(--border-subtle)' }}>
         {icon && (
           <span className={`${ACCENT_CLASS[iconAccent]} shrink-0 flex items-center`}>{icon}</span>
         )}
@@ -83,12 +90,22 @@ export default function PageFrame({
         </div>
         <div className="flex-1" />
         {actions && <div className="flex items-center gap-1 shrink-0">{actions}</div>}
-        <div className="w-px h-4 bg-surface0 mx-1 shrink-0" />
-        <HeaderCluster />
+        {onClose && (
+          <button
+            onClick={onClose}
+            aria-label="Close"
+            title="Close (back to sessions)"
+            className="ml-1 w-6 h-6 flex items-center justify-center rounded shrink-0 text-overlay0 hover:text-text hover:bg-surface0 transition-colors"
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        )}
       </div>
       {leftRail ? (
         <div className="flex-1 flex flex-row min-h-0">
-          <div className="w-44 shrink-0 flex flex-col border-r border-surface0 bg-mantle/40 overflow-y-auto">
+          <div className="w-44 shrink-0 flex flex-col overflow-y-auto" style={{ background: 'var(--surface-panel)', borderRight: '1px solid var(--border-subtle)' }}>
             {leftRail}
           </div>
           <div className={`flex-1 min-w-0 ${scrollable ? 'overflow-y-auto' : 'flex flex-col min-h-0'}`}>

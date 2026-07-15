@@ -2,13 +2,8 @@ import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { useAgentLibraryStore, BUILTIN_TEMPLATES } from '../stores/agentLibraryStore'
 import type { AgentTemplate } from '../types/electron'
 import AgentTemplateDialog from './AgentTemplateDialog'
-
-const MODEL_COLORS: Record<string, string> = {
-  inherit: '#b8c5d6',
-  sonnet: '#89B4FA',
-  opus: '#CBA6F7',
-  haiku: '#A6E3A1',
-}
+import { useRegistryStore } from '../stores/registryStore'
+import { resolveModelInfo } from '../../shared/model-registry'
 
 interface ContextMenuState {
   x: number
@@ -22,7 +17,11 @@ function TemplateCard({ template, onClick, onContextMenu }: {
   onClick: () => void
   onContextMenu: (e: React.MouseEvent) => void
 }) {
-  const modelColor = MODEL_COLORS[template.model] || MODEL_COLORS.inherit
+  // Subscribe to registry so pills hot-reload when the registry updates.
+  const registry = useRegistryStore((s) => s.registry)
+  const modelColor = template.model === 'inherit'
+    ? 'var(--text-secondary)'
+    : resolveModelInfo(registry, template.model).colors.agentPill
 
   return (
     <button
@@ -129,6 +128,11 @@ export default function AgentLibrary() {
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-4 space-y-5">
+        {/* Informational banner */}
+        <div className="rounded-md bg-blue/10 border border-blue/30 p-3 text-sm text-blue">
+          Templates spawn with Claude sessions only. Codex sessions ignore agent flags.
+        </div>
+
         {/* Your Agents */}
         <div>
           <h2 className="text-[10px] text-subtext0 uppercase tracking-wider font-semibold mb-2 px-1">Your Agents</h2>

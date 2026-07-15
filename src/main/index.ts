@@ -1,20 +1,26 @@
-import { app, BrowserWindow, ipcMain, dialog, clipboard, Menu, session, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, Menu, session, shell } from 'electron'
 import { join } from 'path'
-import { tmpdir } from 'os'
+import { tmpdir, homedir } from 'os'
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
 import { randomBytes } from 'crypto'
 import { registerPtyHandlers } from './ipc/pty-handlers'
 import { registerUsageHandlers } from './ipc/usage-handlers'
 import { registerDiscoveryHandlers } from './ipc/discovery-handlers'
-import { killAllPty, gracefulExitAllPty } from './pty-manager'
-import { registerLogHandlers } from './ipc/log-handlers'
-import { closeAllLogs } from './session-logger'
+import { killAllPty, gracefulExitAllPty, resolveClaudeForPty } from './pty-manager'
+import { spawnClaudeHeadless } from './claude-headless'
+import { parseClaudeVersion } from './sentinel/sentinel-version'
+import { registerResumeHandlers } from './ipc/resume-handlers'
+import { registerLogs2Handlers } from './ipc/logs2-handlers'
 
-import { deployStatuslineScript, configureClaudeSettings, startStatuslineWatcher } from './statusline-watcher'
+import { startStatuslineWatcher, setTranscriptPathSink, healGlobalStatusline } from './statusline-watcher'
+import { registerProvider, getProvider } from './providers'
+import { ClaudeProvider } from './providers/claude'
+import { CodexProvider } from './providers/codex'
 import { registerDebugHandlers } from './ipc/debug-handlers'
 import { disableDebugMode } from './debug-capture'
 import { registerUpdateHandlers } from './ipc/update-handlers'
-import { registerSetupHandlers, getResourcesDirectory } from './ipc/setup-handlers'
+import { registerSetupHandlers, getResourcesDirectory, getDataDirectory } from './ipc/setup-handlers'
+import { ensureHelpWorkspace } from './help-workspace'
 import { registerScreenshotHandlers } from './ipc/screenshot-handlers'
 import { registerWebviewHandlers } from './ipc/webview-handlers'
 import { closeAllWebviews } from './webview-manager'
@@ -22,33 +28,60 @@ import { registerInsightsHandlers } from './ipc/insights-handlers'
 import { registerNotesHandlers } from './ipc/notes-handlers'
 import { registerVisionHandlers } from './ipc/vision-handlers'
 import { registerConfigHandlers } from './ipc/config-handlers'
+import { registerAccountProfilesHandlers } from './ipc/account-profiles-handlers'
+import { migrateProfilesToHomeLayout, cleanupSessionHomes, syncPrimaryCredentialsWithGlobal } from './account-profiles'
+import { runFirstRunCapture } from './first-run-accounts'
+import { backupRealClaudeOnce } from './claude-backup'
 import { registerCloudAgentHandlers } from './ipc/cloud-agent-handlers'
 import { registerTeamHandlers } from './ipc/team-handlers'
 import { registerLegacyVersionHandlers } from './ipc/legacy-version-handlers'
-import { registerAccountHandlers } from './ipc/account-handlers'
 import { registerMemoryHandlers } from './ipc/memory-handlers'
-import { registerTokenomicsHandlers } from './ipc/tokenomics-handlers'
+import { initTokenomics, shutdownTokenomics } from './tokenomics/tokenomics-service'
+import { registerTokenomics2Handlers } from './ipc/tokenomics2-handlers'
 import { registerGitHubHandlers } from './ipc/github-handlers'
 import { registerHooksHandlers } from './ipc/hooks-handlers'
+import { registerServiceHealthHandlers, getMergedDiagnostics } from './ipc/service-health-handlers'
+import { PtyIntegrityMonitor, setPtyIntegrityMonitor, getPtyIntegrityMonitor } from './services/pty-integrity-monitor'
+import { registerCodexHandlers } from './ipc/codex-handlers'
+import { registerCodexReviewHandlers } from './ipc/codex-review-handlers'
+import { registerRegistryHandlers } from './ipc/registry-handlers'
+import { initSentinel, reconcileOnUpdate, sentinelStartupCheck } from './sentinel/index'
+import { registerSentinelHandlers } from './ipc/sentinel-handlers'
+import { registerChannelHandlers } from './ipc/channel-handlers'
+import { startRulesEngine } from './channel-rules'
+import { startEffortTracker } from './effort-tracker'
+import { startAttentionSource } from './attention-source'
+import { startJankDetector } from './jank-detector'
+import { readClipboardImageWithRetry } from './clipboard-image'
+import { readClipboardImageFilePath, type PasteableImage } from './clipboard-file'
 import { HooksGateway } from './hooks/hooks-gateway'
 import { setGateway, getGateway } from './hooks'
-import { cleanupStaleHookEntries } from './hooks/boot-cleanup'
+import { ServiceSupervisor } from './services/service-supervisor'
+import { forkHooksChild } from './services/fork-hooks-child'
+import { start as startLoopStallMonitor, stop as stopLoopStallMonitor } from './services/loop-stall-monitor'
+import { initLogging, shutdownLogging, getTranscriptBinder } from './logging/logging-service'
+import { detectOldLogArtifacts, executeWipe } from './logging/logs-wipe'
+import { backfillCompanionDirs, nodeFsCompanionDeps } from './logging/companion-dir'
+import { cleanupStaleHookEntries, cleanupStaleMcpConfigs } from './hooks/boot-cleanup'
+import { isSentinelEnabled } from '../shared/sentinel-enabled'
 import { DEFAULT_HOOKS_PORT } from './hooks/hooks-types'
-import { fetchModelPricing } from './tokenomics-manager'
-import { initAccounts } from './account-manager'
+import { fetchModelPricing } from './tokenomics/tk-pricing'
 import { killAllAgents } from './cloud-agent-manager'
-import { startServiceStatusPoller, stopServiceStatusPoller } from './service-status'
+import { startServiceStatusPoller, stopServiceStatusPoller, getLastServiceStatus } from './service-status'
 import { initUpdateWatcher, stopUpdateWatcher, getProjectRootPath, isPackagedApp } from './update-watcher'
 import { startUpdateServer, stopUpdateServer } from './update-server'
 import { saveSessionState, loadSessionState, clearSessionState, hasSavedSessionState, SessionState } from './session-state'
 import { getConfigDir, ensureConfigDir, snapshotConfig } from './config-manager'
-import { stopGlobalVision, startGlobalVision, cleanupLegacyVisionMarkers, startConductorMcpServer, stopConductorMcpServer } from './vision-manager'
+import { stopGlobalVision, killSpawnedBrowser, cleanupLegacyVisionMarkers } from './vision-manager'
+import { startConductorMcpServer, stopConductorMcpServer, startBrowserAtBoot } from './conductor-mcp-server'
 import { readConfig } from './config-manager'
 import { loadCredential, saveCredential, deleteCredential } from './credential-store'
-import type { GlobalVisionConfig } from '../shared/types'
+import { resolveConductorMcpPort } from '../shared/mcp-ports'
+import { IPC } from '../shared/ipc-channels'
+import { safeExternalHttpsHref } from '../shared/safe-url'
 
 import { migrateRegistryKeys } from './registry'
-import { installGlobalErrorHandlers, logInfo, logError, closeDebugLogger } from './debug-logger'
+import { installGlobalErrorHandlers, logInfo, logError, closeDebugLogger, setVerboseBaseline } from './debug-logger'
 
 // Install global error handlers that log to file
 installGlobalErrorHandlers()
@@ -100,6 +133,9 @@ function saveWindowState(win: BrowserWindow): void {
 
 let mainWindow: BrowserWindow | null = null
 let splashWindow: BrowserWindow | null = null
+let _hooksSupervisor: ServiceSupervisor | null = null
+function setHooksSupervisor(s: ServiceSupervisor): void { _hooksSupervisor = s }
+function getHooksSupervisor(): ServiceSupervisor | null { return _hooksSupervisor }
 
 function getSplashImagePath(): { path: string; mime: string } | null {
   // In dev: repo root. In production: resources/ directory inside app.
@@ -151,8 +187,22 @@ function createSplashWindow(): void {
   }
   @keyframes fadeIn { to { opacity: 1; } }
   img { width: 100%; height: 100%; object-fit: contain; }
+  .disclaimer {
+    position: fixed;
+    bottom: 10px;
+    left: 0;
+    right: 0;
+    text-align: center;
+    font: 500 10px/1.3 system-ui, -apple-system, 'Segoe UI', sans-serif;
+    letter-spacing: 0.2px;
+    color: rgba(205, 214, 244, 0.82);
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85), 0 0 2px rgba(0, 0, 0, 0.7);
+    padding: 0 14px;
+    pointer-events: none;
+  }
 </style></head><body>
   <img src="data:${splash.mime};base64,${imgData}" />
+  <div class="disclaimer">Independent community project. Not affiliated with or endorsed by Anthropic.</div>
 </body></html>`
 
   const tmpHtml = join(tmpdir(), 'claude-command-center-splash.html')
@@ -256,7 +306,14 @@ function createWindow(): void {
     y: state.y,
     minWidth: 1280,
     minHeight: 720,
-    frame: false,
+    // Windows: fully frameless with custom controls in the TitleBar.
+    // macOS: keep the native traffic lights (hiddenInset) — frame:false there
+    // removes them entirely and the custom right-docked controls read as a
+    // broken window to Mac users. The renderer hides its custom controls and
+    // left-pads the drag region on darwin (TitleBar.tsx).
+    ...(process.platform === 'darwin'
+      ? { titleBarStyle: 'hiddenInset' as const }
+      : { frame: false }),
     backgroundColor: '#1E1E2E',
     show: false,
     webPreferences: {
@@ -367,28 +424,35 @@ function createWindow(): void {
     return img.resize({ height: maxDim, quality: 'good' as const })
   }
 
-  // Clipboard image reading (legacy — kept for compatibility, prefer saveImage)
-  ipcMain.handle('clipboard:readImage', async () => {
-    const img = clipboard.readImage()
-    if (img.isEmpty()) return null
-    const resized = constrainToMaxDim(img, 1920)
-    return resized.toJPEG(85).toString('base64')
-  })
-
   // Save clipboard image to a unique file in the host screenshots dir and return its
   // bare filename so the renderer can use the conductor MCP fetch_host_screenshot tool.
   // Returns { filename, path } so callers have both the bare name (for the MCP tool)
   // and the absolute path (for local-only flows that bypass MCP).
-  ipcMain.handle('clipboard:saveImage', async () => {
-    const img = clipboard.readImage()
-    if (img.isEmpty()) return null
-    const resized = constrainToMaxDim(img, 1920)
+  ipcMain.handle('clipboard:saveImage', async (): Promise<PasteableImage> => {
     const screenshotsDir = join(getResourcesDirectory(), 'screenshots')
-    if (!existsSync(screenshotsDir)) mkdirSync(screenshotsDir, { recursive: true })
-    const filename = `clipboard-${Date.now()}-${randomBytes(4).toString('hex')}.jpg`
-    const filePath = join(screenshotsDir, filename)
-    writeFileSync(filePath, resized.toJPEG(85))
-    return filePath
+    // Retry the read so the FIRST Alt+V after copying an image reliably detects
+    // it -- Windows' delayed-render clipboard can return empty on the first read
+    // after the window gains focus, which was the "no image detected" miss.
+    const img = await readClipboardImageWithRetry()
+    if (img) {
+      // [perf] resize + JPEG encode is the suspected clipboard-paste freeze; time it
+      // with the source dimensions, since cost scales with input size.
+      const __t0 = Date.now()
+      const resized = constrainToMaxDim(img, 1920)
+      const jpeg = resized.toJPEG(85)
+      const __dt = Date.now() - __t0
+      if (__dt > 150) {
+        const s = img.getSize()
+        logInfo(`[perf] clipboard-image resize+encode took ${__dt}ms (${s.width}x${s.height})`)
+      }
+      if (!existsSync(screenshotsDir)) mkdirSync(screenshotsDir, { recursive: true })
+      const filename = `clipboard-${Date.now()}-${randomBytes(4).toString('hex')}.jpg`
+      const filePath = join(screenshotsDir, filename)
+      writeFileSync(filePath, jpeg)
+      return { path: filePath }
+    }
+    // No bitmap on the clipboard — fall back to a copied image FILE (BUG-8).
+    return readClipboardImageFilePath(screenshotsDir)
   })
 
   // Encrypted credential storage using safeStorage — delegated to credential-store module
@@ -431,23 +495,63 @@ function createWindow(): void {
   // Windows: tries native .exe then npm .cmd via 'where'
   // macOS/Linux: uses 'which' to find 'claude' in PATH
   ipcMain.handle('cli:check', async () => {
+    // Async execFile (not execSync): this runs every 30s for the app's lifetime
+    // from BottomBar, so a synchronous probe would stall PTY data delivery to
+    // every terminal in lockstep. Same boolean result shape as before.
+    const { execFile } = require('child_process')
+    const { promisify } = require('util')
+    const execFileAsync = promisify(execFile)
     try {
-      const { execSync } = require('child_process')
       if (process.platform === 'win32') {
+        // windowsHide + piped stderr suppresses the "INFO: Could not find
+        // files..." line `where` writes to stderr on a miss; execFile pipes
+        // by default so the noise never reaches the parent's terminal between
+        // the .exe and .cmd probes.
+        const opts = { encoding: 'utf-8' as const, timeout: 5000, windowsHide: true }
         try {
-          execSync('where claude.exe', { encoding: 'utf-8', timeout: 5000, windowsHide: true })
+          await execFileAsync('where', ['claude.exe'], opts)
           return true
         } catch { /* try .cmd */ }
-        execSync('where claude.cmd', { encoding: 'utf-8', timeout: 5000, windowsHide: true })
+        await execFileAsync('where', ['claude.cmd'], opts)
         return true
       } else {
         // Use login shell to pick up Homebrew/nvm PATH entries
         const shell = process.env.SHELL || '/bin/zsh'
-        execSync(`${shell} -l -c "which claude"`, { encoding: 'utf-8', timeout: 5000 })
+        await execFileAsync(shell, ['-l', '-c', 'which claude'], { encoding: 'utf-8', timeout: 5000 })
         return true
       }
     } catch {
       return false
+    }
+  })
+
+  // Onboarding "Find Claude": the resolved claude binary path (no command run).
+  ipcMain.handle('cli:path', async () => {
+    try {
+      return resolveClaudeForPty()?.cmd ?? null
+    } catch {
+      return null
+    }
+  })
+
+  // Onboarding "Find Claude": run `claude --version` on demand (user-approved).
+  ipcMain.handle('cli:version', async () => {
+    try {
+      const res = await spawnClaudeHeadless(['--version'], 10000)
+      return parseClaudeVersion(res.stdout) ?? parseClaudeVersion(res.stderr) ?? null
+    } catch {
+      return null
+    }
+  })
+
+  // "Ask Command Center": stage (refresh) the help workspace and return its
+  // path; the renderer launches a normal Claude session with this cwd so the
+  // CLAUDE.md + app-knowledge.md docs prime the session.
+  ipcMain.handle('help:workspace', async () => {
+    try {
+      return ensureHelpWorkspace(getResourcesDirectory())
+    } catch {
+      return null
     }
   })
 
@@ -529,19 +633,50 @@ if (!gotTheLock) {
     const menu = Menu.buildFromTemplate(menuTemplate)
     Menu.setApplicationMenu(menu)
 
+    // Register built-in providers first — must happen before any code calls
+    // getProvider('claude'), including deployStatuslineScript below.
+    registerProvider(new ClaudeProvider())
+    registerProvider(new CodexProvider())
+
     // Take a daily safety snapshot of the CONFIG directory BEFORE anything
     // writes to it (deploy/config below, window/handlers later, IPC saves
     // throughout the session). One snapshot per UTC day, last 7 retained
     // under CONFIG/_backups/YYYY-MM-DD/. Non-fatal if it fails.
     try { snapshotConfig() } catch (err) { console.warn('[main] snapshotConfig failed:', err) }
 
-    // Deploy statusline script and configure Claude settings
-    try {
-      deployStatuslineScript()
-      configureClaudeSettings()
-    } catch (err) {
-      console.warn('[main] Failed to deploy statusline:', err)
-    }
+    // U2: heal installs that carry a legacy GLOBAL statusLine stanza + planted
+    // ~/.claude/claude-multi-statusline.js from a prior CCC version. The statusline
+    // is now delivered per-session (writeLocalSessionSettings), so plain `claude`
+    // outside CCC gets its native line back. Best-effort, never blocks boot.
+    try { healGlobalStatusline() } catch (err) { console.warn('[main] healGlobalStatusline failed:', err) }
+
+    // Deploy the statusline script to the resources dir (per-session command +
+    // SSH mounts). Fire-and-forget; no downstream consumers here.
+    Promise.resolve()
+      .then(() => getProvider('claude').deployStatuslineScript?.(getResourcesDirectory()))
+      .then(() => getProvider('claude').deployResumePickerScript?.(getResourcesDirectory()))
+      .then(() => getProvider('codex').deployResumePickerScript?.(getResourcesDirectory()))
+      .catch((err) => console.warn('[main] Failed to deploy provider scripts:', err))
+      // Resume-picker bug fix: backfill companion dirs so DIRECT-WORK
+      // conversations (no subagent/workflow → no companion dir from the CLI) are
+      // visible in the picker AND resumable via `claude --resume`. Idempotent,
+      // additive, NEVER deletes. One sweep of the canonical projects store covers
+      // every account (per-account .claude/projects are junctions to it). Runs
+      // after the .catch so a deploy failure never skips it; off the synchronous
+      // boot path (microtask) so it never delays window creation. Each session's
+      // own resume path also ensures its companion dir, so this is a bulk
+      // visibility pass, not a per-resume requirement.
+      .then(() => {
+        try {
+          const projectsRoot = join(homedir(), '.claude', 'projects')
+          const res = backfillCompanionDirs(projectsRoot, nodeFsCompanionDeps)
+          if (res.created > 0) {
+            console.log(`[main] companion-dir backfill: created ${res.created} companion dir(s) (scanned ${res.scanned} transcripts across ${res.projectFolders} project folders)`)
+          }
+        } catch (err) {
+          console.warn('[main] companion-dir backfill failed:', err)
+        }
+      })
 
     // Content Security Policy
     session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
@@ -562,21 +697,85 @@ if (!gotTheLock) {
     registerPtyHandlers(getWindow)
     registerUsageHandlers()
     registerDiscoveryHandlers()
-    registerLogHandlers()
+    registerResumeHandlers()
+    // Logs v2 — first-run warned wipe of the OLD log artifacts (orphaned ~21 GB
+    // logs.db + ~16 GB legacy logs/ tree + migration markers). The renderer drives
+    // a blocking confirm modal: it DETECTs at startup, and only on the user's
+    // confirm does CONFIRM actually delete. Detection-driven + idempotent (no
+    // marker file — once deleted nothing is detected). executeWipe NEVER touches
+    // ~/.claude / the safety backup / the logging settings (see logs-wipe.ts).
+    ipcMain.handle(IPC.LOGS2_WIPE_DETECT, async () => {
+      try {
+        return detectOldLogArtifacts()
+      } catch (err) {
+        logError(`[logs2] wipe detect failed: ${(err as Error)?.message ?? err}`)
+        return { present: false, totalBytes: 0, paths: [], settingsKeys: [] }
+      }
+    })
+    ipcMain.handle(IPC.LOGS2_WIPE_CONFIRM, async () => {
+      const res = executeWipe()
+      logInfo(`[logs2] wiped ${res.deletedPaths.length} old log artifact(s), freed ${res.freedBytes} bytes, cleared keys: ${res.clearedKeys.join(', ') || '(none)'}`)
+      return res
+    })
     registerDebugHandlers()
     registerUpdateHandlers()
     registerSetupHandlers()
+    registerRegistryHandlers(getResourcesDirectory())
+    // Sentinel (spec 2026-06-11): optional service; OFF = no init, dot hidden, zero impact.
+    // readConfig('settings') is available here (same pattern as the beta-channel read below).
+    {
+      const sentinelSettings = readConfig<{ sentinelEnabled?: boolean }>('settings')
+      if (isSentinelEnabled(sentinelSettings?.sentinelEnabled)) {
+        initSentinel(getResourcesDirectory())
+        registerSentinelHandlers()
+        reconcileOnUpdate()
+        void sentinelStartupCheck()
+      }
+    }
     registerConfigHandlers()
+    // Beta builds default to verbose logging (lightweight async DEBUG lines ->
+    // app.log) so field issues are captured. NEVER on stable. This enables only
+    // the verbose level, NOT the per-event hot-path TRACE logs and NOT the heavy
+    // per-PTY debug capture (debugMode) -- so it's perf-neutral. Sticky baseline:
+    // toggling debug mode off later won't silence it on beta.
+    try {
+      const ch = readConfig<{ updateChannel?: string }>('settings')?.updateChannel
+      if (ch === 'beta') { setVerboseBaseline(true); logInfo('[boot] verbose logging enabled (beta channel)') }
+    } catch { /* settings unreadable this early -- skip */ }
+    registerAccountProfilesHandlers()
+    // SAFETY: snapshot the real Claude config before the multi-account feature
+    // does anything, so the user's original login is always recoverable.
+    try { backupRealClaudeOnce() } catch (e) { logInfo(`[backup] snapshot skipped: ${e}`) }
+    // One-time migration to the USERPROFILE fake-home isolation layout (older
+    // profiles isolated only CLAUDE_CONFIG_DIR, which never isolated the account
+    // identity). Idempotent + best-effort; never touches the real home.
+    try { migrateProfilesToHomeLayout() } catch (e) { logInfo(`[profiles] home-layout migration skipped: ${e}`) }
+    // Capture the current global login into a protected "primary" profile so no
+    // session runs on the bare global ~/.claude (idempotent; best-effort).
+    try { runFirstRunCapture() } catch (e) { logInfo(`[profiles] first-run capture skipped: ${e}`) }
+    // Bug 2: migrate OFF the per-session-home model. Sessions of one account now
+    // share its profile home (one rotating-OAuth store); salvage the freshest live
+    // token out of any retired account-homes/<sessionId>/ into the profile home +
+    // canonical (so no re-auth after upgrade), then KEEP + re-point those homes at
+    // the shared store (UPGRADE GUARD -- a resumed pre-upgrade session may still
+    // name an account-homes path, so we never delete it). Idempotent; bounded set.
+    try { cleanupSessionHomes() } catch (e) { logInfo(`[profiles] session-home cleanup skipped: ${e}`) }
+    // Auth-outside-CCC fix: heal a stale real global ~/.claude/.credentials.json on
+    // launch (a prior session rotated the primary account's OAuth token, leaving
+    // external `claude -p` on a dead refresh token). Freshest-wins + email-guarded.
+    try { const r = syncPrimaryCredentialsWithGlobal(); if (r !== 'none') logInfo(`[profiles] primary<->global credential sync at launch: ${r}`) } catch (e) { logInfo(`[profiles] credential sync skipped: ${e}`) }
     registerScreenshotHandlers(getWindow)
     registerWebviewHandlers(getWindow)
     registerInsightsHandlers(getWindow)
     registerNotesHandlers()
     registerVisionHandlers(getWindow)
+    registerCodexHandlers()
+    registerCodexReviewHandlers()
+    registerChannelHandlers()
+    startRulesEngine()
     registerCloudAgentHandlers(getWindow)
     registerTeamHandlers(getWindow)
     registerLegacyVersionHandlers(getWindow)
-    registerAccountHandlers()
-    registerTokenomicsHandlers(getWindow)
     registerMemoryHandlers()
     // GitHub sidebar — reads/writes github-config.json + encrypted auth profiles
     // under the CONFIG dir alongside other app config. Session-level integration
@@ -601,33 +800,91 @@ if (!gotTheLock) {
     const hooksSettings = readConfig<{ hooksEnabled?: boolean; hooksPort?: number }>('settings')
     const hooksEnabled = hooksSettings?.hooksEnabled !== false
     const hooksPort = hooksSettings?.hooksPort ?? DEFAULT_HOOKS_PORT
-    const hooksGateway = new HooksGateway({
-      defaultPort: hooksPort,
-      emit: (channel, payload) => {
-        const win = getWindow()
-        if (win && !win.isDestroyed()) {
-          try { win.webContents.send(channel, payload) } catch { /* destroyed */ }
-        }
-      },
-    })
-    setGateway(hooksGateway)
-    registerHooksHandlers(hooksGateway)
-    if (hooksEnabled) {
-      cleanupStaleHookEntries(new Set())
-      hooksGateway.start().catch((err) => {
-        logError(`[hooks] Gateway failed to start: ${err?.message ?? err}`)
-      })
+    const emitToWindow = (channel: string, payload: unknown) => {
+      const win = getWindow()
+      if (win && !win.isDestroyed()) {
+        try { win.webContents.send(channel, payload) } catch { /* destroyed */ }
+      }
     }
+    // PTY-integrity monitor (D1 diagnostics). Lives in main; surfaces through the
+    // SAME SERVICE_HEALTH_GET/UPDATE as the hooks supervisor via a merge so every
+    // push carries BOTH snapshots (else one source would wipe the other in the UI).
+    const getSup = () => getHooksSupervisor()
+    const getPtyDiag = () => getPtyIntegrityMonitor()?.diagnostics() ?? null
+    const pushDiagnostics = () => emitToWindow(IPC.SERVICE_HEALTH_UPDATE, getMergedDiagnostics(getSup, getPtyDiag))
+    const ptyMonitor = new PtyIntegrityMonitor({ emit: pushDiagnostics })
+    setPtyIntegrityMonitor(ptyMonitor)
+    // Redirect ONLY SERVICE_HEALTH_UPDATE through the merge; every other channel
+    // (HOOKS_STATUS, HOOKS_EVENT, ...) the supervisor/gateway emit passes through.
+    const emitWithMerge = (channel: string, payload: unknown) =>
+      channel === IPC.SERVICE_HEALTH_UPDATE ? pushDiagnostics() : emitToWindow(channel, payload)
+    // Logs v2 (Task 8): route transcript paths the child gateway lifts from hook
+    // POSTs into the binder. Resolved lazily — the binder is created later by
+    // initLogging(), and is null when logging is disabled (then this is a no-op).
+    const routeTranscriptPath = (sessionId: string, path: string) =>
+      getTranscriptBinder()?.notifyTranscriptPath(sessionId, path)
+    if (hooksEnabled) {
+      // Supervised out-of-process gateway: a utilityProcess child runs the HooksGateway,
+      // crash-isolated from the main thread, with restart/backoff + fail-open-to-in-process.
+      const hooksSupervisor = new ServiceSupervisor({ forkChild: forkHooksChild, defaultPort: hooksPort, emit: emitWithMerge, onTranscriptPath: routeTranscriptPath })
+      const hooksProxy = hooksSupervisor.start()   // forks the child + posts start (S1 replay-before-listen inside)
+      setGateway(hooksProxy)                        // B1: consumers + handlers all use the proxy
+      setHooksSupervisor(hooksSupervisor)           // module-scope ref for before-quit (S5)
+    } else {
+      // Hooks disabled: today's exact behavior — an in-process gateway exists (so
+      // registerSession still mints secrets) but never binds; no child is forked.
+      setGateway(new HooksGateway({ defaultPort: hooksPort, emit: emitWithMerge }))
+    }
+    // Session logging (Logs v2): start the transcripts worker supervisor (gated
+    // on loggingEnabled, default true; no-op + no fork when disabled). The worker
+    // closes dangling runs + resumes transcript tails itself on open. The native
+    // dep (better-sqlite3) lives ONLY in the forked worker — this call stays
+    // main-clean.
+    // TODO(logs2 Phase 5): wipe the orphaned old byte-capture DB
+    // (<dataDir>/logs.db) when the old stack is deleted — it is no longer
+    // written or read by the live app.
+    try {
+      initLogging({ emit: emitWithMerge, dbPath: join(getDataDirectory(), 'transcripts.db') })
+    } catch (err) {
+      logError(`[logs] initLogging failed; session logging disabled this run: ${(err as Error)?.message ?? err}`)
+    }
+    // Logs v2 read surface (the transcript-chat viewer). Registered AFTER
+    // initLogging so the new-messages push can subscribe to the live supervisor;
+    // the request/response handlers resolve the supervisor lazily per call and
+    // reject cleanly when logging is disabled.
+    registerLogs2Handlers(getWindow)
+    // Tokenomics rebuild: start the better-sqlite3 indexing worker supervisor
+    // (forked; native dep lives ONLY in the worker — this stays main-clean) and
+    // register the new read-surface handlers. The worker ingests from raw
+    // transcripts on its own timer/fs-watch — the statusline tick no longer
+    // feeds tokenomics (that path drove the ~30s UI freeze).
+    try { initTokenomics({ emit: emitWithMerge }) } catch (err) { logError(`[tokenomics] init failed: ${(err as Error)?.message ?? err}`) }
+    registerTokenomics2Handlers(getWindow)
+    startEffortTracker()
+    startAttentionSource()
+    startJankDetector()
+    // Main-process event-loop jank monitor: feeds the "Jank m/c" main half on the
+    // Conductor services pill (getMergedDiagnostics stamps stallsLastMin() onto
+    // every service). Stopped in before-quit.
+    startLoopStallMonitor()
+    registerHooksHandlers(getGateway()!)   // B1: handlers get whatever gateway backs the singleton
+    // D1b: diagnostics IPC. The getter returns null in the hooks-disabled branch
+    // (supervisor never set) -> the handler serves an honest synthetic "hooks off" snapshot.
+    registerServiceHealthHandlers(getSup, getPtyDiag)
+    if (hooksEnabled) {
+      cleanupStaleHookEntries(new Set())   // supervisor.start() already fired proxy.start()
+    }
+    // U4: sweep leaked per-session mcp-<sid>.json sidecars (removed on normal
+    // dispose; a crash leaves them). Independent of hooks.
+    cleanupStaleMcpConfigs(new Set())
 
     // Shell — open URLs in system browser
-    ipcMain.handle('shell:openExternal', async (_event, url: string) => {
-      if (typeof url === 'string' && url.startsWith('https://')) {
-        await shell.openExternal(url)
-      }
+    ipcMain.handle('shell:openExternal', async (_event, url: unknown) => {
+      // P1.2: parse + require https rather than a startsWith prefix check, and
+      // hand the OS only the normalized href (never raw renderer input).
+      const href = safeExternalHttpsHref(url)
+      if (href) await shell.openExternal(href)
     })
-
-    // Auto-detect current account from credentials (fire-and-forget)
-    initAccounts().catch(() => {})
 
     // Fetch model pricing in background (non-blocking)
     fetchModelPricing().catch(() => {})
@@ -638,19 +895,24 @@ if (!gotTheLock) {
     // Start the Conductor MCP server unconditionally so the fetch_host_screenshot
     // tool is available for image transfer (snap, storyboard, clipboard paste)
     // in BOTH local and SSH sessions, regardless of whether browser vision is enabled.
-    const visionConfig = readConfig<GlobalVisionConfig>('visionGlobal')
-    const mcpPort = visionConfig?.mcpPort || 19333
+    // P7.2: resolve port from build mode (dev binds 19433, prod 19333) so dev
+    // + prod can coexist on the same machine without EADDRINUSE. The
+    // GlobalVisionConfig.mcpPort field is now deprecated and ignored -- per-session
+    // settings rewrite the mcpServers URL to this instance's actual port
+    // (see per-session-settings.ts).
+    const mcpPort = resolveConductorMcpPort(isPackagedApp())
     startConductorMcpServer(mcpPort).catch(err => {
       logError(`[main] Conductor MCP server startup failed: ${err?.message}`)
     })
 
-    // Auto-start global vision (browser CDP) if configured. The MCP server is
-    // already running — startGlobalVision just attaches the browser manager.
-    if (visionConfig?.enabled) {
-      startGlobalVision(visionConfig, getWindow).catch(err => {
-        logError(`[main] Vision auto-start failed: ${err?.message}`)
-      })
-    }
+    // P7.3: Browser-vision sub-tool auto-starts unconditionally at boot.
+    // The MCP server has always been unconditional; this drops the
+    // visionConfig.enabled gate that caused intermittent "Vision not
+    // connected" errors when sessions spawned before the user clicked
+    // Launch Chrome.
+    startBrowserAtBoot(getWindow).catch(err => {
+      logError(`[main] Vision auto-start failed: ${err?.message}`)
+    })
 
     // Start update system
     // Dev mode: run the local update server + source watcher for live-reload workflow
@@ -667,21 +929,54 @@ if (!gotTheLock) {
       logInfo('[main] Production mode: updates via GitHub releases only')
     }
 
-    // Start watching for statusline updates
+    // Start watching for statusline updates. Logs v2 (Task 8): register the
+    // binder sink first so the continuous, exact transcript path carried by each
+    // status JSON feeds discovery (lazy getter — no-op when logging is disabled).
+    setTranscriptPathSink(routeTranscriptPath)
     startStatuslineWatcher(getWindow)
 
     // Start polling Anthropic service status
     startServiceStatusPoller(getWindow)
+    // Let a freshly-mounted renderer pull the cached status immediately, rather
+    // than waiting up to a full poll interval for the next push (the title-bar
+    // status pills were blank until the next poll because the immediate poll
+    // fired before the renderer subscribed, behind the startup splash).
+    ipcMain.handle(IPC.SERVICE_STATUS_GET, () => getLastServiceStatus())
+  }).catch((err) => {
+    // A throw anywhere in the boot sequence above abandons every subsequent
+    // subsystem registration (handlers, logging, hooks gateway, statusline,
+    // service pollers) -- the window may still appear but be half-wired. Don't
+    // ghost the user: log loudly and surface a dialog so a partial boot is
+    // diagnosable rather than reported as random missing features.
+    logError('[boot] startup failed -- the app may be partially initialised:', err)
+    try {
+      dialog.showErrorBox(
+        'Claude Command Center failed to start cleanly',
+        `Startup hit an error and some features may not work. Please restart the app.\n\n${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
+      )
+    } catch { /* dialog unavailable (very early failure) */ }
   })
 
   app.on('before-quit', () => {
     logInfo('App quitting...')
+    // S5: mark the supervisor shutting-down BEFORE killAllPty() so a hooks-child
+    // exit during teardown does NOT trigger a restart (race-free shutdown).
+    try { _hooksSupervisor?.shutdown() } catch { /* never started / hooks disabled */ }
+    // Flush + tear down session logging BEFORE killAllPty so a final batch is
+    // written and the worker shuts down cleanly. No-op when never init / disabled.
+    try { shutdownLogging() } catch { /* never init / disabled */ }
+    // Tear down the tokenomics indexing worker. No-op when never init.
+    try { shutdownTokenomics() } catch { /* never init */ }
     stopServiceStatusPoller()
+    stopLoopStallMonitor()
     stopUpdateWatcher()
     stopUpdateServer()
     disableDebugMode()
-    closeAllLogs()
     stopGlobalVision()
+    // stopGlobalVision is async + fire-and-forget here, so its trailing browser
+    // teardown may not run before the process exits. killSpawnedBrowser is sync
+    // + idempotent — call it directly so the headless Chrome tree dies on quit.
+    killSpawnedBrowser()
     stopConductorMcpServer()
     killAllAgents()
     killAllPty()

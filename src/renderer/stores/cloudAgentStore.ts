@@ -8,9 +8,10 @@ interface CloudAgentState {
   selectedAgentId: string | null
   filter: FilterType
   searchQuery: string
+  accountFilter: string
 
   hydrate: (agents: CloudAgent[]) => void
-  dispatch: (params: { name: string; description: string; projectPath: string; configId?: string; legacyVersion?: { enabled: boolean; version: string } }) => Promise<void>
+  dispatch: (params: { name: string; description: string; projectPath: string; configId?: string; profileId?: string; legacyVersion?: { enabled: boolean; version: string }; skipPermissions?: boolean }) => Promise<void>
   cancel: (id: string) => Promise<void>
   remove: (id: string) => Promise<void>
   retry: (id: string) => Promise<void>
@@ -18,6 +19,7 @@ interface CloudAgentState {
   selectAgent: (id: string | null) => void
   setFilter: (filter: FilterType) => void
   setSearchQuery: (query: string) => void
+  setAccountFilter: (email: string) => void
 
   handleStatusChanged: (agent: CloudAgent) => void
   handleOutputChunk: (data: { id: string; chunk: string }) => void
@@ -26,18 +28,28 @@ interface CloudAgentState {
   getCounts: () => { all: number; running: number; completed: number; failed: number }
 }
 
-let saveTimeout: ReturnType<typeof setTimeout> | null = null
+// Cap the renderer's in-memory copy of an agent's streamed output. We keep the
+// TAIL (the most recent bytes — the tail of a `claude -p` stream carries the
+// result + cost summary that matters) with a leading marker. Mirrors the main
+// process's 500KB cap (cloud-agent-manager.ts MAX_OUTPUT_BYTES) so neither side
+// grows unbounded.
+//
+// The renderer persists NOTHING for cloudAgents. Main owns cloud-agents.json
+// outright: it persist()s on every mutation (dispatch/completion/error/cancel/
+// remove/clearCompleted) with its capped output, and every renderer mutation
+// goes through main IPC first. The old renderer save (output stripped to '')
+// raced main's write on the SAME file and, when it landed last, erased the
+// persisted output of every completed agent (review finding on 8389ed9).
+const MAX_OUTPUT_BYTES = 512 * 1024 // 500KB
+const OUTPUT_TRUNCATED_MARKER = '[earlier output truncated — exceeded 500KB]\n\n'
 
-function saveConfigDebounced(agents: CloudAgent[]): void {
-  if (saveTimeout) clearTimeout(saveTimeout)
-  saveTimeout = setTimeout(() => {
-    window.electronAPI.config.save('cloudAgents', agents)
-  }, 2000)
-}
-
-function saveConfigNow(agents: CloudAgent[]): void {
-  if (saveTimeout) clearTimeout(saveTimeout)
-  window.electronAPI.config.save('cloudAgents', agents)
+function capOutputTail(output: string): string {
+  if (output.length <= MAX_OUTPUT_BYTES) return output
+  let start = output.length - MAX_OUTPUT_BYTES
+  // Don't start mid-surrogate-pair: rendering a lone low surrogate draws U+FFFD.
+  const c = output.charCodeAt(start)
+  if (c >= 0xdc00 && c <= 0xdfff) start++
+  return OUTPUT_TRUNCATED_MARKER + output.slice(start)
 }
 
 export const useCloudAgentStore = create<CloudAgentState>((set, get) => ({
@@ -45,6 +57,7 @@ export const useCloudAgentStore = create<CloudAgentState>((set, get) => ({
   selectedAgentId: null,
   filter: 'all',
   searchQuery: '',
+  accountFilter: 'all',
 
   hydrate: (agents: CloudAgent[]) => {
     set({ agents: agents || [] })
@@ -70,7 +83,6 @@ export const useCloudAgentStore = create<CloudAgentState>((set, get) => ({
     set(state => {
       const agents = state.agents.filter(a => a.id !== id)
       const selectedAgentId = state.selectedAgentId === id ? null : state.selectedAgentId
-      saveConfigNow(agents)
       return { agents, selectedAgentId }
     })
   },
@@ -97,6 +109,7 @@ export const useCloudAgentStore = create<CloudAgentState>((set, get) => ({
   selectAgent: (id: string | null) => set({ selectedAgentId: id }),
   setFilter: (filter: FilterType) => set({ filter }),
   setSearchQuery: (query: string) => set({ searchQuery: query }),
+  setAccountFilter: (email: string) => set({ accountFilter: email }),
 
   handleStatusChanged: (agent: CloudAgent) => {
     set(state => {
@@ -107,7 +120,6 @@ export const useCloudAgentStore = create<CloudAgentState>((set, get) => ({
       } else {
         agents.unshift(agent)
       }
-      saveConfigNow(agents)
       return { agents }
     })
   },
@@ -117,8 +129,7 @@ export const useCloudAgentStore = create<CloudAgentState>((set, get) => ({
       const agents = [...state.agents]
       const idx = agents.findIndex(a => a.id === data.id)
       if (idx >= 0) {
-        agents[idx] = { ...agents[idx], output: agents[idx].output + data.chunk }
-        saveConfigDebounced(agents)
+        agents[idx] = { ...agents[idx], output: capOutputTail(agents[idx].output + data.chunk) }
         return { agents }
       }
       return state
@@ -126,7 +137,7 @@ export const useCloudAgentStore = create<CloudAgentState>((set, get) => ({
   },
 
   getFilteredAgents: () => {
-    const { agents, filter, searchQuery } = get()
+    const { agents, filter, searchQuery, accountFilter } = get()
     let filtered = agents
 
     if (filter === 'running') {
@@ -135,6 +146,10 @@ export const useCloudAgentStore = create<CloudAgentState>((set, get) => ({
       filtered = filtered.filter(a => a.status === 'completed')
     } else if (filter === 'failed') {
       filtered = filtered.filter(a => a.status === 'failed' || a.status === 'cancelled')
+    }
+
+    if (accountFilter !== 'all') {
+      filtered = filtered.filter(a => a.accountEmail === accountFilter)
     }
 
     if (searchQuery) {

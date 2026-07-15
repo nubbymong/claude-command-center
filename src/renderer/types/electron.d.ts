@@ -14,10 +14,7 @@ export type {
   KpiMetric,
   InsightsData,
   KpiData,
-  LogSession,
-  LogEntry,
   NoteMetadata,
-  AccountProfile,
   AgentTemplate,
   AgentModelOverride,
   TeamTemplate,
@@ -26,10 +23,6 @@ export type {
   TeamStepMode,
   TeamRunStep,
   TeamRunStatus,
-  TokenomicsData,
-  TokenomicsSyncProgress,
-  TokenomicsSessionRecord,
-  TokenomicsDailyAggregate,
   MemoryFile,
   MemoryProject,
   MemoryScanResult,
@@ -47,18 +40,64 @@ import type {
   CloudAgent,
   TeamTemplate,
   TeamRun,
-  AccountProfile,
-  TokenomicsData,
-  TokenomicsSyncProgress,
 } from '../../shared/types'
 import type { HookEvent, HooksGatewayStatus } from '../../shared/hook-types'
 export type { HookEvent, HookEventKind, HooksGatewayStatus } from '../../shared/hook-types'
+import type { ModelRegistry } from '../../shared/model-registry'
+export type { ModelRegistry } from '../../shared/model-registry'
+import type { SentinelStateSnapshot } from '../../shared/sentinel-types'
+export type { SentinelStateSnapshot, SentinelFinding, FindingKind, FindingSeverity, FindingStatus } from '../../shared/sentinel-types'
+import type {
+  ChannelPayload,
+  ChannelEnvelopeMeta,
+  LedgerRecord,
+  ChannelRule,
+  StandingApproval,
+  FeatureState,
+  StandingApprovalTool,
+  StandingApprovalTtl,
+} from '../../shared/channel-types'
+export type {
+  ChannelPayload, ChannelEnvelopeMeta, LedgerRecord,
+  ChannelRule, StandingApproval, FeatureState,
+} from '../../shared/channel-types'
+
+// Mirror of the main-process service-status payload (src/main/service-status.ts).
+// Declared locally so the renderer/web tsconfig doesn't pull a main-process
+// module (with its Node imports) into its type graph.
+export interface ServiceComponentStatus {
+  id: string
+  label: string
+  status: string
+  name: string
+}
+export interface ServiceStatusPayload {
+  fetchedAt: string
+  claudeCode: ServiceComponentStatus | null
+  claudeAi: ServiceComponentStatus | null
+  api: ServiceComponentStatus | null
+  worst: string
+}
 
 export interface ElectronAPI {
   config: {
     loadAll: () => Promise<{ data: Record<string, unknown>; needsMigration: boolean }>
     save: (key: string, data: unknown) => Promise<boolean>
     migrateFromLocalStorage: (data: Record<string, unknown>) => Promise<boolean>
+  }
+  accountProfiles: {
+    list: () => Promise<import('../../shared/account-types').AccountProfile[]>
+    rename: (id: string, name: string) => Promise<{ ok: boolean }>
+    delete: (id: string) => Promise<{ ok: boolean; error?: string }>
+    refreshIdentity: (id: string) => Promise<{ ok: boolean; email: string | null; configDir?: string }>
+    create: (name?: string) => Promise<import('../../shared/account-types').AccountProfile>
+    globalEmail: () => Promise<string | null>
+    captureDetected: (sessionId: string, name?: string) => Promise<import('../../shared/account-types').AccountProfile | null>
+    onAccountNewDetected: (cb: (data: { sessionId: string; profileId: string; email: string }) => void) => () => void
+  }
+  accountUsage: {
+    fetchAll: () => Promise<import('../../shared/usage-types').AccountUsage[]>
+    fetchOne: (id: string) => Promise<import('../../shared/usage-types').AccountUsage | null>
   }
   window: {
     minimize: () => void
@@ -75,8 +114,7 @@ export interface ElectronAPI {
     openFolder: () => Promise<string | null>
   }
   clipboard: {
-    readImage: () => Promise<string | null>
-    saveImage: () => Promise<string | null>
+    saveImage: () => Promise<{ path: string } | { error: 'no-image' | 'too-large' }>
   }
   credentials: {
     save: (configId: string, password: string) => Promise<boolean>
@@ -100,6 +138,7 @@ export interface ElectronAPI {
       elevated?: boolean
       configId?: string
       configLabel?: string
+      loggingEnabled?: boolean
       useResumePicker?: boolean
       legacyVersion?: {
         enabled: boolean
@@ -109,16 +148,27 @@ export interface ElectronAPI {
         name: string; description: string; prompt: string
         model?: string; tools?: string[]
       }>
-      flickerFree?: boolean
-      powershellTool?: boolean
-      effortLevel?: 'low' | 'medium' | 'high'
+      effortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode'
       disableAutoMemory?: boolean
+      enableCodexReview?: boolean
+      resume?: { uuid: string; cwd: string }
+      model?: string
+      profileId?: string
+      provider?: 'claude' | 'codex'
+      codexOptions?: {
+        model?: string
+        reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+        permissionsPreset: 'read-only' | 'standard' | 'auto' | 'unrestricted'
+      }
     }) => Promise<void>
     write: (sessionId: string, data: string) => void
     resize: (sessionId: string, cols: number, rows: number) => void
     kill: (sessionId: string) => void
     onData: (sessionId: string, callback: (data: string) => void) => () => void
     onExit: (sessionId: string, callback: (exitCode: number) => void) => () => void
+  }
+  ptyIntegrity: {
+    report: (report: import('../../shared/service-health').PtyIntegrityReport) => void
   }
   ssh: {
     runPostCommand: (sessionId: string) => Promise<void>
@@ -128,29 +178,26 @@ export interface ElectronAPI {
     onFlowState: (sessionId: string, callback: (msg: { state: string; info?: string }) => void) => () => void
   }
   statusline: {
-    onUpdate: (callback: (data: {
-      sessionId: string
-      model?: string
-      contextUsedPercent?: number
-      contextRemainingPercent?: number
-      contextWindowSize?: number
-      inputTokens?: number
-      outputTokens?: number
-      costUsd?: number
-      totalDurationMs?: number
-      linesAdded?: number
-      linesRemoved?: number
-      rateLimitCurrent?: number
-      rateLimitCurrentResets?: string
-      rateLimitWeekly?: number
-      rateLimitWeeklyResets?: string
-      rateLimitExtra?: {
-        enabled: boolean
-        utilization: number
-        usedUsd: number
-        limitUsd: number
-      }
-    }) => void) => () => void
+    onUpdate: (callback: (data: StatuslineData) => void) => () => void
+  }
+  effort: {
+    onUpdate: (callback: (data: { sessionId: string; effortLevel: string }) => void) => () => void
+  }
+  registry: {
+    get(): Promise<ModelRegistry>
+    onUpdate(cb: (reg: ModelRegistry) => void): () => void
+  }
+  sentinel: {
+    getState(): Promise<SentinelStateSnapshot | null>
+    apply(id: string): Promise<{ ok: boolean; error?: string }>
+    revert(id: string): Promise<void>
+    setStatus(id: string, status: 'dismissed' | 'muted'): Promise<void>
+    rerun(): Promise<void>
+    onUpdate(cb: (snap: SentinelStateSnapshot) => void): () => void
+  }
+  accountIdentity: {
+    get: (sessionId: string) => Promise<{ email: string; colourKey: string } | null>
+    onUpdate: (callback: (data: { sessionId: string; email: string; colourKey: string }) => void) => () => void
   }
   debug: {
     onDebug: (callback: (data: any) => void) => () => void
@@ -164,21 +211,76 @@ export interface ElectronAPI {
     getTotalUsage: () => Promise<any>
     getUsageHistory: (hours: number) => Promise<any>
   }
-  logs: {
-    list: () => Promise<Array<{
-      configLabel: string
-      sessionId: string
-      logDir: string
-      startTime?: number
-      endTime?: number
-      size: number
-    }>>
-    read: (logDir: string, offset?: number, limit?: number) => Promise<{
-      entries: Array<{ ts: number; type: string; data?: string }>
-      total: number
+  logsdb: {
+    /** T8b (bug #5): exact-conversation resume target for a session, or null. */
+    getResumeTarget: (sessionId: string) => Promise<{ uuid: string; cwd: string } | null>
+  }
+  logsWipe: {
+    /** Detect the OLD log artifacts (logs.db*, legacy logs/ tree, migration markers). */
+    detect: () => Promise<{
+      present: boolean
+      totalBytes: number
+      paths: string[]
+      settingsKeys: string[]
     }>
-    search: (logDir: string, query: string) => Promise<Array<{ ts: number; type: string; data?: string }>>
-    cleanup: (retentionDays?: number) => Promise<number>
+    /** Delete the detected artifacts + clear the 2 legacy-migration settings keys. */
+    confirm: () => Promise<{
+      deletedPaths: string[]
+      clearedKeys: string[]
+      freedBytes: number
+    }>
+  }
+  /** Logs v2 — the transcript-chat read surface (routes through the transcripts worker). */
+  logs2: {
+    listSlots: () => Promise<Array<{
+      slotKey: string
+      configId: string | null
+      configLabel: string
+      accountEmail: string | null
+      lastActive: number
+      runCount: number
+      messageCount: number
+    }>>
+    readMessages: (args: {
+      scope: { configId: string } | { sessionId: string }
+      anchor?: 'tail' | { runId: number; idx: number }
+      dir?: 'older' | 'newer'
+      limit?: number
+    }) => Promise<Array<{
+      runId: number
+      idx: number
+      ts: number
+      role: string
+      kind: string
+      content: string
+      toolName: string | null
+      toolMeta: string | null
+    }>>
+    turnSummary: (args: { scope: { configId: string } | { sessionId: string } }) => Promise<Array<{
+      runId: number
+      idx: number
+      role: string
+      kind: string
+      ts: number
+      toolName: string | null
+    }>>
+    search: (args: { query: string; limit?: number }) => Promise<Array<{
+      runId: number
+      idx: number
+      configId: string | null
+      sessionId: string
+      snippet: string
+    }>>
+    deleteSlot: (args: { scope: { configId: string } | { sessionId: string } }) =>
+      Promise<{ deletedRuns: number; deletedMessages: number }>
+    clearAll: () => Promise<{ deletedRuns: number; deletedMessages: number }>
+    ingestStatus: (args: { sessionId: string }) => Promise<{
+      transcripts: { path: string; status: string; ord: number }[]
+      messageCount: number
+    } | null>
+    sessionConfig: (args: { sessionId: string }) => Promise<{ configId: string | null } | null>
+    /** Live push from the worker when a tailed transcript appends messages. */
+    onNewMessages: (cb: (e: { sessionId: string; configId: string | null; count: number }) => void) => () => void
   }
   discovery: {
     getProjects: () => Promise<any>
@@ -237,13 +339,12 @@ export interface ElectronAPI {
     gracefulExit: () => Promise<boolean>
   }
   insights: {
-    run: () => Promise<string>
+    run: (opts?: { profileId?: string }) => Promise<string>
     getCatalogue: () => Promise<InsightsCatalogue>
     getReport: (runId: string) => Promise<string | null>
     getKpis: (runId: string) => Promise<KpiData | null>
     getLatest: () => Promise<InsightsRun | null>
     isRunning: () => Promise<boolean>
-    seed: () => Promise<string | null>
     onStatusChanged: (callback: (run: InsightsRun) => void) => () => void
   }
   notes: {
@@ -258,8 +359,8 @@ export interface ElectronAPI {
     stop: () => Promise<{ ok: boolean }>
     status: () => Promise<{ running: boolean; connected: boolean; browser: string; mcpPort: number }>
     launch: (browser: string, debugPort: number, url?: string, headless?: boolean) => Promise<{ ok: boolean; pid?: number; command?: string; error?: string }>
-    saveConfig: (config: { enabled: boolean; browser: 'chrome' | 'edge'; debugPort: number; mcpPort: number; url?: string; headless?: boolean }) => Promise<{ ok: boolean }>
-    getConfig: () => Promise<{ enabled: boolean; browser: 'chrome' | 'edge'; debugPort: number; mcpPort: number; url?: string; headless?: boolean } | null>
+    saveConfig: (config: { enabled?: boolean; browser: 'chrome' | 'edge'; debugPort: number; mcpPort?: number; url?: string; headless?: boolean }) => Promise<{ ok: boolean }>
+    getConfig: () => Promise<{ enabled?: boolean; browser: 'chrome' | 'edge'; debugPort: number; mcpPort?: number; url?: string; headless?: boolean } | null>
     onStatusChanged: (callback: (data: { connected: boolean; browser: string; mcpPort: number }) => void) => () => void
   }
   legacyVersion: {
@@ -271,7 +372,7 @@ export interface ElectronAPI {
     onInstallProgress: (cb: (data: { version: string; message: string }) => void) => () => void
   }
   cloudAgent: {
-    dispatch: (agent: { name: string; description: string; projectPath: string; configId?: string; legacyVersion?: { enabled: boolean; version: string } }) => Promise<CloudAgent>
+    dispatch: (agent: { name: string; description: string; projectPath: string; configId?: string; profileId?: string; legacyVersion?: { enabled: boolean; version: string } }) => Promise<CloudAgent>
     cancel: (id: string) => Promise<boolean>
     remove: (id: string) => Promise<boolean>
     retry: (id: string) => Promise<CloudAgent | null>
@@ -291,29 +392,37 @@ export interface ElectronAPI {
     onRunStatusChanged: (callback: (run: TeamRun) => void) => () => void
   }
   serviceStatus: {
-    onUpdate: (callback: (data: { status: string; description: string }) => void) => () => void
+    get: () => Promise<ServiceStatusPayload | null>
+    onUpdate: (callback: (data: ServiceStatusPayload) => void) => () => void
+  }
+  serviceHealth: {
+    get: () => Promise<import('../../shared/service-health').DiagnosticsSnapshot>
+    restart: (serviceId: string) => Promise<{ ok: boolean; reason?: string }>
+    onUpdate: (callback: (snap: import('../../shared/service-health').DiagnosticsSnapshot) => void) => () => void
   }
   cli: {
     check: () => Promise<boolean>
+    path: () => Promise<string | null>
+    version: () => Promise<string | null>
+  }
+  help: {
+    workspace: () => Promise<string | null>
   }
   tokenomics: {
-    getData: () => Promise<TokenomicsData>
-    seed: () => Promise<TokenomicsData>
-    sync: () => Promise<TokenomicsData>
-    onProgress: (callback: (data: TokenomicsSyncProgress) => void) => () => void
-  }
-  account: {
-    list: () => Promise<AccountProfile[]>
-    switch: (id: string) => Promise<{ ok: boolean; error?: string }>
-    getActive: () => Promise<AccountProfile | null>
-    saveCurrentAs: (id: string, label: string) => Promise<{ ok: boolean; error?: string }>
-    rename: (id: string, newLabel: string) => Promise<{ ok: boolean; error?: string }>
+    summary: (filter?: import('../../shared/types').TkSummaryFilter) => Promise<import('../../shared/types').TkSummary | null>
+    sessions: (query?: import('../../shared/types').TkSessionsQuery) => Promise<import('../../shared/types').TkSessionsPage>
+    sessionDetail: (sessionId: string) => Promise<import('../../shared/types').TkSessionDetail | null>
+    indexStatus: () => Promise<import('../../shared/types').TkIndexStatus>
+    onIndexStatus: (cb: (s: import('../../shared/types').TkIndexStatus) => void) => () => void
+    onIndexProgress: (cb: (p: import('../../shared/types').TkIndexProgress) => void) => () => void
+    onIndexComplete: (cb: (c: import('../../shared/types').TkIndexCompleteEvent) => void) => () => void
   }
   memory: {
     scan: () => Promise<import('../../shared/types').MemoryScanResult>
     read: (filePath: string) => Promise<string>
     delete: (filePath: string) => Promise<void>
     writeFrontmatter: (filePath: string, frontmatter: { name?: string; description?: string; type?: string }) => Promise<void>
+    recentSessions: (projectDir: string) => Promise<Array<{ sessionId: string; lastActive: number }>>
   }
   shell: {
     openExternal: (url: string) => Promise<void>
@@ -332,6 +441,15 @@ export interface ElectronAPI {
     adoptGhCli: (username: string) => Promise<{ ok: boolean; id?: string; error?: string }>
     removeProfile: (id: string) => Promise<{ ok: boolean }>
     renameProfile: (id: string, label: string) => Promise<{ ok: boolean }>
+    // Generic profile patch. The renderer may ONLY assert label + featureToggles
+    // (RendererProfilePatch). Auth-system fields (scopes/capabilities/expiry/
+    // verification timestamps) are derived from token verification in main and
+    // are NOT renderer-patchable; the GITHUB_PROFILE_UPDATE handler narrows the
+    // incoming patch to this shape before it reaches the store (review F1).
+    updateProfile: (
+      id: string,
+      patch: import('../../shared/github-types').RendererProfilePatch,
+    ) => Promise<{ ok: boolean }>
     testProfile: (id: string) => Promise<{
       ok: boolean
       username?: string
@@ -339,7 +457,10 @@ export interface ElectronAPI {
       expiresAt?: number
       error?: string
     }>
-    oauthStart: (mode: 'public' | 'private') => Promise<{
+    oauthStart: (
+      mode: 'public' | 'private',
+      opts?: { includeUserScope?: boolean },
+    ) => Promise<{
       flowId: string
       userCode: string
       verificationUri: string
@@ -352,6 +473,7 @@ export interface ElectronAPI {
       error?: string
     }>
     oauthCancel: (flowId: string) => Promise<{ ok: boolean }>
+    reauthProfile: (profileId: string) => Promise<import('../../shared/github-types').ReauthResult>
     ghcliDetect: () => Promise<{ ok: boolean; users: string[] }>
     repoDetect: (cwd: string) => Promise<{ ok: boolean; slug: string | null }>
     updateSessionConfig: (
@@ -414,6 +536,10 @@ export interface ElectronAPI {
       body: string,
     ) => Promise<{ ok: boolean; error?: string }>
     markNotifRead: (profileId: string, notifId: string) => Promise<{ ok: boolean; error?: string }>
+    getAiUsage: (force?: boolean) => Promise<import('../../shared/github-types').AiUsagePayload>
+    onAiUsageUpdate: (
+      cb: (payload: import('../../shared/github-types').AiUsagePayload) => void,
+    ) => () => void
   }
   hooks: {
     toggle: (enabled: boolean) => Promise<HooksGatewayStatus>
@@ -423,6 +549,41 @@ export interface ElectronAPI {
     onSessionEnded: (cb: (sid: string) => void) => () => void
     onDropped: (cb: (p: { sessionId: string }) => void) => () => void
     onStatus: (cb: (s: HooksGatewayStatus) => void) => () => void
+  }
+  codexReview: {
+    getUsage: (sessionId: string) => Promise<import('../../shared/types').CodexReviewUsageRecord | null>
+    onUsageUpdated: (callback: (payload: { sessionId: string; record: import('../../shared/types').CodexReviewUsageRecord }) => void) => () => void
+  }
+  channels: {
+    send: (req: { targetSessionId: string; targetLabel?: string; payload: ChannelPayload; meta: ChannelEnvelopeMeta }) => Promise<{ ok: boolean; reason?: string; transport?: 'pty' | 'mcp'; ledgerId?: string }>
+    retract: (p: { targetSessionId: string; targetLabel?: string }) => Promise<{ ok: boolean; reason?: string; transport?: 'pty' | 'mcp'; ledgerId?: string }>
+    forceTier: (p: { sessionId: string; tier: 'auto' | 'tier-1' | 'tier-2' }) => Promise<{ ok: boolean }>
+    ruleCRUD: (p: { op: 'list' } | { op: 'save'; rule: ChannelRule } | { op: 'delete'; id: string }) => Promise<ChannelRule[] | { ok: boolean; rules: ChannelRule[] }>
+    standingApprovalCRUD: (p: { op: 'add'; tool: StandingApprovalTool; ttl: StandingApprovalTtl } | { op: 'remove'; id: string } | { op: 'list' }) => Promise<StandingApproval[]>
+    capabilityDiagnostics: () => Promise<{ descriptor: unknown; handshakes: unknown[]; sessions: unknown[]; protocolRange: string }>
+    introDismissed: () => Promise<FeatureState>
+    killSwitch: (p: { disabled: boolean }) => Promise<FeatureState>
+    onLedgerEvent: (cb: (r: LedgerRecord) => void) => () => void
+    rendererReady: () => Promise<unknown>
+    onAttention: (cb: (p: { sessionId: string; needsAttention: boolean }) => void) => () => void
+  }
+  codex: {
+    status: () => Promise<{
+      installed: boolean
+      version: string | null
+      authMode: 'chatgpt' | 'api-key' | 'none'
+      planType?: string
+      accountId?: string
+      hasOpenAiApiKeyEnv: boolean
+    }>
+    login: (payload: { mode: 'chatgpt' | 'api-key' | 'device'; apiKey?: string }) => Promise<{
+      ok: boolean
+      browserUrl?: string
+      deviceCode?: string
+      error?: string
+    }>
+    logout: () => Promise<{ ok: boolean }>
+    testConnection: () => Promise<{ ok: boolean; message: string }>
   }
 }
 

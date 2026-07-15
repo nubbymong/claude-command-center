@@ -9,6 +9,12 @@ export interface AppMeta {
   colorMigrated?: boolean
   hasCreatedFirstConfig?: boolean
   firstRunCardDismissed?: boolean
+  accountWizardDismissed?: boolean
+  accountGateDecided?: boolean      // user explicitly chose Enable or No in the gate
+  lastSeenGlobalAccount?: string    // global ~/.claude.json oauth email at last launch
+  completedSteps?: Record<string, string>   // onboarding: stepId -> app version at completion (presence = settled)
+  onboardingCompletedVersion?: string       // onboarding: set once at the finish step; compared to ONBOARDING_VERSION
+  onboardingAppVersion?: string             // app version at last onboarding finish; drives the per-beta-version tour retrigger
 }
 
 interface AppMetaState {

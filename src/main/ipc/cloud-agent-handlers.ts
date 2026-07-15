@@ -20,7 +20,9 @@ export function registerCloudAgentHandlers(getWindow: () => BrowserWindow | null
     description: string
     projectPath: string
     configId?: string
+    profileId?: string
     legacyVersion?: { enabled: boolean; version: string }
+    skipPermissions?: boolean
   }) => {
     return dispatchAgent(params)
   })

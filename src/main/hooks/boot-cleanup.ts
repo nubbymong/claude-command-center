@@ -39,3 +39,30 @@ export function cleanupStaleHookEntries(activeSessionIds: ReadonlySet<string>): 
   }
   return cleaned
 }
+
+// Non-greedy before `.json` so `mcp-foo.json.bak` does not match.
+const MCP_SID_FROM_FILENAME = /^mcp-([^.]+)\.json$/
+
+/**
+ * Sweep leaked per-session ~/.claude/mcp-<sid>.json sidecars. These are removed
+ * on normal session dispose (removeLocalSessionMcpConfig) but a crash leaves them
+ * behind. Deletes any whose sid is not in the active set. Returns the count.
+ */
+export function cleanupStaleMcpConfigs(activeSessionIds: ReadonlySet<string>): number {
+  const dir = path.join(os.homedir(), '.claude')
+  if (!fs.existsSync(dir)) return 0
+  const files = fs.readdirSync(dir)
+  let cleaned = 0
+  for (const name of files) {
+    const m = MCP_SID_FROM_FILENAME.exec(name)
+    if (!m) continue
+    if (activeSessionIds.has(m[1])) continue
+    try {
+      fs.unlinkSync(path.join(dir, name))
+      cleaned++
+    } catch {
+      /* skip unreadable / already-gone */
+    }
+  }
+  return cleaned
+}

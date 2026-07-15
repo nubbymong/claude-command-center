@@ -53,30 +53,20 @@ export default function AutoDetectBanner({ cwd, onAccept, onEdit, onDismiss }: P
   }
 
   return (
-    <div
-      role="status"
-      aria-live="polite"
-      className="bg-mantle border-b border-surface0 px-3 py-1.5 flex items-center gap-2 text-xs"
-    >
-      <span className="text-subtext0">Detected</span>
+    <div role="status" aria-live="polite"
+      className="border-b px-3 py-1.5 flex items-center gap-2 text-xs"
+      style={{ background: 'color-mix(in srgb, var(--status-info) 10%, var(--surface-panel))', borderColor: 'color-mix(in srgb, var(--status-info) 30%, transparent)' }}>
+      <span style={{ color: 'var(--status-info)' }}>Detected repo</span>
       <code className="text-blue">{slug}</code>
-      <button
-        onClick={handleAccept}
-        className="bg-surface0 hover:bg-surface1 transition-colors px-2 py-0.5 rounded"
-      >
-        Use this
-      </button>
-      <button onClick={onEdit} className="text-overlay1 hover:text-text transition-colors">
-        Edit
-      </button>
+      <button onClick={handleAccept} className="px-1.5 py-0.5 rounded text-blue hover:bg-blue/10 transition-colors focus-ring">Use this repo</button>
+      <button onClick={onEdit} className="text-overlay1 hover:text-text px-1.5 py-0.5 rounded transition-colors focus-ring">Edit</button>
       <button
         onClick={handleDismiss}
         disabled={dismissing}
-        className="text-overlay1 hover:text-text transition-colors ml-auto disabled:opacity-50"
-        aria-label="Dismiss repo auto-detect banner"
-      >
-        {String.fromCodePoint(0x00d7)}
-      </button>
+        className="text-overlay0 hover:text-text ml-auto px-1 rounded focus-ring disabled:opacity-50 disabled:cursor-not-allowed"
+        title="Dismiss"
+        aria-label="Dismiss"
+      >{String.fromCodePoint(0x00d7)}</button>
     </div>
   )
 }

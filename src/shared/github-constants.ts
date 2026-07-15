@@ -1,5 +1,11 @@
 // src/shared/github-constants.ts
-import type { Capability, GitHubFeatureKey } from './github-types'
+import type {
+  Capability,
+  GitHubAppWideFeatureKey,
+  GitHubAuthFeatureKey,
+  GitHubConfig,
+  GitHubFeatureKey,
+} from './github-types'
 
 // PUBLIC OAuth Client ID — safe to commit. RFC 8628 device flow = public client,
 // no client secret needed. Do NOT add a client secret here.
@@ -65,31 +71,75 @@ export const DEFAULT_FEATURE_TOGGLES: Record<GitHubFeatureKey, boolean> = {
   sessionContext: true,
 }
 
+// Per-account auth-feature defaults (spec 2026-06-13 section 2). The key SETS
+// of this and DEFAULT_FEATURE_TOGGLES intentionally differ (aiCredits here;
+// localGit/sessionContext there); the constraint is that keys present in BOTH
+// must carry identical values. notifications stays false (requires
+// notifications-capable auth). aiCredits defaults off (requires the `plan`
+// capability — classic `user` scope / fine-grained Account "Plan: read").
+export const DEFAULT_AUTH_FEATURE_TOGGLES: Record<GitHubAuthFeatureKey, boolean> = {
+  activePR: true,
+  ci: true,
+  reviews: true,
+  linkedIssues: true,
+  notifications: false,
+  aiCredits: false,
+}
+
+// App-wide no-auth feature defaults; values must match the same keys in
+// DEFAULT_FEATURE_TOGGLES until Plan 2 retires them there.
+export const DEFAULT_APP_WIDE_TOGGLES: Record<GitHubAppWideFeatureKey, boolean> = {
+  localGit: true, // reads the local repo only
+  sessionContext: true, // derived from the session itself, no API calls
+}
+
 // OAuth scopes per repo-visibility mode.
 export const OAUTH_SCOPES_PUBLIC = 'public_repo read:org notifications workflow'
 export const OAUTH_SCOPES_PRIVATE = 'repo read:org notifications workflow'
 
 // Scope → Capability mapping for classic PATs + OAuth tokens.
+// `user` grants 'plan' — it's the scope GitHub requires to read the AI-credits
+// (Copilot billing) usage the aiCredits feature surfaces.
 export const CLASSIC_PAT_SCOPE_CAPABILITIES: Record<string, Capability[]> = {
   repo: ['pulls', 'issues', 'contents', 'statuses', 'checks', 'actions'],
   public_repo: ['pulls', 'issues', 'contents', 'statuses', 'checks', 'actions'],
   workflow: ['actions'],
   notifications: ['notifications'],
+  user: ['plan'],
 }
 
 // Fine-grained PAT permission → Capability mapping.
 // 'checks' intentionally NOT present — GitHub removed the permission.
 // 'notifications' intentionally NOT present — no such scope for fine-grained.
+// 'plan' = the Account "Plan: read" permission, granting AI-credits coverage.
 export const FINEGRAINED_PERMISSION_CAPABILITIES: Record<string, Capability[]> = {
   pull_requests: ['pulls'],
   issues: ['issues'],
   contents: ['contents'],
   statuses: ['statuses'],
   actions: ['actions'],
+  plan: ['plan'],
 }
 
 export const GITHUB_CONFIG_SCHEMA_VERSION = 1
 export const GITHUB_CACHE_SCHEMA_VERSION = 1
+
+// First-launch / no-config-file default. Seeds the new toggle fields
+// (appWideToggles, featureDefaults) from their default constants, so new
+// configs are born already-migrated; the shape migration only runs for
+// configs from older builds that predate those fields.
+export function emptyGitHubConfig(): GitHubConfig {
+  return {
+    schemaVersion: GITHUB_CONFIG_SCHEMA_VERSION,
+    authProfiles: {},
+    featureToggles: { ...DEFAULT_FEATURE_TOGGLES },
+    appWideToggles: { ...DEFAULT_APP_WIDE_TOGGLES },
+    featureDefaults: { ...DEFAULT_AUTH_FEATURE_TOGGLES },
+    syncIntervals: { ...DEFAULT_SYNC_INTERVALS },
+    enabledByDefault: false,
+    transcriptScanningOptIn: false,
+  }
+}
 
 export const CACHE_MAX_REPOS = 50
 export const CACHE_MAX_BYTES = 10 * 1024 * 1024

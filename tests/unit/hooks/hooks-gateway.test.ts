@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { HooksGateway } from '../../../src/main/hooks/hooks-gateway'
+import { RING_BUFFER_CAP } from '../../../src/main/hooks/hooks-types'
 
 describe('HooksGateway.start/stop', () => {
   let gw: HooksGateway | null = null
@@ -34,6 +35,39 @@ describe('HooksGateway.start/stop', () => {
       body: '{}',
     })
     expect(r.status).toBe(403)
+  })
+
+  it('uses parsedBody when provided and does NOT re-parse the body string (perf dedup)', async () => {
+    // The live HTTP path parses the body once and passes the object as
+    // parsedBody so ingest never re-parses. Prove it: garbage body string but a
+    // valid parsedBody => still 200 + emitted (body string is ignored).
+    const emit = vi.fn()
+    gw = new HooksGateway({ emit, defaultPort: 0 })
+    await gw.start()
+    const secret = gw.registerSession('sid-a')
+    const r = await gw._handleRequestForTest({
+      remoteAddress: '127.0.0.1',
+      url: '/hook/sid-a',
+      headers: { 'x-ccc-hook-token': secret },
+      body: 'not-json-at-all',
+      parsedBody: { event: 'PreToolUse', tool_name: 'Bash' },
+    })
+    expect(r.status).toBe(200)
+    expect(emit).toHaveBeenCalled()
+  })
+
+  it('treats parsedBody=null as invalid JSON (400) without parsing body', async () => {
+    gw = new HooksGateway({ emit: vi.fn(), defaultPort: 0 })
+    await gw.start()
+    const secret = gw.registerSession('sid-a')
+    const r = await gw._handleRequestForTest({
+      remoteAddress: '127.0.0.1',
+      url: '/hook/sid-a',
+      headers: { 'x-ccc-hook-token': secret },
+      body: '{"event":"PreToolUse"}', // valid, but parsedBody=null wins
+      parsedBody: null,
+    })
+    expect(r.status).toBe(400)
   })
 
   it('accepts IPv6 loopback :: and :: ffff:127.0.0.1', async () => {
@@ -141,6 +175,42 @@ describe('HooksGateway.request validation', () => {
   })
 })
 
+describe('HooksGateway body-size cap (413)', () => {
+  let gw: HooksGateway | null = null
+  afterEach(async () => {
+    await gw?.stop()
+    gw = null
+  })
+
+  it('accepts a ~300 KiB payload (over the old 256 KiB cap, under the new 4 MiB cap)', async () => {
+    // Regression: PostToolUse on a large file produces a body the old 256 KiB
+    // cap rejected with 413, silently dropping the edit from CCC's feed.
+    gw = new HooksGateway({ emit: vi.fn(), defaultPort: 0 })
+    const status = await gw.start()
+    const secret = gw.registerSession('sid-big')
+    const body = JSON.stringify({ event: 'PostToolUse', tool_name: 'Edit', payload: { big: 'x'.repeat(300 * 1024) } })
+    const res = await fetch(`http://127.0.0.1:${status.port}/hook/sid-big`, {
+      method: 'POST',
+      headers: { 'x-ccc-hook-token': secret, 'content-type': 'application/json' },
+      body,
+    })
+    expect(res.status).toBe(200)
+  })
+
+  it('still rejects a payload over the 4 MiB cap with 413', async () => {
+    gw = new HooksGateway({ emit: vi.fn(), defaultPort: 0 })
+    const status = await gw.start()
+    const secret = gw.registerSession('sid-huge')
+    const body = JSON.stringify({ event: 'PostToolUse', tool_name: 'Edit', payload: { big: 'x'.repeat(4 * 1024 * 1024 + 1024) } })
+    const res = await fetch(`http://127.0.0.1:${status.port}/hook/sid-huge`, {
+      method: 'POST',
+      headers: { 'x-ccc-hook-token': secret, 'content-type': 'application/json' },
+      body,
+    })
+    expect(res.status).toBe(413)
+  })
+})
+
 describe('HooksGateway.ingest', () => {
   let gw: HooksGateway | null = null
   let emitted: Array<{ channel: string; payload: unknown }> = []
@@ -203,11 +273,12 @@ describe('HooksGateway.ingest', () => {
     expect(cmd).not.toContain('sk-ant-abcdefghij')
   })
 
-  it('caps ring buffer at 200 per session, emits dropped once', async () => {
+  it('caps ring buffer at RING_BUFFER_CAP per session, emits dropped once', async () => {
     gw = makeGw()
     await gw.start()
     const secret = gw.registerSession('sid-a')
-    for (let i = 0; i < 250; i++) {
+    // Drive 50 past the cap so exactly the eviction path is exercised.
+    for (let i = 0; i < RING_BUFFER_CAP + 50; i++) {
       await gw._handleRequestForTest({
         remoteAddress: '127.0.0.1',
         url: '/hook/sid-a',
@@ -215,7 +286,7 @@ describe('HooksGateway.ingest', () => {
         body: JSON.stringify({ event: 'PreToolUse', tool_name: 'Read', payload: { i } }),
       })
     }
-    expect(gw.getBuffer('sid-a').length).toBe(200)
+    expect(gw.getBuffer('sid-a').length).toBe(RING_BUFFER_CAP)
     const dropped = emitted.filter((e) => e.channel === 'hooks:dropped')
     expect(dropped.length).toBe(1)
   })

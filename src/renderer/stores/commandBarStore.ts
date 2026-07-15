@@ -13,6 +13,12 @@ import { saveConfigDebounced } from '../utils/config-saver'
 
 export interface CommandBarUiState {
   collapsedSectionIds: string[]
+  // Whole-bar collapse -- when true the CommandBar renders only its slim
+  // toggle row and hides the command rows. Shared (like collapsedSectionIds)
+  // so the Claude and Partner CommandBar instances within one config agree,
+  // and persisted so the choice survives restarts. Defaults to false
+  // (expanded) to avoid surprising existing users on upgrade.
+  barCollapsed: boolean
 }
 
 interface CommandBarStore {
@@ -21,10 +27,13 @@ interface CommandBarStore {
   hydrate: (state: Partial<CommandBarUiState>) => void
   isCollapsed: (sectionId: string) => boolean
   toggleSection: (sectionId: string) => void
+  toggleBar: () => void
+  setBarCollapsed: (value: boolean) => void
 }
 
 const DEFAULTS: CommandBarUiState = {
   collapsedSectionIds: [],
+  barCollapsed: false,
 }
 
 export const useCommandBarStore = create<CommandBarStore>((set, get) => ({
@@ -42,6 +51,9 @@ export const useCommandBarStore = create<CommandBarStore>((set, get) => ({
         collapsedSectionIds: Array.isArray(next.collapsedSectionIds)
           ? next.collapsedSectionIds
           : [],
+        // Defend against a corrupted commandBarUi.json where barCollapsed
+        // came back as a non-boolean; default to expanded.
+        barCollapsed: typeof next.barCollapsed === 'boolean' ? next.barCollapsed : false,
       },
       isLoaded: true,
     }),
@@ -59,6 +71,21 @@ export const useCommandBarStore = create<CommandBarStore>((set, get) => ({
       // Debounced — rapid expand/collapse spam shouldn't write to
       // disk on every click. config-saver coalesces successive calls
       // within 300 ms.
+      saveConfigDebounced('commandBarUi', nextState)
+      return { state: nextState }
+    }),
+
+  toggleBar: () =>
+    set((s) => {
+      const nextState = { ...s.state, barCollapsed: !s.state.barCollapsed }
+      saveConfigDebounced('commandBarUi', nextState)
+      return { state: nextState }
+    }),
+
+  setBarCollapsed: (value) =>
+    set((s) => {
+      if (s.state.barCollapsed === value) return s
+      const nextState = { ...s.state, barCollapsed: value }
       saveConfigDebounced('commandBarUi', nextState)
       return { state: nextState }
     }),

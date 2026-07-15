@@ -11,7 +11,34 @@ export type Capability =
   | 'checks'
   | 'actions'
   | 'notifications'
+  | 'plan'
 
+// Feature keys that require auth, per spec section 2. localGit and
+// sessionContext are app-wide and never appear on a profile.
+export type GitHubAuthFeatureKey =
+  | 'activePR'
+  | 'ci'
+  | 'reviews'
+  | 'linkedIssues'
+  | 'notifications'
+  | 'aiCredits'
+
+export type GitHubAppWideFeatureKey = 'localGit' | 'sessionContext'
+
+/** The only profile fields the renderer may patch via GITHUB_PROFILE_UPDATE.
+ * Auth-system fields (scopes, capabilities, expiry, verification timestamps)
+ * are main-process-only: they are derived from token verification and the
+ * renderer must never be able to assert them. */
+export interface RendererProfilePatch {
+  label?: string
+  featureToggles?: Record<GitHubAuthFeatureKey, boolean>
+}
+
+// Legacy union, still used by the (unmigrated until Plan 2) settings UI and
+// by the legacy global featureToggles field. Do not delete, and do not add
+// new keys: new auth features go in GitHubAuthFeatureKey only (this union
+// keys PermissionsSummary's capability table, which silently skips unknown
+// keys at runtime).
 export type GitHubFeatureKey =
   | 'activePR'
   | 'ci'
@@ -36,6 +63,10 @@ export interface AuthProfile {
   avatarUrl?: string
   scopes: string[]
   capabilities: Capability[]
+  /** Per-account feature enablement (spec 2026-06-13 section 2). Absent on
+   * profiles created before the migration ran; readers fall back to
+   * GitHubConfig.featureDefaults. */
+  featureToggles?: Record<GitHubAuthFeatureKey, boolean>
   allowedRepos?: string[]
   tokenCiphertext?: string
   ghCliUsername?: string
@@ -62,6 +93,12 @@ export interface GitHubConfig {
   authProfiles: Record<string, AuthProfile>
   defaultAuthProfileId?: string
   featureToggles: Record<GitHubFeatureKey, boolean>
+  /** App-wide no-auth features. Replaces the localGit/sessionContext keys of
+   * the legacy global featureToggles. */
+  appWideToggles?: Record<GitHubAppWideFeatureKey, boolean>
+  /** Persisted auth-feature intent: seeds every newly added account and is
+   * the only holder of toggles while zero accounts exist. */
+  featureDefaults?: Record<GitHubAuthFeatureKey, boolean>
   syncIntervals: GitHubSyncIntervals
   enabledByDefault: boolean
   transcriptScanningOptIn: boolean
@@ -191,6 +228,83 @@ export interface GitHubCache {
   lru: string[]
 }
 
+// --- GitHub AI-credits (Copilot) usage meter -------------------------------
+//
+// Normalized shape produced by fetchAiUsage(login). GitHub's raw billing rows
+// use `discount*`/`net*` field names; we rename them to the words the UI uses:
+//   discountQuantity/discountAmount -> coveredQuantity/coveredAmount
+//     (the portion absorbed by the plan's included allowance)
+//   netQuantity/netAmount           -> billedQuantity/billedAmount
+//     (the overage the user actually pays for; billedAmount > 0 = the headline
+//      "you are being billed beyond your included credits" signal)
+//
+// `source` records which endpoint the data came from: 'ai_credit' (new-plan
+// primary endpoint) or 'premium_request' (old-plan fallback).
+export interface AiUsageItem {
+  product: string
+  sku: string
+  model: string
+  unitType: string
+  grossQuantity: number
+  grossAmount: number
+  coveredQuantity: number
+  coveredAmount: number
+  billedQuantity: number
+  billedAmount: number
+}
+
+export interface AiUsageReport {
+  fetchedAt: number
+  source: 'ai_credit' | 'premium_request'
+  timePeriod: { year: number; month: number }
+  items: AiUsageItem[]
+  totals: {
+    grossAmount: number
+    coveredAmount: number
+    billedAmount: number
+  }
+}
+
+// Structured status that travels ALONGSIDE the (possibly null) cached report so
+// the UI can tell apart "no data because we never fetched" from "no data because
+// the token is missing the billing scope" from "no GitHub auth at all". The
+// report stays the source of numbers; this is the source of state copy.
+//   - 'pending'       no fetch has resolved yet (first boot / just enabled)
+//   - 'no-auth'       no usable GitHub auth profile to fetch with
+//   - 'scope-missing' authed, but BOTH endpoints returned 403/404 (token lacks
+//                     the `user` scope (classic) / Account "Plan: read" (fine))
+//   - 'error'         network / non-403/404 HTTP / parse failure (transient)
+//   - 'ok'            a report was fetched successfully (may have zero items)
+export type AiUsageStatus = 'ok' | 'no-auth' | 'scope-missing' | 'error' | 'pending'
+
+// Cycle-scoped "included credits" usage. GitHub's billing card counts AI-credit
+// consumption only within the CURRENT plan cycle (e.g. since a mid-month
+// upgrade), while the usage report aggregates the whole calendar month. We
+// reconstruct the card's figure by summing per-day usage from `since`. The
+// usage report's "ai-units" are 1:1 with the card's "AI credits" (both $0.01),
+// so creditsUsed matches the card's "X / allowance" number. null when no cycle
+// start is configured (then the meter falls back to the whole-month report).
+export interface CycleCredits {
+  /** 'YYYY-MM-DD' the current plan cycle started (user setting). */
+  since: string
+  /** 'YYYY-MM-DD' last day counted (today, UTC). */
+  through: string
+  /** Copilot AI-credits consumed in the window (== GitHub's "included credits used"). */
+  creditsUsed: number
+  /** Additional-usage (overage) billed in the window, USD. */
+  billedUsd: number
+}
+
+// The payload pushed over GITHUB_AI_USAGE_UPDATE and returned by
+// GITHUB_AI_USAGE_GET. Additive: the report is still the headline, but it now
+// carries a status so the renderer renders accurate empty/action states, plus
+// the optional cycle-scoped included-credits figure.
+export interface AiUsagePayload {
+  report: AiUsageReport | null
+  status: AiUsageStatus
+  cycle?: CycleCredits | null
+}
+
 export interface ToolCallFileSignal {
   filePath: string
   at: number
@@ -227,6 +341,30 @@ export interface LocalGitState {
   stashCount: number
   recentCommits: Array<{ sha: string; subject: string; at: number }>
 }
+
+/** Per-profile re-auth plan, derived from the profile's kind + pending features. */
+export type ReauthPlan =
+  | { kind: 'oauth'; mode: 'public' | 'private'; scopes: string[] }
+  | { kind: 'pat-classic'; instruction: string; scopes: string[] }
+  | { kind: 'pat-fine-grained'; instruction: string; scopes: string[] }
+  | { kind: 'gh-cli'; command: string; scopes: string[] }
+
+/** Shape returned by the github.reauthProfile IPC. For oauth a device `flow`
+ *  rides alongside the plan (the renderer polls it via the existing oauthPoll);
+ *  non-oauth kinds carry only the plan (inline instructions). */
+export type ReauthResult =
+  | { ok: false; error: string }
+  | {
+      ok: true
+      plan: ReauthPlan
+      flow?: {
+        flowId: string
+        userCode: string
+        verificationUri: string
+        expiresIn: number
+        interval: number
+      }
+    }
 
 export interface DeviceCodeResponse {
   device_code: string

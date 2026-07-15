@@ -1,6 +1,6 @@
 import * as fs from 'fs'
 import * as path from 'path'
-import { getDataDirectory } from './ipc/setup-handlers'
+import { getDataDirectory } from './data-paths'
 
 // Lazy-initialized: can't call getDataDirectory() at module load time
 let LOG_DIR: string | null = null
@@ -23,13 +23,37 @@ const MAX_LOG_SIZE = 10 * 1024 * 1024 // 10MB
 
 let logStream: fs.WriteStream | null = null
 let verboseMode = false
+// Sticky channel-level baseline (beta builds default verbose ON). Kept separate
+// from the debug toggle so turning debug mode off can't silence beta verbose
+// logging (setVerboseMode ORs with it).
+let verboseBaseline = false
+let traceMode = false
+
+/** Set the verbose baseline (beta builds enable this at boot). Never lowered by
+ *  the debug-mode toggle. */
+export function setVerboseBaseline(enabled: boolean): void {
+  verboseBaseline = enabled
+  verboseMode = verboseMode || enabled
+}
 
 export function setVerboseMode(enabled: boolean): void {
-  verboseMode = enabled
+  verboseMode = enabled || verboseBaseline
 }
 
 export function isVerboseMode(): boolean {
   return verboseMode
+}
+
+/** Trace = the highest-volume, per-event diagnostics (e.g. every hook request).
+ *  Gated SEPARATELY from verbose so beta-default verbose logging does NOT enable
+ *  the hot per-tool-call logs -- that keeps verbose-on-beta perf-neutral. Opt-in
+ *  only (not enabled by the channel baseline). */
+export function setTraceMode(enabled: boolean): void {
+  traceMode = enabled
+}
+
+export function isTraceMode(): boolean {
+  return traceMode
 }
 
 function ensureLogDir() {
@@ -97,6 +121,15 @@ export function logDebug(...args: unknown[]): void {
   stream?.write(formatMessage('DEBUG', ...args))
 }
 
+/** Per-event hot-path diagnostics (every hook request, etc.). Writes ONLY in
+ *  trace mode -- early-returns under plain verbose/beta so it costs nothing on
+ *  the hot path unless explicitly opted in. */
+export function logTrace(...args: unknown[]): void {
+  if (!traceMode) return
+  const stream = getStream()
+  stream?.write(formatMessage('TRACE', ...args))
+}
+
 export function logInfo(...args: unknown[]): void {
   const stream = getStream()
   stream?.write(formatMessage('INFO', ...args))
@@ -141,4 +174,14 @@ export function installGlobalErrorHandlers(): void {
   process.on('unhandledRejection', (reason) => {
     logError('Unhandled rejection:', reason)
   })
+}
+
+/**
+ * P8.18: redact accountEmail from a statusline payload before logging.
+ * The email survives in tokenomics.json (its purpose) but doesn't need
+ * to appear in app.log where it would be harder to scrub.
+ */
+export function redactStatuslinePayload<T extends { accountEmail?: string }>(payload: T): T {
+  if (typeof payload?.accountEmail !== 'string') return payload
+  return { ...payload, accountEmail: '<redacted>' }
 }

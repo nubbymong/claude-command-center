@@ -5,6 +5,7 @@ import os from 'node:os'
 import {
   injectHooks,
   removeHooks,
+  buildHooksBlock,
   MVP_EVENTS,
 } from '../../../src/main/hooks/session-hooks-writer'
 
@@ -83,5 +84,10 @@ describe('session-hooks-writer', () => {
     const deep = path.join(dir, 'nested', 'dir', 'settings-sid-b.json')
     injectHooks({ sessionId: 'sid-b', settingsPath: deep, port: 19335, secret: 'xyz' })
     expect(fs.existsSync(deep)).toBe(true)
+  })
+
+  it('injects a UserPromptSubmit hook (clear signal for the flasher)', () => {
+    const block = buildHooksBlock('sess', 1234, 'secret')
+    expect(block.UserPromptSubmit).toBeDefined()
   })
 })

@@ -1,0 +1,3 @@
+{"timestamp":"2026-05-01T11:00:00.000Z","type":"session_meta","payload":{"id":"019dd000-0002-7000-0000-000000000002","timestamp":"2026-05-01T11:00:00.000Z","cwd":"F:\\OTHER\\directory","originator":"codex-tui","cli_version":"0.128.0","source":"cli","model_provider":"openai"}}
+{"timestamp":"2026-05-01T11:00:00.100Z","type":"turn_context","payload":{"cwd":"F:\\OTHER\\directory","model":"gpt-5.4","effort":"high","approval_policy":"on-request","sandbox_policy":{"type":"read-only"}}}
+{"timestamp":"2026-05-01T11:00:01.000Z","type":"event_msg","payload":{"type":"user_message","message":"this is from a different cwd","images":[],"local_images":[]}}

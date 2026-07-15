@@ -40,7 +40,6 @@ describe('memoryStore', () => {
     useMemoryStore.setState({
       projects: [],
       memories: [],
-      warnings: [],
       totalSize: 0,
       scannedAt: 0,
       loading: false,
@@ -48,9 +47,13 @@ describe('memoryStore', () => {
       selectedProject: null,
       selectedMemoryId: null,
       searchQuery: '',
-      collapsedGroups: new Set(),
       selectedContent: null,
-    })
+      scopeFilter: 'all',
+      typeFilter: null,
+      sortBy: 'modified',
+      sortDir: 'desc',
+      recentSessions: {},
+    } as never)
     // Reset mocks
     vi.clearAllMocks()
   })
@@ -68,10 +71,6 @@ describe('memoryStore', () => {
       expect(state.error).toBeNull()
     })
 
-    it('has empty warnings', () => {
-      expect(useMemoryStore.getState().warnings).toEqual([])
-    })
-
     it('has no selection state', () => {
       const state = useMemoryStore.getState()
       expect(state.selectedProject).toBeNull()
@@ -79,10 +78,8 @@ describe('memoryStore', () => {
       expect(state.selectedContent).toBeNull()
     })
 
-    it('has empty search and collapsed groups', () => {
-      const state = useMemoryStore.getState()
-      expect(state.searchQuery).toBe('')
-      expect(state.collapsedGroups.size).toBe(0)
+    it('has empty search', () => {
+      expect(useMemoryStore.getState().searchQuery).toBe('')
     })
   })
 
@@ -103,7 +100,6 @@ describe('memoryStore', () => {
       const state = useMemoryStore.getState()
       expect(state.projects).toHaveLength(1)
       expect(state.memories).toHaveLength(1)
-      expect(state.warnings).toHaveLength(1)
       expect(state.totalSize).toBe(4096)
       expect(state.scannedAt).toBe(1234567890)
       expect(state.loading).toBe(false)
@@ -219,35 +215,6 @@ describe('memoryStore', () => {
     })
   })
 
-  describe('toggleGroup', () => {
-    it('adds type to collapsedGroups', () => {
-      useMemoryStore.getState().toggleGroup('feedback')
-
-      expect(useMemoryStore.getState().collapsedGroups.has('feedback')).toBe(true)
-    })
-
-    it('removes type from collapsedGroups on second toggle', () => {
-      useMemoryStore.getState().toggleGroup('feedback')
-      useMemoryStore.getState().toggleGroup('feedback')
-
-      expect(useMemoryStore.getState().collapsedGroups.has('feedback')).toBe(false)
-    })
-
-    it('handles multiple groups independently', () => {
-      useMemoryStore.getState().toggleGroup('feedback')
-      useMemoryStore.getState().toggleGroup('reference')
-
-      const groups = useMemoryStore.getState().collapsedGroups
-      expect(groups.has('feedback')).toBe(true)
-      expect(groups.has('reference')).toBe(true)
-
-      useMemoryStore.getState().toggleGroup('feedback')
-      const updated = useMemoryStore.getState().collapsedGroups
-      expect(updated.has('feedback')).toBe(false)
-      expect(updated.has('reference')).toBe(true)
-    })
-  })
-
   describe('deleteMemory', () => {
     it('calls electronAPI.memory.delete and triggers rescan', async () => {
       const mem = makeMemory({ id: 'mem-del', path: '/test/del.md' })
@@ -275,18 +242,41 @@ describe('memoryStore', () => {
     })
   })
 
-  describe('dismissWarnings', () => {
-    it('clears warnings', () => {
-      useMemoryStore.setState({
-        warnings: [
-          { level: 'warn', message: 'Warning 1' },
-          { level: 'info', message: 'Info 1' },
-        ],
-      })
-
-      useMemoryStore.getState().dismissWarnings()
-
-      expect(useMemoryStore.getState().warnings).toEqual([])
+  describe('filter/sort state', () => {
+    it('drilldown filters/sort defaults + setters', () => {
+      const s = useMemoryStore.getState()
+      expect(s.scopeFilter).toBe('all'); expect(s.typeFilter).toBeNull()
+      expect(s.sortBy).toBe('modified'); expect(s.sortDir).toBe('desc')
+      s.setScopeFilter('stale'); s.setTypeFilter('feedback'); s.setSort('size')
+      const after = useMemoryStore.getState()
+      expect(after.scopeFilter).toBe('stale'); expect(after.typeFilter).toBe('feedback')
+      expect(after.sortBy).toBe('size'); expect(after.sortDir).toBe('desc')
+      after.setSort('size')
+      expect(useMemoryStore.getState().sortDir).toBe('asc')
+    })
+    it('selectProject(projectDir) resets typeFilter and fetches recent sessions once (cached)', async () => {
+      const spy = vi.fn().mockResolvedValue([{ sessionId: 's1', lastActive: 123 }])
+      ;(window.electronAPI.memory as any).recentSessions = spy
+      useMemoryStore.getState().setTypeFilter('feedback')
+      useMemoryStore.getState().selectProject('F--X')
+      await new Promise((r) => setTimeout(r, 0))
+      expect(useMemoryStore.getState().typeFilter).toBeNull()
+      expect(spy).toHaveBeenCalledWith('F--X')
+      expect(useMemoryStore.getState().recentSessions['F--X']).toEqual([{ sessionId: 's1', lastActive: 123 }])
+      useMemoryStore.getState().selectProject(null)
+      useMemoryStore.getState().selectProject('F--X')
+      expect(spy).toHaveBeenCalledTimes(1)
+    })
+    it('recentSessions fetch failure stores [] (fail-open)', async () => {
+      ;(window.electronAPI.memory as any).recentSessions = vi.fn().mockRejectedValue(new Error('x'))
+      useMemoryStore.getState().selectProject('F--Y')
+      await new Promise((r) => setTimeout(r, 0))
+      expect(useMemoryStore.getState().recentSessions['F--Y']).toEqual([])
+    })
+    it('scan() clears the recentSessions cache', async () => {
+      useMemoryStore.setState({ recentSessions: { 'F--X': [] } } as never)
+      await useMemoryStore.getState().scan()
+      expect(useMemoryStore.getState().recentSessions).toEqual({})
     })
   })
 })

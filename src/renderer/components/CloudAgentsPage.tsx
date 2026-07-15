@@ -1,17 +1,27 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { useCloudAgentStore, setupCloudAgentListener } from '../stores/cloudAgentStore'
+import { useAccountProfilesStore } from '../stores/accountProfilesStore'
+import { useSettingsStore } from '../stores/settingsStore'
+import { resolveAccountNameByEmail } from '../../shared/account-chip-color'
 import type { CloudAgent, CloudAgentStatus } from '../types/electron'
+import { StatusDot, type SessionState } from './ui/StatusDot'
+import { MetricChip } from './ui/MetricChip'
 import NewAgentDialog from './NewAgentDialog'
 import AgentLibrary from './AgentLibrary'
 import TeamsPanel from './TeamsPanel'
 import PageFrame from './PageFrame'
+import { AgentHubExplainer, AgentHubExamples } from './agent-hub/AgentHubOnboarding'
 
 const STATUS_COLORS: Record<CloudAgentStatus, string> = {
-  running: '#89B4FA',
-  pending: '#F9E2AF',
-  completed: '#A6E3A1',
-  failed: '#F38BA8',
-  cancelled: '#F38BA8',
+  running:   'var(--status-info)',
+  pending:   'var(--status-warning)',
+  completed: 'var(--status-success)',
+  failed:    'var(--status-danger)',
+  cancelled: 'var(--status-danger)',
+}
+
+export function getAgentStatusColor(s: CloudAgentStatus): string {
+  return STATUS_COLORS[s]
 }
 
 const STATUS_LABELS: Record<CloudAgentStatus, string> = {
@@ -20,6 +30,15 @@ const STATUS_LABELS: Record<CloudAgentStatus, string> = {
   completed: 'Completed',
   failed: 'Failed',
   cancelled: 'Cancelled',
+}
+
+function toSessionState(s: CloudAgentStatus): SessionState {
+  if (s === 'running')   return 'compacting'  // blue/info -- in-progress
+  if (s === 'pending')   return 'awaiting'    // yellow/warning -- queued
+  if (s === 'completed') return 'success'     // green/success -- done
+  if (s === 'failed')    return 'error'       // red/danger
+  if (s === 'cancelled') return 'error'       // red/danger
+  return 'idle'
 }
 
 function formatDuration(ms: number): string {
@@ -133,8 +152,8 @@ function ContextMenu({ x, y, agent, onClose }: {
   return (
     <div
       ref={menuRef}
-      className="fixed z-50 bg-surface0 border border-surface1 rounded-xl shadow-2xl py-1.5 min-w-[180px]"
-      style={{ left: x, top: y }}
+      className="fixed z-50 rounded-xl shadow-2xl py-1.5 min-w-[180px]"
+      style={{ left: x, top: y, background: 'var(--surface-overlay)', border: '1px solid var(--border-subtle)' }}
     >
       {menuItems.map((item, i) => (
         <button
@@ -166,17 +185,19 @@ function FilterChip({ label, count, color, active, onClick }: {
     <button
       onClick={onClick}
       className={`px-3 py-1 rounded-full text-[11px] font-medium transition-all ${
-        active ? 'text-crust shadow-sm' : 'text-overlay1 hover:text-text'
+        active ? 'shadow-sm' : 'text-overlay1 hover:text-text'
       }`}
-      style={active ? { backgroundColor: color } : { backgroundColor: 'transparent', border: `1px solid ${color}30` }}
+      style={active
+        ? { backgroundColor: color, color: 'var(--surface-chrome)' }
+        : { backgroundColor: 'transparent', border: `1px solid color-mix(in srgb, ${color} 30%, transparent)` }}
     >
       {label} {count}
     </button>
   )
 }
 
-function AgentCard({ agent, selected, onClick, onContextMenu }: {
-  agent: CloudAgent; selected: boolean; onClick: () => void; onContextMenu: (e: React.MouseEvent) => void
+export function AgentCard({ agent, selected, onClick, onContextMenu, accountName }: {
+  agent: CloudAgent; selected: boolean; onClick: () => void; onContextMenu: (e: React.MouseEvent) => void; accountName?: string | null
 }) {
   const color = STATUS_COLORS[agent.status]
   const isRunning = agent.status === 'running' || agent.status === 'pending'
@@ -199,18 +220,14 @@ function AgentCard({ agent, selected, onClick, onContextMenu }: {
     <button
       onClick={onClick}
       onContextMenu={onContextMenu}
-      className={`w-full text-left rounded-xl p-3 transition-all duration-150 border group ${
-        selected
-          ? 'bg-surface0/60 border-sapphire/30'
-          : 'bg-mantle/30 border-transparent hover:bg-surface0/30 hover:border-surface0/60'
-      }`}
+      className={`w-full text-left rounded-xl p-3 transition-all duration-150 group focus-ring ${selected ? '' : 'hover:ring-1 hover:ring-sapphire/25'}`}
+      style={selected
+        ? { background: 'color-mix(in srgb, var(--surface-raised) 80%, var(--color-sapphire) 8%)', border: '1px solid color-mix(in srgb, var(--color-sapphire) 45%, transparent)' }
+        : { background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)' }}
     >
       {/* Row 1: Status dot + name + elapsed */}
       <div className="flex items-center gap-2 mb-1">
-        <span
-          className={`w-2.5 h-2.5 rounded-full shrink-0 ${isRunning ? 'animate-pulse' : ''}`}
-          style={{ backgroundColor: color, boxShadow: isRunning ? `0 0 8px 2px ${color}60` : undefined }}
-        />
+        <StatusDot state={toSessionState(agent.status)} />
         <span className="text-sm font-medium text-text truncate flex-1">{agent.name}</span>
         {elapsed && (
           <span className="text-[10px] text-overlay0 shrink-0 tabular-nums">{elapsed}</span>
@@ -235,6 +252,12 @@ function AgentCard({ agent, selected, onClick, onContextMenu }: {
           <>
             <span>{String.fromCodePoint(0x00B7)}</span>
             <span>{formatCost(agent.cost)}</span>
+          </>
+        )}
+        {accountName && (
+          <>
+            <span>{String.fromCodePoint(0x00B7)}</span>
+            <span className="truncate max-w-[120px] text-overlay1" title={agent.accountEmail}>{accountName}</span>
           </>
         )}
       </div>
@@ -330,8 +353,13 @@ function OutputTab({ agent }: { agent: CloudAgent }) {
   )
 }
 
-function SummaryTab({ agent }: { agent: CloudAgent }) {
+export function SummaryTab({ agent }: { agent: CloudAgent }) {
   const isRunning = agent.status === 'running' || agent.status === 'pending'
+  const profiles = useAccountProfilesStore(s => s.profiles)
+  const accountAliases = useSettingsStore(s => s.settings.accountAliases)
+  const accountName = agent.accountEmail
+    ? resolveAccountNameByEmail(agent.accountEmail, profiles, accountAliases)
+    : null
 
   return (
     <div className="flex-1 overflow-auto space-y-4 p-1">
@@ -364,22 +392,26 @@ function SummaryTab({ agent }: { agent: CloudAgent }) {
         <InfoCell label="Agent ID">
           <span className="font-mono text-[10px]">{agent.id}</span>
         </InfoCell>
+        {accountName && (
+          <InfoCell label="Account">
+            <span className="truncate" title={agent.accountEmail}>{accountName}</span>
+          </InfoCell>
+        )}
       </div>
 
       {/* Cost & Tokens */}
       {(agent.cost != null || agent.tokenUsage) && (
         <div>
-          <div className="text-[10px] text-subtext0 uppercase tracking-wider font-semibold mb-1.5">Usage</div>
-          <div className="flex gap-2.5">
+          <div className="text-[10px] uppercase tracking-wider font-semibold mb-1.5" style={{ color: 'var(--text-muted)' }}>Usage</div>
+          <div className="flex gap-2.5 flex-wrap">
             {agent.cost != null && (
-              <div className="text-xs text-text bg-crust/60 rounded-lg px-3 py-2 border border-surface0/30">
-                Cost: <span className="text-green font-medium">{formatCost(agent.cost)}</span>
-              </div>
+              <MetricChip label="Cost" value={formatCost(agent.cost)} tone="success" />
             )}
             {agent.tokenUsage && (
-              <div className="text-xs text-text bg-crust/60 rounded-lg px-3 py-2 border border-surface0/30 tabular-nums">
-                {agent.tokenUsage.inputTokens.toLocaleString()} in / {agent.tokenUsage.outputTokens.toLocaleString()} out
-              </div>
+              <>
+                <MetricChip label="Input" value={agent.tokenUsage.inputTokens.toLocaleString()} />
+                <MetricChip label="Output" value={agent.tokenUsage.outputTokens.toLocaleString()} />
+              </>
             )}
           </div>
         </div>
@@ -493,6 +525,37 @@ function AgentDetail({ agent }: { agent: CloudAgent }) {
 
 type HubTab = 'tasks' | 'teams' | 'library'
 
+const HUB_TABS: { id: HubTab; label: string }[] = [
+  { id: 'tasks', label: 'Tasks' },
+  // Label-only rename to "Pipelines" (the id/config keys/IPC stay `team*`).
+  { id: 'teams', label: 'Pipelines' },
+  { id: 'library', label: 'Library' },
+]
+
+export function CloudRail({ hubTab, onChange }: { hubTab: HubTab; onChange: (id: HubTab) => void }) {
+  return (
+    <nav className="py-1.5">
+      {HUB_TABS.map(t => {
+        const active = hubTab === t.id
+        return (
+          <button
+            key={t.id}
+            onClick={() => onChange(t.id)}
+            className="w-full text-left px-3 py-1.5 text-xs transition-colors focus-ring"
+            style={{
+              background: active ? 'color-mix(in srgb, var(--accent) 15%, transparent)' : 'transparent',
+              color: active ? 'var(--accent)' : 'var(--text-secondary)',
+              borderLeft: `2px solid ${active ? 'var(--accent)' : 'transparent'}`,
+            }}
+          >
+            {t.label}
+          </button>
+        )
+      })}
+    </nav>
+  )
+}
+
 export default function CloudAgentsPage() {
   const [hubTab, setHubTab] = useState<HubTab>('tasks')
   const allAgents = useCloudAgentStore(s => s.agents)
@@ -502,13 +565,48 @@ export default function CloudAgentsPage() {
   const setFilter = useCloudAgentStore(s => s.setFilter)
   const searchQuery = useCloudAgentStore(s => s.searchQuery)
   const setSearchQuery = useCloudAgentStore(s => s.setSearchQuery)
+  const accountFilter = useCloudAgentStore(s => s.accountFilter)
+  const setAccountFilter = useCloudAgentStore(s => s.setAccountFilter)
   const clearCompleted = useCloudAgentStore(s => s.clearCompleted)
   const [showNewDialog, setShowNewDialog] = useState(false)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
+  // First-run example prefill for the New Agent dialog (ephemeral).
+  const [prefill, setPrefill] = useState<{ name: string; description: string } | null>(null)
+  const explainerDismissed = useSettingsStore(s => s.settings.agentHubExplainerDismissed)
+  const updateSettings = useSettingsStore(s => s.updateSettings)
+
+  // Account naming: resolve an agent's accountEmail to its friendly name via the
+  // shared single-source resolver (profile name > alias > raw email).
+  const profiles = useAccountProfilesStore(s => s.profiles)
+  const accountAliases = useSettingsStore(s => s.settings.accountAliases)
+  const nameForAccount = useCallback(
+    (email?: string) => (email ? resolveAccountNameByEmail(email, profiles, accountAliases) : null),
+    [profiles, accountAliases],
+  )
+  // Distinct accounts present across all agents (drives the account filter,
+  // shown only when more than one account appears).
+  const agentAccounts = useMemo(() => {
+    const seen = new Map<string, string>()
+    for (const a of allAgents) {
+      if (a.accountEmail && !seen.has(a.accountEmail)) {
+        seen.set(a.accountEmail, nameForAccount(a.accountEmail) || a.accountEmail)
+      }
+    }
+    return Array.from(seen, ([email, name]) => ({ email, name }))
+  }, [allAgents, nameForAccount])
+
+  // Reset a stale account filter when its account no longer appears among the
+  // agents (e.g. its agents were cleared) — otherwise the dropdown hides while
+  // the filter still applies, stranding the user on an empty list.
+  useEffect(() => {
+    if (accountFilter !== 'all' && !agentAccounts.some(a => a.email === accountFilter)) {
+      setAccountFilter('all')
+    }
+  }, [accountFilter, agentAccounts, setAccountFilter])
 
   const agents = useMemo(() => {
     return useCloudAgentStore.getState().getFilteredAgents()
-  }, [allAgents, filter, searchQuery])
+  }, [allAgents, filter, searchQuery, accountFilter])
 
   const counts = useMemo(() => {
     return useCloudAgentStore.getState().getCounts()
@@ -543,29 +641,7 @@ export default function CloudAgentsPage() {
     </svg>
   )
 
-  const HUB_TABS: { id: HubTab; label: string }[] = [
-    { id: 'tasks', label: 'Tasks' },
-    { id: 'teams', label: 'Teams' },
-    { id: 'library', label: 'Library' },
-  ]
-
-  const cloudRail = (
-    <nav className="py-1.5">
-      {HUB_TABS.map(t => (
-        <button
-          key={t.id}
-          onClick={() => setHubTab(t.id)}
-          className={`w-full text-left px-3 py-1.5 text-xs transition-colors ${
-            hubTab === t.id
-              ? 'bg-sapphire/15 text-sapphire border-l-2 border-sapphire'
-              : 'text-overlay1 hover:text-text hover:bg-surface0/40 border-l-2 border-transparent'
-          }`}
-        >
-          {t.label}
-        </button>
-      ))}
-    </nav>
-  )
+  const cloudRail = <CloudRail hubTab={hubTab} onChange={setHubTab} />
 
   const cloudContext = hubTab === 'tasks' && counts.running > 0 ? (
     <span className="inline-flex items-center gap-1.5">
@@ -611,21 +687,46 @@ export default function CloudAgentsPage() {
         <AgentLibrary />
       ) : (
         <div className="flex flex-col flex-1 min-h-0">
+        {!explainerDismissed && (
+          <AgentHubExplainer onDismiss={() => { void updateSettings({ agentHubExplainerDismissed: true }) }} />
+        )}
+        {counts.all === 0 ? (
+          <AgentHubExamples
+            onPick={(ex) => { setPrefill({ name: ex.name, description: ex.description }); setShowNewDialog(true) }}
+            onNew={() => { setPrefill(null); setShowNewDialog(true) }}
+          />
+        ) : (
+          <>
         {/* Filter chips + search */}
         <div className="flex items-center gap-2 px-4 py-2 border-b border-surface0/40 shrink-0">
           <div className="flex gap-1">
-            <FilterChip label="All" count={counts.all} color="#b8c5d6" active={filter === 'all'} onClick={() => setFilter('all')} />
-            <FilterChip label="Running" count={counts.running} color="#89B4FA" active={filter === 'running'} onClick={() => setFilter('running')} />
-            <FilterChip label="Done" count={counts.completed} color="#A6E3A1" active={filter === 'completed'} onClick={() => setFilter('completed')} />
-            <FilterChip label="Failed" count={counts.failed} color="#F38BA8" active={filter === 'failed'} onClick={() => setFilter('failed')} />
+            <FilterChip label="All"     count={counts.all}       color="var(--text-secondary)"  active={filter === 'all'}       onClick={() => setFilter('all')} />
+            <FilterChip label="Running" count={counts.running}   color="var(--status-info)"     active={filter === 'running'}   onClick={() => setFilter('running')} />
+            <FilterChip label="Done"    count={counts.completed} color="var(--status-success)"  active={filter === 'completed'} onClick={() => setFilter('completed')} />
+            <FilterChip label="Failed"  count={counts.failed}    color="var(--status-danger)"   active={filter === 'failed'}    onClick={() => setFilter('failed')} />
           </div>
           <div className="flex-1" />
+          {agentAccounts.length > 1 && (
+            <select
+              value={accountFilter}
+              onChange={e => setAccountFilter(e.target.value)}
+              className="rounded-lg px-2 py-1.5 text-xs outline-none transition-colors focus-ring"
+              style={{ background: 'var(--surface-base)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}
+              title="Filter agents by account"
+            >
+              <option value="all">All accounts</option>
+              {agentAccounts.map(a => (
+                <option key={a.email} value={a.email}>{a.name}</option>
+              ))}
+            </select>
+          )}
           <div className="relative">
             <input
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
               placeholder="Search agents..."
-              className="bg-surface0/40 border border-surface0/80 rounded-lg px-3 py-1.5 text-xs text-text placeholder:text-overlay0 outline-none focus:border-blue/40 w-44 transition-colors"
+              className="rounded-lg px-3 py-1.5 text-xs placeholder:text-overlay0 outline-none w-44 transition-colors focus-ring"
+              style={{ background: 'var(--surface-base)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}
             />
             {searchQuery && (
               <button
@@ -644,8 +745,8 @@ export default function CloudAgentsPage() {
         <div className="w-[40%] border-r border-surface0/40 overflow-y-auto p-3 space-y-1.5">
           {agents.length === 0 ? (
             <div className="flex-1 flex flex-col items-center justify-center py-16 text-center">
-              <div className="w-14 h-14 mx-auto mb-4 rounded-2xl bg-surface0/30 flex items-center justify-center">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" className="text-overlay0">
+              <div className="w-14 h-14 mx-auto mb-4 rounded-2xl flex items-center justify-center" style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z" />
                 </svg>
               </div>
@@ -679,6 +780,7 @@ export default function CloudAgentsPage() {
                   selected={agent.id === selectedAgentId}
                   onClick={() => selectAgent(agent.id)}
                   onContextMenu={(e) => handleCardContextMenu(e, agent.id)}
+                  accountName={agentAccounts.length > 1 ? nameForAccount(agent.accountEmail) : null}
                 />
               ))}
             </>
@@ -692,8 +794,8 @@ export default function CloudAgentsPage() {
           ) : (
             <div className="flex-1 flex items-center justify-center">
               <div className="text-center">
-                <div className="w-14 h-14 mx-auto mb-4 rounded-2xl bg-surface0/30 flex items-center justify-center">
-                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" className="text-overlay0">
+                <div className="w-14 h-14 mx-auto mb-4 rounded-2xl flex items-center justify-center" style={{ background: 'var(--surface-raised)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round">
                     <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z" />
                     <polyline points="8 14 12 10 16 14" />
                   </svg>
@@ -705,6 +807,8 @@ export default function CloudAgentsPage() {
           )}
         </div>
         </div>
+          </>
+        )}
         </div>
       )}
       </PageFrame>
@@ -719,7 +823,13 @@ export default function CloudAgentsPage() {
         />
       )}
 
-      {showNewDialog && <NewAgentDialog onClose={() => setShowNewDialog(false)} />}
+      {showNewDialog && (
+        <NewAgentDialog
+          onClose={() => { setShowNewDialog(false); setPrefill(null) }}
+          initialName={prefill?.name}
+          initialDescription={prefill?.description}
+        />
+      )}
     </>
   )
 }

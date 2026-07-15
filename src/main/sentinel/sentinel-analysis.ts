@@ -1,0 +1,108 @@
+// AI half of Trigger B: one self-contained claude -p call, strict zod-validated
+// JSON out, one retry, 3-minute cap. Severe-breaking-changes-only (spec
+// 2026-07-04): the prompt is a LEAN ~2KB (changelog slice + CCC's 4-item
+// breaking surface), which also removes the large-stdin hang that stalled the
+// old ~21KB manifest prompt (anthropics/claude-code#7263).
+import { z } from 'zod'
+import type { SentinelFinding } from '../../shared/sentinel-types'
+
+// The only things that, if CC changes them, actually stop CCC working. The AI
+// checks the changelog against ONLY these four surfaces.
+const CCC_BREAKING_SURFACE = [
+  '1. Session launch — how `claude` is spawned (CLI flags, env vars, PATH, install layout). Break = CCC sessions will not start.',
+  '2. Terminal embedding — mouse modes, clickable UI, alternate-screen, OSC/escape sequences; CCC renders claude inside xterm.js. Break = the session renders garbled or unusable.',
+  '3. Statusline hook — the statusLine settings/hook contract CCC installs to read session telemetry. Break = telemetry / rate-limit readouts die.',
+  '4. Config & account files — the shape of ~/.claude/settings.json and ~/.claude.json that CCC multi-account isolation and hook install depend on. Break = multi-account or hooks break.',
+].join('\n')
+
+const BreakingChangeSchema = z.object({
+  title: z.string().min(1).max(200),
+  evidence: z.string().min(1).max(2000),   // exact changelog line(s), quoted
+  surface: z.number().int().min(1).max(4),
+  whatBreaks: z.string().min(1).max(400),
+})
+const OutputSchema = z.object({ breakingChanges: z.array(BreakingChangeSchema).max(5) })
+
+export function buildAnalysisPrompt(changelog: string): string {
+  return [
+    'You are CCC Sentinel. Claude Command Center (CCC) is a desktop app that runs the Claude Code (CC) CLI inside embedded terminals.',
+    'Read the CC changelog below and report ONLY changes that would SEVERELY BREAK CCC — stop it working — by hitting one of these four surfaces:',
+    CCC_BREAKING_SURFACE,
+    '',
+    'Ignore everything else: new features, new models, model/pricing housekeeping, performance, cosmetic or informational changes, and anything that only affects enterprise / managed-settings installs. A change is NOT breaking just because it is new.',
+    '',
+    'Output STRICT JSON only — no markdown, no prose: {"breakingChanges": [ ... ]} where each item is',
+    '{"title": "<short>", "evidence": "<exact changelog line(s), quoted verbatim>", "surface": <1-4>, "whatBreaks": "<one sentence: what stops working in CCC>"}.',
+    'Quote the changelog verbatim in evidence. List at most 5. If nothing severely breaks CCC, return {"breakingChanges": []}.',
+    '',
+    '--- CHANGELOG ---',
+    changelog,
+  ].join('\n')
+}
+
+function unwrapPayload(stdout: string): string {
+  let text = stdout.trim()
+  // claude -p --output-format json wraps the reply in an envelope { type:'result', result: '...' }
+  try {
+    const env = JSON.parse(text)
+    if (env && typeof env.result === 'string') text = env.result.trim()
+  } catch { /* not an envelope — treat as the payload itself */ }
+  // strip a markdown fence if the model added one despite instructions
+  const fence = /^```(?:json)?\s*([\s\S]*?)\s*```$/.exec(text)
+  if (fence) text = fence[1]
+  return text
+}
+
+export function parseAnalysisOutput(stdout: string, from: string, to: string): SentinelFinding[] | null {
+  try {
+    const parsed = OutputSchema.parse(JSON.parse(unwrapPayload(stdout)))
+    // Every breaking change is a high-severity compat finding (the panel has one
+    // list now). whatBreaks rides in badgeText; surface tags which contract broke.
+    return parsed.breakingChanges.map((b, i) => ({
+      id: `cc:${to}:${i}`,
+      kind: 'compat' as const,
+      severity: 'high' as const,
+      title: b.title,
+      evidence: b.evidence,
+      badgeText: b.whatBreaks,
+      surface: b.surface,
+      status: 'open' as const,
+      createdAt: Date.now(),
+      ccVersionFrom: from,
+      ccVersionTo: to,
+    }))
+  } catch { return null }
+}
+
+export type HeadlessRunner = (args: string[], timeoutMs: number, stdin?: string) => Promise<{ code: number; stdout: string; stderr: string }>
+
+// Graceful-degrade copy for a failed AI pass. The deterministic backstop runs
+// separately (and is shown regardless), so a failed AI analysis is a soft,
+// retryable condition, not an error. Keep it calm and human: never surface raw
+// stderr / "Timed out after 180s" to the user (that detail is in the logs). A
+// timeout most often means the signed-in account is busy or rate limited, so the
+// message hints at that and points to Re-run.
+export function analysisFailureMessage(stderr: string): string {
+  const timedOut = /timed out after/i.test(stderr)
+  const base = timedOut
+    ? 'AI analysis could not finish in time this run. This usually means the signed-in account is busy or rate limited, or the update was large.'
+    : 'AI analysis could not complete this run.'
+  return `${base} The deterministic checks still ran. Use Re-run to try again.`
+}
+
+export async function runAnalysis(opts: {
+  runner: HeadlessRunner; changelog: string; from: string; to: string
+}): Promise<{ ok: true; findings: SentinelFinding[] } | { ok: false; error: string }> {
+  const prompt = buildAnalysisPrompt(opts.changelog)
+  const args = ['-p', '--model', 'sonnet', '--output-format', 'json']
+  let lastStderr = ''
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const res = await opts.runner(args, 180000, prompt)          // 3-minute cap
+    lastStderr = res.stderr
+    if (res.code === 0) {
+      const findings = parseAnalysisOutput(res.stdout, opts.from, opts.to)
+      if (findings) return { ok: true, findings }
+    }
+  }
+  return { ok: false, error: analysisFailureMessage(lastStderr) }
+}

@@ -1,0 +1,3 @@
+{"timestamp":"2026-05-01T10:00:00.000Z","type":"session_meta","payload":{"id":"019dd000-0001-7000-0000-000000000001","timestamp":"2026-05-01T10:00:00.000Z","cwd":"F:\\test\\fixture-cwd","originator":"codex-tui","cli_version":"0.128.0","source":"cli","model_provider":"openai"}}
+{"timestamp":"2026-05-01T10:00:00.100Z","type":"turn_context","payload":{"cwd":"F:\\test\\fixture-cwd","model":"gpt-5.5","effort":"xhigh","approval_policy":"on-request","sandbox_policy":{"type":"workspace-write"}}}
+{"timestamp":"2026-05-01T10:00:01.000Z","type":"event_msg","payload":{"type":"user_message","message":"refactor the auth module","images":[],"local_images":[]}}

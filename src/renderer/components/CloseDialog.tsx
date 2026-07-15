@@ -15,7 +15,7 @@ export default function CloseDialog({ mode, sessionCount, onSaveAndClose, onClos
         <h2 className="text-lg font-semibold text-text mb-2">
           {mode === 'update' ? 'Update & Restart' : 'Close App'}
         </h2>
-        <p className="text-sm text-overlay1 mb-5">
+        <p className="text-sm text-overlay1 mb-3">
           You have {sessionCount} active session{sessionCount !== 1 ? 's' : ''}.
           Would you like to save them for next launch?
         </p>

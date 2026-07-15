@@ -1,173 +1,219 @@
 import { create } from 'zustand'
-import type {
-  TokenomicsData,
-  TokenomicsSyncProgress,
-  TokenomicsSessionRecord,
-  TokenomicsDailyAggregate,
-} from '../../shared/types'
+import type { TkSummary, TkSessionRow, TkSessionDetail, TkIndexStatus } from '../../shared/types'
+
+export type TkRange = '7d' | '30d' | 'all'
+export interface TkUiFilter { configId?: string | null; range: TkRange; model?: string; search?: string }
 
 interface TokenomicsState {
-  data: TokenomicsData | null
-  loading: boolean
-  seeding: boolean
-  syncing: boolean
-  progress: TokenomicsSyncProgress | null
+  summary: TkSummary | null
+  sessions: TkSessionRow[]
+  nextCursor: { lastTs: number; sessionId: string } | null
+  indexStatus: TkIndexStatus | null
+  filter: TkUiFilter
+  selected: TkSessionDetail | null
+  loadingSummary: boolean
+  loadingSessions: boolean
+  indexJustCompleted: boolean
+  /** Set when a read-surface IPC call rejects (worker crash/restart-backoff or
+   *  the 15s query timeout). Surfaced by TokenomicsPage so a fault clears the
+   *  spinner and shows a retryable error instead of spinning forever. */
   error: string | null
+  _unsubs: Array<() => void>
 
-  loadData: () => Promise<void>
-  startSeed: () => Promise<void>
-  startSync: () => Promise<void>
-  handleProgress: (progress: TokenomicsSyncProgress) => void
+  init: () => Promise<void>
+  refresh: () => Promise<void>
+  refreshIndexStatus: () => Promise<void>
+  setConfig: (configId: string | null | undefined) => void
+  setRange: (range: TkRange) => void
+  setSearch: (search: string) => void
+  loadMore: () => Promise<void>
+  selectSession: (id: string) => Promise<void>
+  clearSelected: () => void
+  clearIndexBadge: () => void
+  dispose: () => void
+}
 
-  // Derived
-  getTodayCost: () => number
-  getWeekCost: () => number
-  getAllTimeCost: () => number
-  getDailyAggregates: (days: number) => TokenomicsDailyAggregate[]
-  getModelBreakdown: () => Array<{ model: string; costUsd: number; inputTokens: number; outputTokens: number }>
-  getSortedSessions: (sortBy: string, sortDir: 'asc' | 'desc') => TokenomicsSessionRecord[]
+function rangeToWindow(range: TkRange, now: number): { from?: number } {
+  if (range === '7d') return { from: now - 7 * 86_400_000 }
+  if (range === '30d') return { from: now - 30 * 86_400_000 }
+  return {}
 }
 
 export const useTokenomicsStore = create<TokenomicsState>((set, get) => ({
-  data: null,
-  loading: false,
-  seeding: false,
-  syncing: false,
-  progress: null,
+  summary: null,
+  sessions: [],
+  nextCursor: null,
+  indexStatus: null,
+  filter: { range: 'all' },
+  selected: null,
+  loadingSummary: false,
+  loadingSessions: false,
+  indexJustCompleted: false,
   error: null,
+  _unsubs: [],
 
-  loadData: async () => {
-    set({ loading: true, error: null })
+  init: async () => {
+    const tk = window.electronAPI.tokenomics
+
+    // Fetch initial index status
+    let status: TkIndexStatus
     try {
-      const data = await window.electronAPI.tokenomics.getData()
-      set({ data, loading: false })
+      status = await tk.indexStatus()
+    } catch (err) {
+      console.error('[tokenomicsStore] init: indexStatus failed', err)
+      set({ error: err instanceof Error ? err.message : String(err) })
+      return
+    }
+    set({ indexStatus: status, error: status.error ?? null })
 
-      // Auto-seed if not complete
-      if (!data.seedComplete) {
-        get().startSeed()
-      } else {
-        // Auto-sync on subsequent loads
-        get().startSync()
-      }
-    } catch (err: any) {
-      set({ loading: false, error: err.message || 'Failed to load tokenomics data' })
+    // Subscribe to pushed status updates — carries the worker's fatal `error`
+    // (e.g. a failed DB open) so the page leaves the 'indexing' gate instead
+    // of spinning forever with zero diagnostics.
+    const unsubStatus = tk.onIndexStatus((st) => {
+      set({ indexStatus: st, error: st.error ?? null })
+    })
+
+    // Subscribe to progress events — update filesDone/filesTotal
+    const unsubProgress = tk.onIndexProgress((p) => {
+      set((s) => ({
+        indexStatus: s.indexStatus
+          ? { ...s.indexStatus, filesDone: p.filesDone, filesTotal: p.filesTotal }
+          : s.indexStatus,
+      }))
+    })
+
+    // Subscribe to complete events
+    const unsubComplete = tk.onIndexComplete((e) => {
+      set((s) => ({
+        indexStatus: s.indexStatus
+          ? { ...s.indexStatus, firstIndexComplete: true, indexing: false }
+          : s.indexStatus,
+        indexJustCompleted: e.firstIndex ? true : s.indexJustCompleted,
+      }))
+      // Always refresh after an index completion
+      get().refresh()
+    })
+
+    set((s) => ({ _unsubs: [...s._unsubs, unsubStatus, unsubProgress, unsubComplete] }))
+
+    // If the first index is already done, load data now
+    if (status.firstIndexComplete) {
+      await get().refresh()
     }
   },
 
-  startSeed: async () => {
-    set({ seeding: true, error: null })
+  refreshIndexStatus: async () => {
+    // Idempotent re-fetch for the indexing-gate Retry button (no resubscribe).
+    const tk = window.electronAPI.tokenomics
     try {
-      const data = await window.electronAPI.tokenomics.seed()
-      set({ data, seeding: false, progress: null })
-    } catch (err: any) {
-      set({ seeding: false, error: err.message || 'Seed failed' })
+      const status = await tk.indexStatus()
+      set({ indexStatus: status, error: status.error ?? null })
+    } catch (err) {
+      console.error('[tokenomicsStore] refreshIndexStatus failed', err)
+      set({ error: err instanceof Error ? err.message : String(err) })
     }
   },
 
-  startSync: async () => {
-    set({ syncing: true })
+  refresh: async () => {
+    const { filter } = get()
+    const tk = window.electronAPI.tokenomics
+
+    const base = {
+      ...(filter.configId !== undefined ? { configId: filter.configId } : {}),
+      ...(filter.model ? { model: filter.model } : {}),
+      ...rangeToWindow(filter.range, Date.now()),
+    }
+
+    set({ loadingSummary: true, loadingSessions: true, error: null })
+
     try {
-      const data = await window.electronAPI.tokenomics.sync()
-      set({ data, syncing: false })
-    } catch (err: any) {
-      set({ syncing: false, error: err.message || 'Sync failed' })
-    }
-  },
+      const [summary, page] = await Promise.all([
+        tk.summary(base),
+        tk.sessions({ ...base, search: filter.search, limit: 50 }),
+      ])
 
-  handleProgress: (progress: TokenomicsSyncProgress) => {
-    set({ progress })
-  },
-
-  getTodayCost: () => {
-    const { data } = get()
-    if (!data) return 0
-    const today = new Date().toISOString().slice(0, 10)
-    return data.dailyAggregates[today]?.totalCostUsd || 0
-  },
-
-  getWeekCost: () => {
-    const { data } = get()
-    if (!data) return 0
-    const now = new Date()
-    let total = 0
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(now)
-      d.setDate(d.getDate() - i)
-      const key = d.toISOString().slice(0, 10)
-      total += data.dailyAggregates[key]?.totalCostUsd || 0
-    }
-    return total
-  },
-
-  getAllTimeCost: () => {
-    const { data } = get()
-    return data?.totalCostUsd || 0
-  },
-
-  getDailyAggregates: (days: number) => {
-    const { data } = get()
-    if (!data) return []
-    const result: TokenomicsDailyAggregate[] = []
-    const now = new Date()
-    for (let i = days - 1; i >= 0; i--) {
-      const d = new Date(now)
-      d.setDate(d.getDate() - i)
-      const key = d.toISOString().slice(0, 10)
-      result.push(data.dailyAggregates[key] || {
-        date: key,
-        totalCostUsd: 0,
-        totalTokens: 0,
-        messageCount: 0,
-        sessionCount: 0,
-        byModel: {},
+      set({
+        summary,
+        sessions: page.rows,
+        nextCursor: page.nextCursor,
+        loadingSummary: false,
+        loadingSessions: false,
+      })
+    } catch (err) {
+      // Worker crash / restart-backoff / 15s timeout: clear the loading flags so
+      // the page leaves its spinner and surfaces a retryable error instead of
+      // hanging forever (and never raising an unhandled rejection).
+      console.error('[tokenomicsStore] refresh failed', err)
+      set({
+        loadingSummary: false,
+        loadingSessions: false,
+        error: err instanceof Error ? err.message : String(err),
       })
     }
-    return result
   },
 
-  getModelBreakdown: () => {
-    const { data } = get()
-    if (!data) return []
-    const models: Record<string, { costUsd: number; inputTokens: number; outputTokens: number }> = {}
-    for (const agg of Object.values(data.dailyAggregates)) {
-      for (const [model, stats] of Object.entries(agg.byModel)) {
-        if (!models[model]) models[model] = { costUsd: 0, inputTokens: 0, outputTokens: 0 }
-        models[model].costUsd += stats.costUsd
-        models[model].inputTokens += stats.inputTokens
-        models[model].outputTokens += stats.outputTokens
-      }
+  setConfig: (configId) => {
+    set((s) => ({ filter: { ...s.filter, configId } }))
+    get().refresh()
+  },
+
+  setRange: (range) => {
+    set((s) => ({ filter: { ...s.filter, range } }))
+    get().refresh()
+  },
+
+  setSearch: (search) => {
+    set((s) => ({ filter: { ...s.filter, search } }))
+    get().refresh()
+  },
+
+  loadMore: async () => {
+    const { nextCursor, filter } = get()
+    if (!nextCursor) return
+
+    const tk = window.electronAPI.tokenomics
+
+    const base = {
+      ...(filter.configId !== undefined ? { configId: filter.configId } : {}),
+      ...(filter.model ? { model: filter.model } : {}),
+      ...rangeToWindow(filter.range, Date.now()),
     }
-    return Object.entries(models)
-      .map(([model, stats]) => ({ model, ...stats }))
-      .sort((a, b) => b.costUsd - a.costUsd)
+
+    try {
+      const page = await tk.sessions({
+        ...base,
+        search: filter.search,
+        cursor: nextCursor,
+        limit: 50,
+      })
+
+      set((s) => ({
+        sessions: [...s.sessions, ...page.rows],
+        nextCursor: page.nextCursor,
+      }))
+    } catch (err) {
+      console.error('[tokenomicsStore] loadMore failed', err)
+      set({ error: err instanceof Error ? err.message : String(err) })
+    }
   },
 
-  getSortedSessions: (sortBy: string, sortDir: 'asc' | 'desc') => {
-    const { data } = get()
-    if (!data) return []
-    const sessions = Object.values(data.sessions)
-    const dir = sortDir === 'asc' ? 1 : -1
-    return sessions.sort((a, b) => {
-      switch (sortBy) {
-        case 'cost': return (a.totalCostUsd - b.totalCostUsd) * dir
-        case 'inputTokens': return (a.totalInputTokens - b.totalInputTokens) * dir
-        case 'outputTokens': return (a.totalOutputTokens - b.totalOutputTokens) * dir
-        case 'date': return (a.firstTimestamp.localeCompare(b.firstTimestamp)) * dir
-        case 'model': return (a.model.localeCompare(b.model)) * dir
-        case 'project': return (a.projectDir.localeCompare(b.projectDir)) * dir
-        default: return (a.totalCostUsd - b.totalCostUsd) * dir
-      }
-    })
+  selectSession: async (id) => {
+    try {
+      const detail = await window.electronAPI.tokenomics.sessionDetail(id)
+      set({ selected: detail })
+    } catch (err) {
+      console.error('[tokenomicsStore] selectSession failed', err)
+      set({ error: err instanceof Error ? err.message : String(err) })
+    }
+  },
+
+  clearSelected: () => set({ selected: null }),
+
+  clearIndexBadge: () => set({ indexJustCompleted: false }),
+
+  dispose: () => {
+    const { _unsubs } = get()
+    _unsubs.forEach((fn) => fn())
+    set({ _unsubs: [] })
   },
 }))
-
-// Global IPC listener — same pattern as setupCloudAgentListener
-let listenerSetup = false
-export function setupTokenomicsListener(): void {
-  if (listenerSetup) return
-  listenerSetup = true
-
-  window.electronAPI.tokenomics.onProgress((progress) => {
-    useTokenomicsStore.getState().handleProgress(progress)
-  })
-}

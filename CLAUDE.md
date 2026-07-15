@@ -1,6 +1,6 @@
 # Claude Command Center
 
-Multi-session Claude Code terminal orchestrator built with Electron 33 + React 18 + TypeScript.
+Multi-session Claude Code terminal orchestrator built with Electron 39 + React 18 + TypeScript.
 
 ## Build & Run
 
@@ -47,7 +47,12 @@ npm run test         # both
 
 ## Release Process
 
-- Work on `beta` branch. Cut beta releases with `npm run release -- --beta`
-- Promote to stable: merge beta→main PR, then `npm run release -- --stable --no-bump` from main
-- GitHub Actions builds Windows (.exe) + macOS (.dmg) installers
+RC-branch model (adopted with #89): `beta` is never frozen — features merge there continuously; each release stabilizes on its own branch.
+
+- Feature/fix work: branch off `beta`, PR back into `beta` (owner review + green CI required)
+- To stabilize a release: cut `release/vX.Y.Z` from `beta`; on that branch bump `package.json` (e.g. `2.0.0-rc.2`), commit `build(release): <version>`, push, then `gh workflow run release.yml --ref release/vX.Y.Z -f channel=beta -f skip_vt=false` and watch it to green
+- RC-branch fixes are back-ported to `beta`; features never merge into a release branch
+- Prerelease tags: `-beta.N` and `-rc.N` — both ride the beta update channel; rc outranks beta, final outranks rc
+- Promote to stable: merge `release/vX.Y.Z` → `main`, run the release workflow from `main` with `channel=stable`, then delete the release branch
+- GitHub Actions builds Windows (.exe) + macOS (.dmg) installers; the release job tags the exact built commit (`--target`) so the in-app updater orders releases correctly
 - Never commit secrets, .env files, or personal paths

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useGitHubStore } from '../../stores/githubStore'
 import { useSessionStore } from '../../stores/sessionStore'
+import { useConfigStore } from '../../stores/configStore'
 import { trackUsage } from '../../stores/tipsStore'
 import { parseRepoUrlClient } from './parseRepoUrlClient'
 import { buildSessionState } from '../../session-persistence'
@@ -16,6 +17,7 @@ export default function SessionGitHubConfig({ sessionId, cwd, initial }: Props) 
   const config = useGitHubStore((s) => s.config)
   const profiles = useGitHubStore((s) => s.profiles)
   const updateSession = useSessionStore((s) => s.updateSession)
+  const updateConfig = useConfigStore((s) => s.updateConfig)
   const [enabled, setEnabled] = useState(initial?.enabled ?? config?.enabledByDefault ?? false)
   const [userTouchedEnabled, setUserTouchedEnabled] = useState(false)
   const [repoUrl, setRepoUrl] = useState(initial?.repoUrl ?? '')
@@ -73,11 +75,12 @@ export default function SessionGitHubConfig({ sessionId, cwd, initial }: Props) 
     try {
       // Flush current sessions to session-state.json before invoking the
       // main-side handler. session.save is otherwise only called on graceful
-      // close, so freshly-opened sessions aren't on disk — and the handler
+      // close, so freshly-opened sessions aren't on disk and the handler
       // looks them up there and returns "not-found". Bail if the flush
       // fails; without it the next call would hit the same not-found path
       // and surface a confusing error.
-      const saved = await window.electronAPI.session.save(buildSessionState())
+      const stateToFlush = buildSessionState()
+      const saved = await window.electronAPI.session.save(stateToFlush)
       if (!saved) {
         setTestResult('Error: Failed to persist session state before save')
         setTimeout(() => setTestResult(null), 3000)
@@ -86,15 +89,26 @@ export default function SessionGitHubConfig({ sessionId, cwd, initial }: Props) 
       const r = await window.electronAPI.github.updateSessionConfig(sessionId, patch)
       if (r.ok) {
         // Mirror the patch into the renderer session store so the GitHub
-        // panel's enable-gate reacts immediately — otherwise the change only
+        // panel's enable-gate reacts immediately; otherwise the change only
         // shows up on the next app restart when SavedSession rehydrates.
         const prior = useSessionStore.getState().getSession(sessionId)
-        updateSession(sessionId, {
-          githubIntegration: {
-            ...(prior?.githubIntegration ?? { enabled: false, autoDetected: false }),
-            ...patch,
-          },
-        })
+        const merged = {
+          ...(prior?.githubIntegration ?? { enabled: false, autoDetected: false }),
+          ...patch,
+        }
+        updateSession(sessionId, { githubIntegration: merged })
+
+        // P9.3 (#280): persist the integration on the parent CONFIG too so
+        // any future session spawned from this template inherits the setup.
+        // Without this the enable/repo/auth-profile selection only survives
+        // the lifetime of the current SavedSession; closing the app and
+        // re-spawning from the same config (which is the user's actual
+        // workflow) lost the GH setup every time.
+        const sessionCfgId = prior?.configId
+        if (sessionCfgId) {
+          updateConfig(sessionCfgId, { githubIntegration: merged })
+        }
+
         if (enabled) trackUsage('github.session-enabled')
       }
       setTestResult(r.ok ? 'Saved' : `Error: ${r.error ?? 'unknown'}`)

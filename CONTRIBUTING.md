@@ -54,14 +54,27 @@ npx tsc --noEmit       # Type-check only
 
 ## Branching Model
 
-- `beta` - default working branch (all development happens here)
-- `main` - stable releases only (updated by merging the `beta` → `main` GitHub PR with a merge commit)
+- `beta` - default working branch; all feature development happens here, continuously. `beta` is **never frozen** for a release.
+- `release/vX.Y.Z` - a release-candidate branch cut from `beta` for **every** release. All RC stabilization happens here, not on `beta`.
+- `main` - stable releases only (updated by merging the accepted `release/vX.Y.Z` branch with a merge commit).
 
 ### For contributors
 
-1. Fork the repo and create a feature branch from `beta`
+1. Fork the repo (or create a feature branch in-repo) from `beta`
 2. Make your changes and ensure tests pass
 3. Submit a PR targeting `beta`
+
+That's the whole contributor surface — everything below this line is maintainer/release-manager process, documented for transparency.
+
+### Release process (maintainers)
+
+We cut a dedicated RC branch for every release cycle so that `beta` stays open for feature development at all times — features never wait for a release to finish stabilizing.
+
+- When a release is ready to stabilize, cut a `release/vX.Y.Z` branch from `beta` and tag the `-rc.N` release candidates **there**.
+- **`beta`:** feature branches and fix branches merge here continuously; it is never frozen.
+- **`release/vX.Y.Z`:** bug fixes and stabilization only — **no features**. The RC branch is the proposed stable release; merging a feature into it invalidates the candidate.
+- Fixes made on the RC branch are back-ported to `beta` so the next cycle keeps them.
+- When the RC is accepted, merge `release/vX.Y.Z` → `main`, then delete the RC branch.
 
 ## Commit Messages
 

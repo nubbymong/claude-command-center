@@ -1,0 +1,10 @@
+{
+  "auth_mode": "chatgpt",
+  "tokens": {
+    "id_token": "<placeholder -- the test synthesises its own JWT>",
+    "access_token": "redacted",
+    "refresh_token": "redacted"
+  },
+  "account_id": "acct-abc",
+  "last_refresh": 1714000000
+}

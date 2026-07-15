@@ -86,7 +86,7 @@ function watchSourceDirectory(srcDir: string) {
 
   // Use recursive watching
   try {
-    fileWatcher = fs.watch(srcDir, { recursive: true }, (eventType, filename) => {
+    const w = fs.watch(srcDir, { recursive: true }, (eventType, filename) => {
       if (!filename) return
 
       // Only care about source files
@@ -99,6 +99,14 @@ function watchSourceDirectory(srcDir: string) {
         broadcastUpdate(srcDir, [filename])
       }, 500)
     })
+    // An FSWatcher 'error' with no listener throws -> uncaughtException. Log + close
+    // the broken watcher (dev-only server, so just stop watching rather than crash).
+    w.on('error', (err) => {
+      logError('[update-server] Source watcher error; stopping watch:', err)
+      try { w.close() } catch { /* already closed */ }
+      if (fileWatcher === w) fileWatcher = null
+    })
+    fileWatcher = w
 
     logInfo(`[update-server] Watching source directory: ${srcDir}`)
   } catch (err) {
@@ -110,7 +118,10 @@ function isPortFree(port: number): Promise<boolean> {
   return new Promise((resolve) => {
     const tester = createServer()
     tester.once('error', () => { resolve(false) })
-    tester.listen(port, '0.0.0.0', () => {
+    // Loopback only: the dev update-server must not be reachable from the LAN
+    // (it exposes a source-hash health endpoint + live source-change WS). The
+    // prod update-watcher connects to localhost anyway.
+    tester.listen(port, '127.0.0.1', () => {
       tester.close(() => resolve(true))
     })
   })
@@ -181,8 +192,10 @@ export async function startUpdateServer(projectRoot: string): Promise<{ port: nu
   // Start watching source files
   watchSourceDirectory(srcDir)
 
-  // Start the server
-  httpServer.listen(port, '0.0.0.0', () => {
+  // Start the server. Loopback only (127.0.0.1): dev-only server that exposes a
+  // source-hash health endpoint + a live source-change WebSocket -- must never
+  // be reachable from the LAN. The prod update-watcher connects to localhost.
+  httpServer.listen(port, '127.0.0.1', () => {
     logInfo(`[update-server] Update server running on port ${port}`)
   })
 

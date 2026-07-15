@@ -35,9 +35,8 @@ describe('commandStore', () => {
   })
 
   describe('DEFAULT_COMMANDS', () => {
-    it('has at least one built-in command', () => {
-      expect(DEFAULT_COMMANDS.length).toBeGreaterThanOrEqual(1)
-      expect(DEFAULT_COMMANDS[0].scope).toBe('global')
+    it('ships no built-in commands (statusline is auto-configured on install)', () => {
+      expect(DEFAULT_COMMANDS).toEqual([])
     })
   })
 

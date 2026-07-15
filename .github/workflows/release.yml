@@ -22,7 +22,9 @@ permissions:
 jobs:
   # ── Build Windows installer ──
   build-windows:
-    runs-on: windows-latest
+    # Pinned off windows-latest: the new vs2026 image breaks @electron/node-gyp
+    # (no supported Visual Studio). Same pin as ci.yml — unpin together.
+    runs-on: windows-2025
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
@@ -48,6 +50,13 @@ jobs:
       - name: Install Electron binary
         run: node node_modules/electron/install.js
 
+      # VS 2026-only runner images break @electron/node-gyp's VS discovery
+      # (VS18 absent from its version table). Install VS2022 Build Tools —
+      # also covers electron-builder's internal rebuild. See ci.yml.
+      - name: Install VS2022 Build Tools
+        shell: pwsh
+        run: choco install visualstudio2022buildtools --no-progress -y --package-parameters "--add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.VC.Runtimes.x86.x64.Spectre --includeRecommended --quiet --norestart"
+
       - name: Rebuild native modules
         shell: bash
         run: |
@@ -69,11 +78,18 @@ jobs:
         run: |
           VERSION=$(node -e "console.log(require('./package.json').version)")
           CHANNEL="${{ inputs.channel }}"
-          case "$CHANNEL" in
-            beta) TAG="v${VERSION}-beta" ;;
-            dev)  TAG="v${VERSION}-dev"  ;;
-            *)    TAG="v${VERSION}"      ;;
-          esac
+          # When package.json already carries a prerelease suffix (e.g.
+          # 2.0.0-beta.1 for numbered betas), the tag IS v${VERSION} — don't
+          # append a second -beta. Bare versions keep the channel suffix.
+          if [[ "$VERSION" == *-* ]]; then
+            TAG="v${VERSION}"
+          else
+            case "$CHANNEL" in
+              beta) TAG="v${VERSION}-beta" ;;
+              dev)  TAG="v${VERSION}-dev"  ;;
+              *)    TAG="v${VERSION}"      ;;
+            esac
+          fi
           INSTALLER="ClaudeCommandCenter-${VERSION}.exe"
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
@@ -91,7 +107,13 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-installer
-          path: dist/${{ steps.version.outputs.installer }}
+          # exe + blockmap + latest.yml travel together: latest.yml carries the
+          # exe's sha512, so replacing one without the others breaks the updater
+          # (matters for rolling re-releases onto an existing tag).
+          path: |
+            dist/${{ steps.version.outputs.installer }}
+            dist/${{ steps.version.outputs.installer }}.blockmap
+            dist/latest.yml
           if-no-files-found: error
 
   # ── Build macOS app ──
@@ -178,7 +200,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: macos-dmg
-          path: ${{ steps.dmg.outputs.path }}
+          path: |
+            dist/*.dmg
+            dist/*.dmg.blockmap
+            dist/latest-mac.yml
           if-no-files-found: error
 
   # ── Create GitHub Release ──
@@ -244,10 +269,25 @@ jobs:
             PRERELEASE_FLAG="--prerelease"
           fi
 
-          gh release create "${TAG}" $PRERELEASE_FLAG \
-            --title "${TITLE}" \
-            --notes "$(echo -e "${BODY}")" \
-            artifacts/*
+          # Rolling re-release support (v2 beta policy): if the tag's release
+          # already exists, REPLACE its assets instead of failing, and leave
+          # the existing hand-written release notes untouched.
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            echo "Release ${TAG} exists - replacing assets (rolling re-release)"
+            gh release upload "${TAG}" artifacts/* --clobber
+          else
+            # --target pins the tag to the commit we actually built ($GITHUB_SHA
+            # = the dispatched beta ref). WITHOUT it, `gh release create` tags the
+            # DEFAULT branch (main), which is frozen at an old commit — GitHub then
+            # derives the release's created_at from that stale commit's date, and
+            # the in-app updater (which fetches releases in created_at order) never
+            # sees the new beta. See src/main/github-update.ts.
+            gh release create "${TAG}" $PRERELEASE_FLAG \
+              --target "$GITHUB_SHA" \
+              --title "${TITLE}" \
+              --notes "$(echo -e "${BODY}")" \
+              artifacts/*
+          fi
 
       - name: VirusTotal scan
         if: ${{ !inputs.skip_vt }}

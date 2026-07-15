@@ -24,34 +24,82 @@ import { execSync } from 'child_process'
 
 const SCREENSHOT_DIR = path.join(__dirname, '..', 'src', 'renderer', 'assets', 'training')
 const BUILT_APP = path.join(__dirname, '..', 'out', 'main', 'index.js')
-const PLATFORM_SUFFIX = process.platform === 'darwin' ? '-mac' : ''
+// Setting CAPTURE_NO_PLATFORM_SUFFIX=1 forces no -mac suffix even on darwin,
+// useful when you want the Mac run to produce the canonical filenames the
+// README + training-steps.ts reference (no-suffix). Defaults preserve the
+// historical platform tagging so the per-platform reconcile flow stays
+// untouched.
+const PLATFORM_SUFFIX =
+  process.env.CAPTURE_NO_PLATFORM_SUFFIX === '1'
+    ? ''
+    : process.platform === 'darwin'
+      ? '-mac'
+      : ''
 const WIDTH = 1280
 const HEIGHT = 800
 const JPEG_QUALITY = 85
 
+// P8.18: redact account identity during capture so generated screenshots
+// don't leak the user's email. Forces a stable placeholder colour for
+// visual consistency across captured environments.
+function redactAccountInStatusline(sl: any) {
+  if (sl) {
+    sl.accountEmail = 'you@example.com'
+    sl.accountColour = 'periwinkle'
+  }
+}
+
 // ── Config directory resolution ──
 
-function getConfigDir(): string {
-  if (process.platform === 'win32') {
-    for (const key of ['Software\\Claude Command Center', 'Software\\Claude Conductor']) {
-      try {
-        const result = execSync(`reg query "HKCU\\${key}" /v ResourcesDirectory`, { encoding: 'utf-8', timeout: 5000, windowsHide: true })
-        const match = result.match(/ResourcesDirectory\s+REG_SZ\s+(.+)/)
-        if (match) return path.join(match[1].trim(), 'CONFIG')
-      } catch { /* try next */ }
-    }
-    return path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'Claude Conductor', 'CONFIG')
-  } else {
-    const fallbackFile = path.join(os.homedir(), '.claude-conductor', 'platform-config.json')
+function readRegistryValue(name: 'ResourcesDirectory' | 'DataDirectory'): string | null {
+  if (process.platform !== 'win32') return null
+  for (const key of ['Software\\Claude Command Center', 'Software\\Claude Conductor']) {
     try {
-      if (fs.existsSync(fallbackFile)) {
-        const config = JSON.parse(fs.readFileSync(fallbackFile, 'utf-8'))
-        if (config.ResourcesDirectory) return path.join(config.ResourcesDirectory, 'CONFIG')
-        if (config.DataDirectory) return path.join(config.DataDirectory, 'CONFIG')
-      }
-    } catch {}
-    return path.join(os.homedir(), 'Library', 'Application Support', 'Claude Conductor', 'CONFIG')
+      const result = execSync(`reg query "HKCU\\${key}" /v ${name}`, { encoding: 'utf-8', timeout: 5000, windowsHide: true })
+      const match = result.match(new RegExp(`${name}\\s+REG_SZ\\s+(.+)`))
+      if (match) return match[1].trim()
+    } catch { /* try next */ }
   }
+  return null
+}
+
+function getResourcesDir(): string {
+  const fromReg = readRegistryValue('ResourcesDirectory')
+  if (fromReg) return fromReg
+  if (process.platform === 'win32') {
+    return path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'Claude Conductor')
+  }
+  const fallbackFile = path.join(os.homedir(), '.claude-conductor', 'platform-config.json')
+  try {
+    if (fs.existsSync(fallbackFile)) {
+      const config = JSON.parse(fs.readFileSync(fallbackFile, 'utf-8'))
+      if (config.ResourcesDirectory) return config.ResourcesDirectory
+      if (config.DataDirectory) return config.DataDirectory
+    }
+  } catch {}
+  return path.join(os.homedir(), 'Library', 'Application Support', 'Claude Conductor')
+}
+
+function getDataDir(): string {
+  const fromReg = readRegistryValue('DataDirectory')
+  if (fromReg) return fromReg
+  // Defaults match getDefaultDataDir() in src/main/ipc/setup-handlers.ts
+  if (process.platform === 'win32') {
+    return path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'Claude Conductor')
+  }
+  const fallbackFile = path.join(os.homedir(), '.claude-conductor', 'platform-config.json')
+  try {
+    if (fs.existsSync(fallbackFile)) {
+      const config = JSON.parse(fs.readFileSync(fallbackFile, 'utf-8'))
+      if (config.DataDirectory) return config.DataDirectory
+      if (config.ResourcesDirectory) return config.ResourcesDirectory
+    }
+  } catch {}
+  return path.join(os.homedir(), 'Library', 'Application Support', 'Claude Conductor')
+}
+
+function getConfigDir(): string {
+  return path.join(getResourcesDir(), 'CONFIG')
 }
 
 // ── Sample data ──
@@ -72,6 +120,10 @@ const SAMPLE_CONFIGS = [
   { id: 'demo-mobile', label: 'Mobile App', workingDirectory: path.join(homePath, 'mobile'), model: '', color: '#F9E2AF', sessionType: 'local', shellOnly: true, partnerTerminalPath: PARTNER_SHELL },
   { id: 'demo-infra', label: 'Infrastructure', workingDirectory: path.join(homePath, 'infra'), model: '', color: '#CBA6F7', sessionType: 'local', shellOnly: true },
   { id: 'demo-gpu', label: 'GPU Server', workingDirectory: '/home/developer/ml-pipeline', model: '', color: '#F38BA8', sessionType: 'ssh', shellOnly: true, sshConfig: { host: '10.0.1.50', port: 22, username: 'developer', remotePath: '/home/developer/ml-pipeline' } },
+  // Codex provider demo. shellOnly so capture works on hosts without codex
+  // installed; the Edit dialog renders CodexFormFields based purely on the
+  // saved provider/codexOptions, no live spawn required for the screenshot.
+  { id: 'demo-codex', label: 'Codex Provider', workingDirectory: path.join(homePath, 'codex-demo'), color: '#F9E2AF', sessionType: 'local', shellOnly: true, provider: 'codex', codexOptions: { model: 'gpt-5.5', reasoningEffort: 'medium', permissionsPreset: 'standard' } },
 ]
 
 const SAMPLE_COMMANDS = [
@@ -106,22 +158,46 @@ const SAMPLE_CLOUD_AGENTS = [
   },
 ]
 
-// Fake GitHub config + auth profile for the Settings > GitHub screenshot.
-// The "token" entry here is a label only — the real token lives in OS
-// credential storage and is not captured in the JSON file. These fields
-// populate the AuthProfilesList render so the screenshot shows a realistic
-// signed-in state instead of the empty "No auth profiles yet" placeholder.
+// Fake GitHub config + two auth profiles for the Settings > GitHub screenshot.
+// The "token" entries here are labels only - the real tokens live in OS
+// credential storage and are not captured in the JSON file. These fields
+// populate the Accounts panels and the all-accounts master section so the
+// screenshot shows a realistic multi-account state instead of the empty
+// "No auth profiles yet" placeholder.
 // Importantly: no real usernames, repo owners, or tokens in this demo.
+//
+// Two profiles are engineered so the captured screenshots demonstrate the
+// redesigned surfaces:
+//   - Profile A (demo-github-profile): fully covered, every feature on, so it
+//     reads as a clean signed-in account with no warnings.
+//   - Profile B (demo-personal-profile): aiCredits is switched ON but its
+//     capabilities lack the `plan` cap, so it surfaces a "needs re-auth" chip;
+//     it also has notifications OFF while A has it ON, so the all-accounts
+//     master row for notifications renders as MIXED (tri-state).
+// Cap math: FEATURE_CAPABILITIES maps activePR->[pulls], ci->[actions],
+// reviews->[pulls], linkedIssues->[issues], notifications->[notifications],
+// aiCredits->[plan]. A feature is "covered" when the profile's capabilities
+// include every cap that feature needs; a toggled-on-but-uncovered feature is
+// what surfaces as pending re-auth.
 const SAMPLE_GITHUB_CONFIG = {
   schemaVersion: 1,
   authProfiles: {
+    // Fully covered: all eight capabilities, every auth feature on and powered.
     'demo-github-profile': {
       id: 'demo-github-profile',
       kind: 'oauth' as const,
       label: 'developer',
       username: 'developer',
-      scopes: ['repo', 'notifications'],
-      capabilities: ['pulls', 'issues', 'contents', 'statuses', 'checks', 'actions', 'notifications'],
+      scopes: ['repo', 'notifications', 'user'],
+      capabilities: ['pulls', 'issues', 'contents', 'statuses', 'checks', 'actions', 'notifications', 'plan'],
+      featureToggles: {
+        activePR: true,
+        ci: true,
+        reviews: true,
+        linkedIssues: true,
+        notifications: true,
+        aiCredits: true,
+      },
       createdAt: Date.now() - 86_400_000,
       lastVerifiedAt: Date.now() - 3_600_000,
       expiryObservable: false,
@@ -129,8 +205,33 @@ const SAMPLE_GITHUB_CONFIG = {
         core: { limit: 5000, remaining: 4732, resetAt: Date.now() + 1800_000, capturedAt: Date.now() },
       },
     },
+    // Partial coverage: a fine-grained PAT with no `notifications` or `plan`
+    // cap. aiCredits is on but uncovered -> pending re-auth chip. notifications
+    // is off here while A has it on -> the master notifications row is mixed.
+    'demo-personal-profile': {
+      id: 'demo-personal-profile',
+      kind: 'pat-fine-grained' as const,
+      label: 'personal',
+      username: 'dev-personal',
+      scopes: ['public_repo'],
+      capabilities: ['pulls', 'issues', 'contents', 'actions'],
+      featureToggles: {
+        activePR: true,
+        ci: true,
+        reviews: true,
+        linkedIssues: true,
+        notifications: false,
+        aiCredits: true,
+      },
+      createdAt: Date.now() - 43_200_000,
+      lastVerifiedAt: Date.now() - 1_800_000,
+      expiryObservable: false,
+    },
   },
   defaultAuthProfileId: 'demo-github-profile',
+  // Legacy 7-key global map - kept for downgrade safety so an older build that
+  // still reads featureToggles renders sensibly. New auth-feature intent lives
+  // in featureDefaults; app-wide no-auth features live in appWideToggles.
   featureToggles: {
     sessionContext: true,
     activePR: true,
@@ -140,6 +241,15 @@ const SAMPLE_GITHUB_CONFIG = {
     notifications: true,
     localGit: true,
   },
+  featureDefaults: {
+    activePR: true,
+    ci: true,
+    reviews: true,
+    linkedIssues: true,
+    notifications: true,
+    aiCredits: false,
+  },
+  appWideToggles: { localGit: true, sessionContext: true },
   syncIntervals: { activeSessionSec: 60, backgroundSec: 300, notificationsSec: 300 },
   enabledByDefault: false,
   transcriptScanningOptIn: false,
@@ -174,6 +284,9 @@ interface BackupInfo {
   createdDemoFiles: string[]   // orig didn't exist; we wrote demo data; safe to delete
   createdMemoryDirs: string[]
   projectsRenamed: boolean
+  codexSessionsRenamed: boolean
+  insightsRenamed: boolean
+  logsRenamed: boolean
   lockPath: string
 }
 
@@ -252,6 +365,9 @@ function seedSampleData(): BackupInfo {
     createdDemoFiles: [],
     createdMemoryDirs: [],
     projectsRenamed: false,
+    codexSessionsRenamed: false,
+    insightsRenamed: false,
+    logsRenamed: false,
     lockPath,
   }
 
@@ -272,13 +388,26 @@ function seedSampleData(): BackupInfo {
       return [d, { date: d, totalCostUsd: costs[i], totalTokens: tokens[i], messageCount: sessions[i] * 15, sessionCount: sessions[i], totalDurationMs: 0, avgCostPerHour: 0, byModel: {} }]
     })),
     lastSeeded: now,
+    // Mark seed complete + recent lastSync so seedTokenomics/syncTokenomics
+    // skip the project-folder scan that would otherwise pull in real
+    // Claude/Codex history (and overwrite tokenomics.json with 15+MB of it).
+    seedComplete: true,
+    lastSyncTimestamp: now,
+    totalCostUsd: 4.46,
+  }
+
+  // P8.18: scrub any account identity baked into the seeded sessions before
+  // they hit disk. The helper is idempotent and sets the field if absent so
+  // it's safe to call on every record.
+  for (const session of sampleTokenomics.sessions) {
+    redactAccountInStatusline(session)
   }
 
   const fileMap: Record<string, unknown> = {
     'configs.json': SAMPLE_CONFIGS,
     'commands.json': SAMPLE_COMMANDS,
     'command-sections.json': SAMPLE_SECTIONS,
-    'settings.json': { localMachineName: process.platform === 'darwin' ? 'Mac Mini' : 'Dev Workstation', terminalFontSize: 14, updateChannel: 'stable' },
+    'settings.json': { localMachineName: 'Demo Workstation', terminalFontSize: 14, updateChannel: 'stable', colourMigrationNoticeDismissed: true, colourMigrationNoticePending: false },
     'app-meta.json': { setupVersion: '99.99.99', lastTrainingVersion: '99.99.99', lastWhatsNewVersion: '99.99.99', lastSeenVersion: '99.99.99' },
     'cloud-agents.json': SAMPLE_CLOUD_AGENTS,
     'tokenomics.json': sampleTokenomics,
@@ -301,14 +430,83 @@ function seedSampleData(): BackupInfo {
 
   // Temporarily hide real projects so only demo ones appear in screenshots.
   // Rename ~/.claude/projects/ → ~/.claude/projects-real-bak/ during capture.
+  // Fail loudly if a leftover backup exists -- silently continuing would let
+  // real session data leak into screenshots (and confuse the cleanup step).
   const projectsDir = path.join(os.homedir(), '.claude', 'projects')
   const projectsBackup = projectsDir + '-real-bak'
+  if (fs.existsSync(projectsBackup)) {
+    throw new Error(
+      `[capture] Refusing to start: ${projectsBackup} already exists from a prior crashed capture. ` +
+      `Move its contents back into ${projectsDir} (or delete it if you don't need them) before re-running.`
+    )
+  }
   if (fs.existsSync(projectsDir)) {
     fs.renameSync(projectsDir, projectsBackup)
     activeBackupInfo.projectsRenamed = true
     console.log('[capture] Hid real projects directory')
   }
   fs.mkdirSync(projectsDir, { recursive: true })
+
+  // Same treatment for Codex history -- seedTokenomics scans ~/.codex/sessions/
+  // and would otherwise pull all real Codex transcripts into screenshots.
+  const codexSessionsDir = path.join(os.homedir(), '.codex', 'sessions')
+  const codexSessionsBackup = codexSessionsDir + '-real-bak'
+  if (fs.existsSync(codexSessionsBackup)) {
+    throw new Error(
+      `[capture] Refusing to start: ${codexSessionsBackup} already exists from a prior crashed capture. ` +
+      `Move its contents back into ${codexSessionsDir} (or delete it if you don't need them) before re-running.`
+    )
+  }
+  if (fs.existsSync(codexSessionsDir)) {
+    fs.renameSync(codexSessionsDir, codexSessionsBackup)
+    activeBackupInfo.codexSessionsRenamed = true
+    console.log('[capture] Hid real Codex sessions directory')
+  }
+
+  // Insights reports live at <RESOURCES>/insights/ as one dir per run -- the
+  // Insights page renders the latest report. Without hiding, real KPIs and
+  // project names from the user's history leak into screenshots.
+  const insightsDir = path.join(getResourcesDir(), 'insights')
+  const insightsBackup = insightsDir + '-real-bak'
+  if (fs.existsSync(insightsBackup)) {
+    throw new Error(
+      `[capture] Refusing to start: ${insightsBackup} already exists from a prior crashed capture. ` +
+      `Move its contents back into ${insightsDir} (or delete it if you don't need them) before re-running.`
+    )
+  }
+  if (fs.existsSync(insightsDir)) {
+    fs.renameSync(insightsDir, insightsBackup)
+    activeBackupInfo.insightsRenamed = true
+    console.log('[capture] Hid real Insights directory')
+  }
+
+  // Session logs live at <DATA>/logs/<configLabel>/<sessionId>/ -- the Logs
+  // page renders the configLabel folders, leaking real session names.
+  const logsDir = path.join(getDataDir(), 'logs')
+  const logsBackup = logsDir + '-real-bak'
+  if (fs.existsSync(logsBackup)) {
+    throw new Error(
+      `[capture] Refusing to start: ${logsBackup} already exists from a prior crashed capture. ` +
+      `Move its contents back into ${logsDir} (or delete it if you don't need them) before re-running.`
+    )
+  }
+  if (fs.existsSync(logsDir)) {
+    // Best-effort: if the live CCC instance has open handles in logs/ (it
+    // streams session logs continuously), the rename will EPERM on Windows.
+    // We don't want that to abort the whole capture -- accept the leak,
+    // record nothing renamed, and proceed.
+    try {
+      fs.renameSync(logsDir, logsBackup)
+      activeBackupInfo.logsRenamed = true
+      console.log('[capture] Hid real session logs directory')
+    } catch (err: any) {
+      if (err && err.code === 'EPERM') {
+        console.warn('[capture] Could not hide session logs directory (live CCC holding handles). Logs page screenshot may show real session names.')
+      } else {
+        throw err
+      }
+    }
+  }
 
   for (const project of SAMPLE_MEMORY_PROJECTS) {
     const memoryDir = path.join(projectsDir, project.projectDir, 'memory')
@@ -392,6 +590,60 @@ function cleanupSampleData(info: BackupInfo | null): void {
     }
   }
 
+  // Restore real Codex sessions directory
+  if (info.codexSessionsRenamed) {
+    const codexSessionsDir = path.join(os.homedir(), '.codex', 'sessions')
+    const codexSessionsBackup = codexSessionsDir + '-real-bak'
+    try {
+      if (!fs.existsSync(codexSessionsBackup)) {
+        console.warn('[capture] codex sessions-real-bak missing; skipping restore to protect real data')
+      } else {
+        if (fs.existsSync(codexSessionsDir)) fs.rmSync(codexSessionsDir, { recursive: true, force: true })
+        fs.renameSync(codexSessionsBackup, codexSessionsDir)
+        console.log('[capture] Restored real Codex sessions directory')
+      }
+    } catch (err) {
+      console.error('[capture] WARNING: Failed to restore Codex sessions directory!', err)
+      console.error(`[capture] Your real Codex sessions are at: ${codexSessionsBackup}`)
+    }
+  }
+
+  // Restore real Insights directory
+  if (info.insightsRenamed) {
+    const insightsDir = path.join(getResourcesDir(), 'insights')
+    const insightsBackup = insightsDir + '-real-bak'
+    try {
+      if (!fs.existsSync(insightsBackup)) {
+        console.warn('[capture] insights-real-bak missing; skipping restore to protect real data')
+      } else {
+        if (fs.existsSync(insightsDir)) fs.rmSync(insightsDir, { recursive: true, force: true })
+        fs.renameSync(insightsBackup, insightsDir)
+        console.log('[capture] Restored real Insights directory')
+      }
+    } catch (err) {
+      console.error('[capture] WARNING: Failed to restore Insights directory!', err)
+      console.error(`[capture] Your real Insights are at: ${insightsBackup}`)
+    }
+  }
+
+  // Restore real session logs directory
+  if (info.logsRenamed) {
+    const logsDir = path.join(getDataDir(), 'logs')
+    const logsBackup = logsDir + '-real-bak'
+    try {
+      if (!fs.existsSync(logsBackup)) {
+        console.warn('[capture] logs-real-bak missing; skipping restore to protect real data')
+      } else {
+        if (fs.existsSync(logsDir)) fs.rmSync(logsDir, { recursive: true, force: true })
+        fs.renameSync(logsBackup, logsDir)
+        console.log('[capture] Restored real session logs directory')
+      }
+    } catch (err) {
+      console.error('[capture] WARNING: Failed to restore logs directory!', err)
+      console.error(`[capture] Your real logs are at: ${logsBackup}`)
+    }
+  }
+
   // Release lock LAST so a crashed / aborted cleanup can't free the lock for
   // a parallel capture that would then race against half-restored files.
   releaseCaptureLock(info.lockPath)
@@ -432,7 +684,30 @@ async function clickTab(window: any, text: string): Promise<void> {
 }
 
 async function dismissModals(window: any): Promise<void> {
+  // First pass: Escape covers the dialogs that wire one in.
   for (let i = 0; i < 4; i++) { await window.keyboard.press('Escape'); await window.waitForTimeout(400) }
+  // Second pass: the What's New modal does not bind Escape; it needs an
+  // explicit click on its "Got it" button (or any "Close" / "Skip" / "X"
+  // button on similar one-shot modals). Walk visible buttons and click
+  // anything that looks like a dismiss action; the demo seed sets
+  // lastWhatsNewVersion to 99.99.99 so this should rarely fire, but the
+  // setupVersion bump cycle can still re-trigger it.
+  for (let i = 0; i < 3; i++) {
+    const clicked = await window.evaluate(() => {
+      const targets = ['Got it', 'Close', 'Skip', 'Dismiss', 'OK']
+      const buttons = Array.from(document.querySelectorAll('button')) as HTMLButtonElement[]
+      for (const b of buttons) {
+        const text = (b.textContent || '').trim()
+        if (b.offsetParent !== null && targets.includes(text)) {
+          b.click()
+          return true
+        }
+      }
+      return false
+    })
+    if (!clicked) break
+    await window.waitForTimeout(400)
+  }
 }
 
 /** Launch a session by clicking the Launch button on the matching config
@@ -497,6 +772,11 @@ const DOCS_COPY_MAP: Record<string, string> = {
   'step-vision.jpg': 'vision.jpg',
   'step-security.jpg': 'settings.jpg',
   'step-tips.jpg': 'shortcuts.jpg',
+  // v1.5.13 README hero block - dedicated asset so the in-app tour for
+  // dynamic-workflows can point at the right surface rather than aliasing
+  // step-agent-hub.jpg.
+  'step-dynamic-workflows.jpg': 'dynamic-workflows.jpg',
+  'v2-shell-hero.jpg': 'v2-shell-hero.jpg',
 }
 
 async function capture(window: any, filename: string, description: string): Promise<void> {
@@ -551,13 +831,86 @@ async function main() {
       for (const el of items) { if (el.textContent?.trim() === 'Edit') { (el as HTMLElement).click(); return } }
     })
     await window.waitForTimeout(800)
-    await capture(window, 'step-session-options.jpg', 'Session config dialog')
+    // v1.5.13: seed the dialog state so the captured screenshot actually
+    // shows the Claude controls (Opus 4.8 model, Ultracode effort). The Edit
+    // dialog opened on a "shellOnly:true" config so the Claude options are
+    // hidden by default - we have to uncheck Shell only FIRST (the Claude
+    // controls are conditionally rendered).
+    // All DOM mutation must live in a single inline anonymous arrow
+    // because esbuild/tsx names const-assigned arrows which triggers
+    // __name in the evaluate context.
+    await window.evaluate(() => {
+      const cbs = Array.from(document.querySelectorAll('input[type=checkbox]'))
+      for (const cb of cbs) {
+        const lbl = cb.closest('label')?.textContent || ''
+        if (lbl.includes('Shell only')) {
+          if ((cb as HTMLInputElement).checked) (cb as HTMLInputElement).click()
+          break
+        }
+      }
+    })
+    await window.waitForTimeout(400)
+    await window.evaluate(() => {
+      // Native value setter trick - React 18 reads value via the prototype
+      // descriptor, so a plain sel.value = 'opus' will not fire onChange.
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value')?.set
+      const selects = Array.from(document.querySelectorAll('select'))
+      let modelSel: HTMLSelectElement | null = null
+      let effortSel: HTMLSelectElement | null = null
+      for (const s of selects) {
+        const labelText = (s.previousElementSibling?.textContent || '') + ' ' + (s.closest('div')?.textContent || '')
+        if (!modelSel && /Model override/i.test(labelText)) modelSel = s as HTMLSelectElement
+        if (!effortSel && /Effort level/i.test(labelText)) effortSel = s as HTMLSelectElement
+      }
+      if (modelSel && setter) {
+        setter.call(modelSel, 'opus')
+        modelSel.dispatchEvent(new Event('change', { bubbles: true }))
+      }
+      if (effortSel && setter) {
+        setter.call(effortSel, 'ultracode')
+        effortSel.dispatchEvent(new Event('change', { bubbles: true }))
+      }
+    })
+    await window.waitForTimeout(500)
+    await capture(window, 'step-session-options.jpg', 'Session config dialog (Opus 4.8 + Ultracode)')
     // Close dialog — try multiple methods
     await window.keyboard.press('Escape')
     await window.waitForTimeout(300)
     await window.keyboard.press('Escape')
     await window.waitForTimeout(300)
     // Also click any close/cancel button
+    await window.evaluate(() => {
+      const overlays = document.querySelectorAll('.fixed')
+      overlays.forEach(el => el.remove())
+    })
+    await window.waitForTimeout(500)
+
+    // Step 1b: Codex Provider -- open Edit on the Codex demo config so the
+    // SessionDialog surfaces ProviderSegmentedControl + CodexFormFields
+    // (model dropdown, permissions preset, reasoning effort). Right-click
+    // the config label to get the context menu, then click Edit. Mirrors
+    // the fallback path used above for Web App / API Server.
+    await window.evaluate(() => {
+      const spans = document.querySelectorAll('span')
+      for (const s of spans) {
+        if (s.textContent === 'Codex Provider') {
+          s.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 100, clientY: 200 }))
+          return
+        }
+      }
+    })
+    await window.waitForTimeout(800)
+    await window.evaluate(() => {
+      const items = document.querySelectorAll('[role="menuitem"], button')
+      for (const el of items) { if (el.textContent?.trim() === 'Edit') { (el as HTMLElement).click(); return } }
+    })
+    await window.waitForTimeout(800)
+    await capture(window, 'step-codex.jpg', 'Codex provider edit dialog (CodexFormFields visible)')
+    // Close dialog
+    await window.keyboard.press('Escape')
+    await window.waitForTimeout(300)
+    await window.keyboard.press('Escape')
+    await window.waitForTimeout(300)
     await window.evaluate(() => {
       const overlays = document.querySelectorAll('.fixed')
       overlays.forEach(el => el.remove())
@@ -578,9 +931,10 @@ async function main() {
     await window.waitForTimeout(500)
     await capture(window, 'step-agent-hub.jpg', 'Agent Hub with detail')
 
-    // Step 3: Vision
-    await clickNav(window, 'Vision')
-    await capture(window, 'step-vision.jpg', 'Vision page')
+    // Step 3: Conductor MCP (nav label is "Conductor MCP"; the asset/step id
+    // stays 'vision' for back-compat with saved view state)
+    await clickNav(window, 'Conductor MCP')
+    await capture(window, 'step-vision.jpg', 'Conductor MCP page')
 
     // Step 4: Tokenomics
     await clickNav(window, 'Tokenomics')
@@ -606,6 +960,20 @@ async function main() {
     await clickNav(window, 'Settings')
     await window.waitForTimeout(500)
     await capture(window, 'step-security.jpg', 'Settings page')
+
+    // Step 8a (v1.5.13): Dynamic Workflows toggle - on the Settings General
+    // tab, scroll the Security section into view so the "Disable Claude Code
+    // dynamic workflows" checkbox is centered. Capture as dedicated asset
+    // so the dynamic-workflows tour step stops aliasing step-agent-hub.jpg.
+    await clickTab(window, 'General')
+    await window.waitForTimeout(400)
+    await window.evaluate(() => {
+      const labels = Array.from(document.querySelectorAll('label'))
+      const target = labels.find((l) => (l.textContent || '').includes('Disable Claude Code dynamic workflows'))
+      if (target) target.scrollIntoView({ block: 'center' })
+    })
+    await window.waitForTimeout(500)
+    await capture(window, 'step-dynamic-workflows.jpg', 'Settings General - Disable Claude Code dynamic workflows toggle')
 
     // Step 9: Tips (Shortcuts tab)
     await clickTab(window, 'Shortcuts')
@@ -669,12 +1037,37 @@ async function main() {
     await window.waitForTimeout(2500)
     await capture(window, 'step-combined.jpg', 'Combined mode (Claude + partner)')
 
+    // v1.5.13 V2 README hero: capture the full shell with multiple live
+    // sessions in the sidebar, the active terminal in the main pane, and
+    // the statusline strip lit. Launches an additional "API Server" on
+    // top of the already-running Web App + Mobile App so the sidebar
+    // shows a three-deep active list. Active focus stays on API Server
+    // (the most recently launched) - the previous version re-launched
+    // Web App to "switch focus" but that created a duplicate sidebar
+    // entry.
+    await launchSessionFromSidebar(window, 'API Server')
+    await window.waitForTimeout(2500)
+    await capture(window, 'v2-shell-hero.jpg', 'V2 hero - multi-session shell + active terminal + statusline')
+
     // Webview is intentionally skipped — requires a real URL that loads,
     // and the WebContentsView overlay does not surface in Playwright
     // screenshots reliably. Tour falls back to the legacy bullet view.
 
     console.log('[capture] Closing app...')
-    await app.close()
+    // app.close() opens a graceful-shutdown race; if Electron does not
+    // exit within ~5s we SIGKILL the underlying node-spawned process so
+    // it does not leave a window hanging on the user's screen. Playwright
+    // exposes the child via app.process().
+    const child = app.process()
+    let closed = false
+    await Promise.race([
+      app.close().then(() => { closed = true }),
+      new Promise<void>((r) => setTimeout(r, 5000)),
+    ])
+    if (!closed) {
+      console.warn('[capture] app.close() did not finish in 5s -- SIGKILL')
+      try { child.kill('SIGKILL') } catch {}
+    }
   } finally {
     cleanupSampleData(backupInfo)
   }

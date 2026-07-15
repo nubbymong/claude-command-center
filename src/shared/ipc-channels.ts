@@ -24,7 +24,6 @@ export const IPC = {
   DIALOG_OPEN_FOLDER: 'dialog:openFolder',
 
   // Clipboard
-  CLIPBOARD_READ_IMAGE: 'clipboard:readImage',
   CLIPBOARD_SAVE_IMAGE: 'clipboard:saveImage',
 
   // Credentials
@@ -39,6 +38,7 @@ export const IPC = {
   PTY_KILL: 'pty:kill',
   PTY_DATA: 'pty:data',   // Suffixed with :sessionId at runtime
   PTY_EXIT: 'pty:exit',   // Suffixed with :sessionId at runtime
+  PTY_INTEGRITY_REPORT: 'pty:integrityReport',   // renderer -> main per-session byte/resize report
 
   // SSH connection-flow controller (manual mode user-gated stages).
   // Main->renderer notification is suffixed with :<sessionId> at runtime.
@@ -50,6 +50,21 @@ export const IPC = {
 
   // Statusline
   STATUSLINE_UPDATE: 'statusline:update',
+
+  // Live reasoning effort pushed from the hooks gateway (main -> renderer).
+  HOOKS_EFFORT_UPDATE: 'hooks:effortUpdate',
+
+  // Model/effort registry (spec 2026-06-11): hydrate + hot-reload push (main -> renderer).
+  REGISTRY_GET: 'registry:get',
+  REGISTRY_UPDATE: 'registry:update',
+
+  // Sentinel (spec 2026-06-11 §5/§6)
+  SENTINEL_GET_STATE: 'sentinel:getState',
+  SENTINEL_STATE_UPDATE: 'sentinel:stateUpdate',
+  SENTINEL_APPLY: 'sentinel:apply',
+  SENTINEL_REVERT: 'sentinel:revert',
+  SENTINEL_SET_STATUS: 'sentinel:setStatus',
+  SENTINEL_RERUN: 'sentinel:rerun',
 
   // Debug
   DEBUG_ON_DEBUG: 'claude:debug',
@@ -63,11 +78,32 @@ export const IPC = {
   USAGE_TOTAL: 'usage:total',
   USAGE_HISTORY: 'usage:history',
 
-  // Logs
-  LOGS_LIST: 'logs:list',
-  LOGS_READ: 'logs:read',
-  LOGS_SEARCH: 'logs:search',
-  LOGS_CLEANUP: 'logs:cleanup',
+  // T8b (bug #5): the exact-conversation resume target for a session — {uuid,cwd}
+  // read off the latest bound transcript, or null. Used at session-save time to
+  // persist resumeUuid/resumeCwd onto SavedSession for app-relaunch. Handled by
+  // resume-handlers.ts (routes through the transcript binder; no DB).
+  LOGS_GET_RESUME_TARGET: 'logging:getResumeTarget',
+
+  // Logs v2 — detection-driven warned wipe of the OLD log artifacts (first run).
+  // DETECT reports the inventory (bytes + paths); CONFIRM performs the deletion
+  // after the renderer's blocking modal proceeds.
+  LOGS2_WIPE_DETECT: 'logs2:wipe:detect',
+  LOGS2_WIPE_CONFIRM: 'logs2:wipe:confirm',
+
+  // Logs v2 — the transcript-chat read surface. All request/response channels
+  // route through getLogSupervisor().query(kind, args) (the forked transcripts
+  // worker). Args are Zod-validated in logs2-handlers.ts before the supervisor is
+  // ever called. LOGS2_NEW_MESSAGES is a PUSH (main -> renderer) forwarding the
+  // worker's new-messages fan-out so the open chat view can live-tail.
+  LOGS2_LIST_SLOTS: 'logs2:listSlots',
+  LOGS2_READ_MESSAGES: 'logs2:readMessages',
+  LOGS2_TURN_SUMMARY: 'logs2:turnSummary',
+  LOGS2_SEARCH: 'logs2:search',
+  LOGS2_DELETE_SLOT: 'logs2:deleteSlot',
+  LOGS2_CLEAR_ALL: 'logs2:clearAll',
+  LOGS2_INGEST_STATUS: 'logs2:ingestStatus',
+  LOGS2_NEW_MESSAGES: 'logs2:newMessages',   // push: main -> renderer
+  LOGS2_SESSION_CONFIG: 'logs2:sessionConfig',
 
   // Discovery
   DISCOVERY_PROJECTS: 'discovery:projects',
@@ -121,7 +157,6 @@ export const IPC = {
   INSIGHTS_GET_KPIS: 'insights:getKpis',
   INSIGHTS_GET_LATEST: 'insights:getLatest',
   INSIGHTS_IS_RUNNING: 'insights:isRunning',
-  INSIGHTS_SEED: 'insights:seed',
   INSIGHTS_STATUS_CHANGED: 'insights:statusChanged',
 
   // Notes
@@ -170,25 +205,36 @@ export const IPC = {
 
   // Service status
   SERVICE_STATUS: 'serviceStatus:update',
+  SERVICE_STATUS_GET: 'serviceStatus:get',
+  SERVICE_HEALTH_GET: 'serviceHealth:get',
+  SERVICE_HEALTH_UPDATE: 'serviceHealth:update',
+  SERVICE_RESTART: 'serviceHealth:restart',
 
   // CLI
   CLI_CHECK: 'cli:check',
+  CLI_PATH: 'cli:path',
+  CLI_VERSION: 'cli:version',
 
-  // Tokenomics
-  TOKENOMICS_GET_DATA: 'tokenomics:getData',
-  TOKENOMICS_SEED: 'tokenomics:seed',
-  TOKENOMICS_SYNC: 'tokenomics:sync',
-  TOKENOMICS_PROGRESS: 'tokenomics:progress',
+  // Ask Command Center help workspace
+  HELP_WORKSPACE: 'help:workspace',
 
-  // Account switching
-  ACCOUNT_LIST: 'account:list',
-  ACCOUNT_SWITCH: 'account:switch',
-  ACCOUNT_GET_ACTIVE: 'account:getActive',
-  ACCOUNT_SAVE_CURRENT_AS: 'account:saveCurrentAs',
-  ACCOUNT_RENAME: 'account:rename',
+  // Tokenomics v2 — SQLite-backed summary/sessions/detail + index push
+  TOKENOMICS2_SUMMARY: 'tokenomics2:summary',
+  TOKENOMICS2_SESSIONS: 'tokenomics2:sessions',
+  TOKENOMICS2_SESSION_DETAIL: 'tokenomics2:sessionDetail',
+  TOKENOMICS2_INDEX_STATUS: 'tokenomics2:indexStatus',
+  TOKENOMICS2_INDEX_PROGRESS: 'tokenomics2:indexProgress',
+  TOKENOMICS2_INDEX_COMPLETE: 'tokenomics2:indexComplete',
+
+  // Codex (OpenAI)
+  CODEX_STATUS: 'codex:status',
+  CODEX_LOGIN: 'codex:login',
+  CODEX_LOGOUT: 'codex:logout',
+  CODEX_TEST_CONNECTION: 'codex:testConnection',
 
   // Memory
   MEMORY_SCAN: 'memory:scan',
+  MEMORY_RECENT_SESSIONS: 'memory:recentSessions',
   MEMORY_READ: 'memory:read',
   MEMORY_DELETE: 'memory:delete',
   MEMORY_WRITE_FRONTMATTER: 'memory:writeFrontmatter',
@@ -200,10 +246,12 @@ export const IPC = {
   GITHUB_PROFILE_ADOPT_GHCLI: 'github:profile:adoptGhCli',
   GITHUB_PROFILE_REMOVE: 'github:profile:remove',
   GITHUB_PROFILE_RENAME: 'github:profile:rename',
+  GITHUB_PROFILE_UPDATE: 'github:profile:update',
   GITHUB_PROFILE_TEST: 'github:profile:test',
   GITHUB_OAUTH_START: 'github:oauth:start',
   GITHUB_OAUTH_POLL: 'github:oauth:poll',
   GITHUB_OAUTH_CANCEL: 'github:oauth:cancel',
+  GITHUB_REAUTH_PROFILE: 'github:reauth:profile',
   GITHUB_GHCLI_DETECT: 'github:ghcli:detect',
   GITHUB_REPO_DETECT: 'github:repo:detect',
   GITHUB_SESSION_CONFIG_UPDATE: 'github:session:updateConfig',
@@ -223,6 +271,9 @@ export const IPC = {
   GITHUB_REVIEW_REPLY: 'github:review:reply',
   GITHUB_NOTIF_MARK_READ: 'github:notif:markRead',
   GITHUB_NOTIFICATIONS_UPDATE: 'github:notifications:update',
+  // AI-credits (Copilot) usage meter
+  GITHUB_AI_USAGE_GET: 'github:aiUsage:get',
+  GITHUB_AI_USAGE_UPDATE: 'github:aiUsage:update',
 
   // Webview pane (per-session WebContentsView)
   WEBVIEW_CHECK: 'webview:check',                 // HEAD probe (CORS-bypass)
@@ -246,6 +297,41 @@ export const IPC = {
   HOOKS_SESSION_ENDED: 'hooks:sessionEnded',
   HOOKS_DROPPED: 'hooks:dropped',
   HOOKS_STATUS: 'hooks:status',
+
+  // Codex review MCP (P6)
+  CODEX_REVIEW_USAGE_GET: 'codex-review:usage:get',
+  CODEX_REVIEW_USAGE_UPDATED: 'codex-review:usage:updated',
+
+  // Conductor Channels (v1.5.10)
+  CHANNELS_SEND: 'channels:send',                                   // renderer -> main: dispatch a payload
+  CHANNELS_RETRACT: 'channels:retract',                             // renderer -> main: send retraction follow-up
+  CHANNELS_FORCE_TIER: 'channels:forceTier',                        // renderer -> main: per-session tier override
+  CHANNELS_LEDGER_EVENT: 'channels:ledgerEvent',                    // main -> renderer: live ledger row
+  CHANNELS_RULE_CRUD: 'channels:ruleCRUD',                          // renderer -> main: payload { op: 'list'|'save'|'delete', ... }
+  CHANNELS_STANDING_APPROVAL_CRUD: 'channels:standingApprovalCRUD', // renderer -> main: payload { op: 'list'|'add'|'remove', ... }
+  CHANNELS_RENDERER_READY: 'channels:rendererReady',   // renderer -> main: listeners mounted, safe to gate permissions
+  CHANNELS_ATTENTION: 'channels:attention',            // main -> renderer: { sessionId, needsAttention }
+  CHANNELS_CAPABILITY_DIAGNOSTICS: 'channels:capabilityDiagnostics',// renderer -> main: capability + handshake history
+  CHANNELS_INTRO_DISMISSED: 'channels:introDismissed',              // renderer -> main: persist first-run dismissal
+  CHANNELS_KILL_SWITCH: 'channels:killSwitch',                      // renderer -> main: toggle disableConductorChannels
+
+  // Account profiles (per-process CLAUDE_CONFIG_DIR multi-account)
+  ACCOUNT_PROFILES_LIST: 'accountProfiles:list',
+  ACCOUNT_PROFILES_CREATE: 'accountProfiles:create',
+  ACCOUNT_PROFILES_RENAME: 'accountProfiles:rename',
+  ACCOUNT_PROFILES_DELETE: 'accountProfiles:delete',
+  ACCOUNT_PROFILES_REFRESH_IDENTITY: 'accountProfiles:refreshIdentity',
+  ACCOUNT_PROFILES_CAPTURE_DETECTED: 'accountProfiles:captureDetected',
+  ACCOUNT_GLOBAL_EMAIL_GET: 'accountProfiles:globalEmail',
+
+  // All-accounts usage overview (fetch each profile's usage without a session)
+  ACCOUNT_USAGE_FETCH_ALL: 'accountUsage:fetchAll',
+  ACCOUNT_USAGE_FETCH_ONE: 'accountUsage:fetchOne',
+
+  // Reliable per-session account identity (main -> renderer push at spawn; renderer pull on mount)
+  ACCOUNT_IDENTITY_UPDATE: 'identity:accountUpdate',
+  ACCOUNT_IDENTITY_GET: 'identity:accountGet',
+  ACCOUNT_NEW_DETECTED: 'account:new-detected',
 } as const
 
 /** Helper to build per-session PTY data channels */

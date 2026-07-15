@@ -1,0 +1,315 @@
+[
+  {
+    "id": "transcript-path",
+    "area": "logs",
+    "contract": "Transcripts live at ~/.claude/projects/<mangled-cwd>/<uuid>.jsonl; mangling = cwd.replace(/[^A-Za-z0-9]/g, '-') with no run-collapsing; session ids are canonical UUIDs matching /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/",
+    "files": [
+      "src/main/logging/transcript-discovery.ts"
+    ],
+    "failureMode": "Logs ingest, resume picker, and session-to-transcript binding all fail to find transcripts",
+    "severity": "high",
+    "configFixable": false,
+    "affectedFeature": "logs"
+  },
+  {
+    "id": "transcript-jsonl-shape",
+    "area": "logs",
+    "contract": "Each JSONL record is a JSON object with a 'type' field. Conversation entries have type 'user' or 'assistant'; metadata entries have known skip types (attachment, last-prompt, pr-link, permission-mode, custom-title, agent-name, system, queue-operation, mode, ai-title, progress, worktree-state, file-history-snapshot, summary) or isMeta:true. Novel types are normalised as 'unknown' messages.",
+    "files": [
+      "src/main/logging/transcript-normalizer.ts"
+    ],
+    "failureMode": "New record types silently inflate unknown-message counts; renamed types break normalizer mapping and corrupt chat viewer output",
+    "severity": "warn",
+    "configFixable": false,
+    "affectedFeature": "logs"
+  },
+  {
+    "id": "content-block-types",
+    "area": "logs",
+    "contract": "Assistant messages carry a message.content array whose items have a 'type' field; the normalizer special-cases 'text', 'image', 'thinking' (skipped), 'tool_result' (skipped), and 'tool_use' (rendered as tool_call row). All other types — including 'redacted_thinking' — fall into the unknown-part bucket and are not rendered. Usage tokens live at entry.message.usage (input_tokens, output_tokens, cache_read_input_tokens, cache_creation_input_tokens). Model id lives at entry.message.model.",
+    "files": [
+      "src/main/logging/transcript-normalizer.ts",
+      "src/main/providers/claude/telemetry.ts"
+    ],
+    "failureMode": "New content block types become opaque 'unknown' parts; renamed usage fields zero out token counts and break tokenomics attribution",
+    "severity": "warn",
+    "configFixable": false,
+    "affectedFeature": "tokenomics"
+  },
+  {
+    "id": "statusline-stdin-fields",
+    "area": "statusline",
+    "contract": "Claude Code pipes a JSON object to the statusLine.command via stdin. CCC reads: model.display_name (or model.id fallback), model.id (raw), effort.level, context_window.used_percentage, context_window.remaining_percentage, context_window.context_window_size, context_window.current_usage.{input_tokens,cache_creation_input_tokens,cache_read_input_tokens,output_tokens}, cost.total_cost_usd, cost.total_duration_ms, cost.total_lines_added, cost.total_lines_removed, transcript_path.",
+    "files": [
+      "src/main/providers/claude/statusline.ts"
+    ],
+    "failureMode": "Renamed/removed stdin fields blank out the ContextBar (model, effort, cost, context usage) and break transcript path binding",
+    "severity": "high",
+    "configFixable": false,
+    "affectedFeature": "statusline"
+  },
+  {
+    "id": "statusline-settings-command",
+    "area": "statusline",
+    "contract": "CCC registers its statusline bridge by writing { statusLine: { type: 'command', command: '<node path>' } } into ~/.claude/settings.json (and per-session settings files). Claude Code must honour the statusLine.command stanza and pipe its JSON to the command's stdin.",
+    "files": [
+      "src/main/providers/claude/statusline.ts"
+    ],
+    "failureMode": "Schema change breaks statusline registration; statusline data stops flowing; ContextBar goes blank",
+    "severity": "high",
+    "configFixable": false,
+    "affectedFeature": "statusline"
+  },
+  {
+    "id": "hooks-settings-schema",
+    "area": "hooks",
+    "contract": "Hooks are registered under a 'hooks' key in settings.json as a matcher-wrapped map: { hooks: { PreToolUse: [{ matcher: '', hooks: [{ type: 'http', url: 'http://localhost:<port>/hook/<sessionId>', headers: { 'X-CCC-Hook-Token': '<secret>' } }] }], ... } }. Each event maps to an array of matcher-wrapped entries; the inner hook entry uses type 'http' with a per-session URL and auth header. CCC uses per-session settings files seeded via --settings; mcpServers in --settings are ignored by Claude CLI (must use --mcp-config).",
+    "files": [
+      "src/main/hooks/session-hooks-writer.ts",
+      "src/main/hooks/per-session-settings.ts"
+    ],
+    "failureMode": "Schema change silently drops all hooks; all hook-driven features (attention, tokenomics, logs) stop working",
+    "severity": "high",
+    "configFixable": false,
+    "affectedFeature": "hooks"
+  },
+  {
+    "id": "hook-field-names",
+    "area": "hooks",
+    "contract": "Hook HTTP POST bodies use field names: hook_event_name (not 'event') for the event kind, tool_name (not 'toolName') for the tool, tool_use_id for tool correlation, and notification_type (values: idle_prompt, permission_prompt) for Notification events. effort.level carries the current effort in hook payloads.",
+    "files": [
+      "src/shared/hook-types.ts",
+      "src/main/attention-source.ts",
+      "src/main/hooks/hooks-gateway.ts"
+    ],
+    "failureMode": "Field renames cause silent total hook loss (historical: hook_event_name incident dropped the entire logging pipeline); notification_type rename breaks attention detection",
+    "severity": "high",
+    "configFixable": false,
+    "affectedFeature": "hooks"
+  },
+  {
+    "id": "account-identity",
+    "area": "accounts",
+    "contract": "The active Claude account identity lives in ~/.claude.json at oauthAccount.emailAddress (string) and optionally oauthAccount.displayName, oauthAccount.accountUuid. This file follows USERPROFILE on Windows (not CLAUDE_CONFIG_DIR). Per-account isolation in CCC sets USERPROFILE to a profile-specific directory containing a private .claude.json.",
+    "files": [
+      "src/main/account-identity.ts",
+      "src/main/providers/claude/statusline.ts"
+    ],
+    "failureMode": "Renamed identity fields lose account email from the session strip and statusline; account switching stops working",
+    "severity": "high",
+    "configFixable": false,
+    "affectedFeature": "accounts"
+  },
+  {
+    "id": "credentials-oauth",
+    "area": "accounts",
+    "contract": "OAuth credentials live at ~/.claude/.credentials.json as { claudeAiOauth: { accessToken: string } }. CCC's statusline bridge reads this token to call api.anthropic.com/api/oauth/usage (with headers Authorization: Bearer <token>, anthropic-beta: oauth-2025-04-20) for rate-limit data (five_hour/seven_day/extra_usage blocks).",
+    "files": [
+      "src/main/providers/claude/statusline.ts"
+    ],
+    "failureMode": "Renamed credentials fields stop rate-limit fetches; statusline rate-limit bars go blank. Changed OAuth endpoint path or response shape corrupts rate-limit display.",
+    "severity": "warn",
+    "configFixable": false,
+    "affectedFeature": "statusline"
+  },
+  {
+    "id": "cli-flags",
+    "area": "sessions",
+    "contract": "CCC passes CLI flags to claude with --resume <uuid> FIRST (must come first for cwd-scoped resume to work); the remaining named flags (--agents, --effort, --model, --settings, --mcp-config) are order-independent. Flags are shell-escaped for the platform shell (PowerShell on Windows, sh on POSIX).",
+    "files": [
+      "src/main/pty-manager.ts"
+    ],
+    "failureMode": "Flag reordering, renaming, or schema changes break session spawn, resume, MCP connection, effort/model overrides, and agent templates",
+    "severity": "high",
+    "configFixable": false,
+    "affectedFeature": "sessions"
+  },
+  {
+    "id": "cli-print-mode",
+    "area": "sessions",
+    "contract": "Headless (non-interactive) invocations use -p (or --print) combined with --output-format json to get structured JSON output from the CLI. CCC's Sentinel analysis runner and insights runner use this mode via spawnClaude / claude -p.",
+    "files": [
+      "src/main/insights-runner.ts"
+    ],
+    "failureMode": "Changed -p / --output-format behaviour breaks Sentinel AI analysis and insights generation; analysis falls back to 'analysis failed' finding",
+    "severity": "warn",
+    "configFixable": false,
+    "affectedFeature": "sessions"
+  },
+  {
+    "id": "session-env",
+    "area": "sessions",
+    "contract": "CCC injects CLAUDE_MULTI_SESSION_ID=<sessionId> into every Claude process env. The statusline script reads this env var to write the correct per-session status file. Shell-only sessions also receive this variable.",
+    "files": [
+      "src/main/providers/claude/spawn.ts",
+      "src/main/providers/claude/statusline.ts"
+    ],
+    "failureMode": "If CC strips or ignores injected env vars, the statusline script falls back to data.session_id or 'unknown', causing status files to be written under the wrong session key",
+    "severity": "warn",
+    "configFixable": false,
+    "affectedFeature": "sessions"
+  },
+  {
+    "id": "env-killswitches",
+    "area": "sessions",
+    "contract": "CCC sets CLAUDE_CODE_DISABLE_MOUSE=1 and CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1 by default (unless classicTerminalCopyPaste is disabled) to allow xterm.js to own mouse and scrollback, and CLAUDE_CODE_DISABLE_MOUSE_CLICKS=1 by default (unless clickableQuestions is enabled) so CC 2.1.195+ clickable question options stay keyboard-driven inside xterm. CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 is set when the disableAutoMemory session option is active.",
+    "files": [
+      "src/main/providers/claude/spawn.ts"
+    ],
+    "failureMode": "Removed/renamed env killswitches re-enable CC mouse tracking (breaks text selection), alternate-screen renderer (breaks scrollback), or clickable question options (stray clicks answer prompts in xterm). Removed DISABLE_AUTO_MEMORY causes unwanted automatic memory writes.",
+    "severity": "warn",
+    "configFixable": false,
+    "affectedFeature": "sessions"
+  },
+  {
+    "id": "usage-token-fields",
+    "area": "tokenomics",
+    "contract": "Token usage for tokenomics is read from assistant transcript entries at entry.message.usage: input_tokens (number), output_tokens (number), cache_read_input_tokens (number), cache_creation_input_tokens (number). Model id is at entry.message.model.",
+    "files": [
+      "src/main/providers/claude/telemetry.ts"
+    ],
+    "failureMode": "Renamed usage fields zero out token counts; tokenomics shows $0 / zero tokens for all sessions",
+    "severity": "high",
+    "configFixable": false,
+    "affectedFeature": "tokenomics"
+  },
+  {
+    "id": "model-registry",
+    "area": "sessions",
+    "contract": "Known Claude models and their pricing, colours, families, and dropdown labels are maintained in CCC's model-registry.json + optional user overlay. Unknown model IDs observed at runtime become Sentinel registry-proposal findings. Pricing falls back through: live LiteLLM → registry fallbackPricing (exact) → longest-prefix family match → flagged guess.",
+    "files": [
+      "resources/model-registry.json",
+      "src/main/model-registry-service.ts",
+      "src/main/tokenomics/tk-pricing.ts"
+    ],
+    "failureMode": "New model families not in the registry cause silent misprice (guessed family rates), grey/unknown colour, and raw model ID shown in UI until a Sentinel apply or CCC update",
+    "severity": "warn",
+    "configFixable": true,
+    "affectedFeature": "tokenomics"
+  },
+  {
+    "id": "effort-levels",
+    "area": "sessions",
+    "contract": "Effort levels known to CCC are maintained in the model-registry's effortLevels array (values: low, medium, high, xhigh, max, ultracode). The spawn path accepts any string effort to avoid breaking restored sessions with novel values. Unknown effort values become Sentinel observations.",
+    "files": [
+      "resources/model-registry.json",
+      "src/main/model-registry-service.ts"
+    ],
+    "failureMode": "New effort levels not in the registry are missing from the effort dropdown; no functional breakage (spawn accepts any string), but UI is incomplete",
+    "severity": "info",
+    "configFixable": true,
+    "affectedFeature": "sessions"
+  },
+  {
+    "id": "cwd-scoped-resume",
+    "area": "resume",
+    "contract": "`claude --resume <uuid>` is cwd-scoped: it only resolves a conversation from the launch cwd's mangled ~/.claude/projects/<mangled> folder. CCC therefore overrides the launch cwd to the conversation's original cwd (read from the first JSONL line with a non-empty 'cwd' field) when launching an exact-conversation resume.",
+    "files": [
+      "src/main/pty-manager.ts",
+      "src/main/logging/transcript-discovery.ts"
+    ],
+    "failureMode": "If CC changes --resume to be cwd-independent, CCC's cwd-override logic is harmless but unnecessary. If the cwd-scoped invariant changes in the opposite direction (stricter), resume may silently pick a wrong or stale conversation.",
+    "severity": "warn",
+    "configFixable": false,
+    "affectedFeature": "resume"
+  },
+  {
+    "id": "version-output",
+    "area": "sessions",
+    "contract": "`claude --version` outputs a string containing a parseable semver of the form MAJOR.MINOR.PATCH (optionally with pre-release suffix -[0-9A-Za-z.-]+). CCC extracts the version with /\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?/.",
+    "files": [
+      "src/main/sentinel/sentinel-version.ts"
+    ],
+    "failureMode": "Changed --version output format prevents Sentinel from detecting CC version changes; Trigger B never fires and the service stays on the last known version",
+    "severity": "warn",
+    "configFixable": false,
+    "affectedFeature": "sessions"
+  },
+  {
+    "id": "transcript-skip-types",
+    "area": "logs",
+    "contract": "The following record types are silently skipped as metadata (not shown in chat view or counted as messages): attachment, last-prompt, pr-link, permission-mode, custom-title, agent-name, system, queue-operation, mode, ai-title, progress, worktree-state, file-history-snapshot, summary. Records with isMeta:true are also skipped regardless of type.",
+    "files": [
+      "src/main/logging/transcript-normalizer.ts"
+    ],
+    "failureMode": "New metadata types not in SKIP_TYPES surface as 'unknown' messages in the chat viewer; removed types that CC still emits become invisible, potentially hiding content",
+    "severity": "info",
+    "configFixable": false,
+    "affectedFeature": "logs"
+  },
+  {
+    "id": "hook-event-kinds",
+    "area": "hooks",
+    "contract": "Known hook event kinds are: PreToolUse, PostToolUse, Notification, SessionStart, Stop, UserPromptSubmit, PreCompact, SubagentStart, SubagentStop, StopFailure, PermissionRequest, FileChanged. Attention is raised on Notification with notification_type idle_prompt or permission_prompt, and cleared on UserPromptSubmit/PreToolUse/PostToolUse.",
+    "files": [
+      "src/shared/hook-types.ts",
+      "src/main/attention-source.ts"
+    ],
+    "failureMode": "New event kinds are handled gracefully (string union); renamed or removed kinds stop their associated behaviours (e.g. UserPromptSubmit rename keeps the amber pulse lit permanently)",
+    "severity": "info",
+    "configFixable": false,
+    "affectedFeature": "hooks"
+  },
+  {
+    "id": "mcp-settings-exclusion",
+    "area": "mcp",
+    "contract": "Claude CLI ignores the mcpServers key in --settings files; MCP server registration must go through --mcp-config. CCC writes a separate per-session MCP config file and appends --mcp-config <path> to the claude command for the Conductor MCP server registration.",
+    "files": [
+      "src/main/pty-manager.ts"
+    ],
+    "failureMode": "If CC starts honouring mcpServers in --settings, the current separation is redundant but safe. If --mcp-config is removed/renamed, the Conductor MCP server (vision, screenshot) stops connecting.",
+    "severity": "warn",
+    "configFixable": false,
+    "affectedFeature": "mcp"
+  },
+  {
+    "id": "account-profiles-isolation",
+    "area": "accounts",
+    "contract": "Per-account isolation is achieved by setting USERPROFILE (Windows) / HOME (POSIX) to a profile-specific directory that mirrors the real home via directory junctions (dot-dirs) and hardlinks (dot-files). Only .claude.json and .claude/ are private per profile; projects/memory/agents/skills/commands/plugins are junctioned back to the real ~/.claude.",
+    "files": [
+      "src/main/account-profiles.ts",
+      "src/main/providers/claude/spawn.ts"
+    ],
+    "failureMode": "If CC changes identity file location away from ~/.claude.json or stores credentials elsewhere, account isolation breaks silently — sessions share identity despite separate profile dirs",
+    "severity": "high",
+    "configFixable": false,
+    "affectedFeature": "accounts"
+  },
+  {
+    "id": "oauth-usage-response-shape",
+    "area": "statusline",
+    "contract": "The Anthropic OAuth usage endpoint (api.anthropic.com/api/oauth/usage, header anthropic-beta: oauth-2025-04-20) returns a JSON body with optional keys: five_hour.{ utilization, resets_at }, seven_day.{ utilization, resets_at }, extra_usage.{ is_enabled, utilization, used_credits, monthly_limit }.",
+    "files": [
+      "src/main/providers/claude/statusline.ts"
+    ],
+    "failureMode": "Renamed or restructured usage response fields silently zero the rate-limit bars in the statusline; no functional breakage but usage visibility is lost",
+    "severity": "info",
+    "configFixable": false,
+    "affectedFeature": "statusline"
+  },
+  {
+    "id": "statusline-transcript-path",
+    "area": "logs",
+    "contract": "Claude Code includes a transcript_path string field in the statusline stdin JSON payload. CCC's statusline bridge forwards this as-is in the written status file; the watcher fan-out uses it as the continuous, exact discovery source for binding a session to its transcript.",
+    "files": [
+      "src/main/providers/claude/statusline.ts"
+    ],
+    "failureMode": "Removed or renamed transcript_path field forces CCC to fall back to heuristic mtime-based transcript binding, which can pick the wrong file in worktree or concurrent-session scenarios",
+    "severity": "warn",
+    "configFixable": false,
+    "affectedFeature": "logs"
+  },
+  {
+    "id": "claude-config-dir-projects-junction",
+    "area": "logs",
+    "contract": "In CCC's per-profile account isolation, each profile's .claude/projects is a JUNCTION (Windows) or symlink (POSIX) pointing to os.homedir()/.claude/projects. Transcript discovery canonicalizes paths by rewriting everything before the last .claude/projects segment to os.homedir(), so junction paths never leak into stored transcript records.",
+    "files": [
+      "src/main/logging/transcript-discovery.ts",
+      "src/main/account-profiles.ts"
+    ],
+    "failureMode": "If CC writes transcripts to a profile-private location rather than the shared projects dir, the junction strategy fails and transcripts are not discovered",
+    "severity": "high",
+    "configFixable": false,
+    "affectedFeature": "logs"
+  }
+]

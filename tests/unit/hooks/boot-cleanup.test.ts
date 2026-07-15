@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
-import { cleanupStaleHookEntries } from '../../../src/main/hooks/boot-cleanup'
+import { cleanupStaleHookEntries, cleanupStaleMcpConfigs } from '../../../src/main/hooks/boot-cleanup'
 
 describe('cleanupStaleHookEntries', () => {
   let fakeHome = ''
@@ -79,5 +79,46 @@ describe('cleanupStaleHookEntries', () => {
   it('returns 0 when ~/.claude does not exist', () => {
     fs.rmSync(claudeDir, { recursive: true, force: true })
     expect(cleanupStaleHookEntries(new Set())).toBe(0)
+  })
+})
+
+describe('cleanupStaleMcpConfigs', () => {
+  let fakeHome = ''
+  let claudeDir = ''
+  beforeEach(() => {
+    fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'hooks-mcpclean-'))
+    claudeDir = path.join(fakeHome, '.claude')
+    fs.mkdirSync(claudeDir, { recursive: true })
+    vi.spyOn(os, 'homedir').mockReturnValue(fakeHome)
+  })
+  afterEach(() => {
+    fs.rmSync(fakeHome, { recursive: true, force: true })
+    vi.restoreAllMocks()
+  })
+
+  it('deletes a stale mcp-<sid>.json whose sid is not active', () => {
+    const f = path.join(claudeDir, 'mcp-dead-sid.json')
+    fs.writeFileSync(f, JSON.stringify({ mcpServers: {} }))
+    expect(cleanupStaleMcpConfigs(new Set())).toBe(1)
+    expect(fs.existsSync(f)).toBe(false)
+  })
+
+  it('keeps the mcp file of an active session', () => {
+    const f = path.join(claudeDir, 'mcp-live-sid.json')
+    fs.writeFileSync(f, JSON.stringify({ mcpServers: {} }))
+    expect(cleanupStaleMcpConfigs(new Set(['live-sid']))).toBe(0)
+    expect(fs.existsSync(f)).toBe(true)
+  })
+
+  it('ignores .bak siblings (regex anchored to .json)', () => {
+    const f = path.join(claudeDir, 'mcp-x.json.bak')
+    fs.writeFileSync(f, '{}')
+    expect(cleanupStaleMcpConfigs(new Set())).toBe(0)
+    expect(fs.existsSync(f)).toBe(true)
+  })
+
+  it('returns 0 when ~/.claude does not exist', () => {
+    fs.rmSync(claudeDir, { recursive: true, force: true })
+    expect(cleanupStaleMcpConfigs(new Set())).toBe(0)
   })
 })
