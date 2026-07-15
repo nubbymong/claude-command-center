@@ -75,6 +75,20 @@ export interface McpUpstream {
   autostart: boolean
 }
 
+/** A server discovered in a client config (Claude CLI / Desktop / Codex),
+ *  offered for import into the proxy registry (T6). */
+export interface McpDiscoveredUpstream {
+  source: 'claude' | 'claude-desktop' | 'codex'
+  input: {
+    name: string
+    transport: McpUpstreamTransport
+    enabled?: boolean
+    exposure?: McpUpstreamExposure
+    autostart?: boolean
+  }
+  existing: boolean
+}
+
 /** Registry config + live runtime state for one upstream, as shown in the UI. */
 export interface McpUpstreamView extends McpUpstream {
   status: 'offline' | 'connecting' | 'online' | 'error'

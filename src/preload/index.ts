@@ -309,6 +309,9 @@ export interface ElectronAPI {
     start: (id: string) => Promise<{ ok: boolean; error?: string; upstreams?: import('../shared/types').McpUpstreamView[] }>
     stop: (id: string) => Promise<{ ok: boolean; upstreams?: import('../shared/types').McpUpstreamView[] }>
     restart: (id: string) => Promise<{ ok: boolean; error?: string; upstreams?: import('../shared/types').McpUpstreamView[] }>
+    discover: () => Promise<import('../shared/types').McpDiscoveredUpstream[]>
+    importServers: (items: import('../shared/types').McpDiscoveredUpstream[]) => Promise<{ ok: boolean; added: number; upstreams?: import('../shared/types').McpUpstreamView[] }>
+    takeOver: (source: 'claude' | 'claude-desktop', names: string[]) => Promise<{ ok: boolean; removed: number; error?: string }>
     onChanged: (callback: (upstreams: import('../shared/types').McpUpstreamView[]) => void) => () => void
   }
   legacyVersion: {
@@ -780,6 +783,9 @@ const electronAPI: ElectronAPI = {
     start: (id: string) => ipcRenderer.invoke(IPC.MCP_PROXY_START, id),
     stop: (id: string) => ipcRenderer.invoke(IPC.MCP_PROXY_STOP, id),
     restart: (id: string) => ipcRenderer.invoke(IPC.MCP_PROXY_RESTART, id),
+    discover: () => ipcRenderer.invoke(IPC.MCP_PROXY_DISCOVER),
+    importServers: (items: any) => ipcRenderer.invoke(IPC.MCP_PROXY_IMPORT, items),
+    takeOver: (source: string, names: string[]) => ipcRenderer.invoke(IPC.MCP_PROXY_TAKEOVER, source, names),
     onChanged: (callback: (upstreams: any) => void) => {
       const handler = (_: unknown, upstreams: any) => callback(upstreams)
       ipcRenderer.on(IPC.MCP_PROXY_CHANGED, handler)

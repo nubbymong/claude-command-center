@@ -18,6 +18,7 @@ import {
   type McpUpstreamInput,
 } from '../mcp-proxy/upstream-registry'
 import { getProxySupervisor } from '../mcp-proxy/supervisor'
+import { discoverAll, importDiscovered, takeOver, type DiscoveredUpstream, type AdoptSource } from '../mcp-proxy/adopt'
 import { onInternal } from '../internal-events'
 import { logError } from '../debug-logger'
 import type { McpUpstreamView } from '../../shared/types'
@@ -92,6 +93,19 @@ export function registerMcpProxyHandlers(getWindow: () => BrowserWindow | null):
     } catch (err: any) {
       return { ok: false, error: err?.message || 'Failed to restart upstream' }
     }
+  })
+
+  ipcMain.handle(IPC.MCP_PROXY_DISCOVER, async () => discoverAll())
+
+  ipcMain.handle(IPC.MCP_PROXY_IMPORT, async (_e, items: DiscoveredUpstream[]) => {
+    const added = importDiscovered(items ?? [])
+    getProxySupervisor().sync()
+    return { ok: true, added, upstreams: buildView() }
+  })
+
+  ipcMain.handle(IPC.MCP_PROXY_TAKEOVER, async (_e, source: AdoptSource, names: string[]) => {
+    if (source === 'codex') return { ok: false, removed: 0, error: 'Codex take-over is not supported yet' }
+    return takeOver(source, names ?? [])
   })
 
   // Push supervisor changes (async connect/close/tool-list) to the renderer.

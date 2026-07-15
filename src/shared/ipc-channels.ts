@@ -192,6 +192,9 @@ export const IPC = {
   MCP_PROXY_STOP: 'mcpProxy:stop',
   MCP_PROXY_RESTART: 'mcpProxy:restart',
   MCP_PROXY_CHANGED: 'mcpProxy:changed',
+  MCP_PROXY_DISCOVER: 'mcpProxy:discover',
+  MCP_PROXY_IMPORT: 'mcpProxy:import',
+  MCP_PROXY_TAKEOVER: 'mcpProxy:takeover',
 
   // Cloud agents
   CLOUD_AGENT_DISPATCH: 'cloudAgent:dispatch',

@@ -371,6 +371,9 @@ export interface ElectronAPI {
     start: (id: string) => Promise<{ ok: boolean; error?: string; upstreams?: import('../../shared/types').McpUpstreamView[] }>
     stop: (id: string) => Promise<{ ok: boolean; upstreams?: import('../../shared/types').McpUpstreamView[] }>
     restart: (id: string) => Promise<{ ok: boolean; error?: string; upstreams?: import('../../shared/types').McpUpstreamView[] }>
+    discover: () => Promise<import('../../shared/types').McpDiscoveredUpstream[]>
+    importServers: (items: import('../../shared/types').McpDiscoveredUpstream[]) => Promise<{ ok: boolean; added: number; upstreams?: import('../../shared/types').McpUpstreamView[] }>
+    takeOver: (source: 'claude' | 'claude-desktop', names: string[]) => Promise<{ ok: boolean; removed: number; error?: string }>
     onChanged: (callback: (upstreams: import('../../shared/types').McpUpstreamView[]) => void) => () => void
   }
   legacyVersion: {

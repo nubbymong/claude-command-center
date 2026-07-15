@@ -43,11 +43,18 @@ const EMPTY_DRAFT: McpUpstreamDraft = {
 export default function ProxySubTool() {
   const upstreams = useMcpProxyStore((s) => s.upstreams)
   const error = useMcpProxyStore((s) => s.error)
-  const { load, add, update, remove, start, stop, restart } = useMcpProxyStore.getState()
+  const { load, add, update, remove, start, stop, restart, importFromClients } = useMcpProxyStore.getState()
 
   const [showAdd, setShowAdd] = useState(false)
   const [draft, setDraft] = useState<McpUpstreamDraft>(EMPTY_DRAFT)
   const [argsText, setArgsText] = useState('')
+  const [importMsg, setImportMsg] = useState<string | null>(null)
+
+  async function runImport() {
+    setImportMsg('Scanning Claude / Codex configs…')
+    const { added, found } = await importFromClients()
+    setImportMsg(found === 0 ? 'No servers found in client configs.' : `Imported ${added} of ${found} discovered server(s).`)
+  }
 
   useEffect(() => {
     load()
@@ -80,15 +87,25 @@ export default function ProxySubTool() {
       statusColor={onlineCount > 0 ? 'green' : 'overlay1'}
       description="Aggregate external MCP servers behind Conductor. One shared instance per server is fanned out to every session; tools are discovered on demand via search_tools (or advertised directly in passthrough mode)."
       actions={
-        <button
-          className="text-xs px-2 py-1 rounded-md bg-surface1 hover:bg-surface2 text-text transition-colors"
-          onClick={() => setShowAdd((v) => !v)}
-        >
-          {showAdd ? 'Cancel' : '+ Add server'}
-        </button>
+        <div className="flex gap-2">
+          <button
+            className="text-xs px-2 py-1 rounded-md bg-surface1 hover:bg-surface2 text-text transition-colors"
+            onClick={runImport}
+            title="Discover and import MCP servers already configured in Claude / Codex"
+          >
+            Import existing
+          </button>
+          <button
+            className="text-xs px-2 py-1 rounded-md bg-surface1 hover:bg-surface2 text-text transition-colors"
+            onClick={() => setShowAdd((v) => !v)}
+          >
+            {showAdd ? 'Cancel' : '+ Add server'}
+          </button>
+        </div>
       }
     >
       {error && <div className="text-xs text-red">{error}</div>}
+      {importMsg && <div className="text-xs text-subtext0">{importMsg}</div>}
 
       {showAdd && (
         <div className="rounded-lg p-3 space-y-2" style={{ background: 'var(--surface-sunken, rgba(0,0,0,0.15))', border: '1px solid var(--border-subtle)' }}>

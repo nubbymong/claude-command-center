@@ -29,6 +29,7 @@ const CONFIG_FILES = {
   visionGlobal: 'vision-global.json',
   conductorSecret: 'conductor-secret.json',
   mcpUpstreams: 'mcp-upstreams.json',
+  mcpAdoptBackup: 'mcp-adopt-backup.json',
   commandSections: 'command-sections.json',
   usageTracking: 'usage-tracking.json',
   commandBarUi: 'command-bar-ui.json',

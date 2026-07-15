@@ -16,6 +16,7 @@ interface McpProxyState {
   start: (id: string) => Promise<void>
   stop: (id: string) => Promise<void>
   restart: (id: string) => Promise<void>
+  importFromClients: () => Promise<{ added: number; found: number }>
   handleChanged: (upstreams: McpUpstreamView[]) => void
 }
 
@@ -70,6 +71,14 @@ export const useMcpProxyStore = create<McpProxyState>((set, get) => ({
     const res = await window.electronAPI.mcpProxy.restart(id)
     if (res.upstreams) set({ upstreams: res.upstreams })
     if (!res.ok && res.error) set({ error: res.error })
+  },
+
+  importFromClients: async () => {
+    const found = await window.electronAPI.mcpProxy.discover()
+    const toImport = found.filter((f) => !f.existing)
+    const res = await window.electronAPI.mcpProxy.importServers(toImport)
+    if (res.ok && res.upstreams) set({ upstreams: res.upstreams, error: null })
+    return { added: res.added ?? 0, found: found.length }
   },
 
   // Push updates from the main process (async connect/close/tool-list changes).
