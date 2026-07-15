@@ -32,6 +32,49 @@ export interface GlobalVisionConfig {
   headless?: boolean    // default true
 }
 
+// ── MCP Proxy (upstreams) ──
+
+/** How the Conductor proxy exposes an upstream's tools to the LLM.
+ *  'search'      — tools are discoverable ONLY through the fixed search
+ *                  meta-tools (search_tools / describe_tool / call_tool).
+ *                  Default: upstream churn never changes the advertised list.
+ *  'passthrough' — the upstream's tools are ALSO advertised directly as
+ *                  `server__tool`, skipping the search round-trip. Reserve
+ *                  for a few high-frequency servers; keep the total advertised
+ *                  tool count under the ~30-50 selection-accuracy ceiling. */
+export type McpUpstreamExposure = 'search' | 'passthrough'
+
+/** Stdio transport: CCC spawns `command args...` and speaks MCP over the
+ *  child's stdin/stdout. `env` is merged over the inherited environment. */
+export interface McpStdioTransport {
+  kind: 'stdio'
+  command: string
+  args?: string[]
+  env?: Record<string, string>
+}
+
+/** Remote transport: CCC connects to an already-running MCP server.
+ *  'http' = Streamable HTTP (current MCP standard); 'sse' = legacy SSE. */
+export interface McpHttpTransport {
+  kind: 'http' | 'sse'
+  url: string
+  headers?: Record<string, string>
+}
+
+export type McpUpstreamTransport = McpStdioTransport | McpHttpTransport
+
+/** A single upstream MCP server the Conductor proxy supervises. One shared
+ *  connection per upstream is fanned out to every CCC session (local + SSH). */
+export interface McpUpstream {
+  id: string
+  name: string
+  transport: McpUpstreamTransport
+  enabled: boolean
+  exposure: McpUpstreamExposure
+  /** Connect at proxy startup rather than lazily on first use. */
+  autostart: boolean
+}
+
 // ── SSH ──
 
 export interface SshConfig {

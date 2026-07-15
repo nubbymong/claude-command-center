@@ -28,6 +28,7 @@ const CONFIG_FILES = {
   accounts: 'accounts.json',
   visionGlobal: 'vision-global.json',
   conductorSecret: 'conductor-secret.json',
+  mcpUpstreams: 'mcp-upstreams.json',
   commandSections: 'command-sections.json',
   usageTracking: 'usage-tracking.json',
   commandBarUi: 'command-bar-ui.json',
