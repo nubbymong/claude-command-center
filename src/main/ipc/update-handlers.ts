@@ -4,7 +4,7 @@ import * as path from 'path'
 import * as fs from 'fs'
 import * as os from 'os'
 import { checkForUpdatesOnDemand, markUpdateInstalled, getProjectRootPath, setSourcePathInRegistry, hasSourcePath, isPackagedApp } from '../update-watcher'
-import { checkGitHubRelease, downloadGitHubRelease } from '../github-update'
+import { checkGitHubRelease, downloadGitHubRelease, prepareLinuxAppImageUpdate } from '../github-update'
 import { killAllPty } from '../pty-manager'
 import { logInfo, logError } from '../debug-logger'
 
@@ -146,6 +146,13 @@ export function registerUpdateHandlers(): void {
         // On macOS, open the DMG in Finder — user drags to Applications manually.
         // Auto-installing a DMG over a running app is not supported.
         spawn('open', [installerPath], { detached: true, stdio: 'ignore' }).unref()
+      } else if (process.platform === 'linux' && installerPath.endsWith('.AppImage')) {
+        // A downloaded AppImage has no execute bit and is not an installer —
+        // prepare it (chmod +x, replace the running AppImage in place when
+        // $APPIMAGE is known) and spawn the prepared copy directly.
+        const launchPath = prepareLinuxAppImageUpdate(installerPath)
+        logInfo(`[update] Launching updated AppImage: ${launchPath}`)
+        spawn(launchPath, [], { detached: true, stdio: 'ignore' }).unref()
       } else {
         const proc = spawn(installerPath, [], { detached: true, stdio: 'ignore' })
         proc.unref()

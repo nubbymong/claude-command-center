@@ -54,5 +54,6 @@ RC-branch model (adopted with #89): `beta` is never frozen — features merge th
 - RC-branch fixes are back-ported to `beta`; features never merge into a release branch
 - Prerelease tags: `-beta.N` and `-rc.N` — both ride the beta update channel; rc outranks beta, final outranks rc
 - Promote to stable: merge `release/vX.Y.Z` → `main`, run the release workflow from `main` with `channel=stable`, then delete the release branch
-- GitHub Actions builds Windows (.exe) + macOS (.dmg) installers; the release job tags the exact built commit (`--target`) so the in-app updater orders releases correctly
+- GitHub Actions builds Windows (.exe) + macOS (.dmg) + Linux (.AppImage, experimental) installers; the release job tags the exact built commit (`--target`) so the in-app updater orders releases correctly
+- Linux builds on ubuntu-latest → glibc 2.39 floor (Ubuntu 24.04+/Rocky 10+); older distros need a container build. Vision on Linux requires a deb/rpm Chrome/Chromium (snap confinement blocks the CDP profile dir)
 - Never commit secrets, .env files, or personal paths

@@ -27,7 +27,23 @@ import { readRegistry } from './registry'
 
 const execFileAsync = promisify(execFile)
 
-const INSTALLER_EXT = process.platform === 'darwin' ? '.dmg' : '.exe'
+/**
+ * Installer asset extension per platform. Pure + exported for unit tests —
+ * INSTALLER_EXT itself is baked from process.platform at module load, so tests
+ * can't exercise other platforms through it.
+ *
+ * Linux ships as an AppImage. Before this mapping existed, Linux fell into the
+ * `.exe` default: the checker then found no matching asset on any release and
+ * skipped every update, so Linux installs were silently frozen at whatever
+ * version they first installed.
+ */
+export function installerExtForPlatform(platform: NodeJS.Platform): string {
+  if (platform === 'darwin') return '.dmg'
+  if (platform === 'linux') return '.AppImage'
+  return '.exe'
+}
+
+const INSTALLER_EXT = installerExtForPlatform(process.platform)
 
 const DEFAULT_REPO = 'nubbymong/claude-command-center'
 
@@ -627,4 +643,52 @@ export async function downloadGitHubRelease(tagName: string, assetName: string, 
   }
 
   return null
+}
+
+// ── Linux AppImage apply ─────────────────────────────────────────────────
+
+/**
+ * Prepare a downloaded AppImage for launch and, when possible, put it where
+ * the running AppImage lives. Returns the path the caller should spawn.
+ *
+ * Unlike Windows (the .exe IS an installer that installs over the old copy),
+ * a downloaded AppImage is just a file: it arrives without the execute bit,
+ * and launching it from ~/Downloads would leave the user's "real" copy stale.
+ * So: chmod +x always; then, when we're running AS an AppImage (AppImage
+ * runtimes export $APPIMAGE = the file's own path), copy the new version next
+ * to it and delete the old one. Deleting the running AppImage is safe on
+ * Linux — the mounted squashfs holds the inode until the process exits. The
+ * new file keeps its own versioned name, so the filename never lies about the
+ * version inside.
+ *
+ * Every failure degrades to launching straight from the download location —
+ * never block the update on the tidy-up. `currentAppImage` is a parameter
+ * (defaulting to $APPIMAGE) so tests can exercise all paths on any platform.
+ */
+export function prepareLinuxAppImageUpdate(
+  downloadedPath: string,
+  currentAppImage: string | undefined = process.env.APPIMAGE,
+): string {
+  try { fs.chmodSync(downloadedPath, 0o755) } catch (err) {
+    logError('[github-update] chmod +x on downloaded AppImage failed:', err)
+  }
+
+  if (!currentAppImage) return downloadedPath
+  try {
+    if (!fs.existsSync(currentAppImage)) return downloadedPath
+    const target = path.join(path.dirname(currentAppImage), path.basename(downloadedPath))
+    if (path.resolve(target) === path.resolve(downloadedPath)) return downloadedPath
+
+    fs.copyFileSync(downloadedPath, target)
+    fs.chmodSync(target, 0o755)
+    if (path.resolve(target) !== path.resolve(currentAppImage)) {
+      // Old version file — best-effort removal; leaving it behind is cosmetic.
+      try { fs.unlinkSync(currentAppImage) } catch { /* non-fatal */ }
+    }
+    logInfo(`[github-update] AppImage updated in place: ${target}`)
+    return target
+  } catch (err) {
+    logError('[github-update] In-place AppImage update failed — launching from download location:', err)
+    return downloadedPath
+  }
 }

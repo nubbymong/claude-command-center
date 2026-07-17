@@ -206,9 +206,70 @@ jobs:
             dist/latest-mac.yml
           if-no-files-found: error
 
+  # ── Build Linux AppImage ──
+  # Unsigned by design: Linux has no SmartScreen/Gatekeeper equivalent, and
+  # AppImage carries no signing convention — integrity comes from CHECKSUMS.txt.
+  # Built on ubuntu-latest (glibc 2.39), so the AppImage runs on distros at
+  # that glibc or newer: Ubuntu 24.04+, Rocky 10+, Fedora 40+. Older lines
+  # (Rocky 8/9, Ubuntu 22.04) need a container build against an older glibc —
+  # deliberately out of scope for now.
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python setuptools
+        run: pip install setuptools
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Install Electron binary
+        run: node node_modules/electron/install.js
+
+      - name: Rebuild native modules
+        run: |
+          node -e "
+          const { rebuild } = require('@electron/rebuild');
+          rebuild({
+            buildPath: process.cwd(),
+            electronVersion: require('./node_modules/electron/package.json').version,
+            onlyModules: ['node-pty', 'better-sqlite3']
+          }).then(() => console.log('rebuild done')).catch(e => { console.error(e); process.exit(1) })
+          "
+
+      # The only place the suite runs on Linux (CI's PR matrix is Win+macOS),
+      # so keep it: it gates the release on linux-native node-pty/sqlite too.
+      - name: Run tests
+        run: npx vitest run
+
+      - name: Build
+        run: npm run build
+
+      - name: Package Linux AppImage
+        run: npx electron-builder --linux --publish never
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-appimage
+          path: |
+            dist/*.AppImage
+            dist/latest-linux.yml
+          if-no-files-found: error
+
   # ── Create GitHub Release ──
   release:
-    needs: [build-windows, build-macos]
+    needs: [build-windows, build-macos, build-linux]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -223,6 +284,12 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: macos-dmg
+          path: artifacts/
+
+      - name: Download Linux artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-appimage
           path: artifacts/
 
       - name: List artifacts
@@ -303,8 +370,8 @@ jobs:
             --url "https://www.virustotal.com/api/v3/files/upload_url" \
             --header "x-apikey: ${VT_API_KEY}" | jq -r '.data')
 
-          # Scan each installer (EXE + DMG)
-          for FILE in artifacts/*.exe artifacts/*.dmg; do
+          # Scan each installer (EXE + DMG + AppImage)
+          for FILE in artifacts/*.exe artifacts/*.dmg artifacts/*.AppImage; do
             [ -f "$FILE" ] || continue
             echo "Uploading $(basename $FILE) to VirusTotal..."
             RESULT=$(curl -s --request POST \

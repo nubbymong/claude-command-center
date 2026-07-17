@@ -84,9 +84,13 @@ const mockExistsSync = vi.fn(() => true)
 const mockRenameSync = vi.fn()
 const mockUnlinkSync = vi.fn()
 const mockCreateWriteStream = vi.fn()
+const mockChmodSync = vi.fn()
+const mockCopyFileSync = vi.fn()
 vi.mock('fs', () => {
   const { EventEmitter: EE } = require('events')
   return {
+    chmodSync: (...a: any[]) => mockChmodSync(...a),
+    copyFileSync: (...a: any[]) => mockCopyFileSync(...a),
     existsSync: (...a: any[]) => mockExistsSync(...a),
     readFileSync: vi.fn(),
     writeFileSync: vi.fn(),
@@ -135,11 +139,12 @@ vi.mock('../../src/main/debug-logger', () => ({
   logError: vi.fn(),
 }))
 
-import { checkGitHubRelease, downloadGitHubRelease } from '../../src/main/github-update'
+import { checkGitHubRelease, downloadGitHubRelease, installerExtForPlatform, prepareLinuxAppImageUpdate } from '../../src/main/github-update'
 
-// Helper to build release fixtures with installers for BOTH platforms.
-// checkGitHubRelease now returns null if no matching asset exists for the
-// current platform, so every test fixture needs both .exe and .dmg assets.
+// Helper to build release fixtures with installers for ALL platforms.
+// checkGitHubRelease returns null if no matching asset exists for the current
+// platform, and these tests run on whatever host executes the suite (Windows
+// or macOS CI legs, Linux dev boxes) — so every fixture needs all three.
 function releaseWithBothAssets(tagName: string, version: string, isPrerelease = false) {
   return {
     tag_name: tagName,
@@ -148,6 +153,7 @@ function releaseWithBothAssets(tagName: string, version: string, isPrerelease = 
     assets: [
       { name: `ClaudeCommandCenter-Beta-${version}.exe`, browser_download_url: `https://x/${version}.exe` },
       { name: `ClaudeCommandCenter-Beta-${version}-mac.dmg`, browser_download_url: `https://x/${version}.dmg` },
+      { name: `ClaudeCommandCenter-Beta-${version}-linux-x86_64.AppImage`, browser_download_url: `https://x/${version}.AppImage` },
     ],
   }
 }
@@ -312,6 +318,7 @@ describe('github-update', () => {
           { tagName: 'v1.2.125', isPrerelease: false, isDraft: false, assets: [
             { name: 'ClaudeCommandCenter-Beta-1.2.125.exe', url: 'https://x/y.exe', size: 100 },
             { name: 'ClaudeCommandCenter-Beta-1.2.125-mac.dmg', url: 'https://x/y.dmg', size: 100 },
+            { name: 'ClaudeCommandCenter-Beta-1.2.125-linux-x86_64.AppImage', url: 'https://x/y.AppImage', size: 100 },
           ] },
         ]), '')
       })
@@ -336,11 +343,13 @@ describe('github-update', () => {
 
   describe('asset matching', () => {
     it('selects ClaudeCommandCenter installer asset for current platform', async () => {
-      const isMac = process.platform === 'darwin'
-      const expectedName = isMac
-        ? 'ClaudeCommandCenter-Beta-1.2.125-mac.dmg'
-        : 'ClaudeCommandCenter-Beta-1.2.125.exe'
-      // Release contains both platform installers; the checker should pick the right one
+      const expectedByPlatform: Record<string, { name: string; url: string }> = {
+        darwin: { name: 'ClaudeCommandCenter-Beta-1.2.125-mac.dmg', url: 'https://x/mac.dmg' },
+        linux: { name: 'ClaudeCommandCenter-Beta-1.2.125-linux-x86_64.AppImage', url: 'https://x/linux.AppImage' },
+        win32: { name: 'ClaudeCommandCenter-Beta-1.2.125.exe', url: 'https://x/win.exe' },
+      }
+      const expected = expectedByPlatform[process.platform] ?? expectedByPlatform.win32
+      // Release contains all platform installers; the checker should pick the right one
       httpsState.nextResponse = {
         statusCode: 200,
         body: [
@@ -349,12 +358,14 @@ describe('github-update', () => {
             { name: 'SomeOtherApp.exe', browser_download_url: 'https://x/other.exe' },
             { name: 'ClaudeCommandCenter-Beta-1.2.125.exe', browser_download_url: 'https://x/win.exe' },
             { name: 'ClaudeCommandCenter-Beta-1.2.125-mac.dmg', browser_download_url: 'https://x/mac.dmg' },
+            { name: 'ClaudeCommandCenter-Beta-1.2.125-linux-x86_64.AppImage', browser_download_url: 'https://x/mac.AppImage' },
+            { name: 'ClaudeCommandCenter-Beta-1.2.125-linux-x86_64.AppImage', browser_download_url: 'https://x/linux.AppImage' },
           ] },
         ],
       }
       const result = await checkGitHubRelease()
-      expect(result!.installerName).toBe(expectedName)
-      expect(result!.installerUrl).toBe(isMac ? 'https://x/mac.dmg' : 'https://x/win.exe')
+      expect(result!.installerName).toBe(expected.name)
+      expect(result!.installerUrl).toBe(expected.url)
     })
 
     it('returns null entirely when no installer asset exists for this platform', async () => {
@@ -381,10 +392,12 @@ describe('github-update', () => {
           { tag_name: 'v1.2.125-beta.2', draft: false, prerelease: true, assets: [
             { name: 'ClaudeCommandCenter-Beta-1.2.125.exe', browser_download_url: 'https://x/b2.exe' },
             { name: 'ClaudeCommandCenter-Beta-1.2.125-mac.dmg', browser_download_url: 'https://x/b2.dmg' },
+            { name: 'ClaudeCommandCenter-Beta-1.2.125-linux-x86_64.AppImage', browser_download_url: 'https://x/b2.AppImage' },
           ] },
           { tag_name: 'v1.2.125-beta.1', draft: false, prerelease: true, assets: [
             { name: 'ClaudeCommandCenter-Beta-1.2.125.exe', browser_download_url: 'https://x/b1.exe' },
             { name: 'ClaudeCommandCenter-Beta-1.2.125-mac.dmg', browser_download_url: 'https://x/b1.dmg' },
+            { name: 'ClaudeCommandCenter-Beta-1.2.125-linux-x86_64.AppImage', browser_download_url: 'https://x/b1.AppImage' },
           ] },
         ],
       }
@@ -401,10 +414,12 @@ describe('github-update', () => {
           { tag_name: 'v1.2.125', draft: false, prerelease: false, assets: [
             { name: 'ClaudeCommandCenter-Beta-1.2.125.exe', browser_download_url: 'https://x/f.exe' },
             { name: 'ClaudeCommandCenter-Beta-1.2.125-mac.dmg', browser_download_url: 'https://x/f.dmg' },
+            { name: 'ClaudeCommandCenter-Beta-1.2.125-linux-x86_64.AppImage', browser_download_url: 'https://x/f.AppImage' },
           ] },
           { tag_name: 'v1.2.125-beta.3', draft: false, prerelease: true, assets: [
             { name: 'ClaudeCommandCenter-Beta-1.2.125.exe', browser_download_url: 'https://x/b.exe' },
             { name: 'ClaudeCommandCenter-Beta-1.2.125-mac.dmg', browser_download_url: 'https://x/b.dmg' },
+            { name: 'ClaudeCommandCenter-Beta-1.2.125-linux-x86_64.AppImage', browser_download_url: 'https://x/b.AppImage' },
           ] },
         ],
       }
@@ -422,6 +437,7 @@ describe('github-update', () => {
           { tag_name: 'v1.2.125', draft: false, prerelease: false, assets: [
             { name: 'ClaudeCommandCenter-Beta-1.2.125.exe', browser_download_url: 'https://x/y.exe' },
             { name: 'ClaudeCommandCenter-Beta-1.2.125-mac.dmg', browser_download_url: 'https://x/y.dmg' },
+            { name: 'ClaudeCommandCenter-Beta-1.2.125-linux-x86_64.AppImage', browser_download_url: 'https://x/y.AppImage' },
           ] },
         ],
       }
@@ -453,6 +469,7 @@ describe('github-update', () => {
           { tagName: 'v1.2.125', isPrerelease: false, isDraft: false, assets: [
             { name: 'ClaudeCommandCenter-Beta-1.2.125.exe', url: 'https://x/y.exe', size: 100 },
             { name: 'ClaudeCommandCenter-Beta-1.2.125-mac.dmg', url: 'https://x/y.dmg', size: 100 },
+            { name: 'ClaudeCommandCenter-Beta-1.2.125-linux-x86_64.AppImage', url: 'https://x/y.AppImage', size: 100 },
           ] },
         ]), '')
       })
@@ -548,6 +565,105 @@ describe('github-update', () => {
       })
       const result = await downloadGitHubRelease('v1.2.125', 'ClaudeCommandCenter-Beta-1.2.125.exe', 'https://x/y.exe')
       expect(result).toBeNull()
+    })
+  })
+
+  describe('installerExtForPlatform', () => {
+    it('maps each platform to its installer asset extension', () => {
+      expect(installerExtForPlatform('win32')).toBe('.exe')
+      expect(installerExtForPlatform('darwin')).toBe('.dmg')
+      // The Linux regression: before this mapping, linux fell into the '.exe'
+      // default, matched no asset on any release, and silently skipped every
+      // update — Linux installs were frozen at their first-installed version.
+      expect(installerExtForPlatform('linux')).toBe('.AppImage')
+    })
+
+    it('unknown platforms fall back to .exe (the historical default)', () => {
+      expect(installerExtForPlatform('freebsd' as NodeJS.Platform)).toBe('.exe')
+    })
+
+    it('release.yml artifact names satisfy the asset-selection predicate', () => {
+      // The checker requires startsWith('ClaudeCommandCenter-') && endsWith(ext).
+      // Pin the contract against the electron-builder artifactName patterns so a
+      // rename in package.json can't silently strand a platform again.
+      const artifacts: Array<[string, string]> = [
+        ['ClaudeCommandCenter-2.1.0-beta.1.exe', '.exe'],
+        ['ClaudeCommandCenter-2.1.0-beta.1-mac.dmg', '.dmg'],
+        ['ClaudeCommandCenter-2.1.0-beta.1-linux-x86_64.AppImage', '.AppImage'],
+      ]
+      for (const [name, ext] of artifacts) {
+        expect(name.startsWith('ClaudeCommandCenter-')).toBe(true)
+        expect(name.endsWith(ext)).toBe(true)
+      }
+    })
+  })
+
+  describe('prepareLinuxAppImageUpdate', () => {
+    const downloaded = '/home/u/Downloads/ClaudeCommandCenter-2.1.0-beta.2-linux-x86_64.AppImage'
+    const running = '/home/u/Apps/ClaudeCommandCenter-2.1.0-beta.1-linux-x86_64.AppImage'
+
+    beforeEach(() => {
+      // vi.clearAllMocks() clears CALLS but keeps implementations — a throwing
+      // mockImplementation from one test would otherwise leak into the next.
+      mockChmodSync.mockReset()
+      mockCopyFileSync.mockReset()
+      mockUnlinkSync.mockReset()
+    })
+
+    it('always chmods the download executable (downloads arrive without +x)', () => {
+      prepareLinuxAppImageUpdate(downloaded, undefined)
+      expect(mockChmodSync).toHaveBeenCalledWith(downloaded, 0o755)
+    })
+
+    it('without $APPIMAGE (extracted/dev run), launches from the download location', () => {
+      const result = prepareLinuxAppImageUpdate(downloaded, undefined)
+      expect(result).toBe(downloaded)
+      expect(mockCopyFileSync).not.toHaveBeenCalled()
+      expect(mockUnlinkSync).not.toHaveBeenCalled()
+    })
+
+    it('replaces the running AppImage in place: copy beside it, chmod, remove old', () => {
+      mockExistsSync.mockReturnValue(true)
+      const result = prepareLinuxAppImageUpdate(downloaded, running)
+      // New file lands next to the old one, keeping its own versioned name
+      const expectedTarget = '/home/u/Apps/ClaudeCommandCenter-2.1.0-beta.2-linux-x86_64.AppImage'
+      expect(result?.replace(/\\/g, '/')).toBe(expectedTarget)
+      expect(mockCopyFileSync).toHaveBeenCalledTimes(1)
+      expect(mockChmodSync).toHaveBeenCalledTimes(2) // download + target
+      // Old version file removed (safe on Linux: mounted inode outlives the unlink)
+      expect(mockUnlinkSync).toHaveBeenCalledWith(running)
+    })
+
+    it('when the running AppImage no longer exists, launches from the download', () => {
+      mockExistsSync.mockReturnValue(false)
+      const result = prepareLinuxAppImageUpdate(downloaded, running)
+      expect(result).toBe(downloaded)
+      expect(mockCopyFileSync).not.toHaveBeenCalled()
+    })
+
+    it('degrades to the download location when the copy fails (unwritable dir)', () => {
+      mockExistsSync.mockReturnValue(true)
+      mockCopyFileSync.mockImplementation(() => { throw new Error('EACCES: permission denied') })
+      const result = prepareLinuxAppImageUpdate(downloaded, running)
+      expect(result).toBe(downloaded)
+      // Never removed the old version — the new one didn't land beside it
+      expect(mockUnlinkSync).not.toHaveBeenCalled()
+    })
+
+    it('failure to remove the old version is non-fatal (still returns the new path)', () => {
+      mockExistsSync.mockReturnValue(true)
+      mockUnlinkSync.mockImplementation(() => { throw new Error('EBUSY') })
+      const result = prepareLinuxAppImageUpdate(downloaded, running)
+      expect(result?.replace(/\\/g, '/')).toBe('/home/u/Apps/ClaudeCommandCenter-2.1.0-beta.2-linux-x86_64.AppImage')
+    })
+
+    it('re-download of the exact same file is a no-op replace', () => {
+      mockExistsSync.mockReturnValue(true)
+      const samePath = '/home/u/Apps/ClaudeCommandCenter-2.1.0-beta.2-linux-x86_64.AppImage'
+      const result = prepareLinuxAppImageUpdate(samePath, samePath)
+      expect(result).toBe(samePath)
+      expect(mockCopyFileSync).not.toHaveBeenCalled()
+      expect(mockUnlinkSync).not.toHaveBeenCalled()
     })
   })
 })
