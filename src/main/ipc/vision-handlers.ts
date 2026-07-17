@@ -1,5 +1,5 @@
 import { ipcMain, BrowserWindow } from 'electron'
-import { startGlobalVision, stopGlobalVision, getGlobalVisionStatus, launchBrowser, tryReconnectGlobalVision } from '../vision-manager'
+import { startGlobalVision, stopGlobalVision, getGlobalVisionStatus, launchBrowser, tryReconnectGlobalVision, resetVisionRelaunchBreaker, isGlobalVisionRunning } from '../vision-manager'
 import { readConfig, writeConfig } from '../config-manager'
 import { isPackagedApp } from '../update-watcher'
 import { resolveCdpPort } from '../../shared/cdp-ports'
@@ -35,8 +35,20 @@ export function registerVisionHandlers(getWindow: () => BrowserWindow | null): v
       // CCC or attach back to its browser. The resolver is the single source
       // of truth for the CDP port; the renderer's value is now advisory only.
       const debugPort = resolveCdpPort(isPackagedApp())
-      const result = launchBrowser(browser, debugPort, url, headless)
-      tryReconnectGlobalVision()
+      // Manual Start re-arms auto-relaunch (clears any tripped circuit breaker).
+      resetVisionRelaunchBreaker()
+      const result = await launchBrowser(browser, debugPort, url, headless)
+      // If vision was previously Stopped, stopGlobalVision tore down the manager
+      // (globalManager=null), so tryReconnect would be a no-op and the browser
+      // would sit on "launching…" forever. Recreate the manager in that case
+      // (mirrors boot: launchBrowser then startGlobalVision); otherwise just nudge
+      // the existing manager to reconnect to the freshly-spawned browser.
+      if (isGlobalVisionRunning()) {
+        tryReconnectGlobalVision()
+      } else {
+        const saved = readConfig<GlobalVisionConfig>('visionGlobal')
+        await startGlobalVision({ ...(saved ?? {}), browser, debugPort, headless } as GlobalVisionConfig, getWindow)
+      }
       return { ok: true, ...result }
     } catch (err: any) {
       return { ok: false, error: err?.message || 'Failed to launch browser' }
