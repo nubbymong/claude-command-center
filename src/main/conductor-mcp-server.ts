@@ -969,7 +969,7 @@ export async function startBrowserAtBoot(
   const browser: 'chrome' | 'edge' = visionConfig.browser === 'edge' ? 'edge' : 'chrome'
   const headless = visionConfig.headless !== false
   try {
-    launchBrowser(browser, debugPort, visionConfig.url, headless)
+    await launchBrowser(browser, debugPort, visionConfig.url, headless)
   } catch (err) {
     logError(`[vision] Browser spawn at boot failed: ${(err as Error)?.message}. Heartbeat will retry if browser becomes reachable.`)
   }
