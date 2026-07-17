@@ -145,7 +145,7 @@ vi.mock('../../src/main/debug-logger', () => ({
   logError: vi.fn(),
 }))
 
-import { checkGitHubRelease, downloadGitHubRelease, installerExtForPlatform, prepareLinuxAppImageUpdate } from '../../src/main/github-update'
+import { checkGitHubRelease, downloadGitHubRelease, installerExtForPlatform, prepareLinuxAppImageUpdate, isPathOnNoexecMount } from '../../src/main/github-update'
 
 // Helper to build release fixtures with installers for ALL platforms.
 // checkGitHubRelease returns null if no matching asset exists for the current
@@ -709,6 +709,43 @@ describe('github-update', () => {
       expect(result).toBe(samePath)
       expect(mockCopyFileSync).not.toHaveBeenCalled()
       expect(mockUnlinkSync).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('isPathOnNoexecMount (Copilot review — access(X_OK) misses noexec)', () => {
+    // Realistic /proc/mounts: home is noexec (hardened box), root is normal.
+    const mounts = [
+      'proc /proc proc rw,nosuid,nodev,noexec,relatime 0 0',
+      '/dev/sda1 / ext4 rw,relatime 0 0',
+      '/dev/sda2 /home ext4 rw,nosuid,nodev,noexec,relatime 0 0',
+      'tmpfs /tmp tmpfs rw,nosuid,nodev,relatime 0 0',
+    ].join('\n')
+
+    it('flags a file under a noexec mount', () => {
+      expect(isPathOnNoexecMount('/home/u/Downloads/x.AppImage', mounts)).toBe(true)
+    })
+
+    it('does NOT flag a file under an exec mount', () => {
+      expect(isPathOnNoexecMount('/opt/apps/x.AppImage', mounts)).toBe(false) // falls to / (exec)
+      expect(isPathOnNoexecMount('/tmp/x.AppImage', mounts)).toBe(false)
+    })
+
+    it('longest-prefix wins: an exec submount under a noexec parent is exec', () => {
+      const nested = mounts + '\n/dev/sdb1 /home/u/exec ext4 rw,relatime 0 0'
+      expect(isPathOnNoexecMount('/home/u/exec/x.AppImage', nested)).toBe(false)
+      expect(isPathOnNoexecMount('/home/u/other/x.AppImage', nested)).toBe(true)
+    })
+
+    it('does not prefix-match a sibling whose name shares a prefix', () => {
+      // /home must not match /home2 — the trailing-slash boundary guards this
+      const m = '/dev/sda1 / ext4 rw 0 0\n/dev/sda2 /home ext4 rw,noexec 0 0'
+      expect(isPathOnNoexecMount('/home2/x.AppImage', m)).toBe(false)
+    })
+
+    it('degrades to false when /proc/mounts is unreadable (never blocks updates)', () => {
+      // No procMounts arg → reads /proc/mounts, which the fs mock returns undefined
+      // for; the try/catch returns false rather than throwing.
+      expect(isPathOnNoexecMount('/home/u/x.AppImage')).toBe(false)
     })
   })
 })

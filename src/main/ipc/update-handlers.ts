@@ -4,7 +4,7 @@ import * as path from 'path'
 import * as fs from 'fs'
 import * as os from 'os'
 import { checkForUpdatesOnDemand, markUpdateInstalled, getProjectRootPath, setSourcePathInRegistry, hasSourcePath, isPackagedApp } from '../update-watcher'
-import { checkGitHubRelease, downloadGitHubRelease, prepareLinuxAppImageUpdate } from '../github-update'
+import { checkGitHubRelease, downloadGitHubRelease, prepareLinuxAppImageUpdate, isPathOnNoexecMount } from '../github-update'
 import { killAllPty } from '../pty-manager'
 import { logInfo, logError } from '../debug-logger'
 
@@ -146,10 +146,18 @@ export function registerUpdateHandlers(): void {
     let linuxLaunchPath: string | null = null
     if (process.platform === 'linux' && installerPath.endsWith('.AppImage')) {
       linuxLaunchPath = prepareLinuxAppImageUpdate(installerPath)
+      // Permission bits (fast, catches a failed chmod on vfat/exfat)...
       try {
         fs.accessSync(linuxLaunchPath, fs.constants.X_OK)
       } catch (err) {
         throw new Error(`Updated AppImage is not executable (${linuxLaunchPath}) — aborting before restart: ${(err as Error).message}`)
+      }
+      // ...and the mount, which accessSync can't see: a noexec ~/Downloads (the
+      // fallback launch location) would pass the bit check yet fail execve. The
+      // single-instance lock means we can't confirm the relaunch by spawning it
+      // first, so catch this here — before the PTYs are killed — not after.
+      if (isPathOnNoexecMount(linuxLaunchPath)) {
+        throw new Error(`Updated AppImage is on a noexec mount (${linuxLaunchPath}) — cannot relaunch. Move the app to a filesystem that allows execution, or update manually.`)
       }
     }
 

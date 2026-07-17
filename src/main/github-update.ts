@@ -645,6 +645,46 @@ export async function downloadGitHubRelease(tagName: string, assetName: string, 
   return null
 }
 
+/**
+ * Best-effort check: is `targetPath` on a filesystem mounted `noexec`?
+ *
+ * `fs.accessSync(X_OK)` inspects the file's permission bits, not the mount, so
+ * on a hardened box where ~/Downloads (or /home) is mounted `noexec` a freshly
+ * chmod'd AppImage passes the access check yet `execve` fails EACCES at launch.
+ * Because CCC holds a single-instance lock, we cannot verify the relaunch by
+ * spawning it first (the new instance can't start until we exit), so the update
+ * flow uses this to abort BEFORE killing the user's terminals rather than after.
+ *
+ * Parses /proc/mounts and returns the `noexec` state of the longest mount point
+ * that is a prefix of `targetPath`. Returns false whenever it can't tell (no
+ * /proc/mounts, parse failure) — never block an update on a best-effort probe.
+ * `procMounts` is injectable for tests.
+ */
+export function isPathOnNoexecMount(targetPath: string, procMounts?: string): boolean {
+  let text: string | undefined
+  try {
+    text = procMounts ?? fs.readFileSync('/proc/mounts', 'utf-8')
+  } catch { return false }
+  if (typeof text !== 'string') return false
+
+  let bestPointLen = -1
+  let noexec = false
+  for (const line of text.split('\n')) {
+    const parts = line.split(/\s+/)
+    if (parts.length < 4) continue
+    const point = parts[1]
+    const opts = parts[3]
+    const prefix = point.endsWith('/') ? point : point + '/'
+    if (targetPath === point || targetPath.startsWith(prefix)) {
+      if (point.length > bestPointLen) {
+        bestPointLen = point.length
+        noexec = /(^|,)noexec(,|$)/.test(opts)
+      }
+    }
+  }
+  return noexec
+}
+
 // ── Linux AppImage apply ─────────────────────────────────────────────────
 
 /**
@@ -670,9 +710,11 @@ export async function downloadGitHubRelease(tagName: string, assetName: string, 
  * the inode until the process exits.
  *
  * Guarded: $APPIMAGE is an environment variable a wrapper could point anywhere,
- * so we only ever unlink/overwrite a plain file whose name is actually one of
- * ours. Every failure degrades to launching straight from the download location
- * — never block the update on the tidy-up. `currentAppImage` is a parameter
+ * so we only ever unlink/overwrite a plain *.AppImage FILE — name-agnostic,
+ * because users legitimately rename the image to a stable custom name (that's
+ * the case finding #1 preserves), so we can't require our own name prefix.
+ * Every failure degrades to launching straight from the download location —
+ * never block the update on the tidy-up. `currentAppImage` is a parameter
  * (defaulting to $APPIMAGE) so tests can exercise all paths on any platform.
  */
 export function prepareLinuxAppImageUpdate(
