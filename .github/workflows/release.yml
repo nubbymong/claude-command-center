@@ -206,15 +206,22 @@ jobs:
             dist/latest-mac.yml
           if-no-files-found: error
 
-  # ── Build Linux AppImage ──
-  # Unsigned by design: Linux has no SmartScreen/Gatekeeper equivalent, and
-  # AppImage carries no signing convention — integrity comes from CHECKSUMS.txt.
-  # Built on ubuntu-latest (glibc 2.39), so the AppImage runs on distros at
-  # that glibc or newer: Ubuntu 24.04+, Rocky 10+, Fedora 40+. Older lines
-  # (Rocky 8/9, Ubuntu 22.04) need a container build against an older glibc —
-  # deliberately out of scope for now.
+  # ── Build Linux AppImage (experimental) ──
+  # Unsigned: Linux has no SmartScreen/Gatekeeper equivalent, and AppImage
+  # carries no signing convention. CHECKSUMS.txt lets users verify the download
+  # by hand — the in-app updater does NOT yet verify it (tracked as follow-up).
+  # Built on ubuntu-latest (glibc 2.39), so the AppImage runs on distros at that
+  # glibc or newer: Ubuntu 24.04+, Rocky 10+, Fedora 40+. Older lines (Rocky
+  # 8/9, Ubuntu 22.04) need a container build against an older glibc — out of
+  # scope for now.
+  #
+  # continue-on-error: this is an EXPERIMENTAL third platform, so a Linux build
+  # failure must never block the Windows/macOS release. The job still shows red
+  # in the run (visible to the maintainer), and release.js flags the missing
+  # AppImage asset — but the release proceeds with the platforms that built.
   build-linux:
     runs-on: ubuntu-latest
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
@@ -247,8 +254,11 @@ jobs:
           }).then(() => console.log('rebuild done')).catch(e => { console.error(e); process.exit(1) })
           "
 
-      # The only place the suite runs on Linux (CI's PR matrix is Win+macOS),
-      # so keep it: it gates the release on linux-native node-pty/sqlite too.
+      # The only place the vitest suite runs on Linux (CI's PR matrix is
+      # Win+macOS). Note this is the standard suite — the *.native.test.ts
+      # files (better-sqlite3 under Electron-as-Node) are excluded by
+      # vitest.config; the native rebuild above is what proves node-pty /
+      # better-sqlite3 link on linux-x64.
       - name: Run tests
         run: npx vitest run
 
@@ -286,7 +296,11 @@ jobs:
           name: macos-dmg
           path: artifacts/
 
+      # continue-on-error mirrors build-linux: if the experimental Linux build
+      # failed, its artifact won't exist — download it best-effort so the
+      # Windows/macOS release still publishes.
       - name: Download Linux artifact
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: linux-appimage

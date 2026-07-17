@@ -655,14 +655,24 @@ export async function downloadGitHubRelease(tagName: string, assetName: string, 
  * a downloaded AppImage is just a file: it arrives without the execute bit,
  * and launching it from ~/Downloads would leave the user's "real" copy stale.
  * So: chmod +x always; then, when we're running AS an AppImage (AppImage
- * runtimes export $APPIMAGE = the file's own path), copy the new version next
- * to it and delete the old one. Deleting the running AppImage is safe on
- * Linux — the mounted squashfs holds the inode until the process exits. The
- * new file keeps its own versioned name, so the filename never lies about the
- * version inside.
+ * runtimes export $APPIMAGE = the file's own path), replace it in place.
  *
- * Every failure degrades to launching straight from the download location —
- * never block the update on the tidy-up. `currentAppImage` is a parameter
+ * Replacement follows electron-updater's convention (electron-builder #2964) so
+ * we don't orphan the user's launcher:
+ *   - If the running file's name has NO version (the user renamed it to a stable
+ *     path that a .desktop entry / dock pin / alias points at), overwrite AT THE
+ *     SAME PATH — keep their name.
+ *   - Only when the running name is itself versioned do we write the new
+ *     versioned name and remove the old file.
+ *   - $APPIMAGE is resolved through symlinks first (a stable `~/bin/ccc` link),
+ *     the real file is replaced, and the symlink is re-pointed at the new file.
+ * Deleting the running AppImage is safe on Linux — the mounted squashfs holds
+ * the inode until the process exits.
+ *
+ * Guarded: $APPIMAGE is an environment variable a wrapper could point anywhere,
+ * so we only ever unlink/overwrite a plain file whose name is actually one of
+ * ours. Every failure degrades to launching straight from the download location
+ * — never block the update on the tidy-up. `currentAppImage` is a parameter
  * (defaulting to $APPIMAGE) so tests can exercise all paths on any platform.
  */
 export function prepareLinuxAppImageUpdate(
@@ -674,16 +684,50 @@ export function prepareLinuxAppImageUpdate(
   }
 
   if (!currentAppImage) return downloadedPath
+
+  // Resolve symlinks / `..`: the AppImage runtime sets $APPIMAGE to the real
+  // mounted file, but a user may launch via a stable symlink whose target we
+  // must replace (and whose link we must not leave dangling).
+  let real: string
+  try { real = fs.realpathSync(currentAppImage) } catch { return downloadedPath }
+
+  // Only ever replace a plain *.AppImage FILE — never unlink a directory or a
+  // non-AppImage file (e.g. a wrapper that set $APPIMAGE to some unrelated
+  // path). We can't require our own name prefix here because users legitimately
+  // rename the AppImage to a stable custom name (the case finding #1 preserves);
+  // the .AppImage + regular-file check is the safe, name-agnostic guard.
   try {
-    if (!fs.existsSync(currentAppImage)) return downloadedPath
-    const target = path.join(path.dirname(currentAppImage), path.basename(downloadedPath))
+    const st = fs.lstatSync(real)
+    if (!st.isFile() || !path.basename(real).endsWith('.AppImage')) {
+      logError(`[github-update] $APPIMAGE (${real}) is not an AppImage file — launching from download location`)
+      return downloadedPath
+    }
+  } catch { return downloadedPath }
+
+  try {
+    const runningName = path.basename(real)
+    const keepName = !/\d+\.\d+\.\d+/.test(runningName)   // unversioned = user's custom stable name
+    const target = keepName ? real : path.join(path.dirname(real), path.basename(downloadedPath))
+
     if (path.resolve(target) === path.resolve(downloadedPath)) return downloadedPath
 
+    // Unlink before writing when reusing the running file's own path: truncating
+    // a mounted AppImage in place can corrupt the running mount, whereas removing
+    // the directory entry is safe (the mount keeps the inode) and lets copy
+    // recreate the file cleanly.
+    if (path.resolve(target) === path.resolve(real)) {
+      try { fs.unlinkSync(real) } catch { /* copy recreates it */ }
+    }
     fs.copyFileSync(downloadedPath, target)
     fs.chmodSync(target, 0o755)
-    if (path.resolve(target) !== path.resolve(currentAppImage)) {
-      // Old version file — best-effort removal; leaving it behind is cosmetic.
-      try { fs.unlinkSync(currentAppImage) } catch { /* non-fatal */ }
+
+    if (path.resolve(target) !== path.resolve(real)) {
+      try { fs.unlinkSync(real) } catch { /* non-fatal: a stale old version is cosmetic */ }
+      // Launched via a symlink? Re-point it so the user's stable launcher path
+      // follows the new versioned file instead of dangling at the deleted one.
+      if (path.resolve(currentAppImage) !== path.resolve(real)) {
+        try { fs.unlinkSync(currentAppImage); fs.symlinkSync(target, currentAppImage) } catch { /* best-effort */ }
+      }
     }
     logInfo(`[github-update] AppImage updated in place: ${target}`)
     return target

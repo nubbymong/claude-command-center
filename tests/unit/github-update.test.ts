@@ -86,11 +86,17 @@ const mockUnlinkSync = vi.fn()
 const mockCreateWriteStream = vi.fn()
 const mockChmodSync = vi.fn()
 const mockCopyFileSync = vi.fn()
+const mockRealpathSync = vi.fn((p: string) => p)                 // identity: no symlink
+const mockLstatSync = vi.fn(() => ({ isFile: () => true }))      // regular file
+const mockSymlinkSync = vi.fn()
 vi.mock('fs', () => {
   const { EventEmitter: EE } = require('events')
   return {
     chmodSync: (...a: any[]) => mockChmodSync(...a),
     copyFileSync: (...a: any[]) => mockCopyFileSync(...a),
+    realpathSync: (...a: any[]) => mockRealpathSync(...a),
+    lstatSync: (...a: any[]) => mockLstatSync(...a),
+    symlinkSync: (...a: any[]) => mockSymlinkSync(...a),
     existsSync: (...a: any[]) => mockExistsSync(...a),
     readFileSync: vi.fn(),
     writeFileSync: vi.fn(),
@@ -358,7 +364,6 @@ describe('github-update', () => {
             { name: 'SomeOtherApp.exe', browser_download_url: 'https://x/other.exe' },
             { name: 'ClaudeCommandCenter-Beta-1.2.125.exe', browser_download_url: 'https://x/win.exe' },
             { name: 'ClaudeCommandCenter-Beta-1.2.125-mac.dmg', browser_download_url: 'https://x/mac.dmg' },
-            { name: 'ClaudeCommandCenter-Beta-1.2.125-linux-x86_64.AppImage', browser_download_url: 'https://x/mac.AppImage' },
             { name: 'ClaudeCommandCenter-Beta-1.2.125-linux-x86_64.AppImage', browser_download_url: 'https://x/linux.AppImage' },
           ] },
         ],
@@ -608,6 +613,9 @@ describe('github-update', () => {
       mockChmodSync.mockReset()
       mockCopyFileSync.mockReset()
       mockUnlinkSync.mockReset()
+      mockSymlinkSync.mockReset()
+      mockRealpathSync.mockReset().mockImplementation((p: string) => p)
+      mockLstatSync.mockReset().mockReturnValue({ isFile: () => true })
     })
 
     it('always chmods the download executable (downloads arrive without +x)', () => {
@@ -622,10 +630,8 @@ describe('github-update', () => {
       expect(mockUnlinkSync).not.toHaveBeenCalled()
     })
 
-    it('replaces the running AppImage in place: copy beside it, chmod, remove old', () => {
-      mockExistsSync.mockReturnValue(true)
+    it('versioned running name: writes the new versioned file and removes the old', () => {
       const result = prepareLinuxAppImageUpdate(downloaded, running)
-      // New file lands next to the old one, keeping its own versioned name
       const expectedTarget = '/home/u/Apps/ClaudeCommandCenter-2.1.0-beta.2-linux-x86_64.AppImage'
       expect(result?.replace(/\\/g, '/')).toBe(expectedTarget)
       expect(mockCopyFileSync).toHaveBeenCalledTimes(1)
@@ -634,31 +640,70 @@ describe('github-update', () => {
       expect(mockUnlinkSync).toHaveBeenCalledWith(running)
     })
 
-    it('when the running AppImage no longer exists, launches from the download', () => {
-      mockExistsSync.mockReturnValue(false)
+    it('finding #1 — custom UNVERSIONED name is preserved: overwrites the SAME path', () => {
+      // The user renamed their AppImage to a stable name a .desktop/dock/alias
+      // points at. Writing a new versioned name would orphan that launcher, so
+      // we overwrite in place and keep their filename.
+      const custom = '/home/u/Apps/ClaudeCommandCenter.AppImage'
+      const result = prepareLinuxAppImageUpdate(downloaded, custom)
+      expect(result?.replace(/\\/g, '/')).toBe(custom)
+      expect(mockCopyFileSync).toHaveBeenCalledWith(downloaded, custom)
+      // unlink-before-write on the same path (avoids truncating the mounted image)
+      expect(mockUnlinkSync).toHaveBeenCalledWith(custom)
+      // ...and NOT a second unlink, since target === running
+      expect(mockUnlinkSync).toHaveBeenCalledTimes(1)
+    })
+
+    it('finding #1 — symlink launcher: resolves realpath and re-points the link', () => {
+      const link = '/home/u/bin/ccc'          // what the user launches
+      mockRealpathSync.mockReturnValue(running) // resolves to the real versioned file
+      const result = prepareLinuxAppImageUpdate(downloaded, link)
+      const expectedTarget = '/home/u/Apps/ClaudeCommandCenter-2.1.0-beta.2-linux-x86_64.AppImage'
+      expect(result?.replace(/\\/g, '/')).toBe(expectedTarget)
+      expect(mockUnlinkSync).toHaveBeenCalledWith(running)  // real old file removed
+      // symlink re-pointed at the new file so the stable launcher keeps working
+      // (normalize separators — path.join yields backslashes on a win32 test host)
+      const [symTarget, symLink] = mockSymlinkSync.mock.calls[0]
+      expect(String(symTarget).replace(/\\/g, '/')).toBe(expectedTarget)
+      expect(symLink).toBe(link)
+    })
+
+    it('finding #4 — refuses a $APPIMAGE that is not an AppImage file (no delete, no copy)', () => {
+      const stranger = '/home/u/important.txt'
+      mockRealpathSync.mockReturnValue(stranger)
+      const result = prepareLinuxAppImageUpdate(downloaded, stranger)
+      expect(result).toBe(downloaded)
+      expect(mockUnlinkSync).not.toHaveBeenCalled()
+      expect(mockCopyFileSync).not.toHaveBeenCalled()
+    })
+
+    it('finding #4 — refuses a $APPIMAGE that is a directory', () => {
+      mockLstatSync.mockReturnValue({ isFile: () => false })
+      const result = prepareLinuxAppImageUpdate(downloaded, '/home/u/Apps')
+      expect(result).toBe(downloaded)
+      expect(mockUnlinkSync).not.toHaveBeenCalled()
+    })
+
+    it('when $APPIMAGE no longer resolves (realpath throws), launches from the download', () => {
+      mockRealpathSync.mockImplementation(() => { throw new Error('ENOENT') })
       const result = prepareLinuxAppImageUpdate(downloaded, running)
       expect(result).toBe(downloaded)
       expect(mockCopyFileSync).not.toHaveBeenCalled()
     })
 
     it('degrades to the download location when the copy fails (unwritable dir)', () => {
-      mockExistsSync.mockReturnValue(true)
       mockCopyFileSync.mockImplementation(() => { throw new Error('EACCES: permission denied') })
       const result = prepareLinuxAppImageUpdate(downloaded, running)
       expect(result).toBe(downloaded)
-      // Never removed the old version — the new one didn't land beside it
-      expect(mockUnlinkSync).not.toHaveBeenCalled()
     })
 
     it('failure to remove the old version is non-fatal (still returns the new path)', () => {
-      mockExistsSync.mockReturnValue(true)
       mockUnlinkSync.mockImplementation(() => { throw new Error('EBUSY') })
       const result = prepareLinuxAppImageUpdate(downloaded, running)
       expect(result?.replace(/\\/g, '/')).toBe('/home/u/Apps/ClaudeCommandCenter-2.1.0-beta.2-linux-x86_64.AppImage')
     })
 
     it('re-download of the exact same file is a no-op replace', () => {
-      mockExistsSync.mockReturnValue(true)
       const samePath = '/home/u/Apps/ClaudeCommandCenter-2.1.0-beta.2-linux-x86_64.AppImage'
       const result = prepareLinuxAppImageUpdate(samePath, samePath)
       expect(result).toBe(samePath)
