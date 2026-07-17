@@ -104,7 +104,7 @@ export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   fontWeight: 450,
   lineHeight: 1.2,
   cursorStyle: 'bar',
-  cursorBlink: false,
+  cursorBlink: true,
 }
 
 export interface AppSettings {

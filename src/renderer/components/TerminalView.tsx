@@ -266,10 +266,14 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         fontWeight: (ts.fontWeight || 450) as import('@xterm/xterm').FontWeight,
         fontWeightBold: 700,
         lineHeight: ts.lineHeight || 1.2,
-        cursorBlink: ts.cursorBlink ?? false,
+        cursorBlink: ts.cursorBlink ?? true,
         cursorStyle: ts.cursorStyle || 'bar',
-        cursorWidth: 1,
-        cursorInactiveStyle: 'none',
+        // 1px is a HiDPI hairline that reads as "no caret"; 2px is a visible bar.
+        cursorWidth: 2,
+        // Shell terminals show a hollow caret when unfocused so the input point
+        // stays visible after focus shifts to the sidebar/config/input bar.
+        // Claude/TUI sessions keep the caret fully hidden (they draw their own).
+        cursorInactiveStyle: shellOnly ? 'outline' : 'none',
         scrollback: 10000,
         allowTransparency: true,
         // Light mode only: enforce a minimum contrast ratio so Claude's dim,
@@ -303,6 +307,20 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         raf: requestAnimationFrame,
         isDisposed: () => disposed,
       })
+
+      // #119: cursor options passed to the Terminal constructor do NOT reliably
+      // initialize the WebGL renderer's cursor layer — the caret stays absent
+      // even while focused/typing (xterm.js #1194 "initial cursorBlink has no
+      // effect", #891 "cursor not visible initially"; the WebGL cursor is a
+      // separate 2D canvas that this gap leaves empty). Re-assigning the options
+      // at runtime after the addon loads forces the layer to build and draw.
+      // Shell sessions only — Claude/TUI sessions intentionally hide the caret.
+      if (shellOnly) {
+        term.options.cursorBlink = ts.cursorBlink ?? true
+        term.options.cursorStyle = ts.cursorStyle || 'bar'
+        term.options.cursorWidth = 2
+        term.options.cursorInactiveStyle = 'outline'
+      }
 
       // Belt-and-braces hide for xterm's caret in Claude sessions.
       // The .claude-session class + global CSS rule should already
