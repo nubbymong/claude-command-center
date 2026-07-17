@@ -15,6 +15,15 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '2.1.0-beta.1',
+    date: '2026-07-17',
+    highlights: 'Experimental Linux support — Claude Command Center now runs on Linux as an AppImage, alongside Windows and macOS.',
+    changes: [
+      { type: 'feature', description: 'Linux (experimental): download the AppImage, make it executable (chmod +x), and run it. Verified on Ubuntu 24.04 and Rocky Linux 10; needs a modern glibc (2.39+, i.e. Ubuntu 24.04+, Rocky 10+, Fedora 40+). Older distributions are not covered by this build yet.' },
+      { type: 'improvement', description: 'The in-app updater and the vision browser tool now understand Linux. On Linux the vision tool needs a deb/rpm build of Chrome or Chromium — the Ubuntu snap build is sandboxed away from the debug port, so vision stays off there.' },
+    ],
+  },
+  {
     version: '2.0.0-rc.2',
     date: '2026-07-15',
     highlights: 'Release Candidate 2: terminal scrolling holds your place during live output, and relaunch reopens every session under its saved account — the first community-contributed fixes.',
