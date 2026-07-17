@@ -61,7 +61,7 @@ import { forkHooksChild } from './services/fork-hooks-child'
 import { start as startLoopStallMonitor, stop as stopLoopStallMonitor } from './services/loop-stall-monitor'
 import { initLogging, shutdownLogging, getTranscriptBinder } from './logging/logging-service'
 import { detectOldLogArtifacts, executeWipe } from './logging/logs-wipe'
-import { backfillCompanionDirs, nodeFsCompanionDeps } from './logging/companion-dir'
+import { backfillCompanionDirsAsync, nodeFsCompanionDeps } from './logging/companion-dir'
 import { cleanupStaleHookEntries, cleanupStaleMcpConfigs } from './hooks/boot-cleanup'
 import { isSentinelEnabled } from '../shared/sentinel-enabled'
 import { DEFAULT_HOOKS_PORT } from './hooks/hooks-types'
@@ -667,15 +667,22 @@ if (!gotTheLock) {
       // own resume path also ensures its companion dir, so this is a bulk
       // visibility pass, not a per-resume requirement.
       .then(() => {
-        try {
+        // #120: DEFER + CHUNK the companion-dir backfill. It was synchronous and
+        // stat-stormed the whole projects store, freezing the event loop ~20-28s
+        // at boot (blocking first paint). It is a non-critical bulk visibility
+        // pass for the resume picker (each session ensures its own companion dir),
+        // so run it well after first paint, via the async/yielding variant so it
+        // never blocks the main thread.
+        setTimeout(() => {
           const projectsRoot = join(homedir(), '.claude', 'projects')
-          const res = backfillCompanionDirs(projectsRoot, nodeFsCompanionDeps)
-          if (res.created > 0) {
-            console.log(`[main] companion-dir backfill: created ${res.created} companion dir(s) (scanned ${res.scanned} transcripts across ${res.projectFolders} project folders)`)
-          }
-        } catch (err) {
-          console.warn('[main] companion-dir backfill failed:', err)
-        }
+          backfillCompanionDirsAsync(projectsRoot, nodeFsCompanionDeps)
+            .then((res) => {
+              if (res.created > 0) {
+                console.log(`[main] companion-dir backfill: created ${res.created} companion dir(s) (scanned ${res.scanned} transcripts across ${res.projectFolders} project folders)`)
+              }
+            })
+            .catch((err) => console.warn('[main] companion-dir backfill failed:', err))
+        }, 5000)
       })
 
     // Content Security Policy
