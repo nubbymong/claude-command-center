@@ -16,7 +16,7 @@ export function registerUpdateHandlers(): void {
     // In dev mode, check the local source watcher first (live-reload workflow).
     // In production, always go straight to GitHub.
     if (!isPackagedApp()) {
-      const localUpdate = checkForUpdatesOnDemand()
+      const localUpdate = await checkForUpdatesOnDemand()
       if (localUpdate) return true
     }
 

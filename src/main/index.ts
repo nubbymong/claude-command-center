@@ -938,20 +938,13 @@ if (!gotTheLock) {
     // Dev mode: run the local update server + source watcher for live-reload workflow
     // Production mode: no local polling — updates are checked exclusively against
     //   GitHub releases via the check-for-updates button (see github-update.ts).
-    // #120 boot-timing: temporary instrumentation to pinpoint the ~26s boot
-    // stall. Logs each synchronous step's wall-clock duration. Remove once found.
-    const bootStep = (label: string, fn: () => void) => {
-      const s = performance.now()
-      try { fn() } finally { logInfo(`[boot-timing] ${label}: ${Math.round(performance.now() - s)}ms`) }
-    }
-
     const projectRoot = getProjectRootPath()
     if (!isPackagedApp()) {
       logInfo('[main] Dev mode: starting update server and local watcher')
       if (projectRoot) {
-        bootStep('startUpdateServer', () => startUpdateServer(projectRoot))
+        startUpdateServer(projectRoot)
       }
-      bootStep('initUpdateWatcher', () => initUpdateWatcher(getWindow))
+      initUpdateWatcher(getWindow)
     } else {
       logInfo('[main] Production mode: updates via GitHub releases only')
     }
@@ -959,11 +952,11 @@ if (!gotTheLock) {
     // Start watching for statusline updates. Logs v2 (Task 8): register the
     // binder sink first so the continuous, exact transcript path carried by each
     // status JSON feeds discovery (lazy getter — no-op when logging is disabled).
-    bootStep('setTranscriptPathSink', () => setTranscriptPathSink(routeTranscriptPath))
-    bootStep('startStatuslineWatcher', () => startStatuslineWatcher(getWindow))
+    setTranscriptPathSink(routeTranscriptPath)
+    startStatuslineWatcher(getWindow)
 
     // Start polling Anthropic service status
-    bootStep('startServiceStatusPoller', () => startServiceStatusPoller(getWindow))
+    startServiceStatusPoller(getWindow)
     // Let a freshly-mounted renderer pull the cached status immediately, rather
     // than waiting up to a full poll interval for the next push (the title-bar
     // status pills were blank until the next poll because the immediate poll
