@@ -560,6 +560,10 @@ export function createTranscriptsWorker(
         db.setRunAccount(msg.sessionId, msg.accountEmail)
         return
 
+      case 'run-rename':
+        db.renameRun(msg.sessionId, msg.configLabel)
+        return
+
       case 'transcript-bind': {
         const runId = sessionToRun.get(msg.sessionId)
         if (runId === undefined) {

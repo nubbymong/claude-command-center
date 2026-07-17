@@ -208,6 +208,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     // Blank => clear the override (undefined) so the tab reverts to `label`.
     get().updateSession(id, { customName: trimmed || undefined })
     set({ renamingSessionId: null })
+    // Persist the display name into the logs/history DB so the session's log
+    // keeps this name durably (survives close + restart). Best-effort: no-op
+    // when logging is disabled or the preload bridge is absent (e.g. tests).
+    const s = get().sessions.find((x) => x.id === id)
+    const effective = trimmed || s?.label || ''
+    try {
+      window.electronAPI?.logs2?.renameSession?.({ sessionId: id, configLabel: effective })
+    } catch { /* logging off / preload absent */ }
   }
 }))
 

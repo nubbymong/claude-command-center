@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { useSessionStore, structuralSessionsEqual, Session } from '../../../src/renderer/stores/sessionStore'
 
 function makeSession(overrides: Partial<Session> = {}): Session {
@@ -257,6 +257,27 @@ describe('sessionStore', () => {
       useSessionStore.getState().addSession(makeSession({ id: 'a', customName: 'old name' }))
       useSessionStore.getState().renameSession('a', '   ')
       expect(useSessionStore.getState().sessions[0].customName).toBeUndefined()
+    })
+
+    it('renameSession persists the effective name to the logs DB (best-effort IPC)', () => {
+      const renameSessionIpc = vi.fn()
+      ;(globalThis as any).window = { electronAPI: { logs2: { renameSession: renameSessionIpc } } }
+      useSessionStore.getState().addSession(makeSession({ id: 'a', label: 'Config A' }))
+
+      useSessionStore.getState().renameSession('a', 'Boot perf')
+      expect(renameSessionIpc).toHaveBeenCalledWith({ sessionId: 'a', configLabel: 'Boot perf' })
+
+      // Blank => effective label falls back to the config label.
+      useSessionStore.getState().renameSession('a', '   ')
+      expect(renameSessionIpc).toHaveBeenLastCalledWith({ sessionId: 'a', configLabel: 'Config A' })
+
+      delete (globalThis as any).window
+    })
+
+    it('renameSession does not throw when the preload bridge is absent', () => {
+      delete (globalThis as any).window
+      useSessionStore.getState().addSession(makeSession({ id: 'a' }))
+      expect(() => useSessionStore.getState().renameSession('a', 'x')).not.toThrow()
     })
   })
 })

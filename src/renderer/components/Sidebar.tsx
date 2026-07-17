@@ -123,6 +123,9 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
   const sessionRenameRef = useRef<HTMLInputElement>(null)
   const sectionRenameRef = useRef<HTMLInputElement>(null)
   const newSectionInputRef = useRef<HTMLInputElement>(null)
+  // Read current collapse state inside the stable ([]) keydown effect below.
+  const collapsedRef = useRef(collapsed)
+  collapsedRef.current = collapsed
 
   // Mid-session account switch (respawn + resume) for the session context menu.
   // Gated on having 2+ profiles. The hook is bound to whichever
@@ -153,6 +156,22 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
       if (matchesShortcut(e, sc.newConfig)) {
         e.preventDefault()
         setShowNewDialog(true)
+      }
+      // Rename (F2) edits the ACTIVE session here in the Active Sessions list —
+      // only while the sidebar is visible ("if it's in focus"). Preferred over
+      // the tab editor. Falls back to the default binding for pre-existing
+      // shortcut maps. Reads live state (stable [] effect).
+      if (matchesShortcut(e, sc.renameSession || DEFAULT_SHORTCUTS.renameSession)) {
+        if (collapsedRef.current) return
+        const st = useSessionStore.getState()
+        const id = st.activeSessionId
+        if (!id) return
+        e.preventDefault()
+        const s = st.sessions.find((x) => x.id === id)
+        setRenamingSessionId(id)
+        setSessionRenameValue(s?.customName?.trim() || s?.label || '')
+        setSessionContextMenu(null)
+        setTimeout(() => sessionRenameRef.current?.focus(), 0)
       }
     }
     window.addEventListener('keydown', handleKeyDown)
@@ -254,12 +273,11 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
 
   const handleFinishSessionRename = () => {
     if (renamingSessionId) {
-      // Decoupled per-session "work name": write customName ONLY. Renaming an
-      // active session must NOT rewrite its Saved Config's label (that lived
-      // here before and was the source of the "renaming a session renames the
-      // config" confusion). Blank clears the override -> tab reverts to `label`.
-      const trimmed = sessionRenameValue.trim()
-      updateSession(renamingSessionId, { customName: trimmed || undefined })
+      // Decoupled per-session "work name": renameSession writes customName ONLY
+      // (never the Saved Config's label — that coupling was the confusion) AND
+      // persists the name into the logs/history DB. Blank clears the override
+      // -> tab reverts to `label`.
+      useSessionStore.getState().renameSession(renamingSessionId, sessionRenameValue)
     }
     setRenamingSessionId(null)
     setSessionRenameValue('')

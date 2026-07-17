@@ -63,13 +63,9 @@ export function useKeyboardShortcuts(
         e.preventDefault()
         setSidebarOpen(prev => !prev)
       }
-      // Rename the active session (inline tab editor). Fall back to the default
-      // binding so installs whose saved shortcut map predates this action still
-      // respond to F2 without needing a settings reset.
-      if (matchesShortcut(e, shortcuts.renameSession || DEFAULT_SHORTCUTS.renameSession)) {
-        e.preventDefault()
-        if (activeSessionId) useSessionStore.getState().beginRename(activeSessionId)
-      }
+      // NOTE: rename (F2) is handled in Sidebar so it edits the active session
+      // in the Active Sessions list (only when the sidebar is visible), not the
+      // tab. Tab double-click / right-click still edit the tab inline.
       // Paste clipboard image: saves to host screenshots dir, then routes to
       // Claude. Local sessions get the absolute path written into the prompt
       // (Claude's Read tool ingests it directly). SSH sessions can't reach

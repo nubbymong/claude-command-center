@@ -370,7 +370,9 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
           if (gate.isPending(sessionId)) return
           const cols = term.cols
           const rows = term.rows
-          const configLabel = session?.label || 'default'
+          // Prefer the custom work name so a restored/pre-named session's log
+          // carries the name from its first run (#119 rename → logs durability).
+          const configLabel = session?.customName?.trim() || session?.label || 'default'
           const useResumePicker = shouldUseResumePicker(sessionId)
           // Resolve agent template IDs to config objects for --agents flag
           let agentsConfig: Array<{ name: string; description: string; prompt: string; model?: string; tools?: string[] }> | undefined

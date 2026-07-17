@@ -122,6 +122,10 @@ export interface TranscriptsDb {
   /** Set accountEmail on the latest open run for sessionId; no-op if none. */
   setRunAccount(sessionId: string, accountEmail: string): void
 
+  /** Update configLabel (display name) on the latest open run for sessionId;
+   *  no-op if none. Drives the logs/history tab's session name after a rename. */
+  renameRun(sessionId: string, configLabel: string): void
+
   /**
    * Close EVERY dangling run (status='running') as crashed in one statement:
    * endedAt = max(message ts for that run) falling back to startedAt. Called by
@@ -490,6 +494,11 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
     WHERE runId = ${latestOpenRunSubquery}
   `)
 
+  const stmtRenameRun: Statement = sqlite.prepare(`
+    UPDATE runs SET configLabel = @configLabel
+    WHERE runId = ${latestOpenRunSubquery}
+  `)
+
   const stmtGetRunStartedAt: Statement = sqlite.prepare(`SELECT startedAt FROM runs WHERE runId = ?`)
 
   // Single-statement dangling-run closure: endedAt = last message ts, falling
@@ -812,6 +821,10 @@ export function openTranscriptsDb(dbPath: string): TranscriptsDb {
 
     setRunAccount(sessionId, accountEmail) {
       stmtSetRunAccount.run({ sessionId, accountEmail })
+    },
+
+    renameRun(sessionId, configLabel) {
+      stmtRenameRun.run({ sessionId, configLabel })
     },
 
     closeDanglingRuns() {
