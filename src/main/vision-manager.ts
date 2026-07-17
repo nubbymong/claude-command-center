@@ -598,10 +598,30 @@ export function tryReconnectGlobalVision(): void { if (globalManager) globalMana
 
 // === Browser launching (unchanged) ===
 
-function getBrowserPaths(browser: 'chrome' | 'edge'): string[] {
-  if (process.platform === 'darwin') {
+/** Candidate executable paths per browser. Pure + exported for unit testing —
+ *  `platform` is a parameter because process.platform is baked at test runtime. */
+export function getBrowserPaths(browser: 'chrome' | 'edge', platform: NodeJS.Platform = process.platform): string[] {
+  if (platform === 'darwin') {
     if (browser === 'edge') return ['/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge']
     return ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome']
+  }
+  if (platform === 'linux') {
+    if (browser === 'edge') return [
+      '/usr/bin/microsoft-edge',
+      '/usr/bin/microsoft-edge-stable',
+      '/opt/microsoft/msedge/msedge',
+    ]
+    // Chromium counts as "chrome" here — same engine, same CDP protocol.
+    // Snap chromium (/snap/bin/chromium) is deliberately absent: snap
+    // confinement blocks the --user-data-dir under /tmp, so it spawns but the
+    // debug port never comes up and vision hangs on "launching" instead of
+    // cleanly disabling. deb/rpm builds only.
+    return [
+      '/usr/bin/google-chrome',
+      '/usr/bin/google-chrome-stable',
+      '/usr/bin/chromium',
+      '/usr/bin/chromium-browser',
+    ]
   }
   if (browser === 'edge') return [
     'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
@@ -739,9 +759,14 @@ export function launchBrowser(browser: 'chrome' | 'edge', debugPort: number, url
   const tmpDir = process.env.TEMP || process.env.TMP || os.tmpdir()
   const profileDir = path.join(tmpDir, `${browser}-debug-${debugPort}`)
   const other: 'chrome' | 'edge' = browser === 'edge' ? 'chrome' : 'edge'
+  // Bare-name PATH fallback when no candidate path exists. On Linux the
+  // conventional binary name is `chromium`/`microsoft-edge` — `chrome` exists
+  // on no mainstream distro, which used to guarantee a spawn ENOENT here.
   const fallback = process.platform === 'darwin'
     ? (browser === 'edge' ? 'Microsoft Edge' : 'Google Chrome')
-    : (browser === 'edge' ? 'msedge' : 'chrome')
+    : process.platform === 'linux'
+      ? (browser === 'edge' ? 'microsoft-edge' : 'chromium')
+      : (browser === 'edge' ? 'msedge' : 'chrome')
   const executable =
     getBrowserPaths(browser).find(p => fs.existsSync(p)) ||
     getBrowserPaths(other).find(p => fs.existsSync(p)) ||

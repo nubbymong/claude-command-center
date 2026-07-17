@@ -604,6 +604,7 @@ if (exitCode !== 0) {
     const names = release.names || []
     const hasExe = names.some((n) => n.endsWith('.exe'))
     const hasDmg = names.some((n) => n.endsWith('.dmg'))
+    const hasAppImage = names.some((n) => n.endsWith('.AppImage'))
     const hasChecksums = names.some((n) => n.toLowerCase().includes('checksum'))
 
     console.log(`      Release URL: ${release.url}`)
@@ -612,6 +613,8 @@ if (exitCode !== 0) {
     else { warn('Windows installer NOT found'); exitCode = 1 }
     if (hasDmg) ok('macOS installer (.dmg) attached')
     else { warn('macOS installer NOT found'); exitCode = 1 }
+    if (hasAppImage) ok('Linux AppImage attached')
+    else { warn('Linux AppImage NOT found'); exitCode = 1 }
     if (hasChecksums) ok('CHECKSUMS.txt attached')
     else warn('CHECKSUMS.txt not found (workflow normally generates this)')
   } catch (err) {

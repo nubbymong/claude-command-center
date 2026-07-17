@@ -4,7 +4,7 @@ import * as path from 'path'
 import * as fs from 'fs'
 import * as os from 'os'
 import { checkForUpdatesOnDemand, markUpdateInstalled, getProjectRootPath, setSourcePathInRegistry, hasSourcePath, isPackagedApp } from '../update-watcher'
-import { checkGitHubRelease, downloadGitHubRelease } from '../github-update'
+import { checkGitHubRelease, downloadGitHubRelease, prepareLinuxAppImageUpdate, isPathOnNoexecMount } from '../github-update'
 import { killAllPty } from '../pty-manager'
 import { logInfo, logError } from '../debug-logger'
 
@@ -137,6 +137,30 @@ export function registerUpdateHandlers(): void {
 
     logInfo(`[update] Found installer: ${installerPath}`)
 
+    // Linux: prepare and VERIFY the AppImage is executable BEFORE we kill the
+    // user's terminals and exit. spawn() reports EACCES/ENOENT only via an async
+    // 'error' event, so a doomed launch (a noexec ~/Downloads mount, a failed
+    // chmod on vfat/exfat, an unwritable $APPIMAGE dir) would otherwise kill
+    // every PTY, exit the app, and leave nothing running with no error shown.
+    // Fail here instead — the outer catch surfaces it and the app stays alive.
+    let linuxLaunchPath: string | null = null
+    if (process.platform === 'linux' && installerPath.endsWith('.AppImage')) {
+      linuxLaunchPath = prepareLinuxAppImageUpdate(installerPath)
+      // Permission bits (fast, catches a failed chmod on vfat/exfat)...
+      try {
+        fs.accessSync(linuxLaunchPath, fs.constants.X_OK)
+      } catch (err) {
+        throw new Error(`Updated AppImage is not executable (${linuxLaunchPath}) — aborting before restart: ${(err as Error).message}`)
+      }
+      // ...and the mount, which accessSync can't see: a noexec ~/Downloads (the
+      // fallback launch location) would pass the bit check yet fail execve. The
+      // single-instance lock means we can't confirm the relaunch by spawning it
+      // first, so catch this here — before the PTYs are killed — not after.
+      if (isPathOnNoexecMount(linuxLaunchPath)) {
+        throw new Error(`Updated AppImage is on a noexec mount (${linuxLaunchPath}) — cannot relaunch. Move the app to a filesystem that allows execution, or update manually.`)
+      }
+    }
+
     try {
       logInfo('[update] Killing all PTYs...')
       killAllPty()
@@ -146,6 +170,21 @@ export function registerUpdateHandlers(): void {
         // On macOS, open the DMG in Finder — user drags to Applications manually.
         // Auto-installing a DMG over a running app is not supported.
         spawn('open', [installerPath], { detached: true, stdio: 'ignore' }).unref()
+      } else if (linuxLaunchPath) {
+        logInfo(`[update] Launching updated AppImage: ${linuxLaunchPath}`)
+        const child = spawn(linuxLaunchPath, [], { detached: true, stdio: 'ignore' })
+        // Wait for the child to actually start before exiting — spawn surfaces
+        // exec failures asynchronously, so exiting immediately would hide a
+        // failure and strand the user with no running app. On 'spawn' we exit;
+        // on 'error' we abort (outer catch surfaces it); a short timeout is the
+        // safety net so we never hang the update forever.
+        await new Promise<void>((resolve, reject) => {
+          let done = false
+          const settle = (fn: () => void) => { if (!done) { done = true; child.unref(); fn() } }
+          child.once('spawn', () => settle(resolve))
+          child.once('error', (err) => settle(() => reject(err)))
+          setTimeout(() => settle(resolve), 3000)
+        })
       } else {
         const proc = spawn(installerPath, [], { detached: true, stdio: 'ignore' })
         proc.unref()

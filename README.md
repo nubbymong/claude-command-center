@@ -13,7 +13,7 @@ Run dozens of Claude Code and Codex sessions in parallel, each with its own acco
 [![Release](https://img.shields.io/github/v/release/nubbymong/claude-command-center?include_prereleases&label=release&color=cba6f7&labelColor=313244)](../../releases)
 [![Opus 4.8](https://img.shields.io/badge/Opus%204.8-day--one-f9e2af?labelColor=313244)](https://www.anthropic.com/news/claude-opus-4-8)
 [![Tests](https://img.shields.io/badge/tests-passing-a6e3a1?labelColor=313244)](../../actions)
-[![Platform](https://img.shields.io/badge/Windows%20%7C%20macOS%20(arm64)-89b4fa?labelColor=313244)](../../releases)
+[![Platform](https://img.shields.io/badge/Windows%20%7C%20macOS%20(arm64)%20%7C%20Linux%20(experimental)-89b4fa?labelColor=313244)](../../releases)
 [![License](https://img.shields.io/badge/MIT-fab387?labelColor=313244)](LICENSE)
 
 [Download](#install) &middot; [Features](#what-it-does) &middot; [Architecture](#under-the-hood) &middot; [Security](#security)
@@ -178,6 +178,7 @@ Invoke an Opus 4.8 dynamic workflow three ways: include the word `workflow` in a
 1. Grab the latest installer from **[Releases](../../releases)**.
    - Windows: `ClaudeCommandCenter-x.y.z.exe`
    - macOS (Apple Silicon): `ClaudeCommandCenter-x.y.z-mac.dmg`
+   - Linux (experimental): `ClaudeCommandCenter-x.y.z-linux-x86_64.AppImage`
 2. Verify the **SHA-256** of the file you downloaded against the checksum printed on the release page.
 3. Run the installer and choose your Data and Resources directories.
 4. The setup wizard hands off to Claude CLI auth.
@@ -186,7 +187,9 @@ Invoke an Opus 4.8 dynamic workflow three ways: include the word `workflow` in a
 
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and authenticated (a recent version, for Opus 4.8 and dynamic workflows)
 - Node.js 20+ (a Claude Code dependency)
-- Windows 10 or 11 (x64), or macOS 12+ on **Apple Silicon (arm64)**
+- Windows 10 or 11 (x64), or macOS 12+ on **Apple Silicon (arm64)**, or a Linux distro with **glibc 2.39+** (Ubuntu 24.04+, Rocky 10+, Fedora 40+) on x64
+
+> **Linux (experimental)** &middot; Make the AppImage executable before first run (`chmod +x ClaudeCommandCenter-*.AppImage`); it needs FUSE (`sudo apt install libfuse2` on Ubuntu) and the usual GTK 3 desktop libraries. Verified on Ubuntu 24.04 and Rocky Linux 10. Older glibc lines (Ubuntu 22.04, Rocky 8/9) are not covered by this build. The vision browser tool needs a **deb/rpm** Chrome or Chromium — the Ubuntu *snap* build's confinement blocks the debug profile, so vision stays disabled with snap-only Chromium.
 
 > **Windows SmartScreen** &middot; These installers are **not code-signed**. This is an independent, single-maintainer build, and a code-signing certificate is not in place yet, so Windows SmartScreen will warn the first time you run a new release: click **More info**, then **Run anyway**. To convince yourself the download is intact, verify the SHA-256 against the value on the release page before running it. Releases produced by the CI pipeline are additionally scanned through VirusTotal (70+ engines); the scan link is included in those release notes.
 
@@ -207,8 +210,9 @@ npm run build        # production build
 ```
 
 ```bash
-npm run package:win  # Windows NSIS installer
-npm run package:mac  # macOS DMG (Apple Silicon)
+npm run package:win    # Windows NSIS installer
+npm run package:mac    # macOS DMG (Apple Silicon)
+npm run package:linux  # Linux AppImage (x64)
 ```
 
 The repository ships well over two thousand unit tests plus a native (better-sqlite3 / node-pty) suite; both run green on Windows and macOS in CI on every labelled PR. See the [Actions](../../actions) tab for current status.

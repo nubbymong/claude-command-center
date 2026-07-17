@@ -11,6 +11,7 @@
     "package": "electron-vite build && electron-builder --win --dir",
     "package:win": "electron-vite build && electron-builder --win",
     "package:mac": "electron-vite build && electron-builder --mac",
+    "package:linux": "electron-vite build && electron-builder --linux",
     "verify:package": "node scripts/verify-native-unpack.mjs",
     "test": "vitest run && npm run test:unit:native && npx playwright test",
     "test:unit": "vitest run",
@@ -125,6 +126,18 @@
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
       "notarize": true
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "category": "Development",
+      "artifactName": "ClaudeCommandCenter-${version}-linux-${arch}.${ext}"
     },
     "dmg": {
       "sign": false
