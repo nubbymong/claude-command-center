@@ -233,4 +233,30 @@ describe('sessionStore', () => {
       expect(useSessionStore.getState().activeSessionId).toBeNull()
     })
   })
+
+  describe('rename (customName)', () => {
+    it('beginRename sets/clears the renaming session id', () => {
+      useSessionStore.getState().addSession(makeSession({ id: 'a' }))
+      useSessionStore.getState().beginRename('a')
+      expect(useSessionStore.getState().renamingSessionId).toBe('a')
+      useSessionStore.getState().beginRename(null)
+      expect(useSessionStore.getState().renamingSessionId).toBeNull()
+    })
+
+    it('renameSession sets a trimmed customName and exits rename mode', () => {
+      useSessionStore.getState().addSession(makeSession({ id: 'a', label: 'Config A' }))
+      useSessionStore.getState().beginRename('a')
+      useSessionStore.getState().renameSession('a', '  IM-8315 keychain fix  ')
+      const s = useSessionStore.getState().sessions[0]
+      expect(s.customName).toBe('IM-8315 keychain fix')
+      expect(s.label).toBe('Config A') // origin label is untouched
+      expect(useSessionStore.getState().renamingSessionId).toBeNull()
+    })
+
+    it('blank/whitespace name clears customName (reverts to label)', () => {
+      useSessionStore.getState().addSession(makeSession({ id: 'a', customName: 'old name' }))
+      useSessionStore.getState().renameSession('a', '   ')
+      expect(useSessionStore.getState().sessions[0].customName).toBeUndefined()
+    })
+  })
 })

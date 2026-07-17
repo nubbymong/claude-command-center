@@ -49,6 +49,7 @@ export const DEFAULT_SHORTCUTS: Record<string, string> = {
   prevSession: 'Ctrl+Shift+Tab',
   toggleSidebar: 'Ctrl+B',
   pasteImage: 'Alt+V',
+  renameSession: 'F2',
 }
 
 /** Human-readable labels for shortcut actions */
@@ -59,4 +60,5 @@ export const SHORTCUT_LABELS: Record<string, string> = {
   prevSession: 'Previous session',
   toggleSidebar: 'Toggle sidebar',
   pasteImage: 'Paste clipboard image',
+  renameSession: 'Rename session',
 }

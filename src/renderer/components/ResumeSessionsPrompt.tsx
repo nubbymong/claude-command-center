@@ -11,15 +11,18 @@ import React, { useEffect, useState } from 'react'
  * typing in a terminal).
  */
 export default function ResumeSessionsPrompt({
-  count,
+  sessions,
   onResume,
   onDontOpen,
 }: {
-  count: number
+  /** The saved sessions that would reopen. Rendered by work name so the user
+   *  can see which named windows are coming back before choosing. */
+  sessions: Array<{ id: string; label: string; customName?: string }>
   onResume: () => void
   onDontOpen: () => void
 }) {
   const [entering, setEntering] = useState(false)
+  const count = sessions.length
 
   useEffect(() => {
     const id = requestAnimationFrame(() => setEntering(true))
@@ -43,11 +46,24 @@ export default function ResumeSessionsPrompt({
       <h2 id="resume-sessions-heading" className="text-sm font-semibold text-text mb-1">
         Resume previous sessions?
       </h2>
-      <p className="text-xs leading-relaxed mb-3" style={{ color: 'var(--text-secondary)' }}>
+      <p className="text-xs leading-relaxed mb-2" style={{ color: 'var(--text-secondary)' }}>
         {count.toLocaleString()} saved session{count === 1 ? '' : 's'} from your last run
         {count === 1 ? ' is' : ' are'} ready to reopen. Choosing &quot;Don&apos;t open&quot; discards
         the saved cards; your Claude conversations stay resumable from inside Claude.
       </p>
+      {/* Named list so the user recognizes which windows will reopen. */}
+      <ul className="mb-3 max-h-40 overflow-y-auto rounded-lg" style={{ background: 'var(--surface-overlay, var(--color-surface1))' }}>
+        {sessions.map((s) => (
+          <li
+            key={s.id}
+            className="truncate px-2.5 py-1 text-xs"
+            style={{ color: 'var(--text-primary)' }}
+            title={s.customName?.trim() ? `${s.customName.trim()} (${s.label})` : s.label}
+          >
+            {s.customName?.trim() || s.label}
+          </li>
+        ))}
+      </ul>
       <div className="flex items-center justify-end gap-2">
         <button
           onClick={onDontOpen}

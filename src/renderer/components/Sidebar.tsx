@@ -253,13 +253,13 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
   }
 
   const handleFinishSessionRename = () => {
-    if (renamingSessionId && sessionRenameValue.trim()) {
-      const newLabel = sessionRenameValue.trim()
-      updateSession(renamingSessionId, { label: newLabel })
-      const session = sessions.find((s) => s.id === renamingSessionId)
-      if (session?.configId) {
-        updateConfig(session.configId, { label: newLabel })
-      }
+    if (renamingSessionId) {
+      // Decoupled per-session "work name": write customName ONLY. Renaming an
+      // active session must NOT rewrite its Saved Config's label (that lived
+      // here before and was the source of the "renaming a session renames the
+      // config" confusion). Blank clears the override -> tab reverts to `label`.
+      const trimmed = sessionRenameValue.trim()
+      updateSession(renamingSessionId, { customName: trimmed || undefined })
     }
     setRenamingSessionId(null)
     setSessionRenameValue('')
@@ -980,7 +980,7 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
             y={sessionContextMenu.y}
             session={s}
             hasGroup={!!cfg?.groupId}
-            onRename={() => handleStartSessionRename(s.id, s.label)}
+            onRename={() => handleStartSessionRename(s.id, s.customName?.trim() || s.label)}
             onRemoveFromGroup={() => {
               if (cfg) moveConfigToGroup(cfg.id, undefined)
               setSessionContextMenu(null)

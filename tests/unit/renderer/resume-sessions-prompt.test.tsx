@@ -33,10 +33,13 @@ function renderComponent(ui: React.ReactElement): { container: HTMLElement; unmo
 const buttonByText = (container: HTMLElement, label: string) =>
   Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent === label)
 
+const mkSessions = (n: number) =>
+  Array.from({ length: n }, (_, i) => ({ id: `s${i}`, label: `Config ${i}` }))
+
 describe('ResumeSessionsPrompt', () => {
   it('renders the saved-session count', () => {
     const { container, unmount } = renderComponent(
-      <ResumeSessionsPrompt count={3} onResume={() => {}} onDontOpen={() => {}} />,
+      <ResumeSessionsPrompt sessions={mkSessions(3)} onResume={() => {}} onDontOpen={() => {}} />,
     )
     expect(container.textContent).toContain('3')
     expect(buttonByText(container, 'Resume')).toBeTruthy()
@@ -44,11 +47,28 @@ describe('ResumeSessionsPrompt', () => {
     unmount()
   })
 
+  it('lists each session by its work name (customName over label)', () => {
+    const { container, unmount } = renderComponent(
+      <ResumeSessionsPrompt
+        sessions={[
+          { id: 'a', label: 'sonnet · ~/proj', customName: 'IM-8315 keychain fix' },
+          { id: 'b', label: 'opus · ~/other' },
+        ]}
+        onResume={() => {}}
+        onDontOpen={() => {}}
+      />,
+    )
+    const items = Array.from(container.querySelectorAll('li')).map((li) => li.textContent)
+    expect(items).toContain('IM-8315 keychain fix') // customName wins
+    expect(items).toContain('opus · ~/other')       // falls back to label
+    unmount()
+  })
+
   it('Resume fires onResume (and not onDontOpen)', () => {
     const onResume = vi.fn()
     const onDontOpen = vi.fn()
     const { container, unmount } = renderComponent(
-      <ResumeSessionsPrompt count={1} onResume={onResume} onDontOpen={onDontOpen} />,
+      <ResumeSessionsPrompt sessions={mkSessions(1)} onResume={onResume} onDontOpen={onDontOpen} />,
     )
     act(() => { buttonByText(container, 'Resume')!.click() })
     expect(onResume).toHaveBeenCalledTimes(1)
@@ -60,7 +80,7 @@ describe('ResumeSessionsPrompt', () => {
     const onResume = vi.fn()
     const onDontOpen = vi.fn()
     const { container, unmount } = renderComponent(
-      <ResumeSessionsPrompt count={2} onResume={onResume} onDontOpen={onDontOpen} />,
+      <ResumeSessionsPrompt sessions={mkSessions(2)} onResume={onResume} onDontOpen={onDontOpen} />,
     )
     act(() => { buttonByText(container, "Don't open")!.click() })
     expect(onDontOpen).toHaveBeenCalledTimes(1)
@@ -70,7 +90,7 @@ describe('ResumeSessionsPrompt', () => {
 
   it('never steals focus (no autofocus; dialog tabIndex=-1)', () => {
     const { container, unmount } = renderComponent(
-      <ResumeSessionsPrompt count={1} onResume={() => {}} onDontOpen={() => {}} />,
+      <ResumeSessionsPrompt sessions={mkSessions(1)} onResume={() => {}} onDontOpen={() => {}} />,
     )
     const dialog = container.querySelector('[role="dialog"]')!
     expect(dialog.getAttribute('tabindex')).toBe('-1')
