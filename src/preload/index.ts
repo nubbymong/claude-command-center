@@ -6,6 +6,9 @@ import type { ModelRegistry } from '../shared/model-registry'
 import type { SentinelStateSnapshot } from '../shared/sentinel-types'
 
 export interface ElectronAPI {
+  /** True when this is a dev build (npm run dev / ccc), false for a packaged
+   *  prod install. Drives DEV window labeling (title + badge + accent). */
+  appIsDev: () => Promise<boolean>
   config: {
     loadAll: () => Promise<{ data: Record<string, unknown>; needsMigration: boolean }>
     save: (key: string, data: unknown) => Promise<boolean>
@@ -456,6 +459,7 @@ interface GitHubBridge {
 }
 
 const electronAPI: ElectronAPI = {
+  appIsDev: () => ipcRenderer.invoke(IPC.APP_IS_DEV),
   config: {
     loadAll: () => ipcRenderer.invoke(IPC.CONFIG_LOAD_ALL),
     save: (key, data) => ipcRenderer.invoke(IPC.CONFIG_SAVE, key, data),

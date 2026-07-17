@@ -4,6 +4,9 @@
  */
 
 export const IPC = {
+  // App info
+  APP_IS_DEV: 'app:isDev',
+
   // Config management
   CONFIG_LOAD_ALL: 'config:loadAll',
   CONFIG_SAVE: 'config:save',
