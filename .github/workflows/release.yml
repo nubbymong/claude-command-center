@@ -104,7 +104,7 @@ jobs:
         run: npx electron-builder --win --publish never
 
       - name: Upload Windows artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: windows-installer
           # exe + blockmap + latest.yml travel together: latest.yml carries the
@@ -197,7 +197,7 @@ jobs:
           echo "name=$(basename ${DMG})" >> $GITHUB_OUTPUT
 
       - name: Upload macOS artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: macos-dmg
           path: |
@@ -269,7 +269,7 @@ jobs:
         run: npx electron-builder --linux --publish never
 
       - name: Upload Linux artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: linux-appimage
           path: |
