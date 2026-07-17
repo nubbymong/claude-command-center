@@ -83,7 +83,15 @@ export function withProfileHome(env: Record<string, string>, home: string | null
     GIT_CONFIG_GLOBAL: path.join(realHome, '.gitconfig'),
     npm_config_userconfig: path.join(realHome, '.npmrc'),
   }
-  if (process.platform !== 'win32') next.HOME = home
+  // macOS locates the login keychain via $HOME (~/Library/Keychains/login.keychain-db).
+  // Pointing HOME at the fake profile home — which mirrors only dot-entries, never
+  // ~/Library (see mirrorRealHome) — leaves the spawned `claude` with no keychain to
+  // resolve, surfacing the macOS "A keychain cannot be found to store ..." dialog (#117).
+  // Multi-account is disabled on macOS anyway (see AccountsPanel), so HOME-based identity
+  // isolation buys nothing there; leaving HOME at the real home restores keychain access
+  // and resolves the single global account correctly. Linux keychains (Secret Service /
+  // D-Bus) are not HOME-path-based, so keep the redirect there for multi-account isolation.
+  if (process.platform === 'linux') next.HOME = home
   // Claude's native install lives at `$HOME/.local/bin`. With the home redirected,
   // CC computes that as `<home>/.local/bin` (a junction to the real ~/.local) but
   // PATH still carries the *real* home's `.local/bin`, so `/doctor` falsely warns
