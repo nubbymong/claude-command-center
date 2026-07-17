@@ -16,6 +16,7 @@
  */
 
 import * as http from 'http'
+import * as net from 'net'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
@@ -185,6 +186,8 @@ export class VisionManager {
         res.on('end', () => {
           if (!this.connected) {
             logInfo(`[vision] Browser heartbeat restored on port ${this.debugPort}, reconnecting...`)
+            // Connection is back — re-arm auto-relaunch for any FUTURE crash.
+            resetVisionRelaunchBreaker()
             this.reconnectRoot()
           }
         })
@@ -621,33 +624,68 @@ function getBrowserPaths(browser: 'chrome' | 'edge'): string[] {
 // themselves never comes through launchBrowser, so it is never tracked or killed.
 let spawnedBrowserPid: number | null = null
 
-// ── Heartbeat auto-relaunch ───────────────────────────────────────────────
+// ── Heartbeat auto-relaunch (backoff + circuit breaker) ───────────────────
 let lastAutoRelaunchAt = 0
-const AUTO_RELAUNCH_COOLDOWN_MS = 120_000
+let relaunchAttempts = 0
+let relaunchDisabled = false
+// Give up after this many consecutive relaunches that never restored a
+// connection — a browser that keeps dying (bad Chrome, GPU/driver crash, policy
+// block) should not be retried forever; the user re-arms it with Start.
+const MAX_RELAUNCH_ATTEMPTS = 4
+// Exponential backoff between attempts (15s, 30s, 60s, 120s, capped at 5min).
+const AUTO_RELAUNCH_BASE_MS = 15_000
+const AUTO_RELAUNCH_MAX_MS = 300_000
+
+function relaunchBackoffMs(): number {
+  return Math.min(AUTO_RELAUNCH_BASE_MS * 2 ** relaunchAttempts, AUTO_RELAUNCH_MAX_MS)
+}
 
 /** The heartbeat found the CDP endpoint dead. While vision is running
  *  (globalConfig set), relaunch OUR browser instead of reconnecting to a corpse
  *  forever — the panel otherwise sticks on "Browser launching…" until the user
- *  manually Stop/Starts. Cooldown-limited so a crash-looping browser can't
- *  spawn-storm. Returns whether a relaunch was attempted. Exported for tests. */
+ *  manually Stop/Starts.
+ *
+ *  Resilience: exponential backoff between attempts + a circuit breaker that
+ *  DISABLES auto-relaunch after MAX_RELAUNCH_ATTEMPTS consecutive failures, so a
+ *  crash-looping browser can never spawn-storm or (with the now non-blocking
+ *  kills) churn in the background. The breaker resets when a connection is
+ *  restored (resetVisionRelaunchBreaker) or the user manually Starts vision.
+ *  Returns whether a relaunch was attempted. Exported for tests. */
 export function maybeAutoRelaunchBrowser(debugPort: number): boolean {
   const cfg = globalConfig
   if (!cfg || cfg.debugPort !== debugPort) return false
+  if (relaunchDisabled) return false
   const now = Date.now()
-  if (now - lastAutoRelaunchAt < AUTO_RELAUNCH_COOLDOWN_MS) return false
+  if (now - lastAutoRelaunchAt < relaunchBackoffMs()) return false
   lastAutoRelaunchAt = now
-  logInfo(`[vision] Browser gone on port ${debugPort} — auto-relaunching`)
-  try {
-    launchBrowser(cfg.browser, cfg.debugPort, cfg.url, cfg.headless !== false)
-    return true
-  } catch (err) {
-    logInfo(`[vision] Auto-relaunch failed (heartbeat will retry): ${(err as Error)?.message ?? err}`)
+  relaunchAttempts += 1
+  if (relaunchAttempts > MAX_RELAUNCH_ATTEMPTS) {
+    relaunchDisabled = true
+    logInfo(`[vision] Browser on port ${debugPort} keeps dying after ${MAX_RELAUNCH_ATTEMPTS} attempts — auto-relaunch disabled. Use Start in the Vision panel to retry.`)
     return false
   }
+  logInfo(`[vision] Browser gone on port ${debugPort} — auto-relaunching (attempt ${relaunchAttempts}/${MAX_RELAUNCH_ATTEMPTS})`)
+  // launchBrowser is async (it awaits the previous-browser kill); fire-and-forget
+  // from the heartbeat — a launch error just means the next tick retries.
+  void launchBrowser(cfg.browser, cfg.debugPort, cfg.url, cfg.headless !== false)
+    .catch((err) => logInfo(`[vision] Auto-relaunch failed (heartbeat will retry): ${(err as Error)?.message ?? err}`))
+  return true
 }
 
-/** Test seam: clear the auto-relaunch cooldown. */
-export function _resetAutoRelaunchForTest(): void { lastAutoRelaunchAt = 0 }
+/** Re-arm auto-relaunch: called when a connection is restored (success) or the
+ *  user manually Starts vision. Clears the backoff + circuit breaker. */
+export function resetVisionRelaunchBreaker(): void {
+  lastAutoRelaunchAt = 0
+  relaunchAttempts = 0
+  relaunchDisabled = false
+}
+
+/** Test seam: clear the auto-relaunch cooldown + breaker. */
+export function _resetAutoRelaunchForTest(): void { resetVisionRelaunchBreaker() }
+
+/** Test seam: clear ONLY the backoff timer (keep the attempt count) so a test
+ *  can drive consecutive attempts and exercise the circuit breaker. */
+export function _clearRelaunchCooldownForTest(): void { lastAutoRelaunchAt = 0 }
 
 /** Kill ORPHANED debug browsers left over from a PREVIOUS CCC run. The tracked-pid
  *  kill above only covers this process's own spawn — after a crash the pid is lost
@@ -656,18 +694,89 @@ export function _resetAutoRelaunchForTest(): void { lastAutoRelaunchAt = 0 }
  *  Match main processes (not --type= children) by the profile-dir signature we bake
  *  into the command line (`chrome-debug-<port>` / `msedge-debug-<port>`) and kill
  *  each tree. Best-effort: never throws, no-op when nothing matches. */
-function sweepOrphanDebugBrowsers(debugPort: number): void {
-  try {
-    if (process.platform === 'win32') {
-      const ps =
-        `Get-CimInstance Win32_Process -Filter \\"Name='chrome.exe' or Name='msedge.exe'\\" | ` +
-        `Where-Object { $_.CommandLine -match 'debug-${debugPort}' -and $_.CommandLine -notmatch '--type=' } | ` +
-        `ForEach-Object { taskkill /PID $_.ProcessId /T /F }`
-      execSync(`powershell -NoProfile -NonInteractive -Command "${ps}"`, { windowsHide: true, timeout: 10000, stdio: 'ignore' })
-    } else {
-      execSync(`pkill -f -- "-debug-${debugPort}" || true`, { timeout: 10000, stdio: 'ignore' })
+/** Cheap TCP probe: is anything LISTENING on 127.0.0.1:port? Sub-millisecond
+ *  when the port is free (connection refused). Lets us skip the kill entirely on
+ *  the common boot case — no process spawn at all. */
+function isPortListening(port: number, timeoutMs = 300): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = new net.Socket()
+    let done = false
+    const finish = (v: boolean) => { if (done) return; done = true; try { socket.destroy() } catch { /* ignore */ } resolve(v) }
+    socket.setTimeout(timeoutMs)
+    socket.once('connect', () => finish(true))
+    socket.once('timeout', () => finish(false))
+    socket.once('error', () => finish(false)) // ECONNREFUSED => nothing there
+    socket.connect(port, '127.0.0.1')
+  })
+}
+
+async function sweepOrphanDebugBrowsers(debugPort: number): Promise<void> {
+  // Free the debug PORT before we respawn, so the new browser never races an
+  // orphan from a prior crashed run for the port (that race left the browser
+  // stuck on "launching…").
+  //
+  // Fast path: if nothing is listening on the debug port there is no orphan —
+  // skip the kill (and its process spawn) entirely. This is the common case at
+  // boot and shaves the PowerShell cold-start off the launch path.
+  if (!(await isPortListening(debugPort))) return
+  //
+  // Otherwise target the PORT, not a Win32_Process command-line scan: the old
+  // `Get-CimInstance Win32_Process` enumerated EVERY process's command line via
+  // WMI, which on a loaded machine took ~20s and starved the main process at
+  // boot (the app hung on "Loading…"). Get-NetTCPConnection is a cheap, direct
+  // port lookup.
+  if (process.platform === 'win32') {
+    const ps =
+      `$p = Get-NetTCPConnection -State Listen -LocalPort ${debugPort} -ErrorAction SilentlyContinue ` +
+      `| Select-Object -ExpandProperty OwningProcess -Unique; ` +
+      `if ($p) { $p | ForEach-Object { taskkill /PID $_ /T /F } }`
+    await runKillAwait('powershell', ['-NoProfile', '-NonInteractive', '-Command', ps], 4000)
+  } else {
+    await runKillAwait('pkill', ['-f', `-debug-${debugPort}`], 4000)
+  }
+}
+
+/** Spawn a kill command and resolve when it finishes (or a timeout elapses).
+ *  Serialises kill-before-respawn so the new browser never races the old one for
+ *  the debug port, WITHOUT execSync's event-loop freeze. Best-effort: a missing
+ *  tool / nothing-to-kill resolves rather than rejecting. */
+function runKillAwait(command: string, args: string[], timeoutMs = 4000): Promise<void> {
+  return new Promise((resolve) => {
+    let settled = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+    let child: ReturnType<typeof spawn> | null = null
+    const finish = () => {
+      if (settled) return
+      settled = true
+      if (timer) clearTimeout(timer)
+      resolve()
     }
-  } catch { /* nothing matched / tool unavailable — best-effort */ }
+    try {
+      child = spawn(command, args, { windowsHide: true, stdio: 'ignore' })
+      child.on('close', finish)
+      child.on('error', finish)
+      // On timeout, kill the (possibly hung/slow) kill command so it can't keep
+      // running in the background and starve the main process, then resolve.
+      timer = setTimeout(() => { try { child?.kill() } catch { /* already gone */ } finish() }, timeoutMs)
+      if (typeof timer.unref === 'function') timer.unref()
+    } catch { finish() }
+  })
+}
+
+/** Awaited counterpart to killSpawnedBrowser, used on the launch/relaunch path so
+ *  the previous browser is dead (port freed) before the respawn — without the
+ *  event-loop freeze execSync caused. The sync killSpawnedBrowser is retained for
+ *  quit/stop where the kill must run before the process exits. */
+async function killSpawnedBrowserForRelaunch(): Promise<void> {
+  const pid = spawnedBrowserPid
+  spawnedBrowserPid = null
+  if (!pid) return
+  logInfo(`[vision] Killing previous CCC-spawned browser (pid ${pid}) before relaunch`)
+  if (process.platform === 'win32') {
+    await runKillAwait('taskkill', ['/pid', String(pid), '/T', '/F'])
+  } else {
+    try { process.kill(-pid, 'SIGTERM') } catch { try { process.kill(pid, 'SIGTERM') } catch { /* already gone */ } }
+  }
 }
 
 /**
@@ -727,14 +836,19 @@ export function buildBrowserLaunchArgs(
   return args
 }
 
-export function launchBrowser(browser: 'chrome' | 'edge', debugPort: number, url?: string, headless: boolean = true): { pid: number; command: string } {
+export async function launchBrowser(browser: 'chrome' | 'edge', debugPort: number, url?: string, headless: boolean = true): Promise<{ pid: number; command: string }> {
   // Relaunch path: kill the previous CCC-spawned browser first so we never
   // stack orphans (the --user-data-dir singleton means a stale one would also
   // reject the new debug port). Then sweep UNTRACKED orphans from a prior
   // crashed run — those hold the same profile lock and would make this spawn
   // silently die.
-  killSpawnedBrowser()
-  sweepOrphanDebugBrowsers(debugPort)
+  // Serialised kills (resilience fix): AWAIT the previous browser + orphan
+  // sweep so the debug port / profile lock is free before we respawn — otherwise
+  // a lingering zombie holds the port and the new browser hangs on "launching…".
+  // These awaits do NOT block the event loop (unlike the old execSync), so boot
+  // IPC stays responsive.
+  await killSpawnedBrowserForRelaunch()
+  await sweepOrphanDebugBrowsers(debugPort)
 
   const tmpDir = process.env.TEMP || process.env.TMP || os.tmpdir()
   const profileDir = path.join(tmpDir, `${browser}-debug-${debugPort}`)

@@ -905,14 +905,27 @@ if (!gotTheLock) {
       logError(`[main] Conductor MCP server startup failed: ${err?.message}`)
     })
 
-    // P7.3: Browser-vision sub-tool auto-starts unconditionally at boot.
-    // The MCP server has always been unconditional; this drops the
-    // visionConfig.enabled gate that caused intermittent "Vision not
-    // connected" errors when sessions spawned before the user clicked
-    // Launch Chrome.
-    startBrowserAtBoot(getWindow).catch(err => {
-      logError(`[main] Vision auto-start failed: ${err?.message}`)
-    })
+    // P7.3: Browser-vision sub-tool auto-starts at boot (MCP server is always up).
+    //
+    // DEFERRED (boot resilience): launching headless Chrome is heavy and, on a
+    // busy machine, competing with the renderer's initial load could starve the
+    // main process and leave the window stuck/unshown. Wait until the renderer
+    // has finished loading (+ a short settle), so the UI paints first, then bring
+    // vision up. Fallback timer launches it anyway if the load signal never comes.
+    {
+      let visionStarted = false
+      const startVisionOnce = () => {
+        if (visionStarted) return
+        visionStarted = true
+        startBrowserAtBoot(getWindow).catch(err => {
+          logError(`[main] Vision auto-start failed: ${err?.message}`)
+        })
+      }
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.once('did-finish-load', () => setTimeout(startVisionOnce, 1500))
+      }
+      setTimeout(startVisionOnce, 8000)
+    }
 
     // Start update system
     // Dev mode: run the local update server + source watcher for live-reload workflow
