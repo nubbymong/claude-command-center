@@ -62,6 +62,7 @@ type BufferedMessage =
   | RunStartMessage
   | Extract<ToTranscriptsWorker, { type: 'run-end' }>
   | Extract<ToTranscriptsWorker, { type: 'run-account' }>
+  | Extract<ToTranscriptsWorker, { type: 'run-rename' }>
   | Extract<ToTranscriptsWorker, { type: 'transcript-bind' }>
 
 interface QueuedItem {
@@ -266,6 +267,12 @@ export class LogSupervisor {
   /** Back-fill the account email on the latest open run (identity poll). */
   runAccount(sessionId: string, accountEmail: string): void {
     this.enqueueOrSend({ type: 'run-account', sessionId, accountEmail })
+  }
+
+  /** Update the display label on the latest open run (session rename), so the
+   *  logs/history tab shows the custom work name durably. */
+  renameRun(sessionId: string, configLabel: string): void {
+    this.enqueueOrSend({ type: 'run-rename', sessionId, configLabel })
   }
 
   /** Bind a discovered transcript file to the session's current run; the worker

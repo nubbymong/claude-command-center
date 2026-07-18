@@ -92,6 +92,10 @@ export interface SavedSession {
   id: string
   configId?: string
   label: string
+  /** User-assigned "work name" (see Session.customName). Persisted by id so it
+   *  survives restart and returns when the saved session is reopened; dropped
+   *  when the session is closed in CCC. Display-only. */
+  customName?: string
   workingDirectory: string
   color: string
   /** V2 identity colour: stable palette key. Authoritative over `color` at render time. */

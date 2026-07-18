@@ -73,7 +73,6 @@ import GitHubPanel from './components/github/GitHubPanel'
 import OnboardingModal from './components/github/onboarding/OnboardingModal'
 import AutoDetectBanner from './components/github/AutoDetectBanner'
 import { handleAutoDetectAccept } from './utils/githubAutoDetectAccept'
-import RepoBreadcrumb from './components/RepoBreadcrumb'
 import type { SessionState, SavedSession } from './types/electron'
 import { buildSessionState, buildSessionStateWithResumeTargets, markRestoredSessionsPredetermined } from './session-persistence'
 import { useSessionAutosave } from './hooks/useSessionAutosave'
@@ -530,6 +529,7 @@ export default function App() {
           id: saved.id,
           configId: saved.configId,
           label: saved.label,
+          customName: saved.customName,
           workingDirectory: saved.workingDirectory,
           model: claude?.model ?? saved.model ?? '',
           color: saved.color,
@@ -707,7 +707,6 @@ export default function App() {
     return (
       <div className="flex-1 flex flex-col" style={{ display: view === 'sessions' ? 'flex' : 'none', minHeight: 0 }}>
         <TabBar />
-        <RepoBreadcrumb session={activeSession} />
         <SessionHeader session={activeSession} onShowTip={() => setShowTipModal(true)} />
         {(() => {
           const gi = activeSession.githubIntegration
@@ -1048,7 +1047,7 @@ export default function App() {
 
         {pendingRestore && bootGate !== 'onboarding' && !tourActive && !showGuidedConfig && (
           <ResumeSessionsPrompt
-            count={pendingRestore.sessions.length}
+            sessions={pendingRestore.sessions}
             onResume={() => {
               const saved = pendingRestore
               setPendingRestore(null)

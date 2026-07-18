@@ -69,6 +69,10 @@ const searchSchema = z
 
 const deleteSlotSchema = z.object({ scope: scopeSchema }).strict()
 
+const renameSessionSchema = z
+  .object({ sessionId: z.string().min(1).max(200), configLabel: z.string().max(200) })
+  .strict()
+
 const ingestStatusSchema = z.object({ sessionId: z.string().min(1).max(200) }).strict()
 
 const sessionConfigSchema = z.object({ sessionId: z.string().min(1).max(200) }).strict()
@@ -123,6 +127,15 @@ export function registerLogs2Handlers(getWindow: () => BrowserWindow | null): vo
   ipcMain.handle(IPC.LOGS2_CLEAR_ALL, async () => {
     const rows = await q('clear-all', {})
     return rows[0] ?? { deletedRuns: 0, deletedMessages: 0 }
+  })
+
+  // Session rename: update the display label on the session's latest run so the
+  // logs/history tab reflects the custom work name durably. Fire-and-forget post
+  // (buffered in the supervisor); no-op when logging is disabled.
+  ipcMain.handle(IPC.LOGS2_RENAME_SESSION, async (_e, args: unknown) => {
+    const { sessionId, configLabel } = renameSessionSchema.parse(args)
+    getLogSupervisor()?.renameRun(sessionId, configLabel)
+    return { ok: true }
   })
 
   ipcMain.handle(IPC.LOGS2_INGEST_STATUS, async (_e, args: unknown) => {

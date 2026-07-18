@@ -21,6 +21,11 @@ export interface Session {
   id: string
   configId?: string
   label: string
+  /** User-assigned "work name" for this session, editable while it's open and
+   *  persisted by id across restarts (until the session is closed in CCC).
+   *  Display-only; renders in place of `label` when set. Empty/undefined =>
+   *  fall back to the config-derived `label`. */
+  customName?: string
   workingDirectory: string
   model: string
   color: string
@@ -116,6 +121,9 @@ interface SessionState {
   sessions: Session[]
   activeSessionId: string | null
   isRestoring: boolean  // True while restoring sessions from saved state
+  /** Id of the session whose name is currently being edited inline (tab).
+   *  Ephemeral UI state — never persisted. null when no rename is in flight. */
+  renamingSessionId: string | null
 
   addSession: (session: Session) => void
   removeSession: (id: string) => void
@@ -125,12 +133,18 @@ interface SessionState {
   hasWorkingSessions: () => boolean  // Check if any session is actively working
   setRestoring: (restoring: boolean) => void
   restoreSessions: (sessions: Session[], activeId: string | null) => void
+  /** Enter/leave inline-rename mode for a session (id) or clear it (null). */
+  beginRename: (id: string | null) => void
+  /** Commit a new custom name. Blank/whitespace clears it (reverts to `label`).
+   *  Always exits rename mode. */
+  renameSession: (id: string, name: string) => void
 }
 
 export const useSessionStore = create<SessionState>((set, get) => ({
   sessions: [],
   activeSessionId: null,
   isRestoring: false,
+  renamingSessionId: null,
 
   addSession: (session) =>
     set((state) => ({
@@ -185,7 +199,24 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       sessions,
       activeSessionId: activeId || sessions[0]?.id || null,
       isRestoring: false
-    })
+    }),
+
+  beginRename: (id) => set({ renamingSessionId: id }),
+
+  renameSession: (id, name) => {
+    const trimmed = name.trim()
+    // Blank => clear the override (undefined) so the tab reverts to `label`.
+    get().updateSession(id, { customName: trimmed || undefined })
+    set({ renamingSessionId: null })
+    // Persist the display name into the logs/history DB so the session's log
+    // keeps this name durably (survives close + restart). Best-effort: no-op
+    // when logging is disabled or the preload bridge is absent (e.g. tests).
+    const s = get().sessions.find((x) => x.id === id)
+    const effective = trimmed || s?.label || ''
+    try {
+      window.electronAPI?.logs2?.renameSession?.({ sessionId: id, configLabel: effective })
+    } catch { /* logging off / preload absent */ }
+  }
 }))
 
 /**
@@ -201,7 +232,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
  * telemetry-only ticks and stop the full-tree re-render cascade.
  */
 export const STRUCTURAL_SESSION_FIELDS = [
-  'id', 'createdAt', 'configId', 'label', 'workingDirectory', 'sessionType',
+  'id', 'createdAt', 'configId', 'label', 'customName', 'workingDirectory', 'sessionType',
   'shellOnly', 'sshConfig', 'partnerTerminalPath', 'partnerElevated',
   'legacyVersion', 'agentIds', 'effortLevel', 'disableAutoMemory',
   'enableCodexReview', 'loggingEnabled', 'model', 'provider', 'codexOptions',

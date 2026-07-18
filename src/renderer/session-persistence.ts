@@ -14,6 +14,7 @@ export function buildSessionState(): SessionState {
     id: s.id,
     configId: s.configId,
     label: s.label,
+    customName: s.customName,
     workingDirectory: s.workingDirectory,
     color: s.color,
     identityColorKey: s.identityColorKey,

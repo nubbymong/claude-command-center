@@ -100,6 +100,7 @@ export const IPC = {
   LOGS2_TURN_SUMMARY: 'logs2:turnSummary',
   LOGS2_SEARCH: 'logs2:search',
   LOGS2_DELETE_SLOT: 'logs2:deleteSlot',
+  LOGS2_RENAME_SESSION: 'logs2:renameSession',
   LOGS2_CLEAR_ALL: 'logs2:clearAll',
   LOGS2_INGEST_STATUS: 'logs2:ingestStatus',
   LOGS2_NEW_MESSAGES: 'logs2:newMessages',   // push: main -> renderer

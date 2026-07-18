@@ -157,6 +157,7 @@ export interface ElectronAPI {
     search: (args: { query: string; limit?: number }) => Promise<unknown[]>
     deleteSlot: (args: { scope: { configId: string } | { sessionId: string } }) =>
       Promise<{ deletedRuns: number; deletedMessages: number }>
+    renameSession: (args: { sessionId: string; configLabel: string }) => Promise<{ ok: boolean }>
     clearAll: () => Promise<{ deletedRuns: number; deletedMessages: number }>
     ingestStatus: (args: { sessionId: string }) => Promise<{
       transcripts: { path: string; status: string; ord: number }[]
@@ -632,6 +633,8 @@ const electronAPI: ElectronAPI = {
     search: (args: { query: string; limit?: number }) => ipcRenderer.invoke(IPC.LOGS2_SEARCH, args),
     deleteSlot: (args: { scope: { configId: string } | { sessionId: string } }) =>
       ipcRenderer.invoke(IPC.LOGS2_DELETE_SLOT, args),
+    renameSession: (args: { sessionId: string; configLabel: string }) =>
+      ipcRenderer.invoke(IPC.LOGS2_RENAME_SESSION, args),
     clearAll: () => ipcRenderer.invoke(IPC.LOGS2_CLEAR_ALL),
     ingestStatus: (args: { sessionId: string }) => ipcRenderer.invoke(IPC.LOGS2_INGEST_STATUS, args),
     sessionConfig: (args: { sessionId: string }) => ipcRenderer.invoke(IPC.LOGS2_SESSION_CONFIG, args),

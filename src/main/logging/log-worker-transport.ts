@@ -37,6 +37,7 @@ export type ToTranscriptsWorker =
     }
   | { type: 'run-end'; sessionId: string; ts: number; status: string }
   | { type: 'run-account'; sessionId: string; accountEmail: string }
+  | { type: 'run-rename'; sessionId: string; configLabel: string }
   | {
       type: 'transcript-bind'
       sessionId: string

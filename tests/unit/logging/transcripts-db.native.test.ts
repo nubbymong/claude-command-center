@@ -154,6 +154,28 @@ describe('transcripts-db', () => {
     expect(rows.find((r) => r.runId === r2)).toMatchObject({ status: 'exited', endedAt: 999 })
   })
 
+  it('renameRun updates configLabel on the latest open run (session rename -> logs durability)', () => {
+    const r1 = db.insertRun(runMeta({ startedAt: 100 }))
+    const r2 = db.insertRun(runMeta({ startedAt: 200 }))
+
+    // Latest open run is r2 — rename must hit it, not r1.
+    db.renameRun('s1', 'IM-8315 keychain fix')
+    let rows = inspect((raw) =>
+      raw.prepare(`SELECT runId, configLabel FROM runs ORDER BY runId`).all(),
+    ) as { runId: number; configLabel: string }[]
+    expect(rows.find((r) => r.runId === r2)!.configLabel).toBe('IM-8315 keychain fix')
+    expect(rows.find((r) => r.runId === r1)!.configLabel).toBe('APP_DEV')
+
+    // No open run left -> no-op, no throw.
+    db.closeRun('s1', 300, 'exited')
+    db.closeRun('s1', 301, 'exited')
+    expect(() => db.renameRun('s1', 'ignored')).not.toThrow()
+    rows = inspect((raw) =>
+      raw.prepare(`SELECT runId, configLabel FROM runs ORDER BY runId`).all(),
+    ) as { runId: number; configLabel: string }[]
+    expect(rows.find((r) => r.runId === r2)!.configLabel).toBe('IM-8315 keychain fix')
+  })
+
   it('getOpenRunId returns the latest open run (null when none); closeAllOpenRuns closes every open run', () => {
     const r1 = db.insertRun(runMeta({ startedAt: 100 }))
     const r2 = db.insertRun(runMeta({ startedAt: 200 }))
