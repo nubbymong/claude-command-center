@@ -116,6 +116,37 @@ function getAllSourceFiles(dir: string, files: string[] = []): string[] {
   return files
 }
 
+// Yield to the event loop so a long sweep can never freeze the main thread.
+function yieldToLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve))
+}
+
+async function getAllSourceFilesAsync(dir: string, files: string[] = []): Promise<string[]> {
+  try {
+    const entries = await fs.promises.readdir(dir, { withFileTypes: true })
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name)
+      if (entry.isDirectory()) {
+        if (!entry.name.startsWith('.') && entry.name !== 'node_modules') {
+          await getAllSourceFilesAsync(fullPath, files)
+        }
+      } else if (/\.(ts|tsx|css|html|json)$/.test(entry.name)) {
+        files.push(fullPath)
+      }
+    }
+  } catch { /* ignore */ }
+  return files
+}
+
+async function hashFileAsync(filePath: string): Promise<string> {
+  try {
+    const content = await fs.promises.readFile(filePath)
+    return crypto.createHash('md5').update(content).digest('hex')
+  } catch {
+    return ''
+  }
+}
+
 function computeHashes(): SourceHashes | null {
   const projectRoot = getProjectRootPath()
   if (!projectRoot) return null
@@ -129,6 +160,31 @@ function computeHashes(): SourceHashes | null {
   for (const file of files) {
     const relativePath = path.relative(srcDir, file)
     hashes[relativePath] = hashFile(file)
+  }
+
+  return { timestamp: Date.now(), hashes }
+}
+
+// #120: non-blocking twin of computeHashes(). The synchronous version walked the
+// entire dev src tree and readFileSync+md5-hashed every file on the main thread,
+// freezing the event loop ~20s at boot (jank monitor logged a matching ~27s
+// stall) and blocking first paint. This variant uses async fs + yields to the
+// loop every ~50 files, so the sweep can never freeze the main thread.
+async function computeHashesAsync(): Promise<SourceHashes | null> {
+  const projectRoot = getProjectRootPath()
+  if (!projectRoot) return null
+
+  const srcDir = path.join(projectRoot, 'src')
+  if (!fs.existsSync(srcDir)) return null
+
+  const files = await getAllSourceFilesAsync(srcDir)
+  const hashes: Record<string, string> = {}
+
+  let sinceYield = 0
+  for (const file of files) {
+    const relativePath = path.relative(srcDir, file)
+    hashes[relativePath] = await hashFileAsync(file)
+    if (++sinceYield >= 50) { sinceYield = 0; await yieldToLoop() }
   }
 
   return { timestamp: Date.now(), hashes }
@@ -171,15 +227,17 @@ function hasChanges(oldHashes: SourceHashes, newHashes: SourceHashes): boolean {
   return false
 }
 
-function checkForUpdates(): void {
-  const win = windowGetter?.()
-
+// #120: fully async so the file-hash sweep never blocks the main thread. The
+// old synchronous checkForUpdates() was the ~20s boot freeze (see
+// computeHashesAsync). Callers that don't need the result fire-and-forget it.
+async function checkForUpdates(): Promise<void> {
   // Check if source path is now available (might have been configured after startup)
   const sourceConfigured = hasSourcePath()
   if (sourceConfigured !== lastSourceConfigured) {
     lastSourceConfigured = sourceConfigured
-    if (win && !win.isDestroyed()) {
-      win.webContents.send('update:sourceConfigured', sourceConfigured)
+    const w = windowGetter?.()
+    if (w && !w.isDestroyed()) {
+      w.webContents.send('update:sourceConfigured', sourceConfigured)
     }
   }
   if (!sourceConfigured) return
@@ -189,7 +247,7 @@ function checkForUpdates(): void {
     currentHashes = loadSavedHashes()
     if (!currentHashes) {
       // First run - save current state as baseline
-      currentHashes = computeHashes()
+      currentHashes = await computeHashesAsync()
       if (currentHashes) {
         saveHashes(currentHashes)
         logInfo('[update-watcher] Initial hash snapshot saved')
@@ -199,15 +257,18 @@ function checkForUpdates(): void {
 
   if (!currentHashes) return
 
-  const newHashes = computeHashes()
+  const newHashes = await computeHashesAsync()
   if (!newHashes) return
 
   const changed = hasChanges(currentHashes, newHashes)
 
   if (changed !== updateAvailable) {
     updateAvailable = changed
-    if (win && !win.isDestroyed()) {
-      win.webContents.send('update:available', updateAvailable)
+    // Re-resolve the window after the async sweep — it may have appeared or
+    // been torn down while we were hashing.
+    const w = windowGetter?.()
+    if (w && !w.isDestroyed()) {
+      w.webContents.send('update:available', updateAvailable)
       if (updateAvailable) {
         logInfo('[update-watcher] Source changes detected, update available')
       }
@@ -220,8 +281,8 @@ function reinitializeWatcher(): void {
   // Reset state so it picks up new source path
   currentHashes = null
   updateAvailable = false
-  // Immediately check for updates
-  checkForUpdates()
+  // Immediately check for updates (non-blocking).
+  void checkForUpdates()
 }
 
 export function initUpdateWatcher(getWindow: () => BrowserWindow | null): void {
@@ -242,17 +303,21 @@ export function initUpdateWatcher(getWindow: () => BrowserWindow | null): void {
     logInfo('[update-watcher] No source path configured')
   }
 
-  // Single startup check — no polling. Use checkForUpdatesOnDemand() for manual checks.
-  checkForUpdates()
+  // #120: DEFER the startup check off the boot path. It hashes the whole dev
+  // src tree; even now that it yields, running it during boot competes with the
+  // renderer's first paint. Fire it ~3s after boot, non-blocking. Single check —
+  // no polling; use checkForUpdatesOnDemand() for manual checks.
+  setTimeout(() => { void checkForUpdates() }, 3000)
 }
 
 export function isUpdateAvailable(): boolean {
   return updateAvailable
 }
 
-// On-demand check triggered by user clicking "Check for Updates"
-export function checkForUpdatesOnDemand(): boolean {
-  checkForUpdates()
+// On-demand check triggered by user clicking "Check for Updates". Async so a
+// large src tree never freezes the UI on the button click either.
+export async function checkForUpdatesOnDemand(): Promise<boolean> {
+  await checkForUpdates()
   return updateAvailable
 }
 
