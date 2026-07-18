@@ -47,3 +47,8 @@ test-results/
 process-snapshot-*.txt
 .tip-screenshots/
 .tmp-e2e/
+
+# CARP running log: CONTEXT.md is a GENERATED aggregate of CONTEXT.d/ fragments
+# (rendered on demand); never commit it. The fragments under CONTEXT.d/ are the
+# sole tracked source. (aai-core AAI-407 / ADR-043 convention, mirrored here.)
+/CONTEXT.md
