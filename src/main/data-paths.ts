@@ -43,6 +43,19 @@ export function getDataDirectory(): string {
     return cachedDataDir
   }
 
+  // DEV isolation: a dev instance (npm run dev / ccc) runs alongside a live
+  // production install. CCC_DEV_DATA_DIR (set by index.ts when !app.isPackaged,
+  // and by the ccc launcher) points dev at its OWN data root so it never shares
+  // CONFIG/sessions/transcripts with prod. Checked BEFORE the registry so dev
+  // ignores prod's configured dir. Treated as configured (skip the setup wizard).
+  const devDir = process.env.CCC_DEV_DATA_DIR
+  if (devDir) {
+    cachedDataDir = devDir
+    dataDirFromRegistry = true
+    logInfo(`[setup] Data directory from DEV override: ${cachedDataDir}`)
+    return cachedDataDir
+  }
+
   const regVal = readRegistry('DataDirectory')
   if (regVal) {
     cachedDataDir = regVal
@@ -65,6 +78,15 @@ export function getResourcesDirectory(): string {
   if (e2eDir) {
     cachedResourcesDir = path.join(e2eDir, 'resources')
     logInfo(`[setup] Resources directory from E2E override: ${cachedResourcesDir}`)
+    return cachedResourcesDir
+  }
+
+  // DEV isolation (see getDataDirectory): dev resources live under the dev data
+  // root, so CONFIG/, screenshots/, skills/ etc. are all isolated from prod.
+  const devDir = process.env.CCC_DEV_DATA_DIR
+  if (devDir) {
+    cachedResourcesDir = path.join(devDir, 'resources')
+    logInfo(`[setup] Resources directory from DEV override: ${cachedResourcesDir}`)
     return cachedResourcesDir
   }
 

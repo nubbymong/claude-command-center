@@ -80,6 +80,8 @@ export interface ServiceStatusPayload {
 }
 
 export interface ElectronAPI {
+  /** True for a dev build (npm run dev / ccc); drives DEV window labeling. */
+  appIsDev: () => Promise<boolean>
   config: {
     loadAll: () => Promise<{ data: Record<string, unknown>; needsMigration: boolean }>
     save: (key: string, data: unknown) => Promise<boolean>

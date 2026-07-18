@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useSettingsStore } from '../stores/settingsStore'
+import { useIsDev } from '../hooks/useIsDev'
 import ThemeToggle from './ThemeToggle'
 import ConductorHealthPill from './ConductorHealthPill'
 import ConductorServicesPanel from './ConductorServicesPanel'
@@ -122,6 +123,7 @@ function StatusPill({ label, status, highlight }: StatusPillProps) {
 }
 
 export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
+  const isDev = useIsDev()
   const [maximized, setMaximized] = useState(false)
   const [serviceStatus, setServiceStatus] = useState<ServiceStatusPayload | null>(null)
   // panelOpen drives the open/closed visual state; panelMounted keeps the panel in
@@ -190,6 +192,9 @@ export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
           background: 'var(--surface-panel)',
           color: 'var(--text-on-chrome)',
         }),
+        // DEV instance accent: an unmistakable amber underline so a dev window is
+        // obvious next to a prod window. Composes with the status gradient above.
+        ...(isDev ? { boxShadow: 'inset 0 -2px 0 var(--status-warning)' } : {}),
       }}
     >
       <div className="titlebar-no-drag flex items-center gap-1 mr-3">
@@ -207,6 +212,15 @@ export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
 
       <div className="flex-1 text-center text-xs text-overlay1 font-medium flex items-center justify-center gap-0">
         <span>Claude Command Center</span>
+        {isDev && (
+          <span
+            className="ml-2 px-1.5 py-px rounded-full text-[10px] font-bold align-middle tracking-wide"
+            style={{ color: 'var(--color-crust, #11111b)', background: 'var(--status-warning)' }}
+            title="Development build — isolated data dir, separate ports"
+          >
+            DEV
+          </span>
+        )}
         {useSettingsStore((s) => s.settings.updateChannel) === 'beta' && (
           <span className="ml-2 px-1.5 py-px rounded-full text-[10px] font-semibold align-middle" style={{ color: 'var(--brand)', background: 'color-mix(in srgb, var(--brand) 16%, transparent)' }}>{prereleaseChipLabel()}</span>
         )}

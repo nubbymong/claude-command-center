@@ -64,7 +64,7 @@ import { detectOldLogArtifacts, executeWipe } from './logging/logs-wipe'
 import { backfillCompanionDirsAsync, nodeFsCompanionDeps } from './logging/companion-dir'
 import { cleanupStaleHookEntries, cleanupStaleMcpConfigs } from './hooks/boot-cleanup'
 import { isSentinelEnabled } from '../shared/sentinel-enabled'
-import { DEFAULT_HOOKS_PORT } from './hooks/hooks-types'
+import { resolveHooksPort } from './hooks/hooks-types'
 import { fetchModelPricing } from './tokenomics/tk-pricing'
 import { killAllAgents } from './cloud-agent-manager'
 import { startServiceStatusPoller, stopServiceStatusPoller, getLastServiceStatus } from './service-status'
@@ -85,6 +85,21 @@ import { installGlobalErrorHandlers, logInfo, logError, closeDebugLogger, setVer
 
 // Install global error handlers that log to file
 installGlobalErrorHandlers()
+
+// Multi-instance (dev alongside prod): a dev build must NOT share prod's data
+// dir (CONFIG/sessions/transcripts/profiles). Point it at a dedicated dev root
+// BEFORE anything reads the data dir or forks a worker (workers inherit this
+// env). The ccc launcher may set it too — respect an existing value. No-op for
+// a packaged (prod) build, so production behaviour is completely unchanged.
+if (!app.isPackaged && !process.env.CCC_DEV_DATA_DIR) {
+  const base =
+    process.platform === 'darwin'
+      ? join(homedir(), 'Library', 'Application Support', 'Claude Conductor')
+      : process.platform === 'linux'
+        ? join(homedir(), '.claude-conductor', 'data')
+        : join(process.env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'), 'Claude Command Center')
+  process.env.CCC_DEV_DATA_DIR = join(base, 'dev')
+}
 
 // Migrate registry keys from old "Claude Conductor" → new "Claude Command Center"
 migrateRegistryKeys()
@@ -562,6 +577,15 @@ function createWindow(): void {
     mainWindow?.webContents.send('window:maximized-changed', false)
   })
 
+  // DEV instance labeling: stamp the OS window/taskbar title so a dev window is
+  // unmistakable next to a running prod window. Guard page-title-updated so the
+  // renderer's <title> can't overwrite it. No-op in prod.
+  if (!app.isPackaged) {
+    const devTitle = 'Claude Command Center — DEV'
+    mainWindow.on('page-title-updated', (e) => { e.preventDefault(); mainWindow?.setTitle(devTitle) })
+    mainWindow.setTitle(devTitle)
+  }
+
   // Load renderer
   if (process.env.ELECTRON_RENDERER_URL) {
     mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
@@ -629,6 +653,10 @@ if (!gotTheLock) {
         ]
       })
     }
+
+    // Expose dev/prod build mode to the renderer for DEV labeling (title + badge
+    // + accent). Registered early so the renderer can read it on first paint.
+    ipcMain.handle(IPC.APP_IS_DEV, () => !app.isPackaged)
 
     const menu = Menu.buildFromTemplate(menuTemplate)
     Menu.setApplicationMenu(menu)
@@ -806,7 +834,7 @@ if (!gotTheLock) {
     // UUID secrets. Renderer consumes events via the HOOKS_EVENT IPC channel.
     const hooksSettings = readConfig<{ hooksEnabled?: boolean; hooksPort?: number }>('settings')
     const hooksEnabled = hooksSettings?.hooksEnabled !== false
-    const hooksPort = hooksSettings?.hooksPort ?? DEFAULT_HOOKS_PORT
+    const hooksPort = hooksSettings?.hooksPort ?? resolveHooksPort(isPackagedApp())
     const emitToWindow = (channel: string, payload: unknown) => {
       const win = getWindow()
       if (win && !win.isDestroyed()) {
