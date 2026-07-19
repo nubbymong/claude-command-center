@@ -52,7 +52,7 @@
     "@commitlint/cli": "^21.2.1",
     "@commitlint/config-conventional": "^21.2.0",
     "@electron/rebuild": "^4.0.4",
-    "@playwright/test": "^1.60.0",
+    "@playwright/test": "^1.61.1",
     "@tailwindcss/vite": "^4.3.1",
     "@types/better-sqlite3": "^7.6.8",
     "@types/react": "^19.2.0",
