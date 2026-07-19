@@ -47,7 +47,7 @@ describe('ResumeSessionsPrompt', () => {
     unmount()
   })
 
-  it('lists each session by its work name (customName over label)', () => {
+  it('lists each session by its work name (customName primary, label as sub-line)', () => {
     const { container, unmount } = renderComponent(
       <ResumeSessionsPrompt
         sessions={[
@@ -58,9 +58,40 @@ describe('ResumeSessionsPrompt', () => {
         onDontOpen={() => {}}
       />,
     )
-    const items = Array.from(container.querySelectorAll('li')).map((li) => li.textContent)
-    expect(items).toContain('IM-8315 keychain fix') // customName wins
-    expect(items).toContain('opus · ~/other')       // falls back to label
+    const items = Array.from(container.querySelectorAll('li'))
+    // Named session: customName is the primary line, label shown as a sub-line.
+    const named = items.find((li) => li.textContent?.includes('IM-8315 keychain fix'))!
+    expect(named).toBeTruthy()
+    expect(named.querySelector('div')?.textContent).toBe('IM-8315 keychain fix')
+    expect(named.textContent).toContain('sonnet · ~/proj')
+    // Unnamed session: label is the primary (and only) line.
+    const unnamed = items.find((li) => li.textContent === 'opus · ~/other')!
+    expect(unnamed).toBeTruthy()
+    unmount()
+  })
+
+  it('shows a refresh control only when onRefresh is given, and it fires onRefresh', async () => {
+    const onRefresh = vi.fn()
+    const { container, unmount } = renderComponent(
+      <ResumeSessionsPrompt
+        sessions={mkSessions(1)}
+        onResume={() => {}}
+        onDontOpen={() => {}}
+        onRefresh={onRefresh}
+      />,
+    )
+    const refresh = container.querySelector<HTMLButtonElement>('button[aria-label="Refresh sessions"]')
+    expect(refresh).toBeTruthy()
+    await act(async () => { refresh!.click() })
+    expect(onRefresh).toHaveBeenCalledTimes(1)
+    unmount()
+  })
+
+  it('omits the refresh control when onRefresh is not provided', () => {
+    const { container, unmount } = renderComponent(
+      <ResumeSessionsPrompt sessions={mkSessions(1)} onResume={() => {}} onDontOpen={() => {}} />,
+    )
+    expect(container.querySelector('button[aria-label="Refresh sessions"]')).toBeNull()
     unmount()
   })
 
