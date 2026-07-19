@@ -1,0 +1,10 @@
+# Keep these LF on every platform, independent of core.autocrlf.
+#
+# CHANGELOG.md is generated with LF by scripts/gen-changelog.js; pinning it means
+# the working tree matches the rendered output byte-for-byte, so the drift check
+# (npm run changelog:check) is stable on Windows and in Linux CI alike.
+CHANGELOG.md text eol=lf
+
+# Husky hooks are POSIX shell run via sh — CRLF would inject stray \r and break
+# execution.
+.husky/commit-msg text eol=lf

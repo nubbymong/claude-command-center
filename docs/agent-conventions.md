@@ -1,9 +1,9 @@
 # Agent & contributor conventions
 
 Working conventions for AI agents and contributors in this repo. Read this
-before making changes. It complements `README.md` (what the product is),
-`CONTRIBUTING.md` (contributor mechanics), and `CLAUDE.md` (harness-specific
-instructions).
+before making changes. It expands on `AGENTS.md` (the canonical, cross-tool agent
+brief; `CLAUDE.md` just imports it via `@AGENTS.md`) and complements `README.md`
+(what the product is) and `CONTRIBUTING.md` (contributor mechanics).
 
 ## Build, run, test
 
@@ -25,7 +25,7 @@ npm run test:e2e     # Playwright
 - **Main** (`src/main/`): Electron main — PTY (node-pty), IPC handlers
   (`src/main/ipc/`, one file per domain), config/session persistence, statusline,
   vision MCP, cloud agents, tokenomics, the forked logging/tokenomics workers.
-- **Renderer** (`src/renderer/`): React 18 SPA, Zustand stores
+- **Renderer** (`src/renderer/`): React 19 SPA, Zustand stores
   (`src/renderer/stores/`), xterm.js terminals (WebGL addon), Tailwind v4.
 - **Preload** (`src/preload/`): the typed IPC bridge — ALL renderer↔main traffic.
 - **Shared** (`src/shared/`): types + IPC channel constants used by both sides.

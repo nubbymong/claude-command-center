@@ -78,9 +78,44 @@ We cut a dedicated RC branch for every release cycle so that `beta` stays open f
 
 ## Commit Messages
 
-- Keep the first line under 72 characters
-- Use imperative mood ("Add feature" not "Added feature")
-- Reference issues where applicable (`Fixes #123`)
+This project follows [Conventional Commits](https://www.conventionalcommits.org/).
+The format is enforced two ways, so a non-conforming message is caught before it lands:
+
+- **Locally:** a Husky `commit-msg` hook runs commitlint on every `git commit`
+  (installed automatically the first time you run `npm install`).
+- **In CI:** because PRs are squash-merged, the **PR title** becomes the commit
+  subject — the `PR Title` workflow lints it against the same rules.
+
+Format:
+
+```
+<type>(<optional scope>): <imperative subject>
+```
+
+- **Allowed types:** `feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `build`,
+  `ci`, `chore`, `style`, `revert`, `deps` (`deps` is reserved for Dependabot).
+- Use imperative mood ("add feature", not "added feature").
+- Aim for a subject under 72 characters (hard cap 120).
+- One type per subject — compound types like `docs+chore:` are **not** valid.
+- Reference issues/PRs where applicable (`Fixes #123`).
+
+Examples: `feat(sessions): add per-session rename`, `fix(terminal): restore caret under WebGL`.
+
+Rules live in `commitlint.config.js`.
+
+## Changelog & Release Notes
+
+The changelog is **generated**, not hand-edited. The single source of truth is
+`src/renderer/changelog.ts` (it also drives the in-app "What's New" modal).
+
+- When your change is user-facing, add an entry to the top of the array in
+  `src/renderer/changelog.ts` (type: `feature` | `fix` | `improvement`).
+- Run `npm run changelog` to regenerate the root `CHANGELOG.md`, and commit both files.
+- CI (`Changelog in sync`) fails if `CHANGELOG.md` is stale — run
+  `npm run changelog:check` locally to verify.
+- The release workflow reads the same source to populate the **GitHub release
+  notes** automatically (`scripts/gen-changelog.js --notes <version>`), so there
+  is nothing to paste by hand at release time.
 
 ## What We're Looking For
 

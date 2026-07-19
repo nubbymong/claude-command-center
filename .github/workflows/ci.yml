@@ -11,6 +11,20 @@ permissions:
   contents: read
 
 jobs:
+  # Fast, always-on guard (not gated on the `ci-run` label): CHANGELOG.md is
+  # generated from src/renderer/changelog.ts, so it must never drift. The
+  # generator is zero-dependency, so no npm install is needed.
+  changelog:
+    name: Changelog in sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Verify CHANGELOG.md matches changelog.ts
+        run: node scripts/gen-changelog.js --check
+
   test:
     # Gate the test matrix on a `ci-run` label for PRs.
     # Rationale: this repo accumulates many WIP commits per PR (multi-phase v1.x

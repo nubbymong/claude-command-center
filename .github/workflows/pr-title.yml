@@ -1,0 +1,35 @@
+name: PR Title
+
+# Squash-merge makes the PR title the commit subject, so the title is what lands
+# in history and drives changelog/release-note tooling. Validate it against the
+# Conventional Commits rules in commitlint.config.js.
+#
+# Local commits are checked by the .husky/commit-msg hook; this is the CI
+# backstop for anyone who bypassed hooks (or contributed via the web UI).
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  lint-pr-title:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install commitlint
+        run: npm ci --ignore-scripts
+
+      - name: Lint PR title
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: echo "$PR_TITLE" | npx --no-install commitlint

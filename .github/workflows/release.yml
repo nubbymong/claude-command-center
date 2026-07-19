@@ -284,6 +284,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Derive the release body from src/renderer/changelog.ts (the single
+      # source of truth). Empty output = no changelog entry for this version;
+      # the create step then falls back to the checksums-only note.
+      - name: Generate release notes
+        id: notes
+        run: |
+          VERSION="${{ needs.build-windows.outputs.version }}"
+          node scripts/gen-changelog.js --notes "$VERSION" > RELEASE_NOTES.md || true
+          if [ -s RELEASE_NOTES.md ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "Release notes for v${VERSION}:"
+            cat RELEASE_NOTES.md
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "No changelog.ts entry for v${VERSION} - using checksums-only note."
+          fi
+
       - name: Download Windows artifact
         uses: actions/download-artifact@v4
         with:
@@ -342,7 +363,21 @@ jobs:
               LABEL="**${CHANNEL} Release**"
               ;;
           esac
-          BODY="## ${RELEASE_NAME} v${VERSION}\n\n${LABEL}\n\nSHA-256 checksums are in CHECKSUMS.txt attached to this release."
+          # Assemble the release body: title + channel label + generated notes
+          # (or a checksums-only fallback), then the checksums pointer. Written
+          # to a file so multi-line markdown survives intact (--notes-file).
+          {
+            echo "## ${RELEASE_NAME} v${VERSION}"
+            echo ""
+            echo "${LABEL}"
+            echo ""
+            if [ "${{ steps.notes.outputs.found }}" = "true" ]; then
+              cat RELEASE_NOTES.md
+              echo ""
+            fi
+            echo "---"
+            echo "SHA-256 checksums are in CHECKSUMS.txt attached to this release."
+          } > RELEASE_BODY.md
 
           # Tag stable as latest release; beta and dev are pre-releases
           PRERELEASE_FLAG=""
@@ -366,7 +401,7 @@ jobs:
             gh release create "${TAG}" $PRERELEASE_FLAG \
               --target "$GITHUB_SHA" \
               --title "${TITLE}" \
-              --notes "$(echo -e "${BODY}")" \
+              --notes-file RELEASE_BODY.md \
               artifacts/*
           fi
 
