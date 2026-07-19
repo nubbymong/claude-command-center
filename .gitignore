@@ -11,7 +11,8 @@ dist/
 # Personal/local config
 .claude/
 .agents/
-AGENTS.md
+# AGENTS.md is now TRACKED — it is the canonical, cross-tool agent brief
+# (ADR-004 / 2026-07-18). CLAUDE.md imports it via `@AGENTS.md`.
 .copilot-review-notes.md
 .superpowers/
 docs/superpowers/
