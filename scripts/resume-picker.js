@@ -185,6 +185,30 @@ function worktreeLabelFor(worktree) {
   return null
 }
 
+// ── Sanitize message text ───────────────────────────────────────────
+// The Claude CLI records structural XML inside user messages — slash-command
+// invocations (<command-name>/foo</command-name><command-message>…</command-message>
+// <command-args>…</command-args>), local-command output, and injected
+// <system-reminder> blocks. Left in, this markup fills the row and pushes the
+// real content off-screen (#130). Strip these tag families AND their contents
+// (they're structure, not conversation), collapse whitespace, and return null
+// when nothing meaningful remains (so a pure-command message is skipped).
+function sanitizeMessageText(raw) {
+  if (typeof raw !== 'string') return null
+  const text = raw
+    // <command-*>…</command-*> (name/message/args) and <local-command-*>…
+    // </local-command-*> (stdout/stderr/caveat/…) — strip tags AND contents.
+    // The backreference keeps each open tag matched to its own close tag.
+    .replace(/<(command-[a-z]+)>[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<(local-command-[a-z]+)>[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/gi, ' ')
+    // Leftover unpaired/partial wrapper tags (defensive).
+    .replace(/<\/?(?:command-[a-z]+|local-command-[a-z]+|system-reminder)>/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return text || null
+}
+
 // ── Extract user text from a message object ─────────────────────────
 function extractUserText(obj) {
   if (obj.isMeta) return null
@@ -200,10 +224,10 @@ function extractUserText(obj) {
     }
   }
   if (!text) return null
-  // Skip commands, caveats, and tool interrupts
-  if (text.startsWith('<command-name>') || text.startsWith('<local-command')
-      || text.startsWith('[Request interrupted')) return null
-  return text.replace(/[\r\n]+/g, ' ').trim()
+  // Tool-interrupt marker — not a tag, so sanitize won't catch it.
+  if (text.startsWith('[Request interrupted')) return null
+  // Strip command / system markup so the picker shows real content, not XML.
+  return sanitizeMessageText(text)
 }
 
 // ── Parse conversation: first message from head, last 5 from tail ───
@@ -223,17 +247,27 @@ function parseConversation(filePath) {
 
     let firstMessage = null
     let model = null
+    // Claude Code writes these metadata entries into the transcript: `ai-title`
+    // is its own concise AI-generated title for the conversation; `last-prompt`
+    // holds the most recent prompt text. They're the best labels when the head
+    // has no clean user message (resumed/compacted sessions), so a conversation
+    // no longer degrades to "(continued session)" (#130). No early break — these
+    // entries sit after the first user/assistant lines, and the head is small.
+    let aiTitle = null
+    let lastPrompt = null
 
     for (const line of headLines) {
       try {
         const obj = JSON.parse(line)
         if (obj.type === 'user' && !firstMessage) {
           firstMessage = extractUserText(obj)
-        }
-        if (obj.type === 'assistant' && obj.message?.model && !model) {
+        } else if (obj.type === 'assistant' && obj.message?.model && !model) {
           model = obj.message.model
+        } else if (obj.type === 'ai-title' && typeof obj.aiTitle === 'string') {
+          aiTitle = obj.aiTitle.trim() || aiTitle
+        } else if (obj.type === 'last-prompt' && typeof obj.lastPrompt === 'string') {
+          lastPrompt = sanitizeMessageText(obj.lastPrompt) || lastPrompt
         }
-        if (firstMessage && model) break
       } catch { /* skip */ }
     }
 
@@ -256,6 +290,11 @@ function parseConversation(filePath) {
         if (obj.type === 'user') {
           const text = extractUserText(obj)
           if (text) recentMessages.push(text)
+        } else if (obj.type === 'ai-title' && typeof obj.aiTitle === 'string' && obj.aiTitle.trim()) {
+          aiTitle = obj.aiTitle.trim() // append-only log: the latest title wins
+        } else if (obj.type === 'last-prompt' && typeof obj.lastPrompt === 'string') {
+          const p = sanitizeMessageText(obj.lastPrompt)
+          if (p) lastPrompt = p // latest wins
         }
       } catch { /* skip */ }
     }
@@ -263,9 +302,13 @@ function parseConversation(filePath) {
     // Last 5 user messages
     const lastMessages = recentMessages.slice(-5)
 
+    // firstMessage stays null when the head had no clean user text — the display
+    // builds the label from the aiTitle/lastPrompt/lastMessages fallback chain.
     return {
       sessionId,
-      firstMessage: (firstMessage || '(continued session)').trim(),
+      aiTitle,
+      firstMessage,
+      lastPrompt,
       lastMessages,
       model,
       mtime: stat.mtimeMs,
@@ -379,6 +422,42 @@ function truncate(str, maxLen) {
   return str.slice(0, maxLen - 1) + '…'
 }
 
+// ── Layout width ────────────────────────────────────────────────────
+// Render to the REAL interface width — the old hard clamp (78, then 120)
+// truncated content on wide terminals even though the window could show more
+// (#130). We only ever *display* what fits the window; the full message text is
+// read regardless and truncated to this width per line. Floor 60 keeps a narrow
+// terminal usable; a high sanity bound (400) guards a pathological columns value
+// without imposing an artificial narrow cap. Injectable for testing.
+function computeLayoutWidth(columns) {
+  const cols = Number(columns) || 80
+  return Math.max(60, Math.min(cols - 4, 400))
+}
+
+// ── CCC work names ──────────────────────────────────────────────────
+// Read the CCC session-state.json (its dir is passed via CCC_CONFIG_DIR by
+// pty-manager) and map each session's resume conversation UUID -> its
+// user-assigned work name (customName, from the rename feature). Lets the picker
+// show the recognizable work name next to the matching conversation instead of
+// only the first user message (#130). The transcript's basename UUID equals the
+// session's resumeUuid (both are what `claude --resume <uuid>` takes).
+// FAIL-SAFE: missing env / file / field / parse error -> empty map. Never throws.
+function loadWorkNames(configDir) {
+  const map = new Map()
+  try {
+    if (!configDir) return map
+    const raw = fs.readFileSync(path.join(configDir, 'session-state.json'), 'utf-8')
+    const data = JSON.parse(raw)
+    const sessions = Array.isArray(data && data.sessions) ? data.sessions : []
+    for (const s of sessions) {
+      const name = s && typeof s.customName === 'string' ? s.customName.trim() : ''
+      const uuid = s && typeof s.resumeUuid === 'string' ? s.resumeUuid : ''
+      if (name && uuid) map.set(uuid, name)
+    }
+  } catch { /* fail-safe */ }
+  return map
+}
+
 // ── Main ────────────────────────────────────────────────────────────
 async function main() {
   const cwd = process.cwd()
@@ -407,9 +486,12 @@ async function main() {
   }
 
   // ── Display ─────────────────────────────────────────────────────
-  const maxWidth = Math.min(process.stdout.columns || 80, 78)
+  const maxWidth = computeLayoutWidth(process.stdout.columns)
   const innerWidth = maxWidth - 6
   const dirDisplay = truncate(cwd, innerWidth)
+
+  // Map resume UUID -> CCC work name so a renamed session is recognizable here.
+  const workNames = loadWorkNames(process.env.CCC_CONFIG_DIR)
 
   console.log('')
   console.log(`  ${C.surface}╭─${C.blue} Resume Conversation ${C.surface}─ ${C.subtext}${dirDisplay} ${C.surface}${'─'.repeat(Math.max(0, maxWidth - 26 - dirDisplay.length))}╮${C.reset}`)
@@ -422,7 +504,16 @@ async function main() {
   for (let i = 0; i < conversations.length; i++) {
     const conv = conversations[i]
     const num = String(i + 1).padStart(2)
-    const title = truncate(conv.firstMessage.replace(/[\r\n]+/g, ' '), innerWidth - 6)
+    const workName = workNames.get(conv.sessionId)
+    // Best available label, most→least useful: the user's own work name, then
+    // Claude's AI title, then the first real user message, then the last prompt,
+    // then the most recent user message. "(continued session)" only when the
+    // conversation truly yielded no readable text (#130).
+    const recent = conv.lastMessages.length ? conv.lastMessages[conv.lastMessages.length - 1] : null
+    const primary = workName || conv.aiTitle || conv.firstMessage || conv.lastPrompt || recent || '(continued session)'
+    const primaryColored = workName
+      ? `${C.bold}${C.peach}${truncate(primary, innerWidth - 6)}${C.reset}`
+      : `${C.text}${truncate(primary, innerWidth - 6)}${C.reset}`
     const meta = [
       timeAgo(conv.mtime),
       formatSize(conv.size),
@@ -432,13 +523,19 @@ async function main() {
 
     // Title line. A non-main worktree conversation gets a distinct themed tag
     // (⑂ = branch/fork glyph) appended so the worktree is CALLED OUT.
-    let titleLine = `  ${C.surface}│${C.reset}  ${C.green}${num}${C.reset}  ${C.text}${title}${C.reset}`
+    let titleLine = `  ${C.surface}│${C.reset}  ${C.green}${num}${C.reset}  ${primaryColored}`
     if (conv.worktreeLabel) {
       titleLine += `  ${C.mauve}⑂ ${truncate(conv.worktreeLabel, 24)}${C.reset}`
     }
     console.log(titleLine)
     // Meta line
     console.log(`  ${C.surface}│${C.reset}      ${C.overlay}${meta}${C.reset}`)
+    // When we led with the work name, show the AI title / first message beneath
+    // so the row still says what the conversation was about.
+    const sub = workName ? (conv.aiTitle || conv.firstMessage || conv.lastPrompt) : null
+    if (sub) {
+      console.log(`  ${C.surface}│${C.reset}      ${C.dim}${C.subtext}${truncate(sub, innerWidth - 10)}${C.reset}`)
+    }
 
     // Last 5 user messages (dim, indented)
     if (conv.lastMessages.length > 0) {
@@ -586,6 +683,9 @@ module.exports = {
   scanWorktreeConversations,
   mergeAndLabel,
   parseConversation,
+  computeLayoutWidth,
+  loadWorkNames,
+  sanitizeMessageText,
 }
 
 if (require.main === module) {

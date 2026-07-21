@@ -1059,6 +1059,17 @@ export default function App() {
               // conversations themselves stay resumable from inside Claude.
               void window.electronAPI.session.clear()
             }}
+            onRefresh={async () => {
+              // The list is a boot-time snapshot; re-read the saved set so a
+              // session restarted since launch shows up (#130). Keep the current
+              // list on a transient empty read rather than dismissing the prompt.
+              try {
+                const saved = await window.electronAPI.session.load() as SessionState | null
+                setPendingRestore((prev) => (saved && saved.sessions.length > 0 ? saved : prev))
+              } catch (err) {
+                console.error('[App] Resume refresh failed:', err)
+              }
+            }}
           />
         )}
 
