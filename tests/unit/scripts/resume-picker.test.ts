@@ -15,7 +15,7 @@ const picker = require('../../../scripts/resume-picker.js') as {
   scanWorktreeConversations: (
     wt: { path: string; branch: string | null; isMain: boolean },
     claudeProjectsDir: string,
-  ) => Array<{ sessionId: string; mtime: number; size: number; filePath: string; sourceCwd: string; worktreeLabel: string | null; firstMessage: string; lastMessages: string[] }>
+  ) => Array<{ sessionId: string; mtime: number; size: number; filePath: string; sourceCwd: string; worktreeLabel: string | null; firstMessage: string | null; aiTitle: string | null; lastPrompt: string | null; lastMessages: string[] }>
   mergeAndLabel: (
     conversationsBySource: Array<Array<{ mtime: number; filePath: string }>>,
     cap?: number,
@@ -224,6 +224,47 @@ describe('resume-picker scanWorktreeConversations', () => {
     expect(out).toEqual([])
   })
 
+  it('surfaces ai-title + last-prompt; a command-only first message is skipped (#130)', () => {
+    const wtPath = join(projectsDir, '..', 'titled-repo')
+    const dir = join(projectsDir, picker.encodeProjectPath(wtPath))
+    mkdirSync(dir, { recursive: true })
+    const uuid = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee'
+    const lines = [
+      JSON.stringify({ type: 'last-prompt', lastPrompt: 'wire up the release notes' }),
+      JSON.stringify({ type: 'ai-title', aiTitle: 'Add changelog infrastructure' }),
+      // First user message is a pure slash command → sanitized to null, skipped.
+      JSON.stringify({ type: 'user', message: { content: '<command-name>/compact</command-name><command-message>compact</command-message>' } }),
+      JSON.stringify({ type: 'user', message: { content: 'now do the AGENTS.md migration' } }),
+    ]
+    const pad = JSON.stringify({ type: 'file-history-snapshot', data: 'x'.repeat(200) })
+    for (let i = 0; i < 200; i++) lines.push(pad)
+    writeFileSync(join(dir, `${uuid}.jsonl`), lines.join('\n') + '\n')
+    const out = picker.scanWorktreeConversations({ path: wtPath, branch: 'main', isMain: true }, projectsDir)
+    expect(out).toHaveLength(1)
+    expect(out[0].aiTitle).toBe('Add changelog infrastructure')
+    expect(out[0].lastPrompt).toBe('wire up the release notes')
+    // The first *clean* user message wins for firstMessage (command-only skipped).
+    expect(out[0].firstMessage).toBe('now do the AGENTS.md migration')
+  })
+
+  it('firstMessage is null when the head has no clean user text (→ display falls back)', () => {
+    const wtPath = join(projectsDir, '..', 'nofirst-repo')
+    const dir = join(projectsDir, picker.encodeProjectPath(wtPath))
+    mkdirSync(dir, { recursive: true })
+    const uuid = 'ffffffff-ffff-ffff-ffff-ffffffffffff'
+    const lines = [
+      JSON.stringify({ type: 'ai-title', aiTitle: 'Only a title here' }),
+      JSON.stringify({ type: 'user', message: { content: '<command-name>/clear</command-name>' } }),
+    ]
+    const pad = JSON.stringify({ type: 'system', message: 'x'.repeat(200) })
+    for (let i = 0; i < 200; i++) lines.push(pad)
+    writeFileSync(join(dir, `${uuid}.jsonl`), lines.join('\n') + '\n')
+    const out = picker.scanWorktreeConversations({ path: wtPath, branch: 'main', isMain: true }, projectsDir)
+    expect(out).toHaveLength(1)
+    expect(out[0].firstMessage).toBeNull()
+    expect(out[0].aiTitle).toBe('Only a title here')
+  })
+
   it('THE FIX: lists a direct-work transcript that has NO companion dir', () => {
     // The root-cause bug: a conversation that never spawned a subagent/workflow
     // has no companion dir, so the old companion-dir gate hid it from the picker
@@ -374,6 +415,10 @@ describe('resume-picker sanitizeMessageText', () => {
     expect(picker.sanitizeMessageText('<command-args>--flag x</command-args>real')).toBe('real')
     expect(picker.sanitizeMessageText('keep<local-command-stdout>noise</local-command-stdout>')).toBe('keep')
     expect(picker.sanitizeMessageText('<system-reminder>be nice</system-reminder>fix the bug')).toBe('fix the bug')
+  })
+
+  it('strips a local-command-caveat block (real-world head noise)', () => {
+    expect(picker.sanitizeMessageText('<local-command-caveat>Caveat: messages below were generated…</local-command-caveat>the real ask')).toBe('the real ask')
   })
 
   it('removes leftover unpaired wrapper tags and collapses whitespace', () => {

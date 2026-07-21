@@ -196,11 +196,11 @@ function worktreeLabelFor(worktree) {
 function sanitizeMessageText(raw) {
   if (typeof raw !== 'string') return null
   const text = raw
-    .replace(/<command-name>[\s\S]*?<\/command-name>/gi, ' ')
-    .replace(/<command-message>[\s\S]*?<\/command-message>/gi, ' ')
-    .replace(/<command-args>[\s\S]*?<\/command-args>/gi, ' ')
-    .replace(/<local-command-stdout>[\s\S]*?<\/local-command-stdout>/gi, ' ')
-    .replace(/<local-command-stderr>[\s\S]*?<\/local-command-stderr>/gi, ' ')
+    // <command-*>…</command-*> (name/message/args) and <local-command-*>…
+    // </local-command-*> (stdout/stderr/caveat/…) — strip tags AND contents.
+    // The backreference keeps each open tag matched to its own close tag.
+    .replace(/<(command-[a-z]+)>[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<(local-command-[a-z]+)>[\s\S]*?<\/\1>/gi, ' ')
     .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/gi, ' ')
     // Leftover unpaired/partial wrapper tags (defensive).
     .replace(/<\/?(?:command-[a-z]+|local-command-[a-z]+|system-reminder)>/gi, ' ')
@@ -247,17 +247,27 @@ function parseConversation(filePath) {
 
     let firstMessage = null
     let model = null
+    // Claude Code writes these metadata entries into the transcript: `ai-title`
+    // is its own concise AI-generated title for the conversation; `last-prompt`
+    // holds the most recent prompt text. They're the best labels when the head
+    // has no clean user message (resumed/compacted sessions), so a conversation
+    // no longer degrades to "(continued session)" (#130). No early break — these
+    // entries sit after the first user/assistant lines, and the head is small.
+    let aiTitle = null
+    let lastPrompt = null
 
     for (const line of headLines) {
       try {
         const obj = JSON.parse(line)
         if (obj.type === 'user' && !firstMessage) {
           firstMessage = extractUserText(obj)
-        }
-        if (obj.type === 'assistant' && obj.message?.model && !model) {
+        } else if (obj.type === 'assistant' && obj.message?.model && !model) {
           model = obj.message.model
+        } else if (obj.type === 'ai-title' && typeof obj.aiTitle === 'string') {
+          aiTitle = obj.aiTitle.trim() || aiTitle
+        } else if (obj.type === 'last-prompt' && typeof obj.lastPrompt === 'string') {
+          lastPrompt = sanitizeMessageText(obj.lastPrompt) || lastPrompt
         }
-        if (firstMessage && model) break
       } catch { /* skip */ }
     }
 
@@ -280,6 +290,11 @@ function parseConversation(filePath) {
         if (obj.type === 'user') {
           const text = extractUserText(obj)
           if (text) recentMessages.push(text)
+        } else if (obj.type === 'ai-title' && typeof obj.aiTitle === 'string' && obj.aiTitle.trim()) {
+          aiTitle = obj.aiTitle.trim() // append-only log: the latest title wins
+        } else if (obj.type === 'last-prompt' && typeof obj.lastPrompt === 'string') {
+          const p = sanitizeMessageText(obj.lastPrompt)
+          if (p) lastPrompt = p // latest wins
         }
       } catch { /* skip */ }
     }
@@ -287,9 +302,13 @@ function parseConversation(filePath) {
     // Last 5 user messages
     const lastMessages = recentMessages.slice(-5)
 
+    // firstMessage stays null when the head had no clean user text — the display
+    // builds the label from the aiTitle/lastPrompt/lastMessages fallback chain.
     return {
       sessionId,
-      firstMessage: (firstMessage || '(continued session)').trim(),
+      aiTitle,
+      firstMessage,
+      lastPrompt,
       lastMessages,
       model,
       mtime: stat.mtimeMs,
@@ -486,10 +505,12 @@ async function main() {
     const conv = conversations[i]
     const num = String(i + 1).padStart(2)
     const workName = workNames.get(conv.sessionId)
-    const firstMsg = conv.firstMessage.replace(/[\r\n]+/g, ' ')
-    // Lead with the recognizable CCC work name when this conversation was a
-    // renamed session; otherwise fall back to the first user message (#130).
-    const primary = workName || firstMsg
+    // Best available label, most→least useful: the user's own work name, then
+    // Claude's AI title, then the first real user message, then the last prompt,
+    // then the most recent user message. "(continued session)" only when the
+    // conversation truly yielded no readable text (#130).
+    const recent = conv.lastMessages.length ? conv.lastMessages[conv.lastMessages.length - 1] : null
+    const primary = workName || conv.aiTitle || conv.firstMessage || conv.lastPrompt || recent || '(continued session)'
     const primaryColored = workName
       ? `${C.bold}${C.peach}${truncate(primary, innerWidth - 6)}${C.reset}`
       : `${C.text}${truncate(primary, innerWidth - 6)}${C.reset}`
@@ -509,9 +530,11 @@ async function main() {
     console.log(titleLine)
     // Meta line
     console.log(`  ${C.surface}│${C.reset}      ${C.overlay}${meta}${C.reset}`)
-    // When we led with the work name, still show what the conversation was about.
-    if (workName) {
-      console.log(`  ${C.surface}│${C.reset}      ${C.dim}${C.subtext}${truncate(firstMsg, innerWidth - 10)}${C.reset}`)
+    // When we led with the work name, show the AI title / first message beneath
+    // so the row still says what the conversation was about.
+    const sub = workName ? (conv.aiTitle || conv.firstMessage || conv.lastPrompt) : null
+    if (sub) {
+      console.log(`  ${C.surface}│${C.reset}      ${C.dim}${C.subtext}${truncate(sub, innerWidth - 10)}${C.reset}`)
     }
 
     // Last 5 user messages (dim, indented)

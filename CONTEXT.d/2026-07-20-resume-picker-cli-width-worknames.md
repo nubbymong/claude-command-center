@@ -26,6 +26,20 @@ Three symptoms, three root causes:
   Conversations that were renamed sessions now lead with the work name (bold peach), with
   the first user message kept as a dim sub-line so context isn't lost.
 - **Hard to pick:** addressed by the above -- recognizable name up front + wider rows.
+- **"(continued session)" everywhere:** parseConversation only looked at type=user/assistant
+  in the 32KB head; resumed/compacted sessions (head full of mode/attachment/
+  file-history-snapshot/command lines) yielded no clean user text -> the "(continued
+  session)" fallback. DISCOVERY: Claude Code already writes `ai-title` ({aiTitle}) and
+  `last-prompt` ({lastPrompt}) entries per transcript -- the AI summary a session
+  processor would have produced already exists. Fix: parseConversation captures aiTitle +
+  lastPrompt (head AND tail, latest-wins since the .jsonl is append-only), firstMessage is
+  now null-when-absent, and the display picks the best label via a chain:
+  workName -> aiTitle -> firstMessage -> lastPrompt -> last user message -> "(continued
+  session)". Real-data check: 5/6 recent transcripts now show their AI title; the 6th shows
+  a real last message. No custom AI processor needed.
+- Also generalized sanitizeMessageText to strip ANY command-*/local-command-* tag family
+  (backreference-matched), so `<local-command-caveat>` (the "Caveat:" preamble) no longer
+  leaks in.
 
 - **Not renderer-only** (contra the issue body): touches `scripts/resume-picker.js` +
   `src/main/pty-manager.ts` (env injection, best-effort/fail-safe). No IPC/schema changes.
