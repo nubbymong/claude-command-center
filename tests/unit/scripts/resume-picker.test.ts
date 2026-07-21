@@ -21,6 +21,8 @@ const picker = require('../../../scripts/resume-picker.js') as {
     cap?: number,
   ) => Array<{ mtime: number; filePath: string }>
   ensureCompanionDir: (projectDir: string, uuid: string) => boolean
+  computeLayoutWidth: (columns: number | undefined) => number
+  loadWorkNames: (configDir: string | undefined) => Map<string, string>
 }
 
 // ── encodeProjectPath ──────────────────────────────────────────────
@@ -330,5 +332,67 @@ describe('resume-picker mergeAndLabel', () => {
   it('tolerates non-array sources (fail-safe)', () => {
     const out = picker.mergeAndLabel([null, undefined, [{ sessionId: 'y', mtime: 1, filePath: '/p/y.jsonl', worktreeLabel: null }]] as never)
     expect(out).toHaveLength(1)
+  })
+})
+
+// ── computeLayoutWidth (#130 width fix) ─────────────────────────────
+describe('resume-picker computeLayoutWidth', () => {
+  it('honors a wide terminal instead of the old 78-col clamp (capped at 120)', () => {
+    expect(picker.computeLayoutWidth(200)).toBe(120)
+    expect(picker.computeLayoutWidth(100)).toBe(96) // cols - 4
+  })
+
+  it('floors at 60 for a narrow terminal', () => {
+    expect(picker.computeLayoutWidth(40)).toBe(60)
+    expect(picker.computeLayoutWidth(10)).toBe(60)
+  })
+
+  it('falls back to 80 columns when width is unknown (→ 76)', () => {
+    expect(picker.computeLayoutWidth(undefined)).toBe(76)
+    expect(picker.computeLayoutWidth(0)).toBe(76)
+  })
+})
+
+// ── loadWorkNames (#130: surface the renamed session's work name) ────
+describe('resume-picker loadWorkNames', () => {
+  let dir: string
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'ccc-worknames-')) })
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }) })
+
+  const write = (state: unknown) =>
+    writeFileSync(join(dir, 'session-state.json'), JSON.stringify(state), 'utf-8')
+
+  it('maps resumeUuid -> customName for renamed sessions', () => {
+    write({
+      sessions: [
+        { id: 'a', resumeUuid: 'uuid-1', customName: 'Billing refactor' },
+        { id: 'b', resumeUuid: 'uuid-2', customName: '  Docs sweep  ' }, // trimmed
+      ],
+    })
+    const map = picker.loadWorkNames(dir)
+    expect(map.get('uuid-1')).toBe('Billing refactor')
+    expect(map.get('uuid-2')).toBe('Docs sweep')
+    expect(map.size).toBe(2)
+  })
+
+  it('skips sessions without a customName or without a resumeUuid', () => {
+    write({
+      sessions: [
+        { id: 'a', resumeUuid: 'uuid-1' },                    // no name
+        { id: 'b', customName: 'Named but no uuid' },         // no uuid
+        { id: 'c', resumeUuid: 'uuid-3', customName: '   ' }, // blank name
+        { id: 'd', resumeUuid: 'uuid-4', customName: 'Keep' },
+      ],
+    })
+    const map = picker.loadWorkNames(dir)
+    expect(map.size).toBe(1)
+    expect(map.get('uuid-4')).toBe('Keep')
+  })
+
+  it('is fail-safe: missing dir, missing file, or bad JSON → empty map', () => {
+    expect(picker.loadWorkNames(undefined).size).toBe(0)
+    expect(picker.loadWorkNames(dir).size).toBe(0) // no file written yet
+    writeFileSync(join(dir, 'session-state.json'), '{ not json', 'utf-8')
+    expect(picker.loadWorkNames(dir).size).toBe(0)
   })
 })

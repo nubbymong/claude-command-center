@@ -39,7 +39,7 @@ import { getProfileConfigDir, setupProfileLinks, getPrimaryProfileId, backupProf
 import { captureClaudeAccount, clearClaudeAccount, getAccountIdentity, pushAccountIdentity, startWatchingAccountIdentity, stopWatchingAccountIdentity, getWatchedProfileId } from './claude-account-identity'
 import type { AccountIdentity } from '../shared/types'
 import { updateSessionMeta, clearSessionMeta } from './session-registry'
-import { readConfig } from './config-manager'
+import { readConfig, getConfigDir } from './config-manager'
 import { getPtyIntegrityMonitor } from './services/pty-integrity-monitor'
 
 import * as path from 'path'
@@ -1035,6 +1035,10 @@ export function spawnPty(
       home = getProfileConfigDir(resolvedProfileId)
     }
     const finalSpawnEnv = withProfileHome(spawnEnv, home)
+    // Give the resume-picker (run inside this PTY) the CONFIG dir so it can read
+    // session-state.json and label conversations with their CCC work name
+    // (customName). Read-only, best-effort — never block the spawn (#130).
+    try { finalSpawnEnv.CCC_CONFIG_DIR = getConfigDir() } catch { /* best-effort */ }
     logInfo(`[profiles] session ${sessionId} account spawn: requestedProfileId=${wantProfileId ?? '(none)'} resolvedProfileId=${resolvedProfileId ?? '(none/bare-global)'} shellOnly=${shellOnly} USERPROFILE=${home ?? '(real home)'}`)
     // Reliable, drift-immune account identity: capture once at spawn from the
     // session's profile (or the default ~/.claude.json), never re-read.
