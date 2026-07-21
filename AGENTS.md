@@ -65,6 +65,7 @@ RC-branch model (adopted with #89): `beta` is never frozen — features merge th
 - Promote to stable: merge `release/vX.Y.Z` → `main`, run the release workflow from `main` with `channel=stable`, then delete the release branch
 - Changelog is generated from `src/renderer/changelog.ts` (single source; also drives the in-app "What's New" modal). Before a release, add the version's entry there, run `npm run changelog` to refresh `CHANGELOG.md`, and commit both. `release.js` already syncs the version line; the release workflow auto-populates the GitHub release notes from the same file (`scripts/gen-changelog.js --notes <version>`) — no hand-pasting. CI (`Changelog in sync`) fails on drift
 - Commits/PR titles follow Conventional Commits, enforced by a Husky `commit-msg` hook and the `PR Title` workflow (`commitlint.config.js`)
+- Issue lifecycle: label an issue `in-beta` (don't close it) when its fix merges to `beta`; close it only when the change promotes to `main`. See CONTRIBUTING.md ("Issue lifecycle")
 - GitHub Actions builds Windows (.exe) + macOS (.dmg) + Linux (.AppImage, experimental) installers; the release job tags the exact built commit (`--target`) so the in-app updater orders releases correctly
 - Linux builds on ubuntu-latest → glibc 2.39 floor (Ubuntu 24.04+/Rocky 10+); older distros need a container build. Vision on Linux requires a deb/rpm Chrome/Chromium (snap confinement blocks the CDP profile dir)
 - Never commit secrets, .env files, or personal paths

@@ -76,6 +76,27 @@ We cut a dedicated RC branch for every release cycle so that `beta` stays open f
 - Fixes made on the RC branch are back-ported to `beta` so the next cycle keeps them.
 - When the RC is accepted, merge `release/vX.Y.Z` → `main`, then delete the RC branch.
 
+### Issue lifecycle (beta vs. main)
+
+Because fixes merge to `beta` (in testing) long before they ship in a stable
+`main` release, an issue has three states — don't close an issue the moment its
+fix hits `beta`:
+
+- **Open, no status label** — not yet fixed (todo / in progress).
+- **Open, labeled `in-beta`** — the fix is merged to `beta` and in testing, but
+  not yet shipped. Apply `in-beta` when the fixing PR merges to `beta`, and add a
+  comment naming that PR.
+- **Closed (completed)** — the fix has promoted to `main` (shipped in a stable
+  release). Only then close the issue.
+
+Rationale: GitHub only auto-closes issues on merges to the **default** branch
+(`main`), never on `beta` merges — so beta-merged issues won't self-close, and
+closing them early hides "shipped" behind "merged, still baking." The generated
+`CHANGELOG.md`/release notes show the same distinction per version.
+
+At `main` promotion, the `in-beta` issues covered by the release are closed and
+the label removed. This step is manual today; automating it is tracked in #134.
+
 ## Commit Messages
 
 This project follows [Conventional Commits](https://www.conventionalcommits.org/).
