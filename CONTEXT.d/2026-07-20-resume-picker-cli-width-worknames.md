@@ -8,7 +8,16 @@ this branch; this fragment covers the CLI picker.
 Three symptoms, three root causes:
 - **Width:** picker hard-clamped to 78 cols (`Math.min(process.stdout.columns||80, 78)`),
   so title/meta/preview lines truncated on any wider terminal. Fix: `computeLayoutWidth`
-  honors real width (floor 60, ceiling 120).
+  renders to the REAL interface width (floor 60; high 400 sanity bound, NOT an artificial
+  narrow cap — an earlier pass mistakenly capped at 120, which a wide window exceeded).
+  Full message text is still read; only the display truncates per line to this width.
+- **XML noise ate the width:** user messages carry structural markup — slash-command
+  invocations (`<command-name>`/`<command-message>`/`<command-args>`), `<local-command-*>`
+  output, `<system-reminder>` blocks. The old filter only skipped messages *starting with*
+  `<command-name>`/`<local-command`, so `<command-message>` and inline tags leaked through
+  and pushed real content off-screen. Fix: `sanitizeMessageText` strips those tag families
+  AND their contents, collapses whitespace, returns null when nothing meaningful remains
+  (pure-command messages are skipped). `extractUserText` routes through it.
 - **Renamed work name never shown:** the picker only reads Claude transcripts
   (`~/.claude/projects/*.jsonl`) and had no access to session-state.json (where
   `customName` lives). It was spawned with only cwd + forwarded flags. Fix: pty-manager

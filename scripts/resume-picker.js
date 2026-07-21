@@ -185,6 +185,30 @@ function worktreeLabelFor(worktree) {
   return null
 }
 
+// ── Sanitize message text ───────────────────────────────────────────
+// The Claude CLI records structural XML inside user messages — slash-command
+// invocations (<command-name>/foo</command-name><command-message>…</command-message>
+// <command-args>…</command-args>), local-command output, and injected
+// <system-reminder> blocks. Left in, this markup fills the row and pushes the
+// real content off-screen (#130). Strip these tag families AND their contents
+// (they're structure, not conversation), collapse whitespace, and return null
+// when nothing meaningful remains (so a pure-command message is skipped).
+function sanitizeMessageText(raw) {
+  if (typeof raw !== 'string') return null
+  const text = raw
+    .replace(/<command-name>[\s\S]*?<\/command-name>/gi, ' ')
+    .replace(/<command-message>[\s\S]*?<\/command-message>/gi, ' ')
+    .replace(/<command-args>[\s\S]*?<\/command-args>/gi, ' ')
+    .replace(/<local-command-stdout>[\s\S]*?<\/local-command-stdout>/gi, ' ')
+    .replace(/<local-command-stderr>[\s\S]*?<\/local-command-stderr>/gi, ' ')
+    .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/gi, ' ')
+    // Leftover unpaired/partial wrapper tags (defensive).
+    .replace(/<\/?(?:command-[a-z]+|local-command-[a-z]+|system-reminder)>/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return text || null
+}
+
 // ── Extract user text from a message object ─────────────────────────
 function extractUserText(obj) {
   if (obj.isMeta) return null
@@ -200,10 +224,10 @@ function extractUserText(obj) {
     }
   }
   if (!text) return null
-  // Skip commands, caveats, and tool interrupts
-  if (text.startsWith('<command-name>') || text.startsWith('<local-command')
-      || text.startsWith('[Request interrupted')) return null
-  return text.replace(/[\r\n]+/g, ' ').trim()
+  // Tool-interrupt marker — not a tag, so sanitize won't catch it.
+  if (text.startsWith('[Request interrupted')) return null
+  // Strip command / system markup so the picker shows real content, not XML.
+  return sanitizeMessageText(text)
 }
 
 // ── Parse conversation: first message from head, last 5 from tail ───
@@ -380,13 +404,15 @@ function truncate(str, maxLen) {
 }
 
 // ── Layout width ────────────────────────────────────────────────────
-// Honor the real terminal width instead of the old hard 78-col clamp, which
-// truncated the title/meta/preview lines on any wider terminal (#130). Floor 60
-// keeps a narrow terminal usable; ceiling 120 keeps lines readable on very wide
-// ones. Injectable for testing.
+// Render to the REAL interface width — the old hard clamp (78, then 120)
+// truncated content on wide terminals even though the window could show more
+// (#130). We only ever *display* what fits the window; the full message text is
+// read regardless and truncated to this width per line. Floor 60 keeps a narrow
+// terminal usable; a high sanity bound (400) guards a pathological columns value
+// without imposing an artificial narrow cap. Injectable for testing.
 function computeLayoutWidth(columns) {
   const cols = Number(columns) || 80
-  return Math.max(60, Math.min(cols - 4, 120))
+  return Math.max(60, Math.min(cols - 4, 400))
 }
 
 // ── CCC work names ──────────────────────────────────────────────────
@@ -636,6 +662,7 @@ module.exports = {
   parseConversation,
   computeLayoutWidth,
   loadWorkNames,
+  sanitizeMessageText,
 }
 
 if (require.main === module) {

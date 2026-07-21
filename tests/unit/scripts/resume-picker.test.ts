@@ -23,6 +23,7 @@ const picker = require('../../../scripts/resume-picker.js') as {
   ensureCompanionDir: (projectDir: string, uuid: string) => boolean
   computeLayoutWidth: (columns: number | undefined) => number
   loadWorkNames: (configDir: string | undefined) => Map<string, string>
+  sanitizeMessageText: (raw: unknown) => string | null
 }
 
 // ── encodeProjectPath ──────────────────────────────────────────────
@@ -337,9 +338,9 @@ describe('resume-picker mergeAndLabel', () => {
 
 // ── computeLayoutWidth (#130 width fix) ─────────────────────────────
 describe('resume-picker computeLayoutWidth', () => {
-  it('honors a wide terminal instead of the old 78-col clamp (capped at 120)', () => {
-    expect(picker.computeLayoutWidth(200)).toBe(120)
-    expect(picker.computeLayoutWidth(100)).toBe(96) // cols - 4
+  it('renders to the real interface width (no artificial 120 clamp)', () => {
+    expect(picker.computeLayoutWidth(200)).toBe(196) // cols - 4, wide window
+    expect(picker.computeLayoutWidth(100)).toBe(96)
   })
 
   it('floors at 60 for a narrow terminal', () => {
@@ -347,9 +348,46 @@ describe('resume-picker computeLayoutWidth', () => {
     expect(picker.computeLayoutWidth(10)).toBe(60)
   })
 
+  it('caps at a 400-col sanity bound for pathological widths', () => {
+    expect(picker.computeLayoutWidth(10000)).toBe(400)
+  })
+
   it('falls back to 80 columns when width is unknown (→ 76)', () => {
     expect(picker.computeLayoutWidth(undefined)).toBe(76)
     expect(picker.computeLayoutWidth(0)).toBe(76)
+  })
+})
+
+// ── sanitizeMessageText (#130: strip command/system XML) ────────────
+describe('resume-picker sanitizeMessageText', () => {
+  it('drops a pure slash-command invocation entirely (→ null)', () => {
+    const raw = '<command-name>/compact</command-name><command-message>compact</command-message>'
+    expect(picker.sanitizeMessageText(raw)).toBeNull()
+  })
+
+  it('strips command markup but keeps surrounding prose', () => {
+    const raw = 'before <command-message>running foo</command-message> after'
+    expect(picker.sanitizeMessageText(raw)).toBe('before after')
+  })
+
+  it('strips command-args, local-command output, and system-reminder blocks', () => {
+    expect(picker.sanitizeMessageText('<command-args>--flag x</command-args>real')).toBe('real')
+    expect(picker.sanitizeMessageText('keep<local-command-stdout>noise</local-command-stdout>')).toBe('keep')
+    expect(picker.sanitizeMessageText('<system-reminder>be nice</system-reminder>fix the bug')).toBe('fix the bug')
+  })
+
+  it('removes leftover unpaired wrapper tags and collapses whitespace', () => {
+    expect(picker.sanitizeMessageText('a  <command-message>\n\n b')).toBe('a b')
+  })
+
+  it('is fail-safe for non-strings and empties', () => {
+    expect(picker.sanitizeMessageText(undefined)).toBeNull()
+    expect(picker.sanitizeMessageText(123)).toBeNull()
+    expect(picker.sanitizeMessageText('   ')).toBeNull()
+  })
+
+  it('leaves normal prose untouched (whitespace-collapsed)', () => {
+    expect(picker.sanitizeMessageText('Fix the login redirect loop')).toBe('Fix the login redirect loop')
   })
 })
 
