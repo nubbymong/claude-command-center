@@ -76,6 +76,8 @@ We cut a dedicated RC branch for every release cycle so that `beta` stays open f
 - Fixes made on the RC branch are back-ported to `beta` so the next cycle keeps them.
 - When the RC is accepted, merge `release/vX.Y.Z` → `main`, then delete the RC branch.
 
+For the versioning scheme, prerelease suffixes (`-beta.N`/`-rc.N`), update channels, and when a rebuild ships to users vs. requires a version bump, see [`docs/versioning.md`](docs/versioning.md).
+
 ### Issue lifecycle (beta vs. main)
 
 Because fixes merge to `beta` (in testing) long before they ship in a stable
