@@ -1236,7 +1236,7 @@ export function spawnPty(
         if (gw && gwStatus?.listening && gwStatus.port) {
           try {
             const secret = gw.registerSession(sessionId)
-            injectHooks({ sessionId, settingsPath: sesPath, port: gwStatus.port, secret })
+            injectHooks({ sessionId, settingsPath: sesPath, port: gwStatus.port, secret, cwd: claudeCwd })
           } catch (err) {
             logError(`[pty] Failed to inject hooks for ${sessionId}: ${(err as Error)?.message ?? err}`)
           }
