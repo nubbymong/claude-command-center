@@ -15,12 +15,15 @@ const picker = require('../../../scripts/resume-picker.js') as {
   scanWorktreeConversations: (
     wt: { path: string; branch: string | null; isMain: boolean },
     claudeProjectsDir: string,
-  ) => Array<{ sessionId: string; mtime: number; size: number; filePath: string; sourceCwd: string; worktreeLabel: string | null; firstMessage: string; lastMessages: string[] }>
+  ) => Array<{ sessionId: string; mtime: number; size: number; filePath: string; sourceCwd: string; worktreeLabel: string | null; firstMessage: string | null; aiTitle: string | null; lastPrompt: string | null; lastMessages: string[] }>
   mergeAndLabel: (
     conversationsBySource: Array<Array<{ mtime: number; filePath: string }>>,
     cap?: number,
   ) => Array<{ mtime: number; filePath: string }>
   ensureCompanionDir: (projectDir: string, uuid: string) => boolean
+  computeLayoutWidth: (columns: number | undefined) => number
+  loadWorkNames: (configDir: string | undefined) => Map<string, string>
+  sanitizeMessageText: (raw: unknown) => string | null
 }
 
 // ── encodeProjectPath ──────────────────────────────────────────────
@@ -221,6 +224,47 @@ describe('resume-picker scanWorktreeConversations', () => {
     expect(out).toEqual([])
   })
 
+  it('surfaces ai-title + last-prompt; a command-only first message is skipped (#130)', () => {
+    const wtPath = join(projectsDir, '..', 'titled-repo')
+    const dir = join(projectsDir, picker.encodeProjectPath(wtPath))
+    mkdirSync(dir, { recursive: true })
+    const uuid = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee'
+    const lines = [
+      JSON.stringify({ type: 'last-prompt', lastPrompt: 'wire up the release notes' }),
+      JSON.stringify({ type: 'ai-title', aiTitle: 'Add changelog infrastructure' }),
+      // First user message is a pure slash command → sanitized to null, skipped.
+      JSON.stringify({ type: 'user', message: { content: '<command-name>/compact</command-name><command-message>compact</command-message>' } }),
+      JSON.stringify({ type: 'user', message: { content: 'now do the AGENTS.md migration' } }),
+    ]
+    const pad = JSON.stringify({ type: 'file-history-snapshot', data: 'x'.repeat(200) })
+    for (let i = 0; i < 200; i++) lines.push(pad)
+    writeFileSync(join(dir, `${uuid}.jsonl`), lines.join('\n') + '\n')
+    const out = picker.scanWorktreeConversations({ path: wtPath, branch: 'main', isMain: true }, projectsDir)
+    expect(out).toHaveLength(1)
+    expect(out[0].aiTitle).toBe('Add changelog infrastructure')
+    expect(out[0].lastPrompt).toBe('wire up the release notes')
+    // The first *clean* user message wins for firstMessage (command-only skipped).
+    expect(out[0].firstMessage).toBe('now do the AGENTS.md migration')
+  })
+
+  it('firstMessage is null when the head has no clean user text (→ display falls back)', () => {
+    const wtPath = join(projectsDir, '..', 'nofirst-repo')
+    const dir = join(projectsDir, picker.encodeProjectPath(wtPath))
+    mkdirSync(dir, { recursive: true })
+    const uuid = 'ffffffff-ffff-ffff-ffff-ffffffffffff'
+    const lines = [
+      JSON.stringify({ type: 'ai-title', aiTitle: 'Only a title here' }),
+      JSON.stringify({ type: 'user', message: { content: '<command-name>/clear</command-name>' } }),
+    ]
+    const pad = JSON.stringify({ type: 'system', message: 'x'.repeat(200) })
+    for (let i = 0; i < 200; i++) lines.push(pad)
+    writeFileSync(join(dir, `${uuid}.jsonl`), lines.join('\n') + '\n')
+    const out = picker.scanWorktreeConversations({ path: wtPath, branch: 'main', isMain: true }, projectsDir)
+    expect(out).toHaveLength(1)
+    expect(out[0].firstMessage).toBeNull()
+    expect(out[0].aiTitle).toBe('Only a title here')
+  })
+
   it('THE FIX: lists a direct-work transcript that has NO companion dir', () => {
     // The root-cause bug: a conversation that never spawned a subagent/workflow
     // has no companion dir, so the old companion-dir gate hid it from the picker
@@ -330,5 +374,108 @@ describe('resume-picker mergeAndLabel', () => {
   it('tolerates non-array sources (fail-safe)', () => {
     const out = picker.mergeAndLabel([null, undefined, [{ sessionId: 'y', mtime: 1, filePath: '/p/y.jsonl', worktreeLabel: null }]] as never)
     expect(out).toHaveLength(1)
+  })
+})
+
+// ── computeLayoutWidth (#130 width fix) ─────────────────────────────
+describe('resume-picker computeLayoutWidth', () => {
+  it('renders to the real interface width (no artificial 120 clamp)', () => {
+    expect(picker.computeLayoutWidth(200)).toBe(196) // cols - 4, wide window
+    expect(picker.computeLayoutWidth(100)).toBe(96)
+  })
+
+  it('floors at 60 for a narrow terminal', () => {
+    expect(picker.computeLayoutWidth(40)).toBe(60)
+    expect(picker.computeLayoutWidth(10)).toBe(60)
+  })
+
+  it('caps at a 400-col sanity bound for pathological widths', () => {
+    expect(picker.computeLayoutWidth(10000)).toBe(400)
+  })
+
+  it('falls back to 80 columns when width is unknown (→ 76)', () => {
+    expect(picker.computeLayoutWidth(undefined)).toBe(76)
+    expect(picker.computeLayoutWidth(0)).toBe(76)
+  })
+})
+
+// ── sanitizeMessageText (#130: strip command/system XML) ────────────
+describe('resume-picker sanitizeMessageText', () => {
+  it('drops a pure slash-command invocation entirely (→ null)', () => {
+    const raw = '<command-name>/compact</command-name><command-message>compact</command-message>'
+    expect(picker.sanitizeMessageText(raw)).toBeNull()
+  })
+
+  it('strips command markup but keeps surrounding prose', () => {
+    const raw = 'before <command-message>running foo</command-message> after'
+    expect(picker.sanitizeMessageText(raw)).toBe('before after')
+  })
+
+  it('strips command-args, local-command output, and system-reminder blocks', () => {
+    expect(picker.sanitizeMessageText('<command-args>--flag x</command-args>real')).toBe('real')
+    expect(picker.sanitizeMessageText('keep<local-command-stdout>noise</local-command-stdout>')).toBe('keep')
+    expect(picker.sanitizeMessageText('<system-reminder>be nice</system-reminder>fix the bug')).toBe('fix the bug')
+  })
+
+  it('strips a local-command-caveat block (real-world head noise)', () => {
+    expect(picker.sanitizeMessageText('<local-command-caveat>Caveat: messages below were generated…</local-command-caveat>the real ask')).toBe('the real ask')
+  })
+
+  it('removes leftover unpaired wrapper tags and collapses whitespace', () => {
+    expect(picker.sanitizeMessageText('a  <command-message>\n\n b')).toBe('a b')
+  })
+
+  it('is fail-safe for non-strings and empties', () => {
+    expect(picker.sanitizeMessageText(undefined)).toBeNull()
+    expect(picker.sanitizeMessageText(123)).toBeNull()
+    expect(picker.sanitizeMessageText('   ')).toBeNull()
+  })
+
+  it('leaves normal prose untouched (whitespace-collapsed)', () => {
+    expect(picker.sanitizeMessageText('Fix the login redirect loop')).toBe('Fix the login redirect loop')
+  })
+})
+
+// ── loadWorkNames (#130: surface the renamed session's work name) ────
+describe('resume-picker loadWorkNames', () => {
+  let dir: string
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'ccc-worknames-')) })
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }) })
+
+  const write = (state: unknown) =>
+    writeFileSync(join(dir, 'session-state.json'), JSON.stringify(state), 'utf-8')
+
+  it('maps resumeUuid -> customName for renamed sessions', () => {
+    write({
+      sessions: [
+        { id: 'a', resumeUuid: 'uuid-1', customName: 'Billing refactor' },
+        { id: 'b', resumeUuid: 'uuid-2', customName: '  Docs sweep  ' }, // trimmed
+      ],
+    })
+    const map = picker.loadWorkNames(dir)
+    expect(map.get('uuid-1')).toBe('Billing refactor')
+    expect(map.get('uuid-2')).toBe('Docs sweep')
+    expect(map.size).toBe(2)
+  })
+
+  it('skips sessions without a customName or without a resumeUuid', () => {
+    write({
+      sessions: [
+        { id: 'a', resumeUuid: 'uuid-1' },                    // no name
+        { id: 'b', customName: 'Named but no uuid' },         // no uuid
+        { id: 'c', resumeUuid: 'uuid-3', customName: '   ' }, // blank name
+        { id: 'd', resumeUuid: 'uuid-4', customName: 'Keep' },
+      ],
+    })
+    const map = picker.loadWorkNames(dir)
+    expect(map.size).toBe(1)
+    expect(map.get('uuid-4')).toBe('Keep')
+  })
+
+  it('is fail-safe: missing dir, missing file, or bad JSON → empty map', () => {
+    expect(picker.loadWorkNames(undefined).size).toBe(0)
+    expect(picker.loadWorkNames(dir).size).toBe(0) // no file written yet
+    writeFileSync(join(dir, 'session-state.json'), '{ not json', 'utf-8')
+    expect(picker.loadWorkNames(dir).size).toBe(0)
   })
 })
