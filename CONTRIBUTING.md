@@ -94,8 +94,25 @@ Rationale: GitHub only auto-closes issues on merges to the **default** branch
 closing them early hides "shipped" behind "merged, still baking." The generated
 `CHANGELOG.md`/release notes show the same distinction per version.
 
-At `main` promotion, the `in-beta` issues covered by the release are closed and
-the label removed. This step is manual today; automating it is tracked in #134.
+At `main` promotion the close step is **automatic**: the `Close in-beta issues on
+promotion` workflow (`.github/workflows/close-in-beta-on-promotion.yml`) runs on
+every push to `main`, walks the promoted commit range, and for each referenced
+issue that is open **and** labeled `in-beta` it comments, removes the label, and
+closes it as completed. Anything else it finds — pull requests, unlabeled issues,
+already-closed issues, refs to other projects' issue numbers — is skipped and
+listed in the run log.
+
+Applying `in-beta` on the beta merge is therefore the one step that stays manual,
+and it is what makes the automatic close possible. An issue that never got the
+label will not be closed by a promotion.
+
+To preview what a promotion would close, or to catch up after a promotion that
+predates this workflow, run it from the Actions tab (`workflow_dispatch`) with a
+range such as `v2.0.0..main`; `dry_run` defaults to **true**. Locally:
+
+```bash
+node scripts/close-in-beta-issues.js --range origin/main..origin/beta --dry-run
+```
 
 ## Commit Messages
 

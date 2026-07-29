@@ -1,0 +1,72 @@
+name: Close in-beta issues on promotion
+
+# Issue lifecycle (CONTRIBUTING.md -> "Issue lifecycle"): a fix that merges to
+# `beta` leaves its issue OPEN with the `in-beta` label, because GitHub only
+# auto-closes issues on merges to the DEFAULT branch. When the change finally
+# promotes to `main`, those issues must be closed — which was a manual step
+# nobody could reliably remember (#134). This does it.
+#
+# Scoped to the promotion path only (push to `main`). Day-to-day `beta` merges
+# never run this. The `build(release):` version-bump pushes to `main` do trigger
+# it, but they reference no issues, so the script finds nothing and exits.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      range:
+        description: 'Commit range to harvest (e.g. v2.0.0..main). Blank = previous tag..HEAD'
+        required: false
+        type: string
+      dry_run:
+        description: 'Report the plan without closing anything'
+        required: false
+        default: true
+        type: boolean
+
+# Never let two promotions process the same issues concurrently.
+concurrency:
+  group: close-in-beta-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+  # Referenced PRs are read through the issues API, which needs this scope to
+  # return their bodies (that's where `Closes #NNN` lives).
+  pull-requests: read
+
+jobs:
+  close:
+    name: Close in-beta issues
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history: the script walks the promotion's commit range and falls
+          # back to `git describe` for the previous tag. A shallow clone has
+          # neither.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Close in-beta issues covered by this promotion
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_SHA: ${{ github.sha }}
+          # Push events describe their own range; all-zeros / unreachable falls
+          # back to the previous tag inside the script.
+          EVENT_BEFORE: ${{ github.event.before }}
+          # Empty on a push (the `inputs` context only populates for dispatch).
+          INPUT_RANGE: ${{ inputs.range }}
+          INPUT_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
+        run: |
+          ARGS=""
+          if [ -n "$INPUT_RANGE" ]; then ARGS="$ARGS --range $INPUT_RANGE"; fi
+          if [ "$INPUT_DRY_RUN" = "true" ]; then ARGS="$ARGS --dry-run"; fi
+          echo "Running: node scripts/close-in-beta-issues.js$ARGS"
+          node scripts/close-in-beta-issues.js $ARGS
