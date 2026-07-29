@@ -180,14 +180,94 @@ function realHomeDir(): string {
 // everything else mirrors the real home so tools behave identically.
 const HOME_PRIVATE = new Set(['.claude', '.claude.json'])
 
-function ensureLink(target: string, link: string): void {
+/**
+ * Union-move the contents of an orphaned REAL dir (inside a fake home) into the
+ * app-shared target so nothing is orphaned; the caller then replaces the drained
+ * dir with a junction. Reads only from `src` (a fake home) and writes only into
+ * `dest` (the shared ~/.claude store) -- NEVER the real home. On a filename
+ * collision keeps the LARGER file: a session transcript only grows, so the larger
+ * copy is the more complete one and conversation history is never lost.
+ */
+function mergeTreeInto(src: string, dest: string): void {
+  let entries: fs.Dirent[]
+  try { entries = fs.readdirSync(src, { withFileTypes: true }) } catch { return }
+  fs.mkdirSync(dest, { recursive: true })
+  for (const e of entries) {
+    const s = path.join(src, e.name)
+    const d = path.join(dest, e.name)
+    let st: fs.Stats
+    try { st = fs.lstatSync(s) } catch { continue }
+    if (st.isSymbolicLink()) continue          // never chase a link out of the fake home
+    if (st.isDirectory()) { mergeTreeInto(s, d); continue }
+    try {
+      let dstat: fs.Stats | null = null
+      try { dstat = fs.statSync(d) } catch { /* absent */ }
+      if (!dstat) {
+        try { fs.renameSync(s, d) }             // fast move (same volume)
+        catch { fs.copyFileSync(s, d); fs.rmSync(s, { force: true }) } // cross-volume
+      } else if (st.size > dstat.size) {
+        fs.rmSync(d, { force: true })
+        try { fs.renameSync(s, d) } catch { fs.copyFileSync(s, d); fs.rmSync(s, { force: true }) }
+      } else {
+        fs.rmSync(s, { force: true })           // dest is >= complete; drop the dominated dup
+      }
+    } catch { /* leave un-drained; removeTreeIfDrained preserves it and skips junctioning */ }
+  }
+}
+
+/**
+ * Remove `dir` (a drained fake-home dir) bottom-up. Returns true only if the whole
+ * tree was empty/removed; if any file survived the merge (e.g. a cross-volume copy
+ * failed), it is LEFT in place and false is returned so the caller does NOT junction
+ * over it -- preserving data beats establishing the junction (retried next spawn).
+ */
+function removeTreeIfDrained(dir: string): boolean {
+  let entries: fs.Dirent[]
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }) } catch { return true }
+  let drained = true
+  for (const e of entries) {
+    const full = path.join(dir, e.name)
+    let st: fs.Stats
+    try { st = fs.lstatSync(full) } catch { drained = false; continue }
+    if (st.isDirectory() && !st.isSymbolicLink()) {
+      if (!removeTreeIfDrained(full)) drained = false
+    } else {
+      drained = false                           // a leftover file/link -> preserve, not drained
+    }
+  }
+  if (drained) { try { fs.rmdirSync(dir) } catch { drained = false } }
+  return drained
+}
+
+/**
+ * Point `link` at `target` as a junction/symlink. `link` is ALWAYS inside a fake
+ * home; we only replace our own link there, never the target.
+ *
+ * `mergeOrphans` (used for the shared `projects` store): if `link` is a pre-existing
+ * REAL directory -- e.g. Claude wrote transcripts there before the junction was ever
+ * established, orphaning them from every other account (#131) -- union-merge its
+ * contents into the shared `target` first, then junction. A non-empty real dir would
+ * otherwise block symlinkSync (EEXIST) forever, and those sessions would never be
+ * discoverable cross-account. If the dir can't be fully drained, we skip junctioning
+ * this pass rather than lose data.
+ */
+function ensureLink(target: string, link: string, mergeOrphans = false): void {
   // Replace any existing entry at `link` (safely: never recurse a junction).
   try {
     const st = fs.lstatSync(link)
     if (st.isSymbolicLink()) { try { fs.rmdirSync(link) } catch { fs.unlinkSync(link) } }
-    else if (st.isDirectory()) fs.rmdirSync(link) // only if empty; a real dir we created
+    else if (st.isDirectory()) {
+      if (mergeOrphans) {
+        mergeTreeInto(link, target)
+        if (!removeTreeIfDrained(link)) return  // couldn't drain -> preserve data, don't junction
+      } else {
+        fs.rmdirSync(link) // only if empty; a real dir we created
+      }
+    }
     else fs.unlinkSync(link)
-  // NOTE: a pre-existing REAL non-empty dir at `link` throws ENOTEMPTY here (swallowed) then EEXIST at symlinkSync. That is safe (rmdirSync never deletes non-empty dirs) but surfaces a confusing error; in this feature's flows `link` is always our own junction or absent.
+  // NOTE (non-merge path): a pre-existing REAL non-empty dir at `link` throws ENOTEMPTY
+  // here (swallowed) then EEXIST at symlinkSync. That is safe (rmdirSync never deletes
+  // non-empty dirs). The `projects` junction passes mergeOrphans=true to recover instead.
   } catch { /* not present */ }
   fs.mkdirSync(path.dirname(link), { recursive: true })
   fs.symlinkSync(target, link, isWin ? 'junction' : 'dir')
@@ -264,7 +344,11 @@ function buildHomeLinks(home: string): void {
   for (const name of SHARED_DIR_NAMES) {
     const target = path.join(shared, name)
     if (!fs.existsSync(target)) fs.mkdirSync(target, { recursive: true })
-    ensureLink(target, path.join(claudeDir, name))
+    // `projects` (session transcripts, uuid filenames -> union-safe) recovers an
+    // orphaned real dir into the shared store before junctioning (#131). Other
+    // shared dirs keep the plain replace-if-empty behavior: `memory` has a curated
+    // MEMORY.md index that is NOT union-safe, and the rest are synced config.
+    ensureLink(target, path.join(claudeDir, name), name === 'projects')
   }
   const srcSettings = path.join(shared, 'settings.json')
   if (fs.existsSync(srcSettings)) fs.copyFileSync(srcSettings, path.join(claudeDir, 'settings.json'))
@@ -283,6 +367,30 @@ export function setupProfileLinks(id: string): void {
   const home = getProfileConfigDir(id)
   fs.mkdirSync(home, { recursive: true })
   buildHomeLinks(home)
+}
+
+/**
+ * Startup repair (#131): recover sessions orphaned in a profile's REAL
+ * `.claude/projects` dir (a junction that never established) by merging them into
+ * the shared store and junctioning, for EVERY profile -- so orphans are visible
+ * cross-account at launch, not only when that account is next spawned. Idempotent
+ * and best-effort: an already-junctioned profile is skipped; a per-profile failure
+ * never aborts the sweep. Only ever touches a profile's own `.claude/projects` and
+ * the shared store.
+ */
+export function repairSharedProjectJunctions(): void {
+  const shared = path.join(sharedRoot(), 'projects')
+  for (const p of listProfiles()) {
+    if (!isValidProfileId(p.id)) continue
+    const link = path.join(getProfileConfigDir(p.id), '.claude', 'projects')
+    let st: fs.Stats
+    try { st = fs.lstatSync(link) } catch { continue }   // absent -> nothing to repair
+    if (st.isSymbolicLink() || !st.isDirectory()) continue // already a junction (or a file)
+    try {
+      fs.mkdirSync(shared, { recursive: true })
+      ensureLink(shared, link, true)                     // merge orphaned transcripts -> junction
+    } catch { /* best-effort; retried next launch/spawn */ }
+  }
 }
 
 /** Re-copy settings.json from shared -> profile's `.claude/` (after shared edits). */

@@ -29,7 +29,7 @@ import { registerNotesHandlers } from './ipc/notes-handlers'
 import { registerVisionHandlers } from './ipc/vision-handlers'
 import { registerConfigHandlers } from './ipc/config-handlers'
 import { registerAccountProfilesHandlers } from './ipc/account-profiles-handlers'
-import { migrateProfilesToHomeLayout, cleanupSessionHomes, syncPrimaryCredentialsWithGlobal } from './account-profiles'
+import { migrateProfilesToHomeLayout, cleanupSessionHomes, syncPrimaryCredentialsWithGlobal, repairSharedProjectJunctions } from './account-profiles'
 import { runFirstRunCapture } from './first-run-accounts'
 import { backupRealClaudeOnce } from './claude-backup'
 import { registerCloudAgentHandlers } from './ipc/cloud-agent-handlers'
@@ -785,6 +785,10 @@ if (!gotTheLock) {
     // profiles isolated only CLAUDE_CONFIG_DIR, which never isolated the account
     // identity). Idempotent + best-effort; never touches the real home.
     try { migrateProfilesToHomeLayout() } catch (e) { logInfo(`[profiles] home-layout migration skipped: ${e}`) }
+    // Recover sessions orphaned in a profile's REAL projects dir (a junction that
+    // never established) into the shared store so they're resumable cross-account
+    // (#131). Idempotent + best-effort; only touches per-profile projects + shared.
+    try { repairSharedProjectJunctions() } catch (e) { logInfo(`[profiles] project-junction repair skipped: ${e}`) }
     // Capture the current global login into a protected "primary" profile so no
     // session runs on the bare global ~/.claude (idempotent; best-effort).
     try { runFirstRunCapture() } catch (e) { logInfo(`[profiles] first-run capture skipped: ${e}`) }
