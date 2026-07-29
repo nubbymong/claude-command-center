@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > `src/renderer/changelog.ts`. After editing that file, run `npm run changelog`
 > (CI enforces that this file is in sync via `npm run changelog:check`).
 
+## [2.1.0-beta.2] - 2026-07-29
+
+> Resuming your work is far easier to read, your own Claude hooks now run in CCC sessions, and each config can set its own permission mode and CLI arguments.
+
+### Added
+- Each config can now set its own Claude permission mode and extra command-line arguments, instead of every session sharing one global setting.
+- Sessions can be given a work name (renamed) independently of their config, so restored windows are recognisable at a glance. The startup "Resume previous sessions?" card is wider, lists each session on two lines so long names are not chopped, shows a count, and has a refresh button that picks up a session you restarted after launch.
+- A development instance can now run alongside your installed copy with fully separate data, ports, and an amber DEV badge, so testing a change can no longer disturb your day-to-day sessions.
+
+### Changed
+- The Resume Conversation picker shown in the terminal is much easier to scan: it now fills the width of your window instead of being capped at a narrow column, leads each entry with a recognisable title (your session's work name when you renamed it, otherwise Claude's own summary of the conversation), and strips the slash-command markup that used to crowd out the actual content. Conversations that only showed "(continued session)" now show what they were about.
+
+### Fixed
+- Hooks you configure yourself now run in CCC sessions. CCC was replacing the whole hooks block with its own, so hooks from your user settings or a project's .claude/settings.json never fired in a CCC session even though they worked in a plain Claude session in the same folder. They are now merged, so a CCC session behaves like a normal Claude session in that folder, plus CCC's own hooks.
+- The text cursor is visible and blinking again in shell terminals on Windows and macOS.
+- Startup no longer freezes for roughly half a minute: two long synchronous sweeps during boot now run in the background.
+- macOS: fixed the "A keychain cannot be found to store" error at launch, which was caused by CCC redirecting your home directory away from your login keychain.
+- Multi-account: sessions belonging to a signed-in account whose per-account project folder had been orphaned are recovered, so cross-account resume finds your conversations again.
+
 ## [2.1.0-beta.1] - 2026-07-17
 
 > Experimental Linux support — Claude Command Center now runs on Linux as an AppImage, alongside Windows and macOS.
@@ -896,6 +915,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tab attention indicators for waiting prompts
 - Context usage tracking via statusline API
 
+[2.1.0-beta.2]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-beta.2
 [2.1.0-beta.1]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-beta.1
 [2.0.0-rc.2]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.0.0-rc.2
 [2.0.0-rc.1]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.0.0-rc.1
