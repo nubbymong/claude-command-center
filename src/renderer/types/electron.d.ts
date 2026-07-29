@@ -151,6 +151,8 @@ export interface ElectronAPI {
         model?: string; tools?: string[]
       }>
       effortLevel?: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultracode'
+      permissionMode?: string
+      extraArgs?: string
       disableAutoMemory?: boolean
       enableCodexReview?: boolean
       resume?: { uuid: string; cwd: string }

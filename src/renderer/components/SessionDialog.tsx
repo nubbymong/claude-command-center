@@ -7,7 +7,7 @@ import { IDENTITY_COLOR_KEYS, resolveIdentityColor, bucketLegacyColorToKey, type
 import { useResolvedTheme } from '../hooks/useThemeController'
 import { useRegistryStore } from '../stores/registryStore'
 import { useSettingsStore } from '../stores/settingsStore'
-import { modelsFromRegistry } from '../lib/claude-cli-options'
+import { modelsFromRegistry, PERMISSION_MODES } from '../lib/claude-cli-options'
 
 export type SessionType = 'local' | 'ssh'
 
@@ -65,6 +65,10 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
   // to whichever Opus version Claude Code currently ships, so this
   // doesn't go stale when Anthropic releases the next one.
   const [model, setModel] = useState(initialClaude?.model ?? initial?.model ?? 'opus')
+  // Per-config Claude permission mode ('default' => no --permission-mode flag) and
+  // an advanced free-text escape hatch for extra CLI args.
+  const [permissionMode, setPermissionMode] = useState(initialClaude?.permissionMode ?? 'default')
+  const [extraArgs, setExtraArgs] = useState(initialClaude?.extraArgs ?? '')
   const [colorKey, setColorKey] = useState<IdentityColorKey>(
     (initial?.identityColorKey as IdentityColorKey) ?? bucketLegacyColorToKey(initial?.color ?? '')
   )
@@ -250,6 +254,9 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
 
     const claudeOptions = provider === 'claude' ? {
       model: model || undefined,
+      // 'default' is the no-op sentinel; persist only a real override.
+      permissionMode: permissionMode && permissionMode !== 'default' ? permissionMode : undefined,
+      extraArgs: extraArgs.trim() || undefined,
       legacyVersion: legacyEnabled && legacyVersion ? { enabled: true, version: legacyVersion } : undefined,
       agentIds: !shellOnly && selectedAgentIds.size > 0 ? Array.from(selectedAgentIds) : undefined,
       disableAutoMemory: !shellOnly && disableAutoMemory ? true : undefined,
@@ -644,6 +651,44 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                 The model sessions start on. Default follows Claude's own setting; /model inside a session still works.
               </p>
             </div>
+
+            {/* Permission mode */}
+            <div>
+              <label className="block text-xs text-subtext0 mb-1">
+                Permission mode
+                <span className="text-overlay0 ml-1">(how Claude asks before actions)</span>
+              </label>
+              <select
+                value={permissionMode}
+                onChange={(e) => setPermissionMode(e.target.value)}
+                className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-blue"
+              >
+                {PERMISSION_MODES.map((m) => (
+                  <option key={m.value} value={m.value}>{m.label}</option>
+                ))}
+              </select>
+              <p className="text-[10px] text-overlay0 mt-1">
+                Sets --permission-mode at launch, so one config can run Bypass while another runs Don't ask. /permissions inside a session still works.
+              </p>
+            </div>
+
+            {/* Advanced: extra CLI args escape hatch */}
+            <details>
+              <summary className="text-xs text-subtext0 cursor-pointer select-none">Advanced: extra CLI args</summary>
+              <div className="mt-2">
+                <input
+                  type="text"
+                  value={extraArgs}
+                  onChange={(e) => setExtraArgs(e.target.value)}
+                  placeholder="--verbose --add-dir /path/to/dir"
+                  spellCheck={false}
+                  className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text font-mono focus:outline-none focus:border-blue"
+                />
+                <p className="text-[10px] text-overlay0 mt-1">
+                  Appended verbatim to the claude command. Shell metacharacters are blocked, and CCC-managed flags (--model, --effort, --permission-mode, --settings, --mcp-config, --agents, --resume) can't be overridden here.
+                </p>
+              </div>
+            </details>
 
             {/* Disable auto-memory toggle */}
             {!shellOnly && (
