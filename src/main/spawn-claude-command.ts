@@ -54,6 +54,25 @@ function escapeForCwdQuote(p: string, isWin32: boolean): string {
   return isWin32 ? p.replace(/'/g, "''") : p.replace(/'/g, "'\\''")
 }
 
+/**
+ * Single-quote an argument VALUE for the launch shell — returns the value
+ * wrapped in single quotes, escaped for the target shell.
+ *
+ * Required for `--model` (#144): 1M-context model ids contain brackets
+ * (`opus[1m]`), which zsh — the macOS default shell — parses as a glob
+ * character class. Unquoted it fails with `zsh: no matches found: opus[1m]` and
+ * aborts the ENTIRE launch line before claude/node ever runs, so no session
+ * starts. bash and PowerShell pass the unmatched glob through literally, which
+ * is why this only reproduces on zsh. Single quotes are literal in PowerShell
+ * and POSIX sh/zsh alike.
+ *
+ * Pass `isWin32: false` for a command that will run on a REMOTE POSIX shell
+ * (SSH sessions) regardless of the local platform.
+ */
+export function quoteArgForShell(value: string, isWin32: boolean): string {
+  return `'${escapeForCwdQuote(value, isWin32)}'`
+}
+
 // ---------------------------------------------------------------------------
 // resolveResumeLaunch — pure resume-launch decision (T8b, bug #5 review)
 // ---------------------------------------------------------------------------

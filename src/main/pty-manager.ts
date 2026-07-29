@@ -8,7 +8,7 @@ import { logPtyOutput, isDebugModeEnabled } from './debug-capture'
 import { shouldRegisterRun } from './logging/should-register-run'
 import { getLogSupervisor, getTranscriptBinder } from './logging/logging-service'
 import { resolveResumeTargetFromTranscript, mangleCwdToProjectDir } from './logging/transcript-discovery'
-import { buildClaudeLaunchCommand, resolveResumeLaunch, buildResumeTranscriptPath } from './spawn-claude-command'
+import { buildClaudeLaunchCommand, resolveResumeLaunch, buildResumeTranscriptPath, quoteArgForShell } from './spawn-claude-command'
 import { ensureCompanionDir, nodeFsCompanionDeps } from './logging/companion-dir'
 import { logInfo, logDebug, logError, logWarn } from './debug-logger'
 import { writeCliSetupPty, getResourcesDirectory } from './ipc/setup-handlers'
@@ -596,8 +596,12 @@ export function spawnPty(
       options?.effortLevel ? `--effort ${options.effortLevel}` : '',
       // --model pins the Claude model for this session. Empty string in
       // the config form means "no override" — the CLI picks whatever
-      // the user's plan exposes by default.
-      options?.model ? `--model ${options.model}` : '',
+      // the user's plan exposes by default. Single-quoted (#144): 1M-context
+      // ids contain brackets (`opus[1m]`) which zsh parses as a glob class,
+      // aborting the remote command with "no matches found". The remote shell
+      // is always POSIX here, so POSIX escaping applies regardless of the
+      // local platform (hence isWin32: false).
+      options?.model ? `--model ${quoteArgForShell(options.model, false)}` : '',
       // Per-config permission mode. 'default'/'' => no flag (Claude's own default).
       options?.permissionMode && options.permissionMode !== 'default' ? `--permission-mode ${options.permissionMode}` : '',
       // Advanced escape hatch: extra CLI args verbatim (IPC-charset-guarded).
@@ -1212,7 +1216,12 @@ export function spawnPty(
         extraFlags += ` --effort ${options.effortLevel}`
       }
       if (options?.model) {
-        extraFlags += ` --model ${options.model}`
+        // MUST be quoted (#144): 1M-context ids contain brackets (`opus[1m]`),
+        // which zsh treats as a glob class and aborts the whole launch line.
+        // See quoteArgForShell. (--effort / --permission-mode need no quoting:
+        // their IPC guards — a `^[a-zA-Z0-9_-]+$` charset and a fixed enum —
+        // exclude every glob and shell metacharacter.)
+        extraFlags += ` --model ${quoteArgForShell(options.model, os.platform() === 'win32')}`
       }
       // Per-config permission mode. 'default'/'' => no flag (Claude's own default).
       if (options?.permissionMode && options.permissionMode !== 'default') {
@@ -1228,8 +1237,6 @@ export function spawnPty(
       // overrides. P7.7.3: also seed a per-session MCP config file
       // (--mcp-config), because claude.exe ignores mcpServers in --settings
       // and reads it ONLY from --mcp-config or ~/.claude.json.
-      const quoteForShell = (p: string): string =>
-        os.platform() === 'win32' ? p.replace(/'/g, "''") : p.replace(/'/g, "'\\''")
       try {
         // v1.5.12: thread the CCC AppSettings.disableClaudeWorkflows flag
         // through so Claude Code's dynamic-workflow feature can be killed
@@ -1260,7 +1267,7 @@ export function spawnPty(
             logError(`[pty] Failed to inject hooks for ${sessionId}: ${(err as Error)?.message ?? err}`)
           }
         }
-        extraFlags += ` --settings '${quoteForShell(sesPath)}'`
+        extraFlags += ` --settings ${quoteArgForShell(sesPath, os.platform() === 'win32')}`
       } catch (err) {
         logError(`[pty] Failed to seed per-session settings for ${sessionId}: ${(err as Error)?.message ?? err}`)
       }
@@ -1269,7 +1276,7 @@ export function spawnPty(
         // mcp-config carries no conductor entry. Read fresh per spawn.
         const conductorOn = readConfig<{ conductorToolsEnabled?: boolean }>('settings')?.conductorToolsEnabled !== false
         const mcpCfgPath = writeLocalSessionMcpConfig(sessionId, conductorOn)
-        extraFlags += ` --mcp-config '${quoteForShell(mcpCfgPath)}'`
+        extraFlags += ` --mcp-config ${quoteArgForShell(mcpCfgPath, os.platform() === 'win32')}`
       } catch (err) {
         logError(`[pty] Failed to seed per-session MCP config for ${sessionId}: ${(err as Error)?.message ?? err}`)
       }
