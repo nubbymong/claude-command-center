@@ -652,6 +652,22 @@ export default function App() {
     }
   }
 
+  // Single entry point for "install the update now", shared by the bottom-bar
+  // Update pill and the Settings > Check for Updates button (#142). Never call
+  // update.installAndRestart() directly from a component: with sessions open the
+  // restart must go through the 'update' close dialog so session state is saved
+  // (and pending config writes flushed) first.
+  const handleUpdateRequested = () => {
+    const state = useSessionStore.getState()
+    if (state.sessions.length === 0) {
+      setIsClosing(true)
+      setIsUpdating(true)
+      window.electronAPI.update.installAndRestart().catch(() => { setIsClosing(false); setIsUpdating(false) })
+    } else {
+      setCloseDialog('update')
+    }
+  }
+
   // Main process sends 'closeRequested' when window close is attempted
   useEffect(() => {
     const handleCloseRequested = () => {
@@ -675,7 +691,7 @@ export default function App() {
   // Render non-session views (shown on top of sessions)
   const renderOverlayView = () => {
     if (view === 'logs') return <GlobalLogsView initialSessionId={pendingLogsSessionId} onInitialSessionConsumed={() => setPendingLogsSessionId(null)} />
-    if (view === 'settings') return <SettingsPage initialTab={pendingSettingsTab ?? undefined} onNavigateToSessions={() => setView('sessions')} />
+    if (view === 'settings') return <SettingsPage initialTab={pendingSettingsTab ?? undefined} onNavigateToSessions={() => setView('sessions')} onUpdateRequested={handleUpdateRequested} />
     if (view === 'insights') return <InsightsPage />
     if (view === 'cloud-agents') return <CloudAgentsPage />
     if (view === 'tokenomics') return <TokenomicsPage />
@@ -1157,16 +1173,7 @@ export default function App() {
             status bar, distinct from the per-session statusline strip which
             lives above the command rows inside the terminal column. */}
         <div className="titlebar-no-drag shrink-0">
-          <BottomBar currentView={view} onViewChange={setView} onUpdateRequested={() => {
-            const state = useSessionStore.getState()
-            if (state.sessions.length === 0) {
-              setIsClosing(true)
-              setIsUpdating(true)
-              window.electronAPI.update.installAndRestart().catch(() => { setIsClosing(false); setIsUpdating(false) })
-            } else {
-              setCloseDialog('update')
-            }
-          }} />
+          <BottomBar currentView={view} onViewChange={setView} onUpdateRequested={handleUpdateRequested} />
         </div>
         {bootGate === 'training' && (
           <TrainingWalkthrough
