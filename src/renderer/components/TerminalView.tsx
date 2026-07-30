@@ -25,6 +25,7 @@ import { decideFollow } from '../utils/terminalScroll'
 import { getTerminalTheme } from './terminal/terminalTheme'
 import { useSettingsStore, DEFAULT_TERMINAL_SETTINGS } from '../stores/settingsStore'
 import { usePasteHintStore } from '../stores/pasteHintStore'
+import { installInputDiagnostics } from '../utils/inputDiagnostics'
 import { ScrollToBottomButton } from './terminal'
 import { useStatuslineSubscription } from '../hooks/useStatuslineSubscription'
 import { useEffortSubscription } from '../hooks/useEffortSubscription'
@@ -159,6 +160,24 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
   // attaches on first paint instead of returning early when the ref
   // was still null. Without this gate, theme flips never repainted.
   const [terminalReady, setTerminalReady] = useState(false)
+
+  // Input diagnostics (#145), opt-in via CCC_INPUT_DEBUG=1. Active session only,
+  // so one dictation run yields one readable trace rather than N interleaved
+  // copies. Answers what an external tool ACTUALLY sends — see
+  // inputDiagnostics.ts for why measuring had to replace reasoning here.
+  useEffect(() => {
+    if (!isActive || !terminalReady) return
+    const container = xtermContainerRef.current
+    if (!container) return
+    let dispose: (() => void) | null = null
+    let cancelled = false
+    void window.electronAPI.inputDebug.enabled().then((on) => {
+      if (!on || cancelled) return
+      dispose = installInputDiagnostics(container, (line) => window.electronAPI.inputDebug.log(`[${sessionId}] ${line}`))
+    }).catch(() => { /* diagnostics are never load-bearing */ })
+    return () => { cancelled = true; dispose?.() }
+  }, [isActive, terminalReady, sessionId])
+
   useEffect(() => {
     if (!terminalReady) return
     const term = terminalRef.current

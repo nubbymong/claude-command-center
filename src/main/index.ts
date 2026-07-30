@@ -449,6 +449,17 @@ function createWindow(): void {
     return readClipboardTextWithRetry()
   })
 
+  // Input diagnostics (#145). Opt-in via CCC_INPUT_DEBUG=1 so it costs nothing
+  // normally: the renderer asks once and only then attaches listeners. Lines land
+  // in the debug log (<dataDir>/debug/app.log) prefixed [input-diag].
+  // `on`, not `handle` — this is a fire-and-forget stream; a round trip per
+  // keystroke would itself perturb what we are trying to measure.
+  ipcMain.handle(IPC.DEBUG_INPUT_ENABLED, () => process.env.CCC_INPUT_DEBUG === '1')
+  ipcMain.on(IPC.DEBUG_LOG_INPUT, (_e, line: string) => {
+    if (process.env.CCC_INPUT_DEBUG !== '1') return
+    logInfo(`[input-diag] ${String(line).slice(0, 400)}`)
+  })
+
   // Save clipboard image to a unique file in the host screenshots dir and return its
   // bare filename so the renderer can use the conductor MCP fetch_host_screenshot tool.
   // Returns { filename, path } so callers have both the bare name (for the MCP tool)

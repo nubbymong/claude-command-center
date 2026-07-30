@@ -32,6 +32,10 @@ export const IPC = {
   // renderer's navigator.clipboard.readText(), and retried for Windows
   // delayed-render. Used by the terminal paste keybinding.
   CLIPBOARD_READ_TEXT: 'clipboard:readText',
+  // Input diagnostics (#145): identify what an external tool actually sends.
+  // Enabled only when CCC_INPUT_DEBUG=1 is set for the main process.
+  DEBUG_INPUT_ENABLED: 'debug:inputEnabled',
+  DEBUG_LOG_INPUT: 'debug:logInput',
 
   // Credentials
   CREDENTIALS_SAVE: 'credentials:save',
