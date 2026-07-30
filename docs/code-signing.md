@@ -67,6 +67,10 @@ Pick one when you're ready; then the release workflow gets a small signing step.
   `release.yml`. This is the modern standard and avoids handling a `.pfx` in CI.
 - **Simpler fallback — `.pfx` in GitHub secrets:** base64 the OV `.pfx`, store as
   a secret, decode + sign at build time. Reuses the same env-var path as local:
+  - Create the `.b64` **outside the repo** (same rule as the `.pfx` itself) and
+    `cd` there to run the command below; delete it once the secret is set. It is
+    a base64-wrapped private key, not a safer form of one — `*.b64` is
+    gitignored as a backstop, not a license.
   - `gh secret set WIN_CSC_LINK --repo <owner>/<repo> < cert.b64`  (base64 of the `.pfx`; command never prints it)
   - `gh secret set WIN_CSC_KEY_PASSWORD --repo <owner>/<repo>`  (prompts, hidden)
   - workflow: add `WIN_CSC_LINK` + `WIN_CSC_KEY_PASSWORD` to the Windows build

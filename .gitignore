@@ -58,7 +58,11 @@ process-snapshot-*.txt
 *.pfx
 *.p12
 *.key
+*.pem
+*.p8
 *.cer
 *.crt
 *.jks
-certificate*.b64
+# Any base64-wrapped cert/key blob (e.g. the `cert.b64` used to load a GitHub
+# secret — see docs/code-signing.md). Make those outside the repo; catch anyway.
+*.b64
