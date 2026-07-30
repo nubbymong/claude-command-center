@@ -65,6 +65,7 @@ RC-branch model (adopted with #89): `beta` is never frozen — features merge th
 - Promote to stable: merge `release/vX.Y.Z` → `main`, run the release workflow from `main` with `channel=stable`, then delete the release branch
 - Changelog is generated from `src/renderer/changelog.ts` (single source; also drives the in-app "What's New" modal). Before a release, add the version's entry there, run `npm run changelog` to refresh `CHANGELOG.md`, and commit both. `release.js` already syncs the version line; the release workflow auto-populates the GitHub release notes from the same file (`scripts/gen-changelog.js --notes <version>`) — no hand-pasting. CI (`Changelog in sync`) fails on drift
 - Commits/PR titles follow Conventional Commits, enforced by a Husky `commit-msg` hook and the `PR Title` workflow (`commitlint.config.js`)
+- **Security-sensitive changes need an adversarial-review PASS before merge is recommended** (ADR-009). Touching IPC/preload, the Conductor MCP server, PTY argv construction, credential/keychain code, the updater's verification path, Electron `webPreferences`, or bumping a *runtime* dependency's major version? Run `/adversarial-review` — independent attacker sub-agents, not a re-read of your own diff. The author never attacks their own change. Docs/styling/changelog-only work is exempt. Unsure → it's required (fail closed). Dismissing a CodeQL/Dependabot alert as a false positive goes through the same pass
 - Issue lifecycle: label an issue `in-beta` (don't close it) when its fix merges to `beta`. Closing on promotion to `main` is AUTOMATIC (`.github/workflows/close-in-beta-on-promotion.yml`, #134) and keys off that label — an unlabeled issue is never closed by a promotion, so applying the label is the step that matters. See CONTRIBUTING.md ("Issue lifecycle")
 - GitHub Actions builds Windows (.exe) + macOS (.dmg) + Linux (.AppImage, experimental) installers; the release job tags the exact built commit (`--target`) so the in-app updater orders releases correctly
 - Linux builds on ubuntu-latest → glibc 2.39 floor (Ubuntu 24.04+/Rocky 10+); older distros need a container build. Vision on Linux requires a deb/rpm Chrome/Chromium (snap confinement blocks the CDP profile dir)
@@ -79,6 +80,7 @@ RC-branch model (adopted with #89): `beta` is never frozen — features merge th
 
 ## Deeper references
 
+- `.claude/skills/adversarial-review/SKILL.md` — the adversarial review pass required for security-sensitive changes (ADR-009), plus the path table that decides when it applies.
 - `docs/agent-conventions.md` — the detailed agent/contributor conventions (hard constraints, IPC channel rules, branching & review).
 - `CONTRIBUTING.md` — contributor mechanics, commit-message format, changelog workflow.
 - `docs/versioning.md` — versioning scheme, prerelease suffixes, update channels, rolling re-release vs. version bump.
