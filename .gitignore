@@ -53,3 +53,17 @@ process-snapshot-*.txt
 # (rendered on demand); never commit it. The fragments under CONTEXT.d/ are the
 # sole tracked source. (aai-core AAI-407 / ADR-043 convention, mirrored here.)
 /CONTEXT.md
+
+# Code-signing certificates / private keys — NEVER commit these. Sign locally via
+# env vars pointing at a cert OUTSIDE the repo, or via CI secrets. (Belt-and-braces.)
+*.pfx
+*.p12
+*.key
+*.pem
+*.p8
+*.cer
+*.crt
+*.jks
+# Any base64-wrapped cert/key blob (e.g. the `cert.b64` used to load a GitHub
+# secret — see docs/code-signing.md). Make those outside the repo; catch anyway.
+*.b64
