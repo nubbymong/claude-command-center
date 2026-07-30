@@ -39,40 +39,45 @@ function redosPayload(spaces: number): string {
   return 'bearer' + ' '.repeat(spaces) + 'X\nY'
 }
 
+/** Best-of-3 elapsed time. Round-2 review measured occasional 80ms excursions
+ *  under heavy CPU load, because payload allocation sat INSIDE the timed window
+ *  and a GC pause landed in the measurement. Callers now build the payload
+ *  first and this takes the minimum of three runs. Discriminating power is
+ *  ~2270ms vs ~0.5ms, so nothing is lost by being generous. */
 function timeMs(fn: () => void): number {
-  const t0 = performance.now()
-  fn()
-  return performance.now() - t0
+  let best = Infinity
+  for (let i = 0; i < 3; i++) {
+    const t0 = performance.now()
+    fn()
+    best = Math.min(best, performance.now() - t0)
+  }
+  return best
 }
 
 describe('Bearer parsing is linear in the header length (#151)', () => {
   it('rejects the quadratic payload in well under the vulnerable time', () => {
-    const elapsed = timeMs(() => {
-      expect(isAuthorizedMcpRequest('/sse', redosPayload(80_000), SECRET)).toBe(false)
-    })
-    // Pre-fix: 2209 ms at this size. Post-fix: sub-millisecond. A 50 ms bound
-    // is ~44x margin over the fix and ~44x under the bug -- it cannot be passed
-    // by a reintroduced regex, and it cannot flake on a loaded CI box.
-    expect(elapsed).toBeLessThan(50)
+    const payload = redosPayload(80_000)
+    expect(isAuthorizedMcpRequest('/sse', payload, SECRET)).toBe(false)
+    // Pre-fix: ~2270 ms at this size (measured). Post-fix: sub-millisecond.
+    // 250 ms sits ~9x under the bug signal and ~500x over the fixed path -- a
+    // reintroduced regex cannot pass it, and a slow shared runner has room.
+    expect(timeMs(() => isAuthorizedMcpRequest('/sse', payload, SECRET))).toBeLessThan(250)
   })
 
   it('does not blow up super-linearly as the payload grows', () => {
-    const small = timeMs(() => {
-      isAuthorizedMcpRequest('/sse', redosPayload(20_000), SECRET)
-    })
-    const large = timeMs(() => {
-      isAuthorizedMcpRequest('/sse', redosPayload(80_000), SECRET)
-    })
+    const smallPayload = redosPayload(20_000)
+    const largePayload = redosPayload(80_000)
+    const small = timeMs(() => isAuthorizedMcpRequest('/sse', smallPayload, SECRET))
+    const large = timeMs(() => isAuthorizedMcpRequest('/sse', largePayload, SECRET))
     // 4x the input. Linear ~4x; the vulnerable regex measured ~17x (128->2209ms).
     // Generous slack for timer noise, but an order-of-magnitude jump fails.
-    expect(large).toBeLessThan(Math.max(small * 10, 50))
+    expect(large).toBeLessThan(Math.max(small * 10, 250))
   })
 
   it('also stays linear on a trailing whitespace flood (the trimmed case)', () => {
-    const elapsed = timeMs(() => {
-      expect(isAuthorizedMcpRequest('/sse', 'bearer ' + ' '.repeat(200_000), SECRET)).toBe(false)
-    })
-    expect(elapsed).toBeLessThan(50)
+    const flood = 'bearer ' + ' '.repeat(200_000)
+    expect(isAuthorizedMcpRequest('/sse', flood, SECRET)).toBe(false)
+    expect(timeMs(() => isAuthorizedMcpRequest('/sse', flood, SECRET))).toBeLessThan(250)
   })
 
   it('a whitespace-only token is not a token', () => {
@@ -128,10 +133,28 @@ describe('separator narrowing is pinned (#151)', () => {
     })
   }
 
+  // ROUND-2 NOTE. The first version of this used `Bearer wrong` as the payload.
+  // That is NOT a refusal -- SP separator, non-empty token -- so it parses cleanly
+  // under the pre-fix regex, round 1 and round 2 alike, and the assertion
+  // discriminated nothing (its comment claimed the opposite, wrongly). A real
+  // refusal needs a separator that `\s` accepted and SP/HTAB does not. U+00A0 is
+  // the one such character that survives Node's HTTP parser (obs-text, decoded as
+  // latin-1), so it is the honest payload. Escape, never a literal.
   it('a refused Bearer header is FATAL -- it does not fall through to ?token=', () => {
-    // Pre-review this returned true: the malformed header parsed to null, which
-    // was indistinguishable from "no header", so the query param took over.
-    expect(isAuthorizedMcpRequest(`/sse?token=${SECRET}`, `Bearer wrong`, SECRET)).toBe(false)
+    const nbsp = '\u00a0'
+    expect(
+      isAuthorizedMcpRequest(`/sse?token=${SECRET}`, `Bearer${nbsp}${SECRET}`, SECRET),
+    ).toBe(false)
+  })
+
+  it('a rejected separator hiding behind a legal one is still fatal', () => {
+    // If only the FIRST separator char were checked, `slice().trim()` would absorb
+    // the rest -- so one leading space would defeat the entire narrowing.
+    for (const ws of NON_SP_WHITESPACE) {
+      expect(isAuthorizedMcpRequest('/sse', `Bearer ${ws}${SECRET}`, SECRET)).toBe(false)
+      expect(isAuthorizedMcpRequest('/sse', `Bearer\t${ws} ${SECRET}`, SECRET)).toBe(false)
+      expect(isAuthorizedMcpRequest(`/sse?token=${SECRET}`, `Bearer ${ws}x`, SECRET)).toBe(false)
+    }
   })
 
   it('a NON-Bearer scheme is not a refusal -- ?token= still works', () => {

@@ -119,6 +119,16 @@ export function getConductorMcpSecret(): string {
 
 const BEARER_SCHEME = 'bearer'
 
+/** Single-character whitespace test. Linear by construction -- no quantifier,
+ *  so there is nothing to backtrack. Matches the set `String.prototype.trim()`
+ *  strips, which is what keeps the separator scan below consistent with the
+ *  outer trim. */
+const WHITESPACE = /\s/
+
+function isSpOrTab(c: string): boolean {
+  return c === ' ' || c === '\t'
+}
+
 /** Parse `Bearer <token>` from an Authorization header value.
  *
  *  Three-state return, because "no Bearer credential was offered" and "a Bearer
@@ -126,9 +136,15 @@ const BEARER_SCHEME = 'bearer'
  *    - string    -- a well-formed Bearer token
  *    - undefined -- not a Bearer header at all (absent, or another scheme such
  *                   as Basic). The caller may fall through to `?token=`.
- *    - null      -- a Bearer header we REFUSED (bad separator, empty token).
- *                   The caller must treat this as fatal; falling through would
- *                   let a mangled header silently downgrade to a weaker channel.
+ *    - null      -- a Bearer header we REFUSED: the whitespace run separating
+ *                   the scheme from the token contains something other than
+ *                   SP/HTAB. The caller must treat this as fatal; falling
+ *                   through would let a mangled header silently downgrade to a
+ *                   weaker channel.
+ *
+ *  (There is deliberately no "empty token" refusal state: the outer `.trim()`
+ *  makes `'Bearer '` collapse to the bare scheme, which is `undefined` -- no
+ *  Bearer credential offered -- long before any token check.)
  *
  *  Deliberately NOT a regex. The obvious `/^bearer\s+(.+)$/i` is quadratic on
  *  `"bearer" + <long run of spaces> + <line terminator> + x`: the trailing
@@ -149,28 +165,50 @@ const BEARER_SCHEME = 'bearer'
  *  Prefix-compare the scheme, require exactly one SP/HTAB separator, take the
  *  remainder: single pass, no backtracking, linear whatever the input.
  *
- *  On the separator: RFC 9110's ABNF for `credentials` is `auth-scheme 1*SP
- *  token68`, so SP is the only RFC-legal separator here -- HTAB is NOT (OWS/BWS
- *  govern whitespace around field delimiters, not this position). HTAB is
- *  accepted anyway for backward compatibility with the `\s` this replaced. All
- *  other whitespace `\s` used to accept is now rejected; no token writer in this
- *  repo emits anything but a single SP (the registration paths use `?token=`
- *  and never a header at all), so nothing real regresses. */
+ *  On the separator: RFC 9110 section 11.4 gives
+ *  `credentials = auth-scheme [ 1*SP ( token68 / #auth-param ) ]`, so SP is the
+ *  only RFC-legal separator here -- HTAB is NOT (OWS/BWS govern whitespace
+ *  around field delimiters, not this position). HTAB is accepted anyway for
+ *  backward compatibility with the `\s` this replaced. Every OTHER whitespace
+ *  character `\s` used to accept is rejected, anywhere in the separator run --
+ *  the run is scanned, not just its first character, because
+ *  `slice(...).trim()` would otherwise silently absorb a rejected character
+ *  that merely sat behind a legal one (`Bearer<SP><NBSP><token>`).
+ *
+ *  Blast radius of that narrowing: the SSE/HTTP registration writers all embed
+ *  `?token=` and send no header at all, so they are unaffected. The one
+ *  header-only client is Codex -- `providers/codex/spawn.ts` sets
+ *  `mcp_servers.conductor.bearer_token_env_var=CONDUCTOR_MCP_TOKEN` with no
+ *  `?token=` in its URL, so the Authorization header is its ONLY credential
+ *  channel. Its rmcp client formats `Bearer ` with a single SP, so it is
+ *  unaffected too -- but a future change here breaks Codex outright with no
+ *  fallback, which is why this paragraph exists. */
 function parseBearerToken(authHeader: string): string | null | undefined {
   const trimmed = authHeader.trim()
   if (trimmed.length <= BEARER_SCHEME.length) return undefined
   if (trimmed.slice(0, BEARER_SCHEME.length).toLowerCase() !== BEARER_SCHEME) return undefined
-  const sep = trimmed[BEARER_SCHEME.length]
-  if (sep !== ' ' && sep !== '\t') {
+  if (!isSpOrTab(trimmed[BEARER_SCHEME.length])) {
     // Not whitespace at all -> this is a DIFFERENT scheme whose name merely
     // starts with "bearer" (e.g. `bearerX`), so no Bearer credential was
     // offered. Whitespace that is not SP/HTAB -> a Bearer header we refuse.
-    return /\s/.test(sep) ? null : undefined
+    return WHITESPACE.test(trimmed[BEARER_SCHEME.length]) ? null : undefined
   }
-  const token = trimmed.slice(BEARER_SCHEME.length + 1).trim()
-  // Unreachable while the outer `.trim()` above stands (trimmed cannot end in
-  // whitespace, and sep IS whitespace, so the remainder always has a non-space
-  // char). Kept as defence in depth against an edit that drops that trim.
+
+  // Walk the whole separator run. Stopping at the first character would let
+  // `Bearer<SP><NBSP><token>` through, because the slice+trim below absorbs any
+  // leading whitespace the check did not look at -- so the narrowing would be
+  // defeated by one legal space in front of an illegal one. Single pass, so
+  // this stays linear.
+  let i = BEARER_SCHEME.length
+  while (i < trimmed.length && WHITESPACE.test(trimmed[i])) {
+    if (!isSpOrTab(trimmed[i])) return null
+    i++
+  }
+
+  const token = trimmed.slice(i)
+  // Unreachable while the outer `.trim()` above stands: trimmed cannot end in
+  // whitespace, so the separator run always terminates on a real character.
+  // Kept as defence in depth against an edit that drops that trim.
   return token.length > 0 ? token : null
 }
 
