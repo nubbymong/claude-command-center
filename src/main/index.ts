@@ -53,6 +53,7 @@ import { startEffortTracker } from './effort-tracker'
 import { startAttentionSource } from './attention-source'
 import { startJankDetector } from './jank-detector'
 import { readClipboardImageWithRetry } from './clipboard-image'
+import { readClipboardTextWithRetry } from './clipboard-text'
 import { readClipboardImageFilePath, type PasteableImage } from './clipboard-file'
 import { HooksGateway } from './hooks/hooks-gateway'
 import { setGateway, getGateway } from './hooks'
@@ -438,6 +439,26 @@ function createWindow(): void {
     }
     return img.resize({ height: maxDim, quality: 'good' as const })
   }
+
+  // Clipboard TEXT read for the terminal paste keybinding (#145). Deliberately
+  // main-process: navigator.clipboard.readText() requires the document to be
+  // focused, which is exactly the condition that fails when an external tool
+  // (dictation, snippet expander) takes focus and synthesizes Ctrl+V. Retried
+  // for the same Windows delayed-render reason as the image path below.
+  ipcMain.handle(IPC.CLIPBOARD_READ_TEXT, async (): Promise<string> => {
+    return readClipboardTextWithRetry()
+  })
+
+  // Input diagnostics (#145). Opt-in via CCC_INPUT_DEBUG=1 so it costs nothing
+  // normally: the renderer asks once and only then attaches listeners. Lines land
+  // in the debug log (<dataDir>/debug/app.log) prefixed [input-diag].
+  // `on`, not `handle` — this is a fire-and-forget stream; a round trip per
+  // keystroke would itself perturb what we are trying to measure.
+  ipcMain.handle(IPC.DEBUG_INPUT_ENABLED, () => process.env.CCC_INPUT_DEBUG === '1')
+  ipcMain.on(IPC.DEBUG_LOG_INPUT, (_e, line: string) => {
+    if (process.env.CCC_INPUT_DEBUG !== '1') return
+    logInfo(`[input-diag] ${String(line).slice(0, 400)}`)
+  })
 
   // Save clipboard image to a unique file in the host screenshots dir and return its
   // bare filename so the renderer can use the conductor MCP fetch_host_screenshot tool.
