@@ -81,5 +81,6 @@ RC-branch model (adopted with #89): `beta` is never frozen — features merge th
 
 - `docs/agent-conventions.md` — the detailed agent/contributor conventions (hard constraints, IPC channel rules, branching & review).
 - `CONTRIBUTING.md` — contributor mechanics, commit-message format, changelog workflow.
+- `docs/versioning.md` — versioning scheme, prerelease suffixes, update channels, rolling re-release vs. version bump.
 - `architecture/decisions/` — ADRs (the *why* behind architectural/tooling calls).
 - `docs/dev-alongside-prod.md`, `docs/USER_GUIDE.md`, `docs/code-signing.md` — operational guides.
