@@ -3,6 +3,7 @@ import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, ren
 import { join } from 'path'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import { logInfo, logError } from './debug-logger'
+import { randomId } from '../shared/id'
 
 const SUBDIR = 'conductor-channels'
 
@@ -42,7 +43,7 @@ export function readJsonFile<T>(name: string, seedDefaults: () => T): T {
   try {
     return JSON.parse(readFileSync(fp, 'utf-8')) as T
   } catch (err) {
-    const corruptPath = `${fp}.corrupt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const corruptPath = `${fp}.corrupt-${Date.now()}-${randomId()}`
     try { renameSync(fp, corruptPath); logError(`[channels] ${name} unreadable, moved to ${corruptPath}`) }
     catch (e) { logError(`[channels] could not quarantine ${name}: ${String(e)}`) }
     return seedDefaults()

@@ -2,13 +2,14 @@ import React, { useState, useEffect } from 'react'
 import { useTeamStore } from '../stores/teamStore'
 import { useAgentLibraryStore, BUILTIN_TEMPLATES } from '../stores/agentLibraryStore'
 import type { TeamTemplate, TeamStep, TeamStepMode } from '../types/electron'
+import { generateId } from '../utils/id'
 
 function generateStepId(): string {
-  return 'ts-' + Math.random().toString(36).slice(2, 10)
+  return 'ts-' + generateId()
 }
 
 function generateTeamId(): string {
-  return 'team-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
+  return 'team-' + generateId()
 }
 
 export default function TeamBuilder({ onClose }: { onClose: () => void }) {

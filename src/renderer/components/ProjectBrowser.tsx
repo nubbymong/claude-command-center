@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { useSessionStore, Session } from '../stores/sessionStore'
 import { markSessionForResumePicker } from '../utils/resumePicker'
 import { COLOR_SWATCHES } from './SessionDialog'
+import { generateId } from '../utils/id'
 
 interface DiscoveredProject {
   path: string
@@ -52,7 +53,7 @@ export default function ProjectBrowser() {
 
   const resumeSession = (ds: DiscoveredSession, projectPath: string) => {
     const session: Session = {
-      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
+      id: generateId(),
       label: ds.firstMessage.slice(0, 40) || 'Resumed session',
       workingDirectory: projectPath,
       model: ds.model || '',

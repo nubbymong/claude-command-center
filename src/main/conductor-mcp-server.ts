@@ -117,6 +117,28 @@ export function getConductorMcpSecret(): string {
   return _conductorMcpSecret
 }
 
+const BEARER_SCHEME = 'bearer'
+
+/** Parse `Bearer <token>` from an Authorization header value, or null.
+ *
+ *  Deliberately NOT a regex. The obvious `/^bearer\s+(.+)$/i` backtracks in
+ *  polynomial time on `"bearer "` followed by many spaces (CodeQL
+ *  js/polynomial-redos, #151) -- and this runs on an attacker-controlled header
+ *  on a listening socket BEFORE authentication, so it is reachable by anyone who
+ *  can reach the port. Prefix-compare the scheme, require one whitespace
+ *  separator, then take the remainder: single pass, no backtracking, linear in
+ *  the header length whatever the input. */
+function parseBearerToken(authHeader: string): string | null {
+  const trimmed = authHeader.trim()
+  if (trimmed.length <= BEARER_SCHEME.length) return null
+  if (trimmed.slice(0, BEARER_SCHEME.length).toLowerCase() !== BEARER_SCHEME) return null
+  // The separator must be whitespace, else `bearerX` would parse as scheme `bearer`.
+  const sep = trimmed[BEARER_SCHEME.length]
+  if (sep !== ' ' && sep !== '\t') return null
+  const token = trimmed.slice(BEARER_SCHEME.length + 1).trim()
+  return token.length > 0 ? token : null
+}
+
 /** Extract the presented token from either an `Authorization: Bearer <token>`
  *  header or a `?token=<token>` query param, then compare against the expected
  *  secret in constant time. The header is checked first (cheaper, and the
@@ -131,8 +153,7 @@ export function isAuthorizedMcpRequest(
 ): boolean {
   let presented: string | null = null
   if (authHeader) {
-    const m = /^bearer\s+(.+)$/i.exec(authHeader.trim())
-    if (m) presented = m[1]
+    presented = parseBearerToken(authHeader)
   }
   if (presented === null && reqUrl) {
     try {
