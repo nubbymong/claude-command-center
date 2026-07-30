@@ -839,6 +839,16 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         })) return
         // Claim the event before the async read so Chromium's native paste can't
         // also fire and double-insert.
+        //
+        // stopPropagation is what actually makes this work, and it only works
+        // because the listener is registered in the CAPTURE phase (see below).
+        // xterm's own keydown listener lives on the helper textarea, so in the
+        // bubble phase it runs FIRST and has already turned Ctrl+V into the raw
+        // control byte \x16 (SYN) and written it to the PTY before a
+        // document-level bubble listener is ever called — preventDefault at that
+        // point is far too late. Capture + stopPropagation means xterm never sees
+        // the chord and never emits \x16.
+        e.stopPropagation()
         e.preventDefault()
         // Read through the MAIN process, not navigator.clipboard.readText().
         // The async clipboard API requires the DOCUMENT to be focused and rejects
@@ -871,7 +881,11 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         }
         term?.paste(text)
       }
-      document.addEventListener('keydown', handleKeyDownPaste)
+      // CAPTURE phase (the `true`) — not optional, and the whole reason the first
+      // attempt at this fix silently did nothing. Capture on `document` runs
+      // before any listener on a descendant, so this beats xterm's textarea
+      // handler; a bubble-phase listener loses the race every time.
+      document.addEventListener('keydown', handleKeyDownPaste, true)
 
       // Right-click: context-aware copy or paste depending on mode.
       //
@@ -930,7 +944,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         try { window.electronAPI.pty.resize(sessionId, lastSentCols, lastSentRows) } catch { /* main gone */ }
       }
       if (handleKeyDownCopy) document.removeEventListener('keydown', handleKeyDownCopy)
-      if (handleKeyDownPaste) document.removeEventListener('keydown', handleKeyDownPaste)
+      if (handleKeyDownPaste) document.removeEventListener('keydown', handleKeyDownPaste, true)
       if (handleContextMenu) container.removeEventListener('contextmenu', handleContextMenu, true)
       if (handleWheel) container.removeEventListener('wheel', handleWheel)
       resizeObserver?.disconnect()

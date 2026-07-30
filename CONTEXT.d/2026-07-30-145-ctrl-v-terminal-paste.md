@@ -51,6 +51,35 @@ in a CCC terminal at all**, confirmed with the reporter.
   bug live -- and it doubles as the diagnostic: if an external tool pastes nothing
   and NO hint appears, the handler never ran, so the tool isn't sending a paste
   chord and the mechanism is something else.
+- ROUND 3 -- ACTUAL ROOT CAUSE, measured, superseding both earlier theories.
+  Reporter narrowed it: the same dictation pasted fine into a shell session but not
+  a Claude one. Added opt-in input diagnostics (CCC_INPUT_DEBUG=1) covering both
+  what ARRIVES (DOM events) and what LEAVES (pty writes). The trace settled it:
+    keydown key="v" mods=ctrl trusted=true target=textarea.xterm-helper-textarea
+    pty:write shell  len=1 "\x16"
+    pty:write claude len=1 "\x16"
+  * The tool DOES send a real synthesized Ctrl+V. Injected keystrokes carry
+    `key="v"` and NO `code` (no scan code); human presses carry code=KeyV. Both
+    appeared in one trace, which is how they were separated -- 4 injected, 14 human.
+  * What reached the PTY was \x16 (SYN, raw Ctrl+V) in BOTH session types, so CCC
+    was never pasting at all.
+  * The shell only "worked" because PSReadLine binds Ctrl+V to Paste -- PowerShell
+    did the pasting from the Windows clipboard. claude.exe has no \x16 binding, so
+    nothing happened. That asymmetry is what made it look like a claude.exe bug.
+  * The handler never ran because it was registered on `document` in the BUBBLE
+    phase. xterm's keydown listener is on the helper textarea (target phase), which
+    runs BEFORE a document bubble listener, so xterm had already emitted \x16 --
+    preventDefault there is too late.
+  Fix: register in the CAPTURE phase and stopPropagation() before preventDefault().
+  Capture on document beats any descendant listener, so xterm never sees the chord.
+  stopPropagation (not stopImmediatePropagation) so the diagnostics listener on the
+  same node still records.
+- LESSON worth keeping: rounds 1-2 were reasoned, round 3 was measured. The two
+  earlier fixes (focus-independent handler, main-process clipboard read) are real
+  improvements and stay, but neither was the bug. The instrumentation found it in
+  one run.
+- Also corrected: an earlier reading of "no text and no hint" as "the tool sends no
+  paste chord". It does send one; the handler simply never got to see it first.
 - Verification: typecheck clean; full suite 3147 passed / 4 skipped; 22 tests in
   tests/unit/renderer/terminal-input.test.ts + 7 in tests/unit/main/clipboard-text.test.ts
   (added `clipboard.readText` to the electron mock in tests/unit/setup.ts). Unit tests

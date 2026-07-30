@@ -84,6 +84,15 @@ describe('isPasteChord', () => {
     expect(isPasteChord(chord({ ctrlKey: true, altKey: true }))).toBe(false)
   })
 
+  it('matches an INJECTED Ctrl+V that carries no code field', () => {
+    // Measured from a real Aqua Voice dictation (#145 diagnostics): synthesized
+    // keystrokes arrive as `key="v" mods=ctrl` with NO `code`, because there is no
+    // physical scan code behind them. Human presses carry code=KeyV. Matching on
+    // `key` alone is therefore load-bearing — requiring `code` would silently
+    // exclude every injected paste, which is the entire bug.
+    expect(isPasteChord({ key: 'v', ctrlKey: true, metaKey: false, shiftKey: false, altKey: false })).toBe(true)
+  })
+
   it('ignores a bare v, and other modified keys', () => {
     expect(isPasteChord(chord())).toBe(false)
     expect(isPasteChord(chord({ key: 'c', ctrlKey: true }))).toBe(false)

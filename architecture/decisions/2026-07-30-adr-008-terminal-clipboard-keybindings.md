@@ -29,11 +29,51 @@ state. An external app that takes focus and hands it back is the worst case, and
 nothing in CCC restored terminal focus on window focus (focus was re-grabbed only
 on session activation, overlay unmount, and mouseup inside the terminal).
 
+## The measured root cause (supersedes two earlier theories)
+
+Two attempted fixes failed because the mechanism was reasoned about rather than
+measured. Opt-in input diagnostics (`CCC_INPUT_DEBUG=1`) settled it:
+
+```
+keydown key="v" mods=ctrl trusted=true target=textarea.xterm-helper-textarea   <- injected, NO code field
+pty:write shell  len=1 "\x16"
+pty:write claude len=1 "\x16"
+```
+
+- The external tool **does** send a real synthesized Ctrl+V. Injected keystrokes
+  arrive with `key="v"` and **no `code`** (no physical scan code); human presses
+  carry `code=KeyV`. Both were present in one trace, which is how they were told
+  apart.
+- What reached the PTY was `\x16` — **SYN, the raw Ctrl+V control byte** — in
+  BOTH session types. So CCC was never pasting at all.
+- It appeared to work in a shell only because **PSReadLine binds Ctrl+V to Paste**,
+  so PowerShell pasted from the Windows clipboard itself. `claude.exe` has no
+  binding for `\x16`, so nothing happened. That difference is what made this look
+  like a `claude.exe` bug; it was not.
+- The paste handler never ran because it was registered on `document` in the
+  **bubble** phase. xterm's own keydown listener is on the helper textarea, so it
+  runs in the target phase — **before** any document bubble listener — converting
+  the chord to `\x16` and writing it. `preventDefault()` there is already too late.
+
+So the defect was event-phase ordering in CCC, not focus, not the clipboard API,
+not the injecting tool, and not Claude Code.
+
 ## Decision
 
 **Terminal clipboard keybindings are CCC's, handled explicitly and
 focus-independently. The Electron menu roles are a fallback for ordinary input
 fields, never the mechanism for terminals.**
+
+- The keydown listener is registered in the **CAPTURE** phase on `document` and
+  calls `stopPropagation()` before `preventDefault()`. Capture on `document` runs
+  ahead of any listener on a descendant, so xterm never sees the chord and never
+  emits `\x16`. This is not a stylistic detail — in the bubble phase the handler is
+  dead code, which is exactly how the first attempt shipped looking correct.
+  `stopPropagation`, not `stopImmediatePropagation`, so the diagnostics listener on
+  the same node still records the event.
+- `isPasteChord` matches on `key` alone and must never require `code`: injected
+  keystrokes have no `code`, so requiring it would exclude precisely the case this
+  exists to serve.
 
 - Ctrl+V / Cmd+V / Shift+Insert (and Ctrl+Shift+V, which some terminals use) read
   the clipboard and call `term.paste()` — the same route right-click already
