@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > `src/renderer/changelog.ts`. After editing that file, run `npm run changelog`
 > (CI enforces that this file is in sync via `npm run changelog:check`).
 
+## [2.1.0-beta.3] - 2026-07-30
+
+> Ctrl+V pastes into terminals — which also makes voice dictation and text expanders work — and Check for Updates can install the update it finds.
+
+### Fixed
+- Ctrl+V now pastes into terminals. Previously only right-click pasted: Ctrl+V was passed straight through to the session as a raw control code, which a shell happened to treat as its own paste command, while Claude ignored it entirely. Cmd+V, Shift+Insert and Ctrl+Shift+V work too, and if the clipboard has no text CCC now says so instead of appearing to do nothing.
+- Voice dictation and text-expander tools now work in terminals. Tools of that kind type into whatever is focused by copying text and sending Ctrl+V, so they were silently doing nothing in a Claude session — the same root cause as above.
+- Settings -> Check for Updates can now install the update it finds. It used to only report that one existed, leaving you to hunt for the small Update pill in the bottom bar. Open sessions are still saved before CCC restarts.
+
 ## [2.1.0-beta.2] - 2026-07-29
 
 > Resuming your work is far easier to read, your own Claude hooks now run in CCC sessions, and each config can set its own permission mode and CLI arguments.
@@ -915,6 +924,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tab attention indicators for waiting prompts
 - Context usage tracking via statusline API
 
+[2.1.0-beta.3]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-beta.3
 [2.1.0-beta.2]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-beta.2
 [2.1.0-beta.1]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-beta.1
 [2.0.0-rc.2]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.0.0-rc.2
