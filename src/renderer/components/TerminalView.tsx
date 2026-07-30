@@ -14,7 +14,13 @@ import SshFlowOverlay from './SshFlowOverlay'
 import { shouldUseResumePicker } from '../utils/resumePicker'
 import { shouldGateAccountChoice, formatSpawnError } from '../utils/sessionLaunch'
 import { stripCursorSequences } from '../utils/terminalFormatting'
-import { isControlReportOnly, decideContextMenuAction } from '../utils/terminalInput'
+import {
+  isControlReportOnly,
+  decideContextMenuAction,
+  isPasteChord,
+  shouldHandleTerminalPaste,
+  isOrdinaryEditable,
+} from '../utils/terminalInput'
 import { decideFollow } from '../utils/terminalScroll'
 import { getTerminalTheme } from './terminal/terminalTheme'
 import { useSettingsStore, DEFAULT_TERMINAL_SETTINGS } from '../stores/settingsStore'
@@ -80,6 +86,11 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
   const attentionAckedRef = useRef(false)
   const [isScrolledUp, setIsScrolledUp] = useState(false)
   const isScrolledUpRef = useRef(false)
+  // Mirror of the isActive prop for `document`-level listeners installed by the
+  // init effect (which keys on session identity, not activation) — reading the
+  // captured prop there would go stale on tab switches. See the paste handler.
+  const isActiveRef = useRef(isActive)
+  isActiveRef.current = isActive
   const updateSession = useSessionStore((s) => s.updateSession)
   const session = useSessionStore((s) => s.sessions.find((sess) => sess.id === sessionId))
 
@@ -108,6 +119,30 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       })
     })
   }, [sessionId, ssh])
+
+  // Restore terminal focus when the WINDOW regains focus (#145).
+  //
+  // Terminal focus was previously re-grabbed only on session activation, overlay
+  // unmount, and mouseup inside the terminal — never on window focus. An external
+  // tool that steals focus and then synthesizes *typed characters* (rather than a
+  // paste command) needs the xterm helper textarea focused, or the keystrokes land
+  // on <body> and vanish. The paste handler above is focus-independent by design;
+  // this covers the typing case.
+  //
+  // Only the active session, and never over a modal's focus trap.
+  useEffect(() => {
+    if (!isActive) return
+    const onWindowFocus = () => {
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return
+      // Don't yank focus out of a real input the user is working in.
+      if (isOrdinaryEditable(document.activeElement as HTMLElement | null)) return
+      requestAnimationFrame(() => {
+        try { terminalRef.current?.focus() } catch { /* ignore */ }
+      })
+    }
+    window.addEventListener('focus', onWindowFocus)
+    return () => window.removeEventListener('focus', onWindowFocus)
+  }, [isActive])
 
   // Repaint the terminal whenever the resolved theme changes.
   // Watching data-theme on <html> via MutationObserver covers BOTH:
@@ -185,6 +220,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
     let unsubData: (() => void) | null = null
     let unsubExit: (() => void) | null = null
     let handleKeyDownCopy: ((e: KeyboardEvent) => void) | null = null
+    let handleKeyDownPaste: ((e: KeyboardEvent) => void) | null = null
     let handleContextMenu: ((e: MouseEvent) => void) | null = null
     let disposed = false
     let parseTimer: ReturnType<typeof setTimeout> | null = null
@@ -747,6 +783,40 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       }
       document.addEventListener('keydown', handleKeyDownCopy)
 
+      // Ctrl+V / Cmd+V / Shift+Insert to paste (#145).
+      //
+      // CCC owns this keybinding rather than leaving it to the Edit menu's
+      // `role: 'paste'`: the native path pastes into the focused editable element
+      // (xterm's hidden helper textarea), so it silently does nothing whenever that
+      // textarea has lost DOM focus — which is every time an external tool takes
+      // focus and synthesizes a paste (dictation apps, snippet expanders). Reading
+      // the clipboard directly is the same focus-independent route that has always
+      // made right-click paste work.
+      //
+      // `isActiveRef` (not the captured prop) because this effect re-runs on session
+      // identity, not on activation — a captured `isActive` would go stale and this
+      // listener is on `document`, shared by every mounted TerminalView.
+      handleKeyDownPaste = async (e: KeyboardEvent) => {
+        if (!isPasteChord(e)) return
+        if (!shouldHandleTerminalPaste({
+          isActive: isActiveRef.current,
+          hasModalOpen: !!document.querySelector('[role="dialog"][aria-modal="true"]'),
+          targetIsOrdinaryEditable: isOrdinaryEditable(document.activeElement as HTMLElement | null),
+        })) return
+        // Claim the event before the async read so Chromium's native paste can't
+        // also fire and double-insert.
+        e.preventDefault()
+        try {
+          const text = await navigator.clipboard.readText()
+          if (!text) return
+          term?.paste(text)
+        } catch {
+          // Clipboard read denied (insecure context / window not focused). Nothing
+          // to paste; the terminal is unchanged.
+        }
+      }
+      document.addEventListener('keydown', handleKeyDownPaste)
+
       // Right-click: context-aware copy or paste depending on mode.
       //
       // Classic mode (classicTerminalCopyPaste, the default): CC's mouse
@@ -804,6 +874,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         try { window.electronAPI.pty.resize(sessionId, lastSentCols, lastSentRows) } catch { /* main gone */ }
       }
       if (handleKeyDownCopy) document.removeEventListener('keydown', handleKeyDownCopy)
+      if (handleKeyDownPaste) document.removeEventListener('keydown', handleKeyDownPaste)
       if (handleContextMenu) container.removeEventListener('contextmenu', handleContextMenu, true)
       if (handleWheel) container.removeEventListener('wheel', handleWheel)
       resizeObserver?.disconnect()
