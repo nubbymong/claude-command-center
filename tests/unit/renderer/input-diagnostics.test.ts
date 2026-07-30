@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { formatDiagEvent, describeNode } from '../../../src/renderer/utils/inputDiagnostics'
+import { formatDiagEvent, describeNode, describeBytes } from '../../../src/renderer/utils/inputDiagnostics'
 
 // #145: after two fixes built on assumed injection mechanisms, these lines are the
 // evidence that replaces the guessing. They must stay greppable and lossless about
@@ -65,5 +65,38 @@ describe('describeNode', () => {
   it('tolerates a non-string className (SVG animated class)', () => {
     const svgish = { tagName: 'svg', className: { baseVal: 'x' } } as unknown as EventTarget
     expect(describeNode(svgish)).toBe('svg')
+  })
+})
+
+// The shell-vs-Claude discriminator: CCC's write path is identical for both, so
+// what matters is whether the bytes leaving for the PTY are correct — and above
+// all whether they were sent as a PASTE or as TYPING.
+describe('describeBytes', () => {
+  it('flags a bracketed paste, which right-click proves Claude handles', () => {
+    const line = describeBytes('\x1b[200~hello world\x1b[201~')
+    expect(line).toContain('BRACKETED_PASTE')
+    expect(line).toContain('\\e[200~')
+  })
+
+  it('does NOT flag plain typed characters', () => {
+    const line = describeBytes('hello')
+    expect(line).not.toContain('BRACKETED_PASTE')
+    expect(line).toBe('len=5 "hello"')
+  })
+
+  it('escapes control bytes so they are visible rather than swallowed', () => {
+    expect(describeBytes('\r')).toBe('len=1 "\\r"')
+    expect(describeBytes('\x03')).toBe('len=1 "\\x03"')
+    expect(describeBytes('a\tb\n')).toBe('len=4 "a\\tb\\n"')
+  })
+
+  it('reports the true length and marks truncation', () => {
+    const line = describeBytes('x'.repeat(200), 10)
+    expect(line).toContain('len=200')
+    expect(line).toContain('+190more')
+  })
+
+  it('handles empty input', () => {
+    expect(describeBytes('')).toBe('len=0 ""')
   })
 })

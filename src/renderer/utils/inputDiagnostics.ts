@@ -46,6 +46,35 @@ export function formatDiagEvent(e: DiagEvent): string {
   return parts.join(' ')
 }
 
+/**
+ * Render a PTY payload readably: control bytes as \xNN, escape sequences visible.
+ *
+ * This is the other half of the diagnosis. Renderer events tell us what ARRIVED;
+ * this tells us what LEFT for the PTY. When the same dictation works in a
+ * PowerShell session but not a Claude session, CCC's write path is identical
+ * (term.onData -> pty.write for both), so the question becomes whether the bytes
+ * handed to claude.exe are correct and complete. If they are, the divergence is
+ * entirely inside the PTY consumer and not CCC's to fix.
+ *
+ * Bracketed-paste markers are the specific thing to look for: \x1b[200~ ... \x1b[201~
+ * means xterm sent a PASTE (which right-click proves Claude handles correctly),
+ * whereas a stream of bare characters means it sent TYPING.
+ */
+export function describeBytes(data: string, max = 120): string {
+  const shown = data.slice(0, max)
+  const escaped = shown.replace(/[\x00-\x1f\x7f]/g, (c) => {
+    const code = c.charCodeAt(0)
+    if (c === '\x1b') return '\\e'
+    if (c === '\r') return '\\r'
+    if (c === '\n') return '\\n'
+    if (c === '\t') return '\\t'
+    return `\\x${code.toString(16).padStart(2, '0')}`
+  })
+  const bracketed = data.includes('\x1b[200~') ? ' BRACKETED_PASTE' : ''
+  const truncated = data.length > max ? ` +${data.length - max}more` : ''
+  return `len=${data.length} "${escaped}"${truncated}${bracketed}`
+}
+
 /** `div.xterm-screen` / `textarea.xterm-helper-textarea` / `BODY` — enough to tell
  *  which surface an event hit without dumping the whole element. */
 export function describeNode(n: EventTarget | null): string {

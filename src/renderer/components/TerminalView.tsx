@@ -25,7 +25,7 @@ import { decideFollow } from '../utils/terminalScroll'
 import { getTerminalTheme } from './terminal/terminalTheme'
 import { useSettingsStore, DEFAULT_TERMINAL_SETTINGS } from '../stores/settingsStore'
 import { usePasteHintStore } from '../stores/pasteHintStore'
-import { installInputDiagnostics } from '../utils/inputDiagnostics'
+import { installInputDiagnostics, describeBytes } from '../utils/inputDiagnostics'
 import { ScrollToBottomButton } from './terminal'
 import { useStatuslineSubscription } from '../hooks/useStatuslineSubscription'
 import { useEffortSubscription } from '../hooks/useEffortSubscription'
@@ -93,6 +93,9 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
   // captured prop there would go stale on tab switches. See the paste handler.
   const isActiveRef = useRef(isActive)
   isActiveRef.current = isActive
+  // Whether #145 input diagnostics are on, readable from the init effect's
+  // long-lived onData closure.
+  const inputDiagRef = useRef(false)
   const updateSession = useSessionStore((s) => s.updateSession)
   const session = useSessionStore((s) => s.sessions.find((sess) => sess.id === sessionId))
 
@@ -173,9 +176,10 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
     let cancelled = false
     void window.electronAPI.inputDebug.enabled().then((on) => {
       if (!on || cancelled) return
+      inputDiagRef.current = true
       dispose = installInputDiagnostics(container, (line) => window.electronAPI.inputDebug.log(`[${sessionId}] ${line}`))
     }).catch(() => { /* diagnostics are never load-bearing */ })
-    return () => { cancelled = true; dispose?.() }
+    return () => { cancelled = true; inputDiagRef.current = false; dispose?.() }
   }, [isActive, terminalReady, sessionId])
 
   useEffect(() => {
@@ -565,6 +569,16 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         // comes from PTY output; un-ack on real keystrokes. Provider sessions use
         // the hook-driven attention source (attention-source.ts) instead.
         if (shellOnly && !isControlReportOnly(data)) attentionAckedRef.current = false
+        // #145 diagnostics: record what actually leaves for the PTY. The write path
+        // is identical for shell and Claude sessions, so when the same dictation
+        // lands in PowerShell but not in Claude, this line is what proves whether
+        // the bytes handed to claude.exe were correct and complete. Control reports
+        // are skipped — they'd bury the real input.
+        if (inputDiagRef.current && !isControlReportOnly(data)) {
+          window.electronAPI.inputDebug.log(
+            `[${sessionId}] pty:write ${shellOnly ? 'shell' : 'claude'} ${describeBytes(data)}`,
+          )
+        }
         window.electronAPI.pty.write(sessionId, data)
       })
 
