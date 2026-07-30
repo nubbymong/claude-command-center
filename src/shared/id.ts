@@ -20,7 +20,22 @@
  * (statusline-watcher.ts).
  */
 
-const ID_BYTES = 16 // 128 bits
+/**
+ * 12 bytes -> 24 hex chars, not the reflexive 16/32.
+ *
+ * Session ids become filenames at `<resourcesDir>/status/<sessionId>.json`, and
+ * the resources dir is user-selected and can be deep. The old ids were 14 chars,
+ * so 32 would have moved the legacy Windows MAX_PATH cliff 18 chars closer for a
+ * user who has long paths disabled -- and the write that would fail is a bare
+ * `catch {}` inside the emitted statusline bridge script, so the symptom is a
+ * permanently blank ContextBar with nothing logged.
+ *
+ * 96 bits is not a compromise on the security property: it is ~7.9e28 values,
+ * unguessable by any margin that matters locally, with a birthday bound around
+ * 2^48 draws. The property CodeQL flagged is unpredictability, and 96 bits has
+ * it; 128 would only have bought path length.
+ */
+const ID_BYTES = 12
 
 /** A cryptographically random, path-safe opaque id, optionally prefixed. */
 export function randomId(prefix = ''): string {

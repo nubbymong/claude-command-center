@@ -43,7 +43,10 @@ export function readJsonFile<T>(name: string, seedDefaults: () => T): T {
   try {
     return JSON.parse(readFileSync(fp, 'utf-8')) as T
   } catch (err) {
-    const corruptPath = `${fp}.corrupt-${Date.now()}-${randomId()}`
+    // A collision-breaker on an already-timestamped name, not an identifier --
+    // 8 hex chars is plenty, and the full 32 would push an already-long
+    // quarantine path 24 chars closer to Windows MAX_PATH for no benefit.
+    const corruptPath = `${fp}.corrupt-${Date.now()}-${randomId().slice(0, 8)}`
     try { renameSync(fp, corruptPath); logError(`[channels] ${name} unreadable, moved to ${corruptPath}`) }
     catch (e) { logError(`[channels] could not quarantine ${name}: ${String(e)}`) }
     return seedDefaults()
