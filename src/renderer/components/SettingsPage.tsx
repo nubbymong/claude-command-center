@@ -65,9 +65,14 @@ interface SettingsPageProps {
   // Called after the user triggers "Add another account" so the parent can
   // switch the view to Sessions (where the login shell opens).
   onNavigateToSessions?: () => void
+  // Install the pending update. Supplied by App so the Settings button uses the
+  // SAME path as the bottom-bar Update pill — which saves session state via the
+  // 'update' close dialog when sessions are open, instead of restarting on top
+  // of them (#142). Omitted => the field falls back to a direct install.
+  onUpdateRequested?: () => void
 }
 
-export default function SettingsPage({ initialTab, onNavigateToSessions }: SettingsPageProps = {}) {
+export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdateRequested }: SettingsPageProps = {}) {
   const settings = useSettingsStore((s) => s.settings)
   const updateSettings = useSettingsStore((s) => s.updateSettings)
   const updateAppMeta = useAppMetaStore((s) => s.update)
@@ -193,7 +198,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions }: Setti
                     <option value="system">System -- follow OS preference</option>
                   </select>
                 </Field>
-                <CheckForUpdatesField />
+                <CheckForUpdatesField onUpdateRequested={onUpdateRequested} />
                 <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer mt-3">
                   <input
                     type="checkbox"
@@ -859,9 +864,23 @@ function MockRateDots({ label, pct }: { label: string; pct: number }) {
 
 type UpdateCheckStatus = 'idle' | 'checking' | 'up-to-date' | 'available'
 
-function CheckForUpdatesField() {
+export function CheckForUpdatesField({ onUpdateRequested }: { onUpdateRequested?: () => void }) {
   const [status, setStatus] = useState<UpdateCheckStatus>('idle')
   const [foundVersion, setFoundVersion] = useState<string | null>(null)
+  const [installing, setInstalling] = useState(false)
+
+  // Route through App's handler so an install with sessions open goes via the
+  // 'update' close dialog (session state saved first). The direct call is only
+  // a fallback for a parent that didn't pass the prop — same shape as BottomBar.
+  const handleInstall = () => {
+    if (installing) return
+    setInstalling(true)
+    if (onUpdateRequested) {
+      onUpdateRequested()
+      return
+    }
+    window.electronAPI.update.installAndRestart().catch(() => setInstalling(false))
+  }
 
   const handleCheck = async () => {
     if (status === 'checking') return
@@ -894,18 +913,38 @@ function CheckForUpdatesField() {
     status === 'available' ? 'text-yellow' :
     'text-overlay0'
 
+  // Once a check finds an update, the primary button BECOMES the install action
+  // — previously this screen only printed "Update available" and left the user to
+  // hunt for the bottom-bar Update pill (#142).
+  const updateFound = status === 'available'
+
   return (
     <Field label="Check for Updates">
       <div className="flex items-center gap-3">
-        <button
-          onClick={handleCheck}
-          disabled={status === 'checking'}
-          className="px-3 py-1.5 text-sm bg-surface1 hover:bg-surface2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-wait border border-surface0/80"
-        >
-          {status === 'checking' ? 'Checking...' : 'Check now'}
-        </button>
+        {updateFound ? (
+          <button
+            onClick={handleInstall}
+            disabled={installing}
+            title="Install the update and restart -- open sessions are saved first"
+            className="px-3 py-1.5 text-sm rounded-lg transition-colors disabled:opacity-50 disabled:cursor-wait font-medium"
+            style={{ background: 'var(--status-success)', color: 'var(--color-crust)' }}
+          >
+            {installing ? 'Installing...' : 'Install now'}
+          </button>
+        ) : (
+          <button
+            onClick={handleCheck}
+            disabled={status === 'checking'}
+            className="px-3 py-1.5 text-sm bg-surface1 hover:bg-surface2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-wait border border-surface0/80"
+          >
+            {status === 'checking' ? 'Checking...' : 'Check now'}
+          </button>
+        )}
         {statusText && status !== 'checking' && (
           <span className={`text-xs ${statusColor}`}>{statusText}</span>
+        )}
+        {updateFound && !installing && (
+          <span className="text-[10px] text-overlay0">Restarts CCC; open sessions are saved.</span>
         )}
       </div>
     </Field>
