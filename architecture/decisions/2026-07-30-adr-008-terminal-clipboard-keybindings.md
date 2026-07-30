@@ -4,7 +4,8 @@
 - **Deciders:** @nubbymong (owner)
 - **Related:** CONTEXT.d/2026-07-30-145-ctrl-v-terminal-paste.md, #145,
   src/renderer/utils/terminalInput.ts,
-  src/renderer/components/TerminalView.tsx, src/main/index.ts (Edit menu roles)
+  src/renderer/components/TerminalView.tsx, src/main/clipboard-text.ts,
+  src/main/clipboard-image.ts (the image precedent), src/main/index.ts (Edit menu roles)
 
 ## Context
 
@@ -53,6 +54,26 @@ fields, never the mechanism for terminals.**
   CommandBar, settings and rename fields keep behaving normally. xterm's own helper
   textarea is explicitly *excluded* from that classification — it IS the terminal.
 - Alt+V stays image paste and is never treated as text.
+- **The clipboard is read in the MAIN process** (`readClipboardTextWithRetry`), not
+  via `navigator.clipboard.readText()`. Two independent reasons, both fatal to the
+  renderer API here:
+  1. The async clipboard API **requires the document to be focused** and rejects
+     with "Document is not focused" otherwise — exactly the condition this handler
+     exists to survive. Depending on document focus would reintroduce the bug in a
+     new place.
+  2. **Windows delayed-render**: the first read after the window gains focus can
+     return empty because the source app materialises the format lazily. This is
+     not speculation — it is the documented cause of the Alt+V *image*
+     first-attempt miss (`clipboard-image.ts`), fixed there with the same retry.
+     Text has no reason to behave differently, so it gets the same treatment
+     (6 tries x 80ms, short-circuiting on the first hit).
+  The renderer API remains as a fallback if the IPC call fails.
+- **Failure is visible, never silent.** An empty or unreadable clipboard shows a
+  paste hint. Silence is what let this bug live: Ctrl+V appeared to do nothing,
+  with no way to tell whether the chord was even received. The hint is also the
+  cheapest available diagnostic — if an external tool pastes nothing and NO hint
+  appears, the handler never ran, which means the tool is not sending a paste
+  chord at all and the mechanism is something else.
 - Separately, terminal focus is now restored when the window regains focus, for
   tools that synthesize *typed characters* rather than a paste command. Skipped
   over modals and when focus sits in a real input, so it cannot steal focus from

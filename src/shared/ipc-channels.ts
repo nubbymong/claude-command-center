@@ -28,6 +28,10 @@ export const IPC = {
 
   // Clipboard
   CLIPBOARD_SAVE_IMAGE: 'clipboard:saveImage',
+  // Main-process clipboard text read (#145). Focus-independent, unlike the
+  // renderer's navigator.clipboard.readText(), and retried for Windows
+  // delayed-render. Used by the terminal paste keybinding.
+  CLIPBOARD_READ_TEXT: 'clipboard:readText',
 
   // Credentials
   CREDENTIALS_SAVE: 'credentials:save',

@@ -28,7 +28,7 @@ vi.mock('electron', () => ({
     show: vi.fn(),
   })),
   dialog: { showOpenDialog: vi.fn() },
-  clipboard: { readImage: vi.fn() },
+  clipboard: { readImage: vi.fn(), readText: vi.fn() },
   safeStorage: { isEncryptionAvailable: vi.fn(() => false) },
   Menu: { buildFromTemplate: vi.fn(), setApplicationMenu: vi.fn() },
 }))

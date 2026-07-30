@@ -24,6 +24,7 @@ import {
 import { decideFollow } from '../utils/terminalScroll'
 import { getTerminalTheme } from './terminal/terminalTheme'
 import { useSettingsStore, DEFAULT_TERMINAL_SETTINGS } from '../stores/settingsStore'
+import { usePasteHintStore } from '../stores/pasteHintStore'
 import { ScrollToBottomButton } from './terminal'
 import { useStatuslineSubscription } from '../hooks/useStatuslineSubscription'
 import { useEffortSubscription } from '../hooks/useEffortSubscription'
@@ -806,14 +807,36 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         // Claim the event before the async read so Chromium's native paste can't
         // also fire and double-insert.
         e.preventDefault()
+        // Read through the MAIN process, not navigator.clipboard.readText().
+        // The async clipboard API requires the DOCUMENT to be focused and rejects
+        // otherwise — precisely the condition this handler exists to survive, since
+        // an external tool takes focus, writes the clipboard, hands focus back and
+        // synthesizes Ctrl+V. The main-process read has no focus requirement and
+        // retries for Windows delayed-render (the same first-read-empty behaviour
+        // already documented for clipboard images).
+        let text = ''
         try {
-          const text = await navigator.clipboard.readText()
-          if (!text) return
-          term?.paste(text)
+          text = await window.electronAPI.clipboard.readText()
         } catch {
-          // Clipboard read denied (insecure context / window not focused). Nothing
-          // to paste; the terminal is unchanged.
+          // IPC unavailable — fall through to the renderer API below.
         }
+        if (!text) {
+          try {
+            text = await navigator.clipboard.readText()
+          } catch {
+            text = ''
+          }
+        }
+        if (!text) {
+          // Do NOT fail silently. A silent no-op is what let #145 go unnoticed:
+          // Ctrl+V appeared to do nothing with no way to tell whether the chord
+          // was even seen. This hint also makes the failure mode diagnosable — if
+          // a dictation tool pastes nothing and NO hint appears, the tool never
+          // sent a paste chord at all.
+          usePasteHintStore.getState().show(sessionId, 'Nothing to paste — clipboard has no text')
+          return
+        }
+        term?.paste(text)
       }
       document.addEventListener('keydown', handleKeyDownPaste)
 

@@ -34,8 +34,26 @@ in a CCC terminal at all**, confirmed with the reporter.
 - KNOWN, LEFT ALONE: the pre-existing Ctrl+Shift+C copy handler has the same missing
   `isActive` guard. Benign today (only one terminal holds a selection); noted in
   ADR-008 rather than fixed here, to keep this change scoped.
-- Verification: typecheck clean; full suite 3140 passed / 4 skipped; 22 tests in
-  tests/unit/renderer/terminal-input.test.ts. Unit tests cannot prove this one --
-  validated in the app against a SYNTHESIZED Ctrl+V from an external process
-  (clipboard write + SendKeys into the CCC window), which is what actually reproduces
-  the focus-loss condition; hand-pressing the key does not.
+- ROUND 2 -- the first cut still failed against Aqua Voice in a dev build that DID
+  contain it (source 00:28, build 08:47, fix branch checked out, no uncommitted
+  changes). Cause: the handler fired but the READ failed, silently.
+  `navigator.clipboard.readText()` requires the DOCUMENT to be focused and rejects
+  otherwise -- the exact condition the handler exists to survive -- and the original
+  catch swallowed it. Compounding it, Windows delayed-render means the first read
+  after a focus change can come back empty anyway.
+  Not speculation: `clipboard-image.ts` already documents this as the cause of the
+  Alt+V image first-attempt miss and already fixes it with a retry. Text had the
+  same flaw.
+  So: added `src/main/clipboard-text.ts` (`readClipboardTextWithRetry`, 6 x 80ms,
+  short-circuits) + `CLIPBOARD_READ_TEXT` IPC. The main-process clipboard has no
+  focus requirement. Renderer API kept only as a fallback.
+- Failure is now VISIBLE (paste hint) instead of silent. Silence is what let this
+  bug live -- and it doubles as the diagnostic: if an external tool pastes nothing
+  and NO hint appears, the handler never ran, so the tool isn't sending a paste
+  chord and the mechanism is something else.
+- Verification: typecheck clean; full suite 3147 passed / 4 skipped; 22 tests in
+  tests/unit/renderer/terminal-input.test.ts + 7 in tests/unit/main/clipboard-text.test.ts
+  (added `clipboard.readText` to the electron mock in tests/unit/setup.ts). Unit tests
+  cannot prove the end-to-end path -- it needs a SYNTHESIZED Ctrl+V from an external
+  process (clipboard write + SendKeys into the CCC window), which is what actually
+  reproduces the focus-loss condition; hand-pressing the key does not.

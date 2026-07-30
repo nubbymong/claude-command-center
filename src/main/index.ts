@@ -53,6 +53,7 @@ import { startEffortTracker } from './effort-tracker'
 import { startAttentionSource } from './attention-source'
 import { startJankDetector } from './jank-detector'
 import { readClipboardImageWithRetry } from './clipboard-image'
+import { readClipboardTextWithRetry } from './clipboard-text'
 import { readClipboardImageFilePath, type PasteableImage } from './clipboard-file'
 import { HooksGateway } from './hooks/hooks-gateway'
 import { setGateway, getGateway } from './hooks'
@@ -438,6 +439,15 @@ function createWindow(): void {
     }
     return img.resize({ height: maxDim, quality: 'good' as const })
   }
+
+  // Clipboard TEXT read for the terminal paste keybinding (#145). Deliberately
+  // main-process: navigator.clipboard.readText() requires the document to be
+  // focused, which is exactly the condition that fails when an external tool
+  // (dictation, snippet expander) takes focus and synthesizes Ctrl+V. Retried
+  // for the same Windows delayed-render reason as the image path below.
+  ipcMain.handle(IPC.CLIPBOARD_READ_TEXT, async (): Promise<string> => {
+    return readClipboardTextWithRetry()
+  })
 
   // Save clipboard image to a unique file in the host screenshots dir and return its
   // bare filename so the renderer can use the conductor MCP fetch_host_screenshot tool.

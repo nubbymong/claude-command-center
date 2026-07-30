@@ -44,6 +44,8 @@ export interface ElectronAPI {
   }
   clipboard: {
     saveImage: () => Promise<{ path: string } | { error: 'no-image' | 'too-large' }>
+    /** Focus-independent clipboard text read, retried for Windows delayed-render (#145). */
+    readText: () => Promise<string>
   }
   credentials: {
     save: (configId: string, password: string) => Promise<boolean>
@@ -509,7 +511,8 @@ const electronAPI: ElectronAPI = {
     openFolder: () => ipcRenderer.invoke(IPC.DIALOG_OPEN_FOLDER)
   },
   clipboard: {
-    saveImage: () => ipcRenderer.invoke(IPC.CLIPBOARD_SAVE_IMAGE)
+    saveImage: () => ipcRenderer.invoke(IPC.CLIPBOARD_SAVE_IMAGE),
+    readText: () => ipcRenderer.invoke(IPC.CLIPBOARD_READ_TEXT)
   },
   credentials: {
     save: (configId, password) => ipcRenderer.invoke(IPC.CREDENTIALS_SAVE, configId, password),

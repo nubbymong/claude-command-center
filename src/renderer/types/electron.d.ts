@@ -117,6 +117,8 @@ export interface ElectronAPI {
   }
   clipboard: {
     saveImage: () => Promise<{ path: string } | { error: 'no-image' | 'too-large' }>
+    /** Focus-independent clipboard text read, retried for Windows delayed-render (#145). */
+    readText: () => Promise<string>
   }
   credentials: {
     save: (configId: string, password: string) => Promise<boolean>
