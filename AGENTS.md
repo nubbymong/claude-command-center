@@ -71,6 +71,20 @@ RC-branch model (adopted with #89): `beta` is never frozen — features merge th
 - Linux builds on ubuntu-latest → glibc 2.39 floor (Ubuntu 24.04+/Rocky 10+); older distros need a container build. Vision on Linux requires a deb/rpm Chrome/Chromium (snap confinement blocks the CDP profile dir)
 - Never commit secrets, .env files, or personal paths
 
+## Security embargo — read before writing ANY doc about a security finding
+
+**This repository is public. Anything that gets pushed is publication.** If you have found
+or been handed an unfixed vulnerability, it does not go into a `CONTEXT.d/` fragment, an
+ADR, a commit message, a branch name, the changelog, an issue, or a PR — it goes into a
+private GitHub Security Advisory, and the fix is developed in the private fork attached to
+that advisory. See `SECURITY.md` ("Embargo") for the full workflow.
+
+`CONTEXT.d/` is the trap. The running log *feels* like a scratch notebook and is in fact a
+tracked file; a fragment describing a live bug is a disclosure with a repro attached. A
+fragment written during an embargo may say *that* a finding exists and was routed
+privately — never the component, the mechanism, or the repro. The public record (fragment,
+changelog entry, advisory) is written **after** the fix ships, all at once.
+
 ## Documentation protocol (CARP)
 
 - **Running log:** add a dated fragment under `CONTEXT.d/` for your work (see `CONTEXT.d/README.md`). `CONTEXT.md` is generated + gitignored — never commit it.
