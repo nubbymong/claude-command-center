@@ -8,8 +8,13 @@ dist/
 .secrets/
 .env
 
-# Personal/local config
-.claude/
+# Personal/local config. `.claude/*` (not `.claude/`) so the shared, repo-owned
+# agent skills under .claude/skills/ can be un-ignored below; git will not
+# descend into a wholly-excluded directory. Everything else in .claude/ --
+# settings.local.json, session state, caches -- stays personal and untracked.
+# (ADR-009 / 2026-07-30, same reasoning as ADR-004 tracking AGENTS.md.)
+.claude/*
+!.claude/skills/
 .agents/
 # AGENTS.md is now TRACKED — it is the canonical, cross-tool agent brief
 # (ADR-004 / 2026-07-18). CLAUDE.md imports it via `@AGENTS.md`.
