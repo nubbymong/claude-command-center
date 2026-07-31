@@ -124,9 +124,51 @@ function fanOutStatusline(data: StatuslineData, getWindow: (() => BrowserWindow 
 export function dispatchSSHStatuslineUpdate(json: string): void {
   if (!sshDispatchWindow) return
   try {
-    const data: StatuslineData = JSON.parse(json)
+    const parsed: unknown = JSON.parse(json)
+    const data = sanitiseSentinelPayload(parsed)
+    if (!data) return
     fanOutStatusline(data, sshDispatchWindow)
   } catch { /* ignore malformed sentinel payloads */ }
+}
+
+/**
+ * Shape-check an OSC sentinel payload before it is fanned out.
+ *
+ * This payload is lifted verbatim out of an SSH PTY byte stream, so it is
+ * REMOTE-CONTROLLED: the host you connected to decides its contents, and it
+ * reached `JSON.parse` with no validation at all. Everything downstream --
+ * the renderer, the telemetry fan-out, the transcript binder -- was trusting a
+ * `StatuslineData` type assertion over a value the type system never checked.
+ *
+ * Deliberately a shape filter, not a strict schema. Rejecting the whole payload
+ * on one unexpected field would break the statusline against any CLI version
+ * whose fields we do not yet know about, which is a reliability regression paid
+ * for no security gain. Instead: require an object with a usable `sessionId`,
+ * then keep only fields whose runtime type matches the declared one and drop
+ * the rest. A hostile host can still send *valid* values -- that is inherent to
+ * a statusline -- but it can no longer smuggle a value of the wrong TYPE into
+ * code that assumed otherwise.
+ */
+function sanitiseSentinelPayload(v: unknown): StatuslineData | null {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return null
+  const src = v as Record<string, unknown>
+
+  // sessionId is the routing key -- without a usable one there is nothing to
+  // fan out to. Bounded because it is used to build log lines and lookups.
+  const sessionId = src.sessionId
+  if (typeof sessionId !== 'string' || sessionId.length === 0 || sessionId.length > 256) return null
+
+  const out: Record<string, unknown> = { sessionId }
+  for (const [key, val] of Object.entries(src)) {
+    if (key === 'sessionId') continue
+    const t = typeof val
+    // Scalars are copied when they are finite/real; objects are passed through
+    // for the nested shapes (rateLimitExtra, usage buckets) that the renderer
+    // already treats defensively.
+    if (t === 'string' || t === 'boolean' || t === 'object') out[key] = val
+    else if (t === 'number' && Number.isFinite(val as number)) out[key] = val
+  }
+  return out as unknown as StatuslineData
 }
 
 /**

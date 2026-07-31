@@ -103,7 +103,29 @@ export function canonicalizeTranscriptPath(p: string): string | null {
 
   // Reconstruct as canonical path under homedir, letting path.join handle
   // platform separator normalisation.
-  return path.join(homedir(), '.claude', 'projects', ...(rest ? [rest] : []))
+  const root = path.join(homedir(), '.claude', 'projects')
+  const candidate = path.join(root, ...(rest ? [rest] : []))
+
+  // CONTAINMENT. `path.join` NORMALISES `..` -- it does not reject it -- so a
+  // `rest` of `../../../../.ssh/id_rsa` walks straight out of the projects root
+  // and resolves to a real path elsewhere on the drive. `p` is not trustworthy:
+  // it arrives from a remote host's statusline payload and from hook payloads,
+  // so this function must treat it as hostile input rather than as a path we
+  // produced. Resolve both sides and require the result to stay under the root.
+  //
+  // The trailing separator on `root` matters: without it, a sibling directory
+  // whose name merely starts with the root's name (`...projects-evil`) would
+  // pass a bare `startsWith`.
+  const resolvedRoot = path.resolve(root)
+  const resolved = path.resolve(candidate)
+  if (resolved !== resolvedRoot && !resolved.startsWith(resolvedRoot + path.sep)) return null
+
+  // Deliberately NO `.jsonl` extension check. It looked free, but this function
+  // is documented and tested to return the bare projects root when the input
+  // ends exactly at the `.claude/projects` segment, and an extension filter
+  // breaks that. Containment above is the security control; narrowing what a
+  // contained path may point at belongs to the caller that opens it.
+  return resolved
 }
 
 // ---------------------------------------------------------------------------
