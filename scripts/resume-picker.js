@@ -591,6 +591,36 @@ async function main() {
 // Forwarded args come via this script's own argv — pty-manager passes
 // things like `--settings <path>` in when the hooks gateway is active.
 // They're appended after `--resume <id>` so the resume verb stays first.
+/**
+ * Build the spawn target for `claude`, WITHOUT handing anything to a shell.
+ *
+ * `shell: true` on Windows is the trap this replaces. Node joins [file,
+ * ...args] with spaces and hands the result to `cmd.exe /d /s /c` UNESCAPED
+ * (the documented child_process caveat, CVE-2024-27980 class). Every argument
+ * this script forwards is therefore re-parsed by cmd.exe:
+ *
+ *  - Any `&`, `|`, `<`, `>` or `%` inside a forwarded value becomes cmd.exe
+ *    syntax. The `--agents` payload is user-authored template text, so that is
+ *    a command-execution path, not a theoretical one.
+ *  - Any SPACE inside a path splits it. The default Windows data root is
+ *    `%LOCALAPPDATA%\Claude Command Center`, which ALWAYS contains spaces, so
+ *    `--settings` was being truncated on every restored Windows session and the
+ *    tail was landing as a positional arg (an accidental initial prompt).
+ *
+ * `shell: false` fixes both: Node passes argv to CreateProcess directly and
+ * quotes each element itself. The only thing shell:true was buying is the
+ * ability to invoke a `.cmd` shim, so do that explicitly through cmd.exe with
+ * an ARGS ARRAY -- the same shape src/main/providers/codex/spawn.ts already
+ * uses. cmd.exe still parses the shim path, but the arguments are passed as
+ * separate argv elements rather than concatenated into one command line.
+ */
+function buildSpawnTarget(cmd, args) {
+  if (os.platform() === 'win32' && /\.(cmd|bat)$/i.test(cmd)) {
+    return { file: 'cmd.exe', argv: ['/c', cmd, ...args] }
+  }
+  return { file: cmd, argv: args }
+}
+
 function getForwardedArgs() {
   // node resume-picker.js [ --settings <path> ] [ other flags ... ]
   return process.argv.slice(2)
@@ -636,11 +666,13 @@ function launchClaude(resumeId, sourceCwd) {
     } catch { /* best-effort */ }
   }
 
+
   // Only override cwd for an actual resume into a different directory. Be
   // FAIL-SAFE: an unresolvable/missing sourceCwd silently falls back to inherit.
   const spawnOpts = {
     stdio: 'inherit',
-    shell: os.platform() === 'win32',
+    // NEVER shell:true here -- see buildSpawnTarget.
+    shell: false,
     windowsHide: false,
   }
   if (resumeId && sourceCwd) {
@@ -651,7 +683,8 @@ function launchClaude(resumeId, sourceCwd) {
     } catch { /* leave cwd inherited */ }
   }
 
-  const result = spawnSync(cmd, args, spawnOpts)
+  const target = buildSpawnTarget(cmd, args)
+  const result = spawnSync(target.file, target.argv, spawnOpts)
 
   // If resume failed (conversation no longer exists), fall back to fresh session.
   // The fresh fallback runs in the SAME (worktree) cwd so it lands where the
@@ -660,11 +693,12 @@ function launchClaude(resumeId, sourceCwd) {
     console.log('\n  Conversation no longer available - starting fresh session...\n')
     const freshOpts = {
       stdio: 'inherit',
-      shell: os.platform() === 'win32',
+      shell: false,
       windowsHide: false,
     }
     if (spawnOpts.cwd) freshOpts.cwd = spawnOpts.cwd
-    const fresh = spawnSync(cmd, forwarded, freshOpts)
+    const freshTarget = buildSpawnTarget(cmd, forwarded)
+    const fresh = spawnSync(freshTarget.file, freshTarget.argv, freshOpts)
     process.exit(fresh.status || 0)
   }
 
@@ -674,6 +708,7 @@ function launchClaude(resumeId, sourceCwd) {
 // Pure-logic exports for unit testing. Guarded so `require()` from the test (or
 // a sanity `node -e "require('./scripts/resume-picker.js')"`) does NOT run main.
 module.exports = {
+  buildSpawnTarget,
   encodeProjectPath,
   resolveProjectDir,
   ensureCompanionDir,
