@@ -4,7 +4,7 @@ import * as path from 'path'
 import * as fs from 'fs'
 import * as os from 'os'
 import { checkForUpdatesOnDemand, markUpdateInstalled, getProjectRootPath, setSourcePathInRegistry, hasSourcePath, isPackagedApp } from '../update-watcher'
-import { checkGitHubRelease, downloadGitHubRelease, prepareLinuxAppImageUpdate, isPathOnNoexecMount, InstallerIntegrityError } from '../github-update'
+import { checkGitHubRelease, downloadGitHubRelease, prepareLinuxAppImageUpdate, isPathOnNoexecMount, InstallerIntegrityError, stillMatchesDigest } from '../github-update'
 import { killAllPty } from '../pty-manager'
 import { logInfo, logError } from '../debug-logger'
 
@@ -71,6 +71,10 @@ export function registerUpdateHandlers(): void {
     logInfo('[update] Starting update...')
 
     let installerPath: string | null = null
+    // SHA-256 of the installer as verified at download time, kept so it can be
+    // re-checked immediately before exec (#111). Null for the dev-only local
+    // build path, which has no manifest to check against.
+    let verifiedSha256: string | null = null
 
     // 1. Re-check GitHub for the latest release (cached info may be stale)
     try {
@@ -87,19 +91,31 @@ export function registerUpdateHandlers(): void {
     if (cachedRelease?.installerName && cachedRelease?.tagName) {
       logInfo(`[update] Downloading from GitHub: ${cachedRelease.installerName}`)
       try {
-        installerPath = await downloadGitHubRelease(
+        const verified = await downloadGitHubRelease(
           cachedRelease.tagName,
           cachedRelease.installerName,
           cachedRelease.installerUrl
         )
+        if (verified) {
+          installerPath = verified.path
+          verifiedSha256 = verified.sha256
+        }
       } catch (err) {
         // An integrity failure is NOT "installer not found" (#111). Surfacing it
         // as a network problem sends the user to re-click forever and blame
         // their connection, and on a genuine tamper event gives them no signal
-        // at all. Rethrow the specific message so the renderer shows the truth.
+        // at all.
+        //
+        // Adversarial review found the rethrow alone was inert: EVERY renderer
+        // path swallows the error (console.error or a bare state reset), and
+        // there is no toast component -- so the user saw the "Updating..."
+        // overlay vanish and nothing else. showErrorBox is the one channel that
+        // cannot be dropped on the way out.
         if (err instanceof InstallerIntegrityError) {
           logError(`[update] ${err.message}`)
-          throw err
+          try {
+            dialog.showErrorBox('Update blocked - integrity check failed', err.message)
+          } catch { /* never let the dialog itself break the flow */ }
         }
         throw err
       }
@@ -148,6 +164,23 @@ export function registerUpdateHandlers(): void {
     }
 
     logInfo(`[update] Found installer: ${installerPath}`)
+
+    // Re-hash immediately before the point of no return. Verification happened
+    // at download time, but the file then sits at a predictable path in
+    // ~/Downloads while we kill every PTY -- tens of ms to seconds, and every
+    // browser writes into that directory. The installer runs with
+    // `allowElevation`, so a non-elevated local process that wins that race
+    // gains admin on a UAC prompt the user is already expecting. Costs ~1s for
+    // 150 MB and shrinks the window to microseconds (#111).
+    if (verifiedSha256) {
+      if (!await stillMatchesDigest(installerPath, verifiedSha256)) {
+        const msg = `${path.basename(installerPath)} changed on disk after it was verified. `
+          + 'Aborting the update. Install manually from the GitHub release page.'
+        logError('[update] ' + msg)
+        try { dialog.showErrorBox('Update blocked - installer changed after verification', msg) } catch { /* ignore */ }
+        throw new InstallerIntegrityError(msg)
+      }
+    }
 
     // Linux: prepare and VERIFY the AppImage is executable BEFORE we kill the
     // user's terminals and exit. spawn() reports EACCES/ENOENT only via an async

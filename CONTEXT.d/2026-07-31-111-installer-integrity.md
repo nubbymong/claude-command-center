@@ -82,3 +82,50 @@ ADVERSARIAL ROUND 1 (blast-radius lens) found a BLOCKER I caused and several rea
   resumed downloads, and a partial compromise replacing only the installer asset.
 
 Full suite 3225 passed after the fixes; typecheck clean; release.js syntax-checked.
+
+ADVERSARIAL ROUND 2 (fresh attacker, bypass + patch-regression lens) -- 3 MAJOR:
+
+- MAJOR, and the worst thing in this ticket: my parser regex
+  /^([0-9a-f]{64})\s+\*?(.+)$/i REINTRODUCED THE EXACT ReDoS CLASS #151 FIXED, four
+  commits later, in a different file. Same \s+ followed by .+ followed by an outer
+  trim(). Measured: 1666 ms at 64k spaces, 27 s at 256k; with the 1 MiB manifest cap the
+  ceiling was ~7 MINUTES of a fully blocked Electron main process, since the parse is
+  synchronous and in main. Worse than #151, which was capped by llhttp and
+  http.maxHeaderSize -- this had no limiter and needs only CHECKSUMS.txt bytes, strictly
+  less access than the release-write compromise the threat model already concedes.
+  Replaced with an index-based splitChecksumLine (search /\s/ once, require index 64,
+  walk the separator run) plus SP/HTAB-only separators, the same narrowing #151 applied.
+  Guard: tests/unit/main/github-update-redos.test.ts. Verified by reverting to the regex --
+  the run does not fail an assertion, it HANGS (10 min, killed). Inherent: a synchronous
+  quadratic regex blocks the event loop so vitest cannot preempt it. Documented in the
+  test header so a future CI stall in that file is read correctly.
+- MAJOR: the round-1 "fix" for invisible failure was INERT. Rethrowing the typed error
+  achieved nothing because every renderer path discards it (console.error or a bare state
+  reset) and there is no toast component -- the user saw the overlay vanish and nothing
+  else, exactly what round 1 claimed to fix. Worse, the BottomBar line I edited is dead
+  code: App.tsx always supplies onUpdateRequested, so that else branch never runs. Now
+  dialog.showErrorBox in the main process, the one channel nothing downstream can swallow.
+- MAJOR: TOCTOU with real teeth. The file is hashed, then killAllPty() runs (tens of ms to
+  seconds with sessions open), then spawn. Path is predictable from the public release feed,
+  ~/Downloads is a directory every browser writes into, and nsis is oneClick:false +
+  allowElevation:true -- so a NON-elevated local process that wins the race gains admin on
+  a UAC prompt the user is already expecting. downloadGitHubRelease now returns
+  { path, sha256 } and the handler re-hashes via stillMatchesDigest() immediately before
+  the point of no return. ~1 s for 150 MB, window down to microseconds. Moving the download
+  out of ~/Downloads entirely is the better fix and is a follow-up.
+
+MINORs also fixed: manifest URL now derived with the URL API and origin-pinned (the string
+replace produced host `checksums.txt` for a path-less URL, and for a URL with a fragment it
+rewrote inside the fragment so https.get FETCHED THE INSTALLER as the manifest -- violating
+the "no installer bytes when unverifiable" guarantee); truncate-before-unlink so a rejected
+installer is inert even if unlink and rename both fail; release.js now requires the exact
+name CHECKSUMS.txt (the old substring predicate greenlit checksums.txt and
+CHECKSUMS.txt.sig, both of which the client refuses); corrected a now-false comment in
+release.yml claiming the updater does not verify.
+
+Still open, deliberately deferred to follow-ups: signing the manifest (the real ceiling),
+the post-upload asset-vs-manifest gate in the release workflow, moving downloads out of
+~/Downloads, and a size cap on httpsDownload so the 1 MiB manifest limit is enforced before
+bytes reach disk rather than after.
+
+Full suite 3233 passed. Typecheck clean.

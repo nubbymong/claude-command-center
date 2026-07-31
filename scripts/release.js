@@ -605,7 +605,10 @@ if (exitCode !== 0) {
     const hasExe = names.some((n) => n.endsWith('.exe'))
     const hasDmg = names.some((n) => n.endsWith('.dmg'))
     const hasAppImage = names.some((n) => n.endsWith('.AppImage'))
-    const hasChecksums = names.some((n) => n.toLowerCase().includes('checksum'))
+    // Exact name: the client hard-codes literal 'CHECKSUMS.txt' in both the
+    // derived URL and `gh release download --pattern`, so a checksums.txt or a
+    // CHECKSUMS.txt.sig would pass this gate and still fail every update.
+    const hasChecksums = names.includes('CHECKSUMS.txt')
 
     console.log(`      Release URL: ${release.url}`)
     console.log(`      Assets: ${names.join(', ')}`)
