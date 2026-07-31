@@ -46,10 +46,29 @@ that the tests certifying the fix were worthless. A vacuous guard is worse than 
 because it will be trusted. "Verify the test fails against the unfixed code" is now the
 minimum bar for any security regression test here.
 
-SEPARATE FINDING, ROUTED PRIVATELY -- the adversarial pass surfaced one unrelated,
-pre-existing issue while tracing the alert-6 taint path. It is NOT described here.
-Deliberately: this file is tracked and this repo is public, so a running-log fragment is
-a disclosure channel exactly like an issue is. It has been handed to the maintainer for
-a private advisory under SECURITY.md. Nothing about it -- component, mechanism, or repro
--- belongs in a tracked file, a commit message, an ADR, or the changelog until a fix has
-shipped.
+SEPARATE FINDING, NOW PUBLISHED -- GHSA-hw7c-g5pw-w725 (medium, CVSS 6.5).
+
+The adversarial pass surfaced an unrelated pre-existing issue while tracing the alert-6
+taint path. It was routed privately per SECURITY.md, and this fragment deliberately said
+nothing about it while it was embargoed -- a tracked file in a public repo is a disclosure
+channel exactly like an issue is. The advisory is published (2026-07-31) and the fix is on
+beta, so the public record can now be written; that ordering is SECURITY.md step 4.
+
+What it was: `canonicalizeTranscriptPath` rewrote a transcript path onto the canonical
+`~/.claude/projects` root with no containment check. `path.join` NORMALISES `..` rather
+than rejecting it, so a crafted suffix escaped the root and resolved anywhere on the same
+drive -- and the binder then opened and tailed whatever it named. The input is not
+trustworthy: it arrives from an SSH host's statusline sentinel and from hook payloads.
+
+Fix (merged from the advisory's private fork as `1c00230`): resolve both sides and require
+the candidate to stay under the root, with a separator-terminated comparison so a sibling
+directory whose name merely begins with the root's cannot pass. Plus shape validation on
+the SSH sentinel payload, which reached `JSON.parse` behind a bare type assertion.
+
+Deliberately NOT added: a `.jsonl` extension filter. It was in the first draft and removed --
+the function is documented and unit-tested to return the bare projects root when the input
+ends exactly at the segment, and the filter broke that. Containment is the control;
+narrowing what a contained path may point at belongs to the caller that opens it.
+
+Follow-up tracked publicly now that the embargo is lifted: the hooks gateway lifts
+`transcript_path` from a hook POST and shares the same source class.
