@@ -8,6 +8,22 @@ making changes.
 Multi-session Claude Code terminal orchestrator built with Electron 42 + React 19
 + TypeScript.
 
+## Session isolation — do this FIRST
+
+Several agents run against this repo simultaneously. **One session = one worktree
+= one branch.** Before changing anything, claim your own:
+
+```bash
+node scripts/session-guard.mjs claim --base beta   # or: adopt (already in one)
+```
+
+Work only in the directory it prints, and prefer `git -C "<that dir>" …` over
+relying on the current directory. Never work in the primary checkout or another
+session's worktree — their branch can change under you and they may hold
+uncommitted work. A `PreToolUse` hook denies writes and mutating git outside the
+worktree you own; `CCC_SESSION_GUARD=off` is the escape hatch. See
+`docs/session-isolation.md` and ADR-011.
+
 ## Build & Run
 
 ```bash
@@ -99,4 +115,5 @@ changelog entry, advisory) is written **after** the fix ships, all at once.
 - `CONTRIBUTING.md` — contributor mechanics, commit-message format, changelog workflow.
 - `docs/versioning.md` — versioning scheme, prerelease suffixes, update channels, rolling re-release vs. version bump.
 - `architecture/decisions/` — ADRs (the *why* behind architectural/tooling calls).
+- `docs/session-isolation.md` — running parallel agents without collisions (`scripts/session-guard.mjs`, the `PreToolUse` hook, ADR-011).
 - `docs/dev-alongside-prod.md`, `docs/USER_GUIDE.md`, `docs/code-signing.md` — operational guides.

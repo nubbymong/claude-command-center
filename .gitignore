@@ -15,6 +15,10 @@ dist/
 # (ADR-009 / 2026-07-30, same reasoning as ADR-004 tracking AGENTS.md.)
 .claude/*
 !.claude/skills/
+# settings.json is repo-owned too: it carries the session-isolation PreToolUse
+# hook that every worktree must inherit (ADR-011). An untracked hook protects
+# nobody but the machine that wrote it. settings.local.json stays personal.
+!.claude/settings.json
 .agents/
 # AGENTS.md is now TRACKED — it is the canonical, cross-tool agent brief
 # (ADR-004 / 2026-07-18). CLAUDE.md imports it via `@AGENTS.md`.
