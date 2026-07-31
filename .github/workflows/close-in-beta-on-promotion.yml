@@ -42,7 +42,7 @@ jobs:
     name: Close in-beta issues
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Full history: the script walks the promotion's commit range and falls
           # back to `git describe` for the previous tag. A shallow clone has
