@@ -22,7 +22,7 @@ export interface ChangelogEntry {
 export const changelog: ChangelogEntry[] = [
   {
     version: '2.1.0-beta.3',
-    date: '2026-07-30',
+    date: '2026-07-31',
     highlights: 'Ctrl+V pastes into terminals — which also makes voice dictation and text expanders work — Check for Updates can install the update it finds, and a round of security hardening lands across the local tools server and the bundled dependencies.',
     changes: [
       { type: 'fix', description: 'Ctrl+V now pastes into terminals. Previously only right-click pasted: Ctrl+V was passed straight through to the session as a raw control code, which a shell happened to treat as its own paste command, while Claude ignored it entirely. Cmd+V, Shift+Insert and Ctrl+Shift+V work too, and if the clipboard has no text CCC now says so instead of appearing to do nothing.' },
@@ -32,6 +32,7 @@ export const changelog: ChangelogEntry[] = [
       { type: 'fix', description: 'Session, config, team and agent-template identifiers are now generated with a cryptographic random number generator instead of a predictable one. Existing items keep the identifiers they already have and nothing needs migrating.' },
       { type: 'improvement', description: 'Updated bundled dependencies to close 12 published security advisories, plus two more found while checking. No feature changes.' },
       { type: 'fix', description: 'The in-app updater now verifies every installer it downloads against the SHA-256 checksums published with the release, and refuses to run one that does not match. Previously it launched whatever it downloaded, with no client-side check on any platform. If a download fails the check it is discarded and you are told why, rather than the update silently doing nothing.' },
+      { type: 'fix', description: 'Fixed a flaw in how a session\'s conversation transcript was located. A machine you opened an SSH session to could name a file outside the Claude projects folder — a private key or token elsewhere on your drive — and CCC would open it and read its contents into that session\'s local transcript store. Transcript locations are now confined to the projects folder, and the status information a remote host sends is checked before it is used. Exploiting this needed you to connect to a host the attacker controlled, and the file contents stayed on your own machine. Advisory GHSA-hw7c-g5pw-w725.' },
     ],
   },
   {
