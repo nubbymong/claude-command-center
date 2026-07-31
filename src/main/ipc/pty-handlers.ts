@@ -95,23 +95,33 @@ export const spawnOptionsSchema = z.object({
   // escape character. So the character is harmless where it is needed and only
   // its shell-stripping behaviour has to be accounted for.
   //
-  // BRACKETS COLLAPSE FOR THE SAME REASON. `[` and `]` are in the charset, and a
-  // POSIX shell pathname-expands an unquoted bracket group: `--setting[s]` is a
-  // glob that matches a file literally named `--settings`, so if one exists in
-  // the session's cwd -- a repo can ship one -- the shell hands the CLI the real
-  // flag, exactly the substitution the backslash collapse closes. Verified in a
-  // real shell: with `--settings` present, `--setting[s]` expands to
-  // `--settings`; without it, bash leaves the pattern literal. Collapsing (not
-  // banning) keeps brackets usable in a path, since the stripped copy is only
-  // ever used for matching -- never for emission.
-  extraArgs: z.string().max(512).regex(/^[A-Za-z0-9 _\-=.\/\\:@,+[\]]*$/).refine(
-    // Collapse backslashes AND bracket-glob syntax before matching -- see the
-    // notes above. Also reject a trailing backslash outright: it turns the SSH
-    // launch line into a shell line continuation, which hangs the session on a
-    // `>` prompt waiting for input that never comes.
+  // BRACKETS ARE BANNED FROM THE CHARSET, not collapsed. The value is emitted
+  // unquoted, so a POSIX shell pathname-expands an unquoted bracket group:
+  // `--setting[s]` is a glob matching a file literally named `--settings`, and
+  // if one exists in the session's cwd -- a cloned repo can ship one -- the
+  // shell hands the CLI the real flag. That is the same substitution the
+  // backslash collapse closes.
+  //
+  // Collapsing brackets the way backslashes are collapsed does NOT work, and
+  // the difference matters: a backslash is an ESCAPE (deleting it reproduces
+  // exactly what the shell yields), whereas a bracket group is a PATTERN, so
+  // there is no single normalised string to match against. Verified in a real
+  // shell with `--settings` present in cwd -- every one of these expands to
+  // `--settings`, while stripping just the bracket characters leaves
+  // `--settingr-t` / `--settinga-z` / `--setting!x`, none of which match:
+  //     --setting[s]  --setting[r-t]  --setting[a-z]  --setting[!x]
+  // Since the charset admits no other glob metacharacter (`*` and `?` are
+  // already excluded), dropping `[` and `]` removes pathname expansion from
+  // this hatch entirely. A literal bracket in a path is the cost; nothing in
+  // an ordinary flag or path needs one.
+  extraArgs: z.string().max(512).regex(/^[A-Za-z0-9 _\-=.\/\\:@,+]*$/).refine(
+    // Collapse backslashes before matching -- see the note above. Also reject a
+    // trailing backslash outright: it turns the SSH launch line into a shell
+    // line continuation, which hangs the session on a `>` prompt waiting for
+    // input that never comes.
     (v) => !v.endsWith('\\')
       && !/(^|\s)--(model|effort|permission-mode|settings|mcp-config|agents|resume)\b/
-        .test(v.replace(/[\\[\]]/g, '')),
+        .test(v.replace(/\\/g, '')),
     { message: 'extraArgs must not include a CCC-managed flag (--model/--effort/--permission-mode/--settings/--mcp-config/--agents/--resume), nor end in a backslash' },
   ).optional(),
   disableAutoMemory: z.boolean().optional(),
