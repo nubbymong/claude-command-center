@@ -133,11 +133,18 @@ So, when the pass surfaces an out-of-scope live vulnerability:
 
 1. **Do not put it in the PR verdict.** The verdict may say "the pass surfaced one unrelated
    pre-existing finding, routed privately" -- no component, no mechanism, no repro.
-2. Hand the detail to the maintainer **out of band** and let them open the advisory.
+2. **Open the private advisory yourself.** You do not need to be the repo owner: private
+   vulnerability reporting is enabled, so `POST .../security-advisories/reports` with
+   `start_private_fork: true` files the advisory and creates the private fork in one call.
+   Follow `docs/security-embargo-runbook.md`. Handing it to the maintainer out of band is the
+   *fallback*, not the default -- and note the maintainer endpoint
+   (`POST .../security-advisories`, no `/reports`) 403s without admin, which is NOT evidence
+   that you have no private channel (ADR-011).
 3. The `CONTEXT.d/` fragment for this work follows the same rule: it may record *that* a finding
    exists and was routed privately, and nothing else.
 4. Any fix is developed in the **private fork attached to the advisory**, never in a branch on this
-   repo -- however innocently the branch is named.
+   repo -- however innocently the branch is named. Base it on `beta` and target `beta`: the fork
+   inherits `main` as its default and `main` runs behind.
 5. The public record -- fragment, changelog, advisory publication -- is written together, after the
    fix ships.
 

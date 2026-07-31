@@ -145,7 +145,7 @@ vi.mock('../../src/main/debug-logger', () => ({
   logError: vi.fn(),
 }))
 
-import { checkGitHubRelease, downloadGitHubRelease, installerExtForPlatform, prepareLinuxAppImageUpdate, isPathOnNoexecMount } from '../../src/main/github-update'
+import { checkGitHubRelease, downloadGitHubRelease, downloadInstallerFile, InstallerIntegrityError, installerExtForPlatform, prepareLinuxAppImageUpdate, isPathOnNoexecMount } from '../../src/main/github-update'
 
 // Helper to build release fixtures with installers for ALL platforms.
 // checkGitHubRelease returns null if no matching asset exists for the current
@@ -484,13 +484,62 @@ describe('github-update', () => {
     })
   })
 
-  describe('downloadGitHubRelease', () => {
+  describe('downloadGitHubRelease (verified path) -- #111', () => {
+    // The transport half above is deliberately unverified. THIS is the function
+    // the app calls, and its contract is that it never returns a path it has
+    // not checked. Every one of these asserts the fail-closed direction: if a
+    // digest cannot be established, nothing is downloaded and nothing is
+    // returned -- an exception is raised instead, so the caller cannot mistake
+    // it for "no update available".
+    it('throws rather than downloading when CHECKSUMS.txt cannot be fetched', async () => {
+      // Manifest fetch fails (404), gh CLI fallback also fails.
+      httpsState.nextResponse = { statusCode: 404, body: null as any }
+      mockExecFile.mockImplementation((_cmd: string, _args: string[], _opts: any, cb: any) => {
+        cb(new Error('gh not available'), '', '')
+      })
+      await expect(
+        downloadGitHubRelease('v1.2.125', 'ClaudeCommandCenter-Beta-1.2.125.exe', 'https://x/y.exe')
+      ).rejects.toThrow(InstallerIntegrityError)
+    })
+
+    it('names the asset and the release in the failure, not the network', async () => {
+      httpsState.nextResponse = { statusCode: 404, body: null as any }
+      mockExecFile.mockImplementation((_cmd: string, _args: string[], _opts: any, cb: any) => {
+        cb(new Error('gh not available'), '', '')
+      })
+      // Regression guard for the real complaint in review: an integrity failure
+      // used to surface as "check your internet connection".
+      await expect(
+        downloadGitHubRelease('v1.2.125', 'ClaudeCommandCenter-Beta-1.2.125.exe', 'https://x/y.exe')
+      ).rejects.toThrow(/ClaudeCommandCenter-Beta-1\.2\.125\.exe.*v1\.2\.125/)
+    })
+
+    it('does not attempt the installer download at all when unverifiable', async () => {
+      httpsState.nextResponse = { statusCode: 404, body: null as any }
+      mockExecFile.mockImplementation((_cmd: string, _args: string[], _opts: any, cb: any) => {
+        cb(new Error('gh not available'), '', '')
+      })
+      httpsState.callUrls = []
+      await expect(
+        downloadGitHubRelease('v1.2.125', 'ClaudeCommandCenter-Beta-1.2.125.exe', 'https://x/y.exe')
+      ).rejects.toThrow(InstallerIntegrityError)
+      // Only the CHECKSUMS.txt URL should ever have been requested -- the point
+      // of resolving the digest first is to not pull 150 MB we cannot check.
+      expect(httpsState.callUrls.every((u: string) => u.endsWith('/CHECKSUMS.txt'))).toBe(true)
+    })
+  })
+
+  describe('downloadInstallerFile (transport half)', () => {
+    // #111 split verification out of downloadGitHubRelease. These five cases
+    // always tested the TRANSPORT -- redirects, gh fallback, stale-path
+    // handling -- so they target the transport function directly. Verification
+    // has its own coverage in github-update-integrity.test.ts.
     it('downloads via direct HTTPS when directUrl is provided', async () => {
       httpsState.nextResponse = {
         statusCode: 200,
         bodyBuffer: Buffer.from('fake installer bytes'),
       }
-      const result = await downloadGitHubRelease('v1.2.125', 'ClaudeCommandCenter-Beta-1.2.125.exe', 'https://x/y.exe')
+      const result = await downloadInstallerFile('v1.2.125', 'ClaudeCommandCenter-Beta-1.2.125.exe', 'https://x/y.exe')
       expect(result).not.toBeNull()
       expect(result).toContain('ClaudeCommandCenter-Beta-1.2.125.exe')
       // gh CLI should NOT have been called since direct download succeeded
@@ -504,7 +553,7 @@ describe('github-update', () => {
         { statusCode: 302, headers: { location: 'https://cdn.example.com/real-file.exe' } },
         { statusCode: 200, bodyBuffer: Buffer.from('final bytes') },
       ]
-      const result = await downloadGitHubRelease('v1.2.125', 'ClaudeCommandCenter-Beta-1.2.125.exe', 'https://x/redirect.exe')
+      const result = await downloadInstallerFile('v1.2.125', 'ClaudeCommandCenter-Beta-1.2.125.exe', 'https://x/redirect.exe')
       expect(result).not.toBeNull()
       // Both URLs should have been called in order
       expect(httpsState.callUrls).toHaveLength(2)
@@ -521,7 +570,7 @@ describe('github-update', () => {
       mockExecFile.mockImplementation((_cmd: string, _args: string[], _opts: any, cb: any) => {
         cb(new Error('gh not available'), '', '')
       })
-      const result = await downloadGitHubRelease('v1.2.125', 'ClaudeCommandCenter-Beta-1.2.125.exe', 'https://x/redirect.exe')
+      const result = await downloadInstallerFile('v1.2.125', 'ClaudeCommandCenter-Beta-1.2.125.exe', 'https://x/redirect.exe')
       expect(result).toBeNull()
     })
 
@@ -530,7 +579,7 @@ describe('github-update', () => {
         { statusCode: 302, headers: { location: '/assets/real-file.exe' } },
         { statusCode: 200, bodyBuffer: Buffer.from('final bytes') },
       ]
-      const result = await downloadGitHubRelease('v1.2.125', 'ClaudeCommandCenter-Beta-1.2.125.exe', 'https://origin.example.com/redirect.exe')
+      const result = await downloadInstallerFile('v1.2.125', 'ClaudeCommandCenter-Beta-1.2.125.exe', 'https://origin.example.com/redirect.exe')
       expect(result).not.toBeNull()
       expect(httpsState.callUrls[1]).toBe('https://origin.example.com/assets/real-file.exe')
     })
@@ -540,7 +589,7 @@ describe('github-update', () => {
         cb(null, '', '')  // gh exits cleanly
       })
       mockExistsSync.mockReturnValue(true)
-      const result = await downloadGitHubRelease('v1.2.125', 'ClaudeCommandCenter-Beta-1.2.125.exe', null)
+      const result = await downloadInstallerFile('v1.2.125', 'ClaudeCommandCenter-Beta-1.2.125.exe', null)
       expect(result).not.toBeNull()
       expect(mockExecFile).toHaveBeenCalled()
       expect(mockExecFile.mock.calls[0][0]).toBe('gh')
@@ -555,7 +604,7 @@ describe('github-update', () => {
       }
       // Simulate that the destination file already exists from a previous attempt
       mockExistsSync.mockReturnValue(true)
-      const result = await downloadGitHubRelease('v1.2.125', 'ClaudeCommandCenter-Beta-1.2.125.exe', 'https://x/y.exe')
+      const result = await downloadInstallerFile('v1.2.125', 'ClaudeCommandCenter-Beta-1.2.125.exe', 'https://x/y.exe')
       expect(result).not.toBeNull()
       // unlink should have been called to remove the stale file before rename
       expect(mockUnlinkSync).toHaveBeenCalled()
@@ -568,7 +617,7 @@ describe('github-update', () => {
       mockExecFile.mockImplementation((_cmd: string, _args: string[], _opts: any, cb: any) => {
         cb(new Error('gh: command not found'), '', '')
       })
-      const result = await downloadGitHubRelease('v1.2.125', 'ClaudeCommandCenter-Beta-1.2.125.exe', 'https://x/y.exe')
+      const result = await downloadInstallerFile('v1.2.125', 'ClaudeCommandCenter-Beta-1.2.125.exe', 'https://x/y.exe')
       expect(result).toBeNull()
     })
   })
