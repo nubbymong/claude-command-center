@@ -94,7 +94,27 @@ export const spawnOptionsSchema = z.object({
   // and on Windows the launch shell is PowerShell, where backslash is not an
   // escape character. So the character is harmless where it is needed and only
   // its shell-stripping behaviour has to be accounted for.
-  extraArgs: z.string().max(512).regex(/^[A-Za-z0-9 _\-=.\/\\:@,+[\]]*$/).refine(
+  //
+  // BRACKETS ARE BANNED FROM THE CHARSET, not collapsed. The value is emitted
+  // unquoted, so a POSIX shell pathname-expands an unquoted bracket group:
+  // `--setting[s]` is a glob matching a file literally named `--settings`, and
+  // if one exists in the session's cwd -- a cloned repo can ship one -- the
+  // shell hands the CLI the real flag. That is the same substitution the
+  // backslash collapse closes.
+  //
+  // Collapsing brackets the way backslashes are collapsed does NOT work, and
+  // the difference matters: a backslash is an ESCAPE (deleting it reproduces
+  // exactly what the shell yields), whereas a bracket group is a PATTERN, so
+  // there is no single normalised string to match against. Verified in a real
+  // shell with `--settings` present in cwd -- every one of these expands to
+  // `--settings`, while stripping just the bracket characters leaves
+  // `--settingr-t` / `--settinga-z` / `--setting!x`, none of which match:
+  //     --setting[s]  --setting[r-t]  --setting[a-z]  --setting[!x]
+  // Since the charset admits no other glob metacharacter (`*` and `?` are
+  // already excluded), dropping `[` and `]` removes pathname expansion from
+  // this hatch entirely. A literal bracket in a path is the cost; nothing in
+  // an ordinary flag or path needs one.
+  extraArgs: z.string().max(512).regex(/^[A-Za-z0-9 _\-=.\/\\:@,+]*$/).refine(
     // Collapse backslashes before matching -- see the note above. Also reject a
     // trailing backslash outright: it turns the SSH launch line into a shell
     // line continuation, which hangs the session on a `>` prompt waiting for
