@@ -39,30 +39,62 @@ const SECTIONS = [
  * The array is a pure data literal (strings/arrays/objects, no runtime calls),
  * so we slice out the literal by bracket-matching and evaluate it in isolation.
  */
-function loadChangelog() {
-  const src = fs.readFileSync(SOURCE, 'utf-8')
-  const anchor = src.indexOf('changelog: ChangelogEntry[] =')
-  if (anchor === -1) {
-    throw new Error(`Could not find "changelog: ChangelogEntry[] =" in ${SOURCE}`)
-  }
+/**
+ * Slice a bracket-matched array literal out of JS/TS source.
+ *
+ * Pure and exported so the scanner can be unit-tested on synthetic input --
+ * the bug this guards (#156) is invisible against the real changelog file,
+ * which happens not to contain a comment with an apostrophe today.
+ *
+ * Returns the literal text, or throws with a message that names the likely
+ * cause rather than surfacing a raw SyntaxError from generated code.
+ */
+function sliceArrayLiteral(src, anchorText) {
+  const anchor = src.indexOf(anchorText)
+  if (anchor === -1) throw new Error(`Could not find "${anchorText}"`)
   // Start AFTER the `=` — searching from `anchor` would match the `[` in the
   // `ChangelogEntry[]` type annotation instead of the array literal.
   const eq = src.indexOf('=', anchor)
   const start = src.indexOf('[', eq)
-  if (start === -1) throw new Error('Could not find start of changelog array')
+  if (start === -1) throw new Error('Could not find start of array literal')
 
-  // Bracket-match, ignoring brackets that appear inside string literals.
+  // Bracket-match, ignoring brackets inside string literals AND comments.
+  //
+  // Comment handling is not optional pedantry (#156): the scanner used to
+  // track only quotes, so one apostrophe in a `//` comment inside the array --
+  // "the entry's version", the most natural English -- opened a phantom
+  // string. Depth tracking stopped, the slice ended in the wrong place, and it
+  // failed as `SyntaxError: Unexpected token ')'` pointing at generated code,
+  // with nothing to suggest the real cause. That cost time twice.
   let depth = 0
   let end = -1
   let inString = false
   let quote = ''
+  let inLineComment = false
+  let inBlockComment = false
   for (let i = start; i < src.length; i++) {
     const ch = src[i]
+    const next = src[i + 1]
+
+    if (inLineComment) {
+      if (ch === '\n') inLineComment = false
+      continue
+    }
+    if (inBlockComment) {
+      if (ch === '*' && next === '/') { inBlockComment = false; i++ }
+      continue
+    }
     if (inString) {
       if (ch === '\\') { i++; continue } // skip escaped char
       if (ch === quote) inString = false
       continue
     }
+
+    // Comments only start OUTSIDE a string, so a `//` inside a URL in a
+    // description does not open one. Hence this sits after the inString branch.
+    if (ch === '/' && next === '/') { inLineComment = true; i++; continue }
+    if (ch === '/' && next === '*') { inBlockComment = true; i++; continue }
+
     if (ch === '"' || ch === "'" || ch === '`') { inString = true; quote = ch; continue }
     if (ch === '[') depth++
     else if (ch === ']') {
@@ -70,11 +102,39 @@ function loadChangelog() {
       if (depth === 0) { end = i; break }
     }
   }
-  if (end === -1) throw new Error('Could not find end of changelog array')
+  if (end === -1) {
+    throw new Error(
+      'Could not find the end of the array literal. An unterminated string or ' +
+      'comment inside it is the usual cause.',
+    )
+  }
+  return src.slice(start, end + 1)
+}
 
-  const literal = src.slice(start, end + 1)
-  // eslint-disable-next-line no-new-func — trusted, in-repo data literal only.
-  const entries = new Function(`return (${literal})`)()
+/**
+ * Pull the `changelog` array out of the TS source without a TS toolchain.
+ * The array is a pure data literal (strings/arrays/objects, no runtime calls),
+ * so we slice out the literal by bracket-matching and evaluate it in isolation.
+ */
+function loadChangelog() {
+  const src = fs.readFileSync(SOURCE, 'utf-8')
+  const literal = sliceArrayLiteral(src, 'changelog: ChangelogEntry[] =')
+  let entries
+  try {
+    // eslint-disable-next-line no-new-func — trusted, in-repo data literal only.
+    entries = new Function(`return (${literal})`)()
+  } catch (err) {
+    // Without this, the raw SyntaxError points at <anonymous_script> line N of
+    // generated code and says nothing about the file the author actually edited.
+    throw new Error(
+      `Failed to evaluate the changelog literal from ${SOURCE}.\n` +
+      `  ${err.message}\n` +
+      '  The array must stay a PURE DATA LITERAL: strings, arrays and objects ' +
+      'only, no runtime calls.\n' +
+      '  If you just added a comment inside the array, check it for an ' +
+      'unbalanced bracket.',
+    )
+  }
   if (!Array.isArray(entries) || entries.length === 0) {
     throw new Error('Parsed changelog is empty or not an array')
   }
@@ -180,3 +240,6 @@ function main() {
 }
 
 main()
+
+// Pure-logic export for unit testing.
+module.exports = { sliceArrayLiteral }
