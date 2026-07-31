@@ -31,6 +31,7 @@ export const changelog: ChangelogEntry[] = [
       { type: 'fix', description: 'Hardened the authentication check on the local Conductor server that Claude and Codex sessions use to reach the built-in CCC tools. Its token check accepted some malformed credentials it should have rejected, and a crafted request could make the check do far more work than it needed to. Both are fixed. The server still listens only on your own machine, and no session behaviour changes.' },
       { type: 'fix', description: 'Session, config, team and agent-template identifiers are now generated with a cryptographic random number generator instead of a predictable one. Existing items keep the identifiers they already have and nothing needs migrating.' },
       { type: 'improvement', description: 'Updated bundled dependencies to close 12 published security advisories, plus two more found while checking. No feature changes.' },
+      { type: 'fix', description: 'The in-app updater now verifies every installer it downloads against the SHA-256 checksums published with the release, and refuses to run one that does not match. Previously it launched whatever it downloaded, with no client-side check on any platform. If a download fails the check it is discarded and you are told why, rather than the update silently doing nothing.' },
     ],
   },
   {
