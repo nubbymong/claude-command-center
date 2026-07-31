@@ -46,6 +46,22 @@ npm run test:e2e     # Playwright
   must be a no-op when packaged. New long-lived ports must be split dev/prod (see
   `resolveHooksPort` / `resolveConductorMcpPort` / `resolveCdpPort`). See ADR-001.
 
+## Session isolation (parallel agents)
+
+- **One session = one worktree = one branch.** Several agents run against this
+  repo at once. Claim your own before you change anything:
+  `node scripts/session-guard.mjs claim --base beta` (or `adopt`, if you are
+  already in a worktree made for you).
+- **Never work in the primary checkout or another session's worktree.** Their
+  branch can change under you, and they may hold uncommitted work. A
+  `PreToolUse` hook enforces this — writes and mutating git outside the worktree
+  you own are denied. `CCC_SESSION_GUARD=off` is the escape hatch.
+- Prefer `git -C "<your worktree>" …` over relying on the current directory.
+- Before adding commits to an existing PR branch, check
+  `git log --oneline origin/<head>..<local-branch>` — a local ref can carry
+  unpushed commits that are not part of that PR.
+- Full guide: `docs/session-isolation.md`; rationale in ADR-012.
+
 ## Branching & review
 
 - Branch off `beta`; PR back into `beta`. `beta` is never frozen; releases
