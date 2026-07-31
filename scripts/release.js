@@ -616,7 +616,7 @@ if (exitCode !== 0) {
     if (hasAppImage) ok('Linux AppImage attached')
     else { warn('Linux AppImage NOT found'); exitCode = 1 }
     if (hasChecksums) ok('CHECKSUMS.txt attached')
-    else warn('CHECKSUMS.txt not found (workflow normally generates this)')
+    else fail('CHECKSUMS.txt not attached -- the in-app updater REFUSES to install\n        a release it cannot verify (#111), so publishing without it ships a\n        release nobody can auto-update to.')
   } catch (err) {
     warn(`Could not verify release: ${err.message}`)
     exitCode = 1

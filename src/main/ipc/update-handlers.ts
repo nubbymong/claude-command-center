@@ -4,7 +4,7 @@ import * as path from 'path'
 import * as fs from 'fs'
 import * as os from 'os'
 import { checkForUpdatesOnDemand, markUpdateInstalled, getProjectRootPath, setSourcePathInRegistry, hasSourcePath, isPackagedApp } from '../update-watcher'
-import { checkGitHubRelease, downloadGitHubRelease, prepareLinuxAppImageUpdate, isPathOnNoexecMount } from '../github-update'
+import { checkGitHubRelease, downloadGitHubRelease, prepareLinuxAppImageUpdate, isPathOnNoexecMount, InstallerIntegrityError } from '../github-update'
 import { killAllPty } from '../pty-manager'
 import { logInfo, logError } from '../debug-logger'
 
@@ -86,11 +86,23 @@ export function registerUpdateHandlers(): void {
     // 2. Download from GitHub if we have release info
     if (cachedRelease?.installerName && cachedRelease?.tagName) {
       logInfo(`[update] Downloading from GitHub: ${cachedRelease.installerName}`)
-      installerPath = await downloadGitHubRelease(
-        cachedRelease.tagName,
-        cachedRelease.installerName,
-        cachedRelease.installerUrl
-      )
+      try {
+        installerPath = await downloadGitHubRelease(
+          cachedRelease.tagName,
+          cachedRelease.installerName,
+          cachedRelease.installerUrl
+        )
+      } catch (err) {
+        // An integrity failure is NOT "installer not found" (#111). Surfacing it
+        // as a network problem sends the user to re-click forever and blame
+        // their connection, and on a genuine tamper event gives them no signal
+        // at all. Rethrow the specific message so the renderer shows the truth.
+        if (err instanceof InstallerIntegrityError) {
+          logError(`[update] ${err.message}`)
+          throw err
+        }
+        throw err
+      }
     }
 
     // 3. Dev-only fallback: look for a locally-built installer in the source folder.

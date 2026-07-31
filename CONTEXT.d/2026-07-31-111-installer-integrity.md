@@ -50,3 +50,35 @@ security gain.
 Tests: tests/unit/main/github-update-integrity.test.ts, 21 cases, weighted toward the
 fail-closed paths (asset absent, malformed digest, HTML error page served instead of the
 manifest, duplicate-with-different-digest, prefix/suffix filename near-misses).
+
+ADVERSARIAL ROUND 1 (blast-radius lens) found a BLOCKER I caused and several real gaps:
+
+- BLOCKER: the change broke 5 PRE-EXISTING tests in tests/unit/github-update.test.ts. I had
+  claimed "typecheck clean" having run only my new test file. Exactly the failure this
+  repo already learned once on #151 -- a claim about the suite made without running the
+  suite. Fixed by splitting transport from policy: downloadInstallerFile() is the
+  unverified transport half (redirects, gh fallback, stale-path handling -- what those 5
+  tests always actually tested), and downloadGitHubRelease() wraps it with verification.
+  Better design than the mock-fabrication alternative, and the old tests keep their intent.
+- MAJOR: an integrity failure surfaced to the user as "Installer not found. Check your
+  internet connection" -- wrong cause, and on a genuine tamper event, no signal at all.
+  Now throws a typed InstallerIntegrityError carrying the asset and release, rethrown by
+  update-handlers. BottomBar had no .catch at all on installAndRestart (unhandled
+  rejection); added, wrapped in Promise.resolve because the test mock returns undefined.
+- MAJOR (release-side): a rolling re-release onto an existing tag can regenerate
+  CHECKSUMS.txt without a platform whose build flaked (build-linux is continue-on-error)
+  while the OLD asset stays attached -- offering an update that can never verify. Partially
+  addressed: scripts/release.js promoted from warn to FAIL when CHECKSUMS.txt is missing,
+  since the client now hard-requires it. The post-upload asset-vs-manifest gate in the
+  workflow is a follow-up.
+- Manifest is now fetched BEFORE the installer. Discovering "no usable manifest" after
+  pulling 150-200 MB wastes bandwidth and delays the failure by minutes.
+- Manifest read capped at 1 MiB (synchronous read in the main process).
+- On verification failure, if unlink fails (Windows lock) the file is renamed .INVALID --
+  leaving an unverified installer in ~/Downloads under its expected name is how a user
+  ends up double-clicking it.
+- Threat-model claim corrected: the manifest comes from the SAME host and release, so this
+  does NOT cover a tampered CDN edge. It covers corruption, truncation, interrupted or
+  resumed downloads, and a partial compromise replacing only the installer asset.
+
+Full suite 3225 passed after the fixes; typecheck clean; release.js syntax-checked.

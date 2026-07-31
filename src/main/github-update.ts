@@ -607,7 +607,7 @@ function httpsDownload(url: string, destPath: string, timeoutMs = 300000): Promi
   })
 }
 
-// ── Installer integrity (#111) ───────────────────────────────────────────
+// -- Installer integrity (#111) -------------------------------------------
 //
 // The updater downloads an installer and hands it to the OS to execute. That
 // is a code-execution path on the user's machine, and until this landed there
@@ -618,15 +618,32 @@ function httpsDownload(url: string, destPath: string, timeoutMs = 300000): Promi
 // at all. `CHECKSUMS.txt` was already generated and attached to every release
 // by the release workflow -- the client simply never read it.
 //
-// THREAT MODEL, stated plainly so nobody over-trusts this. Same-origin
-// checksums defend against corruption, truncation, a tampered CDN edge, and a
-// partial compromise. They do NOT defend against an attacker holding GitHub
-// release-write credentials -- such an attacker rewrites CHECKSUMS.txt to match
-// their payload. Closing that requires SIGNING the manifest (ed25519/minisign
-// in CI, public key pinned in the app). This is a floor, not a ceiling.
+// THREAT MODEL, stated narrowly so nobody over-trusts it. The manifest is
+// fetched from the SAME host and the SAME release as the installer, so this
+// does NOT defend against a tampered CDN edge, nor against anyone holding
+// GitHub release-write credentials -- either of those rewrites both files
+// together. What it DOES defend against is corruption, truncation, an
+// interrupted or resumed download, and a partial compromise that replaces only
+// the installer asset. Closing the rest requires SIGNING the manifest
+// (ed25519/minisign in CI, public key pinned in the app). A floor, not a
+// ceiling.
 
 /** One `<sha256>  <filename>` line as emitted by `sha256sum *`. */
 const CHECKSUM_LINE = /^([0-9a-f]{64})\s+\*?(.+)$/i
+
+/** Refuse a manifest larger than this. A real one is a few hundred bytes, the
+ *  read is synchronous, and it lands in the main process -- so an oversized
+ *  body would be an OOM rather than a parse failure. */
+const MAX_MANIFEST_BYTES = 1024 * 1024
+
+/** Thrown when an installer was fetched but failed verification, so the caller
+ *  can say THAT rather than blaming the user's network connection. */
+export class InstallerIntegrityError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'InstallerIntegrityError'
+  }
+}
 
 /**
  * Find the digest for `assetName` in a `sha256sum`-format manifest.
@@ -670,6 +687,19 @@ function sha256File(filePath: string): Promise<string | null> {
   })
 }
 
+/** Read a fetched manifest, refusing anything implausibly large. */
+function readManifest(filePath: string): string | null {
+  try {
+    if (fs.statSync(filePath).size > MAX_MANIFEST_BYTES) {
+      logError('[github-update] CHECKSUMS.txt is implausibly large; refusing to parse')
+      return null
+    }
+    return fs.readFileSync(filePath, 'utf-8')
+  } catch {
+    return null
+  }
+}
+
 /** Fetch CHECKSUMS.txt for a release, via the same cascade as the installer. */
 async function fetchChecksumManifest(tagName: string, directUrl?: string | null): Promise<string | null> {
   const tmpPath = path.join(os.tmpdir(), `ccc-CHECKSUMS-${Date.now()}.txt`)
@@ -680,11 +710,9 @@ async function fetchChecksumManifest(tagName: string, directUrl?: string | null)
   if (directUrl) {
     const manifestUrl = directUrl.replace(/\/[^/]*$/, '/CHECKSUMS.txt')
     if (manifestUrl !== directUrl && await httpsDownload(manifestUrl, tmpPath, 60000)) {
-      try {
-        const text = fs.readFileSync(tmpPath, 'utf-8')
-        cleanup()
-        return text
-      } catch { cleanup() }
+      const text = readManifest(tmpPath)
+      cleanup()
+      if (text) return text
     }
   }
 
@@ -697,8 +725,8 @@ async function fetchChecksumManifest(tagName: string, directUrl?: string | null)
       ['release', 'download', tagName, '--repo', REPO, '--pattern', 'CHECKSUMS.txt', '--dir', tmpDir, '--clobber'],
       { encoding: 'utf-8', timeout: 60000, windowsHide: true }
     )
-    const p = path.join(tmpDir, 'CHECKSUMS.txt')
-    if (fs.existsSync(p)) return fs.readFileSync(p, 'utf-8')
+    const manifestPath = path.join(tmpDir, 'CHECKSUMS.txt')
+    if (fs.existsSync(manifestPath)) return readManifest(manifestPath)
   } catch (err) {
     logError('[github-update] CHECKSUMS.txt fetch via gh CLI failed:', err)
   } finally {
@@ -709,52 +737,77 @@ async function fetchChecksumManifest(tagName: string, directUrl?: string | null)
 }
 
 /**
- * Verify a downloaded installer against the release's CHECKSUMS.txt.
+ * Resolve the expected SHA-256 for `assetName` BEFORE downloading it.
  *
- * FAILS CLOSED. Every failure path -- manifest missing, asset absent from it,
- * unreadable file, digest mismatch -- deletes the download and returns false.
- * There is deliberately no "could not verify, proceed anyway" branch: an
- * attacker who can tamper with the installer can usually also make the manifest
- * fetch fail, so a soft check would be no check.
+ * Deliberately front-loaded: an installer is 100-200 MB and the manifest a few
+ * hundred bytes, so discovering "this release has no usable manifest" after the
+ * big download wastes the user's bandwidth and delays the failure by minutes.
+ * Returns null when no trustworthy digest exists -- callers must abort.
  */
-async function verifyInstaller(
-  filePath: string,
-  assetName: string,
+async function resolveExpectedDigest(
   tagName: string,
+  assetName: string,
   directUrl?: string | null,
-): Promise<boolean> {
-  const discard = (why: string): false => {
-    logError(`[github-update] INTEGRITY CHECK FAILED (${why}) -- discarding ${assetName}`)
-    try { fs.unlinkSync(filePath) } catch { /* best effort */ }
-    return false
-  }
-
+): Promise<string | null> {
   const manifest = await fetchChecksumManifest(tagName, directUrl)
-  if (!manifest) return discard('CHECKSUMS.txt could not be fetched')
-
-  const expected = digestForAsset(manifest, assetName)
-  if (!expected) return discard(`no SHA-256 entry for ${assetName} in CHECKSUMS.txt`)
-
-  const actual = await sha256File(filePath)
-  if (!actual) return discard('could not hash the downloaded file')
-
-  if (actual !== expected) {
-    return discard(`sha256 mismatch: expected ${expected}, got ${actual}`)
+  if (!manifest) {
+    logError('[github-update] CHECKSUMS.txt could not be fetched for this release')
+    return null
   }
-
-  logInfo(`[github-update] Integrity OK: ${assetName} sha256=${actual}`)
-  return true
+  const expected = digestForAsset(manifest, assetName)
+  if (!expected) {
+    logError(`[github-update] No SHA-256 entry for ${assetName} in CHECKSUMS.txt`)
+    return null
+  }
+  return expected
 }
 
 /**
- * Download the installer from the latest GitHub release and verify it.
- * Returns the path to the downloaded file, or null on failure.
+ * Hash the downloaded file and compare it against the expected digest.
  *
- * Verification happens HERE rather than at the call site so every caller
- * inherits it -- this function is the only way an installer enters the app, and
- * a returned path is a verified path.
+ * FAILS CLOSED. On mismatch or an unreadable file the download is destroyed and
+ * false returned. If unlink fails (Windows file lock) the file is renamed to
+ * `.INVALID` instead -- leaving an unverified installer in ~/Downloads under its
+ * expected name is how a user ends up double-clicking it.
  */
-export async function downloadGitHubRelease(tagName: string, assetName: string, directUrl?: string | null): Promise<string | null> {
+async function confirmDigest(filePath: string, assetName: string, expected: string): Promise<boolean> {
+  const actual = await sha256File(filePath)
+  if (actual === expected) {
+    logInfo(`[github-update] Integrity OK: ${assetName} sha256=${actual}`)
+    return true
+  }
+
+  logError(
+    `[github-update] INTEGRITY CHECK FAILED for ${assetName}: ` +
+    `expected ${expected}, got ${actual ?? 'unreadable'} -- discarding`
+  )
+  try {
+    fs.unlinkSync(filePath)
+  } catch {
+    try {
+      fs.renameSync(filePath, `${filePath}.INVALID`)
+      logError(`[github-update] Could not delete it; renamed to ${filePath}.INVALID`)
+    } catch (err) {
+      logError('[github-update] Could not delete OR rename the failed download:', err)
+    }
+  }
+  return false
+}
+
+/** Both integrity failure modes produce the same user-facing advice. */
+function integrityFailure(assetName: string, why: string): InstallerIntegrityError {
+  return new InstallerIntegrityError(
+    `${assetName} ${why}. Install manually from the GitHub release page.`
+  )
+}
+
+/**
+ * Transport half: fetch the asset to ~/Downloads, direct HTTPS first then gh
+ * CLI. Performs NO integrity check -- callers must use downloadGitHubRelease,
+ * which wraps this with verification. Exported only so the download mechanics
+ * are unit-testable on their own.
+ */
+export async function downloadInstallerFile(tagName: string, assetName: string, directUrl?: string | null): Promise<string | null> {
   const downloadsDir = path.join(os.homedir(), 'Downloads')
   try { fs.mkdirSync(downloadsDir, { recursive: true }) } catch {}
   const destPath = path.join(downloadsDir, assetName)
@@ -766,7 +819,6 @@ export async function downloadGitHubRelease(tagName: string, assetName: string, 
     const ok = await httpsDownload(directUrl, destPath)
     if (ok && fs.existsSync(destPath)) {
       logInfo(`[github-update] Downloaded via direct HTTPS: ${destPath}`)
-      if (!await verifyInstaller(destPath, assetName, tagName, directUrl)) return null
       return destPath
     }
     logInfo('[github-update] Direct HTTPS download failed, trying gh CLI')
@@ -781,7 +833,6 @@ export async function downloadGitHubRelease(tagName: string, assetName: string, 
     )
     if (fs.existsSync(destPath)) {
       logInfo(`[github-update] Downloaded via gh CLI: ${destPath}`)
-      if (!await verifyInstaller(destPath, assetName, tagName, directUrl)) return null
       return destPath
     }
   } catch (err) {
@@ -789,6 +840,33 @@ export async function downloadGitHubRelease(tagName: string, assetName: string, 
   }
 
   return null
+}
+
+/**
+ * Download the installer for a release AND verify it. This is the function the
+ * app uses; `downloadInstallerFile` above is the transport half, split out so
+ * the download mechanics (redirects, gh fallback, stale-path handling) stay
+ * testable without standing up a fake CHECKSUMS.txt for every case.
+ *
+ * Returns the verified path, or null if nothing could be downloaded.
+ * Throws {@link InstallerIntegrityError} when the release cannot be verified,
+ * or when a file WAS fetched and failed its digest -- outcomes the caller must
+ * not conflate with "download failed", because the user-facing advice differs.
+ */
+export async function downloadGitHubRelease(tagName: string, assetName: string, directUrl?: string | null): Promise<string | null> {
+  // Manifest first -- see resolveExpectedDigest. No digest, no download.
+  const expected = await resolveExpectedDigest(tagName, assetName, directUrl)
+  if (!expected) {
+    throw integrityFailure(assetName, `has no verified SHA-256 in release ${tagName}`)
+  }
+
+  const filePath = await downloadInstallerFile(tagName, assetName, directUrl)
+  if (!filePath) return null
+
+  if (!await confirmDigest(filePath, assetName, expected)) {
+    throw integrityFailure(assetName, 'failed its SHA-256 check and was discarded')
+  }
+  return filePath
 }
 
 /**
