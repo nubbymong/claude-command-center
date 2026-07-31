@@ -2,7 +2,7 @@
 
 How to run many Claude Code sessions against this repo at once without them
 colliding. The rationale and the rejected alternatives are in
-`architecture/decisions/2026-07-30-adr-011-session-isolation-for-parallel-agents.md`.
+`architecture/decisions/2026-07-31-adr-012-session-isolation-for-parallel-agents.md`.
 
 ## The rule
 
@@ -110,8 +110,18 @@ shared checkout, and prefer `git -C` at a specific path over changing directory.
 
 ## Notes
 
-- Identity is `CLAUDE_CODE_SESSION_ID`; liveness is `CLAUDE_PID`. Both are
-  provided by Claude Code. Outside a Claude session `claim` refuses to run.
+- Identity is `CLAUDE_CODE_SESSION_ID`. Outside a Claude session `claim` refuses
+  to run.
+- Liveness is a **pid check plus a heartbeat**, and the heartbeat is the part
+  that matters. `CLAUDE_PID` is *not* stable for the life of a session: resuming
+  after `/exit` keeps the same `CLAUDE_CODE_SESSION_ID` but gets a new process,
+  so a pid check on its own reports a live session as dead — and the fix for
+  "dead" is `reap`, which would hand your worktree to someone else. Every guard
+  invocation therefore re-stamps its own lease with the current pid and time, and
+  a lease counts as live if its pid exists **or** it was touched in the last 30
+  minutes. Because the hook runs on every matched tool call, ordinary work is the
+  heartbeat. `reap` never clears a lease inside that window, and never clears
+  your own.
 - Leases live in `<git-common-dir>/ccc-sessions/` -- shared by every linked
   worktree, never tracked by git.
 - Worktree location defaults to `../ccc-wt/` beside the primary checkout;

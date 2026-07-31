@@ -60,7 +60,7 @@ npm run test:e2e     # Playwright
 - Before adding commits to an existing PR branch, check
   `git log --oneline origin/<head>..<local-branch>` — a local ref can carry
   unpushed commits that are not part of that PR.
-- Full guide: `docs/session-isolation.md`; rationale in ADR-011.
+- Full guide: `docs/session-isolation.md`; rationale in ADR-012.
 
 ## Branching & review
 

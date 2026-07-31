@@ -1,4 +1,4 @@
-# ADR-011: Session isolation for parallel agents
+# ADR-012: Session isolation for parallel agents
 
 - Status: Accepted
 - Date: 2026-07-30

@@ -90,6 +90,15 @@ function leaseDir(cwd) {
   return dir
 }
 
+/**
+ * How long a lease stays credible after its last heartbeat, once its recorded
+ * pid is gone. CLAUDE_PID is NOT stable for the life of a session -- resuming
+ * after /exit keeps CLAUDE_CODE_SESSION_ID but gets a new process -- so a pid
+ * check alone declares live sessions dead. Every guard invocation refreshes the
+ * caller's own lease (touchLease), which makes the hook a natural heartbeat.
+ */
+const HEARTBEAT_GRACE_MS = 30 * 60 * 1000
+
 function readLeases(cwd) {
   const dir = leaseDir(cwd)
   if (!dir) return []
@@ -99,7 +108,12 @@ function readLeases(cwd) {
     try {
       const lease = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'))
       lease._file = path.join(dir, f)
-      lease._alive = pidAlive(lease.pid)
+      lease._pidAlive = pidAlive(lease.pid)
+      const beat = Date.parse(lease.renewedAt || lease.createdAt || '')
+      lease._fresh = Number.isFinite(beat) && Date.now() - beat < HEARTBEAT_GRACE_MS
+      // Live if the recorded process is still there OR the lease was touched
+      // recently -- the latter covers a session that changed pid on resume.
+      lease._alive = lease._pidAlive || lease._fresh
       // A worktree the user deleted by hand leaves an orphan lease behind.
       lease._present = !!lease.worktree && fs.existsSync(lease.worktree)
       out.push(lease)
@@ -108,6 +122,29 @@ function readLeases(cwd) {
     }
   }
   return out
+}
+
+/**
+ * Re-stamp this session's own lease with the current pid and timestamp. Called
+ * at the top of every command so any activity keeps the lease credible. Never
+ * touches another session's lease.
+ */
+function touchLease(cwd) {
+  const me = sessionId()
+  if (!me) return
+  try {
+    const dir = leaseDir(cwd)
+    if (!dir) return
+    const file = path.join(dir, `${me}.json`)
+    if (!fs.existsSync(file)) return
+    const lease = JSON.parse(fs.readFileSync(file, 'utf8'))
+    const pid = Number(process.env.CLAUDE_PID) || process.ppid
+    lease.pid = pid
+    lease.renewedAt = new Date().toISOString()
+    fs.writeFileSync(file, JSON.stringify(lease, null, 2))
+  } catch {
+    /* a heartbeat failure must never break the caller */
+  }
 }
 
 /** The worktree root containing p, or null when p is not in a work tree. */
@@ -288,14 +325,15 @@ function explain(o, target) {
   const lines = [`session-guard: BLOCKED -- you (session ${me}) do not own this location.`, `  target  ${target}`]
   if (o.root) lines.push(`  worktree  ${o.root}`)
   if (o.kind === 'other') {
+    const why = o.lease._pidAlive ? `pid ${o.lease.pid}, ALIVE` : `heartbeat ${o.lease.renewedAt || o.lease.createdAt}`
     lines.push(
-      `  leased to  session ${shortId(o.lease.sessionId)} (pid ${o.lease.pid}, ALIVE) on branch ${o.lease.branch}`,
+      `  leased to  session ${shortId(o.lease.sessionId)} (${why}) on branch ${o.lease.branch}`,
       '',
-      'That session is running right now. Editing here would collide with it.',
+      'That session is active right now. Editing here would collide with it.',
     )
   } else if (o.kind === 'stale') {
     lines.push(
-      `  leased to  session ${shortId(o.lease.sessionId)} (pid ${o.lease.pid}, not running)`,
+      `  leased to  session ${shortId(o.lease.sessionId)} (pid ${o.lease.pid}, gone; last heartbeat ${o.lease.renewedAt || o.lease.createdAt || 'unknown'})`,
       '',
       'The lease is stale. Clear dead leases with:',
       '  node scripts/session-guard.mjs reap',
@@ -324,7 +362,8 @@ function cmdList() {
   const rows = leases
     .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))
     .map((l) => {
-      const flags = [l.sessionId === me ? 'you' : null, l._alive ? 'alive' : 'DEAD', l._present ? null : 'MISSING-WT']
+      const live = l._pidAlive ? 'alive' : l._fresh ? 'alive(beat)' : 'DEAD'
+      const flags = [l.sessionId === me ? 'you' : null, live, l._present ? null : 'MISSING-WT']
         .filter(Boolean)
         .join(',')
       return `  ${shortId(l.sessionId).padEnd(10)} ${String(l.pid).padEnd(8)} ${(l.branch || '?').padEnd(34)} ${flags}\n      ${l.worktree}`
@@ -345,7 +384,10 @@ function cmdReap() {
   const leases = readLeases(process.cwd())
   let n = 0
   for (const l of leases) {
+    // _alive already folds in the heartbeat grace, so a session that merely
+    // changed pid on resume is never reaped out from under itself.
     if (l._alive) continue
+    if (l.sessionId === sessionId()) continue // never reap your own
     // Never reap a dead session that still has uncommitted work on disk --
     // dropping the lease would invite another session to take the directory.
     if (l._present) {
@@ -523,6 +565,15 @@ function fail(msg) {
 }
 
 const [, , cmd, ...rest] = process.argv
+// Any invocation is proof of life for this session -- keep its lease credible
+// before anything reads ownership. Cheap, and never touches another lease.
+if (cmd) {
+  try {
+    touchLease(process.cwd())
+  } catch {
+    /* ignore */
+  }
+}
 switch (cmd) {
   case 'claim': cmdClaim(rest); break
   case 'adopt': cmdAdopt(rest); break

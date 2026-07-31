@@ -13,7 +13,7 @@ Root cause: a session had no way to tell whether the directory it stood in
 belonged to it, and convention alone does not bind an agent whose context has
 been truncated.
 
-Decision (ADR-011): one session = one worktree = one branch, all branched from a
+Decision (ADR-012): one session = one worktree = one branch, all branched from a
 shared base. Git already refuses to check out one branch in two worktrees, so
 the branch ref is the hard interlock; the new tooling supplies the bookkeeping
 git has no opinion about.
@@ -28,7 +28,7 @@ Added:
   mutating git against a worktree of this repo the caller does not own. Honours
   a -C <path> argument, so `git -C <other-worktree> commit` is caught even when
   cwd is fine.
-- docs/session-isolation.md, ADR-011, AGENTS.md + docs/agent-conventions.md
+- docs/session-isolation.md, ADR-012, AGENTS.md + docs/agent-conventions.md
   sections.
 
 Rejected: literal same-branch parallelism via `git worktree add --force` (N

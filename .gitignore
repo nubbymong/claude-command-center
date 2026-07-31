@@ -16,7 +16,7 @@ dist/
 .claude/*
 !.claude/skills/
 # settings.json is repo-owned too: it carries the session-isolation PreToolUse
-# hook that every worktree must inherit (ADR-011). An untracked hook protects
+# hook that every worktree must inherit (ADR-012). An untracked hook protects
 # nobody but the machine that wrote it. settings.local.json stays personal.
 !.claude/settings.json
 .agents/
