@@ -86,6 +86,22 @@ The workflow:
    fragment, the changelog entry, and the advisory publication, together.
 4. A public issue may be opened at that point to track follow-up hardening.
 
+**You do not need to be the repository owner to start this.** Private vulnerability
+reporting is enabled here, so any GitHub account — external reporter, or a contributor who
+tripped over something mid-task — can file the advisory *and* get the private fork to fix
+it in. A contributor with plain `write` access can carry a finding all the way to a
+reviewable PR; only accepting the report, merging, and publishing need the owner.
+
+This is worth stating explicitly because the obvious API call is the wrong one:
+`POST /repos/{owner}/{repo}/security-advisories` is the *maintainer* endpoint and returns
+403 without admin, which reads like "no private channel is available to you". It isn't.
+The endpoint behind the link above is
+`POST /repos/{owner}/{repo}/security-advisories/reports`, and it is open to anyone.
+
+**[`docs/security-embargo-runbook.md`](docs/security-embargo-runbook.md) is the
+step-by-step procedure** — permissions, the `gh` recipes, working in the private fork, and
+the traps. If you are about to write a finding down anywhere, read that first.
+
 A fragment written during an embargo may record *that* a finding exists and was routed
 privately. It must not name the component, the mechanism, or the repro.
 

@@ -77,7 +77,14 @@ RC-branch model (adopted with #89): `beta` is never frozen — features merge th
 or been handed an unfixed vulnerability, it does not go into a `CONTEXT.d/` fragment, an
 ADR, a commit message, a branch name, the changelog, an issue, or a PR — it goes into a
 private GitHub Security Advisory, and the fix is developed in the private fork attached to
-that advisory. See `SECURITY.md` ("Embargo") for the full workflow.
+that advisory. See `SECURITY.md` ("Embargo") for the rule and
+`docs/security-embargo-runbook.md` for the **executable procedure**.
+
+You can do this yourself — you do not need to be the repo owner. Private vulnerability
+reporting is enabled, so any account can file the advisory and get a private fork. The
+obvious API call is the wrong one: `POST .../security-advisories` needs admin and 403s;
+`POST .../security-advisories/reports` is the open one. Do not conclude from that 403 that
+you have no private channel (ADR-011).
 
 `CONTEXT.d/` is the trap. The running log *feels* like a scratch notebook and is in fact a
 tracked file; a fragment describing a live bug is a disclosure with a repro attached. A
@@ -95,6 +102,7 @@ changelog entry, advisory) is written **after** the fix ships, all at once.
 ## Deeper references
 
 - `.claude/skills/adversarial-review/SKILL.md` — the adversarial review pass required for security-sensitive changes (ADR-009), plus the path table that decides when it applies.
+- `docs/security-embargo-runbook.md` — the executable procedure for an unfixed vulnerability: who can do what, the `gh` recipes, the private-fork workflow, and the traps (ADR-011).
 - `docs/agent-conventions.md` — the detailed agent/contributor conventions (hard constraints, IPC channel rules, branching & review).
 - `CONTRIBUTING.md` — contributor mechanics, commit-message format, changelog workflow.
 - `docs/versioning.md` — versioning scheme, prerelease suffixes, update channels, rolling re-release vs. version bump.
