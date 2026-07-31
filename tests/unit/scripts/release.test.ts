@@ -248,13 +248,31 @@ describe('release todayIso', () => {
     expect(todayIso(new Date(2026, 11, 31))).toBe('2026-12-31')
   })
 
-  it('uses LOCAL calendar parts, not UTC', () => {
+  it('reads LOCAL getters and never toISOString', () => {
     // The bug this guards: toISOString() is UTC, so an evening release west of
     // Greenwich stamps TOMORROW. In Denver (UTC-6/-7) anything after ~17:00 local
     // would be off by a day, silently, in a user-visible file.
-    const evening = new Date(2026, 6, 30, 23, 30, 0)
-    expect(todayIso(evening)).toBe('2026-07-30')
-    expect(todayIso(evening)).not.toBe(evening.toISOString().slice(0, 10))
+    //
+    // Asserting `todayIso(d) !== d.toISOString().slice(0,10)` does NOT work: on a
+    // UTC runner local IS UTC, so the two are equal and the assertion fails. That
+    // version passed in Denver and broke both CI platforms.
+    //
+    // So prove the contract structurally instead — a stub carrying only the local
+    // getters. If the implementation reached for toISOString (or any UTC getter)
+    // this would throw, and it is deterministic in every timezone.
+    const localOnly = {
+      getFullYear: () => 2026,
+      getMonth: () => 6, // 0-based: July
+      getDate: () => 30,
+    } as unknown as Date
+    expect(todayIso(localOnly)).toBe('2026-07-30')
+  })
+
+  it('is timezone-independent for a fixed local wall-clock time', () => {
+    // Late-evening local time must still report that same local day, whatever the
+    // host offset is — this is the real-world case that motivated #157.
+    expect(todayIso(new Date(2026, 6, 30, 23, 30, 0))).toBe('2026-07-30')
+    expect(todayIso(new Date(2026, 6, 30, 0, 15, 0))).toBe('2026-07-30')
   })
 })
 
