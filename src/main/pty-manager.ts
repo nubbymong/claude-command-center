@@ -8,7 +8,7 @@ import { logPtyOutput, isDebugModeEnabled } from './debug-capture'
 import { shouldRegisterRun } from './logging/should-register-run'
 import { getLogSupervisor, getTranscriptBinder } from './logging/logging-service'
 import { resolveResumeTargetFromTranscript, mangleCwdToProjectDir } from './logging/transcript-discovery'
-import { buildClaudeLaunchCommand, resolveResumeLaunch, buildResumeTranscriptPath, quoteArgForShell } from './spawn-claude-command'
+import { buildClaudeLaunchCommand, resolveResumeLaunch, buildResumeTranscriptPath, quoteArgForShell, modelFlag } from './spawn-claude-command'
 import { ensureCompanionDir, nodeFsCompanionDeps } from './logging/companion-dir'
 import { logInfo, logDebug, logError, logWarn } from './debug-logger'
 import { writeCliSetupPty, getResourcesDirectory } from './ipc/setup-handlers'
@@ -601,7 +601,7 @@ export function spawnPty(
       // aborting the remote command with "no matches found". The remote shell
       // is always POSIX here, so POSIX escaping applies regardless of the
       // local platform (hence isWin32: false).
-      options?.model ? `--model ${quoteArgForShell(options.model, false)}` : '',
+      modelFlag(options?.model, false),
       // Per-config permission mode. 'default'/'' => no flag (Claude's own default).
       options?.permissionMode && options.permissionMode !== 'default' ? `--permission-mode ${options.permissionMode}` : '',
       // Advanced escape hatch: extra CLI args verbatim (IPC-charset-guarded).
@@ -1215,14 +1215,14 @@ export function spawnPty(
       if (options?.effortLevel) {
         extraFlags += ` --effort ${options.effortLevel}`
       }
-      if (options?.model) {
-        // MUST be quoted (#144): 1M-context ids contain brackets (`opus[1m]`),
-        // which zsh treats as a glob class and aborts the whole launch line.
-        // See quoteArgForShell. (--effort / --permission-mode need no quoting:
-        // their IPC guards — a `^[a-zA-Z0-9_-]+$` charset and a fixed enum —
-        // exclude every glob and shell metacharacter.)
-        extraFlags += ` --model ${quoteArgForShell(options.model, os.platform() === 'win32')}`
-      }
+      // MUST be quoted (#144): 1M-context ids contain brackets (`opus[1m]`),
+      // which zsh treats as a glob class and aborts the whole launch line.
+      // modelFlag builds the entire flag so this site cannot interpolate the
+      // raw value by accident. (--effort / --permission-mode need no quoting:
+      // their IPC guards — a `^[a-zA-Z0-9_-]+$` charset and a fixed enum —
+      // exclude every glob and shell metacharacter.)
+      const mFlag = modelFlag(options?.model, os.platform() === 'win32')
+      if (mFlag) extraFlags += ` ${mFlag}`
       // Per-config permission mode. 'default'/'' => no flag (Claude's own default).
       if (options?.permissionMode && options.permissionMode !== 'default') {
         extraFlags += ` --permission-mode ${options.permissionMode}`

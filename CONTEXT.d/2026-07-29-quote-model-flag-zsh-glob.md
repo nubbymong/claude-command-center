@@ -19,26 +19,52 @@ values that must reach the CLI, so banning them is not an option — quoting is.
 - Added `quoteArgForShell(value, isWin32)` to `spawn-claude-command.ts` (the pure
   helper module), wrapping the pre-existing `escapeForCwdQuote` escaping. Single
   quotes are literal in PowerShell and POSIX sh/zsh alike.
-- Applied at both `--model` sites in `pty-manager.ts`: local (`:1224`, local
-  platform) and SSH (`:604`, `isWin32: false` — the REMOTE shell is always POSIX
-  regardless of the local platform).
+- Added `modelFlag(model, isWin32)` returning the ENTIRE `--model 'value'` flag, and
+  used it at both sites: local (local platform) and SSH (`isWin32: false` — the
+  REMOTE shell is always POSIX regardless of the local platform). Returning the whole
+  flag rather than just the escaped value is deliberate; see the adversarial note.
 - Folded the two path sites (`--settings`, `--mcp-config`) onto the same helper and
   deleted `pty-manager`'s duplicate local `quoteForShell`, so one tested helper now
   covers all four quoted flag values.
 - `--effort` / `--permission-mode` deliberately left unquoted: their IPC guards (a
   `^[a-zA-Z0-9_-]+$` charset and a fixed enum) already exclude every glob and shell
   metacharacter.
-- `scripts/resume-picker.js` needed no change — it forwards argv via
-  `spawnSync(cmd, args)` with `shell:false` on macOS, so there is no second shell
-  parse to glob.
-- Tests: `tests/unit/spawn-model-flag-quoting.test.ts` (bracketed-id quoting both
-  dialects, every shipped alias round-trips verbatim, embedded-quote escaping, a
-  "no unquoted `[` survives" regression sentinel, plus the companion schema guard).
-  Full suite 3128 passed.
 
-Known related hazard, NOT changed here (needs a scope call): `extraArgs` is also
-interpolated unquoted and its charset guard permits `[`/`]`, so brackets typed there
-would glob-break on zsh the same way. It cannot simply be wrapped in quotes (it is
-meant to expand to multiple shell words), so the choice is to drop `[`/`]` from that
-charset or leave it documented — flagged on #144 rather than silently narrowing a
-user-facing guard.
+A related scope call on the `extraArgs` escape hatch is tracked separately and
+privately. Deliberately not described here: this file is tracked and the repo is
+public (SECURITY.md, "Embargo"). The earlier revision of this fragment carried that
+description; it has been cut.
+
+ADVERSARIAL PASS -- injection lens, plus platform-parity / blast-radius lens.
+
+- MAJOR, in scope: the original regression guard was VACUOUS. Reverting BOTH emission
+  sites to the pre-fix raw interpolation left the suite green — 3239 passed, typecheck
+  clean, no lint error. It tested only the pure helper, and typecheck could not catch
+  the revert because `quoteArgForShell` stayed imported for the path flags. Third
+  vacuous guard in this repo. Fixed two ways: `modelFlag()` returns the entire flag so
+  a call site has nothing left to get wrong, and
+  `tests/unit/spawn-model-flag-emission.test.ts` asserts at SOURCE level that no site
+  interpolates the model value raw, plus the inverse (that both sites still call
+  `modelFlag`, so the check cannot be silenced by deleting the flag). Verified by
+  reverting both sites: both new assertions fail.
+- MINOR, in scope: the IPC guard comment said the value is interpolated UNQUOTED and
+  carried stale line numbers. That comment was the sole recorded justification for the
+  charset guard, so a reader would either relax it as redundant or harden the wrong
+  layer. Corrected, and the line numbers dropped rather than re-stated — they were
+  wrong once already.
+
+Guarantees that HELD under attack. 23 payloads across four real shells (sh, bash,
+pwsh 7, PowerShell 5.1): every one parsed as a single argument, no breakout, no marker
+file written. Both escape dialects are correct and complete. Argument injection is
+closed too — the model charset admits no space, so a value can never become two argv
+words. The folded path flags are byte-identical to the deleted local helper across 24
+cases (spaces, apostrophes, UNC paths, trailing backslash, dollar signs).
+`--effort` / `--permission-mode` were verified safe unquoted against the REAL Zod
+schema rather than the commit message, including the JS-versus-Python difference in
+whether `$` matches before a trailing newline. The SSH `isWin32:false` choice is
+unobservable for this flag (20,020 fuzzed values, zero divergence between dialects),
+and a Windows SSH remote is unreachable by construction.
+
+Two PRE-EXISTING findings on the same launch-shell surface were surfaced by the pass
+and routed privately per SECURITY.md. They are not described here, and neither is
+introduced by this change.

@@ -84,7 +84,9 @@ export const spawnOptionsSchema = z.object({
     uuid: z.string().regex(/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/),
     cwd: z.string().min(1).max(4096),
   }).optional(),
-  // Shell-interpolated UNQUOTED at spawn (pty-manager.ts:1140 local, :567 SSH) → charset-guarded.
+  // Single-quoted at BOTH spawn sites via modelFlag() (#144); this charset is
+  // defence-in-depth, not the primary control. Line numbers deliberately omitted --
+  // the previous comment carried stale ones and said UNQUOTED, the opposite of the code.
   // Legit values: 'opus', 'opus[1m]', 'fable', 'sonnet', 'haiku', or versioned ids like 'claude-opus-4-8'.
   // '' is the DEFAULT for "no override" (sessionStore.model is non-optional; TerminalView
   // passes it verbatim) and must stay accepted — emission already skips empty (`if (options?.model)`).
