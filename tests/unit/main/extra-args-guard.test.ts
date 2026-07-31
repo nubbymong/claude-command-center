@@ -48,6 +48,32 @@ describe('extraArgs rejects backslash-spelled managed flags', () => {
   })
 })
 
+describe('extraArgs rejects bracket-glob-spelled managed flags', () => {
+  // Same substitution as the backslash family, reached a different way. `[` and
+  // `]` are in the charset, and an unquoted bracket group is a PATHNAME GLOB: a
+  // POSIX shell expands `--setting[s]` to a file literally named `--settings`
+  // when one exists in the session's cwd (a cloned repo can ship one), handing
+  // the CLI the real flag. Verified in a real shell -- with the file present
+  // bash yields ARG=[--settings]; with it absent the pattern stays literal.
+  const bypasses = [
+    '--setting[s] /tmp/evil-hooks.json',
+    '--[m]odel evil-model',
+    '--mode[l] evil-model',
+    '--agent[s] /tmp/x.json',
+    '--resum[e] 11111111-1111-1111-1111-111111111111',
+    '--mcp-confi[g] /tmp/x.json',
+    '--permission-mod[e] bypassPermissions',
+    '--eff[o]rt xhigh',
+    // brackets and backslashes combined, since the two collapses share a pass
+    '--sett[i]ng\\s /tmp/x.json',
+  ]
+  for (const v of bypasses) {
+    it(`rejects ${JSON.stringify(v)}`, () => {
+      expect(accepts(v)).toBe(false)
+    })
+  }
+})
+
 describe('extraArgs rejects a trailing backslash', () => {
   it('rejects it: on SSH it becomes a shell line continuation', () => {
     // The remote shell prompts `>` and swallows the user's next line as
@@ -66,6 +92,9 @@ describe('extraArgs still accepts what it is for', () => {
     '--add-dir /home/me/project',
     '--foo=bar',
     '--tag a,b,c',
+    // Brackets are collapsed for MATCHING only, never for emission, so a path
+    // that legitimately contains them is still accepted.
+    '--add-dir /home/me/proj[1]',
     '',
   ]
   for (const v of ok) {
