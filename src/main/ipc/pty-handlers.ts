@@ -48,13 +48,24 @@ export const spawnOptionsSchema = z.object({
     path: ['version'],
     message: 'legacyVersion.version must be valid semver when enabled',
   }).optional(),
+  // Bounded, not charset-guarded. `prompt` and `description` are free-form
+  // natural language -- a metacharacter charset here would break the feature
+  // for anyone writing an ordinary English sentence, so it is the wrong control.
+  //
+  // The real control is that this value never reaches a shell as command TEXT:
+  // it is JSON-stringified and single-quote-escaped for the launch shell, and
+  // scripts/resume-picker.js re-spawns with shell:false so there is no second,
+  // unescaped parse (see buildSpawnTarget there -- shell:true on Windows
+  // concatenated argv into a cmd.exe command line, which made this field a
+  // command-execution path). These bounds are defence in depth against an
+  // oversized payload, not the injection boundary.
   agentsConfig: z.array(z.object({
-    name: z.string(),
-    description: z.string(),
-    prompt: z.string(),
-    model: z.string().optional(),
-    tools: z.array(z.string()).optional(),
-  })).optional(),
+    name: z.string().max(200),
+    description: z.string().max(2000),
+    prompt: z.string().max(100_000),
+    model: z.string().max(64).optional(),
+    tools: z.array(z.string().max(200)).max(200).optional(),
+  })).max(200).optional(),
   // PERMISSIVE by design (spec 2026-06-11 §4): a registry-validated enum here
   // re-creates the restore crash — capping at low/medium/high made a restored
   // xhigh/max/ultracode session throw. Unknown levels flow through to the
@@ -70,9 +81,28 @@ export const spawnOptionsSchema = z.object({
   // every shell metacharacter (; | & $ ` ( ) < > ' " * ? ~ ! % ^ newline), leaving only
   // characters that make up ordinary flags/paths. The refine rejects CCC-managed flags
   // so extraArgs can't clobber --model/--effort/--permission-mode/--settings/etc.
+  //
+  // The managed-flag refine runs on a BACKSLASH-COLLAPSED copy of the value, not
+  // on the raw text. The value is emitted unquoted, and POSIX shells strip
+  // unquoted backslashes at word expansion -- so a spelling like `--setting\s`
+  // matched no literal flag, passed the refine, and arrived at the CLI as the
+  // real `--settings`, substituting CCC's per-session settings file. A Claude
+  // settings file carries `hooks`, i.e. arbitrary commands.
+  //
+  // Collapsing rather than banning the character: Windows users legitimately
+  // pass backslash paths through this escape hatch (pinned by an existing test),
+  // and on Windows the launch shell is PowerShell, where backslash is not an
+  // escape character. So the character is harmless where it is needed and only
+  // its shell-stripping behaviour has to be accounted for.
   extraArgs: z.string().max(512).regex(/^[A-Za-z0-9 _\-=.\/\\:@,+[\]]*$/).refine(
-    (v) => !/(^|\s)--(model|effort|permission-mode|settings|mcp-config|agents|resume)\b/.test(v),
-    { message: 'extraArgs must not include a CCC-managed flag (--model/--effort/--permission-mode/--settings/--mcp-config/--agents/--resume)' },
+    // Collapse backslashes before matching -- see the note above. Also reject a
+    // trailing backslash outright: it turns the SSH launch line into a shell
+    // line continuation, which hangs the session on a `>` prompt waiting for
+    // input that never comes.
+    (v) => !v.endsWith('\\')
+      && !/(^|\s)--(model|effort|permission-mode|settings|mcp-config|agents|resume)\b/
+        .test(v.replace(/\\/g, '')),
+    { message: 'extraArgs must not include a CCC-managed flag (--model/--effort/--permission-mode/--settings/--mcp-config/--agents/--resume), nor end in a backslash' },
   ).optional(),
   disableAutoMemory: z.boolean().optional(),
   enableCodexReview: z.boolean().optional(),
