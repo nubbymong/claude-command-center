@@ -12,6 +12,17 @@ const release = require('../../../scripts/release.js') as {
   branchHintFor: (channel: string) => string
   nextVersion: (current: string, opts: { branch: string; channel: string; bump?: string | null }) => string
   tagFor: (version: string, channel: string) => string
+  todayIso: (now?: Date) => string
+  syncChangelogEntry: (source: string, version: string, date: string) =>
+    | { ok: false; reason: string }
+    | {
+        ok: true
+        content: string
+        prevVersion: string
+        prevDate: string | null
+        versionChanged: boolean
+        dateChanged: boolean
+      }
 }
 
 const { parseVersion, releaseBranchBase, preIdForBranch, branchAllowsChannel, nextVersion, tagFor } = release
@@ -225,5 +236,115 @@ describe('release version flow across a full cycle', () => {
     expect(rc).toBe('2.0.0-rc.3')
     // The two lines never collide.
     expect(tagFor(beta, 'beta')).not.toBe(tagFor(rc, 'beta'))
+  })
+})
+
+// ── todayIso / syncChangelogEntry (#157) ───────────────────────────
+const { todayIso, syncChangelogEntry } = release
+
+describe('release todayIso', () => {
+  it('formats a local date as YYYY-MM-DD with zero padding', () => {
+    expect(todayIso(new Date(2026, 0, 5))).toBe('2026-01-05')
+    expect(todayIso(new Date(2026, 11, 31))).toBe('2026-12-31')
+  })
+
+  it('uses LOCAL calendar parts, not UTC', () => {
+    // The bug this guards: toISOString() is UTC, so an evening release west of
+    // Greenwich stamps TOMORROW. In Denver (UTC-6/-7) anything after ~17:00 local
+    // would be off by a day, silently, in a user-visible file.
+    const evening = new Date(2026, 6, 30, 23, 30, 0)
+    expect(todayIso(evening)).toBe('2026-07-30')
+    expect(todayIso(evening)).not.toBe(evening.toISOString().slice(0, 10))
+  })
+})
+
+describe('release syncChangelogEntry', () => {
+  // Mirrors the real file: an interface whose `version`/`date` are UNQUOTED type
+  // annotations, then the data literal. The regexes must never touch the interface.
+  const source = (version: string, date: string) => `
+export interface ChangelogEntry {
+  version: string
+  date: string  // YYYY-MM-DD format
+}
+
+export const changelog: ChangelogEntry[] = [
+  {
+    version: '${version}',
+    date: '${date}',
+    changes: [],
+  },
+  {
+    version: '2.0.0',
+    date: '2026-01-01',
+    changes: [],
+  },
+]
+`
+
+  it('rewrites both version and date of the newest entry', () => {
+    const res = syncChangelogEntry(source('2.1.0-beta.3', '2026-07-30'), '2.1.0-beta.4', '2026-08-06')
+    if (!res.ok) throw new Error('expected ok')
+    expect(res.prevVersion).toBe('2.1.0-beta.3')
+    expect(res.prevDate).toBe('2026-07-30')
+    expect(res.versionChanged).toBe(true)
+    expect(res.dateChanged).toBe(true)
+    expect(res.content).toContain("version: '2.1.0-beta.4'")
+    expect(res.content).toContain("date: '2026-08-06'")
+  })
+
+  it('leaves the OLDER entry untouched', () => {
+    // The historical failure: a loose version regex skipped the prerelease entry
+    // at the top and rewrote the first BARE version it found, corrupting an old
+    // entry while reporting success.
+    const res = syncChangelogEntry(source('2.1.0-beta.3', '2026-07-30'), '2.1.0-beta.4', '2026-08-06')
+    if (!res.ok) throw new Error('expected ok')
+    expect(res.content).toContain("version: '2.0.0'")
+    expect(res.content).toContain("date: '2026-01-01'")
+  })
+
+  it('never rewrites the unquoted interface annotations', () => {
+    const res = syncChangelogEntry(source('2.1.0-beta.3', '2026-07-30'), '2.1.0-beta.4', '2026-08-06')
+    if (!res.ok) throw new Error('expected ok')
+    expect(res.content).toContain('version: string')
+    expect(res.content).toContain('date: string')
+  })
+
+  it('syncs the date even when the version already matches', () => {
+    // The #157 case exactly: entry authored days ago with the right version guess,
+    // wrong date. Pre-fix this whole branch was a no-op and shipped stale.
+    const res = syncChangelogEntry(source('2.1.0-beta.3', '2026-07-30'), '2.1.0-beta.3', '2026-08-06')
+    if (!res.ok) throw new Error('expected ok')
+    expect(res.versionChanged).toBe(false)
+    expect(res.dateChanged).toBe(true)
+    expect(res.content).toContain("date: '2026-08-06'")
+  })
+
+  it('reports no change when both already match', () => {
+    const res = syncChangelogEntry(source('2.1.0-beta.3', '2026-07-30'), '2.1.0-beta.3', '2026-07-30')
+    if (!res.ok) throw new Error('expected ok')
+    expect(res.versionChanged).toBe(false)
+    expect(res.dateChanged).toBe(false)
+    expect(res.content).toBe(source('2.1.0-beta.3', '2026-07-30'))
+  })
+
+  it('handles a bare stable version at the top', () => {
+    const res = syncChangelogEntry(source('2.1.0', '2026-07-30'), '2.2.0', '2026-08-06')
+    if (!res.ok) throw new Error('expected ok')
+    expect(res.prevVersion).toBe('2.1.0')
+    expect(res.content).toContain("version: '2.2.0'")
+  })
+
+  it('fails cleanly when there is no version entry', () => {
+    const res = syncChangelogEntry('export const changelog = []', '2.1.0', '2026-08-06')
+    expect(res.ok).toBe(false)
+  })
+
+  it('still syncs the version when no date field exists', () => {
+    // Degrades rather than throwing, so a malformed entry cannot abort a release.
+    const res = syncChangelogEntry("[{ version: '2.1.0', changes: [] }]", '2.2.0', '2026-08-06')
+    if (!res.ok) throw new Error('expected ok')
+    expect(res.prevDate).toBeNull()
+    expect(res.dateChanged).toBe(false)
+    expect(res.content).toContain("version: '2.2.0'")
   })
 })

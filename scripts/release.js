@@ -11,7 +11,7 @@
  *   1. Pre-flight checks (gh auth, npm audit, git status)
  *   2. Channel selection (stable / beta / dev)
  *   3. Version bump
- *   4. Update changelog.ts version line
+ *   4. Update changelog.ts version + date of the newest entry, regenerate CHANGELOG.md
  *   5. Typecheck + unit tests + build smoke test
  *   6. Git commit + tag + push
  *
@@ -56,8 +56,15 @@
  *   - VirusTotal scanning is part of the GitHub Actions workflow, not local.
  *     The workflow scans BOTH the .exe and the .dmg.
  *   - Changelog generation is hand-authored. Edit src/renderer/changelog.ts to
- *     add a new entry BEFORE running this script. The script will update the
- *     version field of the first entry to match the bumped version.
+ *     add a new entry BEFORE running this script. The script then aligns the
+ *     FIRST (newest) entry with the release being cut: it rewrites both the
+ *     `version` field to the bumped version AND the `date` field to today's
+ *     LOCAL date, then regenerates CHANGELOG.md so the generated file cannot go
+ *     stale in the release commit (the `Changelog in sync` CI gate would
+ *     otherwise fail on the release itself).
+ *     So both fields in a pending entry are placeholders — write whatever is
+ *     reasonable and let the release correct them. Before #157 only `version`
+ *     was synced, so an entry authored days earlier shipped stale-dated.
  *   - This script does NOT create or push a git tag. release.yml creates the tag
  *     via `gh release create --target $GITHUB_SHA`, pinning it to the commit it
  *     actually built. A pre-pushed tag would defeat that and can strand the
@@ -273,6 +280,69 @@ function tagFor(version, channel) {
   }
 }
 
+/**
+ * Today's date as YYYY-MM-DD in LOCAL time.
+ *
+ * Deliberately not `toISOString().slice(0, 10)`: that is UTC, and for anyone west
+ * of Greenwich an evening release would stamp TOMORROW's date. In Denver
+ * (UTC-6/-7) any release after ~17:00 local would be off by a day — silently, and
+ * in a user-visible file.
+ *
+ * `now` is injectable so the behaviour is testable without faking the clock.
+ */
+function todayIso(now = new Date()) {
+  const y = now.getFullYear()
+  const m = String(now.getMonth() + 1).padStart(2, '0')
+  const d = String(now.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
+}
+
+/**
+ * Align the FIRST (newest) changelog.ts entry with the release being cut.
+ *
+ * Entries are hand-authored BEFORE the release, so both fields drift: the version
+ * is whatever the author guessed the next bump would be, and the date is whatever
+ * day they wrote it. `beta` is never frozen, so a pending entry can sit for a week
+ * and then ship stale-dated (#157). Both are rewritten here.
+ *
+ * Pure: takes and returns source text, so the regex behaviour is unit-testable.
+ * The inline version of this logic was untested and had already corrupted an old
+ * entry once — see the prerelease-suffix note below.
+ *
+ * Both regexes REQUIRE quotes, which is what keeps them off the `ChangelogEntry`
+ * interface at the top of the file (`version: string`, `date: string` — unquoted).
+ * The version pattern must also carry the optional prerelease suffix: without it
+ * the match skipped past `2.0.0-rc.2` at the top and rewrote the first BARE
+ * version found (a historical `2.0.0` entry), corrupting an old entry while
+ * reporting success and leaving the real one stale.
+ *
+ * @returns {{ok: false, reason: string} | {ok: true, content: string, prevVersion: string, prevDate: string|null, versionChanged: boolean, dateChanged: boolean}}
+ */
+function syncChangelogEntry(source, version, date) {
+  const versionRegex = /version:\s*'(\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+\.\d+)?)'/
+  const dateRegex = /date:\s*'(\d{4}-\d{2}-\d{2})'/
+
+  const vMatch = String(source).match(versionRegex)
+  if (!vMatch) return { ok: false, reason: 'no version entry found' }
+  const dMatch = String(source).match(dateRegex)
+
+  const versionChanged = vMatch[1] !== version
+  const dateChanged = !!dMatch && dMatch[1] !== date
+
+  let content = source
+  if (versionChanged) content = content.replace(versionRegex, `version: '${version}'`)
+  if (dateChanged) content = content.replace(dateRegex, `date: '${date}'`)
+
+  return {
+    ok: true,
+    content,
+    prevVersion: vMatch[1],
+    prevDate: dMatch ? dMatch[1] : null,
+    versionChanged,
+    dateChanged,
+  }
+}
+
 // ============================================================
 // MAIN
 // ============================================================
@@ -420,28 +490,34 @@ const tag = tagFor(version, channel)
 console.log('')
 console.log(`      ${NO_BUMP ? `v${version} (reused)` : `v${oldVersion} → v${version}`}  (tag: ${tag}, channel: ${channel})`)
 
-// --- Step 3: Sync changelog version ---
-step(3, TOTAL_STEPS, 'Aligning changelog version with bumped version...')
+// --- Step 3: Sync changelog version + date ---
+step(3, TOTAL_STEPS, 'Aligning changelog version and date with this release...')
 
 const changelogPath = path.join(PROJECT_ROOT, 'src', 'renderer', 'changelog.ts')
 try {
-  let changelogContent = fs.readFileSync(changelogPath, 'utf-8')
-  // Match the FIRST `version: '...'` entry — that's the topmost (newest) entry.
-  // The prerelease suffix is NOT optional decoration: without it this regex
-  // skipped straight past `2.0.0-rc.2` at the top of the file and rewrote the
-  // first BARE version it found (the historical `2.0.0` entry), corrupting an
-  // old entry while reporting success and leaving the real one stale.
-  const versionRegex = /version:\s*'(\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+\.\d+)?)'/
-  const match = changelogContent.match(versionRegex)
-  if (!match) {
-    warn('Could not locate first version entry in changelog.ts')
-  } else if (match[1] === version) {
-    ok(`Changelog already on v${version}`)
+  const changelogContent = fs.readFileSync(changelogPath, 'utf-8')
+  const releaseDate = todayIso()
+  const sync = syncChangelogEntry(changelogContent, version, releaseDate)
+  if (!sync.ok) {
+    warn(`Could not locate first version entry in changelog.ts (${sync.reason})`)
+  } else if (!sync.versionChanged && !sync.dateChanged) {
+    ok(`Changelog already on v${version} (${releaseDate})`)
   } else {
-    changelogContent = changelogContent.replace(versionRegex, `version: '${version}'`)
-    fs.writeFileSync(changelogPath, changelogContent, 'utf-8')
-    ok(`Changelog version: v${match[1]} → v${version}`)
-    warn('Hand-author the changelog body BEFORE the next release for accurate notes')
+    fs.writeFileSync(changelogPath, sync.content, 'utf-8')
+    if (sync.versionChanged) ok(`Changelog version: v${sync.prevVersion} → v${version}`)
+    if (sync.dateChanged) ok(`Changelog date: ${sync.prevDate} → ${releaseDate}`)
+    // Regenerate so CHANGELOG.md carries the corrected version/date. Without
+    // this the `Changelog in sync` CI gate fails on the release commit itself:
+    // the generated file still holds the pre-sync values.
+    try {
+      run('node scripts/gen-changelog.js')
+      ok('CHANGELOG.md regenerated')
+    } catch (err) {
+      warn(`CHANGELOG.md regeneration failed — run 'npm run changelog' before committing (${err.message})`)
+    }
+    if (sync.versionChanged) {
+      warn('Hand-author the changelog body BEFORE the next release for accurate notes')
+    }
   }
 } catch (err) {
   warn(`Changelog sync skipped: ${err.message}`)
@@ -644,6 +720,8 @@ module.exports = {
   branchHintFor,
   nextVersion,
   tagFor,
+  todayIso,
+  syncChangelogEntry,
 }
 
 if (require.main === module) {
