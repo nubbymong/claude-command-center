@@ -50,6 +50,23 @@ export function isPasteChord(e: {
   return false
 }
 
+// Is this keystroke a terminal COPY request? Ctrl+Shift+C — the conventional
+// terminal copy chord, kept distinct from Ctrl+C so it cannot swallow SIGINT.
+//
+// Matched case-insensitively: with shift held Chromium reports 'C', but with caps
+// lock also on it reports 'c'. The old inline check compared `e.key === 'C'`
+// exactly, so copy silently stopped working under caps lock.
+export function isCopyChord(e: {
+  key: string
+  ctrlKey: boolean
+  metaKey: boolean
+  shiftKey: boolean
+  altKey: boolean
+}): boolean {
+  if (e.altKey || e.metaKey) return false
+  return e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'c'
+}
+
 // Should THIS TerminalView handle a paste chord itself, rather than leaving it to
 // Chromium's native paste?
 //

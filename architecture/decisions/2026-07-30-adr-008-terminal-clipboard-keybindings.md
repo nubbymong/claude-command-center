@@ -137,9 +137,16 @@ it would leave paste dependent on a focus race).
   (insecure context, window not focused) is a no-op rather than a double paste.
   The terminal is left unchanged and nothing is reported — consistent with the
   existing right-click behaviour.
-- The pre-existing Ctrl+Shift+C copy handler still lacks the `isActive` guard. It
-  is benign today (only one terminal holds a selection) and is intentionally left
-  alone here to keep this change scoped; it should get the same treatment.
+- **Resolved in #154/#153:** the wiring now lives in
+  `components/terminal/terminalKeybindings.ts` (`installTerminalKeybindings`), which
+  owns BOTH chords behind one capture-phase listener and returns a disposer. Copy
+  gained the same `isActive` / modal / ordinary-editable gate it never had. The
+  extraction exists so the REGISTRATION is testable, not just the predicates — the
+  original bug was dead code that passed every predicate test, and a test that
+  mirrors the registration would pass regardless. The suite drives the installer
+  with a stand-in for xterm's textarea listener and asserts xterm never sees the
+  chord; flipping the capture flag to `false` fails exactly those tests, which is
+  the check that the coverage is real.
 - Verified by simulating the real failure mode — clipboard write plus a synthesized
   Ctrl+V from an external process (`SendKeys`) into the CCC window — not only by
   pressing the key by hand, since hand-pressing does not reproduce the
