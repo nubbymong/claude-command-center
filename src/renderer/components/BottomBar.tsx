@@ -107,7 +107,7 @@ export default function BottomBar({ currentView, onViewChange, onUpdateRequested
         )}
         {updateAvailable && (
           <button
-            onClick={() => { if (onUpdateRequested) onUpdateRequested(); else window.electronAPI.update.installAndRestart() }}
+            onClick={() => { if (onUpdateRequested) onUpdateRequested(); else void Promise.resolve(window.electronAPI.update.installAndRestart()).catch((e: unknown) => console.error('[update] install failed:', e)) }}
             className="footer-update-pulse px-1.5 py-px rounded-full text-[10px] font-medium focus-ring"
             style={{ color: 'var(--status-success)', background: 'color-mix(in srgb, var(--status-success) 15%, transparent)' }}
             title="Update available -- click to install and restart"

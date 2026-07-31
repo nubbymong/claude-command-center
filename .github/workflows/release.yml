@@ -209,7 +209,7 @@ jobs:
   # ── Build Linux AppImage (experimental) ──
   # Unsigned: Linux has no SmartScreen/Gatekeeper equivalent, and AppImage
   # carries no signing convention. CHECKSUMS.txt lets users verify the download
-  # by hand — the in-app updater does NOT yet verify it (tracked as follow-up).
+  # by hand — the in-app updater verifies every download against it (#111).
   # Built on ubuntu-latest (glibc 2.39), so the AppImage runs on distros at that
   # glibc or newer: Ubuntu 24.04+, Rocky 10+, Fedora 40+. Older lines (Rocky
   # 8/9, Ubuntu 22.04) need a container build against an older glibc — out of

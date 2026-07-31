@@ -605,7 +605,10 @@ if (exitCode !== 0) {
     const hasExe = names.some((n) => n.endsWith('.exe'))
     const hasDmg = names.some((n) => n.endsWith('.dmg'))
     const hasAppImage = names.some((n) => n.endsWith('.AppImage'))
-    const hasChecksums = names.some((n) => n.toLowerCase().includes('checksum'))
+    // Exact name: the client hard-codes literal 'CHECKSUMS.txt' in both the
+    // derived URL and `gh release download --pattern`, so a checksums.txt or a
+    // CHECKSUMS.txt.sig would pass this gate and still fail every update.
+    const hasChecksums = names.includes('CHECKSUMS.txt')
 
     console.log(`      Release URL: ${release.url}`)
     console.log(`      Assets: ${names.join(', ')}`)
@@ -616,7 +619,7 @@ if (exitCode !== 0) {
     if (hasAppImage) ok('Linux AppImage attached')
     else { warn('Linux AppImage NOT found'); exitCode = 1 }
     if (hasChecksums) ok('CHECKSUMS.txt attached')
-    else warn('CHECKSUMS.txt not found (workflow normally generates this)')
+    else fail('CHECKSUMS.txt not attached -- the in-app updater REFUSES to install\n        a release it cannot verify (#111), so publishing without it ships a\n        release nobody can auto-update to.')
   } catch (err) {
     warn(`Could not verify release: ${err.message}`)
     exitCode = 1
