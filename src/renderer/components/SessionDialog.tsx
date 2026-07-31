@@ -8,6 +8,7 @@ import { useResolvedTheme } from '../hooks/useThemeController'
 import { useRegistryStore } from '../stores/registryStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { modelsFromRegistry, PERMISSION_MODES } from '../lib/claude-cli-options'
+import { generateId } from '../utils/id'
 
 export type SessionType = 'local' | 'ssh'
 
@@ -222,7 +223,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
 
   const handleCreateSection = () => {
     if (!newSectionName.trim()) return
-    const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
+    const id = generateId()
     addSection({ id, name: newSectionName.trim() })
     setSectionId(id)
     setNewSectionName('')
@@ -231,7 +232,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
 
   const handleCreateGroup = () => {
     if (!newGroupName.trim()) return
-    const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
+    const id = generateId()
     addGroup({ id, name: newGroupName.trim() })
     setGroupId(id)
     setNewGroupName('')

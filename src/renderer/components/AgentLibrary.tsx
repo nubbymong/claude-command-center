@@ -4,6 +4,7 @@ import type { AgentTemplate } from '../types/electron'
 import AgentTemplateDialog from './AgentTemplateDialog'
 import { useRegistryStore } from '../stores/registryStore'
 import { resolveModelInfo } from '../../shared/model-registry'
+import { generateId } from '../utils/id'
 
 interface ContextMenuState {
   x: number
@@ -88,7 +89,7 @@ export default function AgentLibrary() {
   }
 
   const handleSaveNew = (data: Omit<AgentTemplate, 'id'>) => {
-    const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
+    const id = generateId()
     addTemplate({ ...data, id })
     setShowDialog(false)
   }

@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { AgentTemplate, AgentModelOverride } from '../types/electron'
+import { generateId } from '../utils/id'
 
 // ── Built-in Templates ──
 
@@ -109,7 +110,7 @@ export const useAgentLibraryStore = create<AgentLibraryState>((set, get) => ({
     const all = [...state.templates, ...BUILTIN_TEMPLATES]
     const original = all.find(t => t.id === id)
     if (!original) return undefined
-    const newId = Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
+    const newId = generateId()
     const copy: AgentTemplate = {
       ...original,
       id: newId,

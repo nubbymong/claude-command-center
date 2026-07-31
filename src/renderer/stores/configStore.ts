@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { saveConfigNow, saveConfigDebounced } from '../utils/config-saver'
 import type { ProviderId, ClaudeOptions, CodexOptions } from '../../shared/types'
 import type { IdentityColorKey } from '../../shared/identity-colors'
+import { generateId } from '../utils/id'
 
 // Re-export provider types so callers can import from a single place
 export type { ProviderId, ClaudeOptions, CodexOptions }
@@ -253,7 +254,7 @@ export const useConfigStore = create<ConfigState>((set) => ({
     const state = useConfigStore.getState()
     const original = state.configs.find((c) => c.id === configId)
     if (!original) return undefined
-    const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
+    const id = generateId()
     const copy: TerminalConfig = {
       ...original,
       id,

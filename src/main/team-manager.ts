@@ -10,6 +10,7 @@ import { dispatchAgent, cancelAgent, getAgentOutput, onAgentCompletion, CloudAge
 import { logInfo, logError } from './debug-logger'
 import type { TeamTemplate, TeamRun, TeamRunStep, TeamRunStatus, TeamStep } from '../shared/types'
 import { IPC } from '../shared/ipc-channels'
+import { randomId } from '../shared/id'
 
 const MAX_CONTEXT_BYTES = 50 * 1024 // 50KB per prior step output
 
@@ -21,11 +22,11 @@ let getWindow: () => BrowserWindow | null = () => null
 const agentToRun = new Map<string, string>()
 
 function generateTeamId(): string {
-  return 'team-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
+  return randomId('team-')
 }
 
 function generateRunId(): string {
-  return 'tr-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
+  return randomId('tr-')
 }
 
 function persistTeams(): void {

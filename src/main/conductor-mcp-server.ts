@@ -117,6 +117,101 @@ export function getConductorMcpSecret(): string {
   return _conductorMcpSecret
 }
 
+const BEARER_SCHEME = 'bearer'
+
+/** Single-character whitespace test. Linear by construction -- no quantifier,
+ *  so there is nothing to backtrack. Matches the set `String.prototype.trim()`
+ *  strips, which is what keeps the separator scan below consistent with the
+ *  outer trim. */
+const WHITESPACE = /\s/
+
+function isSpOrTab(c: string): boolean {
+  return c === ' ' || c === '\t'
+}
+
+/** Parse `Bearer <token>` from an Authorization header value.
+ *
+ *  Three-state return, because "no Bearer credential was offered" and "a Bearer
+ *  credential was offered and we refused to parse it" must not be conflated:
+ *    - string    -- a well-formed Bearer token
+ *    - undefined -- not a Bearer header at all (absent, or another scheme such
+ *                   as Basic). The caller may fall through to `?token=`.
+ *    - null      -- a Bearer header we REFUSED: the whitespace run separating
+ *                   the scheme from the token contains something other than
+ *                   SP/HTAB. The caller must treat this as fatal; falling
+ *                   through would let a mangled header silently downgrade to a
+ *                   weaker channel.
+ *
+ *  (There is deliberately no "empty token" refusal state: the outer `.trim()`
+ *  makes `'Bearer '` collapse to the bare scheme, which is `undefined` -- no
+ *  Bearer credential offered -- long before any token check.)
+ *
+ *  Deliberately NOT a regex. The obvious `/^bearer\s+(.+)$/i` is quadratic on
+ *  `"bearer" + <long run of spaces> + <line terminator> + x`: the trailing
+ *  LineTerminator is what `.` cannot cross, which forces `\s+` to give a
+ *  character back and retry for every position in the run (CodeQL
+ *  js/polynomial-redos, #151).
+ *
+ *  Reachability, stated honestly: that payload does NOT arrive through Node's
+ *  HTTP parser today. llhttp rejects bare CR/LF in a header value with a 400
+ *  before any handler runs, header values decode as latin-1 (so U+2028/U+2029
+ *  cannot appear as single code units), `http.maxHeaderSize` caps the value at
+ *  16 KB, and llhttp strips trailing OWS. So this is a static-analysis finding
+ *  mitigated in depth, not a live loopback DoS. It is fixed anyway because the
+ *  parser is a policy dependency that must not rely on a *different* component's
+ *  input filtering to be safe, and because `isAuthorizedMcpRequest` is exported
+ *  and callable with anything.
+ *
+ *  Prefix-compare the scheme, require exactly one SP/HTAB separator, take the
+ *  remainder: single pass, no backtracking, linear whatever the input.
+ *
+ *  On the separator: RFC 9110 section 11.4 gives
+ *  `credentials = auth-scheme [ 1*SP ( token68 / #auth-param ) ]`, so SP is the
+ *  only RFC-legal separator here -- HTAB is NOT (OWS/BWS govern whitespace
+ *  around field delimiters, not this position). HTAB is accepted anyway for
+ *  backward compatibility with the `\s` this replaced. Every OTHER whitespace
+ *  character `\s` used to accept is rejected, anywhere in the separator run --
+ *  the run is scanned, not just its first character, because
+ *  `slice(...).trim()` would otherwise silently absorb a rejected character
+ *  that merely sat behind a legal one (`Bearer<SP><NBSP><token>`).
+ *
+ *  Blast radius of that narrowing: the SSE/HTTP registration writers all embed
+ *  `?token=` and send no header at all, so they are unaffected. The one
+ *  header-only client is Codex -- `providers/codex/spawn.ts` sets
+ *  `mcp_servers.conductor.bearer_token_env_var=CONDUCTOR_MCP_TOKEN` with no
+ *  `?token=` in its URL, so the Authorization header is its ONLY credential
+ *  channel. Its rmcp client formats `Bearer ` with a single SP, so it is
+ *  unaffected too -- but a future change here breaks Codex outright with no
+ *  fallback, which is why this paragraph exists. */
+function parseBearerToken(authHeader: string): string | null | undefined {
+  const trimmed = authHeader.trim()
+  if (trimmed.length <= BEARER_SCHEME.length) return undefined
+  if (trimmed.slice(0, BEARER_SCHEME.length).toLowerCase() !== BEARER_SCHEME) return undefined
+  if (!isSpOrTab(trimmed[BEARER_SCHEME.length])) {
+    // Not whitespace at all -> this is a DIFFERENT scheme whose name merely
+    // starts with "bearer" (e.g. `bearerX`), so no Bearer credential was
+    // offered. Whitespace that is not SP/HTAB -> a Bearer header we refuse.
+    return WHITESPACE.test(trimmed[BEARER_SCHEME.length]) ? null : undefined
+  }
+
+  // Walk the whole separator run. Stopping at the first character would let
+  // `Bearer<SP><NBSP><token>` through, because the slice+trim below absorbs any
+  // leading whitespace the check did not look at -- so the narrowing would be
+  // defeated by one legal space in front of an illegal one. Single pass, so
+  // this stays linear.
+  let i = BEARER_SCHEME.length
+  while (i < trimmed.length && WHITESPACE.test(trimmed[i])) {
+    if (!isSpOrTab(trimmed[i])) return null
+    i++
+  }
+
+  const token = trimmed.slice(i)
+  // Unreachable while the outer `.trim()` above stands: trimmed cannot end in
+  // whitespace, so the separator run always terminates on a real character.
+  // Kept as defence in depth against an edit that drops that trim.
+  return token.length > 0 ? token : null
+}
+
 /** Extract the presented token from either an `Authorization: Bearer <token>`
  *  header or a `?token=<token>` query param, then compare against the expected
  *  secret in constant time. The header is checked first (cheaper, and the
@@ -129,10 +224,19 @@ export function isAuthorizedMcpRequest(
   authHeader: string | undefined,
   expectedSecret: string,
 ): boolean {
+  // A secret shorter than the real 64-hex one means the provider is broken or
+  // absent. Refuse rather than authenticate: `?token=` yields '' for an empty
+  // query value, and timingSafeEqual(<empty>, <empty>) is true -- so without
+  // this guard an empty expectedSecret authorizes every request (#151).
+  if (!expectedSecret || expectedSecret.length < 32) return false
+
   let presented: string | null = null
   if (authHeader) {
-    const m = /^bearer\s+(.+)$/i.exec(authHeader.trim())
-    if (m) presented = m[1]
+    const fromHeader = parseBearerToken(authHeader)
+    // A Bearer header we refused to parse is fatal. Only "no Bearer credential
+    // offered" (undefined) falls through to the weaker query-param channel.
+    if (fromHeader === null) return false
+    if (fromHeader !== undefined) presented = fromHeader
   }
   if (presented === null && reqUrl) {
     try {

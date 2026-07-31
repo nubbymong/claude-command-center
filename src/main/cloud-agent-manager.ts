@@ -13,6 +13,7 @@ import { resolveVersionBinary, isVersionInstalled, installVersion } from './lega
 import { isValidLegacyVersion } from '../shared/legacy-version'
 import { getProfileConfigDir, getPrimaryProfileId, setupProfileLinks, listProfiles } from './account-profiles'
 import { withProfileHome } from './pty-manager'
+import { randomId } from '../shared/id'
 
 export interface CloudAgentData {
   id: string
@@ -85,7 +86,7 @@ let agents: CloudAgentData[] = []
 let getWindow: () => BrowserWindow | null = () => null
 
 function generateId(): string {
-  return 'ca-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
+  return randomId('ca-')
 }
 
 function persist(): void {
