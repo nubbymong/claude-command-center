@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Settings -> Check for Updates can now install the update it finds. It used to only report that one existed, leaving you to hunt for the small Update pill in the bottom bar. Open sessions are still saved before CCC restarts.
 - Hardened the authentication check on the local Conductor server that Claude and Codex sessions use to reach the built-in CCC tools. Its token check accepted some malformed credentials it should have rejected, and a crafted request could make the check do far more work than it needed to. Both are fixed. The server still listens only on your own machine, and no session behaviour changes.
 - Session, config, team and agent-template identifiers are now generated with a cryptographic random number generator instead of a predictable one. Existing items keep the identifiers they already have and nothing needs migrating.
+- The in-app updater now verifies every installer it downloads against the SHA-256 checksums published with the release, and refuses to run one that does not match. Previously it launched whatever it downloaded, with no client-side check on any platform. If a download fails the check it is discarded and you are told why, rather than the update silently doing nothing.
 
 ## [2.1.0-beta.2] - 2026-07-29
 
