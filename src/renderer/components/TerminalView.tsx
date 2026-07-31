@@ -14,15 +14,10 @@ import SshFlowOverlay from './SshFlowOverlay'
 import { shouldUseResumePicker } from '../utils/resumePicker'
 import { shouldGateAccountChoice, formatSpawnError } from '../utils/sessionLaunch'
 import { stripCursorSequences } from '../utils/terminalFormatting'
-import {
-  isControlReportOnly,
-  decideContextMenuAction,
-  isPasteChord,
-  shouldHandleTerminalPaste,
-  isOrdinaryEditable,
-} from '../utils/terminalInput'
+import { isControlReportOnly, decideContextMenuAction, isOrdinaryEditable } from '../utils/terminalInput'
 import { decideFollow } from '../utils/terminalScroll'
 import { getTerminalTheme } from './terminal/terminalTheme'
+import { installTerminalKeybindings } from './terminal/terminalKeybindings'
 import { useSettingsStore, DEFAULT_TERMINAL_SETTINGS } from '../stores/settingsStore'
 import { usePasteHintStore } from '../stores/pasteHintStore'
 import { installInputDiagnostics, describeBytes } from '../utils/inputDiagnostics'
@@ -243,8 +238,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
     let resizeObserver: ResizeObserver | null = null
     let unsubData: (() => void) | null = null
     let unsubExit: (() => void) | null = null
-    let handleKeyDownCopy: ((e: KeyboardEvent) => void) | null = null
-    let handleKeyDownPaste: ((e: KeyboardEvent) => void) | null = null
+    let disposeKeybindings: (() => void) | null = null
     let handleContextMenu: ((e: MouseEvent) => void) | null = null
     let disposed = false
     let parseTimer: ReturnType<typeof setTimeout> | null = null
@@ -807,85 +801,41 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
       })
       resizeObserver.observe(container)
 
-      // Ctrl+Shift+C to copy selected text
-      handleKeyDownCopy = (e: KeyboardEvent) => {
-        if (e.ctrlKey && e.shiftKey && e.key === 'C') {
-          e.preventDefault()
-          const sel = term?.getSelection()
-          if (sel) navigator.clipboard.writeText(sel)
-        }
-      }
-      document.addEventListener('keydown', handleKeyDownCopy)
-
-      // Ctrl+V / Cmd+V / Shift+Insert to paste (#145).
+      // Clipboard keybindings (copy + paste). The wiring lives in
+      // terminalKeybindings.ts so the event-phase registration is unit-testable —
+      // the #145 bug was a bubble-phase listener that xterm beat to the keystroke,
+      // and no predicate test could see it (#154).
       //
-      // CCC owns this keybinding rather than leaving it to the Edit menu's
-      // `role: 'paste'`: the native path pastes into the focused editable element
-      // (xterm's hidden helper textarea), so it silently does nothing whenever that
-      // textarea has lost DOM focus — which is every time an external tool takes
-      // focus and synthesizes a paste (dictation apps, snippet expanders). Reading
-      // the clipboard directly is the same focus-independent route that has always
-      // made right-click paste work.
-      //
-      // `isActiveRef` (not the captured prop) because this effect re-runs on session
-      // identity, not on activation — a captured `isActive` would go stale and this
+      // `isActive` is passed as a THUNK, not a value: this effect keys on session
+      // identity, so a captured boolean would go stale on tab switches, and the
       // listener is on `document`, shared by every mounted TerminalView.
-      handleKeyDownPaste = async (e: KeyboardEvent) => {
-        if (!isPasteChord(e)) return
-        if (!shouldHandleTerminalPaste({
-          isActive: isActiveRef.current,
-          hasModalOpen: !!document.querySelector('[role="dialog"][aria-modal="true"]'),
-          targetIsOrdinaryEditable: isOrdinaryEditable(document.activeElement as HTMLElement | null),
-        })) return
-        // Claim the event before the async read so Chromium's native paste can't
-        // also fire and double-insert.
-        //
-        // stopPropagation is what actually makes this work, and it only works
-        // because the listener is registered in the CAPTURE phase (see below).
-        // xterm's own keydown listener lives on the helper textarea, so in the
-        // bubble phase it runs FIRST and has already turned Ctrl+V into the raw
-        // control byte \x16 (SYN) and written it to the PTY before a
-        // document-level bubble listener is ever called — preventDefault at that
-        // point is far too late. Capture + stopPropagation means xterm never sees
-        // the chord and never emits \x16.
-        e.stopPropagation()
-        e.preventDefault()
-        // Read through the MAIN process, not navigator.clipboard.readText().
-        // The async clipboard API requires the DOCUMENT to be focused and rejects
-        // otherwise — precisely the condition this handler exists to survive, since
-        // an external tool takes focus, writes the clipboard, hands focus back and
-        // synthesizes Ctrl+V. The main-process read has no focus requirement and
-        // retries for Windows delayed-render (the same first-read-empty behaviour
-        // already documented for clipboard images).
-        let text = ''
-        try {
-          text = await window.electronAPI.clipboard.readText()
-        } catch {
-          // IPC unavailable — fall through to the renderer API below.
-        }
-        if (!text) {
+      disposeKeybindings = installTerminalKeybindings({
+        term: {
+          getSelection: () => term?.getSelection() ?? '',
+          paste: (text) => term?.paste(text),
+          clearSelection: () => term?.clearSelection(),
+        },
+        isActive: () => isActiveRef.current,
+        // Main-process clipboard read: focus-independent and retried for Windows
+        // delayed-render, with the renderer API as a fallback if IPC is unavailable.
+        readText: async () => {
           try {
-            text = await navigator.clipboard.readText()
+            const viaMain = await window.electronAPI.clipboard.readText()
+            if (viaMain) return viaMain
+          } catch { /* fall through */ }
+          try {
+            return await navigator.clipboard.readText()
           } catch {
-            text = ''
+            return ''
           }
-        }
-        if (!text) {
-          // Do NOT fail silently. A silent no-op is what let #145 go unnoticed:
-          // Ctrl+V appeared to do nothing with no way to tell whether the chord
-          // was even seen. This hint also makes the failure mode diagnosable — if
-          // a dictation tool pastes nothing and NO hint appears, the tool never
-          // sent a paste chord at all.
+        },
+        writeText: (text) => navigator.clipboard.writeText(text),
+        // Never fail silently — a silent no-op is what let #145 go unnoticed.
+        onNothingToPaste: () => {
           usePasteHintStore.getState().show(sessionId, 'Nothing to paste — clipboard has no text')
-          return
-        }
-        term?.paste(text)
-      }
-      // CAPTURE phase (the `true`) — not optional, and the whole reason the first
-      // attempt at this fix silently did nothing. Capture on `document` runs
-      // before any listener on a descendant, so this beats xterm's textarea
-      // handler; a bubble-phase listener loses the race every time.
-      document.addEventListener('keydown', handleKeyDownPaste, true)
+        },
+      })
+
 
       // Right-click: context-aware copy or paste depending on mode.
       //
@@ -943,8 +893,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
         // geometry so a remount doesn't inherit a desynced terminal.
         try { window.electronAPI.pty.resize(sessionId, lastSentCols, lastSentRows) } catch { /* main gone */ }
       }
-      if (handleKeyDownCopy) document.removeEventListener('keydown', handleKeyDownCopy)
-      if (handleKeyDownPaste) document.removeEventListener('keydown', handleKeyDownPaste, true)
+      disposeKeybindings?.()
       if (handleContextMenu) container.removeEventListener('contextmenu', handleContextMenu, true)
       if (handleWheel) container.removeEventListener('wheel', handleWheel)
       resizeObserver?.disconnect()

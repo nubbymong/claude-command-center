@@ -3,6 +3,7 @@ import {
   isControlReportOnly,
   decideContextMenuAction,
   isPasteChord,
+  isCopyChord,
   shouldHandleTerminalPaste,
   isOrdinaryEditable,
 } from '../../../src/renderer/utils/terminalInput'
@@ -97,6 +98,31 @@ describe('isPasteChord', () => {
     expect(isPasteChord(chord())).toBe(false)
     expect(isPasteChord(chord({ key: 'c', ctrlKey: true }))).toBe(false)
     expect(isPasteChord(chord({ key: 'Insert' }))).toBe(false)
+  })
+})
+
+describe('isCopyChord', () => {
+  it('matches Ctrl+Shift+C in either letter case', () => {
+    // With shift held Chromium reports 'C'; with caps lock ALSO on it reports 'c'.
+    // The old inline check compared `e.key === 'C'` exactly, so copy silently
+    // stopped working under caps lock (#153).
+    expect(isCopyChord(chord({ key: 'C', ctrlKey: true, shiftKey: true }))).toBe(true)
+    expect(isCopyChord(chord({ key: 'c', ctrlKey: true, shiftKey: true }))).toBe(true)
+  })
+
+  it('does NOT match plain Ctrl+C — that is SIGINT and belongs to the shell', () => {
+    expect(isCopyChord(chord({ key: 'c', ctrlKey: true }))).toBe(false)
+  })
+
+  it('ignores alt and meta variants', () => {
+    expect(isCopyChord(chord({ key: 'c', ctrlKey: true, shiftKey: true, altKey: true }))).toBe(false)
+    expect(isCopyChord(chord({ key: 'c', ctrlKey: true, shiftKey: true, metaKey: true }))).toBe(false)
+  })
+
+  it('does not collide with the paste chords', () => {
+    const pasteV = chord({ key: 'v', ctrlKey: true, shiftKey: true })
+    expect(isPasteChord(pasteV)).toBe(true)
+    expect(isCopyChord(pasteV)).toBe(false)
   })
 })
 
