@@ -30,6 +30,11 @@ const verify = require('../../../scripts/verify-release-manifest.js') as {
     warnings: string[]
   }
   withRetry: <T>(fn: () => T, opts?: { attempts?: number; sleep?: (ms: number) => void; log?: (m: string) => void }) => T
+  classifyReleaseState: (r: { ok: boolean; stdout?: unknown; stderr?: unknown }) => 'draft' | 'published' | 'absent' | 'error'
+  releaseState: (
+    tag: string,
+    opts?: { runGh?: (args: string[]) => string; sleep?: (ms: number) => void; log?: (m: string) => void; attempts?: number },
+  ) => 'draft' | 'published' | 'absent' | 'error'
   main: (deps: {
     argv?: string[]
     env?: Record<string, string>
@@ -46,7 +51,7 @@ const verify = require('../../../scripts/verify-release-manifest.js') as {
   EXIT_CANNOT_VERIFY: number
 }
 
-const { isInstaller, normalizeApiDigest, auditManifest, withRetry, main } = verify
+const { isInstaller, normalizeApiDigest, auditManifest, withRetry, main, classifyReleaseState, releaseState } = verify
 const { EXIT_OK, EXIT_BROKEN_RELEASE, EXIT_CANNOT_VERIFY, MAX_MANIFEST_BYTES } = verify
 
 const HASH_A = 'a'.repeat(64)
@@ -507,8 +512,170 @@ describe('withRetry', () => {
   })
 })
 
+describe('classifyReleaseState', () => {
+  it('reads a definite draft or published answer', () => {
+    expect(classifyReleaseState({ ok: true, stdout: 'true\n' })).toBe('draft')
+    expect(classifyReleaseState({ ok: true, stdout: 'false\n' })).toBe('published')
+  })
+
+  it('treats ONLY a real not-found as absence', () => {
+    // This is the distinction with teeth. The workflow decides whether to
+    // create, whether to DELETE, and whether to publish from this answer, so
+    // reading an outage as "no release exists" is how a live release gets
+    // deleted by the cleanup step or shadowed by an orphan draft.
+    expect(classifyReleaseState({ ok: false, stderr: 'release not found' })).toBe('absent')
+    expect(classifyReleaseState({ ok: false, stderr: 'HTTP 403: API rate limit exceeded' })).toBe('error')
+    expect(classifyReleaseState({ ok: false, stderr: 'HTTP 502 Bad Gateway' })).toBe('error')
+    expect(classifyReleaseState({ ok: false, stderr: 'dial tcp: lookup api.github.com: no such host' })).toBe('error')
+    expect(classifyReleaseState({ ok: false, stderr: '' })).toBe('error')
+    expect(classifyReleaseState({ ok: false, stderr: undefined })).toBe('error')
+  })
+
+  it('treats an unparseable success as an error, not as published', () => {
+    // `false` is the publish-and-move-on answer. Anything that is not literally
+    // true/false must not be able to reach it.
+    expect(classifyReleaseState({ ok: true, stdout: '' })).toBe('error')
+    expect(classifyReleaseState({ ok: true, stdout: 'null' })).toBe('error')
+    expect(classifyReleaseState({ ok: true, stdout: undefined })).toBe('error')
+    expect(classifyReleaseState({ ok: true, stdout: 'FALSE' })).toBe('error')
+  })
+})
+
+describe('releaseState', () => {
+  const quiet = { sleep: () => {}, log: () => {} }
+
+  it('returns a definite answer without retrying', () => {
+    let calls = 0
+    const state = releaseState('v1.0.0', {
+      ...quiet,
+      runGh: () => {
+        calls += 1
+        return 'false'
+      },
+    })
+    expect(state).toBe('published')
+    expect(calls).toBe(1)
+  })
+
+  it('does not retry a real not-found', () => {
+    // Absence is a final answer. Retrying it would add 6s to every fresh
+    // release for nothing.
+    let calls = 0
+    const state = releaseState('v1.0.0', {
+      ...quiet,
+      runGh: () => {
+        calls += 1
+        const err = new Error('release not found') as Error & { stderr?: string }
+        err.stderr = 'release not found'
+        throw err
+      },
+    })
+    expect(state).toBe('absent')
+    expect(calls).toBe(1)
+  })
+
+  it('retries a transient error and accepts the later answer', () => {
+    let calls = 0
+    const state = releaseState('v1.0.0', {
+      ...quiet,
+      runGh: () => {
+        calls += 1
+        if (calls < 3) {
+          const err = new Error('HTTP 502') as Error & { stderr?: string }
+          err.stderr = 'HTTP 502 Bad Gateway'
+          throw err
+        }
+        return 'true'
+      },
+    })
+    expect(state).toBe('draft')
+    expect(calls).toBe(3)
+  })
+
+  it('reports error, never absent, when every attempt fails', () => {
+    const state = releaseState('v1.0.0', {
+      ...quiet,
+      runGh: () => {
+        const err = new Error('HTTP 403') as Error & { stderr?: string }
+        err.stderr = 'HTTP 403: rate limited'
+        throw err
+      },
+    })
+    expect(state).toBe('error')
+  })
+})
+
+describe('main --state', () => {
+  const silentState = { errLog: () => {}, sleep: () => {} }
+
+  it('prints exactly one word on stdout and exits OK', () => {
+    const out: string[] = []
+    const code = main({
+      ...silentState,
+      argv: ['--state', 'v1.0.0'],
+      env: {},
+      log: (m) => out.push(m),
+      runGh: () => 'true',
+    })
+    expect(code).toBe(EXIT_OK)
+    // The workflow does STATE=$(...) and branches on it, so anything else on
+    // stdout corrupts the value it compares.
+    expect(out).toEqual(['draft'])
+  })
+
+  it('exits CANNOT_VERIFY and prints nothing on stdout when the state is unknowable', () => {
+    const out: string[] = []
+    const code = main({
+      ...silentState,
+      argv: ['--state', 'v1.0.0'],
+      env: {},
+      log: (m) => out.push(m),
+      runGh: () => {
+        const err = new Error('HTTP 500') as Error & { stderr?: string }
+        err.stderr = 'HTTP 500'
+        throw err
+      },
+    })
+    expect(code).toBe(EXIT_CANNOT_VERIFY)
+    expect(out).toEqual([])
+  })
+
+  it('reports absent for a tag with no release', () => {
+    const out: string[] = []
+    const code = main({
+      ...silentState,
+      argv: ['--state', 'v1.0.0'],
+      env: {},
+      log: (m) => out.push(m),
+      runGh: () => {
+        const err = new Error('release not found') as Error & { stderr?: string }
+        err.stderr = 'release not found'
+        throw err
+      },
+    })
+    expect(code).toBe(EXIT_OK)
+    expect(out).toEqual(['absent'])
+  })
+})
+
 describe('main', () => {
   const silent = { log: () => {}, errLog: () => {}, sleep: () => {} }
+
+  it('returns CANNOT_VERIFY, not BROKEN_RELEASE, when the check itself crashes', () => {
+    // node exits 1 on an uncaught throw — the same code the workflow reads as
+    // "this release is broken" and acts on by withdrawing it from client view.
+    // A full temp disk must not tear down a healthy release.
+    const code = main({
+      ...silent,
+      argv: ['v1.0.0'],
+      env: {},
+      tmpdir: () => {
+        throw new Error('ENOSPC: no space left on device')
+      },
+      runGh: () => JSON.stringify({ assets: [{ name: 'CHECKSUMS.txt' }, { name: EXE }], isDraft: false }),
+    })
+    expect(code).toBe(EXIT_CANNOT_VERIFY)
+  })
 
   /** A fake `gh` that records its argv and serves a scripted release. */
   function fakeGh(opts: {

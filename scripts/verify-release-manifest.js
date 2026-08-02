@@ -303,11 +303,69 @@ const EXIT_BROKEN_RELEASE = 1
 const EXIT_CANNOT_VERIFY = 2
 
 /**
+ * Turn one `gh release view --json isDraft` result into a release state.
+ *
+ * The distinction that matters is ABSENT vs ERROR, and it has teeth: the
+ * workflow decides whether to create a release, whether to DELETE one, and
+ * whether to publish one from this answer. Reading an API outage as "no release
+ * exists" is how a live published release gets deleted by a cleanup step, or
+ * shadowed by a duplicate draft nobody looks at. So only the literal
+ * "release not found" is absence; everything else is `error`, and `error` makes
+ * the caller stop rather than guess.
+ *
+ * @returns {'draft'|'published'|'absent'|'error'}
+ */
+function classifyReleaseState({ ok, stdout, stderr }) {
+  if (ok) {
+    const value = String(stdout === undefined || stdout === null ? '' : stdout).trim()
+    if (value === 'true') return 'draft'
+    if (value === 'false') return 'published'
+    return 'error'
+  }
+  return /release not found/i.test(String(stderr || '')) ? 'absent' : 'error'
+}
+
+/**
+ * Ask GitHub what state a release is in, retrying only on `error`. An `absent`
+ * or a definite draft/published answer is final and is returned immediately.
+ */
+function releaseState(tag, { runGh = defaultRunGh, sleep = defaultSleep, log = console.error, attempts = DEFAULT_ATTEMPTS } = {}) {
+  let state = 'error'
+  for (let i = 0; i < attempts; i++) {
+    try {
+      state = classifyReleaseState({ ok: true, stdout: runGh(['release', 'view', tag, '--json', 'isDraft', '-q', '.isDraft']) })
+    } catch (err) {
+      state = classifyReleaseState({ ok: false, stderr: `${err && err.stderr ? err.stderr : ''}\n${err && err.message ? err.message : ''}` })
+    }
+    if (state !== 'error') return state
+    if (i < attempts - 1) {
+      const wait = 2000 * Math.pow(2, i)
+      log(`[verify-release-manifest] state probe ${i + 1}/${attempts} failed — retrying in ${wait / 1000}s`)
+      sleep(wait)
+    }
+  }
+  return state
+}
+
+/**
  * @param {{argv?: string[], env?: object, runGh?: Function, sleep?: Function,
  *          log?: Function, errLog?: Function, tmpdir?: Function}} deps
  * @returns {number} process exit code
  */
 function main(deps = {}) {
+  try {
+    return run(deps)
+  } catch (err) {
+    // An uncaught throw would exit 1 — the same code as "this release is
+    // broken", which makes the workflow WITHDRAW a live release over a full
+    // temp disk. A crash is never a verdict on the release.
+    const errLog = deps.errLog || console.error
+    errLog(`[verify-release-manifest] CANNOT VERIFY — the check itself crashed: ${err && err.message ? err.message : err}`)
+    return EXIT_CANNOT_VERIFY
+  }
+}
+
+function run(deps = {}) {
   const argv = deps.argv || process.argv.slice(2)
   const env = deps.env || process.env
   const runGh = deps.runGh || defaultRunGh
@@ -315,6 +373,25 @@ function main(deps = {}) {
   const log = deps.log || console.log
   const errLog = deps.errLog || console.error
   const tmpdir = deps.tmpdir || os.tmpdir
+
+  // `--state <tag>` mode: print exactly one word (draft|published|absent) on
+  // stdout so a workflow step can branch on it, or exit 2 saying nothing. The
+  // workflow needs this in four places and must never infer absence from an
+  // error, so it lives here rather than as bash in four `run:` blocks.
+  if (argv[0] === '--state') {
+    const stateTag = (argv[1] || env.TAG || '').trim()
+    if (!stateTag) {
+      errLog('[verify-release-manifest] --state needs a tag')
+      return EXIT_CANNOT_VERIFY
+    }
+    const state = releaseState(stateTag, { runGh, sleep, log: errLog })
+    if (state === 'error') {
+      errLog(`[verify-release-manifest] could not determine the state of ${stateTag}`)
+      return EXIT_CANNOT_VERIFY
+    }
+    log(state)
+    return EXIT_OK
+  }
 
   const tag = (argv[0] || env.TAG || '').trim()
   if (!tag) {
@@ -437,6 +514,8 @@ module.exports = {
   normalizeApiDigest,
   auditManifest,
   withRetry,
+  classifyReleaseState,
+  releaseState,
   main,
   INSTALLER_EXTENSIONS,
   MAX_MANIFEST_BYTES,
