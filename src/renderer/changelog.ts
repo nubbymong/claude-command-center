@@ -21,6 +21,17 @@ export interface ChangelogEntry {
 // a backtick in a comment opens a phantom string and the parse fails.
 export const changelog: ChangelogEntry[] = [
   {
+    version: '2.1.0-beta.5',
+    date: '2026-08-02',
+    highlights: 'A runtime refresh. CCC now runs on Electron 43, with the terminal backend and the local database updated to match. No feature changes: this build exists so the beta channel is actually running what the beta line has been carrying.',
+    changes: [
+      { type: 'improvement', description: 'Updated the application runtime to Electron 43, which brings a newer Chromium and Node.js underneath CCC. A foundation update with no feature changes, carrying the browser and platform security fixes released with those versions.' },
+      { type: 'improvement', description: 'Updated the two native components CCC depends on: the terminal backend that runs your sessions, and the local database that stores transcripts and usage. Both were rebuilt against the new runtime and exercised in a real launch before this release. Existing data is unchanged and nothing needs migrating.' },
+      { type: 'improvement', description: 'Updated the screen-capture component used when you attach a screenshot to a session.' },
+      { type: 'improvement', description: 'Updated the build pipeline that produces and publishes the installers. No effect on the application.' },
+    ],
+  },
+  {
     version: '2.1.0-beta.4',
     date: '2026-07-31',
     highlights: 'Security fixes for the session-launch path, and 1M-context models now launch correctly on macOS. Recommended for everyone on the beta channel.',
