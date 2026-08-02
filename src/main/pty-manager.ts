@@ -1192,12 +1192,13 @@ export function spawnPty(
       // without a respawn), so the strip/card/statusline follow the new account.
       startWatchingAccountIdentity(sessionId, resolvedProfileId)
 
-      // P6: register for codex_review opt-in if the session config requested it.
-      // Only Claude sessions can opt in; Codex sessions never reach this branch
-      // (they go through the codex provider branch above).
-      if (options?.enableCodexReview) {
-        registerCodexReviewSession(sessionId, resolvedCwd)
-      }
+      // codex_review is authorised globally (2 Aug decision): every LOCAL Claude
+      // session registers. Availability is still governed at tool-registration
+      // time by the global Codex master + conductor tool toggles
+      // (conductor-mcp-server createServer), and SSH sessions never reach this
+      // branch, so the tool keeps running only against paths that exist on this
+      // machine. The per-config enableCodexReview flag is retired (ignored).
+      registerCodexReviewSession(sessionId, resolvedCwd)
 
       // Explicitly cd to the project directory, then launch Claude.
       // The cd is critical — it ensures Claude sees the correct project directory

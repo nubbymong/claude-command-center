@@ -207,9 +207,7 @@ export const TIPS_LIBRARY: Tip[] = [
       primary: {
         shortText: '🔀 Add a partner shell next to Claude',
         title: 'Partner Terminal',
-        body: 'A **partner terminal** is a second shell that runs in the same session tab, alongside Claude. One click toggles between them.\n\nUse it to:\n• Run `npm run dev` while Claude edits code\n• Keep a test watcher running\n• Run git commands without Claude\'s interference\n• Tail a log file\n\nEdit your config and set a Partner Terminal Path. Path examples below.',
-        bodyMac: 'A **partner terminal** is a second shell that runs in the same session tab, alongside Claude. One click toggles between them.\n\nUse it to:\n• Run `npm run dev` while Claude edits code\n• Keep a test watcher running\n• Run git commands without Claude\'s interference\n• Tail a log file\n\nEdit your config and set Partner Terminal Path to `/bin/zsh` or `/bin/bash`.',
-        bodyWin: 'A **partner terminal** is a second shell that runs in the same session tab, alongside Claude. One click toggles between them.\n\nUse it to:\n• Run `npm run dev` while Claude edits code\n• Keep a test watcher running\n• Run git commands without Claude\'s interference\n• Tail a log file\n\nEdit your config and set Partner Terminal Path to `powershell.exe` or `cmd.exe`. You can also tick **Elevated** to run it as admin (requires `gsudo`).',
+        body: 'A **partner terminal** is a second shell that runs in the same session tab, alongside Claude. One click on the Partner button in the command bar toggles between them — every session has one, no setup needed.\n\nUse it to:\n• Run `npm run dev` while Claude edits code\n• Keep a test watcher running\n• Run git commands without Claude\'s interference\n• Tail a log file\n\nIt opens in the session\'s working directory (home for SSH sessions).',
       },
       postUse: {
         shortText: '🎯 Route command buttons to your partner shell',

@@ -79,9 +79,9 @@ export interface ClaudeOptions {
   legacyVersion?: LegacyVersion
   disableAutoMemory?: boolean
   agentIds?: string[]
-  /** v1.5 P6: when true, the Claude PTY is registered into the codex_review opt-in set
-   *  and the SessionDialog toggle is persisted. Tool description still appears to all
-   *  Claude sessions (soft ACL); this flag controls authorisation server-side. */
+  /** RETIRED 2.1.0-beta.5 (was v1.5 P6): codex_review is authorised globally now —
+   *  every local Claude session registers, gated by the global Codex master switch.
+   *  The field remains only so stored configs round-trip; nothing reads it. */
   enableCodexReview?: boolean
   /** T16: per-session CCC indexing opt-out. DEFAULT-TRUE (undefined / true = on).
    *  When false, CCC does not index this session's transcript for the Logs viewer.
@@ -114,6 +114,8 @@ export interface SavedSession {
   legacyColor?: string
   sessionType: 'local' | 'ssh'
   shellOnly?: boolean
+  /** RETIRED 2.1.0-beta.5: the partner terminal is permanent for every config type
+   *  (working directory locally, home over SSH). Fields remain for round-trip only. */
   partnerTerminalPath?: string
   partnerElevated?: boolean
   sshConfig?: SshConfig

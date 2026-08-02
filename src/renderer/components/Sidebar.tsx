@@ -218,6 +218,9 @@ export default function Sidebar({ currentView, onViewChange, collapsed, onShowHe
   const handleDeleteConfig = async (configId: string) => {
     removeConfig(configId)
     await window.electronAPI.credentials.delete(configId)
+    // The sudo password lives under its own key; without this it stays
+    // orphaned in the OS keychain forever (pre-2.1.0-beta.5 bug).
+    await window.electronAPI.credentials.delete(configId + '_sudo')
   }
 
   const launchFromConfig = async (config: TerminalConfig) => {

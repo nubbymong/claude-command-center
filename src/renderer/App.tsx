@@ -806,7 +806,11 @@ export default function App() {
           <div className="flex-1 flex flex-col" style={{ minWidth: 0, minHeight: 0 }}>
             {sessions.map((session) => {
               const isShowingPartner = partnerActive.has(session.id)
-              const hasPartner = !!session.partnerTerminalPath
+              // Partner terminal is permanent for every config type (2 Aug):
+              // no per-config opt-in. It opens in the working directory for
+              // local sessions and at home for SSH (the working directory
+              // there is a remote path this PC can't resolve).
+              const hasPartner = true
               const partnerPtyId = session.id + '-partner'
               const isShowingWebview = !!webviewBySession[session.id]?.isOpen
               const isShowingExcalidraw = !!excalidrawBySession[session.id]?.isOpen
@@ -863,9 +867,8 @@ export default function App() {
                         key={partnerPtyId + '-' + session.createdAt}
                         sessionId={partnerPtyId}
                         configId={session.configId}
-                        cwd={session.partnerTerminalPath}
+                        cwd={session.sessionType === 'local' ? session.workingDirectory : undefined}
                         shellOnly={true}
-                        elevated={session.partnerElevated}
                         isActive={session.id === activeSessionId && view === 'sessions' && isShowingPartner && !altPaneShowing}
                       />
                     </div>
@@ -908,10 +911,10 @@ export default function App() {
             sessionId={activeSession.id}
             configId={activeSession.configId}
             sessionType={activeSession.sessionType === 'ssh' ? 'ssh' : 'local'}
-            partnerEnabled={!!activeSession.partnerTerminalPath}
+            partnerEnabled={true}
             isPartnerActive={partnerActive.has(activeSession.id)}
             onTogglePartner={() => togglePartner(activeSession.id)}
-            partnerSessionId={activeSession.partnerTerminalPath ? activeSession.id + '-partner' : undefined}
+            partnerSessionId={activeSession.id + '-partner'}
             parentSessionId={activeSession.id}
           />
         )}
