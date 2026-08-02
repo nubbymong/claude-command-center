@@ -31,8 +31,13 @@ async function openDialog() {
   await expect(page.locator('text=New saved config')).toBeVisible({ timeout: 10000 })
 }
 
+// The radios are visually-hidden (sr-only) inputs inside styled <label> cards —
+// that's what gives them the native ARIA radiogroup keyboard behaviour. A user
+// clicks the CARD, so tests click the label and assert on the input.
 const provider = (v: string) => page.locator(`[role="radiogroup"][aria-label="Provider"] input[value="${v}"]`)
 const transport = (v: string) => page.locator(`[role="radiogroup"][aria-label="Where it runs"] input[value="${v}"]`)
+const providerCard = (v: string) => page.locator(`[role="radiogroup"][aria-label="Provider"] label:has(input[value="${v}"])`)
+const transportCard = (v: string) => page.locator(`[role="radiogroup"][aria-label="Where it runs"] label:has(input[value="${v}"])`)
 
 test.describe('SessionDialog — driven flow permutations', () => {
   test('a new config reveals itself: nothing until a provider is picked', async () => {
@@ -42,13 +47,13 @@ test.describe('SessionDialog — driven flow permutations', () => {
     await expect(page.locator('text=Choose what this launcher runs')).toBeVisible()
     await expect(page.locator('text=Workspace')).toHaveCount(0)
 
-    await provider('claude').click()
+    await providerCard('claude').click()
     await expect(page.locator('[role="radiogroup"][aria-label="Where it runs"]')).toBeVisible()
     await expect(page.locator('text=Choose where it runs')).toBeVisible()
     // Still nothing below until the transport is chosen.
     await expect(page.locator('text=Workspace')).toHaveCount(0)
 
-    await transport('local').click()
+    await transportCard('local').click()
     await expect(page.locator('text=Workspace')).toBeVisible()
     await expect(page.locator('text=Session startup')).toBeVisible()
     await expect(page.locator('text=Identity')).toBeVisible()
@@ -56,8 +61,8 @@ test.describe('SessionDialog — driven flow permutations', () => {
 
   test('Claude Code × Local shows model/effort/permission, and GitHub only after a directory', async () => {
     await openDialog()
-    await provider('claude').click()
-    await transport('local').click()
+    await providerCard('claude').click()
+    await transportCard('local').click()
     await expect(page.locator('text=Starting model')).toBeVisible()
     await expect(page.locator('text=Starting effort')).toBeVisible()
     await expect(page.locator('text=Permission mode')).toBeVisible()
@@ -70,8 +75,8 @@ test.describe('SessionDialog — driven flow permutations', () => {
 
   test('Claude Code × SSH swaps in the SSH fields and drops local-only sections', async () => {
     await openDialog()
-    await provider('claude').click()
-    await transport('ssh').click()
+    await providerCard('claude').click()
+    await transportCard('ssh').click()
     await expect(page.locator('text=Remote directory')).toBeVisible()
     await expect(page.locator('text=After connecting, run')).toBeVisible()
     await expect(page.locator('text=Machine name')).toBeVisible()
@@ -85,21 +90,21 @@ test.describe('SessionDialog — driven flow permutations', () => {
   test('Codex × SSH is blocked in BOTH directions', async () => {
     await openDialog()
     // SSH first → Codex card disabled.
-    await provider('claude').click()
-    await transport('ssh').click()
+    await providerCard('claude').click()
+    await transportCard('ssh').click()
     await expect(provider('codex')).toBeDisabled()
     await expect(page.locator("text=Codex can't run over SSH yet")).toBeVisible()
     // Codex first → SSH card disabled.
-    await transport('local').click()
-    await provider('codex').click()
+    await transportCard('local').click()
+    await providerCard('codex').click()
     await expect(transport('ssh')).toBeDisabled()
     await expect(page.locator('text=Codex runs on this PC only')).toBeVisible()
   })
 
   test('Terminal only × Local shows the command / arguments / secret fields', async () => {
     await openDialog()
-    await provider('terminal').click()
-    await transport('local').click()
+    await providerCard('terminal').click()
+    await transportCard('local').click()
     await expect(page.locator('text=Terminal startup')).toBeVisible()
     await expect(page.locator('text=First-run command')).toBeVisible()
     await expect(page.locator('text=Secret argument')).toBeVisible()
@@ -110,16 +115,16 @@ test.describe('SessionDialog — driven flow permutations', () => {
 
   test('Terminal only × SSH points at the post-connect command instead', async () => {
     await openDialog()
-    await provider('terminal').click()
-    await transport('ssh').click()
+    await providerCard('terminal').click()
+    await transportCard('ssh').click()
     await expect(page.locator('text=After connecting, run')).toBeVisible()
     await expect(page.locator('text=First-run command')).toHaveCount(0)
   })
 
   test('Organise is a real disclosure, not a decorative pill', async () => {
     await openDialog()
-    await provider('claude').click()
-    await transport('local').click()
+    await providerCard('claude').click()
+    await transportCard('local').click()
     // Collapsed by default; the group/section selects appear only once opened.
     await expect(page.locator('text=(optional — group & section)')).toBeVisible()
     await expect(page.locator('select#group')).toHaveCount(0)
@@ -131,8 +136,8 @@ test.describe('SessionDialog — driven flow permutations', () => {
 test.describe('Terminal-only config actually runs its command', () => {
   test('creates, launches, and the PTY runs the first-run command with the secret', async () => {
     await openDialog()
-    await provider('terminal').click()
-    await transport('local').click()
+    await providerCard('terminal').click()
+    await transportCard('local').click()
 
     await page.locator('input[placeholder*="path"]').first().fill(process.env.TEMP || 'C:\\temp')
     await page.locator('input[placeholder="npm run dev"]').fill('echo')
