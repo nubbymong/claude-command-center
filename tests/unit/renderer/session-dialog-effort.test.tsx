@@ -45,11 +45,13 @@ function submit(container: HTMLElement) {
   })
 }
 
-function effortChip(container: HTMLElement, label: string): HTMLButtonElement | null {
+// The effort control is native radios styled as chips: each option is a
+// <label> wrapping <input type="radio">. Return the input so .click() drives it.
+function effortChip(container: HTMLElement, label: string): HTMLInputElement | null {
   const group = container.querySelector('[role="radiogroup"][aria-label="Starting effort"]')
   if (!group) return null
-  for (const btn of Array.from(group.querySelectorAll('button'))) {
-    if (btn.textContent?.trim() === label) return btn as HTMLButtonElement
+  for (const lab of Array.from(group.querySelectorAll('label'))) {
+    if (lab.textContent?.trim() === label) return lab.querySelector('input[type="radio"]') as HTMLInputElement
   }
   return null
 }
@@ -81,6 +83,7 @@ describe('SessionDialog starting effort', () => {
     })
     expect(container.textContent).toContain('Starting effort')
     expect(effortChip(container, 'Default')).not.toBeNull()
+    expect(effortChip(container, 'Default')!.checked).toBe(true)
   })
 
   it('picking an effort persists claudeOptions.effortLevel on submit', () => {
@@ -98,9 +101,9 @@ describe('SessionDialog starting effort', () => {
     expect(group).not.toBeNull()
     // First registry chip after "Default" — value comes from the live registry,
     // so the test doesn't hardcode a level name.
-    const chips = Array.from(group!.querySelectorAll('button'))
+    const chips = Array.from(group!.querySelectorAll('input[type="radio"]'))
     expect(chips.length).toBeGreaterThan(1)
-    act(() => { (chips[1] as HTMLButtonElement).click() })
+    act(() => { (chips[1] as HTMLInputElement).click() })
     submit(container)
     expect(onConfirm).toHaveBeenCalledOnce()
     const [config] = onConfirm.mock.calls[0]
@@ -142,6 +145,27 @@ describe('SessionDialog starting effort', () => {
     submit(container)
     const [config] = onConfirm.mock.calls[0]
     expect(config.claudeOptions?.effortLevel).toBeUndefined()
+  })
+
+  it('provider, transport and effort are native radios grouped by name (a11y — #188 Copilot)', () => {
+    act(() => {
+      root.render(
+        React.createElement(SessionDialog, {
+          initial: CLAUDE_LOCAL,
+          onConfirm: vi.fn(),
+          onCancel: vi.fn(),
+        }),
+      )
+    })
+    // Native <input type="radio"> get the ARIA radiogroup keyboard pattern
+    // (roving tabindex, arrow-key nav, skip-disabled) from the browser — the
+    // hand-rolled role="radio" buttons did not.
+    const named = (n: string) => container.querySelectorAll(`input[type="radio"][name="${n}"]`).length
+    expect(named('ccc-provider')).toBe(3)   // Claude Code / Codex / Terminal only
+    expect(named('ccc-transport')).toBe(2)  // Local / SSH
+    expect(named('ccc-effort')).toBeGreaterThan(1)  // Default + registry levels
+    // No leftover fake-radio buttons claiming radio semantics.
+    expect(container.querySelectorAll('button[role="radio"]').length).toBe(0)
   })
 
   it('an untouched edit keeps a stored "Default" model as Default (no silent opus upgrade)', () => {

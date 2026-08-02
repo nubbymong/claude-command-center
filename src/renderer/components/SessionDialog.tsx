@@ -384,44 +384,49 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
     </div>
   )
 
+  // Native radio inputs styled as cards: the browser then provides the ARIA
+  // radiogroup keyboard pattern for free (roving tabindex, arrow-key navigation,
+  // skip-disabled) instead of the hand-rolled role="radio" buttons that claimed
+  // radio semantics but only responded to Tab/Enter (Copilot review, #188).
+  const cardCls = (selected: boolean, disabled: boolean) =>
+    `flex-1 text-left rounded-md border px-3 py-2 transition-colors focus-within:outline focus-within:outline-2 focus-within:outline-blue ${
+      disabled
+        ? 'border-surface1 opacity-50 cursor-not-allowed'
+        : selected
+          ? 'border-blue bg-blue/10 cursor-pointer'
+          : 'border-surface1 bg-base hover:border-overlay0 cursor-pointer'
+    }`
+
   const providerCard = (id: UiProvider, title: string, sub: string, disabled: boolean) => (
-    <button
-      type="button"
-      role="radio"
-      aria-checked={uiProvider === id}
-      disabled={disabled}
-      onClick={() => setUiProvider(id)}
-      className={`flex-1 text-left rounded-md border px-3 py-2 transition-colors ${
-        disabled
-          ? 'border-surface1 opacity-50 cursor-not-allowed'
-          : uiProvider === id
-            ? 'border-blue bg-blue/10'
-            : 'border-surface1 bg-base hover:border-overlay0'
-      }`}
-    >
+    <label className={cardCls(uiProvider === id, disabled)}>
+      <input
+        type="radio"
+        name="ccc-provider"
+        className="sr-only"
+        value={id}
+        checked={uiProvider === id}
+        disabled={disabled}
+        onChange={() => setUiProvider(id)}
+      />
       <span className={`block text-sm font-medium ${disabled ? 'text-overlay0' : 'text-text'}`}>{title}</span>
       <span className="block text-[10px] text-overlay0 mt-0.5">{sub}</span>
-    </button>
+    </label>
   )
 
   const transportCard = (id: SessionType, title: string, sub: string, disabled: boolean) => (
-    <button
-      type="button"
-      role="radio"
-      aria-checked={sessionType === id}
-      disabled={disabled}
-      onClick={() => setSessionType(id)}
-      className={`flex-1 text-left rounded-md border px-3 py-2 transition-colors ${
-        disabled
-          ? 'border-surface1 opacity-50 cursor-not-allowed'
-          : sessionType === id
-            ? 'border-blue bg-blue/10'
-            : 'border-surface1 bg-base hover:border-overlay0'
-      }`}
-    >
+    <label className={cardCls(sessionType === id, disabled)}>
+      <input
+        type="radio"
+        name="ccc-transport"
+        className="sr-only"
+        value={id}
+        checked={sessionType === id}
+        disabled={disabled}
+        onChange={() => setSessionType(id)}
+      />
       <span className={`block text-sm font-medium ${disabled ? 'text-overlay0' : 'text-text'}`}>{title}</span>
       <span className="block text-[10px] text-overlay0 mt-0.5">{sub}</span>
-    </button>
+    </label>
   )
 
   const inputCls = 'w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue'
@@ -696,30 +701,23 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                         <HelpBtn k="effort" label="About the starting effort" />
                       </div>
                       <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Starting effort">
-                        <button
-                          type="button"
-                          role="radio"
-                          aria-checked={effortLevel === ''}
-                          onClick={() => setEffortLevel('')}
-                          className={`px-2.5 py-1 rounded-full border text-xs transition-colors ${
-                            effortLevel === '' ? 'border-blue bg-blue/10 text-text' : 'border-surface1 bg-base text-subtext0 hover:border-overlay0'
-                          }`}
-                        >
-                          Default
-                        </button>
-                        {effortsFromRegistry(registry).map((ef) => (
-                          <button
-                            key={ef.value}
-                            type="button"
-                            role="radio"
-                            aria-checked={effortLevel === ef.value}
-                            onClick={() => setEffortLevel(ef.value as typeof effortLevel)}
-                            className={`px-2.5 py-1 rounded-full border text-xs transition-colors ${
+                        {[{ value: '', label: 'Default' }, ...effortsFromRegistry(registry)].map((ef) => (
+                          <label
+                            key={ef.value || 'default'}
+                            className={`px-2.5 py-1 rounded-full border text-xs cursor-pointer transition-colors focus-within:outline focus-within:outline-2 focus-within:outline-blue ${
                               effortLevel === ef.value ? 'border-blue bg-blue/10 text-text' : 'border-surface1 bg-base text-subtext0 hover:border-overlay0'
                             }`}
                           >
+                            <input
+                              type="radio"
+                              name="ccc-effort"
+                              className="sr-only"
+                              value={ef.value}
+                              checked={effortLevel === ef.value}
+                              onChange={() => setEffortLevel(ef.value as EffortValue | '')}
+                            />
                             {ef.label}
-                          </button>
+                          </label>
                         ))}
                       </div>
                       <Hint k="effort">

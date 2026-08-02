@@ -59,10 +59,12 @@ function submit(container: HTMLElement) {
   act(() => { form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })) })
 }
 
-function cardIn(container: HTMLElement, groupLabel: string, text: string): HTMLButtonElement {
+// Provider/transport are native radios styled as cards: <label><input radio>.
+// Return the input so .click() selects it.
+function cardIn(container: HTMLElement, groupLabel: string, text: string): HTMLInputElement {
   const group = container.querySelector(`[role="radiogroup"][aria-label="${groupLabel}"]`)!
-  const btn = Array.from(group.querySelectorAll('button')).find((b) => b.textContent?.startsWith(text))
-  return btn as HTMLButtonElement
+  const lab = Array.from(group.querySelectorAll('label')).find((l) => l.textContent?.startsWith(text))
+  return lab!.querySelector('input[type="radio"]') as HTMLInputElement
 }
 
 function inputByPlaceholder(container: HTMLElement, ph: string): HTMLInputElement | undefined {
