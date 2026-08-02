@@ -2,6 +2,10 @@ import React from 'react'
 import { formatValue } from '../../utils/kpiTrends'
 import type { CrossAccountComparisonRow, CrossAccountInsights, InsightsRun } from '../../types/electron'
 
+// Values here are rendered with the SAME formatter the main process uses to write
+// the synthesis prompt (shared/kpi-format), so a number the model quotes in its
+// prose always matches the number in the table beside it.
+
 interface Props {
   data: CrossAccountInsights
   run: InsightsRun
@@ -12,6 +16,7 @@ interface Props {
 const ARROW_UP = String.fromCodePoint(0x25b2)
 const ARROW_DOWN = String.fromCodePoint(0x25bc)
 const ARROW_RIGHT = String.fromCodePoint(0x2192)
+const WARN = String.fromCodePoint(0x26a0)
 
 function Bullets({
   label,
@@ -44,14 +49,24 @@ function Bullets({
   )
 }
 
+/** A row is only comparable when the accounts agreed on what the metric means. */
+function isComparable(row: CrossAccountComparisonRow): boolean {
+  return !row.labelVariants && !row.formatVariants
+}
+
 /**
  * Which values in a row are the best and the worst, by the metric's own
  * goodDirection. Returns nulls for a neutral or undirected metric — colouring a
  * metric where neither end is "good" would invent a judgement the data doesn't
  * carry. Ties are left uncoloured for the same reason.
+ *
+ * Also returns nulls for a row the accounts labelled differently: colouring one
+ * account green for beating another at a metric they may not both be measuring
+ * is how the first cut of this table asserted the exact inverse of the truth.
  */
 function extremes(row: CrossAccountComparisonRow): { best: number | null; worst: number | null } {
   const good = row.goodDirection
+  if (!isComparable(row)) return { best: null, worst: null }
   if (good !== 'up' && good !== 'down') return { best: null, worst: null }
   const values = row.values.map((v) => v.value)
   const min = Math.min(...values)
@@ -65,7 +80,7 @@ function ComparisonTable({
   columns,
 }: {
   rows: CrossAccountComparisonRow[]
-  columns: Array<{ key: string; label: string }>
+  columns: Array<{ key: string; label: string; span?: number }>
 }) {
   if (rows.length === 0) {
     return (
@@ -93,6 +108,12 @@ function ComparisonTable({
             {columns.map((c) => (
               <th key={c.key} className="text-right font-semibold text-subtext0 px-3 py-2 whitespace-nowrap">
                 {c.label}
+                {/* Window length under each account: a raw count from a 23-day
+                    window sitting beside one from a 35-day window is only honest
+                    if the reader can see the difference. */}
+                {c.span != null && (
+                  <span className="block text-[10px] font-normal text-overlay0">{c.span}d window</span>
+                )}
               </th>
             ))}
             {showTotal && (
@@ -114,9 +135,31 @@ function ComparisonTable({
               {catRows.map((row) => {
                 const { best, worst } = extremes(row)
                 const byKey = new Map(row.values.map((v) => [v.key, v.value]))
+                const conflict = !isComparable(row)
+                const conflictTitle = conflict
+                  ? [
+                      row.labelVariants
+                        ? `These accounts named this metric differently: ${row.labelVariants
+                            .map((l) => `"${l}"`)
+                            .join(' vs ')}. They may not be measuring the same thing, so the values are shown but not ranked.`
+                        : '',
+                      row.formatVariants ? `Units disagree: ${row.formatVariants.join(' vs ')}.` : '',
+                    ]
+                      .filter(Boolean)
+                      .join(' ')
+                  : undefined
                 return (
                   <tr key={`${row.category}:${row.metricKey}`} className="border-b border-surface0/60 last:border-b-0">
-                    <td className="px-3 py-1.5 text-subtext1">{row.label}</td>
+                    <td className="px-3 py-1.5 text-subtext1">
+                      {conflict ? (
+                        <span className="flex items-center gap-1.5" title={conflictTitle}>
+                          <span className="text-yellow text-[10px] shrink-0">{WARN}</span>
+                          <span className="font-mono text-[11px]">{row.label}</span>
+                        </span>
+                      ) : (
+                        row.label
+                      )}
+                    </td>
                     {columns.map((c) => {
                       const value = byKey.get(c.key)
                       if (value == null) {
@@ -165,9 +208,21 @@ export default function CrossAccountReport({ data, run, nameForAccount }: Props)
   const columns = data.accounts.map((a) => ({
     key: a.key,
     label: nameForAccount?.(a.accountEmail) || a.label,
+    span: a.spanDays,
   }))
   const failedMembers = (run.members || []).filter((m) => m.status !== 'complete' || m.kpisUnavailable)
   const summary = data.summary
+  const comparison = data.comparison ?? []
+  const conflictCount = comparison.filter((r) => !isComparable(r)).length
+  // Older aggregates were written before these fields existed; treat absent as
+  // "nothing to disclose" rather than crashing or claiming false precision.
+  const uniqueMetrics = data.uniqueMetrics ?? []
+  const windowsComparable = data.windowsComparable !== false
+  const uniqueByAccount = data.accounts.map((a) => ({
+    account: a,
+    label: nameForAccount?.(a.accountEmail) || a.label,
+    metrics: uniqueMetrics.filter((u) => u.key === a.key),
+  }))
 
   return (
     <div className="w-full h-full overflow-auto">
@@ -177,7 +232,8 @@ export default function CrossAccountReport({ data, run, nameForAccount }: Props)
           <p className="text-xs text-overlay1 mt-0.5">
             {data.accounts.length} account{data.accounts.length !== 1 ? 's' : ''} compared
             {' · '}
-            {data.comparison.length} shared metric{data.comparison.length !== 1 ? 's' : ''}
+            {comparison.length} shared metric{comparison.length !== 1 ? 's' : ''}
+            {uniqueMetrics.length > 0 && ` · ${uniqueMetrics.length} single-account`}
             {' · '}
             {new Date(run.timestamp).toLocaleString('en-US', {
               month: 'short',
@@ -260,8 +316,64 @@ export default function CrossAccountReport({ data, run, nameForAccount }: Props)
           <h3 className="text-xs font-semibold uppercase tracking-wider text-subtext0 mb-2">
             Metrics side by side
           </h3>
-          <ComparisonTable rows={data.comparison} columns={columns} />
+          <ComparisonTable rows={comparison} columns={columns} />
+          {(conflictCount > 0 || !windowsComparable) && (
+            <ul className="mt-2 space-y-1 text-[11px] text-overlay1">
+              {conflictCount > 0 && (
+                <li>
+                  <span className="text-yellow">{WARN}</span> {conflictCount} row
+                  {conflictCount !== 1 ? 's' : ''} shown by raw metric key: the accounts named the
+                  metric differently, so the values are listed but not ranked. Hover a row for both
+                  wordings.
+                </li>
+              )}
+              {!windowsComparable && (
+                <li>
+                  No totals: these accounts cover reporting windows of different lengths, so summing
+                  raw counts across them would not mean anything. Per-account windows are in the
+                  column headers.
+                </li>
+              )}
+            </ul>
+          )}
         </div>
+
+        {uniqueMetrics.length > 0 && (
+          <div>
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-subtext0 mb-2">
+              Reported by one account only
+            </h3>
+            <p className="text-[11px] text-overlay1 mb-2">
+              These have no comparison row because no other account reported them. That can be a real
+              difference in how the accounts are used, or just different naming in each account&apos;s
+              own report.
+            </p>
+            <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+              {uniqueByAccount
+                .filter((u) => u.metrics.length > 0)
+                .map((u) => (
+                  <div key={u.account.key} className="rounded-lg border border-surface0 bg-mantle/40 p-3">
+                    <div className="text-xs font-semibold text-text truncate">{u.label}</div>
+                    <ul className="mt-1.5 space-y-0.5">
+                      {u.metrics.map((m) => (
+                        <li
+                          key={`${m.category}:${m.metricKey}`}
+                          className="flex items-baseline justify-between gap-2 text-[11px]"
+                        >
+                          <span className="text-overlay1 truncate" title={`${m.category}.${m.metricKey}`}>
+                            {m.label}
+                          </span>
+                          <span className="text-text tabular-nums shrink-0">
+                            {formatValue(m.value, m.format)}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+            </div>
+          </div>
+        )}
 
         <div>
           <h3 className="text-xs font-semibold uppercase tracking-wider text-subtext0 mb-2">
@@ -276,7 +388,21 @@ export default function CrossAccountReport({ data, run, nameForAccount }: Props)
                 {a.period && (
                   <div className="text-[10px] text-overlay0 mt-0.5">
                     {a.period.start} {ARROW_RIGHT} {a.period.end}
-                    {a.period.days != null && ` (${a.period.days}d)`}
+                    {/* spanDays is the calendar window computed from the dates.
+                        period.days is the model's ACTIVE-day count, so the two are
+                        labelled separately instead of one standing in for the other. */}
+                    {a.spanDays != null && ` · ${a.spanDays}d`}
+                    {a.period.days != null && `, ${a.period.days} active`}
+                  </div>
+                )}
+                {a.topLists && (
+                  <div className="mt-2 space-y-0.5">
+                    {Object.entries(a.topLists).map(([name, items]) => (
+                      <div key={name} className="text-[10px] text-overlay1 truncate" title={name}>
+                        <span className="text-overlay0">{name}: </span>
+                        {items.map((i) => `${i.name} (${i.count})`).join(', ')}
+                      </div>
+                    ))}
                   </div>
                 )}
                 {a.highlights?.length ? (

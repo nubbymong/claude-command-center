@@ -24,12 +24,13 @@ import {
   CROSS_ACCOUNT_MAX_PARALLEL,
   CROSS_ACCOUNT_MIN_ACCOUNTS,
   assembleCrossAccount,
-  buildCrossAccountPrompt,
+  buildCrossAccountPromptFrom,
   buildCrossAccountSpawnArgs,
   crossAccountLabel,
   describeCrossAccountFanout,
   mapWithLimit,
   parseCrossAccountNarrative,
+  withNarrative,
   type CrossAccountMember
 } from './insights-cross-account'
 
@@ -488,6 +489,48 @@ export function buildKpiSpawnArgs(): string[] {
 }
 
 /**
+ * Pull the usage/cost block out of a `claude -p --output-format json` reply and
+ * render it for the log. Pure + exported for testing.
+ *
+ * Every token figure for this feature has so far been an ESTIMATE derived from
+ * file sizes. The CLI already reports the real numbers in the envelope and the
+ * code discarded them. Logging turns the next optimisation pass into measurement
+ * instead of arithmetic. Field names are read defensively (both snake_case and
+ * camelCase) because they are not part of any contract we control.
+ */
+export function describeClaudeUsage(stdout: string): string | null {
+  let envelope: any
+  try {
+    envelope = JSON.parse(stdout.trim())
+  } catch {
+    return null
+  }
+  if (!envelope || typeof envelope !== 'object') return null
+  const usage = envelope.usage
+  const num = (...keys: string[]): number | undefined => {
+    for (const k of keys) {
+      const v = usage?.[k]
+      if (typeof v === 'number' && Number.isFinite(v)) return v
+    }
+    return undefined
+  }
+  const parts: string[] = []
+  const input = num('input_tokens', 'inputTokens')
+  const output = num('output_tokens', 'outputTokens')
+  const cacheRead = num('cache_read_input_tokens', 'cacheReadInputTokens')
+  const cacheWrite = num('cache_creation_input_tokens', 'cacheCreationInputTokens')
+  if (input != null) parts.push(`in=${input}`)
+  if (output != null) parts.push(`out=${output}`)
+  if (cacheRead != null) parts.push(`cacheRead=${cacheRead}`)
+  if (cacheWrite != null) parts.push(`cacheWrite=${cacheWrite}`)
+  const cost = envelope.total_cost_usd ?? envelope.totalCostUsd
+  if (typeof cost === 'number' && Number.isFinite(cost)) parts.push(`cost=$${cost.toFixed(4)}`)
+  const durationMs = envelope.duration_ms ?? envelope.durationMs
+  if (typeof durationMs === 'number' && Number.isFinite(durationMs)) parts.push(`${Math.round(durationMs / 1000)}s`)
+  return parts.length > 0 ? parts.join(' ') : null
+}
+
+/**
  * Parse the KPI JSON out of a `claude -p --output-format json` reply. Pure +
  * exported for testing. Handles: a direct JSON object; the `{result:"<json>"}`
  * envelope; and a result/raw string with prose around the JSON (greedy
@@ -532,6 +575,9 @@ async function extractKpis(archiveDir: string, runId: string, home: string | nul
   // Pipe the prompt via stdin — passing multi-KB prompts with embedded JSON
   // as shell arguments is unreliable on Windows (quoting/escaping breaks).
   const result = await spawnClaudeHeadless(spawnArgs, 600000, prompt, home)
+
+  const usage = describeClaudeUsage(result.stdout)
+  if (usage) logInfo(`[insights] KPI extraction usage: ${usage}`)
 
   if (result.code !== 0) {
     logError('[insights] KPI extraction failed (code ' + result.code + '):', result.stderr)
@@ -773,12 +819,23 @@ export async function runCrossAccountInsights(
     // primary (same resolution as a default run) rather than any one member, so
     // the roll-up isn't attributed to an arbitrary account.
     const home = resolveInsightsAccount(undefined).home
-    const result = await spawnClaudeHeadless(
-      buildCrossAccountSpawnArgs(),
-      600000,
-      buildCrossAccountPrompt(members),
-      home
+    // Compute the roll-up ONCE and build the prompt from it, so the model reasons
+    // over exactly the table the user will see — including its label conflicts and
+    // its suppressed totals. Sending the computed comparison rather than each
+    // member's raw kpis.json also cuts this prompt by ~88% (measured on real
+    // archives: 30,477 -> 3,619 bytes for two accounts).
+    const baseline = assembleCrossAccount(members, null)
+    const prompt = buildCrossAccountPromptFrom(baseline)
+    logInfo(
+      `[insights] Cross-account synthesis payload: ${prompt.length} chars, ` +
+      `${baseline.comparison.length} shared / ${baseline.uniqueMetrics.length} unique metrics, ` +
+      `windowsComparable=${baseline.windowsComparable}`
     )
+    const result = await spawnClaudeHeadless(buildCrossAccountSpawnArgs(), 600000, prompt, home)
+
+    const usage = describeClaudeUsage(result.stdout)
+    if (usage) logInfo(`[insights] Cross-account synthesis usage: ${usage}`)
+
     const narrative = result.code === 0 ? parseCrossAccountNarrative(result.stdout) : null
     if (!narrative) {
       logError(
@@ -788,7 +845,7 @@ export async function runCrossAccountInsights(
       logError('[insights] Raw synthesis output:', result.stdout.slice(0, 500))
     }
 
-    const data = assembleCrossAccount(members, narrative)
+    const data = withNarrative(baseline, narrative)
     writeFileSync(join(archiveDir, 'kpis.json'), JSON.stringify(data, null, 2))
 
     run.status = 'complete'

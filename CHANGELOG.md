@@ -18,8 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The combined report is kept alongside your normal reports and appears in the same dropdown as "All accounts", so you can go back to any earlier comparison. Each account's own full report is still generated and still there.
 
 ### Changed
-- A combined report never invents a number. Every value in it is taken straight from an individual account's own report, only metrics that at least two accounts measured are compared, and totals are shown only where adding up actually means something. If the written analysis cannot be produced, you still get the measured comparison and the report says so rather than quietly leaving it out.
+- A combined report never invents a number, and never claims two accounts measured the same thing unless they agree that they did. Where accounts describe a metric differently the report shows both wordings and stops ranking them, rather than silently treating one account's definition as the shared one. Totals appear only where adding up actually means something, and are dropped entirely when the accounts cover reporting periods of different lengths — each column shows its own period so you can see why.
+- Metrics only one account reported now get their own section instead of being dropped. In practice that is most of them, and it is often the most interesting part: a tool or a kind of error that shows up in one account and nowhere else says more than a metric you already had side by side. Each account's top tools, languages and goals are carried into the comparison too.
+- If the written analysis cannot be produced, you still get the measured comparison and the report says so rather than quietly leaving it out.
 - While a cross-account run is in progress it reports which account it is on, and finishing accounts no longer pull the report you are reading out from under you.
+- Generating the combined report costs roughly a tenth of what it did: it is now handed the comparison CCC has already worked out rather than every account's full metric dump. That also makes it a better report, because the alignment is done before the analysis starts instead of during it.
 
 ### Fixed
 - Multi-account: a report was able to compare itself against the wrong run — a combined cross-account report could be picked as the "previous run" for a single account, so the trend arrows were measuring against something unrelated. Comparisons now only ever pair a single account with its own earlier reports.

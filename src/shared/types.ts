@@ -337,11 +337,33 @@ export interface CrossAccountComparisonRow {
   goodDirection?: 'up' | 'down' | 'neutral'
   values: Array<{ key: string; profileId?: string; accountEmail?: string; value: number }>
   /**
-   * Sum across accounts — only present for `format: 'number'` (counts add up).
-   * Percentages and durations need weights we don't have, so they get no total
-   * rather than a misleading average.
+   * Sum across accounts — only present for `format: 'number'` (counts add up),
+   * and only when the row is confirmed comparable and the accounts' reporting
+   * windows are of similar length. Percentages and durations need weights we
+   * don't have, so they get no total rather than a misleading average.
    */
   total?: number
+  /**
+   * Present when the accounts gave this same metricKey DIFFERENT wording — i.e.
+   * they may not be measuring the same thing. Holds every distinct label seen.
+   * A row carrying this is displayed by its raw key, uncoloured and untotalled:
+   * the values are shown, the equivalence is not asserted.
+   *
+   * This is not hypothetical. Real data: both accounts report
+   * `Outcomes.successRate`, one as "Fully Achieved Rate" (0.4231), the other as
+   * "Mostly or Fully Achieved Rate" (0.787) — whose own fully-achieved rate is
+   * 0.128, the worse of the two. Merging on key alone rendered the inverse of
+   * the truth, in colour, as measured fact.
+   */
+  labelVariants?: string[]
+  /** Present when accounts disagree on `format`; the row then carries none. */
+  formatVariants?: Array<'number' | 'percent' | 'duration'>
+  /**
+   * True when accounts disagreed on `goodDirection`. The row then carries none,
+   * so nothing is coloured — otherwise which account looks "good" would depend
+   * on member ORDER, which is non-determinism in rendered output.
+   */
+  directionConflict?: boolean
 }
 
 export interface CrossAccountAccountSummary {
@@ -352,8 +374,30 @@ export interface CrossAccountAccountSummary {
   accountEmail?: string
   label: string
   period?: { start?: string; end?: string; days?: number }
+  /**
+   * Calendar days from period.start to period.end inclusive, computed here.
+   * NOT period.days — the extraction model emits ACTIVE days there (measured:
+   * a 23-day span reported as `days: 10`), so period.days cannot be used to
+   * judge whether two accounts cover comparable windows.
+   */
+  spanDays?: number
+  /** Top 3 per ranked list (tools, languages, goals). Often the only place an
+   *  account-unique behaviour shows up at all, so it is carried, not dropped. */
+  topLists?: Record<string, Array<{ name: string; count: number }>>
   /** Model-written bullets about this account. Absent in a deterministic roll-up. */
   highlights?: string[]
+}
+
+/** Metrics only ONE account reported. No comparison row exists for these (there
+ *  is nothing to compare against), but "only A2 uses subagents at all" can be the
+ *  most useful sentence in the report, so they are kept and shown. */
+export interface CrossAccountUniqueMetric {
+  key: string
+  category: string
+  metricKey: string
+  label: string
+  value: number
+  format?: 'number' | 'percent' | 'duration'
 }
 
 export interface CrossAccountInsights extends InsightsData {
@@ -361,6 +405,14 @@ export interface CrossAccountInsights extends InsightsData {
   synthesis: 'ai' | 'deterministic'
   accounts: CrossAccountAccountSummary[]
   comparison: CrossAccountComparisonRow[]
+  /** Single-account metrics, kept out of `comparison` but not thrown away. */
+  uniqueMetrics: CrossAccountUniqueMetric[]
+  /**
+   * False when the accounts' reporting windows differ materially in length, in
+   * which case no row carries a `total`: summing a 23-day count with a 35-day
+   * count produces a number that means nothing.
+   */
+  windowsComparable: boolean
   crossAccount?: {
     observations?: string[]
     recommendations?: string[]

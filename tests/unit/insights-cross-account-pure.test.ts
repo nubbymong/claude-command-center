@@ -17,25 +17,107 @@ function member(key: string, label: string, kpis: unknown = {}): CrossAccountMem
 }
 
 describe('cross-account prompt', () => {
-  it('sends each account under its opaque key with its KPI JSON verbatim', () => {
-    const prompt = buildCrossAccountPrompt([
-      member('A1', 'Work', { kpis: { Volume: { sessions: { value: 12, label: 'Sessions' } } } }),
-      member('A2', 'Personal', { kpis: { Volume: { sessions: { value: 3, label: 'Sessions' } } } })
-    ])
-    expect(prompt).toContain('key: A1 | label: Work')
-    expect(prompt).toContain('key: A2 | label: Personal')
-    expect(prompt).toContain('"value": 12')
-    expect(prompt).toContain('"value": 3')
+  const SAME_WINDOW = { start: '2026-07-01', end: '2026-07-31' }
+  const WORK = member('A1', 'Work', {
+    period: SAME_WINDOW,
+    kpis: { Volume: { sessions: { value: 12, label: 'Sessions', format: 'number', goodDirection: 'up' } } }
+  })
+  const PERSONAL = member('A2', 'Personal', {
+    period: SAME_WINDOW,
+    kpis: { Volume: { sessions: { value: 3, label: 'Sessions', format: 'number', goodDirection: 'up' } } }
+  })
+
+  it('sends the ALIGNED table, not each account s raw KPI JSON', () => {
+    const prompt = buildCrossAccountPrompt([WORK, PERSONAL])
+    expect(prompt).toContain('A1 = Work')
+    expect(prompt).toContain('A2 = Personal')
+    expect(prompt).toContain('SHARED METRICS')
+    expect(prompt).toContain('Volume | Sessions (up) | 12 | 3 | 15')
+    // The raw-JSON payload is what this replaced; its shape must not come back.
+    expect(prompt).not.toContain('"value": 12')
+    expect(prompt).not.toContain('"goodDirection"')
+  })
+
+  it('is dramatically smaller than the raw-JSON payload it replaced', () => {
+    const prompt = buildCrossAccountPrompt([WORK, PERSONAL])
+    const rawEquivalent = [WORK, PERSONAL].map((m) => JSON.stringify(m.kpis, null, 2)).join('\n')
+    // Tiny fixtures, so this only proves the table is not larger than the blobs.
+    // The real ratio (~88% on 13-15KB archives) is measured in the docs, not here.
+    expect(prompt.length - rawEquivalent.length).toBeLessThan(prompt.length)
   })
 
   it('asks for the narrative only — never for the metric tables it already has', () => {
-    const prompt = buildCrossAccountPrompt([member('A1', 'Work'), member('A2', 'Personal')])
+    const prompt = buildCrossAccountPrompt([WORK, PERSONAL])
     expect(prompt).toContain('"crossAccount"')
     expect(prompt).toContain('"highlights"')
-    // The instruction that keeps numbers out of the model's output. If this line
-    // goes, the roll-up starts reporting metrics no account produced.
-    expect(prompt).toMatch(/Do NOT restate the full metric tables/)
+    // The instructions that keep invented numbers out of the model's output. If
+    // these go, the roll-up starts reporting metrics no account produced.
+    expect(prompt).toMatch(/Do NOT walk the table restating rows/)
+    expect(prompt).toMatch(/Never introduce a number that is not below/)
     expect(prompt).toContain('Output ONLY valid JSON')
+  })
+
+  it('says WHICH window problem it has when it cannot total', () => {
+    const noPeriod = member('A1', 'Work', {
+      kpis: { Volume: { sessions: { value: 12, label: 'Sessions', format: 'number' } } }
+    })
+    const prompt = buildCrossAccountPrompt([noPeriod, PERSONAL])
+    expect(prompt).toContain('window length unknown')
+    expect(prompt).toMatch(/could not be determined/)
+    expect(prompt).not.toMatch(/differ materially in length/)
+  })
+
+  it('declares label conflicts instead of letting the model assume equivalence', () => {
+    const a = member('A1', 'Work', {
+      period: SAME_WINDOW,
+      kpis: { Outcomes: { successRate: { value: 0.4231, label: 'Fully Achieved Rate', format: 'percent' } } }
+    })
+    const b = member('A2', 'Personal', {
+      period: SAME_WINDOW,
+      kpis: {
+        Outcomes: { successRate: { value: 0.787, label: 'Mostly or Fully Achieved Rate', format: 'percent' } }
+      }
+    })
+    const prompt = buildCrossAccountPrompt([a, b])
+    expect(prompt).toContain('LABEL CONFLICTS')
+    expect(prompt).toContain('~ Outcomes.successRate')
+    expect(prompt).toContain('"Fully Achieved Rate"')
+    expect(prompt).toContain('"Mostly or Fully Achieved Rate"')
+  })
+
+  it('carries account-unique metrics and top lists into the prompt', () => {
+    const a = member('A1', 'Work', {
+      period: SAME_WINDOW,
+      kpis: { Volume: { commits: { value: 242, label: 'Commits', format: 'number' } } },
+      lists: { 'Top Tools': [{ name: 'Bash', count: 10328 }, { name: 'Edit', count: 2765 }] }
+    })
+    const b = member('A2', 'Personal', {
+      period: SAME_WINDOW,
+      kpis: { Volume: { subagents: { value: 7, label: 'Subagent Calls', format: 'number' } } }
+    })
+    const prompt = buildCrossAccountPrompt([a, b])
+    expect(prompt).toContain('ACCOUNT-UNIQUE METRICS')
+    expect(prompt).toContain('A1 only: Commits=242')
+    expect(prompt).toContain('A2 only: Subagent Calls=7')
+    expect(prompt).toContain('TOP LISTS')
+    expect(prompt).toContain('Bash 10328')
+  })
+
+  it('tells the model when the windows are not comparable', () => {
+    const short = member('A1', 'Work', {
+      period: { start: '2026-07-01', end: '2026-07-10' },
+      kpis: { Volume: { sessions: { value: 5, label: 'Sessions', format: 'number' } } }
+    })
+    const long = member('A2', 'Personal', {
+      period: { start: '2026-06-01', end: '2026-07-31' },
+      kpis: { Volume: { sessions: { value: 50, label: 'Sessions', format: 'number' } } }
+    })
+    const prompt = buildCrossAccountPrompt([short, long])
+    expect(prompt).toContain('10d window')
+    expect(prompt).toContain('61d window')
+    expect(prompt).toMatch(/differ materially in length/)
+    // No total on any row when the windows are incommensurate.
+    expect(prompt).toContain('| 5 | 50 | -')
   })
 })
 

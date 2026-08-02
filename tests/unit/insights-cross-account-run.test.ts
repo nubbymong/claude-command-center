@@ -178,10 +178,16 @@ describe('runCrossAccountInsights', () => {
     expect(data.comparison.map((r) => r.metricKey).sort()).toEqual(['sessions', 'successRate'])
     expect(data.crossAccount?.observations).toEqual(['A1 and A2 are level'])
 
-    // Both accounts reached the synthesis prompt, under their opaque keys.
+    // Both accounts reached the synthesis prompt, under their opaque keys, as an
+    // aligned table rather than raw per-account JSON blobs.
     expect(h.synthesisPrompts).toHaveLength(1)
-    expect(h.synthesisPrompts[0]).toContain('key: A1 | label: Acct A')
-    expect(h.synthesisPrompts[0]).toContain('key: A2 | label: Acct B')
+    expect(h.synthesisPrompts[0]).toContain('A1 = Acct A')
+    expect(h.synthesisPrompts[0]).toContain('A2 = Acct B')
+    expect(h.synthesisPrompts[0]).toContain('SHARED METRICS')
+    expect(h.synthesisPrompts[0]).not.toContain('"goodDirection"')
+    // The prompt is built from the SAME assembled roll-up that gets persisted, so
+    // the model cannot have reasoned over a different table than the user sees.
+    expect(h.synthesisPrompts[0]).toContain('Volume | Sessions (up) | 10 | 10 | 20')
 
     expect(isCrossAccountRunning()).toBe(false)
   })

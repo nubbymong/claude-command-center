@@ -72,6 +72,60 @@ Consequences, all deliberate:
   the UI says so. Degrading is possible *because* the numbers were never the
   model's to produce.
 
+### 3b. Computing the numbers is not enough — the ALIGNMENT must be proven too
+
+Rule 3 as first written was necessary and insufficient, and the gap shipped as a
+false report. `buildComparisonRows` merged two accounts' metrics on
+`category + metricKey` alone and took the row's label from whichever account came
+first. Verified against real archives: both accounts report
+`Outcomes.successRate`, one meaning "Fully Achieved Rate" (0.4231), the other
+"Mostly or Fully Achieved Rate" (0.787) — and the second account's *own*
+fully-achieved rate is 0.128, the worse of the two, dropped because its
+`fullyAchievedRate` key had no counterpart. The table rendered that account green
+at 78.7% "Fully Achieved Rate": the exact inverse of the truth, in colour,
+presented as a measurement. No value was invented. The *meaning* was.
+
+So the rule extends: **a roll-up may not assert that two accounts measure the
+same thing unless they agree that they do.** Concretely — merge on key *and*
+agreement:
+
+- Labels differing by more than wording noise (case, punctuation, spacing) mark
+  the row `labelVariants`, display it by its raw metric key, drop its total, and
+  suppress its colouring. The numbers are still shown; the equivalence is not
+  claimed. Same for `format` disagreement.
+- `goodDirection` disagreement clears the direction. Otherwise which account is
+  painted green depends on member ORDER — non-determinism in rendered output.
+- Metrics only one account reported are no longer discarded. Measured, they are
+  the majority of the union (59 of 88 across two real accounts), because the
+  extraction step names keys freely: `commandFailed` vs `errorCommandFailed`,
+  `environmentIssue` vs `environmentIssues`. They are carried as
+  `uniqueMetrics`, shown, and sent to the synthesis pass — "only A2 has any
+  subagent calls" is exactly the kind of fact a comparison table cannot hold.
+- Totals require comparable reporting windows. `period.days` cannot decide that:
+  the extraction model emits ACTIVE days there (a 23-day window arrives carrying
+  `days: 10`), so the span is computed from the dates. When spans differ by more
+  than 25%, or any span is unknown, no row carries a total, and the UI and the
+  prompt both say why.
+
+### 3c. The synthesis pass receives the computed table, not the raw KPI blobs
+
+The first cut sent every member's full `kpis.json` verbatim (~13-15 KB each) and
+asked for narrative only. That is the wrong payload on both axes.
+
+Measured on real archives, sending the assembled comparison instead is **~88%
+smaller** (30,477 -> 3,619 bytes for two accounts; ~89% extrapolated at four).
+Where each account's `kpis.json` spends 27% of its bytes on per-metric
+`label`/`format`/`goodDirection` scaffolding that is identical across accounts —
+and 0.9% on the actual numbers — the aligned table carries each metric's metadata
+once.
+
+It is also the better payload. The model no longer has to align metrics itself
+across blobs tens of thousands of tokens apart; the key -> label -> window mapping
+sits at the top instead of scattered through the payload; label conflicts are
+declared rather than left to be inferred; and the prompt is built from the *same*
+assembled roll-up that gets persisted, so the model cannot have reasoned over a
+different table than the user sees.
+
 ### 4. Failure is per-member; refusal is explicit
 
 An account whose run fails, or which is already running under its own per-account
