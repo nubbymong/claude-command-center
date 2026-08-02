@@ -216,12 +216,24 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
     setShowNewGroup(false)
   }
 
-  // A working directory must be ABSOLUTE. Rejecting '.', './x', '../x' and bare
-  // relative paths closes the transcript-misfiling incident at the source (the
-  // old '.' fallback), which client validation only half-fixed: an empty field
-  // was blocked but '.' still saved (adversarial review, #188). Accepts a
-  // Windows drive path, a UNC path, a POSIX absolute path, or a ~ home path.
-  const looksAbsolute = (p: string) => /^([a-zA-Z]:[\\/]|\\\\|\/|~)/.test(p.trim())
+  // A working directory must be ABSOLUTE, platform-appropriately. Rejecting '.',
+  // relative paths, and shape-only lookalikes (`~evil`, `/etc` on Windows) closes
+  // the transcript-misfiling incident at the source: a non-absolute path silently
+  // resolves to $HOME at spawn, which client validation only half-fixed before
+  // (empty was blocked, '.' and friends still saved — adversarial review, #188).
+  const looksAbsolute = (raw: string) => {
+    const p = raw.trim()
+    // Home-relative: only a bare ~ or ~/ ~\ prefix (NOT ~evil).
+    if (p === '~' || p.startsWith('~/') || p.startsWith('~\\')) return true
+    if (window.electronPlatform === 'win32') {
+      return /^([a-zA-Z]:[\\/]|\\\\|\/\/)/.test(p)  // drive path or UNC (either slash)
+    }
+    return p.startsWith('/')  // POSIX absolute
+  }
+  // Mirror ssh-shim.ts SAFE_REMOTE_PATH_RE: main THROWS on a bad remote path
+  // (inside a setTimeout → crashes the main process), so a freely-typed space or
+  // shell char must be caught here, not just at spawn (adversarial review, #188).
+  const safeRemotePath = (p: string) => /^[~A-Za-z0-9_./-]+$/.test(p)
 
   // The footer's validation slot: names the next step in a fixed order instead
   // of letting Save silently no-op (the old dialog's worst habit).
@@ -235,6 +247,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
     if (sessionType === 'local' && !workingDir.trim()) return 'Add a working directory to save'
     if (sessionType === 'local' && !looksAbsolute(workingDir)) return 'Working directory must be a full path (e.g. C:\\projects\\app)'
     if (sessionType === 'ssh' && !sshHost.trim()) return 'Add a host to save'
+    if (sessionType === 'ssh' && sshRemotePath.trim() && !safeRemotePath(sshRemotePath.trim())) return 'Remote directory can only use letters, numbers and _ . / - ~'
     if (!label.trim()) return 'Add a label to save'
     return ''
   })()
@@ -278,9 +291,16 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
     // different host. sudo additionally requires a post-connect command: clearing
     // that command must strand nothing. When these are false and the config
     // previously had a stored secret, the delete block below removes it.
+    // A stored secret is host-specific: if the user repoints an SSH config at a
+    // DIFFERENT host without retyping, the old password must NOT carry to the new
+    // machine (adversarial review, #188). Treat the stored value as absent in
+    // that case, so it is deleted below and re-entry is required.
     const isSsh = sessionType === 'ssh'
-    const passwordSaved = isSsh && savePassword && (sshPassword.length > 0 || storedPassword)
-    const sudoSaved = isSsh && postCommand.trim().length > 0 && saveSudo && (sudoPassword.length > 0 || storedSudo)
+    const hostChanged = isSsh && !!initial?.sshConfig && initial.sshConfig.host !== sshHost.trim()
+    const keepStoredPw = storedPassword && !hostChanged
+    const keepStoredSudo = storedSudo && !hostChanged
+    const passwordSaved = isSsh && savePassword && (sshPassword.length > 0 || keepStoredPw)
+    const sudoSaved = isSsh && postCommand.trim().length > 0 && saveSudo && (sudoPassword.length > 0 || keepStoredSudo)
 
     const config: Omit<TerminalConfig, 'id'> = {
       provider,
@@ -315,15 +335,16 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
       // configs are simply ignored by the app.
     }
 
-    // "Remove stored password" clicked (edit mode only): clear the keychain
-    // entry the moment the change is confirmed, never before.
+    // On edit, delete any keychain entry we are NOT (re)saving. Gated only on
+    // "not saving", NOT on the config's hasPassword flag: the flag can lie
+    // (a config the old dialog left in the divergent state has hasPassword:false
+    // with a live secret), and credentials.delete is idempotent, so an
+    // unconditional delete-when-not-saving both removes intentional "Remove
+    // stored password" entries AND sweeps pre-existing orphans (adversarial
+    // review, #188). Runs on confirm, never before.
     if (initial?.id) {
-      if (!passwordSaved && (initial?.sshConfig?.hasPassword ?? false)) {
-        void window.electronAPI.credentials.delete(initial.id)
-      }
-      if (!sudoSaved && (initial?.sshConfig?.hasSudoPassword ?? false)) {
-        void window.electronAPI.credentials.delete(initial.id + '_sudo')
-      }
+      if (!passwordSaved) void window.electronAPI.credentials.delete(initial.id)
+      if (!sudoSaved) void window.electronAPI.credentials.delete(initial.id + '_sudo')
     }
 
     onConfirm(

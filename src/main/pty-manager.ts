@@ -20,7 +20,7 @@ import { detectClaudeUi, lastPromptLineForClaude } from './providers/claude/ui-d
 import { getProvider } from './providers'
 import { isSshCapable } from './providers/types'
 import type { TelemetrySource } from './providers/types'
-import { resolveCwd } from './path-utils'
+import { resolveCwd, isHomeOrAncestor } from './path-utils'
 import { dispatchSSHStatuslineUpdate, cleanupStatusFile } from './statusline-watcher'
 import { forgetSession } from './background-context'
 import { decorateStatuslineWithColour } from './account-color'
@@ -1208,8 +1208,8 @@ export function spawnPty(
       // mode:'paths' (containment holds, but the ROOT is wrong). Since universal
       // opt-in removed the per-config gate that used to bound this, block it at
       // the source: no legitimate review targets the bare home dir.
-      if (claudeCwd === os.homedir()) {
-        logWarn(`[pty] codex_review NOT registered for ${sessionId}: launch cwd resolved to the home directory (workingDirectory is '.', empty, or a stale path). Set a real project directory to enable review.`)
+      if (isHomeOrAncestor(claudeCwd)) {
+        logWarn(`[pty] codex_review NOT registered for ${sessionId}: launch cwd resolves to (or above) the home directory (workingDirectory is '.', empty, a stale path, or points at home). Set a real project directory to enable review.`)
       } else {
         registerCodexReviewSession(sessionId, claudeCwd)
       }
@@ -1675,6 +1675,14 @@ function cleanupSessionResources(sessionId: string): void {
     try { flow.destroy() } catch { /* noop */ }
     sshFlows.delete(sessionId)
   }
+  // SECURITY (adversarial review, #188): deregister codex_review here so
+  // registration is strictly RE-ESTABLISHED per spawn. spawnPty calls killPty
+  // (→ this) before it re-registers, so a session that restarts into a
+  // home-rooted, SSH, shell-only or Codex state cannot INHERIT the stale
+  // registration (and stale cwd) from a prior local-Claude spawn — which would
+  // otherwise defeat the home-dir refusal and the "SSH never registers"
+  // invariant. Idempotent: a no-op when the session was never registered.
+  unregisterCodexReviewSession(sessionId)
 }
 
 // U8: grace before killing an SSH PTY so the in-band remote-cleanup command has

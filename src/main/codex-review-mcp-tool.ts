@@ -1,7 +1,8 @@
 import { mkdtempSync, readFileSync, existsSync, statSync } from 'fs'
 import { join } from 'path'
 import * as path from 'path'
-import { tmpdir, homedir } from 'os'
+import { tmpdir } from 'os'
+import { isHomeOrAncestor } from './path-utils'
 import { z } from 'zod'
 import { runCodexStreaming, readCodexAuthStatus } from './providers/codex/auth'
 import { recordReview } from './codex-review-usage'
@@ -162,15 +163,16 @@ export async function runCodexReview(
   }
 
   // 2.5. SECURITY (adversarial review, #188): defence-in-depth against the
-  // home-directory review root. Registration already refuses when the launch
-  // cwd is os.homedir() (pty-manager), so a home-rooted session should never be
-  // in optedInSessions — but never review the bare home dir even if some future
-  // caller re-introduces it: mode:'paths' containment would otherwise allow
-  // ~/.ssh, ~/.claude, ~/.aws. A real project directory is never os.homedir().
-  if (resolvedCwd === homedir()) {
+  // home-directory review root. Registration already refuses when the launch cwd
+  // is home or an ancestor of it (pty-manager), so such a session should never be
+  // in optedInSessions — but re-check here so mode:'paths' can never reach
+  // ~/.ssh, ~/.claude, ~/.aws even if a future caller re-introduces one.
+  // isHomeOrAncestor canonicalises with realpath so a case-variant / \\?\ /
+  // junction form of home is caught, not just the exact string.
+  if (isHomeOrAncestor(resolvedCwd)) {
     return {
       isError: true,
-      text: 'Codex review refused: the session has no project directory (its working directory resolved to your home folder). Set a real project directory in the session config.',
+      text: 'Codex review refused: the session has no project directory (its working directory resolves to your home folder). Set a real project directory in the session config.',
     }
   }
 
@@ -283,12 +285,23 @@ export async function runCodexReview(
 
 /** Register the codex_review tool on a conductor-mcp-server McpServer instance.
  *
- * P7.7.10: the `getBoundSessionId` callback returns the CCC session id parsed
- * from the SSE transport URL (`?cccSessionId=<sid>` query, baked in by the
- * per-session --mcp-config writer). When present it takes precedence over
- * any `cccSessionId` the LLM passes as a tool arg -- prevents Claude from
- * dispatching against a stale id cached from a prior conversation. The arg
- * remains a fallback for in-flight sessions written by older CCC builds.
+ * The session id comes SOLELY from `getBoundSessionId()` — the CCC session id
+ * parsed from the transport URL (`?cccSessionId=<sid>`, baked in per-session by
+ * writeLocalSessionMcpConfig). The `cccSessionId` tool ARG is ignored entirely
+ * (adversarial review, #188): once every local session is opted-in, trusting an
+ * LLM-supplied id would let a session name another session's id and review its
+ * tree. An unbound connection (legacy/in-flight, pre-P7.7.10 URL bake) is refused
+ * and self-heals on the session's next respawn.
+ *
+ * NOTE — this binds the id to the transport URL, not to an unforgeable secret.
+ * The endpoint is still gated only by the loopback token, which is written into
+ * each session's readable ~/.claude/mcp-<sid>.json (a documented local-trust
+ * posture, SECURITY.md). A local process already running as the user could read
+ * that token and POST a chosen ?cccSessionId — but such a process can read the
+ * target files directly and needs no codex_review, so this is not an escalation
+ * over the existing local-trust boundary. Minting a per-session capability token
+ * (so the sid can't be restated in the URL) is tracked as a follow-up; it is a
+ * pre-existing hardening, not introduced by this change.
  */
 export function registerCodexReviewTool(
   server: any,  // McpServer (lazy-typed in conductor-mcp-server.ts)
@@ -301,7 +314,7 @@ export function registerCodexReviewTool(
     'codex_review',
     'Get a Codex (gpt-5.5) code review on a change. Use when the user asks for a "Codex review" or "second opinion". The mode arg picks scope: "working" for uncommitted changes (no extra arg), "range" for a git revision range (provide range, e.g. "HEAD~1..HEAD"), "paths" for specific files (provide paths). Optional focus directs Codex\'s attention. Returns the review markdown plus a residual rate-limit footer so you can self-govern usage. The CCC session id is resolved automatically from the MCP connection -- no need to pass it.',
     {
-      cccSessionId: zMod.string().optional().describe('Internal: normally resolved automatically from the MCP connection. Set this only as a back-compat fallback for legacy / in-flight sessions where the server has not bound a session id; new code should leave it unset.'),
+      cccSessionId: zMod.string().optional().describe('Ignored — the CCC session id is resolved from the MCP connection and cannot be set here. Leave unset.'),
       mode: zMod.enum(['working', 'range', 'paths']).describe('Scope: working diff, git range, or explicit paths'),
       range: zMod.string().optional().describe('Git range (e.g. "HEAD~1..HEAD") -- required when mode === "range"'),
       paths: zMod.array(zMod.string()).optional().describe('File paths -- required when mode === "paths"'),

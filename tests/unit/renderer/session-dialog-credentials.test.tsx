@@ -171,6 +171,45 @@ describe('SessionDialog credential hygiene (#188)', () => {
     expect(password).toBeUndefined()
     expect(credDelete).toHaveBeenCalledWith('cfgAAA')
   })
+
+  it('R2-F1: a label-only edit keeps the stored password and fires NO delete', () => {
+    const onConfirm = vi.fn()
+    act(() => { root.render(React.createElement(SessionDialog, { initial: SSH_WITH_PW, onConfirm, onCancel: vi.fn() })) })
+    // Change only the label; leave host + password untouched.
+    const label = Array.from(container.querySelectorAll('input')).find((i) => (i as HTMLInputElement).value === 'prod box') as HTMLInputElement
+    setValue(label, 'prod box renamed')
+    submit(container)
+    const [config, password] = onConfirm.mock.calls[0]
+    expect(config.sshConfig.hasPassword).toBe(true)   // kept
+    expect(password).toBeUndefined()                  // not re-sent (unchanged)
+    // The main password key is preserved. The idempotent `_sudo` sweep may fire
+    // (harmless orphan cleanup) — what must NOT happen is deleting the password.
+    expect(credDelete).not.toHaveBeenCalledWith('cfgAAA')
+  })
+
+  it('R2-F2: changing the Host without retyping drops the stored password (not walked to a new host)', () => {
+    const onConfirm = vi.fn()
+    act(() => { root.render(React.createElement(SessionDialog, { initial: SSH_WITH_PW, onConfirm, onCancel: vi.fn() })) })
+    const host = Array.from(container.querySelectorAll('input')).find((i) => (i as HTMLInputElement).value === '10.0.0.5') as HTMLInputElement
+    setValue(host, '203.0.113.9')  // repoint at a DIFFERENT machine
+    submit(container)
+    const [config, password] = onConfirm.mock.calls[0]
+    expect(config.sshConfig.host).toBe('203.0.113.9')
+    expect(config.sshConfig.hasPassword).toBe(false)  // old password does NOT carry
+    expect(password).toBeUndefined()
+    expect(credDelete).toHaveBeenCalledWith('cfgAAA') // old secret removed
+  })
+
+  it('R2-F3: the delete is idempotent — a non-saving edit always sweeps, regardless of the (possibly-lying) flag', () => {
+    const onConfirm = vi.fn()
+    // A config the OLD dialog left divergent: hasPassword:false but a secret is
+    // actually live in the keychain. Editing + saving must still delete it.
+    const DIVERGENT = { ...SSH_WITH_PW, id: 'cfgDIV', sshConfig: { ...SSH_WITH_PW.sshConfig, hasPassword: false } }
+    act(() => { root.render(React.createElement(SessionDialog, { initial: DIVERGENT, onConfirm, onCancel: vi.fn() })) })
+    submit(container)
+    expect(credDelete).toHaveBeenCalledWith('cfgDIV')
+    expect(credDelete).toHaveBeenCalledWith('cfgDIV_sudo')
+  })
 })
 
 describe('SessionDialog validation gates (#188)', () => {
@@ -230,5 +269,35 @@ describe('SessionDialog validation gates (#188)', () => {
     expect(saveBtn().disabled).toBe(false)
     submit(container)
     expect(onConfirm).toHaveBeenCalledOnce()
+  })
+
+  it('rejects the ~evil shape-only lookalike (not a real home path)', () => {
+    const onConfirm = vi.fn()
+    act(() => {
+      root.render(React.createElement(SessionDialog, {
+        initial: { id: 'w', provider: 'claude', sessionType: 'local', label: 'x', workingDirectory: '~evil' },
+        onConfirm, onCancel: vi.fn(),
+      }))
+    })
+    expect(saveBtn().disabled).toBe(true)
+    submit(container)
+    expect(onConfirm).not.toHaveBeenCalled()
+  })
+
+  it('rejects an SSH remote directory with a space (would crash main at spawn)', () => {
+    const onConfirm = vi.fn()
+    act(() => {
+      root.render(React.createElement(SessionDialog, {
+        initial: {
+          id: 'r', provider: 'claude', sessionType: 'ssh', label: 'x', workingDirectory: '/srv/my project',
+          sshConfig: { host: '10.0.0.5', port: 22, username: 'root', remotePath: '/srv/my project' },
+        },
+        onConfirm, onCancel: vi.fn(),
+      }))
+    })
+    expect(saveBtn().disabled).toBe(true)
+    expect(container.textContent).toContain('Remote directory can only use')
+    submit(container)
+    expect(onConfirm).not.toHaveBeenCalled()
   })
 })
