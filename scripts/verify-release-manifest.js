@@ -315,32 +315,52 @@ const EXIT_CANNOT_VERIFY = 2
  *
  * @returns {'draft'|'published'|'absent'|'error'}
  */
-function classifyReleaseState({ ok, stdout, stderr }) {
+function classifyReleaseState({ ok, stdout, stderr, message }) {
   if (ok) {
     const value = String(stdout === undefined || stdout === null ? '' : stdout).trim()
     if (value === 'true') return 'draft'
     if (value === 'false') return 'published'
     return 'error'
   }
-  return /release not found/i.test(String(stderr || '')) ? 'absent' : 'error'
+  // Both fields are checked because `execFileSync` fills `.stderr` with gh's
+  // output and `.message` with "Command failed: gh ... \n<stderr>", and neither
+  // is guaranteed (a spawn ENOENT has no stderr at all).
+  //
+  // Anchored on gh's exact wording, NOT a bare /not found/. gh emits this
+  // phrase for its own ErrReleaseNotFound, which it raises on HTTP 404 from the
+  // release lookup — and a generic "HTTP 404: Not Found" from anywhere else in
+  // the API must stay `error`, because `absent` is the answer that authorises
+  // creating a release.
+  const text = `${stderr === undefined || stderr === null ? '' : stderr}\n${message === undefined || message === null ? '' : message}`
+  return /release not found/i.test(text) ? 'absent' : 'error'
 }
 
 /**
- * Ask GitHub what state a release is in, retrying only on `error`. An `absent`
- * or a definite draft/published answer is final and is returned immediately.
+ * Ask GitHub what state a release is in, retrying only on `error`. A definite
+ * draft/published answer is final and returns immediately.
+ *
+ * `retryAbsent` also re-checks a 404. Use it where absence AUTHORISES
+ * something — the create-path probe, which reads `absent` as "the tag is free,
+ * make a release". gh maps only HTTP 404 to not-found, so a single spurious or
+ * replica-lagged 404 there forks a duplicate release for a tag that already has
+ * one; with a leftover draft in play, `fetchDraftRelease` then returns "the
+ * first draft matching the tag" and which one gets published is arbitrary.
+ * Everywhere else absence is merely reported, so one call is enough and
+ * retrying would add six seconds to every release for nothing.
  */
-function releaseState(tag, { runGh = defaultRunGh, sleep = defaultSleep, log = console.error, attempts = DEFAULT_ATTEMPTS } = {}) {
+function releaseState(tag, { runGh = defaultRunGh, sleep = defaultSleep, log = console.error, attempts = DEFAULT_ATTEMPTS, retryAbsent = false } = {}) {
   let state = 'error'
   for (let i = 0; i < attempts; i++) {
     try {
       state = classifyReleaseState({ ok: true, stdout: runGh(['release', 'view', tag, '--json', 'isDraft', '-q', '.isDraft']) })
     } catch (err) {
-      state = classifyReleaseState({ ok: false, stderr: `${err && err.stderr ? err.stderr : ''}\n${err && err.message ? err.message : ''}` })
+      state = classifyReleaseState({ ok: false, stderr: err && err.stderr, message: err && err.message })
     }
-    if (state !== 'error') return state
+    const settled = state !== 'error' && !(retryAbsent && state === 'absent')
+    if (settled) return state
     if (i < attempts - 1) {
       const wait = 2000 * Math.pow(2, i)
-      log(`[verify-release-manifest] state probe ${i + 1}/${attempts} failed — retrying in ${wait / 1000}s`)
+      log(`[verify-release-manifest] state probe ${i + 1}/${attempts} said '${state}' — re-checking in ${wait / 1000}s`)
       sleep(wait)
     }
   }
@@ -379,12 +399,17 @@ function run(deps = {}) {
   // workflow needs this in four places and must never infer absence from an
   // error, so it lives here rather than as bash in four `run:` blocks.
   if (argv[0] === '--state') {
-    const stateTag = (argv[1] || env.TAG || '').trim()
+    const rest = argv.slice(1).filter((a) => a !== '--retry-absent')
+    const retryAbsent = argv.includes('--retry-absent')
+    const stateTag = (rest[0] || env.TAG || '').trim()
+    // An empty tag is NOT harmless here: `gh release view ""` resolves to the
+    // repo's LATEST release, so a blank job output would have the workflow
+    // report on — and potentially publish or delete — an unrelated release.
     if (!stateTag) {
       errLog('[verify-release-manifest] --state needs a tag')
       return EXIT_CANNOT_VERIFY
     }
-    const state = releaseState(stateTag, { runGh, sleep, log: errLog })
+    const state = releaseState(stateTag, { runGh, sleep, log: errLog, retryAbsent })
     if (state === 'error') {
       errLog(`[verify-release-manifest] could not determine the state of ${stateTag}`)
       return EXIT_CANNOT_VERIFY

@@ -30,10 +30,16 @@ const verify = require('../../../scripts/verify-release-manifest.js') as {
     warnings: string[]
   }
   withRetry: <T>(fn: () => T, opts?: { attempts?: number; sleep?: (ms: number) => void; log?: (m: string) => void }) => T
-  classifyReleaseState: (r: { ok: boolean; stdout?: unknown; stderr?: unknown }) => 'draft' | 'published' | 'absent' | 'error'
+  classifyReleaseState: (r: { ok: boolean; stdout?: unknown; stderr?: unknown; message?: unknown }) => 'draft' | 'published' | 'absent' | 'error'
   releaseState: (
     tag: string,
-    opts?: { runGh?: (args: string[]) => string; sleep?: (ms: number) => void; log?: (m: string) => void; attempts?: number },
+    opts?: {
+      runGh?: (args: string[]) => string
+      sleep?: (ms: number) => void
+      log?: (m: string) => void
+      attempts?: number
+      retryAbsent?: boolean
+    },
   ) => 'draft' | 'published' | 'absent' | 'error'
   main: (deps: {
     argv?: string[]
@@ -518,6 +524,15 @@ describe('classifyReleaseState', () => {
     expect(classifyReleaseState({ ok: true, stdout: 'false\n' })).toBe('published')
   })
 
+  it('reads gh output from stderr OR from the wrapped message', () => {
+    // execFileSync fills `.stderr` with gh's output and `.message` with
+    // "Command failed: gh ... \n<stderr>", and neither is guaranteed — a spawn
+    // ENOENT has no stderr at all. Both sources must be consulted.
+    expect(classifyReleaseState({ ok: false, stderr: 'release not found', message: 'Command failed' })).toBe('absent')
+    expect(classifyReleaseState({ ok: false, stderr: undefined, message: 'Command failed: gh release view v1\nrelease not found\n' })).toBe('absent')
+    expect(classifyReleaseState({ ok: false, stderr: undefined, message: 'spawnSync gh ENOENT' })).toBe('error')
+  })
+
   it('treats ONLY a real not-found as absence', () => {
     // This is the distinction with teeth. The workflow decides whether to
     // create, whether to DELETE, and whether to publish from this answer, so
@@ -529,6 +544,11 @@ describe('classifyReleaseState', () => {
     expect(classifyReleaseState({ ok: false, stderr: 'dial tcp: lookup api.github.com: no such host' })).toBe('error')
     expect(classifyReleaseState({ ok: false, stderr: '' })).toBe('error')
     expect(classifyReleaseState({ ok: false, stderr: undefined })).toBe('error')
+    // Anchored on gh's own phrase, not a bare /not found/. A generic 404 from
+    // anywhere else in the API — a renamed repo, a token that cannot see it —
+    // must not become the answer that authorises creating a release.
+    expect(classifyReleaseState({ ok: false, stderr: 'HTTP 404: Not Found (https://api.github.com/repos/o/r/releases/tags/v1)' })).toBe('error')
+    expect(classifyReleaseState({ ok: false, stderr: 'could not find any commits matching' })).toBe('error')
   })
 
   it('treats an unparseable success as an error, not as published', () => {
@@ -592,6 +612,45 @@ describe('releaseState', () => {
     expect(calls).toBe(3)
   })
 
+  it('re-checks a not-found under retryAbsent, and settles once the release appears', () => {
+    // Absence AUTHORISES a create, so at that one call site a single spurious
+    // 404 must not be enough. Without the re-check, one lagged replica read
+    // forks a duplicate release for a tag that already has one.
+    let calls = 0
+    const notFound = () => {
+      const err = new Error('release not found') as Error & { stderr?: string }
+      err.stderr = 'release not found'
+      throw err
+    }
+    const state = releaseState('v1.0.0', {
+      ...quiet,
+      retryAbsent: true,
+      runGh: () => {
+        calls += 1
+        if (calls < 3) notFound()
+        return 'false'
+      },
+    })
+    expect(state).toBe('published')
+    expect(calls).toBe(3)
+  })
+
+  it('still reports absent under retryAbsent when the release really is gone', () => {
+    let calls = 0
+    const state = releaseState('v1.0.0', {
+      ...quiet,
+      retryAbsent: true,
+      runGh: () => {
+        calls += 1
+        const err = new Error('release not found') as Error & { stderr?: string }
+        err.stderr = 'release not found'
+        throw err
+      },
+    })
+    expect(state).toBe('absent')
+    expect(calls).toBe(3)
+  })
+
   it('reports error, never absent, when every attempt fails', () => {
     const state = releaseState('v1.0.0', {
       ...quiet,
@@ -640,6 +699,97 @@ describe('main --state', () => {
     expect(out).toEqual([])
   })
 
+  it('refuses an empty or whitespace tag without calling gh', () => {
+    // Verified against gh 2.96.0: `gh release view ""` reports the repo's
+    // LATEST release. A blank job output must never reach that — the workflow
+    // publishes and deletes based on this answer.
+    for (const bad of ['', '   ']) {
+      const out: string[] = []
+      const calls: string[][] = []
+      const code = main({
+        ...silentState,
+        argv: ['--state', bad],
+        env: {},
+        log: (m) => out.push(m),
+        runGh: (args) => {
+          calls.push(args)
+          throw new Error('gh must not be called')
+        },
+      })
+      expect(code).toBe(EXIT_CANNOT_VERIFY)
+      expect(out).toEqual([])
+      expect(calls).toEqual([])
+    }
+  })
+
+  it('falls back to $TAG when no positional tag is given', () => {
+    const calls: string[][] = []
+    const out: string[] = []
+    const code = main({
+      ...silentState,
+      argv: ['--state'],
+      env: { TAG: 'v9.9.9' },
+      log: (m) => out.push(m),
+      runGh: (args) => {
+        calls.push(args)
+        return 'false'
+      },
+    })
+    expect(code).toBe(EXIT_OK)
+    expect(out).toEqual(['published'])
+    expect(calls[0]).toContain('v9.9.9')
+  })
+
+  it('retries a transient error with backoff and still answers', () => {
+    // Nothing else observes releaseState's default budget through main, so
+    // collapsing it to one attempt — or dropping the sleep — would leave every
+    // other test green while a single 502 reddens the release job.
+    const slept: number[] = []
+    const out: string[] = []
+    let calls = 0
+    const code = main({
+      ...silentState,
+      argv: ['--state', 'v1.0.0'],
+      env: {},
+      log: (m) => out.push(m),
+      sleep: (ms) => slept.push(ms),
+      runGh: () => {
+        calls += 1
+        if (calls < 3) {
+          const err = new Error('HTTP 502') as Error & { stderr?: string }
+          err.stderr = 'HTTP 502 Bad Gateway'
+          throw err
+        }
+        return 'true'
+      },
+    })
+    expect(code).toBe(EXIT_OK)
+    expect(out).toEqual(['draft'])
+    expect(calls).toBe(3)
+    expect(slept).toEqual([2000, 4000])
+  })
+
+  it('passes --retry-absent through to releaseState', () => {
+    let calls = 0
+    const out: string[] = []
+    const code = main({
+      ...silentState,
+      argv: ['--state', 'v1.0.0', '--retry-absent'],
+      env: {},
+      log: (m) => out.push(m),
+      runGh: () => {
+        calls += 1
+        const err = new Error('release not found') as Error & { stderr?: string }
+        err.stderr = 'release not found'
+        throw err
+      },
+    })
+    expect(code).toBe(EXIT_OK)
+    expect(out).toEqual(['absent'])
+    // Without the flag this is 1 call; the flag is the whole difference.
+    expect(calls).toBe(3)
+  })
+
   it('reports absent for a tag with no release', () => {
     const out: string[] = []
     const code = main({
@@ -665,16 +815,21 @@ describe('main', () => {
     // node exits 1 on an uncaught throw — the same code the workflow reads as
     // "this release is broken" and acts on by withdrawing it from client view.
     // A full temp disk must not tear down a healthy release.
+    const out: string[] = []
     const code = main({
       ...silent,
       argv: ['v1.0.0'],
       env: {},
+      log: (m) => out.push(m),
       tmpdir: () => {
         throw new Error('ENOSPC: no space left on device')
       },
       runGh: () => JSON.stringify({ assets: [{ name: 'CHECKSUMS.txt' }, { name: EXE }], isDraft: false }),
     })
     expect(code).toBe(EXIT_CANNOT_VERIFY)
+    // The crash report goes to stderr. In --state mode stdout is parsed by the
+    // workflow, so a crash must never write a word there.
+    expect(out.join('\n')).not.toMatch(/crashed/)
   })
 
   /** A fake `gh` that records its argv and serves a scripted release. */

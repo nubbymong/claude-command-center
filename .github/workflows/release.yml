@@ -397,8 +397,13 @@ jobs:
           # latter. Inferring absence from an outage would create an orphan
           # draft holding the new build while the live release keeps serving the
           # old one — green job, nothing shipped.
-          STATE=$(node scripts/verify-release-manifest.js --state "${TAG}") || {
+          # --retry-absent because here, and only here, "absent" AUTHORISES a
+          # write. gh maps just HTTP 404 to not-found, so one spurious or
+          # replica-lagged 404 would fork a second release for a tag that
+          # already has one.
+          STATE=$(node scripts/verify-release-manifest.js --state "${TAG}" --retry-absent) || {
             echo "::error::Could not determine whether a release already exists for ${TAG}. Refusing to guess."
+            echo "fresh=unknown" >> "$GITHUB_OUTPUT"
             exit 1
           }
           echo "Existing release state for ${TAG}: ${STATE}"
@@ -581,8 +586,13 @@ jobs:
       # rather than leave a known dead-end update on offer while someone reads
       # the log. Best-effort: if GitHub refuses to re-draft a published release
       # (immutable releases), the step still fails loudly and names the repair.
+      # `!= 'true'` rather than `== 'false'`: the probe can abort before it
+      # writes `fresh` at all, and a pre-existing broken live release still has
+      # to be withdrawable on that path. Only a confirmed fresh create — where
+      # nothing was ever live — is excluded. The body reads the real state and
+      # re-drafts only what is actually published.
       - name: Withdraw an unverifiable re-release
-        if: ${{ failure() && steps.verify.outputs.code == '1' && steps.publish.outputs.fresh == 'false' }}
+        if: ${{ failure() && steps.verify.outputs.code == '1' && steps.publish.outputs.fresh != 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.build-windows.outputs.tag }}
