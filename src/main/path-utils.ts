@@ -54,7 +54,10 @@ export function isHomeOrAncestor(cwd: string): boolean {
   // so even a canonicalised string compare misses it). statSync collapses them
   // all to the same dev:ino. (adversarial review, #188 rounds 2–3.)
   const idOf = (p: string): string | null => {
-    try { const s = fs.statSync(p); return `${s.dev}:${s.ino}` } catch { return null }
+    // bigint so a large NTFS file-reference number (> 2^53) isn't rounded — a
+    // lossy Number ino could bucket two distinct dirs together and wrongly DENY
+    // a legit project dir (over-deny, never exposure). (adversarial review, #188.)
+    try { const s = fs.statSync(p, { bigint: true }); return `${s.dev}:${s.ino}` } catch { return null }
   }
   const home = real(os.homedir())
   const dir = real(cwd)
