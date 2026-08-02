@@ -46,6 +46,9 @@ export const COLOR_SWATCHES = [
  *  arguments and secret argument) is the follow-up PR. */
 type UiProvider = 'claude' | 'codex' | 'terminal'
 
+/** The config's own effort union, derived so it can't drift from ClaudeOptions. */
+type EffortValue = NonNullable<NonNullable<TerminalConfig['claudeOptions']>['effortLevel']>
+
 /** Stronger consequence copy for the two modes that disable safety prompts.
  *  Falls back to the shared PERMISSION_MODES hint for everything else. */
 const DANGEROUS_MODE_COPY: Record<string, string> = {
@@ -111,7 +114,9 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
   // silently upgraded Default → opus on every save; same family as the
   // effortLevel wipe).
   const [model, setModel] = useState(initial ? (initialClaude?.model ?? initial?.model ?? '') : 'opus')
-  const [effortLevel, setEffortLevel] = useState(initialClaude?.effortLevel ?? '')
+  // Typed against the config's own effort union (not widened to string) so the
+  // saved claudeOptions.effortLevel stays assignable — '' is the "Default" chip.
+  const [effortLevel, setEffortLevel] = useState<EffortValue | ''>(initialClaude?.effortLevel ?? '')
   const [permissionMode, setPermissionMode] = useState(initialClaude?.permissionMode ?? 'default')
   const [extraArgs, setExtraArgs] = useState(initialClaude?.extraArgs ?? '')
   const [loggingEnabled, setLoggingEnabled] = useState(initialClaude?.loggingEnabled !== false)
