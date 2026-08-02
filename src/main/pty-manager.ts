@@ -646,12 +646,22 @@ export function spawnPty(
         }
       }, SETUP_TIMEOUT_MS)
       setTimeout(() => {
-        const s = readConfig<{ statusLineEnabled?: boolean; conductorToolsEnabled?: boolean }>('settings')
-        const setupCmd = claudeProvider.configureRemoteSettings(sessionId, remotePath, hooksConfig, {
-          includeStatusLine: s?.statusLineEnabled !== false,
-          includeConductorMcp: s?.conductorToolsEnabled !== false,
-        })
-        ptyProcess.write(setupCmd + '\r')
+        // configureRemoteSettings → assertSafeRemotePath throws on a bad path.
+        // Catch it HERE: an uncaught throw in a setTimeout is re-thrown by the
+        // global handler and crashes main (adversarial review, #188). Fail the
+        // flow instead. The IPC schema already rejects bad paths up front; this
+        // is defence-in-depth for any path that reaches here.
+        try {
+          const s = readConfig<{ statusLineEnabled?: boolean; conductorToolsEnabled?: boolean }>('settings')
+          const setupCmd = claudeProvider.configureRemoteSettings(sessionId, remotePath, hooksConfig, {
+            includeStatusLine: s?.statusLineEnabled !== false,
+            includeConductorMcp: s?.conductorToolsEnabled !== false,
+          })
+          ptyProcess.write(setupCmd + '\r')
+        } catch (err) {
+          logError(`[ssh] ${sessionId}: host setup failed: ${(err as Error)?.message ?? err}`)
+          setFlowState('failed', 'host setup error')
+        }
       }, 200)
     }
 
@@ -676,12 +686,19 @@ export function spawnPty(
         }
       }, SETUP_TIMEOUT_MS)
       setTimeout(() => {
-        const s = readConfig<{ statusLineEnabled?: boolean; conductorToolsEnabled?: boolean }>('settings')
-        const setupCmd = claudeProvider.configureRemoteSettings(sessionId, remotePath, hooksConfig, {
-          includeStatusLine: s?.statusLineEnabled !== false,
-          includeConductorMcp: s?.conductorToolsEnabled !== false,
-        })
-        ptyProcess.write(setupCmd + '\r')
+        // See writeHostSetupCmd: a throw here would crash main via the global
+        // handler; fail the flow instead (adversarial review, #188).
+        try {
+          const s = readConfig<{ statusLineEnabled?: boolean; conductorToolsEnabled?: boolean }>('settings')
+          const setupCmd = claudeProvider.configureRemoteSettings(sessionId, remotePath, hooksConfig, {
+            includeStatusLine: s?.statusLineEnabled !== false,
+            includeConductorMcp: s?.conductorToolsEnabled !== false,
+          })
+          ptyProcess.write(setupCmd + '\r')
+        } catch (err) {
+          logError(`[ssh] ${sessionId}: container setup failed: ${(err as Error)?.message ?? err}`)
+          setFlowState('failed', 'container setup error')
+        }
       }, 300)
     }
 

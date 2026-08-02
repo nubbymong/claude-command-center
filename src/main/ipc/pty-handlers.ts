@@ -23,7 +23,13 @@ const sshSchema = z.object({
   host: z.string().min(1),
   port: z.number().int().min(1).max(65535),
   username: z.string().min(1),
-  remotePath: z.string().min(1),
+  // Charset-gated at the IPC boundary (mirrors ssh-shim SAFE_REMOTE_PATH_RE):
+  // the remote path is interpolated into the remote setup command, and the
+  // shim's own assertSafeRemotePath throws from inside a setTimeout — which the
+  // global handler re-throws, crashing main. Rejecting here means a bad stored
+  // config fails the spawn cleanly instead of taking the process down
+  // (adversarial review, #188).
+  remotePath: z.string().min(1).regex(/^[~A-Za-z0-9_./-]+$/, 'remote path has invalid characters'),
   postCommand: z.string().optional(),
 }).optional()
 

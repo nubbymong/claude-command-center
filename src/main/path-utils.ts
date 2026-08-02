@@ -44,16 +44,39 @@ export function resolveCwd(cwd: string | undefined): string {
  * case-insensitively on win32, then also refuse ancestors of home.
  */
 export function isHomeOrAncestor(cwd: string): boolean {
-  const canon = (p: string): string => {
-    let out: string
-    try { out = fs.realpathSync.native(p) } catch { out = path.resolve(p) }
-    return process.platform === 'win32' ? out.toLowerCase() : out
+  const real = (p: string): string => {
+    try { return fs.realpathSync.native(p) } catch { return path.resolve(p) }
   }
-  const home = canon(os.homedir())
-  const dir = canon(cwd)
-  if (dir === home) return true
-  // home is INSIDE dir (dir is an ancestor of home) → relative path has no '..'
-  // and isn't absolute. home OUTSIDE dir → relative starts with '..'.
-  const rel = path.relative(dir, home)
-  return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel)
+  // Filesystem IDENTITY (device:inode), not the path string. A string compare
+  // misses the many spellings of one directory on Windows — case-variant, the
+  // \\?\ / \\.\ prefixes, a `subst` drive, a junction/symlink, an 8.3 short
+  // name, and the \\host\C$ admin-share form (which realpath returns verbatim,
+  // so even a canonicalised string compare misses it). statSync collapses them
+  // all to the same dev:ino. (adversarial review, #188 rounds 2–3.)
+  const idOf = (p: string): string | null => {
+    try { const s = fs.statSync(p); return `${s.dev}:${s.ino}` } catch { return null }
+  }
+  const home = real(os.homedir())
+  const dir = real(cwd)
+  const dirId = idOf(dir)
+  if (dirId != null) {
+    // Walk home up to the filesystem root; dir matches home itself or any
+    // ancestor of home when their identities are equal.
+    let cur = home
+    while (true) {
+      if (idOf(cur) === dirId) return true
+      const parent = path.dirname(cur)
+      if (parent === cur) break
+      cur = parent
+    }
+    return false
+  }
+  // Fallback for a path that doesn't exist on disk (statSync failed): a
+  // normalised string comparison. resolveCwd would already have mapped a
+  // non-existent path to home before this is reached, so this is belt-and-braces.
+  const norm = (p: string) => (process.platform === 'win32' ? p.toLowerCase() : p)
+  const h = norm(home), d = norm(dir)
+  if (d === h) return true
+  const rel = path.relative(d, h)
+  return rel !== '' && rel.split(path.sep)[0] !== '..' && !path.isAbsolute(rel)
 }

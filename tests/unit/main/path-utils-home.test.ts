@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import * as os from 'os'
 import * as path from 'path'
+import * as fs from 'fs'
 import { isHomeOrAncestor } from '../../../src/main/path-utils'
 
 /**
@@ -41,5 +42,17 @@ describe('isHomeOrAncestor', () => {
 
   it('catches the trailing-separator form of home', () => {
     expect(isHomeOrAncestor(home + path.sep)).toBe(true)
+  })
+
+  it('catches the UNC admin-share form of home on Windows (identity, not string)', () => {
+    if (process.platform !== 'win32') return
+    const m = /^([A-Za-z]):\\(.*)$/.exec(home)
+    if (!m) return
+    const unc = `\\\\localhost\\${m[1]}$\\${m[2]}`  // \\localhost\C$\Users\me
+    // Only assert when the admin share is actually reachable in this environment;
+    // its dev:ino must match the drive-letter form, which the string compare missed.
+    let reachable = false
+    try { reachable = fs.statSync(unc).isDirectory() } catch { reachable = false }
+    if (reachable) expect(isHomeOrAncestor(unc)).toBe(true)
   })
 })

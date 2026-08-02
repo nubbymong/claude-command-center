@@ -200,6 +200,30 @@ describe('SessionDialog credential hygiene (#188)', () => {
     expect(credDelete).toHaveBeenCalledWith('cfgAAA') // old secret removed
   })
 
+  it('R3: changing only the PORT drops the stored password (endpoint changed)', () => {
+    const onConfirm = vi.fn()
+    act(() => { root.render(React.createElement(SessionDialog, { initial: SSH_WITH_PW, onConfirm, onCancel: vi.fn() })) })
+    const port = Array.from(container.querySelectorAll('input[type="number"]'))[0] as HTMLInputElement
+    setValue(port, '2222')
+    submit(container)
+    const [config, password] = onConfirm.mock.calls[0]
+    expect(config.sshConfig.hasPassword).toBe(false)
+    expect(password).toBeUndefined()
+    expect(credDelete).toHaveBeenCalledWith('cfgAAA')
+  })
+
+  it('R3: changing only the USERNAME drops the stored password (different principal)', () => {
+    const onConfirm = vi.fn()
+    act(() => { root.render(React.createElement(SessionDialog, { initial: SSH_WITH_PW, onConfirm, onCancel: vi.fn() })) })
+    const user = Array.from(container.querySelectorAll('input')).find((i) => (i as HTMLInputElement).value === 'root') as HTMLInputElement
+    setValue(user, 'someoneelse')
+    submit(container)
+    const [config, password] = onConfirm.mock.calls[0]
+    expect(config.sshConfig.hasPassword).toBe(false)
+    expect(password).toBeUndefined()
+    expect(credDelete).toHaveBeenCalledWith('cfgAAA')
+  })
+
   it('R2-F3: the delete is idempotent — a non-saving edit always sweeps, regardless of the (possibly-lying) flag', () => {
     const onConfirm = vi.fn()
     // A config the OLD dialog left divergent: hasPassword:false but a secret is
@@ -244,18 +268,34 @@ describe('SessionDialog validation gates (#188)', () => {
     expect(onConfirm).not.toHaveBeenCalled()
   })
 
-  it("a '.' working directory is rejected (transcript-misfiling incident)", () => {
+  it("newly typing '.' as a working directory is rejected (transcript-misfiling incident)", () => {
     const onConfirm = vi.fn()
     act(() => {
       root.render(React.createElement(SessionDialog, {
-        initial: { id: 'y', provider: 'claude', sessionType: 'local', label: 'dot', workingDirectory: '.' },
+        initial: { id: 'y', provider: 'claude', sessionType: 'local', label: 'dot', workingDirectory: 'C:\\proj' },
         onConfirm, onCancel: vi.fn(),
       }))
     })
+    const wdir = Array.from(container.querySelectorAll('input')).find((i) => (i as HTMLInputElement).value === 'C:\\proj') as HTMLInputElement
+    setValue(wdir, '.')
     expect(saveBtn().disabled).toBe(true)
     expect(container.textContent).toContain('full path')
     submit(container)
     expect(onConfirm).not.toHaveBeenCalled()
+  })
+
+  it('an UNCHANGED foreign-platform path stays editable (does not block unrelated edits)', () => {
+    const onConfirm = vi.fn()
+    act(() => {
+      root.render(React.createElement(SessionDialog, {
+        // A macOS path opened on this Windows machine — the user is only renaming it.
+        initial: { id: 'f', provider: 'claude', sessionType: 'local', label: 'mac', workingDirectory: '/Users/me/proj' },
+        onConfirm, onCancel: vi.fn(),
+      }))
+    })
+    expect(saveBtn().disabled).toBe(false)
+    submit(container)
+    expect(onConfirm).toHaveBeenCalledOnce()
   })
 
   it('an absolute working directory saves fine', () => {
@@ -271,14 +311,16 @@ describe('SessionDialog validation gates (#188)', () => {
     expect(onConfirm).toHaveBeenCalledOnce()
   })
 
-  it('rejects the ~evil shape-only lookalike (not a real home path)', () => {
+  it('rejects the ~evil shape-only lookalike when newly typed (not a real home path)', () => {
     const onConfirm = vi.fn()
     act(() => {
       root.render(React.createElement(SessionDialog, {
-        initial: { id: 'w', provider: 'claude', sessionType: 'local', label: 'x', workingDirectory: '~evil' },
+        initial: { id: 'w', provider: 'claude', sessionType: 'local', label: 'x', workingDirectory: 'C:\\proj' },
         onConfirm, onCancel: vi.fn(),
       }))
     })
+    const wdir = Array.from(container.querySelectorAll('input')).find((i) => (i as HTMLInputElement).value === 'C:\\proj') as HTMLInputElement
+    setValue(wdir, '~evil')
     expect(saveBtn().disabled).toBe(true)
     submit(container)
     expect(onConfirm).not.toHaveBeenCalled()

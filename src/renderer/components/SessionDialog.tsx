@@ -245,7 +245,13 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
     // here or the config saves and then hard-throws at spawn.
     if (uiProvider === 'codex' && sessionType === 'ssh') return "Codex can't run over SSH — pick Claude Code or Terminal only"
     if (sessionType === 'local' && !workingDir.trim()) return 'Add a working directory to save'
-    if (sessionType === 'local' && !looksAbsolute(workingDir)) return 'Working directory must be a full path (e.g. C:\\projects\\app)'
+    // Enforce the absolute-path rule only on a CHANGED value: an imported or
+    // synced config with a foreign-platform absolute path (e.g. a macOS
+    // /Users/... path opened on Windows) can still have its label/colour/model
+    // edited without being forced to fix the path (adversarial review, #188).
+    if (sessionType === 'local' && workingDir.trim() !== (initial?.workingDirectory ?? '').trim() && !looksAbsolute(workingDir)) {
+      return 'Working directory must be a full path (e.g. C:\\projects\\app)'
+    }
     if (sessionType === 'ssh' && !sshHost.trim()) return 'Add a host to save'
     if (sessionType === 'ssh' && sshRemotePath.trim() && !safeRemotePath(sshRemotePath.trim())) return 'Remote directory can only use letters, numbers and _ . / - ~'
     if (!label.trim()) return 'Add a label to save'
@@ -291,14 +297,20 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
     // different host. sudo additionally requires a post-connect command: clearing
     // that command must strand nothing. When these are false and the config
     // previously had a stored secret, the delete block below removes it.
-    // A stored secret is host-specific: if the user repoints an SSH config at a
-    // DIFFERENT host without retyping, the old password must NOT carry to the new
-    // machine (adversarial review, #188). Treat the stored value as absent in
-    // that case, so it is deleted below and re-entry is required.
+    // A stored secret is ENDPOINT-specific: if the user repoints an SSH config at
+    // a different host, PORT, or username without retyping, the old password must
+    // NOT carry to the new endpoint (adversarial review, #188 — host, port and
+    // username all change the principal being authenticated). Treat the stored
+    // value as absent in that case, so it is deleted below and re-entry required.
     const isSsh = sessionType === 'ssh'
-    const hostChanged = isSsh && !!initial?.sshConfig && initial.sshConfig.host !== sshHost.trim()
-    const keepStoredPw = storedPassword && !hostChanged
-    const keepStoredSudo = storedSudo && !hostChanged
+    const prevSsh = initial?.sshConfig
+    const endpointChanged = isSsh && !!prevSsh && (
+      (prevSsh.host ?? '').trim() !== sshHost.trim() ||
+      prevSsh.port !== sshPort ||
+      (prevSsh.username ?? '').trim() !== (sshUser.trim() || 'root')
+    )
+    const keepStoredPw = storedPassword && !endpointChanged
+    const keepStoredSudo = storedSudo && !endpointChanged
     const passwordSaved = isSsh && savePassword && (sshPassword.length > 0 || keepStoredPw)
     const sudoSaved = isSsh && postCommand.trim().length > 0 && saveSudo && (sudoPassword.length > 0 || keepStoredSudo)
 
