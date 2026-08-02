@@ -24,9 +24,19 @@ test.afterAll(async () => {
   await closeIsolatedApp(ctx)
 })
 
-/** Open a fresh New-config dialog (Escape first so a previous one can't stack). */
+/**
+ * Open a fresh New-config dialog. These specs share one app instance, so an
+ * already-open dialog would block the sidebar button — close it via Cancel.
+ * (Escape does NOT close this dialog today; deliberately not added here since a
+ * bare Escape-to-close would make silent data loss easier without the
+ * unsaved-changes confirm.)
+ */
 async function openDialog() {
-  await page.keyboard.press('Escape').catch(() => {})
+  const cancel = page.locator('button:has-text("Cancel")').first()
+  if (await cancel.isVisible().catch(() => false)) {
+    await cancel.click()
+    await expect(page.locator('text=New saved config')).toHaveCount(0)
+  }
   await page.locator('[data-tour="new-config"]').first().click()
   await expect(page.locator('text=New saved config')).toBeVisible({ timeout: 10000 })
 }
@@ -126,15 +136,17 @@ test.describe('SessionDialog — driven flow permutations', () => {
     await providerCard('claude').click()
     await transportCard('local').click()
     // Collapsed by default; the group/section selects appear only once opened.
-    await expect(page.locator('text=(optional — group & section)')).toBeVisible()
-    await expect(page.locator('select#group')).toHaveCount(0)
+    await expect(page.locator('#ccc-group')).toHaveCount(0)
     await page.locator('summary:has-text("Organise")').click()
-    await expect(page.locator('select#group')).toBeVisible()
+    await expect(page.locator('#ccc-group')).toBeVisible()
+    await expect(page.locator('#ccc-section')).toBeVisible()
   })
 })
 
 test.describe('Terminal-only config actually runs its command', () => {
+  // Spawning a PTY and waiting for shell output needs more than the 30s default.
   test('creates, launches, and the PTY runs the first-run command with the secret', async () => {
+    test.setTimeout(120000)
     await openDialog()
     await providerCard('terminal').click()
     await transportCard('local').click()

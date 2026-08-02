@@ -948,10 +948,11 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                 <div className="grid grid-cols-2 gap-2 mt-2">
                   <div>
                     <div className="flex items-center gap-1.5 mb-1">
-                      <label className="text-xs text-subtext0">Group</label>
+                      <label className="text-xs text-subtext0" htmlFor="ccc-group">Group</label>
                       <HelpBtn k="group" label="About groups" />
                     </div>
                     <select
+                      id="ccc-group"
                       value={showNewGroup ? '__new__' : (groupId || '')}
                       onChange={(e) => handleGroupChange(e.target.value)}
                       className={inputCls}
@@ -985,10 +986,11 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                   </div>
                   <div>
                     <div className="flex items-center gap-1.5 mb-1">
-                      <label className="text-xs text-subtext0">Section</label>
+                      <label className="text-xs text-subtext0" htmlFor="ccc-section">Section</label>
                       <HelpBtn k="section" label="About sections" />
                     </div>
                     <select
+                      id="ccc-section"
                       value={showNewSection ? '__new__' : (sectionId || '')}
                       onChange={(e) => handleSectionChange(e.target.value)}
                       disabled={!!groupId}
