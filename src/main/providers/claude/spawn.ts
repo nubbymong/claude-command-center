@@ -74,6 +74,14 @@ export function buildClaudeLocalSpawn(opts: SpawnOptions): { cmd: string; args: 
 
   if (opts.disableAutoMemory) env.CLAUDE_CODE_DISABLE_AUTO_MEMORY = '1'
 
+  // Terminal-only secret argument. The secret goes in the ENV, and the launch
+  // line references the variable rather than the value, so the plaintext never
+  // reaches the shell's persistent history (PSReadLine writes every submitted
+  // line to disk) or the config file. Same-user processes can still read the
+  // env — that is the existing local-trust boundary, and it is strictly better
+  // than a secret sitting in ConsoleHost_history.txt forever.
+  if (opts.shellOnly && opts.terminalSecret) env.CCC_ARG_SECRET = opts.terminalSecret
+
   const shell = os.platform() === 'win32' ? 'powershell.exe' : (process.env.SHELL || '/bin/bash')
   // POSIX: spawn a LOGIN shell (-l) so PATH picks up Homebrew/nvm/npm-global
   // entries from ~/.zprofile. A Finder/Dock-launched app inherits launchd's

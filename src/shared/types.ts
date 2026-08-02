@@ -89,6 +89,23 @@ export interface ClaudeOptions {
   loggingEnabled?: boolean
 }
 
+/** Terminal-only ("no AI") launcher options. Local sessions: the command runs
+ *  once when the terminal opens. Over SSH the equivalent is sshConfig.postCommand
+ *  ("After connecting, run"), so these are not used there. */
+export interface TerminalOptions {
+  /** Command run once when the terminal opens. Empty = a plain shell. */
+  command?: string
+  /** Arguments appended to `command`. The literal token `{secret}` is replaced at
+   *  launch with a reference to the secret argument (never the value itself —
+   *  see hasSecretArg). Stored in plain text, so secrets belong in the keychain. */
+  args?: string
+  /** True when a secret argument is stored in the OS keychain under
+   *  `<configId>_argsecret`. The value NEVER touches the config file. */
+  hasSecretArg?: boolean
+  /** Run the terminal elevated (gsudo on Windows, sudo elsewhere). */
+  elevated?: boolean
+}
+
 export interface CodexOptions {
   /** gpt-5.5 / gpt-5.4 / gpt-5.4-mini / gpt-5.3-codex / gpt-5.3-codex-spark / gpt-5.2 */
   model?: string
@@ -114,6 +131,8 @@ export interface SavedSession {
   legacyColor?: string
   sessionType: 'local' | 'ssh'
   shellOnly?: boolean
+  /** Terminal-only launcher options (command / args / secret / elevated). */
+  terminalOptions?: TerminalOptions
   /** RETIRED 2.1.0-beta.5: the partner terminal is permanent for every config type
    *  (working directory locally, home over SSH). Fields remain for round-trip only. */
   partnerTerminalPath?: string

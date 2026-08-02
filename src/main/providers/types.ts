@@ -10,6 +10,10 @@ export interface SpawnOptions {
   ssh?: SshConfig
   shellOnly?: boolean
   elevated?: boolean
+  /** Terminal-only secret argument, resolved from the OS keychain in main. Placed
+   *  in the spawn ENV (never interpolated into the command text) so it cannot land
+   *  in the shell's on-disk history. See buildSpawnCommand + the shell-only write. */
+  terminalSecret?: string
   configLabel?: string
   useResumePicker?: boolean
   legacyVersion?: LegacyVersion

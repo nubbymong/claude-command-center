@@ -21,6 +21,7 @@ import { getProvider } from './providers'
 import { isSshCapable } from './providers/types'
 import type { TelemetrySource } from './providers/types'
 import { resolveCwd, isHomeOrAncestor } from './path-utils'
+import { buildTerminalLaunchLine } from './terminal-launch-line'
 import { dispatchSSHStatuslineUpdate, cleanupStatusFile } from './statusline-watcher'
 import { forgetSession } from './background-context'
 import { decorateStatuslineWithColour } from './account-color'
@@ -274,6 +275,10 @@ export function spawnPty(
     rows?: number
     ssh?: SSHOptions
     shellOnly?: boolean
+    /** Terminal-only launcher: command + args run once when the shell opens. */
+    terminalOptions?: { command?: string; args?: string; hasSecretArg?: boolean; elevated?: boolean }
+    /** Secret argument resolved from the OS keychain in the IPC handler (main only). */
+    terminalSecret?: string
     elevated?: boolean
     configLabel?: string
     /** Config id that owns the session. Stamped onto the session-log row for per-config filtering. */
@@ -1024,7 +1029,8 @@ export function spawnPty(
       cols,
       rows,
       shellOnly: options?.shellOnly,
-      elevated: options?.elevated,
+      elevated: options?.elevated ?? options?.terminalOptions?.elevated,
+      terminalSecret: options?.terminalSecret,
       legacyVersion: options?.legacyVersion,
       effortLevel: options?.effortLevel,
       disableAutoMemory: options?.disableAutoMemory,
@@ -1091,17 +1097,32 @@ export function spawnPty(
 
       // Explicitly cd to ensure the shell is in the right directory
       // (PowerShell profiles can change cwd before the user sees the prompt)
+      const isWin = os.platform() === 'win32'
       const escapedShellCwd = resolvedCwd.replace(/'/g, "''")
-      const cdCmd = os.platform() === 'win32'
+      const cdCmd = isWin
         ? `Set-Location '${escapedShellCwd}'`
         : `cd '${resolvedCwd.replace(/'/g, "'\\''")}' 2>/dev/null; clear`
+
+      // Terminal-only first-run command. `{secret}` becomes a REFERENCE to the
+      // CCC_ARG_SECRET env var (set from the keychain in buildClaudeLocalSpawn),
+      // never the secret itself — see terminal-launch-line.ts for the contract.
+      const launchLine = buildTerminalLaunchLine(options?.terminalOptions, isWin)
+
       setTimeout(() => {
         // Liveness guard: a kill / Restart / app-quit can land inside this 300ms
         // window — writing to a dead or already-replaced PTY here would throw
         // inside the timer (uncaught in main). Only write when our PTY is still
         // the registered one.
         if (ptySessions.get(sessionId)?.ptyProcess !== ptyProcess) return
-        try { ptyProcess.write(cdCmd + '\r') } catch { /* session died mid-launch */ }
+        try {
+          ptyProcess.write(cdCmd + '\r')
+          // Queued straight after the cd: the shell runs them in order, so the
+          // command always starts in the configured directory.
+          if (launchLine) {
+            logInfo(`[pty-manager] shell-only first-run command for ${sessionId}: ${launchLine}`)
+            ptyProcess.write(launchLine + '\r')
+          }
+        } catch { /* session died mid-launch */ }
       }, 300)
     } else {
       // Launch Claude Code interactive mode.

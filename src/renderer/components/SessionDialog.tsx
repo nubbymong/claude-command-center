@@ -57,7 +57,10 @@ const DANGEROUS_MODE_COPY: Record<string, string> = {
 }
 
 interface Props {
-  onConfirm: (config: Omit<TerminalConfig, 'id'>, password?: string, sudoPassword?: string) => void
+  /** `argSecret` is the Terminal-only secret argument: handed to the caller so it
+   *  can be written to the OS keychain under `<configId>_argsecret`. It is never
+   *  part of the config object and never persisted to the config file. */
+  onConfirm: (config: Omit<TerminalConfig, 'id'>, password?: string, sudoPassword?: string, argSecret?: string) => void
   onCancel: () => void
   initial?: Partial<TerminalConfig>
 }
@@ -120,6 +123,13 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
   const [permissionMode, setPermissionMode] = useState(initialClaude?.permissionMode ?? 'default')
   const [extraArgs, setExtraArgs] = useState(initialClaude?.extraArgs ?? '')
   const [loggingEnabled, setLoggingEnabled] = useState(initialClaude?.loggingEnabled !== false)
+
+  // ── Terminal-only startup
+  const [termCommand, setTermCommand] = useState(initial?.terminalOptions?.command ?? '')
+  const [termArgs, setTermArgs] = useState(initial?.terminalOptions?.args ?? '')
+  const [termElevated, setTermElevated] = useState(initial?.terminalOptions?.elevated ?? false)
+  const [secretArg, setSecretArg] = useState('')
+  const [storedSecret, setStoredSecret] = useState(initial?.terminalOptions?.hasSecretArg ?? false)
 
   // ── Session startup (Codex)
   const [codexModel, setCodexModel] = useState(initial?.codexOptions?.model ?? 'gpt-5.5')
@@ -288,6 +298,21 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
       loggingEnabled: !loggingEnabled ? false : undefined,
     } : initial?.claudeOptions
 
+    // Terminal-only options. Local only: over SSH the startup command IS the
+    // post-connect command, so we never write a second one here.
+    const isTerminalLocal = uiProvider === 'terminal' && sessionType === 'local'
+    const secretSaved = isTerminalLocal && (secretArg.length > 0 || storedSecret)
+    const terminalOptions = isTerminalLocal
+      ? (termCommand.trim() || termArgs.trim() || secretSaved || termElevated
+          ? {
+              command: termCommand.trim() || undefined,
+              args: termArgs.trim() || undefined,
+              hasSecretArg: secretSaved || undefined,
+              elevated: termElevated || undefined,
+            }
+          : undefined)
+      : initial?.terminalOptions
+
     const codexOptions: CodexOptions | undefined = uiProvider === 'codex' ? {
       model: codexModel,
       reasoningEffort: codexEffort,
@@ -327,6 +352,7 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
       color: resolveIdentityColor(colorKey, 'dark'),  // back-compat shadow; render prefers the key
       sessionType,
       shellOnly,
+      terminalOptions,
       groupId,
       sectionId: groupId ? undefined : sectionId,
       sshConfig: sessionType === 'ssh' ? {
@@ -362,6 +388,9 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
     if (initial?.id) {
       if (!passwordSaved) void window.electronAPI.credentials.delete(initial.id)
       if (!sudoSaved) void window.electronAPI.credentials.delete(initial.id + '_sudo')
+      // Same rule for the Terminal-only secret: switching the config away from a
+      // local terminal, or clearing the secret, must not strand it in the keychain.
+      if (!secretSaved) void window.electronAPI.credentials.delete(initial.id + '_argsecret')
     }
 
     onConfirm(
@@ -371,7 +400,8 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
       // old dialog stored it regardless — so a password typed into an SSH block
       // that was then switched to Local was persisted for a config with no SSH.
       passwordSaved && sshPassword.length > 0 ? sshPassword : undefined,
-      sudoSaved && sudoPassword.length > 0 ? sudoPassword : undefined
+      sudoSaved && sudoPassword.length > 0 ? sudoPassword : undefined,
+      secretSaved && secretArg.length > 0 ? secretArg : undefined,
     )
   }
 
@@ -514,6 +544,15 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                       Browse
                     </button>
                   </div>
+                  {/* Grandfathered bad value: an existing config keeps saving (we only
+                      block a CHANGED non-absolute path), but say what it actually does
+                      — '.' and friends resolve to the home folder at spawn, which is
+                      what mis-filed transcripts before. */}
+                  {workingDir.trim() && !looksAbsolute(workingDir) && (
+                    <p className="text-[11px] text-yellow mt-1.5">
+                      Not a full path — sessions will start in your home folder. Pick a real project folder.
+                    </p>
+                  )}
                 </div>
               ) : (
                 <div className="space-y-3 mt-1">
@@ -806,6 +845,84 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
                 </>
               )}
 
+              {uiProvider === 'terminal' && sessionType === 'local' && (
+                <>
+                  {sectionHead('Terminal startup', 'Terminal only', 'termstart', 'About terminal startup')}
+                  <Hint k="termstart">
+                    No AI here — just a terminal. Anything below runs automatically each time you open this
+                    launcher, so it can start a long-running tool for you.
+                  </Hint>
+                  <div className="space-y-3 mt-1">
+                    <div>
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <label className="text-xs text-subtext0">First-run command</label>
+                        <HelpBtn k="termcmd" label="About the first-run command" />
+                      </div>
+                      <input
+                        value={termCommand}
+                        onChange={(e) => setTermCommand(e.target.value)}
+                        placeholder="npm run dev"
+                        spellCheck={false}
+                        className={inputCls + ' font-mono text-xs'}
+                      />
+                      <Hint k="termcmd">Runs once when the terminal opens. Leave empty for a plain shell.</Hint>
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <label className="text-xs text-subtext0">Arguments</label>
+                        <HelpBtn k="termargs" label="About arguments" />
+                      </div>
+                      <input
+                        value={termArgs}
+                        onChange={(e) => setTermArgs(e.target.value)}
+                        placeholder={'--port 4310 --token {secret}'}
+                        spellCheck={false}
+                        className={inputCls + ' font-mono text-xs'}
+                      />
+                      <Hint k="termargs">
+                        Appended to the command above. Saved as plain text in your config file — put tokens and
+                        keys in Secret argument instead.
+                      </Hint>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-subtext0 mb-1">Secret argument</label>
+                      <input
+                        type="password"
+                        value={secretArg}
+                        onChange={(e) => setSecretArg(e.target.value)}
+                        placeholder={storedSecret ? '(saved — enter new to change)' : 'Leave empty if not needed'}
+                        className={inputCls}
+                      />
+                      <div className="flex items-center gap-3 mt-1.5">
+                        <p className="text-[11px] text-overlay0">
+                          <span className="text-green">🔒</span> Kept in your OS keychain, never written to the
+                          config file. Type <span className="font-mono text-subtext0">{'{secret}'}</span> in
+                          Arguments to use it.
+                        </p>
+                        {storedSecret && (
+                          <button
+                            type="button"
+                            onClick={() => { setStoredSecret(false); setSecretArg('') }}
+                            className="text-[11px] text-blue underline underline-offset-2 shrink-0"
+                          >
+                            Remove
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={termElevated}
+                        onChange={(e) => setTermElevated(e.target.checked)}
+                        className="rounded border-surface1"
+                      />
+                      {`Run as Administrator (requires ${window.electronPlatform === 'win32' ? 'gsudo' : 'sudo'})`}
+                    </label>
+                  </div>
+                </>
+              )}
+
               {uiProvider === 'terminal' && sessionType === 'ssh' && (
                 <>
                   {sectionHead('Terminal startup', 'Terminal only')}
@@ -816,11 +933,16 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
               )}
 
               {/* ── 4 · ORGANISE (collapsed until needed) ── */}
-              <details className="border-t border-surface1 pt-3 mt-4" open={isEdit && (!!groupId || !!sectionId)}>
-                <summary className="flex items-center gap-2 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">
-                  <span className="text-[10px] uppercase tracking-wider text-overlay1 font-medium">Organise</span>
-                  <span className="text-[9px] uppercase tracking-wide text-overlay0 border border-surface2 rounded-full px-1.5 py-px">Optional</span>
-                  <span className="text-[10px] text-overlay0 ml-auto">▸</span>
+              {/* The only expandable section. It must NOT dress its trigger in the
+                  same pill the static scope chips use ("Any provider", "Terminal
+                  only") — that made a clickable row look identical to decoration.
+                  A leading chevron that rotates when open, a hover state and a
+                  plain "(optional)" read as a control instead. */}
+              <details className="group border-t border-surface1 pt-3 mt-4" open={isEdit && (!!groupId || !!sectionId)}>
+                <summary className="flex items-center gap-2 cursor-pointer select-none list-none rounded px-1 -mx-1 py-1 hover:bg-surface1/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue [&::-webkit-details-marker]:hidden">
+                  <span className="text-[10px] text-overlay1 transition-transform group-open:rotate-90">▶</span>
+                  <span className="text-[10px] uppercase tracking-wider text-overlay1 font-medium group-hover:text-subtext0">Organise</span>
+                  <span className="text-[11px] text-overlay0 normal-case">(optional — group &amp; section)</span>
                 </summary>
                 <p className="text-[11px] text-overlay0 mt-2">Optional — only tidies the sidebar.</p>
                 <div className="grid grid-cols-2 gap-2 mt-2">

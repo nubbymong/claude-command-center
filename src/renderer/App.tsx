@@ -547,6 +547,7 @@ export default function App() {
           legacyColor: saved.legacyColor,
           sessionType: saved.sessionType,
           shellOnly: saved.shellOnly,
+          terminalOptions: saved.terminalOptions,
           partnerTerminalPath: saved.partnerTerminalPath,
           partnerElevated: saved.partnerElevated,
           sshConfig: saved.sshConfig,
@@ -852,6 +853,8 @@ export default function App() {
                       configId={session.configId}
                       cwd={session.sessionType === 'local' ? session.workingDirectory : undefined}
                       shellOnly={session.shellOnly}
+                      elevated={session.terminalOptions?.elevated}
+                      terminalOptions={session.terminalOptions}
                       ssh={session.sshConfig}
                       isActive={session.id === activeSessionId && view === 'sessions' && !isShowingPartner && !altPaneShowing}
                       legacyVersion={session.legacyVersion}
@@ -1205,12 +1208,13 @@ export default function App() {
         {showGuidedConfig && (
           <SessionDialog
             onCancel={() => setShowGuidedConfig(false)}
-            onConfirm={async (data, password, sudoPassword) => {
+            onConfirm={async (data, password, sudoPassword, argSecret) => {
               const { generateId } = await import('./utils/id')
               const config = { ...data, id: generateId() }
               useConfigStore.getState().addConfig(config)
               if (password) await window.electronAPI.credentials.save(config.id, password)
               if (sudoPassword) await window.electronAPI.credentials.save(config.id + '_sudo', sudoPassword)
+              if (argSecret) await window.electronAPI.credentials.save(config.id + '_argsecret', argSecret)
               useAppMetaStore.getState().update({ hasCreatedFirstConfig: true })
               trackUsage('sessions.create-config')
               setShowGuidedConfig(false)

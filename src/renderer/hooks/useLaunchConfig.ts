@@ -40,6 +40,7 @@ export function useLaunchConfig(): (config: TerminalConfig) => string {
       createdAt: Date.now(),
       sessionType: config.sessionType,
       shellOnly: config.shellOnly,
+      terminalOptions: config.terminalOptions,
       // Partner terminal is permanent for every config type (2 Aug decision):
       // stored partnerTerminalPath/partnerElevated are no longer consumed.
       sshConfig: config.sshConfig ? {
