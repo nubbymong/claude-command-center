@@ -265,6 +265,32 @@ export interface InsightsRun {
   profileId?: string
   /** Run completed but KPI extraction failed: report is viewable, no kpis.json. */
   kpisUnavailable?: boolean
+  /**
+   * What kind of run this is. Absent means 'account' — every run written before
+   * cross-account existed is a single-account run, so the field is optional
+   * rather than defaulted, and readers MUST treat undefined as 'account'.
+   * An 'aggregate' run has no profileId and no report.html: its only artifact is
+   * a kpis.json holding CrossAccountInsights.
+   */
+  kind?: 'account' | 'aggregate'
+  /** Aggregate only: the per-account run ids that fed the roll-up. */
+  memberRunIds?: string[]
+  /** Aggregate only: one row per targeted account, so a partial roll-up is legible. */
+  members?: InsightsRunMember[]
+}
+
+/** One account's outcome inside a cross-account (aggregate) run. */
+export interface InsightsRunMember {
+  profileId?: string
+  accountEmail?: string
+  /** Display label captured at fan-out time (profile name, else email). */
+  label?: string
+  /** The per-account run this member produced. Absent until it starts. */
+  runId?: string
+  status: 'running' | 'complete' | 'failed'
+  error?: string
+  /** Completed without a kpis.json, so it is excluded from the roll-up. */
+  kpisUnavailable?: boolean
 }
 
 export interface InsightsCatalogue {
@@ -292,6 +318,54 @@ export interface InsightsData {
 
 /** Alias for backward compatibility */
 export type KpiData = InsightsData
+
+// ── Cross-account insights (aggregate runs) ──
+// A cross-account roll-up keeps NUMBERS and PROSE strictly separate: every value
+// in `comparison` is computed from the member runs' own kpis.json, and only the
+// narrative fields (summary, highlights, crossAccount) come from the synthesis
+// model. That way a roll-up can never report a metric the accounts didn't
+// actually produce, and it still renders when the model pass fails.
+
+/** One metric lined up across accounts. Values are copied, never derived. */
+export interface CrossAccountComparisonRow {
+  /** Metric key as it appears in each account's kpis.kpis[category]. */
+  metricKey: string
+  /** KPI category the metric came from (Volume, Outcomes, Friction, …). */
+  category: string
+  label: string
+  format?: 'number' | 'percent' | 'duration'
+  goodDirection?: 'up' | 'down' | 'neutral'
+  values: Array<{ key: string; profileId?: string; accountEmail?: string; value: number }>
+  /**
+   * Sum across accounts — only present for `format: 'number'` (counts add up).
+   * Percentages and durations need weights we don't have, so they get no total
+   * rather than a misleading average.
+   */
+  total?: number
+}
+
+export interface CrossAccountAccountSummary {
+  /** Stable per-roll-up key (A1, A2, …). Used to match narrative back to accounts. */
+  key: string
+  runId: string
+  profileId?: string
+  accountEmail?: string
+  label: string
+  period?: { start?: string; end?: string; days?: number }
+  /** Model-written bullets about this account. Absent in a deterministic roll-up. */
+  highlights?: string[]
+}
+
+export interface CrossAccountInsights extends InsightsData {
+  /** 'ai' = the synthesis pass wrote the prose; 'deterministic' = it failed, numbers only. */
+  synthesis: 'ai' | 'deterministic'
+  accounts: CrossAccountAccountSummary[]
+  comparison: CrossAccountComparisonRow[]
+  crossAccount?: {
+    observations?: string[]
+    recommendations?: string[]
+  }
+}
 
 // ── Agent Teams ──
 

@@ -164,6 +164,7 @@ export const IPC = {
 
   // Insights
   INSIGHTS_RUN: 'insights:run',
+  INSIGHTS_RUN_ALL: 'insights:runAll',
   INSIGHTS_GET_CATALOGUE: 'insights:getCatalogue',
   INSIGHTS_GET_REPORT: 'insights:getReport',
   INSIGHTS_GET_KPIS: 'insights:getKpis',

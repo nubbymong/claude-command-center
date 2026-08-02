@@ -298,6 +298,7 @@ export interface ElectronAPI {
   }
   insights: {
     run: (opts?: { profileId?: string }) => Promise<string>
+    runAll: (opts?: { profileIds?: string[] }) => Promise<string>
     getCatalogue: () => Promise<import('../shared/types').InsightsCatalogue>
     getReport: (runId: string) => Promise<string | null>
     getKpis: (runId: string) => Promise<import('../shared/types').KpiData | null>
@@ -738,6 +739,7 @@ const electronAPI: ElectronAPI = {
   },
   insights: {
     run: (opts?: { profileId?: string }) => ipcRenderer.invoke(IPC.INSIGHTS_RUN, opts),
+    runAll: (opts?: { profileIds?: string[] }) => ipcRenderer.invoke(IPC.INSIGHTS_RUN_ALL, opts),
     getCatalogue: () => ipcRenderer.invoke(IPC.INSIGHTS_GET_CATALOGUE),
     getReport: (runId: string) => ipcRenderer.invoke(IPC.INSIGHTS_GET_REPORT, runId),
     getKpis: (runId: string) => ipcRenderer.invoke(IPC.INSIGHTS_GET_KPIS, runId),

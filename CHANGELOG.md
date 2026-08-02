@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > `src/renderer/changelog.ts`. After editing that file, run `npm run changelog`
 > (CI enforces that this file is in sync via `npm run changelog:check`).
 
+## [2.2.0] - 2026-08-02
+
+> Insights can now look at all of your accounts at once: one click generates every account's report and then a combined report that compares them side by side.
+
+### Added
+- Insights: a "Run all" button generates a report for every signed-in account and then one combined cross-account report. It lines every metric the accounts have in common up side by side, marks the best and worst account for each, totals the counts, and adds a written comparison — where your work actually lives, which account is costing you the most friction, and what one account should copy from another. It appears once you have two or more accounts signed in; with a single account nothing changes.
+- The combined report is kept alongside your normal reports and appears in the same dropdown as "All accounts", so you can go back to any earlier comparison. Each account's own full report is still generated and still there.
+
+### Changed
+- A combined report never invents a number. Every value in it is taken straight from an individual account's own report, only metrics that at least two accounts measured are compared, and totals are shown only where adding up actually means something. If the written analysis cannot be produced, you still get the measured comparison and the report says so rather than quietly leaving it out.
+- While a cross-account run is in progress it reports which account it is on, and finishing accounts no longer pull the report you are reading out from under you.
+
+### Fixed
+- Multi-account: a report was able to compare itself against the wrong run — a combined cross-account report could be picked as the "previous run" for a single account, so the trend arrows were measuring against something unrelated. Comparisons now only ever pair a single account with its own earlier reports.
+
 ## [2.1.0-beta.5] - 2026-08-02
 
 > A runtime refresh. CCC now runs on Electron 43, with the terminal backend and the local database updated to match. No feature changes: this build exists so the beta channel is actually running what the beta line has been carrying.
@@ -952,6 +967,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tab attention indicators for waiting prompts
 - Context usage tracking via statusline API
 
+[2.2.0]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.2.0
 [2.1.0-beta.5]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-beta.5
 [2.1.0-beta.4]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-beta.4
 [2.1.0-beta.3]: https://github.com/nubbymong/claude-command-center/releases/tag/v2.1.0-beta.3

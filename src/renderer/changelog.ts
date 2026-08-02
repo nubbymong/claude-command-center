@@ -21,6 +21,18 @@ export interface ChangelogEntry {
 // a backtick in a comment opens a phantom string and the parse fails.
 export const changelog: ChangelogEntry[] = [
   {
+    version: '2.2.0',
+    date: '2026-08-02',
+    highlights: 'Insights can now look at all of your accounts at once: one click generates every account\'s report and then a combined report that compares them side by side.',
+    changes: [
+      { type: 'feature', description: 'Insights: a "Run all" button generates a report for every signed-in account and then one combined cross-account report. It lines every metric the accounts have in common up side by side, marks the best and worst account for each, totals the counts, and adds a written comparison — where your work actually lives, which account is costing you the most friction, and what one account should copy from another. It appears once you have two or more accounts signed in; with a single account nothing changes.' },
+      { type: 'feature', description: 'The combined report is kept alongside your normal reports and appears in the same dropdown as "All accounts", so you can go back to any earlier comparison. Each account\'s own full report is still generated and still there.' },
+      { type: 'improvement', description: 'A combined report never invents a number. Every value in it is taken straight from an individual account\'s own report, only metrics that at least two accounts measured are compared, and totals are shown only where adding up actually means something. If the written analysis cannot be produced, you still get the measured comparison and the report says so rather than quietly leaving it out.' },
+      { type: 'improvement', description: 'While a cross-account run is in progress it reports which account it is on, and finishing accounts no longer pull the report you are reading out from under you.' },
+      { type: 'fix', description: 'Multi-account: a report was able to compare itself against the wrong run — a combined cross-account report could be picked as the "previous run" for a single account, so the trend arrows were measuring against something unrelated. Comparisons now only ever pair a single account with its own earlier reports.' },
+    ],
+  },
+  {
     version: '2.1.0-beta.5',
     date: '2026-08-02',
     highlights: 'A runtime refresh. CCC now runs on Electron 43, with the terminal backend and the local database updated to match. No feature changes: this build exists so the beta channel is actually running what the beta line has been carrying.',

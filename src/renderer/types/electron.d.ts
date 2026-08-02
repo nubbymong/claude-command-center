@@ -10,10 +10,14 @@ export type {
   CloudAgent,
   CloudAgentStatus,
   InsightsRun,
+  InsightsRunMember,
   InsightsCatalogue,
   KpiMetric,
   InsightsData,
   KpiData,
+  CrossAccountInsights,
+  CrossAccountAccountSummary,
+  CrossAccountComparisonRow,
   NoteMetadata,
   AgentTemplate,
   AgentModelOverride,
@@ -352,6 +356,8 @@ export interface ElectronAPI {
   }
   insights: {
     run: (opts?: { profileId?: string }) => Promise<string>
+    /** Cross-account roll-up: runs every targeted account, then synthesizes one report. */
+    runAll: (opts?: { profileIds?: string[] }) => Promise<string>
     getCatalogue: () => Promise<InsightsCatalogue>
     getReport: (runId: string) => Promise<string | null>
     getKpis: (runId: string) => Promise<KpiData | null>

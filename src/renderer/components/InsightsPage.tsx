@@ -4,10 +4,11 @@ import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { resolveAccountNameByEmail, resolveAccountName } from '../../shared/account-chip-color'
 import KpiSidebar from './KpiSidebar'
-import type { InsightsData } from '../types/electron'
+import type { CrossAccountInsights, InsightsData } from '../types/electron'
 import PageFrame from './PageFrame'
 import { parseInsightsReport, type ParsedInsights } from './insights/parseInsightsReport'
 import { InsightsSections } from './insights/InsightsSections'
+import CrossAccountReport from './insights/CrossAccountReport'
 
 export default function InsightsPage() {
   // All hooks called unconditionally -- early returns appear after all hook calls.
@@ -17,6 +18,8 @@ export default function InsightsPage() {
   const status = useInsightsStore((s) => s.status)
   const statusMessage = useInsightsStore((s) => s.statusMessage)
   const startInsights = useInsightsStore((s) => s.startInsights)
+  const startCrossAccount = useInsightsStore((s) => s.startCrossAccount)
+  const batchActive = useInsightsStore((s) => s.batchActive)
   const loadCatalogue = useInsightsStore((s) => s.loadCatalogue)
 
   const [parsed, setParsed] = useState<ParsedInsights | null>(null)
@@ -76,9 +79,19 @@ export default function InsightsPage() {
     if (catalogue) {
       // Compare against the previous complete run of the SAME account (W5) —
       // otherwise multi-account diffs one account's run against another's.
+      // Aggregates are excluded on both sides: they carry no profileId, so they
+      // would otherwise pair up with every default-account run, and a
+      // cross-account roll-up is rendered without the trend sidebar anyway.
       const sel = catalogue.runs.find((r) => r.id === selectedRunId)
+      if (sel?.kind === 'aggregate') {
+        setPreviousKpis(null)
+        return
+      }
       const runs = catalogue.runs.filter(
-        (r) => r.status === 'complete' && (r.profileId ?? null) === (sel?.profileId ?? null)
+        (r) =>
+          r.status === 'complete' &&
+          r.kind !== 'aggregate' &&
+          (r.profileId ?? null) === (sel?.profileId ?? null)
       )
       const idx = runs.findIndex((r) => r.id === selectedRunId)
       if (idx > 0) {
@@ -97,6 +110,19 @@ export default function InsightsPage() {
   // are discoverable instead of being silently filtered out.
   const pickerRuns = [...completedRuns, ...failedRuns].sort((a, b) => b.timestamp - a.timestamp)
   const isRunning = status === 'running' || status === 'extracting_kpis'
+
+  // A cross-account roll-up renders from its own JSON (it has no report.html).
+  // The shape is validated before use so a truncated or hand-edited kpis.json
+  // shows the "no report" state instead of throwing inside the view.
+  const selectedIsAggregate = selectedRun?.kind === 'aggregate'
+  const crossAccount: CrossAccountInsights | null =
+    selectedIsAggregate &&
+    currentKpis &&
+    Array.isArray((currentKpis as CrossAccountInsights).accounts) &&
+    Array.isArray((currentKpis as CrossAccountInsights).comparison)
+      ? (currentKpis as CrossAccountInsights)
+      : null
+  const runAllLabel = `Run all (${profiles.length})`
 
   // Codex-only empty state: user has Codex sessions but no Claude sessions.
   // Insights are Claude-only -- show an explanatory message rather than the
@@ -178,12 +204,23 @@ export default function InsightsPage() {
                     ))}
                   </select>
                 )}
-                <button
-                  onClick={() => startInsights(effectiveRunProfileId || undefined)}
-                  className="px-4 py-2 bg-teal/10 border border-teal/25 text-teal rounded-lg hover:bg-teal/20 transition-colors text-xs font-medium"
-                >
-                  Run Insights Now
-                </button>
+                <div className="flex items-center justify-center gap-2">
+                  <button
+                    onClick={() => startInsights(effectiveRunProfileId || undefined)}
+                    className="px-4 py-2 bg-teal/10 border border-teal/25 text-teal rounded-lg hover:bg-teal/20 transition-colors text-xs font-medium"
+                  >
+                    Run Insights Now
+                  </button>
+                  {multiAccount && (
+                    <button
+                      onClick={() => startCrossAccount()}
+                      className="px-4 py-2 bg-surface0 border border-surface1 text-subtext1 rounded-lg hover:border-teal/40 hover:text-teal transition-colors text-xs font-medium"
+                      title="Generate a report for every account, then one combined cross-account report"
+                    >
+                      {runAllLabel}
+                    </button>
+                  )}
+                </div>
               </>
             )}
           </div>
@@ -212,7 +249,14 @@ export default function InsightsPage() {
             month: 'short', day: 'numeric', year: 'numeric',
             hour: '2-digit', minute: '2-digit'
           })
-          const acct = multiAccount ? nameForAccount(run.accountEmail) : null
+          // An aggregate belongs to every account, so it is labelled by how many
+          // it actually compared rather than by one account name.
+          const acct =
+            run.kind === 'aggregate'
+              ? `All accounts (${run.memberRunIds?.length ?? run.members?.length ?? 0})`
+              : multiAccount
+                ? nameForAccount(run.accountEmail)
+                : null
           const base = acct ? `${label} · ${acct}` : label
           const suffix = run.status === 'failed' ? ' · failed' : run.kpisUnavailable ? ' · no KPIs' : ''
           return <option key={run.id} value={run.id}>{base}{suffix}</option>
@@ -248,6 +292,20 @@ export default function InsightsPage() {
           </>
         ) : 'New run'}
       </button>
+      {multiAccount && (
+        <button
+          onClick={() => startCrossAccount()}
+          disabled={isRunning || batchActive}
+          className={`text-xs px-2.5 py-0.5 rounded border font-medium transition-all ${
+            isRunning || batchActive
+              ? 'bg-surface0 border-surface1 text-overlay0 cursor-not-allowed'
+              : 'bg-surface0 border-surface1 text-subtext1 hover:border-teal/40 hover:text-teal'
+          }`}
+          title="Generate a report for every account, then one combined cross-account report"
+        >
+          {runAllLabel}
+        </button>
+      )}
     </>
   )
 
@@ -284,6 +342,8 @@ export default function InsightsPage() {
                 <span className="text-xs">Loading report...</span>
               </div>
             </div>
+          ) : crossAccount && selectedRun ? (
+            <CrossAccountReport data={crossAccount} run={selectedRun} nameForAccount={nameForAccount} />
           ) : parsed ? (
             <div className="w-full h-full overflow-auto">
               {parsed.title && (
@@ -308,8 +368,11 @@ export default function InsightsPage() {
           )}
         </div>
 
-        {/* KPI Sidebar — or a note when KPIs failed for this completed run */}
-        {currentKpis ? (
+        {/* KPI Sidebar — or a note when KPIs failed for this completed run.
+            An aggregate is full-width: its comparison table already holds every
+            metric, and the trend sidebar has no same-account previous run to
+            diff against. */}
+        {selectedIsAggregate ? null : currentKpis ? (
           <KpiSidebar current={currentKpis} previous={previousKpis} />
         ) : selectedRun?.kpisUnavailable ? (
           <div className="w-72 shrink-0 border-l border-surface0/80 p-4 text-xs text-overlay0">

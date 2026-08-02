@@ -18,6 +18,25 @@ import { spawnClaudeHeadless } from './claude-headless'
 import { getProfileConfigDir, getPrimaryProfileId, setupProfileLinks, listProfiles } from './account-profiles'
 import { getProjectRootPath, getInstallPath } from './update-watcher'
 import { getResourcesDirectory } from './ipc/setup-handlers'
+import type { AccountProfile } from '../shared/account-types'
+import type { InsightsCatalogue, InsightsData, InsightsRun, InsightsRunMember } from '../shared/types'
+import {
+  CROSS_ACCOUNT_MAX_PARALLEL,
+  CROSS_ACCOUNT_MIN_ACCOUNTS,
+  assembleCrossAccount,
+  buildCrossAccountPrompt,
+  buildCrossAccountSpawnArgs,
+  crossAccountLabel,
+  describeCrossAccountFanout,
+  mapWithLimit,
+  parseCrossAccountNarrative,
+  type CrossAccountMember
+} from './insights-cross-account'
+
+// The run/catalogue shapes live in shared/types (the renderer reads them too);
+// re-exported here so existing `from './insights-runner'` type imports keep
+// working and the two copies can't drift.
+export type { InsightsCatalogue, InsightsRun }
 
 // Source locations (Claude CLI output). `/insights` writes report.html under the
 // running account's HOME (~/.claude/usage-data); with per-account isolation the
@@ -30,19 +49,6 @@ export function claudeFacetsDir(home: string | null): string { return join(usage
 // Dynamic paths based on data directory
 function getInsightsDir(): string { return join(getResourcesDirectory(), 'insights') }
 function getCatalogueFile(): string { return join(getInsightsDir(), 'catalogue.json') }
-
-export interface InsightsRun {
-  id: string            // timestamp-based: '2026-02-06-143022'
-  timestamp: number     // Date.now()
-  status: 'running' | 'extracting_kpis' | 'complete' | 'failed'
-  statusMessage?: string  // e.g. "Step 1/3: Generating report..."
-  error?: string
-  /** Account this run was generated for (multi-account). Undefined = default. */
-  accountEmail?: string
-  profileId?: string
-  /** Run completed but KPI extraction failed: report is viewable, no kpis.json. */
-  kpisUnavailable?: boolean
-}
 
 /**
  * Resolve which account a run executes under. Mirrors the cloud-agent path: an
@@ -66,10 +72,6 @@ function resolveInsightsAccount(profileId?: string): { home: string | null; prof
   return { home: getProfileConfigDir(resolved), profileId: resolved, accountEmail }
 }
 
-export interface InsightsCatalogue {
-  runs: InsightsRun[]
-}
-
 // Per-account in-flight lock: keyed by resolved profileId so two DIFFERENT
 // accounts can run concurrently, while the same account can't double-run.
 // Catalogue integrity across concurrent runs is preserved by upsertRun's
@@ -78,6 +80,12 @@ const inFlight = new Set<string>()
 function accountKey(profileId?: string): string {
   return profileId ?? '(default)'
 }
+
+// A cross-account fan-out takes its own lock so two overlapping roll-ups can't
+// both drive the same member accounts. It is deliberately a SEPARATE key from
+// every accountKey(): the fan-out holds this one while each member run takes and
+// releases its own, so the aggregate lock can never collide with a member's.
+const CROSS_ACCOUNT_KEY = '(cross-account)'
 
 function ensureDir(dir: string): void {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
@@ -444,8 +452,16 @@ export function loadPreviousKpis(currentRunId: string): string | null {
     // undefined so they all match (unchanged behaviour). (Unit 3 W5)
     const current = catalogue.runs.find(r => r.id === currentRunId)
     const currentAccount = current?.profileId ?? null
+    // Aggregates are excluded explicitly: a cross-account roll-up has no
+    // profileId, so `(r.profileId ?? null) === currentAccount` would otherwise
+    // match it against every DEFAULT-account run and hand a roll-up to a single
+    // account as its "previous run".
     const completeRuns = catalogue.runs.filter(
-      r => r.status === 'complete' && r.id !== currentRunId && (r.profileId ?? null) === currentAccount
+      r =>
+        r.status === 'complete' &&
+        r.kind !== 'aggregate' &&
+        r.id !== currentRunId &&
+        (r.profileId ?? null) === currentAccount
     )
     if (completeRuns.length === 0) return null
 
@@ -609,6 +625,187 @@ export async function runInsights(getWindow: () => BrowserWindow | null, opts?: 
     notifyRenderer(getWindow, run)
   } finally {
     inFlight.delete(key)
+  }
+
+  return id
+}
+
+// ── Cross-account roll-up ────────────────────────────────────────────────────
+
+/**
+ * Accounts a roll-up will target: the signed-in profiles whose on-disk dir
+ * actually exists (a profile with a missing dir would silently fall back to the
+ * primary inside runInsights and get counted twice). An explicit id list is
+ * intersected with that set rather than trusted.
+ */
+export function resolveCrossAccountTargets(profileIds?: string[]): AccountProfile[] {
+  const present = listProfiles().filter(p => existsSync(getProfileConfigDir(p.id)))
+  if (!profileIds || profileIds.length === 0) return present
+  const wanted = new Set(profileIds)
+  return present.filter(p => wanted.has(p.id))
+}
+
+/** True while a cross-account fan-out holds the aggregate lock. */
+export function isCrossAccountRunning(): boolean {
+  return inFlight.has(CROSS_ACCOUNT_KEY)
+}
+
+/**
+ * Generate every targeted account's report, then synthesize ONE cross-account
+ * roll-up from the results.
+ *
+ * The roll-up is a first-class catalogue entry (`kind: 'aggregate'`) so it shows
+ * up in the run picker alongside account runs, but it has no report.html — its
+ * only artifact is a kpis.json holding CrossAccountInsights.
+ *
+ * Failure is per-member, not global: an account whose run fails (or which is
+ * already running under its own lock) is recorded in `members` and left out of
+ * the synthesis. The roll-up itself only fails when fewer than
+ * CROSS_ACCOUNT_MIN_ACCOUNTS accounts produced KPIs, because below that there is
+ * nothing to compare.
+ */
+export async function runCrossAccountInsights(
+  getWindow: () => BrowserWindow | null,
+  opts?: { profileIds?: string[] }
+): Promise<string> {
+  const targets = resolveCrossAccountTargets(opts?.profileIds)
+  if (targets.length < CROSS_ACCOUNT_MIN_ACCOUNTS) {
+    throw new Error(
+      `A cross-account report needs at least ${CROSS_ACCOUNT_MIN_ACCOUNTS} signed-in accounts (found ${targets.length})`
+    )
+  }
+  if (inFlight.has(CROSS_ACCOUNT_KEY)) throw new Error('A cross-account report is already being generated')
+  inFlight.add(CROSS_ACCOUNT_KEY)
+
+  const id = generateRunId()
+  const archiveDir = join(getInsightsDir(), id)
+  ensureDir(archiveDir)
+
+  const run: InsightsRun = {
+    id,
+    timestamp: Date.now(),
+    status: 'running',
+    kind: 'aggregate',
+    statusMessage: describeCrossAccountFanout(0, targets.length),
+    memberRunIds: [],
+    members: targets.map<InsightsRunMember>(t => ({
+      profileId: t.id,
+      accountEmail: t.accountEmail,
+      label: crossAccountLabel(t),
+      status: 'running'
+    }))
+  }
+  const publish = (): void => {
+    upsertRun(run)
+    notifyRenderer(getWindow, run)
+  }
+  const patchMember = (profileId: string, patch: Partial<InsightsRunMember>): void => {
+    const row = run.members?.find(m => m.profileId === profileId)
+    if (row) Object.assign(row, patch)
+  }
+  publish()
+  logInfo(`[insights] Cross-account run ${id} over ${targets.length} accounts`)
+
+  try {
+    // Step 1: fan out one normal per-account run each, bounded so a wide
+    // multi-account setup doesn't put N interactive Claude PTYs on the machine.
+    let done = 0
+    await mapWithLimit(targets, CROSS_ACCOUNT_MAX_PARALLEL, async (target) => {
+      try {
+        const memberRunId = await runInsights(getWindow, { profileId: target.id })
+        // runInsights resolves with the id even when the run failed, so the
+        // outcome has to be read back off the catalogue rather than inferred.
+        const memberRun = loadCatalogue().runs.find(r => r.id === memberRunId)
+        patchMember(target.id, {
+          runId: memberRunId,
+          status: memberRun?.status === 'complete' ? 'complete' : 'failed',
+          error: memberRun?.error,
+          kpisUnavailable: memberRun?.kpisUnavailable
+        })
+      } catch (err: any) {
+        // The per-account lock rejecting (that account is already running) lands
+        // here, as does anything thrown before a run entry existed.
+        patchMember(target.id, { status: 'failed', error: err?.message || 'Run could not be started' })
+      } finally {
+        done++
+        run.statusMessage = describeCrossAccountFanout(done, targets.length)
+        publish()
+      }
+    })
+
+    // Step 2: collect the members that actually produced KPIs.
+    const members: CrossAccountMember[] = []
+    targets.forEach((target, i) => {
+      const row = run.members?.find(m => m.profileId === target.id)
+      if (!row || row.status !== 'complete' || !row.runId) return
+      const kpis = getInsightsKpis(row.runId) as InsightsData | null
+      if (!kpis) {
+        patchMember(target.id, { kpisUnavailable: true })
+        return
+      }
+      members.push({
+        key: `A${i + 1}`,
+        runId: row.runId,
+        profileId: target.id,
+        accountEmail: target.accountEmail,
+        label: crossAccountLabel(target),
+        kpis
+      })
+    })
+
+    if (members.length < CROSS_ACCOUNT_MIN_ACCOUNTS) {
+      run.status = 'failed'
+      run.statusMessage = undefined
+      run.error =
+        `Only ${members.length} of ${targets.length} accounts produced KPIs; ` +
+        `a cross-account report needs at least ${CROSS_ACCOUNT_MIN_ACCOUNTS}`
+      publish()
+      logError(`[insights] Cross-account run ${id} aborted: ${run.error}`)
+      return id
+    }
+
+    run.status = 'extracting_kpis'
+    run.statusMessage = describeCrossAccountFanout(targets.length, targets.length)
+    publish()
+
+    // The synthesis pass needs a signed-in identity to run at all, but reads
+    // nothing from that account's disk — the KPI JSON travels on stdin. Use the
+    // primary (same resolution as a default run) rather than any one member, so
+    // the roll-up isn't attributed to an arbitrary account.
+    const home = resolveInsightsAccount(undefined).home
+    const result = await spawnClaudeHeadless(
+      buildCrossAccountSpawnArgs(),
+      600000,
+      buildCrossAccountPrompt(members),
+      home
+    )
+    const narrative = result.code === 0 ? parseCrossAccountNarrative(result.stdout) : null
+    if (!narrative) {
+      logError(
+        `[insights] Cross-account synthesis unusable (code ${result.code}); ` +
+        'falling back to a numbers-only roll-up'
+      )
+      logError('[insights] Raw synthesis output:', result.stdout.slice(0, 500))
+    }
+
+    const data = assembleCrossAccount(members, narrative)
+    writeFileSync(join(archiveDir, 'kpis.json'), JSON.stringify(data, null, 2))
+
+    run.status = 'complete'
+    run.statusMessage = undefined
+    run.memberRunIds = members.map(m => m.runId)
+    publish()
+    logInfo(
+      `[insights] Cross-account run ${id} complete: ${members.length} accounts, ` +
+      `${data.comparison.length} shared metrics, synthesis=${data.synthesis}`
+    )
+  } catch (err: any) {
+    run.status = 'failed'
+    run.statusMessage = undefined
+    run.error = err?.message || 'Unknown error'
+    publish()
+  } finally {
+    inFlight.delete(CROSS_ACCOUNT_KEY)
   }
 
   return id
