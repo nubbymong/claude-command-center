@@ -91,12 +91,19 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
   // Secrets: `stored*` tracks whether the keychain currently holds one (the
   // "Remove stored password" link clears it); `save*` is the honest opt-in —
   // a typed password is only handed to the caller for storage when it's on.
+  // savePassword defaults to true so a freshly-typed password is saved by
+  // default. It must NOT default to `hasPassword ?? true`: after this PR every
+  // key-auth SSH config persists hasPassword:false, and `false ?? true` is
+  // false — which rendered the checkbox unticked, silently dropping a password
+  // the user typed into an existing key-auth config (adversarial review, #188).
+  // The checkbox only renders (and only matters) once there IS a password to
+  // save, so a plain `true` is safe for stored-secret and key-auth cases alike.
   const [sshPassword, setSshPassword] = useState('')
   const [storedPassword, setStoredPassword] = useState(initial?.sshConfig?.hasPassword ?? false)
-  const [savePassword, setSavePassword] = useState(initial?.sshConfig?.hasPassword ?? true)
+  const [savePassword, setSavePassword] = useState(true)
   const [sudoPassword, setSudoPassword] = useState('')
   const [storedSudo, setStoredSudo] = useState(initial?.sshConfig?.hasSudoPassword ?? false)
-  const [saveSudo, setSaveSudo] = useState(initial?.sshConfig?.hasSudoPassword ?? true)
+  const [saveSudo, setSaveSudo] = useState(true)
 
   // ── Session startup (Claude Code)
   // Edit must not rewrite what's stored: a config saved with no model override
@@ -209,21 +216,28 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
     setShowNewGroup(false)
   }
 
-  // The footer's validation slot: names the next step instead of letting Save
-  // silently no-op (the old dialog's worst habit).
-  const validationMsg = !uiProvider
-    ? 'Choose what this launcher runs'
-    : !sessionType
-      ? 'Choose where it runs'
-      : !label.trim() && !(sessionType === 'local' && !workingDir.trim()) && !(sessionType === 'ssh' && !sshHost.trim())
-        ? 'Add a label to save'
-        : sessionType === 'local' && !workingDir.trim()
-          ? 'Add a working directory to save'
-          : sessionType === 'ssh' && !sshHost.trim()
-            ? 'Add a host to save'
-            : !label.trim()
-              ? 'Add a label to save'
-              : ''
+  // A working directory must be ABSOLUTE. Rejecting '.', './x', '../x' and bare
+  // relative paths closes the transcript-misfiling incident at the source (the
+  // old '.' fallback), which client validation only half-fixed: an empty field
+  // was blocked but '.' still saved (adversarial review, #188). Accepts a
+  // Windows drive path, a UNC path, a POSIX absolute path, or a ~ home path.
+  const looksAbsolute = (p: string) => /^([a-zA-Z]:[\\/]|\\\\|\/|~)/.test(p.trim())
+
+  // The footer's validation slot: names the next step in a fixed order instead
+  // of letting Save silently no-op (the old dialog's worst habit).
+  const validationMsg = (() => {
+    if (!uiProvider) return 'Choose what this launcher runs'
+    if (!sessionType) return 'Choose where it runs'
+    // A hand-edited or migrated config can carry the Codex×SSH combination the
+    // cards forbid; the disabled cards don't constrain saved state, so guard it
+    // here or the config saves and then hard-throws at spawn.
+    if (uiProvider === 'codex' && sessionType === 'ssh') return "Codex can't run over SSH — pick Claude Code or Terminal only"
+    if (sessionType === 'local' && !workingDir.trim()) return 'Add a working directory to save'
+    if (sessionType === 'local' && !looksAbsolute(workingDir)) return 'Working directory must be a full path (e.g. C:\\projects\\app)'
+    if (sessionType === 'ssh' && !sshHost.trim()) return 'Add a host to save'
+    if (!label.trim()) return 'Add a label to save'
+    return ''
+  })()
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -256,8 +270,17 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
       permissionsPreset: codexPreset,
     } : undefined
 
-    const passwordSaved = savePassword && (sshPassword.length > 0 || storedPassword)
-    const sudoSaved = saveSudo && (sudoPassword.length > 0 || storedSudo)
+    // SECURITY (adversarial review, #188): every credential decision is gated on
+    // the FINAL sessionType. Without this, switching an SSH config to Local (or
+    // to Terminal-only) drops the SSH block from the UI but leaves savePassword/
+    // storedPassword state untouched — so the config saved with no sshConfig
+    // while its keychain secret survived orphaned, later auto-typed at a
+    // different host. sudo additionally requires a post-connect command: clearing
+    // that command must strand nothing. When these are false and the config
+    // previously had a stored secret, the delete block below removes it.
+    const isSsh = sessionType === 'ssh'
+    const passwordSaved = isSsh && savePassword && (sshPassword.length > 0 || storedPassword)
+    const sudoSaved = isSsh && postCommand.trim().length > 0 && saveSudo && (sudoPassword.length > 0 || storedSudo)
 
     const config: Omit<TerminalConfig, 'id'> = {
       provider,
@@ -305,10 +328,12 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
 
     onConfirm(
       config,
-      // Honest save: a typed password reaches the keychain ONLY with the
-      // checkbox on (the old dialog stored it regardless).
-      savePassword && sshPassword.length > 0 ? sshPassword : undefined,
-      saveSudo && sudoPassword.length > 0 ? sudoPassword : undefined
+      // Honest save, gated on the final sessionType: a typed password reaches the
+      // keychain ONLY when this is still an SSH config AND the checkbox is on. The
+      // old dialog stored it regardless — so a password typed into an SSH block
+      // that was then switched to Local was persisted for a config with no SSH.
+      passwordSaved && sshPassword.length > 0 ? sshPassword : undefined,
+      sudoSaved && sudoPassword.length > 0 ? sudoPassword : undefined
     )
   }
 

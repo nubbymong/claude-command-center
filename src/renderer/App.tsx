@@ -173,6 +173,9 @@ export default function App() {
   const [showHelpPanel, setShowHelpPanel] = useState(false)
   const [showTipModal, setShowTipModal] = useState(false)
   const [partnerActive, setPartnerActive] = useState<Set<string>>(new Set())
+  // Sessions whose partner terminal has been opened at least once — gates the
+  // lazy mount of the partner TerminalView (see togglePartner).
+  const [partnerEverActivated, setPartnerEverActivated] = useState<Set<string>>(new Set())
   const [showMachineNamePrompt, setShowMachineNamePrompt] = useState(false)
   const [machineNameInput, setMachineNameInput] = useState('')
   // Saved sessions awaiting the user's Resume / Don't-open choice (startup gate —
@@ -295,6 +298,13 @@ export default function App() {
       else next.add(sessionId)
       return next
     })
+    // Record first activation so the partner PTY mounts LAZILY. The partner
+    // terminal is available for every session (2 Aug decision), but eagerly
+    // mounting its TerminalView spawned a second PTY per session at creation —
+    // 2N PTYs whether or not the pane was ever opened (adversarial review,
+    // #188). Mount on first toggle instead, and keep it mounted afterwards so
+    // toggling back and forth costs nothing.
+    setPartnerEverActivated(prev => prev.has(sessionId) ? prev : new Set(prev).add(sessionId))
   }
 
   // Load config and hydrate stores after setup is complete
@@ -809,8 +819,10 @@ export default function App() {
               // Partner terminal is permanent for every config type (2 Aug):
               // no per-config opt-in. It opens in the working directory for
               // local sessions and at home for SSH (the working directory
-              // there is a remote path this PC can't resolve).
-              const hasPartner = true
+              // there is a remote path this PC can't resolve). Mounted LAZILY on
+              // first activation so its PTY isn't spawned for every session up
+              // front (adversarial review, #188); once opened it stays mounted.
+              const hasPartner = partnerEverActivated.has(session.id)
               const partnerPtyId = session.id + '-partner'
               const isShowingWebview = !!webviewBySession[session.id]?.isOpen
               const isShowingExcalidraw = !!excalidrawBySession[session.id]?.isOpen

@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, existsSync, statSync } from 'fs'
 import { join } from 'path'
 import * as path from 'path'
-import { tmpdir } from 'os'
+import { tmpdir, homedir } from 'os'
 import { z } from 'zod'
 import { runCodexStreaming, readCodexAuthStatus } from './providers/codex/auth'
 import { recordReview } from './codex-review-usage'
@@ -157,7 +157,20 @@ export async function runCodexReview(
   if (!optedInSessions.has(cccSessionId)) {
     return {
       isError: true,
-      text: `Codex review is not enabled for session ${cccSessionId}. Toggle "Enable Codex code review" in the session config.`,
+      text: `Codex review is not enabled for session ${cccSessionId}. It is available to local Claude Code sessions when Codex is enabled in Settings → Codex, and only when the session has a real project directory.`,
+    }
+  }
+
+  // 2.5. SECURITY (adversarial review, #188): defence-in-depth against the
+  // home-directory review root. Registration already refuses when the launch
+  // cwd is os.homedir() (pty-manager), so a home-rooted session should never be
+  // in optedInSessions — but never review the bare home dir even if some future
+  // caller re-introduces it: mode:'paths' containment would otherwise allow
+  // ~/.ssh, ~/.claude, ~/.aws. A real project directory is never os.homedir().
+  if (resolvedCwd === homedir()) {
+    return {
+      isError: true,
+      text: 'Codex review refused: the session has no project directory (its working directory resolved to your home folder). Set a real project directory in the session config.',
     }
   }
 
@@ -296,16 +309,31 @@ export function registerCodexReviewTool(
       timeoutSeconds: zMod.number().int().min(30).max(900).optional().describe('Optional override of the default 5-minute timeout. Allowed range 30-900 seconds. Raise for large diffs that overshoot the default; lower for fast-fail experiments.'),
     },
     async (rawArgs: any) => {
-      // Prefer the transport-bound session id; fall back to the LLM-supplied
-      // arg only when the connection didn't bind one (e.g. in-flight sessions
-      // from a CCC build that pre-dates P7.7.10's URL bake).
-      const sid = getBoundSessionId() ?? rawArgs?.cccSessionId ?? null
-      const cwd = (sid && getCwdForSession(sid)) ?? process.cwd()
-      // Pass cccSessionId only when resolved; null would fail zod validation
-      // (the schema is `z.string().optional()` -- undefined ok, null is not).
-      const mergedArgs: Record<string, unknown> = { ...rawArgs }
-      if (sid != null) mergedArgs.cccSessionId = sid
-      else delete mergedArgs.cccSessionId
+      // SECURITY (adversarial review, #188): trust ONLY the transport-bound
+      // session id. The old code fell back to the LLM-supplied cccSessionId when
+      // the connection hadn't bound one — harmless while the opt-in set was tiny
+      // and user-curated, but once every local session is opted-in that fallback
+      // becomes a cross-session read primitive: a prompt-injected session could
+      // pass ANOTHER session's id, clear the (now-universal) ACL, and have codex
+      // review that session's working tree. Binding the id to the transport URL
+      // (baked in per-session by writeLocalSessionMcpConfig) makes it
+      // unforgeable from inside the model. Legacy in-flight sessions that
+      // pre-date the URL bake self-heal on their next respawn.
+      const sid = getBoundSessionId()
+      if (!sid) {
+        return {
+          content: [{ type: 'text' as const, text: 'Codex review unavailable: this MCP connection has no bound CCC session. Restart the Claude session from inside Conductor.' }],
+          isError: true,
+        }
+      }
+      const cwd = getCwdForSession(sid)
+      if (!cwd) {
+        return {
+          content: [{ type: 'text' as const, text: `Codex review is not enabled for this session. It is available to local Claude Code sessions with a real project directory when Codex is enabled in Settings → Codex.` }],
+          isError: true,
+        }
+      }
+      const mergedArgs: Record<string, unknown> = { ...rawArgs, cccSessionId: sid }
       const result = await runCodexReview(mergedArgs, getOptedIn(), cwd)
       return {
         content: [{ type: 'text' as const, text: result.text }],

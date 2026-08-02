@@ -1198,7 +1198,21 @@ export function spawnPty(
       // (conductor-mcp-server createServer), and SSH sessions never reach this
       // branch, so the tool keeps running only against paths that exist on this
       // machine. The per-config enableCodexReview flag is retired (ignored).
-      registerCodexReviewSession(sessionId, resolvedCwd)
+      //
+      // SECURITY (adversarial review, #188): register the ACTUAL launch cwd
+      // (`claudeCwd`, post-resume-override) — not the pre-override `resolvedCwd`
+      // — and REFUSE to register when that cwd is the bare home directory. A
+      // config whose workingDirectory is '.', empty, or a stale/deleted path
+      // makes resolveCwd() silently fall back to os.homedir(); registering that
+      // would let a prompt-injected session review ~/.ssh, ~/.claude, ~/.aws via
+      // mode:'paths' (containment holds, but the ROOT is wrong). Since universal
+      // opt-in removed the per-config gate that used to bound this, block it at
+      // the source: no legitimate review targets the bare home dir.
+      if (claudeCwd === os.homedir()) {
+        logWarn(`[pty] codex_review NOT registered for ${sessionId}: launch cwd resolved to the home directory (workingDirectory is '.', empty, or a stale path). Set a real project directory to enable review.`)
+      } else {
+        registerCodexReviewSession(sessionId, claudeCwd)
+      }
 
       // Explicitly cd to the project directory, then launch Claude.
       // The cd is critical — it ensures Claude sees the correct project directory

@@ -1,0 +1,234 @@
+// @vitest-environment jsdom
+/**
+ * 2.1.0-beta.5 credential-hygiene regressions (adversarial review, #188).
+ *
+ * Every credential decision in SessionDialog must be gated on the FINAL
+ * sessionType. Three MAJOR findings, each pinned here:
+ *   1. Switching an SSH config to Local orphaned the stored secret (flag
+ *      vanished, no keychain delete) — later auto-typed at a different host.
+ *   2. A password typed into an SSH block that was then switched to Local was
+ *      still written to the keychain for a config with no SSH.
+ *   3. `hasPassword ?? true` default rendered the Save checkbox unticked for a
+ *      key-auth config (which now persists hasPassword:false), silently
+ *      dropping a freshly-typed password.
+ * Plus the two validation gaps: the Codex×SSH combination and a '.' working
+ * directory must both be unsaveable.
+ */
+import React from 'react'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { createRoot, type Root } from 'react-dom/client'
+import { act } from 'react'
+
+;(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
+
+vi.mock('../../../src/renderer/stores/configStore', () => ({
+  useConfigStore: (sel: any) => sel({
+    groups: [],
+    addGroup: vi.fn(),
+    sections: [],
+    addSection: vi.fn(),
+  }),
+}))
+
+const credDelete = vi.fn()
+const credSave = vi.fn()
+
+if (typeof window !== 'undefined') {
+  ;(window as any).electronAPI = {
+    debug: { isEnabled: vi.fn().mockResolvedValue(false) },
+    dialog: { openFolder: vi.fn().mockResolvedValue(null) },
+    credentials: { save: credSave, delete: credDelete },
+  }
+  ;(window as any).electronPlatform = 'win32'
+}
+
+import SessionDialog from '../../../src/renderer/components/SessionDialog'
+
+function setValue(el: HTMLInputElement, value: string) {
+  const proto = el.type === 'checkbox' ? null : Object.getPrototypeOf(el)
+  const setter = proto && Object.getOwnPropertyDescriptor(proto, 'value')?.set
+  act(() => {
+    if (setter) setter.call(el, value)
+    else el.value = value
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+}
+
+function submit(container: HTMLElement) {
+  const form = container.querySelector('form')!
+  act(() => { form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })) })
+}
+
+function cardIn(container: HTMLElement, groupLabel: string, text: string): HTMLButtonElement {
+  const group = container.querySelector(`[role="radiogroup"][aria-label="${groupLabel}"]`)!
+  const btn = Array.from(group.querySelectorAll('button')).find((b) => b.textContent?.startsWith(text))
+  return btn as HTMLButtonElement
+}
+
+function inputByPlaceholder(container: HTMLElement, ph: string): HTMLInputElement | undefined {
+  return Array.from(container.querySelectorAll('input')).find(
+    (i) => (i as HTMLInputElement).placeholder?.includes(ph),
+  ) as HTMLInputElement | undefined
+}
+
+function saveCheckbox(container: HTMLElement, which = 0): HTMLInputElement | undefined {
+  const boxes = Array.from(container.querySelectorAll('input[type="checkbox"]')) as HTMLInputElement[]
+  const labelled = boxes.filter((b) => b.parentElement?.textContent?.includes('Save password'))
+  return labelled[which]
+}
+
+const SSH_WITH_PW = {
+  id: 'cfgAAA',
+  provider: 'claude' as const,
+  label: 'prod box',
+  sessionType: 'ssh' as const,
+  workingDirectory: '~',
+  sshConfig: { host: '10.0.0.5', port: 22, username: 'root', remotePath: '~', hasPassword: true },
+}
+
+const SSH_KEY_AUTH = {
+  id: 'cfgKEY',
+  provider: 'claude' as const,
+  label: 'key box',
+  sessionType: 'ssh' as const,
+  workingDirectory: '~',
+  // The shape EVERY key-auth SSH config now saves as: hasPassword explicitly false.
+  sshConfig: { host: '10.0.0.9', port: 22, username: 'root', remotePath: '~', hasPassword: false },
+}
+
+describe('SessionDialog credential hygiene (#188)', () => {
+  let container: HTMLDivElement
+  let root: Root
+
+  beforeEach(() => {
+    credDelete.mockClear(); credSave.mockClear()
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+  })
+  afterEach(() => { act(() => { root.unmount() }); container.remove() })
+
+  it('F1: switching an SSH config with a stored password to Local deletes the secret and saves no SSH', () => {
+    const onConfirm = vi.fn()
+    act(() => { root.render(React.createElement(SessionDialog, { initial: SSH_WITH_PW, onConfirm, onCancel: vi.fn() })) })
+    // Switch transport to Local, give it a valid absolute working directory.
+    act(() => { cardIn(container, 'Where it runs', 'Local').click() })
+    const wdir = inputByPlaceholder(container, ':\\')  // the win32 working-directory placeholder
+    expect(wdir).toBeTruthy()
+    setValue(wdir!, 'C:\\proj')
+    submit(container)
+    expect(onConfirm).toHaveBeenCalledOnce()
+    const [config, password] = onConfirm.mock.calls[0]
+    expect(config.sshConfig).toBeUndefined()
+    expect(password).toBeUndefined()
+    // The orphaned keychain entry is deleted on confirm.
+    expect(credDelete).toHaveBeenCalledWith('cfgAAA')
+  })
+
+  it('F2: a password typed into SSH then abandoned by switching to Local is never saved', () => {
+    const onConfirm = vi.fn()
+    // New config.
+    act(() => { root.render(React.createElement(SessionDialog, { onConfirm, onCancel: vi.fn() })) })
+    act(() => { cardIn(container, 'Provider', 'Claude Code').click() })
+    act(() => { cardIn(container, 'Where it runs', 'SSH').click() })
+    setValue(inputByPlaceholder(container, '192.168')!, '10.0.0.5')
+    const pw = Array.from(container.querySelectorAll('input[type="password"]'))[0] as HTMLInputElement
+    setValue(pw, 'hunter2')
+    // Change mind: switch to Local.
+    act(() => { cardIn(container, 'Where it runs', 'Local').click() })
+    setValue(inputByPlaceholder(container, ':\\')!, 'C:\\proj')
+    const label = Array.from(container.querySelectorAll('input')).find((i) => (i as HTMLInputElement).placeholder === 'e.g. App Dev') as HTMLInputElement
+    setValue(label, 'oops')
+    submit(container)
+    expect(onConfirm).toHaveBeenCalledOnce()
+    const [config, password] = onConfirm.mock.calls[0]
+    expect(config.sshConfig).toBeUndefined()
+    expect(password).toBeUndefined()  // the abandoned SSH password is NOT handed to the keychain
+  })
+
+  it('F3: typing a password into a key-auth (hasPassword:false) config saves it (checkbox defaults ticked)', () => {
+    const onConfirm = vi.fn()
+    act(() => { root.render(React.createElement(SessionDialog, { initial: SSH_KEY_AUTH, onConfirm, onCancel: vi.fn() })) })
+    const pw = Array.from(container.querySelectorAll('input[type="password"]'))[0] as HTMLInputElement
+    setValue(pw, 'newsecret')
+    const box = saveCheckbox(container)!
+    expect(box.checked).toBe(true)  // must default ticked, not `false ?? true` = false
+    submit(container)
+    const [config, password] = onConfirm.mock.calls[0]
+    expect(config.sshConfig.hasPassword).toBe(true)
+    expect(password).toBe('newsecret')
+  })
+
+  it('untick Save on a stored password still deletes the keychain entry (baseline held)', () => {
+    const onConfirm = vi.fn()
+    act(() => { root.render(React.createElement(SessionDialog, { initial: SSH_WITH_PW, onConfirm, onCancel: vi.fn() })) })
+    const box = saveCheckbox(container)!
+    expect(box.checked).toBe(true)
+    act(() => { box.click() })
+    submit(container)
+    const [config, password] = onConfirm.mock.calls[0]
+    expect(config.sshConfig.hasPassword).toBe(false)
+    expect(password).toBeUndefined()
+    expect(credDelete).toHaveBeenCalledWith('cfgAAA')
+  })
+})
+
+describe('SessionDialog validation gates (#188)', () => {
+  let container: HTMLDivElement
+  let root: Root
+
+  beforeEach(() => {
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+  })
+  afterEach(() => { act(() => { root.unmount() }); container.remove() })
+
+  function saveBtn(): HTMLButtonElement {
+    return Array.from(container.querySelectorAll('button')).find(
+      (b) => /^(Create config|Save changes)$/.test(b.textContent?.trim() ?? ''),
+    ) as HTMLButtonElement
+  }
+
+  it('a hand-edited Codex×SSH config cannot be saved', () => {
+    const onConfirm = vi.fn()
+    act(() => {
+      root.render(React.createElement(SessionDialog, {
+        initial: { id: 'x', provider: 'codex', sessionType: 'ssh', label: 'bad', workingDirectory: '~',
+          sshConfig: { host: '10.0.0.1', port: 22, username: 'root', remotePath: '~' } },
+        onConfirm, onCancel: vi.fn(),
+      }))
+    })
+    expect(saveBtn().disabled).toBe(true)
+    expect(container.textContent).toContain("Codex can't run over SSH")
+    submit(container)
+    expect(onConfirm).not.toHaveBeenCalled()
+  })
+
+  it("a '.' working directory is rejected (transcript-misfiling incident)", () => {
+    const onConfirm = vi.fn()
+    act(() => {
+      root.render(React.createElement(SessionDialog, {
+        initial: { id: 'y', provider: 'claude', sessionType: 'local', label: 'dot', workingDirectory: '.' },
+        onConfirm, onCancel: vi.fn(),
+      }))
+    })
+    expect(saveBtn().disabled).toBe(true)
+    expect(container.textContent).toContain('full path')
+    submit(container)
+    expect(onConfirm).not.toHaveBeenCalled()
+  })
+
+  it('an absolute working directory saves fine', () => {
+    const onConfirm = vi.fn()
+    act(() => {
+      root.render(React.createElement(SessionDialog, {
+        initial: { id: 'z', provider: 'claude', sessionType: 'local', label: 'ok', workingDirectory: 'C:\\proj' },
+        onConfirm, onCancel: vi.fn(),
+      }))
+    })
+    expect(saveBtn().disabled).toBe(false)
+    submit(container)
+    expect(onConfirm).toHaveBeenCalledOnce()
+  })
+})
