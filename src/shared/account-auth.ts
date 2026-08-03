@@ -27,6 +27,14 @@ export interface ProfileAuthInfo {
   refreshTokenExpiresAt?: number
   subscriptionType?: string
   /**
+   * When the credentials file was last written, epoch ms. This is how a past
+   * failure gets retired: a run that failed authentication is only still relevant
+   * if the credentials have NOT been rewritten since. Without it, signing in
+   * cannot clear a warning derived from run history, because signing in does not
+   * produce a new run.
+   */
+  credentialsUpdatedAt?: number
+  /**
    * profiles.json and the profile's own home disagree about which account this
    * is — the home is authoritative, so the label is wrong.
    */
@@ -54,6 +62,24 @@ export interface AuthWindow {
   tone: AuthWindowTone
   /** Ready-to-render sentence. Never mentions the access token. */
   label: string
+}
+
+/**
+ * Does a past authentication failure still describe reality?
+ *
+ * A run that failed with an auth error is stale the moment the credentials are
+ * rewritten — i.e. the moment the user signs in. Signing in does NOT create a new
+ * Insights run, so anything keyed purely on run history would keep warning
+ * forever. This is the retirement rule.
+ */
+export function authFailureStillApplies(
+  runTimestamp: number,
+  info: Pick<ProfileAuthInfo, 'credentialsUpdatedAt' | 'credentialsMissing'> | undefined
+): boolean {
+  if (!info) return true // nothing known about the credentials; keep the warning
+  if (info.credentialsMissing) return true
+  if (typeof info.credentialsUpdatedAt !== 'number') return true
+  return info.credentialsUpdatedAt <= runTimestamp
 }
 
 /** Under this many days, the countdown is red. */

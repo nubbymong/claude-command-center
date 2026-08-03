@@ -8,7 +8,7 @@
 //   * the duplicate/mismatch identity check (#202)
 //   * layer 1 of the Insights pre-flight, "are there credentials at all" (#201)
 
-import { existsSync, readFileSync } from 'fs'
+import { existsSync, readFileSync, statSync } from 'fs'
 import { join } from 'path'
 import { getProfileConfigDir, listProfiles } from './account-profiles'
 import { canonicaliseEmail } from '../shared/account-chip-color'
@@ -34,11 +34,20 @@ function positiveNumber(value: unknown): number | undefined {
 /** Read one profile's credential state. Never throws. */
 export function readProfileAuthInfo(profileId: string, accountEmail?: string): ProfileAuthInfo {
   const home = getProfileConfigDir(profileId)
-  const creds = readJson(join(home, '.claude', '.credentials.json'))?.claudeAiOauth
+  const credentialsFile = join(home, '.claude', '.credentials.json')
+  const creds = readJson(credentialsFile)?.claudeAiOauth
   const oauthEmail: string | undefined = readJson(join(home, '.claude.json'))?.oauthAccount?.emailAddress
 
   if (!creds) {
     return { profileId, accountEmail, oauthEmail, credentialsMissing: true }
+  }
+  // mtime, not a value inside the file: this is how "the user has signed in since
+  // that failure" is established, and a fresh login rewrites the whole file.
+  let credentialsUpdatedAt: number | undefined
+  try {
+    credentialsUpdatedAt = statSync(credentialsFile).mtimeMs
+  } catch {
+    credentialsUpdatedAt = undefined
   }
   return {
     profileId,
@@ -47,7 +56,8 @@ export function readProfileAuthInfo(profileId: string, accountEmail?: string): P
     hasRefreshToken: typeof creds.refreshToken === 'string' && creds.refreshToken.length > 0,
     expiresAt: positiveNumber(creds.expiresAt),
     refreshTokenExpiresAt: positiveNumber(creds.refreshTokenExpiresAt),
-    subscriptionType: typeof creds.subscriptionType === 'string' ? creds.subscriptionType : undefined
+    subscriptionType: typeof creds.subscriptionType === 'string' ? creds.subscriptionType : undefined,
+    credentialsUpdatedAt
   }
 }
 

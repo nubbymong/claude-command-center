@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { describeAuthWindow } from '../../src/shared/account-auth'
+import { authFailureStillApplies, describeAuthWindow } from '../../src/shared/account-auth'
 
 // #203: `.credentials.json` carries TWO expiries and conflating them produces a
 // wrong, alarming UI. Measured on real profiles:
@@ -102,5 +102,34 @@ describe('describeAuthWindow', () => {
       )
       expect(w.tone, String(bad)).toBe('unknown')
     }
+  })
+})
+
+// The reported bug: "even though I logged in, it's still flagging an account as not
+// logged in". The Insights warning was derived from run history, and signing in does
+// NOT produce a new run — so the fix could never clear the warning. This is the
+// retirement rule that fixes it.
+describe('authFailureStillApplies', () => {
+  const RUN_AT = NOW - 2 * HOUR
+
+  it('retires the failure once the user has signed in since', () => {
+    expect(authFailureStillApplies(RUN_AT, { credentialsUpdatedAt: NOW - HOUR })).toBe(false)
+  })
+
+  it('keeps the failure when the credentials predate the failed run', () => {
+    expect(authFailureStillApplies(RUN_AT, { credentialsUpdatedAt: RUN_AT - HOUR })).toBe(true)
+  })
+
+  it('treats credentials written in the same instant as the run as not newer', () => {
+    expect(authFailureStillApplies(RUN_AT, { credentialsUpdatedAt: RUN_AT })).toBe(true)
+  })
+
+  it('keeps the failure when the credentials are gone entirely', () => {
+    expect(authFailureStillApplies(RUN_AT, { credentialsMissing: true, credentialsUpdatedAt: NOW })).toBe(true)
+  })
+
+  it('keeps the failure when nothing is known — fails toward warning, not silence', () => {
+    expect(authFailureStillApplies(RUN_AT, undefined)).toBe(true)
+    expect(authFailureStillApplies(RUN_AT, {})).toBe(true)
   })
 })

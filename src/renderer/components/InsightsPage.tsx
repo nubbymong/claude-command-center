@@ -3,6 +3,7 @@ import { useInsightsStore } from '../stores/insightsStore'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useReauthAccount } from '../hooks/useReauthAccount'
+import { authFailureStillApplies, describeAuthWindow, type ProfileAuthInfo } from '../../shared/account-auth'
 import { resolveAccountNameByEmail, resolveAccountName } from '../../shared/account-chip-color'
 import KpiSidebar from './KpiSidebar'
 import type { CrossAccountInsights, InsightsData } from '../types/electron'
@@ -26,17 +27,21 @@ interface InsightsPageProps {
  */
 function AuthBanner({
   accounts,
+  checking,
   onReauth,
+  onRecheck,
 }: {
   accounts: Array<{ profileId: string; name: string; error?: string }>
+  checking: boolean
   onReauth: (profileId: string, name: string) => void
+  onRecheck: () => void
 }) {
   if (accounts.length === 0) return null
   return (
     <div className="px-4 py-2.5 bg-red/10 border-b border-red/25 shrink-0">
       <div className="flex items-start gap-2">
         <span className="text-red text-xs mt-0.5 shrink-0">{String.fromCodePoint(0x26a0)}</span>
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <p className="text-xs text-red font-medium">
             {accounts.length === 1
               ? 'One account needs to sign in again before Insights can analyse it.'
@@ -46,7 +51,7 @@ function AuthBanner({
             The report still generates, but the metrics and the written analysis need a working
             sign-in. Signing in opens a terminal session for that account.
           </p>
-          <div className="flex flex-wrap gap-1.5 mt-2">
+          <div className="flex flex-wrap items-center gap-1.5 mt-2">
             {accounts.map((a) => (
               <button
                 key={a.profileId}
@@ -57,6 +62,16 @@ function AuthBanner({
                 Sign in: {a.name}
               </button>
             ))}
+            {/* Explicit re-check: the credential files are read on mount, but a
+                sign-in happens in a terminal session this component never hears
+                about, so the user needs a way to say "look again" without a reload. */}
+            <button
+              onClick={onRecheck}
+              disabled={checking}
+              className="text-[11px] px-2 py-0.5 rounded border border-surface1 text-overlay1 hover:text-text transition-colors disabled:opacity-60"
+            >
+              {checking ? 'Checking…' : 'Re-check sign-ins'}
+            </button>
           </div>
         </div>
       </div>
@@ -178,37 +193,75 @@ export default function InsightsPage({ onNavigateToSessions }: InsightsPageProps
       : null
   const runAllLabel = `Run all (${profiles.length})`
 
-  // Accounts Insights has seen fail authentication on their LATEST run. Derived
-  // from the catalogue rather than probed, so it costs nothing and reflects
-  // exactly what the feature actually hit.
-  const accountsNeedingReauth = useMemo(() => {
-    if (!catalogue) return []
-    const latestByProfile = new Map<string, typeof catalogue.runs[number]>()
-    for (const run of catalogue.runs) {
-      if (!run.profileId || run.kind === 'aggregate') continue
-      const current = latestByProfile.get(run.profileId)
-      if (!current || run.timestamp > current.timestamp) latestByProfile.set(run.profileId, run)
+  // LIVE credential state, read from disk. The first cut derived this purely from
+  // run history ("this account's latest run failed authentication"), which cannot
+  // be cleared by the fix: signing in does not produce a new run, so the warning
+  // persisted forever after a successful login. Run history is now only a
+  // secondary hint, retired as soon as the credentials are newer than the run.
+  const [authInfo, setAuthInfo] = useState<ProfileAuthInfo[] | null>(null)
+  const [checkingAuth, setCheckingAuth] = useState(false)
+  const recheckAuth = React.useCallback(async () => {
+    setCheckingAuth(true)
+    try {
+      setAuthInfo(await window.electronAPI.accountProfiles.authInfo())
+    } catch {
+      setAuthInfo([])
+    } finally {
+      setCheckingAuth(false)
     }
+  }, [])
+  useEffect(() => { void recheckAuth() }, [recheckAuth])
+
+  const accountsNeedingReauth = useMemo(() => {
+    if (!authInfo) return []
+    const latestRunByProfile = new Map<string, { timestamp: number; authFailed?: boolean; error?: string; accountEmail?: string }>()
+    for (const run of catalogue?.runs ?? []) {
+      if (!run.profileId || run.kind === 'aggregate') continue
+      const current = latestRunByProfile.get(run.profileId)
+      if (!current || run.timestamp > current.timestamp) latestRunByProfile.set(run.profileId, run)
+    }
+
     const out: Array<{ profileId: string; name: string; error?: string }> = []
-    for (const [profileId, run] of latestByProfile) {
-      if (!run.authFailed) continue
-      const profile = profiles.find((p) => p.id === profileId)
-      out.push({
-        profileId,
-        name: nameForAccount(run.accountEmail) || profile?.name || run.accountEmail || 'Account',
-        error: run.error,
-      })
+    for (const info of authInfo) {
+      const profile = profiles.find((p) => p.id === info.profileId)
+      const email = info.oauthEmail || info.accountEmail || profile?.accountEmail
+      const name = (email ? nameForAccount(email) : null) || profile?.name || email || 'Account'
+
+      // 1. Live state is authoritative and self-clearing.
+      const window_ = describeAuthWindow(info, Date.now())
+      if (window_.tone === 'expired') {
+        out.push({ profileId: info.profileId, name, error: window_.label })
+        continue
+      }
+      // 2. A past auth failure counts only while the credentials have NOT been
+      //    rewritten since it happened.
+      const run = latestRunByProfile.get(info.profileId)
+      if (run?.authFailed && authFailureStillApplies(run.timestamp, info)) {
+        out.push({ profileId: info.profileId, name, error: run.error })
+      }
     }
     return out
-  }, [catalogue, profiles, accountAliases])
+  }, [authInfo, catalogue, profiles, accountAliases])
 
   const reauthAccount = useReauthAccount()
   const handleReauth = (profileId: string, name: string): void => {
     const profile = profiles.find((p) => p.id === profileId)
-    reauthAccount({ id: profileId, name: profile?.name || name }, () => void loadCatalogue())
+    // Re-read the credentials when the login lands, so the banner clears itself
+    // without the user having to press anything.
+    reauthAccount({ id: profileId, name: profile?.name || name }, () => {
+      void loadCatalogue()
+      void recheckAuth()
+    })
     onNavigateToSessions?.()
   }
-  const authBanner = <AuthBanner accounts={accountsNeedingReauth} onReauth={handleReauth} />
+  const authBanner = (
+    <AuthBanner
+      accounts={accountsNeedingReauth}
+      checking={checkingAuth}
+      onReauth={handleReauth}
+      onRecheck={() => void recheckAuth()}
+    />
+  )
 
   // Codex-only empty state: user has Codex sessions but no Claude sessions.
   // Insights are Claude-only -- show an explanatory message rather than the
@@ -381,6 +434,17 @@ export default function InsightsPage({ onNavigateToSessions }: InsightsPageProps
             {statusMessage || 'Running…'}
           </>
         ) : 'New run'}
+      </button>
+      {/* Reloads the run catalogue AND re-reads every account's credentials. Both
+          change outside this view — a run finishing elsewhere, a sign-in completing
+          in a terminal session — and neither pushes an event here. */}
+      <button
+        onClick={() => { void loadCatalogue(); void recheckAuth() }}
+        disabled={checkingAuth}
+        title="Reload reports and re-check account sign-ins"
+        className="text-xs px-2 py-0.5 rounded text-overlay1 hover:text-text hover:bg-surface0 transition-colors disabled:opacity-60"
+      >
+        {checkingAuth ? 'Checking…' : 'Refresh'}
       </button>
       {multiAccount && (
         <button

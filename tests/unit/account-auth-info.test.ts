@@ -79,6 +79,16 @@ describe('readProfileAuthInfo', () => {
     expect(readProfileAuthInfo('p1').credentialsMissing).toBe(true)
   })
 
+  it('records when the credentials were last written', () => {
+    // This is what retires a stale auth failure: signing in rewrites the file, and
+    // signing in does not produce a new Insights run to compare against.
+    const before = Date.now() - 1000
+    seed('p1', { oauthEmail: 'a@example.com' })
+    const info = readProfileAuthInfo('p1', 'a@example.com')
+    expect(info.credentialsUpdatedAt).toBeGreaterThanOrEqual(before)
+    expect(info.credentialsUpdatedAt).toBeLessThanOrEqual(Date.now() + 1000)
+  })
+
   it('reports an absent refresh token distinctly from absent credentials', () => {
     seed('p1', { refreshToken: '' })
     const info = readProfileAuthInfo('p1')
