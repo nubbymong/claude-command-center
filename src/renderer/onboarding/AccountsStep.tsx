@@ -67,7 +67,7 @@ export function AccountsStep({ onNext, onBack }: { onNext: () => void; onBack: (
           <div className="assure">
             <div className="assure-ic">{CHECK}</div>
             <div>
-              <b>Claude Code outside Command Center keeps working exactly as today.</b>
+              <b>Claude Code outside the Conductor keeps working exactly as today.</b>
               <span>
                 Terminal, IDE, anywhere: same login, same history. Nothing is moved or rewritten, and your setup is
                 backed up once before accounts are ever set up.

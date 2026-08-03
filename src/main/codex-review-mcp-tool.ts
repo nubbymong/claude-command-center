@@ -144,7 +144,7 @@ export async function runCodexReview(
   if (!args.cccSessionId) {
     return {
       isError: true,
-      text: 'Codex review unavailable: no CCC session id bound to this MCP connection. Spawn the Claude session from inside the Conductor app.',
+      text: 'Codex review unavailable: no Conductor session id bound to this MCP connection. Spawn the Claude session from inside AI Code Conductor.',
     }
   }
   // Narrow once and reuse so a future refactor adding an `await` between
@@ -286,7 +286,7 @@ export function registerCodexReviewTool(
 ): void {
   server.tool(
     'codex_review',
-    'Get a Codex (gpt-5.5) code review on a change. Use when the user asks for a "Codex review" or "second opinion". The mode arg picks scope: "working" for uncommitted changes (no extra arg), "range" for a git revision range (provide range, e.g. "HEAD~1..HEAD"), "paths" for specific files (provide paths). Optional focus directs Codex\'s attention. Returns the review markdown plus a residual rate-limit footer so you can self-govern usage. The CCC session id is resolved automatically from the MCP connection -- no need to pass it.',
+    'Get a Codex (gpt-5.5) code review on a change. Use when the user asks for a "Codex review" or "second opinion". The mode arg picks scope: "working" for uncommitted changes (no extra arg), "range" for a git revision range (provide range, e.g. "HEAD~1..HEAD"), "paths" for specific files (provide paths). Optional focus directs Codex\'s attention. Returns the review markdown plus a residual rate-limit footer so you can self-govern usage. The Conductor session id is resolved automatically from the MCP connection -- no need to pass it.',
     {
       cccSessionId: zMod.string().optional().describe('Internal: normally resolved automatically from the MCP connection. Set this only as a back-compat fallback for legacy / in-flight sessions where the server has not bound a session id; new code should leave it unset.'),
       mode: zMod.enum(['working', 'range', 'paths']).describe('Scope: working diff, git range, or explicit paths'),

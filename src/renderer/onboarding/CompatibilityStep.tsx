@@ -69,12 +69,12 @@ export function CompatibilityStep({
                 <div className="v-ic">!</div>
                 <div>
                   <b>Your Claude Code is older than we've validated.</b>
-                  <span>Command Center is built for {VALIDATED_CC_VERSION}+. On {version}, some things may not work.</span>
+                  <span>The Conductor is built for {VALIDATED_CC_VERSION}+. On {version}, some things may not work.</span>
                 </div>
               </div>
               <div className="updbox">
                 <div className="ub-l">
-                  <b>Update Claude Code, then reopen Command Center</b>
+                  <b>Update Claude Code, then reopen the Conductor</b>
                   <span>
                     Run <code>claude update</code>, or let it update itself. Once you're on {VALIDATED_CC_VERSION}+,
                     we'll carry on from here.

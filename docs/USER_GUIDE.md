@@ -1,4 +1,4 @@
-# Claude Command Center — User Guide
+# AI Code Conductor — User Guide
 
 A task-oriented manual: *how do I…* for everyday use. For the feature tour and
 install instructions see [`README.md`](../README.md); for running a dev build

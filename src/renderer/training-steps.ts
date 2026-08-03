@@ -77,7 +77,7 @@ export const trainingSteps: TrainingStep[] = [
       'Run more than one Claude account side by side. Your existing login is captured into a protected primary account on first run, and every session runs under a saved, isolated account, so signing in to one never disturbs another or your default login.',
     highlights: [
       'Pick the account at **launch time** -- the first time a session spawns this run, a small dialog asks which account to use (pre-set to the last one you used)',
-      'Add an account by running **`/login`** in a session: CCC detects the new login and offers to save it as a separate named account',
+      'Add an account by running **`/login`** in a session: The app detects the new login and offers to save it as a separate named account',
       '**Per-session isolation** -- each session gets its own private home, so two sessions on different accounts never cross over',
       'Your **primary** account (the one captured on first run) is protected and can never be deleted',
       'Memory, settings, and history stay **shared** across all accounts',
@@ -399,7 +399,7 @@ export const trainingSteps: TrainingStep[] = [
     sinceVersion: '1.5.30',
     section: 'admin',
     summary:
-      "Logs is a chat-transcript viewer. CCC indexes Claude's own conversation transcripts (which live in ~/.claude/projects) and renders them back as a readable chat -- messages, tool calls, and thinking -- with a timeline rail for fast scrubbing and full-text search across everything.",
+      "Logs is a chat-transcript viewer. The Conductor indexes Claude's own conversation transcripts (which live in ~/.claude/projects) and renders them back as a readable chat -- messages, tool calls, and thinking -- with a timeline rail for fast scrubbing and full-text search across everything.",
     highlights: [
       'Browse conversations as a chat, grouped by config (filter by account)',
       'A timeline rail beside the transcript scrubs the whole conversation; click to jump',
@@ -453,30 +453,30 @@ export const trainingSteps: TrainingStep[] = [
   },
   {
     id: 'sentinel',
-    title: 'CCC Sentinel',
+    title: 'Sentinel',
     sinceVersion: '1.5.37',
     section: 'admin',
     summary:
-      'An opt-in watcher that notices when Claude Code updates and checks whether the new version might affect CCC. It surfaces findings in a labelled "Sentinel" chip and a panel, proposes registry fixes you apply yourself, and never changes anything automatically.',
+      'An opt-in watcher that notices when Claude Code updates and checks whether the new version might affect the app. It surfaces findings in a labelled "Sentinel" chip and a panel, proposes registry fixes you apply yourself, and never changes anything automatically.',
     highlights: [
       'Runs on startup when Claude Code\'s version changes; **fail-open** so it never blocks the app',
-      'Checks the CC changelog against CCC\'s compatibility assumptions',
+      'Checks the CC changelog against the app\'s compatibility assumptions',
       'Proposes **model and effort registry** fixes you **Apply** (or Dismiss) -- never automatic',
       'A hot-reloadable registry means unknown or brand-new models still get a colour, label, and pricing',
-      'Opt-in -- turn it on or off in **Settings → CCC Sentinel**',
+      'Opt-in -- turn it on or off in **Settings → Sentinel**',
     ],
     howToTrigger: [
       { label: 'Open', value: 'Click the Sentinel chip in the title bar' },
-      { label: 'Enable', value: 'Settings → CCC Sentinel → Enable' },
+      { label: 'Enable', value: 'Settings → Sentinel → Enable' },
       { label: 'Apply a fix', value: 'Sentinel panel → Apply on a proposal' },
     ],
     proTip:
       'When a finding offers an Apply button it is a safe registry change you can take in one click; everything else is a compatibility report so you know what to watch after a Claude Code update.',
     bullets: [
-      'Opt-in watcher that flags when a **Claude Code update** might affect CCC',
+      'Opt-in watcher that flags when a **Claude Code update** might affect the app',
       'Findings show in a labelled **Sentinel chip** and a panel',
       'Proposes **registry fixes you apply yourself** -- nothing changes automatically',
-      'Toggle it in **Settings → CCC Sentinel**',
+      'Toggle it in **Settings → Sentinel**',
     ],
     // No dedicated Sentinel capture exists yet; the Settings shot shows where
     // it is enabled. (Future capture: step-sentinel.jpg / the Sentinel panel.)
@@ -530,12 +530,12 @@ export const trainingSteps: TrainingStep[] = [
       { label: 'Disable globally', value: 'Settings → General → Security → Disable Claude Code dynamic workflows' },
     ],
     proTip:
-      'Workflows can burn 1000-agent tokens fast. CCC\'s tokenomics still tracks the spend per session so you can see exactly what a run cost.',
+      'Workflows can burn 1000-agent tokens fast. The Conductor\'s tokenomics still tracks the spend per session so you can see exactly what a run cost.',
     bullets: [
       '**Background orchestration** -- subagents run in parallel while your session stays free',
       '**/effort ultracode** in Claude enables it automatically for every task',
       '**/deep-research** is the bundled example; **/workflows** lists active runs',
-      'CCC: **Disable Claude Code dynamic workflows** in Settings -> Security if you want it off',
+      'Conductor: **Disable Claude Code dynamic workflows** in Settings -> Security if you want it off',
     ],
     screenshotFilename: 'step-dynamic-workflows.jpg',
   },

@@ -360,7 +360,7 @@ describe('codex_review tool', () => {
       optedIn, gitCwd,
     )
     expect(result.isError).toBe(true)
-    expect(result.text).toContain('no CCC session id bound')
+    expect(result.text).toContain('no Conductor session id bound')
     expect(runCodexStreaming).not.toHaveBeenCalled()
   })
 })
@@ -437,7 +437,7 @@ describe('registerCodexReviewTool resolver (P7.7.10 transport binding)', () => {
     expect(out.content[0].text).not.toContain('not enabled')
   })
 
-  it('returns "no CCC session id bound" when neither bound nor arg sid is present', async () => {
+  it('returns "no Conductor session id bound" when neither bound nor arg sid is present', async () => {
     registerCodexReviewTool(
       mockServer,
       mockZ,
@@ -448,7 +448,7 @@ describe('registerCodexReviewTool resolver (P7.7.10 transport binding)', () => {
     expect(resolver).not.toBeNull()
     const out = await resolver!({ mode: 'paths', paths: ['x'] })
     expect(out.isError).toBe(true)
-    expect(out.content[0].text).toContain('no CCC session id bound')
+    expect(out.content[0].text).toContain('no Conductor session id bound')
     expect(runCodexStreaming).not.toHaveBeenCalled()
   })
 

@@ -1,7 +1,7 @@
 @echo off
 setlocal
 REM ============================================================================
-REM ccc - launch Claude Command Center (DEV) alongside a running PROD install.
+REM ccc - launch AI Code Conductor (DEV) alongside a running PROD install.
 REM
 REM Distributed WITH the repo (scripts\ccc.cmd) so its data-isolation / seed /
 REM cleanup logic is versioned and updates with the code. Your PATH `ccc` is a
@@ -46,7 +46,7 @@ if errorlevel 9 (
   exit /b 1
 )
 
-start "Claude Command Center (dev)" cmd /c "%~f0" __run
+start "AI Code Conductor (dev)" cmd /c "%~f0" __run
 exit /b 0
 
 :run
@@ -60,12 +60,12 @@ if not exist "%CCC_REPO%\package.json" (
   goto :eof
 )
 cd /d "%CCC_REPO%"
-title Claude Command Center (dev)
+title AI Code Conductor (dev)
 
 set "CCC_BRANCH=?"
 for /f "delims=" %%b in ('git rev-parse --abbrev-ref HEAD 2^>nul') do set "CCC_BRANCH=%%b"
 
-echo [ccc] Claude Command Center (dev)
+echo [ccc] AI Code Conductor (dev)
 echo [ccc]   repo:     %CCC_REPO%
 echo [ccc]   branch:   %CCC_BRANCH%
 echo [ccc]   dev data: %CCC_DEV_DATA_DIR%

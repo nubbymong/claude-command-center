@@ -16,7 +16,7 @@ const STEPS: TourStep[] = [
   {
     selector: null,
     title: 'This is your workbench',
-    body: 'Command Center runs your Claude (and Codex) sessions side by side. A quick look at where things live, then we’ll start your first session.',
+    body: 'AI Code Conductor runs your Claude (and Codex) sessions side by side. A quick look at where things live, then we’ll start your first session.',
   },
   {
     selector: '[data-tour="nav-rail"]',

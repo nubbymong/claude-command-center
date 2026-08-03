@@ -1,5 +1,5 @@
 /**
- * Pure helpers for the CCC Sentinel panel (severe-breaking-only): the open
+ * Pure helpers for the Sentinel panel (severe-breaking-only): the open
  * breaking findings + plain-text rendering, so the panel's Copy buttons and the
  * rendered list share ONE definition of what is shown (copy can never drift from
  * the rendered report). Kept pure + framework-free so it is unit-tested without
@@ -52,7 +52,7 @@ export function formatSentinelReportText(snap: SentinelStateSnapshot | null): st
   const breaking = selectBreakingFindings(snap)
   const version = snap?.lastSeenCcVersion ?? 'unknown'
   const when = snap?.lastAnalysisAt ? new Date(snap.lastAnalysisAt).toISOString() : 'no analysis yet'
-  const out: string[] = ['CCC Sentinel: Breaking Changes', `CC ${version} · ${when}`, '']
+  const out: string[] = ['Sentinel: Breaking Changes', `CC ${version} · ${when}`, '']
   if (breaking.length === 0) {
     out.push(`No breaking changes. Claude Code ${version} is compatible.`)
   } else {

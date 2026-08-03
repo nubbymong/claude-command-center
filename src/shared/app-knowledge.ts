@@ -1,9 +1,9 @@
 /**
- * Curated, user-facing knowledge about Claude Command Center.
+ * Curated, user-facing knowledge about AI Code Conductor.
  *
  * SINGLE SOURCE for two surfaces:
  *  - the in-app searchable Help panel (renderer renders the sections), and
- *  - the "Ask Command Center" session: main stages this as app-knowledge.md
+ *  - the "Ask Conductor" session: main stages this as app-knowledge.md
  *    (plus a CLAUDE.md preamble) in a help workspace folder, and the ask
  *    session launches there so Claude reads it automatically.
  *
@@ -20,8 +20,8 @@ export interface AppKnowledgeSection {
 export const APP_KNOWLEDGE_SECTIONS: AppKnowledgeSection[] = [
   {
     id: 'overview',
-    title: 'What is Command Center?',
-    body: `Claude Command Center runs the Claude Code you already have, side by side: multiple sessions in one window, with saved configs, live usage in a status line, cost tracking, searchable history, and optional GitHub and Codex integrations. It sits on top of Claude Code; it never replaces it, and Claude Code outside Command Center keeps working exactly as before.`,
+    title: 'What is AI Code Conductor?',
+    body: `AI Code Conductor (formerly Claude Command Center) runs the Claude Code you already have, side by side: multiple sessions in one window, with saved configs, live usage in a status line, cost tracking, searchable history, and optional GitHub and Codex integrations. It sits on top of Claude Code; it never replaces it, and Claude Code outside the Conductor keeps working exactly as before. It is an independent community project, not affiliated with or endorsed by Anthropic.`,
   },
   {
     id: 'sessions',
@@ -41,17 +41,17 @@ export const APP_KNOWLEDGE_SECTIONS: AppKnowledgeSection[] = [
   {
     id: 'statusline',
     title: 'The status line',
-    body: `Each Claude session can show a live status line: model, account, tokens against the context window, an API-equivalent cost estimate, lines changed, duration, and your 5-hour and weekly rate limits. Pick exactly which elements appear, and the font and size, in Settings, Status Line tab; the master switch there turns the whole thing off for new sessions. It applies only to sessions launched from Command Center and never changes your global Claude config.`,
+    body: `Each Claude session can show a live status line: model, account, tokens against the context window, an API-equivalent cost estimate, lines changed, duration, and your 5-hour and weekly rate limits. Pick exactly which elements appear, and the font and size, in Settings, Status Line tab; the master switch there turns the whole thing off for new sessions. It applies only to sessions launched from the Conductor and never changes your global Claude config.`,
   },
   {
     id: 'tools',
     title: 'Built-in tools',
-    body: `Command Center can hand every session a small set of ready-made tools with no setup: Vision (Claude can open a real browser, take screenshots, click, type, and run JavaScript; Claude sessions only), Code review (an independent second opinion on your working changes, powered by Codex, so it needs Codex enabled), and host screenshots (pull images from your machine into the conversation, even over SSH). Toggle them in Settings, General, under Built-in Tools. They are registered per session and only for sessions launched here; nothing is added to your global Claude or Codex config.`,
+    body: `AI Code Conductor can hand every session a small set of ready-made tools with no setup: Vision (Claude can open a real browser, take screenshots, click, type, and run JavaScript; Claude sessions only), Code review (an independent second opinion on your working changes, powered by Codex, so it needs Codex enabled), and host screenshots (pull images from your machine into the conversation, even over SSH). Toggle them in Settings, General, under Built-in Tools. They are registered per session and only for sessions launched here; nothing is added to your global Claude or Codex config.`,
   },
   {
     id: 'codex',
     title: 'Codex (Beta)',
-    body: `Command Center can also run OpenAI's Codex CLI in the same workbench: sessions, saved configs, status line telemetry, and history all work. Sign in with ChatGPT or an API key in Settings, Codex tab. Codex support is Beta. Turning Codex off also removes the Code review built-in tool from new sessions.`,
+    body: `AI Code Conductor can also run OpenAI's Codex CLI in the same workbench: sessions, saved configs, status line telemetry, and history all work. Sign in with ChatGPT or an API key in Settings, Codex tab. Codex support is Beta. Turning Codex off also removes the Code review built-in tool from new sessions.`,
   },
   {
     id: 'pages',
@@ -65,13 +65,13 @@ export const APP_KNOWLEDGE_SECTIONS: AppKnowledgeSection[] = [
   },
   {
     id: 'sentinel',
-    title: 'CCC Sentinel',
+    title: 'Sentinel',
     body: `Sentinel is an optional watcher that checks new Claude Code releases for changes that could affect your setup and proposes fixes. It is off by default because analysis spends Claude tokens when Claude updates. Enable it in Settings, and note it takes effect after a restart. Its chip lives in the title bar.`,
   },
   {
     id: 'privacy',
     title: 'Privacy and data',
-    body: `Everything stays on your machine: configs, logs index, memory, and cost data are local files. Session-log indexing (for the Logs, Memory, and Tokenomics pages) reads Claude's own transcript files locally and can be turned off in Settings, General. Network traffic happens only for the services you connect: Claude and Codex talk to their own APIs, and the GitHub integration talks only to github.com. Command Center sends no telemetry.`,
+    body: `Everything stays on your machine: configs, logs index, memory, and cost data are local files. Session-log indexing (for the Logs, Memory, and Tokenomics pages) reads Claude's own transcript files locally and can be turned off in Settings, General. Network traffic happens only for the services you connect: Claude and Codex talk to their own APIs, and the GitHub integration talks only to github.com. AI Code Conductor sends no telemetry.`,
   },
   {
     id: 'shortcuts',
@@ -88,7 +88,7 @@ export const APP_KNOWLEDGE_SECTIONS: AppKnowledgeSection[] = [
 /** The full knowledge as one markdown document (for the ask-session workspace). */
 export function appKnowledgeMarkdown(): string {
   return [
-    '# Claude Command Center: user guide',
+    '# AI Code Conductor: user guide',
     '',
     ...APP_KNOWLEDGE_SECTIONS.flatMap((s) => [`## ${s.title}`, '', s.body, '']),
   ].join('\n')

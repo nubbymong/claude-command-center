@@ -52,8 +52,8 @@ export function registerUpdateHandlers(): void {
   ipcMain.handle('update:selectSourcePath', async () => {
     const result = await dialog.showOpenDialog({
       properties: ['openDirectory'],
-      title: 'Select Claude Command Center Source Directory',
-      message: 'Select the folder containing the Claude Command Center source code (with package.json)'
+      title: 'Select AI Code Conductor Source Directory',
+      message: 'Select the folder containing the AI Code Conductor source code (with package.json)'
     })
     if (result.canceled || result.filePaths.length === 0) return null
 

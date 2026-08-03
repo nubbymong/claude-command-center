@@ -21,7 +21,7 @@ export function OnboardingShell({ phase, children }: { phase: number; children: 
       </div>
       <div className="top">
         <BrandMark className="blogo" />
-        <span className="bname">Claude Command Center</span>
+        <span className="bname">AI Code Conductor</span>
         <div className="crumbs">
           {PHASES.map((n, i) => (
             <span key={n} className={crumbClass(i, phase)}>

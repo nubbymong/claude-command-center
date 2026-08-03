@@ -71,7 +71,7 @@ The dev switch activates whenever the build is **unpackaged** (`app.isPackaged
 
 ## DEV labeling
 
-- OS window / taskbar title: **"Claude Command Center — DEV"**.
+- OS window / taskbar title: **"AI Code Conductor — DEV"**.
 - Title bar: an amber **DEV** pill and an amber underline accent.
 
 ## Caveats

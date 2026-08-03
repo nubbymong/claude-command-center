@@ -58,7 +58,7 @@ describe('buildSessionNotFoundResponse (#435)', () => {
   it('includes the recovery instructions in the body', () => {
     const result = buildSessionNotFoundResponse('abc12345xyz', new Map(), undefined)
     expect(result.body).toContain('MCP transport session not found')
-    expect(result.body).toContain('restart the Claude session inside CCC')
+    expect(result.body).toContain('restart the Claude session inside AI Code Conductor')
     expect(result.body).toContain('SSE connection')
     // No JSON wrapping -- plain text.
     expect(result.body.trim().startsWith('{')).toBe(false)

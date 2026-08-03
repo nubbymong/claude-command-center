@@ -36,7 +36,7 @@ export default function VisionSubTool() {
       icon={visionIcon}
       statusLabel={statusLabel}
       statusColor={statusColor}
-      description="Headless Chrome via CDP. Auto-starts at CCC boot; Stop button kills it for the current run."
+      description="Headless Chrome via CDP. Auto-starts at app boot; Stop button kills it for the current run."
       toolList={['screenshot', 'navigate', 'click', 'type', 'eval']}
       actions={actions}
     />

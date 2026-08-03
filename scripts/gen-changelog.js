@@ -159,7 +159,7 @@ function renderChangelog(entries) {
   const out = []
   out.push('# Changelog')
   out.push('')
-  out.push('All notable changes to Claude Command Center are documented here.')
+  out.push('All notable changes to AI Code Conductor (formerly Claude Command Center) are documented here.')
   out.push('')
   out.push('The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),')
   out.push('and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).')

@@ -40,7 +40,7 @@ export async function deployClaudeStatuslineScript(resourcesDir: string): Promis
 
   // Write the Node.js statusline script
   const scriptContent = `#!/usr/bin/env node
-// Claude Command Center - Statusline bridge script
+// AI Code Conductor - Statusline bridge script
 // Reads JSON from stdin (sent by Claude Code), fetches rate limits, writes status file
 const fs = require('fs');
 const path = require('path');

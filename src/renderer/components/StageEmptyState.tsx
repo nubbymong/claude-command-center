@@ -31,7 +31,7 @@ export default function StageEmptyState({ configs, onLaunch, onShowAllConfigs, o
       <div className="text-center max-w-md px-6">
         <div className="text-5xl mb-4 font-mono text-overlay1">&gt;_</div>
         <h2 className="text-xl font-semibold mb-1 text-text">
-          {hasConfigs ? 'Start a saved config' : 'Claude Command Center'}
+          {hasConfigs ? 'Start a saved config' : 'AI Code Conductor'}
         </h2>
         <p className="text-sm text-subtext0 mb-5">
           {hasConfigs ? 'Pick a saved config to launch a new session.' : 'Create a saved config to get started.'}

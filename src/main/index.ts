@@ -602,7 +602,7 @@ function createWindow(): void {
   // unmistakable next to a running prod window. Guard page-title-updated so the
   // renderer's <title> can't overwrite it. No-op in prod.
   if (!app.isPackaged) {
-    const devTitle = 'Claude Command Center — DEV'
+    const devTitle = 'AI Code Conductor — DEV'
     mainWindow.on('page-title-updated', (e) => { e.preventDefault(); mainWindow?.setTitle(devTitle) })
     mainWindow.setTitle(devTitle)
   }
@@ -637,7 +637,9 @@ if (!gotTheLock) {
 
     if (process.platform === 'darwin') {
       menuTemplate.push({
-        label: app.name,
+        // app.name is the npm package name ('claude-conductor', frozen for the
+        // userData path) — hardcode the display name instead.
+        label: 'AI Code Conductor',
         submenu: [
           { role: 'about' },
           { type: 'separator' },
@@ -1024,7 +1026,7 @@ if (!gotTheLock) {
     logError('[boot] startup failed -- the app may be partially initialised:', err)
     try {
       dialog.showErrorBox(
-        'Claude Command Center failed to start cleanly',
+        'AI Code Conductor failed to start cleanly',
         `Startup hit an error and some features may not work. Please restart the app.\n\n${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
       )
     } catch { /* dialog unavailable (very early failure) */ }

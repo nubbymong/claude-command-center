@@ -1,4 +1,4 @@
-# Contributing to Claude Command Center
+# Contributing to AI Code Conductor
 
 Thanks for your interest in contributing! This document covers setup, coding standards, and the PR process.
 
