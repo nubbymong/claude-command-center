@@ -64,6 +64,50 @@ export { mangleCwdToProjectDir }
  * - Already-canonical paths pass through unchanged (normalized).
  * - Paths without a `.claude/projects` segment return `null`.
  */
+/**
+ * Longest `transcript_path` any source may hand to the binder, in BYTES.
+ *
+ * Purely a log/memory bound, NOT a stand-in for a platform limit: Linux
+ * PATH_MAX is 4096 bytes and macOS is 1024, so on POSIX the OS is already the
+ * tighter constraint, while Windows long paths allow far more. Bytes rather than
+ * UTF-16 code units because 4096 units of astral characters is 16 KiB of UTF-8 --
+ * a code-unit bound reads up to 4x tighter than it is.
+ */
+export const MAX_TRANSCRIPT_PATH_BYTES = 4096
+
+/**
+ * Shape-filter a transcript path arriving from an untrusted source.
+ *
+ * Lives HERE, next to the containment check, because there are two sources that
+ * feed the binder -- the hooks gateway's POST body and the SSH statusline
+ * sentinel -- and they disagreed about this field: the gateway filtered it, the
+ * sentinel only type-checked it. Two copies of a rule is how the two copies
+ * drift, and a third source added later would pick whichever it happened to
+ * import. One filter, at the same module as the containment it complements.
+ *
+ * Containment is deliberately NOT done here: that is
+ * {@link canonicalizeTranscriptPath}'s job, and duplicating it is the same
+ * mistake one level down.
+ *
+ * Rejects a non-string, an empty string, anything over the byte bound, and any
+ * C0/DEL control character. The NUL matters most: it truncates the path for a
+ * native consumer while the JS string keeps going -- two layers disagreeing
+ * about where a string ends. CR and LF matter because this value is interpolated
+ * into single-line log records, so either one forges a record (the log sink
+ * escapes them too; this is the belt to that braces).
+ *
+ * Returns the usable path, or null to drop the field. Dropping is safe -- the
+ * transcript is also discovered heuristically, so a rejected value costs a slower
+ * discovery, never a broken session.
+ */
+export function sanitiseTranscriptPath(v: unknown): string | null {
+  if (typeof v !== 'string') return null
+  if (v.length === 0) return null
+  if (Buffer.byteLength(v, 'utf8') > MAX_TRANSCRIPT_PATH_BYTES) return null
+  if (/[\u0000-\u001f\u007f]/.test(v)) return null
+  return v
+}
+
 export function canonicalizeTranscriptPath(p: string): string | null {
   if (!p) return null
 

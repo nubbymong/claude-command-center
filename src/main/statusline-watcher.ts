@@ -34,6 +34,7 @@ import { notifyClaudeTelemetry } from './providers/claude/telemetry'
 import { sentinelObserve } from './sentinel/index'
 import { isBackgroundContext } from './background-context'
 import { logWarn } from './debug-logger'
+import { sanitiseTranscriptPath } from './logging/transcript-discovery'
 
 // Re-export from shared types for backward compatibility
 export type { StatuslineData } from '../shared/types'
@@ -161,6 +162,16 @@ function sanitiseSentinelPayload(v: unknown): StatuslineData | null {
   const out: Record<string, unknown> = { sessionId }
   for (const [key, val] of Object.entries(src)) {
     if (key === 'sessionId') continue
+    // transcriptPath goes to the SAME transcript binder the hooks gateway feeds,
+    // and the gateway shape-filters it (#180). This side only type-checked it, so
+    // the two sources disagreed about the same field: any string, any length, any
+    // characters. Use the one filter, so a third source added later cannot pick
+    // the weaker of two.
+    if (key === 'transcriptPath') {
+      const clean = sanitiseTranscriptPath(val)
+      if (clean !== null) out[key] = clean
+      continue
+    }
     const t = typeof val
     // Scalars are copied when they are finite/real; objects are passed through
     // for the nested shapes (rateLimitExtra, usage buckets) that the renderer

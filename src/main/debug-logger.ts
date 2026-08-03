@@ -100,16 +100,39 @@ function getStream(): fs.WriteStream | null {
   }
 }
 
+/**
+ * One log record is one physical line: `[<iso>] [<LEVEL>] <message>\n`.
+ *
+ * So a CR or LF anywhere INSIDE `message` ends the record early and everything
+ * after it becomes a line the value's author fully controls -- including a
+ * fabricated timestamp, level and subsystem tag. Plenty of values interpolated
+ * into log lines here are remote-influenced (a transcript path off an SSH
+ * sentinel, a hook body field), and forging `[ERROR] [ssh] ...` records is a
+ * cheap way to mislead whoever reads the log after an incident. Flooding evicts
+ * genuine history through rotation for the same reason.
+ *
+ * Escaped at the SINK rather than at each caller: the callers are many, several
+ * are on hot paths, and one that forgets is invisible until someone reads the
+ * log. A stack trace's own newlines are preserved -- those are ours and a reader
+ * needs them -- by escaping each arg before the multi-line Error case is joined.
+ */
+function stripRecordBreaks(s: string): string {
+  return s.includes('\n') || s.includes('\r')
+    ? s.replace(/\r/g, '\\r').replace(/\n/g, '\\n')
+    : s
+}
+
 function formatMessage(level: string, ...args: unknown[]): string {
   const timestamp = new Date().toISOString()
   const message = args.map(arg => {
     if (arg instanceof Error) {
-      return `${arg.message}\n${arg.stack}`
+      // Our own stack — keep it readable across lines.
+      return `${stripRecordBreaks(arg.message)}\n${arg.stack}`
     }
     if (typeof arg === 'object') {
-      try { return JSON.stringify(arg) } catch { return String(arg) }
+      try { return stripRecordBreaks(JSON.stringify(arg)) } catch { return stripRecordBreaks(String(arg)) }
     }
-    return String(arg)
+    return stripRecordBreaks(String(arg))
   }).join(' ')
   return `[${timestamp}] [${level}] ${message}\n`
 }

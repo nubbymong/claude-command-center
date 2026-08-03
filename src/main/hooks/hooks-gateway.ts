@@ -20,6 +20,10 @@ import type {
 // dependency is no longer needed (#483).
 import { registerResponder as defaultRegister, deregisterResponder as defaultDeregister } from '../permission-responders'
 import { logTrace, logWarn, logError } from '../debug-logger'
+// ONE shape filter for the transcript path, shared with the SSH sentinel source.
+// Re-exported so the existing gateway tests keep importing it from here.
+import { sanitiseTranscriptPath } from '../logging/transcript-discovery'
+export { sanitiseTranscriptPath }
 
 // Diagnostics (opt-in, verbose-gated): module-level in-flight counter for the
 // hooks HTTP handler. Incremented on handler entry, decremented when the
@@ -67,23 +71,6 @@ export function tokensMatch(presented: string, expected: string): boolean {
 }
 
 /**
- * Longest `transcript_path` this gateway will hand to the binder.
- *
- * The binder canonicalises and contains the path (that is the fix from
- * GHSA-hw7c-g5pw-w725, and it is at the choke point so it covers this caller
- * too). This bound is about the OTHER half: the value arrives in a hook POST
- * body, is logged, and is used to build lookups, so an unbounded string is a
- * cheap way to bloat the log and the discovery sink.
- *
- * Measured in BYTES, not UTF-16 code units: 4096 code units of astral characters
- * is 16 KiB of UTF-8, so a code-unit bound is up to 4x looser than it reads. This
- * is purely a log/memory bound and does not stand in for a platform limit --
- * Linux PATH_MAX is 4096 bytes and macOS is 1024, so on POSIX the OS is already
- * the tighter constraint, while Windows long paths allow far more.
- */
-const MAX_TRANSCRIPT_PATH_BYTES = 4096
-
-/**
  * Bounds for the scalar fields lifted straight out of a hook body.
  *
  * `hooks-types.ts` documents a hard per-session feed ceiling: RING_BUFFER_CAP
@@ -107,36 +94,6 @@ function boundScalar(v: string | undefined): string | undefined {
 /** Truncate the derived feed summary. */
 function boundSummary(v: string): string {
   return v.length > MAX_SUMMARY_LENGTH ? `${v.slice(0, MAX_SUMMARY_LENGTH - 1)}…` : v
-}
-
-/**
- * Shape-filter a `transcript_path` lifted out of a hook POST body.
- *
- * GHSA-hw7c-g5pw-w725 fixed `canonicalizeTranscriptPath`, which is the choke
- * point, and traced ONE source path into it: the SSH statusline sentinel. That
- * source also got a shape filter (`sanitiseSentinelPayload`). This is the other
- * source, and it never got the same look (#180): the value reaches the binder
- * through a bare `typeof x === 'string'`, and it is read BEFORE redaction.
- *
- * Containment is not re-implemented here -- duplicating it is how the two copies
- * drift, and the choke point is the right place for it. What this adds is the
- * shape half: a bound, and a rejection of the embedded NUL and control
- * characters that no real path contains but that do confuse log readers and
- * anything downstream that splits on them.
- *
- * Returns the usable path, or null to drop the field. Dropping is safe: the
- * transcript is also discovered heuristically, so a rejected value costs a
- * slower discovery, not a broken session.
- */
-export function sanitiseTranscriptPath(v: unknown): string | null {
-  if (typeof v !== 'string') return null
-  if (v.length === 0 || Buffer.byteLength(v, 'utf8') > MAX_TRANSCRIPT_PATH_BYTES) return null
-  // A NUL truncates the path for any native consumer while leaving the JS string
-  // intact -- the classic disagreement between two layers about where a string
-  // ends. Other C0 controls have no business in a path either.
-  // eslint-disable-next-line no-control-regex
-  if (/[\u0000-\u001f\u007f]/.test(v)) return null
-  return v
 }
 
 // Cap how many request bodies may be buffering at once. The gateway is
