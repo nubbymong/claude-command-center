@@ -25,6 +25,7 @@ import { promisify } from 'util'
 import { logInfo, logError } from './debug-logger'
 import { readConfig } from './config-manager'
 import { readRegistry } from './registry'
+import { getDataDirectory } from './data-paths'
 
 const execFileAsync = promisify(execFile)
 
@@ -501,7 +502,7 @@ export async function checkGitHubRelease(): Promise<ReleaseInfo | null> {
  *  - Cleans up the .part file on every failure path.
  *  - Aborts the active HTTP request when something fails mid-stream.
  */
-function httpsDownload(url: string, destPath: string, timeoutMs = 300000): Promise<boolean> {
+function httpsDownload(url: string, destPath: string, timeoutMs = 300000, maxBytes?: number): Promise<boolean> {
   return new Promise((resolve) => {
     const tmpPath = destPath + '.part'
     let file: fs.WriteStream
@@ -555,7 +556,13 @@ function httpsDownload(url: string, destPath: string, timeoutMs = 300000): Promi
           // Follow redirects — resolve against the current URL so relative
           // Location headers work, and re-validate the protocol on each hop.
           if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-            res.resume()
+            // destroy(), not resume(). resume() DRAINS the redirect body and
+            // discards it -- uncounted against maxBytes and, because activeReq
+            // is nulled just below, no longer reachable by fail(). A 3xx with an
+            // endless body then makes the main process read and throw away data
+            // forever, on up to `hopsLeft` leaked sockets, past the point the
+            // promise has already settled.
+            res.destroy()
             activeReq = null
             let nextUrl: string
             try {
@@ -571,6 +578,29 @@ function httpsDownload(url: string, destPath: string, timeoutMs = 300000): Promi
             res.resume()
             fail(new Error(`HTTP ${res.statusCode}`))
             return
+          }
+          // Enforce the byte limit ON THE WIRE, not after landing (#174).
+          // readManifest checks MAX_MANIFEST_BYTES by stat-ing the finished
+          // file, which is too late: a hostile manifest endpoint can fill the
+          // disk before that check ever runs. Content-Length is a fast reject
+          // when honest; the running count is what actually holds, because the
+          // header is attacker-supplied and a chunked response has none.
+          if (maxBytes !== undefined) {
+            const declared = Number(res.headers['content-length'])
+            if (Number.isFinite(declared) && declared > maxBytes) {
+              res.resume()
+              fail(new Error(`response declares ${declared} bytes, over the ${maxBytes}-byte limit`))
+              return
+            }
+            let received = 0
+            res.on('data', (chunk: Buffer | string) => {
+              received += typeof chunk === 'string' ? Buffer.byteLength(chunk) : chunk.length
+              if (received > maxBytes) {
+                // fail() destroys the request and unlinks the .part file, so
+                // nothing past the limit is kept and the socket stops.
+                fail(new Error(`response exceeded the ${maxBytes}-byte limit`))
+              }
+            })
           }
           res.on('error', (err) => fail(err))
           res.pipe(file)
@@ -687,6 +717,16 @@ function splitChecksumLine(line: string): [string, string] | null {
  *  refuses is a release that passes CI and cannot be installed. */
 export const MAX_MANIFEST_BYTES = 1024 * 1024
 
+/**
+ * Ceiling on the INSTALLER download. Generous on purpose -- the current assets
+ * are 170-215 MB and this only exists so an unbounded response cannot fill the
+ * disk before the digest check (which necessarily runs after the whole body has
+ * landed) gets a chance to reject it. Sized so no plausible future build trips it
+ * while still bounding the damage; the digest, not this, is what decides whether
+ * the bytes are trustworthy.
+ */
+export const MAX_INSTALLER_BYTES = 1024 * 1024 * 1024
+
 /** A downloaded installer whose SHA-256 has been checked against the release
  *  manifest. Carries the digest so the caller can re-verify just before exec. */
 export interface VerifiedInstaller {
@@ -788,37 +828,52 @@ function deriveManifestUrl(directUrl?: string | null): string | null {
   }
 }
 
-/** Fetch CHECKSUMS.txt for a release, via the same cascade as the installer. */
-async function fetchChecksumManifest(tagName: string, directUrl?: string | null): Promise<string | null> {
-  const tmpPath = path.join(os.tmpdir(), `ccc-CHECKSUMS-${Date.now()}.txt`)
-  const cleanup = (): void => { try { fs.unlinkSync(tmpPath) } catch { /* best effort */ } }
+/**
+ * Fetch CHECKSUMS.txt for a release, via the same cascade as the installer.
+ *
+ * Staged in the SAME kind of private mkdtemp directory as the installer (#174),
+ * not `os.tmpdir()` under a `Date.now()` name. That old shape was worse than the
+ * installer's, not better: on a multi-user POSIX box /tmp's sticky bit stops
+ * another user UNLINKING our entry but not their pre-planting a SYMLINK at a
+ * millisecond-guessable name, and `createWriteStream` opens without O_NOFOLLOW,
+ * so the write follows the link -- and `renameSync` then moves the LINK to the
+ * destination, leaving the attacker in control of the bytes `readManifest` reads.
+ * This is the file that decides which digest counts as "verified", so it is the
+ * last one that should have been left in a shared directory.
+ */
+async function fetchChecksumManifest(tagName: string, stageDir: string, directUrl?: string | null): Promise<string | null> {
+  const tmpPath = path.join(stageDir, 'CHECKSUMS.txt')
 
-  // 1. Direct HTTPS, deriving the manifest URL from the installer's own asset
-  //    URL so it comes from the same release, same host.
-  const manifestUrl = deriveManifestUrl(directUrl)
-  if (manifestUrl) {
-    if (await httpsDownload(manifestUrl, tmpPath, 60000)) {
-      const text = readManifest(tmpPath)
-      cleanup()
-      if (text) return text
-    }
-  }
-
-  // 2. gh CLI fallback (private repos, and when the derived URL 404s).
-  const tmpDir = path.join(os.tmpdir(), `ccc-sums-${Date.now()}`)
   try {
-    fs.mkdirSync(tmpDir, { recursive: true })
+    // 1. Direct HTTPS, deriving the manifest URL from the installer's own asset
+    //    URL so it comes from the same release, same host.
+    const manifestUrl = deriveManifestUrl(directUrl)
+    if (manifestUrl) {
+      if (await httpsDownload(manifestUrl, tmpPath, 60000, MAX_MANIFEST_BYTES)) {
+        const text = readManifest(tmpPath)
+        if (text) return text
+      }
+      try { fs.unlinkSync(tmpPath) } catch { /* best effort */ }
+    }
+
+    // 2. gh CLI fallback (private repos, and when the derived URL 404s).
+    //    gh writes the whole body before we can see it, so readManifest's
+    //    stat-based MAX_MANIFEST_BYTES check is the only limit on this leg --
+    //    the post-hoc shape the direct leg no longer uses. Acceptable: it takes
+    //    release-write access to publish an oversized CHECKSUMS.txt, which the
+    //    threat model already concedes.
     await execFileAsync(
       'gh',
-      ['release', 'download', tagName, '--repo', REPO, '--pattern', 'CHECKSUMS.txt', '--dir', tmpDir, '--clobber'],
+      ['release', 'download', tagName, '--repo', REPO, '--pattern', 'CHECKSUMS.txt', '--dir', stageDir, '--clobber'],
       { encoding: 'utf-8', timeout: 60000, windowsHide: true }
     )
-    const manifestPath = path.join(tmpDir, 'CHECKSUMS.txt')
-    if (fs.existsSync(manifestPath)) return readManifest(manifestPath)
+    if (fs.existsSync(tmpPath)) return readManifest(tmpPath)
   } catch (err) {
     logError('[github-update] CHECKSUMS.txt fetch via gh CLI failed:', err)
   } finally {
-    try { fs.rmSync(tmpDir, { recursive: true, force: true }) } catch { /* best effort */ }
+    // Only the manifest file. The directory is the caller's, and the installer
+    // is about to be downloaded into it.
+    try { fs.unlinkSync(tmpPath) } catch { /* best effort */ }
   }
 
   return null
@@ -835,9 +890,10 @@ async function fetchChecksumManifest(tagName: string, directUrl?: string | null)
 async function resolveExpectedDigest(
   tagName: string,
   assetName: string,
+  stageDir: string,
   directUrl?: string | null,
 ): Promise<string | null> {
-  const manifest = await fetchChecksumManifest(tagName, directUrl)
+  const manifest = await fetchChecksumManifest(tagName, stageDir, directUrl)
   if (!manifest) {
     logError('[github-update] CHECKSUMS.txt could not be fetched for this release')
     return null
@@ -855,8 +911,10 @@ async function resolveExpectedDigest(
  *
  * FAILS CLOSED. On mismatch or an unreadable file the download is destroyed and
  * false returned. If unlink fails (Windows file lock) the file is renamed to
- * `.INVALID` instead -- leaving an unverified installer in ~/Downloads under its
- * expected name is how a user ends up double-clicking it.
+ * `.INVALID` instead -- leaving an unverified installer under its expected name
+ * is how someone ends up double-clicking it. Since #174 it is staged in a
+ * private directory rather than ~/Downloads, which makes that far less likely to
+ * be stumbled upon, but the file is still destroyed rather than trusted.
  */
 async function confirmDigest(filePath: string, assetName: string, expected: string): Promise<boolean> {
   const actual = await sha256File(filePath)
@@ -895,22 +953,282 @@ function integrityFailure(assetName: string, why: string): InstallerIntegrityErr
   )
 }
 
-/**
- * Transport half: fetch the asset to ~/Downloads, direct HTTPS first then gh
- * CLI. Performs NO integrity check -- callers must use downloadGitHubRelease,
- * which wraps this with verification. Exported only so the download mechanics
- * are unit-testable on their own.
- */
-export async function downloadInstallerFile(tagName: string, assetName: string, directUrl?: string | null): Promise<string | null> {
-  const downloadsDir = path.join(os.homedir(), 'Downloads')
-  try { fs.mkdirSync(downloadsDir, { recursive: true }) } catch {}
-  const destPath = path.join(downloadsDir, assetName)
+// -- Where an installer is staged (#174) ----------------------------------
+//
+// NOT ~/Downloads. The updater verifies the installer, kills every PTY, then
+// spawns it with `allowElevation`, so the user is about to approve a UAC prompt
+// for whatever sits at that path. In ~/Downloads the path is fully PREDICTABLE
+// (the asset name is public in the release feed) and the directory is one every
+// browser writes into.
+//
+// BE PRECISE ABOUT WHAT THIS BUYS. The stated attacker is a non-elevated process
+// in the USER'S OWN SESSION -- which means it is the owner, so it does not have
+// to guess the name: it can watch the root and see the new directory appear in
+// milliseconds, and 0700 excludes only OTHER users. What moving out of
+// ~/Downloads removes is the code-execution-free variant (a hostile page driving
+// a browser download onto the publicly-known asset name), collisions with
+// anything else writing that directory, and the chance of someone stumbling on a
+// stale unverified installer and double-clicking it. `stillMatchesDigest`
+// remains the control of record for the verify->spawn race. Do not read this as
+// making the re-hash redundant.
+//
+// `updates/` under the app's OWN data directory (`getDataDirectory()`), not
+// Electron's `userData` and not the system temp dir:
+//   - not `temp`: on Linux that is the shared, world-writable /tmp, and it is
+//     `noexec` on hardened boxes -- for a file we intend to EXECUTE.
+//   - not `app.getPath('userData')`: on Windows that is %APPDATA%, which ROAMS.
+//     Staging a 200 MB installer there syncs it to a file share at sign-out and
+//     can trip a profile quota. `getDataDirectory()` uses %LOCALAPPDATA%, which
+//     is what the rest of this app already uses for bulk data.
+//   - and it honours CCC_DEV_DATA_DIR / CCC_E2E_DATA_DIR, so a dev instance
+//     stages inside its own data root instead of the installed copy's.
 
-  logInfo(`[github-update] Downloading ${assetName} to ${destPath}`)
+const INSTALLER_DIR_PREFIX = 'ccc-upd-'
+
+/**
+ * Assert `dir` is a real directory, at the path we asked for, owned by us and
+ * not group/other-writable.
+ *
+ * The parent of the staging directory is what an attacker actually needs: with
+ * write access to it they can `rename()` the 0700 leaf away and substitute their
+ * own. `mkdirSync(..., {recursive: true})` swallows EEXIST, so without this a
+ * pre-planted SYMLINK (POSIX) or JUNCTION (Windows -- no admin required) at
+ * `<dataDir>/updates` is followed silently and every future installer is staged
+ * inside a directory the planter controls. Plant once, harvest every update.
+ *
+ * Only the FINAL component is checked against realpath: legitimate symlinks
+ * higher up are normal (macOS /var -> /private/var), and rejecting those would
+ * break the update for no security gain.
+ */
+export function assertPrivateDir(dir: string): void {
+  const st = fs.lstatSync(dir)
+  if (!st.isDirectory()) {
+    throw new Error(`${dir} is not a directory (symlink or file) — refusing to stage an installer there`)
+  }
+  // NOTE ON COVERAGE: on every platform a planted redirect (POSIX symlink,
+  // Windows junction) fails the check above, because lstat reports it as a link
+  // rather than a directory. The realpath comparison below therefore has no
+  // portable test -- the input that needs it (a bind mount or volume mount point
+  // AT the final component, where lstat says "directory" and realpath diverges)
+  // cannot be created without root. It is kept as the belt to that braces, not
+  // because a test pins it.
+  const resolvedParent = fs.realpathSync(path.dirname(dir))
+  const expected = path.join(resolvedParent, path.basename(dir))
+  const actual = fs.realpathSync(dir)
+  if (path.resolve(actual) !== path.resolve(expected)) {
+    throw new Error(`${dir} resolves to ${actual} — refusing to stage an installer through a redirected path`)
+  }
+  // POSIX only: Windows has no mode bits worth reading here (see chmod note in
+  // createInstallerDir) and the profile ACL is what scopes it.
+  if (process.platform !== 'win32' && typeof process.getuid === 'function') {
+    if (st.uid !== process.getuid()) {
+      throw new Error(`${dir} is owned by uid ${st.uid}, not ${process.getuid()} — refusing to stage an installer there`)
+    }
+    if ((st.mode & 0o022) !== 0) {
+      throw new Error(`${dir} is group- or world-writable (mode ${(st.mode & 0o777).toString(8)}) — refusing to stage an installer there`)
+    }
+  }
+}
+
+/**
+ * The staging root. THROWS rather than falling back.
+ *
+ * There is deliberately no fallback chain. Every candidate a fallback could
+ * reach is either shared (/tmp) or roaming (%APPDATA%), so "try the next one"
+ * means "silently downgrade to the state this change exists to leave".
+ *
+ * A throw propagates: `downloadGitHubRelease` turns it into a plain Error (never
+ * an InstallerIntegrityError -- a local storage problem is not a tamper event),
+ * and `update-handlers` shows it in an "Update could not be downloaded" dialog.
+ */
+export function installerRoot(): string {
+  return privateSubdir('updates')
+}
+
+/**
+ * `<dataDir>/<name>`, created and validated.
+ *
+ * The data directory's OWN final component is lstat-checked too -- not the full
+ * ownership/mode test (it may legitimately live on a mount or share whose uid
+ * differs), just enough to refuse a symlink or junction dropped in its place.
+ * That check is load-bearing rather than redundant: with the data directory
+ * itself junctioned, `assertPrivateDir` on the subdirectory PASSES, because both
+ * realpath calls resolve through the same junction and therefore agree.
+ *
+ * A redirect at a HIGHER component (e.g. %LOCALAPPDATA%) is not caught, and is
+ * not meant to be: an attacker who can relocate the live data directory already
+ * has the config, sessions and transcripts. The point is only that a file we are
+ * about to EXECUTE must not be written through a redirect we could have seen.
+ */
+function privateSubdir(name: string): string {
+  const base = getDataDirectory()
+  fs.mkdirSync(base, { recursive: true })
+  if (!fs.lstatSync(base).isDirectory()) {
+    throw new Error(`${base} is not a directory (symlink or file) — refusing to stage an installer under it`)
+  }
+  const dir = path.join(base, name)
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
+  // TIGHTEN, then validate. `mkdirSync`'s mode is masked by the process umask,
+  // so on a umask-002 box (per-user-group setups, many container images) the
+  // directory lands 0775 -- and assertPrivateDir's group-write check then
+  // rejects it. Because there is deliberately no fallback, that turned into a
+  // PERMANENT, unrecoverable update failure for those users: the control this
+  // change exists to add would have doubled as an update-killer. chmod is not
+  // umask-masked, so this is what actually holds. It also repairs a directory an
+  // older build left loose.
+  // Unguarded by platform: chmod is a documented no-op on Windows (the same
+  // reason createInstallerDir does it unguarded), and guarding it meant the line
+  // could only be covered by a POSIX-only test.
+  try { fs.chmodSync(dir, 0o700) } catch { /* validated below either way */ }
+
+  // A filesystem with no POSIX mode bits (exFAT/vfat, CIFS with a fixed
+  // dir_mode, a 9p/virtiofs VM share) accepts the chmod and changes nothing, so
+  // the validation below would refuse with "group- or world-writable" and no hint
+  // that we tried. The data directory is user-chosen at first run, so "on an
+  // external drive or a network share" is a supported configuration -- say what
+  // is actually wrong and what to do about it.
+  if (process.platform !== 'win32') {
+    try {
+      if ((fs.statSync(dir).mode & 0o022) !== 0) {
+        throw new Error(
+          `${dir} is on a filesystem that cannot restrict permissions, so an installer `
+          + 'cannot be staged there privately. Choose a data directory on a local disk in '
+          + 'Settings, or install the update manually from the GitHub release page.'
+        )
+      }
+    } catch (err) {
+      if (err instanceof Error && err.message.includes('cannot restrict permissions')) throw err
+      // A stat failure is assertPrivateDir's problem, not ours.
+    }
+  }
+
+  assertPrivateDir(dir)
+  return dir
+}
+
+/**
+ * A fresh, owner-only, unpredictably-named directory to stage one download in.
+ *
+ * `mkdtemp` supplies the unpredictable name. 0700 keeps it to the owner on
+ * POSIX. On Windows `chmod` is a documented NO-OP -- it succeeds and changes
+ * nothing, so the catch never fires -- and containment there comes from the
+ * inherited per-user profile ACL instead.
+ *
+ * `root` is injectable so tests can use a real scratch directory.
+ */
+export function createInstallerDir(root?: string): string {
+  const base = root || installerRoot()
+  const dir = fs.mkdtempSync(path.join(base, INSTALLER_DIR_PREFIX))
+  try { fs.chmodSync(dir, 0o700) } catch { /* no-op on Windows */ }
+  return dir
+}
+
+/**
+ * Remove staging directories from previous updates, keeping `keep`.
+ *
+ * The successful path cannot clean up after itself: CCC spawns the installer and
+ * exits, so the file must outlive the process. Pruning on the way IN bounds the
+ * accumulation instead. Best-effort throughout -- a running installer holds a
+ * lock on Windows, and a leftover directory is untidy, never unsafe. The inner
+ * catch is load-bearing: the call site is not wrapped, so a throw here would
+ * abort the whole update over a tidy-up.
+ *
+ * An entry that is NOT a real directory is unlinked, never recursed into. Node's
+ * rimraf happens to lstat first and do the same, but this is a recursive delete
+ * driven by `readdir` of a directory the attacker can write to, so the guard is
+ * explicit here rather than inherited from an implementation detail: a
+ * `ccc-upd-evil` symlink pointing at $HOME must cost the link, not the home
+ * directory.
+ */
+export function pruneStaleInstallerDirs(root: string, keep?: string): number {
+  let removed = 0
+  let entries: string[]
+  try { entries = fs.readdirSync(root) } catch { return 0 }
+  for (const name of entries) {
+    if (!name.startsWith(INSTALLER_DIR_PREFIX)) continue
+    const full = path.join(root, name)
+    if (keep && path.resolve(full) === path.resolve(keep)) continue
+    try {
+      if (!fs.lstatSync(full).isDirectory()) {
+        fs.unlinkSync(full)
+        removed += 1
+        continue
+      }
+      fs.rmSync(full, { recursive: true, force: true })
+      removed += 1
+    } catch { /* locked by a running installer, or gone already */ }
+  }
+  return removed
+}
+
+/**
+ * Where a launched AppImage is parked so the next update's prune cannot delete
+ * the running application.
+ *
+ * `prepareLinuxAppImageUpdate` relocates the AppImage next to the running one
+ * when $APPIMAGE is set, but returns the DOWNLOAD path unchanged when it cannot
+ * (dev/extracted runs, an unwritable target, $APPIMAGE pointing at something
+ * that is not a plain .AppImage). Before #174 that download path was
+ * ~/Downloads, which nothing pruned. Inside the staging root it is
+ * prune-eligible, so update N+1 would unlink the very file the user is running
+ * -- and the app's location would change to a fresh random name every time,
+ * orphaning any .desktop entry or dock pin.
+ */
+function appImageParkingPath(downloadedPath: string): string {
+  // VALIDATED, like the staging root. This is the directory CCC will EXECUTE
+  // from, so leaving it as a bare recursive mkdir would reintroduce the exact
+  // plantable-redirect hole assertPrivateDir exists to close -- at the worst
+  // possible place.
+  return path.join(privateSubdir('bin'), path.basename(downloadedPath))
+}
+
+/**
+ * Transport half: fetch the asset into a private staging directory, direct HTTPS
+ * first then gh CLI. Performs NO integrity check -- callers must use
+ * downloadGitHubRelease, which wraps this with verification. Exported only so
+ * the download mechanics are unit-testable on their own.
+ */
+export async function downloadInstallerFile(tagName: string, assetName: string, directUrl?: string | null, existingStageDir?: string): Promise<string | null> {
+  // The asset name comes from the release feed and is interpolated into a
+  // filesystem path, so a name carrying a separator would escape the staging
+  // directory and undo the point of it. REFUSE rather than silently basename it
+  // down: a real asset never contains a separator, so a name that needs
+  // sanitising means the feed is wrong and downloading whatever is left of it is
+  // not the right recovery.
+  // Both separators, on every platform. `path.basename` is platform-aware: on
+  // POSIX a backslash is an ordinary filename character, so `..\evil.exe` came
+  // back unchanged and passed the `safeName !== rawName` test. It stayed inside
+  // the staging directory there (POSIX reads it as one long filename), so nothing
+  // escaped -- but a guard whose verdict depends on the host is a guard that will
+  // be wrong on one of them. The macOS CI leg caught this; the Windows leg could
+  // not. A real asset name contains neither separator.
+  const rawName = String(assetName || '')
+  const safeName = path.basename(rawName)
+  if (!safeName || safeName !== rawName || /[/\\]/.test(rawName) || safeName === '.' || safeName === '..') {
+    logError(`[github-update] Refusing to download an asset with an unusable name: ${JSON.stringify(rawName)}`)
+    return null
+  }
+
+  // downloadGitHubRelease creates ONE staging directory and passes it in, so the
+  // manifest and the installer share it: two independent directories meant the
+  // installer's prune could delete the one the manifest fetch was still using.
+  let stageDir: string
+  try {
+    const root = installerRoot()
+    stageDir = existingStageDir || createInstallerDir(root)
+    pruneStaleInstallerDirs(root, stageDir)
+  } catch (err) {
+    logError('[github-update] Could not create a staging directory for the download:', err)
+    return null
+  }
+
+  const destPath = path.join(stageDir, safeName)
+
+  logInfo(`[github-update] Downloading ${safeName} to ${destPath}`)
 
   // 1. Try direct HTTPS download (works for public repo)
   if (directUrl) {
-    const ok = await httpsDownload(directUrl, destPath)
+    const ok = await httpsDownload(directUrl, destPath, 300000, MAX_INSTALLER_BYTES)
     if (ok && fs.existsSync(destPath)) {
       logInfo(`[github-update] Downloaded via direct HTTPS: ${destPath}`)
       return destPath
@@ -922,7 +1240,7 @@ export async function downloadInstallerFile(tagName: string, assetName: string, 
   try {
     await execFileAsync(
       'gh',
-      ['release', 'download', tagName, '--repo', REPO, '--pattern', assetName, '--dir', downloadsDir, '--clobber'],
+      ['release', 'download', tagName, '--repo', REPO, '--pattern', safeName, '--dir', stageDir, '--clobber'],
       { encoding: 'utf-8', timeout: 300000, windowsHide: true }
     )
     if (fs.existsSync(destPath)) {
@@ -933,6 +1251,11 @@ export async function downloadInstallerFile(tagName: string, assetName: string, 
     logError('[github-update] gh CLI download failed:', err)
   }
 
+  // Nothing usable landed. Only clean up a directory WE created: when the caller
+  // supplied one it owns the lifetime (and may have other files in it).
+  if (!existingStageDir) {
+    try { fs.rmSync(stageDir, { recursive: true, force: true }) } catch { /* best effort */ }
+  }
   return null
 }
 
@@ -948,16 +1271,44 @@ export async function downloadInstallerFile(tagName: string, assetName: string, 
  * not conflate with "download failed", because the user-facing advice differs.
  */
 export async function downloadGitHubRelease(tagName: string, assetName: string, directUrl?: string | null): Promise<VerifiedInstaller | null> {
+  // ONE staging directory for the manifest and the installer.
+  //
+  // Created here, and a failure raises a PLAIN Error rather than an
+  // InstallerIntegrityError. That distinction is user-facing: when the manifest
+  // fetch owned its own directory, a disk-full mkdtemp or an unwritable data dir
+  // returned null and the caller showed "Update blocked - integrity check
+  // failed" -- reporting a local storage problem as a release TAMPER event.
+  // False tamper signals are how real ones get ignored.
+  let stageDir: string
+  try {
+    stageDir = createInstallerDir()
+  } catch (err) {
+    throw new Error(
+      `Could not prepare a private folder to download the update into: ${(err as Error).message}. `
+      + 'Check free disk space and that the data directory is writable.'
+    )
+  }
+
+  const discard = (): void => {
+    try { fs.rmSync(stageDir, { recursive: true, force: true }) } catch { /* best effort */ }
+  }
+
   // Manifest first -- see resolveExpectedDigest. No digest, no download.
-  const expected = await resolveExpectedDigest(tagName, assetName, directUrl)
+  const expected = await resolveExpectedDigest(tagName, assetName, stageDir, directUrl)
   if (!expected) {
+    discard()
     throw integrityFailure(assetName, `has no verified SHA-256 in release ${tagName}`)
   }
 
-  const filePath = await downloadInstallerFile(tagName, assetName, directUrl)
-  if (!filePath) return null
+  const filePath = await downloadInstallerFile(tagName, assetName, directUrl, stageDir)
+  if (!filePath) {
+    discard()
+    return null
+  }
 
   if (!await confirmDigest(filePath, assetName, expected)) {
+    // confirmDigest destroys the file; take the now-empty directory too.
+    discard()
     throw integrityFailure(assetName, 'failed its SHA-256 check and was discarded')
   }
   return { path: filePath, sha256: expected }
@@ -967,12 +1318,17 @@ export async function downloadGitHubRelease(tagName: string, assetName: string, 
  * Re-hash a previously-verified installer immediately before executing it.
  *
  * The gap between verification and `spawn` is not small: the caller kills every
- * PTY in between, which takes tens of milliseconds to seconds. The file sits at
- * a predictable path in ~/Downloads -- a directory every browser writes into --
- * and the installer is launched with `allowElevation`, so a NON-elevated local
- * process that wins that race gains admin on a UAC prompt the user is already
- * expecting. Re-hashing costs about a second for 150 MB and shrinks the window
- * to microseconds.
+ * PTY in between, which takes tens of milliseconds to seconds. The installer is
+ * launched with `allowElevation`, so a local process that wins that race gains
+ * admin on a UAC prompt the user is already expecting. Re-hashing costs about a
+ * second for 150 MB and shrinks the window to microseconds.
+ *
+ * #174 moved staging out of ~/Downloads but did NOT retire this. The attacker in
+ * this model runs as the user, so an unpredictable directory name buys nothing
+ * against it: the attacker owns the root and can watch it. What #174 removed is
+ * the drive-by variant (a hostile page steering a browser download onto the
+ * publicly-known asset name in a directory every browser writes into). THIS is
+ * the control of record for the verify->spawn race.
  */
 export async function stillMatchesDigest(filePath: string, expectedSha256: string): Promise<boolean> {
   const actual = await sha256File(filePath)
@@ -988,8 +1344,10 @@ export async function stillMatchesDigest(filePath: string, expectedSha256: strin
  * Best-effort check: is `targetPath` on a filesystem mounted `noexec`?
  *
  * `fs.accessSync(X_OK)` inspects the file's permission bits, not the mount, so
- * on a hardened box where ~/Downloads (or /home) is mounted `noexec` a freshly
- * chmod'd AppImage passes the access check yet `execve` fails EACCES at launch.
+ * on a hardened box where the staging directory (or /home, or /tmp) is mounted
+ * `noexec` a freshly chmod'd AppImage passes the access check yet `execve` fails
+ * EACCES at launch. This is also why #174 stages under userData rather than the
+ * system temp dir: /tmp is `noexec` far more often than $HOME.
  * Because CCC holds a single-instance lock, we cannot verify the relaunch by
  * spawning it first (the new instance can't start until we exit), so the update
  * flow uses this to abort BEFORE killing the user's terminals rather than after.
@@ -1032,7 +1390,8 @@ export function isPathOnNoexecMount(targetPath: string, procMounts?: string): bo
  *
  * Unlike Windows (the .exe IS an installer that installs over the old copy),
  * a downloaded AppImage is just a file: it arrives without the execute bit,
- * and launching it from ~/Downloads would leave the user's "real" copy stale.
+ * and launching it from the staging directory would leave the user's "real" copy
+ * stale.
  * So: chmod +x always; then, when we're running AS an AppImage (AppImage
  * runtimes export $APPIMAGE = the file's own path), replace it in place.
  *
@@ -1056,21 +1415,54 @@ export function isPathOnNoexecMount(targetPath: string, procMounts?: string): bo
  * never block the update on the tidy-up. `currentAppImage` is a parameter
  * (defaulting to $APPIMAGE) so tests can exercise all paths on any platform.
  */
-export function prepareLinuxAppImageUpdate(
+export async function prepareLinuxAppImageUpdate(
   downloadedPath: string,
   currentAppImage: string | undefined = process.env.APPIMAGE,
-): string {
+  verify?: (candidate: string) => Promise<boolean>,
+): Promise<string> {
   try { fs.chmodSync(downloadedPath, 0o755) } catch (err) {
     logError('[github-update] chmod +x on downloaded AppImage failed:', err)
   }
 
-  if (!currentAppImage) return downloadedPath
+  // Every early return below hands back a path OUTSIDE the prune-eligible
+  // staging root -- see appImageParkingPath. Returning `downloadedPath` itself
+  // would leave the running application in a directory the next update deletes.
+  const park = (): string => {
+    // Only files actually sitting in a staging directory need moving. A
+    // re-download straight onto the running AppImage's own path, or any other
+    // location, is already outside the prune root -- copying it would be a
+    // pointless 200 MB write. Checked against the prune root's LOCATION, not by
+    // name alone, so a legitimate `~/ccc-upd-backup/App.AppImage` does not
+    // trigger a spurious copy. Derived from the same `getDataDirectory() +
+    // 'updates'` as installerRoot() so the two cannot drift -- but WITHOUT
+    // calling it, because this must not depend on the root validating: a hostile
+    // root would otherwise silently switch parking off.
+    const parent = path.dirname(downloadedPath)
+    const pruneRoot = path.join(getDataDirectory(), 'updates')
+    if (path.resolve(path.dirname(parent)) !== path.resolve(pruneRoot)) return downloadedPath
+    if (!path.basename(parent).startsWith(INSTALLER_DIR_PREFIX)) return downloadedPath
+    try {
+      const parked = appImageParkingPath(downloadedPath)
+      if (path.resolve(parked) === path.resolve(downloadedPath)) return downloadedPath
+      fs.copyFileSync(downloadedPath, parked)
+      fs.chmodSync(parked, 0o755)
+      logInfo(`[github-update] AppImage parked outside the staging root: ${parked}`)
+      return parked
+    } catch (err) {
+      // Launching from the staging dir still works TODAY; it is the next
+      // update's prune that would remove it. Never block the update on tidy-up.
+      logError('[github-update] Could not park the AppImage outside the staging root:', err)
+      return downloadedPath
+    }
+  }
+
+  if (!currentAppImage) return park()
 
   // Resolve symlinks / `..`: the AppImage runtime sets $APPIMAGE to the real
   // mounted file, but a user may launch via a stable symlink whose target we
   // must replace (and whose link we must not leave dangling).
   let real: string
-  try { real = fs.realpathSync(currentAppImage) } catch { return downloadedPath }
+  try { real = fs.realpathSync(currentAppImage) } catch { return park() }
 
   // Only ever replace a plain *.AppImage FILE — never unlink a directory or a
   // non-AppImage file (e.g. a wrapper that set $APPIMAGE to some unrelated
@@ -1080,26 +1472,53 @@ export function prepareLinuxAppImageUpdate(
   try {
     const st = fs.lstatSync(real)
     if (!st.isFile() || !path.basename(real).endsWith('.AppImage')) {
-      logError(`[github-update] $APPIMAGE (${real}) is not an AppImage file — launching from download location`)
-      return downloadedPath
+      logError(`[github-update] $APPIMAGE (${real}) is not an AppImage file — launching from a parked copy`)
+      return park()
     }
-  } catch { return downloadedPath }
+  } catch { return park() }
 
+  // Declared outside the try so the catch can reclaim it. Randomising the name
+  // removed the only thing that used to bound the leak (the pre-emptive unlink of
+  // a FIXED `.new`), so without this a failed copy/chmod/rename leaves a ~200 MB
+  // orphan next to the running AppImage that nothing ever cleans -- prune only
+  // walks `ccc-upd-*` inside <dataDir>/updates.
+  let staged: string | null = null
   try {
     const runningName = path.basename(real)
     const keepName = !/\d+\.\d+\.\d+/.test(runningName)   // unversioned = user's custom stable name
     const target = keepName ? real : path.join(path.dirname(real), path.basename(downloadedPath))
 
-    if (path.resolve(target) === path.resolve(downloadedPath)) return downloadedPath
+    // target == the download means $APPIMAGE already points into the staging
+    // root, so relocating is a no-op but launching from there is still
+    // prune-eligible. Park it.
+    if (path.resolve(target) === path.resolve(downloadedPath)) return park()
+
+    // VERIFY BEFORE COMMIT. Copy to a sibling `.new`, hash THAT, and only then
+    // move it into place. The old order copied straight onto the target and let
+    // the caller re-hash afterwards -- which detects a swap but cannot undo it:
+    // the bad bytes are already at the user's .desktop/dock-pinned path and run
+    // on next launch, while the UI says the update was "blocked".
+    // Random suffix, not a fixed `.new`: a fixed name both clobbers whatever the
+    // user happened to have there and gives an attacker a predictable path to
+    // pre-plant a symlink at, which copyFileSync would follow, verify would hash
+    // THROUGH, and renameSync would then move onto the launcher path. The unlink
+    // stays as belt for the (now vanishingly unlikely) collision.
+    staged = `${target}.new-${crypto.randomBytes(6).toString('hex')}`
+    fs.copyFileSync(downloadedPath, staged)
+    fs.chmodSync(staged, 0o755)
+    if (verify && !await verify(staged)) {
+      throw new Error(`the copy at ${staged} did not match the verified installer`)
+    }
 
     // Unlink before writing when reusing the running file's own path: truncating
     // a mounted AppImage in place can corrupt the running mount, whereas removing
-    // the directory entry is safe (the mount keeps the inode) and lets copy
+    // the directory entry is safe (the mount keeps the inode) and lets the rename
     // recreate the file cleanly.
     if (path.resolve(target) === path.resolve(real)) {
-      try { fs.unlinkSync(real) } catch { /* copy recreates it */ }
+      try { fs.unlinkSync(real) } catch { /* the rename recreates it */ }
     }
-    fs.copyFileSync(downloadedPath, target)
+    fs.renameSync(staged, target)
+    staged = null   // committed; no longer an orphan to reclaim
     fs.chmodSync(target, 0o755)
 
     if (path.resolve(target) !== path.resolve(real)) {
@@ -1113,7 +1532,13 @@ export function prepareLinuxAppImageUpdate(
     logInfo(`[github-update] AppImage updated in place: ${target}`)
     return target
   } catch (err) {
-    logError('[github-update] In-place AppImage update failed — launching from download location:', err)
-    return downloadedPath
+    // Includes a failed verification of the staged copy. The user's installed
+    // AppImage was never touched in that case, so falling back to a parked copy
+    // of the (already-verified) download is safe.
+    if (staged) {
+      try { fs.unlinkSync(staged) } catch { /* best effort */ }
+    }
+    logError('[github-update] In-place AppImage update failed — launching from a parked copy:', err)
+    return park()
   }
 }

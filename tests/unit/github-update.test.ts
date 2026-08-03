@@ -9,12 +9,14 @@ type MockResponse = {
   statusCode: number
   body?: unknown              // JSON body (stringified + emitted as data event)
   bodyBuffer?: Buffer         // Raw buffer for streaming downloads
+  bodyChunks?: Buffer[]       // Multi-chunk body — exercises mid-stream aborts
   headers?: Record<string, string>
 }
 const httpsState = vi.hoisted(() => ({
   nextResponse: { statusCode: 200, body: [] } as MockResponse,
   responses: [] as MockResponse[],   // When non-empty, used per-call in order
   callUrls: [] as string[],          // Track URLs that were requested
+  destroyed: 0,                      // res.destroy() calls — abandoned hops
 }))
 
 vi.mock('https', () => {
@@ -29,25 +31,40 @@ vi.mock('https', () => {
     res.statusCode = resp.statusCode
     res.headers = resp.headers || {}
     res.resume = () => {}
+    res.__aborted = false
+    // A real IncomingMessage is a stream and has destroy(). #174 destroys a
+    // redirect response instead of resume()-ing it, so the mock needs this or
+    // every redirect test hangs on a TypeError inside the callback.
+    res.destroy = () => { res.__aborted = true; httpsState.destroyed += 1 }
     res.pipe = (stream: any) => {
-      // Simulate streaming bytes from response into the write stream
+      // Emit 'data' per chunk as the real stream does, THEN write it on. The
+      // old mock wrote bodyBuffer straight into the stream without emitting,
+      // which meant a `res.on('data')` byte counter in production code could
+      // never be exercised (#174's wire-level size cap is exactly that).
+      // Stopping on __aborted models `req.destroy()`: once the consumer aborts,
+      // no further chunks arrive and 'finish' never fires.
       setImmediate(() => {
-        if (resp.bodyBuffer) {
-          stream.write?.(resp.bodyBuffer)
+        const chunks: Buffer[] = resp.bodyChunks ?? (resp.bodyBuffer ? [resp.bodyBuffer] : [])
+        for (const chunk of chunks) {
+          if (res.__aborted) return
+          res.emit('data', chunk)
+          if (res.__aborted) return
+          stream.write?.(chunk)
         }
+        if (res.__aborted) return
         stream.emit?.('finish')
       })
       return stream
     }
     setImmediate(() => {
       callback(res)
-      if (resp.body !== undefined && resp.body !== null && !resp.bodyBuffer) {
+      if (resp.body !== undefined && resp.body !== null && !resp.bodyBuffer && !resp.bodyChunks) {
         res.emit('data', Buffer.from(JSON.stringify(resp.body)))
       }
       res.emit('end')
     })
     const req = new EE() as any
-    req.destroy = () => {}
+    req.destroy = () => { res.__aborted = true }
     return req
   }
   return { default: { get }, get }
@@ -87,8 +104,32 @@ const mockCreateWriteStream = vi.fn()
 const mockChmodSync = vi.fn()
 const mockCopyFileSync = vi.fn()
 const mockRealpathSync = vi.fn((p: string) => p)                 // identity: no symlink
-const mockLstatSync = vi.fn(() => ({ isFile: () => true }))      // regular file
+/** A stat that satisfies both the AppImage file guard and assertPrivateDir. */
+const statLike = (over: Record<string, unknown> = {}) => ({
+  isFile: () => true,
+  isDirectory: () => true,
+  mode: 0o700,
+  uid: typeof process.getuid === 'function' ? process.getuid() : 0,
+  ...over,
+})
+const mockLstatSync = vi.fn(() => statLike())
 const mockSymlinkSync = vi.fn()
+// #174 stages downloads in a private mkdtemp directory instead of ~/Downloads,
+// so the transport half now touches mkdtemp/readdir/rm. Deterministic suffix:
+// several tests assert on the returned path.
+const mockMkdtempSync = vi.fn((prefix: string) => `${prefix}TEST`)
+const mockReaddirSync = vi.fn((): string[] => [])
+const mockRmSync = vi.fn()
+const mockStatSync = vi.fn(() => ({ size: 256 }))
+const mockReadFileSync = vi.fn()
+// Bytes actually written into the .part file across all streams this test made.
+// #174's cap has to hold ON THE WIRE, so "how much landed" is the observable
+// that distinguishes an abort from a post-hoc size check.
+const writtenBytes = { total: 0 }
+const mockWriteStreamBytes = (): number => writtenBytes.total
+// What actually landed at each path, so createReadStream can serve it back and
+// the SUCCESS path of downloadGitHubRelease (digest match included) is reachable.
+const fileBodies = new Map<string, Buffer>()
 vi.mock('fs', () => {
   const { EventEmitter: EE } = require('events')
   return {
@@ -98,22 +139,47 @@ vi.mock('fs', () => {
     lstatSync: (...a: any[]) => mockLstatSync(...a),
     symlinkSync: (...a: any[]) => mockSymlinkSync(...a),
     existsSync: (...a: any[]) => mockExistsSync(...a),
-    readFileSync: vi.fn(),
+    readFileSync: (...a: any[]) => mockReadFileSync(...a),
     writeFileSync: vi.fn(),
     mkdirSync: vi.fn(),
     createWriteStream: (path: string) => {
       mockCreateWriteStream(path)
+      fileBodies.set(path, Buffer.alloc(0))
       const stream = new EE() as any
       stream.closed = false
-      stream.write = vi.fn()
+      stream.write = vi.fn((chunk: Buffer | string) => {
+        const buf = typeof chunk === 'string' ? Buffer.from(chunk) : chunk
+        writtenBytes.total += buf.length
+        fileBodies.set(path, Buffer.concat([fileBodies.get(path) ?? Buffer.alloc(0), buf]))
+        return true
+      })
       stream.close = (cb?: () => void) => {
         stream.closed = true
         if (cb) cb()
       }
       return stream
     },
-    unlinkSync: (...a: any[]) => mockUnlinkSync(...a),
-    renameSync: (...a: any[]) => mockRenameSync(...a),
+    createReadStream: (path: string) => {
+      const stream = new EE() as any
+      const body = fileBodies.get(path)
+      setImmediate(() => {
+        if (body === undefined) { stream.emit('error', new Error('ENOENT')); return }
+        stream.emit('data', body)
+        stream.emit('end')
+      })
+      return stream
+    },
+    unlinkSync: (...a: any[]) => { fileBodies.delete(String(a[0])); return mockUnlinkSync(...a) },
+    renameSync: (...a: any[]) => {
+      const body = fileBodies.get(String(a[0]))
+      if (body !== undefined) { fileBodies.set(String(a[1]), body); fileBodies.delete(String(a[0])) }
+      return mockRenameSync(...a)
+    },
+    mkdtempSync: (...a: any[]) => mockMkdtempSync(...(a as [string])),
+    readdirSync: (...a: any[]) => mockReaddirSync(...a),
+    rmSync: (...a: any[]) => mockRmSync(...a),
+    statSync: (...a: any[]) => mockStatSync(...a),
+    truncateSync: vi.fn(),
   }
 })
 
@@ -137,6 +203,12 @@ vi.mock('electron', async () => {
     },
   }
 })
+// #174 stages installers under the app's own data dir (not Electron's userData:
+// that is %APPDATA%, which roams).
+vi.mock('../../src/main/data-paths', () => ({
+  getDataDirectory: () => '/mock/dataDir',
+}))
+
 vi.mock('../../src/main/config-manager', () => ({
   readConfig: vi.fn(() => ({ updateChannel: currentChannel })),
 }))
@@ -170,9 +242,229 @@ describe('github-update', () => {
     httpsState.nextResponse = { statusCode: 200, body: [] }
     httpsState.responses = []
     httpsState.callUrls = []
+    httpsState.destroyed = 0
     currentChannel = 'stable'
     mockReadRegistry.mockReturnValue(null)
     mockExistsSync.mockReturnValue(true)
+    mockMkdtempSync.mockImplementation((prefix: string) => `${prefix}TEST`)
+    mockReaddirSync.mockReturnValue([])
+    mockStatSync.mockReturnValue({ size: 256 })
+    mockReadFileSync.mockReturnValue('')
+    writtenBytes.total = 0
+    fileBodies.clear()
+  })
+
+  // ── #174: where a download is staged, and how big it is allowed to get ──
+  describe('installer staging directory (#174)', () => {
+    const ASSET = 'ClaudeCommandCenter-Beta-1.2.125.exe'
+
+    it('does NOT stage the installer in ~/Downloads', async () => {
+      // The whole point of #174. The file is about to be spawned with
+      // allowElevation, and ~/Downloads is a predictable path in a directory
+      // every browser writes into, so any local process can drop a payload
+      // there and win the verify->spawn race for admin.
+      httpsState.nextResponse = { statusCode: 200, bodyBuffer: Buffer.from('installer bytes') }
+      const result = await downloadInstallerFile('v1.2.125', ASSET, 'https://x/y.exe')
+      expect(result).not.toBeNull()
+      expect(result!.replace(/\\/g, '/').toLowerCase()).not.toContain('/downloads/')
+    })
+
+    it('stages it in an owner-only mkdtemp directory under the app data dir', async () => {
+      httpsState.nextResponse = { statusCode: 200, bodyBuffer: Buffer.from('installer bytes') }
+      const result = await downloadInstallerFile('v1.2.125', ASSET, 'https://x/y.exe')
+      expect(mockMkdtempSync).toHaveBeenCalled()
+      // mkdtemp, not a fixed name: the asset name is public, so a predictable
+      // directory would hand the race straight back.
+      expect(mockMkdtempSync.mock.calls[0][0].replace(/\\/g, '/')).toContain('/updates/ccc-upd-')
+      expect(mockChmodSync).toHaveBeenCalledWith(expect.stringContaining('ccc-upd-'), 0o700)
+      expect(result!.replace(/\\/g, '/')).toContain('/ccc-upd-')
+      expect(result).toContain(ASSET)
+    })
+
+    it('passes the staging directory, not ~/Downloads, to the gh CLI fallback', async () => {
+      mockExecFile.mockImplementation((_cmd: string, _args: string[], _opts: any, cb: any) => cb(null, '', ''))
+      const result = await downloadInstallerFile('v1.2.125', ASSET, null)
+      expect(result).not.toBeNull()
+      const args = mockExecFile.mock.calls[0][1] as string[]
+      const dir = args[args.indexOf('--dir') + 1]
+      expect(dir.replace(/\\/g, '/')).toContain('/ccc-upd-')
+      expect(dir.replace(/\\/g, '/').toLowerCase()).not.toContain('/downloads/')
+    })
+
+    it('refuses an asset name that would escape the staging directory', async () => {
+      // assetName comes from the release feed and is interpolated into a path.
+      // A separator in it would write outside the private directory and undo
+      // the containment.
+      for (const bad of ['../evil.exe', 'sub/dir/evil.exe', '..\\evil.exe', '', '.', '..']) {
+        const result = await downloadInstallerFile('v1.2.125', bad, 'https://x/y.exe')
+        expect(result, `accepted ${JSON.stringify(bad)}`).toBeNull()
+      }
+    })
+
+    it('prunes staging directories left by earlier updates, keeping the current one', async () => {
+      // The success path cannot clean up after itself — CCC spawns the installer
+      // and exits — so pruning on the way in is what bounds the accumulation.
+      mockReaddirSync.mockReturnValue(['ccc-upd-OLD1', 'ccc-upd-OLD2', 'ccc-upd-TEST', 'something-else'])
+      httpsState.nextResponse = { statusCode: 200, bodyBuffer: Buffer.from('installer bytes') }
+      await downloadInstallerFile('v1.2.125', ASSET, 'https://x/y.exe')
+      const removed = mockRmSync.mock.calls.map((c) => String(c[0]).replace(/\\/g, '/'))
+      expect(removed.some((p) => p.endsWith('ccc-upd-OLD1'))).toBe(true)
+      expect(removed.some((p) => p.endsWith('ccc-upd-OLD2'))).toBe(true)
+      // Never the directory this download is using, and never an unrelated one.
+      expect(removed.some((p) => p.endsWith('ccc-upd-TEST'))).toBe(false)
+      expect(removed.some((p) => p.endsWith('something-else'))).toBe(false)
+    })
+
+    it('removes its own staging directory when nothing could be downloaded', async () => {
+      httpsState.nextResponse = { statusCode: 500 }
+      mockExistsSync.mockReturnValue(false)
+      mockExecFile.mockImplementation((_cmd: string, _args: string[], _opts: any, cb: any) => cb(new Error('gh missing'), '', ''))
+      const result = await downloadInstallerFile('v1.2.125', ASSET, 'https://x/y.exe')
+      expect(result).toBeNull()
+      const removed = mockRmSync.mock.calls.map((c) => String(c[0]).replace(/\\/g, '/'))
+      expect(removed.some((p) => p.endsWith('ccc-upd-TEST'))).toBe(true)
+    })
+  })
+
+  describe('manifest download size cap (#174)', () => {
+    const ASSET = 'ClaudeCommandCenter-Beta-1.2.125.exe'
+    const MiB = 1024 * 1024
+
+    // The manifest fetch is the capped one: readManifest enforced
+    // MAX_MANIFEST_BYTES by stat-ing the FINISHED file, so a hostile endpoint
+    // could fill the disk before the check ever ran. Driven through
+    // downloadGitHubRelease rather than a helper, because the cap has to hold at
+    // the call site that actually fetches.
+    const failGh = () => {
+      mockExecFile.mockImplementation((_cmd: string, _args: string[], _opts: any, cb: any) => cb(new Error('gh missing'), '', ''))
+    }
+
+    it('aborts a manifest that exceeds the cap mid-stream, before it lands', async () => {
+      failGh()
+      const chunk = Buffer.alloc(512 * 1024, 0x61)
+      httpsState.nextResponse = { statusCode: 200, bodyChunks: [chunk, chunk, chunk, chunk] } // 2 MiB
+      await expect(
+        downloadGitHubRelease('v1.2.125', ASSET, 'https://h/r/download/v1.2.125/' + ASSET)
+      ).rejects.toThrow(InstallerIntegrityError)
+      // Enforced ON THE WIRE: the stream is destroyed partway, so not every
+      // chunk reaches the file. Landing 2 MiB and then rejecting it would pass a
+      // stat-based check just as well and is exactly what this replaced.
+      const written = mockWriteStreamBytes()
+      expect(written).toBeGreaterThan(0)
+      expect(written).toBeLessThan(4 * 512 * 1024)
+      expect(written).toBeLessThanOrEqual(MiB + chunk.length)
+    })
+
+    it('rejects an oversized Content-Length without reading any body', async () => {
+      failGh()
+      httpsState.nextResponse = {
+        statusCode: 200,
+        headers: { 'content-length': String(50 * MiB) },
+        bodyChunks: [Buffer.alloc(1024, 0x61)],
+      }
+      await expect(
+        downloadGitHubRelease('v1.2.125', ASSET, 'https://h/r/download/v1.2.125/' + ASSET)
+      ).rejects.toThrow(InstallerIntegrityError)
+      expect(mockWriteStreamBytes()).toBe(0)
+    })
+
+    it('reports a local staging failure as a STORAGE problem, not a tamper event', async () => {
+      // A disk-full mkdtemp or an unwritable data dir used to surface as
+      // "Update blocked - integrity check failed ... has no verified SHA-256",
+      // i.e. a release TAMPER claim. False tamper signals are how real ones get
+      // ignored, so this must not be an InstallerIntegrityError.
+      mockMkdtempSync.mockImplementation(() => {
+        const err = new Error('ENOSPC: no space left on device') as Error & { code?: string }
+        err.code = 'ENOSPC'
+        throw err
+      })
+      const p = downloadGitHubRelease('v1.2.125', ASSET, 'https://h/r/download/v1.2.125/' + ASSET)
+      await expect(p).rejects.toThrow(/disk space|writable|private folder/i)
+      await expect(p).rejects.not.toBeInstanceOf(InstallerIntegrityError)
+    })
+
+    it('verifies and returns the installer, staged beside the manifest in ONE directory', async () => {
+      // The "one staging directory" invariant, driven all the way to SUCCESS.
+      // Two independent directories meant the installer's prune could delete the
+      // one the manifest fetch was using; over-cleaning the shared one (rmSync of
+      // the directory instead of unlinking just the manifest) removes the
+      // directory the installer's own .part file is about to land in, and breaks
+      // the direct-HTTPS leg of every real update.
+      const body = Buffer.from('the real installer bytes')
+      const digest = require('crypto').createHash('sha256').update(body).digest('hex')
+      const manifest = `${digest}  ${ASSET}\n`
+      mockReadFileSync.mockReturnValue(manifest)
+      mockStatSync.mockReturnValue({ size: manifest.length })
+      // existsSync must be false for the pre-rename unlink and true after, so
+      // just report "absent" — httpsDownload tolerates it and renames anyway.
+      mockExistsSync.mockImplementation((p: string) => !String(p).endsWith('.part'))
+      httpsState.responses = [
+        { statusCode: 200, bodyBuffer: Buffer.from(manifest) },
+        { statusCode: 200, bodyBuffer: body },
+      ]
+
+      const verified = await downloadGitHubRelease('v1.2.125', ASSET, 'https://h/r/download/v1.2.125/' + ASSET)
+      expect(verified).not.toBeNull()
+      expect(verified!.sha256).toBe(digest)
+
+      const written = mockCreateWriteStream.mock.calls.map((c) => String(c[0]).replace(/\\/g, '/'))
+      const manifestDir = written.find((p) => p.includes('CHECKSUMS.txt'))!.replace(/\/[^/]*$/, '')
+      const installerDir = written.find((p) => p.includes(ASSET))!.replace(/\/[^/]*$/, '')
+      expect(installerDir).toBe(manifestDir)
+      expect(mockMkdtempSync).toHaveBeenCalledTimes(1)
+      // And the staging directory SURVIVES: the installer has to outlive this
+      // process, and the manifest cleanup must not take the directory with it.
+      const rmTargets = mockRmSync.mock.calls.map((c) => String(c[0]).replace(/\\/g, '/'))
+      expect(rmTargets).not.toContain(installerDir)
+    })
+
+    it('stages CHECKSUMS.txt in a private directory, not the shared temp dir', async () => {
+      // The manifest decides WHICH DIGEST counts as verified, so it was the last
+      // file that should have been left at a Date.now()-guessable name in a
+      // shared /tmp: the sticky bit stops another user unlinking our entry, not
+      // pre-planting a symlink that createWriteStream (no O_NOFOLLOW) follows —
+      // after which renameSync moves the LINK to the destination and the
+      // attacker still owns the bytes readManifest reads.
+      failGh()
+      httpsState.nextResponse = { statusCode: 200, bodyBuffer: Buffer.from('nope') }
+      await expect(
+        downloadGitHubRelease('v1.2.125', ASSET, 'https://h/r/download/v1.2.125/' + ASSET)
+      ).rejects.toThrow(InstallerIntegrityError)
+      const manifestWrites = mockCreateWriteStream.mock.calls
+        .map((c) => String(c[0]).replace(/\\/g, '/'))
+        .filter((p) => p.includes('CHECKSUMS.txt'))
+      expect(manifestWrites.length).toBeGreaterThan(0)
+      for (const p of manifestWrites) expect(p).toContain('/ccc-upd-')
+    })
+
+    it('does NOT apply the manifest cap to the installer download', async () => {
+      // The cap's SCOPE, pinned. Real installers are 170-215 MB; applying
+      // MAX_MANIFEST_BYTES (1 MiB) to them is a one-token change that breaks
+      // 100% of updates — and every other download test here uses a 15-byte
+      // body, so nothing else in the suite could tell the difference.
+      const chunk = Buffer.alloc(512 * 1024, 0x62)
+      httpsState.nextResponse = { statusCode: 200, bodyChunks: [chunk, chunk, chunk, chunk, chunk, chunk] } // 3 MiB
+      const result = await downloadInstallerFile('v1.2.125', ASSET, 'https://x/y.exe')
+      expect(result).not.toBeNull()
+      expect(mockWriteStreamBytes()).toBe(6 * 512 * 1024)
+    })
+
+    it('still accepts a normal manifest', async () => {
+      // Guards the cap against being so eager it blocks every real release.
+      const digest = 'a'.repeat(64)
+      const manifest = `${digest}  ${ASSET}\n`
+      mockReadFileSync.mockReturnValue(manifest)
+      mockStatSync.mockReturnValue({ size: manifest.length })
+      httpsState.responses = [
+        { statusCode: 200, bodyBuffer: Buffer.from(manifest) },   // CHECKSUMS.txt
+        { statusCode: 200, bodyBuffer: Buffer.from('installer') }, // the installer
+      ]
+      // sha256 of the body will not match `digest`, so this must fail on the
+      // DIGEST, not on the size — proving the manifest was fetched and parsed.
+      await expect(
+        downloadGitHubRelease('v1.2.125', ASSET, 'https://h/r/download/v1.2.125/' + ASSET)
+      ).rejects.toThrow(/failed its SHA-256 check/)
+    })
   })
 
   describe('channel matching', () => {
@@ -574,6 +866,21 @@ describe('github-update', () => {
       expect(result).toBeNull()
     })
 
+    it('DESTROYS an abandoned redirect response instead of draining it', async () => {
+      // resume() drains a 3xx body and discards it — uncounted against maxBytes,
+      // and unreachable by fail() because activeReq is nulled before recursing.
+      // A 3xx with an endless body would then have the main process read and
+      // throw away data forever, on up to `hopsLeft` leaked sockets, past the
+      // point the promise settled. (#174 adversarial review.)
+      httpsState.responses = [
+        { statusCode: 302, headers: { location: 'https://cdn.example.com/real.exe' }, bodyChunks: [Buffer.alloc(4096, 0x63)] },
+        { statusCode: 200, bodyBuffer: Buffer.from('final bytes') },
+      ]
+      const result = await downloadInstallerFile('v1.2.125', 'ClaudeCommandCenter-Beta-1.2.125.exe', 'https://x/redirect.exe')
+      expect(result).not.toBeNull()
+      expect(httpsState.destroyed).toBeGreaterThanOrEqual(1)
+    })
+
     it('resolves relative redirect against the source URL', async () => {
       httpsState.responses = [
         { statusCode: 302, headers: { location: '/assets/real-file.exe' } },
@@ -653,7 +960,11 @@ describe('github-update', () => {
   })
 
   describe('prepareLinuxAppImageUpdate', () => {
-    const downloaded = '/home/u/Downloads/ClaudeCommandCenter-2.1.0-beta.2-linux-x86_64.AppImage'
+    // A post-#174 download path: inside a private ccc-upd- staging directory,
+    // which is prune-eligible. The `ccc-upd-` component is load-bearing — it is
+    // what tells prepareLinuxAppImageUpdate the file must be parked elsewhere
+    // before the next update's prune deletes it.
+    const downloaded = '/mock/dataDir/updates/ccc-upd-AbC123/ClaudeCommandCenter-2.1.0-beta.2-linux-x86_64.AppImage'
     const running = '/home/u/Apps/ClaudeCommandCenter-2.1.0-beta.1-linux-x86_64.AppImage'
 
     beforeEach(() => {
@@ -664,49 +975,75 @@ describe('github-update', () => {
       mockUnlinkSync.mockReset()
       mockSymlinkSync.mockReset()
       mockRealpathSync.mockReset().mockImplementation((p: string) => p)
-      mockLstatSync.mockReset().mockReturnValue({ isFile: () => true })
+      mockLstatSync.mockReset().mockReturnValue(statLike())
     })
 
-    it('always chmods the download executable (downloads arrive without +x)', () => {
-      prepareLinuxAppImageUpdate(downloaded, undefined)
+    it('always chmods the download executable (downloads arrive without +x)', async () => {
+      await prepareLinuxAppImageUpdate(downloaded, undefined)
       expect(mockChmodSync).toHaveBeenCalledWith(downloaded, 0o755)
     })
 
-    it('without $APPIMAGE (extracted/dev run), launches from the download location', () => {
-      const result = prepareLinuxAppImageUpdate(downloaded, undefined)
-      expect(result).toBe(downloaded)
-      expect(mockCopyFileSync).not.toHaveBeenCalled()
+    it('without $APPIMAGE (extracted/dev run), parks the AppImage OUTSIDE the staging root', async () => {
+      // #174 made this matter: the download now lands in a prune-eligible
+      // ccc-upd- directory, so returning it unchanged would have the NEXT
+      // update delete the running application. Parked under the data dir
+      // instead, at a stable name so a .desktop entry or dock pin survives.
+      const result = await prepareLinuxAppImageUpdate(downloaded, undefined)
+      expect(result?.replace(/\\/g, '/')).toBe(`/mock/dataDir/bin/${downloaded.split('/').pop()}`)
+      expect(result?.replace(/\\/g, '/')).not.toContain('/ccc-upd-')
+      expect(mockCopyFileSync).toHaveBeenCalledWith(downloaded, result)
+      // The running AppImage is never touched on this path — there isn't one.
       expect(mockUnlinkSync).not.toHaveBeenCalled()
     })
 
-    it('versioned running name: writes the new versioned file and removes the old', () => {
-      const result = prepareLinuxAppImageUpdate(downloaded, running)
+    it('falls back to the download location when parking itself fails', async () => {
+      // Never block an update on tidy-up: launching from the staging dir works
+      // today, it is only the next prune that would remove it.
+      mockCopyFileSync.mockImplementation(() => { throw new Error('EACCES') })
+      expect(await prepareLinuxAppImageUpdate(downloaded, undefined)).toBe(downloaded)
+    })
+
+    it('versioned running name: writes the new versioned file and removes the old', async () => {
+      const result = await prepareLinuxAppImageUpdate(downloaded, running)
       const expectedTarget = '/home/u/Apps/ClaudeCommandCenter-2.1.0-beta.2-linux-x86_64.AppImage'
       expect(result?.replace(/\\/g, '/')).toBe(expectedTarget)
+      // VERIFY BEFORE COMMIT: the bytes go to a sibling `.new` and are renamed
+      // into place, so a failed check never leaves them at the launcher path.
       expect(mockCopyFileSync).toHaveBeenCalledTimes(1)
-      expect(mockChmodSync).toHaveBeenCalledTimes(2) // download + target
+      // A RANDOMISED sibling name: a fixed `.new` both clobbers whatever the user
+      // had there and gives an attacker a predictable path to plant a symlink at.
+      const stagedName = String(mockCopyFileSync.mock.calls[0][1]).replace(/\\/g, '/')
+      expect(stagedName).toMatch(/\.new-[0-9a-f]{12}$/)
+      expect(stagedName.startsWith(expectedTarget)).toBe(true)
+      expect(String(mockRenameSync.mock.calls[0][0]).replace(/\\/g, '/')).toBe(stagedName)
+      expect(String(mockRenameSync.mock.calls[0][1]).replace(/\\/g, '/')).toBe(expectedTarget)
+      expect(mockChmodSync).toHaveBeenCalledTimes(3) // download + .new + target
       // Old version file removed (safe on Linux: mounted inode outlives the unlink)
       expect(mockUnlinkSync).toHaveBeenCalledWith(running)
     })
 
-    it('finding #1 — custom UNVERSIONED name is preserved: overwrites the SAME path', () => {
+    it('finding #1 — custom UNVERSIONED name is preserved: overwrites the SAME path', async () => {
       // The user renamed their AppImage to a stable name a .desktop/dock/alias
       // points at. Writing a new versioned name would orphan that launcher, so
       // we overwrite in place and keep their filename.
       const custom = '/home/u/Apps/ClaudeCommandCenter.AppImage'
-      const result = prepareLinuxAppImageUpdate(downloaded, custom)
+      const result = await prepareLinuxAppImageUpdate(downloaded, custom)
       expect(result?.replace(/\\/g, '/')).toBe(custom)
-      expect(mockCopyFileSync).toHaveBeenCalledWith(downloaded, custom)
-      // unlink-before-write on the same path (avoids truncating the mounted image)
+      // Staged next to the target, then renamed onto it.
+      const stagedName = String(mockCopyFileSync.mock.calls[0][1])
+      expect(stagedName).toMatch(/\.new-[0-9a-f]{12}$/)
+      expect(mockCopyFileSync).toHaveBeenCalledWith(downloaded, stagedName)
+      expect(mockRenameSync).toHaveBeenCalledWith(stagedName, custom)
+      // unlink-before-rename on the same path (avoids truncating the mounted image),
+      // exactly once — never a second unlink of the TARGET, since target === running.
       expect(mockUnlinkSync).toHaveBeenCalledWith(custom)
-      // ...and NOT a second unlink, since target === running
-      expect(mockUnlinkSync).toHaveBeenCalledTimes(1)
+      expect(mockUnlinkSync.mock.calls.filter(([p]) => p === custom)).toHaveLength(1)
     })
 
-    it('finding #1 — symlink launcher: resolves realpath and re-points the link', () => {
+    it('finding #1 — symlink launcher: resolves realpath and re-points the link', async () => {
       const link = '/home/u/bin/ccc'          // what the user launches
       mockRealpathSync.mockReturnValue(running) // resolves to the real versioned file
-      const result = prepareLinuxAppImageUpdate(downloaded, link)
+      const result = await prepareLinuxAppImageUpdate(downloaded, link)
       const expectedTarget = '/home/u/Apps/ClaudeCommandCenter-2.1.0-beta.2-linux-x86_64.AppImage'
       expect(result?.replace(/\\/g, '/')).toBe(expectedTarget)
       expect(mockUnlinkSync).toHaveBeenCalledWith(running)  // real old file removed
@@ -717,44 +1054,54 @@ describe('github-update', () => {
       expect(symLink).toBe(link)
     })
 
-    it('finding #4 — refuses a $APPIMAGE that is not an AppImage file (no delete, no copy)', () => {
+    it('finding #4 — refuses a $APPIMAGE that is not an AppImage file (never writes to it)', async () => {
       const stranger = '/home/u/important.txt'
-      mockRealpathSync.mockReturnValue(stranger)
-      const result = prepareLinuxAppImageUpdate(downloaded, stranger)
-      expect(result).toBe(downloaded)
+      // Identity realpath is enough — $APPIMAGE IS the stranger. A blanket
+      // mockReturnValue would also redirect the parking directory's own
+      // validation and mask the assertion below.
+      const result = await prepareLinuxAppImageUpdate(downloaded, stranger)
+      // Parked, not left in the staging root (#174) — but the stranger file is
+      // still never unlinked and never written to, which is the guarantee.
+      expect(result?.replace(/\\/g, '/')).toContain('/mock/dataDir/bin/')
       expect(mockUnlinkSync).not.toHaveBeenCalled()
-      expect(mockCopyFileSync).not.toHaveBeenCalled()
+      expect(mockCopyFileSync.mock.calls.some(([, dest]) => dest === stranger)).toBe(false)
     })
 
-    it('finding #4 — refuses a $APPIMAGE that is a directory', () => {
-      mockLstatSync.mockReturnValue({ isFile: () => false })
-      const result = prepareLinuxAppImageUpdate(downloaded, '/home/u/Apps')
-      expect(result).toBe(downloaded)
+    it('finding #4 — refuses a $APPIMAGE that is a directory', async () => {
+      mockLstatSync.mockReturnValue(statLike({ isFile: () => false }))
+      const result = await prepareLinuxAppImageUpdate(downloaded, '/home/u/Apps')
+      expect(result?.replace(/\\/g, '/')).toContain('/mock/dataDir/bin/')
       expect(mockUnlinkSync).not.toHaveBeenCalled()
+      expect(mockCopyFileSync.mock.calls.some(([, dest]) => String(dest).includes('/home/u/Apps'))).toBe(false)
     })
 
-    it('when $APPIMAGE no longer resolves (realpath throws), launches from the download', () => {
-      mockRealpathSync.mockImplementation(() => { throw new Error('ENOENT') })
-      const result = prepareLinuxAppImageUpdate(downloaded, running)
-      expect(result).toBe(downloaded)
-      expect(mockCopyFileSync).not.toHaveBeenCalled()
+    it('when $APPIMAGE no longer resolves (realpath throws), parks the download', async () => {
+      // Throw only for $APPIMAGE. A blanket throw would also break the parking
+      // directory's validation, so the test would pass for the wrong reason.
+      mockRealpathSync.mockImplementation((p: string) => {
+        if (p === running) throw new Error('ENOENT')
+        return p
+      })
+      const result = await prepareLinuxAppImageUpdate(downloaded, running)
+      expect(result?.replace(/\\/g, '/')).toContain('/mock/dataDir/bin/')
+      expect(mockCopyFileSync.mock.calls.some(([, dest]) => dest === running)).toBe(false)
     })
 
-    it('degrades to the download location when the copy fails (unwritable dir)', () => {
+    it('degrades to the download location when the copy fails (unwritable dir)', async () => {
       mockCopyFileSync.mockImplementation(() => { throw new Error('EACCES: permission denied') })
-      const result = prepareLinuxAppImageUpdate(downloaded, running)
+      const result = await prepareLinuxAppImageUpdate(downloaded, running)
       expect(result).toBe(downloaded)
     })
 
-    it('failure to remove the old version is non-fatal (still returns the new path)', () => {
+    it('failure to remove the old version is non-fatal (still returns the new path)', async () => {
       mockUnlinkSync.mockImplementation(() => { throw new Error('EBUSY') })
-      const result = prepareLinuxAppImageUpdate(downloaded, running)
+      const result = await prepareLinuxAppImageUpdate(downloaded, running)
       expect(result?.replace(/\\/g, '/')).toBe('/home/u/Apps/ClaudeCommandCenter-2.1.0-beta.2-linux-x86_64.AppImage')
     })
 
-    it('re-download of the exact same file is a no-op replace', () => {
+    it('re-download of the exact same file is a no-op replace', async () => {
       const samePath = '/home/u/Apps/ClaudeCommandCenter-2.1.0-beta.2-linux-x86_64.AppImage'
-      const result = prepareLinuxAppImageUpdate(samePath, samePath)
+      const result = await prepareLinuxAppImageUpdate(samePath, samePath)
       expect(result).toBe(samePath)
       expect(mockCopyFileSync).not.toHaveBeenCalled()
       expect(mockUnlinkSync).not.toHaveBeenCalled()
