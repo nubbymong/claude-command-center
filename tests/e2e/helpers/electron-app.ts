@@ -116,10 +116,21 @@ export async function launchIsolatedApp(): Promise<IsolatedApp> {
 
 export async function closeIsolatedApp(a: IsolatedApp | undefined): Promise<void> {
   if (!a) return
+  // A graceful close can hang indefinitely when the test left a live PTY session
+  // running (the shell keeps the app alive), which blows the afterAll hook
+  // timeout and fails an otherwise-passing run. Race it, then kill.
   try {
-    await a.app.close()
+    await Promise.race([
+      a.app.close(),
+      new Promise<void>((resolve) => setTimeout(resolve, 5000)),
+    ])
   } catch {
     /* ignore */
+  }
+  try {
+    a.app.process().kill()
+  } catch {
+    /* already gone */
   }
   // Remove ONLY the unique mkdtemp dir we created — never a parent/shared path.
   try {
