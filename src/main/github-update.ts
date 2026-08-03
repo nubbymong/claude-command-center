@@ -680,8 +680,12 @@ function splitChecksumLine(line: string): [string, string] | null {
 
 /** Refuse a manifest larger than this. A real one is a few hundred bytes, the
  *  read is synchronous, and it lands in the main process -- so an oversized
- *  body would be an OOM rather than a parse failure. */
-const MAX_MANIFEST_BYTES = 1024 * 1024
+ *  body would be an OOM rather than a parse failure.
+ *
+ *  Exported so `scripts/verify-release-manifest.js` can be pinned to the SAME
+ *  cap by test (#173). A release gate that accepts a manifest this client
+ *  refuses is a release that passes CI and cannot be installed. */
+export const MAX_MANIFEST_BYTES = 1024 * 1024
 
 /** A downloaded installer whose SHA-256 has been checked against the release
  *  manifest. Carries the digest so the caller can re-verify just before exec. */

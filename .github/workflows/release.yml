@@ -337,6 +337,7 @@ jobs:
           cat CHECKSUMS.txt
 
       - name: Create GitHub Release
+        id: publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -388,8 +389,30 @@ jobs:
           # Rolling re-release support (v2 beta policy): if the tag's release
           # already exists, REPLACE its assets instead of failing, and leave
           # the existing hand-written release notes untouched.
-          if gh release view "${TAG}" >/dev/null 2>&1; then
+          # Passing --draft below turns OFF gh's own duplicate-tag pre-check (it
+          # only runs for a non-draft create), so this probe is now the ONLY
+          # guard against creating a second release for a tag that already has
+          # one. It must therefore fail CLOSED: `--state` distinguishes a real
+          # "release not found" from an API error and exits non-zero on the
+          # latter. Inferring absence from an outage would create an orphan
+          # draft holding the new build while the live release keeps serving the
+          # old one — green job, nothing shipped.
+          # --retry-absent because here, and only here, "absent" AUTHORISES a
+          # write. gh maps just HTTP 404 to not-found, so one spurious or
+          # replica-lagged 404 would fork a second release for a tag that
+          # already has one.
+          STATE=$(node scripts/verify-release-manifest.js --state "${TAG}" --retry-absent) || {
+            echo "::error::Could not determine whether a release already exists for ${TAG}. Refusing to guess."
+            echo "fresh=unknown" >> "$GITHUB_OUTPUT"
+            exit 1
+          }
+          echo "Existing release state for ${TAG}: ${STATE}"
+
+          # A leftover DRAFT takes the re-release path too — that is how a run
+          # that drafted and then failed gets repaired and published.
+          if [ "$STATE" != "absent" ]; then
             echo "Release ${TAG} exists - replacing assets (rolling re-release)"
+            echo "fresh=false" >> "$GITHUB_OUTPUT"
             gh release upload "${TAG}" artifacts/* --clobber
           else
             # --target pins the tag to the commit we actually built ($GITHUB_SHA
@@ -398,14 +421,60 @@ jobs:
             # derives the release's created_at from that stale commit's date, and
             # the in-app updater (which fetches releases in created_at order) never
             # sees the new beta. See src/main/github-update.ts.
-            gh release create "${TAG}" $PRERELEASE_FLAG \
+            #
+            # --draft so no client can see the release until the manifest gate
+            # below passes. `checkGitHubRelease` skips drafts outright
+            # (github-update.ts), and `created_at` is the TARGET COMMIT's date,
+            # not the publish date, so deferring publication cannot strand the
+            # release the way a stale --target would.
+            #
+            # Note what --draft COSTS: `gh release create` normally drafts
+            # internally while uploading and DELETES the draft if an upload
+            # fails (`draftWhileUploading` in cli/cli). Passing --draft
+            # explicitly disables that cleanup, so a failed upload leaves a
+            # partial draft behind. The "Clean up a failed draft" step below
+            # replaces it.
+            echo "fresh=true" >> "$GITHUB_OUTPUT"
+            gh release create "${TAG}" $PRERELEASE_FLAG --draft \
               --target "$GITHUB_SHA" \
               --title "${TITLE}" \
               --notes-file RELEASE_BODY.md \
               artifacts/*
           fi
 
+      # A create that failed part-way now leaves a partial draft behind (see the
+      # --draft note above), and a leftover draft is the entry point to the worst
+      # failure mode this job has: the next run finds it, takes the re-release
+      # path, and never publishes. Remove it so a re-run starts clean. No
+      # --cleanup-tag: a draft has no tag.
+      - name: Clean up a failed draft
+        if: ${{ failure() && steps.publish.outputs.fresh == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.build-windows.outputs.tag }}
+        run: |
+          # `fresh=true` is what this run INTENDED, not what exists. Never
+          # delete on intent alone: confirm the thing in front of us is actually
+          # a draft. Otherwise a run that thought the tag was free — and was
+          # wrong — deletes a live published release, assets and notes included.
+          STATE=$(node scripts/verify-release-manifest.js --state "$TAG") || STATE=unknown
+          if [ "$STATE" = "draft" ]; then
+            echo "::warning::Release creation failed — deleting the partial draft ${TAG}."
+            gh release delete "$TAG" --yes || echo "::warning::Could not delete the draft ${TAG}."
+          else
+            echo "::warning::${TAG} is '${STATE}', not a draft — refusing to delete it."
+          fi
+
+      # VT runs BEFORE the manifest gate on purpose: it scans the local
+      # artifacts/, not the release, so it is independent of the gate's verdict —
+      # and if the gate ran first, a manifest problem would silently take malware
+      # scanning down with it for that release.
+      #
+      # continue-on-error because VT is ADVISORY: it produces links, not a
+      # verdict. Without it, a VirusTotal outage fails the step, skips the
+      # publish, and strands a perfectly good verified release as a draft.
       - name: VirusTotal scan
+        continue-on-error: true
         if: ${{ !inputs.skip_vt }}
         env:
           VT_API_KEY: ${{ secrets.VT_API_KEY }}
@@ -434,3 +503,151 @@ jobs:
               echo "  Upload response: ${RESULT}"
             fi
           done
+
+      # ── Manifest gate (#173) ──
+      # Every installer ATTACHED to the release must be one the CLIENT can
+      # verify: a resolvable CHECKSUMS.txt line whose digest matches the bytes
+      # GitHub is serving. Since #111 the client REFUSES what it cannot verify,
+      # so a defective manifest is a dead-end update — offered, downloaded,
+      # blocked, on every attempt, silently until the next release.
+      #
+      # The script reads the assets back from the API rather than looking at
+      # artifacts/. That is the whole point: `gh release upload --clobber` above
+      # replaces same-named assets but never PRUNES, so a flaked build-linux on a
+      # rolling re-release leaves the OLD AppImage attached while the manifest
+      # regenerated from artifacts/ has no line for it. A local check cannot see
+      # an asset it never produced.
+      #
+      # Exit 1 = the release is broken. Exit 2 = GitHub was unreachable (or the
+      # digest half could not run), which is NOT a verdict on the release. That
+      # distinction has to survive into the workflow, because `steps.*.outcome`
+      # is only success/failure — so the code is captured as a step OUTPUT and
+      # the withdraw step keys on it. Without that, a network blip would tear a
+      # healthy live release out of client view.
+      #
+      # `!cancelled()` rather than the default `success()`: `--clobber` DELETES
+      # each asset before re-uploading it ("if the upload fails, the original
+      # assets will be lost" — gh's own docs), so a mid-upload failure is exactly
+      # the state this gate exists to report. Defaulting to success() would skip
+      # the gate precisely when it matters. It is still skipped when the publish
+      # step never ran, so an earlier build failure does not end the log with a
+      # gate complaining that a release it never created is missing.
+      - name: Verify the client can verify every attached installer
+        id: verify
+        if: ${{ !cancelled() && steps.publish.conclusion != 'skipped' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.build-windows.outputs.tag }}
+        run: |
+          code=0
+          node scripts/verify-release-manifest.js "$TAG" || code=$?
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          exit $code
+
+      # Publication keys on whether the release is a draft RIGHT NOW, not on how
+      # this run created it. Keying on `fresh` is the trap: a run that drafts and
+      # then fails leaves a draft behind, the NEXT run finds it and takes the
+      # re-release path (fresh=false), and the publish step never fires — a green
+      # run with nothing published, repeating forever.
+      - name: Publish the verified release
+        id: publish_final
+        if: ${{ success() && steps.verify.outcome == 'success' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.build-windows.outputs.tag }}
+        run: |
+          # Fail CLOSED. `if [ "$(gh ...)" = "true" ]` swallows a failed command
+          # substitution under `bash -e` and falls into the else branch, which
+          # would log "already published" over a release that is still a draft —
+          # a green job and an invisible release, the worst outcome this job has.
+          STATE=$(node scripts/verify-release-manifest.js --state "$TAG") || {
+            echo "::error::Verified ${TAG} but could not read its draft state, so it may be unpublished."
+            exit 1
+          }
+          case "$STATE" in
+            draft)
+              gh release edit "$TAG" --draft=false
+              echo "published=true" >> "$GITHUB_OUTPUT"
+              echo "Published $TAG — assets verified."
+              ;;
+            published)
+              echo "published=true" >> "$GITHUB_OUTPUT"
+              echo "$TAG is already published — assets verified."
+              ;;
+            *)
+              echo "::error::${TAG} verified but its state is '${STATE}' — nothing to publish."
+              exit 1
+              ;;
+          esac
+
+      # The rolling re-release path cannot be gated before publication: the
+      # release is already live and `--clobber` mutates it in place. So on a
+      # BROKEN verdict — code 1 only, never code 2 — pull it out of client view
+      # rather than leave a known dead-end update on offer while someone reads
+      # the log. Best-effort: if GitHub refuses to re-draft a published release
+      # (immutable releases), the step still fails loudly and names the repair.
+      # `!= 'true'` rather than `== 'false'`: the probe can abort before it
+      # writes `fresh` at all, and a pre-existing broken live release still has
+      # to be withdrawable on that path. Only a confirmed fresh create — where
+      # nothing was ever live — is excluded. The body reads the real state and
+      # re-drafts only what is actually published.
+      - name: Withdraw an unverifiable re-release
+        if: ${{ failure() && steps.verify.outputs.code == '1' && steps.publish.outputs.fresh != 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.build-windows.outputs.tag }}
+        run: |
+          # `fresh=false` no longer implies "was published" — it is also true of
+          # a leftover draft from a previous failed run. Read the real state so
+          # the log does not announce that a live release was withdrawn when
+          # nothing was ever live.
+          STATE=$(node scripts/verify-release-manifest.js --state "$TAG") || STATE=unknown
+          case "$STATE" in
+            published)
+              echo "::error::${TAG} failed manifest verification and is LIVE. Withdrawing it from client view."
+              if gh release edit "$TAG" --draft; then
+                echo "::warning::${TAG} is now a DRAFT. Repair the assets and re-run; the publish step re-publishes any draft that verifies."
+              else
+                echo "::error::Could not re-draft ${TAG}. Withdraw it by hand NOW: gh release edit \"$TAG\" --draft"
+              fi
+              ;;
+            draft)
+              echo "::warning::${TAG} failed manifest verification but is still a DRAFT — no client has seen it. Repair the assets and re-run."
+              ;;
+            *)
+              echo "::error::${TAG} failed manifest verification and its state is '${STATE}'. Check it by hand."
+              ;;
+          esac
+          exit 1
+
+      # Failsafe. A draft is invisible to every client, so "left as a draft" is
+      # a silent non-release — the one outcome that must never be reported
+      # green.
+      #
+      # Skipped when the publish step already confirmed publication: re-reading
+      # a second later would race GitHub's own consistency (release.js sleeps 3s
+      # before its equivalent read) and redden a release that is live.
+      # Skipped on a code-1 verdict too — the release is known-broken and the
+      # gate has already said so in detail.
+      # `!cancelled()` not `always()`: a cancelled run should not also collect a
+      # hard red from a failsafe.
+      - name: Fail if the release was left unpublished
+        if: ${{ !cancelled() && steps.publish.conclusion != 'skipped' && steps.verify.outputs.code != '1' && steps.publish_final.outputs.published != 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.build-windows.outputs.tag }}
+        run: |
+          # Fail closed: `|| echo absent` here would map a rate limit onto the
+          # exit-0 branch, so the step that exists to catch a stranded draft
+          # would be silent exactly when GitHub is the reason it is stranded.
+          STATE=$(node scripts/verify-release-manifest.js --state "$TAG") || {
+            echo "::error::Could not determine whether ${TAG} was published. Check it by hand."
+            exit 1
+          }
+          case "$STATE" in
+            published) echo "$TAG is published." ;;
+            absent)    echo "::warning::No release exists for $TAG — nothing was published." ; exit 0 ;;
+            *)         echo "::error::$TAG exists but is STILL A DRAFT. No client can see it."
+                       echo "::error::Repair the assets and re-run, or publish by hand: gh release edit \"$TAG\" --draft=false"
+                       exit 1 ;;
+          esac
