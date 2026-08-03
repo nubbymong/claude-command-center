@@ -1,15 +1,85 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { useInsightsStore } from '../stores/insightsStore'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { useSettingsStore } from '../stores/settingsStore'
+import { useReauthAccount } from '../hooks/useReauthAccount'
+import { authFailureStillApplies, describeAuthWindow, type ProfileAuthInfo } from '../../shared/account-auth'
 import { resolveAccountNameByEmail, resolveAccountName } from '../../shared/account-chip-color'
 import KpiSidebar from './KpiSidebar'
-import type { InsightsData } from '../types/electron'
+import type { CrossAccountInsights, InsightsData } from '../types/electron'
 import PageFrame from './PageFrame'
 import { parseInsightsReport, type ParsedInsights } from './insights/parseInsightsReport'
 import { InsightsSections } from './insights/InsightsSections'
+import CrossAccountReport from './insights/CrossAccountReport'
 
-export default function InsightsPage() {
+interface InsightsPageProps {
+  /** Switch to the sessions view. Re-auth opens a login shell session, so the
+   *  user has to be taken to it — same contract AccountUsagePanel uses. */
+  onNavigateToSessions?: () => void
+}
+
+/**
+ * Accounts whose sign-in has expired, according to Insights' own runs.
+ *
+ * Only each account's MOST RECENT run counts. A historical auth failure that has
+ * since been fixed must not keep nagging — same calibration as the nav status dot:
+ * a warning means "needs attention now", not "once failed".
+ */
+function AuthBanner({
+  accounts,
+  checking,
+  onReauth,
+  onRecheck,
+}: {
+  accounts: Array<{ profileId: string; name: string; error?: string }>
+  checking: boolean
+  onReauth: (profileId: string, name: string) => void
+  onRecheck: () => void
+}) {
+  if (accounts.length === 0) return null
+  return (
+    <div className="px-4 py-2.5 bg-red/10 border-b border-red/25 shrink-0">
+      <div className="flex items-start gap-2">
+        <span className="text-red text-xs mt-0.5 shrink-0">{String.fromCodePoint(0x26a0)}</span>
+        <div className="min-w-0 flex-1">
+          <p className="text-xs text-red font-medium">
+            {accounts.length === 1
+              ? 'One account needs to sign in again before Insights can analyse it.'
+              : `${accounts.length} accounts need to sign in again before Insights can analyse them.`}
+          </p>
+          <p className="text-[11px] text-overlay1 mt-0.5">
+            The report still generates, but the metrics and the written analysis need a working
+            sign-in. Signing in opens a terminal session for that account.
+          </p>
+          <div className="flex flex-wrap items-center gap-1.5 mt-2">
+            {accounts.map((a) => (
+              <button
+                key={a.profileId}
+                onClick={() => onReauth(a.profileId, a.name)}
+                title={a.error || 'Sign-in expired'}
+                className="text-[11px] px-2 py-0.5 rounded border border-red/40 text-red hover:bg-red/15 transition-colors"
+              >
+                Sign in: {a.name}
+              </button>
+            ))}
+            {/* Explicit re-check: the credential files are read on mount, but a
+                sign-in happens in a terminal session this component never hears
+                about, so the user needs a way to say "look again" without a reload. */}
+            <button
+              onClick={onRecheck}
+              disabled={checking}
+              className="text-[11px] px-2 py-0.5 rounded border border-surface1 text-overlay1 hover:text-text transition-colors disabled:opacity-60"
+            >
+              {checking ? 'Checking…' : 'Re-check sign-ins'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export default function InsightsPage({ onNavigateToSessions }: InsightsPageProps = {}) {
   // All hooks called unconditionally -- early returns appear after all hook calls.
   const catalogue = useInsightsStore((s) => s.catalogue)
   const selectedRunId = useInsightsStore((s) => s.selectedRunId)
@@ -17,6 +87,8 @@ export default function InsightsPage() {
   const status = useInsightsStore((s) => s.status)
   const statusMessage = useInsightsStore((s) => s.statusMessage)
   const startInsights = useInsightsStore((s) => s.startInsights)
+  const startCrossAccount = useInsightsStore((s) => s.startCrossAccount)
+  const batchActive = useInsightsStore((s) => s.batchActive)
   const loadCatalogue = useInsightsStore((s) => s.loadCatalogue)
 
   const [parsed, setParsed] = useState<ParsedInsights | null>(null)
@@ -76,9 +148,19 @@ export default function InsightsPage() {
     if (catalogue) {
       // Compare against the previous complete run of the SAME account (W5) —
       // otherwise multi-account diffs one account's run against another's.
+      // Aggregates are excluded on both sides: they carry no profileId, so they
+      // would otherwise pair up with every default-account run, and a
+      // cross-account roll-up is rendered without the trend sidebar anyway.
       const sel = catalogue.runs.find((r) => r.id === selectedRunId)
+      if (sel?.kind === 'aggregate') {
+        setPreviousKpis(null)
+        return
+      }
       const runs = catalogue.runs.filter(
-        (r) => r.status === 'complete' && (r.profileId ?? null) === (sel?.profileId ?? null)
+        (r) =>
+          r.status === 'complete' &&
+          r.kind !== 'aggregate' &&
+          (r.profileId ?? null) === (sel?.profileId ?? null)
       )
       const idx = runs.findIndex((r) => r.id === selectedRunId)
       if (idx > 0) {
@@ -97,6 +179,89 @@ export default function InsightsPage() {
   // are discoverable instead of being silently filtered out.
   const pickerRuns = [...completedRuns, ...failedRuns].sort((a, b) => b.timestamp - a.timestamp)
   const isRunning = status === 'running' || status === 'extracting_kpis'
+
+  // A cross-account roll-up renders from its own JSON (it has no report.html).
+  // The shape is validated before use so a truncated or hand-edited kpis.json
+  // shows the "no report" state instead of throwing inside the view.
+  const selectedIsAggregate = selectedRun?.kind === 'aggregate'
+  const crossAccount: CrossAccountInsights | null =
+    selectedIsAggregate &&
+    currentKpis &&
+    Array.isArray((currentKpis as CrossAccountInsights).accounts) &&
+    Array.isArray((currentKpis as CrossAccountInsights).comparison)
+      ? (currentKpis as CrossAccountInsights)
+      : null
+  const runAllLabel = `Run all (${profiles.length})`
+
+  // LIVE credential state, read from disk. The first cut derived this purely from
+  // run history ("this account's latest run failed authentication"), which cannot
+  // be cleared by the fix: signing in does not produce a new run, so the warning
+  // persisted forever after a successful login. Run history is now only a
+  // secondary hint, retired as soon as the credentials are newer than the run.
+  const [authInfo, setAuthInfo] = useState<ProfileAuthInfo[] | null>(null)
+  const [checkingAuth, setCheckingAuth] = useState(false)
+  const recheckAuth = React.useCallback(async () => {
+    setCheckingAuth(true)
+    try {
+      setAuthInfo(await window.electronAPI.accountProfiles.authInfo())
+    } catch {
+      setAuthInfo([])
+    } finally {
+      setCheckingAuth(false)
+    }
+  }, [])
+  useEffect(() => { void recheckAuth() }, [recheckAuth])
+
+  const accountsNeedingReauth = useMemo(() => {
+    if (!authInfo) return []
+    const latestRunByProfile = new Map<string, { timestamp: number; authFailed?: boolean; authFailedRefreshExpiry?: number; error?: string; accountEmail?: string }>()
+    for (const run of catalogue?.runs ?? []) {
+      if (!run.profileId || run.kind === 'aggregate') continue
+      const current = latestRunByProfile.get(run.profileId)
+      if (!current || run.timestamp > current.timestamp) latestRunByProfile.set(run.profileId, run)
+    }
+
+    const out: Array<{ profileId: string; name: string; error?: string }> = []
+    for (const info of authInfo) {
+      const profile = profiles.find((p) => p.id === info.profileId)
+      const email = info.oauthEmail || info.accountEmail || profile?.accountEmail
+      const name = (email ? nameForAccount(email) : null) || profile?.name || email || 'Account'
+
+      // 1. Live state is authoritative and self-clearing.
+      const window_ = describeAuthWindow(info, Date.now())
+      if (window_.tone === 'expired') {
+        out.push({ profileId: info.profileId, name, error: window_.label })
+        continue
+      }
+      // 2. A past auth failure counts only while the credentials have NOT been
+      //    rewritten since it happened.
+      const run = latestRunByProfile.get(info.profileId)
+      if (run?.authFailed && authFailureStillApplies(run.timestamp, info, run.authFailedRefreshExpiry)) {
+        out.push({ profileId: info.profileId, name, error: run.error })
+      }
+    }
+    return out
+  }, [authInfo, catalogue, profiles, accountAliases])
+
+  const reauthAccount = useReauthAccount()
+  const handleReauth = (profileId: string, name: string): void => {
+    const profile = profiles.find((p) => p.id === profileId)
+    // Re-read the credentials when the login lands, so the banner clears itself
+    // without the user having to press anything.
+    reauthAccount({ id: profileId, name: profile?.name || name }, () => {
+      void loadCatalogue()
+      void recheckAuth()
+    })
+    onNavigateToSessions?.()
+  }
+  const authBanner = (
+    <AuthBanner
+      accounts={accountsNeedingReauth}
+      checking={checkingAuth}
+      onReauth={handleReauth}
+      onRecheck={() => void recheckAuth()}
+    />
+  )
 
   // Codex-only empty state: user has Codex sessions but no Claude sessions.
   // Insights are Claude-only -- show an explanatory message rather than the
@@ -139,6 +304,10 @@ export default function InsightsPage() {
           </div>
         </div>
 
+        {/* Shown in the empty state too: an expired sign-in is exactly why there
+            may be no reports yet, so this is when it matters most. */}
+        {authBanner}
+
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center">
             <div className="w-14 h-14 mx-auto mb-4 rounded-2xl bg-surface0/30 flex items-center justify-center">
@@ -178,12 +347,23 @@ export default function InsightsPage() {
                     ))}
                   </select>
                 )}
-                <button
-                  onClick={() => startInsights(effectiveRunProfileId || undefined)}
-                  className="px-4 py-2 bg-teal/10 border border-teal/25 text-teal rounded-lg hover:bg-teal/20 transition-colors text-xs font-medium"
-                >
-                  Run Insights Now
-                </button>
+                <div className="flex items-center justify-center gap-2">
+                  <button
+                    onClick={() => startInsights(effectiveRunProfileId || undefined)}
+                    className="px-4 py-2 bg-teal/10 border border-teal/25 text-teal rounded-lg hover:bg-teal/20 transition-colors text-xs font-medium"
+                  >
+                    Run Insights Now
+                  </button>
+                  {multiAccount && (
+                    <button
+                      onClick={() => startCrossAccount()}
+                      className="px-4 py-2 bg-surface0 border border-surface1 text-subtext1 rounded-lg hover:border-teal/40 hover:text-teal transition-colors text-xs font-medium"
+                      title="Generate a report for every account, then one combined cross-account report"
+                    >
+                      {runAllLabel}
+                    </button>
+                  )}
+                </div>
               </>
             )}
           </div>
@@ -212,7 +392,14 @@ export default function InsightsPage() {
             month: 'short', day: 'numeric', year: 'numeric',
             hour: '2-digit', minute: '2-digit'
           })
-          const acct = multiAccount ? nameForAccount(run.accountEmail) : null
+          // An aggregate belongs to every account, so it is labelled by how many
+          // it actually compared rather than by one account name.
+          const acct =
+            run.kind === 'aggregate'
+              ? `All accounts (${run.memberRunIds?.length ?? run.members?.length ?? 0})`
+              : multiAccount
+                ? nameForAccount(run.accountEmail)
+                : null
           const base = acct ? `${label} · ${acct}` : label
           const suffix = run.status === 'failed' ? ' · failed' : run.kpisUnavailable ? ' · no KPIs' : ''
           return <option key={run.id} value={run.id}>{base}{suffix}</option>
@@ -248,6 +435,31 @@ export default function InsightsPage() {
           </>
         ) : 'New run'}
       </button>
+      {/* Reloads the run catalogue AND re-reads every account's credentials. Both
+          change outside this view — a run finishing elsewhere, a sign-in completing
+          in a terminal session — and neither pushes an event here. */}
+      <button
+        onClick={() => { void loadCatalogue(); void recheckAuth() }}
+        disabled={checkingAuth}
+        title="Reload reports and re-check account sign-ins"
+        className="text-xs px-2 py-0.5 rounded text-overlay1 hover:text-text hover:bg-surface0 transition-colors disabled:opacity-60"
+      >
+        {checkingAuth ? 'Checking…' : 'Refresh'}
+      </button>
+      {multiAccount && (
+        <button
+          onClick={() => startCrossAccount()}
+          disabled={isRunning || batchActive}
+          className={`text-xs px-2.5 py-0.5 rounded border font-medium transition-all ${
+            isRunning || batchActive
+              ? 'bg-surface0 border-surface1 text-overlay0 cursor-not-allowed'
+              : 'bg-surface0 border-surface1 text-subtext1 hover:border-teal/40 hover:text-teal'
+          }`}
+          title="Generate a report for every account, then one combined cross-account report"
+        >
+          {runAllLabel}
+        </button>
+      )}
     </>
   )
 
@@ -264,6 +476,7 @@ export default function InsightsPage() {
       actions={insightsActions}
       scrollable={false}
     >
+      {authBanner}
       {latestRun?.status === 'failed' && (
         <div
           className="px-4 py-1.5 text-[11px] text-red bg-red/10 border-b border-red/20 shrink-0 truncate"
@@ -284,6 +497,8 @@ export default function InsightsPage() {
                 <span className="text-xs">Loading report...</span>
               </div>
             </div>
+          ) : crossAccount && selectedRun ? (
+            <CrossAccountReport data={crossAccount} run={selectedRun} nameForAccount={nameForAccount} />
           ) : parsed ? (
             <div className="w-full h-full overflow-auto">
               {parsed.title && (
@@ -308,12 +523,22 @@ export default function InsightsPage() {
           )}
         </div>
 
-        {/* KPI Sidebar — or a note when KPIs failed for this completed run */}
-        {currentKpis ? (
+        {/* KPI Sidebar — or a note when KPIs failed for this completed run.
+            An aggregate is full-width: its comparison table already holds every
+            metric, and the trend sidebar has no same-account previous run to
+            diff against. */}
+        {selectedIsAggregate ? null : currentKpis ? (
           <KpiSidebar current={currentKpis} previous={previousKpis} />
         ) : selectedRun?.kpisUnavailable ? (
           <div className="w-72 shrink-0 border-l border-surface0/80 p-4 text-xs text-overlay0">
-            Report ready — KPI extraction failed for this run.
+            <p>Report ready — KPI extraction failed for this run.</p>
+            {/* The reason, when the runner captured one. An expired OAuth session
+                is a one-click fix the user can only act on if told about it. */}
+            {selectedRun?.error && (
+              <p className="mt-2 text-red break-words" title={selectedRun.error}>
+                {selectedRun.error}
+              </p>
+            )}
           </div>
         ) : null}
       </div>

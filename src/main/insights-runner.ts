@@ -8,7 +8,8 @@ import {
   renameSync,
   copyFileSync,
   readdirSync,
-  statSync
+  statSync,
+  chmodSync
 } from 'fs'
 import * as pty from 'node-pty'
 import { BrowserWindow } from 'electron'
@@ -18,6 +19,29 @@ import { spawnClaudeHeadless } from './claude-headless'
 import { getProfileConfigDir, getPrimaryProfileId, setupProfileLinks, listProfiles } from './account-profiles'
 import { getProjectRootPath, getInstallPath } from './update-watcher'
 import { getResourcesDirectory } from './ipc/setup-handlers'
+import type { AccountProfile } from '../shared/account-types'
+import { isAuthFailure, type ClaudeFailureFacts } from '../shared/claude-auth-errors'
+import { readProfileAuthInfo } from './account-auth-info'
+import { redactSecrets } from './hooks/hook-payload-redactor'
+import type { InsightsCatalogue, InsightsData, InsightsRun, InsightsRunMember } from '../shared/types'
+import {
+  CROSS_ACCOUNT_MAX_PARALLEL,
+  CROSS_ACCOUNT_MIN_ACCOUNTS,
+  assembleCrossAccount,
+  buildCrossAccountPromptFrom,
+  buildCrossAccountSpawnArgs,
+  crossAccountLabel,
+  describeCrossAccountFanout,
+  mapWithLimit,
+  parseCrossAccountNarrative,
+  withNarrative,
+  type CrossAccountMember
+} from './insights-cross-account'
+
+// The run/catalogue shapes live in shared/types (the renderer reads them too);
+// re-exported here so existing `from './insights-runner'` type imports keep
+// working and the two copies can't drift.
+export type { InsightsCatalogue, InsightsRun }
 
 // Source locations (Claude CLI output). `/insights` writes report.html under the
 // running account's HOME (~/.claude/usage-data); with per-account isolation the
@@ -30,19 +54,6 @@ export function claudeFacetsDir(home: string | null): string { return join(usage
 // Dynamic paths based on data directory
 function getInsightsDir(): string { return join(getResourcesDirectory(), 'insights') }
 function getCatalogueFile(): string { return join(getInsightsDir(), 'catalogue.json') }
-
-export interface InsightsRun {
-  id: string            // timestamp-based: '2026-02-06-143022'
-  timestamp: number     // Date.now()
-  status: 'running' | 'extracting_kpis' | 'complete' | 'failed'
-  statusMessage?: string  // e.g. "Step 1/3: Generating report..."
-  error?: string
-  /** Account this run was generated for (multi-account). Undefined = default. */
-  accountEmail?: string
-  profileId?: string
-  /** Run completed but KPI extraction failed: report is viewable, no kpis.json. */
-  kpisUnavailable?: boolean
-}
 
 /**
  * Resolve which account a run executes under. Mirrors the cloud-agent path: an
@@ -66,10 +77,6 @@ function resolveInsightsAccount(profileId?: string): { home: string | null; prof
   return { home: getProfileConfigDir(resolved), profileId: resolved, accountEmail }
 }
 
-export interface InsightsCatalogue {
-  runs: InsightsRun[]
-}
-
 // Per-account in-flight lock: keyed by resolved profileId so two DIFFERENT
 // accounts can run concurrently, while the same account can't double-run.
 // Catalogue integrity across concurrent runs is preserved by upsertRun's
@@ -78,6 +85,12 @@ const inFlight = new Set<string>()
 function accountKey(profileId?: string): string {
   return profileId ?? '(default)'
 }
+
+// A cross-account fan-out takes its own lock so two overlapping roll-ups can't
+// both drive the same member accounts. It is deliberately a SEPARATE key from
+// every accountKey(): the fan-out holds this one while each member run takes and
+// releases its own, so the aggregate lock can never collide with a member's.
+const CROSS_ACCOUNT_KEY = '(cross-account)'
 
 function ensureDir(dir: string): void {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
@@ -444,8 +457,16 @@ export function loadPreviousKpis(currentRunId: string): string | null {
     // undefined so they all match (unchanged behaviour). (Unit 3 W5)
     const current = catalogue.runs.find(r => r.id === currentRunId)
     const currentAccount = current?.profileId ?? null
+    // Aggregates are excluded explicitly: a cross-account roll-up has no
+    // profileId, so `(r.profileId ?? null) === currentAccount` would otherwise
+    // match it against every DEFAULT-account run and hand a roll-up to a single
+    // account as its "previous run".
     const completeRuns = catalogue.runs.filter(
-      r => r.status === 'complete' && r.id !== currentRunId && (r.profileId ?? null) === currentAccount
+      r =>
+        r.status === 'complete' &&
+        r.kind !== 'aggregate' &&
+        r.id !== currentRunId &&
+        (r.profileId ?? null) === currentAccount
     )
     if (completeRuns.length === 0) return null
 
@@ -466,36 +487,283 @@ export function loadPreviousKpis(currentRunId: string): string | null {
  * dialog and `--allowedTools Read` pre-authorizes the only tool needed. Verified
  * on the VM: an out-of-cwd absolute Read succeeds with zero permission denials
  * and no dangerous flag. See specs/2026-06-15-unit3-insights-review-design.md W1.
+ *
+ * `--strict-mcp-config` and `--tools Read` are the cost fix, and they are not a
+ * micro-optimisation. A headless `claude -p` loads the account's whole mirrored
+ * global config: measured on a real profile, 10 MCP servers (azure, m365,
+ * atlassian, grafana, ...) plus 41 skills. A real 4-account run showed
+ * `cache_read 134,038 + cache_creation 58,814 = 192,852` context tokens per
+ * extraction, against a payload of roughly 31k — so ~162k of pure overhead, at
+ * $0.77 a call.
+ *
+ * Measured with the same trivial prompt: overhead is 41,714 tokens with
+ * `--strict-mcp-config` (no `--mcp-config` alongside it means no servers load),
+ * and 14,395 with `--tools Read` as well. The remaining 27k is the default
+ * built-in toolset's schemas, which `--allowedTools` does NOT unload — that flag
+ * only gates the permission prompt. `--tools` is the one that decides which tool
+ * DEFINITIONS enter context, so both are needed and they do different jobs.
+ *
+ * Neither value contains a space or is empty, which is why they can be passed at
+ * all: spawnClaudeHeadless runs with `shell: true`, which concatenates argv
+ * without quoting, so an empty or spaced argument would vanish and let the
+ * preceding flag swallow the next one. `--tools ""` for the no-tools case and
+ * `--settings '{...}'` for the skills/CLAUDE.md overhead are blocked on that.
  */
 export function buildKpiSpawnArgs(): string[] {
-  return ['-p', '--allowedTools', 'Read', '--output-format', 'json']
+  return ['-p', '--strict-mcp-config', '--tools', 'Read', '--allowedTools', 'Read', '--output-format', 'json']
+}
+
+/**
+ * Pull the usage/cost block out of a `claude -p --output-format json` reply and
+ * render it for the log. Pure + exported for testing.
+ *
+ * Every token figure for this feature has so far been an ESTIMATE derived from
+ * file sizes. The CLI already reports the real numbers in the envelope and the
+ * code discarded them. Logging turns the next optimisation pass into measurement
+ * instead of arithmetic. Field names are read defensively (both snake_case and
+ * camelCase) because they are not part of any contract we control.
+ */
+export function describeClaudeUsage(stdout: string): string | null {
+  let envelope: any
+  try {
+    envelope = JSON.parse(stdout.trim())
+  } catch {
+    return null
+  }
+  if (!envelope || typeof envelope !== 'object') return null
+  const usage = envelope.usage
+  const num = (...keys: string[]): number | undefined => {
+    for (const k of keys) {
+      const v = usage?.[k]
+      if (typeof v === 'number' && Number.isFinite(v)) return v
+    }
+    return undefined
+  }
+  const parts: string[] = []
+  const input = num('input_tokens', 'inputTokens')
+  const output = num('output_tokens', 'outputTokens')
+  const cacheRead = num('cache_read_input_tokens', 'cacheReadInputTokens')
+  const cacheWrite = num('cache_creation_input_tokens', 'cacheCreationInputTokens')
+  if (input != null) parts.push(`in=${input}`)
+  if (output != null) parts.push(`out=${output}`)
+  if (cacheRead != null) parts.push(`cacheRead=${cacheRead}`)
+  if (cacheWrite != null) parts.push(`cacheWrite=${cacheWrite}`)
+  const cost = envelope.total_cost_usd ?? envelope.totalCostUsd
+  if (typeof cost === 'number' && Number.isFinite(cost)) parts.push(`cost=$${cost.toFixed(4)}`)
+  const durationMs = envelope.duration_ms ?? envelope.durationMs
+  if (typeof durationMs === 'number' && Number.isFinite(durationMs)) parts.push(`${Math.round(durationMs / 1000)}s`)
+  return parts.length > 0 ? parts.join(' ') : null
+}
+
+/**
+ * Human-readable reason from a `claude -p --output-format json` reply that failed
+ * before producing anything. Pure + exported for testing.
+ *
+ * The hard-failure envelope carries the actual explanation in `result` (or
+ * `error`), and the code used to log 500 characters of the raw envelope — which is
+ * mostly the zeroed `usage` block — so the reason never reached the UI or the log.
+ * Observed shape of such a failure: `is_error:true, duration_api_ms:0, num_turns:1`
+ * with every token count at 0, i.e. the API was never called.
+ */
+/**
+ * Extract the non-prose facts from a failure envelope so the auth classifier can
+ * gate on them. `apiReached` is the important one: if any token was counted or the
+ * API call took time, the envelope's `result` is MODEL OUTPUT and must never be
+ * read as an auth verdict. See isAuthFailure.
+ */
+export function readClaudeFailureFacts(stdout: string, reason: string | null): ClaudeFailureFacts {
+  let envelope: any
+  try {
+    envelope = JSON.parse(stdout.trim())
+  } catch {
+    // Unparseable output tells us nothing structural; treat the API as reached so
+    // the auth path stays closed and the raw reason is surfaced instead.
+    return { isError: true, apiReached: true, reason }
+  }
+  const usage = envelope?.usage ?? {}
+  const counters = [
+    'input_tokens', 'output_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens',
+    'inputTokens', 'outputTokens', 'cacheReadInputTokens', 'cacheCreationInputTokens'
+  ]
+  const apiMs = envelope?.duration_api_ms ?? envelope?.durationApiMs
+
+  // A field that is PRESENT but not a finite number tells us nothing, and
+  // "nothing" must fail CLOSED — treat the API as reached, exactly like
+  // unparseable stdout does. The first cut coerced such a field to zero, which
+  // failed OPEN: `{"usage":{"input_tokens":"500"},"duration_api_ms":"5000"}` read
+  // as no-tokens-no-time and let model prose back through the gate.
+  //
+  // `undefined` means the key is genuinely ABSENT, which is fine: the real auth
+  // envelope carries every counter at zero, and a missing counter honestly means
+  // nothing was spent. `null` is NOT absent — it is an explicitly present value we
+  // cannot read, i.e. the schema drift this guard exists for, so it is excluded
+  // from this filter and caught below. (It is also what `NaN` becomes after a JSON
+  // round-trip, so it is the only form that case can reach us in.)
+  const present = [...counters.map((k) => usage[k]), apiMs].filter((v) => v !== undefined)
+  const unreadable = present.some((v) => typeof v !== 'number' || !Number.isFinite(v))
+  if (unreadable) {
+    return { isError: envelope?.is_error === true || envelope?.isError === true, apiReached: true, reason }
+  }
+
+  const tokensSpent = counters.some((k) => typeof usage[k] === 'number' && usage[k] > 0)
+  const tookApiTime = typeof apiMs === 'number' && apiMs > 0
+  return {
+    isError: envelope?.is_error === true || envelope?.isError === true,
+    apiReached: tokensSpent || tookApiTime,
+    reason
+  }
+}
+
+export function describeClaudeError(stdout: string): string | null {
+  let envelope: any
+  try {
+    envelope = JSON.parse(stdout.trim())
+  } catch {
+    return null
+  }
+  if (!envelope || typeof envelope !== 'object') return null
+  if (envelope.is_error !== true && envelope.isError !== true) return null
+
+  const parts: string[] = []
+  if (typeof envelope.subtype === 'string' && envelope.subtype.trim()) parts.push(envelope.subtype.trim())
+  const message =
+    (typeof envelope.result === 'string' && envelope.result.trim()) ||
+    (typeof envelope.error === 'string' && envelope.error.trim()) ||
+    (typeof envelope.error?.message === 'string' && envelope.error.message.trim())
+  if (message) parts.push(String(message).slice(0, 400))
+  const apiMs = envelope.duration_api_ms ?? envelope.durationApiMs
+  if (apiMs === 0) parts.push('the API was never reached (duration_api_ms=0)')
+  if (typeof envelope.stop_reason === 'string') parts.push(`stop_reason=${envelope.stop_reason}`)
+  return parts.length > 0 ? parts.join('; ') : 'claude reported is_error with no message'
+}
+
+/**
+ * Scan a balanced JSON object starting at `start`, honouring strings and escapes.
+ * Returns the object's source text, or null when it never closes — which is the
+ * signature of output truncated mid-object.
+ */
+function scanBalancedObject(text: string, start: number): string | null {
+  let depth = 0
+  let inString = false
+  let escaped = false
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i]
+    if (inString) {
+      if (escaped) escaped = false
+      else if (ch === '\\') escaped = true
+      else if (ch === '"') inString = false
+      continue
+    }
+    if (ch === '"') inString = true
+    else if (ch === '{') depth++
+    else if (ch === '}' && --depth === 0) return text.slice(start, i + 1)
+  }
+  return null
+}
+
+/** How many candidate opening braces to try. Bounds the scan on a large reply. */
+const MAX_OBJECT_STARTS = 8
+
+/**
+ * Recover a JSON object from model output that may be fenced, prefaced with prose,
+ * or followed by commentary. Pure + exported for testing.
+ *
+ * Replaces a greedy `/\{[\s\S]*\}/` match, which fails outright whenever anything
+ * after the object contains a `}` (the greedy match then runs past the real
+ * closing brace) or whenever prose before it contains a `{`. That failure mode was
+ * not theoretical: a real run produced 4,788 output tokens costing $0.77, and the
+ * greedy match returned nothing, so the whole reply was discarded.
+ *
+ * Strategy: strip code fences, then try successive opening braces with a balanced
+ * scan, and keep the LONGEST candidate that parses — prose can contain a small
+ * valid object (`{"note": 1}`), and the payload is always the big one.
+ */
+export function extractJsonObject(text: string): unknown | null {
+  const stripped = text.replace(/```[a-zA-Z0-9]*/g, '').trim()
+  const first = stripped.indexOf('{')
+  if (first === -1) return null
+
+  // If the FIRST object never closes, the reply was cut off. Bail out rather than
+  // searching on: the next complete object would be one of its NESTED children,
+  // and returning `{"days":3}` out of a truncated KPI payload writes a
+  // plausible-looking wrong artifact to disk. A visible failure plus the saved raw
+  // reply beats a quiet fragment.
+  //
+  // Accepted cost: a stray unclosed `{` in leading prose makes the whole reply
+  // unrecoverable. That is the safe direction to fail in.
+  if (scanBalancedObject(stripped, first) === null) return null
+
+  let best: { source: string; value: unknown } | null = null
+  let attempts = 0
+  for (let i = first; i !== -1 && attempts < MAX_OBJECT_STARTS; i = stripped.indexOf('{', i + 1)) {
+    attempts++
+    const candidate = scanBalancedObject(stripped, i)
+    if (!candidate) continue
+    try {
+      const value = JSON.parse(candidate)
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        if (!best || candidate.length > best.source.length) best = { source: candidate, value }
+      }
+    } catch {
+      // Not a valid object from this brace; try the next one.
+    }
+  }
+  return best?.value ?? null
+}
+
+/** True when the text opens a JSON object that never closes — i.e. cut off. */
+export function looksTruncated(text: string): boolean {
+  const stripped = text.replace(/```[a-zA-Z0-9]*/g, '').trim()
+  const first = stripped.indexOf('{')
+  return first !== -1 && scanBalancedObject(stripped, first) === null
 }
 
 /**
  * Parse the KPI JSON out of a `claude -p --output-format json` reply. Pure +
  * exported for testing. Handles: a direct JSON object; the `{result:"<json>"}`
- * envelope; and a result/raw string with prose around the JSON (greedy
- * outermost-braces extraction). Returns null if no JSON object is recoverable.
+ * envelope; and a result/raw string with fences or prose around the JSON.
+ * Returns null if no JSON object is recoverable.
  */
 export function parseKpiOutput(stdout: string): unknown | null {
   const trimmed = stdout.trim()
-  const fromBraces = (s: string): unknown | null => {
-    const m = s.match(/\{[\s\S]*\}/)
-    if (!m) return null
-    try { return JSON.parse(m[0]) } catch { return null }
-  }
+  let outer: unknown = null
   try {
-    const parsed = JSON.parse(trimmed)
-    if (parsed && parsed.result && typeof parsed.result === 'string') {
-      try { return JSON.parse(parsed.result) } catch { return fromBraces(parsed.result) }
-    }
-    return parsed
+    outer = JSON.parse(trimmed)
   } catch {
-    return fromBraces(trimmed)
+    // stdout was not clean JSON (a prefix, a fence, trailing text). Recover the
+    // object rather than giving up — the old code's greedy match gave up here.
+    outer = extractJsonObject(trimmed)
   }
+  if (outer == null || typeof outer !== 'object' || Array.isArray(outer)) return null
+
+  // Unwrap the `--output-format json` envelope. This has to happen on BOTH paths:
+  // recovering the envelope from noisy stdout and then returning it would write
+  // the CLI's own metadata to kpis.json as if it were the metrics.
+  const result = (outer as { result?: unknown }).result
+  if (typeof result === 'string') {
+    try {
+      return JSON.parse(result)
+    } catch {
+      return extractJsonObject(result)
+    }
+  }
+  return outer
 }
 
-async function extractKpis(archiveDir: string, runId: string, home: string | null = null): Promise<boolean> {
+/** Outcome of a KPI extraction. The reason travels so the UI can name a dead
+ *  account instead of showing a bare "KPI extraction failed", and `authFailed`
+ *  lets Insights offer the re-auth action rather than just reporting a problem. */
+interface KpiExtractionResult {
+  ok: boolean
+  reason?: string
+  authFailed?: boolean
+}
+
+async function extractKpis(
+  archiveDir: string,
+  runId: string,
+  home: string | null = null
+): Promise<KpiExtractionResult> {
   const reportPath = join(archiveDir, 'report.html').replace(/\\/g, '/')
 
   // Build previous context for comparison
@@ -517,26 +785,116 @@ async function extractKpis(archiveDir: string, runId: string, home: string | nul
   // as shell arguments is unreliable on Windows (quoting/escaping breaks).
   const result = await spawnClaudeHeadless(spawnArgs, 600000, prompt, home)
 
+  const usage = describeClaudeUsage(result.stdout)
+  if (usage) logInfo(`[insights] KPI extraction usage: ${usage}`)
+
   if (result.code !== 0) {
-    logError('[insights] KPI extraction failed (code ' + result.code + '):', result.stderr)
-    logError('[insights] stdout:', result.stdout.slice(0, 500))
-    return false
+    // The hard-failure envelope carries the real reason in `result`; the previous
+    // 500-char slice of the raw envelope showed only the zeroed usage block.
+    const reason = describeClaudeError(result.stdout)
+    logError(
+      `[insights] KPI extraction failed (code ${result.code}): ${reason ?? (result.stderr.slice(0, 400) || 'no reason reported')}`
+    )
+    saveExtractionFailure(archiveDir, spawnArgs, result, reason)
+    return {
+      ok: false,
+      reason: reason ?? `claude exited ${result.code}`,
+      // Structural gate, not a phrase match: an auth failure spends no tokens and
+      // reaches no API, so a reason containing MODEL prose can never be read as
+      // one. stderr is excluded too — it carries proxy, DNS and TLS noise from the
+      // whole network path, and this flag drives a UI action that opens a login
+      // shell.
+      authFailed: isAuthFailure(readClaudeFailureFacts(result.stdout, reason))
+    }
   }
 
   const kpiData = parseKpiOutput(result.stdout)
   if (kpiData == null) {
-    logError('[insights] Failed to parse KPI output')
-    logError('[insights] Raw output:', result.stdout.slice(0, 500))
-    return false
+    // A parse failure here means the model was PAID FOR and its answer thrown
+    // away, so the full reply is persisted beside the report for post-mortem.
+    const truncated = looksTruncated(result.stdout)
+    logError(
+      `[insights] Failed to parse KPI output${truncated ? ' (reply looks truncated mid-object)' : ''}` +
+      `${usage ? ` — this run was billed: ${usage}` : ''}`
+    )
+    const reason = truncated ? 'the analysis reply was cut off mid-object' : 'no JSON object could be recovered from the reply'
+    saveExtractionFailure(archiveDir, spawnArgs, result, reason)
+    return { ok: false, reason }
   }
 
   try {
     writeFileSync(join(archiveDir, 'kpis.json'), JSON.stringify(kpiData, null, 2))
     logInfo('[insights] KPIs extracted and saved')
-    return true
+    return { ok: true }
   } catch (err) {
     logError('[insights] Failed to write kpis.json:', err)
-    return false
+    return { ok: false, reason: 'kpis.json could not be written' }
+  }
+}
+
+/**
+ * Persist everything about a failed extraction next to the report it was for.
+ *
+ * A real 4-account run billed $0.77 for a reply of 4,788 output tokens, failed to
+ * parse it, logged 500 characters of the envelope, and discarded the rest — so
+ * there was nothing left to diagnose from. The archive already holds report.html;
+ * this puts the reply beside it. Written best-effort: a failure to record a
+ * failure must never mask the original one.
+ */
+/**
+ * Cap on each captured stream. A failure record exists to be read by a human, and
+ * a truncated 19KB reply diagnoses just as well as an unbounded one. Also bounds
+ * how much of the prompt's embedded previous-run KPI data can be duplicated onto
+ * disk by a single failure.
+ */
+const FAILURE_CAPTURE_LIMIT = 20000
+
+/** Truncate AND redact. Redaction first, so a secret straddling the cut is still
+ *  matched as a whole before anything is dropped. */
+function capture(text: string): string {
+  const clean = redactSecrets(text ?? '')
+  return clean.length <= FAILURE_CAPTURE_LIMIT
+    ? clean
+    : clean.slice(0, FAILURE_CAPTURE_LIMIT) + `\n…[truncated, ${clean.length} chars total]`
+}
+
+function saveExtractionFailure(
+  archiveDir: string,
+  spawnArgs: string[],
+  result: { code: number; stdout: string; stderr: string },
+  reason: string | null
+): void {
+  try {
+    const target = join(archiveDir, 'kpi-extraction-failure.json')
+    writeFileSync(
+      target,
+      JSON.stringify(
+        {
+          at: new Date().toISOString(),
+          exitCode: result.code,
+          reason,
+          usage: describeClaudeUsage(result.stdout),
+          spawnArgs,
+          stdout: capture(result.stdout),
+          stderr: capture(result.stderr)
+        },
+        null,
+        2
+      ),
+      // 0o600 on POSIX. This file holds the verbatim reply to a prompt that embeds
+      // the previous run's full kpis.json, so it routinely persists a copy of the
+      // user's analysed usage data. A plain writeFileSync lands 0o644 under the
+      // default umask — world-readable — which is exactly the failure mode
+      // account-profiles.ts's writeCredentialFile/hardenCredentialFile exist to
+      // prevent. NTFS ACL inheritance masks this on Windows; macOS and Linux ship
+      // too. Mode is ignored on win32, so this is unconditional.
+      { mode: 0o600 }
+    )
+    // writeFileSync's mode only applies on CREATE, so re-assert for an overwrite.
+    try { chmodSync(target, 0o600) } catch { /* best-effort; win32 ignores modes */ }
+    logError(`[insights] Full failed reply saved to ${target}`)
+  } catch (err) {
+    logError('[insights] Could not save the extraction failure record:', err)
   }
 }
 
@@ -590,13 +948,26 @@ export async function runInsights(getWindow: () => BrowserWindow | null, opts?: 
     upsertRun(run)
     notifyRenderer(getWindow, run)
 
-    const kpiSuccess = await extractKpis(archiveDir, id, account.home)
-    if (!kpiSuccess) {
+    const kpi = await extractKpis(archiveDir, id, account.home)
+    if (!kpi.ok) {
       // KPI extraction is non-fatal — the report is still viewable. Flag it so
       // the UI shows "report ready, KPIs unavailable" instead of silently
-      // hiding the sidebar with no explanation.
+      // hiding the sidebar with no explanation. The reason rides along on
+      // `error`: a real run failed with "OAuth session expired and could not be
+      // refreshed", which is a one-click fix the user can only act on if told.
       logError('[insights] KPI extraction failed, report is still available')
       run.kpisUnavailable = true
+      if (kpi.reason) run.error = kpi.reason
+      if (kpi.authFailed) {
+        run.authFailed = true
+        // Snapshot the refresh-token expiry in force right now, so the warning can
+        // only be retired by a login that issues a LATER one — not by credential
+        // reconciliation rewriting the file.
+        if (account.profileId) {
+          run.authFailedRefreshExpiry = readProfileAuthInfo(account.profileId).refreshTokenExpiresAt
+        }
+        logError(`[insights] ${account.accountEmail ?? 'this account'} needs to sign in again`)
+      }
     }
 
     run.status = 'complete'
@@ -609,6 +980,225 @@ export async function runInsights(getWindow: () => BrowserWindow | null, opts?: 
     notifyRenderer(getWindow, run)
   } finally {
     inFlight.delete(key)
+  }
+
+  return id
+}
+
+// ── Cross-account roll-up ────────────────────────────────────────────────────
+
+/**
+ * Accounts a roll-up will target: the signed-in profiles whose on-disk dir
+ * actually exists (a profile with a missing dir would silently fall back to the
+ * primary inside runInsights and get counted twice). An explicit id list is
+ * intersected with that set rather than trusted.
+ */
+export function resolveCrossAccountTargets(profileIds?: string[]): AccountProfile[] {
+  const present = listProfiles().filter(p => existsSync(getProfileConfigDir(p.id)))
+  if (!profileIds || profileIds.length === 0) return present
+  const wanted = new Set(profileIds)
+  return present.filter(p => wanted.has(p.id))
+}
+
+/** True while a cross-account fan-out holds the aggregate lock. */
+export function isCrossAccountRunning(): boolean {
+  return inFlight.has(CROSS_ACCOUNT_KEY)
+}
+
+/**
+ * Generate every targeted account's report, then synthesize ONE cross-account
+ * roll-up from the results.
+ *
+ * The roll-up is a first-class catalogue entry (`kind: 'aggregate'`) so it shows
+ * up in the run picker alongside account runs, but it has no report.html — its
+ * only artifact is a kpis.json holding CrossAccountInsights.
+ *
+ * Failure is per-member, not global: an account whose run fails (or which is
+ * already running under its own lock) is recorded in `members` and left out of
+ * the synthesis. The roll-up itself only fails when fewer than
+ * CROSS_ACCOUNT_MIN_ACCOUNTS accounts produced KPIs, because below that there is
+ * nothing to compare.
+ */
+export async function runCrossAccountInsights(
+  getWindow: () => BrowserWindow | null,
+  opts?: { profileIds?: string[] }
+): Promise<string> {
+  const targets = resolveCrossAccountTargets(opts?.profileIds)
+  if (targets.length < CROSS_ACCOUNT_MIN_ACCOUNTS) {
+    throw new Error(
+      `A cross-account report needs at least ${CROSS_ACCOUNT_MIN_ACCOUNTS} signed-in accounts (found ${targets.length})`
+    )
+  }
+  if (inFlight.has(CROSS_ACCOUNT_KEY)) throw new Error('A cross-account report is already being generated')
+  inFlight.add(CROSS_ACCOUNT_KEY)
+
+  const id = generateRunId()
+  const archiveDir = join(getInsightsDir(), id)
+  ensureDir(archiveDir)
+
+  const run: InsightsRun = {
+    id,
+    timestamp: Date.now(),
+    status: 'running',
+    kind: 'aggregate',
+    statusMessage: describeCrossAccountFanout(0, targets.length),
+    memberRunIds: [],
+    members: targets.map<InsightsRunMember>(t => ({
+      profileId: t.id,
+      accountEmail: t.accountEmail,
+      label: crossAccountLabel(t),
+      status: 'running'
+    }))
+  }
+  const publish = (): void => {
+    upsertRun(run)
+    notifyRenderer(getWindow, run)
+  }
+  const patchMember = (profileId: string, patch: Partial<InsightsRunMember>): void => {
+    const row = run.members?.find(m => m.profileId === profileId)
+    if (row) Object.assign(row, patch)
+  }
+  publish()
+  logInfo(`[insights] Cross-account run ${id} over ${targets.length} accounts`)
+
+  try {
+    // Step 1: fan out one normal per-account run each, bounded so a wide
+    // multi-account setup doesn't put N interactive Claude PTYs on the machine.
+    let done = 0
+    await mapWithLimit(targets, CROSS_ACCOUNT_MAX_PARALLEL, async (target) => {
+      try {
+        const memberRunId = await runInsights(getWindow, { profileId: target.id })
+        // runInsights resolves with the id even when the run failed, so the
+        // outcome has to be read back off the catalogue rather than inferred.
+        const memberRun = loadCatalogue().runs.find(r => r.id === memberRunId)
+        patchMember(target.id, {
+          runId: memberRunId,
+          status: memberRun?.status === 'complete' ? 'complete' : 'failed',
+          // Copied unconditionally: a member that COMPLETED but produced no KPIs
+          // carries its reason here (e.g. an expired OAuth session), and that is
+          // exactly the case the roll-up needs to explain.
+          error: memberRun?.error,
+          kpisUnavailable: memberRun?.kpisUnavailable,
+          authFailed: memberRun?.authFailed
+        })
+      } catch (err: any) {
+        // The per-account lock rejecting (that account is already running) lands
+        // here, as does anything thrown before a run entry existed.
+        patchMember(target.id, { status: 'failed', error: err?.message || 'Run could not be started' })
+      } finally {
+        done++
+        run.statusMessage = describeCrossAccountFanout(done, targets.length)
+        publish()
+      }
+    })
+
+    // Step 2: collect the members that actually produced KPIs.
+    const members: CrossAccountMember[] = []
+    targets.forEach((target, i) => {
+      const row = run.members?.find(m => m.profileId === target.id)
+      if (!row || row.status !== 'complete' || !row.runId) return
+      const kpis = getInsightsKpis(row.runId) as InsightsData | null
+      if (!kpis) {
+        patchMember(target.id, { kpisUnavailable: true })
+        return
+      }
+      members.push({
+        key: `A${i + 1}`,
+        runId: row.runId,
+        profileId: target.id,
+        accountEmail: target.accountEmail,
+        label: crossAccountLabel(target),
+        kpis
+      })
+    })
+
+    if (members.length < CROSS_ACCOUNT_MIN_ACCOUNTS) {
+      run.status = 'failed'
+      run.statusMessage = undefined
+      run.error =
+        `Only ${members.length} of ${targets.length} accounts produced KPIs; ` +
+        `a cross-account report needs at least ${CROSS_ACCOUNT_MIN_ACCOUNTS}`
+      publish()
+      logError(`[insights] Cross-account run ${id} aborted: ${run.error}`)
+      return id
+    }
+
+    run.status = 'extracting_kpis'
+    run.statusMessage = describeCrossAccountFanout(targets.length, targets.length)
+    publish()
+
+    // The synthesis pass needs a signed-in identity to run at all, but reads
+    // nothing from that account's disk — the comparison travels on stdin.
+    //
+    // Use a member whose OWN extraction just succeeded, because that is proof its
+    // credentials work right now. Using the primary unconditionally cost a real
+    // run its entire written analysis: the primary account's OAuth session had
+    // expired, so the synthesis failed with 0 tokens and the roll-up degraded to
+    // numbers-only even though two other accounts had authenticated fine seconds
+    // earlier. Prefer the primary WHEN it is among the working members, so the
+    // roll-up is still not attributed to an arbitrary account without cause.
+    const primaryId = getPrimaryProfileId()
+    const synthesisMember = members.find(m => m.profileId === primaryId) ?? members[0]
+    const home = synthesisMember.profileId
+      ? getProfileConfigDir(synthesisMember.profileId)
+      : resolveInsightsAccount(undefined).home
+    logInfo(
+      `[insights] Cross-account synthesis running under ${synthesisMember.label}` +
+      `${synthesisMember.profileId === primaryId ? ' (primary)' : ' (primary unavailable or did not produce KPIs)'}`
+    )
+    // Compute the roll-up ONCE and build the prompt from it, so the model reasons
+    // over exactly the table the user will see — including its label conflicts and
+    // its suppressed totals. Sending the computed comparison rather than each
+    // member's raw kpis.json also cuts this prompt by ~88% (measured on real
+    // archives: 30,477 -> 3,619 bytes for two accounts).
+    const baseline = assembleCrossAccount(members, null)
+    const prompt = buildCrossAccountPromptFrom(baseline)
+    logInfo(
+      `[insights] Cross-account synthesis payload: ${prompt.length} chars, ` +
+      `${baseline.comparison.length} shared / ${baseline.uniqueMetrics.length} unique metrics, ` +
+      `windowsComparable=${baseline.windowsComparable}`
+    )
+    const result = await spawnClaudeHeadless(buildCrossAccountSpawnArgs(), 600000, prompt, home)
+
+    const usage = describeClaudeUsage(result.stdout)
+    if (usage) logInfo(`[insights] Cross-account synthesis usage: ${usage}`)
+
+    const narrative = result.code === 0 ? parseCrossAccountNarrative(result.stdout) : null
+    if (!narrative) {
+      // Record WHY there is no written analysis. Degrading silently to
+      // numbers-only left a real run looking like the model had nothing to say,
+      // when in fact the synthesis account's sign-in had expired.
+      const synthesisReason = describeClaudeError(result.stdout)
+      const authFailed = isAuthFailure(readClaudeFailureFacts(result.stdout, synthesisReason))
+      logError(
+        `[insights] Cross-account synthesis unusable (code ${result.code}): ` +
+        `${synthesisReason ?? 'no reason reported'}; falling back to a numbers-only roll-up`
+      )
+      logError('[insights] Raw synthesis output:', result.stdout.slice(0, 500))
+      run.error = authFailed
+        ? `No written analysis: ${synthesisMember.label} needs to sign in again (${synthesisReason ?? 'authentication failed'})`
+        : `No written analysis: ${synthesisReason ?? 'the synthesis pass did not return usable output'}`
+      if (authFailed) run.authFailed = true
+    }
+
+    const data = withNarrative(baseline, narrative)
+    writeFileSync(join(archiveDir, 'kpis.json'), JSON.stringify(data, null, 2))
+
+    run.status = 'complete'
+    run.statusMessage = undefined
+    run.memberRunIds = members.map(m => m.runId)
+    publish()
+    logInfo(
+      `[insights] Cross-account run ${id} complete: ${members.length} accounts, ` +
+      `${data.comparison.length} shared metrics, synthesis=${data.synthesis}`
+    )
+  } catch (err: any) {
+    run.status = 'failed'
+    run.statusMessage = undefined
+    run.error = err?.message || 'Unknown error'
+    publish()
+  } finally {
+    inFlight.delete(CROSS_ACCOUNT_KEY)
   }
 
   return id

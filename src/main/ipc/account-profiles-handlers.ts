@@ -8,10 +8,22 @@ import {
 } from '../account-profiles'
 import { getAccountIdentity, getDefaultAccountEmail, getWatchedProfileId, isProfileInUseByLiveSession } from '../claude-account-identity'
 import { fetchAllAccountsUsage, fetchAccountUsage } from '../usage/account-usage'
+import { readAllProfileAuthInfo } from '../account-auth-info'
 import { logError } from '../debug-logger'
 
 export function registerAccountProfilesHandlers(): void {
   ipcMain.handle(IPC.ACCOUNT_PROFILES_LIST, () => listProfiles())
+
+  // Credential state per profile: days until a forced login, plus the identity
+  // cross-check. Pure file reads, so it is safe to call on every panel open.
+  ipcMain.handle(IPC.ACCOUNT_PROFILES_AUTH_INFO, () => {
+    try {
+      return readAllProfileAuthInfo()
+    } catch (err) {
+      logError('[account-profiles] authInfo failed:', err)
+      return []
+    }
+  })
 
   // All-accounts usage overview: fetch each profile's usage directly (no session).
   ipcMain.handle(IPC.ACCOUNT_USAGE_FETCH_ALL, () => fetchAllAccountsUsage())

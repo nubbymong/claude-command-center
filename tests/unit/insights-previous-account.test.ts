@@ -66,4 +66,29 @@ describe('loadPreviousKpis account isolation (W5)', () => {
     writeKpis('r1', { marker: 'prev' })
     expect(loadPreviousKpis('r2')).toContain('prev')
   })
+
+  // #191: a cross-account roll-up has no profileId, so `(r.profileId ?? null) ===
+  // currentAccount` matched it against every DEFAULT-account run and handed the
+  // roll-up to a single account as its "previous run".
+  it('never picks a cross-account aggregate as an account run\'s previous run', () => {
+    writeCatalogue([
+      { id: 'r1', status: 'complete', timestamp: 1 },
+      { id: 'agg', status: 'complete', timestamp: 2, kind: 'aggregate' },
+      { id: 'r2', status: 'complete', timestamp: 3 }, // current, default account
+    ])
+    writeKpis('r1', { marker: 'account-prev' })
+    writeKpis('agg', { marker: 'aggregate' })
+    const prev = loadPreviousKpis('r2')
+    expect(prev).toContain('account-prev')
+    expect(prev).not.toContain('aggregate')
+  })
+
+  it('returns null when the only earlier run is an aggregate', () => {
+    writeCatalogue([
+      { id: 'agg', status: 'complete', timestamp: 1, kind: 'aggregate' },
+      { id: 'r1', status: 'complete', timestamp: 2 }, // current
+    ])
+    writeKpis('agg', { marker: 'aggregate' })
+    expect(loadPreviousKpis('r1')).toBeNull()
+  })
 })

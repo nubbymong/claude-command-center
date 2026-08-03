@@ -21,9 +21,54 @@ function killHeadlessTree(proc: ReturnType<typeof spawn>): void {
   }
 }
 
+// SECURITY CONTROL. `shell: true` means the argv below is CONCATENATED INTO A
+// SHELL COMMAND LINE without quoting (this is Node's DEP0190 warning). Verified
+// empirically on both platforms with an echo shim:
+//
+//   ['-p','--settings','x&echo PWNED']  -> cmd.exe runs `echo PWNED` as a second
+//                                          command; `sh -c` does the same with `;`
+//   ['-p','--tools','']                -> the empty arg VANISHES and `--tools`
+//                                          swallows the next flag
+//   ['-p','--settings','%VAR%']        -> cmd.exe splices the env value into the
+//                                          command line, then re-parses ITS metachars
+//
+// Every current call site passes a literal array and is safe, and the callers'
+// comments say so — but a comment 500 lines from the sink is not a control, and
+// those same comments name the next two arguments someone will want to add
+// (`--tools ""`, `--settings '{...}'`), one of which silently breaks the argv.
+// So the invariant is enforced HERE, where the shell actually is.
+//
+// The character class is the UNION of both platforms' metacharacters on purpose:
+// `$`/backtick/glob are inert on Windows and live on POSIX, `%` is the reverse, so
+// a set tested on one platform would pass CI and be a no-op on the other.
+// `#` is in the class because it starts a COMMENT under `sh -c`, which silently
+// swallows every argument after it — the same drop-and-shift failure as the empty
+// string, just via a different mechanism. Verified: `sh -c 'echo a #b; echo X'`
+// prints only `a`.
+const UNSAFE_ARGV = /[\s&|^<>%$`;()*?~'"\\#]/
+
+/** Throws on an argv element the shell would re-parse or silently drop. */
+export function assertSafeArgv(args: string[]): void {
+  for (const arg of args) {
+    if (arg.length === 0) {
+      throw new Error('[claude-headless] empty argv element: shell:true would drop it and shift every later flag')
+    }
+    if (UNSAFE_ARGV.test(arg)) {
+      throw new Error(
+        `[claude-headless] unsafe argv element ${JSON.stringify(arg)}: shell:true would let the shell re-parse it. ` +
+        'Pass the value on stdin, or drop shell:true and resolve the claude path explicitly.'
+      )
+    }
+  }
+}
+
 /**
  * Spawn `claude` as a headless child process (shell:true so both claude.exe and
  * claude.cmd are found on PATH).  Returns stdout/stderr and the exit code.
+ *
+ * Throws synchronously on an unsafe argv (see assertSafeArgv) — that is a
+ * programming error, not a runtime condition, so it fails loudly in dev and in
+ * tests rather than resolving with a code the caller might shrug off.
  *
  * @param args        CLI arguments passed to `claude`
  * @param timeoutMs   Kill and resolve with code 1 after this many ms (default 10 min)
@@ -37,6 +82,7 @@ export function spawnClaudeHeadless(
   home: string | null = null,
   signal?: AbortSignal
 ): Promise<{ code: number; stdout: string; stderr: string }> {
+  assertSafeArgv(args)
   return new Promise((resolve) => {
     logInfo(`[claude-headless] Spawning: claude ${args.join(' ')}${stdinData ? ' (with stdin)' : ''}${home ? ' (account home)' : ''}`)
 

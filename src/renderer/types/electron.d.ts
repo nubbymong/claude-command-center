@@ -10,10 +10,14 @@ export type {
   CloudAgent,
   CloudAgentStatus,
   InsightsRun,
+  InsightsRunMember,
   InsightsCatalogue,
   KpiMetric,
   InsightsData,
   KpiData,
+  CrossAccountInsights,
+  CrossAccountAccountSummary,
+  CrossAccountComparisonRow,
   NoteMetadata,
   AgentTemplate,
   AgentModelOverride,
@@ -92,6 +96,8 @@ export interface ElectronAPI {
     rename: (id: string, name: string) => Promise<{ ok: boolean }>
     delete: (id: string) => Promise<{ ok: boolean; error?: string }>
     refreshIdentity: (id: string) => Promise<{ ok: boolean; email: string | null; configDir?: string }>
+    /** Per-profile credential state: forced-login countdown + identity cross-check. */
+    authInfo: () => Promise<import('../../shared/account-auth').ProfileAuthInfo[]>
     create: (name?: string) => Promise<import('../../shared/account-types').AccountProfile>
     globalEmail: () => Promise<string | null>
     captureDetected: (sessionId: string, name?: string) => Promise<import('../../shared/account-types').AccountProfile | null>
@@ -352,6 +358,8 @@ export interface ElectronAPI {
   }
   insights: {
     run: (opts?: { profileId?: string }) => Promise<string>
+    /** Cross-account roll-up: runs every targeted account, then synthesizes one report. */
+    runAll: (opts?: { profileIds?: string[] }) => Promise<string>
     getCatalogue: () => Promise<InsightsCatalogue>
     getReport: (runId: string) => Promise<string | null>
     getKpis: (runId: string) => Promise<KpiData | null>

@@ -265,6 +265,49 @@ export interface InsightsRun {
   profileId?: string
   /** Run completed but KPI extraction failed: report is viewable, no kpis.json. */
   kpisUnavailable?: boolean
+  /**
+   * The failure in `error` was an authentication failure — this account's sign-in
+   * has expired and the fix is to log in again. Classified in main so the UI does
+   * not string-match CLI messages, and so Insights can offer the re-auth action
+   * instead of only reporting that something went wrong.
+   */
+  authFailed?: boolean
+  /**
+   * The profile's `refreshTokenExpiresAt` at the moment this run failed to
+   * authenticate. Retirement of the warning requires the CURRENT expiry to be
+   * strictly later than this — evidence only a real login produces, since copying
+   * a credentials file preserves the value. Without it the warning retired on the
+   * file's mtime, which credential reconciliation bumps with no login at all.
+   */
+  authFailedRefreshExpiry?: number
+  /**
+   * What kind of run this is. Absent means 'account' — every run written before
+   * cross-account existed is a single-account run, so the field is optional
+   * rather than defaulted, and readers MUST treat undefined as 'account'.
+   * An 'aggregate' run has no profileId and no report.html: its only artifact is
+   * a kpis.json holding CrossAccountInsights.
+   */
+  kind?: 'account' | 'aggregate'
+  /** Aggregate only: the per-account run ids that fed the roll-up. */
+  memberRunIds?: string[]
+  /** Aggregate only: one row per targeted account, so a partial roll-up is legible. */
+  members?: InsightsRunMember[]
+}
+
+/** One account's outcome inside a cross-account (aggregate) run. */
+export interface InsightsRunMember {
+  profileId?: string
+  accountEmail?: string
+  /** Display label captured at fan-out time (profile name, else email). */
+  label?: string
+  /** The per-account run this member produced. Absent until it starts. */
+  runId?: string
+  status: 'running' | 'complete' | 'failed'
+  error?: string
+  /** Completed without a kpis.json, so it is excluded from the roll-up. */
+  kpisUnavailable?: boolean
+  /** This account's sign-in has expired; the fix is to authenticate again. */
+  authFailed?: boolean
 }
 
 export interface InsightsCatalogue {
@@ -292,6 +335,106 @@ export interface InsightsData {
 
 /** Alias for backward compatibility */
 export type KpiData = InsightsData
+
+// ── Cross-account insights (aggregate runs) ──
+// A cross-account roll-up keeps NUMBERS and PROSE strictly separate: every value
+// in `comparison` is computed from the member runs' own kpis.json, and only the
+// narrative fields (summary, highlights, crossAccount) come from the synthesis
+// model. That way a roll-up can never report a metric the accounts didn't
+// actually produce, and it still renders when the model pass fails.
+
+/** One metric lined up across accounts. Values are copied, never derived. */
+export interface CrossAccountComparisonRow {
+  /** Metric key as it appears in each account's kpis.kpis[category]. */
+  metricKey: string
+  /** KPI category the metric came from (Volume, Outcomes, Friction, …). */
+  category: string
+  label: string
+  format?: 'number' | 'percent' | 'duration'
+  goodDirection?: 'up' | 'down' | 'neutral'
+  values: Array<{ key: string; profileId?: string; accountEmail?: string; value: number }>
+  /**
+   * Sum across accounts — only present for `format: 'number'` (counts add up),
+   * and only when the row is confirmed comparable and the accounts' reporting
+   * windows are of similar length. Percentages and durations need weights we
+   * don't have, so they get no total rather than a misleading average.
+   */
+  total?: number
+  /**
+   * Present when the accounts gave this same metricKey DIFFERENT wording — i.e.
+   * they may not be measuring the same thing. Holds every distinct label seen.
+   * A row carrying this is displayed by its raw key, uncoloured and untotalled:
+   * the values are shown, the equivalence is not asserted.
+   *
+   * This is not hypothetical. Real data: both accounts report
+   * `Outcomes.successRate`, one as "Fully Achieved Rate" (0.4231), the other as
+   * "Mostly or Fully Achieved Rate" (0.787) — whose own fully-achieved rate is
+   * 0.128, the worse of the two. Merging on key alone rendered the inverse of
+   * the truth, in colour, as measured fact.
+   */
+  labelVariants?: string[]
+  /** Present when accounts disagree on `format`; the row then carries none. */
+  formatVariants?: Array<'number' | 'percent' | 'duration'>
+  /**
+   * True when accounts disagreed on `goodDirection`. The row then carries none,
+   * so nothing is coloured — otherwise which account looks "good" would depend
+   * on member ORDER, which is non-determinism in rendered output.
+   */
+  directionConflict?: boolean
+}
+
+export interface CrossAccountAccountSummary {
+  /** Stable per-roll-up key (A1, A2, …). Used to match narrative back to accounts. */
+  key: string
+  runId: string
+  profileId?: string
+  accountEmail?: string
+  label: string
+  period?: { start?: string; end?: string; days?: number }
+  /**
+   * Calendar days from period.start to period.end inclusive, computed here.
+   * NOT period.days — the extraction model emits ACTIVE days there (measured:
+   * a 23-day span reported as `days: 10`), so period.days cannot be used to
+   * judge whether two accounts cover comparable windows.
+   */
+  spanDays?: number
+  /** Top 3 per ranked list (tools, languages, goals). Often the only place an
+   *  account-unique behaviour shows up at all, so it is carried, not dropped. */
+  topLists?: Record<string, Array<{ name: string; count: number }>>
+  /** Model-written bullets about this account. Absent in a deterministic roll-up. */
+  highlights?: string[]
+}
+
+/** Metrics only ONE account reported. No comparison row exists for these (there
+ *  is nothing to compare against), but "only A2 uses subagents at all" can be the
+ *  most useful sentence in the report, so they are kept and shown. */
+export interface CrossAccountUniqueMetric {
+  key: string
+  category: string
+  metricKey: string
+  label: string
+  value: number
+  format?: 'number' | 'percent' | 'duration'
+}
+
+export interface CrossAccountInsights extends InsightsData {
+  /** 'ai' = the synthesis pass wrote the prose; 'deterministic' = it failed, numbers only. */
+  synthesis: 'ai' | 'deterministic'
+  accounts: CrossAccountAccountSummary[]
+  comparison: CrossAccountComparisonRow[]
+  /** Single-account metrics, kept out of `comparison` but not thrown away. */
+  uniqueMetrics: CrossAccountUniqueMetric[]
+  /**
+   * False when the accounts' reporting windows differ materially in length, in
+   * which case no row carries a `total`: summing a 23-day count with a 35-day
+   * count produces a number that means nothing.
+   */
+  windowsComparable: boolean
+  crossAccount?: {
+    observations?: string[]
+    recommendations?: string[]
+  }
+}
 
 // ── Agent Teams ──
 
