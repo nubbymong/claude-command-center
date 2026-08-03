@@ -25,7 +25,7 @@ vi.mock('../../../src/main/data-paths', () => ({
   getDataDirectory: () => dataDir.path,
 }))
 
-import { createInstallerDir, pruneStaleInstallerDirs, assertPrivateDir, installerRoot } from '../../../src/main/github-update'
+import { createInstallerDir, pruneStaleInstallerDirs, assertPrivateDir, installerRoot, prepareLinuxAppImageUpdate } from '../../../src/main/github-update'
 
 let root: string
 
@@ -85,6 +85,60 @@ describe('installerRoot — the parent of the staging directory', () => {
     // silently downgrading to the state this change exists to leave.
     fs.writeFileSync(path.join(dataDir.path, 'updates'), 'not a directory')
     expect(() => installerRoot()).toThrow()
+  })
+})
+
+describe('the AppImage parking directory', () => {
+  /** A downloaded AppImage sitting in a real staging directory. */
+  function stagedAppImage(): string {
+    const stage = createInstallerDir(installerRoot())
+    const file = path.join(stage, 'ClaudeCommandCenter-2.1.0-linux-x86_64.AppImage')
+    fs.writeFileSync(file, 'appimage bytes')
+    return file
+  }
+
+  it('parks a staged AppImage under <dataDir>/bin', () => {
+    const staged = stagedAppImage()
+    const result = prepareLinuxAppImageUpdate(staged, undefined)
+    expect(path.resolve(result)).toBe(path.resolve(path.join(dataDir.path, 'bin', path.basename(staged))))
+    expect(fs.readFileSync(result, 'utf-8')).toBe('appimage bytes')
+  })
+
+  it('REFUSES to park through a link planted at <dataDir>/bin', () => {
+    // This is the directory CCC EXECUTES from, so it needs the same validation
+    // as the staging root — leaving it a bare recursive mkdir put the
+    // plantable-redirect hole back at the worst possible place.
+    const attacker = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-attacker-'))
+    const staged = stagedAppImage()
+    if (!linkDir(path.join(dataDir.path, 'bin'), attacker)) return
+    try {
+      // Degrades to launching from the staging directory rather than writing
+      // into the attacker's: never block an update on tidy-up, never execute
+      // out of a redirected directory.
+      expect(prepareLinuxAppImageUpdate(staged, undefined)).toBe(staged)
+      expect(fs.readdirSync(attacker)).toEqual([])
+    } finally {
+      fs.rmSync(attacker, { recursive: true, force: true })
+    }
+  })
+
+  it('leaves an AppImage that is already outside the prune root alone', () => {
+    // No spurious 200 MB copy for a file that is not prune-eligible.
+    const elsewhere = path.join(dataDir.path, 'ClaudeCommandCenter.AppImage')
+    fs.writeFileSync(elsewhere, 'bytes')
+    expect(prepareLinuxAppImageUpdate(elsewhere, undefined)).toBe(elsewhere)
+    expect(fs.existsSync(path.join(dataDir.path, 'bin'))).toBe(false)
+  })
+
+  it('does not park a file merely because its folder is NAMED like a staging dir', () => {
+    // A name test alone would copy 200 MB out of anyone's `~/ccc-upd-backup/`.
+    // Prune-eligibility is about LOCATION: directly under <dataDir>/updates.
+    const decoy = path.join(root, 'ccc-upd-backup')
+    fs.mkdirSync(decoy, { recursive: true })
+    const file = path.join(decoy, 'ClaudeCommandCenter.AppImage')
+    fs.writeFileSync(file, 'bytes')
+    expect(prepareLinuxAppImageUpdate(file, undefined)).toBe(file)
+    expect(fs.existsSync(path.join(dataDir.path, 'bin'))).toBe(false)
   })
 })
 

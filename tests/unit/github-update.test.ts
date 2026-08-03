@@ -347,6 +347,21 @@ describe('github-update', () => {
       expect(mockWriteStreamBytes()).toBe(0)
     })
 
+    it('reports a local staging failure as a STORAGE problem, not a tamper event', async () => {
+      // A disk-full mkdtemp or an unwritable data dir used to surface as
+      // "Update blocked - integrity check failed ... has no verified SHA-256",
+      // i.e. a release TAMPER claim. False tamper signals are how real ones get
+      // ignored, so this must not be an InstallerIntegrityError.
+      mockMkdtempSync.mockImplementation(() => {
+        const err = new Error('ENOSPC: no space left on device') as Error & { code?: string }
+        err.code = 'ENOSPC'
+        throw err
+      })
+      const p = downloadGitHubRelease('v1.2.125', ASSET, 'https://h/r/download/v1.2.125/' + ASSET)
+      await expect(p).rejects.toThrow(/disk space|writable|private folder/i)
+      await expect(p).rejects.not.toBeInstanceOf(InstallerIntegrityError)
+    })
+
     it('stages CHECKSUMS.txt in a private directory, not the shared temp dir', async () => {
       // The manifest decides WHICH DIGEST counts as verified, so it was the last
       // file that should have been left at a Date.now()-guessable name in a
@@ -972,7 +987,9 @@ describe('github-update', () => {
 
     it('finding #4 — refuses a $APPIMAGE that is not an AppImage file (never writes to it)', () => {
       const stranger = '/home/u/important.txt'
-      mockRealpathSync.mockReturnValue(stranger)
+      // Identity realpath is enough — $APPIMAGE IS the stranger. A blanket
+      // mockReturnValue would also redirect the parking directory's own
+      // validation and mask the assertion below.
       const result = prepareLinuxAppImageUpdate(downloaded, stranger)
       // Parked, not left in the staging root (#174) — but the stranger file is
       // still never unlinked and never written to, which is the guarantee.
@@ -990,7 +1007,12 @@ describe('github-update', () => {
     })
 
     it('when $APPIMAGE no longer resolves (realpath throws), parks the download', () => {
-      mockRealpathSync.mockImplementation(() => { throw new Error('ENOENT') })
+      // Throw only for $APPIMAGE. A blanket throw would also break the parking
+      // directory's validation, so the test would pass for the wrong reason.
+      mockRealpathSync.mockImplementation((p: string) => {
+        if (p === running) throw new Error('ENOENT')
+        return p
+      })
       const result = prepareLinuxAppImageUpdate(downloaded, running)
       expect(result?.replace(/\\/g, '/')).toContain('/mock/dataDir/bin/')
       expect(mockCopyFileSync.mock.calls.some(([, dest]) => dest === running)).toBe(false)

@@ -841,14 +841,7 @@ function deriveManifestUrl(directUrl?: string | null): string | null {
  * This is the file that decides which digest counts as "verified", so it is the
  * last one that should have been left in a shared directory.
  */
-async function fetchChecksumManifest(tagName: string, directUrl?: string | null): Promise<string | null> {
-  let stageDir: string
-  try {
-    stageDir = createInstallerDir()
-  } catch (err) {
-    logError('[github-update] Could not create a private directory for the manifest:', err)
-    return null
-  }
+async function fetchChecksumManifest(tagName: string, stageDir: string, directUrl?: string | null): Promise<string | null> {
   const tmpPath = path.join(stageDir, 'CHECKSUMS.txt')
 
   try {
@@ -878,7 +871,9 @@ async function fetchChecksumManifest(tagName: string, directUrl?: string | null)
   } catch (err) {
     logError('[github-update] CHECKSUMS.txt fetch via gh CLI failed:', err)
   } finally {
-    try { fs.rmSync(stageDir, { recursive: true, force: true }) } catch { /* best effort */ }
+    // Only the manifest file. The directory is the caller's, and the installer
+    // is about to be downloaded into it.
+    try { fs.unlinkSync(tmpPath) } catch { /* best effort */ }
   }
 
   return null
@@ -895,9 +890,10 @@ async function fetchChecksumManifest(tagName: string, directUrl?: string | null)
 async function resolveExpectedDigest(
   tagName: string,
   assetName: string,
+  stageDir: string,
   directUrl?: string | null,
 ): Promise<string | null> {
-  const manifest = await fetchChecksumManifest(tagName, directUrl)
+  const manifest = await fetchChecksumManifest(tagName, stageDir, directUrl)
   if (!manifest) {
     logError('[github-update] CHECKSUMS.txt could not be fetched for this release')
     return null
@@ -1009,6 +1005,13 @@ export function assertPrivateDir(dir: string): void {
   if (!st.isDirectory()) {
     throw new Error(`${dir} is not a directory (symlink or file) — refusing to stage an installer there`)
   }
+  // NOTE ON COVERAGE: on every platform a planted redirect (POSIX symlink,
+  // Windows junction) fails the check above, because lstat reports it as a link
+  // rather than a directory. The realpath comparison below therefore has no
+  // portable test -- the input that needs it (a bind mount or volume mount point
+  // AT the final component, where lstat says "directory" and realpath diverges)
+  // cannot be created without root. It is kept as the belt to that braces, not
+  // because a test pins it.
   const resolvedParent = fs.realpathSync(path.dirname(dir))
   const expected = path.join(resolvedParent, path.basename(dir))
   const actual = fs.realpathSync(dir)
@@ -1037,7 +1040,27 @@ export function assertPrivateDir(dir: string): void {
  * already reports as a failed update.
  */
 export function installerRoot(): string {
-  const dir = path.join(getDataDirectory(), 'updates')
+  return privateSubdir('updates')
+}
+
+/**
+ * `<dataDir>/<name>`, created and validated.
+ *
+ * The data directory itself is checked for a planted redirect too -- not with
+ * the full ownership/mode test (it may legitimately live on a mount or a share
+ * whose uid differs), but enough to refuse a symlink or junction dropped in its
+ * place. Relocating a live data directory already gives an attacker the config,
+ * sessions and transcripts, so this is the cheap half of a bigger problem rather
+ * than the boundary; the point is that it must not ALSO silently redirect a file
+ * we are about to execute.
+ */
+function privateSubdir(name: string): string {
+  const base = getDataDirectory()
+  fs.mkdirSync(base, { recursive: true })
+  if (!fs.lstatSync(base).isDirectory()) {
+    throw new Error(`${base} is not a directory (symlink or file) — refusing to stage an installer under it`)
+  }
+  const dir = path.join(base, name)
   fs.mkdirSync(dir, { recursive: true })
   assertPrivateDir(dir)
   return dir
@@ -1112,9 +1135,11 @@ export function pruneStaleInstallerDirs(root: string, keep?: string): number {
  * orphaning any .desktop entry or dock pin.
  */
 function appImageParkingPath(downloadedPath: string): string {
-  const dir = path.join(getDataDirectory(), 'bin')
-  fs.mkdirSync(dir, { recursive: true })
-  return path.join(dir, path.basename(downloadedPath))
+  // VALIDATED, like the staging root. This is the directory CCC will EXECUTE
+  // from, so leaving it as a bare recursive mkdir would reintroduce the exact
+  // plantable-redirect hole assertPrivateDir exists to close -- at the worst
+  // possible place.
+  return path.join(privateSubdir('bin'), path.basename(downloadedPath))
 }
 
 /**
@@ -1123,7 +1148,7 @@ function appImageParkingPath(downloadedPath: string): string {
  * downloadGitHubRelease, which wraps this with verification. Exported only so
  * the download mechanics are unit-testable on their own.
  */
-export async function downloadInstallerFile(tagName: string, assetName: string, directUrl?: string | null): Promise<string | null> {
+export async function downloadInstallerFile(tagName: string, assetName: string, directUrl?: string | null, existingStageDir?: string): Promise<string | null> {
   // The asset name comes from the release feed and is interpolated into a
   // filesystem path, so a name carrying a separator would escape the staging
   // directory and undo the point of it. REFUSE rather than silently basename it
@@ -1137,15 +1162,18 @@ export async function downloadInstallerFile(tagName: string, assetName: string, 
     return null
   }
 
+  // downloadGitHubRelease creates ONE staging directory and passes it in, so the
+  // manifest and the installer share it: two independent directories meant the
+  // installer's prune could delete the one the manifest fetch was still using.
   let stageDir: string
-  const root = installerRoot()
   try {
-    stageDir = createInstallerDir(root)
+    const root = installerRoot()
+    stageDir = existingStageDir || createInstallerDir(root)
+    pruneStaleInstallerDirs(root, stageDir)
   } catch (err) {
     logError('[github-update] Could not create a staging directory for the download:', err)
     return null
   }
-  pruneStaleInstallerDirs(root, stageDir)
 
   const destPath = path.join(stageDir, safeName)
 
@@ -1193,20 +1221,44 @@ export async function downloadInstallerFile(tagName: string, assetName: string, 
  * not conflate with "download failed", because the user-facing advice differs.
  */
 export async function downloadGitHubRelease(tagName: string, assetName: string, directUrl?: string | null): Promise<VerifiedInstaller | null> {
+  // ONE staging directory for the manifest and the installer.
+  //
+  // Created here, and a failure raises a PLAIN Error rather than an
+  // InstallerIntegrityError. That distinction is user-facing: when the manifest
+  // fetch owned its own directory, a disk-full mkdtemp or an unwritable data dir
+  // returned null and the caller showed "Update blocked - integrity check
+  // failed" -- reporting a local storage problem as a release TAMPER event.
+  // False tamper signals are how real ones get ignored.
+  let stageDir: string
+  try {
+    stageDir = createInstallerDir()
+  } catch (err) {
+    throw new Error(
+      `Could not prepare a private folder to download the update into: ${(err as Error).message}. `
+      + 'Check free disk space and that the data directory is writable.'
+    )
+  }
+
+  const discard = (): void => {
+    try { fs.rmSync(stageDir, { recursive: true, force: true }) } catch { /* best effort */ }
+  }
+
   // Manifest first -- see resolveExpectedDigest. No digest, no download.
-  const expected = await resolveExpectedDigest(tagName, assetName, directUrl)
+  const expected = await resolveExpectedDigest(tagName, assetName, stageDir, directUrl)
   if (!expected) {
+    discard()
     throw integrityFailure(assetName, `has no verified SHA-256 in release ${tagName}`)
   }
 
-  const filePath = await downloadInstallerFile(tagName, assetName, directUrl)
-  if (!filePath) return null
+  const filePath = await downloadInstallerFile(tagName, assetName, directUrl, stageDir)
+  if (!filePath) {
+    discard()
+    return null
+  }
 
   if (!await confirmDigest(filePath, assetName, expected)) {
-    // confirmDigest destroys the file; take its now-empty staging directory too.
-    // downloadInstallerFile has already returned by this point, so its own
-    // cleanup cannot reach this path (#174).
-    try { fs.rmSync(path.dirname(filePath), { recursive: true, force: true }) } catch { /* best effort */ }
+    // confirmDigest destroys the file; take the now-empty directory too.
+    discard()
     throw integrityFailure(assetName, 'failed its SHA-256 check and was discarded')
   }
   return { path: filePath, sha256: expected }
@@ -1327,11 +1379,17 @@ export function prepareLinuxAppImageUpdate(
   const park = (): string => {
     // Only files actually sitting in a staging directory need moving. A
     // re-download straight onto the running AppImage's own path, or any other
-    // location, is already outside the prune root — copying it would be a
-    // pointless 200 MB write.
-    if (!path.basename(path.dirname(downloadedPath)).startsWith(INSTALLER_DIR_PREFIX)) {
-      return downloadedPath
-    }
+    // location, is already outside the prune root -- copying it would be a
+    // pointless 200 MB write. Checked against the prune root's LOCATION, not by
+    // name alone, so a legitimate `~/ccc-upd-backup/App.AppImage` does not
+    // trigger a spurious copy. Derived from the same `getDataDirectory() +
+    // 'updates'` as installerRoot() so the two cannot drift -- but WITHOUT
+    // calling it, because this must not depend on the root validating: a hostile
+    // root would otherwise silently switch parking off.
+    const parent = path.dirname(downloadedPath)
+    const pruneRoot = path.join(getDataDirectory(), 'updates')
+    if (path.resolve(path.dirname(parent)) !== path.resolve(pruneRoot)) return downloadedPath
+    if (!path.basename(parent).startsWith(INSTALLER_DIR_PREFIX)) return downloadedPath
     try {
       const parked = appImageParkingPath(downloadedPath)
       if (path.resolve(parked) === path.resolve(downloadedPath)) return downloadedPath

@@ -10,6 +10,9 @@ import { logInfo, logError } from '../debug-logger'
 // Cache the latest release info from GitHub so installAndRestart can use it without a re-check
 let cachedRelease: { version: string; tagName: string; installerName: string | null; installerUrl: string | null } | null = null
 
+/** Reentrancy latch for update:installAndRestart — see the handler. */
+let updateInProgress = false
+
 export function registerUpdateHandlers(): void {
   ipcMain.handle('update:check', async () => {
     // In dev mode, check the local source watcher first (live-reload workflow).
@@ -67,6 +70,23 @@ export function registerUpdateHandlers(): void {
   })
 
   ipcMain.handle('update:installAndRestart', async () => {
+    // ipcMain.handle serialises nothing. Two concurrent runs each prune the
+    // staging root keeping only THEIR OWN directory, so each deletes the other's
+    // in-flight installer. The renderer latches on `isUpdating`, but that is one
+    // frame of protection and a scripted invoke has none.
+    if (updateInProgress) {
+      logInfo('[update] Ignoring a second install request — one is already running')
+      throw new Error('An update is already in progress.')
+    }
+    updateInProgress = true
+    try {
+      return await runInstallAndRestart()
+    } finally {
+      updateInProgress = false
+    }
+  })
+
+  async function runInstallAndRestart(): Promise<boolean> {
     logInfo('[update] Starting update...')
 
     let installerPath: string | null = null
@@ -200,6 +220,19 @@ export function registerUpdateHandlers(): void {
     let linuxLaunchPath: string | null = null
     if (process.platform === 'linux' && installerPath.endsWith('.AppImage')) {
       linuxLaunchPath = prepareLinuxAppImageUpdate(installerPath)
+      // The file we verified is NOT the file we are about to spawn: this call
+      // copies the AppImage somewhere else. Re-hash the COPY. Without this, the
+      // digest check covers a file that is then never executed, and everything
+      // between the copy and the spawn is unverified (#174 adversarial review).
+      if (verifiedSha256 && linuxLaunchPath !== installerPath) {
+        if (!await stillMatchesDigest(linuxLaunchPath, verifiedSha256)) {
+          const msg = `${path.basename(linuxLaunchPath)} does not match the verified installer after being copied into place. `
+            + 'Aborting the update. Install manually from the GitHub release page.'
+          logError('[update] ' + msg)
+          try { dialog.showErrorBox('Update blocked - installer changed after verification', msg) } catch { /* ignore */ }
+          throw new InstallerIntegrityError(msg)
+        }
+      }
       // Permission bits (fast, catches a failed chmod on vfat/exfat)...
       try {
         fs.accessSync(linuxLaunchPath, fs.constants.X_OK)
@@ -222,18 +255,11 @@ export function registerUpdateHandlers(): void {
       killAllPty()
 
       logInfo('[update] Launching installer...')
-      if (process.platform === 'darwin' && installerPath.endsWith('.dmg')) {
-        // On macOS, open the DMG in Finder — user drags to Applications manually.
-        // Auto-installing a DMG over a running app is not supported.
-        spawn('open', [installerPath], { detached: true, stdio: 'ignore' }).unref()
-      } else if (linuxLaunchPath) {
-        logInfo(`[update] Launching updated AppImage: ${linuxLaunchPath}`)
-        const child = spawn(linuxLaunchPath, [], { detached: true, stdio: 'ignore' })
-        // Wait for the child to actually start before exiting — spawn surfaces
-        // exec failures asynchronously, so exiting immediately would hide a
-        // failure and strand the user with no running app. On 'spawn' we exit;
-        // on 'error' we abort (outer catch surfaces it); a short timeout is the
-        // safety net so we never hang the update forever.
+      // Every branch waits for the child to actually start. spawn reports
+      // EACCES/ENOENT only via an async 'error' event, and `app.exit(0)` below
+      // runs first -- and with no 'error' listener at all that event is an
+      // UNCAUGHT EXCEPTION in the main process, after every PTY is already dead.
+      const awaitLaunch = async (child: ReturnType<typeof spawn>): Promise<void> => {
         await new Promise<void>((resolve, reject) => {
           let done = false
           const settle = (fn: () => void) => { if (!done) { done = true; child.unref(); fn() } }
@@ -241,22 +267,21 @@ export function registerUpdateHandlers(): void {
           child.once('error', (err) => settle(() => reject(err)))
           setTimeout(() => settle(resolve), 3000)
         })
+      }
+
+      if (process.platform === 'darwin' && installerPath.endsWith('.dmg')) {
+        // On macOS, open the DMG in Finder — user drags to Applications manually.
+        // Auto-installing a DMG over a running app is not supported.
+        await awaitLaunch(spawn('open', [installerPath], { detached: true, stdio: 'ignore' }))
+      } else if (linuxLaunchPath) {
+        logInfo(`[update] Launching updated AppImage: ${linuxLaunchPath}`)
+        await awaitLaunch(spawn(linuxLaunchPath, [], { detached: true, stdio: 'ignore' }))
       } else {
-        // Wait for the child to actually start, as the Linux branch does. spawn
-        // reports EACCES/ENOENT only via an async 'error' event, and `app.exit(0)`
-        // two statements below runs first -- so a blocked launch used to kill
-        // every PTY and exit with nothing on screen. That matters more since #174
-        // moved staging out of ~/Downloads: %LOCALAPPDATA% is a common target for
-        // "block executables outside Program Files" policies, and the user no
-        // longer has a file in Downloads to fall back on.
-        const proc = spawn(installerPath, [], { detached: true, stdio: 'ignore' })
-        await new Promise<void>((resolve, reject) => {
-          let done = false
-          const settle = (fn: () => void) => { if (!done) { done = true; proc.unref(); fn() } }
-          proc.once('spawn', () => settle(resolve))
-          proc.once('error', (err) => settle(() => reject(err)))
-          setTimeout(() => settle(resolve), 3000)
-        })
+        // %LOCALAPPDATA% is a common target for "block executables outside
+        // Program Files" policies, and since #174 the user no longer has a file
+        // in ~/Downloads to fall back on — so a blocked launch has to be
+        // reported, not swallowed.
+        await awaitLaunch(spawn(installerPath, [], { detached: true, stdio: 'ignore' }))
       }
 
       markUpdateInstalled()
@@ -281,5 +306,5 @@ export function registerUpdateHandlers(): void {
       } catch { /* never let the dialog itself break the flow */ }
       throw err
     }
-  })
+  }
 }
