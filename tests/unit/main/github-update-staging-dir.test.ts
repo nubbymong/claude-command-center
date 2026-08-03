@@ -226,7 +226,11 @@ describe('the AppImage parking directory', () => {
 
     const result = await prepareLinuxAppImageUpdate(staged, running, async (c) => { seen.push(c); return true })
 
-    expect(path.resolve(result)).toBe(path.resolve(running))
+    // realpath, not resolve: on macOS os.tmpdir() is under /var, which is a
+    // symlink to /private/var, and the code resolves it while the test fixture
+    // does not. Comparing resolved-but-unresolved paths passes on Windows and
+    // fails on macOS — which is what the macOS CI leg caught.
+    expect(fs.realpathSync(result)).toBe(fs.realpathSync(running))
     expect(fs.readFileSync(running, 'utf-8')).toBe('appimage bytes')
     // The verifier saw a STAGED SIBLING, not the final path — that is what makes
     // it a pre-commit check. The name is randomised so it cannot clobber a

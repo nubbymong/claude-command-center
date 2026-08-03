@@ -1195,9 +1195,16 @@ export async function downloadInstallerFile(tagName: string, assetName: string, 
   // down: a real asset never contains a separator, so a name that needs
   // sanitising means the feed is wrong and downloading whatever is left of it is
   // not the right recovery.
+  // Both separators, on every platform. `path.basename` is platform-aware: on
+  // POSIX a backslash is an ordinary filename character, so `..\evil.exe` came
+  // back unchanged and passed the `safeName !== rawName` test. It stayed inside
+  // the staging directory there (POSIX reads it as one long filename), so nothing
+  // escaped -- but a guard whose verdict depends on the host is a guard that will
+  // be wrong on one of them. The macOS CI leg caught this; the Windows leg could
+  // not. A real asset name contains neither separator.
   const rawName = String(assetName || '')
   const safeName = path.basename(rawName)
-  if (!safeName || safeName !== rawName || safeName === '.' || safeName === '..') {
+  if (!safeName || safeName !== rawName || /[/\\]/.test(rawName) || safeName === '.' || safeName === '..') {
     logError(`[github-update] Refusing to download an asset with an unusable name: ${JSON.stringify(rawName)}`)
     return null
   }
