@@ -483,9 +483,30 @@ export function loadPreviousKpis(currentRunId: string): string | null {
  * dialog and `--allowedTools Read` pre-authorizes the only tool needed. Verified
  * on the VM: an out-of-cwd absolute Read succeeds with zero permission denials
  * and no dangerous flag. See specs/2026-06-15-unit3-insights-review-design.md W1.
+ *
+ * `--strict-mcp-config` and `--tools Read` are the cost fix, and they are not a
+ * micro-optimisation. A headless `claude -p` loads the account's whole mirrored
+ * global config: measured on a real profile, 10 MCP servers (azure, m365,
+ * atlassian, grafana, ...) plus 41 skills. A real 4-account run showed
+ * `cache_read 134,038 + cache_creation 58,814 = 192,852` context tokens per
+ * extraction, against a payload of roughly 31k — so ~162k of pure overhead, at
+ * $0.77 a call.
+ *
+ * Measured with the same trivial prompt: overhead is 41,714 tokens with
+ * `--strict-mcp-config` (no `--mcp-config` alongside it means no servers load),
+ * and 14,395 with `--tools Read` as well. The remaining 27k is the default
+ * built-in toolset's schemas, which `--allowedTools` does NOT unload — that flag
+ * only gates the permission prompt. `--tools` is the one that decides which tool
+ * DEFINITIONS enter context, so both are needed and they do different jobs.
+ *
+ * Neither value contains a space or is empty, which is why they can be passed at
+ * all: spawnClaudeHeadless runs with `shell: true`, which concatenates argv
+ * without quoting, so an empty or spaced argument would vanish and let the
+ * preceding flag swallow the next one. `--tools ""` for the no-tools case and
+ * `--settings '{...}'` for the skills/CLAUDE.md overhead are blocked on that.
  */
 export function buildKpiSpawnArgs(): string[] {
-  return ['-p', '--allowedTools', 'Read', '--output-format', 'json']
+  return ['-p', '--strict-mcp-config', '--tools', 'Read', '--allowedTools', 'Read', '--output-format', 'json']
 }
 
 /**
@@ -531,27 +552,149 @@ export function describeClaudeUsage(stdout: string): string | null {
 }
 
 /**
+ * Human-readable reason from a `claude -p --output-format json` reply that failed
+ * before producing anything. Pure + exported for testing.
+ *
+ * The hard-failure envelope carries the actual explanation in `result` (or
+ * `error`), and the code used to log 500 characters of the raw envelope — which is
+ * mostly the zeroed `usage` block — so the reason never reached the UI or the log.
+ * Observed shape of such a failure: `is_error:true, duration_api_ms:0, num_turns:1`
+ * with every token count at 0, i.e. the API was never called.
+ */
+export function describeClaudeError(stdout: string): string | null {
+  let envelope: any
+  try {
+    envelope = JSON.parse(stdout.trim())
+  } catch {
+    return null
+  }
+  if (!envelope || typeof envelope !== 'object') return null
+  if (envelope.is_error !== true && envelope.isError !== true) return null
+
+  const parts: string[] = []
+  if (typeof envelope.subtype === 'string' && envelope.subtype.trim()) parts.push(envelope.subtype.trim())
+  const message =
+    (typeof envelope.result === 'string' && envelope.result.trim()) ||
+    (typeof envelope.error === 'string' && envelope.error.trim()) ||
+    (typeof envelope.error?.message === 'string' && envelope.error.message.trim())
+  if (message) parts.push(String(message).slice(0, 400))
+  const apiMs = envelope.duration_api_ms ?? envelope.durationApiMs
+  if (apiMs === 0) parts.push('the API was never reached (duration_api_ms=0)')
+  if (typeof envelope.stop_reason === 'string') parts.push(`stop_reason=${envelope.stop_reason}`)
+  return parts.length > 0 ? parts.join('; ') : 'claude reported is_error with no message'
+}
+
+/**
+ * Scan a balanced JSON object starting at `start`, honouring strings and escapes.
+ * Returns the object's source text, or null when it never closes — which is the
+ * signature of output truncated mid-object.
+ */
+function scanBalancedObject(text: string, start: number): string | null {
+  let depth = 0
+  let inString = false
+  let escaped = false
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i]
+    if (inString) {
+      if (escaped) escaped = false
+      else if (ch === '\\') escaped = true
+      else if (ch === '"') inString = false
+      continue
+    }
+    if (ch === '"') inString = true
+    else if (ch === '{') depth++
+    else if (ch === '}' && --depth === 0) return text.slice(start, i + 1)
+  }
+  return null
+}
+
+/** How many candidate opening braces to try. Bounds the scan on a large reply. */
+const MAX_OBJECT_STARTS = 8
+
+/**
+ * Recover a JSON object from model output that may be fenced, prefaced with prose,
+ * or followed by commentary. Pure + exported for testing.
+ *
+ * Replaces a greedy `/\{[\s\S]*\}/` match, which fails outright whenever anything
+ * after the object contains a `}` (the greedy match then runs past the real
+ * closing brace) or whenever prose before it contains a `{`. That failure mode was
+ * not theoretical: a real run produced 4,788 output tokens costing $0.77, and the
+ * greedy match returned nothing, so the whole reply was discarded.
+ *
+ * Strategy: strip code fences, then try successive opening braces with a balanced
+ * scan, and keep the LONGEST candidate that parses — prose can contain a small
+ * valid object (`{"note": 1}`), and the payload is always the big one.
+ */
+export function extractJsonObject(text: string): unknown | null {
+  const stripped = text.replace(/```[a-zA-Z0-9]*/g, '').trim()
+  const first = stripped.indexOf('{')
+  if (first === -1) return null
+
+  // If the FIRST object never closes, the reply was cut off. Bail out rather than
+  // searching on: the next complete object would be one of its NESTED children,
+  // and returning `{"days":3}` out of a truncated KPI payload writes a
+  // plausible-looking wrong artifact to disk. A visible failure plus the saved raw
+  // reply beats a quiet fragment.
+  //
+  // Accepted cost: a stray unclosed `{` in leading prose makes the whole reply
+  // unrecoverable. That is the safe direction to fail in.
+  if (scanBalancedObject(stripped, first) === null) return null
+
+  let best: { source: string; value: unknown } | null = null
+  let attempts = 0
+  for (let i = first; i !== -1 && attempts < MAX_OBJECT_STARTS; i = stripped.indexOf('{', i + 1)) {
+    attempts++
+    const candidate = scanBalancedObject(stripped, i)
+    if (!candidate) continue
+    try {
+      const value = JSON.parse(candidate)
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        if (!best || candidate.length > best.source.length) best = { source: candidate, value }
+      }
+    } catch {
+      // Not a valid object from this brace; try the next one.
+    }
+  }
+  return best?.value ?? null
+}
+
+/** True when the text opens a JSON object that never closes — i.e. cut off. */
+export function looksTruncated(text: string): boolean {
+  const stripped = text.replace(/```[a-zA-Z0-9]*/g, '').trim()
+  const first = stripped.indexOf('{')
+  return first !== -1 && scanBalancedObject(stripped, first) === null
+}
+
+/**
  * Parse the KPI JSON out of a `claude -p --output-format json` reply. Pure +
  * exported for testing. Handles: a direct JSON object; the `{result:"<json>"}`
- * envelope; and a result/raw string with prose around the JSON (greedy
- * outermost-braces extraction). Returns null if no JSON object is recoverable.
+ * envelope; and a result/raw string with fences or prose around the JSON.
+ * Returns null if no JSON object is recoverable.
  */
 export function parseKpiOutput(stdout: string): unknown | null {
   const trimmed = stdout.trim()
-  const fromBraces = (s: string): unknown | null => {
-    const m = s.match(/\{[\s\S]*\}/)
-    if (!m) return null
-    try { return JSON.parse(m[0]) } catch { return null }
-  }
+  let outer: unknown = null
   try {
-    const parsed = JSON.parse(trimmed)
-    if (parsed && parsed.result && typeof parsed.result === 'string') {
-      try { return JSON.parse(parsed.result) } catch { return fromBraces(parsed.result) }
-    }
-    return parsed
+    outer = JSON.parse(trimmed)
   } catch {
-    return fromBraces(trimmed)
+    // stdout was not clean JSON (a prefix, a fence, trailing text). Recover the
+    // object rather than giving up — the old code's greedy match gave up here.
+    outer = extractJsonObject(trimmed)
   }
+  if (outer == null || typeof outer !== 'object' || Array.isArray(outer)) return null
+
+  // Unwrap the `--output-format json` envelope. This has to happen on BOTH paths:
+  // recovering the envelope from noisy stdout and then returning it would write
+  // the CLI's own metadata to kpis.json as if it were the metrics.
+  const result = (outer as { result?: unknown }).result
+  if (typeof result === 'string') {
+    try {
+      return JSON.parse(result)
+    } catch {
+      return extractJsonObject(result)
+    }
+  }
+  return outer
 }
 
 async function extractKpis(archiveDir: string, runId: string, home: string | null = null): Promise<boolean> {
@@ -580,15 +723,26 @@ async function extractKpis(archiveDir: string, runId: string, home: string | nul
   if (usage) logInfo(`[insights] KPI extraction usage: ${usage}`)
 
   if (result.code !== 0) {
-    logError('[insights] KPI extraction failed (code ' + result.code + '):', result.stderr)
-    logError('[insights] stdout:', result.stdout.slice(0, 500))
+    // The hard-failure envelope carries the real reason in `result`; the previous
+    // 500-char slice of the raw envelope showed only the zeroed usage block.
+    const reason = describeClaudeError(result.stdout)
+    logError(
+      `[insights] KPI extraction failed (code ${result.code}): ${reason ?? (result.stderr.slice(0, 400) || 'no reason reported')}`
+    )
+    saveExtractionFailure(archiveDir, spawnArgs, result, reason)
     return false
   }
 
   const kpiData = parseKpiOutput(result.stdout)
   if (kpiData == null) {
-    logError('[insights] Failed to parse KPI output')
-    logError('[insights] Raw output:', result.stdout.slice(0, 500))
+    // A parse failure here means the model was PAID FOR and its answer thrown
+    // away, so the full reply is persisted beside the report for post-mortem.
+    const truncated = looksTruncated(result.stdout)
+    logError(
+      `[insights] Failed to parse KPI output${truncated ? ' (reply looks truncated mid-object)' : ''}` +
+      `${usage ? ` — this run was billed: ${usage}` : ''}`
+    )
+    saveExtractionFailure(archiveDir, spawnArgs, result, truncated ? 'reply looks truncated mid-object' : 'no JSON object recoverable')
     return false
   }
 
@@ -599,6 +753,45 @@ async function extractKpis(archiveDir: string, runId: string, home: string | nul
   } catch (err) {
     logError('[insights] Failed to write kpis.json:', err)
     return false
+  }
+}
+
+/**
+ * Persist everything about a failed extraction next to the report it was for.
+ *
+ * A real 4-account run billed $0.77 for a reply of 4,788 output tokens, failed to
+ * parse it, logged 500 characters of the envelope, and discarded the rest — so
+ * there was nothing left to diagnose from. The archive already holds report.html;
+ * this puts the reply beside it. Written best-effort: a failure to record a
+ * failure must never mask the original one.
+ */
+function saveExtractionFailure(
+  archiveDir: string,
+  spawnArgs: string[],
+  result: { code: number; stdout: string; stderr: string },
+  reason: string | null
+): void {
+  try {
+    const target = join(archiveDir, 'kpi-extraction-failure.json')
+    writeFileSync(
+      target,
+      JSON.stringify(
+        {
+          at: new Date().toISOString(),
+          exitCode: result.code,
+          reason,
+          usage: describeClaudeUsage(result.stdout),
+          spawnArgs,
+          stdout: result.stdout,
+          stderr: result.stderr
+        },
+        null,
+        2
+      )
+    )
+    logError(`[insights] Full failed reply saved to ${target}`)
+  } catch (err) {
+    logError('[insights] Could not save the extraction failure record:', err)
   }
 }
 

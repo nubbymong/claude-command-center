@@ -523,15 +523,21 @@ export function buildCrossAccountPromptFrom(data: CrossAccountInsights): string 
  * needs no tools at all — strictly less privilege than the per-run KPI
  * extraction, which does need `Read`. No `--dangerously-skip-permissions`.
  *
- * `--tools ""` would strip the unused built-in tool SCHEMAS from context too
- * (`--allowedTools` only gates the permission prompt, it does not unload
- * definitions), but spawnClaudeHeadless runs with `shell: true`, which
- * concatenates argv without quoting — an empty argument would vanish and
- * `--tools` would swallow the next flag. Tracked separately; do not add it here
- * until the spawner quotes its arguments.
+ * `--strict-mcp-config` with no `--mcp-config` beside it loads NO MCP servers.
+ * That is the cost fix: a headless `claude -p` otherwise pulls in the account's
+ * whole mirrored global config, measured at 10 MCP servers plus 41 skills on a
+ * real profile — 41,714 tokens of overhead become 14,395 once the built-in tool
+ * schemas go too. Verified empirically, not inferred.
+ *
+ * `--tools ""` is what would drop those remaining schemas here, since this pass
+ * needs no tools at all (`--allowedTools` only gates the permission prompt; it
+ * does not unload definitions). It cannot be passed yet: spawnClaudeHeadless runs
+ * with `shell: true`, which concatenates argv without quoting, so an empty
+ * argument vanishes and `--tools` swallows the next flag. Tracked separately —
+ * do not add it here until the spawner quotes its arguments.
  */
 export function buildCrossAccountSpawnArgs(): string[] {
-  return ['-p', '--output-format', 'json']
+  return ['-p', '--strict-mcp-config', '--output-format', 'json']
 }
 
 /** The narrative half of a roll-up, as returned by the synthesis pass. */

@@ -23,8 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - If the written analysis cannot be produced, you still get the measured comparison and the report says so rather than quietly leaving it out.
 - While a cross-account run is in progress it reports which account it is on, and finishing accounts no longer pull the report you are reading out from under you.
 - Generating the combined report costs roughly a tenth of what it did: it is now handed the comparison CCC has already worked out rather than every account's full metric dump. That also makes it a better report, because the alignment is done before the analysis starts instead of during it.
+- Generating Insights is far cheaper. Each analysis was quietly loading everything your account has configured — every connected tool server, every skill, your instruction files — into a job that only needed to read one report. Measured on a real setup that was about 193,000 words of context per account; it is now about 14,000. Nothing about the analysis itself changes.
 
 ### Fixed
+- Insights: when the analysis step fails, the report no longer just says "KPI extraction failed" with nothing to go on. The full reply is saved next to the report, and the actual reason is written to the log. Previously the result was discarded even when the work had already been paid for.
+- Insights: the analysis result is read back much more tolerantly. Anything wrapped in explanation or code fences is now recovered instead of thrown away, which previously lost a complete and correct analysis. A result that arrives cut off part-way is still rejected rather than half-saved, so you never see a report built from a fragment.
 - Multi-account: a report was able to compare itself against the wrong run — a combined cross-account report could be picked as the "previous run" for a single account, so the trend arrows were measuring against something unrelated. Comparisons now only ever pair a single account with its own earlier reports.
 
 ## [2.1.0-beta.5] - 2026-08-02

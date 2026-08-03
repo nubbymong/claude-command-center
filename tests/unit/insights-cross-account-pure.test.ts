@@ -124,9 +124,25 @@ describe('cross-account prompt', () => {
 describe('cross-account spawn args', () => {
   it('grants no tools at all — the data travels on stdin, so nothing is read', () => {
     const args = buildCrossAccountSpawnArgs()
-    expect(args).toEqual(['-p', '--output-format', 'json'])
+    expect(args).toEqual(['-p', '--strict-mcp-config', '--output-format', 'json'])
     expect(args).not.toContain('--allowedTools')
     expect(args).not.toContain('--dangerously-skip-permissions')
+  })
+
+  it('loads no MCP servers — measured at 10 servers / 41 skills of dead context', () => {
+    expect(buildCrossAccountSpawnArgs()).toContain('--strict-mcp-config')
+    // No --mcp-config beside it: that is what makes the flag load zero servers.
+    expect(buildCrossAccountSpawnArgs()).not.toContain('--mcp-config')
+  })
+
+  it('passes no empty or spaced argument, which shell:true would silently drop', () => {
+    // spawnClaudeHeadless uses shell:true, so argv is concatenated unquoted. An
+    // empty or space-bearing value vanishes and the preceding flag swallows the
+    // next one. This guard is why --tools "" cannot be added here yet.
+    for (const arg of buildCrossAccountSpawnArgs()) {
+      expect(arg.length).toBeGreaterThan(0)
+      expect(arg).not.toMatch(/\s/)
+    }
   })
 })
 
