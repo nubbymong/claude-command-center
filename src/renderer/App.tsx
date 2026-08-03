@@ -692,7 +692,7 @@ export default function App() {
   const renderOverlayView = () => {
     if (view === 'logs') return <GlobalLogsView initialSessionId={pendingLogsSessionId} onInitialSessionConsumed={() => setPendingLogsSessionId(null)} />
     if (view === 'settings') return <SettingsPage initialTab={pendingSettingsTab ?? undefined} onNavigateToSessions={() => setView('sessions')} onUpdateRequested={handleUpdateRequested} />
-    if (view === 'insights') return <InsightsPage />
+    if (view === 'insights') return <InsightsPage onNavigateToSessions={() => setView('sessions')} />
     if (view === 'cloud-agents') return <CloudAgentsPage />
     if (view === 'tokenomics') return <TokenomicsPage />
     if (view === 'vision') return <ConductorMcpPage />

@@ -1,7 +1,8 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { useInsightsStore } from '../stores/insightsStore'
 import { useAccountProfilesStore } from '../stores/accountProfilesStore'
 import { useSettingsStore } from '../stores/settingsStore'
+import { useReauthAccount } from '../hooks/useReauthAccount'
 import { resolveAccountNameByEmail, resolveAccountName } from '../../shared/account-chip-color'
 import KpiSidebar from './KpiSidebar'
 import type { CrossAccountInsights, InsightsData } from '../types/electron'
@@ -10,7 +11,60 @@ import { parseInsightsReport, type ParsedInsights } from './insights/parseInsigh
 import { InsightsSections } from './insights/InsightsSections'
 import CrossAccountReport from './insights/CrossAccountReport'
 
-export default function InsightsPage() {
+interface InsightsPageProps {
+  /** Switch to the sessions view. Re-auth opens a login shell session, so the
+   *  user has to be taken to it — same contract AccountUsagePanel uses. */
+  onNavigateToSessions?: () => void
+}
+
+/**
+ * Accounts whose sign-in has expired, according to Insights' own runs.
+ *
+ * Only each account's MOST RECENT run counts. A historical auth failure that has
+ * since been fixed must not keep nagging — same calibration as the nav status dot:
+ * a warning means "needs attention now", not "once failed".
+ */
+function AuthBanner({
+  accounts,
+  onReauth,
+}: {
+  accounts: Array<{ profileId: string; name: string; error?: string }>
+  onReauth: (profileId: string, name: string) => void
+}) {
+  if (accounts.length === 0) return null
+  return (
+    <div className="px-4 py-2.5 bg-red/10 border-b border-red/25 shrink-0">
+      <div className="flex items-start gap-2">
+        <span className="text-red text-xs mt-0.5 shrink-0">{String.fromCodePoint(0x26a0)}</span>
+        <div className="min-w-0">
+          <p className="text-xs text-red font-medium">
+            {accounts.length === 1
+              ? 'One account needs to sign in again before Insights can analyse it.'
+              : `${accounts.length} accounts need to sign in again before Insights can analyse them.`}
+          </p>
+          <p className="text-[11px] text-overlay1 mt-0.5">
+            The report still generates, but the metrics and the written analysis need a working
+            sign-in. Signing in opens a terminal session for that account.
+          </p>
+          <div className="flex flex-wrap gap-1.5 mt-2">
+            {accounts.map((a) => (
+              <button
+                key={a.profileId}
+                onClick={() => onReauth(a.profileId, a.name)}
+                title={a.error || 'Sign-in expired'}
+                className="text-[11px] px-2 py-0.5 rounded border border-red/40 text-red hover:bg-red/15 transition-colors"
+              >
+                Sign in: {a.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export default function InsightsPage({ onNavigateToSessions }: InsightsPageProps = {}) {
   // All hooks called unconditionally -- early returns appear after all hook calls.
   const catalogue = useInsightsStore((s) => s.catalogue)
   const selectedRunId = useInsightsStore((s) => s.selectedRunId)
@@ -124,6 +178,38 @@ export default function InsightsPage() {
       : null
   const runAllLabel = `Run all (${profiles.length})`
 
+  // Accounts Insights has seen fail authentication on their LATEST run. Derived
+  // from the catalogue rather than probed, so it costs nothing and reflects
+  // exactly what the feature actually hit.
+  const accountsNeedingReauth = useMemo(() => {
+    if (!catalogue) return []
+    const latestByProfile = new Map<string, typeof catalogue.runs[number]>()
+    for (const run of catalogue.runs) {
+      if (!run.profileId || run.kind === 'aggregate') continue
+      const current = latestByProfile.get(run.profileId)
+      if (!current || run.timestamp > current.timestamp) latestByProfile.set(run.profileId, run)
+    }
+    const out: Array<{ profileId: string; name: string; error?: string }> = []
+    for (const [profileId, run] of latestByProfile) {
+      if (!run.authFailed) continue
+      const profile = profiles.find((p) => p.id === profileId)
+      out.push({
+        profileId,
+        name: nameForAccount(run.accountEmail) || profile?.name || run.accountEmail || 'Account',
+        error: run.error,
+      })
+    }
+    return out
+  }, [catalogue, profiles, accountAliases])
+
+  const reauthAccount = useReauthAccount()
+  const handleReauth = (profileId: string, name: string): void => {
+    const profile = profiles.find((p) => p.id === profileId)
+    reauthAccount({ id: profileId, name: profile?.name || name }, () => void loadCatalogue())
+    onNavigateToSessions?.()
+  }
+  const authBanner = <AuthBanner accounts={accountsNeedingReauth} onReauth={handleReauth} />
+
   // Codex-only empty state: user has Codex sessions but no Claude sessions.
   // Insights are Claude-only -- show an explanatory message rather than the
   // generic first-run UI, which would be confusing for Codex-only users.
@@ -164,6 +250,10 @@ export default function InsightsPage() {
             </div>
           </div>
         </div>
+
+        {/* Shown in the empty state too: an expired sign-in is exactly why there
+            may be no reports yet, so this is when it matters most. */}
+        {authBanner}
 
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center">
@@ -322,6 +412,7 @@ export default function InsightsPage() {
       actions={insightsActions}
       scrollable={false}
     >
+      {authBanner}
       {latestRun?.status === 'failed' && (
         <div
           className="px-4 py-1.5 text-[11px] text-red bg-red/10 border-b border-red/20 shrink-0 truncate"

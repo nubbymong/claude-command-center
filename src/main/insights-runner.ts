@@ -19,6 +19,7 @@ import { getProfileConfigDir, getPrimaryProfileId, setupProfileLinks, listProfil
 import { getProjectRootPath, getInstallPath } from './update-watcher'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import type { AccountProfile } from '../shared/account-types'
+import { isAuthFailureMessage } from '../shared/claude-auth-errors'
 import type { InsightsCatalogue, InsightsData, InsightsRun, InsightsRunMember } from '../shared/types'
 import {
   CROSS_ACCOUNT_MAX_PARALLEL,
@@ -698,10 +699,12 @@ export function parseKpiOutput(stdout: string): unknown | null {
 }
 
 /** Outcome of a KPI extraction. The reason travels so the UI can name a dead
- *  account instead of showing a bare "KPI extraction failed". */
+ *  account instead of showing a bare "KPI extraction failed", and `authFailed`
+ *  lets Insights offer the re-auth action rather than just reporting a problem. */
 interface KpiExtractionResult {
   ok: boolean
   reason?: string
+  authFailed?: boolean
 }
 
 async function extractKpis(
@@ -741,7 +744,11 @@ async function extractKpis(
       `[insights] KPI extraction failed (code ${result.code}): ${reason ?? (result.stderr.slice(0, 400) || 'no reason reported')}`
     )
     saveExtractionFailure(archiveDir, spawnArgs, result, reason)
-    return { ok: false, reason: reason ?? `claude exited ${result.code}` }
+    return {
+      ok: false,
+      reason: reason ?? `claude exited ${result.code}`,
+      authFailed: isAuthFailureMessage(reason) || isAuthFailureMessage(result.stderr)
+    }
   }
 
   const kpiData = parseKpiOutput(result.stdout)
@@ -867,6 +874,10 @@ export async function runInsights(getWindow: () => BrowserWindow | null, opts?: 
       logError('[insights] KPI extraction failed, report is still available')
       run.kpisUnavailable = true
       if (kpi.reason) run.error = kpi.reason
+      if (kpi.authFailed) {
+        run.authFailed = true
+        logError(`[insights] ${account.accountEmail ?? 'this account'} needs to sign in again`)
+      }
     }
 
     run.status = 'complete'
@@ -977,7 +988,8 @@ export async function runCrossAccountInsights(
           // carries its reason here (e.g. an expired OAuth session), and that is
           // exactly the case the roll-up needs to explain.
           error: memberRun?.error,
-          kpisUnavailable: memberRun?.kpisUnavailable
+          kpisUnavailable: memberRun?.kpisUnavailable,
+          authFailed: memberRun?.authFailed
         })
       } catch (err: any) {
         // The per-account lock rejecting (that account is already running) lands
@@ -1063,11 +1075,20 @@ export async function runCrossAccountInsights(
 
     const narrative = result.code === 0 ? parseCrossAccountNarrative(result.stdout) : null
     if (!narrative) {
+      // Record WHY there is no written analysis. Degrading silently to
+      // numbers-only left a real run looking like the model had nothing to say,
+      // when in fact the synthesis account's sign-in had expired.
+      const synthesisReason = describeClaudeError(result.stdout)
+      const authFailed = isAuthFailureMessage(synthesisReason) || isAuthFailureMessage(result.stderr)
       logError(
-        `[insights] Cross-account synthesis unusable (code ${result.code}); ` +
-        'falling back to a numbers-only roll-up'
+        `[insights] Cross-account synthesis unusable (code ${result.code}): ` +
+        `${synthesisReason ?? 'no reason reported'}; falling back to a numbers-only roll-up`
       )
       logError('[insights] Raw synthesis output:', result.stdout.slice(0, 500))
+      run.error = authFailed
+        ? `No written analysis: ${synthesisMember.label} needs to sign in again (${synthesisReason ?? 'authentication failed'})`
+        : `No written analysis: ${synthesisReason ?? 'the synthesis pass did not return usable output'}`
+      if (authFailed) run.authFailed = true
     }
 
     const data = withNarrative(baseline, narrative)

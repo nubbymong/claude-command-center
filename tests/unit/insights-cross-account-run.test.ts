@@ -301,6 +301,48 @@ describe('runCrossAccountInsights', () => {
     expect(c.status).toBe('complete')
     expect(c.kpisUnavailable).toBe(true)
     expect(c.error).toMatch(/OAuth session expired/)
+    // Classified, so the Insights page can offer the re-auth action rather than
+    // just reporting that something went wrong.
+    expect(c.authFailed).toBe(true)
+    // The member's own run carries the same flags, which is what the page-level
+    // banner reads (latest run per profile).
+    const memberRun = getCatalogue().runs.find((r) => r.id === c.runId)!
+    expect(memberRun.authFailed).toBe(true)
+    expect(memberRun.error).toMatch(/OAuth session expired/)
+  })
+
+  it('explains a missing written analysis instead of degrading silently', async () => {
+    seedProfile('A', 'a@example.com', { isPrimary: true })
+    seedProfile('B', 'b@example.com')
+    h.synthesisCode = 1
+    h.synthesisStdout = JSON.stringify({
+      is_error: true,
+      result: 'Failed to authenticate: OAuth session expired and could not be refreshed',
+      duration_api_ms: 0
+    })
+
+    const id = await runCrossAccountInsights(getWin)
+    const agg = getCatalogue().runs.find((r) => r.id === id)!
+    // Still completes as a numbers-only roll-up...
+    expect(agg.status).toBe('complete')
+    expect(readAggregateData(id).synthesis).toBe('deterministic')
+    // ...but says why, and names the account to fix.
+    expect(agg.error).toMatch(/No written analysis/)
+    expect(agg.error).toMatch(/needs to sign in again/)
+    expect(agg.error).toMatch(/Acct A/)
+    expect(agg.authFailed).toBe(true)
+  })
+
+  it('does not claim an auth problem when the synthesis failed for another reason', async () => {
+    seedProfile('A', 'a@example.com', { isPrimary: true })
+    seedProfile('B', 'b@example.com')
+    h.synthesisStdout = 'prose with no JSON at all'
+
+    const id = await runCrossAccountInsights(getWin)
+    const agg = getCatalogue().runs.find((r) => r.id === id)!
+    expect(agg.error).toMatch(/No written analysis/)
+    expect(agg.error).not.toMatch(/sign in again/)
+    expect(agg.authFailed).toBeUndefined()
   })
 
   it('holds an aggregate-level lock so two roll-ups cannot overlap', async () => {

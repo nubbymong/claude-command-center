@@ -266,6 +266,13 @@ export interface InsightsRun {
   /** Run completed but KPI extraction failed: report is viewable, no kpis.json. */
   kpisUnavailable?: boolean
   /**
+   * The failure in `error` was an authentication failure — this account's sign-in
+   * has expired and the fix is to log in again. Classified in main so the UI does
+   * not string-match CLI messages, and so Insights can offer the re-auth action
+   * instead of only reporting that something went wrong.
+   */
+  authFailed?: boolean
+  /**
    * What kind of run this is. Absent means 'account' — every run written before
    * cross-account existed is a single-account run, so the field is optional
    * rather than defaulted, and readers MUST treat undefined as 'account'.
@@ -291,6 +298,8 @@ export interface InsightsRunMember {
   error?: string
   /** Completed without a kpis.json, so it is excluded from the roll-up. */
   kpisUnavailable?: boolean
+  /** This account's sign-in has expired; the fix is to authenticate again. */
+  authFailed?: boolean
 }
 
 export interface InsightsCatalogue {

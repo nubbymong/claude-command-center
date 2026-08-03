@@ -250,6 +250,10 @@ export default function CrossAccountReport({ data, run, nameForAccount }: Props)
             The written analysis could not be generated for this roll-up, so this is the
             measured comparison only. The numbers below come straight from each
             account&apos;s own report.
+            {/* The reason, when the runner captured one. Without it a roll-up whose
+                synthesis account had an expired sign-in read as "the model had
+                nothing to say". */}
+            {run.error && <span className="block mt-1 text-yellow/80">{run.error}</span>}
           </div>
         )}
 
