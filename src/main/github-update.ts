@@ -1067,7 +1067,18 @@ function privateSubdir(name: string): string {
     throw new Error(`${base} is not a directory (symlink or file) — refusing to stage an installer under it`)
   }
   const dir = path.join(base, name)
-  fs.mkdirSync(dir, { recursive: true })
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
+  // TIGHTEN, then validate. `mkdirSync`'s mode is masked by the process umask,
+  // so on a umask-002 box (per-user-group setups, many container images) the
+  // directory lands 0775 -- and assertPrivateDir's group-write check then
+  // rejects it. Because there is deliberately no fallback, that turned into a
+  // PERMANENT, unrecoverable update failure for those users: the control this
+  // change exists to add would have doubled as an update-killer. chmod is not
+  // umask-masked, so this is what actually holds. It also repairs a directory an
+  // older build left loose.
+  if (process.platform !== 'win32') {
+    try { fs.chmodSync(dir, 0o700) } catch { /* validated below either way */ }
+  }
   assertPrivateDir(dir)
   return dir
 }
@@ -1451,7 +1462,12 @@ export async function prepareLinuxAppImageUpdate(
     // the caller re-hash afterwards -- which detects a swap but cannot undo it:
     // the bad bytes are already at the user's .desktop/dock-pinned path and run
     // on next launch, while the UI says the update was "blocked".
-    const staged = `${target}.new`
+    // Random suffix, not a fixed `.new`: a fixed name both clobbers whatever the
+    // user happened to have there and gives an attacker a predictable path to
+    // pre-plant a symlink at, which copyFileSync would follow, verify would hash
+    // THROUGH, and renameSync would then move onto the launcher path. The unlink
+    // stays as belt for the (now vanishingly unlikely) collision.
+    const staged = `${target}.new-${crypto.randomBytes(6).toString('hex')}`
     try { fs.unlinkSync(staged) } catch { /* no leftover */ }
     fs.copyFileSync(downloadedPath, staged)
     fs.chmodSync(staged, 0o755)

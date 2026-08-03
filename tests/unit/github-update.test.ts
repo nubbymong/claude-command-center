@@ -1010,8 +1010,12 @@ describe('github-update', () => {
       // VERIFY BEFORE COMMIT: the bytes go to a sibling `.new` and are renamed
       // into place, so a failed check never leaves them at the launcher path.
       expect(mockCopyFileSync).toHaveBeenCalledTimes(1)
-      expect(String(mockCopyFileSync.mock.calls[0][1]).replace(/\\/g, '/')).toBe(`${expectedTarget}.new`)
-      expect(String(mockRenameSync.mock.calls[0][0]).replace(/\\/g, '/')).toBe(`${expectedTarget}.new`)
+      // A RANDOMISED sibling name: a fixed `.new` both clobbers whatever the user
+      // had there and gives an attacker a predictable path to plant a symlink at.
+      const stagedName = String(mockCopyFileSync.mock.calls[0][1]).replace(/\\/g, '/')
+      expect(stagedName).toMatch(/\.new-[0-9a-f]{12}$/)
+      expect(stagedName.startsWith(expectedTarget)).toBe(true)
+      expect(String(mockRenameSync.mock.calls[0][0]).replace(/\\/g, '/')).toBe(stagedName)
       expect(String(mockRenameSync.mock.calls[0][1]).replace(/\\/g, '/')).toBe(expectedTarget)
       expect(mockChmodSync).toHaveBeenCalledTimes(3) // download + .new + target
       // Old version file removed (safe on Linux: mounted inode outlives the unlink)
@@ -1026,8 +1030,10 @@ describe('github-update', () => {
       const result = await prepareLinuxAppImageUpdate(downloaded, custom)
       expect(result?.replace(/\\/g, '/')).toBe(custom)
       // Staged next to the target, then renamed onto it.
-      expect(mockCopyFileSync).toHaveBeenCalledWith(downloaded, `${custom}.new`)
-      expect(mockRenameSync).toHaveBeenCalledWith(`${custom}.new`, custom)
+      const stagedName = String(mockCopyFileSync.mock.calls[0][1])
+      expect(stagedName).toMatch(/\.new-[0-9a-f]{12}$/)
+      expect(mockCopyFileSync).toHaveBeenCalledWith(downloaded, stagedName)
+      expect(mockRenameSync).toHaveBeenCalledWith(stagedName, custom)
       // unlink-before-rename on the same path (avoids truncating the mounted image)
       expect(mockUnlinkSync).toHaveBeenCalledWith(custom)
       // Two unlinks: the pre-emptive `.new` cleanup, then the running file.

@@ -297,6 +297,10 @@ describe('update:installAndRestart — verification', () => {
       await expect(invoke()).rejects.toThrow(/not executable/)
       expect(spawnState.calls).toHaveLength(0)
       expect(exitCalls).toEqual([])
+      // This block sits OUTSIDE the launch try/catch, so without its own dialog
+      // the abort reaches the user through nothing at all.
+      expect(shownErrorBoxes).toHaveLength(1)
+      expect(shownErrorBoxes[0][0]).toMatch(/could not be launched/i)
     } finally {
       Object.defineProperty(process, 'platform', { value: original, configurable: true })
     }
@@ -312,6 +316,8 @@ describe('update:installAndRestart — verification', () => {
     try {
       await expect(invoke()).rejects.toThrow(/noexec/)
       expect(spawnState.calls).toHaveLength(0)
+      expect(shownErrorBoxes).toHaveLength(1)
+      expect(shownErrorBoxes[0][1]).toMatch(/noexec/)
     } finally {
       Object.defineProperty(process, 'platform', { value: original, configurable: true })
     }

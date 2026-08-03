@@ -79,6 +79,31 @@ describe('installerRoot — the parent of the staging directory', () => {
     }
   })
 
+  it('TIGHTENS a group-writable updates dir instead of refusing it', async () => {
+    // The umask trap. mkdirSync's mode is masked by the process umask, so on a
+    // umask-002 box the directory lands 0775 -- and assertPrivateDir's
+    // group-write check then rejects it. With no fallback by design, that is a
+    // PERMANENT unrecoverable update failure: the control this change adds would
+    // have doubled as an update-killer. Nothing in CI has a loose umask, so this
+    // test creates the condition explicitly.
+    if (process.platform === 'win32') return
+    const loose = path.join(dataDir.path, 'updates')
+    fs.mkdirSync(loose, { recursive: true })
+    fs.chmodSync(loose, 0o775)
+    expect(() => installerRoot()).not.toThrow()
+    expect(fs.statSync(loose).mode & 0o777).toBe(0o700)
+  })
+
+  it('creates the updates dir 0700 regardless of umask', async () => {
+    if (process.platform === 'win32') return
+    const previous = process.umask(0o002)
+    try {
+      expect(fs.statSync(installerRoot()).mode & 0o777).toBe(0o700)
+    } finally {
+      process.umask(previous)
+    }
+  })
+
   it('REFUSES a link planted at the DATA DIRECTORY itself', async () => {
     // Load-bearing, not redundant: with the data dir junctioned, both of
     // assertPrivateDir's realpath calls resolve THROUGH the same junction and
@@ -187,8 +212,8 @@ describe('the AppImage parking directory', () => {
 
     // The installed file is untouched...
     expect(fs.readFileSync(running, 'utf-8')).toBe('the original installed app')
-    // ...no `.new` was left behind...
-    expect(fs.existsSync(`${running}.new`)).toBe(false)
+    // ...no staging sibling was left behind...
+    expect(fs.readdirSync(dataDir.path).filter((n) => n.includes('.new'))).toEqual([])
     // ...and it degraded to a parked copy of the (already-verified) download.
     expect(path.resolve(result)).toBe(path.resolve(path.join(dataDir.path, 'bin', path.basename(staged))))
   })
@@ -203,10 +228,26 @@ describe('the AppImage parking directory', () => {
 
     expect(path.resolve(result)).toBe(path.resolve(running))
     expect(fs.readFileSync(running, 'utf-8')).toBe('appimage bytes')
-    // The verifier saw the STAGED sibling, not the final path — that is what
-    // makes it a pre-commit check.
-    expect(seen).toEqual([`${running}.new`])
-    expect(fs.existsSync(`${running}.new`)).toBe(false)
+    // The verifier saw a STAGED SIBLING, not the final path — that is what makes
+    // it a pre-commit check. The name is randomised so it cannot clobber a
+    // user's file, and so an attacker cannot pre-plant a symlink at it that
+    // copyFileSync would follow and renameSync would then move into place.
+    expect(seen).toHaveLength(1)
+    expect(seen[0]).toMatch(/\.new-[0-9a-f]{12}$/)
+    expect(seen[0]).not.toBe(running)
+    expect(fs.readdirSync(dataDir.path).filter((n) => n.includes('.new'))).toEqual([])
+  })
+
+  it('does not destroy an unrelated file sitting at a plausible staging name', async () => {
+    const staged = stagedAppImage()
+    const running = path.join(dataDir.path, 'ClaudeCommandCenter.AppImage')
+    fs.writeFileSync(running, 'installed')
+    const bystander = `${running}.new`
+    fs.writeFileSync(bystander, 'someone elses data')
+
+    await prepareLinuxAppImageUpdate(staged, running, async () => true)
+
+    expect(fs.readFileSync(bystander, 'utf-8')).toBe('someone elses data')
   })
 })
 

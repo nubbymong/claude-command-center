@@ -226,7 +226,8 @@ export function registerUpdateHandlers(): void {
     // 'error' event, so a doomed launch (a noexec staging mount, a failed
     // chmod on vfat/exfat, an unwritable $APPIMAGE dir) would otherwise kill
     // every PTY, exit the app, and leave nothing running with no error shown.
-    // Fail here instead — the outer catch surfaces it and the app stays alive.
+    // Fail here instead, with a dialog of its own: this block sits OUTSIDE the
+    // launch try/catch, so it has no catch to fall back on.
     let linuxLaunchPath: string | null = null
     if (process.platform === 'linux' && installerPath.endsWith('.AppImage')) {
       // The file we verified is NOT the file we are about to spawn: this call
@@ -254,7 +255,13 @@ export function registerUpdateHandlers(): void {
       try {
         fs.accessSync(linuxLaunchPath, fs.constants.X_OK)
       } catch (err) {
-        throw new Error(`Updated AppImage is not executable (${linuxLaunchPath}) — aborting before restart: ${(err as Error).message}`)
+        // These two throws are OUTSIDE the launch try/catch below, so they reach
+        // no dialog on their own -- the same "reported to nobody" defect the
+        // download path had. Say it here.
+        const msg = `Updated AppImage is not executable (${linuxLaunchPath}) — aborting before restart: ${(err as Error).message}`
+        logError('[update] ' + msg)
+        try { dialog.showErrorBox('Update could not be launched', msg) } catch { /* ignore */ }
+        throw new Error(msg)
       }
       // ...and the mount, which accessSync can't see: a noexec staging dir (the
       // fallback launch location when $APPIMAGE is unset) would pass the bit
@@ -263,7 +270,11 @@ export function registerUpdateHandlers(): void {
       // single-instance lock means we can't confirm the relaunch by spawning it
       // first, so catch this here — before the PTYs are killed — not after.
       if (isPathOnNoexecMount(linuxLaunchPath)) {
-        throw new Error(`Updated AppImage is on a noexec mount (${linuxLaunchPath}) — cannot relaunch. Move the app to a filesystem that allows execution, or update manually.`)
+        const msg = `Updated AppImage is on a noexec mount (${linuxLaunchPath}) — cannot relaunch. `
+          + 'Move the app to a filesystem that allows execution, or update manually.'
+        logError('[update] ' + msg)
+        try { dialog.showErrorBox('Update could not be launched', msg) } catch { /* ignore */ }
+        throw new Error(msg)
       }
     }
 
