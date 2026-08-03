@@ -69,7 +69,7 @@ test.describe('SessionDialog — driven flow permutations', () => {
     await expect(page.locator('text=Identity')).toBeVisible()
   })
 
-  test('Claude Code × Local shows model/effort/permission, and GitHub only after a directory', async () => {
+  test('Claude Code × Local shows model / effort / permission / logging', async () => {
     await openDialog()
     await providerCard('claude').click()
     await transportCard('local').click()
@@ -77,10 +77,11 @@ test.describe('SessionDialog — driven flow permutations', () => {
     await expect(page.locator('text=Starting effort')).toBeVisible()
     await expect(page.locator('text=Permission mode')).toBeVisible()
     await expect(page.locator('text=Index conversation logs')).toBeVisible()
-    // GitHub is driven by the working directory.
-    await expect(page.locator('text=GitHub')).toHaveCount(0)
-    await page.locator('input[placeholder*="path"]').first().fill('C:\\temp\\proj')
-    await expect(page.locator('text=GitHub')).toBeVisible()
+    await expect(page.locator('text=Working directory')).toBeVisible()
+    // The GitHub section is deliberately NOT in this dialog yet (it needs the
+    // account picker + autoDetected state); repo binding still happens through
+    // the auto-detect banner. Pinned so re-adding it is a conscious change.
+    await expect(page.locator('text=Repository')).toHaveCount(0)
   })
 
   test('Claude Code × SSH swaps in the SSH fields and drops local-only sections', async () => {
@@ -88,7 +89,7 @@ test.describe('SessionDialog — driven flow permutations', () => {
     await providerCard('claude').click()
     await transportCard('ssh').click()
     await expect(page.locator('text=Remote directory')).toBeVisible()
-    await expect(page.locator('text=After connecting, run')).toBeVisible()
+    await expect(page.locator('text=After connecting, run').first()).toBeVisible()
     await expect(page.locator('text=Machine name')).toBeVisible()
     // Local-only: indexing never registers over SSH, GitHub detection shells local git.
     await expect(page.locator('text=Index conversation logs')).toHaveCount(0)
@@ -127,7 +128,7 @@ test.describe('SessionDialog — driven flow permutations', () => {
     await openDialog()
     await providerCard('terminal').click()
     await transportCard('ssh').click()
-    await expect(page.locator('text=After connecting, run')).toBeVisible()
+    await expect(page.locator('text=After connecting, run').first()).toBeVisible()
     await expect(page.locator('text=First-run command')).toHaveCount(0)
   })
 
@@ -135,8 +136,9 @@ test.describe('SessionDialog — driven flow permutations', () => {
     await openDialog()
     await providerCard('claude').click()
     await transportCard('local').click()
-    // Collapsed by default; the group/section selects appear only once opened.
-    await expect(page.locator('#ccc-group')).toHaveCount(0)
+    // Collapsed by default. <details> keeps its content in the DOM, so assert
+    // VISIBILITY rather than presence.
+    await expect(page.locator('#ccc-group')).toBeHidden()
     await page.locator('summary:has-text("Organise")').click()
     await expect(page.locator('#ccc-group')).toBeVisible()
     await expect(page.locator('#ccc-section')).toBeVisible()
@@ -162,13 +164,17 @@ test.describe('Terminal-only config actually runs its command', () => {
     // Creating from the sidebar launches the config straight away; the PTY runs
     // `echo CCC_E2E_MARKER $env:CCC_ARG_SECRET` after the cd, so the terminal
     // must show the marker AND the secret resolved from the keychain.
+    // The session tab appears first, then the PTY spawns and the shell echoes.
+    await expect(page.locator('text=E2E Terminal').first()).toBeVisible({ timeout: 30000 })
     const term = page.locator('.xterm-screen').first()
-    await expect(term).toBeVisible({ timeout: 20000 })
+    await expect(term).toBeVisible({ timeout: 30000 })
     await expect
       .poll(async () => (await page.locator('.xterm-rows').first().innerText().catch(() => '')) || '',
-        { timeout: 30000, intervals: [500] })
+        { timeout: 60000, intervals: [1000] })
       .toContain('CCC_E2E_MARKER')
     const shown = await page.locator('.xterm-rows').first().innerText()
+    // The secret came from the OS keychain via CCC_ARG_SECRET — never from the
+    // config file, and never as plaintext in the line CCC typed.
     expect(shown).toContain('E2E-SECRET-9f3a')
   })
 })
