@@ -1,5 +1,5 @@
 import http from 'node:http'
-import { randomUUID } from 'node:crypto'
+import { randomUUID, timingSafeEqual } from 'node:crypto'
 import {
   DEFAULT_HOOKS_PORT,
   PORT_RETRY_COUNT,
@@ -36,6 +36,72 @@ let hooksInFlight = 0
 // big-file edit while still bounding a misbehaving local client; the gateway
 // is loopback-only and token-gated, so the DoS surface is already small.
 const MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024
+
+/**
+ * Length-checked, constant-time token comparison.
+ *
+ * Same shape as `tokensMatch` in conductor-mcp-server.ts, and here for the same
+ * reason: two local servers checking a per-session bearer token should not
+ * disagree about how. The practical risk is low -- a loopback token with 122
+ * bits of CSPRNG entropy is not realistically recoverable by timing -- but "low"
+ * is an argument for consistency, not against it, and the inconsistency was
+ * noted while tracing GHSA-hw7c-g5pw-w725 (#180).
+ *
+ * `timingSafeEqual` throws on unequal-length buffers, so the length guard runs
+ * first. That leaks the token LENGTH, which is a fixed constant here.
+ */
+export function tokensMatch(presented: string, expected: string): boolean {
+  // Refuse rather than authenticate on an empty expected secret:
+  // timingSafeEqual(<empty>, <empty>) is true, so a session whose secret failed
+  // to generate would otherwise accept an empty token.
+  if (!presented || !expected) return false
+  const a = Buffer.from(presented, 'utf8')
+  const b = Buffer.from(expected, 'utf8')
+  if (a.length !== b.length) return false
+  return timingSafeEqual(a, b)
+}
+
+/**
+ * Longest `transcript_path` this gateway will hand to the binder.
+ *
+ * The binder canonicalises and contains the path (that is the fix from
+ * GHSA-hw7c-g5pw-w725, and it is at the choke point so it covers this caller
+ * too). This bound is about the OTHER half: the value arrives in a hook POST
+ * body, is logged, and is used to build lookups, so an unbounded string is a
+ * cheap way to bloat the log and the discovery sink. 4096 is well past any real
+ * path on any of the three platforms.
+ */
+const MAX_TRANSCRIPT_PATH_LENGTH = 4096
+
+/**
+ * Shape-filter a `transcript_path` lifted out of a hook POST body.
+ *
+ * GHSA-hw7c-g5pw-w725 fixed `canonicalizeTranscriptPath`, which is the choke
+ * point, and traced ONE source path into it: the SSH statusline sentinel. That
+ * source also got a shape filter (`sanitiseSentinelPayload`). This is the other
+ * source, and it never got the same look (#180): the value reaches the binder
+ * through a bare `typeof x === 'string'`, and it is read BEFORE redaction.
+ *
+ * Containment is not re-implemented here -- duplicating it is how the two copies
+ * drift, and the choke point is the right place for it. What this adds is the
+ * shape half: a bound, and a rejection of the embedded NUL and control
+ * characters that no real path contains but that do confuse log readers and
+ * anything downstream that splits on them.
+ *
+ * Returns the usable path, or null to drop the field. Dropping is safe: the
+ * transcript is also discovered heuristically, so a rejected value costs a
+ * slower discovery, not a broken session.
+ */
+export function sanitiseTranscriptPath(v: unknown): string | null {
+  if (typeof v !== 'string') return null
+  if (v.length === 0 || v.length > MAX_TRANSCRIPT_PATH_LENGTH) return null
+  // A NUL truncates the path for any native consumer while leaving the JS string
+  // intact -- the classic disagreement between two layers about where a string
+  // ends. Other C0 controls have no business in a path either.
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001f\u007f]/.test(v)) return null
+  return v
+}
 
 // Cap how many request bodies may be buffering at once. The gateway is
 // loopback-only and token-gated, but a buggy/hostile LOCAL process could still
@@ -533,7 +599,7 @@ export class HooksGateway {
     const expected = this.secrets.get(sid)
     if (!expected) return { status: 404, body: '{}' }
     const token = headerValue(args.headers, 'x-ccc-hook-token')
-    if (token !== expected) return { status: 404, body: '{}' }
+    if (typeof token !== 'string' || !tokensMatch(token, expected)) return { status: 404, body: '{}' }
     return null
   }
 
@@ -571,9 +637,19 @@ export class HooksGateway {
     // earliest + exact discovery source. Done here (not in the redactor walk) so
     // the redactor stays a pure value-pattern scrubber and the raw path reaches
     // the binder un-mutated. A bad subscriber must never break ingestion.
-    const tp = typeof parsed.transcript_path === 'string' ? (parsed.transcript_path as string) : undefined
+    //
+    // Shape-filtered, not just `typeof`-checked (#180). This is the second source
+    // path into the binder that GHSA-hw7c-g5pw-w725 fixed, and the one that never
+    // got the sentinel's treatment. Containment stays at the choke point --
+    // duplicating it here is how two copies drift.
+    const tp = sanitiseTranscriptPath(parsed.transcript_path)
     if (tp) {
       try { this.onTranscriptPath?.(sid, tp) } catch { /* discovery sink must not break the hook path */ }
+    } else if (parsed.transcript_path !== undefined) {
+      // Say so: a silently dropped path looks identical to "Claude did not send
+      // one", and the two have very different diagnoses. Length only -- the value
+      // is remote-influenced and this runs BEFORE redaction.
+      logWarn(`[hooks] dropped an unusable transcript_path sid=${sid} type=${typeof parsed.transcript_path} length=${typeof parsed.transcript_path === 'string' ? parsed.transcript_path.length : 'n/a'}`)
     }
     // Reject payloads with a missing/non-string event field rather than
     // forging an 'Unknown' sentinel: the shared HookEventKind union
