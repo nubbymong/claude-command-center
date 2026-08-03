@@ -24,6 +24,8 @@ test.beforeAll(async () => {
 })
 
 test.afterAll(async () => {
+  // Tearing down with a live PTY session can exceed the 30s hook default.
+  test.setTimeout(120000)
   await closeIsolatedApp(ctx)
 })
 
@@ -191,6 +193,8 @@ test.describe('Terminal-only config actually runs its command', () => {
     expect(shown).toContain('--token|E2E-SECRET-9f3a')
     // …and it ran in the configured working directory (the cd landed first).
     expect(shown.toLowerCase()).toContain(probeDir.toLowerCase())
-    fs.rmSync(probeDir, { recursive: true, force: true })
+    // Best-effort: the spawned shell is still live with this as its cwd, so
+    // Windows holds a lock on it. Leaving a temp dir behind must not fail the run.
+    try { fs.rmSync(probeDir, { recursive: true, force: true }) } catch { /* shell still owns it */ }
   })
 })
