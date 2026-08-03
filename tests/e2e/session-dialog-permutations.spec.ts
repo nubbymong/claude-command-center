@@ -10,6 +10,9 @@
  * touches real user config.
  */
 import { test, expect } from '@playwright/test'
+import fs from 'fs'
+import os from 'os'
+import path from 'path'
 import { launchIsolatedApp, closeIsolatedApp, IsolatedApp } from './helpers/electron-app'
 
 let ctx: IsolatedApp
@@ -77,7 +80,7 @@ test.describe('SessionDialog — driven flow permutations', () => {
     await expect(page.locator('text=Starting effort')).toBeVisible()
     await expect(page.locator('text=Permission mode')).toBeVisible()
     await expect(page.locator('text=Index conversation logs')).toBeVisible()
-    await expect(page.locator('text=Working directory')).toBeVisible()
+    await expect(page.locator('text=Working directory').first()).toBeVisible()
     // The GitHub section is deliberately NOT in this dialog yet (it needs the
     // account picker + autoDetected state); repo binding still happens through
     // the auto-detect banner. Pinned so re-adding it is a conscious change.
@@ -146,35 +149,48 @@ test.describe('SessionDialog — driven flow permutations', () => {
 })
 
 test.describe('Terminal-only config actually runs its command', () => {
-  // Spawning a PTY and waiting for shell output needs more than the 30s default.
+  // Spawning a PTY and waiting for a real process needs more than the 30s default.
   test('creates, launches, and the PTY runs the first-run command with the secret', async () => {
-    test.setTimeout(120000)
+    test.setTimeout(180000)
+
+    // A probe that records the argv it was launched with. Asserting on a FILE
+    // rather than xterm's output is both stronger (it proves the secret arrived
+    // as a real argv element, not just as pixels) and immune to xterm rendering
+    // to a canvas, where there is no DOM text to read.
+    const probeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-e2e-probe-'))
+    const probeJs = path.join(probeDir, 'probe.js')
+    const probeOut = path.join(probeDir, 'argv.txt')
+    fs.writeFileSync(
+      probeJs,
+      `require('fs').writeFileSync(${JSON.stringify(probeOut)}, 'ARGV=' + process.argv.slice(2).join('|') + '\\nCWD=' + process.cwd())`,
+    )
+
     await openDialog()
     await providerCard('terminal').click()
     await transportCard('local').click()
 
-    await page.locator('input[placeholder*="path"]').first().fill(process.env.TEMP || 'C:\\temp')
-    await page.locator('input[placeholder="npm run dev"]').fill('echo')
-    await page.locator('input[placeholder*="--port 4310"]').fill('CCC_E2E_MARKER {secret}')
+    await page.locator('input[placeholder*="path"]').first().fill(probeDir)
+    await page.locator('input[placeholder="npm run dev"]').fill('node')
+    await page.locator('input[placeholder*="--port 4310"]').fill(`${probeJs.replace(/\\/g, '/')} --token {secret}`)
     await page.locator('input[type="password"]').first().fill('E2E-SECRET-9f3a')
     await page.locator('input[placeholder="e.g. App Dev"]').fill('E2E Terminal')
 
     await page.locator('button:has-text("Create config")').click()
 
-    // Creating from the sidebar launches the config straight away; the PTY runs
-    // `echo CCC_E2E_MARKER $env:CCC_ARG_SECRET` after the cd, so the terminal
-    // must show the marker AND the secret resolved from the keychain.
-    // The session tab appears first, then the PTY spawns and the shell echoes.
+    // Creating from the sidebar launches the config immediately.
     await expect(page.locator('text=E2E Terminal').first()).toBeVisible({ timeout: 30000 })
-    const term = page.locator('.xterm-screen').first()
-    await expect(term).toBeVisible({ timeout: 30000 })
+
     await expect
-      .poll(async () => (await page.locator('.xterm-rows').first().innerText().catch(() => '')) || '',
-        { timeout: 60000, intervals: [1000] })
-      .toContain('CCC_E2E_MARKER')
-    const shown = await page.locator('.xterm-rows').first().innerText()
-    // The secret came from the OS keychain via CCC_ARG_SECRET — never from the
-    // config file, and never as plaintext in the line CCC typed.
-    expect(shown).toContain('E2E-SECRET-9f3a')
+      .poll(() => (fs.existsSync(probeOut) ? fs.readFileSync(probeOut, 'utf8') : ''),
+        { timeout: 90000, intervals: [1000] })
+      .toContain('ARGV=')
+
+    const shown = fs.readFileSync(probeOut, 'utf8')
+    // The secret reached the process as a REAL argv element, resolved from the
+    // OS keychain via CCC_ARG_SECRET — never stored in the config file.
+    expect(shown).toContain('--token|E2E-SECRET-9f3a')
+    // …and it ran in the configured working directory (the cd landed first).
+    expect(shown.toLowerCase()).toContain(probeDir.toLowerCase())
+    fs.rmSync(probeDir, { recursive: true, force: true })
   })
 })
