@@ -1076,9 +1076,32 @@ function privateSubdir(name: string): string {
   // change exists to add would have doubled as an update-killer. chmod is not
   // umask-masked, so this is what actually holds. It also repairs a directory an
   // older build left loose.
+  // Unguarded by platform: chmod is a documented no-op on Windows (the same
+  // reason createInstallerDir does it unguarded), and guarding it meant the line
+  // could only be covered by a POSIX-only test.
+  try { fs.chmodSync(dir, 0o700) } catch { /* validated below either way */ }
+
+  // A filesystem with no POSIX mode bits (exFAT/vfat, CIFS with a fixed
+  // dir_mode, a 9p/virtiofs VM share) accepts the chmod and changes nothing, so
+  // the validation below would refuse with "group- or world-writable" and no hint
+  // that we tried. The data directory is user-chosen at first run, so "on an
+  // external drive or a network share" is a supported configuration -- say what
+  // is actually wrong and what to do about it.
   if (process.platform !== 'win32') {
-    try { fs.chmodSync(dir, 0o700) } catch { /* validated below either way */ }
+    try {
+      if ((fs.statSync(dir).mode & 0o022) !== 0) {
+        throw new Error(
+          `${dir} is on a filesystem that cannot restrict permissions, so an installer `
+          + 'cannot be staged there privately. Choose a data directory on a local disk in '
+          + 'Settings, or install the update manually from the GitHub release page.'
+        )
+      }
+    } catch (err) {
+      if (err instanceof Error && err.message.includes('cannot restrict permissions')) throw err
+      // A stat failure is assertPrivateDir's problem, not ours.
+    }
   }
+
   assertPrivateDir(dir)
   return dir
 }
@@ -1447,6 +1470,12 @@ export async function prepareLinuxAppImageUpdate(
     }
   } catch { return park() }
 
+  // Declared outside the try so the catch can reclaim it. Randomising the name
+  // removed the only thing that used to bound the leak (the pre-emptive unlink of
+  // a FIXED `.new`), so without this a failed copy/chmod/rename leaves a ~200 MB
+  // orphan next to the running AppImage that nothing ever cleans -- prune only
+  // walks `ccc-upd-*` inside <dataDir>/updates.
+  let staged: string | null = null
   try {
     const runningName = path.basename(real)
     const keepName = !/\d+\.\d+\.\d+/.test(runningName)   // unversioned = user's custom stable name
@@ -1467,12 +1496,10 @@ export async function prepareLinuxAppImageUpdate(
     // pre-plant a symlink at, which copyFileSync would follow, verify would hash
     // THROUGH, and renameSync would then move onto the launcher path. The unlink
     // stays as belt for the (now vanishingly unlikely) collision.
-    const staged = `${target}.new-${crypto.randomBytes(6).toString('hex')}`
-    try { fs.unlinkSync(staged) } catch { /* no leftover */ }
+    staged = `${target}.new-${crypto.randomBytes(6).toString('hex')}`
     fs.copyFileSync(downloadedPath, staged)
     fs.chmodSync(staged, 0o755)
     if (verify && !await verify(staged)) {
-      try { fs.unlinkSync(staged) } catch { /* best effort */ }
       throw new Error(`the copy at ${staged} did not match the verified installer`)
     }
 
@@ -1484,6 +1511,7 @@ export async function prepareLinuxAppImageUpdate(
       try { fs.unlinkSync(real) } catch { /* the rename recreates it */ }
     }
     fs.renameSync(staged, target)
+    staged = null   // committed; no longer an orphan to reclaim
     fs.chmodSync(target, 0o755)
 
     if (path.resolve(target) !== path.resolve(real)) {
@@ -1500,6 +1528,9 @@ export async function prepareLinuxAppImageUpdate(
     // Includes a failed verification of the staged copy. The user's installed
     // AppImage was never touched in that case, so falling back to a parked copy
     // of the (already-verified) download is safe.
+    if (staged) {
+      try { fs.unlinkSync(staged) } catch { /* best effort */ }
+    }
     logError('[github-update] In-place AppImage update failed — launching from a parked copy:', err)
     return park()
   }

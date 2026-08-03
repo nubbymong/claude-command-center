@@ -238,6 +238,19 @@ describe('the AppImage parking directory', () => {
     expect(fs.readdirSync(dataDir.path).filter((n) => n.includes('.new'))).toEqual([])
   })
 
+  it('reclaims the staging sibling when the commit fails', async () => {
+    // Randomising the name removed the only thing that used to bound this: the
+    // pre-emptive unlink of a FIXED `.new`. Without cleanup a failed
+    // copy/chmod/rename leaves a ~200 MB orphan next to the running AppImage,
+    // once per attempt, that prune never walks.
+    const staged = stagedAppImage()
+    const running = path.join(dataDir.path, 'ClaudeCommandCenter.AppImage')
+    fs.writeFileSync(running, 'installed')
+    await prepareLinuxAppImageUpdate(staged, running, async () => { throw new Error('verifier blew up') })
+    expect(fs.readdirSync(dataDir.path).filter((n) => n.includes('.new-'))).toEqual([])
+    expect(fs.readFileSync(running, 'utf-8')).toBe('installed')
+  })
+
   it('does not destroy an unrelated file sitting at a plausible staging name', async () => {
     const staged = stagedAppImage()
     const running = path.join(dataDir.path, 'ClaudeCommandCenter.AppImage')

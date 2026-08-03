@@ -258,7 +258,8 @@ export function registerUpdateHandlers(): void {
         // These two throws are OUTSIDE the launch try/catch below, so they reach
         // no dialog on their own -- the same "reported to nobody" defect the
         // download path had. Say it here.
-        const msg = `Updated AppImage is not executable (${linuxLaunchPath}) — aborting before restart: ${(err as Error).message}`
+        const msg = `Updated AppImage is not executable (${linuxLaunchPath}) — aborting before restart: ${(err as Error).message}\n\n`
+          + `The verified installer is at:\n${installerPath}\n\nRun it manually, or install from the GitHub release page.`
         logError('[update] ' + msg)
         try { dialog.showErrorBox('Update could not be launched', msg) } catch { /* ignore */ }
         throw new Error(msg)

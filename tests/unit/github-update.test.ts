@@ -1034,10 +1034,9 @@ describe('github-update', () => {
       expect(stagedName).toMatch(/\.new-[0-9a-f]{12}$/)
       expect(mockCopyFileSync).toHaveBeenCalledWith(downloaded, stagedName)
       expect(mockRenameSync).toHaveBeenCalledWith(stagedName, custom)
-      // unlink-before-rename on the same path (avoids truncating the mounted image)
+      // unlink-before-rename on the same path (avoids truncating the mounted image),
+      // exactly once — never a second unlink of the TARGET, since target === running.
       expect(mockUnlinkSync).toHaveBeenCalledWith(custom)
-      // Two unlinks: the pre-emptive `.new` cleanup, then the running file.
-      // Never a second unlink of the TARGET, since target === running.
       expect(mockUnlinkSync.mock.calls.filter(([p]) => p === custom)).toHaveLength(1)
     })
 
