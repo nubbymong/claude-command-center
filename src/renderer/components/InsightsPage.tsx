@@ -376,7 +376,14 @@ export default function InsightsPage() {
           <KpiSidebar current={currentKpis} previous={previousKpis} />
         ) : selectedRun?.kpisUnavailable ? (
           <div className="w-72 shrink-0 border-l border-surface0/80 p-4 text-xs text-overlay0">
-            Report ready — KPI extraction failed for this run.
+            <p>Report ready — KPI extraction failed for this run.</p>
+            {/* The reason, when the runner captured one. An expired OAuth session
+                is a one-click fix the user can only act on if told about it. */}
+            {selectedRun?.error && (
+              <p className="mt-2 text-red break-words" title={selectedRun.error}>
+                {selectedRun.error}
+              </p>
+            )}
           </div>
         ) : null}
       </div>

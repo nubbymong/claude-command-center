@@ -697,7 +697,18 @@ export function parseKpiOutput(stdout: string): unknown | null {
   return outer
 }
 
-async function extractKpis(archiveDir: string, runId: string, home: string | null = null): Promise<boolean> {
+/** Outcome of a KPI extraction. The reason travels so the UI can name a dead
+ *  account instead of showing a bare "KPI extraction failed". */
+interface KpiExtractionResult {
+  ok: boolean
+  reason?: string
+}
+
+async function extractKpis(
+  archiveDir: string,
+  runId: string,
+  home: string | null = null
+): Promise<KpiExtractionResult> {
   const reportPath = join(archiveDir, 'report.html').replace(/\\/g, '/')
 
   // Build previous context for comparison
@@ -730,7 +741,7 @@ async function extractKpis(archiveDir: string, runId: string, home: string | nul
       `[insights] KPI extraction failed (code ${result.code}): ${reason ?? (result.stderr.slice(0, 400) || 'no reason reported')}`
     )
     saveExtractionFailure(archiveDir, spawnArgs, result, reason)
-    return false
+    return { ok: false, reason: reason ?? `claude exited ${result.code}` }
   }
 
   const kpiData = parseKpiOutput(result.stdout)
@@ -742,17 +753,18 @@ async function extractKpis(archiveDir: string, runId: string, home: string | nul
       `[insights] Failed to parse KPI output${truncated ? ' (reply looks truncated mid-object)' : ''}` +
       `${usage ? ` — this run was billed: ${usage}` : ''}`
     )
-    saveExtractionFailure(archiveDir, spawnArgs, result, truncated ? 'reply looks truncated mid-object' : 'no JSON object recoverable')
-    return false
+    const reason = truncated ? 'the analysis reply was cut off mid-object' : 'no JSON object could be recovered from the reply'
+    saveExtractionFailure(archiveDir, spawnArgs, result, reason)
+    return { ok: false, reason }
   }
 
   try {
     writeFileSync(join(archiveDir, 'kpis.json'), JSON.stringify(kpiData, null, 2))
     logInfo('[insights] KPIs extracted and saved')
-    return true
+    return { ok: true }
   } catch (err) {
     logError('[insights] Failed to write kpis.json:', err)
-    return false
+    return { ok: false, reason: 'kpis.json could not be written' }
   }
 }
 
@@ -845,13 +857,16 @@ export async function runInsights(getWindow: () => BrowserWindow | null, opts?: 
     upsertRun(run)
     notifyRenderer(getWindow, run)
 
-    const kpiSuccess = await extractKpis(archiveDir, id, account.home)
-    if (!kpiSuccess) {
+    const kpi = await extractKpis(archiveDir, id, account.home)
+    if (!kpi.ok) {
       // KPI extraction is non-fatal — the report is still viewable. Flag it so
       // the UI shows "report ready, KPIs unavailable" instead of silently
-      // hiding the sidebar with no explanation.
+      // hiding the sidebar with no explanation. The reason rides along on
+      // `error`: a real run failed with "OAuth session expired and could not be
+      // refreshed", which is a one-click fix the user can only act on if told.
       logError('[insights] KPI extraction failed, report is still available')
       run.kpisUnavailable = true
+      if (kpi.reason) run.error = kpi.reason
     }
 
     run.status = 'complete'
@@ -958,6 +973,9 @@ export async function runCrossAccountInsights(
         patchMember(target.id, {
           runId: memberRunId,
           status: memberRun?.status === 'complete' ? 'complete' : 'failed',
+          // Copied unconditionally: a member that COMPLETED but produced no KPIs
+          // carries its reason here (e.g. an expired OAuth session), and that is
+          // exactly the case the roll-up needs to explain.
           error: memberRun?.error,
           kpisUnavailable: memberRun?.kpisUnavailable
         })
@@ -1008,10 +1026,24 @@ export async function runCrossAccountInsights(
     publish()
 
     // The synthesis pass needs a signed-in identity to run at all, but reads
-    // nothing from that account's disk — the KPI JSON travels on stdin. Use the
-    // primary (same resolution as a default run) rather than any one member, so
-    // the roll-up isn't attributed to an arbitrary account.
-    const home = resolveInsightsAccount(undefined).home
+    // nothing from that account's disk — the comparison travels on stdin.
+    //
+    // Use a member whose OWN extraction just succeeded, because that is proof its
+    // credentials work right now. Using the primary unconditionally cost a real
+    // run its entire written analysis: the primary account's OAuth session had
+    // expired, so the synthesis failed with 0 tokens and the roll-up degraded to
+    // numbers-only even though two other accounts had authenticated fine seconds
+    // earlier. Prefer the primary WHEN it is among the working members, so the
+    // roll-up is still not attributed to an arbitrary account without cause.
+    const primaryId = getPrimaryProfileId()
+    const synthesisMember = members.find(m => m.profileId === primaryId) ?? members[0]
+    const home = synthesisMember.profileId
+      ? getProfileConfigDir(synthesisMember.profileId)
+      : resolveInsightsAccount(undefined).home
+    logInfo(
+      `[insights] Cross-account synthesis running under ${synthesisMember.label}` +
+      `${synthesisMember.profileId === primaryId ? ' (primary)' : ' (primary unavailable or did not produce KPIs)'}`
+    )
     // Compute the roll-up ONCE and build the prompt from it, so the model reasons
     // over exactly the table the user will see — including its label conflicts and
     // its suppressed totals. Sending the computed comparison rather than each

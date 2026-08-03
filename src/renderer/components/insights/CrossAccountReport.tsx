@@ -256,8 +256,11 @@ export default function CrossAccountReport({ data, run, nameForAccount }: Props)
         {failedMembers.length > 0 && (
           <div className="px-3 py-2 rounded-lg bg-surface0/40 border border-surface1 text-xs text-overlay1">
             <span className="text-subtext0">Left out of this comparison:</span>{' '}
+            {/* Prefer the reason over the bare "no KPIs": a real run failed with
+                "OAuth session expired and could not be refreshed", which is
+                actionable only if it is shown. */}
             {failedMembers
-              .map((m) => `${m.label || m.accountEmail || 'account'} (${m.kpisUnavailable ? 'no KPIs' : m.error || 'failed'})`)
+              .map((m) => `${m.label || m.accountEmail || 'account'} (${m.error || (m.kpisUnavailable ? 'no KPIs' : 'failed')})`)
               .join('; ')}
           </div>
         )}

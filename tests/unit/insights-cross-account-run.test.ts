@@ -16,6 +16,10 @@ const h = vi.hoisted(() => ({
   synthesisStdout: '',
   synthesisCode: 0,
   synthesisPrompts: [] as string[],
+  /** Which HOME each synthesis call ran under — proves it avoids a dead account. */
+  synthesisHomes: [] as Array<string | null>,
+  /** profileId -> raw stdout to fail that account's KPI extraction with. */
+  kpiFailFor: {} as Record<string, string>,
   /** When set, the synthesis pass hangs until this is called (in-flight lock tests). */
   holdSynthesis: null as null | (() => void)
 }))
@@ -51,11 +55,16 @@ vi.mock('node-pty', () => ({
 // Two different headless calls share this spawner: the per-run KPI extraction
 // (which passes --allowedTools Read) and the cross-account synthesis (no tools).
 vi.mock('../../src/main/claude-headless', () => ({
-  spawnClaudeHeadless: async (args: string[], _timeout?: number, prompt?: string) => {
+  spawnClaudeHeadless: async (args: string[], _timeout?: number, prompt?: string, home?: string | null) => {
     if (args.includes('--allowedTools')) {
+      // Reverse-map the spawn HOME back to a profile so a single account's
+      // extraction can be failed independently (the expired-OAuth case).
+      const id = Object.keys(h.profileDir).find((k) => h.profileDir[k] === home)
+      if (id && h.kpiFailFor[id]) return { code: 1, stdout: h.kpiFailFor[id], stderr: '' }
       return { code: 0, stdout: h.memberKpiStdout, stderr: '' }
     }
     h.synthesisPrompts.push(prompt ?? '')
+    h.synthesisHomes.push(home ?? null)
     if (h.holdSynthesis) {
       await new Promise<void>((resolve) => {
         h.holdSynthesis = resolve
@@ -119,6 +128,8 @@ describe('runCrossAccountInsights', () => {
     h.synthesisStdout = NARRATIVE
     h.synthesisCode = 0
     h.synthesisPrompts = []
+    h.synthesisHomes = []
+    h.kpiFailFor = {}
     h.holdSynthesis = null
   })
   afterEach(() => {
@@ -250,6 +261,46 @@ describe('runCrossAccountInsights', () => {
     expect(agg.members?.map((m) => m.status)).toEqual(['complete', 'complete'])
     expect(agg.members?.every((m) => m.kpisUnavailable)).toBe(true)
     expect(h.synthesisPrompts).toHaveLength(0)
+  })
+
+  it('runs the synthesis under a member that just authenticated, not a dead primary', async () => {
+    // The real failure: the PRIMARY account's OAuth session had expired, so the
+    // synthesis pass failed with 0 tokens and the roll-up degraded to numbers-only
+    // even though two other accounts had authenticated seconds earlier.
+    seedProfile('A', 'a@example.com', { withReport: false, isPrimary: true }) // primary produces no KPIs
+    seedProfile('B', 'b@example.com')
+    seedProfile('C', 'c@example.com')
+
+    const id = await runCrossAccountInsights(getWin)
+    const agg = getCatalogue().runs.find((r) => r.id === id)!
+    expect(agg.status).toBe('complete')
+    expect(h.synthesisHomes).toHaveLength(1)
+    // Not the primary's home: the primary contributed nothing to this roll-up.
+    expect(h.synthesisHomes[0]).not.toBe(h.profileDir['A'])
+    expect([h.profileDir['B'], h.profileDir['C']]).toContain(h.synthesisHomes[0])
+  })
+
+  it('prefers the primary when the primary DID produce KPIs', async () => {
+    seedProfile('A', 'a@example.com', { isPrimary: true })
+    seedProfile('B', 'b@example.com')
+
+    await runCrossAccountInsights(getWin)
+    expect(h.synthesisHomes[0]).toBe(h.profileDir['A'])
+  })
+
+  it('carries a completed-but-no-KPIs member reason so the UI can name it', async () => {
+    seedProfile('A', 'a@example.com', { isPrimary: true })
+    seedProfile('B', 'b@example.com')
+    seedProfile('C', 'c@example.com')
+    // C's extraction hard-fails with an authentication error, like the real run.
+    h.kpiFailFor = { C: '{"is_error":true,"result":"Failed to authenticate: OAuth session expired and could not be refreshed","duration_api_ms":0}' }
+
+    const id = await runCrossAccountInsights(getWin)
+    const agg = getCatalogue().runs.find((r) => r.id === id)!
+    const c = agg.members!.find((m) => m.profileId === 'C')!
+    expect(c.status).toBe('complete')
+    expect(c.kpisUnavailable).toBe(true)
+    expect(c.error).toMatch(/OAuth session expired/)
   })
 
   it('holds an aggregate-level lock so two roll-ups cannot overlap', async () => {
