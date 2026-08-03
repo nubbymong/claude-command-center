@@ -46,8 +46,9 @@ test.describe('Sessions View', () => {
 
     // The e2e seed starts with no configs, so the empty state must show the
     // brand heading (StageEmptyState). A real assertion — the previous
-    // typeof-boolean check passed no matter what rendered.
-    const heading = page.locator('text=AI Code Conductor')
+    // typeof-boolean check passed no matter what rendered. Scoped to the h2 so
+    // the always-visible TitleBar (same brand text, a span) can't satisfy it.
+    const heading = page.locator('h2', { hasText: 'AI Code Conductor' })
     await heading.first().waitFor({ state: 'visible', timeout: 5000 })
     expect(await heading.first().isVisible()).toBe(true)
   })
