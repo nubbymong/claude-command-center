@@ -273,6 +273,14 @@ export interface InsightsRun {
    */
   authFailed?: boolean
   /**
+   * The profile's `refreshTokenExpiresAt` at the moment this run failed to
+   * authenticate. Retirement of the warning requires the CURRENT expiry to be
+   * strictly later than this — evidence only a real login produces, since copying
+   * a credentials file preserves the value. Without it the warning retired on the
+   * file's mtime, which credential reconciliation bumps with no login at all.
+   */
+  authFailedRefreshExpiry?: number
+  /**
    * What kind of run this is. Absent means 'account' — every run written before
    * cross-account existed is a single-account run, so the field is optional
    * rather than defaulted, and readers MUST treat undefined as 'account'.

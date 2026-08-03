@@ -67,17 +67,40 @@ export interface AuthWindow {
 /**
  * Does a past authentication failure still describe reality?
  *
- * A run that failed with an auth error is stale the moment the credentials are
- * rewritten — i.e. the moment the user signs in. Signing in does NOT create a new
- * Insights run, so anything keyed purely on run history would keep warning
- * forever. This is the retirement rule.
+ * Signing in does NOT create a new Insights run, so a warning keyed purely on run
+ * history could never be cleared by the fix. This is the retirement rule.
+ *
+ * It deliberately does NOT retire on the credentials file's mtime alone. That was
+ * the first cut and it FAILS OPEN: `account-profiles.ts` rewrites
+ * `.credentials.json` through `writeCredentialFile` during credential
+ * reconciliation — no interactive login involved — which bumps mtime and would
+ * silently retire a still-current failure. Backups, antivirus and file-sync
+ * touching mtime have the same effect.
+ *
+ * So retirement requires evidence only a real login produces: a refresh token
+ * whose expiry has moved FORWARD from the one in force when the failure happened.
+ * A login issues a new refresh token with a later expiry; copying a credentials
+ * file preserves the value, so a sync cannot fake it.
+ *
+ * @param refreshExpiryAtFailure the profile's `refreshTokenExpiresAt` recorded when
+ *        the run failed. Undefined for runs that predate the field — those fall
+ *        back to the mtime comparison, which is weaker but better than warning
+ *        forever about a historical failure.
  */
 export function authFailureStillApplies(
   runTimestamp: number,
-  info: Pick<ProfileAuthInfo, 'credentialsUpdatedAt' | 'credentialsMissing'> | undefined
+  info: Pick<ProfileAuthInfo, 'credentialsUpdatedAt' | 'credentialsMissing' | 'refreshTokenExpiresAt'> | undefined,
+  refreshExpiryAtFailure?: number
 ): boolean {
   if (!info) return true // nothing known about the credentials; keep the warning
   if (info.credentialsMissing) return true
+
+  if (typeof refreshExpiryAtFailure === 'number' && Number.isFinite(refreshExpiryAtFailure)) {
+    // Strictly greater: equal means the same refresh token is still in force, so
+    // whatever rewrote the file was not a login.
+    return !(typeof info.refreshTokenExpiresAt === 'number' && info.refreshTokenExpiresAt > refreshExpiryAtFailure)
+  }
+
   if (typeof info.credentialsUpdatedAt !== 'number') return true
   return info.credentialsUpdatedAt <= runTimestamp
 }

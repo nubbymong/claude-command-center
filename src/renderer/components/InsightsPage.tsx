@@ -214,7 +214,7 @@ export default function InsightsPage({ onNavigateToSessions }: InsightsPageProps
 
   const accountsNeedingReauth = useMemo(() => {
     if (!authInfo) return []
-    const latestRunByProfile = new Map<string, { timestamp: number; authFailed?: boolean; error?: string; accountEmail?: string }>()
+    const latestRunByProfile = new Map<string, { timestamp: number; authFailed?: boolean; authFailedRefreshExpiry?: number; error?: string; accountEmail?: string }>()
     for (const run of catalogue?.runs ?? []) {
       if (!run.profileId || run.kind === 'aggregate') continue
       const current = latestRunByProfile.get(run.profileId)
@@ -236,7 +236,7 @@ export default function InsightsPage({ onNavigateToSessions }: InsightsPageProps
       // 2. A past auth failure counts only while the credentials have NOT been
       //    rewritten since it happened.
       const run = latestRunByProfile.get(info.profileId)
-      if (run?.authFailed && authFailureStillApplies(run.timestamp, info)) {
+      if (run?.authFailed && authFailureStillApplies(run.timestamp, info, run.authFailedRefreshExpiry)) {
         out.push({ profileId: info.profileId, name, error: run.error })
       }
     }

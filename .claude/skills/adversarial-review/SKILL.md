@@ -12,6 +12,68 @@ change touches a security-sensitive path.
 diff, or a path set. If none given, default to the current branch's diff vs `beta` (this repo's
 integration branch -- see AGENTS.md "Release Process").
 
+## EXECUTE. Do not ask, do not defer, do not offer.
+
+This skill **dispatches sub-agents immediately**. When a change touches a security-sensitive path
+(Phase 0), the pass is *required* -- so running it is not a decision to put back to the caller.
+
+Specifically, none of the following is a reason to stop and ask:
+
+- "this fans out several agents" -- that is the mechanism, not a cost to be approved
+- "the author can't review their own boundary" -- correct, which is why you dispatch others
+- "the user might not want to spend the tokens" -- the cost is bounded by the budget rules below
+- "I'll offer to run it" -- offering IS the failure mode this section exists to kill
+
+The author orchestrating their own change is expected and fine. **Writing the code then declining to
+dispatch the attackers leaves a required gate unrun** and is the one outcome that must never happen.
+If the pass genuinely does not apply (docs-only, changelog-only, pure styling), say so in one line
+and stop -- that is the *only* early exit.
+
+## Model tiering (token efficiency is a design constraint)
+
+Cheap models narrow the surface; expensive models attack the narrowed surface. Never hand a full diff
+to an expensive attacker.
+
+| Phase | Model | Why |
+| --- | --- | --- |
+| 0 -- scope + risk classification | `fable` | mechanical: read `--stat`, match paths against the table |
+| 0.5 -- thesis assertion check | `fable` | mechanical: extract claimed guarantees, grep for the test that asserts each |
+| 1 -- attackers | `opus` for the highest-severity lens, `sonnet` for the rest | judgement work; this is where the budget goes |
+| 2-5 -- synthesis, verdict, lifecycle | orchestrator | no extra agents |
+
+Budget rules, all mandatory:
+
+- **Phase 0/0.5 output is the attackers' input.** Attackers receive a *scoped file list* plus the
+  thesis table -- never "read the diff and find bugs".
+- **Sequence, do not parallelise across phases.** Fable runs first precisely so the attackers read
+  less. Parallelise *within* Phase 1 only.
+- **Scale attacker count to risk:** 2 lenses for a single-boundary change, 3-4 for a multi-boundary
+  one, more only when Phase 0 flags several independent boundaries.
+- Tell every attacker: *quote only the lines you need; do not paste whole files back.*
+
+## Phase 0.5 -- Thesis assertion check (fable, before any attacker runs)
+
+A change's security value is a set of **claims**. This phase writes them down and checks whether
+anything actually *asserts* them -- cheaply, before an expensive attacker is dispatched.
+
+For each claimed guarantee, produce one row:
+
+| thesis | where claimed | asserted by | verdict |
+| --- | --- | --- | --- |
+| "profileIds cannot widen the target set" | `insights-runner.ts` doc comment | `insights-cross-account-run.test.ts:...` | ASSERTED |
+| "the synthesis pass holds no tools" | ADR-013 §5 | -- | **UNASSERTED** |
+
+Sources of theses: the ADR under `architecture/decisions/`, doc comments on the changed functions,
+the PR body, `SECURITY.md`. A thesis is `ASSERTED` only when a test would **fail** if the guarantee
+were removed -- a test that merely executes the path does not assert it.
+
+**An UNASSERTED thesis is the attackers' first target**, and it is ranked ahead of anything else,
+because it is a guarantee the codebase currently believes without evidence. Hand the table to Phase 1
+and say so explicitly.
+
+This phase never blesses the change -- it produces the priority ordering. It is not a substitute for
+Phase 1, and a clean thesis table is not a PASS.
+
 ## Phase 0 -- Scope the target + risk
 
 Resolve the changed files:
@@ -45,8 +107,9 @@ relevant ADR under `architecture/decisions/`, and the "Scope" / "Security Design
 
 Dispatch **independent sub-agents in parallel** (one Agent call per lens, all in a single message),
 each told: *your job is to find the bypass, not to bless the code; exercise the code empirically;
-report concrete repros.* Use at least these lenses for a security boundary, scaled up for higher
-risk:
+report concrete repros.* Give each the scoped file list and thesis table from Phase 0/0.5, and lead
+its brief with the **UNASSERTED theses** for its lens. Use at least these lenses for a security
+boundary, scaled up for higher risk:
 
 - **Injection / evasion** -- escape the boundary via shell metacharacters, quoting, globbing (note
   the zsh/glob class of bug already seen in #144), encoding, Unicode, path separators -- whatever
@@ -198,7 +261,10 @@ merged past the bar.
 
 ## Rules
 
-- **Never self-review a security boundary.** If you wrote it, you are not its reviewer.
+- **Never self-review a security boundary.** If you wrote it, you are not its reviewer -- you are its
+  orchestrator, and you dispatch the attackers rather than declining the pass. See "EXECUTE".
+- **An UNASSERTED thesis outranks a hunch.** A guarantee the codebase states and no test defends is
+  the highest-value target in the change; attack it first.
 - **Independent + parallel.** Distinct lenses, separate sub-agents; diversity catches what
   redundancy cannot.
 - **Empirical over assertion.** Attackers run the code and show repros; "looks fine" is not a

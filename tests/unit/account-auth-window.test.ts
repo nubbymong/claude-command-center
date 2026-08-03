@@ -132,4 +132,65 @@ describe('authFailureStillApplies', () => {
     expect(authFailureStillApplies(RUN_AT, undefined)).toBe(true)
     expect(authFailureStillApplies(RUN_AT, {})).toBe(true)
   })
+
+  // The MAJOR fail-open the adversarial pass found on PR #206: retiring on the
+  // credentials file's mtime is wrong, because account-profiles.ts rewrites
+  // .credentials.json via writeCredentialFile during credential reconciliation —
+  // no login involved — which bumps mtime and silently retired a live failure.
+  // Backups, antivirus and file-sync do the same. Retirement now requires the
+  // refresh-token expiry to have moved FORWARD, which only a real login produces.
+  describe('with a refresh-expiry snapshot from the failure', () => {
+    const EXPIRY_AT_FAILURE = NOW + 10 * DAY
+
+    it('does NOT retire when a file rewrite bumped mtime but the token is unchanged', () => {
+      expect(
+        authFailureStillApplies(
+          RUN_AT,
+          // mtime is newer than the run — the old rule would have retired this.
+          { credentialsUpdatedAt: NOW, refreshTokenExpiresAt: EXPIRY_AT_FAILURE },
+          EXPIRY_AT_FAILURE
+        )
+      ).toBe(true)
+    })
+
+    it('retires only when the refresh token was reissued with a later expiry', () => {
+      expect(
+        authFailureStillApplies(
+          RUN_AT,
+          { credentialsUpdatedAt: NOW, refreshTokenExpiresAt: EXPIRY_AT_FAILURE + DAY },
+          EXPIRY_AT_FAILURE
+        )
+      ).toBe(false)
+    })
+
+    it('does not retire on an earlier expiry — that is a rollback, not a login', () => {
+      expect(
+        authFailureStillApplies(
+          RUN_AT,
+          { credentialsUpdatedAt: NOW, refreshTokenExpiresAt: EXPIRY_AT_FAILURE - DAY },
+          EXPIRY_AT_FAILURE
+        )
+      ).toBe(true)
+    })
+
+    it('does not retire when the current expiry is unknown', () => {
+      expect(authFailureStillApplies(RUN_AT, { credentialsUpdatedAt: NOW }, EXPIRY_AT_FAILURE)).toBe(true)
+    })
+
+    it('still keeps the failure when the credentials vanished entirely', () => {
+      expect(
+        authFailureStillApplies(
+          RUN_AT,
+          { credentialsMissing: true, refreshTokenExpiresAt: EXPIRY_AT_FAILURE + DAY },
+          EXPIRY_AT_FAILURE
+        )
+      ).toBe(true)
+    })
+
+    it('falls back to the mtime rule for runs recorded before the snapshot existed', () => {
+      // Weaker, but better than warning forever about a historical failure.
+      expect(authFailureStillApplies(RUN_AT, { credentialsUpdatedAt: NOW }, undefined)).toBe(false)
+      expect(authFailureStillApplies(RUN_AT, { credentialsUpdatedAt: RUN_AT - HOUR }, undefined)).toBe(true)
+    })
+  })
 })

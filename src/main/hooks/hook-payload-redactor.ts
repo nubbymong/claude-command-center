@@ -30,6 +30,20 @@ function redactString(s: string): string {
   return out
 }
 
+/**
+ * Apply the same secret patterns to a bare string.
+ *
+ * Exported because "persist raw subprocess output to disk" is the same hazard as
+ * "put a hook payload on the IPC bus", and this module already owns the pattern
+ * set. The Insights extraction-failure record uses it: the CLI inherits
+ * `process.env`, so a failure reply can echo an `ANTHROPIC_API_KEY` back, and a
+ * 0o600 file mode protects that from other local users but not from a support
+ * bundle the user pastes somewhere.
+ */
+export function redactSecrets(text: string): string {
+  return redactString(text)
+}
+
 export function redactHookPayload<T>(payload: T): T {
   const seen = new WeakSet<object>()
 

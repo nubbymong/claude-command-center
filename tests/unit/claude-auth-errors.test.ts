@@ -22,23 +22,65 @@ describe('isAuthFailureMessage', () => {
 
   it('recognises the other ways a dead sign-in is reported', () => {
     for (const message of [
-      'Session has expired',
       'OAuth token expired',
       'Could not refresh the OAuth session',
-      'unable to refresh token',
       'You are not logged in',
       'Please run /login to continue',
       'Invalid API key',
       'authentication_error',
-      'Unauthorized',
       'credentials are invalid'
     ]) {
       expect(isAuthFailureMessage(message), message).toBe(true)
     }
   })
 
+  it('deliberately no longer fires on context-free auth words', () => {
+    // Removed patterns, and the reason they were removed. Missing a novel phrasing
+    // costs a raw message in the UI; a false positive costs a needless login.
+    for (const message of ['Unauthorized', 'Session has expired', 'unable to refresh']) {
+      expect(isAuthFailureMessage(message), message).toBe(false)
+    }
+  })
+
   it('is case-insensitive', () => {
     expect(isAuthFailureMessage('FAILED TO AUTHENTICATE')).toBe(true)
+  })
+
+  // The adversarial pass on PR #206 beat the first corpus with 11 of 11 real-world
+  // non-auth strings, because several patterns' distinguishing words were all
+  // optional: `/(?:could not|unable to) refresh(?: the)?(?: oauth)?(?: session|
+  // token)?/i` reduces to "unable to refresh", and a bare `/\bunauthorized\b/i`
+  // matches any HTTP 401 on the network path. This predicate opens a login shell,
+  // so a false positive walks the user into re-authenticating a working account.
+  it('does NOT fire on network, proxy or unrelated-tooling failures', () => {
+    for (const message of [
+      'HTTP 401 Unauthorized from proxy.corp.example',
+      '407 Proxy Authorization Required',
+      'Your VPN session expired, reconnect and retry',
+      'npm ERR! could not refresh the package index',
+      'DNS refresh failed for registry.npmjs.org',
+      'Licence expired: renew to continue',
+      'unable to refresh the cached manifest',
+      'Certificate expired on 2026-01-01',
+      'The session expired while waiting for the debugger',
+      'Unauthorized: repository access denied by branch protection',
+      'ETIMEDOUT while refreshing the connection pool'
+    ]) {
+      expect(isAuthFailureMessage(message), message).toBe(false)
+    }
+  })
+
+  it('still fires when expired/refresh sits next to a credential noun', () => {
+    for (const message of [
+      'OAuth session expired and could not be refreshed',
+      'refresh token expired',
+      'access token invalid',
+      'OAuth token revoked',
+      'unable to refresh oauth credentials',
+      'credentials are revoked'
+    ]) {
+      expect(isAuthFailureMessage(message), message).toBe(true)
+    }
   })
 
   it('does NOT fire on the other real failure modes', () => {

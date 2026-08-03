@@ -8,7 +8,8 @@ import {
   renameSync,
   copyFileSync,
   readdirSync,
-  statSync
+  statSync,
+  chmodSync
 } from 'fs'
 import * as pty from 'node-pty'
 import { BrowserWindow } from 'electron'
@@ -19,7 +20,9 @@ import { getProfileConfigDir, getPrimaryProfileId, setupProfileLinks, listProfil
 import { getProjectRootPath, getInstallPath } from './update-watcher'
 import { getResourcesDirectory } from './ipc/setup-handlers'
 import type { AccountProfile } from '../shared/account-types'
-import { isAuthFailureMessage } from '../shared/claude-auth-errors'
+import { isAuthFailure, type ClaudeFailureFacts } from '../shared/claude-auth-errors'
+import { readProfileAuthInfo } from './account-auth-info'
+import { redactSecrets } from './hooks/hook-payload-redactor'
 import type { InsightsCatalogue, InsightsData, InsightsRun, InsightsRunMember } from '../shared/types'
 import {
   CROSS_ACCOUNT_MAX_PARALLEL,
@@ -562,6 +565,55 @@ export function describeClaudeUsage(stdout: string): string | null {
  * Observed shape of such a failure: `is_error:true, duration_api_ms:0, num_turns:1`
  * with every token count at 0, i.e. the API was never called.
  */
+/**
+ * Extract the non-prose facts from a failure envelope so the auth classifier can
+ * gate on them. `apiReached` is the important one: if any token was counted or the
+ * API call took time, the envelope's `result` is MODEL OUTPUT and must never be
+ * read as an auth verdict. See isAuthFailure.
+ */
+export function readClaudeFailureFacts(stdout: string, reason: string | null): ClaudeFailureFacts {
+  let envelope: any
+  try {
+    envelope = JSON.parse(stdout.trim())
+  } catch {
+    // Unparseable output tells us nothing structural; treat the API as reached so
+    // the auth path stays closed and the raw reason is surfaced instead.
+    return { isError: true, apiReached: true, reason }
+  }
+  const usage = envelope?.usage ?? {}
+  const counters = [
+    'input_tokens', 'output_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens',
+    'inputTokens', 'outputTokens', 'cacheReadInputTokens', 'cacheCreationInputTokens'
+  ]
+  const apiMs = envelope?.duration_api_ms ?? envelope?.durationApiMs
+
+  // A field that is PRESENT but not a finite number tells us nothing, and
+  // "nothing" must fail CLOSED — treat the API as reached, exactly like
+  // unparseable stdout does. The first cut coerced such a field to zero, which
+  // failed OPEN: `{"usage":{"input_tokens":"500"},"duration_api_ms":"5000"}` read
+  // as no-tokens-no-time and let model prose back through the gate.
+  //
+  // `undefined` means the key is genuinely ABSENT, which is fine: the real auth
+  // envelope carries every counter at zero, and a missing counter honestly means
+  // nothing was spent. `null` is NOT absent — it is an explicitly present value we
+  // cannot read, i.e. the schema drift this guard exists for, so it is excluded
+  // from this filter and caught below. (It is also what `NaN` becomes after a JSON
+  // round-trip, so it is the only form that case can reach us in.)
+  const present = [...counters.map((k) => usage[k]), apiMs].filter((v) => v !== undefined)
+  const unreadable = present.some((v) => typeof v !== 'number' || !Number.isFinite(v))
+  if (unreadable) {
+    return { isError: envelope?.is_error === true || envelope?.isError === true, apiReached: true, reason }
+  }
+
+  const tokensSpent = counters.some((k) => typeof usage[k] === 'number' && usage[k] > 0)
+  const tookApiTime = typeof apiMs === 'number' && apiMs > 0
+  return {
+    isError: envelope?.is_error === true || envelope?.isError === true,
+    apiReached: tokensSpent || tookApiTime,
+    reason
+  }
+}
+
 export function describeClaudeError(stdout: string): string | null {
   let envelope: any
   try {
@@ -747,7 +799,12 @@ async function extractKpis(
     return {
       ok: false,
       reason: reason ?? `claude exited ${result.code}`,
-      authFailed: isAuthFailureMessage(reason) || isAuthFailureMessage(result.stderr)
+      // Structural gate, not a phrase match: an auth failure spends no tokens and
+      // reaches no API, so a reason containing MODEL prose can never be read as
+      // one. stderr is excluded too — it carries proxy, DNS and TLS noise from the
+      // whole network path, and this flag drives a UI action that opens a login
+      // shell.
+      authFailed: isAuthFailure(readClaudeFailureFacts(result.stdout, reason))
     }
   }
 
@@ -784,6 +841,23 @@ async function extractKpis(
  * this puts the reply beside it. Written best-effort: a failure to record a
  * failure must never mask the original one.
  */
+/**
+ * Cap on each captured stream. A failure record exists to be read by a human, and
+ * a truncated 19KB reply diagnoses just as well as an unbounded one. Also bounds
+ * how much of the prompt's embedded previous-run KPI data can be duplicated onto
+ * disk by a single failure.
+ */
+const FAILURE_CAPTURE_LIMIT = 20000
+
+/** Truncate AND redact. Redaction first, so a secret straddling the cut is still
+ *  matched as a whole before anything is dropped. */
+function capture(text: string): string {
+  const clean = redactSecrets(text ?? '')
+  return clean.length <= FAILURE_CAPTURE_LIMIT
+    ? clean
+    : clean.slice(0, FAILURE_CAPTURE_LIMIT) + `\n…[truncated, ${clean.length} chars total]`
+}
+
 function saveExtractionFailure(
   archiveDir: string,
   spawnArgs: string[],
@@ -801,13 +875,23 @@ function saveExtractionFailure(
           reason,
           usage: describeClaudeUsage(result.stdout),
           spawnArgs,
-          stdout: result.stdout,
-          stderr: result.stderr
+          stdout: capture(result.stdout),
+          stderr: capture(result.stderr)
         },
         null,
         2
-      )
+      ),
+      // 0o600 on POSIX. This file holds the verbatim reply to a prompt that embeds
+      // the previous run's full kpis.json, so it routinely persists a copy of the
+      // user's analysed usage data. A plain writeFileSync lands 0o644 under the
+      // default umask — world-readable — which is exactly the failure mode
+      // account-profiles.ts's writeCredentialFile/hardenCredentialFile exist to
+      // prevent. NTFS ACL inheritance masks this on Windows; macOS and Linux ship
+      // too. Mode is ignored on win32, so this is unconditional.
+      { mode: 0o600 }
     )
+    // writeFileSync's mode only applies on CREATE, so re-assert for an overwrite.
+    try { chmodSync(target, 0o600) } catch { /* best-effort; win32 ignores modes */ }
     logError(`[insights] Full failed reply saved to ${target}`)
   } catch (err) {
     logError('[insights] Could not save the extraction failure record:', err)
@@ -876,6 +960,12 @@ export async function runInsights(getWindow: () => BrowserWindow | null, opts?: 
       if (kpi.reason) run.error = kpi.reason
       if (kpi.authFailed) {
         run.authFailed = true
+        // Snapshot the refresh-token expiry in force right now, so the warning can
+        // only be retired by a login that issues a LATER one — not by credential
+        // reconciliation rewriting the file.
+        if (account.profileId) {
+          run.authFailedRefreshExpiry = readProfileAuthInfo(account.profileId).refreshTokenExpiresAt
+        }
         logError(`[insights] ${account.accountEmail ?? 'this account'} needs to sign in again`)
       }
     }
@@ -1079,7 +1169,7 @@ export async function runCrossAccountInsights(
       // numbers-only left a real run looking like the model had nothing to say,
       // when in fact the synthesis account's sign-in had expired.
       const synthesisReason = describeClaudeError(result.stdout)
-      const authFailed = isAuthFailureMessage(synthesisReason) || isAuthFailureMessage(result.stderr)
+      const authFailed = isAuthFailure(readClaudeFailureFacts(result.stdout, synthesisReason))
       logError(
         `[insights] Cross-account synthesis unusable (code ${result.code}): ` +
         `${synthesisReason ?? 'no reason reported'}; falling back to a numbers-only roll-up`
