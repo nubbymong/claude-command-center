@@ -20,6 +20,8 @@ export interface ElectronAPI {
     rename: (id: string, name: string) => Promise<{ ok: boolean }>
     delete: (id: string) => Promise<{ ok: boolean; error?: string }>
     refreshIdentity: (id: string) => Promise<{ ok: boolean; email: string | null; configDir?: string }>
+    /** Per-profile credential state: forced-login countdown + identity cross-check. */
+    authInfo: () => Promise<import('../shared/account-auth').ProfileAuthInfo[]>
     globalEmail: () => Promise<string | null>
     captureDetected: (sessionId: string, name?: string) => Promise<import('../shared/account-types').AccountProfile | null>
     onAccountNewDetected: (cb: (data: { sessionId: string; profileId: string; email: string }) => void) => () => void
@@ -482,6 +484,7 @@ const electronAPI: ElectronAPI = {
     rename: (id, name) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_RENAME, { id, name }),
     delete: (id) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_DELETE, { id }),
     refreshIdentity: (id) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_REFRESH_IDENTITY, { id }),
+    authInfo: () => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_AUTH_INFO),
     globalEmail: () => ipcRenderer.invoke(IPC.ACCOUNT_GLOBAL_EMAIL_GET),
     captureDetected: (sessionId: string, name?: string) => ipcRenderer.invoke(IPC.ACCOUNT_PROFILES_CAPTURE_DETECTED, { sessionId, name }),
     onAccountNewDetected: (cb: (data: { sessionId: string; profileId: string; email: string }) => void) => {

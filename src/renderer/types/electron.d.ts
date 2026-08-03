@@ -96,6 +96,8 @@ export interface ElectronAPI {
     rename: (id: string, name: string) => Promise<{ ok: boolean }>
     delete: (id: string) => Promise<{ ok: boolean; error?: string }>
     refreshIdentity: (id: string) => Promise<{ ok: boolean; email: string | null; configDir?: string }>
+    /** Per-profile credential state: forced-login countdown + identity cross-check. */
+    authInfo: () => Promise<import('../../shared/account-auth').ProfileAuthInfo[]>
     create: (name?: string) => Promise<import('../../shared/account-types').AccountProfile>
     globalEmail: () => Promise<string | null>
     captureDetected: (sessionId: string, name?: string) => Promise<import('../../shared/account-types').AccountProfile | null>

@@ -334,6 +334,7 @@ export const IPC = {
   ACCOUNT_PROFILES_RENAME: 'accountProfiles:rename',
   ACCOUNT_PROFILES_DELETE: 'accountProfiles:delete',
   ACCOUNT_PROFILES_REFRESH_IDENTITY: 'accountProfiles:refreshIdentity',
+  ACCOUNT_PROFILES_AUTH_INFO: 'accountProfiles:authInfo',
   ACCOUNT_PROFILES_CAPTURE_DETECTED: 'accountProfiles:captureDetected',
   ACCOUNT_GLOBAL_EMAIL_GET: 'accountProfiles:globalEmail',
 

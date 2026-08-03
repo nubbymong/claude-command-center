@@ -5,7 +5,16 @@ import { resolveIdentityColor } from '../../shared/identity-colors'
 import { useResolvedTheme } from '../hooks/useThemeController'
 import { formatResetTime } from '../utils/terminalFormatting'
 import PageFrame from './PageFrame'
+import { describeAuthWindow, type AuthWindowTone, type ProfileAuthInfo } from '../../shared/account-auth'
 import type { AccountUsage, UsageBucket } from '../../shared/usage-types'
+
+const TONE_TEXT: Record<AuthWindowTone, string> = {
+  expired: 'text-red',
+  critical: 'text-red',
+  warning: 'text-yellow',
+  ok: 'text-overlay0',
+  unknown: 'text-overlay0',
+}
 
 const peopleIcon = (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
@@ -28,13 +37,21 @@ export default function AccountUsagePanel({ onClose, onReauthNavigate }: {
   const theme = useResolvedTheme()
   const reauth = useReauthAccount()
   const [rows, setRows] = useState<AccountUsage[] | null>(null)
+  const [authInfo, setAuthInfo] = useState<Record<string, ProfileAuthInfo>>({})
   const [loading, setLoading] = useState(true)
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const data = await window.electronAPI.accountUsage.fetchAll()
+      // Credential state is local file reads, so it resolves immediately and
+      // independently of the network usage fetch — one slow account must not
+      // hold back the forced-login countdown for the others.
+      const [data, auth] = await Promise.all([
+        window.electronAPI.accountUsage.fetchAll(),
+        window.electronAPI.accountProfiles.authInfo().catch(() => [] as ProfileAuthInfo[]),
+      ])
       setRows(data)
+      setAuthInfo(Object.fromEntries(auth.map((a) => [a.profileId, a])))
     } catch {
       setRows([])
     } finally {
@@ -73,11 +90,18 @@ export default function AccountUsagePanel({ onClose, onReauthNavigate }: {
         {loading && !rows && <p className="text-[0.8125rem] text-overlay0">Loading usage for all accounts…</p>}
         {rows && rows.length === 0 && <p className="text-[0.8125rem] text-overlay0">No accounts found.</p>}
         {rows?.map((row) => (
-          <AccountCard key={row.profileId} row={row} theme={theme} onSignIn={() => onSignIn(row)} />
+          <AccountCard
+            key={row.profileId}
+            row={row}
+            auth={authInfo[row.profileId]}
+            theme={theme}
+            onSignIn={() => onSignIn(row)}
+          />
         ))}
         <p className="text-[0.6875rem] text-overlay0 leading-relaxed pt-1">
-          Usage is read live from each account, no session required. An account whose sign-in has expired shows a
-          Sign in button; signing in refreshes only that account.
+          Usage is read live from each account, no session required. Signing in refreshes only that account.
+          The countdown is the point at which an interactive sign-in becomes unavoidable — the shorter-lived
+          token behind each session renews itself and is not shown.
         </p>
       </div>
     </PageFrame>
@@ -112,8 +136,23 @@ function creditsText(c: NonNullable<AccountUsage['credits']>): string {
   return `${fmtMoney(c.used, c.currency)} used`
 }
 
-function AccountCard({ row, theme, onSignIn }: { row: AccountUsage; theme: 'dark' | 'light'; onSignIn: () => void }) {
+function AccountCard({
+  row,
+  auth,
+  theme,
+  onSignIn,
+}: {
+  row: AccountUsage
+  auth?: ProfileAuthInfo
+  theme: 'dark' | 'light'
+  onSignIn: () => void
+}) {
   const dot = resolveIdentityColor(resolveAccountColourKey(row.email ?? undefined, undefined, undefined), theme)
+  // Computed at render against the wall clock; the calculation itself is pure and
+  // lives in shared/ so main and renderer cannot disagree about what a credential
+  // state means.
+  const window_ = auth ? describeAuthWindow(auth, Date.now()) : null
+  const duplicates = auth?.duplicateOfProfileIds ?? []
   return (
     <div className="rounded-xl border border-surface0/70 bg-surface0/20 px-4 py-3.5">
       <div className="flex items-center gap-2 mb-2.5">
@@ -121,7 +160,33 @@ function AccountCard({ row, theme, onSignIn }: { row: AccountUsage; theme: 'dark
         {/* Full email, never truncated (accounts are distinct even when emails look similar). */}
         <span className="text-[0.9375rem] text-text font-medium break-all">{row.email || row.name}</span>
         {row.isPrimary && <span className="text-[0.625rem] text-overlay0 border border-surface1 rounded-full px-1.5 py-px shrink-0">Primary</span>}
+        {/* A working sign-in gets a refresh too, not just a broken one: the whole
+            point is to act BEFORE the forced login, and previously the only way to
+            learn it was coming was for it to arrive. */}
+        {row.status !== 'needs-login' && (
+          <button
+            onClick={onSignIn}
+            title="Sign in again now to reset this account's countdown"
+            className="ml-auto text-[0.75rem] px-2 py-0.5 rounded border border-surface1 text-overlay1 hover:text-text hover:border-blue/40 transition-colors shrink-0"
+          >
+            Refresh sign-in
+          </button>
+        )}
       </div>
+
+      {duplicates.length > 0 && (
+        <div className="mb-2.5 px-2.5 py-1.5 rounded-lg bg-red/10 border border-red/25 text-[0.75rem] text-red">
+          This profile and {duplicates.length === 1 ? 'another profile' : `${duplicates.length} other profiles`} are
+          signed into the SAME account. Each time one refreshes, the others&apos; sign-ins are invalidated — which is
+          why they keep expiring. Sign the duplicates in as their own accounts.
+        </div>
+      )}
+
+      {auth?.identityMismatch && duplicates.length === 0 && (
+        <div className="mb-2.5 px-2.5 py-1.5 rounded-lg bg-yellow/10 border border-yellow/25 text-[0.75rem] text-yellow">
+          Labelled {auth.accountEmail} but signed in as {auth.oauthEmail}.
+        </div>
+      )}
 
       {row.status === 'ok' && row.buckets.length > 0 && (
         <div className="flex flex-col gap-2">
@@ -159,11 +224,18 @@ function AccountCard({ row, theme, onSignIn }: { row: AccountUsage; theme: 'dark
         </p>
       )}
 
-      {row.status === 'ok' && (
-        <p className="text-[0.6875rem] text-overlay0 mt-2">
-          {row.stale ? `Last updated ${relAgo(row.fetchedAt)} · couldn't refresh` : `Updated ${relAgo(row.fetchedAt)}`}
-        </p>
-      )}
+      <div className="flex items-center justify-between gap-2 mt-2">
+        {row.status === 'ok' ? (
+          <p className="text-[0.6875rem] text-overlay0">
+            {row.stale ? `Last updated ${relAgo(row.fetchedAt)} · couldn't refresh` : `Updated ${relAgo(row.fetchedAt)}`}
+          </p>
+        ) : (
+          <span />
+        )}
+        {window_ && (
+          <p className={`text-[0.6875rem] tabular-nums shrink-0 ${TONE_TEXT[window_.tone]}`}>{window_.label}</p>
+        )}
+      </div>
     </div>
   )
 }
