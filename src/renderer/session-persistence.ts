@@ -21,6 +21,7 @@ export function buildSessionState(): SessionState {
     legacyColor: s.legacyColor,
     sessionType: s.sessionType,
     shellOnly: s.shellOnly,
+    terminalOptions: s.terminalOptions,
     partnerTerminalPath: s.partnerTerminalPath,
     partnerElevated: s.partnerElevated,
     sshConfig: s.sshConfig

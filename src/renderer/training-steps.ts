@@ -256,24 +256,22 @@ export const trainingSteps: TrainingStep[] = [
     summary:
       'Run Claude and a regular shell side-by-side in the same session. Useful when you want to watch logs, run quick git commands, or babysit a long-running build without spawning a second session.',
     highlights: [
-      'Configure a partner terminal path (cmd, pwsh, bash) per saved config',
-      'Both shells share the same working directory at spawn',
+      'Every session has a partner terminal — no setup, any config type',
+      'Opens in the working directory locally, at home over SSH',
       'Quick command buttons can target Claude or partner explicitly',
       'Resize the split bar to favour whichever pane is active',
-      'Optional elevated partner -- runs as admin via gsudo on Windows',
     ],
     howToTrigger: [
-      { label: 'Configure', value: 'Edit Config → Partner terminal path' },
+      { label: 'Toggle', value: 'Partner button in the command bar' },
       { label: 'Quick commands', value: 'Custom command → Target = Partner' },
       { label: 'Resize', value: 'Drag the vertical bar between panes' },
     ],
     proTip:
-      'Set partner = pwsh.exe on Windows or bash on macOS so you have a familiar shell ready for quick sanity checks while Claude does the heavy lifting in the other pane.',
+      'Keep a test watcher or dev server running in the partner pane for quick sanity checks while Claude does the heavy lifting in the other pane.',
     bullets: [
       '**Side-by-side** Claude + regular shell in the same session',
-      'Configure a **partner terminal** path in the session config',
+      'Always available — **no per-config setup**',
       '**Quick commands** can target either pane (Claude or Partner)',
-      'Optional **elevated partner** for admin tasks (Windows: gsudo)',
     ],
     screenshotFilename: 'step-combined.jpg',
   },

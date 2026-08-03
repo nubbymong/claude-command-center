@@ -1,13 +1,11 @@
-import React, { useState, useEffect } from 'react'
-import { TerminalConfig, ConfigGroup, ConfigSection, ProviderId, CodexOptions, useConfigStore } from '../stores/configStore'
-import { useAgentLibraryStore, BUILTIN_TEMPLATES } from '../stores/agentLibraryStore'
-import { ProviderSegmentedControl } from './SessionDialog/ProviderSegmentedControl'
+import React, { useState } from 'react'
+import { TerminalConfig, ProviderId, CodexOptions, useConfigStore } from '../stores/configStore'
 import { CodexFormFields } from './SessionDialog/CodexFormFields'
 import { IDENTITY_COLOR_KEYS, resolveIdentityColor, bucketLegacyColorToKey, type IdentityColorKey } from '../../shared/identity-colors'
 import { useResolvedTheme } from '../hooks/useThemeController'
 import { useRegistryStore } from '../stores/registryStore'
 import { useSettingsStore } from '../stores/settingsStore'
-import { modelsFromRegistry, PERMISSION_MODES } from '../lib/claude-cli-options'
+import { modelsFromRegistry, effortsFromRegistry, PERMISSION_MODES } from '../lib/claude-cli-options'
 import { generateId } from '../utils/id'
 
 export type SessionType = 'local' | 'ssh'
@@ -41,8 +39,28 @@ export const COLOR_SWATCHES = [
   '#FF1493', '#00FA9A', '#FFD700', '#FF4500',
 ]
 
+/** What the provider cards offer. 'terminal' is a UI-level provider that maps to
+ *  the stored shape `provider: 'claude', shellOnly: true` — the same shape the
+ *  old "Shell only" tickbox produced, so no config migration and no IPC/enum
+ *  widening is needed. A real `provider: 'terminal'` (with first-run command,
+ *  arguments and secret argument) is the follow-up PR. */
+type UiProvider = 'claude' | 'codex' | 'terminal'
+
+/** The config's own effort union, derived so it can't drift from ClaudeOptions. */
+type EffortValue = NonNullable<NonNullable<TerminalConfig['claudeOptions']>['effortLevel']>
+
+/** Stronger consequence copy for the two modes that disable safety prompts.
+ *  Falls back to the shared PERMISSION_MODES hint for everything else. */
+const DANGEROUS_MODE_COPY: Record<string, string> = {
+  bypassPermissions: 'Skips every permission prompt, including file writes and shell commands. Only use this in a folder you could throw away.',
+  dontAsk: "Accepts everything without asking. Same risk as Bypass for anything inside the working directory.",
+}
+
 interface Props {
-  onConfirm: (config: Omit<TerminalConfig, 'id'>, password?: string, sudoPassword?: string) => void
+  /** `argSecret` is the Terminal-only secret argument: handed to the caller so it
+   *  can be written to the OS keychain under `<configId>_argsecret`. It is never
+   *  part of the config object and never persisted to the config file. */
+  onConfirm: (config: Omit<TerminalConfig, 'id'>, password?: string, sudoPassword?: string, argSecret?: string) => void
   onCancel: () => void
   initial?: Partial<TerminalConfig>
 }
@@ -53,143 +71,117 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
   const sections = useConfigStore((s) => s.sections)
   const addSection = useConfigStore((s) => s.addSection)
   const registry = useRegistryStore((s) => s.registry)
-  // Read legacy + claudeOptions fields with claudeOptions taking precedence (P1.4 migration)
+  const theme = useResolvedTheme()
   const initialClaude = initial?.claudeOptions
-  const [provider, setProvider] = useState<ProviderId>(initial?.provider ?? 'claude')
+  const isEdit = !!initial
+
+  // Codex master ("Do you use Codex?"): with it off, Codex configs can't launch,
+  // so the card renders disabled with a pointer to Settings → Codex.
+  const codexDisabled = useSettingsStore((s) => s.settings.codexEnabled === false)
+
+  // ── The two driving choices. A NEW config starts with neither chosen and the
+  // dialog reveals itself as they're answered; EDIT opens fully revealed.
+  const [uiProvider, setUiProvider] = useState<UiProvider | null>(
+    initial ? (initial.shellOnly ? 'terminal' : (initial.provider ?? 'claude')) : null
+  )
+  const [sessionType, setSessionType] = useState<SessionType | null>(initial ? (initial.sessionType ?? 'local') : null)
+
+  // ── Workspace
+  const [workingDir, setWorkingDir] = useState(initial?.workingDirectory ?? '')
+  const [sshHost, setSshHost] = useState(initial?.sshConfig?.host ?? '')
+  const [sshPort, setSshPort] = useState(initial?.sshConfig?.port ?? 22)
+  const [sshUser, setSshUser] = useState(initial?.sshConfig?.username ?? '')
+  const [sshRemotePath, setSshRemotePath] = useState(initial?.sshConfig?.remotePath ?? '~')
+  const [machineName, setMachineName] = useState(initial?.machineName ?? '')
+  const [postCommand, setPostCommand] = useState(initial?.sshConfig?.postCommand ?? '')
+  // Secrets: `stored*` tracks whether the keychain currently holds one (the
+  // "Remove stored password" link clears it); `save*` is the honest opt-in —
+  // a typed password is only handed to the caller for storage when it's on.
+  // savePassword defaults to true so a freshly-typed password is saved by
+  // default. It must NOT default to `hasPassword ?? true`: after this PR every
+  // key-auth SSH config persists hasPassword:false, and `false ?? true` is
+  // false — which rendered the checkbox unticked, silently dropping a password
+  // the user typed into an existing key-auth config (adversarial review, #188).
+  // The checkbox only renders (and only matters) once there IS a password to
+  // save, so a plain `true` is safe for stored-secret and key-auth cases alike.
+  const [sshPassword, setSshPassword] = useState('')
+  const [storedPassword, setStoredPassword] = useState(initial?.sshConfig?.hasPassword ?? false)
+  const [savePassword, setSavePassword] = useState(true)
+  const [sudoPassword, setSudoPassword] = useState('')
+  const [storedSudo, setStoredSudo] = useState(initial?.sshConfig?.hasSudoPassword ?? false)
+  const [saveSudo, setSaveSudo] = useState(true)
+
+  // ── Session startup (Claude Code)
+  // Edit must not rewrite what's stored: a config saved with no model override
+  // reopens as "Default", not the new-config 'opus' default (the old dialog
+  // silently upgraded Default → opus on every save; same family as the
+  // effortLevel wipe).
+  const [model, setModel] = useState(initial ? (initialClaude?.model ?? initial?.model ?? '') : 'opus')
+  // Typed against the config's own effort union (not widened to string) so the
+  // saved claudeOptions.effortLevel stays assignable — '' is the "Default" chip.
+  const [effortLevel, setEffortLevel] = useState<EffortValue | ''>(initialClaude?.effortLevel ?? '')
+  const [permissionMode, setPermissionMode] = useState(initialClaude?.permissionMode ?? 'default')
+  const [extraArgs, setExtraArgs] = useState(initialClaude?.extraArgs ?? '')
+  const [loggingEnabled, setLoggingEnabled] = useState(initialClaude?.loggingEnabled !== false)
+
+  // ── Terminal-only startup
+  const [termCommand, setTermCommand] = useState(initial?.terminalOptions?.command ?? '')
+  const [termArgs, setTermArgs] = useState(initial?.terminalOptions?.args ?? '')
+  const [termElevated, setTermElevated] = useState(initial?.terminalOptions?.elevated ?? false)
+  const [secretArg, setSecretArg] = useState('')
+  const [storedSecret, setStoredSecret] = useState(initial?.terminalOptions?.hasSecretArg ?? false)
+
+  // ── Session startup (Codex)
   const [codexModel, setCodexModel] = useState(initial?.codexOptions?.model ?? 'gpt-5.5')
   const [codexEffort, setCodexEffort] = useState<NonNullable<CodexOptions['reasoningEffort']>>(initial?.codexOptions?.reasoningEffort ?? 'medium')
   const [codexPreset, setCodexPreset] = useState<CodexOptions['permissionsPreset']>(initial?.codexOptions?.permissionsPreset ?? 'standard')
-  const [label, setLabel] = useState(initial?.label ?? '')
-  const [workingDir, setWorkingDir] = useState(initial?.workingDirectory ?? '')
-  // v1.5.11: default to the `opus` alias so new sessions land on Opus 4.8
-  // (the latest Opus family member, as of 2026-05-28). The alias resolves
-  // to whichever Opus version Claude Code currently ships, so this
-  // doesn't go stale when Anthropic releases the next one.
-  const [model, setModel] = useState(initialClaude?.model ?? initial?.model ?? 'opus')
-  // Per-config Claude permission mode ('default' => no --permission-mode flag) and
-  // an advanced free-text escape hatch for extra CLI args.
-  const [permissionMode, setPermissionMode] = useState(initialClaude?.permissionMode ?? 'default')
-  const [extraArgs, setExtraArgs] = useState(initialClaude?.extraArgs ?? '')
-  const [colorKey, setColorKey] = useState<IdentityColorKey>(
-    (initial?.identityColorKey as IdentityColorKey) ?? bucketLegacyColorToKey(initial?.color ?? '')
-  )
-  const theme = useResolvedTheme()
-  const [sessionType, setSessionType] = useState<SessionType>(initial?.sessionType ?? 'local')
-  // Codex master ("Do you use Codex?"): with it off the conductor server never
-  // registers codex_review, so the review checkbox below would be a dead control.
-  const codexDisabled = useSettingsStore((s) => s.settings.codexEnabled === false)
-  const [shellOnly, setShellOnly] = useState(initial?.shellOnly ?? false)
+
+  // ── Organise
   const [groupId, setGroupId] = useState<string | undefined>(initial?.groupId)
   const [newGroupName, setNewGroupName] = useState('')
   const [showNewGroup, setShowNewGroup] = useState(false)
   const [sectionId, setSectionId] = useState<string | undefined>(initial?.sectionId)
   const [newSectionName, setNewSectionName] = useState('')
   const [showNewSection, setShowNewSection] = useState(false)
-  const [partnerTerminalPath, setPartnerTerminalPath] = useState(initial?.partnerTerminalPath ?? '')
-  const [partnerElevated, setPartnerElevated] = useState(initial?.partnerElevated ?? false)
 
-  // SSH fields
-  const [sshHost, setSshHost] = useState(initial?.sshConfig?.host ?? '')
-  const [sshPort, setSshPort] = useState(initial?.sshConfig?.port ?? 22)
-  const [sshUser, setSshUser] = useState(initial?.sshConfig?.username ?? '')
-  const [sshRemotePath, setSshRemotePath] = useState(initial?.sshConfig?.remotePath ?? '~')
-  const [sshPassword, setSshPassword] = useState('')
-  const [savePassword, setSavePassword] = useState(initial?.sshConfig?.hasPassword ?? false)
-  const [postCommand, setPostCommand] = useState(initial?.sshConfig?.postCommand ?? '')
-  const [sudoPassword, setSudoPassword] = useState('')
-  const [saveSudoPassword, setSaveSudoPassword] = useState(initial?.sshConfig?.hasSudoPassword ?? false)
+  // ── Identity
+  const [label, setLabel] = useState(initial?.label ?? '')
+  const [colorKey, setColorKey] = useState<IdentityColorKey>(
+    (initial?.identityColorKey as IdentityColorKey) ?? bucketLegacyColorToKey(initial?.color ?? '')
+  )
 
-  // Legacy version fields
-  const [legacyEnabled, setLegacyEnabled] = useState((initialClaude?.legacyVersion ?? initial?.legacyVersion)?.enabled ?? false)
-  const [legacyVersion, setLegacyVersion] = useState((initialClaude?.legacyVersion ?? initial?.legacyVersion)?.version ?? '')
-  const [availableVersions, setAvailableVersions] = useState<string[]>([])
-  const [loadingVersions, setLoadingVersions] = useState(false)
-  const [versionInstalled, setVersionInstalled] = useState(false)
-  const [installing, setInstalling] = useState(false)
-  const [installError, setInstallError] = useState('')
-
-  // Agent fields
-  const agentUserTemplates = useAgentLibraryStore(s => s.templates)
-  const allAgentTemplates = [...agentUserTemplates, ...BUILTIN_TEMPLATES]
-  const [selectedAgentIds, setSelectedAgentIds] = useState<Set<string>>(new Set(initialClaude?.agentIds ?? initial?.agentIds ?? []))
-  const [disableAutoMemory, setDisableAutoMemory] = useState(initialClaude?.disableAutoMemory ?? initial?.disableAutoMemory ?? false)
-  const [enableCodexReview, setEnableCodexReview] = useState(initialClaude?.enableCodexReview ?? false)
-  // T16: per-session indexing toggle. DEFAULT-TRUE: undefined / true → checked.
-  // Storing only false avoids writing an explicit true to every new config.
-  const [loggingEnabled, setLoggingEnabled] = useState(initialClaude?.loggingEnabled !== false)
-  const [machineName, setMachineName] = useState(initial?.machineName ?? '')
-
-  // Fetch available versions when legacy checkbox enabled
-  useEffect(() => {
-    if (!legacyEnabled) return
-    let cancelled = false
-    setLoadingVersions(true)
-    window.electronAPI.legacyVersion.fetchVersions()
-      .then((versions) => {
-        if (cancelled) return
-        setAvailableVersions(versions)
-        if (!legacyVersion && versions.length > 0) {
-          setLegacyVersion(versions[0])
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setAvailableVersions([])
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingVersions(false)
-      })
-    return () => { cancelled = true }
-  }, [legacyEnabled])
-
-  // Check install status when version changes
-  useEffect(() => {
-    if (!legacyEnabled || !legacyVersion) {
-      setVersionInstalled(false)
-      return
-    }
-    window.electronAPI.legacyVersion.isInstalled(legacyVersion)
-      .then(setVersionInstalled)
-      .catch(() => setVersionInstalled(false))
-  }, [legacyEnabled, legacyVersion])
-
-  // Listen for install progress
-  useEffect(() => {
-    if (!installing) return
-    const unsub = window.electronAPI.legacyVersion.onInstallProgress((data) => {
-      // Progress is displayed via the installing state; we just need to know when done
+  // ── Progressive help: every longer explanation lives behind a small "?" so
+  // the default view is short labels only.
+  const [openHelp, setOpenHelp] = useState<Set<string>>(new Set())
+  const toggleHelp = (key: string) => {
+    setOpenHelp((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
     })
-    return unsub
-  }, [installing])
-
-  // Codex is not yet available over SSH -- if user flips sessionType to ssh while
-  // codex is selected, fall back to claude so the form remains usable.
-  useEffect(() => {
-    if (sessionType === 'ssh' && provider === 'codex') {
-      setProvider('claude')
-    }
-  }, [sessionType, provider])
-
-  const handleInstallVersion = async () => {
-    if (!legacyVersion) return
-    setInstalling(true)
-    setInstallError('')
-    const result = await window.electronAPI.legacyVersion.install(legacyVersion)
-    setInstalling(false)
-    if (result.ok) {
-      setVersionInstalled(true)
-    } else {
-      setInstallError(result.error || 'Install failed')
-    }
   }
+  const HelpBtn = ({ k, label: aria }: { k: string; label: string }) => (
+    <button
+      type="button"
+      aria-label={aria}
+      aria-expanded={openHelp.has(k)}
+      onClick={() => toggleHelp(k)}
+      className={`inline-flex items-center justify-center w-4 h-4 rounded-full border text-[10px] font-semibold leading-none shrink-0 transition-colors ${
+        openHelp.has(k) ? 'border-blue text-blue bg-blue/10' : 'border-surface2 text-overlay0 hover:text-subtext0 hover:border-overlay0'
+      }`}
+    >
+      ?
+    </button>
+  )
+  const Hint = ({ k, children }: { k: string; children: React.ReactNode }) =>
+    openHelp.has(k) ? <p className="text-[11px] text-overlay0 mt-1 leading-snug">{children}</p> : null
+
+  const bothChosen = uiProvider !== null && sessionType !== null
 
   const handleBrowse = async () => {
     const path = await window.electronAPI.dialog.openFolder()
     if (path) setWorkingDir(path)
-  }
-
-  const handleBrowsePartner = async () => {
-    const path = await window.electronAPI.dialog.openFolder()
-    if (path) setPartnerTerminalPath(path)
   }
 
   const handleGroupChange = (value: string) => {
@@ -239,42 +231,118 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
     setShowNewGroup(false)
   }
 
+  // A working directory must be ABSOLUTE, platform-appropriately. Rejecting '.',
+  // relative paths, and shape-only lookalikes (`~evil`, `/etc` on Windows) closes
+  // the transcript-misfiling incident at the source: a non-absolute path silently
+  // resolves to $HOME at spawn, which client validation only half-fixed before
+  // (empty was blocked, '.' and friends still saved — adversarial review, #188).
+  const looksAbsolute = (raw: string) => {
+    const p = raw.trim()
+    // Home-relative: only a bare ~ or ~/ ~\ prefix (NOT ~evil).
+    if (p === '~' || p.startsWith('~/') || p.startsWith('~\\')) return true
+    if (window.electronPlatform === 'win32') {
+      return /^([a-zA-Z]:[\\/]|\\\\|\/\/)/.test(p)  // drive path or UNC (either slash)
+    }
+    return p.startsWith('/')  // POSIX absolute
+  }
+  // Mirror ssh-shim.ts SAFE_REMOTE_PATH_RE: main THROWS on a bad remote path
+  // (inside a setTimeout → crashes the main process), so a freely-typed space or
+  // shell char must be caught here, not just at spawn (adversarial review, #188).
+  const safeRemotePath = (p: string) => /^[~A-Za-z0-9_./-]+$/.test(p)
+
+  // The footer's validation slot: names the next step in a fixed order instead
+  // of letting Save silently no-op (the old dialog's worst habit).
+  const validationMsg = (() => {
+    if (!uiProvider) return 'Choose what this launcher runs'
+    if (!sessionType) return 'Choose where it runs'
+    // A hand-edited or migrated config can carry the Codex×SSH combination the
+    // cards forbid; the disabled cards don't constrain saved state, so guard it
+    // here or the config saves and then hard-throws at spawn.
+    if (uiProvider === 'codex' && sessionType === 'ssh') return "Codex can't run over SSH — pick Claude Code or Terminal only"
+    if (sessionType === 'local' && !workingDir.trim()) return 'Add a working directory to save'
+    // Enforce the absolute-path rule only on a CHANGED value: an imported or
+    // synced config with a foreign-platform absolute path (e.g. a macOS
+    // /Users/... path opened on Windows) can still have its label/colour/model
+    // edited without being forced to fix the path (adversarial review, #188).
+    if (sessionType === 'local' && workingDir.trim() !== (initial?.workingDirectory ?? '').trim() && !looksAbsolute(workingDir)) {
+      return 'Working directory must be a full path (e.g. C:\\projects\\app)'
+    }
+    if (sessionType === 'ssh' && !sshHost.trim()) return 'Add a host to save'
+    if (sessionType === 'ssh' && sshRemotePath.trim() && !safeRemotePath(sshRemotePath.trim())) return 'Remote directory can only use letters, numbers and _ . / - ~'
+    if (!label.trim()) return 'Add a label to save'
+    return ''
+  })()
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    if (!label.trim()) return
-    if (sessionType === 'ssh' && !sshHost.trim()) return
+    if (validationMsg || !uiProvider || !sessionType) return
 
-    const sshConfig: SSHConfig | undefined = sessionType === 'ssh' ? {
-      host: sshHost.trim(),
-      port: sshPort,
-      username: sshUser.trim() || 'root',
-      remotePath: sshRemotePath.trim() || '~'
-    } : undefined
+    const provider: ProviderId = uiProvider === 'codex' ? 'codex' : 'claude'
+    const shellOnly = uiProvider === 'terminal'
 
-    const dir = sessionType === 'ssh' ? sshRemotePath.trim() || '~' : (workingDir.trim() || '.')
+    // No '.' fallback: the empty-directory default is how the transcript
+    // misfiling incident happened; validation above requires a real path.
+    const dir = sessionType === 'ssh' ? (sshRemotePath.trim() || '~') : workingDir.trim()
 
-    const claudeOptions = provider === 'claude' ? {
+    // Spread-then-set preserves stored fields this dialog no longer edits
+    // (legacyVersion, agentIds, disableAutoMemory, enableCodexReview) instead
+    // of wiping them on every save — the bug that ate effortLevel for years.
+    const claudeOptions = uiProvider === 'claude' ? {
+      ...initialClaude,
       model: model || undefined,
+      effortLevel: effortLevel === '' ? undefined : effortLevel,
       // 'default' is the no-op sentinel; persist only a real override.
       permissionMode: permissionMode && permissionMode !== 'default' ? permissionMode : undefined,
       extraArgs: extraArgs.trim() || undefined,
-      legacyVersion: legacyEnabled && legacyVersion ? { enabled: true, version: legacyVersion } : undefined,
-      agentIds: !shellOnly && selectedAgentIds.size > 0 ? Array.from(selectedAgentIds) : undefined,
-      disableAutoMemory: !shellOnly && disableAutoMemory ? true : undefined,
-      // Mirror the display gate: while Codex is off the checkbox renders
-      // unchecked+disabled, so persisting the stale true would silently
-      // re-arm review the moment Codex is re-enabled.
-      enableCodexReview: !shellOnly && enableCodexReview && !codexDisabled ? true : undefined,
       // DEFAULT-TRUE: only write false when the user has turned the toggle off.
-      // Omitting the field (undefined) is equivalent to on, keeps configs clean.
-      loggingEnabled: !shellOnly && !loggingEnabled ? false : undefined,
-    } : undefined
+      loggingEnabled: !loggingEnabled ? false : undefined,
+    } : initial?.claudeOptions
 
-    const codexOptions: CodexOptions | undefined = provider === 'codex' ? {
+    // Terminal-only options. Local only: over SSH the startup command IS the
+    // post-connect command, so we never write a second one here.
+    const isTerminalLocal = uiProvider === 'terminal' && sessionType === 'local'
+    const secretSaved = isTerminalLocal && (secretArg.length > 0 || storedSecret)
+    const terminalOptions = isTerminalLocal
+      ? (termCommand.trim() || termArgs.trim() || secretSaved || termElevated
+          ? {
+              command: termCommand.trim() || undefined,
+              args: termArgs.trim() || undefined,
+              hasSecretArg: secretSaved || undefined,
+              elevated: termElevated || undefined,
+            }
+          : undefined)
+      : initial?.terminalOptions
+
+    const codexOptions: CodexOptions | undefined = uiProvider === 'codex' ? {
       model: codexModel,
       reasoningEffort: codexEffort,
       permissionsPreset: codexPreset,
     } : undefined
+
+    // SECURITY (adversarial review, #188): every credential decision is gated on
+    // the FINAL sessionType. Without this, switching an SSH config to Local (or
+    // to Terminal-only) drops the SSH block from the UI but leaves savePassword/
+    // storedPassword state untouched — so the config saved with no sshConfig
+    // while its keychain secret survived orphaned, later auto-typed at a
+    // different host. sudo additionally requires a post-connect command: clearing
+    // that command must strand nothing. When these are false and the config
+    // previously had a stored secret, the delete block below removes it.
+    // A stored secret is ENDPOINT-specific: if the user repoints an SSH config at
+    // a different host, PORT, or username without retyping, the old password must
+    // NOT carry to the new endpoint (adversarial review, #188 — host, port and
+    // username all change the principal being authenticated). Treat the stored
+    // value as absent in that case, so it is deleted below and re-entry required.
+    const isSsh = sessionType === 'ssh'
+    const prevSsh = initial?.sshConfig
+    const endpointChanged = isSsh && !!prevSsh && (
+      (prevSsh.host ?? '').trim() !== sshHost.trim() ||
+      prevSsh.port !== sshPort ||
+      (prevSsh.username ?? '').trim() !== (sshUser.trim() || 'root')
+    )
+    const keepStoredPw = storedPassword && !endpointChanged
+    const keepStoredSudo = storedSudo && !endpointChanged
+    const passwordSaved = isSsh && savePassword && (sshPassword.length > 0 || keepStoredPw)
+    const sudoSaved = isSsh && postCommand.trim().length > 0 && saveSudo && (sudoPassword.length > 0 || keepStoredSudo)
 
     const config: Omit<TerminalConfig, 'id'> = {
       provider,
@@ -284,701 +352,725 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
       color: resolveIdentityColor(colorKey, 'dark'),  // back-compat shadow; render prefers the key
       sessionType,
       shellOnly,
+      terminalOptions,
       groupId,
       sectionId: groupId ? undefined : sectionId,
-      partnerTerminalPath: !shellOnly && partnerTerminalPath.trim() ? partnerTerminalPath.trim() : undefined,
-      partnerElevated: !shellOnly && partnerTerminalPath.trim() ? partnerElevated : undefined,
-      sshConfig: sshConfig ? {
-        ...sshConfig,
-        hasPassword: savePassword && sshPassword.length > 0,
+      sshConfig: sessionType === 'ssh' ? {
+        // Spread preserves fields the dialog doesn't edit (dockerContainer).
+        ...initial?.sshConfig,
+        host: sshHost.trim(),
+        port: sshPort,
+        username: sshUser.trim() || 'root',
+        remotePath: sshRemotePath.trim() || '~',
+        hasPassword: passwordSaved,
         postCommand: postCommand.trim() || undefined,
-        hasSudoPassword: saveSudoPassword && sudoPassword.length > 0,
+        hasSudoPassword: sudoSaved,
       } : undefined,
       claudeOptions,
       codexOptions,
-      machineName: machineName.trim() || undefined,
+      machineName: sessionType === 'ssh' && machineName.trim() ? machineName.trim() : undefined,
       // Account is no longer a config field -- it's chosen at launch by the
       // pre-spawn account gate. Preserve any pre-existing value on edit so older
       // configs aren't silently rewritten, but never set it from this dialog.
       profileId: initial?.profileId,
+      // Partner terminal is permanent for every config type (2 Aug decision):
+      // the dialog no longer writes a path or elevation. Stored values on old
+      // configs are simply ignored by the app.
+    }
+
+    // On edit, delete any keychain entry we are NOT (re)saving. Gated only on
+    // "not saving", NOT on the config's hasPassword flag: the flag can lie
+    // (a config the old dialog left in the divergent state has hasPassword:false
+    // with a live secret), and credentials.delete is idempotent, so an
+    // unconditional delete-when-not-saving both removes intentional "Remove
+    // stored password" entries AND sweeps pre-existing orphans (adversarial
+    // review, #188). Runs on confirm, never before.
+    if (initial?.id) {
+      if (!passwordSaved) void window.electronAPI.credentials.delete(initial.id)
+      if (!sudoSaved) void window.electronAPI.credentials.delete(initial.id + '_sudo')
+      // Same rule for the Terminal-only secret: switching the config away from a
+      // local terminal, or clearing the secret, must not strand it in the keychain.
+      if (!secretSaved) void window.electronAPI.credentials.delete(initial.id + '_argsecret')
     }
 
     onConfirm(
       config,
-      sshPassword.length > 0 ? sshPassword : undefined,
-      sudoPassword.length > 0 ? sudoPassword : undefined
+      // Honest save, gated on the final sessionType: a typed password reaches the
+      // keychain ONLY when this is still an SSH config AND the checkbox is on. The
+      // old dialog stored it regardless — so a password typed into an SSH block
+      // that was then switched to Local was persisted for a config with no SSH.
+      passwordSaved && sshPassword.length > 0 ? sshPassword : undefined,
+      sudoSaved && sudoPassword.length > 0 ? sudoPassword : undefined,
+      secretSaved && secretArg.length > 0 ? secretArg : undefined,
     )
   }
+
+  // ── Small shared bits
+  const sectionHead = (title: string, chip: string, helpKey?: string, helpLabel?: string) => (
+    <div className="flex items-center gap-2 border-t border-surface1 pt-3 mt-4 mb-2">
+      <span className="text-[10px] uppercase tracking-wider text-overlay1 font-medium">{title}</span>
+      <span className="text-[9px] uppercase tracking-wide text-overlay0 border border-surface2 rounded-full px-1.5 py-px">{chip}</span>
+      {helpKey && helpLabel && <HelpBtn k={helpKey} label={helpLabel} />}
+    </div>
+  )
+
+  // Native radio inputs styled as cards: the browser then provides the ARIA
+  // radiogroup keyboard pattern for free (roving tabindex, arrow-key navigation,
+  // skip-disabled) instead of the hand-rolled role="radio" buttons that claimed
+  // radio semantics but only responded to Tab/Enter (Copilot review, #188).
+  const cardCls = (selected: boolean, disabled: boolean) =>
+    `flex-1 text-left rounded-md border px-3 py-2 transition-colors focus-within:outline focus-within:outline-2 focus-within:outline-blue ${
+      disabled
+        ? 'border-surface1 opacity-50 cursor-not-allowed'
+        : selected
+          ? 'border-blue bg-blue/10 cursor-pointer'
+          : 'border-surface1 bg-base hover:border-overlay0 cursor-pointer'
+    }`
+
+  const providerCard = (id: UiProvider, title: string, sub: string, disabled: boolean) => (
+    <label className={cardCls(uiProvider === id, disabled)}>
+      <input
+        type="radio"
+        name="ccc-provider"
+        className="sr-only"
+        value={id}
+        checked={uiProvider === id}
+        disabled={disabled}
+        onChange={() => setUiProvider(id)}
+      />
+      <span className={`block text-sm font-medium ${disabled ? 'text-overlay0' : 'text-text'}`}>{title}</span>
+      <span className="block text-[10px] text-overlay0 mt-0.5">{sub}</span>
+    </label>
+  )
+
+  const transportCard = (id: SessionType, title: string, sub: string, disabled: boolean) => (
+    <label className={cardCls(sessionType === id, disabled)}>
+      <input
+        type="radio"
+        name="ccc-transport"
+        className="sr-only"
+        value={id}
+        checked={sessionType === id}
+        disabled={disabled}
+        onChange={() => setSessionType(id)}
+      />
+      <span className={`block text-sm font-medium ${disabled ? 'text-overlay0' : 'text-text'}`}>{title}</span>
+      <span className="block text-[10px] text-overlay0 mt-0.5">{sub}</span>
+    </label>
+  )
+
+  const inputCls = 'w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue'
+
+  const permHint = DANGEROUS_MODE_COPY[permissionMode]
+    ?? PERMISSION_MODES.find((m) => m.value === permissionMode)?.hint
+    ?? ''
+  const permDangerous = permissionMode in DANGEROUS_MODE_COPY
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
       <form
         onSubmit={handleSubmit}
-        className="bg-surface0 rounded-lg p-6 w-[760px] max-h-[90vh] overflow-y-auto shadow-2xl border border-surface1"
+        className="bg-surface0 rounded-lg w-[680px] max-h-[90vh] flex flex-col shadow-2xl border border-surface1"
       >
-        <h3 className="text-base font-semibold text-text mb-1">
-          {initial ? 'Edit Config' : 'New Saved Config'}
-        </h3>
-        <p className="text-[11px] text-overlay0 mb-4 leading-snug">
-          A saved config is a reusable launcher: it stays in the sidebar and every launch starts a fresh session
-          with these settings.
-        </p>
-
-        {/* Session type toggle */}
-        <div className="flex items-center bg-crust rounded-md p-0.5 mb-1">
-          <button
-            type="button"
-            onClick={() => setSessionType('local')}
-            className={`flex-1 px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-              sessionType === 'local' ? 'bg-blue text-crust' : 'text-overlay1 hover:text-text'
-            }`}
-          >
-            Local
-          </button>
-          <button
-            type="button"
-            onClick={() => setSessionType('ssh')}
-            className={`flex-1 px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-              sessionType === 'ssh' ? 'bg-blue text-crust' : 'text-overlay1 hover:text-text'
-            }`}
-          >
-            SSH
-          </button>
+        <div className="px-6 pt-5 pb-3 border-b border-surface1">
+          <h3 className="text-base font-semibold text-text mb-1">
+            {isEdit ? 'Edit config' : 'New saved config'}
+          </h3>
+          <p className="text-[11px] text-overlay0 leading-snug">
+            Every click on this launcher starts a fresh session with these settings.
+          </p>
         </div>
-        <p className="text-[10px] text-overlay0 mb-4">
-          Where sessions run: this machine, or a remote machine over SSH.
-        </p>
 
-        {/* Provider segmented control */}
-        <ProviderSegmentedControl
-          value={provider}
-          onChange={setProvider}
-          sessionType={sessionType}
-          codexMasterOff={codexDisabled}
-        />
+        <div className="px-6 pb-4 overflow-y-auto flex-1">
 
-        {/* Two-column grid */}
-        <div className="grid grid-cols-2 gap-6">
-
-          {/* ============ LEFT COLUMN: Identity + Connection ============ */}
-          <div className="space-y-3">
-
-            {/* -- IDENTITY section (first in column, no border-t) -- */}
-            <div>
-              <span className="text-[10px] uppercase tracking-wider text-overlay1 font-medium">Identity</span>
-            </div>
-
-            <div>
-              <label className="block text-xs text-subtext0 mb-1">Label</label>
-              <input
-                autoFocus
-                value={label}
-                onChange={(e) => setLabel(e.target.value)}
-                placeholder="My project"
-                className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue"
-              />
-              <p className="text-[10px] text-overlay0 mt-1">Names this config in the sidebar and on its session tabs.</p>
-            </div>
-
-            {sessionType === 'ssh' && (
-              <div>
-                <label className="block text-xs text-subtext0 mb-1">Machine Name</label>
-                <input
-                  value={machineName}
-                  onChange={(e) => setMachineName(e.target.value)}
-                  placeholder="e.g. GPU Server, Build Box"
-                  className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue"
-                />
-                <p className="text-[10px] text-overlay0 mt-1">Shows in logs and the status line so you can tell machines apart.</p>
+          {/* ── 1 · WHAT THIS LAUNCHER RUNS ── */}
+          <div className="flex items-center gap-2 pt-4 mb-2">
+            <span className="text-[10px] uppercase tracking-wider text-overlay1 font-medium">What this launcher runs</span>
+            <span className="text-[9px] uppercase tracking-wide text-overlay0 border border-surface2 rounded-full px-1.5 py-px">Any provider</span>
+            <HelpBtn k="runs" label="About this section" />
+          </div>
+          <Hint k="runs">
+            Pick the agent this launcher starts and where it runs — everything below adapts to these two
+            choices. Claude Code signs in with your Claude account; Codex needs its own OpenAI account.
+          </Hint>
+          <div className="flex gap-2 mt-2" role="radiogroup" aria-label="Provider">
+            {providerCard('claude', 'Claude Code', "Anthropic's coding agent", false)}
+            {providerCard('codex', 'Codex', "OpenAI's coding agent", codexDisabled || sessionType === 'ssh')}
+            {providerCard('terminal', 'Terminal only', 'A plain terminal — no AI', false)}
+          </div>
+          {sessionType === 'ssh' && (
+            <p className="text-[11px] text-red mt-1.5">Codex can't run over SSH yet — choose Claude Code or Terminal only.</p>
+          )}
+          {codexDisabled && sessionType !== 'ssh' && (
+            <p className="text-[11px] text-overlay0 mt-1.5">Codex is off — enable it in Settings → Codex to use it here.</p>
+          )}
+          {uiProvider !== null && (
+            <>
+              <div className="flex gap-2 mt-2" role="radiogroup" aria-label="Where it runs">
+                {transportCard('local', 'Local', 'Runs on this PC', false)}
+                {transportCard('ssh', 'SSH', 'Runs on another machine', uiProvider === 'codex')}
               </div>
-            )}
+              {uiProvider === 'codex' && (
+                <p className="text-[11px] text-overlay0 mt-1.5">Codex runs on this PC only — SSH isn't available.</p>
+              )}
+            </>
+          )}
 
-            {/* Color picker — compact swatches */}
-            <div>
-              <label className="block text-xs text-subtext0 mb-1">Color</label>
-              <div className="flex flex-wrap gap-1.5">
-                {IDENTITY_SWATCHES.map((k) => (
-                  <button
-                    key={k}
-                    type="button"
-                    onClick={() => setColorKey(k)}
-                    className={`w-6 h-6 rounded-md border-2 transition-all ${
-                      colorKey === k ? 'border-text scale-110' : 'border-transparent hover:border-overlay0'
-                    }`}
-                    style={{ backgroundColor: resolveIdentityColor(k, theme) }}
-                    title={k}
-                  />
-                ))}
-              </div>
-              <p className="text-[10px] text-overlay0 mt-1.5">
-                Tints this config's rail, tabs and dots so you can tell sessions apart at a glance.
-              </p>
-            </div>
+          {bothChosen && (
+            <>
+              {/* ── 2 · WORKSPACE ── */}
+              {sectionHead('Workspace', 'Any provider', 'ws', 'About the workspace')}
+              <Hint k="ws">
+                {sessionType === 'local'
+                  ? 'The folder every session starts in. The agent can read and edit files here, with your approval. Every session also gets a second plain terminal from the command bar — no setup needed.'
+                  : "Where sessions land after connecting. Your PC's folders are not visible to this session."}
+              </Hint>
 
-            {/* -- CONNECTION section -- */}
-            <div className="border-t border-surface1 pt-3 mt-3">
-              <span className="text-[10px] uppercase tracking-wider text-overlay1 font-medium">Connection</span>
-            </div>
-
-            {sessionType === 'local' ? (
-              <div>
-                <label className="block text-xs text-subtext0 mb-1">Working Directory</label>
-                <div className="flex gap-2">
-                  <input
-                    value={workingDir}
-                    onChange={(e) => setWorkingDir(e.target.value)}
-                    placeholder={window.electronPlatform === 'win32' ? 'C:\\path\\to\\project' : '~/path/to/project'}
-                    className="flex-1 bg-base border border-surface1 rounded px-3 py-2 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleBrowse}
-                    className="px-3 py-2 rounded text-sm bg-surface1 text-subtext1 hover:bg-surface2 hover:text-text transition-colors shrink-0"
-                  >
-                    Browse
-                  </button>
-                </div>
-                <p className="text-[10px] text-overlay0 mt-1">
-                  The folder sessions start in. Claude reads and edits files here (with your approval).
-                </p>
-              </div>
-            ) : (
-              <>
-                <div className="grid grid-cols-[1fr_80px] gap-2">
-                  <div>
-                    <label className="block text-xs text-subtext0 mb-1">Host</label>
+              {sessionType === 'local' ? (
+                <div className="mt-1">
+                  <label className="block text-xs text-subtext0 mb-1">Working directory <span className="text-peach">*</span></label>
+                  <div className="flex gap-2">
                     <input
-                      value={sshHost}
-                      onChange={(e) => setSshHost(e.target.value)}
-                      placeholder="192.168.1.100 or hostname"
-                      className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue"
+                      value={workingDir}
+                      onChange={(e) => setWorkingDir(e.target.value)}
+                      placeholder={window.electronPlatform === 'win32' ? 'C:\\path\\to\\project' : '~/path/to/project'}
+                      className={inputCls.replace('w-full', 'flex-1')}
                     />
+                    <button
+                      type="button"
+                      onClick={handleBrowse}
+                      className="px-3 py-2 rounded text-sm bg-surface1 text-subtext1 hover:bg-surface2 hover:text-text transition-colors shrink-0"
+                    >
+                      Browse
+                    </button>
                   </div>
-                  <div>
-                    <label className="block text-xs text-subtext0 mb-1">Port</label>
-                    <input
-                      type="number"
-                      value={sshPort}
-                      onChange={(e) => setSshPort(parseInt(e.target.value) || 22)}
-                      className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-blue"
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-xs text-subtext0 mb-1">Username</label>
-                  <input
-                    value={sshUser}
-                    onChange={(e) => setSshUser(e.target.value)}
-                    placeholder="root"
-                    className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-subtext0 mb-1">
-                    Password
-                    <span className="text-overlay0 ml-1">(encrypted with OS keychain)</span>
-                  </label>
-                  <input
-                    type="password"
-                    value={sshPassword}
-                    onChange={(e) => setSshPassword(e.target.value)}
-                    placeholder={initial?.sshConfig?.hasPassword ? '(saved - enter new to change)' : 'Leave empty for key auth'}
-                    className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue"
-                  />
-                  {sshPassword.length > 0 && (
-                    <label className="flex items-center gap-2 mt-1.5 text-xs text-subtext0 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={savePassword}
-                        onChange={(e) => setSavePassword(e.target.checked)}
-                        className="rounded border-surface1"
-                      />
-                      Save password for this config
-                    </label>
+                  {/* Grandfathered bad value: an existing config keeps saving (we only
+                      block a CHANGED non-absolute path), but say what it actually does
+                      — '.' and friends resolve to the home folder at spawn, which is
+                      what mis-filed transcripts before. */}
+                  {workingDir.trim() && !looksAbsolute(workingDir) && (
+                    <p className="text-[11px] text-yellow mt-1.5">
+                      Not a full path — sessions will start in your home folder. Pick a real project folder.
+                    </p>
                   )}
                 </div>
-                <div>
-                  <label className="block text-xs text-subtext0 mb-1">Remote Path (cd after connect)</label>
-                  <input
-                    value={sshRemotePath}
-                    onChange={(e) => setSshRemotePath(e.target.value)}
-                    placeholder="~/projects/my-app"
-                    className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-subtext0 mb-1">
-                    Post-connect Command
-                    <span className="text-overlay0 ml-1">(runs after SSH connects)</span>
-                  </label>
-                  <input
-                    value={postCommand}
-                    onChange={(e) => setPostCommand(e.target.value)}
-                    placeholder="sudo docker exec -it container bash"
-                    className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue font-mono text-xs"
-                  />
-                </div>
-                {postCommand && (
+              ) : (
+                <div className="space-y-3 mt-1">
+                  <div className="grid grid-cols-[1fr_90px] gap-2">
+                    <div>
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <label className="text-xs text-subtext0">Host <span className="text-peach">*</span></label>
+                        <HelpBtn k="host" label="About host" />
+                      </div>
+                      <input
+                        value={sshHost}
+                        onChange={(e) => setSshHost(e.target.value)}
+                        placeholder="192.168.1.100"
+                        className={inputCls}
+                      />
+                      <Hint k="host">IP address or hostname of the machine to connect to.</Hint>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-subtext0 mb-1">Port <span className="text-peach">*</span></label>
+                      <input
+                        type="number"
+                        value={sshPort}
+                        onChange={(e) => setSshPort(parseInt(e.target.value) || 22)}
+                        className={inputCls}
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-xs text-subtext0 mb-1">User</label>
+                      <input
+                        value={sshUser}
+                        onChange={(e) => setSshUser(e.target.value)}
+                        placeholder="root"
+                        className={inputCls}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-subtext0 mb-1">Password</label>
+                      <input
+                        type="password"
+                        value={sshPassword}
+                        onChange={(e) => setSshPassword(e.target.value)}
+                        placeholder={storedPassword ? '(saved — enter new to change)' : 'Leave empty if you use an SSH key'}
+                        className={inputCls}
+                      />
+                      {(sshPassword.length > 0 || storedPassword) && (
+                        <div className="flex items-center gap-3 mt-1.5">
+                          <label className="flex items-center gap-2 text-xs text-subtext0 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={savePassword}
+                              onChange={(e) => setSavePassword(e.target.checked)}
+                              className="rounded border-surface1"
+                            />
+                            Save password
+                          </label>
+                          {storedPassword && (
+                            <button
+                              type="button"
+                              onClick={() => { setStoredPassword(false); setSavePassword(false); setSshPassword('') }}
+                              className="text-[11px] text-blue underline underline-offset-2"
+                            >
+                              Remove stored password
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <label className="text-xs text-subtext0">Remote directory</label>
+                        <HelpBtn k="rdir" label="About the remote directory" />
+                      </div>
+                      <input
+                        value={sshRemotePath}
+                        onChange={(e) => setSshRemotePath(e.target.value)}
+                        placeholder="~"
+                        className={inputCls}
+                      />
+                      <Hint k="rdir">Where sessions land after connecting. Defaults to the home directory (~).</Hint>
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <label className="text-xs text-subtext0">Machine name</label>
+                        <HelpBtn k="mname" label="About machine name" />
+                      </div>
+                      <input
+                        value={machineName}
+                        onChange={(e) => setMachineName(e.target.value)}
+                        placeholder="e.g. Unix 185"
+                        className={inputCls}
+                      />
+                      <Hint k="mname">Optional display name, shown in logs and the status line so you can tell machines apart.</Hint>
+                    </div>
+                  </div>
                   <div>
-                    <label className="block text-xs text-subtext0 mb-1">
-                      Sudo Password
-                      <span className="text-overlay0 ml-1">(auto-entered if prompted)</span>
-                    </label>
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <label className="text-xs text-subtext0">After connecting, run</label>
+                      <HelpBtn k="postcmd" label="About the post-connect command" />
+                    </div>
                     <input
-                      type="password"
-                      value={sudoPassword}
-                      onChange={(e) => setSudoPassword(e.target.value)}
-                      placeholder={initial?.sshConfig?.hasSudoPassword ? '(saved - enter new to change)' : 'Leave empty if not needed'}
-                      className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue"
+                      value={postCommand}
+                      onChange={(e) => setPostCommand(e.target.value)}
+                      placeholder="sudo docker exec -it container bash"
+                      className={inputCls + ' font-mono text-xs'}
                     />
-                    {sudoPassword.length > 0 && (
-                      <label className="flex items-center gap-2 mt-1.5 text-xs text-subtext0 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={saveSudoPassword}
-                          onChange={(e) => setSaveSudoPassword(e.target.checked)}
-                          className="rounded border-surface1"
-                        />
-                        Save sudo password for this config
-                      </label>
+                    <Hint k="postcmd">
+                      Optional. A command to run once the connection is up — for example dropping into a Docker
+                      container. The Conductor gives you a button to run it, then a second button to launch the agent.
+                    </Hint>
+                  </div>
+                  {postCommand.trim() && (
+                    <div>
+                      <label className="block text-xs text-subtext0 mb-1">Sudo password</label>
+                      <input
+                        type="password"
+                        value={sudoPassword}
+                        onChange={(e) => setSudoPassword(e.target.value)}
+                        placeholder={storedSudo ? '(saved — enter new to change)' : 'Only needed if the command above uses sudo'}
+                        className={inputCls}
+                      />
+                      {(sudoPassword.length > 0 || storedSudo) && (
+                        <div className="flex items-center gap-3 mt-1.5">
+                          <label className="flex items-center gap-2 text-xs text-subtext0 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={saveSudo}
+                              onChange={(e) => setSaveSudo(e.target.checked)}
+                              className="rounded border-surface1"
+                            />
+                            Save password
+                          </label>
+                          {storedSudo && (
+                            <button
+                              type="button"
+                              onClick={() => { setStoredSudo(false); setSaveSudo(false); setSudoPassword('') }}
+                              className="text-[11px] text-blue underline underline-offset-2"
+                            >
+                              Remove stored password
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ── 3 · SESSION STARTUP (Claude Code / Codex; a Terminal-only
+                     launcher has nothing to configure here yet) ── */}
+              {uiProvider === 'claude' && (
+                <>
+                  {sectionHead('Session startup', 'Claude Code only', 'startup', 'About session startup')}
+                  <Hint k="startup">
+                    Starting values only — sessions begin here, and you can change any of them mid-session
+                    with /model, /effort and /permissions.
+                  </Hint>
+                  <div className="space-y-3 mt-1">
+                    <div>
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <label className="text-xs text-subtext0">Starting model</label>
+                        <HelpBtn k="model" label="About the starting model" />
+                      </div>
+                      <select
+                        value={model}
+                        onChange={(e) => setModel(e.target.value)}
+                        className={inputCls}
+                      >
+                        <option value="">Default — follows your Claude plan</option>
+                        {modelsFromRegistry(registry).map((m) => (
+                          <option key={m.value} value={m.value}>{m.label}</option>
+                        ))}
+                      </select>
+                      <Hint k="model">
+                        Which model sessions start on — change it anytime with /model. Names always point at
+                        the newest model in each family.
+                      </Hint>
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <label className="text-xs text-subtext0">Starting effort</label>
+                        <HelpBtn k="effort" label="About the starting effort" />
+                      </div>
+                      <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Starting effort">
+                        {[{ value: '', label: 'Default' }, ...effortsFromRegistry(registry)].map((ef) => (
+                          <label
+                            key={ef.value || 'default'}
+                            className={`px-2.5 py-1 rounded-full border text-xs cursor-pointer transition-colors focus-within:outline focus-within:outline-2 focus-within:outline-blue ${
+                              effortLevel === ef.value ? 'border-blue bg-blue/10 text-text' : 'border-surface1 bg-base text-subtext0 hover:border-overlay0'
+                            }`}
+                          >
+                            <input
+                              type="radio"
+                              name="ccc-effort"
+                              className="sr-only"
+                              value={ef.value}
+                              checked={effortLevel === ef.value}
+                              onChange={() => setEffortLevel(ef.value as EffortValue | '')}
+                            />
+                            {ef.label}
+                          </label>
+                        ))}
+                      </div>
+                      <Hint k="effort">
+                        How hard Claude thinks before answering — change it anytime with /effort. Higher is
+                        slower and uses more of your quota.
+                      </Hint>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-subtext0 mb-1">Permission mode</label>
+                      <select
+                        value={permissionMode}
+                        onChange={(e) => setPermissionMode(e.target.value)}
+                        className={inputCls}
+                      >
+                        {PERMISSION_MODES.map((m) => (
+                          <option key={m.value} value={m.value}>{m.label}</option>
+                        ))}
+                      </select>
+                      {permHint && (
+                        <p className={`text-[11px] mt-1 ${permDangerous ? 'text-red' : 'text-overlay0'}`}>{permHint}</p>
+                      )}
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <label className="text-xs text-subtext0">Extra CLI arguments</label>
+                        <HelpBtn k="xargs" label="About extra CLI arguments" />
+                      </div>
+                      <input
+                        type="text"
+                        value={extraArgs}
+                        onChange={(e) => setExtraArgs(e.target.value)}
+                        placeholder={sessionType === 'ssh' ? '--add-dir /srv/shared' : '--verbose --add-dir F:\\shared_libs'}
+                        spellCheck={false}
+                        className={inputCls + ' font-mono text-xs'}
+                      />
+                      <Hint k="xargs">
+                        Advanced. Appended to the claude command exactly as typed. Shell characters are blocked
+                        and CCC's own flags (--model, --effort, --permission-mode, --settings, --mcp-config,
+                        --agents, --resume) can't be overridden here.
+                      </Hint>
+                    </div>
+                    {sessionType === 'local' && (
+                      <div>
+                        <div className="flex items-center gap-1.5">
+                          <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={loggingEnabled}
+                              onChange={(e) => setLoggingEnabled(e.target.checked)}
+                              className="rounded border-surface1"
+                            />
+                            Index conversation logs
+                          </label>
+                          <HelpBtn k="logs" label="About conversation logs" />
+                        </div>
+                        <Hint k="logs">
+                          Lets you browse this session's transcript inside the Conductor. Your conversation is always
+                          saved by Claude Code either way (~/.claude/projects) — this only controls whether
+                          the app indexes it.
+                        </Hint>
+                      </div>
                     )}
                   </div>
-                )}
-                {postCommand && (
-                  <p className="text-[10px] text-overlay0 leading-snug">
-                    After connect you'll get an in-pane button to run this
-                    command. Once the inner shell appears, a second button
-                    launches Claude (or Skip drops you to the shell).
-                  </p>
-                )}
-              </>
-            )}
-          </div>
+                </>
+              )}
 
-          {/* ============ RIGHT COLUMN: Options + Extensions + Agents + Organization ============ */}
-          <div className="space-y-3">
+              {uiProvider === 'codex' && (
+                <>
+                  {sectionHead('Session startup', 'Codex only', 'startup-cx', 'About session startup')}
+                  <Hint k="startup-cx">
+                    Starting values only — Codex signs in with its own OpenAI account, separate from Claude.
+                  </Hint>
+                  <div className="mt-1">
+                    <CodexFormFields
+                      value={{ model: codexModel, reasoningEffort: codexEffort, permissionsPreset: codexPreset }}
+                      onChange={(next) => {
+                        if (next.model !== undefined) setCodexModel(next.model)
+                        if (next.reasoningEffort !== undefined) setCodexEffort(next.reasoningEffort)
+                        if (next.permissionsPreset !== undefined) setCodexPreset(next.permissionsPreset)
+                      }}
+                      onOpenSettings={() => {
+                        window.dispatchEvent(new CustomEvent('app:openSettings', { detail: { tab: 'codex' } }))
+                      }}
+                    />
+                  </div>
+                </>
+              )}
 
-            {/* -- SESSION OPTIONS section (first in column, no border-t) -- */}
-            <div>
-              <span className="text-[10px] uppercase tracking-wider text-overlay1 font-medium">Session Options</span>
-            </div>
-
-            {/* Shell only toggle */}
-            <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={shellOnly}
-                onChange={(e) => {
-                  setShellOnly(e.target.checked)
-                  if (e.target.checked) setPartnerTerminalPath('')
-                }}
-                className="mt-0.5 rounded border-surface1"
-              />
-              <span>
-                Shell only (don't run Claude)
-                <span className="block text-[10px] text-overlay0">
-                  A plain terminal with no AI attached. Handy for servers, builds and logs.
-                </span>
-              </span>
-            </label>
-
-            {/* Partner Terminal */}
-            {!shellOnly && (
-              <div>
-                <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer mb-1.5">
-                  <input
-                    type="checkbox"
-                    checked={!!partnerTerminalPath}
-                    onChange={(e) => setPartnerTerminalPath(e.target.checked ? (workingDir || '.') : '')}
-                    className="mt-0.5 rounded border-surface1"
-                  />
-                  <span>
-                    Partner Terminal
-                    <span className="block text-[10px] text-overlay0">
-                      A second plain terminal beside the session, for running commands yourself while Claude works.
-                    </span>
-                  </span>
-                </label>
-                {partnerTerminalPath && (
-                  <>
-                    <div className="flex gap-2 ml-5">
+              {uiProvider === 'terminal' && sessionType === 'local' && (
+                <>
+                  {sectionHead('Terminal startup', 'Terminal only', 'termstart', 'About terminal startup')}
+                  <Hint k="termstart">
+                    No AI here — just a terminal. Anything below runs automatically each time you open this
+                    launcher, so it can start a long-running tool for you.
+                  </Hint>
+                  <div className="space-y-3 mt-1">
+                    <div>
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <label className="text-xs text-subtext0">First-run command</label>
+                        <HelpBtn k="termcmd" label="About the first-run command" />
+                      </div>
                       <input
-                        value={partnerTerminalPath}
-                        onChange={(e) => setPartnerTerminalPath(e.target.value)}
-                        placeholder="Partner terminal path"
-                        className="flex-1 bg-base border border-surface1 rounded px-3 py-2 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue"
+                        value={termCommand}
+                        onChange={(e) => setTermCommand(e.target.value)}
+                        placeholder="npm run dev"
+                        spellCheck={false}
+                        className={inputCls + ' font-mono text-xs'}
                       />
-                      <button
-                        type="button"
-                        onClick={handleBrowsePartner}
-                        className="px-3 py-2 rounded text-sm bg-surface1 text-subtext1 hover:bg-surface2 hover:text-text transition-colors shrink-0"
-                      >
-                        Browse
-                      </button>
+                      <Hint k="termcmd">Runs once when the terminal opens. Leave empty for a plain shell.</Hint>
                     </div>
-                    <label className="flex items-center gap-2 text-xs text-subtext0 cursor-pointer ml-5">
+                    <div>
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <label className="text-xs text-subtext0">Arguments</label>
+                        <HelpBtn k="termargs" label="About arguments" />
+                      </div>
+                      <input
+                        value={termArgs}
+                        onChange={(e) => setTermArgs(e.target.value)}
+                        placeholder={'--port 4310 --token {secret}'}
+                        spellCheck={false}
+                        className={inputCls + ' font-mono text-xs'}
+                      />
+                      <Hint k="termargs">
+                        Appended to the command above. Saved as plain text in your config file — put tokens and
+                        keys in Secret argument instead.
+                      </Hint>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-subtext0 mb-1">Secret argument</label>
+                      <input
+                        type="password"
+                        value={secretArg}
+                        onChange={(e) => setSecretArg(e.target.value)}
+                        placeholder={storedSecret ? '(saved — enter new to change)' : 'Leave empty if not needed'}
+                        className={inputCls}
+                      />
+                      <div className="flex items-center gap-3 mt-1.5">
+                        <p className="text-[11px] text-overlay0">
+                          <span className="text-green">🔒</span> Kept in your OS keychain, never written to the
+                          config file. Type <span className="font-mono text-subtext0">{'{secret}'}</span> in
+                          Arguments to use it.
+                        </p>
+                        {storedSecret && (
+                          <button
+                            type="button"
+                            onClick={() => { setStoredSecret(false); setSecretArg('') }}
+                            className="text-[11px] text-blue underline underline-offset-2 shrink-0"
+                          >
+                            Remove
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    <label className="flex items-center gap-2 text-sm text-subtext0 cursor-pointer">
                       <input
                         type="checkbox"
-                        checked={partnerElevated}
-                        onChange={(e) => setPartnerElevated(e.target.checked)}
+                        checked={termElevated}
+                        onChange={(e) => setTermElevated(e.target.checked)}
                         className="rounded border-surface1"
                       />
                       {`Run as Administrator (requires ${window.electronPlatform === 'win32' ? 'gsudo' : 'sudo'})`}
                     </label>
-                  </>
-                )}
-              </div>
-            )}
-
-            {provider === 'claude' && (
-            <>
-            {/* Model override */}
-            <div>
-              <label className="block text-xs text-subtext0 mb-1">
-                Model override
-                <span className="text-overlay0 ml-1">(uses your subscription plan)</span>
-              </label>
-              <select
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-blue"
-              >
-                <option value="">Default (no override)</option>
-                {modelsFromRegistry(registry).map((m) => (
-                  <option key={m.value} value={m.value}>{m.label}</option>
-                ))}
-              </select>
-              <p className="text-[10px] text-overlay0 mt-1">
-                The model sessions start on. Default follows Claude's own setting; /model inside a session still works.
-              </p>
-            </div>
-
-            {/* Permission mode */}
-            <div>
-              <label className="block text-xs text-subtext0 mb-1">
-                Permission mode
-                <span className="text-overlay0 ml-1">(how Claude asks before actions)</span>
-              </label>
-              <select
-                value={permissionMode}
-                onChange={(e) => setPermissionMode(e.target.value)}
-                className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-blue"
-              >
-                {PERMISSION_MODES.map((m) => (
-                  <option key={m.value} value={m.value}>{m.label}</option>
-                ))}
-              </select>
-              <p className="text-[10px] text-overlay0 mt-1">
-                Sets --permission-mode at launch, so one config can run Bypass while another runs Don't ask. /permissions inside a session still works.
-              </p>
-            </div>
-
-            {/* Advanced: extra CLI args escape hatch */}
-            <details>
-              <summary className="text-xs text-subtext0 cursor-pointer select-none">Advanced: extra CLI args</summary>
-              <div className="mt-2">
-                <input
-                  type="text"
-                  value={extraArgs}
-                  onChange={(e) => setExtraArgs(e.target.value)}
-                  placeholder="--verbose --add-dir /path/to/dir"
-                  spellCheck={false}
-                  className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text font-mono focus:outline-none focus:border-blue"
-                />
-                <p className="text-[10px] text-overlay0 mt-1">
-                  Appended verbatim to the claude command. Shell metacharacters are blocked, and CCC-managed flags (--model, --effort, --permission-mode, --settings, --mcp-config, --agents, --resume) can't be overridden here.
-                </p>
-              </div>
-            </details>
-
-            {/* Disable auto-memory toggle */}
-            {!shellOnly && (
-              <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={disableAutoMemory}
-                  onChange={(e) => setDisableAutoMemory(e.target.checked)}
-                  className="mt-0.5 rounded border-surface1"
-                />
-                <span>
-                  Disable auto-memory
-                  <span className="block text-[10px] text-overlay0">
-                    Claude won't save memories (CLAUDE.md writes) from these sessions.
-                  </span>
-                </span>
-              </label>
-            )}
-
-            {/* P6: Codex code review toggle. Hidden for SSH (the tool is never
-                registered for SSH sessions and would run codex against a local
-                path that only exists on the remote); disabled when Codex is
-                answered off (the MCP server won't register the tool at all). */}
-            {!shellOnly && sessionType !== 'ssh' && (
-              <label
-                className={`flex items-start gap-2 text-sm text-subtext0 ${codexDisabled ? 'opacity-50' : 'cursor-pointer'}`}
-              >
-                <input
-                  type="checkbox"
-                  checked={enableCodexReview && !codexDisabled}
-                  disabled={codexDisabled}
-                  onChange={(e) => setEnableCodexReview(e.target.checked)}
-                  className="mt-0.5 rounded border-surface1"
-                />
-                <span>
-                  Enable Codex code review
-                  <span className="block text-[10px] text-overlay0">
-                    {codexDisabled
-                      ? 'Codex is off. Enable it in Settings → Codex first.'
-                      : 'Lets Claude ask Codex for an independent review of working changes. Each call counts against your Codex budget.'}
-                  </span>
-                </span>
-              </label>
-            )}
-
-            {/* T16: Index conversation logs toggle */}
-            {!shellOnly && (
-              <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={loggingEnabled}
-                  onChange={(e) => setLoggingEnabled(e.target.checked)}
-                  className="mt-0.5 rounded border-surface1"
-                />
-                <span>
-                  Index conversation logs
-                  <span className="block text-[10px] text-overlay0">CCC indexes Claude's own transcripts so you can browse them here. Your conversation always lives in Claude's files (~/.claude/projects); turning this off only stops CCC from indexing it.</span>
-                </span>
-              </label>
-            )}
-
-            {/* -- EXTENSIONS section -- */}
-            <div className="border-t border-surface1 pt-3 mt-3">
-              <span className="text-[10px] uppercase tracking-wider text-overlay1 font-medium">Extensions</span>
-            </div>
-
-            {/* Legacy Claude Version */}
-            <div>
-              <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={legacyEnabled}
-                  onChange={(e) => {
-                    setLegacyEnabled(e.target.checked)
-                    if (!e.target.checked) {
-                      setInstallError('')
-                    }
-                  }}
-                  className="mt-0.5 rounded border-surface1"
-                />
-                <span>
-                  Legacy Claude Version
-                  <span className="block text-[10px] text-overlay0">
-                    Pin these sessions to an older Claude Code release, installed from npm beside your current one.
-                  </span>
-                </span>
-              </label>
-              {legacyEnabled && (
-                <div className="ml-5 mt-2 space-y-2">
-                  <div>
-                    <label className="block text-xs text-subtext0 mb-1">Version</label>
-                    {loadingVersions ? (
-                      <div className="text-xs text-overlay0">Loading versions from npm...</div>
-                    ) : availableVersions.length > 0 ? (
-                      <select
-                        value={legacyVersion}
-                        onChange={(e) => setLegacyVersion(e.target.value)}
-                        className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-blue"
-                      >
-                        {availableVersions.map((v) => (
-                          <option key={v} value={v}>{v}</option>
-                        ))}
-                      </select>
-                    ) : (
-                      <div className="text-xs text-red">Failed to load versions. Is npm installed?</div>
-                    )}
                   </div>
-                  {legacyVersion && !loadingVersions && (
-                    <div className="flex items-center gap-2">
-                      {versionInstalled ? (
-                        <span className="text-xs text-green">Installed</span>
-                      ) : installing ? (
-                        <span className="text-xs text-overlay0">Installing...</span>
-                      ) : (
+                </>
+              )}
+
+              {uiProvider === 'terminal' && sessionType === 'ssh' && (
+                <>
+                  {sectionHead('Terminal startup', 'Terminal only')}
+                  <p className="text-[11px] text-overlay0 leading-snug">
+                    Over SSH, set the startup command in Workspace above — <span className="text-subtext0 font-medium">"After connecting, run"</span>.
+                  </p>
+                </>
+              )}
+
+              {/* ── 4 · ORGANISE (collapsed until needed) ── */}
+              {/* The only expandable section. It must NOT dress its trigger in the
+                  same pill the static scope chips use ("Any provider", "Terminal
+                  only") — that made a clickable row look identical to decoration.
+                  A leading chevron that rotates when open, a hover state and a
+                  plain "(optional)" read as a control instead. */}
+              <details className="group border-t border-surface1 pt-3 mt-4" open={isEdit && (!!groupId || !!sectionId)}>
+                <summary className="flex items-center gap-2 cursor-pointer select-none list-none rounded px-1 -mx-1 py-1 hover:bg-surface1/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue [&::-webkit-details-marker]:hidden">
+                  <span className="text-[10px] text-overlay1 transition-transform group-open:rotate-90">▶</span>
+                  <span className="text-[10px] uppercase tracking-wider text-overlay1 font-medium group-hover:text-subtext0">Organise</span>
+                  <span className="text-[11px] text-overlay0 normal-case">(optional — group &amp; section)</span>
+                </summary>
+                <p className="text-[11px] text-overlay0 mt-2">Optional — only tidies the sidebar.</p>
+                <div className="grid grid-cols-2 gap-2 mt-2">
+                  <div>
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <label className="text-xs text-subtext0" htmlFor="ccc-group">Group</label>
+                      <HelpBtn k="group" label="About groups" />
+                    </div>
+                    <select
+                      id="ccc-group"
+                      value={showNewGroup ? '__new__' : (groupId || '')}
+                      onChange={(e) => handleGroupChange(e.target.value)}
+                      className={inputCls}
+                    >
+                      <option value="">None</option>
+                      {groups.map((g) => (
+                        <option key={g.id} value={g.id}>{g.name}</option>
+                      ))}
+                      <option value="__new__">+ New group…</option>
+                    </select>
+                    <Hint k="group">A bundle that collapses into one sidebar row and can launch all its configs with one click.</Hint>
+                    {showNewGroup && (
+                      <div className="flex gap-2 mt-1.5">
+                        <input
+                          autoFocus
+                          value={newGroupName}
+                          onChange={(e) => setNewGroupName(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleCreateGroup() } }}
+                          placeholder="Group name"
+                          className={inputCls.replace('w-full', 'flex-1')}
+                        />
                         <button
                           type="button"
-                          onClick={handleInstallVersion}
-                          className="px-3 py-1 rounded text-xs bg-blue text-crust font-medium hover:bg-blue/90 transition-colors"
+                          onClick={handleCreateGroup}
+                          className="px-3 py-1.5 rounded text-xs bg-blue text-crust font-medium hover:bg-blue/90 transition-colors"
                         >
-                          Install
+                          Create
                         </button>
-                      )}
-                    </div>
-                  )}
-                  {installError && (
-                    <div className="text-xs text-red">{installError}</div>
-                  )}
-                  <p className="text-[10px] text-overlay0">
-                    Install and use a specific version of Claude CLI. ~80MB per version.
-                    {!versionInstalled && legacyVersion && ' Will auto-install on first launch if not installed.'}
-                  </p>
-                </div>
-              )}
-            </div>
-
-            {/* -- AGENTS section -- */}
-            {!shellOnly && allAgentTemplates.length > 0 && (
-              <>
-                <div className="border-t border-surface1 pt-3 mt-3">
-                  <span className="text-[10px] uppercase tracking-wider text-overlay1 font-medium">Agents</span>
-                  <p className="text-[10px] text-overlay0 mt-1">
-                    Subagents Claude can delegate work to in these sessions (via its Task tool). Tick the ones to include.
-                  </p>
-                </div>
-                <div className="max-h-[120px] overflow-y-auto border border-surface1 rounded bg-base">
-                  {allAgentTemplates.map(t => (
-                    <label
-                      key={t.id}
-                      className="flex items-start gap-2 px-2.5 py-1.5 hover:bg-surface0/30 cursor-pointer transition-colors"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selectedAgentIds.has(t.id)}
-                        onChange={() => {
-                          setSelectedAgentIds(prev => {
-                            const next = new Set(prev)
-                            if (next.has(t.id)) next.delete(t.id)
-                            else next.add(t.id)
-                            return next
-                          })
-                        }}
-                        className="rounded border-surface1 mt-0.5"
-                      />
-                      <div className="min-w-0 flex-1">
-                        <span className="text-xs font-medium text-text font-mono">{t.name}</span>
-                        {t.isBuiltIn && <span className="text-[9px] text-overlay0 ml-1">(built-in)</span>}
-                        <div className="text-[10px] text-overlay1 truncate">{t.description}</div>
                       </div>
-                    </label>
-                  ))}
-                </div>
-                <p className="text-[10px] text-overlay0 mt-1.5 leading-snug">
-                  Author your own templates in <span className="text-subtext0 font-medium">Agent Hub → Library</span>. Anything you create there appears here automatically.
-                </p>
-              </>
-            )}
-            </>
-            )}
-
-            {provider === 'codex' && (
-              <CodexFormFields
-                value={{ model: codexModel, reasoningEffort: codexEffort, permissionsPreset: codexPreset }}
-                // Spread-then-set: dropdowns + radios always emit defined values, so we can safely
-                // guard each setter on `!== undefined`. Add explicit-clear logic if future nullable fields land.
-                onChange={(next) => {
-                  if (next.model !== undefined) setCodexModel(next.model)
-                  if (next.reasoningEffort !== undefined) setCodexEffort(next.reasoningEffort)
-                  if (next.permissionsPreset !== undefined) setCodexPreset(next.permissionsPreset)
-                }}
-                onOpenSettings={() => {
-                  // Best-effort: ask the host to navigate Settings to the Codex tab.
-                  // For v1.5.0 we simply open Settings; the user can click the Codex tab.
-                  // P3+ may add a deep-link channel.
-                  window.dispatchEvent(new CustomEvent('app:openSettings', { detail: { tab: 'codex' } }))
-                }}
-              />
-            )}
-
-            {/* -- ORGANIZATION section -- */}
-            <div className="border-t border-surface1 pt-3 mt-3">
-              <span className="text-[10px] uppercase tracking-wider text-overlay1 font-medium">Organization</span>
-              <p className="text-[10px] text-overlay0 mt-1">
-                Optional. Both just organise the sidebar; skip them until you have a few configs.
-              </p>
-            </div>
-
-            {/* Group assignment */}
-            <div>
-              <label className="block text-xs text-subtext0 mb-1">Group</label>
-              <select
-                value={showNewGroup ? '__new__' : (groupId || '')}
-                onChange={(e) => handleGroupChange(e.target.value)}
-                className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-blue"
-              >
-                <option value="">No group</option>
-                {groups.map((g) => (
-                  <option key={g.id} value={g.id}>{g.name}</option>
-                ))}
-                <option value="__new__">+ New Group...</option>
-              </select>
-              <p className="text-[10px] text-overlay0 mt-1">
-                Grouped configs collapse together in the sidebar and can all launch with one click.
-              </p>
-              {showNewGroup && (
-                <div className="flex gap-2 mt-1.5">
-                  <input
-                    autoFocus
-                    value={newGroupName}
-                    onChange={(e) => setNewGroupName(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleCreateGroup() } }}
-                    placeholder="Group name"
-                    className="flex-1 bg-base border border-surface1 rounded px-3 py-1.5 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleCreateGroup}
-                    className="px-3 py-1.5 rounded text-xs bg-blue text-crust font-medium hover:bg-blue/90 transition-colors"
-                  >
-                    Create
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {/* Section assignment (only when ungrouped) */}
-            {!groupId && (
-              <div>
-                <label className="block text-xs text-subtext0 mb-1">Section</label>
-                <select
-                  value={showNewSection ? '__new__' : (sectionId || '')}
-                  onChange={(e) => handleSectionChange(e.target.value)}
-                  className="w-full bg-base border border-surface1 rounded px-3 py-2 text-sm text-text focus:outline-none focus:border-blue"
-                >
-                  <option value="">No section</option>
-                  {sections.map((s) => (
-                    <option key={s.id} value={s.id}>{s.name}</option>
-                  ))}
-                  <option value="__new__">+ New Section...</option>
-                </select>
-                <p className="text-[10px] text-overlay0 mt-1">
-                  A labelled heading this config sits under in the sidebar; sections can also launch all their configs at once.
-                </p>
-                {showNewSection && (
-                  <div className="flex gap-2 mt-1.5">
-                    <input
-                      autoFocus
-                      value={newSectionName}
-                      onChange={(e) => setNewSectionName(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleCreateSection() } }}
-                      placeholder="Section name"
-                      className="flex-1 bg-base border border-surface1 rounded px-3 py-1.5 text-sm text-text placeholder:text-overlay0 focus:outline-none focus:border-blue"
-                    />
-                    <button
-                      type="button"
-                      onClick={handleCreateSection}
-                      className="px-3 py-1.5 rounded text-xs bg-blue text-crust font-medium hover:bg-blue/90 transition-colors"
-                    >
-                      Create
-                    </button>
+                    )}
                   </div>
+                  <div>
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <label className="text-xs text-subtext0" htmlFor="ccc-section">Section</label>
+                      <HelpBtn k="section" label="About sections" />
+                    </div>
+                    <select
+                      id="ccc-section"
+                      value={showNewSection ? '__new__' : (sectionId || '')}
+                      onChange={(e) => handleSectionChange(e.target.value)}
+                      disabled={!!groupId}
+                      className={inputCls + (groupId ? ' opacity-50 cursor-not-allowed' : '')}
+                    >
+                      <option value="">None</option>
+                      {sections.map((s) => (
+                        <option key={s.id} value={s.id}>{s.name}</option>
+                      ))}
+                      <option value="__new__">+ New section…</option>
+                    </select>
+                    <Hint k="section">A labelled heading this config sits under. You can launch everything in a section at once.</Hint>
+                    {showNewSection && !groupId && (
+                      <div className="flex gap-2 mt-1.5">
+                        <input
+                          autoFocus
+                          value={newSectionName}
+                          onChange={(e) => setNewSectionName(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleCreateSection() } }}
+                          placeholder="Section name"
+                          className={inputCls.replace('w-full', 'flex-1')}
+                        />
+                        <button
+                          type="button"
+                          onClick={handleCreateSection}
+                          className="px-3 py-1.5 rounded text-xs bg-blue text-crust font-medium hover:bg-blue/90 transition-colors"
+                        >
+                          Create
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                {groupId && (
+                  <p className="text-[11px] text-yellow mt-2">Grouped configs can't also sit under a section — clear the group to pick one.</p>
                 )}
-              </div>
-            )}
-          </div>
+              </details>
 
+              {/* ── 5 · IDENTITY ── */}
+              {sectionHead('Identity', 'Any provider', 'identity', 'About identity')}
+              <Hint k="identity">
+                Names and colours this config so you can tell its sessions apart in the sidebar and tab strip
+                when several are running.
+              </Hint>
+              <div className="grid grid-cols-2 gap-4 mt-1">
+                <div>
+                  <label className="block text-xs text-subtext0 mb-1">Label <span className="text-peach">*</span></label>
+                  <input
+                    value={label}
+                    onChange={(e) => setLabel(e.target.value)}
+                    placeholder="e.g. App Dev"
+                    className={inputCls}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-subtext0 mb-1">Colour</label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {IDENTITY_SWATCHES.map((k) => (
+                      <button
+                        key={k}
+                        type="button"
+                        onClick={() => setColorKey(k)}
+                        className={`w-6 h-6 rounded-md border-2 transition-all ${
+                          colorKey === k ? 'border-text scale-110' : 'border-transparent hover:border-overlay0'
+                        }`}
+                        style={{ backgroundColor: resolveIdentityColor(k, theme) }}
+                        title={k}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
         </div>
 
-        {/* Buttons — full-width below grid */}
-        <div className="flex justify-end gap-2 mt-5">
+        {/* Footer: the validation slot names the next step; Save can never
+            silently no-op again. */}
+        <div className="flex items-center gap-2 px-6 py-3 border-t border-surface1 bg-base/40">
+          <span className="text-xs text-yellow mr-auto">{validationMsg}</span>
           <button
             type="button"
             onClick={onCancel}
@@ -988,9 +1080,12 @@ export default function SessionDialog({ onConfirm, onCancel, initial }: Props) {
           </button>
           <button
             type="submit"
-            className="px-4 py-1.5 rounded text-sm bg-blue text-crust font-medium hover:bg-blue/90 transition-colors"
+            disabled={!!validationMsg}
+            className={`px-4 py-1.5 rounded text-sm font-medium transition-colors ${
+              validationMsg ? 'bg-surface1 text-overlay0 cursor-not-allowed' : 'bg-blue text-crust hover:bg-blue/90'
+            }`}
           >
-            {initial ? 'Save' : 'Create'}
+            {isEdit ? 'Save changes' : 'Create config'}
           </button>
         </div>
       </form>

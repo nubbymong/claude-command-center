@@ -19,6 +19,7 @@ import os from 'os'
 import { changelog } from '../../../src/renderer/changelog'
 import { emptyGitHubConfig } from '../../../src/shared/github-constants'
 import { currentTrainingVersion } from '../../../src/renderer/training-steps'
+import { STEPS, ONBOARDING_VERSION } from '../../../src/renderer/onboarding/steps'
 
 const APP_PATH = path.resolve(__dirname, '../../../out/main/index.js')
 
@@ -61,6 +62,15 @@ function seedCleanConfig(dataDir: string): void {
         lastTrainingVersion: currentTrainingVersion(),
         hasCreatedFirstConfig: true,
         accountGateDecided: true,
+        // The v2 onboarding harness (bootGates priority 1.5) outranks every gate
+        // seeded above, so without these three keys it blocked EVERY e2e run and
+        // the suite became vacuous. Mark the flow finished: all steps completed,
+        // at the current ONBOARDING_VERSION, stamped with this app version so
+        // shouldReonboardForBeta() doesn't re-fire it on the beta channel.
+        // Derived from STEPS so a new step can't silently re-break the suite.
+        completedSteps: Object.fromEntries(STEPS.map((s) => [s.id, '2026-01-01T00:00:00.000Z'])),
+        onboardingCompletedVersion: ONBOARDING_VERSION,
+        onboardingAppVersion: appVersion,
       },
       null,
       2,
@@ -89,9 +99,11 @@ export async function launchIsolatedApp(): Promise<IsolatedApp> {
   })
   const page = await app.firstWindow()
   await page.waitForLoadState('domcontentloaded')
-  // Deterministic readiness: the sidebar Settings button renders once the
+  // Deterministic readiness: the sidebar's new-config button renders once the
   // shell has hydrated and setup is complete (env hook → isSetupComplete).
-  await page.waitForSelector('button[title="Settings"]', { timeout: 20000 })
+  // NOT button[title="Settings"] — that title no longer exists on the nav item,
+  // so the wait could only ever time out.
+  await page.waitForSelector('[data-tour="new-config"]', { timeout: 20000 })
   // Belt-and-suspenders: dismiss any first-run boot-gate modal (what's-new /
   // training) the seed didn't fully suppress, so its backdrop can't intercept
   // clicks in tests.
@@ -104,10 +116,21 @@ export async function launchIsolatedApp(): Promise<IsolatedApp> {
 
 export async function closeIsolatedApp(a: IsolatedApp | undefined): Promise<void> {
   if (!a) return
+  // A graceful close can hang indefinitely when the test left a live PTY session
+  // running (the shell keeps the app alive), which blows the afterAll hook
+  // timeout and fails an otherwise-passing run. Race it, then kill.
   try {
-    await a.app.close()
+    await Promise.race([
+      a.app.close(),
+      new Promise<void>((resolve) => setTimeout(resolve, 5000)),
+    ])
   } catch {
     /* ignore */
+  }
+  try {
+    a.app.process().kill()
+  } catch {
+    /* already gone */
   }
   // Remove ONLY the unique mkdtemp dir we created — never a parent/shared path.
   try {

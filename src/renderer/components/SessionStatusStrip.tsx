@@ -59,7 +59,12 @@ export default function SessionStatusStrip({ sessionId }: SessionStatusStripProp
   // telemetry band; the Claude controls cluster (Mode/Model/Restart/account)
   // stays regardless. Absent (pre-upgrade config) means on.
   const statusLineEnabled = useSettingsStore((s) => s.settings.statusLineEnabled ?? true)
-  const codexReview = useCodexReviewUsage(session?.enableCodexReview ? sessionId : null)
+  // Codex review is authorised globally (2 Aug decision): every local Claude
+  // session registers for it, so the usage pill polls whenever this session
+  // qualifies — the gate is the global Codex master, not a per-config flag.
+  const codexReviewOn = useSettingsStore((s) => s.settings.codexEnabled !== false)
+  const codexReviewEligible = codexReviewOn && session?.provider === 'claude' && !session?.shellOnly && session?.sessionType !== 'ssh'
+  const codexReview = useCodexReviewUsage(codexReviewEligible ? sessionId : null)
   const { restart } = useRestartSession(session, false)
   const switchAccount = useSwitchAccount(session)
   const theme = useResolvedTheme()

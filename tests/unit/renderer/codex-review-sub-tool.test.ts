@@ -23,12 +23,14 @@ describe('CodexReviewSubTool (P7.4)', () => {
     container.remove()
   })
 
-  it('renders the Available status + opt-in description', () => {
+  it('renders the Available status + global-availability description', () => {
     act(() => { root.render(React.createElement(CodexReviewSubTool)) })
     const text = container.textContent ?? ''
     expect(text).toContain('Codex review (Claude-driven)')
     expect(text).toContain('Available')
-    expect(text).toContain('Enable Codex code review')
+    // 2.1.0-beta.5: the per-config opt-in is retired — the card describes the
+    // global gate (Codex master switch) instead.
+    expect(text).toContain('every local Claude Code session')
     expect(text).toContain('codex_review')
   })
 })

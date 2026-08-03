@@ -28,7 +28,7 @@ import { useAccountIdentitySubscription } from '../hooks/useAccountIdentitySubsc
 import { useActiveTabEffect } from '../hooks/useActiveTabEffect'
 import { useCursorLayerVisibility } from '../hooks/useCursorLayerVisibility'
 import { useAgentLibraryStore, BUILTIN_TEMPLATES } from '../stores/agentLibraryStore'
-import type { ProviderId, CodexOptions } from '../../shared/types'
+import type { ProviderId, CodexOptions, TerminalOptions } from '../../shared/types'
 
 // Re-export for consumers
 export { killSessionPty } from '../ptyTracker'
@@ -73,9 +73,12 @@ interface Props {
   provider?: ProviderId
   /** Codex sub-options (only meaningful when provider === 'codex'). */
   codexOptions?: CodexOptions
+  /** Terminal-only launcher options (only meaningful when shellOnly). The secret
+   *  VALUE is never carried here — main resolves it from the keychain at spawn. */
+  terminalOptions?: TerminalOptions
 }
 
-export default function TerminalView({ sessionId, configId, cwd, shellOnly, elevated, ssh, isActive = true, legacyVersion, agentIds, effortLevel, permissionMode, extraArgs, disableAutoMemory, enableCodexReview, loggingEnabled, model, provider, codexOptions }: Props) {
+export default function TerminalView({ sessionId, configId, cwd, shellOnly, elevated, ssh, isActive = true, legacyVersion, agentIds, effortLevel, permissionMode, extraArgs, disableAutoMemory, enableCodexReview, loggingEnabled, model, provider, codexOptions, terminalOptions }: Props) {
   const xtermContainerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
@@ -489,7 +492,7 @@ export default function TerminalView({ sessionId, configId, cwd, shellOnly, elev
               resumeNudgeGated = true
             }
             window.electronAPI.pty
-              .spawn(sessionId, { cwd, cols, rows, ssh, shellOnly, elevated, configId, configLabel, useResumePicker, legacyVersion, agentsConfig, effortLevel, permissionMode, extraArgs, disableAutoMemory, enableCodexReview, loggingEnabled, model, provider, codexOptions, profileId: resolvedProfileId, resume })
+              .spawn(sessionId, { cwd, cols, rows, ssh, shellOnly, elevated, terminalOptions, configId, configLabel, useResumePicker, legacyVersion, agentsConfig, effortLevel, permissionMode, extraArgs, disableAutoMemory, enableCodexReview, loggingEnabled, model, provider, codexOptions, profileId: resolvedProfileId, resume })
               .catch((err: unknown) => {
                 // BUG-2: spawn was fire-and-forget, so a main-process throw (e.g.
                 // "Codex CLI not found on PATH") became a silent unhandled
