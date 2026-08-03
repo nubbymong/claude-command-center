@@ -45,7 +45,47 @@ source-level assertion instead, scoped to code lines so the rationale comment (w
 the words `token !== expected` while explaining why not to) does not trip it. Same tool the
 resume-picker tests use for `shell: false`, and for the same reason.
 
-Every guard was verified by reverting it on an isolated copy and watching its named test fail:
-8 of 8 mutations killed, including the two that survived the first pass.
+### What the adversarial pass then found, and it was the important half
 
-3461 tests; typecheck clean.
+The source-level assertion was VACUOUS on its first version. It asserted
+`expect(code).toContain('timingSafeEqual')` over the whole file -- and `timingSafeEqual`
+appears in the IMPORT LINE, which is a code line, not a comment. So a `tokensMatch` body of
+`return presented === expected` satisfied it, and the attacker demonstrated that against all
+3191 tests: zero failures, including the test named "compares the token in CONSTANT TIME".
+Every property the change claimed about the token -- constant time, length-guarded, does not
+throw -- reverted silently. The assertion is now scoped to the function BODY, and rejects a
+`presented === expected` short-circuit in either direction. That is the second time in this
+series a "test that cannot fail" shipped past a self-review and was caught only by an
+independent pass.
+
+It also answered the issue's actual question -- "what else arrives unvalidated on that route"
+-- with something worse than the field the issue named. `hooks-types.ts` documents a hard
+per-session feed ceiling: RING_BUFFER_CAP entries times a ~8 KiB bounded payload. That was
+only ever true of `payload`. `event`, `toolName` and the derived `summary` sat OUTSIDE
+`boundPayloadForFeed`, and `summary` is deliberately built from the UNbounded payload, so a
+1 MiB body produced a ~2 MB ring entry -- the documented ceiling was off by three orders of
+magnitude, and every entry is structured-cloned across the utilityProcess transport, so it was
+main-process serialisation cost per event and not only memory. Bounded now, which is what
+makes that ceiling real.
+
+Smaller things from the same pass: the length bound was in UTF-16 code units, so 4096 units of
+astral characters was 16 KiB of UTF-8 -- it is measured in bytes now, and the comment claiming
+4096 is "past any real path" was simply wrong (Linux PATH_MAX is 4096 BYTES, macOS 1024, and
+Windows long paths allow far more). `tokensMatch` compared lossily transcoded buffers, where
+every unpaired surrogate becomes EF BF BD and distinct strings can collide; unreachable given
+an ASCII UUID secret, but a comparison that is only correct because of a property of its caller
+is one refactor from being wrong, so it hashes both sides and compares digests. And the drop
+log had no test at all -- neither that it fires, nor the "length only, never the value"
+property that is its entire justification.
+
+Every guard verified by reverting it on an isolated copy: 8 of 8 in the first battery, then
+11 of 11 in the second, including the `=== `-body mutation that had passed 3191 tests.
+
+3465 tests; typecheck clean.
+
+### Not written here
+
+The pass also surfaced one finding that is NOT about this change: a pre-existing weakness in
+shipped code, low severity, routed privately per SECURITY.md ("Embargo"). No component,
+mechanism, or repro appears in this fragment, in the commits, or in the PR -- that is the whole
+point of the rule, and `CONTEXT.d/` is the file that catches people.

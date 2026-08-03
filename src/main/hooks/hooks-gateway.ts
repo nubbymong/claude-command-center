@@ -1,5 +1,5 @@
 import http from 'node:http'
-import { randomUUID, timingSafeEqual } from 'node:crypto'
+import { randomUUID, timingSafeEqual, createHash } from 'node:crypto'
 import {
   DEFAULT_HOOKS_PORT,
   PORT_RETRY_COUNT,
@@ -47,17 +47,22 @@ const MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024
  * is an argument for consistency, not against it, and the inconsistency was
  * noted while tracing GHSA-hw7c-g5pw-w725 (#180).
  *
- * `timingSafeEqual` throws on unequal-length buffers, so the length guard runs
- * first. That leaks the token LENGTH, which is a fixed constant here.
+ * Compares fixed-size SHA-256 DIGESTS rather than the raw buffers. That removes
+ * two rough edges of the length-guard-then-compare shape:
+ *   - no length side-channel, and no early return on a length mismatch;
+ *   - `Buffer.from(x, 'utf8')` is LOSSY for unpaired surrogates (every one becomes
+ *     EF BF BD), so distinct strings could transcode to identical buffers. Not
+ *     reachable here -- the secret is an ASCII `randomUUID()` -- but a comparison
+ *     that is only correct because of a property of the caller is one refactor
+ *     away from being wrong.
  */
 export function tokensMatch(presented: string, expected: string): boolean {
-  // Refuse rather than authenticate on an empty expected secret:
-  // timingSafeEqual(<empty>, <empty>) is true, so a session whose secret failed
-  // to generate would otherwise accept an empty token.
+  // Refuse rather than authenticate on an empty expected secret: two empty
+  // inputs hash identically, so a session whose secret failed to generate would
+  // otherwise accept an empty token.
   if (!presented || !expected) return false
-  const a = Buffer.from(presented, 'utf8')
-  const b = Buffer.from(expected, 'utf8')
-  if (a.length !== b.length) return false
+  const a = createHash('sha256').update(presented, 'utf8').digest()
+  const b = createHash('sha256').update(expected, 'utf8').digest()
   return timingSafeEqual(a, b)
 }
 
@@ -68,10 +73,41 @@ export function tokensMatch(presented: string, expected: string): boolean {
  * GHSA-hw7c-g5pw-w725, and it is at the choke point so it covers this caller
  * too). This bound is about the OTHER half: the value arrives in a hook POST
  * body, is logged, and is used to build lookups, so an unbounded string is a
- * cheap way to bloat the log and the discovery sink. 4096 is well past any real
- * path on any of the three platforms.
+ * cheap way to bloat the log and the discovery sink.
+ *
+ * Measured in BYTES, not UTF-16 code units: 4096 code units of astral characters
+ * is 16 KiB of UTF-8, so a code-unit bound is up to 4x looser than it reads. This
+ * is purely a log/memory bound and does not stand in for a platform limit --
+ * Linux PATH_MAX is 4096 bytes and macOS is 1024, so on POSIX the OS is already
+ * the tighter constraint, while Windows long paths allow far more.
  */
-const MAX_TRANSCRIPT_PATH_LENGTH = 4096
+const MAX_TRANSCRIPT_PATH_BYTES = 4096
+
+/**
+ * Bounds for the scalar fields lifted straight out of a hook body.
+ *
+ * `hooks-types.ts` documents a hard per-session feed ceiling: RING_BUFFER_CAP
+ * entries times a ~8 KiB bounded payload. That was only true of `payload`.
+ * `event`, `toolName` and the derived `summary` sat OUTSIDE `boundPayloadForFeed`,
+ * so a 1 MiB body produced a 2 MB ring entry and the documented ceiling was off
+ * by three orders of magnitude (#180). These are what make the ceiling real.
+ *
+ * A real event name is ~20 characters and a real tool name ~10, so 128 is
+ * generous; the summary is a one-line label in the feed.
+ */
+const MAX_SCALAR_LENGTH = 128
+const MAX_SUMMARY_LENGTH = 256
+
+/** Truncate a scalar lifted from a hook body. Undefined passes through. */
+function boundScalar(v: string | undefined): string | undefined {
+  if (v === undefined) return undefined
+  return v.length > MAX_SCALAR_LENGTH ? v.slice(0, MAX_SCALAR_LENGTH) : v
+}
+
+/** Truncate the derived feed summary. */
+function boundSummary(v: string): string {
+  return v.length > MAX_SUMMARY_LENGTH ? `${v.slice(0, MAX_SUMMARY_LENGTH - 1)}…` : v
+}
 
 /**
  * Shape-filter a `transcript_path` lifted out of a hook POST body.
@@ -94,7 +130,7 @@ const MAX_TRANSCRIPT_PATH_LENGTH = 4096
  */
 export function sanitiseTranscriptPath(v: unknown): string | null {
   if (typeof v !== 'string') return null
-  if (v.length === 0 || v.length > MAX_TRANSCRIPT_PATH_LENGTH) return null
+  if (v.length === 0 || Buffer.byteLength(v, 'utf8') > MAX_TRANSCRIPT_PATH_BYTES) return null
   // A NUL truncates the path for any native consumer while leaving the JS string
   // intact -- the classic disagreement between two layers about where a string
   // ends. Other C0 controls have no business in a path either.
@@ -666,13 +702,14 @@ export class HooksGateway {
       ? (parsed.hook_event_name as string)
       : typeof parsed.event === 'string' ? (parsed.event as string) : undefined
     if (eventName === undefined) return
-    const event = eventName as HookEventKind
-    const toolName =
+    const event = boundScalar(eventName) as HookEventKind
+    const toolName = boundScalar(
       typeof parsed.tool_name === 'string'
         ? (parsed.tool_name as string)
         : typeof parsed.toolName === 'string'
           ? (parsed.toolName as string)
-          : undefined
+          : undefined,
+    )
     const rawPayload =
       parsed.payload && typeof parsed.payload === 'object'
         ? (parsed.payload as Record<string, unknown>)
@@ -692,7 +729,14 @@ export class HooksGateway {
       // Summary is built from the FULL redacted payload (so it stays accurate),
       // THEN the stored/emitted payload is bounded to ~8 KiB so feed history can't
       // grow unbounded (RING_BUFFER_CAP entries * ~8 KiB = hard memory ceiling).
-      summary: buildSummary(event, toolName, redacted),
+      //
+      // The summary itself is bounded too (#180). It is derived from the UNbounded
+      // payload -- `${toolName} ${file_path}` -- so it sat OUTSIDE that ceiling: a
+      // 1 MiB body produced a 1 MiB summary and a 2 MB ring entry, times
+      // RING_BUFFER_CAP. Every entry is also structured-cloned across the
+      // utilityProcess transport, so this was main-process serialisation cost per
+      // event, not only memory.
+      summary: boundSummary(buildSummary(event, toolName, redacted)),
       payload: boundPayloadForFeed(redacted),
       ts: Date.now(),
     }

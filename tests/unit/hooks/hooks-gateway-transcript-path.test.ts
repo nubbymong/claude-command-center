@@ -22,6 +22,7 @@ import * as path from 'path'
 import { readFileSync } from 'fs'
 import { homedir } from 'os'
 import { HooksGateway, sanitiseTranscriptPath, tokensMatch } from '../../../src/main/hooks/hooks-gateway'
+import { logWarn } from '../../../src/main/debug-logger'
 import { canonicalizeTranscriptPath } from '../../../src/main/logging/transcript-discovery'
 
 let gw: HooksGateway | null = null
@@ -111,6 +112,35 @@ describe('transcript_path arriving on a hook POST', () => {
     const long = `${path.join(homedir(), '.claude', 'projects')}/${'a'.repeat(5000)}.jsonl`
     expect(await post(secret, sid, { hook_event_name: 'SessionStart', transcript_path: long })).toBe(200)
     expect(sink).not.toHaveBeenCalled()
+  })
+
+  it('measures the bound in BYTES, so astral characters cannot quadruple it', async () => {
+    // 4096 UTF-16 code units of astral characters is 16 KiB of UTF-8 — a
+    // code-unit bound reads 4x tighter than it is.
+    const { sink, secret, sid } = await gateway()
+    const astral = '\u{1F600}'.repeat(2048)   // 4096 code units, 8192 bytes
+    expect(astral.length).toBe(4096)
+    expect(await post(secret, sid, { hook_event_name: 'SessionStart', transcript_path: astral })).toBe(200)
+    expect(sink).not.toHaveBeenCalled()
+  })
+
+  it('logs the DROP by type and length, never the value', async () => {
+    // The value is remote-influenced and this runs BEFORE redaction, so the log
+    // line must not carry it. A silent drop is also wrong: it looks identical to
+    // "Claude did not send one", and the two have different diagnoses.
+    const { secret, sid } = await gateway()
+    // logWarn is mocked globally in tests/unit/setup.ts and NOT reset between
+    // tests here, so earlier drops in this file would otherwise be found first.
+    vi.mocked(logWarn).mockClear()
+    const marker = 'MARKER_THAT_MUST_NOT_BE_LOGGED'
+    const rejected = `${path.join(homedir(), '.claude', 'projects')}/${marker}\u0000.jsonl`
+    expect(await post(secret, sid, { hook_event_name: 'SessionStart', transcript_path: rejected })).toBe(200)
+    const lines = vi.mocked(logWarn).mock.calls.map((c) => String(c[0]))
+    const drop = lines.find((l) => l.includes('transcript_path'))
+    expect(drop, 'the drop was not logged at all').toBeDefined()
+    expect(drop).toContain('length=')
+    expect(drop).toContain('type=string')
+    expect(drop).not.toContain(marker)
   })
 
   it('still ingests the event when the path is dropped', async () => {
@@ -217,24 +247,72 @@ describe('the hook token comparison', () => {
     expect(tokensMatch('abc', 'abcd')).toBe(false)
   })
 
-  it('compares the token in CONSTANT TIME, asserted at the source', () => {
-    // A timing property cannot be observed from a unit test: `!==` returns the
+  it('compares the token in CONSTANT TIME, asserted inside the function body', () => {
+    // A timing property cannot be observed from a unit test: `===` returns the
     // same verdict, just not in constant time, so every behavioural test passes
     // against it. This repo already uses a source-level assertion for exactly
-    // that situation (the `shell: false` check in the resume-picker tests), so
-    // the same tool applies here.
+    // that situation (the `shell: false` check in the resume-picker tests).
+    //
+    // Scoped to the BODY of tokensMatch, not the file. A file-wide
+    // `toContain('timingSafeEqual')` is satisfied by the IMPORT LINE alone — so
+    // the first version of this assertion passed against a `return presented ===
+    // expected` body, which the adversarial pass demonstrated across all 3191
+    // tests. That is the exact "test that cannot fail" this repo keeps paying for.
     const src = readFileSync(
       path.join(__dirname, '..', '..', '..', 'src', 'main', 'hooks', 'hooks-gateway.ts'),
       'utf-8',
     )
-    // Scoped to code lines so the rationale comments -- which say the words
-    // "token !== expected" while explaining why not to -- cannot trip it.
-    const code = src
+    const body = src.match(/export function tokensMatch[\s\S]*?\n}/)?.[0]
+    expect(body, 'tokensMatch not found — did it get renamed?').toBeDefined()
+    // Strip comments so the rationale text cannot satisfy or trip the assertions.
+    const code = body!
       .split('\n')
       .filter((l) => !l.trim().startsWith('*') && !l.trim().startsWith('//') && !l.trim().startsWith('/*'))
       .join('\n')
-    expect(code).toContain('tokensMatch(token, expected)')
-    expect(code).not.toMatch(/token\s*!==\s*expected/)
-    expect(code).toContain('timingSafeEqual')
+    expect(code).toContain('timingSafeEqual(')
+    // No short-circuit on the secret itself, in either direction.
+    expect(code).not.toMatch(/presented\s*[!=]==\s*expected/)
+    expect(code).not.toMatch(/expected\s*[!=]==\s*presented/)
+    // ...and the call site actually goes through it.
+    const callSite = src
+      .split('\n')
+      .filter((l) => !l.trim().startsWith('*') && !l.trim().startsWith('//'))
+      .join('\n')
+    expect(callSite).toContain('tokensMatch(token, expected)')
+    expect(callSite).not.toMatch(/token\s*!==\s*expected/)
+  })
+})
+
+describe('what else arrives unvalidated on this route (#180)', () => {
+  it('bounds event, toolName and the derived summary', async () => {
+    // hooks-types.ts documents a hard per-session ceiling: RING_BUFFER_CAP
+    // entries times a ~8 KiB bounded payload. That was only true of `payload` --
+    // these three sat OUTSIDE boundPayloadForFeed, and `summary` is built from
+    // the UNbounded payload, so a 1 MiB body produced a ~2 MB ring entry and the
+    // documented ceiling was off by three orders of magnitude.
+    const { secret, sid } = await gateway()
+    const huge = 'A'.repeat(500_000)
+    expect(await post(secret, sid, {
+      hook_event_name: huge,
+      tool_name: huge,
+      file_path: huge,
+    })).toBe(200)
+
+    const entry = gw!.getBuffer(sid)[0]
+    expect(entry).toBeDefined()
+    expect(entry.event.length).toBeLessThanOrEqual(128)
+    expect(entry.toolName!.length).toBeLessThanOrEqual(128)
+    expect(entry.summary.length).toBeLessThanOrEqual(256)
+    // The whole entry, serialised — this is what crosses the utilityProcess
+    // transport once per event.
+    expect(JSON.stringify(entry).length).toBeLessThan(32_000)
+  })
+
+  it('leaves a normal event, tool name and summary untouched', async () => {
+    const { secret, sid } = await gateway()
+    expect(await post(secret, sid, { hook_event_name: 'PreToolUse', tool_name: 'Bash' })).toBe(200)
+    const entry = gw!.getBuffer(sid)[0]
+    expect(entry.event).toBe('PreToolUse')
+    expect(entry.toolName).toBe('Bash')
   })
 })
