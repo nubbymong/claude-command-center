@@ -478,7 +478,7 @@ describe('registerCodexReviewTool resolver (P7.7.10 transport binding)', () => {
     expect(resolver).not.toBeNull()
     const out = await resolver!({ cccSessionId: 'arg-sid', mode: 'paths', paths: ['x'] })
     expect(out.isError).toBe(true)
-    expect(out.content[0].text).toContain('no bound CCC session')
+    expect(out.content[0].text).toContain('no bound Conductor session')
     expect(runCodexStreaming).not.toHaveBeenCalled()
   })
 
