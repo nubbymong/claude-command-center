@@ -2,9 +2,8 @@ import { ipcMain, app, dialog } from 'electron'
 import { spawn } from 'child_process'
 import * as path from 'path'
 import * as fs from 'fs'
-import * as os from 'os'
 import { checkForUpdatesOnDemand, markUpdateInstalled, getProjectRootPath, setSourcePathInRegistry, hasSourcePath, isPackagedApp } from '../update-watcher'
-import { checkGitHubRelease, downloadGitHubRelease, prepareLinuxAppImageUpdate, isPathOnNoexecMount, InstallerIntegrityError, stillMatchesDigest } from '../github-update'
+import { checkGitHubRelease, downloadGitHubRelease, prepareLinuxAppImageUpdate, isPathOnNoexecMount, InstallerIntegrityError, stillMatchesDigest, createInstallerDir } from '../github-update'
 import { killAllPty } from '../pty-manager'
 import { logInfo, logError } from '../debug-logger'
 
@@ -147,12 +146,20 @@ export function registerUpdateHandlers(): void {
 
         const src = candidates.find((p) => fs.existsSync(p))
         if (src) {
-          const downloadsDir = path.join(os.homedir(), 'Downloads')
-          try { fs.mkdirSync(downloadsDir, { recursive: true }) } catch {}
-          const dest = path.join(downloadsDir, path.basename(src))
-          fs.copyFileSync(src, dest)
-          installerPath = dest
-          logInfo(`[update] Copied local installer to ${dest}`)
+          // Same private staging directory as a real download (#174), not
+          // ~/Downloads. This path is dev-only, but it ends in the same
+          // spawn-with-elevation, so it gets the same directory -- and the same
+          // guard, so a staging failure reads as "installer not found" below
+          // rather than an unhandled ENOENT the renderer silently swallows.
+          try {
+            const stageDir = createInstallerDir()
+            const dest = path.join(stageDir, path.basename(src))
+            fs.copyFileSync(src, dest)
+            installerPath = dest
+            logInfo(`[update] Copied local installer to ${dest}`)
+          } catch (err) {
+            logError('[update] Could not stage the local installer:', err)
+          }
         }
       }
     }
@@ -166,12 +173,14 @@ export function registerUpdateHandlers(): void {
     logInfo(`[update] Found installer: ${installerPath}`)
 
     // Re-hash immediately before the point of no return. Verification happened
-    // at download time, but the file then sits at a predictable path in
-    // ~/Downloads while we kill every PTY -- tens of ms to seconds, and every
-    // browser writes into that directory. The installer runs with
-    // `allowElevation`, so a non-elevated local process that wins that race
-    // gains admin on a UAC prompt the user is already expecting. Costs ~1s for
-    // 150 MB and shrinks the window to microseconds (#111).
+    // at download time, but the file then sits on disk while we kill every PTY
+    // -- tens of ms to seconds. The installer runs with `allowElevation`, so a
+    // local process that wins that race gains admin on a UAC prompt the user is
+    // already expecting. Costs ~1s for 150 MB and shrinks the window to
+    // microseconds (#111). #174 did NOT make this redundant: the attacker in
+    // that model runs as the user, so it does not have to guess the staging
+    // directory -- it can watch the root and see it appear. This re-hash is the
+    // control of record for the race; #174 removed the drive-by variant.
     if (verifiedSha256) {
       if (!await stillMatchesDigest(installerPath, verifiedSha256)) {
         const msg = `${path.basename(installerPath)} changed on disk after it was verified. `
@@ -184,7 +193,7 @@ export function registerUpdateHandlers(): void {
 
     // Linux: prepare and VERIFY the AppImage is executable BEFORE we kill the
     // user's terminals and exit. spawn() reports EACCES/ENOENT only via an async
-    // 'error' event, so a doomed launch (a noexec ~/Downloads mount, a failed
+    // 'error' event, so a doomed launch (a noexec staging mount, a failed
     // chmod on vfat/exfat, an unwritable $APPIMAGE dir) would otherwise kill
     // every PTY, exit the app, and leave nothing running with no error shown.
     // Fail here instead — the outer catch surfaces it and the app stays alive.
@@ -197,8 +206,10 @@ export function registerUpdateHandlers(): void {
       } catch (err) {
         throw new Error(`Updated AppImage is not executable (${linuxLaunchPath}) — aborting before restart: ${(err as Error).message}`)
       }
-      // ...and the mount, which accessSync can't see: a noexec ~/Downloads (the
-      // fallback launch location) would pass the bit check yet fail execve. The
+      // ...and the mount, which accessSync can't see: a noexec staging dir (the
+      // fallback launch location when $APPIMAGE is unset) would pass the bit
+      // check yet fail execve. This is why #174 stages under userData rather
+      // than /tmp, which is noexec on hardened systems far more often. The
       // single-instance lock means we can't confirm the relaunch by spawning it
       // first, so catch this here — before the PTYs are killed — not after.
       if (isPathOnNoexecMount(linuxLaunchPath)) {
@@ -231,8 +242,21 @@ export function registerUpdateHandlers(): void {
           setTimeout(() => settle(resolve), 3000)
         })
       } else {
+        // Wait for the child to actually start, as the Linux branch does. spawn
+        // reports EACCES/ENOENT only via an async 'error' event, and `app.exit(0)`
+        // two statements below runs first -- so a blocked launch used to kill
+        // every PTY and exit with nothing on screen. That matters more since #174
+        // moved staging out of ~/Downloads: %LOCALAPPDATA% is a common target for
+        // "block executables outside Program Files" policies, and the user no
+        // longer has a file in Downloads to fall back on.
         const proc = spawn(installerPath, [], { detached: true, stdio: 'ignore' })
-        proc.unref()
+        await new Promise<void>((resolve, reject) => {
+          let done = false
+          const settle = (fn: () => void) => { if (!done) { done = true; proc.unref(); fn() } }
+          proc.once('spawn', () => settle(resolve))
+          proc.once('error', (err) => settle(() => reject(err)))
+          setTimeout(() => settle(resolve), 3000)
+        })
       }
 
       markUpdateInstalled()
@@ -243,6 +267,18 @@ export function registerUpdateHandlers(): void {
       return true
     } catch (err) {
       logError('[update] Failed:', err)
+      // Every PTY is already dead by the time we get here, and the renderer
+      // swallows this rejection at all four call sites -- so showErrorBox is the
+      // only channel that reaches the user. Name the staged path: since #174 the
+      // installer is in a deliberately unpredictable directory, so without this
+      // there is nothing for them to run by hand (#174 adversarial review).
+      try {
+        dialog.showErrorBox(
+          'Update could not be launched',
+          `${(err as Error).message}\n\nThe verified installer is at:\n${installerPath}\n\n`
+          + 'Run it manually, or install from the GitHub release page.'
+        )
+      } catch { /* never let the dialog itself break the flow */ }
       throw err
     }
   })
