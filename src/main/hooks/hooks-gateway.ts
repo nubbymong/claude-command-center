@@ -1,5 +1,5 @@
 import http from 'node:http'
-import { randomUUID } from 'node:crypto'
+import { randomUUID, timingSafeEqual, createHash } from 'node:crypto'
 import {
   DEFAULT_HOOKS_PORT,
   PORT_RETRY_COUNT,
@@ -20,6 +20,10 @@ import type {
 // dependency is no longer needed (#483).
 import { registerResponder as defaultRegister, deregisterResponder as defaultDeregister } from '../permission-responders'
 import { logTrace, logWarn, logError } from '../debug-logger'
+// ONE shape filter for the transcript path, shared with the SSH sentinel source.
+// Re-exported so the existing gateway tests keep importing it from here.
+import { sanitiseTranscriptPath } from '../logging/transcript-discovery'
+export { sanitiseTranscriptPath }
 
 // Diagnostics (opt-in, verbose-gated): module-level in-flight counter for the
 // hooks HTTP handler. Incremented on handler entry, decremented when the
@@ -36,6 +40,61 @@ let hooksInFlight = 0
 // big-file edit while still bounding a misbehaving local client; the gateway
 // is loopback-only and token-gated, so the DoS surface is already small.
 const MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024
+
+/**
+ * Length-checked, constant-time token comparison.
+ *
+ * Same shape as `tokensMatch` in conductor-mcp-server.ts, and here for the same
+ * reason: two local servers checking a per-session bearer token should not
+ * disagree about how. The practical risk is low -- a loopback token with 122
+ * bits of CSPRNG entropy is not realistically recoverable by timing -- but "low"
+ * is an argument for consistency, not against it, and the inconsistency was
+ * noted while tracing GHSA-hw7c-g5pw-w725 (#180).
+ *
+ * Compares fixed-size SHA-256 DIGESTS rather than the raw buffers. That removes
+ * two rough edges of the length-guard-then-compare shape:
+ *   - no length side-channel, and no early return on a length mismatch;
+ *   - `Buffer.from(x, 'utf8')` is LOSSY for unpaired surrogates (every one becomes
+ *     EF BF BD), so distinct strings could transcode to identical buffers. Not
+ *     reachable here -- the secret is an ASCII `randomUUID()` -- but a comparison
+ *     that is only correct because of a property of the caller is one refactor
+ *     away from being wrong.
+ */
+export function tokensMatch(presented: string, expected: string): boolean {
+  // Refuse rather than authenticate on an empty expected secret: two empty
+  // inputs hash identically, so a session whose secret failed to generate would
+  // otherwise accept an empty token.
+  if (!presented || !expected) return false
+  const a = createHash('sha256').update(presented, 'utf8').digest()
+  const b = createHash('sha256').update(expected, 'utf8').digest()
+  return timingSafeEqual(a, b)
+}
+
+/**
+ * Bounds for the scalar fields lifted straight out of a hook body.
+ *
+ * `hooks-types.ts` documents a hard per-session feed ceiling: RING_BUFFER_CAP
+ * entries times a ~8 KiB bounded payload. That was only true of `payload`.
+ * `event`, `toolName` and the derived `summary` sat OUTSIDE `boundPayloadForFeed`,
+ * so a 1 MiB body produced a 2 MB ring entry and the documented ceiling was off
+ * by three orders of magnitude (#180). These are what make the ceiling real.
+ *
+ * A real event name is ~20 characters and a real tool name ~10, so 128 is
+ * generous; the summary is a one-line label in the feed.
+ */
+const MAX_SCALAR_LENGTH = 128
+const MAX_SUMMARY_LENGTH = 256
+
+/** Truncate a scalar lifted from a hook body. Undefined passes through. */
+function boundScalar(v: string | undefined): string | undefined {
+  if (v === undefined) return undefined
+  return v.length > MAX_SCALAR_LENGTH ? v.slice(0, MAX_SCALAR_LENGTH) : v
+}
+
+/** Truncate the derived feed summary. */
+function boundSummary(v: string): string {
+  return v.length > MAX_SUMMARY_LENGTH ? `${v.slice(0, MAX_SUMMARY_LENGTH - 1)}…` : v
+}
 
 // Cap how many request bodies may be buffering at once. The gateway is
 // loopback-only and token-gated, but a buggy/hostile LOCAL process could still
@@ -533,7 +592,7 @@ export class HooksGateway {
     const expected = this.secrets.get(sid)
     if (!expected) return { status: 404, body: '{}' }
     const token = headerValue(args.headers, 'x-ccc-hook-token')
-    if (token !== expected) return { status: 404, body: '{}' }
+    if (typeof token !== 'string' || !tokensMatch(token, expected)) return { status: 404, body: '{}' }
     return null
   }
 
@@ -571,9 +630,19 @@ export class HooksGateway {
     // earliest + exact discovery source. Done here (not in the redactor walk) so
     // the redactor stays a pure value-pattern scrubber and the raw path reaches
     // the binder un-mutated. A bad subscriber must never break ingestion.
-    const tp = typeof parsed.transcript_path === 'string' ? (parsed.transcript_path as string) : undefined
+    //
+    // Shape-filtered, not just `typeof`-checked (#180). This is the second source
+    // path into the binder that GHSA-hw7c-g5pw-w725 fixed, and the one that never
+    // got the sentinel's treatment. Containment stays at the choke point --
+    // duplicating it here is how two copies drift.
+    const tp = sanitiseTranscriptPath(parsed.transcript_path)
     if (tp) {
       try { this.onTranscriptPath?.(sid, tp) } catch { /* discovery sink must not break the hook path */ }
+    } else if (parsed.transcript_path !== undefined) {
+      // Say so: a silently dropped path looks identical to "Claude did not send
+      // one", and the two have very different diagnoses. Length only -- the value
+      // is remote-influenced and this runs BEFORE redaction.
+      logWarn(`[hooks] dropped an unusable transcript_path sid=${sid} type=${typeof parsed.transcript_path} length=${typeof parsed.transcript_path === 'string' ? parsed.transcript_path.length : 'n/a'}`)
     }
     // Reject payloads with a missing/non-string event field rather than
     // forging an 'Unknown' sentinel: the shared HookEventKind union
@@ -590,13 +659,14 @@ export class HooksGateway {
       ? (parsed.hook_event_name as string)
       : typeof parsed.event === 'string' ? (parsed.event as string) : undefined
     if (eventName === undefined) return
-    const event = eventName as HookEventKind
-    const toolName =
+    const event = boundScalar(eventName) as HookEventKind
+    const toolName = boundScalar(
       typeof parsed.tool_name === 'string'
         ? (parsed.tool_name as string)
         : typeof parsed.toolName === 'string'
           ? (parsed.toolName as string)
-          : undefined
+          : undefined,
+    )
     const rawPayload =
       parsed.payload && typeof parsed.payload === 'object'
         ? (parsed.payload as Record<string, unknown>)
@@ -616,7 +686,14 @@ export class HooksGateway {
       // Summary is built from the FULL redacted payload (so it stays accurate),
       // THEN the stored/emitted payload is bounded to ~8 KiB so feed history can't
       // grow unbounded (RING_BUFFER_CAP entries * ~8 KiB = hard memory ceiling).
-      summary: buildSummary(event, toolName, redacted),
+      //
+      // The summary itself is bounded too (#180). It is derived from the UNbounded
+      // payload -- `${toolName} ${file_path}` -- so it sat OUTSIDE that ceiling: a
+      // 1 MiB body produced a 1 MiB summary and a 2 MB ring entry, times
+      // RING_BUFFER_CAP. Every entry is also structured-cloned across the
+      // utilityProcess transport, so this was main-process serialisation cost per
+      // event, not only memory.
+      summary: boundSummary(buildSummary(event, toolName, redacted)),
       payload: boundPayloadForFeed(redacted),
       ts: Date.now(),
     }
