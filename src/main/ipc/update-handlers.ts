@@ -130,12 +130,21 @@ export function registerUpdateHandlers(): void {
         // there is no toast component -- so the user saw the "Updating..."
         // overlay vanish and nothing else. showErrorBox is the one channel that
         // cannot be dropped on the way out.
-        if (err instanceof InstallerIntegrityError) {
-          logError(`[update] ${err.message}`)
-          try {
+        logError(`[update] ${(err as Error).message}`)
+        try {
+          if (err instanceof InstallerIntegrityError) {
             dialog.showErrorBox('Update blocked - integrity check failed', err.message)
-          } catch { /* never let the dialog itself break the flow */ }
-        }
+          } else {
+            // NOT an integrity failure: a staging failure (disk full, unwritable
+            // data directory, a redirected staging root) or a network error. It
+            // still has to reach the user, and this is the only channel that
+            // does -- the rethrow escapes before the launch try/catch below, and
+            // every renderer call site swallows it. Reporting a storage problem
+            // as a tamper event was wrong; reporting it as nothing at all is
+            // worse (#174 adversarial review, rounds 2 and 3).
+            dialog.showErrorBox('Update could not be downloaded', (err as Error).message)
+          }
+        } catch { /* never let the dialog itself break the flow */ }
         throw err
       }
     }
@@ -187,6 +196,7 @@ export function registerUpdateHandlers(): void {
     if (!installerPath || !fs.existsSync(installerPath)) {
       const msg = 'Installer not found. Check your internet connection or update channel.'
       logError('[update] ' + msg)
+      try { dialog.showErrorBox('Update could not be downloaded', msg) } catch { /* ignore */ }
       throw new Error(msg)
     }
 
@@ -219,11 +229,18 @@ export function registerUpdateHandlers(): void {
     // Fail here instead — the outer catch surfaces it and the app stays alive.
     let linuxLaunchPath: string | null = null
     if (process.platform === 'linux' && installerPath.endsWith('.AppImage')) {
-      linuxLaunchPath = prepareLinuxAppImageUpdate(installerPath)
       // The file we verified is NOT the file we are about to spawn: this call
-      // copies the AppImage somewhere else. Re-hash the COPY. Without this, the
-      // digest check covers a file that is then never executed, and everything
-      // between the copy and the spawn is unverified (#174 adversarial review).
+      // copies the AppImage somewhere else. The verifier is passed IN so the copy
+      // is checked BEFORE it is moved onto the user's launcher path -- checking
+      // afterwards detects a swap but cannot undo it.
+      linuxLaunchPath = await prepareLinuxAppImageUpdate(
+        installerPath,
+        undefined,
+        verifiedSha256 ? (candidate) => stillMatchesDigest(candidate, verifiedSha256!) : undefined,
+      )
+      // Belt to that braces: whatever path came back, hash it before spawning.
+      // Covers the parked-copy and already-in-place branches, which the
+      // pre-commit check above does not reach.
       if (verifiedSha256 && linuxLaunchPath !== installerPath) {
         if (!await stillMatchesDigest(linuxLaunchPath, verifiedSha256)) {
           const msg = `${path.basename(linuxLaunchPath)} does not match the verified installer after being copied into place. `

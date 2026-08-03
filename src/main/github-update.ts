@@ -1035,9 +1035,11 @@ export function assertPrivateDir(dir: string): void {
  *
  * There is deliberately no fallback chain. Every candidate a fallback could
  * reach is either shared (/tmp) or roaming (%APPDATA%), so "try the next one"
- * means "silently downgrade to the state this change exists to leave". A throw
- * here surfaces as `downloadInstallerFile` returning null, which the caller
- * already reports as a failed update.
+ * means "silently downgrade to the state this change exists to leave".
+ *
+ * A throw propagates: `downloadGitHubRelease` turns it into a plain Error (never
+ * an InstallerIntegrityError -- a local storage problem is not a tamper event),
+ * and `update-handlers` shows it in an "Update could not be downloaded" dialog.
  */
 export function installerRoot(): string {
   return privateSubdir('updates')
@@ -1046,13 +1048,17 @@ export function installerRoot(): string {
 /**
  * `<dataDir>/<name>`, created and validated.
  *
- * The data directory itself is checked for a planted redirect too -- not with
- * the full ownership/mode test (it may legitimately live on a mount or a share
- * whose uid differs), but enough to refuse a symlink or junction dropped in its
- * place. Relocating a live data directory already gives an attacker the config,
- * sessions and transcripts, so this is the cheap half of a bigger problem rather
- * than the boundary; the point is that it must not ALSO silently redirect a file
- * we are about to execute.
+ * The data directory's OWN final component is lstat-checked too -- not the full
+ * ownership/mode test (it may legitimately live on a mount or share whose uid
+ * differs), just enough to refuse a symlink or junction dropped in its place.
+ * That check is load-bearing rather than redundant: with the data directory
+ * itself junctioned, `assertPrivateDir` on the subdirectory PASSES, because both
+ * realpath calls resolve through the same junction and therefore agree.
+ *
+ * A redirect at a HIGHER component (e.g. %LOCALAPPDATA%) is not caught, and is
+ * not meant to be: an attacker who can relocate the live data directory already
+ * has the config, sessions and transcripts. The point is only that a file we are
+ * about to EXECUTE must not be written through a redirect we could have seen.
  */
 function privateSubdir(name: string): string {
   const base = getDataDirectory()
@@ -1204,8 +1210,11 @@ export async function downloadInstallerFile(tagName: string, assetName: string, 
     logError('[github-update] gh CLI download failed:', err)
   }
 
-  // Nothing usable landed -- take the empty staging directory with us.
-  try { fs.rmSync(stageDir, { recursive: true, force: true }) } catch { /* best effort */ }
+  // Nothing usable landed. Only clean up a directory WE created: when the caller
+  // supplied one it owns the lifetime (and may have other files in it).
+  if (!existingStageDir) {
+    try { fs.rmSync(stageDir, { recursive: true, force: true }) } catch { /* best effort */ }
+  }
   return null
 }
 
@@ -1365,10 +1374,11 @@ export function isPathOnNoexecMount(targetPath: string, procMounts?: string): bo
  * never block the update on the tidy-up. `currentAppImage` is a parameter
  * (defaulting to $APPIMAGE) so tests can exercise all paths on any platform.
  */
-export function prepareLinuxAppImageUpdate(
+export async function prepareLinuxAppImageUpdate(
   downloadedPath: string,
   currentAppImage: string | undefined = process.env.APPIMAGE,
-): string {
+  verify?: (candidate: string) => Promise<boolean>,
+): Promise<string> {
   try { fs.chmodSync(downloadedPath, 0o755) } catch (err) {
     logError('[github-update] chmod +x on downloaded AppImage failed:', err)
   }
@@ -1436,14 +1446,28 @@ export function prepareLinuxAppImageUpdate(
     // prune-eligible. Park it.
     if (path.resolve(target) === path.resolve(downloadedPath)) return park()
 
+    // VERIFY BEFORE COMMIT. Copy to a sibling `.new`, hash THAT, and only then
+    // move it into place. The old order copied straight onto the target and let
+    // the caller re-hash afterwards -- which detects a swap but cannot undo it:
+    // the bad bytes are already at the user's .desktop/dock-pinned path and run
+    // on next launch, while the UI says the update was "blocked".
+    const staged = `${target}.new`
+    try { fs.unlinkSync(staged) } catch { /* no leftover */ }
+    fs.copyFileSync(downloadedPath, staged)
+    fs.chmodSync(staged, 0o755)
+    if (verify && !await verify(staged)) {
+      try { fs.unlinkSync(staged) } catch { /* best effort */ }
+      throw new Error(`the copy at ${staged} did not match the verified installer`)
+    }
+
     // Unlink before writing when reusing the running file's own path: truncating
     // a mounted AppImage in place can corrupt the running mount, whereas removing
-    // the directory entry is safe (the mount keeps the inode) and lets copy
+    // the directory entry is safe (the mount keeps the inode) and lets the rename
     // recreate the file cleanly.
     if (path.resolve(target) === path.resolve(real)) {
-      try { fs.unlinkSync(real) } catch { /* copy recreates it */ }
+      try { fs.unlinkSync(real) } catch { /* the rename recreates it */ }
     }
-    fs.copyFileSync(downloadedPath, target)
+    fs.renameSync(staged, target)
     fs.chmodSync(target, 0o755)
 
     if (path.resolve(target) !== path.resolve(real)) {
@@ -1457,6 +1481,9 @@ export function prepareLinuxAppImageUpdate(
     logInfo(`[github-update] AppImage updated in place: ${target}`)
     return target
   } catch (err) {
+    // Includes a failed verification of the staged copy. The user's installed
+    // AppImage was never touched in that case, so falling back to a parked copy
+    // of the (already-verified) download is safe.
     logError('[github-update] In-place AppImage update failed — launching from a parked copy:', err)
     return park()
   }

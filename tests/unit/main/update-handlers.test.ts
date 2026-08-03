@@ -58,6 +58,7 @@ const gh = vi.hoisted(() => ({
   stillMatchesCalls: [] as string[],
   appImageResult: null as string | null,
   noexec: false,
+  appImageVerifiers: [] as Array<((c: string) => Promise<boolean>) | undefined>,
 }))
 
 // Hoisted with the mock factory, which vitest lifts above the imports.
@@ -77,19 +78,25 @@ vi.mock('../../../src/main/github-update', () => ({
     gh.stillMatchesCalls.push(p)
     return gh.stillMatches.length ? gh.stillMatches.shift()! : true
   },
-  prepareLinuxAppImageUpdate: (p: string) => gh.appImageResult ?? p,
+  prepareLinuxAppImageUpdate: async (p: string, _cur: string | undefined, verify?: (c: string) => Promise<boolean>) => {
+    gh.appImageVerifiers.push(verify)
+    return gh.appImageResult ?? p
+  },
   isPathOnNoexecMount: () => gh.noexec,
   createInstallerDir: () => '/mock/dataDir/updates/ccc-upd-DEV',
   InstallerIntegrityError: FakeIntegrityError,
 }))
 
 // ── everything else the module pulls in ────────────────────────────────
+const fsState = vi.hoisted(() => ({ accessThrows: false }))
 vi.mock('fs', () => ({
   existsSync: () => true,
   readFileSync: () => '{"version":"2.1.1"}',
   copyFileSync: vi.fn(),
   mkdirSync: vi.fn(),
-  accessSync: vi.fn(),
+  accessSync: () => {
+    if (fsState.accessThrows) throw new Error('EACCES: permission denied')
+  },
   constants: { X_OK: 1 },
 }))
 // update-watcher owns the "an update was installed" bookkeeping and reaches for
@@ -99,6 +106,11 @@ vi.mock('../../../src/main/update-watcher', () => ({
   markUpdateInstalled: vi.fn(),
   getProjectRootPath: () => '/mock/project',
   setSourcePathInRegistry: vi.fn(),
+  // Present so the "no installer" branch is REACHABLE. Omitting these made
+  // vitest throw "No export is defined on the mock" the moment a test drove
+  // `gh.verified = null`, which is why nothing covered that path.
+  isPackagedApp: () => true,
+  hasSourcePath: () => false,
 }))
 vi.mock('../../../src/main/debug-logger', () => ({ logInfo: vi.fn(), logError: vi.fn() }))
 vi.mock('../../../src/main/pty-manager', () => ({ killAllPty: vi.fn() }))
@@ -128,6 +140,8 @@ beforeEach(() => {
   gh.stillMatchesCalls = []
   gh.appImageResult = null
   gh.noexec = false
+  gh.appImageVerifiers = []
+  fsState.accessThrows = false
   registerUpdateHandlers()
 })
 
@@ -217,6 +231,26 @@ describe('update:installAndRestart — verification', () => {
     }
   })
 
+  it('hands prepareLinuxAppImageUpdate a verifier so the copy is checked BEFORE it lands', async () => {
+    // Without the passthrough the copy is only checked after it has already
+    // overwritten the user's installed AppImage — detect, not prevent.
+    const staged = '/mock/dataDir/updates/ccc-upd-XYZ/CCC-2.1.1.AppImage'
+    gh.verified = { path: staged, sha256: 'a'.repeat(64) }
+    const original = process.platform
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true })
+    try {
+      await invoke()
+      expect(gh.appImageVerifiers).toHaveLength(1)
+      expect(typeof gh.appImageVerifiers[0]).toBe('function')
+      // And it really is the digest check, bound to the verified hash.
+      gh.stillMatchesCalls = []
+      await gh.appImageVerifiers[0]!('/some/candidate')
+      expect(gh.stillMatchesCalls).toEqual(['/some/candidate'])
+    } finally {
+      Object.defineProperty(process, 'platform', { value: original, configurable: true })
+    }
+  })
+
   it('aborts when the AppImage copy does not match the verified digest', async () => {
     const staged = '/mock/dataDir/updates/ccc-upd-XYZ/CCC-2.1.1.AppImage'
     gh.verified = { path: staged, sha256: 'a'.repeat(64) }
@@ -230,6 +264,62 @@ describe('update:installAndRestart — verification', () => {
     } finally {
       Object.defineProperty(process, 'platform', { value: original, configurable: true })
     }
+  })
+
+  it('tells the user when a local STORAGE failure stopped the download', async () => {
+    // A disk-full mkdtemp or an unwritable data dir raises a plain Error, which
+    // is not an InstallerIntegrityError -- so before this it reached the user
+    // through NO channel at all: the overlay vanished and nothing was shown.
+    // A wrong message became silence, which is worse.
+    gh.downloadError = new Error('Could not prepare a private folder to download the update into: ENOSPC')
+    await expect(invoke()).rejects.toThrow(/ENOSPC/)
+    expect(shownErrorBoxes).toHaveLength(1)
+    expect(shownErrorBoxes[0][0]).toMatch(/could not be downloaded/i)
+    expect(shownErrorBoxes[0][1]).toContain('ENOSPC')
+  })
+
+  it('tells the user when no installer could be found at all', async () => {
+    gh.verified = null
+    await expect(invoke()).rejects.toThrow(/Installer not found/)
+    expect(shownErrorBoxes).toHaveLength(1)
+    expect(spawnState.calls).toHaveLength(0)
+  })
+
+  it('aborts before killing the PTYs when the AppImage is not executable', async () => {
+    // The round-1 guard: spawn reports EACCES only asynchronously, and the
+    // single-instance lock means we cannot test-launch first, so this has to fail
+    // BEFORE the terminals are killed.
+    gh.verified = { path: '/mock/dataDir/updates/ccc-upd-XYZ/CCC-2.1.1.AppImage', sha256: 'a'.repeat(64) }
+    fsState.accessThrows = true
+    const original = process.platform
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true })
+    try {
+      await expect(invoke()).rejects.toThrow(/not executable/)
+      expect(spawnState.calls).toHaveLength(0)
+      expect(exitCalls).toEqual([])
+    } finally {
+      Object.defineProperty(process, 'platform', { value: original, configurable: true })
+    }
+  })
+
+  it('aborts before killing the PTYs when the AppImage is on a noexec mount', async () => {
+    // accessSync inspects permission BITS, not the mount, so a chmod'd AppImage
+    // on a noexec filesystem passes that check and still fails execve.
+    gh.verified = { path: '/mock/dataDir/updates/ccc-upd-XYZ/CCC-2.1.1.AppImage', sha256: 'a'.repeat(64) }
+    gh.noexec = true
+    const original = process.platform
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true })
+    try {
+      await expect(invoke()).rejects.toThrow(/noexec/)
+      expect(spawnState.calls).toHaveLength(0)
+    } finally {
+      Object.defineProperty(process, 'platform', { value: original, configurable: true })
+    }
+  })
+
+  it('unrefs the child so it outlives the app', async () => {
+    await invoke()
+    expect(spawnState.unrefs).toBe(1)
   })
 
   it('shows the integrity dialog, and only that one, on an integrity failure', async () => {

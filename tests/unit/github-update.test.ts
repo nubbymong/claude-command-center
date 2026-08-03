@@ -127,6 +127,9 @@ const mockReadFileSync = vi.fn()
 // that distinguishes an abort from a post-hoc size check.
 const writtenBytes = { total: 0 }
 const mockWriteStreamBytes = (): number => writtenBytes.total
+// What actually landed at each path, so createReadStream can serve it back and
+// the SUCCESS path of downloadGitHubRelease (digest match included) is reachable.
+const fileBodies = new Map<string, Buffer>()
 vi.mock('fs', () => {
   const { EventEmitter: EE } = require('events')
   return {
@@ -141,10 +144,13 @@ vi.mock('fs', () => {
     mkdirSync: vi.fn(),
     createWriteStream: (path: string) => {
       mockCreateWriteStream(path)
+      fileBodies.set(path, Buffer.alloc(0))
       const stream = new EE() as any
       stream.closed = false
       stream.write = vi.fn((chunk: Buffer | string) => {
-        writtenBytes.total += typeof chunk === 'string' ? Buffer.byteLength(chunk) : chunk.length
+        const buf = typeof chunk === 'string' ? Buffer.from(chunk) : chunk
+        writtenBytes.total += buf.length
+        fileBodies.set(path, Buffer.concat([fileBodies.get(path) ?? Buffer.alloc(0), buf]))
         return true
       })
       stream.close = (cb?: () => void) => {
@@ -153,8 +159,22 @@ vi.mock('fs', () => {
       }
       return stream
     },
-    unlinkSync: (...a: any[]) => mockUnlinkSync(...a),
-    renameSync: (...a: any[]) => mockRenameSync(...a),
+    createReadStream: (path: string) => {
+      const stream = new EE() as any
+      const body = fileBodies.get(path)
+      setImmediate(() => {
+        if (body === undefined) { stream.emit('error', new Error('ENOENT')); return }
+        stream.emit('data', body)
+        stream.emit('end')
+      })
+      return stream
+    },
+    unlinkSync: (...a: any[]) => { fileBodies.delete(String(a[0])); return mockUnlinkSync(...a) },
+    renameSync: (...a: any[]) => {
+      const body = fileBodies.get(String(a[0]))
+      if (body !== undefined) { fileBodies.set(String(a[1]), body); fileBodies.delete(String(a[0])) }
+      return mockRenameSync(...a)
+    },
     mkdtempSync: (...a: any[]) => mockMkdtempSync(...(a as [string])),
     readdirSync: (...a: any[]) => mockReaddirSync(...a),
     rmSync: (...a: any[]) => mockRmSync(...a),
@@ -231,6 +251,7 @@ describe('github-update', () => {
     mockStatSync.mockReturnValue({ size: 256 })
     mockReadFileSync.mockReturnValue('')
     writtenBytes.total = 0
+    fileBodies.clear()
   })
 
   // ── #174: where a download is staged, and how big it is allowed to get ──
@@ -360,6 +381,41 @@ describe('github-update', () => {
       const p = downloadGitHubRelease('v1.2.125', ASSET, 'https://h/r/download/v1.2.125/' + ASSET)
       await expect(p).rejects.toThrow(/disk space|writable|private folder/i)
       await expect(p).rejects.not.toBeInstanceOf(InstallerIntegrityError)
+    })
+
+    it('verifies and returns the installer, staged beside the manifest in ONE directory', async () => {
+      // The "one staging directory" invariant, driven all the way to SUCCESS.
+      // Two independent directories meant the installer's prune could delete the
+      // one the manifest fetch was using; over-cleaning the shared one (rmSync of
+      // the directory instead of unlinking just the manifest) removes the
+      // directory the installer's own .part file is about to land in, and breaks
+      // the direct-HTTPS leg of every real update.
+      const body = Buffer.from('the real installer bytes')
+      const digest = require('crypto').createHash('sha256').update(body).digest('hex')
+      const manifest = `${digest}  ${ASSET}\n`
+      mockReadFileSync.mockReturnValue(manifest)
+      mockStatSync.mockReturnValue({ size: manifest.length })
+      // existsSync must be false for the pre-rename unlink and true after, so
+      // just report "absent" — httpsDownload tolerates it and renames anyway.
+      mockExistsSync.mockImplementation((p: string) => !String(p).endsWith('.part'))
+      httpsState.responses = [
+        { statusCode: 200, bodyBuffer: Buffer.from(manifest) },
+        { statusCode: 200, bodyBuffer: body },
+      ]
+
+      const verified = await downloadGitHubRelease('v1.2.125', ASSET, 'https://h/r/download/v1.2.125/' + ASSET)
+      expect(verified).not.toBeNull()
+      expect(verified!.sha256).toBe(digest)
+
+      const written = mockCreateWriteStream.mock.calls.map((c) => String(c[0]).replace(/\\/g, '/'))
+      const manifestDir = written.find((p) => p.includes('CHECKSUMS.txt'))!.replace(/\/[^/]*$/, '')
+      const installerDir = written.find((p) => p.includes(ASSET))!.replace(/\/[^/]*$/, '')
+      expect(installerDir).toBe(manifestDir)
+      expect(mockMkdtempSync).toHaveBeenCalledTimes(1)
+      // And the staging directory SURVIVES: the installer has to outlive this
+      // process, and the manifest cleanup must not take the directory with it.
+      const rmTargets = mockRmSync.mock.calls.map((c) => String(c[0]).replace(/\\/g, '/'))
+      expect(rmTargets).not.toContain(installerDir)
     })
 
     it('stages CHECKSUMS.txt in a private directory, not the shared temp dir', async () => {
@@ -922,17 +978,17 @@ describe('github-update', () => {
       mockLstatSync.mockReset().mockReturnValue(statLike())
     })
 
-    it('always chmods the download executable (downloads arrive without +x)', () => {
-      prepareLinuxAppImageUpdate(downloaded, undefined)
+    it('always chmods the download executable (downloads arrive without +x)', async () => {
+      await prepareLinuxAppImageUpdate(downloaded, undefined)
       expect(mockChmodSync).toHaveBeenCalledWith(downloaded, 0o755)
     })
 
-    it('without $APPIMAGE (extracted/dev run), parks the AppImage OUTSIDE the staging root', () => {
+    it('without $APPIMAGE (extracted/dev run), parks the AppImage OUTSIDE the staging root', async () => {
       // #174 made this matter: the download now lands in a prune-eligible
       // ccc-upd- directory, so returning it unchanged would have the NEXT
       // update delete the running application. Parked under the data dir
       // instead, at a stable name so a .desktop entry or dock pin survives.
-      const result = prepareLinuxAppImageUpdate(downloaded, undefined)
+      const result = await prepareLinuxAppImageUpdate(downloaded, undefined)
       expect(result?.replace(/\\/g, '/')).toBe(`/mock/dataDir/bin/${downloaded.split('/').pop()}`)
       expect(result?.replace(/\\/g, '/')).not.toContain('/ccc-upd-')
       expect(mockCopyFileSync).toHaveBeenCalledWith(downloaded, result)
@@ -940,41 +996,49 @@ describe('github-update', () => {
       expect(mockUnlinkSync).not.toHaveBeenCalled()
     })
 
-    it('falls back to the download location when parking itself fails', () => {
+    it('falls back to the download location when parking itself fails', async () => {
       // Never block an update on tidy-up: launching from the staging dir works
       // today, it is only the next prune that would remove it.
       mockCopyFileSync.mockImplementation(() => { throw new Error('EACCES') })
-      expect(prepareLinuxAppImageUpdate(downloaded, undefined)).toBe(downloaded)
+      expect(await prepareLinuxAppImageUpdate(downloaded, undefined)).toBe(downloaded)
     })
 
-    it('versioned running name: writes the new versioned file and removes the old', () => {
-      const result = prepareLinuxAppImageUpdate(downloaded, running)
+    it('versioned running name: writes the new versioned file and removes the old', async () => {
+      const result = await prepareLinuxAppImageUpdate(downloaded, running)
       const expectedTarget = '/home/u/Apps/ClaudeCommandCenter-2.1.0-beta.2-linux-x86_64.AppImage'
       expect(result?.replace(/\\/g, '/')).toBe(expectedTarget)
+      // VERIFY BEFORE COMMIT: the bytes go to a sibling `.new` and are renamed
+      // into place, so a failed check never leaves them at the launcher path.
       expect(mockCopyFileSync).toHaveBeenCalledTimes(1)
-      expect(mockChmodSync).toHaveBeenCalledTimes(2) // download + target
+      expect(String(mockCopyFileSync.mock.calls[0][1]).replace(/\\/g, '/')).toBe(`${expectedTarget}.new`)
+      expect(String(mockRenameSync.mock.calls[0][0]).replace(/\\/g, '/')).toBe(`${expectedTarget}.new`)
+      expect(String(mockRenameSync.mock.calls[0][1]).replace(/\\/g, '/')).toBe(expectedTarget)
+      expect(mockChmodSync).toHaveBeenCalledTimes(3) // download + .new + target
       // Old version file removed (safe on Linux: mounted inode outlives the unlink)
       expect(mockUnlinkSync).toHaveBeenCalledWith(running)
     })
 
-    it('finding #1 — custom UNVERSIONED name is preserved: overwrites the SAME path', () => {
+    it('finding #1 — custom UNVERSIONED name is preserved: overwrites the SAME path', async () => {
       // The user renamed their AppImage to a stable name a .desktop/dock/alias
       // points at. Writing a new versioned name would orphan that launcher, so
       // we overwrite in place and keep their filename.
       const custom = '/home/u/Apps/ClaudeCommandCenter.AppImage'
-      const result = prepareLinuxAppImageUpdate(downloaded, custom)
+      const result = await prepareLinuxAppImageUpdate(downloaded, custom)
       expect(result?.replace(/\\/g, '/')).toBe(custom)
-      expect(mockCopyFileSync).toHaveBeenCalledWith(downloaded, custom)
-      // unlink-before-write on the same path (avoids truncating the mounted image)
+      // Staged next to the target, then renamed onto it.
+      expect(mockCopyFileSync).toHaveBeenCalledWith(downloaded, `${custom}.new`)
+      expect(mockRenameSync).toHaveBeenCalledWith(`${custom}.new`, custom)
+      // unlink-before-rename on the same path (avoids truncating the mounted image)
       expect(mockUnlinkSync).toHaveBeenCalledWith(custom)
-      // ...and NOT a second unlink, since target === running
-      expect(mockUnlinkSync).toHaveBeenCalledTimes(1)
+      // Two unlinks: the pre-emptive `.new` cleanup, then the running file.
+      // Never a second unlink of the TARGET, since target === running.
+      expect(mockUnlinkSync.mock.calls.filter(([p]) => p === custom)).toHaveLength(1)
     })
 
-    it('finding #1 — symlink launcher: resolves realpath and re-points the link', () => {
+    it('finding #1 — symlink launcher: resolves realpath and re-points the link', async () => {
       const link = '/home/u/bin/ccc'          // what the user launches
       mockRealpathSync.mockReturnValue(running) // resolves to the real versioned file
-      const result = prepareLinuxAppImageUpdate(downloaded, link)
+      const result = await prepareLinuxAppImageUpdate(downloaded, link)
       const expectedTarget = '/home/u/Apps/ClaudeCommandCenter-2.1.0-beta.2-linux-x86_64.AppImage'
       expect(result?.replace(/\\/g, '/')).toBe(expectedTarget)
       expect(mockUnlinkSync).toHaveBeenCalledWith(running)  // real old file removed
@@ -985,12 +1049,12 @@ describe('github-update', () => {
       expect(symLink).toBe(link)
     })
 
-    it('finding #4 — refuses a $APPIMAGE that is not an AppImage file (never writes to it)', () => {
+    it('finding #4 — refuses a $APPIMAGE that is not an AppImage file (never writes to it)', async () => {
       const stranger = '/home/u/important.txt'
       // Identity realpath is enough — $APPIMAGE IS the stranger. A blanket
       // mockReturnValue would also redirect the parking directory's own
       // validation and mask the assertion below.
-      const result = prepareLinuxAppImageUpdate(downloaded, stranger)
+      const result = await prepareLinuxAppImageUpdate(downloaded, stranger)
       // Parked, not left in the staging root (#174) — but the stranger file is
       // still never unlinked and never written to, which is the guarantee.
       expect(result?.replace(/\\/g, '/')).toContain('/mock/dataDir/bin/')
@@ -998,41 +1062,41 @@ describe('github-update', () => {
       expect(mockCopyFileSync.mock.calls.some(([, dest]) => dest === stranger)).toBe(false)
     })
 
-    it('finding #4 — refuses a $APPIMAGE that is a directory', () => {
+    it('finding #4 — refuses a $APPIMAGE that is a directory', async () => {
       mockLstatSync.mockReturnValue(statLike({ isFile: () => false }))
-      const result = prepareLinuxAppImageUpdate(downloaded, '/home/u/Apps')
+      const result = await prepareLinuxAppImageUpdate(downloaded, '/home/u/Apps')
       expect(result?.replace(/\\/g, '/')).toContain('/mock/dataDir/bin/')
       expect(mockUnlinkSync).not.toHaveBeenCalled()
       expect(mockCopyFileSync.mock.calls.some(([, dest]) => String(dest).includes('/home/u/Apps'))).toBe(false)
     })
 
-    it('when $APPIMAGE no longer resolves (realpath throws), parks the download', () => {
+    it('when $APPIMAGE no longer resolves (realpath throws), parks the download', async () => {
       // Throw only for $APPIMAGE. A blanket throw would also break the parking
       // directory's validation, so the test would pass for the wrong reason.
       mockRealpathSync.mockImplementation((p: string) => {
         if (p === running) throw new Error('ENOENT')
         return p
       })
-      const result = prepareLinuxAppImageUpdate(downloaded, running)
+      const result = await prepareLinuxAppImageUpdate(downloaded, running)
       expect(result?.replace(/\\/g, '/')).toContain('/mock/dataDir/bin/')
       expect(mockCopyFileSync.mock.calls.some(([, dest]) => dest === running)).toBe(false)
     })
 
-    it('degrades to the download location when the copy fails (unwritable dir)', () => {
+    it('degrades to the download location when the copy fails (unwritable dir)', async () => {
       mockCopyFileSync.mockImplementation(() => { throw new Error('EACCES: permission denied') })
-      const result = prepareLinuxAppImageUpdate(downloaded, running)
+      const result = await prepareLinuxAppImageUpdate(downloaded, running)
       expect(result).toBe(downloaded)
     })
 
-    it('failure to remove the old version is non-fatal (still returns the new path)', () => {
+    it('failure to remove the old version is non-fatal (still returns the new path)', async () => {
       mockUnlinkSync.mockImplementation(() => { throw new Error('EBUSY') })
-      const result = prepareLinuxAppImageUpdate(downloaded, running)
+      const result = await prepareLinuxAppImageUpdate(downloaded, running)
       expect(result?.replace(/\\/g, '/')).toBe('/home/u/Apps/ClaudeCommandCenter-2.1.0-beta.2-linux-x86_64.AppImage')
     })
 
-    it('re-download of the exact same file is a no-op replace', () => {
+    it('re-download of the exact same file is a no-op replace', async () => {
       const samePath = '/home/u/Apps/ClaudeCommandCenter-2.1.0-beta.2-linux-x86_64.AppImage'
-      const result = prepareLinuxAppImageUpdate(samePath, samePath)
+      const result = await prepareLinuxAppImageUpdate(samePath, samePath)
       expect(result).toBe(samePath)
       expect(mockCopyFileSync).not.toHaveBeenCalled()
       expect(mockUnlinkSync).not.toHaveBeenCalled()

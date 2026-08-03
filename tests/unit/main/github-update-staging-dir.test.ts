@@ -48,13 +48,13 @@ function linkDir(from: string, to: string): boolean {
 }
 
 describe('installerRoot — the parent of the staging directory', () => {
-  it('creates <dataDir>/updates and returns it', () => {
+  it('creates <dataDir>/updates and returns it', async () => {
     const r = installerRoot()
     expect(path.resolve(r)).toBe(path.resolve(path.join(dataDir.path, 'updates')))
     expect(fs.statSync(r).isDirectory()).toBe(true)
   })
 
-  it('is derived from the app data dir, so it never lands in a roaming profile or a shared /tmp', () => {
+  it('is derived from the app data dir, so it never lands in a roaming profile or a shared /tmp', async () => {
     // Pinning the BASE, not just the suffix. Electron's userData is %APPDATA%
     // on Windows, which roams — staging 200 MB there syncs it to a file share
     // at sign-out. getDataDirectory() uses %LOCALAPPDATA% and honours
@@ -64,7 +64,7 @@ describe('installerRoot — the parent of the staging directory', () => {
     expect(r).not.toContain(os.tmpdir().replace(/\\/g, '/') + '/updates')
   })
 
-  it('REFUSES a pre-planted link at <dataDir>/updates', () => {
+  it('REFUSES a pre-planted link at <dataDir>/updates', async () => {
     // The attack this guard exists for. mkdirSync(..., {recursive: true})
     // swallows EEXIST, so without the check a link planted once redirects every
     // future staged installer into a directory the planter controls — and the
@@ -79,7 +79,29 @@ describe('installerRoot — the parent of the staging directory', () => {
     }
   })
 
-  it('REFUSES a file where the staging root should be, instead of falling back', () => {
+  it('REFUSES a link planted at the DATA DIRECTORY itself', async () => {
+    // Load-bearing, not redundant: with the data dir junctioned, both of
+    // assertPrivateDir's realpath calls resolve THROUGH the same junction and
+    // therefore agree, so assertPrivateDir on the subdirectory passes. The
+    // lstat on the base is the only thing that catches it.
+    const attacker = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-attacker-'))
+    const realBase = dataDir.path
+    fs.rmSync(realBase, { recursive: true, force: true })
+    if (!linkDir(realBase, attacker)) {
+      dataDir.path = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-datadir-test-'))
+      return
+    }
+    try {
+      expect(() => installerRoot()).toThrow(/not a directory/i)
+      expect(fs.existsSync(path.join(attacker, 'updates'))).toBe(false)
+    } finally {
+      try { fs.unlinkSync(realBase) } catch { try { fs.rmSync(realBase, { recursive: true, force: true }) } catch { /* */ } }
+      fs.rmSync(attacker, { recursive: true, force: true })
+      dataDir.path = fs.mkdtempSync(path.join(os.tmpdir(), 'ccc-datadir-test-'))
+    }
+  })
+
+  it('REFUSES a file where the staging root should be, instead of falling back', async () => {
     // There is deliberately no fallback chain: every candidate a fallback could
     // reach is shared (/tmp) or roaming (%APPDATA%), so "try the next one" means
     // silently downgrading to the state this change exists to leave.
@@ -97,14 +119,14 @@ describe('the AppImage parking directory', () => {
     return file
   }
 
-  it('parks a staged AppImage under <dataDir>/bin', () => {
+  it('parks a staged AppImage under <dataDir>/bin', async () => {
     const staged = stagedAppImage()
-    const result = prepareLinuxAppImageUpdate(staged, undefined)
+    const result = await prepareLinuxAppImageUpdate(staged, undefined)
     expect(path.resolve(result)).toBe(path.resolve(path.join(dataDir.path, 'bin', path.basename(staged))))
     expect(fs.readFileSync(result, 'utf-8')).toBe('appimage bytes')
   })
 
-  it('REFUSES to park through a link planted at <dataDir>/bin', () => {
+  it('REFUSES to park through a link planted at <dataDir>/bin', async () => {
     // This is the directory CCC EXECUTES from, so it needs the same validation
     // as the staging root — leaving it a bare recursive mkdir put the
     // plantable-redirect hole back at the worst possible place.
@@ -115,30 +137,76 @@ describe('the AppImage parking directory', () => {
       // Degrades to launching from the staging directory rather than writing
       // into the attacker's: never block an update on tidy-up, never execute
       // out of a redirected directory.
-      expect(prepareLinuxAppImageUpdate(staged, undefined)).toBe(staged)
+      expect(await prepareLinuxAppImageUpdate(staged, undefined)).toBe(staged)
       expect(fs.readdirSync(attacker)).toEqual([])
     } finally {
       fs.rmSync(attacker, { recursive: true, force: true })
     }
   })
 
-  it('leaves an AppImage that is already outside the prune root alone', () => {
+  it('leaves an AppImage that is already outside the prune root alone', async () => {
     // No spurious 200 MB copy for a file that is not prune-eligible.
     const elsewhere = path.join(dataDir.path, 'ClaudeCommandCenter.AppImage')
     fs.writeFileSync(elsewhere, 'bytes')
-    expect(prepareLinuxAppImageUpdate(elsewhere, undefined)).toBe(elsewhere)
+    expect(await prepareLinuxAppImageUpdate(elsewhere, undefined)).toBe(elsewhere)
     expect(fs.existsSync(path.join(dataDir.path, 'bin'))).toBe(false)
   })
 
-  it('does not park a file merely because its folder is NAMED like a staging dir', () => {
+  it('does not park a file merely because its folder is NAMED like a staging dir', async () => {
     // A name test alone would copy 200 MB out of anyone's `~/ccc-upd-backup/`.
     // Prune-eligibility is about LOCATION: directly under <dataDir>/updates.
     const decoy = path.join(root, 'ccc-upd-backup')
     fs.mkdirSync(decoy, { recursive: true })
     const file = path.join(decoy, 'ClaudeCommandCenter.AppImage')
     fs.writeFileSync(file, 'bytes')
-    expect(prepareLinuxAppImageUpdate(file, undefined)).toBe(file)
+    expect(await prepareLinuxAppImageUpdate(file, undefined)).toBe(file)
     expect(fs.existsSync(path.join(dataDir.path, 'bin'))).toBe(false)
+  })
+
+  it('does not park a file under the updates root whose folder is not a staging dir', async () => {
+    // The other half: right LOCATION, wrong NAME. pruneStaleInstallerDirs only
+    // touches `ccc-upd-*`, so anything else under updates/ is not at risk and
+    // must not be copied. Both halves of the test are load-bearing.
+    const other = path.join(installerRoot(), 'not-a-stage')
+    fs.mkdirSync(other, { recursive: true })
+    const file = path.join(other, 'ClaudeCommandCenter.AppImage')
+    fs.writeFileSync(file, 'bytes')
+    expect(await prepareLinuxAppImageUpdate(file, undefined)).toBe(file)
+    expect(fs.existsSync(path.join(dataDir.path, 'bin'))).toBe(false)
+  })
+
+  it('VERIFIES the copy before moving it onto the running AppImage', async () => {
+    // Verify-before-commit. Checking afterwards detects a swap but cannot undo
+    // it: the bad bytes would already be at the user's .desktop/dock-pinned
+    // path, running on next launch, while the UI says the update was blocked.
+    const staged = stagedAppImage()
+    const running = path.join(dataDir.path, 'ClaudeCommandCenter.AppImage')
+    fs.writeFileSync(running, 'the original installed app')
+
+    const result = await prepareLinuxAppImageUpdate(staged, running, async () => false)
+
+    // The installed file is untouched...
+    expect(fs.readFileSync(running, 'utf-8')).toBe('the original installed app')
+    // ...no `.new` was left behind...
+    expect(fs.existsSync(`${running}.new`)).toBe(false)
+    // ...and it degraded to a parked copy of the (already-verified) download.
+    expect(path.resolve(result)).toBe(path.resolve(path.join(dataDir.path, 'bin', path.basename(staged))))
+  })
+
+  it('commits the copy when the verifier passes', async () => {
+    const staged = stagedAppImage()
+    const running = path.join(dataDir.path, 'ClaudeCommandCenter.AppImage')
+    fs.writeFileSync(running, 'the original installed app')
+    const seen: string[] = []
+
+    const result = await prepareLinuxAppImageUpdate(staged, running, async (c) => { seen.push(c); return true })
+
+    expect(path.resolve(result)).toBe(path.resolve(running))
+    expect(fs.readFileSync(running, 'utf-8')).toBe('appimage bytes')
+    // The verifier saw the STAGED sibling, not the final path — that is what
+    // makes it a pre-commit check.
+    expect(seen).toEqual([`${running}.new`])
+    expect(fs.existsSync(`${running}.new`)).toBe(false)
   })
 })
 
