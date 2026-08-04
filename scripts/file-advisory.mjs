@@ -1,5 +1,12 @@
-#!/usr/bin/env node
-// file-advisory.mjs — file a PRIVATE security advisory report (PVR) correctly.
+// file-advisory.mjs -- file a PRIVATE security advisory report (PVR) correctly.
+//
+// NO SHEBANG, deliberately. This module is imported by
+// tests/unit/file-advisory-payload.test.ts, and Vite strips a shebang by rewriting
+// the first line -- which under CRLF leaves a stray \r and the file fails to parse
+// with "SyntaxError: Invalid or unexpected token". It cost a red CI run on #207 and
+// reproduces exactly: LF parses, CRLF does not, and the non-ASCII in this file is
+// innocent. `scripts/*.mjs` is now pinned to LF in .gitattributes as well, so this
+// is belt and braces. Run it as `node scripts/file-advisory.mjs`.
 //
 // This is the ONLY sanctioned way to file an advisory in this repository. It
 // exists because hand-building the payload wasted five API calls and a wrong
