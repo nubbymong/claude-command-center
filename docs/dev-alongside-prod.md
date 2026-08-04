@@ -54,6 +54,12 @@ The dev data dir starts empty. To work with your real configs:
 (`ResourcesDirectory`), falling back to
 `%LOCALAPPDATA%\Claude Command Center\resources`.
 
+> The registry key keeps its original name on purpose — it is the pointer every
+> existing install already writes to, so renaming it would orphan their data.
+> Note the *default* differs by install age: a new install picks
+> `%LOCALAPPDATA%\AI Code Conductor\resources`, while an upgraded one keeps the
+> legacy path. Either way `--seed` reads the real value from the registry first.
+
 ## What's isolated (dev vs prod)
 
 | Resource | Prod | Dev |
