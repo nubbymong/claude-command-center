@@ -187,7 +187,7 @@ export default function SetupDialog({ onComplete, initialStep }: Props) {
       <div className="bg-surface0 rounded-lg p-8 max-w-xl w-full mx-4 shadow-2xl">
         <div className="text-center mb-6">
           <div className="text-4xl mb-3 font-mono text-mauve">&gt;_</div>
-          <h1 className="text-2xl font-bold text-text mb-2">Welcome to Claude Command Center</h1>
+          <h1 className="text-2xl font-bold text-text mb-2">Welcome to AI Code Conductor</h1>
           <p className="text-overlay1">Configure your storage directories</p>
         </div>
 

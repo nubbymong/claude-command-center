@@ -146,7 +146,9 @@ describe('SessionDialog indexing toggle', () => {
     act(() => {
       root.render(
         React.createElement(SessionDialog, {
-          initial: { provider: 'claude', label: 'test' },
+          // workingDirectory required since the validation slot landed — an
+          // empty directory blocks submit (the '.' fallback is gone).
+          initial: { provider: 'claude', label: 'test', workingDirectory: 'C:\\proj' },
           onConfirm,
           onCancel: vi.fn(),
         }),
@@ -177,7 +179,7 @@ describe('SessionDialog indexing toggle', () => {
     act(() => {
       root.render(
         React.createElement(SessionDialog, {
-          initial: { provider: 'claude', label: 'test' },
+          initial: { provider: 'claude', label: 'test', workingDirectory: 'C:\\proj' },
           onConfirm,
           onCancel: vi.fn(),
         }),

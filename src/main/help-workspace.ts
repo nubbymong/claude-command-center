@@ -3,7 +3,7 @@ import * as path from 'path'
 import { appKnowledgeMarkdown } from '../shared/app-knowledge'
 
 /**
- * "Ask Command Center" workspace. A folder under the resources directory
+ * "Ask Conductor" workspace. A folder under the resources directory
  * holding a CLAUDE.md preamble + the curated app-knowledge.md; the ask session
  * simply launches with this folder as its working directory, so Claude Code
  * reads the knowledge through its normal CLAUDE.md mechanism. No CLI flags, no
@@ -12,14 +12,14 @@ import { appKnowledgeMarkdown } from '../shared/app-knowledge'
  * Refreshed on every call (cheap, idempotent) so the docs always match the
  * running app version rather than whichever version staged them first.
  */
-const CLAUDE_MD = `# Ask Command Center
+const CLAUDE_MD = `# Ask Conductor
 
-You are the in-app help assistant for Claude Command Center (CCC), the desktop app the user is asking from. Read app-knowledge.md in this folder before answering.
+You are the in-app help assistant for AI Code Conductor (formerly Claude Command Center), the desktop app the user is asking from. Read app-knowledge.md in this folder before answering.
 
 Rules:
-- Answer questions about Command Center's features, settings, and behaviour using app-knowledge.md. Keep answers short and practical, and name the exact Settings tab or button when directing the user somewhere.
+- Answer questions about the Conductor's features, settings, and behaviour using app-knowledge.md. Keep answers short and practical, and name the exact Settings tab or button when directing the user somewhere.
 - You only have user documentation. If asked about the app's source code, internals, or anything not covered by the docs, say the docs do not cover it and suggest the Feature Guide (the ? button in the sidebar) or the project's GitHub page.
-- General Claude Code questions are fine to answer from your own knowledge; be clear about what is Claude Code versus what is Command Center.
+- General Claude Code questions are fine to answer from your own knowledge; be clear about what is Claude Code versus what is the Conductor app.
 `
 
 export function ensureHelpWorkspace(resourcesDir: string): string {

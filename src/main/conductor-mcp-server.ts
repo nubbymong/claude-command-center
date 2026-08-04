@@ -323,10 +323,10 @@ export function buildSessionNotFoundResponse(
     `\n` +
     `The SSE connection that owned this transport sessionId is no longer registered. This typically means:\n` +
     `  1. Claude Code is reusing a stale sessionId from a previous SSE connection\n` +
-    `  2. The CCC MCP server restarted while Claude was idle\n` +
+    `  2. The Conductor MCP server restarted while Claude was idle\n` +
     `  3. Network interruption dropped the SSE stream\n` +
     `\n` +
-    `Recovery: restart the Claude session inside CCC (the per-session --mcp-config writer re-binds a fresh SSE connection on spawn).\n`
+    `Recovery: restart the Claude session inside AI Code Conductor (the per-session --mcp-config writer re-binds a fresh SSE connection on spawn).\n`
 
   return { status: 404, body, logMessage }
 }

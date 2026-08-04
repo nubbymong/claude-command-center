@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { ProviderId, CodexOptions } from '../../shared/types'
+import type { ProviderId, CodexOptions, TerminalOptions } from '../../shared/types'
 import type { IdentityColorKey } from '../../shared/identity-colors'
 
 export type SessionStatus = 'idle' | 'working' | 'complete' | 'error' | 'disconnected'
@@ -37,6 +37,7 @@ export interface Session {
   createdAt: number
   sessionType: SessionType
   shellOnly?: boolean  // Don't run Claude, just open a shell
+  terminalOptions?: TerminalOptions  // Terminal-only command / args / secret / elevated
   partnerTerminalPath?: string  // Optional partner shell terminal path
   partnerElevated?: boolean     // Run partner terminal as admin (requires gsudo)
   sshConfig?: SSHConfig
@@ -238,7 +239,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
  */
 export const STRUCTURAL_SESSION_FIELDS = [
   'id', 'createdAt', 'configId', 'label', 'customName', 'workingDirectory', 'sessionType',
-  'shellOnly', 'sshConfig', 'partnerTerminalPath', 'partnerElevated',
+  'shellOnly', 'terminalOptions', 'sshConfig', 'partnerTerminalPath', 'partnerElevated',
   'legacyVersion', 'agentIds', 'effortLevel', 'permissionMode', 'extraArgs', 'disableAutoMemory',
   'enableCodexReview', 'loggingEnabled', 'model', 'provider', 'codexOptions',
   'identityColorKey', 'color', 'githubIntegration',

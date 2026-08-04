@@ -151,6 +151,7 @@ export interface ElectronAPI {
       }
       shellOnly?: boolean
       elevated?: boolean
+      terminalOptions?: { command?: string; args?: string; hasSecretArg?: boolean; elevated?: boolean }
       configId?: string
       configLabel?: string
       loggingEnabled?: boolean

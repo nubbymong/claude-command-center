@@ -23,7 +23,13 @@ const sshSchema = z.object({
   host: z.string().min(1),
   port: z.number().int().min(1).max(65535),
   username: z.string().min(1),
-  remotePath: z.string().min(1),
+  // Charset-gated at the IPC boundary (mirrors ssh-shim SAFE_REMOTE_PATH_RE):
+  // the remote path is interpolated into the remote setup command, and the
+  // shim's own assertSafeRemotePath throws from inside a setTimeout — which the
+  // global handler re-throws, crashing main. Rejecting here means a bad stored
+  // config fails the spawn cleanly instead of taking the process down
+  // (adversarial review, #188).
+  remotePath: z.string().min(1).regex(/^[~A-Za-z0-9_./-]+$/, 'remote path has invalid characters'),
   postCommand: z.string().optional(),
 }).optional()
 
@@ -33,6 +39,18 @@ export const spawnOptionsSchema = z.object({
   rows: z.number().int().positive().optional(),
   ssh: sshSchema,
   shellOnly: z.boolean().optional(),
+  // Terminal-only launcher: a command the USER authored, typed into their own
+  // shell on their own machine — running it IS the feature, so a charset guard
+  // would be the wrong control (it is not a privilege boundary being crossed).
+  // Bounds are defence-in-depth against an oversized payload. The secret VALUE
+  // never appears here: only `hasSecretArg` crosses the IPC seam, and main
+  // resolves the value from the OS keychain (see the spawn handler).
+  terminalOptions: z.object({
+    command: z.string().max(4096).optional(),
+    args: z.string().max(4096).optional(),
+    hasSecretArg: z.boolean().optional(),
+    elevated: z.boolean().optional(),
+  }).optional(),
   configId: z.string().optional(),
   configLabel: z.string().max(100).optional(),
   // Task 9: per-config logging opt-out (DEFAULT-TRUE; only false disables).
@@ -167,6 +185,10 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
     rows?: number
     ssh?: RendererSSHOptions
     shellOnly?: boolean
+    terminalOptions?: { command?: string; args?: string; hasSecretArg?: boolean; elevated?: boolean }
+    /** Main-process only — resolved from the OS keychain below and explicitly
+     *  cleared from whatever the renderer sent. Never accepted from outside. */
+    terminalSecret?: string
     configId?: string
     configLabel?: string
     loggingEnabled?: boolean
@@ -210,8 +232,12 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
       }
     }
 
-    // Resolve SSH credentials in the main process (never transit through renderer)
-    let resolvedOptions = options
+    // Resolve SSH credentials in the main process (never transit through renderer).
+    // terminalSecret is stripped up front: this object is forwarded to spawnPty
+    // verbatim (the zod parse result is intentionally discarded), so a field the
+    // schema doesn't declare would otherwise flow straight through from the
+    // renderer. Only the keychain lookup below may set it.
+    let resolvedOptions: typeof options = options ? { ...options, terminalSecret: undefined } : options
     if (options?.ssh && options.configId) {
       const password = loadCredential(options.configId) ?? undefined
       const sudoPassword = loadCredential(options.configId + '_sudo') ?? undefined
@@ -221,6 +247,14 @@ export function registerPtyHandlers(getWindow: () => BrowserWindow | null): void
         sudoPassword,
       }
       resolvedOptions = { ...options, ssh: sshWithCreds }
+    }
+
+    // Terminal-only secret argument: resolved HERE, in main, straight from the OS
+    // keychain — the value never transits the renderer and is never persisted to
+    // the config file (same posture as the SSH credentials above).
+    if (options?.shellOnly && options.configId && options.terminalOptions?.hasSecretArg) {
+      const argSecret = loadCredential(options.configId + '_argsecret') ?? undefined
+      if (argSecret) resolvedOptions = { ...resolvedOptions, terminalSecret: argSecret }
     }
 
     spawnPty(win, sessionId, resolvedOptions)

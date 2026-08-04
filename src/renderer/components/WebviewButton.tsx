@@ -1,5 +1,6 @@
 import React from 'react'
 import { useWebviewStore } from '../stores/webviewStore'
+import { trackUsage } from '../stores/tipsStore'
 
 interface Props {
   sessionId: string
@@ -81,7 +82,13 @@ export default function WebviewButton({ sessionId, hasWebviewCommand = false }: 
 
   return (
     <button
-      onClick={() => { if (!isIdle) togglePane(sessionId) }}
+      onClick={() => {
+        if (isIdle) return
+        // tips-library gates the freeze/annotate tip on `webview.opened`.
+        // Nothing emitted this id, so that tip could never surface.
+        trackUsage('webview.opened')
+        togglePane(sessionId)
+      }}
       disabled={isIdle}
       className={`flex items-center gap-1.5 px-2 py-0.5 text-xs rounded border transition-colors whitespace-nowrap shrink-0 ${
         isIdle ? idleClasses : baseInteractive

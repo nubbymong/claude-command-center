@@ -101,7 +101,7 @@ export default function ConductorMcpPage() {
               transfer are unavailable to your sessions.
             </div>
             <div className="text-xs text-overlay0 max-w-sm">
-              It normally starts automatically at launch. Restart Claude Command Center to bring it
+              It normally starts automatically at launch. Restart AI Code Conductor to bring it
               back; if it keeps failing, another process may be holding its port.
             </div>
           </div>

@@ -105,7 +105,7 @@ export default function SentinelPanel() {
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
       role="dialog"
       aria-modal="true"
-      aria-label="CCC Sentinel"
+      aria-label="Sentinel"
       onClick={(e) => { if (e.target === e.currentTarget) setPanelOpen(false) }}
     >
       <div
@@ -115,7 +115,7 @@ export default function SentinelPanel() {
         {/* Header */}
         <div className="flex items-start justify-between gap-3 px-5 py-4 border-b border-surface1/70 shrink-0">
           <div className="min-w-0">
-            <h2 className="text-sm font-semibold text-text">CCC Sentinel</h2>
+            <h2 className="text-sm font-semibold text-text">Sentinel</h2>
             <p className="text-[11px] text-overlay0 mt-0.5">{subtitle}</p>
           </div>
           <div className="flex items-center gap-2 shrink-0">

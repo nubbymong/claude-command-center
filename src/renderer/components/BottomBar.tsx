@@ -152,7 +152,7 @@ export default function BottomBar({ currentView, onViewChange, onUpdateRequested
           <div className="bg-mantle border border-surface0 rounded-lg shadow-xl p-5 w-[480px] max-h-[80vh] overflow-y-auto">
             <h2 className="text-lg font-semibold text-text mb-3">Claude CLI Not Found</h2>
             <p className="text-sm text-subtext0 mb-4">
-              Claude Command Center requires Claude Code CLI to be installed and on your PATH.
+              AI Code Conductor requires Claude Code CLI to be installed and on your PATH.
             </p>
 
             <div className="space-y-3 text-sm">

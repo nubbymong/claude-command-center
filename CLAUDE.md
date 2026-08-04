@@ -1,4 +1,4 @@
-# Claude Command Center — Claude Code entry point
+# AI Code Conductor — Claude Code entry point
 
 The canonical agent instructions live in `AGENTS.md` (the cross-tool standard,
 read by every agent that runs in this repo). This file imports it so Claude Code

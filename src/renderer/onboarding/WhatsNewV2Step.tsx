@@ -33,7 +33,7 @@ const CARDS: { icon: string; title: string; desc: string; beta?: boolean }[] = [
   },
   {
     icon: MAG,
-    title: 'Ask Command Center',
+    title: 'Ask Conductor',
     desc: 'The ? button in the sidebar opens a searchable guide, or a Claude session that knows the app.',
   },
   {
@@ -50,7 +50,7 @@ export function WhatsNewV2Step({ onNext }: { onNext: () => void }) {
         <div className="p2-inner" style={{ width: 'min(880px, 95vw)' }}>
           <h2 className="h2">What's new in 2.0</h2>
           <p className="p2-sub">
-            Command Center 2.0 is a big release. The short version, before we set it up together:
+            AI Code Conductor 2.0 is a big release. The short version, before we set it up together:
           </p>
 
           <div className="gh-grid">

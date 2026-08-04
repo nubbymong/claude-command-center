@@ -211,7 +211,7 @@ export default function TitleBar({ sidebarOpen, onToggleSidebar }: Props) {
       </div>
 
       <div className="flex-1 text-center text-xs text-overlay1 font-medium flex items-center justify-center gap-0">
-        <span>Claude Command Center</span>
+        <span>AI Code Conductor</span>
         {isDev && (
           <span
             className="ml-2 px-1.5 py-px rounded-full text-[10px] font-bold align-middle tracking-wide"

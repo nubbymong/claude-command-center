@@ -121,7 +121,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
   }
 
   const handleClearAllLogs = async () => {
-    if (!window.confirm('Permanently delete the CCC conversation index? This cannot be undone. Active sessions are kept. Your conversations remain in Claude\'s own files (~/.claude/projects).')) return
+    if (!window.confirm('Permanently delete the app\'s conversation index? This cannot be undone. Active sessions are kept. Your conversations remain in Claude\'s own files (~/.claude/projects).')) return
     try {
       const res = await window.electronAPI.logs2.clearAll()
       window.alert(`Index cleared: ${res.deletedRuns} run(s), ${res.deletedMessages} message(s) removed. Active sessions are kept. Your conversations remain in Claude's own files.`)
@@ -231,7 +231,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                   />
                   <span>
                     Index conversation logs
-                    <span className="block text-[10px] text-overlay0">CCC indexes Claude's own transcripts (~/.claude/projects) for browsing here. Turning this off only stops indexing — your conversations remain in Claude's own files and are not affected.</span>
+                    <span className="block text-[10px] text-overlay0">The Conductor indexes Claude's own transcripts (~/.claude/projects) for browsing here. Turning this off only stops indexing — your conversations remain in Claude's own files and are not affected.</span>
                   </span>
                 </label>
                 <div className="flex items-center gap-2 mt-1">
@@ -241,7 +241,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                   >
                     Clear index
                   </button>
-                  <span className="text-[10px] text-overlay0">(removes CCC's index only; conversations remain in Claude's own files at ~/.claude/projects)</span>
+                  <span className="text-[10px] text-overlay0">(removes the app's index only; conversations remain in Claude's own files at ~/.claude/projects)</span>
                 </div>
               </Section>
 
@@ -306,7 +306,7 @@ export default function SettingsPage({ initialTab, onNavigateToSessions, onUpdat
                 </div>
               </Section>
 
-              <Section title="CCC Sentinel" icon={<path d="M8 2L3 5v4c0 3.5 2.1 6.4 5 7.5 2.9-1.1 5-4 5-7.5V5L8 2z" stroke="currentColor" strokeWidth="1.2" fill="none" />}>
+              <Section title="Sentinel" icon={<path d="M8 2L3 5v4c0 3.5 2.1 6.4 5 7.5 2.9-1.1 5-4 5-7.5V5L8 2z" stroke="currentColor" strokeWidth="1.2" fill="none" />}>
                 <label className="flex items-start gap-2 text-sm text-subtext0 cursor-pointer">
                   <input
                     type="checkbox"
@@ -944,7 +944,7 @@ export function CheckForUpdatesField({ onUpdateRequested }: { onUpdateRequested?
           <span className={`text-xs ${statusColor}`}>{statusText}</span>
         )}
         {updateFound && !installing && (
-          <span className="text-[10px] text-overlay0">Restarts CCC; open sessions are saved.</span>
+          <span className="text-[10px] text-overlay0">Restarts the app; open sessions are saved.</span>
         )}
       </div>
     </Field>

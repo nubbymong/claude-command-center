@@ -124,7 +124,7 @@ export function TransparencyStep({ onNext, onBack }: { onNext: () => void; onBac
           <div className="tool-card">
             <div className="tc-ic">{SHIELD}</div>
             <div className="tc-body">
-              <div className="tc-t">CCC Sentinel</div>
+              <div className="tc-t">Sentinel</div>
               <div className="tc-d">
                 Watches Claude Code updates for changes that could break your setup and proposes fixes. Off by
                 default because it spends Claude tokens when Claude updates. Takes effect after a restart.

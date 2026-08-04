@@ -25,7 +25,11 @@
 
     ${if} $R0 == 0
       ; Still running — show debug info and let user decide
-      MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "Claude Command Center is still running.$\n$\nProcess: ${APP_EXECUTABLE_FILENAME}$\nCheck result: $R0$\n$\nPlease close it manually and click Retry." IDRETRY retry_check
+      ; Display name only. The process/exe name (${APP_EXECUTABLE_FILENAME}) is
+      ; deliberately still "Claude Command Center.exe" — pinned via
+      ; build.win.executableName so upgrades keep their install folder — so the
+      ; message names the app and shows the executable separately.
+      MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "AI Code Conductor is still running.$\n$\nProcess: ${APP_EXECUTABLE_FILENAME}$\nCheck result: $R0$\n$\nPlease close it manually and click Retry." IDRETRY retry_check
       Quit
       retry_check:
     ${endIf}
@@ -114,7 +118,10 @@ Function DataDirPage
     ReadRegStr $1 HKCU "Software\Claude Conductor" "DataDirectory"
   ${EndIf}
   ${If} $1 == ""
-    StrCpy $1 "$LOCALAPPDATA\Claude Command Center"
+    ; FRESH INSTALL ONLY — reached only when neither registry key exists, so an
+    ; upgrade always keeps the path it already had. New installs get a
+    ; new-brand folder with no legacy name in it.
+    StrCpy $1 "$LOCALAPPDATA\AI Code Conductor"
   ${EndIf}
 
   ${NSD_CreateDirRequest} 0 30u 75% 12u "$1"
@@ -128,7 +135,7 @@ Function DataDirPage
 FunctionEnd
 
 Function OnBrowseDataDir
-  nsDialogs::SelectFolderDialog "Select Data Directory" "$LOCALAPPDATA\Claude Command Center"
+  nsDialogs::SelectFolderDialog "Select Data Directory" "$LOCALAPPDATA\AI Code Conductor"
   Pop $0
   ${If} $0 != "error"
     ${NSD_SetText} $DataDir $0
@@ -157,7 +164,8 @@ Function ResourcesDirPage
     ReadRegStr $1 HKCU "Software\Claude Conductor" "ResourcesDirectory"
   ${EndIf}
   ${If} $1 == ""
-    StrCpy $1 "$LOCALAPPDATA\Claude Command Center\resources"
+    ; FRESH INSTALL ONLY (see DataDirPage) — upgrades keep their existing path.
+    StrCpy $1 "$LOCALAPPDATA\AI Code Conductor\resources"
   ${EndIf}
 
   ${NSD_CreateDirRequest} 0 42u 75% 12u "$1"
@@ -171,7 +179,7 @@ Function ResourcesDirPage
 FunctionEnd
 
 Function OnBrowseResourcesDir
-  nsDialogs::SelectFolderDialog "Select Resources Directory" "$LOCALAPPDATA\Claude Command Center\resources"
+  nsDialogs::SelectFolderDialog "Select Resources Directory" "$LOCALAPPDATA\AI Code Conductor\resources"
   Pop $0
   ${If} $0 != "error"
     ${NSD_SetText} $ResourcesDir $0
