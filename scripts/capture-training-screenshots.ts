@@ -21,8 +21,14 @@ import * as path from 'path'
 import * as fs from 'fs'
 import * as os from 'os'
 import { execSync } from 'child_process'
+import { STEPS, ONBOARDING_VERSION } from '../src/renderer/onboarding/steps'
 
 const SCREENSHOT_DIR = path.join(__dirname, '..', 'src', 'renderer', 'assets', 'training')
+// Must match the build's __APP_VERSION__ exactly — the Claude CLI-setup gate
+// compares with !==, so any sentinel value makes the wizard fire.
+const APP_VERSION = JSON.parse(
+  fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf-8'),
+).version as string
 const BUILT_APP = path.join(__dirname, '..', 'out', 'main', 'index.js')
 // Setting CAPTURE_NO_PLATFORM_SUFFIX=1 forces no -mac suffix even on darwin,
 // useful when you want the Mac run to produce the canonical filenames the
@@ -306,7 +312,10 @@ const DEMO_FINGERPRINTS: Record<string, string[]> = {
   'tokenomics.json': ['demo-s1', 'demo-s2'],
   'github-config.json': ['demo-github-profile'],
   'settings.json': ['Dev Workstation', 'Mac Mini'],
-  'app-meta.json': ['"setupVersion": "99.99.99"'],
+  // NOT setupVersion — that now has to equal the real app version (see the
+  // seed below), which would match a genuine user file. lastTrainingVersion
+  // keeps the sentinel and appears only in demo content.
+  'app-meta.json': ['"lastTrainingVersion": "99.99.99"'],
 }
 
 function isDemoContent(filePath: string, content: string): boolean {
@@ -408,7 +417,26 @@ function seedSampleData(): BackupInfo {
     'commands.json': SAMPLE_COMMANDS,
     'command-sections.json': SAMPLE_SECTIONS,
     'settings.json': { localMachineName: 'Demo Workstation', terminalFontSize: 14, updateChannel: 'stable', colourMigrationNoticeDismissed: true, colourMigrationNoticePending: false },
-    'app-meta.json': { setupVersion: '99.99.99', lastTrainingVersion: '99.99.99', lastWhatsNewVersion: '99.99.99', lastSeenVersion: '99.99.99' },
+    // Boot gates. A "very high" sentinel works only for the >= comparisons
+    // (lastSeenVersion / lastTrainingVersion / lastWhatsNewVersion). The Claude
+    // CLI-setup wizard is gated on `setupVersion !== __APP_VERSION__`, so
+    // '99.99.99' GUARANTEED it fired: every run was stuck on "Claude CLI Setup"
+    // with a real claude session inside it, and the whole capture was shots of
+    // that screen. It must equal the app version exactly.
+    // The v2 onboarding harness (bootGates priority 1.5) outranks all of the
+    // above and needs its own three keys — derived from STEPS so a newly added
+    // step can't silently re-break this. Mirrors tests/e2e/helpers/electron-app.ts.
+    'app-meta.json': {
+      setupVersion: APP_VERSION,
+      lastTrainingVersion: '99.99.99',
+      lastWhatsNewVersion: '99.99.99',
+      lastSeenVersion: '99.99.99',
+      hasCreatedFirstConfig: true,
+      accountGateDecided: true,
+      completedSteps: Object.fromEntries(STEPS.map((s) => [s.id, '2026-01-01T00:00:00.000Z'])),
+      onboardingCompletedVersion: ONBOARDING_VERSION,
+      onboardingAppVersion: APP_VERSION,
+    },
     'cloud-agents.json': SAMPLE_CLOUD_AGENTS,
     'tokenomics.json': sampleTokenomics,
     'github-config.json': SAMPLE_GITHUB_CONFIG,
