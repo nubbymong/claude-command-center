@@ -111,7 +111,7 @@
       "scripts/vision-prompt.txt"
     ],
     "win": {
-      "executableName": "Claude Command Center",
+      "executableName": "AI Code Conductor",
       "target": [
         {
           "target": "nsis",
@@ -122,7 +122,7 @@
       ]
     },
     "mac": {
-      "executableName": "Claude Command Center",
+      "executableName": "AI Code Conductor",
       "target": [
         {
           "target": "dmg",

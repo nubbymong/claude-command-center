@@ -8,17 +8,48 @@ import { logInfo } from './debug-logger'
 // this module stays electron-free and can run inside the hooks utilityProcess.
 // Resolved lazily via getDataDirectory() so downstream lazy-initializers
 // (e.g. debug-logger) can call it without a module-load-order constraint.
-function getDefaultDataDir(): string {
+// Current-brand default, plus the legacy locations it replaced. A FRESH install
+// gets the brand path so nothing on disk carries the old name; an install that
+// already has data keeps using the directory it has, because relocating it would
+// look to the user like every session, config and log had vanished.
+//
+// This matters most on macOS and Linux: neither has an installer to record a
+// chosen directory, so this fallback IS where their data lives. On Windows the
+// installer normally writes the location to the registry and this is only the
+// last resort.
+function dataDirCandidates(): { brand: string; legacy: string[] } {
   if (process.platform === 'darwin') {
-    return path.join(homedir(), 'Library', 'Application Support', 'Claude Conductor')
+    const appSupport = path.join(homedir(), 'Library', 'Application Support')
+    return {
+      brand: path.join(appSupport, 'AI Code Conductor'),
+      legacy: [path.join(appSupport, 'Claude Conductor')],
+    }
   }
   if (process.platform === 'linux') {
-    return path.join(homedir(), '.claude-conductor', 'data')
+    return {
+      brand: path.join(homedir(), '.ai-code-conductor', 'data'),
+      legacy: [path.join(homedir(), '.claude-conductor', 'data')],
+    }
   }
   // Windows: derive %LOCALAPPDATA% from the env var,
   // falling back to <home>\AppData\Local.
   const localAppData = process.env.LOCALAPPDATA || path.join(homedir(), 'AppData', 'Local')
-  return path.join(localAppData, 'Claude Command Center')
+  return {
+    brand: path.join(localAppData, 'AI Code Conductor'),
+    legacy: [
+      path.join(localAppData, 'Claude Command Center'),
+      path.join(localAppData, 'Claude Conductor'),
+    ],
+  }
+}
+
+function getDefaultDataDir(): string {
+  const { brand, legacy } = dataDirCandidates()
+  if (fs.existsSync(brand)) return brand
+  for (const dir of legacy) {
+    if (fs.existsSync(dir)) return dir
+  }
+  return brand
 }
 
 // Cache registry values — they don't change during the app's lifetime
