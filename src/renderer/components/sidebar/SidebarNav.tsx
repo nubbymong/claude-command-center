@@ -127,7 +127,12 @@ function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMe
     : insightsStatus === 'complete' ? 'var(--status-success)'
     : insightsStatus === 'failed' ? 'var(--status-danger)'
     : null
-  const isInsightsAnimating = insightsStatus === 'running' || insightsStatus === 'extracting_kpis'
+  // Scope to the Insights item, like isCloudAgentsRunning above. Unscoped, a
+  // running Insights job rewrote EVERY nav button's title -> aria-label (so
+  // screen readers announced the whole rail as "Insights running...", and any
+  // aria-label selector — the guided tour's Settings step — stopped matching)
+  // and tinted every icon blue.
+  const isInsightsAnimating = isInsightsActive && (insightsStatus === 'running' || insightsStatus === 'extracting_kpis')
   const isCloudAgentsRunning = item.view === 'cloud-agents' && cloudAgentRunning > 0
   // P7.7: dot reflects MCP server health, not browser CDP attach. Show
   // the dot whenever serverRunning has been reported (defined) so users
@@ -162,6 +167,9 @@ function NavButton({ item, currentView, onViewChange, insightsStatus, insightsMe
         onViewChange(item.view)
       }}
       aria-label={title}
+      // Stable tour anchor: `title` is legitimately dynamic (collapsed state,
+      // logs-disabled, running jobs), so the tour must not target aria-label.
+      data-tour={`nav-${item.view}`}
       aria-disabled={isLogsDisabled || undefined}
       tabIndex={isLogsDisabled ? -1 : undefined}
       className={`group ${isCollapsed ? 'w-10 h-10' : 'flex-1 py-2'} flex items-center justify-center rounded-lg transition-colors relative ${
@@ -277,6 +285,7 @@ export default function SidebarNav({ currentView, onViewChange, insightsStatus, 
     <button
       onClick={onShowHelp}
       aria-label="Feature Guide"
+      data-tour="help-button"
       className={`group ${collapsed ? 'w-10 h-10' : 'flex-1 py-2'} flex items-center justify-center rounded-lg transition-colors text-overlay0 hover:text-text hover:bg-surface0/50 focus-ring relative`}
     >
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">

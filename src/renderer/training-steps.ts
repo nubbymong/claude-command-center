@@ -43,15 +43,18 @@ export const trainingSteps: TrainingStep[] = [
   {
     id: 'session-options',
     title: 'Session Configuration',
-    sinceVersion: '1.5.11',
+    // Re-versioned for the 2.1 dialog rebuild: currentTrainingVersion() is the
+    // MAX sinceVersion across steps, and getNewSteps() returns only steps newer
+    // than the version the user last saw. With every step pinned at <= 2.0.0,
+    // nobody already on 2.x was ever shown the rebuilt dialog.
+    sinceVersion: '2.1.0',
     section: 'getting-started',
     summary:
-      'Every workspace starts as a saved config -- label, colour, working directory, model, and any agents you want pre-loaded. New sessions default to Opus 4.8. Effort is a live setting you change in Claude with /effort (it shows in the statusline and on the session card), not a config field.',
+      'Every workspace starts as a saved config. First choose what it runs -- Claude Code, Codex, or Terminal only -- then whether it runs locally or over SSH; the rest of the form unfolds from those two answers. A config carries its label, colour, working directory, starting model and starting effort, plus a permission mode and any extra CLI arguments.',
     highlights: [
-      'Model defaults to **Opus 4.8** (Anthropic`s newest, released 2026-05-28)',
-      'Effort is **live** -- set it in Claude with `/effort` (low, medium, high, xhigh, max, ultracode); the card shows the current level',
+      'Pick a **starting model** per config; the dropdown lists what is currently available, newest first',
+      '**Starting effort** is a config field (low, medium, high, xhigh, max, ultracode); change it live in Claude with `/effort`. The card shows the current level',
       'Local or SSH -- one config form, full Claude support either way',
-      'Bundle agent templates from your Library into the session at spawn',
     ],
     howToTrigger: [
       { label: 'Create', value: 'Saved Configs → +' },
@@ -108,16 +111,16 @@ export const trainingSteps: TrainingStep[] = [
     summary:
       "OpenAI's Codex CLI sits alongside Claude in the New Session dialog -- pick the provider per session. gpt-5 series models, runtime permissions presets, the resume picker, and tokenomics segmenting all wired in.",
     highlights: [
-      'Provider toggle in **New Session** -- Claude or Codex, chosen per spawn',
+      'Provider is chosen on the saved config -- Claude Code, Codex, or Terminal only (Codex is local-only; it cannot run over SSH)',
       'Six gpt-5 models in the dropdown: gpt-5.5, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex, gpt-5.3-codex-spark, gpt-5.2',
-      'Permissions presets in the session toolbar: read-only, standard, auto, unrestricted',
+      'Permission presets, model and reasoning effort are set on the Codex config (the session toolbar cluster is Claude-only)',
       'Resume picker mirrors the Claude flow -- recent rollouts surfaced before spawn',
       '**Tokenomics** segments Codex spend automatically alongside Claude, per-day and per-model',
     ],
     howToTrigger: [
-      { label: 'Spawn', value: 'New Session -> Provider -> Codex' },
+      { label: 'Spawn', value: 'New config -> provider card -> Codex' },
       { label: 'Auth', value: 'Settings -> Codex -> Login' },
-      { label: 'Model swap', value: 'Session toolbar -> model dropdown' },
+      { label: 'Model', value: 'Edit the Codex config -> model' },
     ],
     proTip:
       'Login once via Settings -> Codex; subsequent Codex sessions reuse the same auth. Spend lands in tokenomics under the Codex provider tag, side by side with Claude.',
@@ -140,13 +143,11 @@ export const trainingSteps: TrainingStep[] = [
       'Tasks tab -- fire-and-forget headless agent runs with live status + output streaming',
       'Pipelines tab -- chain agents (a → b → c) with shared context and per-step prompts',
       'Library tab -- author your own templates; built-ins (code-reviewer, test-runner...) are starting points to copy and edit',
-      'Tick a template in Edit Config → Agents and Claude can delegate to it via the Task tool inside the running session',
       'Right-click a task for actions: cancel, retry, remove, copy output',
     ],
     howToTrigger: [
       { label: 'Open', value: 'Click  ☁  in the sidebar nav' },
       { label: 'Author', value: 'Library tab → + New Agent' },
-      { label: 'Bundle into session', value: 'Edit Config → Agents → tick template' },
     ],
     proTip:
       'Library templates aren\'t just for headless Tasks -- anything you author there is also a subagent inside any Claude session that has it ticked in the config. Same definition, two delivery surfaces.',
@@ -166,22 +167,21 @@ export const trainingSteps: TrainingStep[] = [
     summary:
       'Browser automation via a global MCP server -- every Claude session shares one Chrome instance. Take screenshots, navigate, click, type, and inspect pages without leaving the terminal. Works over SSH too via automatic reverse tunnels.',
     highlights: [
-      '17 browser-vision tools (one of three sub-tools on the Conductor MCP server) exposed to Claude',
+      '18 browser-vision tools (one of three sub-tools on the Conductor MCP server) exposed to Claude',
       'One global Chrome -- all sessions share state, so cookies + login persist',
       'Reverse tunnel auto-injected on SSH connect (-R <port>) -- remote sessions reach the local Conductor MCP server',
-      'Status pill in the sidebar shows running / connected state at a glance',
-      'Headless or visible browser -- toggled per-config in Settings',
+      'A dot on the Conductor MCP nav icon shows MCP server health: green = running, red = stopped',
     ],
     howToTrigger: [
       { label: 'Open', value: 'Click  Conductor MCP  in the sidebar nav' },
-      { label: 'Start', value: 'Conductor MCP page → Start' },
-      { label: 'Launch browser', value: 'Conductor MCP page → Launch Chrome' },
+      { label: 'Open', value: 'Sidebar → Conductor MCP' },
+      { label: 'Browser', value: 'Vision card → Start browser' },
     ],
     proTip:
       'Ask Claude "open the dev server in the browser and click around to verify the layout" -- it\'ll drive vision tools to do exactly that and report back.',
     bullets: [
       '**Browser automation** via a global MCP server -- all sessions share one browser',
-      'Click the **eye icon** in the sidebar to configure and start vision',
+      'Click **Conductor MCP** in the sidebar nav to see the tool server and its browser',
       '17 vision tools available to Claude: **screenshot, navigate, click, type** and more',
       'Works over **SSH** too -- reverse tunnels connect remote sessions automatically',
     ],
@@ -236,7 +236,7 @@ export const trainingSteps: TrainingStep[] = [
     howToTrigger: [
       { label: 'Open', value: 'Session toolbar → Draw' },
       { label: 'Switch back', value: 'Click Draw again, or pick a different session' },
-      { label: 'Clear canvas', value: 'Excalidraw header → Reset' },
+      { label: 'New drawing', value: 'Left rail → + (rename with ✎, delete with ×)' },
     ],
     proTip:
       'Sketch the architecture of what you want to build, then ask Claude to look at the drawing in Excalidraw -- it will fetch the canvas via the vision MCP and reason about it directly.',
@@ -315,13 +315,12 @@ export const trainingSteps: TrainingStep[] = [
       '**KPI row** -- total spend, tokens, sessions, and daily burn at the top',
       '**Charts** for daily spend and a per-model breakdown',
       '**Sessions table** with cost, model, and config attribution per session',
-      '**Filters** -- slice by date, model, account, or project',
+      '**Filters** -- config, date range (7d / 30d / all), and a free-text search over model and project',
       'Pricing from BerriAI`s LiteLLM (cached 24h); a green nav badge shows when the index is fresh',
     ],
     howToTrigger: [
       { label: 'Open', value: 'Click  $  in the sidebar nav' },
       { label: 'Filter', value: 'Header → date / model / account / project' },
-      { label: 'Reindex', value: 'Header → Reindex (rebuilds from transcripts)' },
     ],
     proTip:
       'Filter by account to see which login is burning the budget, or by model to compare Opus vs Sonnet vs Haiku spend across the same projects. Life-to-date may read lower than the old page -- the rebuild dedups and prices at current rates.',
@@ -345,11 +344,11 @@ export const trainingSteps: TrainingStep[] = [
       '**Activity chart** + **type donut** for the whole store',
       '**Ranked projects** with staleness dots, index warnings, and live-session chips',
       'Drilldown: sortable memory table + sessions rail (live sessions jump to the terminal; recent sessions deep-link into Logs)',
-      '**Reading drawer** to read a memory, write missing frontmatter, or delete it; full-text search across everything',
+      '**Reading drawer** to read a memory, write missing frontmatter, or delete it; search covers memory names, projects and descriptions',
     ],
     howToTrigger: [
       { label: 'Open', value: 'Click the Memory icon in the sidebar nav' },
-      { label: 'Search', value: 'Header → search input or  Ctrl+F' },
+      { label: 'Search', value: 'Header → search input' },
       { label: 'Read / delete', value: 'Click a memory → reading drawer' },
     ],
     proTip:
@@ -378,7 +377,7 @@ export const trainingSteps: TrainingStep[] = [
     ],
     howToTrigger: [
       { label: 'Open', value: 'Click  ✨  in the sidebar nav' },
-      { label: 'Generate', value: 'Insights page → Run Insights Now' },
+      { label: 'Generate', value: 'Insights header → New run' },
       { label: 'History', value: 'Switch between past reports from the header dropdown' },
     ],
     proTip:
@@ -408,7 +407,7 @@ export const trainingSteps: TrainingStep[] = [
     howToTrigger: [
       { label: 'Open', value: 'Click the Logs icon in the sidebar nav' },
       { label: 'Search', value: 'Header search box (full-text across all conversations)' },
-      { label: 'Per-session', value: 'Open the Conversation tab on a running session' },
+      { label: 'Per-session', value: 'Click Logs in the session command bar' },
     ],
     proTip:
       "Reading back a long session? Use the timeline rail to jump straight to a tool call or a clear divider -- and search jumps you to the exact turn without scrolling.",
@@ -437,7 +436,7 @@ export const trainingSteps: TrainingStep[] = [
     howToTrigger: [
       { label: 'Open', value: 'Click  ⚙  in the sidebar nav' },
       { label: 'Replay tour', value: 'About → Replay Training' },
-      { label: 'What\'s new', value: 'About → View What\'s New' },
+      { label: 'What\'s new', value: 'About → View full changelog' },
     ],
     proTip:
       'Settings is also where you pick Stable or Beta updates, rebind every shortcut, choose which statusline metrics show, and toggle local log indexing -- all without leaving the app.',
@@ -461,7 +460,7 @@ export const trainingSteps: TrainingStep[] = [
       'Checks the CC changelog against the app\'s compatibility assumptions',
       'Proposes **model and effort registry** fixes you **Apply** (or Dismiss) -- never automatic',
       'A hot-reloadable registry means unknown or brand-new models still get a colour, label, and pricing',
-      'Opt-in -- turn it on or off in **Settings → Sentinel**',
+      'Opt-in -- turn it on or off in **Settings → General → Sentinel**',
     ],
     howToTrigger: [
       { label: 'Open', value: 'Click the Sentinel chip in the title bar' },
@@ -486,7 +485,7 @@ export const trainingSteps: TrainingStep[] = [
     sinceVersion: '1.0.0',
     section: 'tips',
     summary:
-      'Power moves you\'ll start using on day two. The status bar in the bottom toolbar pulses contextual tips as you discover features, so most of these surface naturally as you work.',
+      'Power moves you\'ll start using on day two. A tip pill in the session header pulses contextual tips as you discover features, so most of these surface naturally as you work.',
     highlights: [
       'Ctrl+Tab / Ctrl+Shift+Tab -- cycle between sessions',
       'Ctrl+1–9 -- jump directly to session N',
@@ -496,7 +495,7 @@ export const trainingSteps: TrainingStep[] = [
     ],
     howToTrigger: [
       { label: 'Rebind', value: 'Settings → Shortcuts' },
-      { label: 'Tip pulse', value: 'Bottom toolbar → 💡' },
+      { label: 'Tip pulse', value: 'Session header → 💡' },
     ],
     proTip:
       'Hover the bottom-toolbar lightbulb to see the catalogue of tips you haven\'t triggered yet -- useful for finding features you didn\'t know existed.',
@@ -543,13 +542,13 @@ export const trainingSteps: TrainingStep[] = [
     sinceVersion: '2.0.0',
     section: 'integrations',
     summary:
-      'A unified usage meter for your AI spend. A compact chip in the repo strip shows GitHub Copilot AI-credit usage at a glance; click it for a popover that breaks down GitHub usage per model and shows the Claude and Codex rate-limit windows side by side. It turns a warning colour the moment GitHub bills you past your included credits.',
+      'A unified usage meter for your AI spend. A compact chip on the session status strip shows GitHub Copilot AI-credit usage at a glance; click it for a popover that breaks down GitHub usage per model and shows the Claude and Codex rate-limit windows side by side. It turns a warning colour the moment GitHub bills you past your included credits.',
     highlights: [
       'A compact chip in the **repo strip** shows credits used (and your cap, when set) without opening anything',
       'When GitHub bills past your included credits the chip shifts to a **warning** and shows the billed amount (for example +$11.69)',
       'Click the chip for a **popover** with per-model GitHub rows, covered and billed totals, plus Claude and Codex 5h / 7d windows',
       'Read-only and best-effort -- it never changes anything, and it fails quietly when a token lacks billing scope',
-      'Set your **included-credit cap** in Settings, GitHub so the chip can show a used-of-cap ratio',
+      'Set your **included-credit cap** in Settings, Status Line so the chip can show a used-of-cap ratio',
     ],
     howToTrigger: [
       { label: 'Enable', value: 'Settings -> GitHub -> AI usage meter' },
@@ -586,7 +585,7 @@ export const trainingSteps: TrainingStep[] = [
     howToTrigger: [
       { label: 'Sign in', value: 'Settings → GitHub → OAuth or PAT' },
       { label: 'Adopt gh CLI', value: 'Settings → GitHub → "Use existing gh auth"' },
-      { label: 'Toggle', value: 'Per-session enable in Edit Config' },
+      { label: 'Toggle', value: 'GitHub button on the session → Configure GitHub for this session' },
     ],
     proTip:
       'OAuth is fastest if you already have GitHub in a browser -- one click. PAT is the move for headless / CI machines where there\'s no browser to do the redirect dance.',
