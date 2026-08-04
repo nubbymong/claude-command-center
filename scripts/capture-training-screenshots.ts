@@ -654,23 +654,32 @@ function cleanupSampleData(info: BackupInfo | null): void {
 
 // ── Helpers ──
 
-/** Click a nav button by its title attribute */
+/** Click a nav button.
+ *
+ * Matches aria-label first, then the native title. The rail dropped its
+ * OS-native `title` when the inline tooltip landed (SidebarNav: "the only
+ * tooltip -- the OS-native `title` was removed so the two no longer
+ * conflict"), so the old title-only lookup silently matched nothing: every
+ * clickNav logged a warning and the capture then shot whichever view was
+ * already on screen, quietly producing a run of near-identical screenshots.
+ * A miss is now fatal rather than cosmetic, because a warning here means the
+ * whole run is worthless.
+ */
 async function clickNav(window: any, label: string): Promise<void> {
-  // Try exact title match first, then startsWith
   const clicked = await window.evaluate((lbl: string) => {
     const buttons = Array.from(document.querySelectorAll('button'))
-    // Exact match
+    const label = (b: HTMLButtonElement) => b.getAttribute('aria-label') ?? ''
     for (const btn of buttons) {
-      if (btn.title === lbl) { btn.click(); return true }
+      if (label(btn) === lbl || btn.title === lbl) { btn.click(); return true }
     }
-    // StartsWith match (for "2 agents running" etc)
+    // StartsWith fallback (labels can carry a running-job suffix).
     for (const btn of buttons) {
-      if (btn.title?.startsWith(lbl)) { btn.click(); return true }
+      if (label(btn).startsWith(lbl) || btn.title?.startsWith(lbl)) { btn.click(); return true }
     }
     return false
   }, label)
-  if (!clicked) console.log(`[capture] WARNING: nav button "${label}" not found`)
-  else console.log(`[capture] Nav -> ${label}`)
+  if (!clicked) throw new Error(`[capture] nav button "${label}" not found -- aborting rather than capturing the wrong view`)
+  console.log(`[capture] Nav -> ${label}`)
   await window.waitForTimeout(1200)
 }
 
