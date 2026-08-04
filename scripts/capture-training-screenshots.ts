@@ -9,8 +9,9 @@
  *   - @playwright/test must be installed (already a devDependency)
  *
  * What it does:
- *   1. Seeds sample data (configs, commands, agents, memory) so pages look populated
- *   2. Launches the built Electron app via Playwright
+ *   1. Seeds sample data (configs, commands, agents, memory) into a throwaway
+ *      temp data root so pages look populated without touching real user data
+ *   2. Launches the built Electron app via Playwright, pointed at that root
  *   3. Navigates to each relevant view and captures screenshots
  *   4. Saves JPEGs to src/renderer/assets/training/
  *   5. Cleans up sample data (restores any backed-up originals)
@@ -20,7 +21,6 @@ import { _electron as electron } from '@playwright/test'
 import * as path from 'path'
 import * as fs from 'fs'
 import * as os from 'os'
-import { execSync } from 'child_process'
 import { STEPS, ONBOARDING_VERSION } from '../src/renderer/onboarding/steps'
 
 const SCREENSHOT_DIR = path.join(__dirname, '..', 'src', 'renderer', 'assets', 'training')
@@ -56,52 +56,23 @@ function redactAccountInStatusline(sl: any) {
 }
 
 // ── Config directory resolution ──
-
-function readRegistryValue(name: 'ResourcesDirectory' | 'DataDirectory'): string | null {
-  if (process.platform !== 'win32') return null
-  for (const key of ['Software\\Claude Command Center', 'Software\\Claude Conductor']) {
-    try {
-      const result = execSync(`reg query "HKCU\\${key}" /v ${name}`, { encoding: 'utf-8', timeout: 5000, windowsHide: true })
-      const match = result.match(new RegExp(`${name}\\s+REG_SZ\\s+(.+)`))
-      if (match) return match[1].trim()
-    } catch { /* try next */ }
-  }
-  return null
-}
+//
+// The capture runs against a THROWAWAY data root under the OS temp dir, never
+// the user's real resources/data directories. Pointing the app at the real
+// folders made the Logs and Tokenomics pages render the user's actual account
+// address and spend figures, and these assets ship in a public repo. The
+// launched app follows this root automatically: main() passes it as
+// CCC_E2E_DATA_DIR, which data-paths.ts maps to data dir = <root> and
+// resources dir = <root>/resources — mirror that shape here so the seed
+// writes exactly where the app reads.
+const CAPTURE_DATA_ROOT = path.join(os.tmpdir(), `ccc-capture-${process.pid}`)
 
 function getResourcesDir(): string {
-  const fromReg = readRegistryValue('ResourcesDirectory')
-  if (fromReg) return fromReg
-  if (process.platform === 'win32') {
-    return path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'Claude Conductor')
-  }
-  const fallbackFile = path.join(os.homedir(), '.claude-conductor', 'platform-config.json')
-  try {
-    if (fs.existsSync(fallbackFile)) {
-      const config = JSON.parse(fs.readFileSync(fallbackFile, 'utf-8'))
-      if (config.ResourcesDirectory) return config.ResourcesDirectory
-      if (config.DataDirectory) return config.DataDirectory
-    }
-  } catch {}
-  return path.join(os.homedir(), 'Library', 'Application Support', 'Claude Conductor')
+  return path.join(CAPTURE_DATA_ROOT, 'resources')
 }
 
 function getDataDir(): string {
-  const fromReg = readRegistryValue('DataDirectory')
-  if (fromReg) return fromReg
-  // Defaults match getDefaultDataDir() in src/main/ipc/setup-handlers.ts
-  if (process.platform === 'win32') {
-    return path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'Claude Conductor')
-  }
-  const fallbackFile = path.join(os.homedir(), '.claude-conductor', 'platform-config.json')
-  try {
-    if (fs.existsSync(fallbackFile)) {
-      const config = JSON.parse(fs.readFileSync(fallbackFile, 'utf-8'))
-      if (config.DataDirectory) return config.DataDirectory
-      if (config.ResourcesDirectory) return config.ResourcesDirectory
-    }
-  } catch {}
-  return path.join(os.homedir(), 'Library', 'Application Support', 'Claude Conductor')
+  return CAPTURE_DATA_ROOT
 }
 
 function getConfigDir(): string {
@@ -1148,6 +1119,11 @@ async function main() {
   } finally {
     cleanupSampleData(backupInfo)
   }
+
+  // Success path only: drop the throwaway data root (seeded CONFIG plus
+  // whatever the app wrote next to it). On failure it stays behind so the
+  // seeded state can be inspected.
+  try { fs.rmSync(CAPTURE_DATA_ROOT, { recursive: true, force: true }) } catch {}
 
   console.log('\n[capture] All screenshots captured.')
 }
