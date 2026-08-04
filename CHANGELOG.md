@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The accounts view now tells you when each account will force you to sign in again — "Forced sign-in in 12 days" — and turns amber under a week, red under two days. It also offers "Refresh sign-in" on accounts that are working fine, so you can reset the clock at a convenient moment instead of finding out when something fails. The countdown deliberately tracks only the long-lived credential: the short one behind each session renews itself and is not shown, because showing it would look alarming for no reason.
 
 ### Changed
+- A brand-new installation now carries the new name everywhere — the program folder, the executable you see in Task Manager, and the folders your data is kept in. Upgrading over an existing copy is unaffected: your data stays exactly where it is, and the app moves its own program folder across for you and clears the old one out.
+- Downloads are now published under the new name as well. The previously-named files are still published alongside them, because existing installations look for that exact name when they check for updates — so updating keeps working either way.
 - A terminal-only launcher no longer insists on a working directory, and the "run as administrator" wording now matches the platform you are on.
 - Installed builds now enforce the same content restrictions the development build has always run under — an extra layer around anything the app displays, including text that comes from your repositories and sessions.
 - The drawing canvas no longer fetches its fonts from the internet when you open it. They ship with the app, so it draws correctly offline and makes no outside requests.
@@ -34,6 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Generating Insights is far cheaper. Each analysis was quietly loading everything your account has configured — every connected tool server, every skill, your instruction files — into a job that only needed to read one report. Measured on a real setup that was about 193,000 words of context per account; it is now about 14,000. Nothing about the analysis itself changes.
 
 ### Fixed
+- macOS, when upgrading by dragging the new app over: because the application has been renamed, the old "Claude Command Center" app is left behind in your Applications folder rather than being replaced. You can safely drag it to the Trash; your data and accounts belong to the new app. A brand-new install is unaffected.
 - Fixed: every button in the sidebar could end up announcing itself with the same label. That broke the guided tour and made the app significantly harder to use with a screen reader.
 - Fixed: two of the tips could never appear, because they were waiting on activity the app never actually recorded.
 - The accounts view now warns when two accounts are signed into the SAME Anthropic account, and explains why it matters: each time one refreshes, it invalidates the other, so they take turns mysteriously expiring. This is easy to cause by accident — sign one account in while your browser is still signed in as another and it happens silently.

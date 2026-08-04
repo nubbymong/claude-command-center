@@ -468,8 +468,18 @@ export async function checkGitHubRelease(): Promise<ReleaseInfo | null> {
     return null
   }
 
+  // Accept either the legacy artifact prefix or the current brand one.
+  //
+  // Releases currently publish the SAME installer under both names: every client
+  // in the wild matches the legacy prefix literally, so dropping it would make
+  // them see "no matching asset" — which is indistinguishable from "up to date"
+  // and unfixable, because the fix would only ship in the build they can no
+  // longer see. Tolerating both here is what eventually lets the legacy name be
+  // retired: once installs predating this build are gone, releases can publish
+  // the brand name alone. Until then the legacy asset must keep being published.
+  const INSTALLER_PREFIXES = ['ClaudeCommandCenter-', 'AI-Code-Conductor-']
   const installer = best.release.assets.find((a) =>
-    a.name.endsWith(INSTALLER_EXT) && a.name.startsWith('ClaudeCommandCenter-')
+    a.name.endsWith(INSTALLER_EXT) && INSTALLER_PREFIXES.some((p) => a.name.startsWith(p))
   )
 
   // If there's no installer for the current platform, don't offer the update.

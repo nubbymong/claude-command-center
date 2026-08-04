@@ -330,6 +330,27 @@ jobs:
       - name: List artifacts
         run: ls -la artifacts/
 
+      # Publish each installer a second time under the current brand name, so a
+      # fresh download carries no legacy name. The ClaudeCommandCenter-* copies
+      # MUST stay: every installed client matches release assets by that literal
+      # prefix, and latest*.yml still points at them, so removing them would
+      # strand existing installs on "no update available". Only the installers
+      # are duplicated — .blockmap and latest*.yml are updater-internal and are
+      # resolved by name from the legacy asset.
+      - name: Add cleanly-named download copies
+        run: |
+          cd artifacts
+          for f in *.exe *.dmg *.AppImage; do
+            [ -e "$f" ] || continue
+            clean="${f/ClaudeCommandCenter-/AI-Code-Conductor-}"
+            if [ "$clean" != "$f" ]; then
+              cp -- "$f" "$clean"
+              echo "added $clean"
+            fi
+          done
+          ls -la
+
+      # Runs AFTER the copies so users can verify whichever name they downloaded.
       - name: Generate checksums
         run: |
           cd artifacts
