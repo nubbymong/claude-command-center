@@ -684,7 +684,22 @@ async function clickNav(window: any, label: string): Promise<void> {
     }
     return false
   }, label)
-  if (!clicked) throw new Error(`[capture] nav button "${label}" not found -- aborting rather than capturing the wrong view`)
+  if (!clicked) {
+    // Dump what IS on the page so a selector regression is diagnosable from
+    // the failure alone instead of needing a second instrumented run.
+    const seen = await window.evaluate(() => {
+      const out: string[] = []
+      for (const btn of Array.from(document.querySelectorAll('button'))) {
+        const al = btn.getAttribute('aria-label') ?? ''
+        const dt = btn.getAttribute('data-tour') ?? ''
+        const t = btn.title ?? ''
+        if (al || dt || t) out.push(`aria="${al}" tour="${dt}" title="${t}"`)
+      }
+      return out.slice(0, 40)
+    })
+    console.log(`[capture] buttons present (${seen.length}):\n  ${seen.join('\n  ')}`)
+    throw new Error(`[capture] nav button "${label}" not found -- aborting rather than capturing the wrong view`)
+  }
   console.log(`[capture] Nav -> ${label}`)
   await window.waitForTimeout(1200)
 }
