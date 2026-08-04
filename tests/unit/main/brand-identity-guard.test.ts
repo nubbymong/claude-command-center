@@ -25,12 +25,35 @@ describe('brand identity guard', () => {
     expect(Object.prototype.hasOwnProperty.call(pkg, 'productName')).toBe(false)
   })
 
-  it('exe and .app bundle filenames stay pinned to the legacy name', () => {
-    expect(pkg.build.win.executableName).toBe('Claude Command Center')
-    expect(pkg.build.mac.executableName).toBe('Claude Command Center')
-    // Never top-level: that would rename the Linux binary out from under
-    // existing AppImage users.
+  it('exe and .app bundle carry the current brand, so a fresh install has no legacy name', () => {
+    // These WERE pinned to "Claude Command Center" to stop upgrades relocating,
+    // because electron-builder's instFilesPre appends ${APP_FILENAME} to any
+    // $INSTDIR lacking it. A fresh install therefore landed in
+    // …\Programs\Claude Command Center\Claude Command Center.exe — the legacy
+    // name in the install path and in Task Manager. The pin is now replaced by
+    // an explicit relocation in build/installer.nsh (customInit steps $INSTDIR
+    // up to the parent when it ends in a legacy folder name, so the append
+    // re-lands it under the new name, and customInstall removes the old folder).
+    // If these two ever revert, that relocation silently becomes dead code.
+    expect(pkg.build.win.executableName).toBe('AI Code Conductor')
+    expect(pkg.build.mac.executableName).toBe('AI Code Conductor')
+    // Still never top-level — Linux has no relocation story and derives its
+    // binary name from productName.
     expect(pkg.build.executableName).toBeUndefined()
+  })
+
+  it('the installer still relocates a legacy install folder instead of nesting inside it', () => {
+    const nsh = readFileSync(join(__dirname, '../../../build/installer.nsh'), 'utf-8')
+    // customInit must run the step-up, and it must recognise both legacy folder
+    // names; without this an upgrade installs to <old folder>\AI Code Conductor.
+    expect(nsh).toMatch(/!macro customInit/)
+    expect(nsh).toMatch(/GetParent/)
+    expect(nsh).toContain('"Claude Command Center"')
+    // And the old folder has to be cleaned up, or the machine keeps a dead copy
+    // that nothing can uninstall (the single uninstall entry now points at the
+    // new folder).
+    expect(nsh).toMatch(/!macro RemoveLegacyInstall/)
+    expect(nsh).toMatch(/RMDir \/r "\$\{DIR\}"/)
   })
 
   it('release artifact names keep the frozen ClaudeCommandCenter- prefix', () => {
